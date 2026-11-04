@@ -87,6 +87,12 @@ export interface SearchSource {
 	 */
 	deepHit?: (pattern: string) => SQL
 	hitSnippet?: (patterns: string[]) => SQL
+	/**
+	 * Optional. A boolean: true when the source holds rows outside the deep scan cap. It counts the
+	 * source's rows and nothing else, so the partial flag does not run `candidates` a second time
+	 * (the people list and last message of every chat). Without it the flag reads `candidates`.
+	 */
+	overScanCap?: (ctx: SearchContext) => SQL
 }
 
 export const SEARCH_SOURCES: SearchSource[] = [
@@ -133,6 +139,14 @@ export const SEARCH_SOURCES: SearchSource[] = [
 			) THEN 'unread'
 			ELSE 'read'
 		END`,
+		// The same chats the candidates number for the cap, counted without the per-chat lookups.
+		overScanCap: ({ workspaceId, callerId }) => sql`(
+			SELECT count(*) > ${CHAT_MESSAGE_SCAN_CAP}
+			FROM conversations c
+			INNER JOIN conversation_participants cp
+				ON cp.conversation_id = c.id AND cp.actor_id = ${callerId} AND cp.left_at IS NULL
+			WHERE c.workspace_id = ${workspaceId}
+		)`,
 		// The chat must hold every picked actor (still a member, not left).
 		participantsOk: (participants) =>
 			sql.join(
@@ -471,9 +485,11 @@ async function runSource(
 		hasDeep && source.hitSnippet
 			? sql`coalesce(CASE WHEN m.deep THEN ${source.hitSnippet(tokens.map(tokenIlikePattern))} END, m.snippet)`
 			: sql`m.snippet`
-	const truncatedFlag = hasDeep
-		? sql`(SELECT coalesce(bool_or(NOT t.deep), false) FROM (${source.candidates(ctx)}) t)`
-		: sql`false`
+	const truncatedFlag = !hasDeep
+		? sql`false`
+		: source.overScanCap
+			? source.overScanCap(ctx)
+			: sql`(SELECT coalesce(bool_or(NOT t.deep), false) FROM (${source.candidates(ctx)}) t)`
 
 	// One scan. m keeps the rows where every word hits, checked cheapest part first and in
 	// order, and works out score and status for those rows only. Both the counts and the top
