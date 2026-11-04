@@ -14,15 +14,18 @@ struct LinkedDraftCard: View {
 
 	@Environment(\.linkedItems) private var store
 	@State private var expanded: Bool
+	/// What the reader has typed over the draft; nil while the draft reads as the agent wrote it.
+	@State private var edit: DraftEdit?
 
 	init(
-		object: WorkObject, preview: ObjectPreview, defaultExpanded: Bool = false,
+		object: WorkObject, preview: ObjectPreview, defaultExpanded: Bool = false, edited: DraftEdit? = nil,
 		onApproved: @escaping (_ title: String?, _ body: String) -> Void = { _, _ in }
 	) {
 		self.object = object
 		self.preview = preview
 		self.onApproved = onApproved
 		_expanded = State(initialValue: defaultExpanded)
+		_edit = State(initialValue: edited)
 	}
 
 	private var title: String {
@@ -32,6 +35,28 @@ struct LinkedDraftCard: View {
 
 	private var phase: DraftApprovalPhase? { store?.phase(of: object.id) }
 	private var isApproving: Bool { phase == .approving }
+
+	private var isEmail: Bool { preview.kind == "email" }
+	private var original: DraftEdit { DraftEdit(preview: preview) }
+	private var current: DraftEdit { edit ?? original }
+	/// A draft not yet approved or sent is drawn as an editor (read-only while it is being approved).
+	private var canEdit: Bool {
+		store != nil && (preview.delivery == nil || preview.delivery == .draft)
+	}
+
+	/// What the lines above the text show. An email's subject is a field while editing, so its
+	/// read-only line is left out.
+	private var metaPreview: ObjectPreview {
+		guard canEdit, isEmail else { return preview }
+		var rest = preview
+		rest.subject = nil
+		return rest
+	}
+
+	private func keep(_ new: DraftEdit) {
+		edit = new == original ? nil : new
+		if case .failed? = phase { store?.clearApprovalFailure(object.id) }
+	}
 
 	var body: some View {
 		LinkedCardChrome {
@@ -44,6 +69,8 @@ struct LinkedDraftCard: View {
 			}
 		}
 		.accessibilityElement(children: .contain)
+		// A draft that was read again (it changed, or it was approved) starts from its new text.
+		.onChange(of: preview.contentHash) { edit = nil }
 	}
 
 	private var head: some View {
@@ -80,17 +107,87 @@ struct LinkedDraftCard: View {
 
 	private var details: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-			ObjectPreviewMetaView(preview: preview)
-			Text(preview.body)
-				.font(MaskinTypeface.sans(MaskinFontSize.t15))
-				.lineSpacing(MaskinSpace.s2)
-				.foregroundStyle(MaskinColor.ink)
-				.frame(maxWidth: .infinity, alignment: .leading)
-				.fixedSize(horizontal: false, vertical: true)
+			ObjectPreviewMetaView(preview: metaPreview)
+			if canEdit && isEmail { subjectField }
+			if canEdit {
+				bodyEditor
+				editedRow
+			} else {
+				Text(preview.body)
+					.font(MaskinTypeface.sans(MaskinFontSize.t15))
+					.lineSpacing(MaskinSpace.s2)
+					.foregroundStyle(MaskinColor.ink)
+					.frame(maxWidth: .infinity, alignment: .leading)
+					.fixedSize(horizontal: false, vertical: true)
+			}
 			footer
 		}
 		.padding(.horizontal, MaskinSpace.s6)
 		.padding(.vertical, MaskinSpace.s5)
+	}
+
+	private var subjectField: some View {
+		HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s5) {
+			Text("Subject")
+				.font(MaskinTypeface.sans(MaskinFontSize.t14))
+				.foregroundStyle(MaskinColor.ink5)
+				.frame(width: 72, alignment: .leading)
+			TextField(
+				"Subject",
+				text: Binding(
+					get: { current.subject ?? "" },
+					set: { value in
+						var next = current
+						next.subject = value
+						keep(next)
+					})
+			)
+			.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold))
+			.foregroundStyle(MaskinColor.ink)
+			.disabled(isApproving)
+			.accessibilityLabel("Subject")
+		}
+		.frame(minHeight: MaskinSpace.touchMin)
+	}
+
+	private var bodyEditor: some View {
+		DraftBodyEditor(
+			text: Binding(
+				get: { current.body },
+				set: { value in
+					var next = current
+					next.body = value
+					keep(next)
+				}),
+			isEnabled: !isApproving, accessibilityLabel: preview.kind == "linkedin_post" ? "Post text" : "Message text"
+		)
+		.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.tag2, style: .continuous))
+	}
+
+	/// "Edited" and the way back to the agent's text, once the reader has changed something.
+	@ViewBuilder
+	private var editedRow: some View {
+		if edit != nil {
+			HStack(spacing: MaskinSpace.s4) {
+				Text("Edited")
+					.font(MaskinTypeface.sans(MaskinFontSize.t12, weight: .bold))
+					.foregroundStyle(MaskinColor.successStrong)
+					.frame(maxWidth: .infinity, alignment: .leading)
+				Button {
+					MaskinHaptics.play(.selection)
+					withAnimation(MaskinMotion.standard) { keep(original) }
+				} label: {
+					Text("Revert to draft")
+						.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold))
+						.foregroundStyle(MaskinColor.ink)
+						.padding(.horizontal, MaskinSpace.s4)
+						.frame(minHeight: MaskinSpace.touchMin)
+						.contentShape(Rectangle())
+				}
+				.buttonStyle(.maskinPressed)
+				.accessibilityHint("Puts back the text the agent wrote")
+			}
+		}
 	}
 
 	@ViewBuilder
@@ -121,7 +218,7 @@ struct LinkedDraftCard: View {
 	}
 
 	private var approveButton: some View {
-		let enabled = preview.canApprove && !isApproving && store != nil
+		let enabled = preview.canApprove && current.isApprovable(isEmail: isEmail) && !isApproving && store != nil
 		return Button(action: approve) {
 			HStack(spacing: MaskinSpace.s3) {
 				if isApproving { ProgressView().controlSize(.small).tint(MaskinSurface.onInverse) }
@@ -143,8 +240,9 @@ struct LinkedDraftCard: View {
 	private func approve() {
 		guard let store else { return }
 		let shown = preview
+		let text = current
 		Task {
-			let result = await store.approve(objectID: object.id, preview: shown)
+			let result = await store.approve(objectID: object.id, preview: shown, edit: text)
 			if case .approved(let approved) = result {
 				MaskinHaptics.play(.success)
 				onApproved(object.title, approved.body)
