@@ -73,12 +73,14 @@ export const AUTO_SENT_ACTION = 'auto_sent'
  *                   and the one-approval-one-send claim use its id), whether a person approved
  *                   or the setting allowed it. `via` says which.
  *   denied          the setting is Deny. Nothing is sent, whatever else is true of the draft.
- *   needs_approval  the setting is Ask first and no person has approved this exact text.
+ *   needs_approval  no person has approved this exact text and the setting does not release it:
+ *                   Ask first, or Always allow with a limit the draft falls outside of
+ *                   (`outsideLimit`).
  */
 export type SendAuthorization =
 	| { outcome: 'allowed'; approval: ObjectApproval; via: 'approval' | 'auto_sent' }
 	| { outcome: 'denied'; message: string }
-	| { outcome: 'needs_approval' }
+	| { outcome: 'needs_approval'; outsideLimit?: true }
 
 /** What an agent is told when the setting is Deny. One wording for every send tool. */
 export function deniedMessage(kind: string): string {
@@ -94,7 +96,8 @@ export function deniedMessage(kind: string): string {
  *   2. A person's approval of exactly this text releases the send, under any other setting. An
  *      agent may always ask for approval of its own choice, and the approval is then used.
  *   3. Always allow releases the send and writes an `auto_sent` event on the draft (the kind, the
- *      content hash and the setting that allowed it).
+ *      content hash and the setting that allowed it). A send tool can narrow this with
+ *      `canAutoSend`: when it says no, the draft is held as under Ask first, and nothing is written.
  *   4. Ask first (and anything unknown) holds the send until a person approves.
  *
  * The caller is whoever calls the send tool; nothing the call or the draft says can change the
@@ -109,6 +112,12 @@ export async function authorizeSend(
 		agentId: string
 		object: { id: string; type: string }
 		preview: { kind: string; content_hash: string }
+		/**
+		 * A limit on Always allow set by the send tool, for example the Slack channels that may be
+		 * posted to without a person. Only asked when the setting is Always allow and no approval
+		 * exists. It can only hold a send back, never release one.
+		 */
+		canAutoSend?: () => Promise<boolean>
 	},
 ): Promise<SendAuthorization> {
 	const { workspaceId, agentId, object, preview } = params
@@ -119,6 +128,9 @@ export async function authorizeSend(
 	if (approval) return { outcome: 'allowed', approval, via: 'approval' }
 
 	if (setting.mode !== 'always_allow') return { outcome: 'needs_approval' }
+	if (params.canAutoSend && !(await params.canAutoSend())) {
+		return { outcome: 'needs_approval', outsideLimit: true }
+	}
 	return {
 		outcome: 'allowed',
 		approval: await recordAutoSent(db, { workspaceId, agentId, object, preview, setting }),

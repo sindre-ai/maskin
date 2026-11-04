@@ -408,6 +408,7 @@ export function createSlackMcpServer(
 						workspaceId: ctx.workspaceId,
 						actorId: ctx.actorId,
 						objectId: args.object_id,
+						canAutoSendTo: (ref) => isDirectChannel(ctx, ref),
 					})
 					channel = await resolveChannelId(ctx, approved.channel)
 					text = approved.preview.body
@@ -889,6 +890,7 @@ export function createSlackMcpServer(
 						workspaceId: ctx.workspaceId,
 						actorId: ctx.actorId,
 						objectId: args.object_id,
+						canAutoSendTo: (ref) => isDirectChannel(ctx, ref),
 					})
 					channelId = await resolveChannelId(ctx, approved.channel)
 					text = approved.preview.body

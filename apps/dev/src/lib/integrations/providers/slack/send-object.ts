@@ -76,7 +76,17 @@ export function isDirectPostChannel(channelId: string, configured?: readonly str
  */
 export async function loadApprovedSlackMessage(
 	db: Database,
-	params: { workspaceId: string; actorId: string; objectId: string },
+	params: {
+		workspaceId: string
+		actorId: string
+		objectId: string
+		/**
+		 * True when a post to this channel (as written on the draft) may go on Always allow without
+		 * a person. Channels outside the direct-post allowlist are held for approval, whatever the
+		 * setting says. Deny still refuses first.
+		 */
+		canAutoSendTo: (channel: string) => Promise<boolean>
+	},
 ) {
 	const [object] = await db
 		.select()
@@ -104,14 +114,24 @@ export async function loadApprovedSlackMessage(
 	if (state === 'sent') {
 		throw new SlackSendRefusal('This text has already been posted. Do not post it again.')
 	}
+	const channel = preview.details.find((d) => d.label === 'Channel')?.value.trim()
+	if (!channel) {
+		throw new SlackSendRefusal('The draft has no channel. Nothing was posted.')
+	}
 	const decision = await authorizeSend(db, {
 		workspaceId: params.workspaceId,
 		agentId: params.actorId,
 		object,
 		preview,
+		canAutoSend: () => params.canAutoSendTo(channel),
 	})
 	if (decision.outcome === 'denied') {
 		throw new SlackSendRefusal(`${decision.message} Nothing was posted.`)
+	}
+	if (decision.outcome === 'needs_approval' && decision.outsideLimit) {
+		throw new SlackSendRefusal(
+			'This channel is not on the list of channels agents may post to without a person. Nothing was posted. Ask a person to approve this text from the card (an edit needs approving again), then call this again.',
+		)
 	}
 	if (decision.outcome === 'needs_approval') {
 		throw new SlackSendRefusal(
@@ -120,10 +140,6 @@ export async function loadApprovedSlackMessage(
 	}
 	const approval = decision.approval
 
-	const channel = preview.details.find((d) => d.label === 'Channel')?.value.trim()
-	if (!channel) {
-		throw new SlackSendRefusal('The draft has no channel. Nothing was posted.')
-	}
 	return { object, preview, approval, channel }
 }
 

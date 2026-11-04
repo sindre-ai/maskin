@@ -22,6 +22,7 @@ vi.mock('../../lib/analytics/posthog', () => ({
  */
 
 const CHANNEL_ID = 'C0123456789'
+const OTHER_CHANNEL_ID = 'C0999999999'
 
 let fetchMock: ReturnType<typeof vi.fn>
 
@@ -37,13 +38,24 @@ afterEach(() => {
 	vi.unstubAllGlobals()
 })
 
-async function setup(content = 'Release 4.2 is out.') {
+/**
+ * Drafts go to `channel`. The Slack tool is given `allowlist` as the channels that may be posted
+ * to without a person; by default that is the draft's own channel, so the cases below are about
+ * the setting alone. The limit has its own describe at the end.
+ */
+async function setup(
+	content = 'Release 4.2 is out.',
+	{
+		channel = CHANNEL_ID,
+		allowlist = [CHANNEL_ID],
+	}: { channel?: string; allowlist?: string[] } = {},
+) {
 	const actorId = getTestActorId()
 	const ws = await insertWorkspace(db, actorId)
 	const object = await insertObject(db, ws.id, actorId, {
 		type: 'task',
 		content,
-		metadata: { kind: 'slack_message', channel: CHANNEL_ID },
+		metadata: { kind: 'slack_message', channel },
 	})
 	const server = createSlackMcpServer({
 		botToken: 'xoxb-test-token',
@@ -52,6 +64,7 @@ async function setup(content = 'Release 4.2 is out.') {
 		workspaceId: ws.id,
 		actorId,
 		db,
+		directPostChannels: allowlist,
 	})
 	const tool = (
 		server as unknown as {
@@ -332,5 +345,86 @@ describe('email starts on Ask first', () => {
 			preview,
 		})
 		expect(decision.outcome).toBe('needs_approval')
+	})
+})
+
+describe('Always allow on Slack only covers the direct-post allowlist', () => {
+	it('holds a channel that is not on the allowlist, and writes no auto_sent', async () => {
+		const { send, object, ws, actorId } = await setup(undefined, { channel: OTHER_CHANNEL_ID })
+		await insertSendPermission(db, {
+			workspaceId: ws.id,
+			agentId: actorId,
+			kind: 'slack_message',
+			mode: 'always_allow',
+		})
+
+		const held = await send()
+
+		expect(held.isError).toBe(true)
+		expect(held.content[0].text).toMatch(/not on the list of channels/)
+		expect(fetchMock).not.toHaveBeenCalled()
+		expect(await eventsOn(object.id, AUTO_SENT_ACTION)).toHaveLength(0)
+
+		await approve(ws.id, actorId, object)
+		expect((await send()).isError).toBeUndefined()
+		expect(fetchMock).toHaveBeenCalledTimes(1)
+		expect(await eventsOn(object.id, AUTO_SENT_ACTION)).toHaveLength(0)
+	})
+
+	it('sends to an allowlisted channel and writes auto_sent', async () => {
+		const { send, object, ws, actorId } = await setup(undefined, {
+			channel: OTHER_CHANNEL_ID,
+			allowlist: [OTHER_CHANNEL_ID],
+		})
+		await insertSendPermission(db, {
+			workspaceId: ws.id,
+			agentId: actorId,
+			kind: 'slack_message',
+			mode: 'always_allow',
+		})
+
+		expect((await send()).isError).toBeUndefined()
+		expect(fetchMock).toHaveBeenCalledTimes(1)
+		expect(await eventsOn(object.id, AUTO_SENT_ACTION)).toHaveLength(1)
+	})
+
+	it('holds when the allowlist is empty', async () => {
+		const { send, object } = await setup(undefined, { allowlist: [] })
+
+		expect((await send()).isError).toBe(true)
+		expect(fetchMock).not.toHaveBeenCalled()
+		expect(await eventsOn(object.id, AUTO_SENT_ACTION)).toHaveLength(0)
+	})
+
+	it('Deny still wins on an allowlisted channel, even for an approved text', async () => {
+		const { send, object, ws, actorId } = await setup()
+		await insertSendPermission(db, {
+			workspaceId: ws.id,
+			agentId: actorId,
+			kind: 'slack_message',
+			mode: 'deny',
+		})
+		await approve(ws.id, actorId, object)
+
+		const result = await send()
+
+		expect(result.isError).toBe(true)
+		expect(result.content[0].text).toMatch(/turned off for you/)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('Deny wins over a channel that is not on the allowlist too', async () => {
+		const { send, ws, actorId } = await setup(undefined, { channel: OTHER_CHANNEL_ID })
+		await insertSendPermission(db, {
+			workspaceId: ws.id,
+			agentId: actorId,
+			kind: 'slack_message',
+			mode: 'deny',
+		})
+
+		const result = await send()
+
+		expect(result.isError).toBe(true)
+		expect(result.content[0].text).toMatch(/turned off for you/)
 	})
 })
