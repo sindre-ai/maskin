@@ -39026,7 +39026,7 @@
 									"amount_usd_cents": {
 										"type": "integer",
 										"minimum": 1000,
-										"maximum": 50000
+										"maximum": 3490000
 									},
 									"success_url": {
 										"type": "string",
