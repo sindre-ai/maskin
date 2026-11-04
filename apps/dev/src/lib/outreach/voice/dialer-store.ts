@@ -87,7 +87,6 @@ function permanentlyRefused(exclusion: QueueExclusion) {
 			then (${field('dial_attempt_n')} #>> '{}')::numeric end >= ${MAX_DIALS_PER_CONTACT}::numeric, false)
 		or ${phone} is null
 		or coalesce(${field('company_type')} not in ('"aps"'::jsonb, '"as"'::jsonb), true)
-		or coalesce(${field('cvr_ad_protection')} is distinct from 'false'::jsonb, true)
 		or coalesce(not (${isString('owner')}), true) or ${owner} = ''
 		${
 			slugs

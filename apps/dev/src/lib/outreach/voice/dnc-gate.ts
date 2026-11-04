@@ -120,21 +120,6 @@ function companyTypeReason(m: Record<string, unknown>): string | null {
 	return `contact company type "${found}" is not ApS or A/S (metadata.company_type must be aps or as)`
 }
 
-/**
- * metadata.cvr_ad_protection must be the boolean false: the company and unit are not flagged
- * "reklamebeskyttet" in CVR. Missing, true or any other value is refused (fail closed).
- */
-function adProtectionReason(m: Record<string, unknown>): string | null {
-	const v = m.cvr_ad_protection
-	if (v === false) return null
-	if (v === undefined || v === null) {
-		return 'contact has no CVR advertising protection answer (metadata.cvr_ad_protection is missing)'
-	}
-	if (v === true)
-		return 'contact is advertising protected in CVR (metadata.cvr_ad_protection is true)'
-	return 'contact CVR advertising protection is not a boolean (metadata.cvr_ad_protection must be false)'
-}
-
 export type DncCheck =
 	| 'hold'
 	| 'status'
@@ -142,7 +127,6 @@ export type DncCheck =
 	| 'investor'
 	| 'owner'
 	| 'company_type'
-	| 'ad_protection'
 	| 'phone'
 	| 'time_of_day'
 	| 'max_dials'
@@ -291,10 +275,6 @@ export async function runDncGate(contact: GateContact, deps: DncGateDeps): Promi
 	// 4. Company type. Only an ApS or A/S is dialed; sole proprietors are a protected group.
 	const companyType = companyTypeReason(m)
 	if (companyType) return refuse('company_type', companyType)
-
-	// 4a. CVR advertising protection (SMB pilot gate). Company size does not gate a dial.
-	const adProtection = adProtectionReason(m)
-	if (adProtection) return refuse('ad_protection', adProtection)
 
 	// 4b. Phone. Needs a +45 number it can normalise.
 	if (!normalizeDanishNumber(m.phone)) {
