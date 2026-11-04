@@ -449,6 +449,7 @@ describe('deliverables declarations, matching', () => {
 			'linkedin_message',
 			'linkedin_post',
 			'linkedin_post_edit',
+			'manual_message',
 			'slack_message',
 		])
 	})

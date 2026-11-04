@@ -310,8 +310,9 @@ export function LinkedObjectCard({
 								workspaceId={workspaceId}
 								objectId={object.id}
 								fallback={shown}
-								canEdit={canAct && delivery !== 'sent'}
-								readOnly={(text) => <MarkdownContent content={text} size="sm" />}
+								// A clamped draft is read first (the gate below), so it is edited once opened in full.
+								canEdit={canAct && delivery !== 'sent' && !gated}
+								readOnly={(text) => <MarkdownContent content={edit ?? text} size="sm" />}
 							/>
 						) : (
 							<MarkdownContent
