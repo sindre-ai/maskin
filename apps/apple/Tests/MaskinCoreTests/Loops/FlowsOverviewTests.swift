@@ -5,24 +5,51 @@ import Testing
 
 @Suite("FlowsOverview")
 struct FlowsOverviewTests {
-	@Test("the lead counts running flows that need the viewer")
-	func lead() {
-		let rows = [
-			loopRow("a", waiting: 1), loopRow("b"), loopRow("c", waiting: 2), loopRow("d", status: .paused, waiting: 3),
-		]
-		#expect(FlowsOverview.lead(rows) == "2 of 4 flows need you.")
-		#expect(FlowsOverview.lead([loopRow("a", waiting: 1), loopRow("b")]) == "1 of 2 flows needs you.")
-		#expect(FlowsOverview.lead([loopRow("a")]) == "Nothing needs you right now.")
-		#expect(FlowsOverview.lead([loopRow("a", waiting: 1)]) == "1 flow needs you.")
-		#expect(FlowsOverview.lead([]) == nil)
-	}
-
 	@Test("the banner only exists while decisions wait on a running flow")
 	func banner() {
 		#expect(FlowsOverview.banner(loopRow("a")) == nil)
 		#expect(FlowsOverview.banner(loopRow("a", waiting: 1)) == "1 decision waits on you")
 		#expect(FlowsOverview.banner(loopRow("a", waiting: 3)) == "3 decisions wait on you")
 		#expect(FlowsOverview.banner(loopRow("a", status: .paused, waiting: 3)) == nil)
+	}
+
+	@Test("the banner names the decision when its title is known")
+	func bannerNamesDecision() {
+		#expect(FlowsOverview.banner(loopRow("a", waiting: 1), decisionTitle: "Post text only?") == "Decide: Post text only?")
+		#expect(
+			FlowsOverview.banner(loopRow("a", waiting: 3), decisionTitle: "Post text only?")
+				== "3 decisions waiting: Post text only?")
+		#expect(FlowsOverview.banner(loopRow("a", waiting: 1), decisionTitle: "  ") == "1 decision waits on you")
+		#expect(FlowsOverview.banner(loopRow("a"), decisionTitle: "Post text only?") == nil)
+	}
+
+	@Test("a decision post is called by its title, else the start of its text")
+	func decisionTitle() {
+		let titled = LoopPost(id: 1, actorID: nil, text: "Long body.", isDecision: true, decisionTitle: "Ship it?")
+		let untitled = LoopPost(id: 2, actorID: nil, text: "Pick a brief. Then go.", isDecision: true)
+		let plain = LoopPost(id: 3, actorID: nil, text: "FYI", isDecision: false)
+		#expect(FlowsOverview.decisionTitle(from: titled) == "Ship it?")
+		#expect(FlowsOverview.decisionTitle(from: untitled) == "Pick a brief. Then go.")
+		#expect(FlowsOverview.decisionTitle(from: plain) == nil)
+		#expect(FlowsOverview.decisionTitle(from: nil) == nil)
+	}
+
+	@Test("the overview strip counts only what the list carries")
+	func kpis() {
+		let busy = loopRow("a", waiting: 1, inProgress: 2, closed: 5)
+		let idle = loopRow("b", inProgress: 1, closed: 0)
+		let paused = loopRow("c", status: .paused, waiting: 4, inProgress: 0, closed: 0)
+		let stats = FlowsOverview.kpis([busy, idle, paused])
+		#expect(stats.map(\.label) == ["Need you", "Running", "In progress", "Closed"])
+		#expect(stats.map(\.value) == ["1", "2 of 3", "3", "5"])
+		#expect(FlowsOverview.kpis([]).isEmpty)
+	}
+
+	@Test("the work line leaves out what is zero")
+	func workLine() {
+		#expect(FlowsOverview.workLine(loopRow("a", inProgress: 0, closed: 0)) == nil)
+		#expect(FlowsOverview.workLine(loopRow("a", inProgress: 2, closed: 0)) == "2 in progress")
+		#expect(FlowsOverview.workLine(loopRow("a", inProgress: 2, closed: 5)) == "2 in progress · 5 closed")
 	}
 
 	@Test("figures come from the most urgent target and are nil without one")

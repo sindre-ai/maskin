@@ -32,14 +32,15 @@ struct LoopsListView: View {
 			loop: loop, needsYou: store.needsYou(loop),
 			hasUpdate: store.installs[loop.id]?.hasUpdate == true,
 			update: store.display.showsSummary ? store.latestUpdate(for: loop) : nil,
+			decisionTitle: store.decisionTitle(for: loop),
 			onReview: { selection = loop.id })
 	}
 
-	/// The lead sentence and the tag chips above the cards.
+	/// The overview strip and the tag chips above the cards.
 	@ViewBuilder
 	private var header: some View {
 		if search.isEmpty {
-			if let lead = FlowsOverview.lead(store.loops) { FlowsLead(sentence: lead) }
+			FlowsKPIStrip(stats: FlowsOverview.kpis(store.loops))
 			FlowTagChips(tags: store.tags, selection: Binding(get: { store.tagFilter }, set: { store.tagFilter = $0 }))
 		}
 	}
@@ -150,17 +151,17 @@ struct LoopsListView: View {
 	}
 }
 
-/// "2 of 4 flows need you." in the ink, under the title.
-struct FlowsLead: View {
-	let sentence: String
+/// What the flows add up to, above the cards: need you, running, in progress, closed. The same
+/// tiles as a flow's Performance tab.
+struct FlowsKPIStrip: View {
+	let stats: [LoopQuality.Stat]
 
 	var body: some View {
-		Text(sentence)
-			.font(MaskinTypeface.sans(MaskinFontSize.t20, weight: .semibold, relativeTo: .title3))
-			.foregroundStyle(MaskinColor.ink)
-			.frame(maxWidth: .infinity, alignment: .leading)
-			.fixedSize(horizontal: false, vertical: true)
-			.accessibilityAddTraits(.isHeader)
+		if !stats.isEmpty {
+			HStack(alignment: .top, spacing: MaskinSpace.s4) {
+				ForEach(stats) { FlowStatTile(stat: $0) }
+			}
+		}
 	}
 }
 

@@ -16,6 +16,8 @@ struct ObjectFlatRow: View {
 	var showsStatus = true
 	var showsDriver = true
 	var showsUpdated = true
+	/// Draws the star. Off where the star would not do anything (a flow's items).
+	var showsStar = true
 	/// Taps on the star. Nil draws a plain star.
 	var onToggleStar: (() -> Void)?
 
@@ -32,7 +34,7 @@ struct ObjectFlatRow: View {
 
 	var body: some View {
 		HStack(alignment: .top, spacing: MaskinSpace.s5) {
-			star
+			if showsStar { star }
 			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
 				Text(object.displayTitle)
 					.maskinText(.headline)

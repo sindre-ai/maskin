@@ -141,7 +141,13 @@ struct LoopBriefingsSection: View {
 							.loopNote()
 					}
 				} else {
-					StoryRow(stories: stories, loopID: loopID) { card in openStory = card }
+					let cards = stories.cards(forLoop: loopID)
+					if cards.count <= LoopBriefingTiles.largestCount {
+						// A few briefings fill the width instead of a strip of small cards.
+						LoopBriefingTiles(cards: cards, stories: stories) { openStory = $0 }
+					} else {
+						StoryRow(stories: stories, loopID: loopID) { card in openStory = card }
+					}
 				}
 			}
 			.storyCover(item: $openStory) { card in
@@ -150,6 +156,51 @@ struct LoopBriefingsSection: View {
 					sequence: BriefSequence.make(cards: stories.cards(forLoop: loopID), opening: card)
 				) { openStory = nil }
 			}
+		}
+	}
+}
+
+/// One to three briefings, drawn large with the For you card: one fills the width, two share a
+/// row, three put the third full width beneath. More than that keeps the small row.
+struct LoopBriefingTiles: View {
+	/// Past this many briefings the flow keeps the strip of small cards.
+	static let largestCount = 3
+	let cards: [StoryCard]
+	let stories: StoriesStore
+	let open: (StoryCard) -> Void
+	@State private var width: CGFloat = 0
+
+	private let gap = MaskinSpace.s5
+
+	var body: some View {
+		VStack(spacing: gap) {
+			if cards.count == 1 {
+				tile(cards[0], width: width, height: 260)
+			} else {
+				HStack(spacing: gap) {
+					ForEach(cards.prefix(2)) { tile($0, width: (width - gap) / 2, height: 200) }
+				}
+				if cards.count == 3 { tile(cards[2], width: width, height: 160) }
+			}
+		}
+		.frame(maxWidth: .infinity)
+		.background(
+			GeometryReader { proxy in
+				Color.clear
+					.onAppear { width = proxy.size.width }
+					.onChange(of: proxy.size.width) { _, new in width = new }
+			})
+		.accessibilityElement(children: .contain)
+		.accessibilityLabel("Briefings")
+	}
+
+	@ViewBuilder
+	private func tile(_ card: StoryCard, width: CGFloat, height: CGFloat) -> some View {
+		if width > 0 {
+			StoryCardView(
+				card: card, isSeen: stories.isSeen(card),
+				metrics: StoryCardMetrics(width: width, radius: 28, height: height)
+			) { open(card) }
 		}
 	}
 }
@@ -230,6 +281,70 @@ struct LoopPostsSection: View {
 	}
 }
 
+/// The flow's properties as the quiet key/value card the item page uses: who drives it, its tags,
+/// the agents that work it, and when it was made and last changed. Only what the flow has shows.
+struct LoopPropertiesCard: View {
+	let store: LoopDetailStore
+
+	private var agentNames: [String] { store.loop.agentIDs.compactMap { store.directory.name($0) } }
+	private var tags: [String] { store.loop.tags ?? [] }
+
+	var body: some View {
+		let loop = store.loop
+		let hasAny = store.driver != nil || !tags.isEmpty || !agentNames.isEmpty || loop.createdAt != nil || loop.updatedAt != nil
+		if hasAny {
+			VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+				FlowSectionHeader("Properties")
+				VStack(spacing: MaskinSpace.s6) {
+					if let driver = store.driver {
+						row("Owner") {
+							HStack(spacing: MaskinSpace.s4) {
+								ActorAvatar(name: driver.name, kind: .agent, size: MaskinSpace.s11, seed: driver.id)
+								Text(driver.name).foregroundStyle(MaskinColor.ink)
+							}
+						}
+					}
+					if !tags.isEmpty {
+						row("Tags") {
+							ChipFlow {
+								ForEach(tags, id: \.self) { tag in
+									Text(tag).maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)
+										.padding(.horizontal, MaskinSpace.s6)
+										.frame(minHeight: MaskinSpace.s14)
+										.background(MaskinSurface.fill, in: Capsule())
+								}
+							}
+						}
+					}
+					if !agentNames.isEmpty {
+						row("Agents") {
+							Text(agentNames.joined(separator: ", ")).foregroundStyle(MaskinColor.ink)
+						}
+					}
+					if let created = loop.createdAt {
+						row("Created") { Text(created.formatted(date: .abbreviated, time: .omitted)).foregroundStyle(MaskinColor.ink) }
+					}
+					if let updated = loop.updatedAt {
+						row("Last updated") { Text(updated.formatted(date: .abbreviated, time: .omitted)).foregroundStyle(MaskinColor.ink) }
+					}
+				}
+				.padding(MaskinSpace.s9)
+				.frame(maxWidth: .infinity, alignment: .leading)
+				.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
+			}
+		}
+	}
+
+	private func row<Value: View>(_ label: String, @ViewBuilder value: () -> Value) -> some View {
+		HStack(alignment: .firstTextBaseline) {
+			Text(label).foregroundStyle(MaskinColor.ink4)
+			Spacer(minLength: MaskinSpace.s7)
+			value().multilineTextAlignment(.trailing)
+		}
+		.maskinText(.subhead)
+	}
+}
+
 /// What the flow wants from you: the decisions waiting on its timeline.
 struct LoopNeedsYouSection: View {
 	let store: LoopDetailStore
@@ -275,11 +390,13 @@ struct LoopNeedsYouSection: View {
 	}
 }
 
-/// The objects still on their way through the flow, grouped by status in workflow order, each row
-/// naming the actor driving it. When the flow runs next is under the hood.
+/// The objects still on their way through the flow: the Items list's own flat hairline rows and
+/// plain collapsible status headers, in workflow order. A row opens the item, as it does there.
 struct LoopInMotionSection: View {
 	let store: LoopDetailStore
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
+	@State private var collapsed: Set<String> = []
 
 	private var groups: [LoopPhase] {
 		LoopPhases.inMotion(members: store.overview.members, statusOrder: store.overview.statusOrder)
@@ -287,6 +404,7 @@ struct LoopInMotionSection: View {
 
 	var body: some View {
 		let groups = groups
+		let mixesTypes = Set(groups.flatMap(\.members).map(\.type)).count > 1
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 			FlowSectionHeader("In motion") {
 				Text("\(groups.reduce(0) { $0 + $1.count })").maskinText(.mono).foregroundStyle(MaskinColor.ink4)
@@ -297,46 +415,45 @@ struct LoopInMotionSection: View {
 					.loopNote()
 			} else {
 				ForEach(groups) { group in
-					VStack(alignment: .leading, spacing: MaskinSpace.s3) {
-						MonoLabel("\(MaskinStatus.label(for: group.status)) · \(group.count)")
-						VStack(spacing: 0) {
-							let shown = Array(group.members.prefix(8))
-							ForEach(Array(shown.enumerated()), id: \.element.id) { index, member in
-								row(member)
-								if index < shown.count - 1 { Divider().overlay(MaskinSurface.separator) }
-							}
-							if group.count > 8 {
-								Text("+\(group.count - 8) more")
-									.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
-									.frame(maxWidth: .infinity, alignment: .leading)
-									.padding(.vertical, MaskinSpace.s3)
+					let objects = group.members.map(workObject)
+					let isCollapsed = collapsed.contains(group.id)
+					VStack(alignment: .leading, spacing: 0) {
+						ObjectGroupHeader(
+							group: ObjectGroup(id: group.id, title: MaskinStatus.label(for: group.status), objects: objects),
+							collapsed: isCollapsed
+						) {
+							withAnimation(reduceMotion ? nil : MaskinMotion.standard) {
+								if !collapsed.insert(group.id).inserted { collapsed.remove(group.id) }
 							}
 						}
-						.padding(.horizontal, MaskinSpace.s8)
-						.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
+						if !isCollapsed {
+							ForEach(objects) { object in
+								Divider().overlay(MaskinSurface.separator)
+								row(object, showsType: mixesTypes)
+							}
+						}
 					}
 				}
 			}
 		}
 	}
 
-	private func row(_ member: LoopMember) -> some View {
-		Button { runtime?.openObject(member.id) } label: {
-			HStack(spacing: MaskinSpace.s6) {
-				Text(member.title)
-					.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold, relativeTo: .subheadline))
-					.foregroundStyle(MaskinColor.ink)
-					.lineLimit(2)
-					.multilineTextAlignment(.leading)
-				Spacer(minLength: MaskinSpace.s3)
-				if let name = store.directory.name(member.driverID) {
-					Text(name).maskinText(.caption).foregroundStyle(MaskinColor.ink4).lineLimit(1)
-				}
-				Image(systemName: "chevron.right").font(.caption).foregroundStyle(MaskinColor.ink5)
-			}
-			.padding(.vertical, MaskinSpace.s7)
-			.contentShape(Rectangle())
+	/// A member as the Items list sees an object. Members carry no star or timestamps.
+	private func workObject(_ member: LoopMember) -> WorkObject {
+		WorkObject(id: member.id, type: member.type, title: member.title, status: member.status, driverId: member.driverID)
+	}
+
+	private func row(_ object: WorkObject, showsType: Bool) -> some View {
+		Button { runtime?.openObject(object.id) } label: {
+			ObjectFlatRow(
+				object: object, typeName: ObjectsSchema.fallback.displayName(for: object.type), showsType: showsType,
+				ownerName: store.directory.name(object.driverId), showsUpdated: false, showsStar: false)
+				.padding(.vertical, MaskinSpace.s5)
+				.padding(.horizontal, MaskinSpace.s4)
 		}
 		.buttonStyle(.maskinPressed)
+		.contextMenu {
+			Button { runtime?.openObject(object.id) } label: { Label("Open", systemImage: "arrow.up.forward.square") }
+		}
 	}
 }

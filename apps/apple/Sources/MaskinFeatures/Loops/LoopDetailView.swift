@@ -53,6 +53,13 @@ struct LoopDetailView: View {
 			}
 			await timeline?.start()
 		}
+		// The composer messages the flow's driver once the overview says who it is.
+		.onChange(of: store.driver?.id, initial: true) {
+			timeline?.owner = store.driver.map { ChatParticipant(id: $0.id, name: $0.name, kind: .agent) }
+		}
+		.onChange(of: timeline != nil) {
+			timeline?.owner = store.driver.map { ChatParticipant(id: $0.id, name: $0.name, kind: .agent) }
+		}
 		// The loop's briefing cards come from the store For you shares; load it if nothing has yet.
 		.task {
 			if let stories = runtime?.storiesStore(), !stories.hasLoaded { await stories.load() }
@@ -182,7 +189,7 @@ struct LoopDetailContent: View {
 	private var overview: some View {
 		let cards = LoopOutcomes.cards(for: store.loop)
 		let tags = store.loop.tags ?? []
-		if !tags.isEmpty { LoopTagsRow(tags: tags) }
+		LoopPropertiesCard(store: store)
 		LoopTargetsSection(cards: cards, directory: store.directory)
 		LoopNeedsYouSection(store: store)
 		OutcomesSection(outputs: store.outputs, sourceName: store.loop.displayName, producesStyle: true)
@@ -329,27 +336,6 @@ struct LoopStatusPill: View {
 		.overlay(Capsule().strokeBorder(MaskinSurface.line, lineWidth: 1))
 		.accessibilityElement(children: .combine)
 		.accessibilityLabel("Status: \(loop.status.label)" + (needsYou ? ", needs you" : ""))
-	}
-}
-
-/// The flow's tags as quiet capsules. They are read here; the API has no way to set them yet.
-struct LoopTagsRow: View {
-	let tags: [String]
-
-	var body: some View {
-		HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s5) {
-			Text("Tags").maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.ink4)
-			ScrollView(.horizontal, showsIndicators: false) {
-				HStack(spacing: MaskinSpace.s4) {
-					ForEach(tags, id: \.self) { tag in
-						Text(tag).maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)
-							.padding(.horizontal, MaskinSpace.s7)
-							.frame(minHeight: MaskinSpace.s14 + MaskinSpace.s4)
-							.background(MaskinSurface.fill, in: Capsule())
-					}
-				}
-			}
-		}
 	}
 }
 
