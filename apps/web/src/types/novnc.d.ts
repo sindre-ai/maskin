@@ -17,7 +17,6 @@ declare module '@novnc/novnc/lib/rfb' {
 		/** Sends text to the remote's clipboard (VNC "client cut text"). */
 		clipboardPasteFrom(text: string): void
 		sendKey(keysym: number, code: string | null, down?: boolean): void
-		sendKey(keysym: number, code: string | null, down?: boolean): void
 		addEventListener(
 			type: 'connect' | 'disconnect' | 'credentialsrequired' | 'securityfailure',
 			listener: (event: CustomEvent) => void,
