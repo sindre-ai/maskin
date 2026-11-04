@@ -6,13 +6,12 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { eq } from 'drizzle-orm'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { captureMock } = vi.hoisted(() => ({ captureMock: vi.fn(async () => {}) }))
 vi.mock('../../lib/analytics/posthog', () => ({ capturePosthogEvent: captureMock }))
 
 import { encrypt } from '../../lib/crypto'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import {
 	type ActionLogContext,
 	LinkedInActionRefusal,
@@ -29,7 +28,9 @@ import {
 	withdrawLinkedInInvitation,
 } from '../../lib/integrations/providers/linkedin-unipile/operations'
 import type { LinkedInClient } from '../../lib/integrations/providers/linkedin-unipile/unipile-client'
-import { insertWorkspace } from '../factories'
+import { recordObjectApproval } from '../../lib/object-delivery'
+import { buildObjectPreview } from '../../lib/object-preview'
+import { insertObject, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
 /**
@@ -55,11 +56,6 @@ afterAll(() => {
 beforeEach(() => {
 	__setLinkedInClientForTests(null)
 	captureMock.mockClear()
-})
-
-afterEach(() => {
-	process.env.FF_WORKSPACE_FEATURES = ''
-	_resetFeatureFlagConfig()
 })
 
 type Row = Record<string, unknown>
@@ -104,7 +100,7 @@ function stubClient(rows: Row[]) {
 	return { client, listRelationRequests, cancelRelationRequest, sendConnectionRequest }
 }
 
-async function connect(opts: { flag?: boolean } = {}) {
+async function connect() {
 	const actorId = getTestActorId()
 	const ws = await insertWorkspace(db, actorId)
 	// The sent-list cache is per account and per process, so each connection gets its own
@@ -121,10 +117,6 @@ async function connect(opts: { flag?: boolean } = {}) {
 			createdBy: actorId,
 		})
 		.returning()
-	if (opts.flag !== false) {
-		process.env.FF_WORKSPACE_FEATURES = `${ws.id}:linkedin-outreach-actions`
-		_resetFeatureFlagConfig()
-	}
 	const cfg: LinkedInMcpInstanceConfig = {
 		unipileAccSlug: 'test-acc',
 		identityType: 'personal',
@@ -403,18 +395,6 @@ describe('withdraw_invitation: dedupe and the daily cap', () => {
 })
 
 describe('withdraw_invitation: the tool', () => {
-	it('is absent while the outreach flag is off', async () => {
-		const { client } = stubClient([])
-		__setLinkedInClientForTests(() => client)
-		const h = await connect({ flag: false })
-
-		const { tools } = await h.mcp.listTools()
-		const names = tools.map((t) => t.name)
-
-		expect(names).not.toContain(toolName(h.cfg, 'withdraw_invitation'))
-		expect(names).toContain(toolName(h.cfg, 'list_sent_invitations'))
-	})
-
 	it('withdraws through the tool and logs one ok row with the person and the invitation', async () => {
 		const { client, cancelRelationRequest } = stubClient([
 			sentRow('inv-tool', new Date(Date.now() - 30 * DAY)),
@@ -467,6 +447,31 @@ describe('withdraw_invitation: the tool', () => {
 	})
 })
 
+/** An approved connection request to `recipient`, the only way a send_connection_request goes out. */
+async function approvedInvite(h: Harness, recipient: string) {
+	const object = await insertObject(db, h.workspaceId, h.actorId, {
+		type: 'task',
+		status: 'todo',
+		content: 'Hej',
+		metadata: {
+			kind: 'linkedin_connection_request',
+			to: 'Someone',
+			recipient_provider_id: recipient,
+		},
+	})
+	const preview = buildObjectPreview(object)
+	if (!preview) throw new Error('not a draft')
+	await recordObjectApproval(db, {
+		workspaceId: h.workspaceId,
+		actorId: h.actorId,
+		objectId: object.id,
+		objectType: object.type,
+		preview,
+		via: 'approval',
+	})
+	return object
+}
+
 describe('send_connection_request after a withdrawal', () => {
 	async function withdrawnPerson(h: Harness, createdAt: Date) {
 		await db.insert(linkedinActions).values({
@@ -487,10 +492,11 @@ describe('send_connection_request after a withdrawal', () => {
 		__setLinkedInClientForTests(() => client)
 		const h = await connect()
 		await withdrawnPerson(h, new Date(Date.now() - 20 * DAY))
+		const invite = await approvedInvite(h, 'ACoAA-withdrawn')
 
 		const result = await h.mcp.callTool({
 			name: toolName(h.cfg, 'send_connection_request'),
-			arguments: { user_id: 'ACoAA-withdrawn', message: 'Hej' },
+			arguments: { object_id: invite.id },
 		})
 
 		expect(result.isError).toBe(true)
@@ -506,10 +512,11 @@ describe('send_connection_request after a withdrawal', () => {
 		__setLinkedInClientForTests(() => client)
 		const h = await connect()
 		await withdrawnPerson(h, new Date(Date.now() - 22 * DAY))
+		const invite = await approvedInvite(h, 'ACoAA-withdrawn')
 
 		const result = await h.mcp.callTool({
 			name: toolName(h.cfg, 'send_connection_request'),
-			arguments: { user_id: 'ACoAA-withdrawn', message: 'Hej' },
+			arguments: { object_id: invite.id },
 		})
 
 		expect(result.isError).toBeFalsy()
@@ -521,10 +528,11 @@ describe('send_connection_request after a withdrawal', () => {
 		__setLinkedInClientForTests(() => client)
 		const h = await connect()
 		await withdrawnPerson(h, new Date(Date.now() - 2 * DAY))
+		const invite = await approvedInvite(h, 'ACoAA-someone-else')
 
 		const result = await h.mcp.callTool({
 			name: toolName(h.cfg, 'send_connection_request'),
-			arguments: { user_id: 'ACoAA-someone-else' },
+			arguments: { object_id: invite.id },
 		})
 
 		expect(result.isError).toBeFalsy()
@@ -537,10 +545,11 @@ describe('send_connection_request after a withdrawal', () => {
 		const h = await connect()
 		const other = await connect()
 		await withdrawnPerson(other, new Date(Date.now() - 2 * DAY))
+		const invite = await approvedInvite(h, 'ACoAA-withdrawn')
 
 		const result = await h.mcp.callTool({
 			name: toolName(h.cfg, 'send_connection_request'),
-			arguments: { user_id: 'ACoAA-withdrawn' },
+			arguments: { object_id: invite.id },
 		})
 
 		expect(result.isError).toBeFalsy()

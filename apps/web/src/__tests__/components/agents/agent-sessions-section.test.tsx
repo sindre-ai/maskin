@@ -2,8 +2,10 @@ import {
 	AgentSessionsSection,
 	__test as sessionSectionInternals,
 } from '@/components/agents/agent-sessions-section'
+import { ApiError } from '@/lib/api'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildActorResponse, buildSessionResponse } from '../../factories'
 import { createWorkspaceWrapper } from '../../setup'
@@ -68,6 +70,7 @@ describe('AgentSessionsSection', () => {
 		createSessionMutate.mockReset()
 		pauseSessionMutate.mockReset()
 		resumeSessionMutate.mockReset()
+		vi.mocked(toast.error).mockClear()
 	})
 
 	it('offers Restart on a running session and reruns the same prompt', async () => {
@@ -277,6 +280,49 @@ describe('AgentSessionsSection', () => {
 		expect(pauseSessionMutate).toHaveBeenCalledWith('s-live', expect.anything())
 	})
 
+	it('hides Pause on a session that runs on an agent server', () => {
+		const agent = buildActorResponse({ id: 'agent-p', type: 'agent' })
+		sessionsData.mockReturnValue([
+			buildSessionResponse({
+				id: 's-remote',
+				actorId: 'agent-p',
+				status: 'running',
+				actionPrompt: 'Hold the queue',
+				agentServerId: 'server-1',
+			}),
+		])
+		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
+
+		expect(screen.queryByRole('button', { name: /^pause$/i })).not.toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /restart/i })).toBeInTheDocument()
+	})
+
+	it('shows the reason the server gave when pausing fails', async () => {
+		const agent = buildActorResponse({ id: 'agent-p', type: 'agent' })
+		sessionsData.mockReturnValue([
+			buildSessionResponse({ id: 's-live', actorId: 'agent-p', status: 'running' }),
+		])
+		pauseSessionMutate.mockImplementation((_id, opts) =>
+			opts.onError(new ApiError(400, 'Session s-live not in running state')),
+		)
+		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
+
+		await userEvent.click(screen.getAllByRole('button', { name: /^pause$/i })[0])
+		expect(toast.error).toHaveBeenCalledWith('Session s-live not in running state')
+	})
+
+	it('falls back to the generic line when the pause error has no server message', async () => {
+		const agent = buildActorResponse({ id: 'agent-p', type: 'agent' })
+		sessionsData.mockReturnValue([
+			buildSessionResponse({ id: 's-live', actorId: 'agent-p', status: 'running' }),
+		])
+		pauseSessionMutate.mockImplementation((_id, opts) => opts.onError(new Error('boom')))
+		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
+
+		await userEvent.click(screen.getAllByRole('button', { name: /^pause$/i })[0])
+		expect(toast.error).toHaveBeenCalledWith("Couldn't pause this session")
+	})
+
 	it('offers Resume on a paused session that has a snapshot', async () => {
 		const agent = buildActorResponse({ id: 'agent-r', type: 'agent' })
 		sessionsData.mockReturnValue([
@@ -392,5 +438,67 @@ describe('AgentSessionsSection internals', () => {
 	it('treats running and waiting as active', () => {
 		expect(isActive('running')).toBe(true)
 		expect(isActive('completed')).toBe(false)
+	})
+})
+
+describe('AgentSessionsSection: viewer and member', () => {
+	const agent = buildActorResponse({ id: 'agent-a', type: 'agent' })
+	const running = () =>
+		sessionsData.mockReturnValue([
+			buildSessionResponse({
+				id: 's-run',
+				actorId: 'agent-a',
+				status: 'running',
+				actionPrompt: 'Sweep the backlog',
+			}),
+		])
+	const paused = () =>
+		sessionsData.mockReturnValue([
+			buildSessionResponse({
+				id: 's-paused',
+				actorId: 'agent-a',
+				status: 'paused',
+				snapshotPath: 'snapshots/s-paused.tar',
+				actionPrompt: 'Sweep the backlog',
+			}),
+		])
+
+	beforeEach(() => {
+		sessionsData.mockReset()
+		triggersData.mockReset()
+		triggersData.mockReturnValue([])
+	})
+
+	it('disables Pause and Restart for a viewer', () => {
+		running()
+		render(<AgentSessionsSection agent={agent} />, {
+			wrapper: createWorkspaceWrapper({ role: 'viewer' }),
+		})
+		expect(screen.getByRole('button', { name: /pause/i })).toBeDisabled()
+		expect(screen.getByRole('button', { name: /restart/i })).toBeDisabled()
+	})
+
+	it('disables Resume for a viewer', () => {
+		paused()
+		render(<AgentSessionsSection agent={agent} />, {
+			wrapper: createWorkspaceWrapper({ role: 'viewer' }),
+		})
+		expect(screen.getAllByRole('button', { name: /^resume$/i })[0]).toBeDisabled()
+	})
+
+	it('keeps Pause, Resume and Restart enabled for a member', () => {
+		running()
+		const first = render(<AgentSessionsSection agent={agent} />, {
+			wrapper: createWorkspaceWrapper({ role: 'member' }),
+		})
+		expect(screen.getByRole('button', { name: /pause/i })).toBeEnabled()
+		expect(screen.getByRole('button', { name: /restart/i })).toBeEnabled()
+		first.unmount()
+
+		paused()
+		render(<AgentSessionsSection agent={agent} />, {
+			wrapper: createWorkspaceWrapper({ role: 'member' }),
+		})
+		expect(screen.getAllByRole('button', { name: /^resume$/i })[0]).toBeEnabled()
 	})
 })

@@ -30,6 +30,7 @@ filter:
     - /api/for-you
     - /api/events/history
     - /api/feature-flags
+    - /api/transcriptions
     - /api/events
     - /api/subscriptions
     - /api/subscriptions/read
@@ -78,6 +79,11 @@ filter:
     - /api/integrations/github/select-installation
     - /api/integrations/{id}/complete
     - /api/integrations/{id}/allow-from-chat
+    - /api/integrations/{id}/allow-access
+    - /api/integrations/{id}/remove
+    - /api/integrations/{id}/audit-log
+    - /api/integrations/{id}/grants
+    - /api/integrations/{id}/grants/{actorId}
     - /api/sessions/{id}/continue
     - /api/sessions/{id}/input
     - /api/marketplace/loops

@@ -64,8 +64,7 @@ export interface MarkdownFileEditorProps {
 
 /**
  * A markdown file in the viewer: the document is the editor on the Rendered
- * tab, Source shows the plain markdown read-only. Only mounted behind the
- * rich-markdown-editor flag.
+ * tab, Source shows the plain markdown read-only.
  */
 export function MarkdownFileEditor({
 	fileId,

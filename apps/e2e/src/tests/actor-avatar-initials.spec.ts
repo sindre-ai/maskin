@@ -32,7 +32,7 @@ test.describe('ActorAvatar — 2-letter initials + deterministic color', () => {
 			const bet = await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Bet for actor-avatar initials',
-				status: 'signal',
+				status: 'opportunity',
 			})
 
 			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
@@ -46,16 +46,13 @@ test.describe('ActorAvatar — 2-letter initials + deterministic color', () => {
 
 			// Post a comment so the timeline renders an authored row — that row's
 			// ActorAvatar is the slot under test, and it exists at every viewport.
-			const composer = page.getByPlaceholder(
-				viewport.width < 768 ? 'Comment…' : 'Comment — / commands, @ mentions',
-			)
+			const composer = page.getByRole('textbox', { name: 'Comment' })
 			await composer.fill('Avatar slot check')
 			await page.getByRole('button', { name: 'Send comment' }).click()
 			// The composer clearing is the signal the post landed. Asserting on the
-			// comment's text instead would be ambiguous: the composer overlays a
-			// mirror div on its textarea, so the string matches twice while the
-			// draft is still in the field.
-			await expect(composer).toHaveValue('', { timeout: 10000 })
+			// comment's text instead would be ambiguous: the string matches twice
+			// while the draft is still in the field.
+			await expect(composer).toHaveText('', { timeout: 10000 })
 
 			// AC: initials render in the avatar slot with the account name.
 			const actorName = await page.evaluate(() => {
@@ -89,6 +86,7 @@ test.describe('ActorAvatar — 2-letter initials + deterministic color', () => {
 			// The comment persists, so its avatar returns with the timeline — but
 			// the timeline loads after the heading, so wait for it before reading
 			// the computed colour.
+			await expect(page.getByText('Avatar slot check')).toBeVisible({ timeout: 10000 })
 			const avatarAfterReload = page.locator('main .rounded-full[title^="E2E "]').first()
 			await expect(avatarAfterReload).toBeVisible({ timeout: 10000 })
 			const secondColor = await avatarAfterReload.evaluate(
@@ -115,7 +113,7 @@ test.describe('ActorAvatar — punctuated agent names skip punctuation', () => {
 			const bet = await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Bet for punctuated initials',
-				status: 'signal',
+				status: 'opportunity',
 			})
 
 			// Author the comment as the punctuated agent so its avatar renders in

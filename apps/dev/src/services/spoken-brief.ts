@@ -369,9 +369,14 @@ export async function generateSpokenBrief(
 	db: Database,
 	storage: StorageProvider,
 	workspaceId: string,
-	options: { now?: Date } = {},
+	options: { now?: Date; mayGenerate?: boolean } = {},
 ): Promise<SpokenBrief> {
 	const now = options.now ?? new Date()
+	// A read-only caller (a viewer) is served the day's cache or the plain
+	// fallback prose. Only a writer may spend the workspace's model credentials
+	// or write the cache, and a viewer's fallback must not be cached or it would
+	// hide the agent's brief from the next writer.
+	const mayGenerate = options.mayGenerate ?? true
 	const facts = await collectBriefingFacts(db, workspaceId)
 
 	// Resolved before the cache is read, not after: the agent and the model it
@@ -409,7 +414,7 @@ export async function generateSpokenBrief(
 	// midnight, and every retry would silently read the failure back.
 	let cacheable = true
 
-	if (agent) {
+	if (agent && mayGenerate) {
 		if (credentials) {
 			try {
 				const adapter = createLLMAdapter(credentials.provider, {
@@ -481,7 +486,7 @@ export async function generateSpokenBrief(
 	// The no-credentials fallback is worth caching — the prose is deterministic,
 	// so every press would otherwise re-run the queries for an identical result.
 	// A fallback caused by a failed call is not: see `cacheable` above.
-	if (cacheable) {
+	if (cacheable && mayGenerate) {
 		try {
 			const { cached: _cached, ...persisted } = brief
 			await storage.put(key, Buffer.from(JSON.stringify({ ...persisted, inputHash }), 'utf-8'))

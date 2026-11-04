@@ -30,6 +30,7 @@ public struct ForYouScreen: View {
 	@State private var path: [String] = []
 	/// The Undo toast: shared by the cards' gestures and the ⋯ menu's "Take every suggested".
 	@State private var undoOffer: UndoOffer?
+	@State private var showDisplay = false
 
 	public var body: some View {
 		NavigationStack(path: $path) {
@@ -48,10 +49,16 @@ public struct ForYouScreen: View {
 			openAgent: { appRuntime.openAgent($0) }
 		)
 		.shellToolbar(
-			environment: environment, title: "For you",
-			actions: ShellActions(live: true)
+			environment: environment,
+			title: ForYouHeader.greeting(name: environment.auth.session?.name, at: Date()),
+			actions: ShellActions(
+				live: true, displaySymbol: ShellActions.slidersSymbol,
+				displayActive: !runtime.store.options.isDefaultDisplay,
+				displayToggle: { showDisplay = true })
 		)
+		.sheet(isPresented: $showDisplay) { ForYouDisplaySheet(store: runtime.store) }
 		.task(id: environment.workspaceId) {
+			Perf.event("foryou.screen.task")
 			async let feed: Void = runtime.store.load()
 			async let stories: Void = appRuntime.storiesStore()?.loadCompletely() ?? ()
 			async let names: Void = loadTypeNames()
@@ -154,6 +161,8 @@ struct ForYouFeedView: View {
 					Color.clear.frame(height: 0).id(Self.topId)
 						.listRowSeparator(.hidden).listRowBackground(Color.clear)
 						.listRowInsets(EdgeInsets())
+					ForYouHeaderView(summary: store.blockedSummary)
+					.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 					if let stories, !stories.cards.isEmpty {
 						StoryRow(stories: stories, open: { card in openStory = card }, metrics: storyMetrics)
 						.listRowSeparator(.hidden)
@@ -165,6 +174,7 @@ struct ForYouFeedView: View {
 					feedRows(entries: entries)
 				}
 				.listStyle(.plain)
+				.scrollDismissesKeyboard(.interactively)
 				.scrollContentBackground(.hidden)
 				.ambientBackground()
 				.background(
@@ -186,7 +196,9 @@ struct ForYouFeedView: View {
 				case .active:
 					outbox.appDidBecomeActive()
 					store.later.reload()
-				case .background: store.decisions.commitHeld()
+				case .background:
+					store.decisions.commitHeld()
+					store.reviews?.commitHeld()
 				default: break
 				}
 			}
@@ -329,21 +341,21 @@ struct ForYouFeedView: View {
 			.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 		case .loaded:
 			let open = entries.filter { $0.bucket != .done }
+			// The primary group is the feed itself: the design shows no header above it. Related
+			// approvals are folded into one card inside it.
+			needsRows(store.needsItems)
 			if open.isEmpty {
 				CaughtUp(
 					filtered: store.options.intent != nil, detail: store.caughtUpDetail
 				)
 				.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 			} else {
-				ForEach(groups(of: open), id: \.bucket) { group in
-					// The primary group is the feed itself: the design shows no header above it.
-					if group.bucket != .needs {
-						SectionHeader(
-							title: title(for: group.bucket), count: group.entries.count,
-							action: group.bucket == .fyi ? ("Mark all read", { store.dismissAllFYIs() }) : nil
-						)
-						.modifier(ReadableRow(width: rowWidth, inset: rowInset))
-					}
+				ForEach(groups(of: open).filter { $0.bucket != .needs }, id: \.bucket) { group in
+					SectionHeader(
+						title: title(for: group.bucket), count: group.entries.count,
+						action: group.bucket == .fyi ? ("Mark all read", { store.dismissAllFYIs() }) : nil
+					)
+					.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 					if wide {
 						decisionGrid(group.entries)
 					} else {
@@ -351,6 +363,7 @@ struct ForYouFeedView: View {
 					}
 				}
 			}
+			draftsSection
 			laterSection
 			handledSection(entries.filter { $0.bucket == .done })
 		}
@@ -360,6 +373,71 @@ struct ForYouFeedView: View {
 		FeedBucket.allCases.compactMap { bucket in
 			let inBucket = entries.filter { $0.section == bucket }
 			return inBucket.isEmpty ? nil : (bucket, inBucket)
+		}
+	}
+
+	/// The "Needs you" list: cards and groups of related approvals, in the order the feed ranked them.
+	/// Wide: groups take the full width above the two columns of cards.
+	@ViewBuilder
+	private func needsRows(_ items: [FeedItem]) -> some View {
+		if wide {
+			ForEach(items.compactMap(\.groupValue)) { group in groupRow(group) }
+			let cards = items.compactMap(\.cardEntry)
+			if !cards.isEmpty { decisionGrid(cards) }
+		} else {
+			ForEach(items) { item in
+				switch item {
+				case .card(let entry): feedRow(entry)
+				case .group(let group): groupRow(group)
+				}
+			}
+		}
+	}
+
+	private func groupRow(_ group: ApprovalGroup) -> some View {
+		let count = group.openCount
+		return ApprovalGroupCard(
+			group: group, typeLabel: store.typeLabel(for: group.objectType),
+			undoableCount: store.undoableCount(group),
+			approveOne: { card in
+				MaskinHaptics.play(.success)
+				_ = withAnimation(MaskinMotion.standard) { store.approveFromGroup(card) }
+				AccessibilityNotification.Announcement("Approved. Undo is available for a few seconds.").post()
+			},
+			approveAll: {
+				MaskinHaptics.play(.success)
+				_ = withAnimation(MaskinMotion.standard) { store.approveAll(in: group) }
+				AccessibilityNotification.Announcement("Approved all \(count). Undo is available for a few seconds.").post()
+			},
+			undo: {
+				MaskinHaptics.play(.selection)
+				withAnimation(MaskinMotion.standard) { store.undo(group) }
+			}
+		)
+		.modifier(ReadableRow(width: rowWidth, inset: rowInset))
+	}
+
+	/// DRAFTS TO REVIEW: messages the agents wrote, to read, edit and approve here. Hidden when there
+	/// are none. A draft that was approved turns into a receipt in the same place.
+	@ViewBuilder private var draftsSection: some View {
+		if let reviews = store.reviews {
+			let drafts = store.reviewDrafts
+			let receipts = reviews.receiptDrafts
+			if !drafts.isEmpty {
+				SectionHeader(
+					title: "Drafts to review", count: drafts.count,
+					countText: drafts.count == 1 ? "1 draft" : "\(drafts.count) drafts"
+				)
+				.modifier(ReadableRow(width: rowWidth, inset: rowInset))
+				ForEach(drafts) { draft in
+					EditableDraftCard(draft: draft, store: reviews)
+						.modifier(ReadableRow(width: rowWidth, inset: rowInset))
+				}
+			}
+			ForEach(receipts) { draft in
+				DraftReceiptStrip(draft: draft, store: reviews)
+					.modifier(ReadableRow(width: rowWidth, inset: rowInset))
+			}
 		}
 	}
 
@@ -438,7 +516,9 @@ struct ForYouFeedView: View {
 				// away: they keep their confirmation on the card. A plain mention has no options,
 				// so there the swipe is Done (mark read).
 				if entry.record == nil {
-					if let option = entry.card.decision?.recommended, !option.destructive {
+					if let option = entry.card.decision?.recommended, !option.destructive,
+						!store.isSendHeldBack(option, on: entry.card)
+					{
 						Button {
 							liveActions(entry).choose(option)
 						} label: {
@@ -513,7 +593,8 @@ struct ForYouFeedView: View {
 			expanded: !wide && expansion.isManuallyExpanded(id), now: fixedNow ?? Date(),
 			actions: actions, chief: chief, threadInDetail: wide, agent: agent,
 			laterOpen: laterOpenId == id, acceptsReturnKey: wide,
-			typeLabel: store.typeLabel(for:))
+			typeLabel: store.typeLabel(for:), draftIsElsewhere: { entry.bucket == .needs && entry.record == nil && store.isInStrip($0) },
+			unsentEditNote: entry.bucket == .needs && entry.record == nil ? store.unsentEditNote(for: entry.card) : nil)
 			.maskinHover(.lift, cornerRadius: MaskinRadius.brief)
 	}
 
@@ -540,6 +621,8 @@ private struct SectionHeader: View {
 	let count: Int
 	/// A mono label (LATER, HANDLED TODAY) rather than a heading.
 	var mono = false
+	/// What the count reads as ("2 drafts"); the bare number when nil.
+	var countText: String?
 	var action: (title: String, run: () -> Void)?
 
 	var body: some View {
@@ -551,7 +634,7 @@ private struct SectionHeader: View {
 					.foregroundStyle(MaskinColor.inkPlaceholder)
 			} else {
 				Text(title).maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)
-				Text("\(count)").maskinText(.subhead).foregroundStyle(MaskinColor.ink5)
+				Text(countText ?? "\(count)").maskinText(.subhead).foregroundStyle(MaskinColor.ink5)
 			}
 			Spacer(minLength: MaskinSpace.s3)
 			if let action {
@@ -680,5 +763,17 @@ extension View {
 			// The Chief of Staff sheet opens at the large detent only (spec 7).
 			self.presentationDetents([.large]).presentationDragIndicator(.visible)
 		}
+	}
+}
+
+private extension FeedItem {
+	var cardEntry: FeedEntry? {
+		if case .card(let entry) = self { return entry }
+		return nil
+	}
+
+	var groupValue: ApprovalGroup? {
+		if case .group(let group) = self { return group }
+		return nil
 	}
 }

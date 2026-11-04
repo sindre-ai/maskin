@@ -30,6 +30,7 @@ jobs:
     outputs:
       backend: ${{ steps.areas.outputs.backend }}
       e2e: ${{ steps.areas.outputs.e2e }}
+      apple: ${{ steps.areas.outputs.apple }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -181,6 +182,8 @@ jobs:
         run: |
           docker run -d --name pg -p 5432:5432 --tmpfs /var/lib/postgresql/data -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=maskin_test postgres:16-alpine -c fsync=off -c synchronous_commit=off -c full_page_writes=off -c max_connections=300
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@v5
         with:
@@ -229,6 +232,40 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_test
           INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
 
+      # Real-container check for the MCP guard wrapper (maskin-mcp-guard): the
+      # round trip in mcp-guard-report.test.ts runs once on the host and once with
+      # the wrapper inside the agent-image built from this ref, so a script that
+      # runs on a laptop but not in the image (path, exec bit, node version) fails
+      # here and not on the first guarded session. Skipped on PRs that touch
+      # neither the image nor the guard code; always on for pushes to main.
+      - name: Did the guard wrapper inputs change?
+        id: guard
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ] &&
+            git diff --quiet "origin/${{ github.base_ref }}...HEAD" -- \
+              docker/agent-base turbo.json .github/workflows/ci.yml \
+              apps/dev/src/lib/integrations/mcp-guard.ts \
+              apps/dev/src/routes/mcp-guard.ts \
+              apps/dev/src/services/extension-guard-launch.ts \
+              apps/dev/src/__tests__/integration/mcp-guard-report.test.ts; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+        if: steps.guard.outputs.run == 'true'
+
+      # Reads the layer cache agent-base-docker.yml writes on main; never writes.
+      - name: Build agent-base image for the guard check
+        if: steps.guard.outputs.run == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/agent-base
+          load: true
+          tags: maskin-agent-base:guard-test
+          cache-from: type=gha
+
       - name: Wait for Postgres
         run: until docker exec pg pg_isready -U postgres; do sleep 1; done
 
@@ -239,6 +276,8 @@ jobs:
           INTEGRATION_WORKERS: 4
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_test
           INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+          # Empty means the in-container case is skipped.
+          GUARD_TEST_IMAGE: ${{ steps.guard.outputs.run == 'true' && 'maskin-agent-base:guard-test' || '' }}
 
   # Guards for scripts/bootstrap-local-devstack.sh, the no-Docker dev stack.
   # Nothing else runs that script, so a change that breaks a fresh bootstrap is
@@ -285,20 +324,34 @@ jobs:
       - name: A busy SeaweedFS master port is routed around
         run: MASKIN_DEVSTACK_CACHE_DIR="$HOME/.cache/maskin-devstack" bash scripts/checks/devstack-port-conflict.sh
 
-  # apps/apple/openapi.json is a snapshot of the served spec. apple.yml only runs when
-  # apps/apple changes, so a PR that adds or changes a route never reached that check and the
-  # snapshot went stale on main until an unrelated Apple PR tripped over it. This is the cheap
-  # half of the same check on ubuntu: it runs when the backend can have changed the spec
-  # (the `backend` area from the changes job) and fails the PR that moved the spec.
-  # The generated Swift client still needs swift, so apple.yml checks that once the snapshot
-  # is refreshed (the refresh touches apps/apple, so that workflow runs on it).
-  apple-openapi-snapshot:
+  # The three drift checks for the native Apple clients, on Linux. They used to be the first
+  # steps of the macOS `apple` job in apple.yml, where a stale file cost a 14 minute wait for a
+  # Mac plus the minutes up to the failing step (10x the price of a Linux minute) to find out
+  # something that needs no Mac. Cheapest first:
+  #   1. Tokens.swift is generated from the design-system CSS (gen-tokens.mjs --check).
+  #   2. apps/apple/openapi.json is a snapshot of the served spec (dump-openapi.ts).
+  #   3. Sources/MaskinAPI/Generated is generated from that snapshot (gen-api.sh, needs Swift,
+  #      so it runs in the official swift image).
+  # Runs when the backend can have moved the spec (`backend`) or an input of the Apple app or
+  # its tokens changed (`apple`, see scripts/ci/changed-areas.sh). The macOS `apple` job in
+  # apple.yml keeps only `swift test` and the platform builds.
+  apple-drift:
     needs: changes
-    if: needs.changes.outputs.backend == 'true'
+    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.apple == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
 
+      # --- 1. Token drift (no deps, runs in a second) ---
+      - name: Design tokens are up to date
+        run: |
+          if ! node apps/apple/scripts/gen-tokens.mjs --check; then
+            echo "::error::Tokens.swift is stale. Run 'node apps/apple/scripts/gen-tokens.mjs' and commit the result."
+            exit 1
+          fi
+
+      # --- 2. OpenAPI snapshot drift ---
       - uses: pnpm/action-setup@v5
         with:
           version: 9.15.0
@@ -317,7 +370,29 @@ jobs:
         run: |
           pnpm --filter @maskin/dev exec tsx scripts/dump-openapi.ts
           if ! git diff --exit-code -- apps/apple/openapi.json; then
-            echo "::error::This change moves the API spec but apps/apple/openapi.json was not refreshed. Run 'pnpm --filter @maskin/dev exec tsx scripts/dump-openapi.ts' and commit the result. The Apple workflow then prints the diff for the generated Swift client (Sources/MaskinAPI/Generated) if that needs refreshing too."
+            echo "::error::apps/apple/openapi.json is stale. Run 'pnpm --filter @maskin/dev exec tsx scripts/dump-openapi.ts' and commit the result, then run apps/apple/scripts/gen-api.sh and commit Sources/MaskinAPI/Generated (or run the 'Apple regenerate API client' workflow on your branch)."
+            exit 1
+          fi
+
+      # --- 3. Generated client drift ---
+      # Only the generator is built (swift run), never the app, so no Apple SDK is needed. The
+      # SwiftPM checkouts and the built generator are cached on the pinned versions; a cold
+      # build of the generator is the slow part.
+      - name: Cache SwiftPM and the generator build
+        uses: actions/cache@v4
+        with:
+          path: apps/apple/.build
+          key: apple-gen-api-${{ runner.os }}-${{ hashFiles('apps/apple/Package.resolved', 'apps/apple/Package.swift') }}
+          restore-keys: |
+            apple-gen-api-${{ runner.os }}-
+
+      - name: Apple generated API client is up to date
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w/apps/apple swift:6.1 ./scripts/gen-api.sh
+          # The container ran as root; give the files back so git does not see a foreign owner.
+          sudo chown -R "$(id -u):$(id -g)" apps/apple
+          if ! git diff --exit-code -- apps/apple/Sources/MaskinAPI/Generated; then
+            echo "::error::apps/apple/Sources/MaskinAPI/Generated is stale. Run 'apps/apple/scripts/gen-api.sh' on a Mac (or the 'Apple regenerate API client' workflow on your branch) and commit the result."
             exit 1
           fi
 
@@ -328,6 +403,10 @@ jobs:
   # script that aborts under `set -e` otherwise takes down every session at once.
   # The image build is skipped on PRs that don't touch its inputs; the job still
   # reports success so it can be a required check.
+  #
+  # It also proves the BYO guard wrapper fails closed: on an image without
+  # maskin-mcp-guard a guarded MCP server is dropped and logged, and on the
+  # image currently deployed (pulled below) it cannot start.
   agent-image-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -359,6 +438,24 @@ jobs:
           load: true
           tags: maskin-agent-base:smoke
           cache-from: type=gha
+
+      # The image agents run on today, for the guard-wrapper check in the smoke:
+      # a guarded MCP server must not be startable on an image without the
+      # wrapper. Read-only: a public pull, no login, nothing pushed, nothing
+      # restarted. A failed pull fails the job; an unreadable previous image is
+      # not a pass.
+      - name: Pull the currently deployed image
+        if: steps.changed.outputs.run == 'true'
+        env:
+          DEPLOYED_IMAGE: ${{ vars.AGENT_BASE_IMAGE }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DEPLOYED_IMAGE" ]; then
+            echo "::error::vars.AGENT_BASE_IMAGE is empty, so the previous image cannot be checked"
+            exit 1
+          fi
+          docker pull --platform linux/amd64 "$DEPLOYED_IMAGE:latest"
+          echo "PREVIOUS_IMAGE=$DEPLOYED_IMAGE:latest" >> "$GITHUB_ENV"
 
       - name: Sessions reach the agent launch
         if: steps.changed.outputs.run == 'true'

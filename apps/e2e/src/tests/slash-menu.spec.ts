@@ -2,8 +2,6 @@ import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 
 // Slash-command menu in the document-variant rich editor (bet 666e3c4a).
-// The editor sits behind the rich-markdown-editor flag; the client-side test
-// override turns it on without provisioning a tester actor.
 
 const BLOCKS: Array<[title: string, description: string]> = [
 	['Heading', 'Section title'],
@@ -17,9 +15,6 @@ const BLOCKS: Array<[title: string, description: string]> = [
 ]
 
 async function openEditor(page: Page, workspaceId: string, objectId: string) {
-	await page.addInitScript(() => {
-		localStorage.setItem('ff:rich-markdown-editor', 'on')
-	})
 	await page.goto(`/${workspaceId}/objects/${objectId}`)
 	const editor = page.locator('.ProseMirror').first()
 	await expect(editor).toBeVisible({ timeout: 15000 })
@@ -31,7 +26,7 @@ test.describe('Slash-command menu (document variant)', () => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Slash menu placeholder',
-			status: 'signal',
+			status: 'opportunity',
 		})
 		const editor = await openEditor(page, account.workspaceId, bet.id)
 		await expect(editor.locator('p.is-editor-empty')).toHaveAttribute(
@@ -47,7 +42,7 @@ test.describe('Slash-command menu (document variant)', () => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Slash menu rows',
-			status: 'signal',
+			status: 'opportunity',
 		})
 		const editor = await openEditor(page, account.workspaceId, bet.id)
 		await editor.click()
@@ -77,7 +72,7 @@ test.describe('Slash-command menu (document variant)', () => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Slash menu announce',
-			status: 'signal',
+			status: 'opportunity',
 		})
 		const editor = await openEditor(page, account.workspaceId, bet.id)
 		await editor.click()
@@ -93,7 +88,7 @@ test.describe('Slash-command menu (document variant)', () => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Slash menu no match',
-			status: 'signal',
+			status: 'opportunity',
 		})
 		const editor = await openEditor(page, account.workspaceId, bet.id)
 		await editor.click()
@@ -108,7 +103,7 @@ test.describe('Slash-command menu (document variant)', () => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Slash menu mid-word',
-			status: 'signal',
+			status: 'opportunity',
 		})
 		const editor = await openEditor(page, account.workspaceId, bet.id)
 		await editor.click()
@@ -125,7 +120,7 @@ test.describe('Slash-command menu (document variant)', () => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Slash menu filter',
-			status: 'signal',
+			status: 'opportunity',
 		})
 		const editor = await openEditor(page, account.workspaceId, bet.id)
 		await editor.click()
@@ -143,7 +138,7 @@ test.describe('Slash-command menu (document variant)', () => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Slash menu heading',
-			status: 'signal',
+			status: 'opportunity',
 		})
 		const editor = await openEditor(page, account.workspaceId, bet.id)
 		await editor.click()
@@ -161,7 +156,7 @@ test.describe('Slash-command menu (document variant)', () => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Slash menu blocks',
-			status: 'signal',
+			status: 'opportunity',
 		})
 		const editor = await openEditor(page, account.workspaceId, bet.id)
 		await editor.click()
@@ -198,7 +193,7 @@ test.describe('Slash-command menu (document variant)', () => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Slash menu backspace',
-			status: 'signal',
+			status: 'opportunity',
 		})
 		const editor = await openEditor(page, account.workspaceId, bet.id)
 		await editor.click()
@@ -215,7 +210,7 @@ test.describe('Slash-command menu (document variant)', () => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Slash menu mobile',
-			status: 'signal',
+			status: 'opportunity',
 		})
 		const editor = await openEditor(page, account.workspaceId, bet.id)
 		await editor.click()

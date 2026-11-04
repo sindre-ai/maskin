@@ -13,7 +13,6 @@ import { and, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encrypt } from '../../lib/crypto'
 import { recordEvents } from '../../lib/events/record-event'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { commitWebhookDelivery } from '../../lib/integrations/webhooks/commit'
 import { logger } from '../../lib/logger'
 import { insertActor, insertWorkspace } from '../factories'
@@ -46,15 +45,9 @@ const SECRET = 'wes_test_secret'
 const ACCOUNT_ID = 'acc_unipile_obs_01'
 const OTHER_SENDER = 'ACoAAExampleSenderProviderId'
 const OWN_SENDER = 'ACoAAExampleOwnProviderId'
-const FLAG = 'linkedin-unipile-events'
 const LINE = 'linkedin-unipile webhook: delivery'
 
-const ENV_KEYS = [
-	'UNIPILE_WEBHOOK_SECRET',
-	'INTEGRATION_ENCRYPTION_KEY',
-	'FF_TESTER_ACTOR_IDS',
-	'FF_TESTER_FEATURES',
-] as const
+const ENV_KEYS = ['UNIPILE_WEBHOOK_SECRET', 'INTEGRATION_ENCRYPTION_KEY'] as const
 const ORIGINAL_ENV: Record<string, string | undefined> = {}
 
 let app: ReturnType<typeof createIntegrationApp>
@@ -79,7 +72,6 @@ afterAll(() => {
 		if (ORIGINAL_ENV[key] === undefined) delete process.env[key]
 		else process.env[key] = ORIGINAL_ENV[key]
 	}
-	_resetFeatureFlagConfig()
 	__resetLinkedInMcpRegistryForTests()
 })
 
@@ -111,10 +103,6 @@ beforeEach(async () => {
 	const ws = await insertWorkspace(db, getTestActorId())
 	workspaceId = ws.id
 	integrationId = (await insertIntegration(workspaceId, ownerActorId)).id
-
-	process.env.FF_TESTER_ACTOR_IDS = ownerActorId
-	process.env.FF_TESTER_FEATURES = FLAG
-	_resetFeatureFlagConfig()
 })
 
 function messageNew(
@@ -233,16 +221,6 @@ describe('one log line and one PostHog event per delivery', () => {
 		])
 	})
 
-	it('dropped: flag off logs and fires once', async () => {
-		process.env.FF_TESTER_FEATURES = ''
-		_resetFeatureFlagConfig()
-		await deliver(messageNew())
-
-		expect(deliveryLines()).toHaveLength(1)
-		expect(deliveryLines()[0]).toMatchObject({ outcome: 'dropped', reason: 'flag_off' })
-		expect(captured()).toHaveLength(1)
-	})
-
 	it('failed: a commit failure logs one error line and fires once, not twice', async () => {
 		vi.mocked(commitWebhookDelivery).mockRejectedValueOnce(
 			Object.assign(new Error('connection terminated'), { code: 'ECONNRESET' }),
@@ -268,8 +246,6 @@ describe('one log line and one PostHog event per delivery', () => {
 		const secondOwner = await insertActor(db)
 		const secondWorkspace = await insertWorkspace(db, getTestActorId())
 		const second = await insertIntegration(secondWorkspace.id, secondOwner.id)
-		process.env.FF_TESTER_ACTOR_IDS = `${ownerActorId},${secondOwner.id}`
-		_resetFeatureFlagConfig()
 		vi.mocked(commitWebhookDelivery).mockImplementation(
 			() => new Promise((resolve) => setTimeout(resolve, 6000)),
 		)
@@ -396,18 +372,11 @@ describe('direction drops leave one durable events row (query e)', () => {
 		})
 	})
 
-	it('own_message, flag_off and no_active_integration write no row', async () => {
+	it('own_message and no_active_integration write no row', async () => {
 		await deliver(messageNew({ message: { is_sender: true } }))
 		await deliver({ ...messageNew(), account_id: 'acc_nobody' })
-		process.env.FF_TESTER_FEATURES = ''
-		_resetFeatureFlagConfig()
-		await deliver(messageNew())
 
-		expect(deliveryLines().map((l) => l.reason)).toEqual([
-			'own_message',
-			'no_active_integration',
-			'flag_off',
-		])
+		expect(deliveryLines().map((l) => l.reason)).toEqual(['own_message', 'no_active_integration'])
 		expect(await webhookRows('dropped')).toHaveLength(0)
 	})
 

@@ -49,7 +49,7 @@ const postTranscriptionRoute = createRoute({
 	tags: ['Transcriptions'],
 	summary: 'Transcribe a short voice recording (chat dictation)',
 	description:
-		'Sends the audio to a speech-to-text model on OpenRouter (default Voxtral Small, override with MASKIN_TRANSCRIPTION_MODEL) and returns the text. Requires X-Workspace-Id; the call is billed to the operator account, so a read-only viewer is refused.',
+		'Sends the audio to a speech-to-text model on OpenRouter (default Voxtral Small, override with MASKIN_TRANSCRIPTION_MODEL) and returns the text. Requires X-Workspace-Id; the call is billed to the operator account, so a read-only viewer is refused. Upstream failures are told apart: 429 busy, 503 provider account or key refused (401/402), 504 timeout or no answer, 502 any other provider error.',
 	request: {
 		body: { content: { 'application/json': { schema: transcribeBody } }, required: true },
 	},
@@ -75,7 +75,16 @@ const postTranscriptionRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		502: {
-			description: 'The speech provider failed',
+			description: 'The speech provider answered with an error other than 401, 402 or 429',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		503: {
+			description:
+				'The speech provider refused our key or account (401 or 402): transcription is not available on this server until the operator fixes it. Retrying will not help.',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		504: {
+			description: 'The request to the speech provider timed out or could not be made',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 	},
@@ -95,10 +104,25 @@ app.openapi(postTranscriptionRoute, async (c) => {
 	if (result.reason === 'not_configured') {
 		return c.json(createApiError('INTERNAL_ERROR', 'Transcription is not configured'), 500)
 	}
+	if (result.reason === 'exception') {
+		return c.json(createApiError('INTERNAL_ERROR', 'Transcription timed out, try again'), 504)
+	}
 	if (result.status === 429) {
 		return c.json(createApiError('RATE_LIMITED', 'Transcription is busy, try again shortly'), 429)
 	}
-	return c.json(createApiError('INTERNAL_ERROR', 'Transcription failed'), 502)
+	if (result.status === 401 || result.status === 402) {
+		return c.json(
+			createApiError(
+				'INTERNAL_ERROR',
+				'Transcription is not available on this server (speech provider account or key problem)',
+			),
+			503,
+		)
+	}
+	return c.json(
+		createApiError('INTERNAL_ERROR', 'Transcription failed (speech provider error)'),
+		502,
+	)
 })
 
 export default app

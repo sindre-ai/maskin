@@ -65,7 +65,9 @@ import {
 	or,
 	sql,
 } from 'drizzle-orm'
+import type { AnyPgColumn } from 'drizzle-orm/pg-core'
 import { resolveChatIdleCloseMs } from '../config/session-idle'
+import { notHumanPaused, withoutHumanPauseMarker } from '../lib/agent-pause'
 import {
 	trackAgentSessionCompletedWithSkills,
 	trackAgentSessionStartedWithPrompt,
@@ -73,6 +75,7 @@ import {
 } from '../lib/analytics/agent-session-events'
 import { claimLoopActiveDay, trackLoopActiveDay, utcDayString } from '../lib/analytics/loop-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
+import { markApiKeyOutOfCredit } from '../lib/api-key-credit-mark'
 import { evictBillingUsage } from '../lib/billing-usage-cache'
 import {
 	SESSION_OAUTH_EXPIRES_AT_KEY,
@@ -80,10 +83,19 @@ import {
 	isClaudeFailoverEnabled,
 	recordRuntimeClaudeOAuthBackupExhausted,
 	recordRuntimeClaudeOAuthFailover,
+	reportClaudeSessionAuthDeath,
 } from '../lib/claude-failover'
 import { getValidOAuthToken } from '../lib/claude-oauth'
 import { debitCreditForSession } from '../lib/credit-billing'
-import { classifySessionExit } from '../lib/credit-classifier'
+import {
+	CREDIT_BALANCE_LOW_BANNER,
+	classifyClaudeAuthFailureText,
+	classifyCreditExhaustion,
+	classifySessionExit,
+	endsInClaudeAuthDeath,
+	isClaudeAuthDeathText,
+	isCreditBalanceLowText,
+} from '../lib/credit-classifier'
 import { readEmptyTurnFallbackModel } from '../lib/empty-turn-fallback'
 import { isEnterprise } from '../lib/enterprise'
 import { recordEvent, writeSpawnedEdge } from '../lib/events/record-event'
@@ -99,6 +111,7 @@ import {
 	runGitHubPreflight,
 	stripFailedIdentities,
 } from '../lib/github/preflight'
+import { HANDOFF_PROOF_BLOCK } from '../lib/handoff-rule'
 import { MISSING_TOOL_BLOCK, buildAccessPreamble } from '../lib/integrations/access-preamble'
 import {
 	type ActorIntegrationAccess,
@@ -106,7 +119,6 @@ import {
 	effectiveAccess,
 	listAgentAccess,
 } from '../lib/integrations/agent-access'
-import { decodeLogin } from '../lib/integrations/byo-login'
 import {
 	CUSTOM_MCP_PROVIDER,
 	customGatewayServerSpec,
@@ -121,10 +133,10 @@ import {
 	isAuthRevokedError,
 } from '../lib/integrations/errors'
 import {
-	byoApiKeyEnvName,
-	byoLoginEnvNames,
-	redactLaunchEnv,
-} from '../lib/integrations/keychain-env'
+	buildExtensionMcpServers,
+	createExtensionMcpKeyReader,
+} from '../lib/integrations/extensions-db'
+import { byoApiKeyEnvName, redactLaunchEnv } from '../lib/integrations/keychain-env'
 import {
 	findUnresolvedKeychainReferences,
 	stripSessionLevelMcps,
@@ -153,6 +165,8 @@ import {
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import { getProvider } from '../lib/integrations/registry'
 import {
+	CredentialResolutionTimeoutError,
+	LLM_ROUTE_API_KEY,
 	LLM_ROUTE_CUSTOM,
 	LLM_ROUTE_MASKIN_PLAN,
 	LLM_ROUTE_OAUTH,
@@ -168,6 +182,7 @@ import {
 	preflightLlmCredentials,
 	resolveLlmRoute,
 	unreadableKeyError,
+	withCredentialResolutionTimeout,
 } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import {
@@ -185,6 +200,7 @@ import {
 	hasMaskinMcpEntry,
 	stampMaskinSessionHeader,
 } from '../lib/mcp-session-header'
+import { pickRetryAt } from '../lib/subscription-limit-reset'
 import { thinkingRowThrottle } from '../lib/thinking-row-throttle'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import { SecretUnreadableError, openSecret } from '../lib/workspace-secrets'
@@ -195,6 +211,7 @@ import {
 } from './agent-server-client'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
+import { applyExtensionGuards } from './extension-guard-launch'
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
 import { buildRunGoalBlock, saveRunGoal } from './run-goal'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
@@ -218,13 +235,11 @@ import {
 import {
 	SESSION_RESUMED_LOG,
 	type SessionUsage,
-	extractSessionUsage,
 	parseUsageFromLogChunks,
 	readSessionStdoutChunks,
 	resolveSessionCostUsd,
 	sumAssistantUsage,
-	sumRunningSessionUsage,
-	sumSegmentResultUsage,
+	sumUncountedResultUsage,
 } from './usage-parser'
 import { buildWorkspaceStartupBlock, loadSenderLine } from './workspace-briefing'
 
@@ -236,10 +251,23 @@ import { buildWorkspaceStartupBlock, loadSenderLine } from './workspace-briefing
  */
 const LOCAL_RUNTIME_BUCKET = 'local-docker'
 
-/** Failure reasons for a session whose container is gone / was never assigned. */
-const CONTAINER_LOST_MESSAGE = 'Container disappeared before pause could complete'
+/**
+ * Technical reasons for a session whose container is gone / was never
+ * assigned. These go to the system log and `result.error` only; users see
+ * CONTAINER_LOST_FAILURE_REASON.human_message instead.
+ */
+const CONTAINER_LOST_MESSAGE = 'Container no longer running'
 const NO_CONTAINER_ASSIGNED_MESSAGE =
 	'No container was ever assigned to this session — it was marked running but never started'
+
+const CONTAINER_LOST_FAILURE_REASON: SessionResultFailureReason = {
+	provider: 'local-docker',
+	reason_code: 'container_lost',
+	human_message: 'This session stopped unexpectedly. Send another message to start a new one.',
+	http_status: null,
+	reset_at: null,
+	verbatim_output: null,
+}
 
 /**
  * Guards the MCP health check's partial-line buffer against a stdout stream
@@ -515,26 +543,6 @@ export type SessionTurnEvent =
 	| { sessionId: string; phase: 'finished'; outcome: 'done' | 'failed' }
 
 /**
- * §17.5 companion parser at the two completion paths: convert the classifier's
- * `reset_at` (ISO-8601 string, may be null) into the Date value settleSession /
- * these paths write to sessions.retry_at. Wrapped as a helper so both handleCompletion
- * and markRemoteSessionComplete apply the same logic — no divergence class from
- * .claude/rules/known-pitfalls.md "The Remote Completion Path Skipped ...".
- *
- * Returns null when the reason isn't credit-exhaustion-shaped (won't retry via
- * scheduler, no reset_at to persist) or when reset_at parsing didn't produce a
- * value in the [now+60s, now+24h] clamp band (§17.3, §17.7).
- */
-function pickRetryAt(failureReason: SessionResultFailureReason | null): Date | null {
-	if (!failureReason) return null
-	if (failureReason.provider !== 'anthropic') return null
-	if (!failureReason.reset_at) return null
-	const parsed = Date.parse(failureReason.reset_at)
-	if (Number.isNaN(parsed)) return null
-	return new Date(parsed)
-}
-
-/**
  * The settle classification for a sandbox exit seen by handleCompletion or
  * markRemoteSessionComplete. Keeps the budget-stop and credit-exhaustion
  * reasons distinguishable from a plain non-zero exit.
@@ -548,6 +556,14 @@ function classifyExit(args: {
 	if (args.status === 'completed') return 'agent_completed'
 	if (!args.failureReason) return 'unknown'
 	return args.failureReason.reason_code === 'plan_cap_exceeded' ? 'plan_cap' : 'credit_exhaustion'
+}
+
+/**
+ * Matches a chat thread on a column holding a thread root id. A null thread is the main
+ * chat, stored as NULL, so it needs IS NULL: `= NULL` never matches.
+ */
+export function matchThread(column: AnyPgColumn, threadRootId: number | null): SQL {
+	return threadRootId === null ? isNull(column) : eq(column, threadRootId)
 }
 
 export class SessionManager extends EventEmitter {
@@ -696,6 +712,34 @@ export class SessionManager extends EventEmitter {
 			// signature so a future stop-reason column can pick it up without
 			// re-plumbing the finalizer.
 			onStopSession: (sessionId, _reason) => this.stopSession(sessionId),
+			// The human's message went unanswered on the spent subscription. Re-run
+			// the responder for it so a fresh session answers on the new one —
+			// the same call as the chat's "retry" action, so nobody re-sends by hand.
+			onResumeAfterMove: async ({ conversationId, workspaceId, agentId }) => {
+				const [latest] = await db
+					.select({ id: messages.id })
+					.from(messages)
+					.where(
+						and(
+							eq(messages.conversationId, conversationId),
+							eq(messages.kind, 'message'),
+							ne(messages.actorId, agentId),
+						),
+					)
+					.orderBy(desc(messages.id))
+					.limit(1)
+				if (!latest) return
+				// Lazy import: conversation-responder imports this module's types.
+				const { evaluateAndRespond } = await import('./conversation-responder')
+				await evaluateAndRespond({
+					db,
+					sessionManager: this,
+					workspaceId,
+					conversationId,
+					messageId: latest.id,
+					options: { forceRespond: true, targetAgentId: agentId },
+				})
+			},
 			// An empty completion that survives the retries is tried once on
 			// another model. Both are optional: with no env var set the finalizer
 			// still retries and still tells the human.
@@ -704,6 +748,10 @@ export class SessionManager extends EventEmitter {
 			onTurnFinished: (sessionId, outcome) =>
 				this.emit('turn', { sessionId, phase: 'finished', outcome } satisfies SessionTurnEvent),
 			onHelperResult: (sessionId, outcome) => this.finishHelperSession(sessionId, outcome),
+			// An interactive CLI stays alive after printing a limit banner as its
+			// final error, so no exit settles the row. Same teardown as a helper.
+			onLimitResult: (sessionId, outcome) =>
+				this.finishHelperSession(sessionId, outcome, { retry: false }),
 		})
 	}
 
@@ -793,6 +841,14 @@ export class SessionManager extends EventEmitter {
 		// "resume conversation from scratch" flow).
 		const conversationMessageId =
 			(config.conversation as { message_id?: number } | undefined)?.message_id ?? null
+		// The thread this chat session answers in; null for the main-chat session. Only a chat
+		// session has one, and only a real message id counts.
+		const rawThreadRootId = (config.conversation as { thread_root_id?: unknown } | undefined)
+			?.thread_root_id
+		const threadRootId =
+			conversationId && typeof rawThreadRootId === 'number' && Number.isSafeInteger(rawThreadRootId)
+				? rawThreadRootId
+				: null
 
 		// Pre-flight billing cap. Only enforced when no BYO credentials are
 		// present — BYO routes (OAuth, custom_llm, api_key) take precedence over
@@ -835,6 +891,7 @@ export class SessionManager extends EventEmitter {
 				config,
 				interactive,
 				conversationId,
+				threadRootId,
 				createdBy: params.createdBy,
 				sourceSessionId: params.sourceSessionId,
 				spawnedBySessionId: params.spawnedBySessionId ?? null,
@@ -885,9 +942,10 @@ export class SessionManager extends EventEmitter {
 
 	/**
 	 * Find a currently-usable interactive session for a (conversation, agent)
-	 * pair — i.e. one that can accept a writeInput() call right now. Fast-path
+	 * pair and thread — i.e. one that can accept a writeInput() call right now. A null
+	 * thread is the main chat; a thread root id is that thread's own session. Fast-path
 	 * optimization for the conversation responder; the DB's
-	 * sessions_conversation_actor_active_uniq partial unique index is the
+	 * sessions_conversation_actor_thread_active_uniq partial unique index is the
 	 * authoritative guard against double-spawn, this just avoids an
 	 * unnecessary createSession attempt in the common case. Only matches
 	 * `running` (not `pending`/`starting`) since writeInput needs a live
@@ -896,6 +954,7 @@ export class SessionManager extends EventEmitter {
 	async findActiveConversationSession(
 		conversationId: string,
 		actorId: string,
+		threadRootId: number | null = null,
 	): Promise<typeof sessions.$inferSelect | null> {
 		const [row] = await this.db
 			.select()
@@ -904,6 +963,7 @@ export class SessionManager extends EventEmitter {
 				and(
 					eq(sessions.conversationId, conversationId),
 					eq(sessions.actorId, actorId),
+					matchThread(sessions.threadRootId, threadRootId),
 					eq(sessions.interactive, true),
 					eq(sessions.status, 'running'),
 				),
@@ -921,6 +981,7 @@ export class SessionManager extends EventEmitter {
 	async findConversationSessionAnyActive(
 		conversationId: string,
 		actorId: string,
+		threadRootId: number | null = null,
 	): Promise<typeof sessions.$inferSelect | null> {
 		const [row] = await this.db
 			.select()
@@ -929,6 +990,7 @@ export class SessionManager extends EventEmitter {
 				and(
 					eq(sessions.conversationId, conversationId),
 					eq(sessions.actorId, actorId),
+					matchThread(sessions.threadRootId, threadRootId),
 					eq(sessions.interactive, true),
 					inArray(sessions.status, ['pending', 'starting', 'queued', 'running']),
 				),
@@ -939,7 +1001,9 @@ export class SessionManager extends EventEmitter {
 
 	/**
 	 * Delivers every turn buffered in conversation_pending_turns for this
-	 * session's (conversation, agent) pair — messages that arrived while the
+	 * session's (conversation, agent, thread) — the thread is read from the
+	 * session row (null = main chat), so a session never drains another
+	 * thread's turns. Messages that arrived while the
 	 * session was still booting. Rows are claimed atomically with
 	 * DELETE ... RETURNING so a concurrent drain (post-boot hook racing the
 	 * responder's own re-check) can't double-deliver a turn. A turn whose
@@ -954,6 +1018,7 @@ export class SessionManager extends EventEmitter {
 				interactive: sessions.interactive,
 				conversationId: sessions.conversationId,
 				actorId: sessions.actorId,
+				threadRootId: sessions.threadRootId,
 			})
 			.from(sessions)
 			.where(eq(sessions.id, sessionId))
@@ -966,6 +1031,7 @@ export class SessionManager extends EventEmitter {
 				and(
 					eq(conversationPendingTurns.conversationId, session.conversationId),
 					eq(conversationPendingTurns.actorId, session.actorId),
+					matchThread(conversationPendingTurns.threadRootId, session.threadRootId),
 				),
 			)
 			.returning()
@@ -1002,6 +1068,7 @@ export class SessionManager extends EventEmitter {
 							conversationId: t.conversationId,
 							actorId: t.actorId,
 							messageId: t.messageId,
+							threadRootId: t.threadRootId,
 							payload: t.payload,
 						})),
 					)
@@ -1759,6 +1826,13 @@ export class SessionManager extends EventEmitter {
 			throw new Error(`Session ${sessionId} not in running state`)
 		}
 
+		// A remote session's sandbox lives on the agent-server, so the local Docker
+		// check below would always call it gone and mark a live session failed.
+		// Snapshot and resume are local-only: refuse, and leave the session running.
+		if (session.agentServerId) {
+			throw new Error(`Session ${sessionId} runs on an agent server and cannot be paused`)
+		}
+
 		// Self-heal: if the container disappeared (stopped or removed externally),
 		// the session can never be snapshotted. Mark it failed and exit so the
 		// auto-pause loop stops retrying every minute.
@@ -1863,7 +1937,7 @@ export class SessionManager extends EventEmitter {
 	 * `ContainerManager.stdinStreams` entry, leaving the row orphaned at
 	 * `running`). Also used directly by callers (e.g. the conversation
 	 * responder) that already know from a failed `writeInput` that a session
-	 * is dead, so the row stops blocking `sessions_conversation_actor_active_uniq`
+	 * is dead, so the row stops blocking `sessions_conversation_actor_thread_active_uniq`
 	 * for a fresh session.
 	 */
 	async markSessionFailedAfterContainerLoss(
@@ -1897,6 +1971,7 @@ export class SessionManager extends EventEmitter {
 				source: 'reaper',
 				reason,
 				exitCode: 0,
+				failureReason: CONTAINER_LOST_FAILURE_REASON,
 			},
 			this.buildSettleDeps({ skipStop: true, skipPush: true }),
 		)
@@ -2102,12 +2177,33 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
+	 * How many thread sessions (a session with a thread, not the main-chat one) this agent has
+	 * live in this chat, counting those still on their way up.
+	 */
+	async countActiveThreadSessions(conversationId: string, actorId: string): Promise<number> {
+		const [row] = await this.db
+			.select({ count: countFn() })
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.conversationId, conversationId),
+					eq(sessions.actorId, actorId),
+					eq(sessions.interactive, true),
+					isNotNull(sessions.threadRootId),
+					inArray(sessions.status, ['pending', 'starting', 'queued', 'running']),
+				),
+			)
+		return Number(row?.count ?? 0)
+	}
+
+	/**
 	 * Separate aggregate cap for chat sessions (see the isChatSession bypass in
 	 * startSession()) — they don't compete with max_concurrent_sessions, but
 	 * still need a ceiling so a workspace with many active conversations can't
-	 * spawn unbounded concurrent containers.
+	 * spawn unbounded concurrent containers. Public so the conversation responder can
+	 * check it before it starts a thread session, which must fall back instead of queueing.
 	 */
-	private async hasChatCapacity(workspaceId: string): Promise<boolean> {
+	async hasChatCapacity(workspaceId: string): Promise<boolean> {
 		const [workspace] = await this.db
 			.select()
 			.from(workspaces)
@@ -2320,6 +2416,7 @@ export class SessionManager extends EventEmitter {
 					typeof sessionConfig.origin_conversation_id === 'string'))
 		const accessPreamble = buildAccessPreamble(accessRows, { personReachable })
 		const missingToolBlock = personReachable ? MISSING_TOOL_BLOCK : ''
+		const handoffBlock = sessionConfig.conversation ? HANDOFF_PROOF_BLOCK : ''
 		// Last in the prompt on purpose: an agent's own persona often says to ask "one follow-up"
 		// in its reply, and the later instruction is the one that is followed.
 		const askWithButtonsRule =
@@ -2328,7 +2425,7 @@ export class SessionManager extends EventEmitter {
 				: ''
 		const resolvedSystemPrompt = `${identityPreamble}${conversationPreamble}${helperPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}
 
-${accessPreamble}${missingToolBlock}${HUMAN_MESSAGE_STYLE}${askWithButtonsRule}`
+${accessPreamble}${missingToolBlock}${handoffBlock}${HUMAN_MESSAGE_STYLE}${askWithButtonsRule}`
 
 		// Committer identity for anything the agent commits. agent-run.sh falls
 		// back to a generic `Maskin Agent <agent@maskin.io>` when these are
@@ -2336,11 +2433,12 @@ ${accessPreamble}${missingToolBlock}${HUMAN_MESSAGE_STYLE}${askWithButtonsRule}`
 		// letting each session invent its own address (see ../lib/git-identity).
 		const gitIdentity = buildAgentGitIdentity(agent.name)
 
+		const maskinApiUrl = process.env.MASKIN_BACKEND_URL ?? 'http://host.docker.internal:3000'
 		const envVars: Record<string, string> = {
 			SESSION_ID: session.id,
 			AGENT_RUNTIME: (sessionConfig.runtime as string) ?? 'claude-code',
 			SYSTEM_PROMPT: resolvedSystemPrompt,
-			MASKIN_API_URL: process.env.MASKIN_BACKEND_URL ?? 'http://host.docker.internal:3000',
+			MASKIN_API_URL: maskinApiUrl,
 			MASKIN_WORKSPACE_ID: session.workspaceId,
 			GIT_IDENTITY_NAME: gitIdentity.name,
 			GIT_IDENTITY_EMAIL: gitIdentity.email,
@@ -2487,18 +2585,23 @@ ${cont.continues_prompt}
 		let oauthExpiresAtTaken: number | undefined
 		let routeModelName: string | undefined
 		try {
-			const resolved = await resolveLlmRoute({
-				db: this.db,
-				workspaceId: session.workspaceId,
-				actorId: session.actorId,
-				wsSettings,
-				enterprise,
-				agent: {
-					provider: agent.llmProvider,
-					apiKey: (llmConfig.api_key as string | undefined) ?? null,
-					model: (llmConfig.model as string | undefined)?.trim() || null,
-				},
-			})
+			// Bounded by wall-clock: the fetch timeouts inside resolution cover
+			// sockets only, so a stuck DB step would otherwise leave the row in
+			// `starting` until the 10 minute reaper.
+			const resolved = await withCredentialResolutionTimeout(
+				resolveLlmRoute({
+					db: this.db,
+					workspaceId: session.workspaceId,
+					actorId: session.actorId,
+					wsSettings,
+					enterprise,
+					agent: {
+						provider: agent.llmProvider,
+						apiKey: (llmConfig.api_key as string | undefined) ?? null,
+						model: (llmConfig.model as string | undefined)?.trim() || null,
+					},
+				}),
+			)
 			if (resolved) {
 				routeTaken = resolved.route
 				oauthSlotTaken = resolved.oauthSlot
@@ -2512,6 +2615,15 @@ ${cont.continues_prompt}
 				Object.assign(envVars, resolved.envVars)
 			}
 		} catch (err) {
+			if (err instanceof CredentialResolutionTimeoutError) {
+				logger.error('Launch credential resolution timed out', {
+					sessionId: session.id,
+					workspaceId: session.workspaceId,
+					actorId: session.actorId,
+					step: 'resolveLlmRoute',
+					timeoutMs: err.timeoutMs,
+				})
+			}
 			if (err instanceof PlanCapExceededError) {
 				logger.warn('Maskin plan cap exceeded', {
 					sessionId: session.id,
@@ -2550,7 +2662,10 @@ ${cont.continues_prompt}
 				},
 			})
 			if (credentialGap) {
-				throw new LlmCredentialsUnavailableError(credentialGap.detail)
+				throw new LlmCredentialsUnavailableError(credentialGap.detail, false, {
+					workspaceName: ws.name,
+					noCredentialsConfigured: true,
+				})
 			}
 		}
 
@@ -2679,6 +2794,21 @@ ${cont.continues_prompt}
 		const attachedKeys = new Set<string>()
 		const accessByIntegration = new Map(accessRows.map((a) => [a.integrationId, a.access]))
 		const integrationTokens: Record<string, string> = {}
+		// Custom extension MCPs (extension-<slug>). Only extensions this agent holds a
+		// grant on are attached. Each key is read through Keychain for this agent and
+		// session; one that cannot be read leaves its server off.
+		const extensionMcp = await buildExtensionMcpServers(
+			this.db,
+			session.workspaceId,
+			agent.id,
+			createExtensionMcpKeyReader(this.db, {
+				workspaceId: session.workspaceId,
+				actorId: agent.id,
+				sessionId: session.id,
+			}),
+		)
+		Object.assign(autoInjectedMcpServers, extensionMcp.servers)
+		Object.assign(envVars, extensionMcp.env)
 		const resolvedGithubInstalls: Array<{
 			ownerLogin: string
 			token: string
@@ -2949,9 +3079,11 @@ ${cont.continues_prompt}
 				const gated = isGatedRow(integration.config)
 				const missing = gated ? [] : referencedVars(server).filter((v) => !(v in keychainEnv))
 				if (missing.length > 0) {
+					// A login is never put in the container, so asking for access cannot fix it.
+					const usesLogin = missing.some((v) => index.get(v)?.kind === 'login')
 					const names = [...new Set(missing.map((v) => index.get(v)?.displayName ?? v))]
 					unattached.push(
-						`- ${integration.displayName ?? 'A tool server'}: needs ${names.map((n) => `"${n}"`).join(', ')}`,
+						`- ${integration.displayName ?? 'A tool server'}: needs ${names.map((n) => `"${n}"`).join(', ')}${usesLogin ? ' (a saved login can only be typed on your computer, not given to a tool server that runs here)' : ''}`,
 					)
 					continue
 				}
@@ -3115,6 +3247,16 @@ ${cont.continues_prompt}
 		// with auto-injected workspace MCPs and per-org GitHub MCPs. Keys are namespaced so
 		// the sources can't collide (github-<owner>, integration-<provider>, session-mcp-N).
 		const mcps = sessionConfig.mcps as Array<Record<string, unknown>> | undefined
+		// Custom-extension servers start behind the guard wrapper (default-deny per
+		// tool). Built-in integrations are left alone.
+		await applyExtensionGuards({
+			db: this.db,
+			sessionId: session.id,
+			workspaceId: session.workspaceId,
+			agentId: agent.id,
+			apiUrl: maskinApiUrl,
+			servers: autoInjectedMcpServers,
+		})
 		const sessionMcpServers: Record<string, unknown> = { ...autoInjectedMcpServers }
 		if (mcps?.length) {
 			if (Object.keys(keychainEnv).length > 0) {
@@ -3340,8 +3482,10 @@ ${cont.continues_prompt}
 
 	/**
 	 * Env vars for the Keychain credentials this session may read: bring-your-own API
-	 * keys and logins, active or still inside their undo window, that an agent grant names
-	 * for the session's actor. The grant filter runs in SQL so a key
+	 * keys, active or still inside their undo window, that an agent grant names for the
+	 * session's actor. A saved LOGIN is never injected, so its password never reaches the
+	 * session: the agent types it with desktop_type and a {{keychain:Name.password}}
+	 * reference that Maskin fills in (lib/integrations/keychain-typing.ts). The grant filter runs in SQL so a key
 	 * scoped to another actor is never decrypted and never writes a denied-read event
 	 * on every launch of an unrelated agent. Each match then goes through getCredential,
 	 * which re-checks status and scope, decrypts, and writes the audit row.
@@ -3349,8 +3493,7 @@ ${cont.continues_prompt}
 	 * A key whose config sets expose_to_agent_sessions to false is left out, as for any
 	 * other integration.
 	 *
-	 * Name: KEYCHAIN_BYO_APIKEY_{SLUG of the display name} for a key, and
-	 * KEYCHAIN_BYO_LOGIN_{SLUG}_USERNAME / _PASSWORD for a login. A name with no usable
+	 * Name: KEYCHAIN_BYO_APIKEY_{SLUG of the display name}. A name with no usable
 	 * characters is skipped, and so is a later credential whose name an earlier one
 	 * already took (oldest wins), each with a warning that carries no value.
 	 */
@@ -3383,7 +3526,7 @@ ${cont.continues_prompt}
 			.where(
 				and(
 					eq(integrations.workspaceId, session.workspaceId),
-					inArray(integrations.providerMode, ['byo_apikey', 'byo_login']),
+					eq(integrations.providerMode, 'byo_apikey'),
 					inArray(integrations.status, ['active', 'pending_undo']),
 					// Main's per-integration switch (config.expose_to_agent_sessions === false):
 					// a switched-off key is neither injected nor decrypted, so no read is audited.
@@ -3399,13 +3542,7 @@ ${cont.continues_prompt}
 			.orderBy(asc(integrations.createdAt))
 
 		for (const row of rows) {
-			const isLogin = row.providerMode === 'byo_login'
-			const loginNames = isLogin && row.displayName ? byoLoginEnvNames(row.displayName) : null
-			const name = isLogin
-				? (loginNames?.username ?? null)
-				: row.displayName
-					? byoApiKeyEnvName(row.displayName)
-					: null
+			const name = row.displayName ? byoApiKeyEnvName(row.displayName) : null
 			if (!name) {
 				logger.warn('Keychain credential has no usable name for an env var; not injected', {
 					sessionId: session.id,
@@ -3428,20 +3565,7 @@ ${cont.continues_prompt}
 					sessionId: session.id,
 					requestId: `launch:${session.id}:${row.id}`,
 				})
-				if (isLogin && loginNames) {
-					const login = decodeLogin(credential.value)
-					if (!login) {
-						logger.error('Keychain login is not a well-formed login; not injected', {
-							sessionId: session.id,
-							integrationId: row.id,
-						})
-						continue
-					}
-					env[loginNames.username] = login.username
-					env[loginNames.password] = login.password
-				} else {
-					env[name] = credential.value
-				}
+				env[name] = credential.value
 			} catch (err) {
 				// Undone, or its grants changed, between the query and the read. Either way
 				// this session does not get it.
@@ -3744,6 +3868,7 @@ ${cont.continues_prompt}
 							} satisfies SessionLogEvent)
 							if (chunk.stream === 'stdout') {
 								await this.turnFinalizer.onStdout(sessionId, chunk.data, log.id)
+								await this.recordTurnUsage(sessionId, chunk.data)
 							}
 						}
 
@@ -3964,6 +4089,22 @@ ${cont.continues_prompt}
 			})
 		}
 		return null
+	}
+
+	/**
+	 * A session on the workspace Anthropic API key that ended on "Credit balance
+	 * is too low" marks that key out of credit, so the route picker leaves it
+	 * alone for a while (lib/api-key-credit-mark.ts). Other routes and other
+	 * failures are none of its business.
+	 */
+	private async markApiKeyOutOfCreditOnExit(
+		session: typeof sessions.$inferSelect,
+		failureReason: { verbatim_output: string | null } | null,
+	): Promise<void> {
+		const config = ((session.config as Record<string, unknown>) ?? {}) as Record<string, unknown>
+		if (config.llm_route !== LLM_ROUTE_API_KEY) return
+		if (!isCreditBalanceLowText(failureReason?.verbatim_output ?? '')) return
+		await markApiKeyOutOfCredit({ db: this.db, workspaceId: session.workspaceId })
 	}
 
 	private async maybeRetryClaudeOAuthOnNextSlot(params: {
@@ -4231,7 +4372,16 @@ ${cont.continues_prompt}
 			void this.emitCompletedWithSkills(session, status)
 		}
 
+		if (status === 'failed' && !userStopped && endsInClaudeAuthDeath(stdoutTail)) {
+			reportClaudeSessionAuthDeath({
+				sessionId,
+				workspaceId: session.workspaceId,
+				config: session.config as Record<string, unknown> | null,
+			})
+		}
+
 		if (status === 'failed' && !userStopped) {
+			await this.markApiKeyOutOfCreditOnExit(session, failureReason)
 			await this.maybeRetryClaudeOAuthOnNextSlot({ session, failureReason, stdoutTail }).catch(
 				(err) =>
 					logger.warn('Failed to retry Claude OAuth session on backup', {
@@ -4460,35 +4610,51 @@ ${cont.continues_prompt}
 	 */
 	private async accumulateSessionUsage(
 		sessionId: string,
-		opts: { allTurns?: boolean } = {},
+		opts: { live?: boolean } = {},
 	): Promise<SessionUsage | null> {
 		let usage: SessionUsage | null = null
 		let tokensOnly = false
+		let watermark: { logId: number; cliCost: number } | null = null
+		let previousWatermarkLogId: number | null = null
 		try {
-			const drained = this.activeSessions.get(sessionId)?.logsDrained
+			// A live (per-turn) write runs inside the log-ingest loop that `logsDrained`
+			// represents, so waiting on it would only burn the timeout.
+			const drained = opts.live ? undefined : this.activeSessions.get(sessionId)?.logsDrained
 			if (drained) {
 				await Promise.race([
 					drained,
 					new Promise<void>((resolve) => setTimeout(resolve, SessionManager.LOGS_DRAIN_TIMEOUT_MS)),
 				])
 			}
-			// A close-out of a many-turn chat (idle close, helper finished) must add up
-			// every turn of this process. The tail below holds only the newest one.
-			if (opts.allTurns) {
-				usage = await sumSegmentResultUsage(this.db, sessionId)
-			}
-			const tail = usage ? undefined : this.activeSessions.get(sessionId)?.stdoutTail
-			if (tail) {
-				usage = parseUsageFromLogChunks([tail])
-			}
-			if (!usage) {
-				usage = await extractSessionUsage(this.db, sessionId)
-			}
-			// No `result` envelope (e.g. killed at the wall-time ceiling): fall back
-			// to the tokens the assistant messages reported. Cost stays null.
-			if (!usage) {
-				usage = await sumAssistantUsage(this.db, sessionId)
-				tokensOnly = usage !== null
+			// Add only the `result` envelopes the row does not hold yet. A per-turn write
+			// (recordTurnUsage) may already have saved the earlier turns, and a pause saved
+			// an earlier segment; the watermark on the row says where counting resumes.
+			const [counted] = await this.db
+				.select({
+					logId: sessions.usageCountedLogId,
+					cliCost: sessions.usageCountedCliCost,
+				})
+				.from(sessions)
+				.where(eq(sessions.id, sessionId))
+				.limit(1)
+			previousWatermarkLogId = counted?.logId ?? null
+			const uncounted = await sumUncountedResultUsage(this.db, sessionId, {
+				logId: previousWatermarkLogId,
+				cliCost: counted?.cliCost != null ? Number(counted.cliCost) : null,
+			})
+			if (uncounted) {
+				usage = uncounted.usage
+				watermark = uncounted.watermark
+			} else if (previousWatermarkLogId === null && !opts.live) {
+				// Nothing was ever counted and no envelope is in the logs yet: the in-memory
+				// tail may hold one that is not flushed, and a run killed at the wall-time
+				// ceiling has none, so fall back to the tokens the assistant messages reported.
+				const tail = this.activeSessions.get(sessionId)?.stdoutTail
+				if (tail) usage = parseUsageFromLogChunks([tail])
+				if (!usage) {
+					usage = await sumAssistantUsage(this.db, sessionId)
+					tokensOnly = usage !== null
+				}
 			}
 		} catch (err) {
 			logger.warn('Failed to parse usage from session logs', { sessionId, error: String(err) })
@@ -4516,7 +4682,7 @@ ${cont.continues_prompt}
 		}
 
 		try {
-			await this.db
+			const updated = await this.db
 				.update(sessions)
 				.set({
 					totalCostUsd:
@@ -4543,17 +4709,67 @@ ${cont.continues_prompt}
 						usage.durationMs != null
 							? sql`COALESCE(${sessions.durationMs}, 0) + ${usage.durationMs}`
 							: undefined,
+					usageCountedLogId: watermark?.logId,
+					usageCountedCliCost: watermark ? String(watermark.cliCost) : undefined,
 					updatedAt: new Date(),
 				})
 				// Terminal rows are final: every caller writes before it settles the
 				// row (or, for pause, on a non-terminal 'paused' row), so a write that
 				// finds a terminal status is a late straggler and must not add cost.
-				.where(and(eq(sessions.id, sessionId), notInArray(sessions.status, [...TERMINAL_STATUSES])))
+				// The watermark compare-and-set is what stops two writers adding the same
+				// envelopes: the loser finds the watermark moved and adds nothing.
+				.where(
+					and(
+						eq(sessions.id, sessionId),
+						notInArray(sessions.status, [...TERMINAL_STATUSES]),
+						watermark
+							? sql`${sessions.usageCountedLogId} IS NOT DISTINCT FROM ${previousWatermarkLogId}`
+							: undefined,
+					),
+				)
+				.returning({ id: sessions.id })
+			if (watermark && updated.length === 0) return null
 		} catch (err) {
 			logger.error('Failed to persist accumulated session usage', { sessionId, error: String(err) })
 		}
 
 		return usage
+	}
+
+	/**
+	 * Saves one turn's tokens and cost onto the session row as soon as its `result`
+	 * envelope lands, so a chat that is still running shows its usage live instead of
+	 * zero until it settles. Every settle path adds only what the row's usage watermark
+	 * says is not counted yet (accumulateSessionUsage), so this never double-counts.
+	 *
+	 * Credits are still debited at settle; this only moves the displayed usage. Never
+	 * throws: a usage hiccup must not break log ingest.
+	 */
+	private async recordTurnUsage(sessionId: string, chunk: string): Promise<void> {
+		if (!chunk.includes('"type":"result"')) return
+		try {
+			const usage = await this.accumulateSessionUsage(sessionId, { live: true })
+			if (!usage) return
+			const [row] = await this.db
+				.select({ workspaceId: sessions.workspaceId, actorId: sessions.actorId })
+				.from(sessions)
+				.where(eq(sessions.id, sessionId))
+				.limit(1)
+			if (!row) return
+			// A step event, not a lifecycle one: the web app refetches the session lists and
+			// the usage block on any session event, while the live-activity fan-out treats
+			// `session_updated` as a throttled step change.
+			await recordEvent(this.db, {
+				workspaceId: row.workspaceId,
+				actorId: row.actorId,
+				action: 'session_updated',
+				entityType: 'session',
+				entityId: sessionId,
+				data: {},
+			})
+		} catch (err) {
+			logger.warn('Failed to record per-turn session usage', { sessionId, error: String(err) })
+		}
 	}
 
 	/**
@@ -4570,13 +4786,12 @@ ${cont.continues_prompt}
 	 *
 	 * Combines the workspace's already-persisted usage from other sessions
 	 * (`getWorkspacePlanUsdCentsUsage`, which reads this session's own
-	 * totalCostUsd/inputTokens/outputTokens columns too — still NULL/0 while
-	 * it's running, since those are only written on pause/completion) with a
-	 * fresh live scan of *this* session's own logs
-	 * (`sumRunningSessionUsage`), so no separate persistence step is needed
-	 * here — nothing is written until the session actually stops, at which
-	 * point `handleCompletion` → `accumulateSessionUsage` +
-	 * `debitCreditIfApplicable` record and bill it exactly as normal.
+	 * totalCostUsd/inputTokens/outputTokens columns too, which `recordTurnUsage`
+	 * fills turn by turn) with a scan of the results of *this* session that are
+	 * not saved on its row yet (`sumUncountedResultUsage`). Nothing is written
+	 * here — when the session stops, `handleCompletion` →
+	 * `accumulateSessionUsage` + `debitCreditIfApplicable` record and bill it
+	 * exactly as normal.
 	 *
 	 * Stops the session once its own overage would cost *more than* the
 	 * remaining credit balance — not just once the balance hits exactly
@@ -4604,7 +4819,12 @@ ${cont.continues_prompt}
 			typeof billing?.period_start === 'number' ? billing.period_start * 1000 : undefined
 		const [persistedUsedCents, liveUsage] = await Promise.all([
 			getWorkspacePlanUsdCentsUsage(this.db, session.workspaceId, periodStartMs),
-			sumRunningSessionUsage(this.db, session.id),
+			// Only this session's results not yet saved on its row: the saved ones are already in
+			// the persisted figure above, so a full scan would count every earlier turn twice.
+			sumUncountedResultUsage(this.db, session.id, {
+				logId: session.usageCountedLogId ?? null,
+				cliCost: session.usageCountedCliCost != null ? Number(session.usageCountedCliCost) : null,
+			}).then((r) => r?.usage ?? null),
 		])
 		// Route-aware cost, not the live scan's own reported figure: only
 		// maskin_plan sessions reach this check (the watchdog query filters on
@@ -4696,6 +4916,30 @@ ${cont.continues_prompt}
 	}
 
 	/**
+	 * True when this session has spoken in its conversation and every one of
+	 * those messages is a turn that failed with "Credit balance is too low" (the
+	 * turn finalizer tags them). Such a chat never did any work, so closing it as
+	 * `completed` makes a dead key look like a quiet session. One real reply, by
+	 * the final-output path or by the chat tool, is enough to keep it completed.
+	 */
+	private async onlyCreditErrorTurns(session: typeof sessions.$inferSelect): Promise<boolean> {
+		const [counts] = await this.db
+			.select({
+				total: sql<number>`count(*)::int`,
+				creditFailed: sql<number>`(count(*) FILTER (WHERE (${messages.metadata}->'final_output'->>'credit_balance_low') = 'true'))::int`,
+			})
+			.from(messages)
+			.where(
+				and(
+					eq(messages.sessionId, session.id),
+					eq(messages.actorId, session.actorId),
+					eq(messages.kind, 'message'),
+				),
+			)
+		return (counts?.total ?? 0) > 0 && counts?.total === counts?.creditFailed
+	}
+
+	/**
 	 * Gracefully closes an idle interactive conversation session as
 	 * `completed`. The row is CAS-flipped to terminal BEFORE the container
 	 * teardown, so the local exit watcher (`handleCompletion`) and a remote
@@ -4712,20 +4956,39 @@ ${cont.continues_prompt}
 		// Save the usage first, as the timeout close does: the terminal row is final
 		// for usage writes, and the settle below reads these totals for its
 		// $ai_generation event. Must run before cleanupSession() clears the tail.
-		await this.accumulateSessionUsage(session.id, { allTurns: true })
+		await this.accumulateSessionUsage(session.id)
 		// settleSession is the only writer of terminal sessions.status. Route
 		// the flip through it AND fold the previously-inline pushAgentFiles /
 		// stopSandbox into its post-commit callbacks per §3.1 (folded from
 		// what used to be a mid-function inline `pushAgentFiles` at :3552 and
 		// a per-host `client.stopSession` / `containers.stop` branch below).
+		//
+		// A chat whose every turn failed on a dead key ends as failed, with the
+		// reason the agents page shows, instead of passing as a quiet session.
+		const creditFailure = (await this.onlyCreditErrorTurns(session))
+			? classifyCreditExhaustion(CREDIT_BALANCE_LOW_BANNER, { includeAmbiguousSignals: false })
+			: null
 		const settled = await settleSession(
 			session.id,
-			{
-				kind: 'complete',
-				classification: 'agent_completed',
-				source: 'idle-watcher',
-				resultText: 'Conversation went idle — session closed',
-			},
+			creditFailure
+				? {
+						kind: 'fail',
+						classification: classifyExit({
+							userStopped: false,
+							status: 'failed',
+							failureReason: creditFailure,
+						}),
+						reason: creditFailure.human_message,
+						resultText: 'Every turn failed with a credit error — session closed',
+						failureReason: creditFailure,
+						source: 'idle-watcher',
+					}
+				: {
+						kind: 'complete',
+						classification: 'agent_completed',
+						source: 'idle-watcher',
+						resultText: 'Conversation went idle — session closed',
+					},
 			this.buildSettleDeps(),
 		)
 		if (settled.alreadySettled) return
@@ -4767,16 +5030,21 @@ ${cont.continues_prompt}
 
 		this.telemetry.recordSessionEnded({
 			sessionId: session.id,
-			endReason: 'completed',
+			endReason: creditFailure ? 'failed' : 'completed',
 			durationMs: elapsedMs(session.startedAt, session.createdAt),
 			agentServerUrl: LOCAL_RUNTIME_BUCKET,
 			contextObjectId: session.initiatedFromObjectId,
 		})
 
-		// Prefix must stay 'Session completed' — the SSE /logs/stream endpoint
-		// matches it to emit its `done` event (TERMINAL_SYSTEM_LOGS in
-		// routes/sessions.ts).
-		await this.insertSystemLog(session.id, 'Session completed — conversation idle').catch((err) =>
+		// The prefix must stay 'Session completed' or 'Session failed' — the SSE
+		// /logs/stream endpoint matches it to emit its `done` event
+		// (TERMINAL_SYSTEM_LOGS in routes/sessions.ts).
+		await this.insertSystemLog(
+			session.id,
+			creditFailure
+				? 'Session failed — every turn hit a credit error'
+				: 'Session completed — conversation idle',
+		).catch((err) =>
 			logger.warn('Failed to write idle chat close system log', {
 				sessionId: session.id,
 				error: String(err),
@@ -4800,10 +5068,15 @@ ${cont.continues_prompt}
 	 * Settled through settleSession like any other end, so the row reads
 	 * completed (or failed), `notify_on_complete` still sends the result back to
 	 * the agent that started it, and `wait: true` callers see it finish.
+	 *
+	 * `retry: false` keeps the failure reason but sets no retry time. A chat that
+	 * ends on a limit uses it: rerunning an idle chat at the reset is a product
+	 * call nobody has made, so only helper and cron sessions are retried.
 	 */
 	async finishHelperSession(
 		sessionId: string,
 		outcome: { isError: boolean; text: string },
+		options: { retry?: boolean } = {},
 	): Promise<void> {
 		const [session] = await this.db
 			.select()
@@ -4813,16 +5086,35 @@ ${cont.continues_prompt}
 		if (!session || session.status !== 'running') return
 
 		// Same reason as the idle close: save the usage before the row goes final.
-		await this.accumulateSessionUsage(session.id, { allTurns: true })
+		await this.accumulateSessionUsage(session.id)
+
+		// A helper that stopped on a Claude limit banner carries the reset time in
+		// its result text. Read it the way the two exit paths do, so the retry
+		// scheduler can rerun the helper once the allowance is back. Banners only:
+		// this is the helper's final error text, not a whole stdout tail, so the
+		// looser substring signals have nothing to add. A dead login or rejected API
+		// key is named first: it has no reset time, so it is stored with its reason
+		// but pickRetryAt returns null and nothing is retried or failed over.
+		const limitReason = outcome.isError
+			? (classifyClaudeAuthFailureText(outcome.text) ??
+				classifyCreditExhaustion(outcome.text, { includeAmbiguousSignals: false }))
+			: null
+		const scheduledRetryAt = pickRetryAt(limitReason)
 
 		const settled = await settleSession(
 			session.id,
 			outcome.isError
 				? {
 						kind: 'fail',
-						classification: 'unknown',
+						classification: classifyExit({
+							userStopped: false,
+							status: 'failed',
+							failureReason: limitReason,
+						}),
 						reason: outcome.text.slice(0, 300) || 'The helper ended its turn with an error',
 						resultText: outcome.text,
+						failureReason: limitReason ?? undefined,
+						retryAt: options.retry === false ? undefined : (scheduledRetryAt ?? undefined),
 						// Same settle source the idle close uses: the remote stop endpoint
 						// validates it against a fixed list, and this is a close-out of an
 						// idle interactive session.
@@ -4837,6 +5129,14 @@ ${cont.continues_prompt}
 			this.buildSettleDeps(),
 		)
 		if (settled.alreadySettled) return
+
+		if (outcome.isError && isClaudeAuthDeathText(outcome.text)) {
+			reportClaudeSessionAuthDeath({
+				sessionId: session.id,
+				workspaceId: session.workspaceId,
+				config: session.config as Record<string, unknown> | null,
+			})
+		}
 
 		logger.info(`Helper session finished: ${session.id}`, { isError: outcome.isError })
 
@@ -5244,8 +5544,15 @@ ${cont.continues_prompt}
 						if (await this.hasOtherActiveSessions(session.actorId, session.id)) return
 						await this.db
 							.update(actors)
-							.set({ agentState: 'paused', agentStateUpdatedAt: new Date(), updatedAt: new Date() })
-							.where(eq(actors.id, session.actorId))
+							.set({
+								agentState: 'paused',
+								agentStateUpdatedAt: new Date(),
+								// An idle auto-pause is not a person's pause: it must keep waking on chat.
+								metadata: withoutHumanPauseMarker,
+								updatedAt: new Date(),
+							})
+							// Not if a person paused it meanwhile: this write would drop their marker.
+							.where(and(eq(actors.id, session.actorId), notHumanPaused))
 							.catch((err) =>
 								logger.warn('Failed to sync agentState after auto-pause', {
 									sessionId: session.id,
@@ -5756,6 +6063,11 @@ ${cont.continues_prompt}
 			const skillsAttached =
 				typeof staging?.manifest_skills === 'number' ? staging.manifest_skills : undefined
 			const skillsStaged = typeof staging?.staged === 'number' ? staging.staged : undefined
+			// The row may predate settle (no completedAt yet), so fall back to now.
+			const startedAt = session.startedAt ?? session.createdAt
+			const durationMs = startedAt
+				? Math.max(0, (session.completedAt ?? new Date()).getTime() - startedAt.getTime())
+				: undefined
 			await trackAgentSessionCompletedWithSkills({
 				workspaceId: session.workspaceId,
 				sessionId: session.id,
@@ -5763,6 +6075,7 @@ ${cont.continues_prompt}
 				outcome,
 				skillsAttached,
 				skillsStaged,
+				durationMs,
 			})
 		} catch (err) {
 			// Never propagate — completion path must not be blocked by analytics.
@@ -5855,6 +6168,7 @@ ${cont.continues_prompt}
 				} satisfies SessionLogEvent)
 				if (line.stream === 'stdout') {
 					await this.turnFinalizer.onStdout(sessionId, line.content, log.id)
+					await this.recordTurnUsage(sessionId, line.content)
 				}
 			}
 		}
@@ -6053,9 +6367,31 @@ ${cont.continues_prompt}
 		// back, doubling the bytes pulled from Postgres on every completion.
 		let usage: SessionUsage | null = null
 		let stdoutChunks: string[] = []
+		let newWatermark: { logId: number; cliCost: number } | null = null
+		let previousWatermarkLogId: number | null = null
 		try {
 			stdoutChunks = await readSessionStdoutChunks(this.db, sessionId)
-			usage = parseUsageFromLogChunks(stdoutChunks)
+			// Only the envelopes no earlier write counted: per-turn writes already saved the
+			// earlier turns of a chat, and the tail read above holds just the newest turn.
+			const [counted] = await this.db
+				.select({
+					logId: sessions.usageCountedLogId,
+					cliCost: sessions.usageCountedCliCost,
+				})
+				.from(sessions)
+				.where(eq(sessions.id, sessionId))
+				.limit(1)
+			previousWatermarkLogId = counted?.logId ?? null
+			const uncounted = await sumUncountedResultUsage(this.db, sessionId, {
+				logId: previousWatermarkLogId,
+				cliCost: counted?.cliCost != null ? Number(counted.cliCost) : null,
+			})
+			if (uncounted) {
+				usage = uncounted.usage
+				newWatermark = uncounted.watermark
+			} else if (previousWatermarkLogId === null) {
+				usage = parseUsageFromLogChunks(stdoutChunks)
+			}
 		} catch (err) {
 			logger.warn('Failed to read or parse usage from remote session logs', {
 				sessionId,
@@ -6141,6 +6477,8 @@ ${cont.continues_prompt}
 							usage.durationMs != null
 								? sql`COALESCE(${sessions.durationMs}, 0) + ${usage.durationMs}`
 								: undefined,
+						usageCountedLogId: newWatermark ? sql`${newWatermark.logId}` : undefined,
+						usageCountedCliCost: newWatermark ? sql`${String(newWatermark.cliCost)}` : undefined,
 					}
 				: null
 
@@ -6187,7 +6525,16 @@ ${cont.continues_prompt}
 					await this.db
 						.update(sessions)
 						.set(usageColumns)
-						.where(and(eq(sessions.id, sessionId), notInArray(sessions.status, resolvedStatuses)))
+						.where(
+							and(
+								eq(sessions.id, sessionId),
+								notInArray(sessions.status, resolvedStatuses),
+								// A per-turn write may have moved the watermark since it was read.
+								newWatermark
+									? sql`${sessions.usageCountedLogId} IS NOT DISTINCT FROM ${previousWatermarkLogId}`
+									: undefined,
+							),
+						)
 					usageApplied = true
 				}
 				// The agent-server owns the sandbox and the workspace is already in
@@ -6301,7 +6648,16 @@ ${cont.continues_prompt}
 		// no outcome in that event's vocabulary; settle's unified event carries it.
 		if (!userStopped) void this.emitCompletedWithSkills(updated, status)
 
+		if (status === 'failed' && !userStopped && endsInClaudeAuthDeath(stdoutTail)) {
+			reportClaudeSessionAuthDeath({
+				sessionId,
+				workspaceId: updated.workspaceId,
+				config: updated.config as Record<string, unknown> | null,
+			})
+		}
+
 		if (status === 'failed' && !userStopped) {
+			await this.markApiKeyOutOfCreditOnExit(updated, failureReason)
 			await this.maybeRetryClaudeOAuthOnNextSlot({
 				session: updated,
 				failureReason,

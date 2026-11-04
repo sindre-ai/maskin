@@ -109,11 +109,22 @@ describe('Agent access in the launch system prompt (Integration)', () => {
 			ask_conversation_id: '11111111-1111-4111-8111-111111111111',
 		})
 		for (const prompt of [chat, helper]) {
-			expect(prompt).toContain('## When a tool or login is missing')
+			expect(prompt).toContain('## When a tool, integration, login or permission is missing')
 			expect(prompt).toContain('request_keychain_credential')
-			expect(prompt).toContain('Follow "When a tool or login is missing" below.')
+			expect(prompt).toContain(
+				'follow "When a tool, integration, login or permission is missing" below',
+			)
 			expect(prompt).not.toContain('a workspace admin can change it under Settings')
 		}
+	})
+
+	it('tells a chat session to show proof before it says work was handed to another agent', async () => {
+		const s = await setup()
+		const chat = await promptFor(s, s.reader.id, { conversation: true })
+		const background = await promptFor(s, s.reader.id)
+		expect(chat).toContain('## Handing work to another agent')
+		expect(chat).toContain('quote the session id or url')
+		expect(background).not.toContain('## Handing work to another agent')
 	})
 
 	it('keeps the settings pointer for a run with nobody to ask', async () => {
@@ -121,7 +132,7 @@ describe('Agent access in the launch system prompt (Integration)', () => {
 		const background = await promptFor(s, s.reader.id)
 		const helperWithoutChat = await promptFor(s, s.reader.id, { stop_on_result: true })
 		for (const prompt of [background, helperWithoutChat]) {
-			expect(prompt).not.toContain('## When a tool or login is missing')
+			expect(prompt).not.toContain('## When a tool, integration, login or permission is missing')
 			expect(prompt).toContain('a workspace admin can change it under Settings')
 		}
 	})
@@ -145,7 +156,9 @@ describe('Agent access in the launch system prompt (Integration)', () => {
 		const manager = new SessionManager(db, stubStorage())
 		try {
 			const spec = await manager.buildLaunchSpec(row as typeof sessions.$inferSelect)
-			expect(spec.env.SYSTEM_PROMPT).toContain('## When a tool or login is missing')
+			expect(spec.env.SYSTEM_PROMPT).toContain(
+				'## When a tool, integration, login or permission is missing',
+			)
 			expect(spec.env.SYSTEM_PROMPT).not.toContain('Integration access')
 		} finally {
 			await manager.stop()

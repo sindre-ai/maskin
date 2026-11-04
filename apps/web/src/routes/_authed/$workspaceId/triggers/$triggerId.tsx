@@ -2,6 +2,7 @@ import { PageHeader } from '@/components/layout/page-header'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { TriggerForm } from '@/components/triggers/trigger-form'
 import type { TriggerFormPayload } from '@/components/triggers/trigger-form'
 import { Button } from '@/components/ui/button'
@@ -12,6 +13,7 @@ import {
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useActors } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import {
 	readAutoPausedInfo,
@@ -39,6 +41,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/triggers/$triggerId'
 function TriggerDetailRoute() {
 	const { triggerId } = Route.useParams()
 	const { workspaceId, workspace } = useWorkspace()
+	const canWrite = useCanWrite()
 	const { data: trigger, isLoading, isError, error, refetch } = useTrigger(triggerId, workspaceId)
 	useDocumentTitle(trigger?.name)
 	const { data: actors } = useActors(workspaceId)
@@ -90,7 +93,7 @@ function TriggerDetailRoute() {
 	}
 
 	const handleAutoCreate = async (payload: TriggerFormPayload) => {
-		if (isCreatedRef.current) return
+		if (isCreatedRef.current || !canWrite) return
 		isCreatedRef.current = true
 		try {
 			await createTrigger.mutateAsync({
@@ -112,6 +115,7 @@ function TriggerDetailRoute() {
 	// fire-and-forget `mutate` here reported "✓ Saved" for saves that failed and
 	// left the edit un-retryable.
 	const handleSave = async (payload: TriggerFormPayload) => {
+		if (!canWrite) return
 		await updateTrigger.mutateAsync({
 			id: triggerId,
 			data: {
@@ -126,6 +130,7 @@ function TriggerDetailRoute() {
 	}
 
 	const handleDelete = () => {
+		if (!canWrite) return
 		deleteTrigger.mutate(triggerId, {
 			onSuccess: () => {
 				// `/triggers` now redirects to `/loops`; go straight there so the
@@ -139,7 +144,7 @@ function TriggerDetailRoute() {
 	}
 
 	const handleToggleEnabled = () => {
-		if (!trigger) return
+		if (!trigger || !canWrite) return
 		// PR D — if the trigger is auto-paused by Slack, route through the
 		// resume hook so we clear `metadata.auto_paused` + fire the resume
 		// PostHog event. A plain user-paused → resume keeps the existing
@@ -179,18 +184,21 @@ function TriggerDetailRoute() {
 								Saved
 							</span>
 							<DropdownMenu>
-								<DropdownMenuTrigger asChild>
-									<Button
-										variant="ghost"
-										size="icon"
-										className="h-7 w-7 text-muted-foreground"
-										aria-label="More"
-									>
-										<MoreHorizontal size={15} />
-									</Button>
-								</DropdownMenuTrigger>
+								<ViewerTooltip>
+									<DropdownMenuTrigger asChild>
+										<Button
+											variant="ghost"
+											size="icon"
+											className="h-7 w-7 text-muted-foreground"
+											aria-label="More"
+											disabled={!canWrite}
+										>
+											<MoreHorizontal size={15} />
+										</Button>
+									</DropdownMenuTrigger>
+								</ViewerTooltip>
 								<DropdownMenuContent align="end">
-									<DropdownMenuItem onSelect={handleToggleEnabled}>
+									<DropdownMenuItem disabled={!canWrite} onSelect={handleToggleEnabled}>
 										{trigger?.enabled ? (
 											<>
 												<Pause size={14} /> Pause trigger
@@ -203,15 +211,18 @@ function TriggerDetailRoute() {
 									</DropdownMenuItem>
 								</DropdownMenuContent>
 							</DropdownMenu>
-							<Button
-								variant="ghost"
-								size="icon"
-								className="h-7 w-7 text-muted-foreground hover:text-error"
-								onClick={handleDelete}
-								aria-label="Delete trigger"
-							>
-								<Trash2 size={15} />
-							</Button>
+							<ViewerTooltip>
+								<Button
+									variant="ghost"
+									size="icon"
+									className="h-7 w-7 text-muted-foreground hover:text-error"
+									onClick={handleDelete}
+									aria-label="Delete trigger"
+									disabled={!canWrite}
+								>
+									<Trash2 size={15} />
+								</Button>
+							</ViewerTooltip>
 						</>
 					) : undefined
 				}

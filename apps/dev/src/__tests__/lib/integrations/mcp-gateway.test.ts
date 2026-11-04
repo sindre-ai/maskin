@@ -182,6 +182,35 @@ describe('annotateToolsList', () => {
 		expect(tools.every((t) => !t.description.includes('Unavailable'))).toBe(true)
 	})
 
+	it('says on Gmail create_draft that it only drafts and names the tool that sends', () => {
+		const gmail = {
+			tools: [
+				{ name: 'create_draft', description: 'Creates a draft email.' },
+				{ name: 'search_threads', description: 'Searches threads.' },
+			],
+		}
+		for (const access of ['read_write', 'read'] as const) {
+			const { result: out } = annotateToolsList(gmail, {
+				provider: 'gmail',
+				providerLabel: 'Gmail',
+				access,
+			})
+			const tools = (out as { tools: Array<{ description: string }> }).tools
+			expect(tools[0].description).toContain('Creates a draft email.')
+			expect(tools[0].description).toContain('does not send anything')
+			expect(tools[0].description).toContain('gmail_send_email')
+			expect(tools[1].description).toBe('Searches threads.')
+		}
+	})
+
+	it('leaves a same-named tool on another provider alone', () => {
+		const { result: out } = annotateToolsList(
+			{ tools: [{ name: 'create_draft', description: 'Drafts.' }] },
+			{ provider: 'linear', providerLabel: 'Linear', access: 'read_write' },
+		)
+		expect((out as { tools: Array<{ description: string }> }).tools[0].description).toBe('Drafts.')
+	})
+
 	it('hands back what the server itself said, to classify later calls with', () => {
 		const { upstreamAnnotations } = annotateToolsList(result, {
 			provider: 'linear',

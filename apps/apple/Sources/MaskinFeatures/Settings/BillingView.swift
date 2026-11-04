@@ -22,14 +22,6 @@ struct BillingView: View {
 			if let usage = store.usage {
 				PageGroupLabel(text: "Plan")
 				PageCard(rows: rows(usage))
-				if usage.creditBalanceCents > 0 {
-					PageCard(rows: [
-						PageRowModel(
-							id: "credits", title: "Credits",
-							subtitle: "Left to use after your allowance",
-							accessory: .state(PageState(BillingUsage.dollars(usage.creditBalanceCents), .plain)))
-					])
-				}
 				PageFootnote(text: "This is a summary of your plan and this period's usage.")
 				if let manageURL {
 					Button("Manage on web") { openURL(manageURL) }.buttonStyle(.primaryAction)
@@ -49,9 +41,9 @@ struct BillingView: View {
 		let healthy = usage.status == .active
 		var rows = [
 			PageRowModel(
-				id: "plan", title: usage.planLabel,
-				subtitle: usage.resetsText ?? "Your current plan",
-				accessory: .state(PageState(usage.statusLabel, healthy ? .active : .muted)))
+				id: "plan", title: "Plan",
+				subtitle: [usage.statusLabel, usage.resetsText].compactMap { $0 }.joined(separator: " · "),
+				accessory: .state(PageState(usage.planLabel, healthy ? .active : .muted)))
 		]
 		let spent = BillingUsage.dollars(usage.usedCents)
 		if let fraction = usage.usedFraction, let cap = usage.capCents {
@@ -66,6 +58,8 @@ struct BillingView: View {
 					id: "usage", title: "Agent usage", subtitle: "This period",
 					accessory: .state(PageState(spent, .plain))))
 		}
+		// Invoices, auto top-up and the credit balance have no usable API field yet (the balance has
+		// no currency), so those rows stay hidden.
 		return rows
 	}
 }

@@ -116,6 +116,20 @@ extension PushAppDelegate: UNUserNotificationCenterDelegate {
 		) {
 			receive(registrationFailure: error)
 		}
+
+		/// A background push (`content-available`). Only the server's clear push is acted on: it
+		/// takes the handled notifications off the lock screen and Notification Center and fixes
+		/// the badge. Needs no runtime or network, so it works from a cold background wake.
+		func application(
+			_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any]
+		) async -> UIBackgroundFetchResult {
+			guard let clear = PushClearPayload(userInfo: userInfo) else { return .noData }
+			let center = SystemDeliveredNotificationCenter()
+			let ids = clear.identifiers(in: await center.delivered())
+			if !ids.isEmpty { await center.remove(identifiers: ids) }
+			if let badge = clear.badge { await center.setBadge(badge) }
+			return ids.isEmpty ? .noData : .newData
+		}
 	}
 #elseif os(macOS)
 	extension PushAppDelegate: NSApplicationDelegate {

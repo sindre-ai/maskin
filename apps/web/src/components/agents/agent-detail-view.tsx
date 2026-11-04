@@ -2,6 +2,7 @@ import { AgentAccessSection } from '@/components/agents/agent-access-section'
 import { AgentComposer } from '@/components/agents/agent-composer'
 import { AgentComputerSection } from '@/components/agents/agent-computer-section'
 import { AgentDetailHeader } from '@/components/agents/agent-detail-header'
+import { AgentExtensionsSection } from '@/components/agents/agent-extensions-section'
 import { AgentInstructionsSection } from '@/components/agents/agent-instructions-section'
 import { AgentLoopsSection } from '@/components/agents/agent-loops-section'
 import { getPortraitStatus } from '@/components/agents/agent-portrait-card'
@@ -11,11 +12,13 @@ import { AgentSkillsSection } from '@/components/agents/agent-skills-section'
 import { AgentTriggersSection } from '@/components/agents/agent-triggers-section'
 import { AgentUsageBlock } from '@/components/agents/agent-usage-block'
 import { PageHeader } from '@/components/layout/page-header'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { useAgentPause, useAgentRun, useDeleteActor } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useActorSessions } from '@/hooks/use-sessions'
 import { deriveAgentStatus, groupSessionsByAgent } from '@/lib/agent-status'
-import type { ActorResponse } from '@/lib/api'
+import { type ActorResponse, ApiError } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
 import { Trash2 } from 'lucide-react'
@@ -28,6 +31,7 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 	const run = useAgentRun(workspaceId)
 	const pause = useAgentPause(workspaceId)
 	const deleteActor = useDeleteActor(workspaceId)
+	const canWrite = useCanWrite()
 	const navigate = useNavigate()
 	// The one read of the desktop flag for the whole feature: the computer lives
 	// on this page only, so this is its boundary.
@@ -37,12 +41,11 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 	const portrait = getPortraitStatus(agent, deriveAgentStatus(agent.id, sessionsByAgent))
 
 	const handleDelete = useCallback(() => {
-		deleteActor.mutate(agent.id, {
-			onSuccess: () => {
-				navigate({ to: '/$workspaceId/agents', params: { workspaceId } })
-			},
-		})
-	}, [agent.id, deleteActor, navigate, workspaceId])
+		// The delete runs on in the background (toast in useDeleteActor), so leave now.
+		setConfirmDelete(false)
+		deleteActor.mutate({ id: agent.id, name: agent.name })
+		navigate({ to: '/$workspaceId/agents', params: { workspaceId } })
+	}, [agent.id, agent.name, deleteActor, navigate, workspaceId])
 
 	// The detail bar's one agent-level control is the enable/disable switch
 	// (mockup 2313: `adPaused ? "Enable agent" : "Disable agent"`), bordered and
@@ -62,7 +65,10 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 				)
 			}
 			onPause={() =>
-				pause.mutate(agent.id, { onError: () => toast.error(`Couldn't disable ${agent.name}`) })
+				pause.mutate(agent.id, {
+					onError: (err) =>
+						toast.error(err instanceof ApiError ? err.message : `Couldn't disable ${agent.name}`),
+				})
 			}
 			isRunPending={run.isPending}
 			isPausePending={pause.isPending}
@@ -99,15 +105,18 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 						</Button>
 					</div>
 				) : (
-					<Button
-						variant="ghost"
-						size="icon"
-						className="h-7 w-7 text-muted-foreground hover:text-error"
-						onClick={() => setConfirmDelete(true)}
-						aria-label="Delete agent"
-					>
-						<Trash2 size={15} />
-					</Button>
+					<ViewerTooltip>
+						<Button
+							variant="ghost"
+							size="icon"
+							className="h-7 w-7 text-muted-foreground hover:text-error"
+							disabled={!canWrite}
+							onClick={() => setConfirmDelete(true)}
+							aria-label="Delete agent"
+						>
+							<Trash2 size={15} />
+						</Button>
+					</ViewerTooltip>
 				))}
 		</div>
 	)
@@ -140,6 +149,7 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 				<AgentInstructionsSection agent={agent} />
 				<AgentSkillsSection agent={agent} />
 				<AgentAccessSection agent={agent} />
+				<AgentExtensionsSection agent={agent} />
 				<AgentComposer agent={agent} />
 			</div>
 		</>

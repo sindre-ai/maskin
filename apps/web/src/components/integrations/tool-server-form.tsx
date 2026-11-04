@@ -1,3 +1,4 @@
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -8,6 +9,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from '@/components/ui/select'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useIntegrations } from '@/hooks/use-integrations'
 import type { CustomMcpServerSpec } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -82,6 +84,7 @@ export function ToolServerForm({
 	onSave: (name: string, server: CustomMcpServerSpec) => void
 	onCancel: () => void
 }) {
+	const canWrite = useCanWrite()
 	const [name, setName] = useState(initialName)
 	const [transport, setTransport] = useState<'stdio' | 'http'>(
 		initialServer?.url ? 'http' : 'stdio',
@@ -94,7 +97,8 @@ export function ToolServerForm({
 	const [url, setUrl] = useState(initialServer?.url ?? '')
 	const [headerPairs, setHeaderPairs] = useState<Pair[]>(toPairs(initialServer?.headers))
 
-	const canSave = !!name.trim() && (transport === 'stdio' ? !!command.trim() : !!url.trim())
+	const canSave =
+		canWrite && !!name.trim() && (transport === 'stdio' ? !!command.trim() : !!url.trim())
 
 	const handleSave = () => {
 		if (!canSave) return
@@ -194,9 +198,11 @@ export function ToolServerForm({
 				<Button size="sm" variant="ghost" onClick={onCancel} disabled={saving}>
 					Cancel
 				</Button>
-				<Button size="sm" onClick={handleSave} disabled={!canSave || saving}>
-					Save
-				</Button>
+				<ViewerTooltip>
+					<Button size="sm" onClick={handleSave} disabled={!canSave || saving}>
+						Save
+					</Button>
+				</ViewerTooltip>
 			</div>
 		</div>
 	)

@@ -6,6 +6,7 @@ import {
 	actors,
 	conversationParticipants,
 	conversations,
+	messageThreadReads,
 	messages,
 	notificationPreferences,
 	notifications,
@@ -261,6 +262,84 @@ describe('notification_preferences', () => {
 			await sleep(PAST_DELAY_MS)
 			expect(sent).toHaveLength(0)
 			f.stop()
+		})
+
+		describe('a thread reply is read in the thread, not in the chat', () => {
+			let replyId: number
+			let rootId: number
+			let threadNotificationId: string
+
+			beforeEach(async () => {
+				// `messageId` (the chat's plain message) doubles as the thread root here.
+				rootId = messageId
+				const source = (await insertActor(db))?.id as string
+				await db.insert(conversationParticipants).values({ conversationId, actorId: source })
+				const [reply] = await db
+					.insert(messages)
+					.values({
+						conversationId,
+						actorId: source,
+						content: 'in the thread',
+						threadRootId: rootId,
+					})
+					.returning()
+				replyId = Number(reply?.id)
+				const [n] = await db
+					.insert(notifications)
+					.values({
+						workspaceId,
+						type: 'good_news',
+						title: 'Reply',
+						sourceActorId: source,
+						targetActorId: actorId,
+						status: 'seen',
+						metadata: {
+							push_category: 'conversation',
+							push_delay_seconds: PUSH_DELAY_SECONDS,
+							push_only: true,
+							conversation_id: conversationId,
+							message_id: replyId,
+							thread_root_id: rootId,
+							push_collapse_key: `chat:${conversationId}:thread:${rootId}`,
+						},
+					})
+					.returning()
+				threadNotificationId = n?.id as string
+			})
+
+			const threadEv = () => ({ ...ev(), entity_id: threadNotificationId })
+
+			it('still sends when the chat was read past the reply but the thread never was', async () => {
+				await db
+					.update(conversationParticipants)
+					.set({ lastReadMessageId: replyId })
+					.where(
+						and(
+							eq(conversationParticipants.conversationId, conversationId),
+							eq(conversationParticipants.actorId, actorId),
+						),
+					)
+				const { f, sent } = fanout()
+				await f.handleEvent(threadEv())
+				await vi.waitFor(() => expect(sent).toHaveLength(1), { timeout: 5_000 })
+				expect(sent[0]).toMatchObject({
+					conversationId,
+					threadRootId: rootId,
+					collapseKey: `chat:${conversationId}:thread:${rootId}`,
+				})
+				f.stop()
+			})
+
+			it('skips once the thread was read up to the reply', async () => {
+				const { f, sent } = fanout()
+				await f.handleEvent(threadEv())
+				await db
+					.insert(messageThreadReads)
+					.values({ actorId, rootMessageId: rootId, lastReadMessageId: replyId })
+				await sleep(PAST_DELAY_MS)
+				expect(sent).toHaveLength(0)
+				f.stop()
+			})
 		})
 
 		it('reads the preferences row: a disabled category never pushes', async () => {

@@ -17,14 +17,20 @@ public struct VoiceCallAnswer: Sendable, Equatable {
 	}
 }
 
+/// How far the microphone is from the speaker's mouth, which the server uses to pick the vendor's
+/// noise reduction: close for a headset or a phone held to the face, far for the loudspeaker.
+public enum VoiceNoiseReduction: String, Sendable, Equatable {
+	case nearField = "near_field"
+	case farField = "far_field"
+}
+
 public enum VoiceCallEndReason: String, Sendable {
 	case userHangup = "user_hangup"
 	case networkError = "network_error"
 }
 
 public enum VoiceCallFailure: Error, Sendable, Equatable {
-	/// 404: voice mode is off for this person, or the agent is not in the workspace. The caller
-	/// falls back to the dictation-based call.
+	/// 404: the agent is not in the workspace. The caller falls back to the dictation-based call.
 	case unavailable
 	/// 400: the target is not an agent.
 	case notAnAgent
@@ -61,7 +67,9 @@ public protocol VoiceCalling: Sendable {
 	/// `conversationID` is the chat the call was started from, so the agent knows what was said
 	/// there; nil for a call that isn't tied to a chat.
 	func create(agentActorID: String, conversationID: String?) async throws -> String
-	func offer(voiceSessionID: String, sdp: String) async throws -> VoiceCallAnswer
+	/// `noiseReduction` is the microphone hint; nil sends none.
+	func offer(voiceSessionID: String, sdp: String, noiseReduction: VoiceNoiseReduction?) async throws
+		-> VoiceCallAnswer
 	/// Ends the call. Idempotent on the server. Returns the id of the conversation the transcript
 	/// was saved to, if any.
 	@discardableResult
@@ -104,10 +112,15 @@ public struct URLSessionVoiceCalls: VoiceCalling {
 		}
 	}
 
-	public func offer(voiceSessionID: String, sdp: String) async throws -> VoiceCallAnswer {
+	public func offer(voiceSessionID: String, sdp: String, noiseReduction: VoiceNoiseReduction?) async throws
+		-> VoiceCallAnswer
+	{
+		let hint = noiseReduction.flatMap {
+			Components.Schemas.VoiceSessionOfferBody.noise_reductionPayload(rawValue: $0.rawValue)
+		}
 		let output = try await send {
 			try await client.post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_offer(
-				path: .init(id: voiceSessionID), body: .json(.init(sdp: sdp)))
+				path: .init(id: voiceSessionID), body: .json(.init(sdp: sdp, noise_reduction: hint)))
 		}
 		switch output {
 		case .ok(let ok):

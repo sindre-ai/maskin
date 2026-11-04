@@ -1,7 +1,9 @@
 import { AgentSectionHeading } from '@/components/agents/agent-section-heading'
 import { RelativeTime } from '@/components/shared/relative-time'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { useCanWrite } from '@/hooks/use-can-write'
 import type { ConversationThread } from '@/hooks/use-conversation-threads'
 import {
 	useActorSessions,
@@ -10,10 +12,11 @@ import {
 	useResumeSession,
 } from '@/hooks/use-sessions'
 import { useTriggers } from '@/hooks/use-triggers'
-import type { ActorResponse, SessionResponse } from '@/lib/api'
+import { type ActorResponse, ApiError, type SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { backgroundTitle, buildBackgroundThreads } from '@/lib/session-thread'
 import { useWorkspace } from '@/lib/workspace-context'
+import { isViewerRefusal } from '@/lib/workspace-role'
 import {
 	AlertCircle,
 	CheckCircle2,
@@ -139,6 +142,7 @@ export function AgentSessionsSection({ agent }: { agent: ActorResponse }) {
 		const rows = buildBackgroundThreads(sessions ?? [], agent.name).map((thread) => ({
 			thread,
 			root: (sessions ?? []).find((s) => s.id === thread.id) as SessionResponse,
+			latest: (sessions ?? []).find((s) => s.id === thread.latestId),
 		}))
 		return rows.sort((a, b) =>
 			sortSessions(
@@ -204,10 +208,11 @@ export function AgentSessionsSection({ agent }: { agent: ActorResponse }) {
 				</p>
 			) : (
 				<ul className="flex flex-col gap-1.5">
-					{shownSessions.map(({ thread, root }) => (
+					{shownSessions.map(({ thread, root, latest }) => (
 						<li key={thread.id}>
 							<SessionCard
 								session={root}
+								latest={latest ?? root}
 								thread={thread}
 								title={backgroundTitle(
 									root.triggerId ? triggerNames.get(root.triggerId) : undefined,
@@ -236,6 +241,7 @@ export function AgentSessionsSection({ agent }: { agent: ActorResponse }) {
 
 function SessionCard({
 	session,
+	latest,
 	thread,
 	title,
 	agent,
@@ -244,6 +250,8 @@ function SessionCard({
 }: {
 	/** The run the thread started with: its trigger, prompt and snapshot. */
 	session: SessionResponse
+	/** The thread's newest run: the one Pause and Resume act on. */
+	latest: SessionResponse
 	/** The run and every follow-up after it; its status is the newest session's. */
 	thread: ConversationThread
 	/** What the row is called: the trigger's name. */
@@ -261,6 +269,8 @@ function SessionCard({
 	const createSession = useCreateSession(workspaceId)
 	const pauseSession = usePauseSession(workspaceId)
 	const resumeSession = useResumeSession(workspaceId)
+	// Pause, resume and restart all act on the session, which a viewer cannot do.
+	const canWrite = useCanWrite()
 
 	const name = title
 	const StateIcon = meta.Icon
@@ -287,15 +297,18 @@ function SessionCard({
 			},
 			{
 				onSuccess: () => toast.success('Session restarted'),
-				onError: () => toast.error(`Couldn't restart this session for ${agent.name}`),
+				onError: (err) => {
+					if (!isViewerRefusal(err)) toast.error(`Couldn't restart this session for ${agent.name}`)
+				},
 			},
 		)
 
 	// Mockup 2443's `s.b1`. The backend refuses anything but an exactly-running
 	// session for pause, and a paused session needs a snapshot to restore from —
 	// so the button only appears where the write path can actually succeed
-	// (apps/dev/src/services/session-manager.ts:896 / :1049).
-	const canPause = thread.status === 'running'
+	// (apps/dev/src/services/session-manager.ts:896 / :1049). A session on an agent
+	// server is refused too: snapshot and resume are local-only.
+	const canPause = thread.status === 'running' && !latest.agentServerId
 	const canResume = state === 'paused' && thread.latestId === session.id && !!session.snapshotPath
 	const isPauseResumePending = pauseSession.isPending || resumeSession.isPending
 
@@ -303,42 +316,51 @@ function SessionCard({
 		if (canPause) {
 			pauseSession.mutate(thread.latestId, {
 				onSuccess: () => toast.success('Session paused'),
-				onError: () => toast.error("Couldn't pause this session"),
+				onError: (err) => {
+					if (!isViewerRefusal(err))
+						toast.error(err instanceof ApiError ? err.message : "Couldn't pause this session")
+				},
 			})
 			return
 		}
 		resumeSession.mutate(thread.latestId, {
 			onSuccess: () => toast.success('Session resumed'),
-			onError: () => toast.error("Couldn't resume this session"),
+			onError: (err) => {
+				if (!isViewerRefusal(err)) toast.error("Couldn't resume this session")
+			},
 		})
 	}
 
 	const pauseResumeButton = (
-		<Button
-			size="sm"
-			variant="outline"
-			className="h-7 rounded-md px-2.5 text-xs"
-			onClick={handlePauseResume}
-			disabled={isPauseResumePending}
-		>
-			{canPause ? <Pause size={12} aria-hidden /> : <Play size={12} aria-hidden />}
-			<span className="sr-only md:not-sr-only">{canPause ? 'Pause' : 'Resume'}</span>
-		</Button>
+		<ViewerTooltip>
+			<Button
+				size="sm"
+				variant="outline"
+				className="h-7 rounded-md px-2.5 text-xs"
+				onClick={handlePauseResume}
+				disabled={isPauseResumePending || !canWrite}
+			>
+				{canPause ? <Pause size={12} aria-hidden /> : <Play size={12} aria-hidden />}
+				<span className="sr-only md:not-sr-only">{canPause ? 'Pause' : 'Resume'}</span>
+			</Button>
+		</ViewerTooltip>
 	)
 
 	const restartButton = (
-		<Button
-			size="sm"
-			variant="outline"
-			className="h-7 rounded-md px-2.5 text-xs"
-			onClick={handleRestart}
-			disabled={createSession.isPending}
-		>
-			<RotateCcw size={12} aria-hidden />
-			<span className="sr-only md:not-sr-only">
-				{createSession.isPending ? 'Restarting…' : 'Restart'}
-			</span>
-		</Button>
+		<ViewerTooltip>
+			<Button
+				size="sm"
+				variant="outline"
+				className="h-7 rounded-md px-2.5 text-xs"
+				onClick={handleRestart}
+				disabled={createSession.isPending || !canWrite}
+			>
+				<RotateCcw size={12} aria-hidden />
+				<span className="sr-only md:not-sr-only">
+					{createSession.isPending ? 'Restarting…' : 'Restart'}
+				</span>
+			</Button>
+		</ViewerTooltip>
 	)
 
 	return (

@@ -3,8 +3,8 @@ import { expect, test } from '../fixtures/auth.fixture'
 import { VIEWPORTS } from '../helpers/viewports'
 
 /**
- * A new agent introduces itself in a 1-1 chat "Meet {name}" with the person who
- * created it (bet/e9ce-agent-intro-chat-routing, slice 2).
+ * A new agent introduces itself in the direct message with the person who
+ * created it, titled with the agent's name (bet/e9ce-agent-intro-chat-routing, slice 2).
  *
  * Not covered here: an agent reply to a message in the intro chat, and asking
  * Chief of Staff in the UI to create an agent. Both need a workspace with real
@@ -12,7 +12,7 @@ import { VIEWPORTS } from '../helpers/viewports'
  */
 
 test.describe('Agent intro chat', () => {
-	test('creating an agent in the UI puts an unread "Meet {name}" chat with its intro in the list', async ({
+	test('creating an agent in the UI puts an unread direct message with its intro in the list', async ({
 		page,
 		account,
 	}) => {
@@ -27,13 +27,14 @@ test.describe('Agent intro chat', () => {
 
 		// The intro lands within seconds of creation; the chat list refreshes on its own.
 		await page.goto(`/${account.workspaceId}/chats`)
-		const row = page.getByRole('link', { name: new RegExp(`Meet ${name}`) })
+		const row = page.getByRole('link', { name: new RegExp(name) })
 		await expect(row).toBeVisible({ timeout: 15_000 })
 		await expect(row.getByLabel('1 unread')).toBeVisible()
 
 		await row.click()
-		await expect(page.getByRole('heading', { name: `Meet ${name}` })).toBeVisible()
-		await expect(page.getByPlaceholder(`Reply to ${name}…`)).toBeVisible()
+		await expect(page.getByRole('heading', { name })).toBeVisible()
+		// The tag input draws its placeholder as text behind the box, not as an attribute.
+		await expect(page.getByText(`Reply to ${name}…`)).toBeVisible()
 		// The chat list's snippet repeats the same text beside the thread, so take the first match.
 		await expect(page.getByText(`I'm ${name}.`).first()).toBeVisible()
 		// The e2e workspace has no LLM credentials, so the intro says it cannot run yet instead of
@@ -204,7 +205,7 @@ test.describe('Agent intro steps and tools', () => {
 		// Fill: the box takes the prompt, keeps focus, and nothing is sent.
 		await page.getByRole('button', { name: /Draft a reply/ }).click()
 		const box = page.getByLabel('Message this conversation')
-		await expect(box).toHaveValue('Draft a reply to: ')
+		await expect(box).toHaveText('Draft a reply to:')
 		await expect(box).toBeFocused()
 		expect(
 			await page.evaluate((id) => sessionStorage.getItem(`composer-draft:${id}`), conversation.id),
@@ -222,7 +223,7 @@ test.describe('Agent intro steps and tools', () => {
 			content: 'Summarise open bugs',
 			metadata: { from_suggested_step: { intro_message_id: 9201, index: 0 } },
 		})
-		await expect(box).toHaveValue('Draft a reply to: ')
+		await expect(box).toHaveText('Draft a reply to:')
 		// The tapped button is gone, so focus goes to the box for a follow-up.
 		await expect(box).toBeFocused()
 		// The steps leave once the person has written; the tool row stays.

@@ -118,3 +118,15 @@ No ActivityKit anywhere. Suggested minimum, after items 1-3:
 - Local start from "run agent"; updates need an APNs `liveactivity` push (new token table, throttle
   ~1 per 30-60 s, priority 10 for needsYou/terminal) plus an integration test per
   `.claude/rules/verification.md`. Ship local-start first, server push second.
+
+## Status 2026-10-29 (branch `apple-push-widget-share-gaps`)
+
+- **8** The service extension now also inserts the fixed fallback category (`PushCategories.merged`), so it exists before the app ever launches. Also fixed: the merge removed the replaced category with `Set.remove`, which does not match by identifier, so a rebuilt category with the same identifier was kept twice; it now matches by identifier. Tests: `PushCategoriesTests`.
+- **9** A failed repost keeps the original's buttons, sound and Time Sensitive level (`NotificationRepost`). Answered / queued / deferred reposts deliberately carry no buttons (answering twice must not be one tap away); documented and tested.
+- **11** Tests added: `PushCategoriesTests`, `NotificationRepostTests`. The shared time budget was already covered by `bothWritesShareOneDeadline`. A two-process Keychain read still needs a signed device.
+- **15** `KeychainSecretStore(readOnly: true)` is used by the widget read paths: no `migrate()` from the extension. Still required (signing is out of scope here): Keychain Sharing on App ID `io.maskin.app.widgets` with the same first group as the app; without it the widget shows "signed out".
+- **18** The blocked screen already offers "Copy your text" (`copyableText`).
+- **20** `NSExtensionActivationSupportsWebURLWithMaxCount` raised from 2 to 10; extra links are kept in the text.
+- **22** Already fixed: `blockedDetail` shows the skip reason (`ShareHardeningTests`).
+- **24** `maskin://open` parsed as the inbox of a workspace called "open" and ended in a not-a-member rejection; `DeepLinkRouter.isOpenApp` now accepts it as a plain foreground. Safari image share: the extractor keeps the page link in every item order tested; whether Safari delivers the address in a separate provider needs a device.
+- **13** Lock-screen layout parity with the mockup is not done (design work).

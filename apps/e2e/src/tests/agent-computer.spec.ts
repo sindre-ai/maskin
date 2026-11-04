@@ -209,7 +209,7 @@ test.describe("An agent's computer", () => {
 
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
 
-			await expect(page.getByRole('region', { name: 'Computer' })).toBeVisible()
+			await expect(page.getByRole('region', { name: 'Computer', exact: true })).toBeVisible()
 			await expect(page.getByText("Couldn't open the desktop")).toBeVisible()
 			await expect(page.getByRole('button', { name: 'Reconnect' })).toBeVisible()
 		})

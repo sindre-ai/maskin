@@ -9,6 +9,7 @@ vi.mock('../../../lib/analytics/posthog', () => ({
 
 import {
 	approximatePromptTokens,
+	trackAgentSessionCompletedWithSkills,
 	trackAgentSessionStartedWithPrompt,
 } from '../../../lib/analytics/agent-session-events'
 
@@ -162,5 +163,39 @@ describe('trackAgentSessionStartedWithPrompt', () => {
 		expect(props.trigger_source).toBe('comment_fallback')
 		expect(props.trigger_type).toBeUndefined()
 		expect(props.trigger_id).toBeUndefined()
+	})
+})
+
+describe('trackAgentSessionCompletedWithSkills', () => {
+	it('carries duration_ms next to the outcome on the dev-backend emission', async () => {
+		await trackAgentSessionCompletedWithSkills({
+			workspaceId: 'ws-1',
+			sessionId: 'sess-1',
+			agentId: 'agent-1',
+			outcome: 'completed',
+			durationMs: 42_000,
+		})
+
+		expect(capturePosthogEventMock).toHaveBeenCalledWith(
+			'agent_session_completed',
+			'agent-1',
+			expect.objectContaining({
+				outcome: 'completed',
+				duration_ms: 42_000,
+				emitted_from: 'dev_backend',
+			}),
+		)
+	})
+
+	it('leaves duration_ms absent when the session has no start time', async () => {
+		await trackAgentSessionCompletedWithSkills({
+			workspaceId: 'ws-1',
+			sessionId: 'sess-1',
+			agentId: 'agent-1',
+			outcome: 'failed',
+		})
+
+		const props = capturePosthogEventMock.mock.calls[0][2]
+		expect(props.duration_ms).toBeUndefined()
 	})
 })

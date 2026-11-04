@@ -100,7 +100,7 @@ export function useApproveObject() {
 export function useSearchObjects(
 	workspaceId: string,
 	params: { q: string; type?: string; status?: string; limit?: number },
-	options?: { enabled?: boolean },
+	options?: { enabled?: boolean; keepPrevious?: boolean },
 ) {
 	const q = params.q.trim()
 	const normalized = { q, type: params.type, status: params.status, limit: params.limit }
@@ -114,6 +114,7 @@ export function useSearchObjects(
 				) as Record<string, string>,
 			),
 		enabled: (options?.enabled ?? true) && q.length >= 1,
+		placeholderData: options?.keepPrevious ? keepPreviousData : undefined,
 	})
 }
 

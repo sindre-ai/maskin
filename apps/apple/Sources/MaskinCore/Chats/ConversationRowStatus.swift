@@ -29,19 +29,22 @@ public struct ConversationRowStatus: Equatable, Sendable {
 
 	public var prefix: Prefix?
 	/// The text after the prefix; empty while typing.
-	public var preview: String
+	public var preview: String { didSet { previewPieces = nil } }
+	/// The preview in runs, when part of it is a muted "link" word; `nil` when it is all plain text.
+	public var previewPieces: [ChatPreviewText.Piece]?
 	public var isDraft: Bool
 	public var mentionsYou: Bool
 	/// Who is running, by first name, so the row can say "Forge is working".
 	public var workingNames: [String]
 
 	public init(
-		prefix: Prefix? = nil, preview: String, isDraft: Bool = false, mentionsYou: Bool = false,
-		workingNames: [String] = []
+		prefix: Prefix? = nil, preview: String, previewPieces: [ChatPreviewText.Piece]? = nil, isDraft: Bool = false,
+		mentionsYou: Bool = false, workingNames: [String] = []
 	) {
 		self.workingNames = workingNames
 		self.prefix = prefix
 		self.preview = preview
+		self.previewPieces = previewPieces
 		self.isDraft = isDraft
 		self.mentionsYou = mentionsYou
 	}
@@ -77,21 +80,29 @@ public struct ConversationRowStatus: Equatable, Sendable {
 		if let draft = draft?.trimmingCharacters(in: .whitespacesAndNewlines), !draft.isEmpty {
 			return ConversationRowStatus(preview: "Draft: \(draft)", isDraft: true, mentionsYou: mention)
 		}
-		let text = conversation.snippet.map(ChatPreviewText.plain) ?? ""
+		let pieces = conversation.snippet.map(ChatPreviewText.linePieces) ?? []
+		let text = pieces.map(\.text).joined()
 		var preview = text.isEmpty ? noMessages : text
+		var lead = ""
 		var prefix: Prefix?
 		if workingAgents > 0 {
 			prefix = .working(workingAgents)
 		} else if tick == .sent, !text.isEmpty {
 			// Your own last message reads "You: …" rather than a tick; sending and failed keep their mark.
-			preview = "You: \(text)"
+			lead = "You: "
 		} else if let tick {
 			prefix = .tick(tick)
 		} else if !text.isEmpty, let who = conversation.snippetActorName, !who.isEmpty {
-			preview = "\(who): \(text)"
+			lead = "\(who): "
+		}
+		var previewPieces: [ChatPreviewText.Piece]?
+		if !lead.isEmpty { preview = lead + text }
+		if pieces.contains(where: \.isLink) {
+			previewPieces = (lead.isEmpty ? [] : [ChatPreviewText.Piece(lead)]) + pieces
 		}
 		return ConversationRowStatus(
-			prefix: prefix, preview: preview, mentionsYou: mention, workingNames: workingNames)
+			prefix: prefix, preview: preview, previewPieces: previewPieces, mentionsYou: mention,
+			workingNames: workingNames)
 	}
 
 	/// A flow row: `{agent}: {first clause of the last post}` with a working prefix while agents run.

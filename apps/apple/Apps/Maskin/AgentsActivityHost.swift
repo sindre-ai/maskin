@@ -19,7 +19,8 @@
 		func attach(_ coordinator: AgentsActivityCoordinator) {
 			self.coordinator = coordinator
 			guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
-			if #available(iOS 17.2, *) {
+			// No automatic card any more, so no push-to-start token is worth registering.
+			if coordinator.startsAutomatically, #available(iOS 17.2, *) {
 				tasks.append(
 					Task { [weak self] in
 						for await data in Activity<MaskinAgentsAttributes>.pushToStartTokenUpdates {
@@ -182,6 +183,70 @@
 		func end() async {
 			for live in Activity<MaskinMeetingAttributes>.activities {
 				await live.end(nil, dismissalPolicy: .immediate)
+			}
+		}
+	}
+
+	/// Starts, updates and ends the opt-in "Following an agent" cards, one per followed session.
+	/// Local only: the app has no push path for it, so a card is kept current while the app runs
+	/// and reads stale after 15 minutes without an update.
+	@MainActor
+	final class FollowActivityHost: FollowActivityHosting {
+		private func activity(sessionId: String) -> Activity<MaskinFollowAttributes>? {
+			Activity<MaskinFollowAttributes>.activities.first { $0.attributes.target.sessionId == sessionId }
+		}
+
+		private static func content(_ state: FollowActivityState) -> ActivityContent<FollowActivityState> {
+			ActivityContent(
+				state: state, staleDate: Date().addingTimeInterval(FollowActivityState.staleAfter))
+		}
+
+		var isAvailable: Bool { ActivityAuthorizationInfo().areActivitiesEnabled }
+
+		func start(_ target: FollowTarget, state: FollowActivityState) -> Bool {
+			guard isAvailable else { return false }
+			if activity(sessionId: target.sessionId) != nil { return true }
+			do {
+				_ = try Activity.request(
+					attributes: MaskinFollowAttributes(target: target), content: Self.content(state), pushType: nil)
+				return true
+			} catch {
+				// Over the system's limit of live activities, or refused.
+				return false
+			}
+		}
+
+		func update(sessionId: String, state: FollowActivityState) async {
+			await activity(sessionId: sessionId)?.update(Self.content(state))
+		}
+
+		func end(sessionId: String, state: FollowActivityState?, dismissAfter: TimeInterval) async {
+			guard let activity = activity(sessionId: sessionId) else { return }
+			// A card adopted after a relaunch has no state of ours: take what it shows and mark it done.
+			var last = state
+			if last == nil, dismissAfter > 0 {
+				var adopted = activity.content.state
+				adopted.phase = .finished
+				last = adopted
+			}
+			let content = last.map { ActivityContent(state: $0, staleDate: nil) }
+			if dismissAfter > 0 {
+				await activity.end(content, dismissalPolicy: .after(Date().addingTimeInterval(dismissAfter)))
+			} else {
+				await activity.end(content, dismissalPolicy: .immediate)
+			}
+		}
+
+		func activeSessionIds() -> Set<String> {
+			Set(
+				Activity<MaskinFollowAttributes>.activities
+					.filter { $0.activityState == .active || $0.activityState == .stale }
+					.map { $0.attributes.target.sessionId })
+		}
+
+		func endAll() async {
+			for activity in Activity<MaskinFollowAttributes>.activities {
+				await activity.end(nil, dismissalPolicy: .immediate)
 			}
 		}
 	}

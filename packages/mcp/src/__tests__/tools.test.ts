@@ -69,6 +69,8 @@ const ALL_TOOL_NAMES = [
 	'update_loop',
 	'list_loops',
 	'get_loop',
+	'set_loop_view',
+	'query_data',
 	'delete_loop',
 	'create_session',
 	'create_sub_chat',
@@ -77,6 +79,7 @@ const ALL_TOOL_NAMES = [
 	'remove_chat_participant',
 	'get_chat_activity',
 	'stop_chat_agent',
+	'run_agent',
 	'list_sessions',
 	'get_session',
 	'get_session_activity',
@@ -87,9 +90,13 @@ const ALL_TOOL_NAMES = [
 	'send_session_message',
 	'ask_user_question',
 	'gmail_send_email',
+	'gmail_save_attachment',
+	'resend_send_email',
 	'approve_object_draft',
 	'create_notification',
 	'list_notifications',
+	'list_for_you',
+	'withdraw_decision_card',
 	'get_notification',
 	'update_notification',
 	'delete_notification',
@@ -102,6 +109,7 @@ const ALL_TOOL_NAMES = [
 	'list_keychain_credentials',
 	'request_keychain_access',
 	'request_integration_access',
+	'add_mcp_server',
 	'show_computer',
 	'update_integration_access',
 	'disconnect_integration',
@@ -117,6 +125,7 @@ const ALL_TOOL_NAMES = [
 	'desktop_type',
 	'desktop_key',
 	'desktop_run',
+	'desktop_put_file',
 	'desktop_expose_port',
 	'desktop_list_ports',
 	'desktop_close_port',
@@ -808,6 +817,30 @@ describe('create_notification schema', () => {
 	})
 })
 
+describe('list_for_you schema', () => {
+	const schema = tools.list_for_you.inputSchema
+
+	it('requires an actor id and defaults limit to 10', () => {
+		expect(() => schema.parse({})).toThrow()
+		expect(schema.parse({ actor_id: uuid }).limit).toBe(10)
+	})
+
+	it('rejects a limit above 50', () => {
+		expect(() => schema.parse({ actor_id: uuid, limit: 51 })).toThrow()
+	})
+
+	it('defaults offset to 0 and rejects a negative or fractional offset', () => {
+		expect(schema.parse({ actor_id: uuid }).offset).toBe(0)
+		expect(schema.parse({ actor_id: uuid, offset: 50 }).offset).toBe(50)
+		expect(() => schema.parse({ actor_id: uuid, offset: -1 })).toThrow()
+		expect(() => schema.parse({ actor_id: uuid, offset: 1.5 })).toThrow()
+	})
+
+	it('points list_notifications readers at list_for_you', () => {
+		expect(tools.list_notifications.description).toContain('list_for_you')
+	})
+})
+
 describe('list_notifications schema', () => {
 	const schema = tools.list_notifications.inputSchema
 
@@ -1005,11 +1038,23 @@ describe('create_loop schema', () => {
 	const schema = tools.create_loop.inputSchema
 
 	it('requires workspace_id', () => {
-		expect(() => schema.parse({ name: 'Lead loop' })).toThrow()
+		expect(() => schema.parse({ name: 'Lead loop', driver_id: uuid2 })).toThrow()
+	})
+
+	it('requires driver_id and says how to pick one', () => {
+		expect(() => schema.parse({ workspace_id: uuid, name: 'Lead loop' })).toThrow(
+			/driver_id is required.*list_actors/s,
+		)
+	})
+
+	it('rejects an empty or non-UUID driver_id', () => {
+		for (const driver_id of ['', 'not-a-uuid']) {
+			expect(() => schema.parse({ workspace_id: uuid, name: 'Lead loop', driver_id })).toThrow()
+		}
 	})
 
 	it('applies defaults: draft status, empty steps/trigger_ids/object_ids', () => {
-		const result = schema.parse({ workspace_id: uuid, name: 'Lead loop' })
+		const result = schema.parse({ workspace_id: uuid, name: 'Lead loop', driver_id: uuid2 })
 		expect(result.status).toBe('draft')
 		expect(result.steps).toEqual([])
 		expect(result.trigger_ids).toEqual([])
@@ -1020,6 +1065,7 @@ describe('create_loop schema', () => {
 		const result = schema.parse({
 			workspace_id: uuid,
 			name: 'Lead loop',
+			driver_id: uuid2,
 			steps: [
 				{
 					name: 'Qualify',
@@ -1044,6 +1090,7 @@ describe('create_loop schema', () => {
 		const result = schema.parse({
 			workspace_id: uuid,
 			name: 'Candidate loop',
+			driver_id: uuid2,
 			closed_when: { insight: ['loop_stage=live'] },
 		})
 		expect(result.closed_when).toEqual({ insight: ['loop_stage=live'] })
@@ -1053,7 +1100,12 @@ describe('create_loop schema', () => {
 		'rejects the malformed closed_when rule %j',
 		(rule) => {
 			expect(() =>
-				schema.parse({ workspace_id: uuid, name: 'X', closed_when: { insight: [rule] } }),
+				schema.parse({
+					workspace_id: uuid,
+					name: 'X',
+					driver_id: uuid2,
+					closed_when: { insight: [rule] },
+				}),
 			).toThrow()
 		},
 	)
@@ -1063,6 +1115,7 @@ describe('create_loop schema', () => {
 			schema.parse({
 				workspace_id: uuid,
 				name: 'X',
+				driver_id: uuid2,
 				steps: [
 					{
 						name: 'Bad',
@@ -1076,12 +1129,14 @@ describe('create_loop schema', () => {
 	})
 
 	it('rejects an unknown loop status', () => {
-		expect(() => schema.parse({ workspace_id: uuid, name: 'X', status: 'sideways' })).toThrow()
+		expect(() =>
+			schema.parse({ workspace_id: uuid, name: 'X', driver_id: uuid2, status: 'sideways' }),
+		).toThrow()
 	})
 
 	describe('targets', () => {
 		const row = { label: 'Posts published', source: 'posts per month', actual: 3, target: 8 }
-		const base = { workspace_id: uuid, name: 'X' }
+		const base = { workspace_id: uuid, name: 'X', driver_id: uuid2 }
 
 		it('accepts a list of rows and keeps them', () => {
 			expect(schema.parse({ ...base, targets: [row] }).targets).toEqual([row])
@@ -1118,6 +1173,14 @@ describe('update_loop schema', () => {
 
 	it('requires a uuid loop id', () => {
 		expect(() => schema.parse({ id: 'not-a-uuid', name: 'X' })).toThrow()
+	})
+
+	it('accepts a driver_id but never an empty or null one', () => {
+		expect(schema.parse({ id: uuid, driver_id: uuid2 }).driver_id).toBe(uuid2)
+		expect(schema.parse({ id: uuid, name: 'X' }).driver_id).toBeUndefined()
+		for (const driver_id of ['', null]) {
+			expect(() => schema.parse({ id: uuid, driver_id })).toThrow()
+		}
 	})
 
 	describe('targets', () => {
@@ -1565,6 +1628,7 @@ describe('workspace_id optional on most tools', () => {
 		'list_keychain_credentials',
 		'request_keychain_access',
 		'request_integration_access',
+		'add_mcp_server',
 		'show_computer',
 		'update_integration_access',
 		'disconnect_integration',
@@ -1700,5 +1764,31 @@ describe('workspace skill tools — end-to-end round-trip', () => {
 		expect(fetched.id).toBe(created.id)
 		expect(fetched.name).toBe('deploy-prod')
 		expect(fetched.content).toBe('---\nname: deploy-prod\ndescription: Ship to prod\n---\n\nBody')
+	})
+})
+
+describe('list_triggers schema', () => {
+	const schema = tools.list_triggers.inputSchema
+
+	it('accepts each filter and the compact flag', () => {
+		const result = schema.safeParse({
+			agent_id: '11111111-1111-4111-8111-111111111111',
+			status: 'enabled',
+			q: 'sweep',
+			compact: true,
+			limit: 10,
+		})
+		expect(result.success).toBe(true)
+	})
+
+	it('rejects an unknown parameter instead of ignoring it', () => {
+		const result = schema.safeParse({ driver_id: '11111111-1111-4111-8111-111111111111' })
+		expect(result.success).toBe(false)
+		if (!result.success) expect(result.error.issues[0].message).toContain('driver_id')
+	})
+
+	it('rejects a status other than enabled or disabled and an agent id that is not a uuid', () => {
+		expect(schema.safeParse({ status: 'paused' }).success).toBe(false)
+		expect(schema.safeParse({ agent_id: 'not-a-uuid' }).success).toBe(false)
 	})
 })

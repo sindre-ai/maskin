@@ -162,10 +162,15 @@ export async function findIntegrationRow(
 			.limit(1)
 		return any ?? null
 	}
+	// Same oldest-wins rule as the fallback above. A workspace can hold more than
+	// one workspace-scoped row for a provider (Drive allows two Google accounts
+	// with actor_id NULL), so an unordered limit(1) would pick whichever row
+	// Postgres returns. The id tiebreak keeps equal timestamps deterministic.
 	const rows = await db
 		.select()
 		.from(integrations)
 		.where(and(scope, isNull(integrations.actorId)))
+		.orderBy(asc(integrations.createdAt), asc(integrations.id))
 		.limit(1)
 	return rows[0] ?? null
 }

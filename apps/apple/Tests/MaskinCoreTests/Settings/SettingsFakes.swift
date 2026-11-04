@@ -31,7 +31,7 @@ final class FakeSettings: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Integration
 		resetsInMs: 3 * 86_400_000)
 	var schemaValue = WorkspaceSchema(
 		fieldDefinitions: ["bet": [PropertyDefinition(name: "owner_team", kind: .text)]],
-		statuses: ["bet": ["signal", "active", "done"]], displayNames: ["bet": "Bet"])
+		statuses: ["bet": ["opportunity", "active", "done"]], displayNames: ["bet": "Bet"])
 	private var _savedKeys: [Set<WorkspaceSchema.Key>] = []
 	private var _saved: [WorkspaceSchema] = []
 	var savedKeys: [Set<WorkspaceSchema.Key>] { lock.withLock { _savedKeys } }

@@ -94,10 +94,40 @@ struct KeychainCaptureTests {
 		#expect(KeychainCredentialName.problem(String(repeating: "a", count: 65)) != nil)
 	}
 
-	@Test func failureMessagesNeverEchoTheBody() {
+	@Test func aRefusedSaveShowsTheServersReasonNotAGuess() {
 		let body = Data(#"{"error":{"message":"Invalid fields: rawSecret"}}"#.utf8)
 		#expect(APIKeychainCaptureSource.failure(status: 400, body: body) == "Couldn't save: Invalid fields: rawSecret")
+		#expect(APIKeychainCaptureSource.failure(status: 404, body: Data(#"{"error":{"message":"Session not found"}}"#.utf8)) == "Couldn't save: Session not found")
+		// A viewer role also gets a 403, so it is not always "not a person".
+		#expect(APIKeychainCaptureSource.failure(status: 403, body: Data(#"{"error":{"message":"Viewers can't save credentials"}}"#.utf8)) == "Viewers can't save credentials")
+		#expect(APIKeychainCaptureSource.failure(status: 403, body: Data()) == "You can't save a credential here.")
 		#expect(APIKeychainCaptureSource.failure(status: 500, body: body) == "Couldn't save. Try again.")
+	}
+
+	/// The route's schema is strict, so an extra or missing field is a 400: pin both shapes.
+	@Test func theCaptureBodyCarriesExactlyTheFieldsTheServerAccepts() {
+		let key = KeychainCredentialInput(displayName: "Stripe", value: .apiKey("sk"), agentIDs: ["a"])
+		#expect(
+			Set(APIKeychainCaptureSource.captureBody(key, sessionID: "s").keys)
+				== ["sessionId", "providerMode", "detectedProvider", "displayName", "rawSecret", "agentIds", "fromCard"])
+		let login = KeychainCredentialInput(displayName: "Shop", value: .login(username: "u", password: "p"), agentIDs: [])
+		#expect(
+			Set(APIKeychainCaptureSource.captureBody(login, sessionID: "s").keys)
+				== ["sessionId", "providerMode", "displayName", "username", "password", "agentIds", "fromCard"])
+	}
+
+	@Test func theServersReasonIsShownForARefusedAllow() {
+		#expect(APIKeychainAccessSource.refusal("That credential is no longer active.") == "Couldn't allow: That credential is no longer active.")
+		#expect(APIKeychainAccessSource.refusal(nil) == "Couldn't allow it. Try again.")
+	}
+
+	@Test func aHiddenNudgeThatFailedToSendStaysVisibleAndOneThatWorkedStaysHidden() {
+		var nudge = ChatMessage(
+			id: "1", conversationID: "c", actorID: "me", actorName: "Me", author: .human, kind: "message", content: "x",
+			metadata: .object(["hidden_from_chat": .bool(true)]))
+		#expect(nudge.showsInTimeline == false)
+		nudge.status = .failed("Couldn't send.")
+		#expect(nudge.showsInTimeline)
 	}
 }
 

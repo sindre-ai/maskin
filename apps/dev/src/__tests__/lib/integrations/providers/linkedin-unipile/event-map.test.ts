@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { FLAGS } from '../../../../../lib/feature-flags'
 import { config } from '../../../../../lib/integrations/providers/linkedin-unipile/config'
 import { readUnipileEnvelope } from '../../../../../lib/integrations/providers/linkedin-unipile/envelope'
 import {
@@ -82,12 +81,11 @@ describe('message.new deliveryKey', () => {
 })
 
 describe('relation.new actions', () => {
-	it('lists accepted and new in the map and in config definitions, gated by the events flag', () => {
+	it('lists accepted and new in the map and in config definitions', () => {
 		const expected = ['accepted', 'new']
 		const row = getEventMapRow('relation.new')
 		expect(row?.entityType).toBe('linkedin.connection')
 		expect([...(row?.actions ?? [])].sort()).toEqual(expected)
-		expect(row?.flag).toBe(FLAGS.LINKEDIN_UNIPILE_EVENTS)
 		const definition = config.events?.definitions.find(
 			(d) => d.entityType === 'linkedin.connection',
 		)
@@ -156,11 +154,10 @@ describe('account event rows', () => {
 		'account.status.running',
 	]
 
-	it.each(ACCOUNT_TYPES)('%s is linkedin.account status_changed behind the flag', (type) => {
+	it.each(ACCOUNT_TYPES)('%s is linkedin.account status_changed', (type) => {
 		const row = getEventMapRow(type)
 		expect(row?.entityType).toBe('linkedin.account')
 		expect(row?.actions).toEqual(['status_changed'])
-		expect(row?.flag).toBe(FLAGS.LINKEDIN_UNIPILE_EVENTS)
 	})
 
 	it('lists status_changed for linkedin.account in config definitions', () => {

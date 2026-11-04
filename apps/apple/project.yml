@@ -239,7 +239,7 @@ targets:
             # counts exceed the in-code limit (ShareLimits.maxAttachments = 5) on purpose: a rule
             # that fails hides Maskin from the sheet, while going over the limit just skips with a note.
             NSExtensionActivationRule:
-              NSExtensionActivationSupportsWebURLWithMaxCount: 2
+              NSExtensionActivationSupportsWebURLWithMaxCount: 10
               NSExtensionActivationSupportsText: true
               NSExtensionActivationSupportsImageWithMaxCount: 10
               NSExtensionActivationSupportsFileWithMaxCount: 10
@@ -274,6 +274,7 @@ targets:
           - Info.plist
       - path: Sources/MaskinCore/Push/PushDecision.swift
       - path: Sources/MaskinCore/Push/PushRichContent.swift
+      - path: Sources/MaskinCore/Push/PushCategories.swift
     info:
       path: Apps/MaskinNotificationService/Info.plist
       properties:
@@ -533,6 +534,7 @@ targets:
         UIAppFonts:
           - Fonts/SchibstedGrotesk.ttf
           - Fonts/JetBrainsMono.ttf
+        NSMicrophoneUsageDescription: Maskin listens when you tap the microphone, so you can ask your Chief of Staff by voice.
         NSUserActivityTypes: [io.maskin.app.open-object]
         MaskinAPIBaseURL: $(MASKIN_API_BASE_URL)
         NSAppTransportSecurity:

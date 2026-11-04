@@ -123,9 +123,21 @@ public struct APIKeychainAccessSource: KeychainAccessing {
 			return try ok.body.json.relaunch == .stopped
 		case .forbidden:
 			throw KeychainAccessError("Only the person who saved this or a workspace admin can allow it.")
+		// The server says why (the session is gone, the credential is no longer active, it is not a
+		// saved key), as the web's card does; "try again" would never work for these.
+		case .badRequest(let bad):
+			throw KeychainAccessError(Self.refusal((try? bad.body.json)?.error.message))
+		case .notFound(let missing):
+			throw KeychainAccessError(Self.refusal((try? missing.body.json)?.error.message))
+		case .conflict(let conflict):
+			throw KeychainAccessError(Self.refusal((try? conflict.body.json)?.error.message))
 		default:
 			throw KeychainAccessError("Couldn't allow it. Try again.")
 		}
+	}
+
+	static func refusal(_ serverMessage: String?) -> String {
+		serverMessage.map { "Couldn't allow: \($0)" } ?? "Couldn't allow it. Try again."
 	}
 }
 

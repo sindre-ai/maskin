@@ -8,6 +8,7 @@ import {
 	checkBet,
 	checkLoop,
 	findMentionedProviders,
+	readWorkspaceLlmReadiness,
 	toNextSteps,
 	toProseBlock,
 } from '../setup-guidance'
@@ -44,6 +45,22 @@ function ctx(fields: Partial<LoopCheckContext> = {}): LoopCheckContext {
 		...fields,
 	}
 }
+
+describe('readWorkspaceLlmReadiness', () => {
+	it('counts a key as set when llm_configured says one is stored, without any key in settings', () => {
+		expect(readWorkspaceLlmReadiness({}, { anthropic: true, openai: false }).hasLlmKey).toBe(true)
+		expect(readWorkspaceLlmReadiness({}, { anthropic: false, openai: true }).hasLlmKey).toBe(true)
+	})
+
+	it('reports no key when llm_configured is all false and settings hold none', () => {
+		expect(readWorkspaceLlmReadiness({}, { anthropic: false, openai: false }).hasLlmKey).toBe(false)
+		expect(readWorkspaceLlmReadiness({}).hasLlmKey).toBe(false)
+	})
+
+	it('still reads llm_keys from settings for a server that does not send llm_configured', () => {
+		expect(readWorkspaceLlmReadiness({ llm_keys: { anthropic: 'sk-fake' } }).hasLlmKey).toBe(true)
+	})
+})
 
 describe('checkLoop — first-test fixture (bet DoD #8)', () => {
 	it('produces steps_have_agents:fail (first) and connectors_connected:warn with connect_integration fix', () => {
@@ -260,12 +277,12 @@ describe('checkBet', () => {
 	describe('status_progression', () => {
 		it('flags the entry status as an FYI without telling the agent to ask or progress', () => {
 			const checks = checkBet(
-				{ id: 'b1', type: 'bet', status: 'signal', content: fullContent, driver: 'actor-1' },
-				{ workspace: readyWorkspace, statusOrder: ['signal', 'qualified', 'active'] },
+				{ id: 'b1', type: 'bet', status: 'opportunity', content: fullContent, driver: 'actor-1' },
+				{ workspace: readyWorkspace, statusOrder: ['opportunity', 'qualified', 'active'] },
 			)
 			const c = checks.find((c) => c.name === 'status_progression')
 			expect(c?.status).toBe('warn')
-			expect(c?.message).toContain('signal')
+			expect(c?.message).toContain('opportunity')
 			expect(c?.message).toContain('qualified')
 			expect(c?.message).not.toMatch(/ask the user/i)
 			expect(c?.fix).toBeUndefined()
@@ -274,14 +291,14 @@ describe('checkBet', () => {
 		it('does not fire once the object is past the entry status', () => {
 			const checks = checkBet(
 				{ id: 'b1', type: 'bet', status: 'active', content: fullContent, driver: 'actor-1' },
-				{ workspace: readyWorkspace, statusOrder: ['signal', 'qualified', 'active'] },
+				{ workspace: readyWorkspace, statusOrder: ['opportunity', 'qualified', 'active'] },
 			)
 			expect(checks.find((c) => c.name === 'status_progression')).toBeUndefined()
 		})
 
 		it('does not fire when there is no status order to progress along', () => {
 			const checks = checkBet(
-				{ id: 'b1', type: 'bet', status: 'signal', content: fullContent, driver: 'actor-1' },
+				{ id: 'b1', type: 'bet', status: 'opportunity', content: fullContent, driver: 'actor-1' },
 				{ workspace: readyWorkspace, statusOrder: [] },
 			)
 			expect(checks.find((c) => c.name === 'status_progression')).toBeUndefined()

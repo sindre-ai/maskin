@@ -117,6 +117,35 @@ export function trackAgentSessionStarted(p: BaseProps & { entity_type: 'session'
 	trackEvent('agent_session_started', fillBase(p))
 }
 
+// The browser does not send agent_session_completed or trigger_fired: the
+// backend already reports completions (with trigger provenance), and the
+// browser copies were about half of all PostHog events, outside the backend
+// daily caps. This one event a day per browser says someone opened the app,
+// which is all the browser has to add. It is the daily and weekly active users
+// event.
+const APP_ACTIVE_DAY_KEY = 'maskin-app-active-day'
+
+// Kept in memory too, so a browser with no usable storage sends once per page
+// load instead of on every mount.
+let appActiveDaySent = ''
+
+// Returns true when it sent the event, false when today's was already sent from
+// this browser. `utc_day` is the same day format as the backend's
+// loop_active_day. Call it after identify so the event lands on the person.
+export function trackAppActive(now: Date = new Date()): boolean {
+	const utcDay = now.toISOString().slice(0, 10)
+	if (appActiveDaySent === utcDay) return false
+	appActiveDaySent = utcDay
+	try {
+		if (localStorage.getItem(APP_ACTIVE_DAY_KEY) === utcDay) return false
+		localStorage.setItem(APP_ACTIVE_DAY_KEY, utcDay)
+	} catch {
+		// No storage: the in-memory record above still stops repeats this page load.
+	}
+	trackEvent('app_active', { utc_day: utcDay })
+	return true
+}
+
 // Operator opened a chat with Maskin (Sindre, or a one-shot agent via the `/`
 // picker). Powers the founder-substitution measurement on the
 // `Chat — Maskin becomes the operator's default AI client` bet: counted against
@@ -199,40 +228,33 @@ export function deriveEntryAgentRole(name: string | null | undefined): string | 
 		.replace(/^-+|-+$/g, '')
 }
 
-// G2 trigger provenance. `trigger_id` / `trigger_type` are present only for
-// trigger-dispatched sessions (`cron` / `event` / `reminder`); they are null for
-// comment-fallback, interactive, and API-created sessions, whose attribution
-// rides on `source` instead. Emitted on the same event so the skill-load rate
-// can be segmented cron-vs-event.
-export function trackAgentSessionCompleted(
-	p: BaseProps & {
-		entity_type: 'session'
-		outcome: 'completed' | 'failed' | 'timeout'
-		trigger_id?: string | null
-		trigger_type?: string | null
-	},
-): void {
-	trackEvent('agent_session_completed', {
-		...fillBase(p),
-		outcome: p.outcome,
-		trigger_id: p.trigger_id ?? null,
-		trigger_type: p.trigger_type ?? null,
-	})
+export type CommentLengthBucket = '1-50' | '51-200' | '201-1000' | '1000+'
+
+export interface CommentShape {
+	is_multiline: boolean
+	length_bucket: CommentLengthBucket
+}
+
+// What a comment looks like without what it says: PostHog never gets the text.
+export function commentShape(text: string): CommentShape {
+	const length = text.trim().length
+	return {
+		is_multiline: text.trim().includes('\n'),
+		length_bucket:
+			length <= 50 ? '1-50' : length <= 200 ? '51-200' : length <= 1000 ? '201-1000' : '1000+',
+	}
 }
 
 export function trackCommentPosted(
-	p: BaseProps & { is_reply: boolean; attachment_count: number; content: string },
+	p: BaseProps & CommentShape & { is_reply: boolean; attachment_count: number },
 ): void {
 	trackEvent('comment_posted', {
 		...fillBase(p),
 		is_reply: p.is_reply,
 		attachment_count: p.attachment_count,
-		content: p.content,
+		is_multiline: p.is_multiline,
+		length_bucket: p.length_bucket,
 	})
-}
-
-export function trackTriggerFired(p: BaseProps & { entity_type: 'trigger' }): void {
-	trackEvent('trigger_fired', { ...fillBase(p), source: 'trigger' })
 }
 
 // `source` on `relationship_created` is the UI attribution point Analytics
@@ -280,10 +302,8 @@ export function trackObjectAttachedFile(
 // id) to count workspaces where the same mini-app was opened on 7 consecutive
 // days, so exactly-once-per-open emission is enforced at the call site.
 
-export function trackMiniAppFileViewed(
-	p: BaseProps & { entity_type: 'file'; file_name: string },
-): void {
-	trackEvent('mini_app_file_viewed', { ...fillBase(p), file_name: p.file_name })
+export function trackMiniAppFileViewed(p: BaseProps & { entity_type: 'file' }): void {
+	trackEvent('mini_app_file_viewed', fillBase(p))
 }
 
 // iPadOS 13+ reports `MacIntel` from `navigator.userAgent` / `navigator.platform`
@@ -326,12 +346,11 @@ export function trackChatObjectReferenceCreated(p: {
 
 // Fires when the `/` picker's Reference search endpoint fails. Paired at query
 // time with `chat_object_reference_created` to compute error-rate on the
-// picker; the message is truncated so posthog-js's batching doesn't reject a
-// long payload on a slow network. See the parent bet's "Retry works from the
+// picker; it carries the error name only, never the message. See the parent bet's "Retry works from the
 // error state" gate.
-export function trackChatSlashPickerError(p: { message: string }): void {
+export function trackChatSlashPickerError(p: { errorClass: string }): void {
 	trackEvent('chat_slash_picker_error', {
-		message: p.message.slice(0, 200),
+		error_class: p.errorClass,
 		source: 'web',
 	})
 }
@@ -593,7 +612,17 @@ export function trackCommandPaletteOpened(p: { surface: SearchSurface }): void {
 	trackEvent('command_palette_opened', { surface: p.surface, source: 'web' })
 }
 
-export type SearchResultGroup = 'chats' | 'loops' | 'agents' | 'objects' | 'automations'
+export type SearchResultGroup = 'chats' | 'loops' | 'agents' | 'people' | 'objects' | 'automations'
+
+// Which search UI produced the event. Events from the old page and launcher carry
+// 'legacy' (or nothing, when they predate the field), so the two stay comparable.
+export type SearchUiVersion = 'legacy' | 'v2'
+
+// How a v2 search began: typed in the field, restored from the URL, handed over
+// from the launcher, or picked from the recent searches.
+export type SearchEntry = 'typed' | 'url' | 'palette_handover' | 'recent'
+
+export type SearchSortKey = 'rel' | 'recent' | 'az'
 
 // Fires once per settled query on either surface. Never carries the query text
 // (queries can name customers and PostHog is a third party): only its length
@@ -609,8 +638,14 @@ export function trackSearchPerformed(p: {
 	words_count: number
 	type_filter: string | null
 	status_filter: string | null
+	// Added by the v2 page. The names above are frozen; these are new and optional.
+	ui_version?: SearchUiVersion
+	entry?: SearchEntry
+	pill_count?: number
+	filter_count?: number
+	sort?: SearchSortKey
 }): void {
-	trackEvent('search_performed', { ...p, source: 'web' })
+	trackEvent('search_performed', { ...p, ui_version: p.ui_version ?? 'legacy', source: 'web' })
 }
 
 // Fires for every result row on both surfaces. `search_id` joins the open to
@@ -626,10 +661,12 @@ export function trackSearchResultOpened(
 		result_count: number
 		position: number
 		result_group: SearchResultGroup
+		ui_version?: SearchUiVersion
 	},
 ): void {
 	trackEvent('search_result_opened', {
 		...fillBase(p),
+		ui_version: p.ui_version ?? 'legacy',
 		surface: p.surface,
 		search_id: p.search_id,
 		has_query: p.has_query,
@@ -637,6 +674,28 @@ export function trackSearchResultOpened(
 		position: p.position,
 		result_group: p.result_group,
 	})
+}
+
+export type SearchFilterDimension = 'type' | 'status' | 'participant' | 'updated' | 'sort' | 'clear'
+export type SearchFilterAction = 'add' | 'remove' | 'set' | 'reset'
+export type SearchFilterKind = 'chip' | 'pill' | 'display_menu' | 'clear_button'
+export type SearchFilterVia = 'click' | 'tab' | 'backspace' | 'typed' | 'keyboard'
+
+// Fires when a person changes a search filter on the v2 page: a chip, a pill, the
+// Display menu or Clear filters. Never fires for a change that comes from the URL
+// (a reload, back, a hand-over). `value` is a type key, a status group key, an actor id
+// (participant, never sent) or a sort / updated key, empty for a clear. Never carries the query text.
+// For the participant dimension the value is an actor id, so it is dropped here.
+export function trackSearchFilterChanged(p: {
+	surface: SearchSurface
+	dimension: SearchFilterDimension
+	action: SearchFilterAction
+	value: string
+	kind: SearchFilterKind
+	via: SearchFilterVia
+}): void {
+	const value = p.dimension === 'participant' ? undefined : p.value
+	trackEvent('search_filter_changed', { ...p, value, ui_version: 'v2', source: 'web' })
 }
 
 // Ship-metric event for the language-only loop builder bet — fires once when

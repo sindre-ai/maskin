@@ -100,7 +100,7 @@ export const TOKEN_CAP_TARGETS: Record<string, TokenCapDescriptor> = {
 	list_relationships: { rowsField: 'relationships' },
 	list_loops: { fetchHandleTool: 'get_loop', rowsField: 'loops' },
 	list_sessions: { fetchHandleTool: 'get_session', rowsField: 'sessions' },
-	list_unread: { rowsField: 'unread' },
+	list_unread: { rowsField: 'items' },
 	list_integrations: { rowsField: 'integrations' },
 	list_integration_providers: { rowsField: 'providers' },
 	list_extensions: { rowsField: 'extensions' },
@@ -263,7 +263,10 @@ function buildCappedResponse(
 		),
 		keptRows.length,
 	)
-	const resumedStructured = resumeAfterKept(rsp, cappedStructured, keptRows)
+	const resumedStructured = markTruncated(
+		resumeAfterKept(rsp, cappedStructured, keptRows),
+		fetchHandle.omittedRows.length,
+	)
 	return {
 		...rsp,
 		content: capContentToStructured(rsp.content, resumedStructured),
@@ -384,6 +387,26 @@ function syncReturnedCount(
 	if (!page || typeof page !== 'object') return structured
 	if (typeof (page as Record<string, unknown>).returned !== 'number') return structured
 	return { ...structured, page: { ...(page as Record<string, unknown>), returned: keptCount } }
+}
+
+/**
+ * Say in the payload itself that rows were dropped. `_meta.truncated` is invisible to a client that
+ * reads only the text (a live call), which then sees a short page with nothing to tell it so. The
+ * rows that were cut are still reachable through the cursor or the fetch handle; `has_more` is set
+ * so a page that looked like the last one does not.
+ */
+function markTruncated(
+	structured: Record<string, unknown>,
+	omittedCount: number,
+): Record<string, unknown> {
+	const page = structured.page
+	const withPage =
+		page &&
+		typeof page === 'object' &&
+		typeof (page as Record<string, unknown>).has_more === 'boolean'
+			? { ...structured, page: { ...(page as Record<string, unknown>), has_more: true } }
+			: structured
+	return { ...withPage, truncated: true, omitted_count: omittedCount }
 }
 
 function readCursor(structured: Record<string, unknown>): string | undefined {

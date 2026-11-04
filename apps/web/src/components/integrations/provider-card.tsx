@@ -5,6 +5,8 @@ export type ProviderCardTone = 'available' | 'connected' | 'warning'
 
 interface ProviderCardProps {
 	name: string
+	/** Small label beside the name, e.g. a "New" pill. */
+	badge?: ReactNode
 	subtitle?: string
 	/** `warning` colours both the dot and the subtitle; `connected` only the dot. */
 	tone: ProviderCardTone
@@ -27,6 +29,7 @@ interface ProviderCardProps {
  */
 export function ProviderCard({
 	name,
+	badge,
 	subtitle,
 	tone,
 	subtitleTitle,
@@ -49,7 +52,14 @@ export function ProviderCard({
 				)}
 			/>
 			<div className="min-w-0 flex-1 basis-40">
-				<p className="text-sm font-medium text-foreground truncate">{name}</p>
+				{badge ? (
+					<div className="flex items-center gap-2">
+						<p className="text-sm font-medium text-foreground truncate">{name}</p>
+						{badge}
+					</div>
+				) : (
+					<p className="text-sm font-medium text-foreground truncate">{name}</p>
+				)}
 				{subtitle && (
 					<p
 						className={cn(

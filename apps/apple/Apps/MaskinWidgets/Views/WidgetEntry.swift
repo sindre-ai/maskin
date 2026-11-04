@@ -53,7 +53,7 @@ enum WidgetRuntime {
 
 	static func decisions() -> WidgetDecisionService {
 		WidgetDecisionService.production(
-			baseURL: baseURL, secrets: KeychainSecretStore(), store: FileWidgetDecisionStore())
+			baseURL: baseURL, secrets: KeychainSecretStore(readOnly: true), store: FileWidgetDecisionStore())
 	}
 }
 

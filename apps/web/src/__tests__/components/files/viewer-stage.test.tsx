@@ -677,3 +677,44 @@ describe('ViewerStage — annotate mode (Slice 3)', () => {
 		expect(outerHandler).not.toHaveBeenCalled()
 	})
 })
+
+describe('ViewerStage — PDF and unsupported types', () => {
+	beforeEach(() => {
+		vi.stubGlobal(
+			'URL',
+			Object.assign(URL, {
+				createObjectURL: vi.fn(() => 'blob:pdf-url'),
+				revokeObjectURL: vi.fn(),
+			}),
+		)
+	})
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	it('shows an application/pdf file in an unsandboxed frame, not the empty state', () => {
+		const file = buildHtmlFile({
+			name: 'brief.pdf',
+			mimeType: 'application/pdf',
+			encoding: 'base64',
+			content: btoa('%PDF-1.4'),
+		})
+		render(<ViewerStage file={file} />)
+		const frame = screen.getByTitle('Preview of brief.pdf') as HTMLIFrameElement
+		expect(frame.getAttribute('src')).toBe('blob:pdf-url')
+		expect(frame.hasAttribute('sandbox')).toBe(false)
+		expect(screen.getByRole('button', { name: /open in new tab/i })).toBeInTheDocument()
+		expect(screen.queryByText('Preview not available')).toBeNull()
+	})
+
+	it('still shows "Preview not available" for other binary types', () => {
+		const file = buildHtmlFile({
+			name: 'archive.zip',
+			mimeType: 'application/zip',
+			encoding: 'base64',
+			content: btoa('PK'),
+		})
+		render(<ViewerStage file={file} />)
+		expect(screen.getByText('Preview not available')).toBeInTheDocument()
+	})
+})

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
 	alignTopFields,
+	listCallHasCursor,
+	listCallObjectType,
+	recordMcpAliasUseSchema,
 	recordMcpTelemetrySchema,
 	recordMcpToolCallResponseSizeSchema,
 	recordMcpToolCallSchema,
@@ -185,5 +188,181 @@ describe('recordMcpToolCallResponseSizeSchema — view', () => {
 		)
 		expect(parsed.view).toBeUndefined()
 		expect(parsed.structured_content_bytes).toBe(900)
+	})
+})
+
+describe('recordMcpTelemetrySchema — alias_use', () => {
+	const aliasEvent = (overrides: Record<string, unknown> = {}) => ({
+		event_type: 'alias_use' as const,
+		tool_name: 'update_actor',
+		session_id: 'session-1',
+		session_source: 'maskin-session' as const,
+		transport: 'http' as const,
+		renames: [{ old: 'driver_id', new: 'driver' }],
+		both_sent: false,
+		...overrides,
+	})
+
+	it('accepts a key-rename event and leaves tool_alias absent', () => {
+		const parsed = recordMcpTelemetrySchema.parse(aliasEvent())
+		expect(parsed).toMatchObject({
+			event_type: 'alias_use',
+			tool_name: 'update_actor',
+			renames: [{ old: 'driver_id', new: 'driver' }],
+			both_sent: false,
+		})
+		expect('tool_alias' in parsed ? parsed.tool_alias : undefined).toBeUndefined()
+	})
+
+	it('accepts nested dotted paths', () => {
+		const parsed = recordMcpAliasUseSchema.parse(
+			aliasEvent({ renames: [{ old: 'config.maxTurns', new: 'config.max_turns' }] }),
+		)
+		expect(parsed.renames[0]).toEqual({ old: 'config.maxTurns', new: 'config.max_turns' })
+	})
+
+	it('accepts a tool-name alias with dropped key names', () => {
+		const parsed = recordMcpAliasUseSchema.parse(
+			aliasEvent({
+				tool_name: 'run_agent',
+				renames: [],
+				tool_alias: { old: 'run_agent', new: 'create_session' },
+				dropped_keys: ['config', 'poll_interval_seconds'],
+			}),
+		)
+		expect(parsed.tool_alias).toEqual({ old: 'run_agent', new: 'create_session' })
+		expect(parsed.dropped_keys).toEqual(['config', 'poll_interval_seconds'])
+	})
+
+	it('defaults renames to empty and both_sent to false', () => {
+		const parsed = recordMcpAliasUseSchema.parse({
+			event_type: 'alias_use',
+			tool_name: 'run_agent',
+		})
+		expect(parsed.renames).toEqual([])
+		expect(parsed.both_sent).toBe(false)
+	})
+
+	it('caps renames at 64 and dropped keys at 16', () => {
+		const rename = { old: 'a', new: 'b' }
+		expect(
+			recordMcpAliasUseSchema.safeParse(aliasEvent({ renames: Array(64).fill(rename) })).success,
+		).toBe(true)
+		expect(
+			recordMcpAliasUseSchema.safeParse(aliasEvent({ renames: Array(65).fill(rename) })).success,
+		).toBe(false)
+		expect(
+			recordMcpAliasUseSchema.safeParse(aliasEvent({ dropped_keys: Array(17).fill('k') })).success,
+		).toBe(false)
+	})
+
+	// The contract is key NAMES. A path with spaces or punctuation is what a
+	// value (free text) looks like, so it must not get through.
+	it('rejects a rename path that is not identifier-like', () => {
+		for (const bad of ['Acquire the Nakatomi account', 'owner:login', 'a'.repeat(65), '']) {
+			expect(
+				recordMcpAliasUseSchema.safeParse(aliasEvent({ renames: [{ old: bad, new: 'driver' }] }))
+					.success,
+			).toBe(false)
+		}
+	})
+
+	it('has no actor field: an actor id in the payload is stripped', () => {
+		const parsed = recordMcpAliasUseSchema.parse(aliasEvent({ agent_actor_id: 'someone-else' }))
+		expect('agent_actor_id' in parsed).toBe(false)
+	})
+
+	it('is a member of the discriminated telemetry union', () => {
+		expect(recordMcpTelemetrySchema.safeParse(aliasEvent()).success).toBe(true)
+	})
+})
+
+describe('listCallObjectType', () => {
+	it('passes a built-in type through for list_objects and search_objects', () => {
+		expect(listCallObjectType('list_objects', { type: 'bet' })).toBe('bet')
+		expect(listCallObjectType('search_objects', { type: 'knowledge', q: 'x' })).toBe('knowledge')
+	})
+
+	it('turns a custom type or free text into other, never the text itself', () => {
+		expect(listCallObjectType('list_objects', { type: 'acme_deal' })).toBe('other')
+		expect(listCallObjectType('search_objects', { type: 'Acquire the Nakatomi account' })).toBe(
+			'other',
+		)
+		expect(listCallObjectType('list_objects', { type: 42 })).toBe('other')
+	})
+
+	it('is undefined when the call has no type argument', () => {
+		expect(listCallObjectType('list_objects', {})).toBeUndefined()
+		expect(listCallObjectType('list_objects', { type: '' })).toBeUndefined()
+		expect(listCallObjectType('list_objects', undefined)).toBeUndefined()
+	})
+
+	it('returns the fixed type for the other four list tools, whatever the arguments', () => {
+		expect(listCallObjectType('list_triggers', {})).toBe('trigger')
+		expect(listCallObjectType('list_loops', { type: 'bet' })).toBe('loop')
+		expect(listCallObjectType('list_workspace_skills', undefined)).toBe('skill')
+		expect(listCallObjectType('list_extensions', {})).toBe('extension')
+	})
+
+	it('is undefined for every other tool', () => {
+		expect(listCallObjectType('get_objects', { type: 'bet' })).toBeUndefined()
+		expect(listCallObjectType('list_actors', {})).toBeUndefined()
+	})
+})
+
+describe('listCallHasCursor', () => {
+	const LIST_TOOLS = [
+		'list_objects',
+		'search_objects',
+		'list_triggers',
+		'list_loops',
+		'list_workspace_skills',
+		'list_extensions',
+	]
+
+	it('is true for a cursor and for an offset, on every list-family tool', () => {
+		for (const tool of LIST_TOOLS) {
+			expect(listCallHasCursor(tool, { cursor: 'abc' })).toBe(true)
+			expect(listCallHasCursor(tool, { offset: 25 })).toBe(true)
+		}
+	})
+
+	it('is false for a first-page call, including offset 0 and an empty cursor', () => {
+		for (const tool of LIST_TOOLS) {
+			expect(listCallHasCursor(tool, { limit: 25 })).toBe(false)
+			expect(listCallHasCursor(tool, { offset: 0, cursor: '' })).toBe(false)
+			expect(listCallHasCursor(tool, undefined)).toBe(false)
+		}
+	})
+
+	it('is undefined for every other tool', () => {
+		expect(listCallHasCursor('get_comments', { cursor: 'abc' })).toBeUndefined()
+	})
+})
+
+describe('recordMcpToolCallSchema: list-call fields', () => {
+	it('accepts a known object type and a cursor flag', () => {
+		const parsed = recordMcpToolCallSchema.parse(
+			baseEvent({ object_type: 'task', has_cursor: true }),
+		)
+		expect(parsed.object_type).toBe('task')
+		expect(parsed.has_cursor).toBe(true)
+	})
+
+	it('is optional: an older MCP build sends neither', () => {
+		const parsed = recordMcpToolCallSchema.parse(baseEvent())
+		expect(parsed.object_type).toBeUndefined()
+		expect(parsed.has_cursor).toBeUndefined()
+	})
+
+	it('drops free text instead of rejecting the whole event', () => {
+		const result = recordMcpToolCallSchema.safeParse(
+			baseEvent({ object_type: 'Acquire the Nakatomi account', has_cursor: 'yes' }),
+		)
+		expect(result.success).toBe(true)
+		if (result.success) {
+			expect(result.data.object_type).toBeUndefined()
+			expect(result.data.has_cursor).toBeUndefined()
+		}
 	})
 })

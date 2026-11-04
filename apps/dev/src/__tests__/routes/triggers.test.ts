@@ -67,6 +67,31 @@ describe('Triggers Routes', () => {
 			expect(body.error.code).toBe('VALIDATION_ERROR')
 		})
 
+		it.each(['llm_route', 'llm_oauth_slot'])(
+			'returns 400 naming %s when it is sent in config, and writes nothing',
+			async (field) => {
+				const { app, calls } = createTestApp(triggersRoutes, '/api/triggers')
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/triggers',
+						buildCreateTriggerBody({
+							type: 'cron',
+							config: { expression: '30 10 * * *', [field]: 'claude_oauth' },
+						}),
+						{ 'x-workspace-id': wsId },
+					),
+				)
+
+				expect(res.status).toBe(400)
+				const body = await res.json()
+				expect(body.error.code).toBe('VALIDATION_ERROR')
+				expect(body.error.message).toContain(`config.${field}`)
+				expect(calls.inserts).toHaveLength(0)
+			},
+		)
+
 		it('fires runSlackTriggerSetup post-commit for a Slack event trigger with channel_ids', async () => {
 			const config = {
 				entity_type: 'slack.channel_message',
@@ -227,6 +252,27 @@ describe('Triggers Routes', () => {
 
 			expect(res.status).toBe(404)
 		})
+
+		it.each(['llm_route', 'llm_oauth_slot'])(
+			'returns 400 naming %s when it is sent in config, and updates nothing',
+			async (field) => {
+				const trigger = buildTrigger({ type: 'cron', config: { expression: '*/5 * * * *' } })
+				const { app, mockResults, calls } = createTestApp(triggersRoutes, '/api/triggers')
+				mockResults.selectQueue = [[trigger], [buildWorkspaceMember()]]
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/triggers/${trigger.id}`, {
+						config: { expression: '30 10 * * *', [field]: 'claude_oauth' },
+					}),
+				)
+
+				expect(res.status).toBe(400)
+				const body = await res.json()
+				expect(body.error.code).toBe('VALIDATION_ERROR')
+				expect(body.error.message).toContain(`config.${field}`)
+				expect(calls.updates).toHaveLength(0)
+			},
+		)
 
 		it('returns 400 for invalid cron expression on cron trigger', async () => {
 			const trigger = buildTrigger({ type: 'cron', config: { expression: '*/5 * * * *' } })

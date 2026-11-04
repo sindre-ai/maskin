@@ -1,61 +1,24 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, objects, readState } from '@maskin/db/schema'
-import { and, desc, eq, gt, inArray, ne, sql } from 'drizzle-orm'
-import { validationFailureHook } from '../lib/errors'
-import {
-	CLOSED_OBJECT_STATUSES,
-	findFinishedDraftCards,
-	loadVisibleForYou,
-} from '../lib/for-you-visibility'
-import { errorSchema, objectResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
-import { serialize } from '../lib/serialize'
-import { feedDecisionSchema, fillDraftBodies, toLatestMention } from './subscriptions'
+import { events, forYouDismissals, forYouWithdrawals, notifications } from '@maskin/db/schema'
+import { FOR_YOU_KIND, parseCommentDecision } from '@maskin/shared'
+import { and, eq, inArray, sql } from 'drizzle-orm'
+import { findChiefOfStaffId } from '../lib/chief-of-staff'
+import { createApiError, validationFailureHook } from '../lib/errors'
+import { recordEvent } from '../lib/events/record-event'
+import { buildForYouItems, forYouItemSchema } from '../lib/for-you-items'
+import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
+import { isWorkspaceMember } from '../lib/workspace-auth'
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		actorType: string
 	}
 }
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
-
-/** Decision cards older than this are not live asks any more; the scan also stays bounded. */
-const DECISION_WINDOW_DAYS = 14
-const DECISION_SCAN_LIMIT = 300
-
-const forYouItemSchema = z.object({
-	// Null for a decision card, which comes straight from an agent's comment and has no
-	// notification behind it.
-	notification_id: z.string().uuid().nullable(),
-	// `curated` is on the list because the Chief of Staff put it there; `decision` is a
-	// decision card an agent addressed to this person directly.
-	source: z.enum(['curated', 'decision']),
-	rank: z.number(),
-	// What marking the item read moves the person's read position to: the source comment, or
-	// for a curated item with no comment the newest activity on its object. Null when the
-	// object has no activity to mark.
-	latest_event_id: z.number().nullable(),
-	headline: z.string(),
-	rationale: z.string().nullable(),
-	created_at: z.string().nullable(),
-	entity_type: z.literal('object').nullable(),
-	entity_id: z.string().uuid().nullable(),
-	session_id: z.string().uuid().nullable(),
-	object: objectResponseSchema.optional(),
-	latest_mention: z
-		.object({
-			event_id: z.number(),
-			actor_id: z.string().uuid().nullable(),
-			created_at: z.string(),
-			content: z.string(),
-			attention: z.number().nullable(),
-			// With each draft's text and, for an email or message, its `preview`.
-			decision: feedDecisionSchema.nullable(),
-		})
-		.optional(),
-})
 
 const forYouResponseSchema = z.object({ items: z.array(forYouItemSchema) })
 
@@ -65,7 +28,18 @@ const listForYouRoute = createRoute({
 	tags: ['For You'],
 	summary:
 		"What needs the current actor: the Chief of Staff's ranked list, then decision cards addressed to them",
-	request: { headers: workspaceIdHeader },
+	request: {
+		headers: workspaceIdHeader,
+		query: z.object({
+			for_actor_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					"Read another member's list. Agents may ask for any member; a person may only ask for their own.",
+				),
+		}),
+	},
 	responses: {
 		200: {
 			description: 'Ranked For You items, already filtered against live state',
@@ -75,154 +49,320 @@ const listForYouRoute = createRoute({
 			description: 'Missing workspace ID',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		403: {
+			description: "A person asked for someone else's list",
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'for_actor_id is not a member of the workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
 app.openapi(listForYouRoute, async (c) => {
 	const db = c.get('db')
-	const actorId = c.get('actorId')
+	const callerId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { for_actor_id: forActorId } = c.req.valid('query')
 
-	const { cards, objectById, sourceById, newestEventByEntity } = await loadVisibleForYou(
-		db,
-		workspaceId,
-		actorId,
-	)
-
-	const curatedItems = cards.map(({ row, meta }) => {
-		const obj = row.objectId ? objectById.get(row.objectId) : undefined
-		const source =
-			meta.source_comment_id !== undefined ? sourceById.get(meta.source_comment_id) : undefined
-		return {
-			notification_id: row.id,
-			source: 'curated' as const,
-			rank: meta.rank,
-			latest_event_id: source
-				? Number(source.id)
-				: row.objectId
-					? (newestEventByEntity.get(row.objectId) ?? 0) || null
-					: null,
-			headline: meta.headline,
-			rationale: meta.rationale ?? null,
-			created_at: row.createdAt ? row.createdAt.toISOString() : null,
-			entity_type: row.objectId ? ('object' as const) : null,
-			entity_id: row.objectId ?? null,
-			session_id: row.sessionId ?? null,
-			...(obj ? { object: serialize(obj) as z.infer<typeof objectResponseSchema> } : {}),
-			...(source ? { latest_mention: toLatestMention(source) } : {}),
+	let actorId = callerId
+	if (forActorId && forActorId !== callerId) {
+		if (c.get('actorType') !== 'agent') {
+			return c.json(createApiError('FORBIDDEN', 'You can only read your own For You list'), 403)
 		}
+		if (!(await isWorkspaceMember(db, forActorId, workspaceId))) {
+			return c.json(createApiError('NOT_FOUND', 'Actor not found in this workspace'), 404)
+		}
+		actorId = forActorId
+	}
+
+	return c.json({ items: await buildForYouItems(db, workspaceId, actorId) }, 200)
+})
+
+const dismissBodySchema = z
+	.object({
+		notification_id: z
+			.string()
+			.uuid()
+			.optional()
+			.describe("A curated card's notification_id from the list."),
+		source_comment_id: z
+			.number()
+			.int()
+			.positive()
+			.optional()
+			.describe("A decision card's latest_mention.event_id from the list."),
+	})
+	.refine((b) => b.notification_id !== undefined || b.source_comment_id !== undefined, {
+		message: 'Give a notification_id or a source_comment_id',
 	})
 
-	// Decision cards: an agent asked this person for a call directly (a draft to approve, a
-	// batch to send). They reach the list without the Chief of Staff, so a draft waiting on
-	// someone never depends on an hourly run. Plain mentions do not: only a comment that
-	// carries a decision block is a blocked ask.
-	const curatedEntityIds = new Set(curatedItems.flatMap((i) => (i.entity_id ? [i.entity_id] : [])))
-	const decisionRows = await db
-		.select({ event: events })
-		.from(events)
-		.leftJoin(
-			readState,
-			and(
-				eq(readState.workspaceId, events.workspaceId),
-				eq(readState.actorId, actorId),
-				eq(readState.entityType, 'object'),
-				eq(readState.entityId, events.entityId),
-			),
-		)
+type DismissBody = z.infer<typeof dismissBodySchema>
+
+const dismissResponses = {
+	200: {
+		description: 'Done',
+		content: { 'application/json': { schema: z.object({ ok: z.literal(true) }) } },
+	},
+	400: {
+		description: 'Missing workspace ID, or neither id given',
+		content: { 'application/json': { schema: errorSchema } },
+	},
+	404: {
+		description: 'No such card for this person in this workspace',
+		content: { 'application/json': { schema: errorSchema } },
+	},
+}
+
+const dismissRoute = createRoute({
+	method: 'post',
+	path: '/dismissals',
+	tags: ['For You'],
+	summary:
+		'Dismiss a For You card. Separate from reading: opening the page does not dismiss a card, this does.',
+	request: {
+		headers: workspaceIdHeader,
+		body: { content: { 'application/json': { schema: dismissBodySchema } } },
+	},
+	responses: dismissResponses,
+})
+
+const undismissRoute = createRoute({
+	method: 'post',
+	path: '/dismissals/undo',
+	tags: ['For You'],
+	summary: 'Undo a Dismiss, so the card comes back',
+	request: {
+		headers: workspaceIdHeader,
+		body: { content: { 'application/json': { schema: dismissBodySchema } } },
+	},
+	responses: dismissResponses,
+})
+
+/** The caller's own For You notification, or undefined when it is not theirs or not a For You card. */
+async function findOwnCard(db: Database, workspaceId: string, actorId: string, id: string) {
+	const [row] = await db
+		.select({ id: notifications.id, status: notifications.status })
+		.from(notifications)
 		.where(
 			and(
+				eq(notifications.id, id),
+				eq(notifications.workspaceId, workspaceId),
+				eq(notifications.targetActorId, actorId),
+				eq(notifications.type, 'needs_input'),
+				sql`${notifications.metadata}->>'kind' = ${FOR_YOU_KIND}`,
+			),
+		)
+		.limit(1)
+	return row
+}
+
+async function commentExists(db: Database, workspaceId: string, id: number) {
+	const [row] = await db
+		.select({ id: events.id })
+		.from(events)
+		.where(
+			and(
+				eq(events.id, id),
 				eq(events.workspaceId, workspaceId),
 				eq(events.action, 'commented'),
 				eq(events.entityType, 'object'),
-				ne(events.actorId, actorId),
-				sql`${events.data}->'mentions' @> jsonb_build_array(${actorId}::text)`,
-				sql`jsonb_typeof(${events.data}->'decision') = 'object'`,
-				sql`${events.createdAt} >= now() - make_interval(days => ${DECISION_WINDOW_DAYS})`,
-				gt(events.id, sql`coalesce(${readState.lastReadEventId}, 0)`),
 			),
 		)
-		.orderBy(desc(events.id))
-		.limit(DECISION_SCAN_LIMIT)
+		.limit(1)
+	return !!row
+}
 
-	// Newest decision per object; the rows arrive newest first.
-	const latestDecisionByEntity = new Map<string, typeof events.$inferSelect>()
-	for (const { event } of decisionRows) {
-		if (curatedEntityIds.has(event.entityId)) continue
-		if (!latestDecisionByEntity.has(event.entityId))
-			latestDecisionByEntity.set(event.entityId, event)
+/**
+ * Applies a dismiss or an undo to what the body names. A curated card carries its own status;
+ * a decision card has only its source comment, so it gets a row in for_you_dismissals. Checks
+ * every id before changing anything, so a bad id never leaves the other half done.
+ */
+async function setDismissed(
+	db: Database,
+	workspaceId: string,
+	actorId: string,
+	body: DismissBody,
+	dismissed: boolean,
+): Promise<boolean> {
+	const card = body.notification_id
+		? await findOwnCard(db, workspaceId, actorId, body.notification_id)
+		: undefined
+	if (body.notification_id && !card) return false
+	if (body.source_comment_id !== undefined) {
+		if (!(await commentExists(db, workspaceId, body.source_comment_id))) return false
 	}
 
-	const decisionEntityIds = [...latestDecisionByEntity.keys()]
-	const [decisionObjects, decisionReplies] = decisionEntityIds.length
-		? await Promise.all([
-				db
-					.select()
-					.from(objects)
-					.where(and(eq(objects.workspaceId, workspaceId), inArray(objects.id, decisionEntityIds))),
-				db
-					.select({ entityId: events.entityId, id: events.id })
-					.from(events)
-					.where(
-						and(
-							eq(events.workspaceId, workspaceId),
-							eq(events.action, 'commented'),
-							eq(events.actorId, actorId),
-							inArray(events.entityId, decisionEntityIds),
-							gt(
-								events.id,
-								Math.min(...[...latestDecisionByEntity.values()].map((e) => Number(e.id))),
-							),
-						),
-					),
-			])
-		: [[], []]
-	const decisionObjectById = new Map(decisionObjects.map((o) => [o.id, o]))
-
-	const finishedDraftCards = await findFinishedDraftCards(db, workspaceId, [
-		...latestDecisionByEntity.values(),
-	])
-	const liveDecisions = [...latestDecisionByEntity.values()].filter((event) => {
-		const obj = decisionObjectById.get(event.entityId)
-		// Gone or closed (done, discarded, shipped…): the card would only ask about finished work.
-		if (!obj || CLOSED_OBJECT_STATUSES.includes(obj.status ?? '')) return false
-		// Every message it offered has been sent or skipped.
-		if (finishedDraftCards.has(Number(event.id))) return false
-		// The person already answered on this thread.
-		return !decisionReplies.some((r) => r.entityId === event.entityId && r.id > event.id)
-	})
-
-	const rankBase = curatedItems.reduce((max, i) => Math.max(max, i.rank), 0)
-	const decisionItems = liveDecisions.map((event, index) => {
-		const mention = toLatestMention(event)
-		const obj = decisionObjectById.get(event.entityId)
-		return {
-			notification_id: null,
-			source: 'decision' as const,
-			rank: rankBase + 1 + index,
-			latest_event_id: mention.event_id,
-			headline: mention.decision?.title ?? 'Needs your call',
-			rationale: null,
-			created_at: mention.created_at,
-			entity_type: 'object' as const,
-			entity_id: event.entityId,
-			session_id: null,
-			...(obj ? { object: serialize(obj) as z.infer<typeof objectResponseSchema> } : {}),
-			latest_mention: mention,
+	if (card) {
+		// Undo only reverses a dismissal; a card someone resolved stays resolved.
+		const [changed] = await db
+			.update(notifications)
+			.set({ status: dismissed ? 'dismissed' : 'pending', updatedAt: new Date() })
+			.where(
+				and(
+					eq(notifications.id, card.id),
+					inArray(notifications.status, dismissed ? ['pending', 'seen'] : ['dismissed']),
+				),
+			)
+			.returning()
+		// So the push fan-out can clear this card's lock-screen push, like any other status change.
+		if (changed) {
+			await recordEvent(db, {
+				workspaceId,
+				actorId,
+				action: 'updated',
+				entityType: 'notification',
+				entityId: changed.id,
+				data: changed,
+			})
 		}
-	})
+	}
+	if (body.source_comment_id !== undefined) {
+		if (dismissed) {
+			await db
+				.insert(forYouDismissals)
+				.values({ workspaceId, actorId, sourceCommentId: body.source_comment_id })
+				.onConflictDoNothing()
+		} else {
+			await db
+				.delete(forYouDismissals)
+				.where(
+					and(
+						eq(forYouDismissals.actorId, actorId),
+						eq(forYouDismissals.sourceCommentId, body.source_comment_id),
+					),
+				)
+		}
+	}
+	return true
+}
 
-	const items = [...curatedItems, ...decisionItems]
-
-	// Drafts show the object's description as it is now, not as it was when the card was posted.
-	await fillDraftBodies(
-		db,
+app.openapi(dismissRoute, async (c) => {
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const ok = await setDismissed(
+		c.get('db'),
 		workspaceId,
-		items.flatMap((i) => (i.latest_mention ? [i.latest_mention] : [])),
-		new Map([...objectById, ...decisionObjectById]),
+		c.get('actorId'),
+		c.req.valid('json'),
+		true,
 	)
+	if (!ok) return c.json(createApiError('NOT_FOUND', 'Card not found'), 404)
+	return c.json({ ok: true as const }, 200)
+})
 
-	return c.json({ items }, 200)
+app.openapi(undismissRoute, async (c) => {
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const ok = await setDismissed(
+		c.get('db'),
+		workspaceId,
+		c.get('actorId'),
+		c.req.valid('json'),
+		false,
+	)
+	if (!ok) return c.json(createApiError('NOT_FOUND', 'Card not found'), 404)
+	return c.json({ ok: true as const }, 200)
+})
+
+const WITHDRAW_REASON_MAX_CHARS = 200
+
+const withdrawBodySchema = z.object({
+	comment_id: z
+		.number()
+		.int()
+		.positive()
+		.describe("The decision card's comment id: latest_mention.event_id in the list."),
+	reason: z
+		.string()
+		.trim()
+		.min(1)
+		.max(WITHDRAW_REASON_MAX_CHARS)
+		.describe('One line saying why the card is dead, up to 200 characters.'),
+})
+
+const withdrawRoute = createRoute({
+	method: 'post',
+	path: '/withdrawals',
+	'x-viewer-policy': 'writer',
+	tags: ['For You'],
+	summary:
+		'Withdraw a decision card that is dead (test card, passed deadline, object already moved on, duplicate). It leaves every list, for everyone. Only the card’s writer or the Chief of Staff.',
+	request: {
+		headers: workspaceIdHeader,
+		body: { content: { 'application/json': { schema: withdrawBodySchema } } },
+	},
+	responses: {
+		200: {
+			description: 'Withdrawn (or already was). Carries the stored reason.',
+			content: {
+				'application/json': {
+					schema: z.object({
+						ok: z.literal(true),
+						comment_id: z.number(),
+						reason: z.string(),
+					}),
+				},
+			},
+		},
+		400: {
+			description:
+				'Missing workspace ID, reason missing or over 200 characters, or the comment is not a decision card',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Only the card’s writer or the Chief of Staff may withdraw it',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'No such comment in this workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(withdrawRoute, async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { comment_id: commentId, reason } = c.req.valid('json')
+
+	// Scoped to the workspace first, so an id from another workspace is a 404 and nothing more.
+	const [comment] = await db
+		.select({ id: events.id, actorId: events.actorId, data: events.data })
+		.from(events)
+		.where(
+			and(
+				eq(events.id, commentId),
+				eq(events.workspaceId, workspaceId),
+				eq(events.action, 'commented'),
+				eq(events.entityType, 'object'),
+			),
+		)
+		.limit(1)
+	if (!comment) return c.json(createApiError('NOT_FOUND', 'Comment not found'), 404)
+
+	// The caller's identity comes from the server, never the body.
+	if (comment.actorId !== callerId && callerId !== (await findChiefOfStaffId(db, workspaceId))) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only the card’s writer or the Chief of Staff can withdraw it'),
+			403,
+		)
+	}
+	if (!parseCommentDecision((comment.data as { decision?: unknown } | null)?.decision)) {
+		return c.json(createApiError('BAD_REQUEST', 'That comment is not a decision card'), 400)
+	}
+
+	// Withdrawing twice is fine: the first reason stays, and is what comes back.
+	await db
+		.insert(forYouWithdrawals)
+		.values({ sourceCommentId: commentId, workspaceId, withdrawnBy: callerId, reason })
+		.onConflictDoNothing()
+	const [stored] = await db
+		.select({ reason: forYouWithdrawals.reason })
+		.from(forYouWithdrawals)
+		.where(eq(forYouWithdrawals.sourceCommentId, commentId))
+		.limit(1)
+	return c.json({ ok: true as const, comment_id: commentId, reason: stored?.reason ?? reason }, 200)
 })
 
 export default app

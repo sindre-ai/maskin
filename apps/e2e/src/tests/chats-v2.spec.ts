@@ -178,7 +178,7 @@ test.describe('Chats v2 — layout', () => {
 
 		const heights = await Promise.all(
 			[
-				page.getByRole('button', { name: 'Search the workspace' }),
+				page.getByRole('button', { name: 'Search or run a command' }),
 				page.getByRole('button', { name: /^Filter conversations/ }),
 				page.getByRole('button', { name: 'New chat' }).first(),
 			].map(async (l) => (await l.boundingBox())?.height ?? 0),
@@ -262,7 +262,7 @@ test.describe('Chats v2 — new chat zero state', () => {
 			await expectNoHorizontalOverflow(page)
 
 			const composer = page.getByLabel('Message this conversation')
-			await expect(composer).toHaveValue('')
+			await expect(composer).toHaveText('')
 
 			// Draft route stays put — nothing has been sent yet.
 			await expect(page).toHaveURL(/\/chats\/new/)

@@ -29,6 +29,11 @@ vi.mock('@/hooks/use-objects', () => ({
 	useObject: () => ({ data: undefined, isLoading: false }),
 }))
 
+const useSessionMock = vi.fn()
+vi.mock('@/hooks/use-sessions', () => ({
+	useSession: (...args: unknown[]) => useSessionMock(...args),
+}))
+
 const markReadMutate = vi.fn()
 vi.mock('@/hooks/use-subscriptions', () => ({
 	useMarkRead: vi.fn(() => ({ mutate: markReadMutate, isPending: false })),
@@ -163,6 +168,48 @@ describe('TimelineTab', () => {
 		expect(within(row).getByText('attached')).toBeInTheDocument()
 		expect(within(row).getByRole('link', { name: /design\.pdf/i })).toBeInTheDocument()
 		expect(within(row).queryByText(/deleted object/i)).toBeNull()
+	})
+
+	// Regression: a session endpoint (`produced_by`) is not an object either. It
+	// used to render through a placeholder object whose status was the literal
+	// word "unknown". It must name the agent that ran the session instead.
+	describe('session endpoint on a produced_by edge', () => {
+		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
+		const relationships = [
+			buildRelationshipResponse({
+				id: 'rel-session',
+				sourceId: 'session-1',
+				sourceType: 'session',
+				sourceTitle: 'Drive the task',
+				targetId: 'obj-1',
+				targetType: 'bet',
+				type: 'produced_by',
+				createdBy: 'actor-2',
+				createdAt: '2026-01-01T00:00:00Z',
+			}),
+		]
+
+		it('names the agent that ran the session, never "unknown"', () => {
+			useSessionMock.mockReturnValue({ data: { id: 'session-1', actorId: 'actor-2' } })
+			mockGraph([], relationships, [], object)
+
+			render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+			const row = screen.getAllByRole('listitem')[0]
+			expect(within(row).getByRole('link', { name: /Agent Smith session/i })).toBeInTheDocument()
+			expect(within(row).queryByText(/unknown/i)).toBeNull()
+		})
+
+		it('falls back to a neutral label when the session or its agent is gone', () => {
+			useSessionMock.mockReturnValue({ data: undefined })
+			mockGraph([], relationships, [], object)
+
+			render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+			const row = screen.getAllByRole('listitem')[0]
+			expect(within(row).getByText('Session')).toBeInTheDocument()
+			expect(within(row).queryByText(/unknown|deleted object/i)).toBeNull()
+		})
 	})
 
 	// The Activity/Timeline split is gone: one stream carries comments and
@@ -703,11 +750,19 @@ describe('TimelineTab', () => {
 	})
 
 	// D8 delta (bet/d166-loops-v4-polish) — every assertion below exercises
-	// the polish variant, opted in via the `loopsV4PolishUnread` prop the
-	// loop-detail route passes when the sub-flag is on. Objects (the other
+	// the polish variant, opted in via the `loopUnread` prop the
+	// loop-detail route passes. Objects (the other
 	// consumer of TimelineTab) never sets the prop, so these behaviours are
 	// scoped to the loop-detail surface by construction.
-	describe('loops-v4-polish.unread variant', () => {
+	describe('loop unread variant', () => {
+		// The timeline also renders a jump-to-comment status output, so pick the
+		// unread host by the attributes only it carries.
+		const unreadRegion = () => {
+			const region = screen.getAllByRole('status').find((el) => el.hasAttribute('aria-atomic'))
+			if (!region) throw new Error('unread aria-live region not found')
+			return region
+		}
+
 		beforeEach(() => {
 			vi.mocked(trackMarkReadClicked).mockReset()
 			markReadMutate.mockReset()
@@ -737,7 +792,7 @@ describe('TimelineTab', () => {
 				object,
 			)
 
-			render(<TimelineTab object={object} loopsV4PolishUnread={{ loopId: 'loop-1' }} />, {
+			render(<TimelineTab object={object} loopUnread={{ loopId: 'loop-1' }} />, {
 				wrapper: createWorkspaceWrapper(),
 			})
 
@@ -802,11 +857,11 @@ describe('TimelineTab', () => {
 				object,
 			)
 
-			render(<TimelineTab object={object} loopsV4PolishUnread={{ loopId: 'loop-1' }} />, {
+			render(<TimelineTab object={object} loopUnread={{ loopId: 'loop-1' }} />, {
 				wrapper: createWorkspaceWrapper(),
 			})
 
-			const region = screen.getByRole('status')
+			const region = unreadRegion()
 			expect(region).toHaveTextContent('3 unread activity items')
 			// aria-live must live on the host, not the swapped-in content — so
 			// the SR announcement doesn't race the DOM swap when the boundary
@@ -832,11 +887,11 @@ describe('TimelineTab', () => {
 				object,
 			)
 
-			render(<TimelineTab object={object} loopsV4PolishUnread={{ loopId: 'loop-1' }} />, {
+			render(<TimelineTab object={object} loopUnread={{ loopId: 'loop-1' }} />, {
 				wrapper: createWorkspaceWrapper(),
 			})
 
-			expect(screen.getByRole('status').textContent).toBe('')
+			expect(unreadRegion().textContent).toBe('')
 		})
 
 		it('fires mark_read_clicked with {loop_id, unread_count} and persists the server read marker on Mark read', async () => {
@@ -864,7 +919,7 @@ describe('TimelineTab', () => {
 				object,
 			)
 
-			render(<TimelineTab object={object} loopsV4PolishUnread={{ loopId: 'loop-1' }} />, {
+			render(<TimelineTab object={object} loopUnread={{ loopId: 'loop-1' }} />, {
 				wrapper: createWorkspaceWrapper(),
 			})
 
@@ -935,7 +990,7 @@ describe('TimelineTab', () => {
 				object,
 			)
 
-			render(<TimelineTab object={object} loopsV4PolishUnread={{ loopId: 'loop-1' }} />, {
+			render(<TimelineTab object={object} loopUnread={{ loopId: 'loop-1' }} />, {
 				wrapper: createWorkspaceWrapper(),
 			})
 
@@ -967,7 +1022,7 @@ describe('TimelineTab', () => {
 				object,
 			)
 
-			render(<TimelineTab object={object} loopsV4PolishUnread={{ loopId: 'loop-1' }} />, {
+			render(<TimelineTab object={object} loopUnread={{ loopId: 'loop-1' }} />, {
 				wrapper: createWorkspaceWrapper(),
 			})
 

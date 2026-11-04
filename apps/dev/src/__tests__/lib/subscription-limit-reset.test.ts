@@ -1,9 +1,11 @@
+import type { SessionResultFailureReason } from '@maskin/shared'
 import { describe, expect, it } from 'vitest'
 
 import {
 	parseCliResetBanner,
 	parseRateLimitEventReset,
 	parseSubscriptionLimitReset,
+	pickRetryAt,
 } from '../../lib/subscription-limit-reset'
 
 const FIXED_NOW = new Date('2026-09-29T20:00:00Z').getTime()
@@ -11,7 +13,7 @@ const now = () => FIXED_NOW
 
 describe('parseSubscriptionLimitReset', () => {
 	describe('anthropic-ratelimit-unified-reset header (source 1/2)', () => {
-		it('parses an ISO-8601 timestamp inside the [now+60s, now+24h] clamp', () => {
+		it('parses an ISO-8601 timestamp inside the [now+60s, now+8d] clamp', () => {
 			const at = new Date(FIXED_NOW + 30 * 60_000).toISOString()
 			const result = parseSubscriptionLimitReset({
 				anthropicHeaders: { 'anthropic-ratelimit-unified-reset': at },
@@ -41,8 +43,18 @@ describe('parseSubscriptionLimitReset', () => {
 			).toBeNull()
 		})
 
-		it('rejects a value above the +24h ceiling', () => {
-			const at = new Date(FIXED_NOW + 25 * 60 * 60_000).toISOString()
+		it('accepts a weekly-limit reset several days out', () => {
+			const at = new Date(FIXED_NOW + 3 * 24 * 60 * 60_000).toISOString()
+			expect(
+				parseSubscriptionLimitReset({
+					anthropicHeaders: { 'anthropic-ratelimit-unified-reset': at },
+					now,
+				})?.resetAt.toISOString(),
+			).toBe(at)
+		})
+
+		it('rejects a value above the +8d ceiling', () => {
+			const at = new Date(FIXED_NOW + 9 * 24 * 60 * 60_000).toISOString()
 			expect(
 				parseSubscriptionLimitReset({
 					anthropicHeaders: { 'anthropic-ratelimit-unified-reset': at },
@@ -257,7 +269,66 @@ describe('parseRateLimitEventReset', () => {
 		)
 	})
 
-	it('returns null when the reset is beyond the 24h clamp', () => {
-		expect(parseRateLimitEventReset(event('rejected', 1793044800), incidentNow)).toBeNull()
+	it('keeps a reset several days out (weekly limit)', () => {
+		const reset = parseRateLimitEventReset(event('rejected', 1793044800), incidentNow)
+		expect(reset?.toISOString()).toBe('2026-10-26T20:00:00.000Z')
+	})
+
+	it('returns null when the reset is beyond the 8d clamp', () => {
+		expect(parseRateLimitEventReset(event('rejected', 1793750400), incidentNow)).toBeNull()
+	})
+})
+
+describe('weekly-limit banner as the CLI prints it', () => {
+	const weeklyNow = new Date('2026-10-28T06:00:00Z').getTime()
+
+	it('reads a month-and-day reset with a comma and an IANA zone, inside a JSON line', () => {
+		const tail =
+			'{"type":"result","result":"You\'ve hit your weekly limit · resets Oct 31, 2pm (Europe/Copenhagen)"}'
+		expect(parseCliResetBanner(tail, weeklyNow)?.toISOString()).toBe('2026-10-31T13:00:00.000Z')
+	})
+})
+
+describe('pickRetryAt', () => {
+	const at = new Date('2026-10-28T06:00:00Z')
+	const reason = (over: Partial<SessionResultFailureReason>): SessionResultFailureReason => ({
+		provider: 'anthropic',
+		reason_code: 'session_limit',
+		human_message: 'Claude session limit reached',
+		http_status: null,
+		reset_at: null,
+		verbatim_output: null,
+		...over,
+	})
+	const backoff = '2026-10-28T06:30:00.000Z'
+
+	it('uses the parsed reset time when there is one, even for a weekly limit', () => {
+		const withReset = reason({ reason_code: 'weekly_limit', reset_at: '2026-10-31T13:00:00.000Z' })
+		expect(pickRetryAt(withReset, at)?.toISOString()).toBe('2026-10-31T13:00:00.000Z')
+	})
+
+	it('falls back to a 30 minute back-off for short-window limits with no reset time', () => {
+		for (const code of [
+			'session_limit',
+			'server_rate_limit',
+			'request_rejected_429',
+			'max_plan_rate_limit',
+			'rate_limit_error',
+		]) {
+			expect(pickRetryAt(reason({ reason_code: code }), at)?.toISOString()).toBe(backoff)
+		}
+	})
+
+	it('does not blind-retry weekly or Opus limits with no reset time', () => {
+		expect(pickRetryAt(reason({ reason_code: 'weekly_limit' }), at)).toBeNull()
+		expect(pickRetryAt(reason({ reason_code: 'opus_limit' }), at)).toBeNull()
+	})
+
+	it('does not retry what waiting will not fix', () => {
+		expect(pickRetryAt(reason({ reason_code: 'not_logged_in' }), at)).toBeNull()
+		expect(pickRetryAt(reason({ reason_code: 'oauth_revoked' }), at)).toBeNull()
+		const openrouter = reason({ provider: 'openrouter', reason_code: 'insufficient_credits' })
+		expect(pickRetryAt(openrouter, at)).toBeNull()
+		expect(pickRetryAt(null, at)).toBeNull()
 	})
 })

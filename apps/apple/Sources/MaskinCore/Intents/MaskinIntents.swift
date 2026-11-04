@@ -24,6 +24,10 @@ import Foundation
 			lock.withLock { service = .live(baseURL: baseURL, clientSource: clientSource) }
 		}
 
+		/// What the "What needs me?" snippet shows, for intents that live in the app target (the
+		/// snippet is SwiftUI, which this module does not import).
+		public static func whatNeedsMe() async -> NeedsMeSummary { await current.whatNeedsMe() }
+
 		static var current: IntentsService {
 			lock.withLock {
 				if let service { return service }

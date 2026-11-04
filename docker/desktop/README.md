@@ -38,6 +38,10 @@ Open `http://10.0.1.1:16080/vnc.html` from the server (or an SSH tunnel:
 - Does the desktop appear and respond to mouse and keyboard?
 - Memory use (`msb` stats / `free -m` in the VM) idle and with Chromium open.
 - `xdotool` and `scrot` work in the VM (`DISPLAY=:99`) so an agent can drive it.
+- A web page's file chooser fits the 1600x900 screen with its Open button visible. GTK
+  restores the chooser size from `dock/keyfile` (`org/gtk/settings/file-chooser`,
+  `window-size` and `window-position`, both needed); unset it opens 1124x822, taller than
+  the screen. Select the file, then click Open: double click and Enter do not submit it.
 
 ## Agent control (desktopd)
 
@@ -45,6 +49,10 @@ Open `http://10.0.1.1:16080/vnc.html` from the server (or an SSH tunnel:
 (`POST /screenshot`, `/input`, `/exec`; `GET /healthz`), published on the msb
 bridge next to noVNC. The agent-server proxies to it; apps/dev exposes it as
 `/api/desktop/{screenshot,input,exec}` and the Maskin MCP as `desktop_*` tools.
+
+The screen is 1600x900 and agents see all of it: `/screenshot` returns the full screen and
+`/input` coordinates are native pixels (`WIDTH/HEIGHT` in `desktopd.py` must match the
+entrypoint's `SCREEN_SIZE` default).
 
 It exists because `msb exec <vm> -- <cmd>` hangs (even `echo hi`) while the
 entrypoint's own `msb exec` holds the VM — verified on msb 0.5.7 — so the host

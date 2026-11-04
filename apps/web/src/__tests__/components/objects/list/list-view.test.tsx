@@ -177,7 +177,7 @@ describe('ListView', () => {
 				grouping: ['status'] as GroupingState,
 				groupTotals: [
 					{ value: 'active', total: 19 },
-					{ value: 'signal', total: 103 },
+					{ value: 'opportunity', total: 103 },
 				],
 			})
 

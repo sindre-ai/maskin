@@ -8,7 +8,9 @@ const mockSetTheme = vi.fn()
 const mockTheme = { current: 'light' as 'light' | 'dark' | 'system' }
 const mockWorkspace = { current: buildWorkspaceWithRole({ settings: {} }) }
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({
 		workspace: mockWorkspace.current,
 		workspaceId: mockWorkspace.current.id,

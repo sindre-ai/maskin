@@ -1,3 +1,5 @@
+import { waitForInviteLink } from './mock-resend.helper'
+
 const BASE_URL = 'http://localhost:5173'
 
 /**
@@ -131,6 +133,9 @@ interface MessageResponse {
 	metadata: Record<string, unknown> | null
 	sessionId: string | null
 	createdAt: string | null
+	threadRootId?: number | null
+	threadAlsoInChannel?: boolean
+	thread?: { replyCount: number; unreadCount: number } | null
 }
 
 interface SessionResponse {
@@ -210,6 +215,8 @@ export class TestAPI {
 			status: string
 			content?: string
 			metadata?: Record<string, unknown>
+			/** The actor who owns it. */
+			driver?: string
 		},
 	): Promise<ObjectResponse> {
 		const res = await fetch(`${this.baseURL}/api/objects`, {
@@ -494,6 +501,31 @@ export class TestAPI {
 		return res.json()
 	}
 
+	/**
+	 * Makes an existing person a member the way a real one joins: the account
+	 * invites their email and they accept with their own key. A person can't be
+	 * added by id, only an agent the workspace created can.
+	 */
+	async addHumanByInvite(
+		workspaceId: string,
+		human: { email: string | null; api_key: string },
+	): Promise<void> {
+		if (!human.email) throw new Error('addHumanByInvite failed: actor has no email')
+		const create = await fetch(`${this.baseURL}/api/invites`, {
+			method: 'POST',
+			headers: this.headers(workspaceId),
+			body: JSON.stringify({ workspaceId, email: human.email, role: 'member' }),
+		})
+		if (!create.ok) throw new Error(`addHumanByInvite failed to invite: ${create.status}`)
+		const token = new URL(await waitForInviteLink(human.email)).searchParams.get('token')
+		if (!token) throw new Error('addHumanByInvite failed: invite link has no token')
+		const accept = await fetch(`${this.baseURL}/api/invites/${token}/accept`, {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${human.api_key}` },
+		})
+		if (!accept.ok) throw new Error(`addHumanByInvite failed to accept: ${accept.status}`)
+	}
+
 	async listWorkspaceMembers(
 		workspaceId: string,
 	): Promise<Array<{ actorId: string; role: string; name: string; type: string }>> {
@@ -564,7 +596,12 @@ export class TestAPI {
 	async postConversationMessage(
 		id: string,
 		workspaceId: string,
-		data: { content: string; metadata?: Record<string, unknown> },
+		data: {
+			content: string
+			metadata?: Record<string, unknown>
+			thread_root_id?: number
+			also_in_channel?: boolean
+		},
 	): Promise<MessageResponse> {
 		const res = await fetch(`${this.baseURL}/api/conversations/${id}/messages`, {
 			method: 'POST',
@@ -572,6 +609,18 @@ export class TestAPI {
 			body: JSON.stringify(data),
 		})
 		if (!res.ok) throw new Error(`postConversationMessage failed: ${res.status}`)
+		return res.json()
+	}
+
+	/** Newest-first page of a conversation's messages, replies included (as the web client receives them). */
+	async listConversationMessages(
+		id: string,
+		workspaceId: string,
+	): Promise<{ messages: MessageResponse[]; has_more: boolean }> {
+		const res = await fetch(`${this.baseURL}/api/conversations/${id}/messages`, {
+			headers: this.headers(workspaceId),
+		})
+		if (!res.ok) throw new Error(`listConversationMessages failed: ${res.status}`)
 		return res.json()
 	}
 

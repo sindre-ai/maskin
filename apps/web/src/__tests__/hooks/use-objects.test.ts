@@ -733,7 +733,7 @@ describe('useDeleteObject', () => {
 describe('useGroupedObjects', () => {
 	const groups = [
 		{ value: 'active', total: 60 },
-		{ value: 'signal', total: 2 },
+		{ value: 'opportunity', total: 2 },
 	]
 	const rowsFor = (status: string, count: number, from = 0) =>
 		Array.from({ length: count }, (_, i) => buildObject({ id: `${status}-${from + i}`, status }))
@@ -768,7 +768,7 @@ describe('useGroupedObjects', () => {
 		await waitFor(() => expect(result.current.rows).toHaveLength(25 + 2))
 		expect(result.current.groups).toEqual([
 			{ value: 'active', total: 60, loaded: 25 },
-			{ value: 'signal', total: 2, loaded: 2 },
+			{ value: 'opportunity', total: 2, loaded: 2 },
 		])
 		expect(api.objects.list).toHaveBeenCalledWith(
 			workspaceId,

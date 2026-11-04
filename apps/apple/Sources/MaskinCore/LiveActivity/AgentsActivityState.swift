@@ -300,6 +300,8 @@ public struct LiveTurn: Equatable, Sendable {
 			case .paused: status = .needsYou
 			case .completed: status = .done
 			case .failed, .timeout: status = .failed
+			// A user stop is a finished turn: left unmapped, the overlay keeps the agent working.
+			case .other("user_stopped"): status = .done
 			case .other: return nil
 			}
 			return LiveTurn(

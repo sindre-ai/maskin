@@ -28,6 +28,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `.claude/rules/structural-verification.md` — file placement and build configuration verification checklist
 - `.claude/rules/known-pitfalls.md` — registry of recurring bugs to check against before submitting code
 - `.claude/rules/integrations-mcp.md` — Integrations & MCP class rules (source of truth: workspace's Tech principles & best-practices doc)
+- `.claude/rules/web-ios-parity.md` — **any user-visible change to the web app or the iOS app must be made in both, in the same PR**; read before touching `apps/web` or `apps/apple`
 - `.claude/rules/feature-flags.md` — how to add, place, and retire a feature flag (one boundary per feature; no shared-state change)
 - `.claude/rules/verification.md` — mandatory runtime-verification gates: integration tests for DB/route changes, E2E specs for frontend changes
 - `.claude/rules/live-verification.md` — live-environment evidence gates for integration/provider work: surface matrix, staging + production runs, no provider ids in the UI
@@ -42,6 +43,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `observability/coolify-host/README.md` — for a host running `docker-compose.prod.yml` under Coolify: Docker logs, host metrics, SeaweedFS metrics, disk-headroom alerts. Both configs read every deployment-specific value from the environment — keep it that way.
 
 ## Runbooks
+- `docs/runbooks/agent-base-image-rollback.md` — retag the previous agent-base sha image as latest and restart maskin-agent-server; how far back it reaches and how to confirm it on a real session
 - `docs/runbooks/github-agent-merge-reliability.md` — diagnostic + recovery guide for GitHub write-path failures (approve, merge, push, PR open) in autonomous agent sessions; includes the first-move pattern for late-run 401s (token-mint delta, installation-ID churn) and the failure-tag glossary set by the tool-call layer
 
 ## Architecture
@@ -54,7 +56,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - Agent execution: Docker-based container sessions in `apps/dev/src/services/session-manager.ts` — spins up ephemeral containers running Claude Code, Codex, or custom CLIs. Persistent agent files (skills, learnings, memory) stored in S3-compatible storage (SeaweedFS for dev). Sessions are trackable, streamable via SSE, pausable/resumable via snapshots.
 - Container management: `apps/dev/src/services/container-manager.ts` wraps dockerode
 - Agent file storage: `packages/storage` provides abstract `StorageProvider` interface with S3 implementation (`@aws-sdk/client-s3`). `apps/dev/src/services/agent-storage.ts` manages pull/push of agent files.
-- MCP server: `packages/mcp` wraps the API as 89 tools for external agents (stdio + HTTP transport)
+- MCP server: `packages/mcp` wraps the API as 90 tools for external agents (stdio + HTTP transport)
 - Workspace context passed via `X-Workspace-Id` header on all workspace-scoped routes
 
 ## Prerequisites
@@ -77,6 +79,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `pnpm lint` — lint with Biome (`biome check .`)
 - `pnpm lint:fix` — auto-fix lint issues
 - `pnpm format` — format with Biome
+- A pre-commit hook (`.githooks/pre-commit`, installed by `pnpm install`) runs the Biome auto-fix on staged files; skip it with `git commit --no-verify` or `SKIP_BIOME_HOOK=1`
 - `docker-compose up postgres -d` — start PostgreSQL only (not needed if using `pnpm dev`)
 - `docker-compose up` — start PostgreSQL + all services
 - `pnpm db:generate` — generate Drizzle migration from schema changes
@@ -97,6 +100,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - Frontend SSE: real-time cache invalidation via `apps/web/src/lib/sse-invalidation.ts`
 - UI components: Radix UI primitives + custom components in `apps/web/src/components/ui/`
 - **Lists are alphabetical by default**: every list, dropdown, picker and filter option list sorts A→Z by its visible label (locale-aware, case-insensitive, numeric-aware) — never by `createdAt`/`updatedAt` or API order unless the user picks that order or the order is inherent to the data (statuses, timelines, chat/log feeds, wizard steps). Sort a copy with a stable tiebreaker, once in the shared hook/helper that feeds the list
+- **Web and iOS stay aligned**: a user-visible change in `apps/web` is not done until the equivalent change is made in `apps/apple`, and vice versa — same task, same PR, same wording and behaviour. Native idiom may differ; capability may not. Rules and exemptions: `.claude/rules/web-ios-parity.md`
 - **Frontend responsiveness is non-negotiable**: every UI surface must work at 375px (mobile), 768px (iPad portrait), and 1024px (iPad landscape). Use Tailwind breakpoints (`md:`, `lg:`) — never hardcode widths or skip mobile collapse. Full guidelines in `apps/web/CLAUDE.md` under "Responsive (mobile + iPad)".
 - All external inputs validated at system boundaries — see `.claude/rules/input-validation.md` for specifics
 - PG NOTIFY payloads must stay under 8KB — truncate large fields in DB triggers
@@ -147,6 +151,9 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `PATCH /api/workspaces/:id` — update workspace
 - `POST /api/workspaces/:id/members` — add member
 - `GET /api/workspaces/:id/members` — list members
+
+### Search (`/api/search`)
+- `GET /api/search` — chats (the caller's own), loops, agents, objects and automations in one call; every typed word must match; returns `results` (capped at `limit`, max 150), `total`, `capped`, `facets` and `relaxed` counts over the full set, and `partial` for any source that failed
 
 ### Relationships (`/api/relationships`)
 - `POST /api/relationships` — create relationship

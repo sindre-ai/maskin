@@ -153,10 +153,11 @@ public struct APIKeychainCaptureSource: KeychainCapturing {
 		}?.displayName
 	}
 
-	public func save(_ input: KeychainCredentialInput, for request: KeychainCredentialRequest) async throws -> Bool {
+	/// The `chat-capture` body. The server's schema is strict (an extra field is a 400), so each shape
+	/// carries exactly the fields it names: a key also names its provider, a login does not.
+	static func captureBody(_ input: KeychainCredentialInput, sessionID: String) -> [String: Any] {
 		var body: [String: Any] = [
-			"sessionId": request.sessionID, "displayName": input.displayName, "fromCard": true,
-			"agentIds": input.agentIDs,
+			"sessionId": sessionID, "displayName": input.displayName, "fromCard": true, "agentIds": input.agentIDs,
 		]
 		switch input.value {
 		case .apiKey(let secret):
@@ -168,6 +169,17 @@ public struct APIKeychainCaptureSource: KeychainCapturing {
 			body["username"] = username
 			body["password"] = password
 		}
+		return body
+	}
+
+	/// The most agents the server accepts on one capture.
+	static let maxAgents = 25
+
+	public func save(_ input: KeychainCredentialInput, for request: KeychainCredentialRequest) async throws -> Bool {
+		guard input.agentIDs.count <= Self.maxAgents else {
+			throw KeychainAccessError("Pick up to \(Self.maxAgents) agents to share it with.")
+		}
+		let body = Self.captureBody(input, sessionID: request.sessionID)
 		var urlRequest = URLRequest(url: baseURL.appendingPathComponent("api/integrations/chat-capture"))
 		urlRequest.httpMethod = "POST"
 		urlRequest.timeoutInterval = 30
@@ -199,9 +211,11 @@ public struct APIKeychainCaptureSource: KeychainCapturing {
 			var error: Detail?
 		}
 		let message = (try? JSONDecoder().decode(Envelope.self, from: body))?.error?.message
+		// The server's reason where it gives one: a 403 is not always "not a person" (a viewer role
+		// gets one too), and a missing session or a taken name each say what to do.
 		switch status {
-		case 403: return "Only a person can save a credential."
-		case 400, 409, 422: return "Couldn't save: \(message ?? "check the name and the value, then try again.")"
+		case 403: return message ?? "You can't save a credential here."
+		case 400, 404, 409, 422: return "Couldn't save: \(message ?? "check the name and the value, then try again.")"
 		default: return "Couldn't save. Try again."
 		}
 	}

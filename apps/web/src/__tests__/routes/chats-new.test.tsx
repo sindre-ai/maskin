@@ -24,6 +24,11 @@ vi.mock('@/hooks/use-conversations', () => ({
 	useConversationsInfinite: () => ({ data: mockConversationsInfinite() }),
 }))
 
+const mockActiveAgents = vi.fn()
+vi.mock('@/hooks/use-active-agents', () => ({
+	useActiveAgents: () => mockActiveAgents(),
+}))
+
 const mockActors = vi.fn()
 vi.mock('@/hooks/use-actors', () => ({
 	useActors: () => ({ data: mockActors() }),
@@ -132,6 +137,7 @@ function conversationsPage(
 					snippet: null,
 					snippet_actor_id: null,
 					snippet_actor_name: null,
+					working_actor_ids: [],
 					participants: c.participants.map((p) => ({ ...p, joinedAt: null, addedBy: null })),
 				})),
 				has_more: false,
@@ -144,6 +150,12 @@ describe('New chat', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		mockSearch.mockReturnValue({})
+		mockActiveAgents.mockReturnValue({
+			agents: [],
+			activeSessionCount: 1,
+			isLoading: false,
+			isError: false,
+		})
 		mockActors.mockReturnValue([CHIEF, FORGE, SENTINEL])
 		mockMembers.mockReturnValue([])
 		mockReferencedObjects.mockReturnValue(undefined)
@@ -157,6 +169,60 @@ describe('New chat', () => {
 		expect(screen.queryByText('Summarise what the loops did overnight')).not.toBeInTheDocument()
 	})
 
+	describe('intro under the heading', () => {
+		const idle = { agents: [], activeSessionCount: 0, isLoading: false, isError: false }
+
+		it('with nothing running shows one plain line and starter chips, not the running-work paragraph', () => {
+			mockActiveAgents.mockReturnValue(idle)
+			render(<NewChatPage />)
+			expect(screen.getByText('What are we working on?')).toBeInTheDocument()
+			expect(
+				screen.getByText(/The Chief of Staff is your first point of contact/),
+			).toBeInTheDocument()
+			expect(
+				screen.getByRole('button', { name: 'Help me set up my first agent' }),
+			).toBeInTheDocument()
+			expect(
+				screen.getByRole('button', { name: 'What should I do first in this workspace?' }),
+			).toBeInTheDocument()
+			expect(
+				screen.getByRole('button', { name: 'Explain how agents, loops and tasks fit together' }),
+			).toBeInTheDocument()
+			expect(screen.queryByText(/Your agents are already inside the work/)).not.toBeInTheDocument()
+		})
+
+		it('keeps the running-work paragraph and no chips while work is running', () => {
+			render(<NewChatPage />)
+			expect(screen.getByText(/Your agents are already inside the work/)).toBeInTheDocument()
+			expect(
+				screen.queryByRole('button', { name: 'Help me set up my first agent' }),
+			).not.toBeInTheDocument()
+		})
+
+		it('shows neither paragraph while activity loads, and falls back to the running paragraph on error', () => {
+			mockActiveAgents.mockReturnValue({ ...idle, isLoading: true })
+			const { unmount } = render(<NewChatPage />)
+			expect(screen.queryByText(/first point of contact/)).not.toBeInTheDocument()
+			expect(screen.queryByText(/Your agents are already inside the work/)).not.toBeInTheDocument()
+			unmount()
+			mockActiveAgents.mockReturnValue({ ...idle, isError: true })
+			render(<NewChatPage />)
+			expect(screen.getByText(/Your agents are already inside the work/)).toBeInTheDocument()
+		})
+
+		it('a chip fills the message box and sends nothing', async () => {
+			mockActiveAgents.mockReturnValue(idle)
+			const user = userEvent.setup()
+			render(<NewChatPage />)
+			await screen.findByLabelText('Remove Chief of Staff')
+			await user.click(screen.getByRole('button', { name: 'Help me set up my first agent' }))
+			expect(screen.getByLabelText('Message this conversation')).toHaveValue(
+				'Help me set up my first agent',
+			)
+			expect(mockCreateConversation).not.toHaveBeenCalled()
+		})
+	})
+
 	it('seeds the workspace default chat agent as an initial chip', async () => {
 		render(<NewChatPage />)
 		expect(await screen.findByLabelText('Remove Chief of Staff')).toBeInTheDocument()
@@ -166,6 +232,29 @@ describe('New chat', () => {
 		mockSearch.mockReturnValue({ agentId: 'forge-1' })
 		render(<NewChatPage />)
 		expect(await screen.findByLabelText('Remove Forge')).toBeInTheDocument()
+	})
+
+	it('puts the ?text= URL param in the message box and sends nothing', async () => {
+		mockSearch.mockReturnValue({ agentId: 'forge-1', text: 'what changed today' })
+		render(<NewChatPage />)
+		await screen.findByLabelText('Remove Forge')
+		expect(screen.getByLabelText('Message this conversation')).toHaveValue('what changed today')
+		expect(mockCreateConversation).not.toHaveBeenCalled()
+	})
+
+	it('replaces the message box when the ?text= param changes on the mounted page', async () => {
+		mockSearch.mockReturnValue({ agentId: 'forge-1', text: 'first question' })
+		const { rerender } = render(<NewChatPage />)
+		await screen.findByLabelText('Remove Forge')
+		expect(screen.getByLabelText('Message this conversation')).toHaveValue('first question')
+
+		mockSearch.mockReturnValue({ agentId: 'forge-1', text: 'second question' })
+		rerender(<NewChatPage />)
+
+		await waitFor(() =>
+			expect(screen.getByLabelText('Message this conversation')).toHaveValue('second question'),
+		)
+		expect(mockCreateConversation).not.toHaveBeenCalled()
 	})
 
 	it('renders a RECENT eyebrow with recently-collaborated actors once the To field is focused', async () => {

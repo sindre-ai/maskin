@@ -268,6 +268,133 @@ describe('Actors Integration — by-id routes are scoped to the caller workspace
 		expect((await readAgent(agent.id)).tools).toEqual({ mcpServers: {} })
 	})
 
+	describe('mailbox needs a human admin or owner', () => {
+		function createAgentCallerApp(agentId: string) {
+			const app = new OpenAPIHono<{ Variables: Record<string, unknown> }>()
+			app.use('*', async (c, next) => {
+				c.set('db', db)
+				c.set('actorId', agentId)
+				c.set('actorType', 'agent')
+				c.set('sessionManager', { stopSession: async () => {} })
+				await next()
+			})
+			app.route('/api/actors', actorsRoutes as never)
+			return app
+		}
+
+		const mailboxOf = async (id: string) =>
+			(await readAgent(id))?.metadata as { mailbox?: string } | null
+
+		it('lets a human admin set it, lowercased, and keeps the rest of the metadata', async () => {
+			const otherOwner = await insertActor(db, { type: 'human', name: 'Other Owner' })
+			const { agent } = await seedAgentInWorkspaceOf(otherOwner.id, 'admin')
+			await db
+				.update(actors)
+				.set({ metadata: { voice_enabled: true } })
+				.where(eq(actors.id, agent.id))
+
+			const res = await createApp().request(
+				jsonRequest('PATCH', `/api/actors/${agent.id}`, { mailbox: 'Dev-Box@Example.com' }),
+			)
+
+			expect(res.status).toBe(200)
+			expect(await mailboxOf(agent.id)).toEqual({
+				voice_enabled: true,
+				mailbox: 'dev-box@example.com',
+			})
+		})
+
+		it('refuses an agent setting its own mailbox, so an agent cannot choose its sender', async () => {
+			const otherOwner = await insertActor(db, { type: 'human', name: 'Other Owner' })
+			const { agent } = await seedAgentInWorkspaceOf(otherOwner.id)
+
+			const res = await createAgentCallerApp(agent.id).request(
+				jsonRequest('PATCH', `/api/actors/${agent.id}`, { mailbox: 'ceo@example.com' }),
+			)
+
+			expect(res.status).toBe(403)
+			expect((await mailboxOf(agent.id))?.mailbox).toBeUndefined()
+		})
+
+		it('refuses an admin agent setting another agent mailbox', async () => {
+			const otherOwner = await insertActor(db, { type: 'human', name: 'Other Owner' })
+			const { ws, agent } = await seedAgentInWorkspaceOf(otherOwner.id)
+			const adminAgent = await insertActor(db, { type: 'agent', name: 'Admin Agent' })
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId: ws.id, actorId: adminAgent.id, role: 'admin' })
+
+			const res = await createAgentCallerApp(adminAgent.id).request(
+				jsonRequest('PATCH', `/api/actors/${agent.id}`, { mailbox: 'ceo@example.com' }),
+			)
+
+			expect(res.status).toBe(403)
+			expect((await mailboxOf(agent.id))?.mailbox).toBeUndefined()
+		})
+
+		it('refuses a plain human member', async () => {
+			const otherOwner = await insertActor(db, { type: 'human', name: 'Other Owner' })
+			const { agent } = await seedAgentInWorkspaceOf(otherOwner.id, 'member')
+
+			const res = await createApp().request(
+				jsonRequest('PATCH', `/api/actors/${agent.id}`, { mailbox: 'ceo@example.com' }),
+			)
+
+			expect(res.status).toBe(403)
+			expect((await mailboxOf(agent.id))?.mailbox).toBeUndefined()
+		})
+
+		it('refuses an address another agent already holds', async () => {
+			const otherOwner = await insertActor(db, { type: 'human', name: 'Other Owner' })
+			const { ws, agent } = await seedAgentInWorkspaceOf(otherOwner.id, 'admin')
+			const holder = await insertActor(db, { type: 'agent', name: 'Holder' })
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId: ws.id, actorId: holder.id, role: 'member' })
+			const address = `taken-${randomUUID()}@example.com`
+			await db
+				.update(actors)
+				.set({ metadata: { mailbox: address } })
+				.where(eq(actors.id, holder.id))
+
+			const res = await createApp().request(
+				jsonRequest('PATCH', `/api/actors/${agent.id}`, { mailbox: address.toUpperCase() }),
+			)
+
+			expect(res.status).toBe(409)
+			expect((await mailboxOf(agent.id))?.mailbox).toBeUndefined()
+		})
+
+		it('refuses a display name or anything but one plain address', async () => {
+			const otherOwner = await insertActor(db, { type: 'human', name: 'Other Owner' })
+			const { agent } = await seedAgentInWorkspaceOf(otherOwner.id, 'admin')
+
+			for (const bad of ['CEO <ceo@example.com>', 'a@b.co, c@d.co', 'no-at-sign']) {
+				const res = await createApp().request(
+					jsonRequest('PATCH', `/api/actors/${agent.id}`, { mailbox: bad }),
+				)
+				expect(res.status).toBe(400)
+			}
+			expect((await mailboxOf(agent.id))?.mailbox).toBeUndefined()
+		})
+
+		it('clears it with null', async () => {
+			const otherOwner = await insertActor(db, { type: 'human', name: 'Other Owner' })
+			const { agent } = await seedAgentInWorkspaceOf(otherOwner.id, 'admin')
+			await db
+				.update(actors)
+				.set({ metadata: { mailbox: 'x@example.com', voice_enabled: true } })
+				.where(eq(actors.id, agent.id))
+
+			const res = await createApp().request(
+				jsonRequest('PATCH', `/api/actors/${agent.id}`, { mailbox: null }),
+			)
+
+			expect(res.status).toBe(200)
+			expect(await mailboxOf(agent.id)).toEqual({ voice_enabled: true })
+		})
+	})
+
 	describe('tools.envFrom needs a human admin or owner', () => {
 		const storedEnvFrom = ['AGENT_SECRET_FAKE_STORED']
 

@@ -251,6 +251,16 @@ export function createMockStorageProvider(overrides?: Record<string, unknown>) {
 		delete: vi.fn().mockResolvedValue(undefined),
 		exists: vi.fn().mockResolvedValue(false),
 		ensureBucket: vi.fn().mockResolvedValue(undefined),
+		createMultipartUpload: vi.fn().mockResolvedValue('s3-upload-1'),
+		presignUploadPart: vi
+			.fn()
+			.mockImplementation(
+				async (_key: string, _id: string, part: number) => `https://storage.test/part/${part}`,
+			),
+		completeMultipartUpload: vi.fn().mockResolvedValue(undefined),
+		abortMultipartUpload: vi.fn().mockResolvedValue(undefined),
+		headObject: vi.fn().mockResolvedValue(null),
+		presignDownload: vi.fn().mockResolvedValue('https://storage.test/download/file'),
 		...overrides,
 	} as unknown as StorageProvider
 }

@@ -42,4 +42,18 @@ struct CallMentionsTests {
 		let found = CallMentions.objects(in: [message(1, "look: https://maskin.io/\(ws)/objects/\(id) now")])
 		#expect(found == [MentionedObject(id: id, title: "Object", workspaceId: ws)])
 	}
+
+	@Test("a text without a web address is not scanned, and one with links is scanned once")
+	func linksAreSkippedOrCached() {
+		let id = "11111111-2222-3333-4444-555555555555"
+		let cache = LinkScanCache<[CallMentions.Link]>()
+		#expect(CallMentions.links(in: "no address here, just words", cache: cache).isEmpty)
+		#expect(cache.computeCount == 0)
+
+		let text = "See [Sentry task](https://maskin.io/\(ws)/objects/\(id)) and https://example.com/x"
+		let first = CallMentions.links(in: text, cache: cache)
+		for _ in 0..<20 { #expect(CallMentions.links(in: text, cache: cache) == first) }
+		#expect(cache.computeCount == 1)
+		#expect(first.map(\.title) == ["Sentry task", "Object"])
+	}
 }

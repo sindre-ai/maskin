@@ -10,6 +10,7 @@ import {
 } from '@maskin/shared'
 import { eq, sql } from 'drizzle-orm'
 import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from '../lib/billing-defaults'
+import { USAGE_BREAKDOWN_MAX_ROWS, readUsageBreakdown } from '../lib/billing-usage-breakdown'
 import { cachedBillingUsage, evictBillingUsage } from '../lib/billing-usage-cache'
 import { evaluateDollarUnit, readZeroCostDays } from '../lib/daily-budget'
 import { isEnterprise, isEnterpriseWorkspace } from '../lib/enterprise'
@@ -177,21 +178,54 @@ const usageRoute = createRoute({
 	},
 })
 
-// The uncached usage read. Returns null when the workspace does not exist.
-async function readBillingUsage(db: Database, workspaceId: string) {
-	const [workspace] = await db
-		.select({
-			id: workspaces.id,
-			settings: workspaces.settings,
-			enterpriseGranted: workspaces.enterpriseGranted,
-			billingOwnerId: workspaces.billingOwnerId,
-		})
-		.from(workspaces)
-		.where(eq(workspaces.id, workspaceId))
-		.limit(1)
+const usageBreakdownRowSchema = z.object({
+	// Model id, agent id or flow id. Null for sessions that carry none.
+	id: z.string().nullable(),
+	name: z.string(),
+	usd_cents: z.number().int().positive(),
+})
 
-	if (!workspace) return null
+const usageSplitSchema = z.object({
+	rows: z.array(usageBreakdownRowSchema).max(USAGE_BREAKDOWN_MAX_ROWS),
+	// Everything past the top rows, so rows + other always add up to usd_cents_used.
+	other_usd_cents: z.number().int().nonnegative(),
+})
 
+const usageBreakdownResponseSchema = z.object({
+	usd_cents_used: z.number().int().nonnegative(),
+	by_model: usageSplitSchema,
+	by_agent: usageSplitSchema,
+	by_flow: usageSplitSchema,
+})
+
+const usageBreakdownRoute = createRoute({
+	method: 'get',
+	path: '/usage/breakdown',
+	tags: ['billing'],
+	summary: 'Spend this period split by model, agent and flow',
+	description:
+		'Splits the same usage GET /usage totals (usd_cents_used) by model, by agent and by flow. Each split lists the top rows plus an other bucket, and its rows plus other add up to usd_cents_used. Sessions that belong to no flow are listed as "No flow". Enterprise workspaces are not metered, so every split is empty.',
+	request: { headers: workspaceIdHeader },
+	responses: {
+		200: {
+			description: 'Usage split for the current billing period',
+			content: { 'application/json': { schema: usageBreakdownResponseSchema } },
+		},
+		404: {
+			description: 'Workspace not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+type BillingWorkspace = {
+	settings: unknown
+	enterpriseGranted: boolean | null
+	billingOwnerId: string | null
+}
+
+// The plan and billing window the usage read (and its breakdown) are measured over.
+function resolveBillingWindow(workspace: BillingWorkspace) {
 	const parsed = workspaceSettingsSchema.partial().safeParse(workspace.settings ?? {})
 	const billing = parsed.success ? parsed.data.billing : undefined
 
@@ -225,6 +259,26 @@ async function readBillingUsage(db: Database, workspaceId: string) {
 			: null
 	const periodStartMs =
 		periodStartSec !== null ? periodStartSec * 1000 : Date.now() - DEFAULT_PERIOD_LENGTH_MS
+	return { billing, plan, status, hardCapCents, periodStartSec, periodStartMs }
+}
+
+// The uncached usage read. Returns null when the workspace does not exist.
+async function readBillingUsage(db: Database, workspaceId: string) {
+	const [workspace] = await db
+		.select({
+			id: workspaces.id,
+			settings: workspaces.settings,
+			enterpriseGranted: workspaces.enterpriseGranted,
+			billingOwnerId: workspaces.billingOwnerId,
+		})
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+
+	if (!workspace) return null
+
+	const { billing, plan, status, hardCapCents, periodStartSec, periodStartMs } =
+		resolveBillingWindow(workspace)
 	const rawPeriodEnd = billing?.period_end
 	const periodEndSec =
 		typeof rawPeriodEnd === 'number' && Number.isFinite(rawPeriodEnd) && rawPeriodEnd > 0
@@ -309,6 +363,32 @@ app.openapi(usageRoute, async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 	return c.json(usage, 200)
+})
+
+app.openapi(usageBreakdownRoute, async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const [workspace] = await db
+		.select({
+			settings: workspaces.settings,
+			enterpriseGranted: workspaces.enterpriseGranted,
+			billingOwnerId: workspaces.billingOwnerId,
+		})
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+	if (!workspace) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+
+	const { plan, periodStartMs } = resolveBillingWindow(workspace)
+	// Enterprise is not metered: /usage reports 0 for it, so the splits are empty too.
+	if (plan === 'enterprise') {
+		const empty = { rows: [], other_usd_cents: 0 }
+		return c.json({ usd_cents_used: 0, by_model: empty, by_agent: empty, by_flow: empty }, 200)
+	}
+	return c.json(await readUsageBreakdown(db, workspaceId, periodStartMs), 200)
 })
 
 app.openapi(checkoutRoute, async (c) => {

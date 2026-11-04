@@ -63,11 +63,33 @@ public struct TeamDisplayOptions: Codable, Equatable, Sendable {
 	public var layout: Layout = .sections
 	public var grouping: Grouping = .byTime
 	public var showsFilterChips = false
+	/// The sheet's Filters row: only conversations with something unread.
+	public var unreadOnly = false
+	/// The sheet's PROPERTIES: the preview line and the live working / typing line under a title.
+	public var showsPreview = true
+	public var showsWorkingLine = true
 
-	public init(layout: Layout = .sections, grouping: Grouping = .byTime, showsFilterChips: Bool = false) {
+	public init(
+		layout: Layout = .sections, grouping: Grouping = .byTime, showsFilterChips: Bool = false,
+		unreadOnly: Bool = false, showsPreview: Bool = true, showsWorkingLine: Bool = true
+	) {
 		self.layout = layout
 		self.grouping = grouping
 		self.showsFilterChips = showsFilterChips
+		self.unreadOnly = unreadOnly
+		self.showsPreview = showsPreview
+		self.showsWorkingLine = showsWorkingLine
+	}
+
+	// Hand-written so choices saved before a field existed still decode.
+	public init(from decoder: any Decoder) throws {
+		let c = try decoder.container(keyedBy: CodingKeys.self)
+		layout = try c.decodeIfPresent(Layout.self, forKey: .layout) ?? .sections
+		grouping = try c.decodeIfPresent(Grouping.self, forKey: .grouping) ?? .byTime
+		showsFilterChips = try c.decodeIfPresent(Bool.self, forKey: .showsFilterChips) ?? false
+		unreadOnly = try c.decodeIfPresent(Bool.self, forKey: .unreadOnly) ?? false
+		showsPreview = try c.decodeIfPresent(Bool.self, forKey: .showsPreview) ?? true
+		showsWorkingLine = try c.decodeIfPresent(Bool.self, forKey: .showsWorkingLine) ?? true
 	}
 
 	public static let `default` = TeamDisplayOptions()
@@ -265,8 +287,12 @@ public struct TeamLayout: Equatable, Sendable {
 	public var tiles: [Tile]
 	public var sections: [Section]
 	public var archivedCount: Int
-	/// Hidden while searching or filtering, and when nothing is archived.
+	/// Hidden while filtering, and when nothing is archived. A search keeps it only when an
+	/// archived conversation matches, so archived chats can be found.
 	public var showsArchived: Bool
+	/// The archived conversations that match the search, newest first as loaded. Empty without a
+	/// query, and while a filter chip is on.
+	public var archivedMatches: [ConversationSummary] = []
 	public var empty: Empty?
 	/// Unread rows across the list (the Unread chip's count), pinned ones included.
 	public var unreadCount: Int
@@ -375,7 +401,9 @@ public struct TeamLayout: Equatable, Sendable {
 		}
 		sections = sections.filter { !$0.rows.isEmpty }
 
-		let hasAny = !tiles.isEmpty || !sections.isEmpty
+		let archivedMatches =
+			!query.isEmpty && input.chip == .all ? input.archived.filter { matches($0, query: query) } : []
+		let hasAny = !tiles.isEmpty || !sections.isEmpty || !archivedMatches.isEmpty
 		let empty: Empty?
 		if hasAny {
 			empty = nil
@@ -390,7 +418,8 @@ public struct TeamLayout: Equatable, Sendable {
 		}
 		return TeamLayout(
 			tiles: tiles, sections: sections, archivedCount: input.archived.count,
-			showsArchived: !isFiltering && !input.archived.isEmpty, empty: empty,
+			showsArchived: (!isFiltering && !input.archived.isEmpty) || !archivedMatches.isEmpty,
+			archivedMatches: archivedMatches, empty: empty,
 			unreadCount: totalUnread, isFiltering: isFiltering)
 	}
 

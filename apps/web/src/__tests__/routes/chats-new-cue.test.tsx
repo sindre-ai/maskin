@@ -21,6 +21,10 @@ vi.mock('@/hooks/use-conversations', () => ({
 	useConversationsInfinite: () => ({ data: undefined }),
 }))
 
+vi.mock('@/hooks/use-active-agents', () => ({
+	useActiveAgents: () => ({ agents: [], activeSessionCount: 1, isLoading: false, isError: false }),
+}))
+
 const FORGE = { id: 'forge-1', name: 'Forge', type: 'agent', description: 'Ships fixes' }
 const SENTINEL = { id: 'sentinel-1', name: 'Sentinel', type: 'agent', description: 'Watches' }
 const SAM = { actorId: 'sam-1', name: 'Sam', type: 'human', role: 'member' }

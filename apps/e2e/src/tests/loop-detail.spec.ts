@@ -63,9 +63,8 @@ test.describe('Loop detail page', () => {
 			await expect(page.getByText('The loop, right now')).toBeVisible()
 			// AC5 — the utterance input is present on loop detail.
 			await expect(page.getByPlaceholder('Listening — speak in plain words')).toBeVisible()
-			await expect(
-				page.getByText('Normalises the Slack event into the shared source'),
-			).toBeVisible()
+			// Step rows show the trigger's title, not its action prompt (#2777).
+			await expect(page.getByText('Triage feedback', { exact: true })).toBeVisible()
 			// The right-now note reads as one line: primitives · triggers on ·
 			// cycles (mockup 1891).
 			await expect(page.getByText(/of \d+ trigger(s)? on/)).toBeVisible()
@@ -93,7 +92,7 @@ test.describe('Loop detail page', () => {
 
 			// A step row is the only route into a loop-owned trigger now that
 			// /triggers redirects.
-			await page.getByText('Normalises the Slack event into the shared source').click()
+			await page.getByText('Triage feedback', { exact: true }).click()
 			await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/triggers/${trigger.id}`), {
 				timeout: 10000,
 			})

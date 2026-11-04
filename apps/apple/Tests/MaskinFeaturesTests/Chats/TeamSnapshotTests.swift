@@ -224,12 +224,11 @@ struct TeamSnapshotTests {
 			@State var draft: NewConversationDraft
 			@State var query: String
 			@State var highlighted: String?
-			@State var showAll = false
 			@FocusState var focused: Bool
 			var body: some View {
 				NewConversationForm(
 					store: store, currentActorID: "me", initialRecipient: nil, error: nil, draft: $draft, query: $query,
-					highlightedChip: $highlighted, showAll: $showAll, toFocused: $focused)
+					highlightedChip: $highlighted, toFocused: $focused)
 			}
 		}
 		var picked = NewConversationDraft()

@@ -21,6 +21,8 @@ public struct WorkObject: Identifiable, Sendable, Equatable, Hashable, Codable {
 	public var activeActivity: String?
 	/// An agent session is running on this object, whether or not it has reported an activity.
 	public var hasActiveSession: Bool
+	/// The newest agent session started for this object (`last_session`), nil when none or not readable.
+	public var lastSession: ObjectSession?
 
 	public init(
 		id: String, type: String, title: String? = nil, content: String? = nil, status: String,
@@ -49,6 +51,35 @@ public struct WorkObject: Identifiable, Sendable, Equatable, Hashable, Codable {
 		let trimmed = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 		return trimmed.isEmpty ? "Untitled" : trimmed
 	}
+}
+
+/// `last_session` on an object read: who ran, how it ended, and where it started. Plain values;
+/// ids resolve to names through the actor directory, never shown as they are.
+public struct ObjectSession: Sendable, Equatable, Hashable, Codable {
+	public var id: String
+	public var status: String
+	public var agentID: String
+	public var startedAt: Date?
+	/// Short reason, set by the server only when the session failed.
+	public var failureReason: String?
+	public var chatID: String?
+	public var createdByActorID: String?
+
+	public init(
+		id: String, status: String, agentID: String, startedAt: Date? = nil, failureReason: String? = nil,
+		chatID: String? = nil, createdByActorID: String? = nil
+	) {
+		self.id = id
+		self.status = status
+		self.agentID = agentID
+		self.startedAt = startedAt
+		self.failureReason = failureReason
+		self.chatID = chatID
+		self.createdByActorID = createdByActorID
+	}
+
+	public var isFailed: Bool { status == "failed" || status == "timeout" }
+	public var isLive: Bool { AgentSession.activeStatuses.contains(status) || status == "paused" }
 }
 
 /// How another object is linked to the one on screen, read from the viewing object's side.
@@ -163,7 +194,7 @@ public struct ObjectsSchema: Sendable, Equatable {
 		displayNames: ["insight": "Insight", "bet": "Bet", "task": "Task"],
 		statuses: [
 			"insight": ["new", "processing", "clustered", "scored", "parked", "discarded"],
-			"bet": ["signal", "define", "active", "live", "succeeded", "failed", "paused", "archived"],
+			"bet": ["opportunity", "define", "active", "live", "succeeded", "failed", "paused", "archived"],
 			"task": ["backlog", "todo", "in_progress", "in_review", "validated", "done", "discarded"],
 		])
 
@@ -188,11 +219,15 @@ public struct ObjectsQuery: Sendable, Equatable {
 	public var limit: Int
 	public var offset: Int
 	public var sort: ObjectsSort
+	/// Against the sort's natural direction (oldest first, Z to A).
+	public var reversed: Bool
 
 	public init(
 		type: String? = nil, status: String? = nil, driver: String? = nil, search: String = "", limit: Int = 50,
-		offset: Int = 0, sort: ObjectsSort = .needsYou
+		offset: Int = 0, sort: ObjectsSort = .needsYou,
+		reversed: Bool = false
 	) {
+		self.reversed = reversed
 		self.type = type
 		self.status = status
 		self.driver = driver

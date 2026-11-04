@@ -39,6 +39,9 @@ export const loopSummarySchema = z.object({
 	 * business) so a long list of loops can be filtered. Trimmed, de-duplicated,
 	 * in the order they were set. Empty array when none — never null. */
 	tags: z.array(z.string()),
+	/** Actor id of the loop's driver — mirrors `objects.driver`. Null when the
+	 * loop has no driver set. Read-only here; set it through the object update. */
+	driverId: z.string().uuid().nullable(),
 	/** Objects (bets/tasks/insights) currently being processed by this loop —
 	 * COUNT of objects reached via an `in_loop` relationship edge (source=loop,
 	 * target=child; child objects carry no `metadata.loop_id` back-reference)

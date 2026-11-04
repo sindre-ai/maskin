@@ -212,10 +212,16 @@ describe('Sessions Routes', () => {
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(body).toHaveLength(1)
-			// Lean shape carries exactly these four keys and no others — no
+			// Lean shape carries exactly these five keys and no others — no
 			// config, no result, no cost/tokens, no timestamps other than
 			// updated_at.
-			expect(Object.keys(body[0]).sort()).toEqual(['id', 'status', 'title', 'updated_at'])
+			expect(Object.keys(body[0]).sort()).toEqual([
+				'failure_reason',
+				'id',
+				'status',
+				'title',
+				'updated_at',
+			])
 			expect(body[0].id).toBe(s1.id)
 			expect(body[0].title).toBe('Investigate the flaky login test')
 			expect(body[0].status).toBe('running')

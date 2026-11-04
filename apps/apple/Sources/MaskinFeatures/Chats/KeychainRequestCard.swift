@@ -47,7 +47,10 @@ struct KeychainRequestCard: View {
 				}
 				.accessibilityElement(children: .combine)
 				if stillRunning {
-					Text("The agent is still running without it. Stop it from the chat, then send a message to start it again with the credential.")
+					Text(
+						request.replyToSession
+							? "Saved, but the agent didn't pick it up. Ask it to carry on from its own thread."
+							: "The agent is still running without it. Stop it from the chat, then send a message to start it again with the credential.")
 						.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
 				}
 			} else {
@@ -70,15 +73,27 @@ struct KeychainRequestCard: View {
 		RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous)
 	}
 
+	/// "Developer needs GITHUB_TOKEN" when the agent and the key's name are known; otherwise what the
+	/// card adds.
+	private var title: String {
+		if let agent = agents.first?.name, agents.count == 1, let key = request.suggestedName, !key.isEmpty {
+			return "\(agent) needs \(key)"
+		}
+		return isLogin ? "Add a login to your Keychain" : "Add a key to your Keychain"
+	}
+
 	private var isLogin: Bool { request.kind == .login }
 
 	@ViewBuilder
 	private var form: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-			Text(isLogin ? "Add a login to your Keychain" : "Add a key to your Keychain")
+			Text(title)
 				.maskinText(.headline).foregroundStyle(MaskinColor.ink)
 			Text(
 				(request.hint.map { $0 + " " } ?? "")
+					+ (agents.count == 1
+						? "Stored in your Keychain. Only this agent can read it. "
+						: "")
 					+ "You type it here and it goes straight to your encrypted vault. The agent never sees it in the chat."
 			)
 			.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
@@ -91,14 +106,14 @@ struct KeychainRequestCard: View {
 		if isLogin {
 			field("Username") {
 				TextField("Username", text: $username)
-					.plainInput().textContentType(.username)
+					.plainInput()
 			}
 			field("Password") {
-				SecureField("Password", text: $password).textContentType(.password)
+				SecureField("Password", text: $password)
 			}
 		} else {
 			field("Key") {
-				SecureField("Paste the key", text: $secret).textContentType(.password)
+				SecureField("Paste the key", text: $secret)
 			}
 		}
 		if agents.count > 1 {
@@ -195,7 +210,8 @@ struct KeychainRequestCard: View {
 				let reply = request.savedReply(name: displayName)
 				if request.replyToSession {
 					do {
-						try await helper()?.continueSession(sessionID: request.sessionID, content: reply)
+						guard let helper = helper() else { throw KeychainAccessError("Couldn't reach the agent.") }
+						try await helper.continueSession(sessionID: request.sessionID, content: reply)
 					} catch {
 						// The credential is saved; only the agent's restart failed.
 						stillRunning = true

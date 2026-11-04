@@ -15,8 +15,27 @@ import SwiftUI
 /// a live status line under it. Takes a ready `ChatStore` and `ChatComposerModel` so it previews
 /// and snapshots without a server.
 /// Which thread is open over a chat: the id of its root message.
-struct ThreadRoute: Hashable {
+struct ThreadRoute: Hashable, Identifiable {
 	let rootID: Int
+	var id: Int { rootID }
+
+	/// The route a tap on a message's thread pill (or Reply in thread) opens. Nil for a message the
+	/// server has not stored yet: it has no thread to open (and shows no pill).
+	static func opening(_ message: ChatMessage) -> ThreadRoute? {
+		message.serverID.map(ThreadRoute.init(rootID:))
+	}
+
+	/// The route "jump to message" opens for a message that lives in a thread (a reply not also posted
+	/// in the channel). Nil for a channel message: the jump scrolls to it instead.
+	static func opening(replyIn message: ChatMessage) -> ThreadRoute? {
+		guard !message.alsoInChannel else { return nil }
+		return message.threadRootID.map(ThreadRoute.init(rootID:))
+	}
+
+	/// The route a thread requested from outside the chat (a notification or link) opens.
+	static func opening(request: AppRuntime.ThreadRequest) -> ThreadRoute {
+		ThreadRoute(rootID: request.rootId)
+	}
 }
 
 struct ChatThreadView: View {
@@ -59,10 +78,14 @@ struct ChatThreadView: View {
 	/// The thread opened on its NEW divider, so new arrivals leave the reader where they are.
 	@State private var openedOnUnread = false
 	@State private var renaming = false
+	/// A secret caught in the message box before sending; the sheet offers the Keychain.
+	@State private var caughtSecret: CaughtSecret?
+	@State private var secretStore: KeychainStore?
 	@State private var newTitle = ""
 	/// The thread open on top of this chat (a pushed screen).
 	@State private var threadRoute: ThreadRoute?
 	@State private var showingLinked = false
+	@State private var selectingText: ChatMessage?
 	@State private var searching = false
 	@State private var searchText = ""
 	@State private var matchIndex: Int?
@@ -91,6 +114,8 @@ struct ChatThreadView: View {
 	private static let revealDelay = 120
 	/// Pauses before each re-anchor of a thread opened on its NEW divider; it stays hidden until the last.
 	private static let reanchorDelays = [200, 300]
+	/// The longest (ms) a thread stays hidden for the finished turns' traces to arrive.
+	private static let traceWait = 800
 	/// How long the thread waits for its read cursor before opening at the bottom (offline).
 	private static let openTimeout: Duration = .milliseconds(1500)
 
@@ -125,6 +150,11 @@ struct ChatThreadView: View {
 
 	/// The live state if any; otherwise the person's name under a topic title.
 	private var navStatus: ThreadNavStatus? {
+		if let call, let startedAt = call.startedAt {
+			return .quiet(
+				LiveMeetingChrome.subline(
+					origin: call.origin, threadTitle: topic ?? store.title, leadName: call.lead.name, startedAt: startedAt))
+		}
 		if let live = ThreadNav.status(presences: presences, flow: flow) { return live }
 		guard topic != nil, let name = counterpart?.name else { return nil }
 		return .quiet(name)
@@ -171,6 +201,7 @@ struct ChatThreadView: View {
 				// Arrow-only back button (user decision). The thread pushes the flow and the agent page.
 				.backChevronOnly()
 				.task { await runtime?.mentionRoster()?.load() }
+				.task { runtime?.chatOpened(store.conversationID) }
 				.onAppear { liveCalls?.visibleConversationID = store.conversationID }
 				.task {
 					// Drafts are per conversation: restored here, saved on every keystroke.
@@ -201,12 +232,31 @@ struct ChatThreadView: View {
 				} message: {
 					Text(store.notice ?? "")
 				}
-				.navigationDestination(item: $threadRoute) { route in
-					if let root = store.allMessages.first(where: { $0.serverID == route.rootID }) {
-						ThreadScreen(store: store, root: root)
+				.task(id: runtime?.requestedThreadRoot) { await openRequestedThread() }
+				// The thread opens as a sheet at every width. A pushed destination declared here is not
+				// reliably honoured: the chat sits in the detail column of the Team split view, which
+				// collapses on iPhone and has no stack of its own on iPad or a wide Mac window.
+				.sheet(item: $threadRoute) { route in
+					NavigationStack {
+						threadDestination(route)
+							.toolbar {
+								ToolbarItem(placement: .confirmationAction) { Button("Done") { threadRoute = nil } }
+							}
 					}
+					.presentationDetents([.large])
 				}
 				.linkedItems(runtime)
+				.sheet(item: $caughtSecret) { caught in
+					if let secretStore {
+						SecretCaughtSheet(
+							caught: caught, store: secretStore,
+							chatAgentIDs: Set(store.participants.filter { $0.kind == .agent }.map(\.id)),
+							onRemove: { composer.text = $0 }, onVaulted: { composer.text = $0 })
+					}
+				}
+				.sheet(item: $selectingText) { message in
+					SelectTextSheet(text: ChatPreviewText.selectable(message.content))
+				}
 				.sheet(isPresented: $showingLinked) {
 					LinkedSheet(
 						entries: linkedEntries,
@@ -237,10 +287,16 @@ struct ChatThreadView: View {
 	private var toolbarContent: some ToolbarContent {
 		ToolbarItem(placement: .principal) {
 			ThreadNavTitle(
-				title: navTitle, status: navStatus, onTap: titleAction)
+				title: navTitle, status: navStatus,
+				onTap: titleAction ?? {
+					newTitle = store.title
+					renaming = true
+				},
+				hint: titleAction == nil ? "Renames the chat" : nil)
 		}
 		// One group so iOS keeps everything in the bar instead of folding into a "More" overflow.
 		ToolbarItemGroup(placement: .primaryAction) {
+			if let call { LiveCallHeaderControls(session: call) { liveCalls?.end() } }
 			if !linkedEntries.isEmpty {
 				Button { showingLinked = true } label: {
 					HStack(spacing: MaskinSpace.s1) {
@@ -291,6 +347,16 @@ struct ChatThreadView: View {
 						Label("Copy link", systemImage: "link")
 					}
 				}
+				if let item = exportItem {
+					ShareLink(item: item, preview: SharePreview(item.fileName)) { Label("Export chat", systemImage: "square.and.arrow.up") }
+				}
+				if let conversations, let row = conversations.conversation(id: store.conversationID), row.unreadCount == 0 {
+					Button {
+						Task { _ = await conversations.markUnread(row.id) }
+					} label: {
+						Label("Mark as unread", systemImage: "envelope.badge")
+					}
+				}
 				Button {
 					newTitle = store.title
 					renaming = true
@@ -330,6 +396,29 @@ struct ChatThreadView: View {
 		}
 	}
 
+	@ViewBuilder
+	private func threadDestination(_ route: ThreadRoute) -> some View {
+		if let root = store.threadRoot(route.rootID) {
+			ThreadScreen(store: store, root: root)
+		} else {
+			// The root is older than the page held: fetch it rather than show an empty screen.
+			ProgressView()
+				.frame(maxWidth: .infinity, maxHeight: .infinity)
+				.task { _ = await store.loadedThreadRoot(route.rootID) }
+		}
+	}
+
+	/// A thread push or link names a root inside this chat: open it once the root is held, fetching
+	/// the thread first when it is older than the loaded page. Nothing happens for another chat's
+	/// request, and an unreachable root leaves the chat open on its own.
+	private func openRequestedThread() async {
+		guard let request = runtime?.requestedThreadRoot, request.conversationId == store.conversationID else {
+			return
+		}
+		if await store.loadedThreadRoot(request.rootId) != nil { threadRoute = ThreadRoute.opening(request: request) }
+		if runtime?.requestedThreadRoot == request { runtime?.requestedThreadRoot = nil }
+	}
+
 	// MARK: Linked
 
 	/// Everything the conversation's messages link to, newest first.
@@ -338,10 +427,23 @@ struct ChatThreadView: View {
 	/// Brings the message that linked something into view: in the timeline, or in its thread.
 	private func jump(to entry: LinkedEntry, proxy: ScrollViewProxy) {
 		guard let message = store.allMessages.first(where: { $0.id == entry.messageID }) else { return }
-		if let rootID = message.threadRootID, !message.alsoInChannel {
-			threadRoute = ThreadRoute(rootID: rootID)
+		if let route = ThreadRoute.opening(replyIn: message) {
+			// The Linked sheet is still closing, and a sheet presented over it is dropped.
+			Task {
+				try? await Task.sleep(for: .milliseconds(450))
+				threadRoute = route
+			}
 		} else {
 			scroll(to: message.id, proxy: proxy)
+		}
+	}
+
+	/// The chat as a lazily built Markdown file: the text is only made when the person shares it.
+	private var exportItem: ExportedChat? {
+		guard !store.allMessages.isEmpty else { return nil }
+		let title = store.title
+		return ExportedChat(fileName: ChatMarkdownExport.fileName(title: title)) { [store] in
+			ChatMarkdownExport.markdown(title: title, messages: store.allMessages)
 		}
 	}
 
@@ -454,11 +556,12 @@ struct ChatThreadView: View {
 			if let call { LiveCallEmptyState(session: call) } else { emptyHint }
 		}
 		ThreadTranscript(
-			store: store, lazy: lazy, onEdit: beginEdit(_:), onReply: reply(to:),
+			store: store, lazy: lazy, onEdit: beginEdit(_:), onReply: reply(to:), onFillStep: { composer.fill($0) },
+			onJumpToMessage: { scroll(to: $0, proxy: proxy) },
 			onOpenThread: { message in
-				guard let id = message.serverID else { return }
-				threadRoute = ThreadRoute(rootID: id)
+				if let route = ThreadRoute.opening(message) { threadRoute = route }
 			},
+			onSelectText: { selectingText = $0 },
 			matchIDs: matchSet,
 			currentMatchID: currentMatchID, call: call)
 		Color.clear.frame(height: 1).id(Self.bottomID)
@@ -687,6 +790,8 @@ struct ChatThreadView: View {
 			onInvite: onInvite,
 			onOpenObject: { runtime?.openObject($0.id) },
 			onEnd: { liveCalls?.end() })
+		.onAppear { liveCalls?.panelAppeared(for: call.chat.conversationID) }
+		.onDisappear { liveCalls?.panelDisappeared(for: call.chat.conversationID) }
 	}
 
 	/// The shared composer (spec 7 §1): Stop in the last slot while an agent is typing, streaming
@@ -713,6 +818,13 @@ struct ChatThreadView: View {
 
 	/// Send, or — while the composer holds an edit — save the new text over the original message.
 	private func send() {
+		// The server refuses a message that holds a secret, so catch it here and offer the Keychain.
+		if let match = SecretScanner.firstSecret(in: composer.text), let runtime {
+			secretStore = SettingsServices(environment: runtime.environment).keychainStore()
+			caughtSecret = CaughtSecret(text: composer.text, match: match)
+			MaskinHaptics.play(.warning)
+			return
+		}
 		if let edit = composer.takeEdit() {
 			MaskinHaptics.play(.light)
 			Task { await store.edit(edit.messageID, to: edit.text) }
@@ -728,7 +840,7 @@ struct ChatThreadView: View {
 	}
 
 	private func reply(to message: ChatMessage) {
-		composer.reply(to: message.actorName, text: message.content)
+		composer.reply(to: message.actorName, text: message.content, serverID: message.serverID)
 	}
 
 	/// Edit loads the text into the composer under the "Editing message" quote; sending replaces it.
@@ -822,6 +934,9 @@ struct ChatThreadView: View {
 					if userScrolled { break }
 					proxy.scrollTo(Self.unreadDividerID, anchor: topAnchor(Self.unreadOpenOffset))
 				}
+				if await waitForTraces(), !userScrolled {
+					proxy.scrollTo(Self.unreadDividerID, anchor: topAnchor(Self.unreadOpenOffset))
+				}
 				revealed = true
 				// A thread short enough to be fully on screen never scrolls, so the bottom-reached
 				// callback never fires and it would stay unread however far it is read. Checked at
@@ -840,8 +955,21 @@ struct ChatThreadView: View {
 		Task {
 			try? await Task.sleep(for: .milliseconds(Self.revealDelay))
 			if followingOpen { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
+			if await waitForTraces(), followingOpen { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
 			revealed = true
 		}
+	}
+
+	/// Holds the opening for the finished turns' one-line traces, which are read after the messages
+	/// and would otherwise appear under the reader one by one. Gives up after `traceWait`, so a slow
+	/// network never keeps the thread hidden. True when it had to wait, so the caller re-pins.
+	private func waitForTraces() async -> Bool {
+		var waited = 0
+		while store.isLoadingTrace, waited < Self.traceWait, !userScrolled {
+			try? await Task.sleep(for: .milliseconds(50))
+			waited += 50
+		}
+		return waited > 0
 	}
 
 	/// Pin to the newest message without animating, then once more after the rows have measured.
@@ -888,8 +1016,14 @@ struct ThreadTranscript: View {
 	var now = Date()
 	var onEdit: (ChatMessage) -> Void = { _ in }
 	var onReply: (ChatMessage) -> Void = { _ in }
+	/// An intro's fill step: put its prompt in the composer.
+	var onFillStep: (String) -> Void = { _ in }
+	/// A tap on a reply's quote: scroll to the message with this id.
+	var onJumpToMessage: (String) -> Void = { _ in }
 	/// Opens the thread under a message (the pill, or Reply in thread).
 	var onOpenThread: (ChatMessage) -> Void = { _ in }
+	/// Opens the message's text in the select-words sheet.
+	var onSelectText: (ChatMessage) -> Void = { _ in }
 	var matchIDs: Set<String> = []
 	var currentMatchID: String?
 	/// The call running in this thread: its card shows what you are saying as you say it.
@@ -937,12 +1071,19 @@ struct ThreadTranscript: View {
 		// A voice call keeps its lines in the call log, which is not observable: reading the running
 		// call's lines here is what redraws the card as each one is transcribed.
 		let _ = call?.lines.count
+		// The same for answers tapped in the dock: their DECIDED rows come from that log too.
+		let _ = call?.decisions.count
 		let items = ThreadLayout.items(
 			for: messages, unreadAfter: store.openedReadCursor, currentActorID: store.currentActorID,
-			calls: LiveCallLog.shared.records(for: store.conversationID))
+			calls: LiveCallLog.shared.records(for: store.conversationID), callSummaries: true,
+			inlineTranscript: false)
 		let latestOwn = ThreadLayout.latestOwnMessageID(in: messages, currentActorID: store.currentActorID)
+		let cardOwners = LinkedConversationItems.firstMentions(in: messages)
+		let statusIDs = ThreadLayout.statusLineIDs(in: messages, currentActorID: store.currentActorID)
 		ForEach(items) { item in
-			row(item, answers: answers, anchors: anchors, latestOwnID: latestOwn)
+			row(
+				item, answers: answers, anchors: anchors, latestOwnID: latestOwn, statusIDs: statusIDs,
+				cardOwners: cardOwners)
 				.padding(.top, ThreadLayout.gap(before: item) == .grouped ? Self.groupedGap : Self.listGap)
 		}
 		TimelineView(.periodic(from: now, by: 15)) { context in
@@ -972,7 +1113,9 @@ struct ThreadTranscript: View {
 					LiveActivityView(
 						agent: row.agent, fallbackActivity: session?.currentActivity,
 						turn: session.flatMap { store.trace?.liveTurn(sessionID: $0.id) },
-						sentAt: store.awaitingReplySince, startedAt: session?.startedAt)
+						sentAt: store.awaitingReplySince, startedAt: session?.startedAt,
+						isFollowing: session.map { followController?.isFollowing($0.id) ?? false } ?? false,
+						onToggleFollow: session.flatMap { toggleFollow(session: $0, agent: row.agent) })
 				}
 			}
 			.padding(.top, Self.listGap)
@@ -991,6 +1134,25 @@ struct ThreadTranscript: View {
 		}
 	}
 
+	private var followController: FollowActivityController? { FollowActivityController.shared }
+
+	/// Follow / Stop following for the agent's working card; nil where Live Activities don't exist.
+	private func toggleFollow(session: ChatAgentSession, agent: ChatParticipant) -> (() -> Void)? {
+		guard let controller = followController, controller.canFollow else { return nil }
+		return {
+			MaskinHaptics.play(.selection)
+			if controller.isFollowing(session.id) {
+				Task { await controller.stopFollowing(sessionId: session.id) }
+			} else {
+				controller.follow(
+					WorkingAgent(
+						id: agent.id, sessionId: session.id, name: agent.name, doing: session.currentActivity,
+						startedAt: session.startedAt ?? Date(), conversationId: store.conversationID,
+						topic: store.title))
+			}
+		}
+	}
+
 	private func actions(for message: ChatMessage, isOwn: Bool, isLatestOwn: Bool) -> MessageMenuActions {
 		var actions = MessageMenuActions()
 		let hasText = !message.content.isEmpty
@@ -1000,6 +1162,7 @@ struct ThreadTranscript: View {
 				Clipboard.copy(message.content)
 				MaskinHaptics.play(.selection)
 			}
+			actions.onSelectText = { onSelectText(message) }
 		}
 		if message.serverID != nil, message.kind == "message", !message.isFailed {
 			actions.reacted = Set(message.reactions.filter(\.reactedByMe).map(\.emoji))
@@ -1042,9 +1205,18 @@ struct ThreadTranscript: View {
 		return actions
 	}
 
+	/// The message a reply's quote points at, when it is in the loaded chat.
+	private func quoteTarget(of message: ChatMessage) -> ChatMessage? {
+		guard let quote = message.quotedReply else { return nil }
+		var quotedID: Int?
+		if case .number(let n)? = message.metadata?["quoted_message_id"] { quotedID = Int(n) }
+		return QuoteJump.original(of: quote, replyID: message.id, quotedID: quotedID, in: store.messages)
+	}
+
 	@ViewBuilder
 	private func row(
-		_ item: ThreadItem, answers: [Int: [ChatQuestionAnswer.Answer]], anchors: ActivityAnchors, latestOwnID: String?
+		_ item: ThreadItem, answers: [Int: [ChatQuestionAnswer.Answer]], anchors: ActivityAnchors, latestOwnID: String?,
+		statusIDs: Set<String>, cardOwners: [String: String]
 	) -> some View {
 		switch item {
 		case .daySeparator(let day):
@@ -1053,8 +1225,14 @@ struct ThreadTranscript: View {
 			SystemLine(message: message)
 		case .unreadDivider(let count):
 			ThreadDivider.unread(count: count)
+		case .callDivider(let divider):
+			ThreadDivider(label: divider.label)
 		case .liveCall(let card):
 			LiveCallCardView(card: card, partial: call.map(Self.partialWords) ?? "")
+		case .receipt(let event):
+			LiveReceiptRow(event: event)
+		case .callSummary(let summary, let transcript):
+			LiveCallSummaryCard(summary: summary, transcript: transcript)
 		case .handoff(let session, let behind):
 			HandoffRow(session: session, behind: behind)
 		case .message(let message, let showsAuthor):
@@ -1071,25 +1249,35 @@ struct ThreadTranscript: View {
 					store.displayName(for: id).map { (id: id, name: $0) }
 				},
 				questionAnswers: message.serverID.flatMap { answers[$0] },
-				sendStatus: isLatestOwn ? MessageSendStatus.of(message, readBy: store.readBy(message)) : nil,
+				sendStatus: statusIDs.contains(message.id) ? MessageSendStatus.of(message, readBy: store.readBy(message)) : nil,
 				messageOverride: store.override(for: message.id), isPinned: store.isPinned(message),
 				versionsLocked: store.replyInFlight,
 				working: message.author == .agent && store.presence(of: message.actorID) != nil,
 				actions: actions(for: message, isOwn: isOwn, isLatestOwn: isLatestOwn),
 				onRetrySend: { store.retrySend(message.id) },
 				onReply: message.content.isEmpty ? nil : { onReply(message) },
+				onQuoteTap: message.quotedReply == nil
+					? nil : { if let target = quoteTarget(of: message) { onJumpToMessage(target.id) } },
 				threadSummary: store.threadSummary(for: message),
 				onOpenThread: { onOpenThread(message) },
 				onToggleReaction: { emoji in Task { await store.toggleReaction(emoji, on: message) } },
 				onAnswer: { picks in _ = store.answer(question: message, picks: picks) },
 				onKeychainReply: { text, metadata in _ = store.send(text, metadata: metadata) },
-				cardOutcome: message.metadata?["keychain_access_request"] == nil
-					? nil : message.serverID.flatMap { store.cardAnswerIndex[$0] },
+				onSendStep: { prompt, introID, index in
+					_ = store.send(
+						prompt,
+						metadata: ChatSendMetadata(fromSuggestedStep: ChatSuggestedStepRef(introMessageID: introID, index: index)))
+				},
+				onFillStep: onFillStep,
+				introStepsOpen: AgentIntroView.stepsOpen(for: message, in: store.messages),
+				cardOutcome: message.asksForAnswer
+					? message.serverID.flatMap { store.cardAnswerIndex[$0] } : nil,
 				chatAgents: store.participants.filter { $0.kind == .agent },
 				onSelectVersion: { store.selectVersion($0, of: message.id) },
 				onApprovedDraft: { title, body in
 					store.tellAgentOfApproval(title: title, body: body, linkedBy: message.actorID, author: message.author)
-				}
+				},
+				cardOwners: cardOwners
 			)
 			.overlay {
 				if matchIDs.contains(message.id) {
@@ -1263,5 +1451,18 @@ extension View {
 		} else {
 			simultaneousGesture(DragGesture(minimumDistance: MaskinSpace.s4).onChanged { _ in action() })
 		}
+	}
+}
+
+/// Export chat's payload. Transferable builds the file on demand, so redrawing the menu costs nothing.
+struct ExportedChat: Transferable {
+	let fileName: String
+	let build: @MainActor @Sendable () -> String
+
+	static var transferRepresentation: some TransferRepresentation {
+		DataRepresentation(exportedContentType: .plainText) { item in
+			await MainActor.run { Data(item.build().utf8) }
+		}
+		.suggestedFileName { $0.fileName }
 	}
 }

@@ -8,6 +8,7 @@ const { default: agentSkillsRoutes } = await import('../../routes/agent-skills')
 const wsId = '00000000-0000-0000-0000-000000000001'
 const actorId = '00000000-0000-0000-0000-000000000002'
 const headers = { 'x-workspace-id': wsId }
+const traversalName = encodeURIComponent('../../other-ws/x')
 
 const validSkillMd = `---
 name: my-skill
@@ -87,6 +88,21 @@ describe('Agent Skills Routes', () => {
 
 			expect(res.status).toBe(404)
 		})
+
+		it('returns 400 and never reads storage for a traversal skill name', async () => {
+			const { app, mockResults, agentStorage } = createSkillsTestApp(
+				agentSkillsRoutes,
+				'/api/actors',
+			)
+			mockResults.select = [buildWorkspaceMember()]
+
+			const res = await app.request(
+				jsonGet(`/api/actors/${actorId}/skills/${traversalName}`, headers),
+			)
+
+			expect(res.status).toBe(400)
+			expect(agentStorage.getFile).not.toHaveBeenCalled()
+		})
 	})
 
 	describe('PUT /:actorId/skills/:skillName', () => {
@@ -162,6 +178,21 @@ describe('Agent Skills Routes', () => {
 			)
 
 			expect(res.status).toBe(403)
+		})
+
+		it('returns 400 and never touches storage for a traversal skill name', async () => {
+			const { app, mockResults, agentStorage } = createSkillsTestApp(
+				agentSkillsRoutes,
+				'/api/actors',
+			)
+			mockResults.select = [buildWorkspaceMember()]
+
+			const res = await app.request(
+				jsonRequest('DELETE', `/api/actors/${actorId}/skills/${traversalName}`, undefined, headers),
+			)
+
+			expect(res.status).toBe(400)
+			expect(agentStorage.deleteFile).not.toHaveBeenCalled()
 		})
 	})
 })

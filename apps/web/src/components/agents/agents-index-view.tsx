@@ -19,12 +19,15 @@ import {
 import {
 	deriveAgentKind,
 	deriveAgentStatus,
+	deriveAgentStatusFromStats,
 	getLatestSession,
 	groupSessionsByAgent,
+	statsToCounts,
 	summarizeAgentSessions,
 } from '@/lib/agent-status'
 import type { ActorListItem, DisplaySettingsBody, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import type { SessionStatsRow } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
 import { ChevronRight } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -77,10 +80,14 @@ export function AgentsIndexView({
 	workspaceId,
 	agents,
 	sessions,
+	stats,
 }: {
 	workspaceId: string
 	agents: ActorListItem[]
+	/** The 100 newest sessions: the source of live status. */
 	sessions: SessionResponse[]
+	/** Per-agent counts and cost over the whole history; the recent list stands in until it loads. */
+	stats?: SessionStatsRow[]
 }) {
 	const [sort, setSort] = useState('name')
 	const [order, setOrder] = useState<'asc' | 'desc'>('asc')
@@ -127,22 +134,31 @@ export function AgentsIndexView({
 
 	const sessionsByAgent = useMemo(() => groupSessionsByAgent(sessions), [sessions])
 
+	const statsByAgent = useMemo(() => new Map((stats ?? []).map((s) => [s.actor_id, s])), [stats])
+
 	const rows = useMemo<AgentRow[]>(
 		() =>
 			agents.map((agent) => {
-				const sessionStatus = deriveAgentStatus(agent.id, sessionsByAgent)
-				const stats = summarizeAgentSessions(sessionsByAgent.get(agent.id))
+				const agentStats = statsByAgent.get(agent.id)
+				// Live status comes from the recent list; an agent with nothing in it falls back to the
+				// stats (active run, or a failed latest run) so older history still shows.
+				const sessionStatus = sessionsByAgent.has(agent.id)
+					? deriveAgentStatus(agent.id, sessionsByAgent)
+					: deriveAgentStatusFromStats(agentStats)
+				const counts = stats
+					? statsToCounts(agentStats)
+					: summarizeAgentSessions(sessionsByAgent.get(agent.id))
 				return {
 					agent,
 					portrait: getPortraitStatus(agent, sessionStatus),
 					latestSession: getLatestSession(agent.id, sessionsByAgent),
-					sessionCount: stats.total,
-					activeCount: stats.active,
-					totalCostUsd: stats.totalCostUsd,
-					last30dCostUsd: stats.last30dCostUsd,
+					sessionCount: counts.total,
+					activeCount: counts.active,
+					totalCostUsd: counts.totalCostUsd,
+					last30dCostUsd: counts.last30dCostUsd,
 				}
 			}),
-		[agents, sessionsByAgent],
+		[agents, sessionsByAgent, statsByAgent, stats],
 	)
 
 	const activeStatuses = useMemo(

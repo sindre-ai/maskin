@@ -15,6 +15,7 @@ struct ThreadScreen: View {
 	@State private var draft = ""
 	@State private var alsoInChannel = false
 	@State private var recipientIndex = 0
+	@State private var selectingText: ChatMessage?
 	@FocusState private var focused: Bool
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 
@@ -64,6 +65,9 @@ struct ThreadScreen: View {
 		}
 		.background(MaskinSurface.grouped)
 		.linkedItems(runtime)
+		.sheet(item: $selectingText) { message in
+			SelectTextSheet(text: ChatPreviewText.selectable(message.content))
+		}
 		.navigationTitle("Thread")
 		#if os(iOS)
 		.navigationBarTitleDisplayMode(.inline)
@@ -116,6 +120,7 @@ struct ThreadScreen: View {
 				Clipboard.copy(message.content)
 				MaskinHaptics.play(.selection)
 			}
+			actions.onSelectText = { selectingText = message }
 		}
 		if message.serverID != nil, message.kind == "message", !message.isFailed {
 			actions.reacted = Set(message.reactions.filter(\.reactedByMe).map(\.emoji))
@@ -140,7 +145,7 @@ struct ThreadScreen: View {
 					text, in: rootID, to: message.author == .agent ? store.participant(for: message.actorID) : nil,
 					alsoInChannel: false, metadata: metadata)
 			},
-			cardOutcome: message.serverID.flatMap { store.cardAnswerIndex[$0] },
+			cardOutcome: message.asksForAnswer ? message.serverID.flatMap { store.cardAnswerIndex[$0] } : nil,
 			chatAgents: store.participants.filter { $0.kind == .agent },
 			onApprovedDraft: { title, body in
 				// The yes goes back into this thread, to the agent that wrote the draft.

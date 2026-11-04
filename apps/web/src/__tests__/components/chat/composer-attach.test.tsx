@@ -1,7 +1,7 @@
 import { Composer, nameClipboardImage } from '@/components/chat/chat'
 import { EMPTY_CHAT_SELECTION } from '@/lib/chat-selection'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createWorkspaceWrapper } from '../../setup'
 
 const uploadFileMock = vi.fn()
@@ -73,6 +73,14 @@ describe('Composer file-attach input', () => {
 		// so file types are validated by the backend, not the client.
 		expect(input.getAttribute('accept')).toBeNull()
 		expect(input.multiple).toBe(true)
+	})
+
+	it('offers the paperclip only, with no + menu', () => {
+		renderComposer()
+		expect(screen.getByRole('button', { name: 'Attach file' })).toBeInTheDocument()
+		expect(
+			screen.queryByRole('button', { name: 'Add an object, file, or mention' }),
+		).not.toBeInTheDocument()
 	})
 
 	it('uploads a picked PDF via useUploadFile and dispatches add_file on success', async () => {
@@ -216,5 +224,98 @@ describe('nameClipboardImage', () => {
 	])('leaves %s alone', (name, type) => {
 		const file = new File(['x'], name, { type })
 		expect(nameClipboardImage(file, at)).toBe(file)
+	})
+})
+
+describe('Composer text over the message cap', () => {
+	const longText = `${'long message '.repeat(800)}the end`
+
+	beforeEach(() => uploadFileMock.mockReset())
+
+	function typeAndSend(container: HTMLElement, text: string) {
+		const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+		fireEvent.change(textarea, { target: { value: text } })
+		fireEvent.submit(textarea.closest('form') as HTMLFormElement)
+	}
+
+	it('uploads the full text as a .txt file and sends a short body with it', async () => {
+		uploadFileMock.mockResolvedValueOnce({ id: 'file-long-1' })
+		const { container, props } = renderComposer({ longTextAsFile: true })
+		typeAndSend(container, longText)
+
+		await waitFor(() => expect(props.onSend).toHaveBeenCalledTimes(1))
+		expect(uploadFileMock).toHaveBeenCalledWith(
+			expect.objectContaining({ mime_type: 'text/plain', content: longText, encoding: 'utf8' }),
+		)
+		const [body, extras] = vi.mocked(props.onSend).mock.calls[0]
+		expect(body.length).toBeLessThan(8000)
+		expect(extras?.files).toEqual([
+			expect.objectContaining({ fileId: 'file-long-1', mimeType: 'text/plain' }),
+		])
+	})
+
+	it('keeps the typed text and shows the error when the upload fails', async () => {
+		uploadFileMock.mockRejectedValueOnce(new Error('Upload failed'))
+		const { container, props } = renderComposer({ longTextAsFile: true })
+		typeAndSend(container, longText)
+
+		expect(await screen.findByText(/Upload failed/)).toBeInTheDocument()
+		expect(props.onSend).not.toHaveBeenCalled()
+		expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe(longText)
+	})
+
+	it('sends the text as typed when the caller did not opt in', async () => {
+		const { container, props } = renderComposer()
+		typeAndSend(container, longText)
+
+		await waitFor(() => expect(props.onSend).toHaveBeenCalledWith(longText.trim()))
+		expect(uploadFileMock).not.toHaveBeenCalled()
+	})
+})
+
+describe('Composer upload state', () => {
+	function pickFile(container: HTMLElement) {
+		const file = new File(['%PDF-1.4 hello'], 'report.pdf', { type: 'application/pdf' })
+		fireEvent.change(getFileInput(container), { target: { files: [file] } })
+	}
+
+	it('shows Preparing, then a percentage after a progress event, and says why Send is off', async () => {
+		uploadFileMock.mockReset()
+		let report: (p: number) => void = () => {}
+		uploadFileMock.mockImplementationOnce(
+			(_input: unknown, opts: { onProgress: (p: number) => void }) => {
+				report = opts.onProgress
+				return new Promise(() => {})
+			},
+		)
+		const { container } = renderComposer()
+		fireEvent.change(screen.getByRole('textbox'), { target: { value: 'hello' } })
+		pickFile(container)
+
+		expect(await screen.findByText('Preparing…')).toBeInTheDocument()
+		expect(screen.getByText('Waiting for 1 upload to finish')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
+
+		await waitFor(() => expect(uploadFileMock).toHaveBeenCalledTimes(1))
+		act(() => report(0.42))
+		expect(await screen.findByText('42%')).toBeInTheDocument()
+		expect(screen.queryByText('Preparing…')).not.toBeInTheDocument()
+		expect(screen.getByText('Waiting for 1 upload to finish')).toBeInTheDocument()
+	})
+
+	it('says a failed upload must be removed, and clears the reason once it is', async () => {
+		uploadFileMock.mockReset()
+		uploadFileMock.mockRejectedValueOnce(new Error('Storage is down'))
+		const { container } = renderComposer()
+		fireEvent.change(screen.getByRole('textbox'), { target: { value: 'hello' } })
+		pickFile(container)
+
+		expect(await screen.findByText('Storage is down')).toBeInTheDocument()
+		expect(screen.getByText('Remove the failed upload to send')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
+
+		fireEvent.click(screen.getByRole('button', { name: 'Remove failed upload report.pdf' }))
+		expect(screen.queryByText('Remove the failed upload to send')).not.toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled()
 	})
 })

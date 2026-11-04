@@ -30,7 +30,9 @@ DISPLAY = os.environ.get("DISPLAY", ":99")
 PORT = int(os.environ.get("DESKTOPD_PORT", "6081"))
 NOVNC_PORT = int(os.environ.get("NOVNC_PORT", "6080"))
 PASSWORD = os.environ.get("VNC_PASSWORD", "")
-WIDTH, HEIGHT = 1280, 720
+# The screen size. Agents see the screenshot and click in these native pixels, so keep
+# it in step with the entrypoint's SCREEN_SIZE default.
+WIDTH, HEIGHT = 1600, 900
 MAX_BODY = 64 * 1024
 MAX_OUTPUT = 20_000
 KEY_RE = re.compile(r"^[A-Za-z0-9_]+(\+[A-Za-z0-9_]+)*$")

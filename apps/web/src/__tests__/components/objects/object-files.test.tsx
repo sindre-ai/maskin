@@ -27,6 +27,7 @@ vi.mock('@/hooks/use-files', () => ({
 	useFile: (...args: unknown[]) => useFileMock(...args),
 	useFiles: (...args: unknown[]) => useFilesMock(...args),
 	useCreateFile: () => ({ mutateAsync: createFileMock }),
+	useUploadFile: () => vi.fn(),
 }))
 
 const createRelationshipMock = vi.fn()

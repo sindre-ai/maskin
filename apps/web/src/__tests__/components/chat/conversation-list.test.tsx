@@ -1,5 +1,6 @@
 import type { ConversationListItemResponse } from '@/lib/api'
-import { render, screen, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
@@ -11,7 +12,7 @@ vi.mock('@tanstack/react-router', async () => {
 vi.mock('@/lib/auth', () => ({ getStoredActor: () => ({ id: 'me', name: 'Me', type: 'human' }) }))
 
 vi.mock('@/lib/api', () => ({
-	api: { conversations: { list: vi.fn() } },
+	api: { conversations: { list: vi.fn(), replyThreads: vi.fn() } },
 }))
 
 import { ConversationList } from '@/components/chat/conversation-list'
@@ -34,6 +35,7 @@ function buildConversation(
 		snippet: 'Still open on three accounts.',
 		snippet_actor_id: null,
 		snippet_actor_name: null,
+		working_actor_ids: [],
 		participants: [],
 		...overrides,
 	}
@@ -42,6 +44,8 @@ function buildConversation(
 describe('ConversationList', () => {
 	beforeEach(() => {
 		vi.mocked(api.conversations.list).mockReset()
+		vi.mocked(api.conversations.replyThreads).mockReset()
+		vi.mocked(api.conversations.replyThreads).mockResolvedValue({ threads: [] } as never)
 	})
 
 	it('renders the group rail and closes the list with the end-of-history line when there is no next page', async () => {
@@ -96,6 +100,17 @@ describe('ConversationList', () => {
 		expect(screen.getByRole('link', { name: 'View all chats →' })).toBeInTheDocument()
 	})
 
+	it('shows the Start a new one link in the empty list, and hides it when asked to', async () => {
+		vi.mocked(api.conversations.list).mockResolvedValue({ conversations: [], has_more: false })
+		const { unmount } = render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
+		expect(await screen.findByRole('link', { name: 'Start a new one →' })).toBeInTheDocument()
+		unmount()
+
+		render(<ConversationList workspaceId="ws-1" hideStartLink />, { wrapper: TestWrapper })
+		expect(await screen.findByText('No conversations here')).toBeInTheDocument()
+		expect(screen.queryByRole('link', { name: 'Start a new one →' })).not.toBeInTheDocument()
+	})
+
 	it('shows the generic empty copy for a filter with no matches', async () => {
 		vi.mocked(api.conversations.list).mockResolvedValue({ conversations: [], has_more: false })
 		render(<ConversationList workspaceId="ws-1" filter="pinned" />, { wrapper: TestWrapper })
@@ -124,6 +139,96 @@ describe('ConversationList', () => {
 				expect.objectContaining({ pinned: 'true' }),
 			),
 		)
+	})
+
+	it('keeps a row in the Unread filter once it is read, until the filter changes', async () => {
+		vi.mocked(api.conversations.list).mockResolvedValueOnce({
+			conversations: [
+				buildConversation({ id: 'a', title: 'First unread', unread_count: 2 }),
+				buildConversation({ id: 'b', title: 'Second unread', unread_count: 1 }),
+			],
+			has_more: false,
+		})
+		const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+		const wrapper = ({ children }: { children: React.ReactNode }) => (
+			<QueryClientProvider client={client}>{children}</QueryClientProvider>
+		)
+		const view = render(<ConversationList workspaceId="ws-1" filter="unread" />, { wrapper })
+		expect(await screen.findByText('First unread')).toBeInTheDocument()
+
+		// Reading the first chat makes the server drop it from the unread list.
+		vi.mocked(api.conversations.list).mockResolvedValue({
+			conversations: [buildConversation({ id: 'b', title: 'Second unread', unread_count: 1 })],
+			has_more: false,
+		})
+		await act(async () => {
+			await client.invalidateQueries()
+		})
+		expect(screen.getByText('First unread')).toBeInTheDocument()
+		expect(screen.getByText('Second unread')).toBeInTheDocument()
+
+		// Leaving the filter and coming back starts from the server's list.
+		view.rerender(<ConversationList workspaceId="ws-1" filter="all" />)
+		view.rerender(<ConversationList workspaceId="ws-1" filter="unread" />)
+		await waitFor(() => expect(screen.queryByText('First unread')).not.toBeInTheDocument())
+		expect(screen.getByText('Second unread')).toBeInTheDocument()
+	})
+
+	it('keeps server order in the Unread filter after Load more, with a read row in its place', async () => {
+		let firstPage = [
+			buildConversation({ id: 'a', title: 'Row A', unread_count: 1 }),
+			buildConversation({ id: 'b', title: 'Row B', unread_count: 1 }),
+		]
+		const secondPage = [
+			buildConversation({ id: 'c', title: 'Row C', unread_count: 1 }),
+			buildConversation({ id: 'd', title: 'Row D', unread_count: 1 }),
+		]
+		vi.mocked(api.conversations.list).mockImplementation(async (_ws, params) =>
+			params?.offset === '0'
+				? { conversations: firstPage, has_more: true }
+				: { conversations: secondPage, has_more: false },
+		)
+		// Drive the scroll sentinel so the second page loads.
+		let intersect: (() => void) | undefined
+		vi.stubGlobal(
+			'IntersectionObserver',
+			class {
+				constructor(cb: (entries: { isIntersecting: boolean }[]) => void) {
+					intersect = () => cb([{ isIntersecting: true }])
+				}
+				observe() {}
+				unobserve() {}
+				disconnect() {}
+				takeRecords() {
+					return []
+				}
+			},
+		)
+		const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+		const wrapper = ({ children }: { children: React.ReactNode }) => (
+			<QueryClientProvider client={client}>{children}</QueryClientProvider>
+		)
+		const titles = () => screen.getAllByText(/^Row [A-D]$/).map((el) => el.textContent)
+		try {
+			render(<ConversationList workspaceId="ws-1" filter="unread" />, { wrapper })
+			expect(await screen.findByText('Row A')).toBeInTheDocument()
+
+			await act(async () => {
+				intersect?.()
+			})
+			expect(await screen.findByText('Row D')).toBeInTheDocument()
+			// The later page lands below the rows already shown.
+			expect(titles()).toEqual(['Row A', 'Row B', 'Row C', 'Row D'])
+
+			// Reading A drops it from the server's list; it stays where it was.
+			firstPage = [firstPage[1]]
+			await act(async () => {
+				await client.invalidateQueries()
+			})
+			expect(titles()).toEqual(['Row A', 'Row B', 'Row C', 'Row D'])
+		} finally {
+			vi.unstubAllGlobals()
+		}
 	})
 
 	it('collapses archived results into a single Archived group', async () => {
@@ -156,5 +261,21 @@ describe('ConversationList', () => {
 		})
 		screen.getByRole('button', { name: /Try again/ }).click()
 		expect(await screen.findByText('Billing retries')).toBeInTheDocument()
+	})
+
+	it('flags a chat whose threads hold unread replies', async () => {
+		vi.mocked(api.conversations.list).mockResolvedValue({
+			conversations: [buildConversation({ id: 'a', title: 'Billing retries' })],
+			has_more: false,
+		})
+		vi.mocked(api.conversations.replyThreads).mockResolvedValue({
+			threads: [
+				{ conversationId: 'a', thread: { unreadCount: 1 } },
+				{ conversationId: 'a', thread: { unreadCount: 2 } },
+			],
+		} as never)
+		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+		expect(await screen.findByText('3 unread replies in threads')).toBeInTheDocument()
 	})
 })

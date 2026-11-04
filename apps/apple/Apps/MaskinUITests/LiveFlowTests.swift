@@ -28,7 +28,7 @@ final class LiveFlowTests: LiveTestCase {
 
 	func test2_Chats() throws {
 		try signInIfNeeded()
-		openSidebarTab("Team")
+		openSidebarTab("Chats")
 		let row = el("Launch planning")
 		if !row.waitForExistence(timeout: 15) {
 			shot("chats-missing-row")
@@ -60,7 +60,7 @@ final class LiveFlowTests: LiveTestCase {
 
 	func test3_ObjectsAndComment() throws {
 		try signInIfNeeded()
-		openSidebarTab("Objects")
+		openSidebarTab("Items")
 		try postFreshDecision()
 		let row = el("Ship a native iOS app")
 		XCTAssertTrue(row.waitForExistence(timeout: 15), "bet row")

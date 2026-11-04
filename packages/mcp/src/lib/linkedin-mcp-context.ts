@@ -119,8 +119,8 @@ export type LinkedInPhase2Verb = (typeof LINKEDIN_PHASE2_VERBS)[number]
  * Outreach-loop verbs (bet aff468ba), registered on personal identities only: the InMail
  * credit read, the sent invitations read and the withdraw write, the posts and company reads and
  * the like and the InMail send here, with the rest of the suite joining as its tasks land.
- * `withdraw_invitation`, `react_to_post` and `send_inmail` are only registered while the
- * LINKEDIN_OUTREACH_ACTIONS flag is on (see the LinkedIn MCP server).
+ * `withdraw_invitation`, `react_to_post` and `send_inmail` are only registered while
+ * the identity allows them (see the LinkedIn MCP server).
  */
 export const LINKEDIN_OUTREACH_VERBS = [
 	'get_inmail_balance',

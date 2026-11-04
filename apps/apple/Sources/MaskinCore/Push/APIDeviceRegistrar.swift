@@ -2,10 +2,12 @@ import Foundation
 import MaskinAPI
 
 /// Production `DeviceRegistering`: `POST /api/devices` (an upsert keyed on APNs token + environment
-/// that answers with the device and its id) and `DELETE /api/devices/{id}`. Hand-encoded
+/// that answers with the device and its id), `DELETE /api/devices/{id}` and the public
+/// `POST /api/devices/unregister`. Hand-encoded
 /// `URLSession` requests, like `APINotificationPreferencesSource`, because the checked-in generated
 /// client predates these routes. The routes are per actor, so no `X-Workspace-Id`. The raw token is
-/// only ever in the POST body, never in a URL. Error text is fixed: no bodies, ids or keys are
+/// only ever in a POST body, never in a URL, and the secret-based unregister carries no Authorization
+/// header at all: the device secret is its credential. Error text is fixed: no bodies, ids or keys are
 /// interpolated.
 public struct APIDeviceRegistrar: DeviceRegistering {
 	private let baseURL: URL
@@ -24,12 +26,14 @@ public struct APIDeviceRegistrar: DeviceRegistering {
 	}
 
 	public func register(
-		token: String, environment: PushEnvironment, platform: DevicePlatform, appVersion: String?
+		token: String, environment: PushEnvironment, platform: DevicePlatform, appVersion: String?,
+		unregisterSecret: String
 	) async throws -> String {
 		var request = await makeRegisterRequest(
 			idempotencyKey: UUID().uuidString)
 		request.httpBody = try Self.registerBody(
-			token: token, environment: environment, platform: platform, appVersion: appVersion)
+			token: token, environment: environment, platform: platform, appVersion: appVersion,
+			unregisterSecret: unregisterSecret)
 		let data = try await send(request)
 		guard let device = try? JSONDecoder().decode(Device.self, from: data), !device.id.isEmpty else {
 			throw NotificationsError("Maskin sent a reply this version can't read.")
@@ -40,6 +44,16 @@ public struct APIDeviceRegistrar: DeviceRegistering {
 	public func unregister(deviceId: String) async throws {
 		// The server answers 404 for a device that is already gone: that is the goal reached.
 		_ = try await send(await makeUnregisterRequest(deviceId: deviceId), acceptingNotFound: true)
+	}
+
+	public func unregister(token: String, environment: PushEnvironment, secret: String) async throws {
+		var request = await makeSecretUnregisterRequest()
+		request.httpBody = try JSONEncoder().encode(
+			SecretUnregisterBody(
+				apns_token: token, environment: environment.rawValue, unregister_secret: secret))
+		// Any 200 is done, whether the server deleted a row or not. 404 or 405 is an older server
+		// without the route: that is not done.
+		_ = try await send(request, routeMayBeMissing: true)
 	}
 
 	/// Built apart from sending so tests can read the URL, headers and body.
@@ -54,27 +68,38 @@ public struct APIDeviceRegistrar: DeviceRegistering {
 		await baseRequest(path: "api/devices/\(deviceId)", method: "DELETE")
 	}
 
+	/// No Authorization header on purpose (a signed-out phone has no key), and no token in the URL.
+	func makeSecretUnregisterRequest() async -> URLRequest {
+		var request = await baseRequest(path: "api/devices/unregister", method: "POST", authorized: false)
+		request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+		return request
+	}
+
 	static func registerBody(
-		token: String, environment: PushEnvironment, platform: DevicePlatform, appVersion: String?
+		token: String, environment: PushEnvironment, platform: DevicePlatform, appVersion: String?,
+		unregisterSecret: String
 	) throws -> Data {
 		try JSONEncoder().encode(
 			RegisterBody(
 				platform: platform.rawValue, apns_token: token, environment: environment.rawValue,
-				app_version: appVersion.flatMap { $0.isEmpty ? nil : String($0.prefix(64)) }))
+				app_version: appVersion.flatMap { $0.isEmpty ? nil : String($0.prefix(64)) },
+				unregister_secret: unregisterSecret))
 	}
 
-	private func baseRequest(path: String, method: String) async -> URLRequest {
+	private func baseRequest(path: String, method: String, authorized: Bool = true) async -> URLRequest {
 		var request = URLRequest(url: baseURL.appendingPathComponent(path))
 		request.httpMethod = method
 		request.setValue("application/json", forHTTPHeaderField: "Accept")
 		request.setValue(clientSource, forHTTPHeaderField: "X-Client-Source")
-		if let creds = await credentials() {
+		if authorized, let creds = await credentials() {
 			request.setValue("Bearer \(creds.apiKey)", forHTTPHeaderField: "Authorization")
 		}
 		return request
 	}
 
-	private func send(_ request: URLRequest, acceptingNotFound: Bool = false) async throws -> Data {
+	private func send(
+		_ request: URLRequest, acceptingNotFound: Bool = false, routeMayBeMissing: Bool = false
+	) async throws -> Data {
 		let data: Data
 		let status: Int
 		do {
@@ -87,6 +112,8 @@ public struct APIDeviceRegistrar: DeviceRegistering {
 		switch status {
 		case 200..<300: return data
 		case 404 where acceptingNotFound: return data
+		case 404 where routeMayBeMissing: throw DeviceUnregisterRouteMissing()
+		case 405 where routeMayBeMissing: throw DeviceUnregisterRouteMissing()
 		case 401, 403: throw NotificationsError("Maskin didn't accept this sign-in. Sign in again to turn on notifications.")
 		case 400..<500: throw NotificationsError("Maskin couldn't register this device for notifications.")
 		default: throw NotificationsError("Maskin had a problem registering this device. Try again later.")
@@ -98,6 +125,13 @@ public struct APIDeviceRegistrar: DeviceRegistering {
 		var apns_token: String
 		var environment: String
 		var app_version: String?
+		var unregister_secret: String
+	}
+
+	private struct SecretUnregisterBody: Encodable {
+		var apns_token: String
+		var environment: String
+		var unregister_secret: String
 	}
 
 	private struct Device: Decodable { var id: String }

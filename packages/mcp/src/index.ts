@@ -1,6 +1,7 @@
 export { createMcpServer, getServerHandlers } from './server.js'
 export type { McpConfig, McpToolHandler } from './server.js'
 export { tools } from './tools.js'
+export { READ_TOOL_NAMES } from './read-error.js'
 
 // CTO pre-req 1 for Voice v1 (bet 16bd0042). Extracted so both the stdio
 // transport (via createMcpServer) and the voice tool-proxy (Task 3) dispatch
@@ -83,7 +84,7 @@ export type {
 
 // Live (voice) calls get the same tools as chat, read straight from the MCP
 // server. See ./voice-tools.ts.
-export { createVoiceToolkit } from './voice-tools.js'
+export { VOICE_CORE_TOOLS, createVoiceToolkit, selectVoiceRealtimeTools } from './voice-tools.js'
 export { READ_ONLY_TOOLS } from './annotations.js'
 export type {
 	VoiceExternalMcpServer,

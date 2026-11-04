@@ -1,7 +1,19 @@
 import type { Database } from '@maskin/db'
-import { events, notifications, objects, readState, sessions } from '@maskin/db/schema'
-import { FOR_YOU_KIND, parseCommentDecision, parseForYouMetadata } from '@maskin/shared'
-import { and, eq, gt, inArray, lte, max, sql } from 'drizzle-orm'
+import {
+	events,
+	forYouDismissals,
+	forYouWithdrawals,
+	notifications,
+	objects,
+	sessions,
+} from '@maskin/db/schema'
+import {
+	FOR_YOU_KIND,
+	isDecisionExpired,
+	parseCommentDecision,
+	parseForYouMetadata,
+} from '@maskin/shared'
+import { and, eq, gte, inArray, max, sql } from 'drizzle-orm'
 import { TERMINAL_STATUSES } from '../services/session-lifecycle'
 
 /**
@@ -66,6 +78,109 @@ export async function findFinishedDraftCards(
 	return finished
 }
 
+/** A reply by the viewer: its id, and the id of the thread it was posted into. */
+export type ViewerReply = { id: number; threadRoot: number }
+
+/**
+ * Threaded replies the viewer posted on `entityIds` after `sinceEventId`. A free comment (no
+ * parent) is not here: it answers nothing. The server collapses every reply to the root of its
+ * thread (see POST /api/events), so a reply to a card and a reply to a reply under it both
+ * carry the card as their parent, and an option tap is such a reply: the web feed card and the
+ * iOS action handler post the option with the card's event id as the parent.
+ */
+export async function findViewerReplies(
+	db: Database,
+	workspaceId: string,
+	actorId: string,
+	entityIds: string[],
+	sinceEventId: number,
+): Promise<ViewerReply[]> {
+	if (entityIds.length === 0) return []
+	const rows = await db
+		.select({ id: events.id, parent: sql<string | null>`${events.data}->>'parentEventId'` })
+		.from(events)
+		.where(
+			and(
+				eq(events.workspaceId, workspaceId),
+				eq(events.action, 'commented'),
+				eq(events.actorId, actorId),
+				inArray(events.entityId, entityIds),
+				gte(events.id, sinceEventId),
+				sql`${events.data}->>'parentEventId' IS NOT NULL`,
+			),
+		)
+	return rows.flatMap((r) => {
+		const threadRoot = Number(r.parent)
+		return Number.isFinite(threadRoot) && threadRoot > 0 ? [{ id: Number(r.id), threadRoot }] : []
+	})
+}
+
+/**
+ * Whether the viewer answered the card raised by `comment`: a threaded reply into the comment's
+ * own thread, posted after it. A comment with no parent is its own thread root. Only a reply
+ * counts, so a free comment on the object does not, and a reply to an older card on the same
+ * object does not retire a newer card. When a card is itself a reply inside a longer thread, a
+ * reply posted after it in that thread counts, because replies are stored against the root and
+ * do not say which sibling they answered.
+ */
+export function isCardAnswered(
+	comment: typeof events.$inferSelect,
+	replies: ViewerReply[],
+): boolean {
+	const parent = Number((comment.data as { parentEventId?: unknown } | null)?.parentEventId)
+	const root = Number.isFinite(parent) && parent > 0 ? parent : Number(comment.id)
+	return replies.some((r) => r.threadRoot === root && r.id > Number(comment.id))
+}
+
+/** Source comments the viewer pressed Dismiss on, among `sourceIds`. */
+export async function findDismissedSourceIds(
+	db: Database,
+	workspaceId: string,
+	actorId: string,
+	sourceIds: number[],
+): Promise<Set<number>> {
+	if (sourceIds.length === 0) return new Set()
+	const rows = await db
+		.select({ id: forYouDismissals.sourceCommentId })
+		.from(forYouDismissals)
+		.where(
+			and(
+				eq(forYouDismissals.workspaceId, workspaceId),
+				eq(forYouDismissals.actorId, actorId),
+				inArray(forYouDismissals.sourceCommentId, sourceIds),
+			),
+		)
+	return new Set(rows.map((r) => Number(r.id)))
+}
+
+/**
+ * Source comments whose card was withdrawn, among `sourceIds`. Global, not per person: the
+ * writing agent (or the Chief of Staff) retired the card, so nobody is shown it.
+ */
+export async function findWithdrawnSourceIds(
+	db: Database,
+	workspaceId: string,
+	sourceIds: number[],
+): Promise<Set<number>> {
+	if (sourceIds.length === 0) return new Set()
+	const rows = await db
+		.select({ id: forYouWithdrawals.sourceCommentId })
+		.from(forYouWithdrawals)
+		.where(
+			and(
+				eq(forYouWithdrawals.workspaceId, workspaceId),
+				inArray(forYouWithdrawals.sourceCommentId, sourceIds),
+			),
+		)
+	return new Set(rows.map((r) => Number(r.id)))
+}
+
+/** Whether a comment asks the person for a call: a decision block, which is also where drafts live. */
+function carriesDecision(comment: typeof events.$inferSelect | undefined): boolean {
+	const data = (comment?.data ?? {}) as Record<string, unknown>
+	return parseCommentDecision(data.decision) !== null
+}
+
 export type ForYouCard = {
 	row: typeof notifications.$inferSelect
 	meta: NonNullable<ReturnType<typeof parseForYouMetadata>>
@@ -82,9 +197,13 @@ export type VisibleForYou = {
 
 /**
  * The For You cards `GET /api/for-you` shows for one actor in one workspace: pending/seen
- * `needs_input` rows of kind FOR_YOU_KIND, minus the ones whose session ended, whose object is
+ * `needs_input` rows of kind FOR_YOU_KIND, minus the ones whose session ended (unless the card asks for an approval or carries a draft), whose object is
  * closed or moved on, or that the viewer already read or answered. Shared with the briefing and
- * lifecycle pushes so a push never counts something the app does not show.
+ * lifecycle pushes so a push never counts something the app does not show. A card with a source
+ * comment is retired only by a threaded reply to it (an option tap is one), by Dismiss, or by a
+ * withdrawal from its writer or the Chief of Staff; the
+ * read position and free comments no longer count. A card with no source comment is retired
+ * only by Dismiss; reading its object does not retire it.
  */
 export async function loadVisibleForYou(
 	db: Database,
@@ -124,7 +243,7 @@ export async function loadVisibleForYou(
 		...new Set(candidates.flatMap((x) => (x.row.sessionId ? [x.row.sessionId] : []))),
 	]
 
-	const [objectRows, sessionRows, readRows] = await Promise.all([
+	const [objectRows, sessionRows] = await Promise.all([
 		objectIds.length
 			? db
 					.select()
@@ -137,23 +256,9 @@ export async function loadVisibleForYou(
 					.from(sessions)
 					.where(and(eq(sessions.workspaceId, workspaceId), inArray(sessions.id, sessionIds)))
 			: [],
-		objectIds.length
-			? db
-					.select({ entityId: readState.entityId, lastReadEventId: readState.lastReadEventId })
-					.from(readState)
-					.where(
-						and(
-							eq(readState.workspaceId, workspaceId),
-							eq(readState.actorId, actorId),
-							eq(readState.entityType, 'object'),
-							inArray(readState.entityId, objectIds),
-						),
-					)
-			: [],
 	])
 	const objectById = new Map(objectRows.map((o) => [o.id, o]))
 	const sessionStatusById = new Map(sessionRows.map((s) => [s.id, s.status]))
-	const lastReadByEntity = new Map(readRows.map((r) => [r.entityId, r.lastReadEventId]))
 
 	// Source comments, and any reply by the viewer after them, in two queries.
 	const sourceIds = candidates.flatMap((x) =>
@@ -168,42 +273,23 @@ export async function loadVisibleForYou(
 	const sourceById = new Map(sourceRows.map((e) => [e.id, e]))
 	const finishedDraftCards = await findFinishedDraftCards(db, workspaceId, sourceRows)
 
-	const replyRows = objectIds.length
-		? await db
-				.select({ entityId: events.entityId, id: events.id })
-				.from(events)
-				.where(
-					and(
-						eq(events.workspaceId, workspaceId),
-						eq(events.action, 'commented'),
-						eq(events.actorId, actorId),
-						inArray(events.entityId, objectIds),
-						gt(events.id, Math.min(...sourceIds, Number.MAX_SAFE_INTEGER)),
-					),
-				)
-		: []
+	const [viewerReplies, dismissedIds, withdrawnIds] = await Promise.all([
+		findViewerReplies(
+			db,
+			workspaceId,
+			actorId,
+			objectIds,
+			Math.min(...sourceIds, Number.MAX_SAFE_INTEGER),
+		),
+		findDismissedSourceIds(db, workspaceId, actorId, sourceIds),
+		findWithdrawnSourceIds(db, workspaceId, sourceIds),
+	])
 
-	// A curated item with no source comment cannot be retired by answering a comment. It
-	// counts as handled once the person has read its object past everything that existed
-	// when the Chief of Staff listed it; later activity does not bring it back.
+	// What reading a source-less curated item moves the position to: the newest activity on its
+	// object. Reading does not retire the item; only Dismiss, a closed object or a moved-on
+	// status does.
 	const noSource = candidates.filter(
 		({ row, meta }) => row.objectId && meta.source_comment_id === undefined,
-	)
-	const baselineByNotification = new Map<string, number>()
-	await Promise.all(
-		noSource.map(async ({ row }) => {
-			const [found] = await db
-				.select({ id: max(events.id) })
-				.from(events)
-				.where(
-					and(
-						eq(events.workspaceId, workspaceId),
-						eq(events.entityId, row.objectId as string),
-						row.createdAt ? lte(events.createdAt, row.createdAt) : undefined,
-					),
-				)
-			baselineByNotification.set(row.id, Number(found?.id ?? 0))
-		}),
 	)
 	const newestEventByEntity = new Map<string, number>()
 	if (noSource.length > 0) {
@@ -227,7 +313,23 @@ export async function loadVisibleForYou(
 		.filter(({ row, meta }) => {
 			const sessionStatus = row.sessionId ? sessionStatusById.get(row.sessionId) : undefined
 			if (sessionStatus && (TERMINAL_STATUSES as readonly string[]).includes(sessionStatus)) {
+				// An ended session has nobody left to answer a question, but a card that asks for
+				// an approval or carries a draft is still the person's to act on.
+				const source =
+					meta.source_comment_id !== undefined ? sourceById.get(meta.source_comment_id) : undefined
+				if (!carriesDecision(source)) return false
+			}
+			// Retired by its writer or the Chief of Staff. Outside the object branch below, so a
+			// card with a source comment but no object is dropped too.
+			if (meta.source_comment_id !== undefined && withdrawnIds.has(meta.source_comment_id)) {
 				return false
+			}
+			// The comment behind the card named a deadline and it has passed. Curated cards feed the
+			// briefing and pushes, so they drop out of those too.
+			if (meta.source_comment_id !== undefined) {
+				const source = sourceById.get(meta.source_comment_id)
+				const data = (source?.data ?? {}) as Record<string, unknown>
+				if (isDecisionExpired(parseCommentDecision(data.decision))) return false
 			}
 			// Every message the card offered has been sent or skipped: nothing left to approve.
 			if (meta.source_comment_id !== undefined && finishedDraftCards.has(meta.source_comment_id)) {
@@ -244,13 +346,13 @@ export async function loadVisibleForYou(
 				}
 				const sourceId = meta.source_comment_id
 				if (sourceId !== undefined) {
-					const lastRead = lastReadByEntity.get(row.objectId) ?? 0
-					if (lastRead >= sourceId) return false
-					if (replyRows.some((r) => r.entityId === row.objectId && r.id > sourceId)) return false
-				} else {
-					const baseline = baselineByNotification.get(row.id) ?? 0
-					const lastRead = lastReadByEntity.get(row.objectId) ?? 0
-					if (baseline > 0 && lastRead >= baseline) return false
+					// Only an answer or a Dismiss retires a card that has a source comment. Opening
+					// the page moves the read position, and a free comment is not an answer. A card
+					// with no source comment has no answer to give: Dismiss sets its status, which
+					// the query above already filters on.
+					if (dismissedIds.has(sourceId)) return false
+					const source = sourceById.get(sourceId)
+					if (source && isCardAnswered(source, viewerReplies)) return false
 				}
 			}
 			return true

@@ -1,3 +1,5 @@
+import { addPerfRoom, perfOverrides } from './perf-fixtures.mjs'
+
 // Demo data for the design review: the Northwind workspace from the Watch, iPad and TV prototypes.
 const uuid = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
 export const WORKSPACE_ID = uuid(1)
@@ -262,6 +264,9 @@ const rooms = [
 		at: DAY,
 	},
 ]
+
+const PERF = process.env.DEMO_PERF === '1'
+if (PERF) addPerfRoom(rooms, { PRIYA, CHIEF })
 // Participants as the API sends them on the list, create and detail responses alike.
 const participantRow = (id) => {
 	const a = actors.find((x) => x.id === id)
@@ -279,6 +284,17 @@ const postedComments = new Map()
 let nextEventId = 9000
 
 export function overrides({ method, path, params, query, body, base, item }) {
+	if (PERF) {
+		const hit = perfOverrides({
+			method,
+			path,
+			query,
+			item,
+			base,
+			ctx: { uuid, ago, ME, actors, WORKSPACE_ID, CHIEF, PRIYA },
+		})
+		if (hit) return hit
+	}
 	if (method !== 'get' && method !== 'post') return null
 	if (method === 'post' && path === '/api/events' && typeof body?.entity_id === 'string') {
 		const event = {
@@ -344,6 +360,70 @@ export function overrides({ method, path, params, query, body, base, item }) {
 	}
 	if (method === 'get' && path === '/api/actors')
 		return { body: actors.map((a) => ({ ...item, ...a })) }
+	// Session log reader: one finished session with a spread of envelope kinds, newest rows paged
+	// by `before` / `since` the way the real route does.
+	if (method === 'get' && path === '/api/sessions' && query.get('verbose') === 'true') {
+		return {
+			body: [
+				{
+					...item,
+					id: uuid(900),
+					actorId: query.get('actor_id') ?? OUTREACH_AGENT,
+					status: 'completed',
+					actionPrompt: 'Draft the follow-up for Priya',
+					interactive: false,
+					startedAt: ago(40),
+					completedAt: ago(35),
+					createdAt: ago(41),
+				},
+			],
+		}
+	}
+	const logsMatch = path.match(/^\/api\/sessions\/[^/]+\/logs$/)
+	if (method === 'get' && logsMatch) {
+		const env = (o) => JSON.stringify(o)
+		const all = [
+			{ stream: 'system', content: 'Container started' },
+			{ stream: 'stdout', content: env({ type: 'system', subtype: 'init' }) },
+			{
+				stream: 'stdout',
+				content: env({
+					type: 'assistant',
+					message: {
+						content: [
+							{ type: 'text', text: 'Reading the last thread with Priya before drafting.' },
+						],
+					},
+				}),
+			},
+			{
+				stream: 'stdout',
+				content: env({
+					type: 'assistant',
+					message: { content: [{ type: 'tool_use', name: 'mcp__maskin__get_conversation' }] },
+				}),
+			},
+			{ stream: 'stderr', content: 'warn: slow response from the mail provider (retrying)' },
+			{
+				stream: 'stdout',
+				content: env({
+					type: 'assistant',
+					message: {
+						content: [{ type: 'text', text: 'Draft is ready and waiting on your approval.' }],
+					},
+				}),
+			},
+			{
+				stream: 'stdout',
+				content: env({ type: 'result', is_error: false, result: 'Draft saved for review.' }),
+			},
+		].map((r, i) => ({ ...item, id: i + 1, sessionId: uuid(900), createdAt: ago(40 - i), ...r }))
+		const since = Number(query.get('since') ?? 0)
+		const before = Number(query.get('before') ?? Number.POSITIVE_INFINITY)
+		let rows = all.filter((r) => r.id > since && r.id < before)
+		if (query.get('order') === 'desc') rows = rows.reverse()
+		return { body: rows.slice(0, Number(query.get('limit') ?? 100)) }
+	}
 	if (method === 'get' && path === '/api/subscriptions/unread') return { body: unreadFeed(item) }
 	if (method === 'get' && path === '/api/briefing') {
 		return {
@@ -541,6 +621,11 @@ export function overrides({ method, path, params, query, body, base, item }) {
 			sessionId: null,
 			createdAt: ago(at),
 			editedAt: null,
+			// null, as the real API sends it: a number (even 0) marks the message as a thread reply
+			// and the app then hides it from the main chat.
+			threadRootId: null,
+			threadAlsoInChannel: false,
+			thread: null,
 			spawned_sessions: [],
 		})
 		const first = actors.find((a) => a.id === r.with[0])
@@ -552,6 +637,39 @@ export function overrides({ method, path, params, query, body, base, item }) {
 						m(2, ME, 'Why not all 47 contacts?', 20),
 						m(3, first, 'Only 7 have Sales approval. The other 40 still need review.', 10),
 					],
+					has_more: false,
+				},
+			}
+		}
+		if (r.n === 302) {
+			// One real thread, shaped as the API sends it: the root carries a `thread` summary, each reply
+			// carries the root's id (and is hidden from the main timeline), and `?thread_root_id=` returns
+			// only the replies. MK-04 depends on this; do not reword the texts without updating it.
+			const root = {
+				...m(3, ME, 'Can you also check the pricing page?', 40),
+				thread: {
+					replyCount: 2,
+					unreadCount: 0,
+					lastReplyId: 5,
+					lastReplyAt: ago(20),
+					participants: [participantRow(ME.id), participantRow(first.id)],
+				},
+			}
+			const replies = [
+				{ ...m(4, first, 'Yes, the pricing page looks right.', 30), threadRootId: 3 },
+				{ ...m(5, ME, 'Thanks, I will ship it today.', 20), threadRootId: 3 },
+			]
+			const wanted = query.get('thread_root_id')
+			return {
+				body: {
+					messages: wanted
+						? replies.filter((x) => x.threadRootId === Number(wanted))
+						: [
+								m(1, ME, 'Where are we on the Northwind follow-ups?', r.at + 12),
+								m(2, first, r.snippet, r.at),
+								root,
+								...replies,
+							],
 					has_more: false,
 				},
 			}

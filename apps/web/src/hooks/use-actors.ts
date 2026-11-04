@@ -1,7 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo } from 'react'
 import { toast } from 'sonner'
-import { type CreateActorInput, type RunAgentInput, type UpdateActorInput, api } from '../lib/api'
+import {
+	type ActorListItem,
+	type CreateActorInput,
+	type RunAgentInput,
+	type UpdateActorInput,
+	api,
+} from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 import { useWorkspace } from '../lib/workspace-context'
 
@@ -93,18 +99,52 @@ export function useUploadActorAvatar(workspaceId: string) {
 	})
 }
 
+/**
+ * Deleting an agent can take minutes on the server (live sessions, every stored
+ * file, then one large transaction), so callers navigate away right after
+ * `mutate` and the toast is the user's only feedback. All of it lives in these
+ * hook-level callbacks, not per-call ones, because those still run after the
+ * component that fired the mutation has unmounted. The agent leaves the list
+ * straight away so it cannot be opened while it is going.
+ */
 export function useDeleteActor(workspaceId: string) {
 	const queryClient = useQueryClient()
+	const listKey = queryKeys.actors.all(workspaceId)
 	return useMutation({
-		mutationFn: (id: string) => api.actors.delete(id, workspaceId),
-		onSuccess: () => {
-			toast.success('Agent deleted')
-			queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
+		mutationFn: ({ id }: { id: string; name: string }) => api.actors.delete(id, workspaceId),
+		onMutate: async ({ id, name }) => {
+			toast.loading(`Deleting ${name}...`, { id: deleteToastId(id) })
+			await queryClient.cancelQueries({ queryKey: listKey })
+			const previous = queryClient.getQueryData<ActorListItem[]>(listKey)
+			queryClient.setQueryData<ActorListItem[]>(listKey, (old) => old?.filter((a) => a.id !== id))
+			return { previous }
 		},
-		onError: () => {
-			toast.error('Failed to delete agent')
+		onSuccess: (_result, { id, name }) => {
+			toast.success(`Deleted ${name}`, { id: deleteToastId(id) })
+			queryClient.invalidateQueries({ queryKey: listKey })
+		},
+		onError: async (_error, { id, name }, context) => {
+			// A slow delete can outlast the proxy timeout: the browser sees an error while
+			// the server still finishes. Read the list again so the toast matches reality.
+			const fresh = await queryClient
+				.fetchQuery({
+					queryKey: listKey,
+					queryFn: () => api.actors.list(workspaceId),
+					staleTime: 0,
+				})
+				.catch(() => undefined)
+			if (fresh && !fresh.some((a) => a.id === id)) {
+				toast.success(`Deleted ${name}`, { id: deleteToastId(id) })
+				return
+			}
+			if (!fresh && context?.previous) queryClient.setQueryData(listKey, context.previous)
+			toast.error(`${name} was not deleted`, { id: deleteToastId(id) })
 		},
 	})
+}
+
+function deleteToastId(actorId: string) {
+	return `delete-actor-${actorId}`
 }
 
 export function useResetActor(workspaceId: string) {

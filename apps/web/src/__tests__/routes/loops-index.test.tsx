@@ -74,7 +74,9 @@ vi.mock('@/components/settings/buy-credits-dialog', () => ({
 	BuyCreditsDialog: () => null,
 }))
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
 
@@ -93,6 +95,7 @@ function buildLoop(overrides: Partial<LoopSummary> = {}): LoopSummary {
 		entryCondition: null,
 		closeCondition: null,
 		tags: [],
+		driverId: null,
 		inProgressCount: 6,
 		closedCount: 128,
 		medianTimeToCloseMs: 11 * 24 * 3600 * 1000,

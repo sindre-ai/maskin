@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { vi } from 'vitest'
 import { trackCommentResponderResolved } from '../../lib/analytics/comment-responder-events'
+import { claimCommentResponder } from '../../lib/comment-responder-claims'
 import { PlanCapExceededError } from '../../lib/llm-routing'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import {
@@ -20,6 +21,13 @@ import { createMockSessionManager, createTestContext } from '../setup'
 // services/session-lifecycle-scope.test.ts.
 vi.mock('../../lib/workspace-scope', () => ({
 	assertInWorkspace: vi.fn().mockResolvedValue(undefined),
+}))
+
+// The claim row is a real-Postgres primary key; its race semantics are covered in
+// integration/comment-responder-claims.test.ts. Here it is stubbed so the scripted selects stay put.
+vi.mock('../../lib/comment-responder-claims', () => ({
+	claimCommentResponder: vi.fn().mockResolvedValue(true),
+	releaseCommentResponderClaim: vi.fn().mockResolvedValue(undefined),
 }))
 
 vi.mock('../../lib/analytics/comment-responder-events', () => ({
@@ -56,6 +64,7 @@ describe('CommentDispatcher', () => {
 			id: 'session-1',
 		})
 		vi.mocked(trackCommentResponderResolved).mockClear()
+		vi.mocked(claimCommentResponder).mockResolvedValue(true)
 	})
 
 	afterEach(() => {
@@ -83,8 +92,9 @@ describe('CommentDispatcher', () => {
 		// 40 with the initiated_from lookup added to dispatchMention /
 		// dispatchCommentFallback: each mention now has an extra `await`
 		// (`loadInitiatedFromObject`), so multi-mention fanouts were racing
-		// the assertion at the old 20-tick budget.
-		for (let i = 0; i < 40; i++) await Promise.resolve()
+		// the assertion at the old 20-tick budget. Bumped again to 60 for the
+		// person-pause check, one more `await` per mentioned agent.
+		for (let i = 0; i < 60; i++) await Promise.resolve()
 	}
 
 	it('ignores events that are not commented-on-object', async () => {
@@ -328,6 +338,23 @@ describe('CommentDispatcher', () => {
 				resolvedActorId: 'driver-1',
 				sourceCommentEventId: 42,
 			}),
+		)
+	})
+
+	it('stands down when another responder already holds the claim for this comment and actor', async () => {
+		vi.mocked(claimCommentResponder).mockResolvedValueOnce(false)
+		mockResults.selectQueue = [
+			[{ actorId: 'human-author', actorType: 'human', data: { content: 'hi', mentions: [] } }],
+			[{ driver: 'driver-1' }],
+		]
+
+		dispatcher.start()
+		await fire(baseEvent({ actor_id: 'human-author' }))
+
+		expect(sessionManager.createSession).not.toHaveBeenCalled()
+		expect(logInfo).toHaveBeenCalledWith(
+			'Comment fallback stood down: another responder session holds the claim',
+			expect.objectContaining({ actor_id: 'driver-1', source_comment_event_id: 42 }),
 		)
 	})
 

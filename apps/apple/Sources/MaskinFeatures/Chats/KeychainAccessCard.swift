@@ -35,7 +35,10 @@ struct KeychainAccessCard: View {
 				}
 				.accessibilityElement(children: .combine)
 				if stillRunning {
-					Text("The agent is still running without it. Stop it from the chat, then send a message to start it again with the credential.")
+					Text(
+						request.replyToSession
+							? "Saved, but the agent didn't pick it up. Ask it to carry on from its own thread."
+							: "The agent is still running without it. Stop it from the chat, then send a message to start it again with the credential.")
 						.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
 				}
 			} else {
@@ -132,7 +135,9 @@ struct KeychainAccessCard: View {
 			if relaunched {
 				if request.replyToSession {
 					do {
-						try await helper()?.continueSession(
+						// Without a helper client the follow-up cannot go, and it must not look sent.
+						guard let helper = helper() else { throw KeychainAccessError("Couldn't reach the agent.") }
+						try await helper.continueSession(
 							sessionID: request.sessionID, content: request.allowedReply(scope: scope))
 					} catch {
 						// The grant is saved; only the agent's restart failed.
@@ -159,7 +164,10 @@ struct KeychainAccessCard: View {
 			onReply(request.declinedReply, ChatSendMetadata(hiddenFromChat: true, cardAnswer: card))
 			return
 		}
-		guard let card, let helper = helper() else { return }
+		guard let card, let helper = helper() else {
+			error = "Couldn't tell the agent. Try again."
+			return
+		}
 		busy = true
 		error = nil
 		defer { busy = false }

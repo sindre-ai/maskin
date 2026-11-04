@@ -85,6 +85,11 @@ public final class ChatStore {
 	/// The agents' step-by-step trace (live and per finished turn). Nil: threads show only the
 	/// one-line status. Set by the screen that builds the store.
 	@ObservationIgnored public var trace: ActivityStore?
+	/// Session reads whose finished-turn history is still on its way to `trace`. Each turn that has
+	/// steps adds a one-line row to the thread, so the thread waits for this (briefly) before it shows
+	/// itself, instead of letting those rows appear under the reader.
+	public var isLoadingTrace: Bool { traceLoads > 0 }
+	@ObservationIgnored private var traceLoads = 0
 	/// Told after every successful session refresh (feeds the Live Activity).
 	@ObservationIgnored public var onSessionsRefreshed: (@MainActor ([ChatAgentSession]) -> Void)?
 	/// The flow this conversation belongs to, when the opener knows it (the API does not link a
@@ -640,7 +645,8 @@ public final class ChatStore {
 	}
 
 	public func load() async {
-		if await attemptLoad() { return }
+		let loaded = await Perf.measure("chat.load") { await attemptLoad() }
+		if loaded { return }
 		scheduleRetry()
 	}
 
@@ -812,13 +818,20 @@ public final class ChatStore {
 	}
 
 	public func refreshSessions() async {
-		guard let sessions = try? await api.sessions(conversationID: conversationID) else { return }
+		traceLoads += 1
+		guard let sessions = try? await api.sessions(conversationID: conversationID) else {
+			traceLoads -= 1
+			return
+		}
 		let sorted = sessions.sorted {
 			($0.startedAt ?? .distantPast) > ($1.startedAt ?? .distantPast)
 		}
 		if sorted != agentSessions { agentSessions = sorted }
 		// Not awaited: fetching a finished turn's history must never delay the thread itself.
-		Task { [trace, sessions = agentSessions] in await trace?.update(sessions: sessions) }
+		Task { [weak self, trace, sessions = agentSessions] in
+			await trace?.update(sessions: sessions)
+			self?.traceLoads -= 1
+		}
 		onSessionsRefreshed?(agentSessions)
 	}
 
@@ -832,6 +845,13 @@ public final class ChatStore {
 	) -> String? {
 		let content = text.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard !content.isEmpty else { return nil }
+		// The server refuses a message that holds a secret, so no entry point queues one: the main chat
+		// shows its own sheet first, and any other (a thread reply, a draft card) gets this notice
+		// instead of a failed row that would keep the key.
+		if SecretScanner.firstSecret(in: content) != nil {
+			notice = ChatsHTTPError.rawSecretMessage
+			return nil
+		}
 		do {
 			let pending = try queue.send(
 				conversationID: conversationID, content: content, metadata: metadata,
@@ -1099,7 +1119,7 @@ public final class ChatStore {
 
 	/// The replies of one thread, oldest first, unconfirmed ones last.
 	public func replies(to rootID: Int) -> [ChatMessage] {
-		allMessages.filter { $0.threadRootID == rootID && !$0.isHiddenFromChat }
+		allMessages.filter { $0.threadRootID == rootID && (!$0.isHiddenFromChat || $0.isFailed) }
 	}
 
 	/// What the pill under a root says: the server's summary plus replies that arrived since.
@@ -1107,8 +1127,20 @@ public final class ChatStore {
 		guard let rootID = root.serverID else { return nil }
 		return ThreadSummary.current(
 			base: root.thread, rootAuthor: participant(for: root.actorID),
-			replies: confirmed.filter { $0.threadRootID == rootID }, currentActorID: currentActorID,
+			replies: confirmed.filter { $0.threadRootID == rootID && !$0.isHiddenFromChat }, currentActorID: currentActorID,
 			readThrough: threadReadThrough[rootID])
+	}
+
+	/// The message a thread hangs under, when the store holds it.
+	public func threadRoot(_ rootID: Int) -> ChatMessage? {
+		allMessages.first { $0.serverID == rootID }
+	}
+
+	/// The thread's root, fetching the thread first when the root is older than the page held. Nil
+	/// when it cannot be reached.
+	public func loadedThreadRoot(_ rootID: Int) async -> ChatMessage? {
+		if threadRoot(rootID) == nil { await loadThread(rootID) }
+		return threadRoot(rootID)
 	}
 
 	/// Fetch every reply of a thread and fold them in (a root opened from the Threads list, or one

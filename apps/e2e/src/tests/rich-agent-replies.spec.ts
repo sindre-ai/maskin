@@ -17,7 +17,7 @@ test.describe('Rich agent replies — chart + live task checklist', () => {
 			const parentBet = await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Bet for rich reply renderer',
-				status: 'signal',
+				status: 'opportunity',
 			})
 			const childTask = await account.api.createObject(account.workspaceId, {
 				type: 'task',

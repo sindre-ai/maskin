@@ -5,7 +5,7 @@ import {
 	voiceSessions,
 	workspaces,
 } from '@maskin/db/schema'
-import { CONVERSATION_TITLE_MAX_LENGTH, MESSAGE_MAX_LENGTH } from '@maskin/shared'
+import { MESSAGE_MAX_LENGTH } from '@maskin/shared'
 import { and, eq, inArray } from 'drizzle-orm'
 import { recordEvent } from '../lib/events/record-event'
 import { insertConversationMessage } from './conversation-messages'
@@ -44,7 +44,8 @@ export async function isTranscriptPersistenceEnabled(
 export async function ensureVoiceConversation(
 	db: Database,
 	session: Pick<VoiceSessionRow, 'id' | 'workspaceId' | 'humanActorId' | 'agentActorId'>,
-	agentName: string,
+	// Kept for callers; every call's own thread is just titled "Live meeting" (the agent is a participant).
+	_agentName: string,
 ): Promise<string> {
 	return db.transaction(async (tx) => {
 		const [locked] = await tx
@@ -54,7 +55,7 @@ export async function ensureVoiceConversation(
 			.for('update')
 		if (locked?.conversationId) return locked.conversationId
 
-		const title = `Voice call with ${agentName}`.slice(0, CONVERSATION_TITLE_MAX_LENGTH)
+		const title = 'Live meeting'
 		const [created] = await tx
 			.insert(conversations)
 			.values({ workspaceId: session.workspaceId, title, createdBy: session.humanActorId })

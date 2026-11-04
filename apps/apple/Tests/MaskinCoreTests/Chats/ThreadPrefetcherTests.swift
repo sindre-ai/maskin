@@ -158,13 +158,17 @@ struct ThreadPrefetcherTests {
 		await api.setGate { await release.wait() }
 		let prefetcher = ThreadPrefetcher(api: api, cache: rig.cache, debounce: .zero)
 		prefetcher.listChanged([chatConvo("c1", last: newer, unread: 1)])
+		// The debounce is zero, so `listChanged` has its own pass running as well as this one.
 		async let first: Void = prefetcher.runPass()
-		await Task.yield()
-		try? await Task.sleep(for: .milliseconds(50))
-		await prefetcher.runPass()
+		#expect(await eventually { await !api.fetched.isEmpty })
+		// Both passes now see the fetch in flight. Neither starts a second one, and each returns
+		// only once that fetch has been written, so release it from a third party.
+		async let second: Void = prefetcher.runPass()
 		await release.open()
 		await first
+		await second
 		#expect(await api.fetched == ["c1"])
+		#expect(rig.snapshot("c1")?.messages.count == 3, "a pass that returned saw the write")
 	}
 
 	@Test("a workspace switch cancels in-flight fetches and nothing is written")
@@ -178,7 +182,7 @@ struct ThreadPrefetcherTests {
 		let prefetcher = ThreadPrefetcher(api: api, cache: rig.cache, debounce: .zero)
 		prefetcher.listChanged([chatConvo("c1", last: newer, unread: 1)])
 		async let pass: Void = prefetcher.runPass()
-		try? await Task.sleep(for: .milliseconds(50))
+		#expect(await eventually { await !api.fetched.isEmpty })
 		prefetcher.cancelAll()
 		await release.open()
 		await pass

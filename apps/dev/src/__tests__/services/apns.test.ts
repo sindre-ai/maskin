@@ -7,11 +7,13 @@ import {
 	ApnsSender,
 	type ApnsTransport,
 	DECISION_CATEGORY,
+	buildApnsClearPayload,
 	buildApnsPayload,
 	deepLinkFor,
 	loadApnsConfig,
 	signApnsJwt,
 } from '../../services/apns'
+import { CLEAR_IDS_MAX } from '../../services/push-types'
 import { createTestContext } from '../setup'
 
 const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' })
@@ -102,6 +104,22 @@ describe('buildApnsPayload', () => {
 			'thread-id': 'chat:c-1',
 		})
 		expect(deepLinkFor({ ...msg, objectId: null })).toBe('maskin://ws-1/notifications')
+	})
+	it('opens the thread inside the chat when the push is about a thread reply', () => {
+		expect(deepLinkFor({ ...msg, conversationId: 'c-1', threadRootId: 42 })).toBe(
+			'maskin://ws-1/chats/c-1?thread=42',
+		)
+	})
+	it('ignores a thread id that is not a positive integer, and one with no chat', () => {
+		expect(deepLinkFor({ ...msg, conversationId: 'c-1', threadRootId: 0 })).toBe(
+			'maskin://ws-1/chats/c-1',
+		)
+		expect(deepLinkFor({ ...msg, conversationId: 'c-1', threadRootId: 1.5 })).toBe(
+			'maskin://ws-1/chats/c-1',
+		)
+		expect(deepLinkFor({ ...msg, objectId: null, threadRootId: 42 })).toBe(
+			'maskin://ws-1/notifications',
+		)
 	})
 })
 
@@ -309,5 +327,106 @@ describe('ApnsSender', () => {
 		}
 		const { sender } = setup([device()], transport)
 		await expect(sender.sendToActor('actor-1', msg)).resolves.toBeUndefined()
+	})
+})
+
+describe('buildApnsClearPayload', () => {
+	it('is a silent background push with the ids, collapse key, thread and badge', () => {
+		const p = buildApnsClearPayload({
+			workspaceId: 'ws-1',
+			notificationIds: ['n-1', 'n-2'],
+			collapseKey: ' object:obj-1 ',
+			threadId: 'chat:c-1',
+			badge: 0,
+		}) as { aps: Record<string, unknown>; clear: Record<string, unknown> }
+		expect(p.aps).toEqual({ 'content-available': 1, badge: 0 })
+		expect(p.aps.alert).toBeUndefined()
+		expect(p.aps.sound).toBeUndefined()
+		expect(p.clear).toEqual({
+			notification_ids: ['n-1', 'n-2'],
+			collapse_key: 'object:obj-1',
+			thread_id: 'chat:c-1',
+		})
+	})
+
+	it('caps the ids, drops a bad badge and omits empty optional keys', () => {
+		const ids = Array.from({ length: CLEAR_IDS_MAX + 5 }, (_, i) => `n-${i}`)
+		const p = buildApnsClearPayload({ workspaceId: 'ws-1', notificationIds: ids, badge: -1 }) as {
+			aps: Record<string, unknown>
+			clear: { notification_ids: string[] }
+		}
+		expect(p.clear.notification_ids).toHaveLength(CLEAR_IDS_MAX)
+		expect(p.clear).not.toHaveProperty('collapse_key')
+		expect(p.clear).not.toHaveProperty('thread_id')
+		expect(p.aps).toEqual({ 'content-available': 1 })
+	})
+
+	it('stays far under the APNs limit at the id cap', () => {
+		const ids = Array.from({ length: CLEAR_IDS_MAX }, () => crypto.randomUUID())
+		const body = JSON.stringify(
+			buildApnsClearPayload({ workspaceId: crypto.randomUUID(), notificationIds: ids, badge: 9 }),
+		)
+		expect(Buffer.byteLength(body)).toBeLessThan(APNS_PAYLOAD_MAX_BYTES)
+	})
+})
+
+describe('ApnsSender.sendClearToActor', () => {
+	const clear = { workspaceId: 'ws-1', notificationIds: ['n-1'], badge: 2 }
+
+	it('sends a background, priority 5 push to every device with no alert', async () => {
+		const sent: ApnsRequest[] = []
+		const transport = {
+			send: vi.fn(async (r: ApnsRequest) => {
+				sent.push(r)
+				return { status: 200, body: '' }
+			}),
+		}
+		const { sender } = setup(
+			[device(), device({ id: 'dev-2', environment: 'production' })],
+			transport,
+		)
+		await sender.sendClearToActor('actor-1', clear)
+		expect(sent).toHaveLength(2)
+		expect(sent[0]?.headers).toMatchObject({
+			'apns-push-type': 'background',
+			'apns-priority': '5',
+			'apns-topic': 'io.maskin.app',
+		})
+		expect(sent[0]?.headers['apns-collapse-id']).toBeUndefined()
+		const body = JSON.parse(sent[0]?.body ?? '{}')
+		expect(body.aps).toEqual({ 'content-available': 1, badge: 2 })
+		expect(body.clear.notification_ids).toEqual(['n-1'])
+		expect(sent[1]?.host).toBe('api.push.apple.com')
+	})
+
+	it('is a no-op without config, and swallows transport errors', async () => {
+		const transport = { send: vi.fn() }
+		await setup([device()], transport, null).sender.sendClearToActor('actor-1', clear)
+		expect(transport.send).not.toHaveBeenCalled()
+		const failing = {
+			send: vi.fn(async () => {
+				throw new Error('socket hang up')
+			}),
+		}
+		await expect(
+			setup([device()], failing).sender.sendClearToActor('actor-1', clear),
+		).resolves.toBeUndefined()
+	})
+
+	it('removes a dead token like the alert path', async () => {
+		const del = vi.fn()
+		const db = {
+			select: () => ({ from: () => ({ where: async () => [device()] }) }),
+			delete: () => ({
+				where: async () => {
+					del()
+				},
+			}),
+		} as never
+		const transport = {
+			send: vi.fn(async () => ({ status: 410, body: '{"reason":"Unregistered"}' })),
+		}
+		await new ApnsSender(db, { config, transport }).sendClearToActor('actor-1', clear)
+		expect(del).toHaveBeenCalledTimes(1)
 	})
 })

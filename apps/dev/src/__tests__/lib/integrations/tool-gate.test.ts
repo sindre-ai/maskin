@@ -35,6 +35,25 @@ describe('classifyTool', () => {
 		expect(classifyTool('google-meet', 'google_meet__create_space')).toBe('write')
 	})
 
+	it('classifies the five Drive reads as reads and everything else on Drive as a write', () => {
+		for (const tool of [
+			'search_files',
+			'list_folder',
+			'get_file_bytes',
+			'get_document_structured',
+			'get_sheet_range',
+		]) {
+			expect(classifyTool('google-drive', `google_drive__${tool}`), tool).toBe('read')
+		}
+		for (const tool of ['write_file', 'comment_on_document', 'watch_folder', 'brand_new_tool']) {
+			expect(classifyTool('google-drive', `google_drive__${tool}`), tool).toBe('write')
+		}
+		// No annotation can talk a Drive tool into being a read.
+		expect(classifyTool('google-drive', 'google_drive__write_file', { readOnlyHint: true })).toBe(
+			'write',
+		)
+	})
+
 	it('matches a LinkedIn verb behind its per-identity prefix', () => {
 		expect(classifyTool('linkedin-unipile', 'linkedin-acc-me__get_profile')).toBe('read')
 		expect(classifyTool('linkedin-unipile', 'linkedin-acc-me__publish_post')).toBe('write')
@@ -256,14 +275,17 @@ describe('buildAccessPreamble', () => {
 		expect(text).toContain('- Slack: Read (read tools only')
 		expect(text).toMatch(/- linear: Read & write/i)
 		expect(text).toMatch(/- gmail: No access/i)
-		expect(text).toContain('do not retry')
+		expect(text).toContain('do not retry the same call')
+		expect(text).not.toContain('workaround')
 		expect(text.endsWith('\n\n')).toBe(true)
 	})
 
 	it('points an agent with a person to ask at the missing-tool steps, others at Settings', () => {
 		const rows = [row('slack', 'read')]
 		const withPerson = buildAccessPreamble(rows, { personReachable: true })
-		expect(withPerson).toContain('Follow "When a tool or login is missing" below.')
+		expect(withPerson).toContain(
+			'follow "When a tool, integration, login or permission is missing" below',
+		)
 		expect(withPerson).not.toContain('Settings')
 		const alone = buildAccessPreamble(rows)
 		expect(alone).toContain('a workspace admin can change it under Settings')
@@ -279,9 +301,12 @@ describe('buildAccessPreamble', () => {
 			'request_keychain_credential',
 			'connect_integration',
 			'request_integration_access',
+			'desktop_run',
+			'show_computer',
 		]) {
 			expect(MISSING_TOOL_BLOCK).toContain(tool)
 		}
+		expect(MISSING_TOOL_BLOCK).toContain('Never answer "I can\'t"')
 		expect(MISSING_TOOL_BLOCK.endsWith('\n\n')).toBe(true)
 	})
 
@@ -290,6 +315,13 @@ describe('buildAccessPreamble', () => {
 		expect(text).toMatch(
 			/- gmail: Read & write \(all tools, but a person has to approve each email before you send it\)/i,
 		)
+	})
+
+	it('tells a Gmail writer to say drafted for a draft and sent only with a message id', () => {
+		const text = buildAccessPreamble([row('gmail', 'read_write')])
+		expect(text).toContain('report "drafted" for a draft')
+		expect(text).toContain('gmail_send_email returns a message id')
+		expect(buildAccessPreamble([row('gmail', 'read')])).not.toContain('drafted')
 	})
 
 	it('folds several accounts of one provider into one line when they differ', () => {

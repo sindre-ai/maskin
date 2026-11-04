@@ -31,7 +31,9 @@ import { evictBillingUsage } from '../lib/billing-usage-cache'
 import { recordEvent } from '../lib/events/record-event'
 import { LLM_ROUTE_MASKIN_PLAN } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
+import { MAX_RETRY_ATTEMPTS } from '../lib/subscription-limit-reset'
 import { assertInWorkspace } from '../lib/workspace-scope'
+import { postRetryNotice } from './chat-retry-notice'
 import { recordSessionAdmission } from './daily-budget-events'
 import { returnDeferredHelpers, returnToSender } from './helper-return'
 import type { CreateSessionParams, SessionManager } from './session-manager'
@@ -908,6 +910,7 @@ export async function settleSession(
 			config: sessions.config,
 			triggerId: sessions.triggerId,
 			conversationId: sessions.conversationId,
+			attemptNumber: sessions.attemptNumber,
 			initiatedFromObjectId: sessions.initiatedFromObjectId,
 			startedAt: sessions.startedAt,
 			inputTokens: sessions.inputTokens,
@@ -1111,6 +1114,23 @@ export async function settleSession(
 	// cost. Evict again now that the final cost is visible to every connection.
 	if (flipped) evictBillingUsage(row.workspaceId)
 
+	// A chat session that hit a usage limit and has a retry time gets its notice now, while the
+	// person is looking, not when the retry fires. A session at the attempt cap is not retried
+	// (the scheduler clears retry_at), so promising a retry there would be untrue.
+	if (
+		flipped &&
+		outcome.retryAt &&
+		existing.conversationId &&
+		existing.attemptNumber < MAX_RETRY_ATTEMPTS
+	) {
+		await postRetryNotice(deps.db, {
+			conversationId: existing.conversationId,
+			workspaceId: row.workspaceId,
+			actorId: row.actorId,
+			retryAt: outcome.retryAt,
+		})
+	}
+
 	// Tell the session that started this one how it ended. Fire-and-forget:
 	// returnToSender never throws, and one-shot-claims the row so the other two
 	// terminal paths (handleCompletion, markRemoteSessionComplete) can call it too.
@@ -1177,6 +1197,9 @@ export async function settleSession(
 					workspaceId: row.workspaceId,
 					actorId: row.actorId,
 					outcome: mapKindToOutcomeProp(outcome.kind) as AiGenerationOutcome,
+					failureReasonCode:
+						outcome.failureReason?.reason_code ?? row.result?.failure_reason?.reason_code,
+					classification: outcome.classification,
 					config: row.config,
 					modelName: row.modelName ?? null,
 					inputTokens: totals.inputTokens,

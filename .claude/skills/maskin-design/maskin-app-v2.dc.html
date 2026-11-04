@@ -4269,7 +4269,7 @@ class Component extends DCLogic {
     // A loop is nothing but object types, triggers on their states, and the agents those triggers hand work to.
     this.OTYPES = {
       insight: { label: "Insight", bg: "#fef3c7", fg: "#b45309", states: ["new", "processing", "clustered", "scored", "parked", "discarded"] },
-      bet: { label: "Bet", bg: "#e0e7ff", fg: "#4338ca", states: ["signal", "define", "active", "live", "succeeded", "failed", "paused", "archived"] },
+      bet: { label: "Bet", bg: "#e0e7ff", fg: "#4338ca", states: ["opportunity", "define", "active", "live", "succeeded", "failed", "paused", "archived"] },
       task: { label: "Task", bg: "#e0f2fe", fg: "#0369a1", states: ["todo", "in_progress", "in_review", "validated", "done", "discarded"] },
       knowledge: { label: "Knowledge", bg: "#ede9fe", fg: "#6d28d9", states: ["draft", "validated", "deprecated"] },
       relationship: { label: "Edge", bg: "#f1f5f9", fg: "#475569", states: [] },
@@ -4296,7 +4296,7 @@ class Component extends DCLogic {
         roles: { relay: "the customer-facing end, both ways in and out", compass: "triages and clusters every insight", sentinel: "scores clusters and decides what becomes a bet", quill: "turns a clustered insight into durable knowledge" },
         types: [
           { k: "insight", role: "what the loop moves", live: "6 open · 145 closed", counts: { "new": 2, "processing": 1, "clustered": 3, "scored": 4, "parked": 17, "discarded": 121 } },
-          { k: "bet", role: "what a cluster is promoted into — the build loop takes it from here", live: "4 in flight", counts: { "signal": 1, "define": 1, "active": 1, "live": 1, "succeeded": 24, "failed": 7, "paused": 0, "archived": 3 } },
+          { k: "bet", role: "what a cluster is promoted into — the build loop takes it from here", live: "4 in flight", counts: { "opportunity": 1, "define": 1, "active": 1, "live": 1, "succeeded": 24, "failed": 7, "paused": 0, "archived": 3 } },
           { k: "knowledge", role: "written when a cluster is generalisable", live: "96 published", counts: { "draft": 2, "validated": 94, "deprecated": 11 } },
         ],
         triggers: [
@@ -4342,7 +4342,7 @@ class Component extends DCLogic {
             agent: "sentinel",
             prompt: "Decide what to do when an insight gets linked to an active/live bet. Render an explicit disposition \u2014 notification without disposition is the failure mode this trigger exists to prevent. Pick exactly one: absorb / spin-off / note-only.",
             does: "absorbs it into scope, spins off a new bet, or says plainly that nothing changes \u2014 never just notifies",
-            out: [{ act: "may create", type: "bet", state: "signal" }, { act: "comments on", integ: "slack", label: "the bet" }], on: true },
+            out: [{ act: "may create", type: "bet", state: "opportunity" }, { act: "comments on", integ: "slack", label: "the bet" }], on: true },
           { id: "cf-7", fires: "31", last: "3d ago", wrote: "29 thread replies · 2 handed to a human", name: "Bug Fix Live \u2192 Reply to Customer", ttype: "event", type: "bet", entity: "bet", action: "status_changed", to: "live",
             conds: ["metadata.auto_bug is true", "reply coordinates present: feedback_source + source_conversation_id"],
             when: "a bet from customer feedback goes live \u2014 this is the single it's-live message, there is no separate deploy reply",
@@ -4357,7 +4357,7 @@ class Component extends DCLogic {
             agent: "compass", skill: "insight-triage",
             prompt: "Daily safety-net triage for insights that slipped through. Triage every insight in new / processing untouched >24h, plus any scored / parked worth revisiting. Nothing found \u2192 exit silently.",
             does: "picks up anything stuck in new or processing for over a day, and promotes clusters with no bet on their theme",
-            out: [{ act: "may create", type: "bet", state: "signal" }], on: true },
+            out: [{ act: "may create", type: "bet", state: "opportunity" }], on: true },
           { id: "cf-9", fires: "4", last: "2d ago", wrote: "4 digests", name: "Weekly Triage Digest", ttype: "cron", cron: "0 1 * * 1", cronHuman: "every Monday at 01:00",
             when: "every Monday \u2014 what changed in customer truth this week",
             agent: "compass", skill: "insight-triage",
@@ -4371,7 +4371,7 @@ class Component extends DCLogic {
         realNote: "10 of the 30 live rows in the Development workspace",
         roles: { sentinel: "owns bet quality — every gate, every verdict", forge: "plans, builds, and unsticks whatever stalls", compass: "reviews the code and merges under the risk gate", quill: "designs the UX when a task needs one", relay: "writes anything a customer will read" },
         types: [
-          { k: "bet", role: "what gets shaped and committed to", live: "12 in flight · 214 closed", counts: { "signal": 3, "define": 4, "active": 4, "live": 1, "succeeded": 168, "failed": 31, "paused": 2, "archived": 13 } },
+          { k: "bet", role: "what gets shaped and committed to", live: "12 in flight · 214 closed", counts: { "opportunity": 3, "define": 4, "active": 4, "live": 1, "succeeded": 168, "failed": 31, "paused": 2, "archived": 13 } },
           { k: "task", role: "what the loop moves — one cycle is one task", live: "12 open · 214 done", counts: { "todo": 4, "in_progress": 3, "in_review": 3, "validated": 2, "done": 214, "discarded": 26 } },
         ],
         triggers: [
@@ -8746,7 +8746,7 @@ class Component extends DCLogic {
         // ---- status: the workspace schema's options for this object's type ----
         const SO = {
           Insight: [["new", "#64748b"], ["processing", "#64748b"], ["clustered", "#d97706"], ["scored", "#d97706"], ["parked", "#a1a1aa"], ["discarded", "#a1a1aa"]],
-          Bet: [["signal", "#64748b"], ["define", "#6366f1"], ["active", "#4f46e5"], ["live", "#16a34a"], ["succeeded", "#16a34a"], ["failed", "#dc2626"], ["paused", "#b45309"], ["archived", "#a1a1aa"]],
+          Bet: [["opportunity", "#64748b"], ["define", "#6366f1"], ["active", "#4f46e5"], ["live", "#16a34a"], ["succeeded", "#16a34a"], ["failed", "#dc2626"], ["paused", "#b45309"], ["archived", "#a1a1aa"]],
           Doc: [["todo", "#64748b"], ["in_progress", "#d97706"], ["in_review", "#b45309"], ["validated", "#16a34a"], ["done", "#16a34a"], ["discarded", "#a1a1aa"]],
         };
         const opts = (od && SO[od.type]) || null;

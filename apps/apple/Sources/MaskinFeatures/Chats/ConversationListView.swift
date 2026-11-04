@@ -27,6 +27,10 @@ struct ConversationListView: View {
 	var onSuggestion: (String) -> Void = { _ in }
 	/// Opens the Threads screen; nil hides its chip (previews and snapshots).
 	var onThreads: (() -> Void)?
+	/// Where the filter chips sit; the bottom placements draw them outside this list.
+	var pillPlacement: TeamPillPlacement = .top
+	/// The shell's bottom pill, told how many are unread and when row selection is running.
+	var pill: TeamPillModel?
 
 	@State private var picking = SelectionModel()
 	@State private var undoOffer: UndoOffer?
@@ -61,7 +65,7 @@ struct ConversationListView: View {
 			if !isLive {
 				OfflineBanner(message: "Live updates paused. Reconnecting…").plainRow()
 			}
-			if store.displayOptions.showsFilterChips, !picking.isActive {
+			if store.displayOptions.showsFilterChips, pillPlacement == .top, !picking.isActive {
 				TeamFilterChips(
 					chip: $store.chip, unreadCount: layout.unreadCount,
 					threadsUnread: store.threadSections.unreadCount, onThreads: onThreads)
@@ -85,7 +89,7 @@ struct ConversationListView: View {
 						},
 						onMove: { id, before in store.movePin(id, before: before, tiles: layout.tiles.map(\.id)) }
 					) { tile in
-						TeamRowMenuItems(actions: actions(for: tile))
+						TeamRowMenuItems(actions: actions(for: tile, among: layout.tiles.map(\.id)))
 					}
 					.plainRow(insets: EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
 				} header: {
@@ -141,14 +145,16 @@ struct ConversationListView: View {
 			}
 			if layout.showsArchived, !picking.isActive {
 				ArchivedRow(
-					items: store.archivedConversations, currentActorID: currentActorID, expanded: $archivedExpanded
-				) { item in
-					Task {
-						if await store.setArchived(item.id, false) {
-							undoOffer = UndoOffer(message: "Unarchived. Undo.") { _ = await store.setArchived(item.id, true) }
+					items: layout.isFiltering ? layout.archivedMatches : store.archivedConversations,
+					currentActorID: currentActorID, expanded: $archivedExpanded, forceExpanded: layout.isFiltering,
+					onUnarchive: { item in
+						Task {
+							if await store.setArchived(item.id, false) {
+								undoOffer = UndoOffer(message: "Unarchived. Undo.") { _ = await store.setArchived(item.id, true) }
+							}
 						}
-					}
-				}
+					},
+					onOpen: { item in selection = item.id })
 				.plainRow(insets: EdgeInsets(top: MaskinSpace.s3, leading: MaskinSpace.s9, bottom: MaskinSpace.s3, trailing: MaskinSpace.s9))
 			}
 		}
@@ -161,12 +167,25 @@ struct ConversationListView: View {
 		.scrollContentBackground(.hidden)
 		.ambientBackground()
 		.teamSearch(text: $search)
+		// A search looks through every archived chat, so the pages past the first are fetched.
+		.task(id: !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
+			if !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { await store.loadMoreArchived() }
+		}
 		.overlay { overlay }
 		.refreshable { await store.refresh() }
 		.animation(.snappy, value: picking.isActive)
 		.onChange(of: allIDs) { picking.prune(toVisible: allIDs) }
 		.selectionToolbar(picking, allIDs: allIDs, noun: "chat") { bulkActions(allIDs: allIDs) }
 		.undoToast($undoOffer)
+		.safeAreaInset(edge: .bottom, spacing: MaskinSpace.s4) {
+			if pillPlacement == .floating, store.displayOptions.showsFilterChips, !picking.isActive {
+				TeamFloatingPill(
+					chip: $store.chip, unreadCount: layout.unreadCount,
+					threadsUnread: store.threadSections.unreadCount, onThreads: onThreads)
+			}
+		}
+		.onChange(of: layout.unreadCount, initial: true) { _, count in pill?.unreadCount = count }
+		.onChange(of: picking.isActive, initial: true) { _, active in pill?.isSelecting = active }
 		.teamRowMenu($menuTarget)
 		.confirmationDialog(
 			deleteTarget.map { $0.conversationIDs.count > 1 ? "Delete \($0.conversationIDs.count) conversations with \($0.title)?" : "Delete this conversation?" } ?? "",
@@ -245,6 +264,10 @@ struct ConversationListView: View {
 	}
 
 	private func status(for row: TeamLayout.Row) -> ConversationRowStatus {
+		rawStatus(for: row).applying(store.displayOptions)
+	}
+
+	private func rawStatus(for row: TeamLayout.Row) -> ConversationRowStatus {
 		switch row.kind {
 		case .conversation(let c):
 			return store.status(for: c, draft: draft(c.id), tick: sendTick(c))
@@ -280,11 +303,17 @@ struct ConversationListView: View {
 		}
 	}
 
-	private func actions(for tile: TeamLayout.Tile) -> TeamRowActions {
+	private func actions(for tile: TeamLayout.Tile, among ids: [String]) -> TeamRowActions {
+		var base: TeamRowActions
 		switch tile.kind {
-		case .conversation(let c): actions(for: c)
-		case .flow(let f): actions(for: f)
+		case .conversation(let c): base = actions(for: c)
+		case .flow(let f): base = actions(for: f)
 		}
+		if let i = ids.firstIndex(of: tile.id) {
+			if i > 0 { base.moveEarlier = { store.movePin(tile.id, before: ids[i - 1], tiles: ids) } }
+			if i < ids.count - 1 { base.moveLater = { store.movePin(tile.id, before: ids[i + 1], tiles: ids) } }
+		}
+		return base
 	}
 
 	private func actions(for c: ConversationSummary) -> TeamRowActions {
@@ -343,7 +372,9 @@ struct ConversationListView: View {
 		switch empty {
 		case .nothing: onNewChat(nil)
 		case .noResults: onSearchEverywhere(query.trimmingCharacters(in: .whitespacesAndNewlines))
-		case .caughtUp, .noKind: store.chip = .all
+		case .caughtUp, .noKind:
+			store.chip = .all
+			store.displayOptions.unreadOnly = false
 		}
 	}
 
@@ -409,28 +440,41 @@ struct ConversationListView: View {
 	}
 }
 
-/// The Team Display menu in the shell's pill (spec 7 §6): LAYOUT (Sections / One list),
-/// CONVERSATIONS grouping (only in Sections) and FILTER CHIPS (Show / Hide). The store persists
-/// the choice per user.
-struct ChatsDisplayMenu: View {
+/// The Chats Display sheet (handoff v15): Group by Sections or None, Show All chats or Unread, and
+/// the Preview and Working line properties. The store persists the choice per user.
+struct ChatsDisplaySheet: View {
 	@Bindable var store: ConversationsStore
 
 	var body: some View {
-		Picker("Show as", selection: $store.displayOptions.layout) {
-			ForEach(TeamDisplayOptions.Layout.allCases, id: \.self) { Text($0.label).tag($0) }
-		}
-		.pickerStyle(.inline)
-		if store.displayOptions.layout == .sections {
-			Picker("Group by", selection: $store.displayOptions.grouping) {
-				ForEach(TeamDisplayOptions.Grouping.allCases, id: \.self) { Text($0.label).tag($0) }
+		DisplaySheet(canReset: store.displayOptions.isCustomised, onReset: { store.displayOptions = .default }) {
+			DisplaySection(title: "Grouping", showsDivider: false) {
+				DisplayChoice(
+					label: "Group by", options: [(true, "Sections"), (false, "None")],
+					selection: $store.displayOptions.isSectioned)
+				if store.displayOptions.isSectioned {
+					DisplayChoice(
+						label: "Sections",
+						options: TeamDisplayOptions.Grouping.allCases.map { ($0, $0.label) },
+						selection: $store.displayOptions.grouping)
+				}
 			}
-			.pickerStyle(.inline)
+			DisplaySection(title: "Filters") {
+				DisplayChoice(
+					label: "Show", options: [(false, "All chats"), (true, "Unread")],
+					selection: $store.displayOptions.unreadOnly)
+				DisplayChoice(
+					label: "Quick filters", options: [(false, "Hide"), (true, "Show")],
+					selection: $store.displayOptions.showsFilterChips)
+			}
+			DisplaySection(title: "Properties") {
+				DisplayToggles(
+					label: "Show",
+					items: [
+						.init(id: "preview", title: "Preview", isOn: $store.displayOptions.showsPreview),
+						.init(id: "working", title: "Working line", isOn: $store.displayOptions.showsWorkingLine),
+					])
+			}
 		}
-		Picker("Quick filters", selection: $store.displayOptions.showsFilterChips) {
-			Text("Show").tag(true)
-			Text("Hide").tag(false)
-		}
-		.pickerStyle(.inline)
 	}
 }
 
@@ -494,7 +538,7 @@ struct TeamConversationRow: View {
 					.fontWeight(conversation.isUnread ? .bold : .semibold)
 					.foregroundStyle(MaskinColor.ink)
 					.lineLimit(1)
-				Text(preview).maskinText(.subhead).foregroundStyle(MaskinColor.ink4).lineLimit(1)
+				preview.maskinText(.subhead).foregroundStyle(MaskinColor.ink4).lineLimit(1)
 			}
 			Spacer(minLength: MaskinSpace.s3)
 			VStack(alignment: .trailing, spacing: MaskinSpace.s2) {
@@ -511,11 +555,11 @@ struct TeamConversationRow: View {
 		.accessibilityElement(children: .combine)
 	}
 
-	private var preview: String {
-		if let draft, !draft.isEmpty { return "Draft: \(draft)" }
-		let text = conversation.snippet.map(ChatPreviewText.plain) ?? ""
-		guard !text.isEmpty else { return ConversationRowStatus.noMessages }
-		if let who = conversation.snippetActorName, !who.isEmpty { return "\(who): \(text)" }
-		return text
+	private var preview: Text {
+		if let draft, !draft.isEmpty { return Text(verbatim: "Draft: \(draft)") }
+		let pieces = conversation.snippet.map(ChatPreviewText.linePieces) ?? []
+		guard !pieces.isEmpty else { return Text(ConversationRowStatus.noMessages) }
+		let lead = conversation.snippetActorName.flatMap { who in who.isEmpty ? nil : "\(who): " }
+		return ChatPreviewLine.text("", pieces: (lead.map { [ChatPreviewText.Piece($0)] } ?? []) + pieces)
 	}
 }

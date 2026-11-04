@@ -29,11 +29,9 @@ export interface TriggerMatchFailedProps {
 }
 
 /**
- * Fires once per matcher miss when `trigger_engine_v2` is enabled for the
- * workspace. The bet's Won criteria pivot on this event — a workspace's dead
- * triggers show up as sustained rows here, and disappear once the matcher v2
- * flag reactivates them. Distinct id is the workspace so per-workspace
- * frequency lines up with the flag's rollout scope.
+ * Fires once per matcher miss. The bet's Won criteria pivot on this event — a
+ * workspace's dead triggers show up as sustained rows here. Distinct id is the
+ * workspace so frequency can be read per workspace.
  *
  * Best-effort: any capture failure is swallowed so analytics never blocks
  * dispatch.
