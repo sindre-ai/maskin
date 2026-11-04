@@ -621,6 +621,11 @@ export function overrides({ method, path, params, query, body, base, item }) {
 			sessionId: null,
 			createdAt: ago(at),
 			editedAt: null,
+			// null, as the real API sends it: a number (even 0) marks the message as a thread reply
+			// and the app then hides it from the main chat.
+			threadRootId: null,
+			threadAlsoInChannel: false,
+			thread: null,
 			spawned_sessions: [],
 		})
 		const first = actors.find((a) => a.id === r.with[0])
@@ -632,6 +637,39 @@ export function overrides({ method, path, params, query, body, base, item }) {
 						m(2, ME, 'Why not all 47 contacts?', 20),
 						m(3, first, 'Only 7 have Sales approval. The other 40 still need review.', 10),
 					],
+					has_more: false,
+				},
+			}
+		}
+		if (r.n === 302) {
+			// One real thread, shaped as the API sends it: the root carries a `thread` summary, each reply
+			// carries the root's id (and is hidden from the main timeline), and `?thread_root_id=` returns
+			// only the replies. MK-04 depends on this; do not reword the texts without updating it.
+			const root = {
+				...m(3, ME, 'Can you also check the pricing page?', 40),
+				thread: {
+					replyCount: 2,
+					unreadCount: 0,
+					lastReplyId: 5,
+					lastReplyAt: ago(20),
+					participants: [participantRow(ME.id), participantRow(first.id)],
+				},
+			}
+			const replies = [
+				{ ...m(4, first, 'Yes, the pricing page looks right.', 30), threadRootId: 3 },
+				{ ...m(5, ME, 'Thanks, I will ship it today.', 20), threadRootId: 3 },
+			]
+			const wanted = query.get('thread_root_id')
+			return {
+				body: {
+					messages: wanted
+						? replies.filter((x) => x.threadRootId === Number(wanted))
+						: [
+								m(1, ME, 'Where are we on the Northwind follow-ups?', r.at + 12),
+								m(2, first, r.snippet, r.at),
+								root,
+								...replies,
+							],
 					has_more: false,
 				},
 			}
