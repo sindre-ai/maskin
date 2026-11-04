@@ -5,9 +5,14 @@ import { describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
 const sendMutate = vi.fn()
+const inputMutate = vi.fn()
 
 vi.mock('@/hooks/use-conversation', () => ({
 	useSendMessage: () => ({ mutate: sendMutate, isPending: false, isError: false }),
+}))
+
+vi.mock('@/hooks/use-sessions', () => ({
+	useSendSessionInput: () => ({ mutate: inputMutate, isPending: false, isError: false }),
 }))
 
 import { QuestionOptions } from '@/components/chat/question-options'
@@ -156,5 +161,38 @@ describe('QuestionOptions', () => {
 		renderOptions(QUESTION, true)
 		expect(screen.queryByRole('button', { name: 'Send answer' })).not.toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: 'API token' })).not.toBeInTheDocument()
+	})
+	it('turns "or type your reply" into a text box that sends a free-text answer', async () => {
+		sendMutate.mockClear()
+		const user = userEvent.setup()
+		renderOptions()
+
+		expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: 'or type your reply' }))
+		await user.type(screen.getByRole('textbox', { name: 'Your reply' }), 'Neither, try Malt')
+		await user.click(screen.getByRole('button', { name: 'Send' }))
+
+		const payload = sendMutate.mock.calls[0]?.[0]
+		expect(payload.content).toBe('Neither, try Malt')
+		expect(payload.metadata.question_answer).toEqual({
+			question_message_id: 7,
+			answers: [{ header: 'Spotify access', selected: ['Neither, try Malt'] }],
+		})
+	})
+
+	it("sends a helper's answer to its session, not to the chat", async () => {
+		sendMutate.mockClear()
+		inputMutate.mockClear()
+		const user = userEvent.setup()
+		renderOptions({ ...QUESTION, reply_to_session: true })
+
+		await user.click(screen.getByRole('button', { name: 'API token' }))
+		await user.click(screen.getByRole('button', { name: 'Send answer' }))
+
+		expect(sendMutate).not.toHaveBeenCalled()
+		expect(inputMutate).toHaveBeenCalledTimes(1)
+		const payload = inputMutate.mock.calls[0]?.[0]
+		expect(payload.id).toBe(QUESTION.session_id)
+		expect(payload.question_answer.question_message_id).toBe(7)
 	})
 })

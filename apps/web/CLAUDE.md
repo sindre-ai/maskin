@@ -1,5 +1,7 @@
 # Frontend — apps/web
 
+> **iOS parity:** any user-visible change here must also be made in `apps/apple` in the same PR (and vice versa). Native idiom may differ; capability, wording and behaviour may not. See `.claude/rules/web-ios-parity.md`.
+
 ## Product Philosophy
 This is a **steering interface for humans overseeing autonomous agents**, not a task management app where humans do the work. Humans care about **bets** (strategic decisions) and only drill into details when needed. Agents handle insights and tasks autonomously.
 
@@ -234,7 +236,7 @@ resolved server-side and loaded in `_authed.tsx`'s `beforeLoad`.
 
 **One boundary per feature, as high in the tree as possible** — the shell or a
 route layout, not scattered checks on individual components.
-`linkedin-addon-visible` is the one live flag; the pattern to copy is the
+The live flags are whatever `FLAGS` in `apps/dev/src/lib/feature-flags.ts` registers. The pattern to copy is the
 retired `new-design` flag, which shipped the v2 redesign: it was read once per
 route component, each swapping a whole page, plus one shell read in
 `src/components/layout/sidebar.tsx`, with the pre-v2 components vendored under
@@ -249,7 +251,7 @@ too low — move it up rather than add another check. See
 Flags gate **per-actor behaviour**, never shared state. A flag may gate any
 behaviour whose off-state is the already-shipped state — visual (a UI branch) or
 behavioural (an action the system takes for the flagging actor, read per
-driver-actor); SALES_REP_LINKEDIN_AUTOSEND is the precedent. A flag must
+driver-actor). A flag must
 **never** make a data-layer, API, or migration change safe: those change shared
 state for everyone, and an actor-scoped flag read at runtime cannot isolate the
 un-flagged population, so such changes must be safe for all users on their own.

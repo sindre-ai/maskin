@@ -1,0 +1,138 @@
+import { Fragment, type ReactNode, useMemo } from 'react'
+
+// Structural type — any object with an `id` and `name` matches. Callers
+// pass `apps/web`'s `ActorListItem` directly (it satisfies this shape).
+export interface MentionActor {
+	id: string
+	name: string | null
+}
+
+interface MentionedTextProps {
+	content: string
+	actors: MentionActor[]
+	/** Class applied to each highlighted @mention span. */
+	mentionClassName?: string
+	/** When provided, @mentions are rendered as clickable buttons. */
+	onMentionClick?: (actor: MentionActor) => void
+	/**
+	 * Ids the author tagged through the picker (a comment's stored `mentions`).
+	 * A mention of one of these draws as the brand chip chat uses; any other
+	 * @name keeps `mentionClassName`, so text with no stored ids is unchanged.
+	 */
+	taggedActorIds?: string[]
+	/** The viewer. A tagged mention of them draws amber, as a tag of yourself does in chat. */
+	selfActorId?: string | null
+}
+
+const DEFAULT_MENTION_CLASS =
+	'inline-flex items-center rounded px-1 py-0.5 text-xs font-medium bg-primary/10 text-primary'
+
+// The chat tag chip (design spec: bg-brand/10, text-brand, semibold, rounded-md, 4px side padding).
+const TAGGED_MENTION_CLASS =
+	'inline-flex items-center rounded-md px-1 font-semibold bg-brand/10 text-brand'
+
+const SELF_TAGGED_MENTION_CLASS =
+	'inline-flex items-center rounded-md px-1 font-semibold bg-warning/10 text-warning'
+
+const CLICKABLE_MENTION_CLASS = 'cursor-pointer hover:opacity-80 transition-opacity'
+
+/**
+ * Renders text with @{actor.name} substrings highlighted as styled chips.
+ * Matches the longest known actor name first so multi-word names ("@Senior Developer")
+ * aren't truncated to just the first token.
+ */
+export function MentionedText({
+	content,
+	actors,
+	mentionClassName = DEFAULT_MENTION_CLASS,
+	onMentionClick,
+	taggedActorIds,
+	selfActorId,
+}: MentionedTextProps) {
+	const sortedNames = useMemo(
+		() =>
+			actors
+				.map((a) => a.name ?? '')
+				.filter((n) => n.length > 0)
+				.sort((a, b) => b.length - a.length),
+		[actors],
+	)
+
+	const actorsByName = useMemo(() => {
+		const map = new Map<string, MentionActor>()
+		for (const a of actors) if (a.name) map.set(a.name, a)
+		return map
+	}, [actors])
+
+	const taggedIds = useMemo(() => new Set(taggedActorIds), [taggedActorIds])
+
+	const parts = useMemo<
+		Array<{ type: 'text' | 'mention'; text: string; actor?: MentionActor; key: string }>
+	>(() => {
+		const out: Array<{
+			type: 'text' | 'mention'
+			text: string
+			actor?: MentionActor
+			key: string
+		}> = []
+		let i = 0
+		while (i < content.length) {
+			if (content[i] === '@') {
+				const match = sortedNames.find((name) => {
+					if (!content.startsWith(`@${name}`, i)) return false
+					const after = content[i + 1 + name.length]
+					return after === undefined || !/\w/.test(after)
+				})
+				if (match) {
+					out.push({
+						type: 'mention',
+						text: `@${match}`,
+						actor: actorsByName.get(match),
+						key: `m-${i}`,
+					})
+					i += match.length + 1
+					continue
+				}
+			}
+			const nextAt = content.indexOf('@', i + 1)
+			const end = nextAt === -1 ? content.length : nextAt
+			out.push({ type: 'text', text: content.slice(i, end), key: `t-${i}` })
+			i = end
+		}
+		return out
+	}, [content, sortedNames, actorsByName])
+
+	return (
+		<>
+			{parts.map((p): ReactNode => {
+				if (p.type === 'mention') {
+					const tagged = p.actor !== undefined && taggedIds.has(p.actor.id)
+					const className = !tagged
+						? mentionClassName
+						: p.actor?.id === selfActorId
+							? SELF_TAGGED_MENTION_CLASS
+							: TAGGED_MENTION_CLASS
+					if (onMentionClick && p.actor) {
+						const actor = p.actor
+						return (
+							<button
+								key={p.key}
+								type="button"
+								onClick={() => onMentionClick(actor)}
+								className={`${className} ${CLICKABLE_MENTION_CLASS}`}
+							>
+								{p.text}
+							</button>
+						)
+					}
+					return (
+						<span key={p.key} className={className}>
+							{p.text}
+						</span>
+					)
+				}
+				return <Fragment key={p.key}>{p.text}</Fragment>
+			})}
+		</>
+	)
+}

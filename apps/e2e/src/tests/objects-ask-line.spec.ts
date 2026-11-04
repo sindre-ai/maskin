@@ -1,5 +1,4 @@
 import { expect, test } from '../fixtures/auth.fixture'
-import { createTestActor } from '../helpers/api.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 // T2 follow-up: the List row shows a pending-ask line ("<Agent> asks · <ask>")
@@ -21,11 +20,11 @@ test.describe('List row — pending-ask line + pill (ship gate)', () => {
 			account,
 		}) => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
-			const source = await createTestActor({ name: 'Asker Bot' })
+			const source = await account.api.createAgentActor('Asker Bot')
 			const object = await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Ask Line Test Bet',
-				status: 'signal',
+				status: 'opportunity',
 			})
 			await account.api.createNotification(account.workspaceId, {
 				type: 'needs_input',
@@ -41,11 +40,11 @@ test.describe('List row — pending-ask line + pill (ship gate)', () => {
 
 			// The pill is the shorthand; the ask line carries actor + text.
 			await expect(page.getByText('Waiting on you')).toBeVisible()
-			// The line names the asking actor; a source actor outside this
-			// workspace's member list reads as the generic "Agent". Only the actor
-			// name is its own span now ({who} asks — "{text}" splits the phrase
-			// across nodes), so match the phrase against the line.
-			await expect(page.getByText(/^Agent asks —/)).toBeVisible()
+			// The line names the asking actor. The source must be a workspace
+			// member (the API answers 404 for a foreign actor), so it reads by
+			// name. Only the actor name is its own span now ({who} asks — "{text}"
+			// splits the phrase across nodes), so match the phrase against the line.
+			await expect(page.getByText(/^Asker Bot asks —/)).toBeVisible()
 			await expect(page.getByText(/approve this bet/i).first()).toBeVisible()
 		})
 	}
@@ -56,11 +55,11 @@ test.describe('List row — pending-ask line + pill (ship gate)', () => {
 		test(`"Waiting on you" pill is visible in ${colorScheme} mode`, async ({ page, account }) => {
 			await page.setViewportSize(SHIP_GATE_VIEWPORTS[0] ?? { width: 375, height: 812 })
 			await page.emulateMedia({ colorScheme })
-			const source = await createTestActor({ name: 'Asker Bot' })
+			const source = await account.api.createAgentActor('Asker Bot')
 			const object = await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Ask Scheme Test Bet',
-				status: 'signal',
+				status: 'opportunity',
 			})
 			await account.api.createNotification(account.workspaceId, {
 				type: 'needs_input',
@@ -85,12 +84,12 @@ test.describe('List row — pending-ask line + pill (ship gate)', () => {
 		account,
 	}) => {
 		await page.setViewportSize(SHIP_GATE_VIEWPORTS[0] ?? { width: 375, height: 812 })
-		const source = await createTestActor({ name: 'Asker Bot' })
-		const other = await createTestActor({ name: 'Someone Else' })
+		const source = await account.api.createAgentActor('Asker Bot')
+		const other = await account.api.createAgentActor('Someone Else')
 		const object = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Not My Ask Bet',
-			status: 'signal',
+			status: 'opportunity',
 		})
 		await account.api.createNotification(account.workspaceId, {
 			type: 'needs_input',

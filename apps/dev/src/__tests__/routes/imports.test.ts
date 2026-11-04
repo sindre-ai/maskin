@@ -143,7 +143,7 @@ describe('PATCH /api/imports/:id/mapping', () => {
 						columns: [
 							{ sourceColumn: 'title', targetField: 'title', transform: 'none', skip: false },
 						],
-						defaultStatus: 'signal',
+						defaultStatus: 'opportunity',
 					},
 				],
 				relationships: [],

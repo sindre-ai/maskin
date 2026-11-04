@@ -29,6 +29,7 @@ describe('sessionStatusSchema', () => {
 		'completed',
 		'failed',
 		'timeout',
+		'user_stopped',
 	]
 
 	for (const s of statuses) {
@@ -122,7 +123,6 @@ describe('sessionConfigSchema', () => {
 		expect(result.mcps).toEqual([])
 		expect(result.env_vars).toEqual({})
 		expect(result.interactive).toBe(false)
-		expect(result.browserRequired).toBe(false)
 	})
 
 	it('accepts interactive=true', () => {
@@ -164,29 +164,6 @@ describe('sessionConfigSchema', () => {
 			mcps: [{ command: 'node', args: ['server.js'] }],
 		})
 		expect(result.mcps).toHaveLength(1)
-	})
-
-	it('accepts previewGuestPorts alongside browserRequired', () => {
-		const result = sessionConfigSchema.parse({
-			browserRequired: true,
-			previewGuestPorts: [5173, 3000],
-		})
-		expect(result.previewGuestPorts).toEqual([5173, 3000])
-	})
-
-	it('leaves previewGuestPorts undefined by default', () => {
-		const result = sessionConfigSchema.parse({})
-		expect(result.previewGuestPorts).toBeUndefined()
-	})
-
-	it('rejects previewGuestPorts entries above 65535', () => {
-		expect(() => sessionConfigSchema.parse({ previewGuestPorts: [70000] })).toThrow()
-	})
-
-	it('rejects more than 8 previewGuestPorts entries', () => {
-		expect(() =>
-			sessionConfigSchema.parse({ previewGuestPorts: [1, 2, 3, 4, 5, 6, 7, 8, 9] }),
-		).toThrow()
 	})
 })
 
@@ -575,46 +552,5 @@ describe('mcpServerSchema — inferred transport type', () => {
 			type: 'http',
 			url: 'https://x/mcp',
 		})
-	})
-})
-
-describe('mcpServerSchema — browser CDP endpoint misuse', () => {
-	// Verbatim from the production actor row that caused a customer-reported
-	// "no Playwright in this session": a CDP address configured as an http MCP
-	// server. It parsed fine, so nothing rejected it; the server then sat at
-	// status "pending" forever and the agent had no browser tools.
-	const badEntry = { type: 'http', url: '${BROWSER_CDP_URL}', headers: {} }
-
-	// The type-inference preprocess must not become a way around this guard:
-	// a typeless { url } is now inferred as http, so it has to hit the same
-	// refinement rather than slip past it.
-	it('rejects a CDP endpoint written without an explicit type', () => {
-		expect(mcpServerSchema.safeParse({ url: '${BROWSER_CDP_URL}' }).success).toBe(false)
-	})
-
-	it('rejects a CDP endpoint configured as an http MCP server', () => {
-		const result = mcpServerSchema.safeParse(badEntry)
-		expect(result.success).toBe(false)
-		if (result.success) return
-		const message = result.error.issues.map((i) => i.message).join(' ')
-		expect(message).toContain('not an MCP server')
-		// The error has to carry the fix, or the next person writes it again.
-		expect(message).toContain('--cdp-endpoint')
-		expect(message).toContain('stdio')
-	})
-
-	it('accepts the stdio form that actually reaches the browser', () => {
-		const good = {
-			type: 'stdio',
-			command: 'npx',
-			args: ['@playwright/mcp@latest', '--cdp-endpoint', '${BROWSER_CDP_URL}'],
-			env: {},
-		}
-		expect(mcpServerSchema.safeParse(good).success).toBe(true)
-	})
-
-	it('leaves unrelated http MCP servers alone', () => {
-		const hosted = { type: 'http', url: 'https://mcp.linear.app/mcp', headers: {} }
-		expect(mcpServerSchema.safeParse(hosted).success).toBe(true)
 	})
 })

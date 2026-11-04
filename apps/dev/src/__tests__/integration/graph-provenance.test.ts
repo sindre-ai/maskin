@@ -6,7 +6,6 @@ import { conversations, relationships, sessions } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { recordEvent, writeSpawnedEdge } from '../../lib/events/record-event'
-import { FLAGS, _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { resolveEndpointTitles } from '../../lib/graph/endpoint-titles'
 import objectsRoutes from '../../routes/objects'
 import relationshipsRoutes from '../../routes/relationships'
@@ -22,45 +21,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const MIGRATION_DIR = join(__dirname, '..', '..', '..', '..', '..', 'packages', 'db', 'drizzle')
 const UP_SQL = join(MIGRATION_DIR, '0074_graph_conversation_session_types.sql')
 const DOWN_SQL = join(MIGRATION_DIR, 'down', '0074_graph_conversation_session_types_down.sql')
-
-// Env-driven flag priming: `resolveFlags` reads FF_TESTER_* on demand and
-// caches the parse. Tests that need the flag ON set both and reset the cache;
-// tests that need it OFF blank the vars and reset the cache. Never mutate
-// process.env without a matching reset — a stale parse silently pins the
-// flag state for the rest of the suite.
-function setEnv(key: string, value: string | undefined): void {
-	if (value === undefined) {
-		process.env[key] = undefined
-	} else {
-		process.env[key] = value
-	}
-}
-
-function withFlagOn(actorId: string, fn: () => Promise<void>): Promise<void> {
-	const prevActors = process.env.FF_TESTER_ACTOR_IDS
-	const prevFlags = process.env.FF_TESTER_FEATURES
-	process.env.FF_TESTER_ACTOR_IDS = actorId
-	process.env.FF_TESTER_FEATURES = FLAGS.GRAPH_PROVENANCE_WRITES
-	_resetFeatureFlagConfig()
-	return fn().finally(() => {
-		setEnv('FF_TESTER_ACTOR_IDS', prevActors)
-		setEnv('FF_TESTER_FEATURES', prevFlags)
-		_resetFeatureFlagConfig()
-	})
-}
-
-function withFlagOff(fn: () => Promise<void>): Promise<void> {
-	const prevActors = process.env.FF_TESTER_ACTOR_IDS
-	const prevFlags = process.env.FF_TESTER_FEATURES
-	setEnv('FF_TESTER_ACTOR_IDS', undefined)
-	setEnv('FF_TESTER_FEATURES', undefined)
-	_resetFeatureFlagConfig()
-	return fn().finally(() => {
-		setEnv('FF_TESTER_ACTOR_IDS', prevActors)
-		setEnv('FF_TESTER_FEATURES', prevFlags)
-		_resetFeatureFlagConfig()
-	})
-}
 
 async function insertSession(
 	workspaceId: string,
@@ -185,17 +145,15 @@ describe('S2 · graph provenance writer + read hydration', () => {
 			objectId = obj.id
 		})
 
-		it('writes a session → object produced_by edge when the flag is on and sessionId is present', async () => {
-			await withFlagOn(sessionActorId, async () => {
-				await recordEvent(db, {
-					workspaceId,
-					actorId: sessionActorId,
-					action: 'updated',
-					entityType: 'task',
-					entityId: objectId,
-					data: { changes: [] },
-					provenance: { sessionId: session.id, entityKind: 'object' },
-				})
+		it('writes a session → object produced_by edge when sessionId is present', async () => {
+			await recordEvent(db, {
+				workspaceId,
+				actorId: sessionActorId,
+				action: 'updated',
+				entityType: 'task',
+				entityId: objectId,
+				data: { changes: [] },
+				provenance: { sessionId: session.id, entityKind: 'object' },
 			})
 
 			const rows = await db
@@ -214,33 +172,14 @@ describe('S2 · graph provenance writer + read hydration', () => {
 		})
 
 		it('writes no edge when sessionId is absent (human write) — mutation still succeeds', async () => {
-			await withFlagOn(sessionActorId, async () => {
-				await recordEvent(db, {
-					workspaceId,
-					actorId: sessionActorId,
-					action: 'updated',
-					entityType: 'task',
-					entityId: objectId,
-					data: { changes: [] },
-					// No `provenance` — mirrors a UI-authored PATCH.
-				})
-			})
-
-			const rows = await db.select().from(relationships).where(eq(relationships.targetId, objectId))
-			expect(rows).toHaveLength(0)
-		})
-
-		it('writes no edge when the flag is off — mutation still succeeds', async () => {
-			await withFlagOff(async () => {
-				await recordEvent(db, {
-					workspaceId,
-					actorId: sessionActorId,
-					action: 'updated',
-					entityType: 'task',
-					entityId: objectId,
-					data: { changes: [] },
-					provenance: { sessionId: session.id, entityKind: 'object' },
-				})
+			await recordEvent(db, {
+				workspaceId,
+				actorId: sessionActorId,
+				action: 'updated',
+				entityType: 'task',
+				entityId: objectId,
+				data: { changes: [] },
+				// No `provenance` — mirrors a UI-authored PATCH.
 			})
 
 			const rows = await db.select().from(relationships).where(eq(relationships.targetId, objectId))
@@ -248,19 +187,17 @@ describe('S2 · graph provenance writer + read hydration', () => {
 		})
 
 		it('is idempotent · a repeat mutation on the same session/entity does not double-write', async () => {
-			await withFlagOn(sessionActorId, async () => {
-				for (let i = 0; i < 3; i++) {
-					await recordEvent(db, {
-						workspaceId,
-						actorId: sessionActorId,
-						action: 'updated',
-						entityType: 'task',
-						entityId: objectId,
-						data: { changes: [{ i }] },
-						provenance: { sessionId: session.id, entityKind: 'object' },
-					})
-				}
-			})
+			for (let i = 0; i < 3; i++) {
+				await recordEvent(db, {
+					workspaceId,
+					actorId: sessionActorId,
+					action: 'updated',
+					entityType: 'task',
+					entityId: objectId,
+					data: { changes: [{ i }] },
+					provenance: { sessionId: session.id, entityKind: 'object' },
+				})
+			}
 
 			const rows = await db
 				.select()
@@ -293,14 +230,12 @@ describe('S2 · graph provenance writer + read hydration', () => {
 				conversationId: conversationId,
 			})
 
-			await withFlagOn(getTestActorId(), async () => {
-				await writeSpawnedEdge(db, {
-					workspaceId: workspace.id,
-					conversationId: conversationId,
-					sessionId: session.id,
-					sessionActorId: getTestActorId(),
-					messageId: 12345,
-				})
+			await writeSpawnedEdge(db, {
+				workspaceId: workspace.id,
+				conversationId: conversationId,
+				sessionId: session.id,
+				sessionActorId: getTestActorId(),
+				messageId: 12345,
 			})
 
 			const [edge] = await db
@@ -317,36 +252,6 @@ describe('S2 · graph provenance writer + read hydration', () => {
 			expect(edge?.sourceType).toBe('conversation')
 			expect(edge?.targetType).toBe('session')
 			expect((edge?.metadata as { messageId?: number } | null)?.messageId).toBe(12345)
-		})
-
-		it('writes no edge when the flag is off', async () => {
-			const workspace = await insertWorkspace(db, getTestActorId())
-			const [conversationRow] = await db
-				.insert(conversations)
-				.values({
-					workspaceId: workspace.id,
-					title: 'no spawn',
-					createdBy: getTestActorId(),
-				})
-				.returning()
-			if (!conversationRow) throw new Error('conversation insert returned no row')
-			const conversationId = conversationRow.id
-			const session = await insertSession(workspace.id, getTestActorId(), {
-				conversationId: conversationId,
-			})
-
-			await withFlagOff(async () => {
-				await writeSpawnedEdge(db, {
-					workspaceId: workspace.id,
-					conversationId: conversationId,
-					sessionId: session.id,
-					sessionActorId: getTestActorId(),
-					messageId: 9999,
-				})
-			})
-
-			const rows = await db.select().from(relationships).where(eq(relationships.type, 'spawned'))
-			expect(rows).toHaveLength(0)
 		})
 
 		it('resolveEndpointTitles hydrates conversation and session endpoint titles in one batch', async () => {

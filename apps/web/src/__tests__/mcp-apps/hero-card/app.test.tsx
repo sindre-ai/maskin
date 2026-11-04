@@ -219,6 +219,7 @@ function makeListToolResult(
 		status: string | null
 		owner: { id: string; name: string | null } | null
 		contextLine: string
+		skills?: string[]
 	}>,
 	totalCount = objects.length,
 ) {
@@ -433,6 +434,40 @@ describe('HeroCardApp — list envelope', () => {
 		expect(screen.getByText('+1 more')).toBeInTheDocument()
 		const cta = screen.getByRole('link', { name: /Open in Maskin/ })
 		expect(cta).toHaveAttribute('href', 'https://maskin.test/ws-1/agents')
+	})
+
+	it('renders list_actors rows that carry a skills array and links them from type and id', async () => {
+		useToolResultMock.mockReturnValue(
+			makeListToolResult('list_actors', [
+				{
+					id: 'actor-1',
+					type: 'actor',
+					title: 'Architect',
+					status: 'member',
+					owner: null,
+					contextLine: 'member',
+					skills: ['alpha-skill', 'zebra-skill'],
+				},
+				{
+					id: 'actor-2',
+					type: 'actor',
+					title: 'Bare',
+					status: 'member',
+					owner: null,
+					contextLine: 'member',
+				},
+			]),
+		)
+		render(<HeroCardApp />)
+		await waitFor(() => expect(screen.getByText('Actors')).toBeInTheDocument())
+		expect(screen.getByText('Architect')).toBeInTheDocument()
+		const rows = screen
+			.getAllByRole('link')
+			.filter((a) => /agents\/actor-\d/.test(a.getAttribute('href') ?? ''))
+		expect(rows.map((a) => a.getAttribute('href'))).toEqual([
+			'https://maskin.test/ws-1/agents/actor-1',
+			'https://maskin.test/ws-1/agents/actor-2',
+		])
 	})
 
 	it('renders the list_workspaces envelope and links rows to their workspace roots', async () => {

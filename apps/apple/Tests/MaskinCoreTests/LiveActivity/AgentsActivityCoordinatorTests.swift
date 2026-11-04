@@ -146,6 +146,16 @@ struct AgentsActivityCoordinatorTests {
 		#expect(host.states.last?.agents.map(\.id) == ["loop"])
 	}
 
+	@Test func anEmptyThreadReportClearsItsOverlay() async {
+		let (coordinator, host, clock) = make()
+		await coordinator.workspaceChanged("ws")
+		await coordinator.reconcile([turn("s1", actor: "forge", .running)])
+		#expect(host.log == ["endAll", "start:1"])
+		clock.advance(5)
+		await coordinator.reconcile([], conversationId: "c1")
+		#expect(host.log.last == "end:60")
+	}
+
 	@Test func aTurnThatNeedsYouIsNeverOnTheCard() async {
 		let (coordinator, host, _) = make()
 		await coordinator.workspaceChanged("ws")

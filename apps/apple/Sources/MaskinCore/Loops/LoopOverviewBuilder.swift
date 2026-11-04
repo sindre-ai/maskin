@@ -11,7 +11,7 @@ public enum LoopOverviewBuilder {
 	public static func members(from graph: ObjectGraph) -> [LoopMember] {
 		graph.links
 			.filter { $0.relation == membershipRelation && $0.isOutgoing && $0.otherType != "file" }
-			.map { LoopMember(id: $0.otherId, type: $0.otherType, title: $0.otherTitle, status: $0.otherStatus ?? "") }
+			.map { LoopMember(id: $0.otherId, type: $0.otherType, title: $0.otherTitle, status: $0.otherStatus ?? "", driverID: $0.otherDriver) }
 	}
 
 	/// Top-level comments, newest first, with how many replies each has.

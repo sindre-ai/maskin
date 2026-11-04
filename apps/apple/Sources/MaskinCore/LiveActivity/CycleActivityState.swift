@@ -32,10 +32,12 @@ public struct CycleActivityState: Codable, Hashable, Sendable {
 	/// One sentence of who is doing what: "Writer is drafting follow-ups. Step 2 of 3."
 	public var summary: String
 	public var phase: Phase
+	/// Who the summary starts with ("Writer"), shown bold. `nil` when the summary has no lead name.
+	public var actor: String?
 
 	public init(
 		flowName: String, cycle: Int, stage: String = "", progress: Double, summary: String,
-		phase: Phase = .running
+		phase: Phase = .running, actor: String? = nil
 	) {
 		self.flowName = Self.clamp(flowName, to: Self.maxFlowNameLength, fallback: "Flow")
 		self.cycle = max(1, cycle)
@@ -43,6 +45,15 @@ public struct CycleActivityState: Codable, Hashable, Sendable {
 		self.progress = progress.isFinite ? min(1, max(0, progress)) : 0
 		self.summary = Self.clamp(summary, to: Self.maxSummaryLength, fallback: "")
 		self.phase = phase
+		let lead = actor?.trimmingCharacters(in: .whitespacesAndNewlines)
+		self.actor = lead?.isEmpty == false ? lead : nil
+	}
+
+	/// The summary split into its bold lead name and the rest ("Writer" + " is drafting ..."), or
+	/// `nil` when the summary does not start with the actor.
+	public var summaryParts: (actor: String, rest: String)? {
+		guard let actor, summary.hasPrefix(actor) else { return nil }
+		return (actor, String(summary.dropFirst(actor.count)))
 	}
 
 	public var percent: Int { Int((progress * 100).rounded()) }

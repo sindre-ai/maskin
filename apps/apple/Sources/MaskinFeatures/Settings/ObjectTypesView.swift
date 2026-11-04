@@ -6,8 +6,13 @@ import SwiftUI
 /// Object types of the workspace; each opens its properties and statuses.
 struct ObjectTypesView: View {
 	@State private var store: SchemaStore
+	/// The workspace's extensions, listed under the types (v3). Nil hides the section.
+	private let extensions: ExtensionsStore?
 
-	init(store: SchemaStore) { _store = State(initialValue: store) }
+	init(store: SchemaStore, extensions: ExtensionsStore? = nil) {
+		_store = State(initialValue: store)
+		self.extensions = extensions
+	}
 
 	var body: some View {
 		List {
@@ -20,6 +25,18 @@ struct ObjectTypesView: View {
 						detail: "\(store.properties(of: type).count) properties")
 				}
 			}
+			if let extensions, !extensions.extensions.isEmpty {
+				Section("Extensions") {
+					ForEach(extensions.extensions) { ext in
+						NavigationLink {
+							ExtensionDetailView(store: extensions, extensionID: ext.id)
+						} label: {
+							SettingsRow(
+								symbol: "puzzlepiece.extension", title: ext.name, detail: ext.statusLabel)
+						}
+					}
+				}
+			}
 			if let error = store.actionError { Section { FormError(error) } }
 		}
 		.settingsListStyle()
@@ -28,17 +45,23 @@ struct ObjectTypesView: View {
 			case .loading: ProgressView()
 			case .failed(let message):
 				ContentUnavailableView(
-					"Couldn't load object types", systemImage: "wifi.exclamationmark",
+					"Couldn't load item types", systemImage: "wifi.exclamationmark",
 					description: Text(message))
 			default: EmptyView()
 			}
 		}
-		.navigationTitle("Object types")
+		.navigationTitle("Item types")
 		#if os(iOS)
 			.navigationBarTitleDisplayMode(.inline)
 		#endif
-		.task { await store.load() }
-		.refreshable { await store.load() }
+		.task {
+			await extensions?.load()
+			await store.load()
+		}
+		.refreshable {
+			await extensions?.load()
+			await store.load()
+		}
 	}
 }
 

@@ -251,9 +251,9 @@ describe('Graph Routes', () => {
 			expect(body.error.message).toContain("Missing status for type 'task'")
 		})
 
-		it("creates a bet at 'signal' when no status is supplied", async () => {
+		it("creates a bet at 'opportunity' when no status is supplied", async () => {
 			const ws = buildWorkspace({ id: wsId })
-			const created = buildObject({ workspaceId: wsId, type: 'bet', status: 'signal' })
+			const created = buildObject({ workspaceId: wsId, type: 'bet', status: 'opportunity' })
 			const { app, mockResults, calls } = createTestApp(graphRoutes, '/api/graph')
 			mockResults.selectQueue = [[ws]]
 			// insert: node returning, node event, autoSubscribe
@@ -277,12 +277,12 @@ describe('Graph Routes', () => {
 					typeof v === 'object' && v !== null && 'type' in v && 'status' in v,
 			)
 			const betInsert = objectInserts.find((i) => i.type === 'bet')
-			expect(betInsert?.status).toBe('signal')
+			expect(betInsert?.status).toBe('opportunity')
 		})
 
-		it("overrides any caller-supplied non-signal status to 'signal' on a bet", async () => {
+		it("overrides any caller-supplied non-signal status to 'opportunity' on a bet", async () => {
 			const ws = buildWorkspace({ id: wsId })
-			const created = buildObject({ workspaceId: wsId, type: 'bet', status: 'signal' })
+			const created = buildObject({ workspaceId: wsId, type: 'bet', status: 'opportunity' })
 			const { app, mockResults, calls } = createTestApp(graphRoutes, '/api/graph')
 			mockResults.selectQueue = [[ws]]
 			mockResults.insertQueue = [[created], [{}], []]
@@ -305,7 +305,7 @@ describe('Graph Routes', () => {
 					typeof v === 'object' && v !== null && 'type' in v && 'status' in v,
 			)
 			const betInsert = objectInserts.find((i) => i.type === 'bet')
-			expect(betInsert?.status).toBe('signal')
+			expect(betInsert?.status).toBe('opportunity')
 		})
 	})
 })

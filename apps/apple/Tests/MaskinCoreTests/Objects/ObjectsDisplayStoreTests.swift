@@ -175,6 +175,6 @@ struct ObjectsBoardStoreTests {
 		await store.load(type: "bet", sort: .needsYou)
 		#expect(store.type == "bet")
 		#expect(store.columns.allSatisfy { _ in true })
-		#expect(store.shownColumns.map(\.value) == ["signal", "define", "active", "live", "succeeded", "failed", "paused", "archived"])
+		#expect(store.shownColumns.map(\.value) == ["opportunity", "define", "active", "live", "succeeded", "failed", "paused", "archived"])
 	}
 }

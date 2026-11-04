@@ -80,18 +80,22 @@ public struct LoopSummary: Identifiable, Equatable, Sendable, Codable {
 	public var updatedAt: Date?
 	/// Nil (or empty) when the loop has no targets; optional so older cached snapshots still decode.
 	public var targets: [LoopTarget]?
+	/// `tags` on the loops list; optional so older cached snapshots still decode.
+	public var tags: [String]?
 
 	public init(
 		id: String, name: String?, content: String? = nil, status: LoopPill = .learning,
 		pill: LoopPill? = nil, entryCondition: String? = nil, closeCondition: String? = nil,
 		inProgressCount: Int = 0, closedCount: Int = 0, medianTimeToClose: TimeInterval? = nil,
 		agentIDs: [String] = [], triggerIDs: [String] = [], waitingCount: Int = 0,
-		createdAt: Date? = nil, updatedAt: Date? = nil, targets: [LoopTarget]? = nil
+		createdAt: Date? = nil, updatedAt: Date? = nil, targets: [LoopTarget]? = nil,
+		tags: [String]? = nil
 	) {
 		self.id = id
 		self.name = name
 		self.content = content
 		self.targets = targets
+		self.tags = tags
 		self.status = status
 		self.pill = pill ?? status
 		self.entryCondition = entryCondition
@@ -258,9 +262,12 @@ public struct LoopMember: Identifiable, Equatable, Sendable {
 	public var type: String
 	public var title: String
 	public var status: String
+	/// The actor driving this member, when known.
+	public var driverID: String?
 
-	public init(id: String, type: String, title: String, status: String) {
+	public init(id: String, type: String, title: String, status: String, driverID: String? = nil) {
 		self.id = id
+		self.driverID = driverID
 		self.type = type
 		self.title = title
 		self.status = status
@@ -323,15 +330,19 @@ public struct LoopOverview: Equatable, Sendable {
 	public var outputs: [LoopOutput]
 	/// The workspace's configured statuses for the member type, in workflow order.
 	public var statusOrder: [String]
+	/// The loop object's `driver`: the agent accountable for the flow. Nil when it has none.
+	public var driverID: String?
 
 	public static let empty = LoopOverview(members: [], posts: [], outputs: [], statusOrder: [])
 
 	public init(
-		members: [LoopMember], posts: [LoopPost], outputs: [LoopOutput], statusOrder: [String]
+		members: [LoopMember], posts: [LoopPost], outputs: [LoopOutput], statusOrder: [String],
+		driverID: String? = nil
 	) {
 		self.members = members
 		self.posts = posts
 		self.outputs = outputs
 		self.statusOrder = statusOrder
+		self.driverID = driverID
 	}
 }

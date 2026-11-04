@@ -28,7 +28,20 @@ private struct StubSearch: SearchRemote {
 	}
 	func conversations() async throws -> [SearchResult] {
 		if fail { throw SearchError("You're offline.", isOffline: true) }
-		return [SearchResult(kind: .chat, entityId: "c1", title: "Launch coordination", subtitle: "Sigrid Larsen, Forge", snippet: "Who owns the launch email?")]
+		return [
+			SearchResult(
+				kind: .chat, entityId: "c1", title: "Launch coordination", subtitle: "Sigrid Larsen, Forge",
+				snippet: "Who owns the launch email?", participantIds: ["p1", "a2"]),
+			SearchResult(
+				kind: .chat, entityId: "c2", title: "Standup", subtitle: "Sigrid Larsen",
+				snippet: "Nothing blocked", participantIds: ["p1"]),
+		]
+	}
+	func people() async throws -> [SearchPerson] {
+		[
+			SearchPerson(id: "p1", name: "Sigrid Larsen"), SearchPerson(id: "a1", name: "Launch Captain", isAgent: true),
+			SearchPerson(id: "a2", name: "Forge", isAgent: true),
+		]
 	}
 	func agents() async throws -> [SearchResult] {
 		if fail { throw SearchError("You're offline.", isOffline: true) }
@@ -114,6 +127,20 @@ struct SearchFilesSnapshotTests {
 		let s = await store(query: "launch")
 		#expect(s.sections.count == 4)
 		for (w, d) in sizes { try snapshot("search-results", width: w, dark: d) { SearchContentBody(store: s, onSelect: { _ in }).padding(MaskinSpace.s9) } }
+	}
+
+	@Test("@ menu and the pill state")
+	func mentionAndPill() async throws {
+		let s = await store()
+		s.setQuery("@")
+		for _ in 0..<200 where s.mentionSuggestions.isEmpty { try? await Task.sleep(for: .milliseconds(10)) }
+		#expect(s.mentionSuggestions.count == 3)
+		for (w, d) in sizes { try snapshot("search-mention-menu", width: w, dark: d) { SearchContentBody(store: s, onSelect: { _ in }, showsChips: true).padding(MaskinSpace.s9) } }
+		s.pick(try #require(s.mentionSuggestions.first { $0.name == "Sigrid Larsen" }))
+		await s.settle()
+		#expect(s.participants.map(\.name) == ["Sigrid Larsen"])
+		#expect(s.allResults.map(\.entityId) == ["c1", "c2"])
+		for (w, d) in sizes { try snapshot("search-mention-pill", width: w, dark: d) { SearchContentBody(store: s, onSelect: { _ in }, showsChips: true).padding(MaskinSpace.s9) } }
 	}
 
 	@Test("no matches")

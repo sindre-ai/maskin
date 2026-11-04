@@ -23,3 +23,6 @@ coverage/
 # This repo is open source and multi-tenant; see
 # observability/deployment.local.md.example.
 *.local.md
+
+# Keychain local-file KEK (apps/dev/README.md, "Keychain"). Never commit.
+.data/

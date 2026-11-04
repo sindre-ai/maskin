@@ -4,11 +4,11 @@ import { workspaces } from '@maskin/db/schema'
 import { CREDIT_TOPUP_MAX_USD, CREDIT_TOPUP_MIN_USD, workspaceSettingsSchema } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from '../lib/billing-defaults'
+import { USAGE_BREAKDOWN_MAX_ROWS, readUsageBreakdown } from '../lib/billing-usage-breakdown'
 import { cachedBillingUsage, evictBillingUsage } from '../lib/billing-usage-cache'
 import { isEnterprise, isEnterpriseWorkspace } from '../lib/enterprise'
 import { createApiError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
-import { FLAGS, getFeatureFlagConfig, resolveFlags } from '../lib/feature-flags'
 import {
 	getConnectedLinkedInIdentityCount,
 	resolveLinkedInIdentityAddon,
@@ -30,7 +30,7 @@ import {
 	readStripeEnv,
 } from '../lib/stripe'
 import type { WorkspaceSettings } from '../lib/types'
-import { isWorkspaceHumanAdminOrOwner } from '../lib/workspace-auth'
+import { assertWorkspaceWriterRole, isWorkspaceHumanAdminOrOwner } from '../lib/workspace-auth'
 
 /**
  * Fallback hard caps (USD cents) for paid plans when
@@ -66,6 +66,8 @@ type Env = {
 		db: Database
 		actorId: string
 		actorType: string
+		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
+		workspaceRole?: string
 	}
 }
 
@@ -85,6 +87,7 @@ const checkoutResponseSchema = z.object({
 const checkoutRoute = createRoute({
 	method: 'post',
 	path: '/checkout',
+	'x-viewer-policy': 'writer',
 	tags: ['billing'],
 	summary: 'Start a Stripe Checkout session for a Maskin subscription',
 	request: {
@@ -119,9 +122,8 @@ const checkoutRoute = createRoute({
 })
 
 // The LinkedIn Identity add-on line — $49/connected-identity/month, gated on
-// the `linkedin-addon-visible` flag AND ≥1 connected `linkedin-unipile`
-// credential. Null in both the flag-off and zero-identities cases; see
-// `../lib/linkedin-addon.ts`.
+// ≥1 connected `linkedin-unipile` credential. Null when no identities are
+// connected or the workspace is enterprise; see `../lib/linkedin-addon.ts`.
 const linkedinIdentityAddonSchema = z
 	.object({
 		count: z.number().int().nonnegative(),
@@ -169,21 +171,54 @@ const usageRoute = createRoute({
 	},
 })
 
-// The uncached usage read. Returns null when the workspace does not exist.
-async function readBillingUsage(db: Database, workspaceId: string, actorId: string) {
-	const [workspace] = await db
-		.select({
-			id: workspaces.id,
-			settings: workspaces.settings,
-			enterpriseGranted: workspaces.enterpriseGranted,
-			billingOwnerId: workspaces.billingOwnerId,
-		})
-		.from(workspaces)
-		.where(eq(workspaces.id, workspaceId))
-		.limit(1)
+const usageBreakdownRowSchema = z.object({
+	// Model id, agent id or flow id. Null for sessions that carry none.
+	id: z.string().nullable(),
+	name: z.string(),
+	usd_cents: z.number().int().positive(),
+})
 
-	if (!workspace) return null
+const usageSplitSchema = z.object({
+	rows: z.array(usageBreakdownRowSchema).max(USAGE_BREAKDOWN_MAX_ROWS),
+	// Everything past the top rows, so rows + other always add up to usd_cents_used.
+	other_usd_cents: z.number().int().nonnegative(),
+})
 
+const usageBreakdownResponseSchema = z.object({
+	usd_cents_used: z.number().int().nonnegative(),
+	by_model: usageSplitSchema,
+	by_agent: usageSplitSchema,
+	by_flow: usageSplitSchema,
+})
+
+const usageBreakdownRoute = createRoute({
+	method: 'get',
+	path: '/usage/breakdown',
+	tags: ['billing'],
+	summary: 'Spend this period split by model, agent and flow',
+	description:
+		'Splits the same usage GET /usage totals (usd_cents_used) by model, by agent and by flow. Each split lists the top rows plus an other bucket, and its rows plus other add up to usd_cents_used. Sessions that belong to no flow are listed as "No flow". Enterprise workspaces are not metered, so every split is empty.',
+	request: { headers: workspaceIdHeader },
+	responses: {
+		200: {
+			description: 'Usage split for the current billing period',
+			content: { 'application/json': { schema: usageBreakdownResponseSchema } },
+		},
+		404: {
+			description: 'Workspace not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+type BillingWorkspace = {
+	settings: unknown
+	enterpriseGranted: boolean | null
+	billingOwnerId: string | null
+}
+
+// The plan and billing window the usage read (and its breakdown) are measured over.
+function resolveBillingWindow(workspace: BillingWorkspace) {
 	const parsed = workspaceSettingsSchema.partial().safeParse(workspace.settings ?? {})
 	const billing = parsed.success ? parsed.data.billing : undefined
 
@@ -217,6 +252,26 @@ async function readBillingUsage(db: Database, workspaceId: string, actorId: stri
 			: null
 	const periodStartMs =
 		periodStartSec !== null ? periodStartSec * 1000 : Date.now() - DEFAULT_PERIOD_LENGTH_MS
+	return { billing, plan, status, hardCapCents, periodStartSec, periodStartMs }
+}
+
+// The uncached usage read. Returns null when the workspace does not exist.
+async function readBillingUsage(db: Database, workspaceId: string) {
+	const [workspace] = await db
+		.select({
+			id: workspaces.id,
+			settings: workspaces.settings,
+			enterpriseGranted: workspaces.enterpriseGranted,
+			billingOwnerId: workspaces.billingOwnerId,
+		})
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+
+	if (!workspace) return null
+
+	const { billing, plan, status, hardCapCents, periodStartSec, periodStartMs } =
+		resolveBillingWindow(workspace)
 	const rawPeriodEnd = billing?.period_end
 	const periodEndSec =
 		typeof rawPeriodEnd === 'number' && Number.isFinite(rawPeriodEnd) && rawPeriodEnd > 0
@@ -239,12 +294,11 @@ async function readBillingUsage(db: Database, workspaceId: string, actorId: stri
 			? Math.floor(billing.credit_balance_cents)
 			: 0
 
-	// LinkedIn Identity add-on line. Gated on the actor-scoped
-	// `linkedin-addon-visible` flag AND ≥1 connected `linkedin-unipile`
-	// credential row. Deliberately DOES NOT touch `usdCentsUsed` — the $49
+	// LinkedIn Identity add-on line. Shown when ≥1 `linkedin-unipile`
+	// credential row is connected. Deliberately DOES NOT touch `usdCentsUsed` — the $49
 	// per-connected-identity/month price is a separate SKU line that must not
-	// flow into the inference-token ledger (see bet §Pricing). Short-circuited
-	// on flag-off so a non-tester actor never hits the count query.
+	// flow into the inference-token ledger (see bet §Pricing). Enterprise
+	// workspaces skip the count query.
 	//
 	// Enterprise workspaces are exempt: connected identities are free for them,
 	// so there is no line and `syncLinkedInAddonQuantity` creates no Stripe
@@ -257,13 +311,11 @@ async function readBillingUsage(db: Database, workspaceId: string, actorId: stri
 	// on the same predicate that does the billing is what keeps the two from
 	// disagreeing.
 	const linkedinExempt = isEnterprise(workspace)
-	const linkedinFlagOn =
-		resolveFlags(actorId, getFeatureFlagConfig())[FLAGS.LINKEDIN_ADDON_VISIBLE] === true
-	const linkedinConnectedCount =
-		linkedinFlagOn && !linkedinExempt ? await getConnectedLinkedInIdentityCount(db, workspaceId) : 0
+	const linkedinConnectedCount = !linkedinExempt
+		? await getConnectedLinkedInIdentityCount(db, workspaceId)
+		: 0
 	const linkedinIdentityAddon = resolveLinkedInIdentityAddon({
 		connectedCount: linkedinConnectedCount,
-		flagOn: linkedinFlagOn,
 		exempt: linkedinExempt,
 	})
 
@@ -298,12 +350,38 @@ app.openapi(usageRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
 	const usage = await cachedBillingUsage(actorId, workspaceId, () =>
-		readBillingUsage(db, workspaceId, actorId),
+		readBillingUsage(db, workspaceId),
 	)
 	if (!usage) {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 	return c.json(usage, 200)
+})
+
+app.openapi(usageBreakdownRoute, async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const [workspace] = await db
+		.select({
+			settings: workspaces.settings,
+			enterpriseGranted: workspaces.enterpriseGranted,
+			billingOwnerId: workspaces.billingOwnerId,
+		})
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+	if (!workspace) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+
+	const { plan, periodStartMs } = resolveBillingWindow(workspace)
+	// Enterprise is not metered: /usage reports 0 for it, so the splits are empty too.
+	if (plan === 'enterprise') {
+		const empty = { rows: [], other_usd_cents: 0 }
+		return c.json({ usd_cents_used: 0, by_model: empty, by_agent: empty, by_flow: empty }, 200)
+	}
+	return c.json(await readUsageBreakdown(db, workspaceId, periodStartMs), 200)
 })
 
 app.openapi(checkoutRoute, async (c) => {
@@ -380,20 +458,31 @@ app.openapi(checkoutRoute, async (c) => {
 	}
 })
 
+// The schema only takes the widest range any currency allows. The exact
+// min/max for the chosen currency is checked in the handler, otherwise this
+// check would cap EUR/DKK callers at the USD maximum.
+const BUY_CREDITS_WIDEST_MIN_MINOR = Math.min(
+	CREDIT_TOPUP_MIN_USD * 100,
+	...Object.values(CREDIT_TOPUP_BOUNDS_MINOR).map((b) => b.min),
+)
+const BUY_CREDITS_WIDEST_MAX_MINOR = Math.max(
+	CREDIT_TOPUP_MAX_USD * 100,
+	...Object.values(CREDIT_TOPUP_BOUNDS_MINOR).map((b) => b.max),
+)
+
 const buyCreditsBodySchema = z.object({
 	amount_usd_cents: z
 		.number()
 		.int()
-		.min(CREDIT_TOPUP_MIN_USD * 100)
-		.max(CREDIT_TOPUP_MAX_USD * 100),
+		.min(BUY_CREDITS_WIDEST_MIN_MINOR)
+		.max(BUY_CREDITS_WIDEST_MAX_MINOR),
 	success_url: z.string().url(),
 	cancel_url: z.string().url(),
 	/**
 	 * Optional currency for the top-up (custom-amount top-up uses the
-	 * maskin_credits_custom Price). When set, the route re-validates the
-	 * amount against the per-currency bounds from CREDIT_TOPUP_BOUNDS_MINOR
-	 * (spec Delta 1b) so a EUR/DKK caller can't sneak in outside the
-	 * currency-specific min/max.
+	 * maskin_credits_custom Price). EUR/DKK amounts are checked against the
+	 * per-currency bounds from CREDIT_TOPUP_BOUNDS_MINOR (spec Delta 1b);
+	 * USD or no currency keeps the $10 to $500 range.
 	 */
 	currency: z.enum(['usd', 'eur', 'dkk']).optional(),
 })
@@ -401,6 +490,7 @@ const buyCreditsBodySchema = z.object({
 const buyCreditsRoute = createRoute({
 	method: 'post',
 	path: '/credits/checkout',
+	'x-viewer-policy': 'writer',
 	tags: ['billing'],
 	summary: 'Start a Stripe Checkout session for a one-time usage-credits top-up',
 	request: {
@@ -439,20 +529,23 @@ app.openapi(buyCreditsRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const { amount_usd_cents, success_url, cancel_url, currency } = c.req.valid('json')
 
-	// Delta 1b currency-scoped bounds. The USD bounds already ran in
-	// buyCreditsBodySchema above; this adds the stricter per-currency min/max
-	// for EUR/DKK callers.
-	if (currency && currency !== 'usd') {
-		const bounds = CREDIT_TOPUP_BOUNDS_MINOR[currency as MaskinCreditsCurrency]
-		if (amount_usd_cents < bounds.min || amount_usd_cents > bounds.max) {
-			return c.json(
-				createApiError(
-					'BAD_REQUEST',
-					`amount_usd_cents must be between ${bounds.min} and ${bounds.max} for currency=${currency}`,
-				),
-				400,
-			)
-		}
+	// Delta 1b currency-scoped bounds. The body schema only enforces the widest
+	// range across currencies; USD (or no currency) keeps $10 to $500 and
+	// EUR/DKK use their own table entry.
+	const bounds =
+		currency && currency !== 'usd'
+			? CREDIT_TOPUP_BOUNDS_MINOR[currency as MaskinCreditsCurrency]
+			: { min: CREDIT_TOPUP_MIN_USD * 100, max: CREDIT_TOPUP_MAX_USD * 100 }
+	if (amount_usd_cents < bounds.min || amount_usd_cents > bounds.max) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				`amount_usd_cents must be between ${bounds.min} and ${bounds.max}${
+					currency ? ` for currency=${currency}` : ''
+				}`,
+			),
+			400,
+		)
 	}
 
 	const [workspace] = await db
@@ -551,6 +644,7 @@ app.openapi(buyCreditsRoute, async (c) => {
 const cancelRoute = createRoute({
 	method: 'post',
 	path: '/cancel',
+	'x-viewer-policy': 'writer',
 	tags: ['billing'],
 	summary: 'Downgrade to Free by cancelling the active Maskin subscription',
 	request: { headers: workspaceIdHeader },
@@ -594,6 +688,9 @@ app.openapi(cancelRoute, async (c) => {
 	// predate `billing_owner_id`; those fall back to the human admin/owner
 	// check rather than being left open to every member.
 	const callerId = c.get('actorId')
+	// The billing owner branch below ignores the role, so a viewer who holds billing ownership
+	// (transfer-ownership does not look at the new owner's role) would pass it.
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const authorized = workspace.billingOwnerId
 		? workspace.billingOwnerId === callerId
 		: await isWorkspaceHumanAdminOrOwner(db, callerId, workspaceId)

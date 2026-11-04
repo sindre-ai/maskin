@@ -8,7 +8,9 @@ const mockUpdateActor = vi.fn()
 const mockStoredActor = vi.fn()
 const mockWorkspace = { current: buildWorkspaceWithRole({ isDefault: false }) }
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({
 		workspace: mockWorkspace.current,
 		workspaceId: mockWorkspace.current.id,
@@ -18,6 +20,10 @@ vi.mock('@/lib/workspace-context', () => ({
 
 vi.mock('@/hooks/use-workspaces', () => ({
 	useUpdateWorkspace: () => ({ mutate: vi.fn(), isPending: false }),
+	useWorkspaces: () => ({ data: [] }),
+	removeDeletedWorkspaceQueries: vi.fn(),
+	useWorkspaceDeletionPreview: () => ({ data: undefined, isLoading: false, isError: false }),
+	useDeleteWorkspace: () => ({ mutate: vi.fn(), isPending: false, isError: false, reset: vi.fn() }),
 }))
 
 vi.mock('@/hooks/use-actors', () => ({

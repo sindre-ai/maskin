@@ -4,19 +4,35 @@ import MaskinCore
 /// The create-account form's rules. They mirror `createActorSchema` for a human
 /// (`packages/shared/src/schemas/actors.ts`): a non-empty name, a valid email, and a password of
 /// at least 8 characters (counted in UTF-16 units, as the server's zod `min(8)` counts them).
+/// Organization, role and a repeated password are asked as well, exactly as on the web sign-up
+/// (`apps/web/src/routes/signup.tsx`), because onboarding is built from them.
 /// The server stays the authority; this only keeps the obvious mistakes off the network.
 struct SignUpForm: Equatable {
 	static let minPasswordLength = 8
 
 	var name = ""
+	var organization = ""
+	var role = ""
 	var email = ""
 	var password = ""
+	var confirmPassword = ""
 
 	var trimmedName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
+	var trimmedOrganization: String { organization.trimmingCharacters(in: .whitespacesAndNewlines) }
+	var trimmedRole: String { role.trimmingCharacters(in: .whitespacesAndNewlines) }
 	var trimmedEmail: String { email.trimmingCharacters(in: .whitespacesAndNewlines) }
 
 	var nameProblem: String? {
 		trimmedName.isEmpty ? "Enter your name." : nil
+	}
+
+	/// The web form requires both: they feed the signup-context note onboarding starts from.
+	var organizationProblem: String? {
+		trimmedOrganization.isEmpty ? "Enter your organization." : nil
+	}
+
+	var roleProblem: String? {
+		trimmedRole.isEmpty ? "Enter your role." : nil
 	}
 
 	var emailProblem: String? {
@@ -30,9 +46,16 @@ struct SignUpForm: Equatable {
 			? nil : "Use at least \(Self.minPasswordLength) characters."
 	}
 
+	var confirmPasswordProblem: String? {
+		confirmPassword == password ? nil : "Passwords do not match."
+	}
+
 	var passwordLength: Int { password.utf16.count }
 
-	var canSubmit: Bool { nameProblem == nil && emailProblem == nil && passwordProblem == nil }
+	var canSubmit: Bool {
+		nameProblem == nil && organizationProblem == nil && roleProblem == nil && emailProblem == nil
+			&& passwordProblem == nil && confirmPasswordProblem == nil
+	}
 
 	/// `local@domain.tld`, no spaces: the same shape zod's `.email()` insists on, minus its
 	/// long tail of edge cases.

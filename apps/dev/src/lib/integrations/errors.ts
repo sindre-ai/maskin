@@ -40,3 +40,53 @@ export class ProviderUnreachableError extends Error {
 		this.name = 'ProviderUnreachableError'
 	}
 }
+
+// ── Keychain: typed failures of getCredential ───────────────────────────────
+// A read either returns a credential or throws one of these. There is no null
+// for "denied", "undone" or "KMS said no", so a caller cannot mistake any of
+// them for "no credential configured".
+
+export class CredentialNotFoundError extends Error {
+	constructor(readonly integrationId: string) {
+		super(`Credential ${integrationId} not found`)
+		this.name = 'CredentialNotFoundError'
+	}
+}
+
+/** The requesting actor or loop holds none of the credential's scope grants. */
+export class ScopeDeniedError extends Error {
+	constructor(
+		readonly integrationId: string,
+		readonly requestingActorId: string,
+	) {
+		super(`Actor ${requestingActorId} is not granted credential ${integrationId}`)
+		this.name = 'ScopeDeniedError'
+	}
+}
+
+/** status = 'undone': the user undid a chat capture; the material is zeroised. */
+export class CredentialUndoneError extends Error {
+	constructor(readonly integrationId: string) {
+		super(`Credential ${integrationId} was undone`)
+		this.name = 'CredentialUndoneError'
+	}
+}
+
+/** status = 'pending': a connect flow has not completed, so there is nothing to read. */
+export class CredentialPendingError extends Error {
+	constructor(readonly integrationId: string) {
+		super(`Credential ${integrationId} is still pending`)
+		this.name = 'CredentialPendingError'
+	}
+}
+
+/** Any other status that is not active or pending_undo (revoked, error, inactive, awaiting_secret). */
+export class CredentialUnavailableError extends Error {
+	constructor(
+		readonly integrationId: string,
+		readonly status: string,
+	) {
+		super(`Credential ${integrationId} is ${status}`)
+		this.name = 'CredentialUnavailableError'
+	}
+}

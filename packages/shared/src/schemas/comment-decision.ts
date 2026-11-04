@@ -18,6 +18,7 @@ const TITLE_MAX_WORDS = 7
 const OPTION_LABEL_MAX_WORDS = 4
 const SUMMARY_MAX_SENTENCES = 2
 
+export const DRAFTS_MAX = 10
 export const OPTIONS_MIN = 2
 export const OPTIONS_MAX = 3
 export const CONSEQUENCES_MIN = 2
@@ -90,7 +91,104 @@ export const decisionOptionSchema = z.object({
 		.describe(
 			'Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing.',
 		),
+	destructive: z
+		.boolean()
+		.optional()
+		.describe(
+			'Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices.',
+		),
+	set_status: z
+		.object({
+			status: z.string().min(1).describe('The status to put the object in, e.g. "active".'),
+			object_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'The object to move when it is not the one this comment is on, e.g. the bet a task comment is about. Defaults to the object this comment is on.',
+				),
+		})
+		.optional()
+		.describe(
+			'Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.',
+		),
 })
+
+/**
+ * The text an agent proposes to send, shown on the card above the buttons so the
+ * human reads it before choosing. It is deliberately NOT part of the prose rules
+ * in `validateDecisionProse`: those police the agent's own wording, and a human's
+ * words (a dash, a number-free sentence, an emoji) must reach the card untouched.
+ *
+ * The draft is normally an object whose description is the draft and nothing
+ * else (`object_id`), and the feed reads that description live, so an edit made
+ * after the card was posted shows on the card. `body` is only for a draft that
+ * is not an object. The feed always sends `body` to the client, filled from the
+ * object when there is one.
+ */
+/**
+ * A function, not a constant: `draft` and each entry of `drafts` must be separate schema
+ * instances, because the JSON Schema the MCP SDK builds turns a reused instance into a
+ * `$ref`, which some agent runtimes cannot follow (see mcp tools.test.ts).
+ */
+function buildDecisionDraftSchema() {
+	return z
+		.object({
+			id: z
+				.string()
+				.min(1)
+				.max(40)
+				.optional()
+				.describe(
+					'Only in `drafts`: a short key for this message ("kenneth", "dan-1"), unique within the card. Taking an action on the message replies with it, so you can tell which message was sent or skipped.',
+				),
+			object_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'The object whose description IS the draft, and nothing else (a task or content object the draft is saved on). The card shows its current description, live, so a later edit shows up. Prefer this: do not copy the text.',
+				),
+			file_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'The workspace file the card is about, when what you are asking about is a file and not text to send: an HTML page, a markdown document, an image, a plain-text file. The card shows the file itself (a rendered page, the formatted text, the picture) above the buttons, live, so a later version shows up. Save the file first (create_file), then give its id. Use object_id instead for a message that would be sent.',
+				),
+			label: z
+				.string()
+				.min(1)
+				.max(30)
+				.optional()
+				.describe(
+					'What kind of text it is, shown as a small label above it: "Email to Hans", "LinkedIn note", "Slack message". Plain words, at most 30 characters. Defaults to "Draft" (or the file name for a file).',
+				),
+			to: z
+				.string()
+				.min(1)
+				.max(300)
+				.optional()
+				.describe(
+					'Who it goes to, as a person would read it: "Hans Jensen, Netwerk". Leave out for a public post.',
+				),
+			body: z
+				.string()
+				.min(1)
+				.max(20_000)
+				.optional()
+				.describe(
+					'Only when the draft is not saved as an object: the exact text you will send, character for character, in the language it will be sent in. Not a summary. Ignored in favour of the object description when object_id is set and the object has one.',
+				),
+		})
+		.refine(
+			(draft) =>
+				draft.object_id !== undefined || draft.body !== undefined || draft.file_id !== undefined,
+			{ message: 'A draft needs object_id (preferred), file_id or body' },
+		)
+}
+
+export const decisionDraftSchema = buildDecisionDraftSchema()
 
 export const commentDecisionSchema = z
 	.object({
@@ -119,11 +217,59 @@ export const commentDecisionSchema = z
 			.describe(
 				`${OPTIONS_MIN} or ${OPTIONS_MAX} options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.`,
 			),
+		drafts: z
+			.array(buildDecisionDraftSchema())
+			.min(1)
+			.max(DRAFTS_MAX)
+			.optional()
+			.describe(
+				`Use this instead of \`draft\` when one card asks about several messages (up to ${DRAFTS_MAX}), for example five first DMs. Each message shows as its own preview with its own Send and Skip, and the human's tap on one replies to you as "Send: <label> to <to> (<id>)" or "Skip: ...". Give every message an \`id\`. The card's options still apply to the whole batch. Never put the text in the summary.`,
+			),
+		only_while_status: z
+			.array(z.string().min(1))
+			.min(1)
+			.optional()
+			.describe(
+				'The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status; the card then drops once the object leaves the status it had when you posted it (see keep_on_status_change).',
+			),
+		keep_on_status_change: z
+			.boolean()
+			.optional()
+			.describe(
+				'Set true only when the card must stay on For You after the object changes status, for example a question about a task that you move on yourself while the person is still deciding. Without it, a card with no only_while_status drops once the object is in any other status than the one it had when you posted. Leave it off otherwise.',
+			),
+		expires_at: z
+			.string()
+			.datetime({ offset: true })
+			.optional()
+			.describe(
+				'ISO 8601 date-time after which the ask is moot, e.g. "2026-10-29T17:00:00Z". Set it whenever an option or the ask names a date or a deadline ("this week", "before Thursday"): once it has passed the card leaves For You and is never counted in the briefing or pushes. Must be in the future when you post. Leave out when the ask has no deadline.',
+			),
+		no_status_action: z
+			.boolean()
+			.optional()
+			.describe(
+				'Set true only when the API rejected the card for asking to change a status but the ask is about something else (for example "Park the launch email?" on a bet in a status called "launch"). Leave it off otherwise.',
+			),
+		status_stamp: z
+			.object({ object_id: z.string().uuid(), status: z.string().min(1) })
+			.optional()
+			.describe(
+				'Set by the API: the object the card is about (the one its set_status option moves, else the one the comment is on) and the status that object was in when the card was posted. The card drops once the object is in any other status. On a card with no set_status option it is left off when the card has only_while_status or keep_on_status_change. Do not set it yourself; any value you send is replaced.',
+			),
+		draft: decisionDraftSchema
+			.optional()
+			.describe(
+				"Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. When the card is about a file instead (an HTML page, a markdown document, an image), give file_id and the card shows the file itself. Never put the text in the summary.",
+			),
 	})
 	.describe(
 		[
 			'Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.',
-			'It renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button.',
+			'It renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.',
+			'To ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.',
+			"Posting a new card withdraws your earlier cards on the same object, so you do not need to withdraw them yourself. Another agent's cards, and your cards on other objects, stay. A card with `drafts` is still one card.",
+			'To ask whether an object should move to a new status ("flip this bet to active"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.',
 			'',
 			'The API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:',
 			'title 3-7 words and not opening with a status verb ("Reviewing the funnel"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;',
@@ -146,6 +292,7 @@ export const commentDecisionSchema = z
 	)
 
 export type CommentDecision = z.infer<typeof commentDecisionSchema>
+export type DecisionDraft = z.infer<typeof decisionDraftSchema>
 export type CommentDecisionOption = z.infer<typeof decisionOptionSchema>
 
 export interface DecisionProseViolation {
@@ -179,7 +326,10 @@ function contentTokens(value: string): string[] {
  * rather than throwing on the first: an agent handed one nit at a time burns a
  * turn per rule.
  */
-export function validateDecisionProse(decision: CommentDecision): DecisionProseViolation[] {
+export function validateDecisionProse(
+	decision: CommentDecision,
+	now: Date = new Date(),
+): DecisionProseViolation[] {
 	const violations: DecisionProseViolation[] = []
 	const add = (path: string, message: string) => violations.push({ path, message })
 
@@ -213,6 +363,13 @@ export function validateDecisionProse(decision: CommentDecision): DecisionProseV
 				`Replace "${hedge}" with the actual number, or drop the claim. Numbers are concrete or absent. Got: "${value}"`,
 			)
 		}
+	}
+
+	if (decision.expires_at && new Date(decision.expires_at).getTime() <= now.getTime()) {
+		add(
+			'expires_at',
+			`expires_at must be in the future, or the card would never show. Got: "${decision.expires_at}"`,
+		)
 	}
 
 	const titleWords = words(decision.title)
@@ -292,6 +449,67 @@ export function validateDecisionProse(decision: CommentDecision): DecisionProseV
 	})
 
 	return violations
+}
+
+// Words that ask for a status change. "next to" a status name of the object's type, they mean the
+// card wants the object moved.
+const STATUS_VERBS = new Set(['flip', 'move', 'promote', 'park', 'set'])
+const STATUS_VERB_WINDOW = 5
+
+/**
+ * A card that asks for a status change in words but has no set_status option. Such a card stays
+ * on For You after the status has moved, and its tap does nothing. Needs the status names of the
+ * object's type, so it cannot sit in `validateDecisionProse`. Narrow on purpose: a verb from STATUS_VERBS
+ * within a few words of a status name, and never on a card that carries a draft ("Park the
+ * launch email?"). `no_status_action` is the opt-out for a false match.
+ */
+export function findStatusActionViolations(
+	decision: CommentDecision,
+	statuses: readonly string[],
+): DecisionProseViolation[] {
+	if (decision.no_status_action || decision.draft || decision.drafts?.length) return []
+	if (decision.options.some((option) => option.set_status)) return []
+
+	const names = statuses.map((status) => status.toLowerCase().replace(/_/g, ' '))
+	const fields: Array<[string, string]> = [
+		['title', decision.title],
+		['ask', decision.ask],
+		...decision.options.map<[string, string]>((option, index) => [
+			`options.${index}.label`,
+			option.label,
+		]),
+	]
+	for (const [path, value] of fields) {
+		const tokens =
+			value
+				.toLowerCase()
+				.replace(/_/g, ' ')
+				.match(/[a-z0-9]+/g) ?? []
+		for (let i = 0; i < tokens.length; i++) {
+			if (!STATUS_VERBS.has(tokens[i] as string)) continue
+			const near = tokens.slice(i + 1, i + 1 + STATUS_VERB_WINDOW)
+			const status = names.find((name) => {
+				const parts = name.split(' ')
+				return near.some((_, at) => parts.every((part, k) => near[at + k] === part))
+			})
+			if (!status) continue
+			return [
+				{
+					path,
+					message: `This card asks to change a status ("${tokens[i]}" ... "${status}") but no option has set_status, so the card would outlive the change and the tap would do nothing. Put it on the option that does it, e.g. { "label": "Go", "set_status": { "status": "${status.replace(/ /g, '_')}" }, ... }, and add "object_id" inside set_status when the object is not the one this comment is on. If the ask is about something else, set no_status_action: true. Got: "${value}"`,
+				},
+			]
+		}
+	}
+	return []
+}
+
+/** Whether the card's `expires_at` has passed. A card without one never expires. */
+export function isDecisionExpired(
+	decision: Pick<CommentDecision, 'expires_at'> | null | undefined,
+	now: Date = new Date(),
+): boolean {
+	return !!decision?.expires_at && new Date(decision.expires_at).getTime() <= now.getTime()
 }
 
 /**

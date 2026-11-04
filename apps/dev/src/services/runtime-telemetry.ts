@@ -1,4 +1,5 @@
 import { PostHog } from 'posthog-node'
+import { admitPosthogEvent } from '../lib/analytics/event-budget'
 import { logger } from '../lib/logger'
 
 /**
@@ -20,6 +21,11 @@ export interface RuntimeTelemetryConfig {
 	 * 0 turns the guard off, so a test can observe what callers ask to send.
 	 */
 	endedDedupLimit?: number
+	/**
+	 * Most runtime_session_ended events sent per UTC day by this process.
+	 * 0 turns the cap off.
+	 */
+	endedDailyCap?: number
 }
 
 /**
@@ -77,6 +83,10 @@ const DEFAULT_GAUGE_INTERVAL_MS = 60_000
 // Several days of sessions (4k on the busiest day so far). The per-pass loops
 // that ran away re-send within minutes, well inside this window.
 const DEFAULT_ENDED_DEDUP_LIMIT = 50_000
+// A hard ceiling for the day, for what the dedup guard cannot see: a loop that
+// mints new session ids, or a restart that empties the guard. Normal volume is
+// one event per session (a few hundred a day, 4k on the worst day).
+const DEFAULT_ENDED_DAILY_CAP = 5_000
 
 /**
  * Emits the four ship-metric events for agent session telemetry:
@@ -102,9 +112,14 @@ export class RuntimeTelemetry {
 	private endedSessionIds = new Set<string>()
 	private endedDedupLimit: number
 	private duplicateEndsDropped = 0
+	private endedDailyCap: number
+	private endedDay = ''
+	private endedToday = 0
+	private cappedEndsToday = 0
 
 	constructor(config: RuntimeTelemetryConfig = {}) {
 		this.endedDedupLimit = config.endedDedupLimit ?? DEFAULT_ENDED_DEDUP_LIMIT
+		this.endedDailyCap = config.endedDailyCap ?? DEFAULT_ENDED_DAILY_CAP
 		if (config.client) {
 			this.client = config.client
 		} else if (config.apiKey) {
@@ -143,6 +158,10 @@ export class RuntimeTelemetry {
 		contextObjectId,
 	}: SessionEndedEvent): void {
 		if (!this.claimSessionEnd(sessionId)) return
+		// Sampled before the ceiling, so a sampled-out end never uses it up.
+		const admission = admitPosthogEvent('runtime_session_ended')
+		if (!admission.send) return
+		if (!this.underDailyCap()) return
 		this.capture({
 			distinctId: sessionId,
 			event: 'runtime_session_ended',
@@ -156,6 +175,7 @@ export class RuntimeTelemetry {
 				// cardinality and read to downstream dashboards as "we had
 				// context but chose null" rather than "we never knew".
 				...(contextObjectId ? { context_object_id: contextObjectId } : {}),
+				...(admission.sampleRate ? { sample_rate: admission.sampleRate } : {}),
 			},
 		})
 	}
@@ -180,12 +200,15 @@ export class RuntimeTelemetry {
 		agentServerUrl,
 		concurrentCount,
 	}: ConcurrentSessionsGaugeEvent): void {
+		const admission = admitPosthogEvent('runtime_concurrent_sessions_gauge')
+		if (!admission.send) return
 		this.capture({
 			distinctId: agentServerUrl,
 			event: 'runtime_concurrent_sessions_gauge',
 			properties: {
 				agent_server_url: agentServerUrl,
 				concurrent_count: concurrentCount,
+				...(admission.sampleRate ? { sample_rate: admission.sampleRate } : {}),
 			},
 		})
 	}
@@ -259,6 +282,33 @@ export class RuntimeTelemetry {
 		return true
 	}
 
+	/**
+	 * True while today's runtime_session_ended count is under the daily cap.
+	 * Events over the cap are dropped and counted; it is logged on the first
+	 * drop of the day and every 1000th after.
+	 */
+	private underDailyCap(): boolean {
+		if (this.endedDailyCap <= 0) return true
+		const day = new Date().toISOString().slice(0, 10)
+		if (day !== this.endedDay) {
+			this.endedDay = day
+			this.endedToday = 0
+			this.cappedEndsToday = 0
+		}
+		if (this.endedToday >= this.endedDailyCap) {
+			this.cappedEndsToday++
+			if (this.cappedEndsToday === 1 || this.cappedEndsToday % 1000 === 0) {
+				logger.warn('Dropped runtime_session_ended over the daily cap', {
+					dailyCap: this.endedDailyCap,
+					cappedEndsToday: this.cappedEndsToday,
+				})
+			}
+			return false
+		}
+		this.endedToday++
+		return true
+	}
+
 	private capture(payload: {
 		distinctId: string
 		event: string
@@ -277,6 +327,8 @@ export class RuntimeTelemetry {
 					// billing and degrades queries precisely as session count scales,
 					// the thing this bet is built to do.
 					$process_person_profile: false,
+					surface: 'backend',
+					actor_type: 'system',
 				},
 			})
 		} catch (err) {

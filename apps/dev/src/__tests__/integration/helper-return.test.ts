@@ -11,7 +11,11 @@ import { and, desc, eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { insertConversationMessage } from '../../services/conversation-messages'
 import { resolveSpawnLink } from '../../services/helper-link'
-import { buildReturnMessage, returnToSender } from '../../services/helper-return'
+import {
+	buildReturnMessage,
+	returnDeferredHelpers,
+	returnToSender,
+} from '../../services/helper-return'
 import { MENTION_GUARD_LIMITS } from '../../services/mention-guards'
 import { configureSessionLifecycle, settleSession } from '../../services/session-lifecycle'
 import type { SettleDependencies } from '../../services/session-lifecycle'
@@ -130,6 +134,32 @@ describe('Helper return (integration)', () => {
 		expect(data.attention).toBe(2)
 	})
 
+	it('a helper that hit its usage limit and has a rerun scheduled says it starts again by itself', async () => {
+		const s = await senderSession()
+		const h = await helperSession(s, {
+			result: {
+				exit_code: 1,
+				failure_reason: {
+					provider: 'anthropic',
+					reason_code: 'session_limit',
+					human_message: 'Claude session limit reached',
+					http_status: null,
+					reset_at: '2026-10-22T12:00:00.000Z',
+					verbatim_output: "You've hit your session limit",
+				},
+			},
+			retryAt: new Date('2026-10-22T12:00:00.000Z'),
+		})
+
+		await returnToSender(db, h.id)
+
+		const [row] = await returnComments()
+		const content = (row.data as { content: string }).content
+		expect(content).toContain('has not done the work yet')
+		expect(content).toContain('starts again by itself at 2026-10-22 12:00 UTC')
+		expect(content).not.toContain('retry with a narrower task')
+	})
+
 	it('a timeout says it ran out of time', async () => {
 		const s = await senderSession()
 		const h = await helperSession(s, { status: 'timeout', result: { exit_code: null } })
@@ -209,6 +239,41 @@ describe('Helper return (integration)', () => {
 		)
 	})
 
+	it('tells a sender that finished normally about a helper that failed while it was busy', async () => {
+		const s = await senderSession({ status: 'running' })
+		const h = await helperSession(s, { status: 'failed' })
+		expect((await returnToSender(db, h.id)).returned).toBe(false)
+		expect(await returnComments()).toHaveLength(0)
+
+		await db.update(sessions).set({ status: 'completed' }).where(eq(sessions.id, s.id))
+		await returnDeferredHelpers(db, s.id)
+
+		const [row] = await returnComments()
+		expect((row.data as { content: string }).content).toBeTruthy()
+		// Once only: a second call finds nothing left to report.
+		await returnDeferredHelpers(db, s.id)
+		expect(await returnComments()).toHaveLength(1)
+	})
+
+	it('tells a sender that finished about a helper that completed while it was busy, but not one a person stopped', async () => {
+		const s = await senderSession({ status: 'running' })
+		const done = await helperSession(s, { status: 'completed' })
+		const stopped = await helperSession(s, { status: 'user_stopped' })
+		expect((await returnToSender(db, done.id)).returned).toBe(false)
+		expect((await returnToSender(db, stopped.id)).returned).toBe(false)
+		expect(await returnComments()).toHaveLength(0)
+
+		await db.update(sessions).set({ status: 'completed' }).where(eq(sessions.id, s.id))
+		await returnDeferredHelpers(db, s.id)
+
+		const rows = await returnComments()
+		expect(rows).toHaveLength(1)
+		expect((rows[0].data as { content: string }).content).toContain('finished the work')
+		// Once only.
+		await returnDeferredHelpers(db, s.id)
+		expect(await returnComments()).toHaveLength(1)
+	})
+
 	it('a completed mention-spawned helper does not return; a failed one does', async () => {
 		const s = await senderSession()
 		const mentionCfg = {
@@ -250,6 +315,8 @@ describe('Helper return (integration)', () => {
 			expect(msgs).toHaveLength(1)
 			expect(msgs[0].actorId).toBe(helper.id)
 			expect(msgs[0].content).toContain('Helper stopped with an error')
+			// The server-written marker is not stripped (only client input is).
+			expect(msgs[0].metadata).toMatchObject({ helper_return: h.id })
 		})
 
 		it('with no destination it posts nothing and records no_destination', async () => {
@@ -330,6 +397,24 @@ describe('Helper return (integration)', () => {
 			} as unknown as SessionManager
 			return { manager, writeInput }
 		}
+
+		it('a flagged mention-spawned helper that completed still reports to the sender’s chat', async () => {
+			const conv = await newChat()
+			const s = await senderSession({ conversationId: conv.id })
+			const h = await flagged(s, {
+				config: {
+					notify_on_complete: true,
+					trigger_source: 'comment_fallback',
+					mention: { object_id: objectId, commenter_actor_id: sender.id, comment_event_id: 1 },
+				},
+			})
+			await logResult(h.id, 'Cover attached.')
+			const { manager } = fakeManager({ id: s.id })
+			expect(await returnToSender(db, h.id, { sessionManager: manager })).toEqual({
+				returned: true,
+				destination: 'conversation',
+			})
+		})
 
 		it('quotes the helper’s final message and posts on the sender’s object, never the helper’s', async () => {
 			const helperObject = await insertObject(db, workspaceId, human, { type: 'task', title: 'h' })

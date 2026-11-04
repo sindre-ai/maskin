@@ -183,6 +183,12 @@ struct LiveTurnTests {
 		#expect(turns.first?.agentName == "Forge")
 	}
 
+	@Test func aUserStoppedSessionIsDoneNotDropped() {
+		let turns = map([session("1", status: .other("user_stopped"))])
+		#expect(turns.map(\.status) == [.done])
+		#expect(turns.compactMap(\.workingAgent).isEmpty)
+	}
+
 	@Test func aRunningChatSessionWithNoReplyOwedIsIdle() {
 		#expect(map([session("1", status: .running), session("2", status: .paused)], replyInFlight: false).map(\.status) == [.done, .needsYou])
 	}

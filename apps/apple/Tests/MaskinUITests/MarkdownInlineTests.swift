@@ -66,12 +66,15 @@ private extension Int { var asCGFloat: CGFloat { CGFloat(self) } }
 #endif
 
 @Suite("Markdown link policy") struct MarkdownLinkPolicyTests {
-	@Test("only http(s) with a host and mailto are allowed; web links confirm", arguments: [
+	@Test("only http(s) with a host, mailto and a plain tel number are allowed; web links confirm", arguments: [
 		("https://maskin.io/x", MarkdownLinkPolicy.Decision.confirm),
 		("http://example.com", .confirm),
 		("HTTPS://Example.com", .confirm),
 		("mailto:a@b.co", .open),
-		("tel:+4512345678", .reject),
+		("tel:+4512345678", .open),
+		("tel:", .reject),
+		("tel:*21*4512345678#", .reject),
+		("tel:+45+12", .reject),
 		("sms:+4512345678", .reject),
 		("facetime:a@b.co", .reject),
 		("maskin://objects/1", .reject),
@@ -149,5 +152,35 @@ private extension Int { var asCGFloat: CGFloat { CGFloat(self) } }
 		#expect(MarkdownStandaloneLink.match("see https://maskin.io/ws/objects/abc") == nil)
 		#expect(MarkdownStandaloneLink.match("[a](https://x.io) and [b](https://y.io)") == nil)
 		#expect(MarkdownStandaloneLink.match("maskin://ws/objects/abc")?.url.scheme == "maskin")
+	}
+}
+
+@Suite("MarkdownStandaloneLink chips") struct MarkdownStandaloneLinkChipTests {
+	private let info: (URL) -> MarkdownLinkInfo? = { _ in MarkdownLinkInfo(symbol: "target", kindLabel: "Bet", title: "Launch plan") }
+
+	@Test func cardsOffTurnsAStandaloneLinkIntoAChip() {
+		for text in [
+			"[Launch plan](https://maskin.io/ws/objects/abc)", "  https://maskin.io/ws/objects/abc \n",
+			"<https://maskin.io/ws/objects/abc>",
+		] {
+			let markdown = MarkdownStandaloneLink.chipMarkdown(for: text)
+			#expect(markdown != nil, "\(text)")
+			let attr = MarkdownInline.attributed(markdown ?? text, base: .body, linkInfo: info)
+			let run = attr.runs.first!
+			#expect(String(attr.characters) == "Launch plan", "\(text)")
+			#expect(run.link != nil)
+			#expect(run.backgroundColor != nil)
+			#expect(run.underlineStyle == nil)
+		}
+	}
+
+	@Test func aParagraphThatIsNotOnlyALinkIsLeftAlone() {
+		#expect(MarkdownStandaloneLink.chipMarkdown(for: "see https://maskin.io/ws/objects/abc") == nil)
+		#expect(MarkdownStandaloneLink.chipMarkdown(for: "[a](https://x.io) and [b](https://y.io)") == nil)
+	}
+
+	@Test func anAddressWithBracketsStaysOneLink() {
+		let markdown = MarkdownStandaloneLink.chipMarkdown(for: "https://maskin.io/ws/objects/a(b)")
+		#expect(markdown == "[https://maskin.io/ws/objects/a(b)](https://maskin.io/ws/objects/a%28b%29)")
 	}
 }

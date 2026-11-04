@@ -245,8 +245,8 @@ export type PushSessionWorkspaceOptions = {
 // 5 attempts with exponential backoff (2s, 4s, 8s, 16s — ~30s total) rather
 // than the previous 3 attempts with linear delay (2s, 4s — ~6s). SeaweedFS
 // answers `ServiceUnavailable` for tens of seconds while a volume server is
-// rebalancing or restarting, which outlasted the old budget and forced an
-// otherwise-successful agent run to exit non-zero (Sentry MASKIN-AGENT-SERVER-3).
+// rebalancing or restarting, which outlasted the old budget and reported an
+// otherwise-successful agent run's workspace as lost (Sentry MASKIN-AGENT-SERVER-3).
 const DEFAULT_PUSH_RETRIES = 5
 const DEFAULT_PUSH_RETRY_DELAY_MS = 2_000
 const MAX_PUSH_RETRY_DELAY_MS = 16_000
@@ -263,10 +263,10 @@ function defaultSleep(ms: number): Promise<void> {
  *
  * The upload is retried with backoff — S3-compatible backends return
  * transient throttling errors (e.g. `SlowDown`) under load, and the caller
- * (monitorSession in apps/agent-server/src/index.ts) treats ANY push failure
- * as a lost workspace and forces the session's exit code non-zero, so a
- * single throttled attempt would otherwise mark an entirely successful agent
- * run as failed.
+ * (monitorSession in apps/agent-server/src/index.ts) treats a failure that
+ * survives the retries as a lost workspace and records it on the session's
+ * log (the exit code is left alone), so a single throttled attempt would
+ * otherwise be reported as a lost workspace.
  */
 export async function pushSessionWorkspace(
 	storage: StorageProvider,

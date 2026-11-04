@@ -48,7 +48,7 @@ const someFlag = useFeatureFlag('some-flag')
 {someFlag ? <ObjectsPageV2 /> : <LegacyObjectsPage />}
 ```
 
-`linkedin-addon-visible` is the one live flag. The pattern to copy is the
+The live flags are whatever `FLAGS` in `apps/dev/src/lib/feature-flags.ts` registers. The pattern to copy is the
 retired `new-design` flag, which shipped the v2 redesign: its read sites were
 route components, each swapping a whole page, plus one shell read in
 `layout/sidebar.tsx`, with the pre-v2 components vendored under sibling
@@ -72,7 +72,7 @@ and that the directory dies with the flag.
 Flags gate **per-actor behaviour**, never shared state. A flag may gate any
 behaviour whose off-state is the already-shipped state — visual (a UI branch) or
 behavioural (an action the system takes for the flagging actor, read per
-driver-actor); SALES_REP_LINKEDIN_AUTOSEND is the precedent. A flag must
+driver-actor). A flag must
 **never** make a data-layer, API, or migration change safe: those change shared
 state for everyone, and an actor-scoped flag read at runtime cannot isolate the
 un-flagged population, so such changes must be safe for all users on their own.

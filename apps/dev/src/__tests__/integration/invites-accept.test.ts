@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { generateApiKey, hashPassword } from '@maskin/auth'
-import { events, actors, workspaceInvitations, workspaceMembers } from '@maskin/db/schema'
+import { generateApiKey, hashApiKey, hashPassword, validateApiKey } from '@maskin/auth'
+import { events, actors, apiKeys, workspaceInvitations, workspaceMembers } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { insertActor, insertWorkspace, setWorkspacePlan } from '../factories'
@@ -99,7 +99,16 @@ describe('Invites — POST /:token/accept', () => {
 			expect(actorRow.type).toBe('human')
 			expect(actorRow.passwordHash).toBeTruthy()
 			expect(actorRow.passwordHash).not.toBe('correct-horse-battery-staple')
-			expect(actorRow.apiKey).toBe(body.actor.api_key)
+			// The key is stored hashed: the plaintext column is untouched and only the hash exists.
+			expect(actorRow.apiKey).toBeNull()
+			const [keyRow] = await db.select().from(apiKeys).where(eq(apiKeys.actorId, body.actor.id))
+			expect(keyRow.keyHash).toBe(hashApiKey(body.actor.api_key))
+			expect(keyRow.kind).toBe('primary')
+			expect(keyRow.last4).toBe(body.actor.api_key.slice(-4))
+			expect(await validateApiKey(db, body.actor.api_key)).toEqual({
+				actorId: body.actor.id,
+				type: 'human',
+			})
 
 			// Membership landed ONLY in the invited workspace — cross-tenant containment.
 			const memberships = await db
@@ -411,6 +420,43 @@ describe('Invites — POST /:token/accept', () => {
 			expect(capturePosthogEventMock).not.toHaveBeenCalled()
 		})
 
+		it('lets an invitee join past the trial seat cap when the billing owner is allowlisted', async () => {
+			const original = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
+			process.env.MASKIN_ENTERPRISE_ACTOR_IDS = inviterId
+			try {
+				const enterpriseWs = await insertWorkspace(db, inviterId, { name: 'Enterprise Seat WS' })
+				const invitee = await insertActor(db, {
+					email: 'enterprise-invitee@example.com',
+					apiKey: generateApiKey().key,
+				})
+				const { rawToken } = await seedPendingInvite({
+					workspaceId: enterpriseWs.id,
+					inviterId,
+					email: 'enterprise-invitee@example.com',
+				})
+
+				const res = await app().request(
+					jsonRequest('POST', `/api/invites/${rawToken}/accept`, undefined, {
+						Authorization: `Bearer ${invitee.apiKey}`,
+					}),
+				)
+
+				expect(res.status).toBe(200)
+				const memberships = await db
+					.select()
+					.from(workspaceMembers)
+					.where(eq(workspaceMembers.actorId, invitee.id))
+				expect(memberships).toHaveLength(1)
+			} finally {
+				if (original === undefined) {
+					// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
+					delete process.env.MASKIN_ENTERPRISE_ACTOR_IDS
+				} else {
+					process.env.MASKIN_ENTERPRISE_ACTOR_IDS = original
+				}
+			}
+		})
+
 		it('seat cap on new-signup rolls back the actor insert (invite pending, no actor)', async () => {
 			// Same fresh trial-tier workspace: 1 seat, filled by the owner.
 			const seatCapWs = await insertWorkspace(db, inviterId, { name: 'Seat Cap Signup WS' })
@@ -465,6 +511,7 @@ describe('Invites — GET /preview', () => {
 			workspaceId,
 			inviterId,
 			email: 'Preview@Example.com',
+			role: 'viewer',
 		})
 
 		const res = await app().request(
@@ -478,6 +525,7 @@ describe('Invites — GET /preview', () => {
 		expect(body.workspaceName).toBe(workspaceName)
 		expect(body.inviteEmail).toBe('Preview@Example.com')
 		expect(body.inviterName).toBeTruthy()
+		expect(body.role).toBe('viewer')
 		expect(body.expiresAt).toEqual(expect.any(String))
 	})
 

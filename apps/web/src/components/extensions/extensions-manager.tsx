@@ -1,6 +1,8 @@
 import { ExtensionRemovalDialog } from '@/components/extensions/extension-removal-dialog'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
@@ -27,6 +29,7 @@ interface PendingRemoval {
  */
 export function ExtensionsManager() {
 	const { workspace, workspaceId } = useWorkspace()
+	const canWrite = useCanWrite()
 	const updateWorkspace = useUpdateWorkspace(workspaceId)
 	const settings = workspace.settings as Record<string, unknown>
 	const enabledModules = useEnabledModules()
@@ -54,6 +57,7 @@ export function ExtensionsManager() {
 	}
 
 	const handleToggle = (moduleId: string, enabled: boolean) => {
+		if (!canWrite) return
 		if (enabled) {
 			enableModule(moduleId)
 			return
@@ -77,6 +81,7 @@ export function ExtensionsManager() {
 	}
 
 	const handleToggleCustomExtension = (extId: string, enabled: boolean) => {
+		if (!canWrite) return
 		if (enabled) {
 			// Direct toggle with nothing destructive before it, so a toast is enough.
 			persistCustomExtensionEnabled(extId, true).catch(() =>
@@ -120,6 +125,7 @@ export function ExtensionsManager() {
 	}
 
 	const handleDeleteCustomExtension = (extId: string, types: string[]) => {
+		if (!canWrite) return
 		setPendingRemoval({
 			affectedTypes: types,
 			commit: () => persistDeleteCustomExtension(extId, types),
@@ -144,11 +150,14 @@ export function ExtensionsManager() {
 									</span>
 								)}
 							</div>
-							<Switch
-								checked={isEnabled}
-								onCheckedChange={(checked) => handleToggle(mod.id, !!checked)}
-								aria-label={mod.name}
-							/>
+							<ViewerTooltip>
+								<Switch
+									checked={isEnabled}
+									onCheckedChange={(checked) => handleToggle(mod.id, !!checked)}
+									disabled={!canWrite}
+									aria-label={mod.name}
+								/>
+							</ViewerTooltip>
 						</div>
 					)
 				})}
@@ -166,20 +175,26 @@ export function ExtensionsManager() {
 							)}
 						</div>
 						<div className="flex shrink-0 items-center gap-2">
-							<Button
-								variant="ghost"
-								size="icon"
-								aria-label={`Delete ${ext.name}`}
-								onClick={() => handleDeleteCustomExtension(ext.id, ext.types)}
-								className="text-muted-foreground hover:text-error"
-							>
-								<Trash2 size={15} />
-							</Button>
-							<Switch
-								checked={ext.enabled}
-								onCheckedChange={(checked) => handleToggleCustomExtension(ext.id, !!checked)}
-								aria-label={ext.name}
-							/>
+							<ViewerTooltip>
+								<Button
+									variant="ghost"
+									size="icon"
+									aria-label={`Delete ${ext.name}`}
+									onClick={() => handleDeleteCustomExtension(ext.id, ext.types)}
+									disabled={!canWrite}
+									className="text-muted-foreground hover:text-error"
+								>
+									<Trash2 size={15} />
+								</Button>
+							</ViewerTooltip>
+							<ViewerTooltip>
+								<Switch
+									checked={ext.enabled}
+									onCheckedChange={(checked) => handleToggleCustomExtension(ext.id, !!checked)}
+									disabled={!canWrite}
+									aria-label={ext.name}
+								/>
+							</ViewerTooltip>
 						</div>
 					</div>
 				))}

@@ -11,13 +11,17 @@ private let secret = "correct-horse-battery"
 private struct FakeSignUp: Authenticating {
 	var result: Result<SignUpResult, any Error>
 	var recorder = KeyRecorder()
+	/// When set, the call parks here (after recording its key) until the test releases it.
+	var gate: Gate?
 	func login(email: String, password: String) async throws -> LoginResult {
 		throw AuthError.invalidCredentials
 	}
-	func signUp(name: String, email: String, password: String, idempotencyKey: String) async throws
-		-> SignUpResult
-	{
+	func signUp(
+		name: String, organization: String, role: String, email: String, password: String,
+		idempotencyKey: String
+	) async throws -> SignUpResult {
 		recorder.keys.withLock { $0.append(idempotencyKey) }
+		await gate?.wait()
 		return try result.get()
 	}
 }
@@ -40,10 +44,10 @@ private let created = SignUpResult(
 @MainActor
 @Suite("AuthSession sign-up")
 struct AuthSignUpTests {
-	private func make(_ result: Result<SignUpResult, any Error>, store: InMemorySecretStore = .init())
-		-> (AuthSession, InMemorySecretStore, InMemoryFirstUseStore, FakeSignUp)
-	{
-		let fake = FakeSignUp(result: result)
+	private func make(
+		_ result: Result<SignUpResult, any Error>, store: InMemorySecretStore = .init(), gate: Gate? = nil
+	) -> (AuthSession, InMemorySecretStore, InMemoryFirstUseStore, FakeSignUp) {
+		let fake = FakeSignUp(result: result, gate: gate)
 		let firstUse = InMemoryFirstUseStore()
 		let auth = AuthSession(authenticator: fake, store: store, firstUse: firstUse)
 		return (auth, store, firstUse, fake)
@@ -53,7 +57,7 @@ struct AuthSignUpTests {
 	func success() async throws {
 		let (auth, store, firstUse, fake) = make(.success(created))
 
-		await auth.signUp(name: "Sam", email: "sam@example.com", password: secret)
+		await auth.signUp(name: "Sam", organization: "Acme", role: "Founder", email: "sam@example.com", password: secret)
 
 		let stored = try JSONDecoder().decode(StoredSession.self, from: try #require(try store.read()))
 		#expect(stored.apiKey == "ank_new")
@@ -81,7 +85,7 @@ struct AuthSignUpTests {
 	@Test("a taken email leaves the user signed out with nothing stored")
 	func emailTaken() async throws {
 		let (auth, store, firstUse, _) = make(.failure(SignUpError.emailTaken))
-		await auth.signUp(name: "Sam", email: "sam@example.com", password: secret)
+		await auth.signUp(name: "Sam", organization: "Acme", role: "Founder", email: "sam@example.com", password: secret)
 		#expect(auth.state == .signedOut)
 		#expect(auth.lastSignUpError == .emailTaken)
 		#expect(try store.read() == nil)
@@ -94,7 +98,7 @@ struct AuthSignUpTests {
 	])
 	func failures(_ error: SignUpError) async throws {
 		let (auth, store, _, _) = make(.failure(error))
-		await auth.signUp(name: "Sam", email: "sam@example.com", password: secret)
+		await auth.signUp(name: "Sam", organization: "Acme", role: "Founder", email: "sam@example.com", password: secret)
 		#expect(auth.lastSignUpError == error)
 		#expect(auth.state == .signedOut)
 		#expect(try store.read() == nil)
@@ -104,7 +108,7 @@ struct AuthSignUpTests {
 	func unexpected() async {
 		struct Boom: Error {}
 		let (auth, _, _, _) = make(.failure(Boom()))
-		await auth.signUp(name: "Sam", email: "sam@example.com", password: secret)
+		await auth.signUp(name: "Sam", organization: "Acme", role: "Founder", email: "sam@example.com", password: secret)
 		guard case .network? = auth.lastSignUpError else {
 			Issue.record("expected .network, got \(String(describing: auth.lastSignUpError))")
 			return
@@ -117,7 +121,7 @@ struct AuthSignUpTests {
 		result.login.workspaceId = nil
 		result.workspaceProvisioningFailed = true
 		let (auth, store, firstUse, _) = make(.success(result))
-		await auth.signUp(name: "Sam", email: "sam@example.com", password: secret)
+		await auth.signUp(name: "Sam", organization: "Acme", role: "Founder", email: "sam@example.com", password: secret)
 		#expect(auth.session?.apiKey == "ank_new")
 		#expect(auth.session?.workspaceId == nil)
 		#expect(auth.workspaceProvisioningFailed)
@@ -128,11 +132,19 @@ struct AuthSignUpTests {
 
 	@Test("a second sign-up while one is running is ignored")
 	func reentrancy() async {
-		let (auth, _, _, fake) = make(.success(created))
-		async let a: Void = auth.signUp(name: "Sam", email: "sam@example.com", password: secret)
-		async let b: Void = auth.signUp(name: "Sam", email: "sam@example.com", password: secret)
-		_ = await (a, b)
+		// The first sign-up is held inside the authenticator until the second has been attempted, so
+		// "while one is running" is a fact of the test, not a scheduling accident (a fake that returns
+		// at once can finish before the second call even starts, and then it is legitimately accepted).
+		let gate = Gate()
+		let (auth, _, _, fake) = make(.success(created), gate: gate)
+		let first = Task { await auth.signUp(name: "Sam", organization: "Acme", role: "Founder", email: "sam@example.com", password: secret) }
+		await gate.waitUntilStarted()
+		#expect(auth.isSigningUp)
+		await auth.signUp(name: "Sam", organization: "Acme", role: "Founder", email: "sam@example.com", password: secret)
+		await gate.release()
+		await first.value
 		#expect(fake.recorder.keys.withLock { $0.count } == 1)
+		#expect(!auth.isSigningUp)
 	}
 
 	@Test("no credential appears in any error's text or description")
@@ -216,7 +228,7 @@ struct APISignUpTests {
 	func created201() async throws {
 		let transport = ScriptedTransport(status: 201, json: createdJSON)
 		let result = try await authenticator(transport).signUp(
-			name: "Sam", email: "sam@example.com", password: secret, idempotencyKey: "key-1")
+			name: "Sam", organization: "Acme", role: "Founder", email: "sam@example.com", password: secret, idempotencyKey: "key-1")
 
 		#expect(result.login.apiKey == "ank_new")
 		#expect(result.login.workspaceId == "ws-9")
@@ -237,7 +249,7 @@ struct APISignUpTests {
 		let json = createdJSON.replacingOccurrences(
 			of: "\"workspace_id\":\"ws-9\"", with: "\"workspace_provisioning_failed\":true")
 		let result = try await authenticator(ScriptedTransport(status: 201, json: json)).signUp(
-			name: "Sam", email: "sam@example.com", password: secret, idempotencyKey: "k")
+			name: "Sam", organization: "Acme", role: "Founder", email: "sam@example.com", password: secret, idempotencyKey: "k")
 		#expect(result.workspaceProvisioningFailed)
 		#expect(result.login.workspaceId == nil)
 	}
@@ -247,7 +259,7 @@ struct APISignUpTests {
 		let json = #"{"error":{"code":"CONFLICT","message":"Email already exists"}}"#
 		await #expect(throws: SignUpError.emailTaken) {
 			try await authenticator(ScriptedTransport(status: 409, json: json)).signUp(
-				name: "Sam", email: "sam@example.com", password: secret, idempotencyKey: "k")
+				name: "Sam", organization: "Acme", role: "Founder", email: "sam@example.com", password: secret, idempotencyKey: "k")
 		}
 	}
 
@@ -264,7 +276,8 @@ struct APISignUpTests {
 			])
 		) {
 			try await authenticator(ScriptedTransport(status: 400, json: json)).signUp(
-				name: "Sam", email: "sam", password: "x", idempotencyKey: "k")
+				name: "Sam", organization: "Acme", role: "Founder", email: "sam", password: "x",
+				idempotencyKey: "k")
 		}
 	}
 
@@ -272,11 +285,11 @@ struct APISignUpTests {
 	func otherStatuses() async {
 		await #expect(throws: SignUpError.rateLimited) {
 			try await authenticator(ScriptedTransport(status: 429, json: "{}")).signUp(
-				name: "S", email: "s@e.co", password: secret, idempotencyKey: "k")
+				name: "S", organization: "Acme", role: "Founder", email: "s@e.co", password: secret, idempotencyKey: "k")
 		}
 		await #expect(throws: SignUpError.server(status: 500)) {
 			try await authenticator(ScriptedTransport(status: 500, json: serverErrorJSON)).signUp(
-				name: "S", email: "s@e.co", password: secret, idempotencyKey: "k")
+				name: "S", organization: "Acme", role: "Founder", email: "s@e.co", password: secret, idempotencyKey: "k")
 		}
 	}
 
@@ -290,7 +303,7 @@ struct APISignUpTests {
 		let auth = APIAuthenticator(
 			client: Client(serverURL: URL(string: "http://localhost:3000")!, transport: Down()))
 		do {
-			_ = try await auth.signUp(name: "S", email: "s@e.co", password: secret, idempotencyKey: "k")
+			_ = try await auth.signUp(name: "S", organization: "Acme", role: "Founder", email: "s@e.co", password: secret, idempotencyKey: "k")
 			Issue.record("expected a throw")
 		} catch let error as SignUpError {
 			guard case .network(let text) = error else {

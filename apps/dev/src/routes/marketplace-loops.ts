@@ -32,7 +32,7 @@ import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, jsonbField } from '../lib/openapi-schemas'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import { isWorkspaceMember, isWorkspaceWriter } from '../lib/workspace-auth'
 import { type AgentStorageManager, workspaceSkillKey } from '../services/agent-storage'
 import {
 	type MarketplaceItemType,
@@ -43,6 +43,10 @@ import {
 } from '../services/loop-provisioning'
 import { stopSessionsForActors } from '../services/session-cleanup'
 import type { SessionManager } from '../services/session-manager'
+import {
+	createWorkspaceDesktopService,
+	removeDesktopsForActors,
+} from '../services/workspace-desktop'
 
 type Env = {
 	Variables: {
@@ -495,6 +499,7 @@ const uninstallItemResponseSchema = z.object({
 const uninstallItemRoute = createRoute({
 	method: 'delete',
 	path: '/items/{id}/uninstall',
+	'x-viewer-policy': 'writer',
 	tags: ['Marketplace'],
 	summary: 'Remove an individually-installed marketplace item from a workspace',
 	request: {
@@ -527,7 +532,7 @@ app.openapi(uninstallItemRoute, (async (c) => {
 	const { id: itemId } = c.req.valid('param')
 	const { workspaceId, keepProvisionedItems } = c.req.valid('json')
 
-	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+	if (!(await isWorkspaceWriter(db, actorId, workspaceId))) {
 		return c.json(createApiError('FORBIDDEN', 'You are not a member of the workspace'), 403)
 	}
 
@@ -768,6 +773,10 @@ app.openapi(uninstallItemRoute, (async (c) => {
 		})
 	})
 
+	if (type === 'actor' && !keepProvisionedItems) {
+		await removeDesktopsForActors(workspaceId, [entityId], createWorkspaceDesktopService(db))
+	}
+
 	if (removedSkillId) {
 		try {
 			await agentStorage.deleteWorkspaceSkill(workspaceId, removedSkillId)
@@ -813,6 +822,7 @@ const installItemResponseSchema = z.object({
 const installItemRoute = createRoute({
 	method: 'post',
 	path: '/items/{id}/install',
+	'x-viewer-policy': 'writer',
 	tags: ['Marketplace'],
 	summary: 'Install a single marketplace item into a workspace',
 	request: {
@@ -853,7 +863,7 @@ app.openapi(installItemRoute, (async (c) => {
 	const { id: itemId } = c.req.valid('param')
 	const { workspaceId } = c.req.valid('json')
 
-	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+	if (!(await isWorkspaceWriter(db, actorId, workspaceId))) {
 		return c.json(createApiError('FORBIDDEN', 'You are not a member of the target workspace'), 403)
 	}
 

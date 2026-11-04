@@ -121,12 +121,8 @@ function bucketByEntity(
 export function useConversationProduced(
 	workspaceId: string,
 	conversationId: string | null,
-	enabled = true,
 ): ConversationProduced {
-	const { data: sessions } = useActiveSessionsForConversation(
-		workspaceId,
-		enabled ? conversationId : null,
-	)
+	const { data: sessions } = useActiveSessionsForConversation(workspaceId, conversationId)
 	const sessionList = sessions ?? []
 	const window = aggregateWindow(sessionList)
 	const sessionActorIds = new Set(sessionList.map((s) => s.actorId))
@@ -145,7 +141,7 @@ export function useConversationProduced(
 				},
 				500,
 			),
-		enabled: enabled && !!conversationId && !!window,
+		enabled: !!conversationId && !!window,
 	})
 
 	const events = query.data ?? []

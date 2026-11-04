@@ -19,8 +19,23 @@ public enum WatchBriefingText {
 			.trimmingCharacters(in: .whitespacesAndNewlines)
 	}
 
-	public static func paragraphs(_ text: String) -> [String] {
-		text.components(separatedBy: "\n\n").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-			.filter { !$0.isEmpty }
+	/// Spoken at about 200 words a minute.
+	public static func readSeconds(_ text: String) -> Int {
+		let words = text.split(whereSeparator: \.isWhitespace).count
+		return Int((Double(words) / 200 * 60).rounded(.up))
+	}
+
+	/// Whole minutes, never under one: "3" for a three-minute briefing.
+	public static func readMinutes(_ text: String) -> Int { max(1, Int((Double(readSeconds(text)) / 60).rounded(.up))) }
+
+	/// The line under the greeting: "3 MIN \u{00B7} AIRPODS", or "3 MIN \u{00B7} WATCH SPEAKER".
+	public static func meta(minutes: Int, headphones: Bool) -> String {
+		"\(minutes) MIN \u{00B7} \(headphones ? "AIRPODS" : "WATCH SPEAKER")"
+	}
+
+	/// A playback time as "1:12".
+	public static func clock(_ seconds: Int) -> String {
+		let s = max(0, seconds)
+		return "\(s / 60):" + String(format: "%02d", s % 60)
 	}
 }

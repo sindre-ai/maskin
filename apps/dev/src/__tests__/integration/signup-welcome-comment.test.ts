@@ -26,7 +26,7 @@ const KNOWLEDGE_WORKSPACE_SETTINGS = {
 	},
 	statuses: {
 		insight: ['new', 'processing', 'clustered', 'discarded'],
-		bet: ['signal', 'proposed', 'active', 'completed', 'succeeded', 'failed', 'paused'],
+		bet: ['opportunity', 'proposed', 'active', 'completed', 'succeeded', 'failed', 'paused'],
 		task: ['todo', 'in_progress', 'done', 'blocked'],
 		loop: ['holding', 'at-risk', 'breached'],
 		knowledge: ['draft', 'validated', 'deprecated'],
@@ -133,7 +133,8 @@ describe('Signup welcome comment — Chief of Staff comments, Researcher gets sp
 		// Researcher IS a real mention — that is what auto-subscribes it to the
 		// object and makes it count as a thread participant, so a later human
 		// reply reaches it. Only its generic CommentDispatcher session is
-		// suppressed, since signup-welcome wires a bespoke one below.
+		// suppressed, since signup-welcome wires a bespoke one below. A sign-up
+		// that does not show the welcome itself (iOS) still mentions the human.
 		expect(data.mentions).toEqual([researcher.id, humanActorId])
 		expect(data.metadata.suppress_dispatch_actor_ids).toEqual([researcher.id])
 		expect(data.content).toContain('Ada Testowski')
@@ -181,6 +182,49 @@ describe('Signup welcome comment — Chief of Staff comments, Researcher gets sp
 		// double-dispatch.
 		const subs = await db.select().from(subscriptions).where(eq(subscriptions.entityId, created.id))
 		expect(subs.map((sub) => sub.actorId)).toContain(researcher.id)
+	})
+
+	it("keeps the welcome off the human's For You when the sign-up shows it on New Chat (welcome_in_chat)", async () => {
+		await seedAgent(workspaceId, 'Chief of Staff')
+		const researcher = await seedAgent(workspaceId, 'Researcher')
+		const sessionManager = {
+			createSession: vi.fn().mockResolvedValue(undefined),
+		} as unknown as SessionManager
+		const app = createObjectsApp(sessionManager)
+
+		const base = buildSignupCaptureKnowledge({
+			name: 'Ada Testowski',
+			organization: 'Acme Robotics',
+			role: 'Head of Product',
+		})
+		const payload = { ...base, metadata: { ...base.metadata, welcome_in_chat: true } }
+
+		const res = await app.request(
+			jsonRequest('POST', '/api/objects', payload, { 'x-workspace-id': workspaceId }),
+		)
+		expect(res.status).toBe(201)
+		const created = (await res.json()) as { id: string }
+
+		await vi.waitFor(() => {
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		const [commentEvent] = await db
+			.select()
+			.from(events)
+			.where(and(eq(events.entityId, created.id), eq(events.action, 'commented')))
+		const data = commentEvent.data as { mentions: string[] }
+		expect(data.mentions).toEqual([researcher.id])
+		expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+
+		const unreadRes = await app.request(
+			jsonRequest('GET', '/api/subscriptions/unread', undefined, { 'x-workspace-id': workspaceId }),
+		)
+		const unread = (await unreadRes.json()) as {
+			items: Array<{ entity_id: string; mentioning_unread_count: number }>
+		}
+		const item = unread.items.find((i) => i.entity_id === created.id)
+		expect(item?.mentioning_unread_count ?? 0).toBe(0)
 	})
 
 	it('does not trigger a comment or session for a knowledge object that is not signup_capture', async () => {

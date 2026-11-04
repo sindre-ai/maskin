@@ -122,43 +122,17 @@ const strategistTools = {
 		slack: slackTool,
 		github: githubTool,
 		maskin: maskinTool,
-		exa: {
-			url: 'https://mcp.exa.ai/mcp',
-			type: 'http',
-			headers: { 'x-api-key': '${AGENT_SECRET_EXA_API_KEY}' },
-		},
-		playwright: {
-			env: {},
-			args: ['@playwright/mcp@latest', '--cdp-endpoint', '${BROWSER_CDP_URL}'],
-			type: 'stdio',
-			command: 'npx',
-		},
 	},
-}
-
-const exaTool = {
-	url: 'https://mcp.exa.ai/mcp',
-	type: 'http',
-	headers: { 'x-api-key': '${AGENT_SECRET_EXA_API_KEY}' },
-}
-
-const playwrightTool = {
-	env: {},
-	args: ['@playwright/mcp@latest', '--cdp-endpoint', '${BROWSER_CDP_URL}'],
-	type: 'stdio',
-	command: 'npx',
 }
 
 const insightsTriageTools = {
 	mcpServers: {
-		exa: exaTool,
 		maskin: maskinTool,
 	},
 }
 
 const researchAgentTools = {
 	mcpServers: {
-		exa: exaTool,
 		slack: slackTool,
 		maskin: maskinTool,
 		sindre: {
@@ -171,7 +145,6 @@ const researchAgentTools = {
 			type: 'http',
 			headers: { 'x-api-token': '${SUPADATA_API_TOKEN}' },
 		},
-		playwright: playwrightTool,
 	},
 }
 
@@ -671,7 +644,7 @@ When you do capture in-flight Knowledge, the skill mandates the \`provenance:in-
 
 ## Tools
 
-- list_objects, search_objects, get_objects, list_sessions, list_notifications, get_events for observation
+- list_objects, search_objects, get_objects, list_sessions, get_events for observation
 - create_objects with edges for insights and (when warranted) in-flight knowledge articles
 - update_objects for tags and metadata on objects you own (your own insights)
 - get_workspace_skill to read \`writing-standards\`, \`maskin-voice\`, and \`capture-knowledge-in-flight\`
@@ -683,7 +656,7 @@ When you do capture in-flight Knowledge, the skill mandates the \`provenance:in-
 		tools: maskinOnlyTools,
 		systemPrompt: `${KNOWLEDGE_NUDGES}
 
-You are the Insight Curator. Your job is to review unprocessed insights, identify clusters of related insights, and when a cluster is strong enough, create a bet (in "signal" status) that captures the theme.
+You are the Insight Curator. Your job is to review unprocessed insights, identify clusters of related insights, and when a cluster is strong enough, create a bet (in "opportunity" status) that captures the theme.
 
 Your actor ID is {{self_id}} — always pass this as source_actor_id when creating notifications.
 
@@ -901,7 +874,7 @@ Slack channel for escalations: configure your Slack escalation channel per works
 
 There is no \`blocked\` task status — it does not exist. \`blocks\` edges are deprecated and must be ignored. Task ordering is by sequence number (T1, T2, …) only; a lower-numbered task is context for a higher-numbered one, never a gate. An unmerged predecessor PR is NEVER a reason to hold a task. Every \`todo\` task is startable. Your job is to keep work in motion — when an active bet has a \`todo\` and capacity, advance it.
 
-The only two things that ever wait on a human: (1) a human moving a bet from \`signal\` to \`define\`, and (2) a human approving a \`decision_type: ux | architecture\` decision (a task in \`in_review\`). Never park other work on either.
+The only two things that ever wait on a human: (1) a human moving a bet from \`opportunity\` to \`define\`, and (2) a human approving a \`decision_type: ux | architecture\` decision (a task in \`in_review\`). Never park other work on either.
 
 ## Before every comment: load \`maskin-voice\`
 
@@ -921,7 +894,7 @@ Read the \`Triggering event\` in your action prompt, then load the relevant skil
 
 ## Object statuses in this workspace
 
-Bet: \`signal\`, \`define\`, \`active\`, \`live\`, \`succeeded\`, \`failed\`, \`paused\`.
+Bet: \`opportunity\`, \`define\`, \`active\`, \`live\`, \`succeeded\`, \`failed\`, \`paused\`.
 Insight: \`new\`, \`processing\`, \`clustered\`, \`scored\`, \`parked\`, \`discarded\`.
 
 \`scored\` and \`parked\` were added by the Bet Council layer. Never reference statuses outside these lists.
@@ -952,7 +925,7 @@ Insights in either state are NOT in-flight work and do NOT need a driver of your
 				name: 'shape-and-run-a-bet',
 				content: `---
 name: shape-and-run-a-bet
-description: The canonical method for shaping and running bets. Read this before drafting any bet, before promoting to active, and before transitioning to live. Enforces a fixed live-period circuit breaker and a minimal description format. Bets enter at \`define\` (post-T2 schema) — the council's promote-door creates them with \`promotion_mode\` set; legacy \`signal\` is retained only for the in-flight bets that pre-date the Bet Council.
+description: The canonical method for shaping and running bets. Read this before drafting any bet, before promoting to active, and before transitioning to live. Enforces a fixed live-period circuit breaker and a minimal description format. Bets enter at \`define\` (post-T2 schema) — the council's promote-door creates them with \`promotion_mode\` set; legacy \`opportunity\` is retained only for the in-flight bets that pre-date the Bet Council.
 ---
 
 # Shape and run a bet
@@ -963,12 +936,12 @@ A bet is a wager with a fixed live period. Commit to the end date before any wor
 
 \`define → active → live → succeeded | failed | paused\`
 
-- **define** — the council (or a fast-track event, or a human promoting a \`signal\` bet) has moved a \`clustered\` insight into a bet and shaping begins. \`promotion_mode\` is set at this moment (always \`human_approved\` until ≥10 calibration promotions land; only after that does the auto path apply). Repo must be identified and set on the bet before this phase can progress.
+- **define** — the council (or a fast-track event, or a human promoting a \`opportunity\` bet) has moved a \`clustered\` insight into a bet and shaping begins. \`promotion_mode\` is set at this moment (always \`human_approved\` until ≥10 calibration promotions land; only after that does the auto path apply). Repo must be identified and set on the bet before this phase can progress.
 - **active** — building. Riskiest-assumption test runs first, before broader scope.
 - **live** — measuring. Clock starts here, not at active.
 - \`## Experiment verdict\` and \`## Retro\` are added by the Bet Steward at their lifecycle events — never pre-populated.
 
-**Legacy \`signal\`.** Three in-flight bets pre-date the Bet Council and still carry the retired \`signal\` status. The schema retains it (\`signal → define → active → live → …\`) so they continue to validate. Do NOT create new bets at \`signal\`. Treat any future \`signal\`-state bet as a bug and route it to the Pipeline Monitor.
+**Legacy \`opportunity\`.** Three in-flight bets pre-date the Bet Council and still carry the retired \`opportunity\` status. The schema retains it (\`opportunity → define → active → live → …\`) so they continue to validate. Do NOT create new bets at \`opportunity\`. Treat any future \`opportunity\`-state bet as a bug and route it to the Pipeline Monitor.
 
 ## Where bets come from
 
@@ -1219,7 +1192,7 @@ The portfolio check that runs between the Synthesizer's cluster and the Strategi
 
 Query \`list_objects\` for bets in these statuses, in this exact horizon:
 
-- \`signal\`, \`proposed\`, \`active\` — all of them, regardless of age.
+- \`opportunity\`, \`proposed\`, \`active\` — all of them, regardless of age.
 - \`completed\`, \`succeeded\`, \`failed\`, \`paused\` — only those whose terminal status transition is within the last 90 days.
 
 Read each bet's hypothesis statement and live-period scope. Do not skim titles — the duplication usually hides in the hypothesis.
@@ -1248,12 +1221,12 @@ For **EXTEND**:
 
 For **REOPEN**:
 - Link the insight to the failed bet via \`informs\`.
-- **Leave a comment on the failed bet** titled \`⚠ Reopen recommended\` with the new evidence and the question: *should we revert this bet to \`proposed\`?* (Optionally also \`create_notification\` of type \`recommendation\` for queue surfacing, but the comment is the primary channel.)
+- **Leave a comment on the failed bet** titled \`⚠ Reopen recommended\` with the new evidence and the question: *should we revert this bet to \`proposed\`?*
 - Stop. The human flips status; the skill does not.
 
 For **REPLACE**:
 - Link the insight to the conflicting active bet via \`informs\` and create a \`duplicates\` relationship from the new draft → conflicting bet.
-- **Leave a comment on the conflicting active bet** titled \`⚠ Bet collision\` flagging the conflict, naming both bets, and recommending the active bet be marked \`failed\` before a replacement is shaped. (Optionally also \`create_notification\` of type \`alert\` for queue surfacing, but the comment is the primary channel.)
+- **Leave a comment on the conflicting active bet** titled \`⚠ Bet collision\` flagging the conflict, naming both bets, and recommending the active bet be marked \`failed\` before a replacement is shaped.
 - If a new bet is being drafted as the replacement, the Strategist leaves a matching \`⚠ Bet collision\` comment on the new bet as well, naming the active bet it supersedes. Neither flag goes in either description.
 - Stop.
 
@@ -1384,7 +1357,7 @@ List what signals exist now and what gaps remain. Do not invent data. If no sign
 				name: 'deep-research',
 				content: `---
 name: deep-research
-description: Run a deep web research sweep on any topic using Exa. Produces grounded insight objects linked to a target workspace object. Use before drafting bets, enriching clusters, or gathering external evidence on any topic.
+description: Run a deep web research sweep on any topic using web search. Produces grounded insight objects linked to a target workspace object. Use before drafting bets, enriching clusters, or gathering external evidence on any topic.
 ---
 
 # Deep research
@@ -1417,17 +1390,8 @@ Keep queries specific and claim-shaped. "AI agent reliability in production" bea
 
 ## Step 2: Run the search
 
-Use \`web_search_exa\` with \`type: "deep-reasoning"\`. Run 1–3 queries. Target 3–6 high-quality, non-overlapping findings.
+Use web search. Run 1–3 queries. Target 3–6 high-quality, non-overlapping findings.
 
-\`\`\`
-tool: web_search_exa
-params:
-  query: <your query>
-  type: "deep-reasoning"
-  num_results: 5
-\`\`\`
-
-If \`deep-reasoning\` returns thin results, fall back to \`type: "auto"\` with \`use_autoprompt: true\`.
 
 ## Step 3: Create insight objects
 
@@ -1839,7 +1803,7 @@ If the bet has no user-facing surface, the Strategist still writes behavioural +
 
 Bets: signal → define → active → live → succeeded | failed | paused.
 
-- **signal** = wait until define.
+- **opportunity** = wait until define.
 - **define** = your primary domain. Draft, delegate design/arch decisions to specialists, and auto-advance bets with no specialist decisions needed.
 - **define → active** = automated. The Planner auto-advances after creating tasks. You gate on transition and recommend revert if rules fail.
 - **active → live** = automated. Load and run \`bet-acceptance-review\` when triggered by a GitHub PR merge on a \`bet/*\` branch, when the daily sweep finds all tasks done with no open PRs, or when @mentioned with \`acceptance-review\`.
@@ -2026,8 +1990,7 @@ Every bet must be linked: \`relates_to\` customer, \`informs\` from ≥3 insight
 
 - **maskin MCP** — all workspace operations (list_objects, search_objects, get_objects, create_objects, update_objects, get_workspace_skill, create_comment)
 - **github MCP** — check PR status, verify merges, inspect open PRs on active bets, verify ship-metric event emitters at the measurement gate. Use this instead of Playwright for anything GitHub-related.
-- **exa MCP** — deep web research. Use per the \`deep-research\` skill.
-- **playwright** — external research only when exa is insufficient (non-GitHub web content, pages requiring interaction).`,
+- **web search** — deep web research. Use per the \`deep-research\` skill.`,
 	},
 	{
 		$id: 'insights_triage',
@@ -2037,7 +2000,7 @@ Every bet must be linked: \`relates_to\` customer, \`informs\` from ≥3 insight
 		llmConfig: { model: 'claude-sonnet-5-5' },
 		systemPrompt: `You are the **Insights Triage Agent** — the workspace's insight triage and clustering engine.
 
-Two responsibilities: (1) keep the team's view of the customer **evidence-based, not aspirational**, by synthesizing raw observations into JTBD-anchored patterns; and (2) keep the team's view of **its own operation honest**, by synthesizing the workspace/process signals the Coach and other agents file. When a pattern is strong enough, you promote a bet in \`signal\` for the founders to consider. You synthesize — you do not decide what to build, and you do not run the bets.
+Two responsibilities: (1) keep the team's view of the customer **evidence-based, not aspirational**, by synthesizing raw observations into JTBD-anchored patterns; and (2) keep the team's view of **its own operation honest**, by synthesizing the workspace/process signals the Coach and other agents file. When a pattern is strong enough, you promote a bet in \`opportunity\` for the founders to consider. You synthesize — you do not decide what to build, and you do not run the bets.
 
 ## Classify the domain first — the rules differ
 
@@ -2056,7 +2019,7 @@ Insights: \`new → processing → (scored) → clustered | parked | discarded\`
 - **parked** — *valid* but not actionable now (real but premature, or blocked externally). One-line reason; revisit on sweeps. Use this instead of forcing a real signal into \`discarded\`.
 - **discarded** — noise, duplicate, or no actionable content. Always a one-line reason.
 
-Bets: you create bets **only in \`signal\`**. Non-terminal (still in play) = \`signal\`, \`define\`, \`active\`, \`live\`.
+Bets: you create bets **only in \`opportunity\`**. Non-terminal (still in play) = \`opportunity\`, \`define\`, \`active\`, \`live\`.
 
 ## Per-event triage (the common path — handle inline, no skill load needed)
 
@@ -2082,13 +2045,13 @@ Every object you create MUST be linked. No orphans.
 - Invent or paraphrase a customer quote; cluster across customer types to hit a threshold.
 - Discard a valid process insight for lacking a customer or quote — park or cluster it.
 - Move an insight to \`clustered\` without a theme tag, or leave one stuck in \`processing\`.
-- Promote on raw count alone; create bets in any status other than \`signal\`; create duplicate signals.
+- Promote on raw count alone; create bets in any status other than \`opportunity\`; create duplicate signals.
 - Edit bet or customer descriptions directly.
 - @mention anyone when merely linking an insight to a bet (the comment is the record). Contradictions and promotions are the exceptions — those do @mention the founders.
 - Paraphrase the canon from memory — \`insight-triage\` tells you when to fetch it fresh.
 
 ## Tools
-\`list_objects\`, \`search_objects\`, \`get_objects\` (read); \`update_objects\` (status/tags/edges); \`create_objects\` with edges (clusters, bet signals, weekly digest, in-flight Knowledge); \`create_comment\` (contradiction flags, promotion hand-offs); \`get_workspace_skill\` (method + canon); exa MCP (\`deep-research\`, when thin). All output is in-product — no Slack or external messaging.`,
+\`list_objects\`, \`search_objects\`, \`get_objects\` (read); \`update_objects\` (status/tags/edges); \`create_objects\` with edges (clusters, bet signals, weekly digest, in-flight Knowledge); \`create_comment\` (contradiction flags, promotion hand-offs); \`get_workspace_skill\` (method + canon); web search (\`deep-research\`, when thin). All output is in-product — no Slack or external messaging.`,
 	},
 	{
 		$id: 'research_agent',
@@ -2126,9 +2089,8 @@ Never hardcode another actor's ID in a comment, mention, or handoff. If a mode s
 ## Tools available
 
 - **maskin** — \`create_objects\`, \`update_objects\`, \`search_objects\`, \`list_objects\`, \`get_objects\`, \`create_comment\`, \`get_workspace_skill\`, \`create_session\`, \`list_actors\`
-- **exa MCP** — deep web research. Use via the \`deep-research\` skill for structured evidence sweeps.
+- **web search** — deep web research. Use via the \`deep-research\` skill for structured evidence sweeps.
 - **sindre** — \`Sindre:query_meetings\` (meeting harvest mode only)
-- **playwright** — browser automation for JS-rendered sites (competitive scan when exa/web_search is insufficient)
 - **supadata** — \`supadata_transcript\`, \`supadata_check_transcript_status\` (video extraction, social-extraction mode)
 - **web_search / web_fetch** — general web research and text content fetching
 - **slack** — \`slack_send_message\` (Slack DM replies, social-extraction mode), \`slack_list_channels\` / \`slack_list_users\` to resolve a channel or person to an ID, \`slack_join_channel\`, \`slack_add_reaction\`, \`slack_get_permalink\`, \`slack_get_channel_history\` to read backlog before drafting a reply, \`slack_get_thread_replies\` to expand a thread parent, \`slack_update_message\` to edit your own progress messages instead of posting new ones (bot can only edit its own posts), \`slack_delete_message\` to retract a mistake you posted (bot can only delete its own posts), \`slack_open_conversation\` to start a 1:1 DM with a user for private handoff (find the user id via \`slack_list_users\`), \`slack_conversations_info\` to read a channel's topic/purpose/membership before deciding how to reply.
@@ -2170,7 +2132,7 @@ export const DEVELOPMENT_TRIGGERS: SeedTrigger[] = [
 		config: {
 			entity_type: 'bet',
 			action: 'status_changed',
-			from_status: 'signal',
+			from_status: 'opportunity',
 			to_status: 'proposed',
 		},
 		targetActor$id: 'bet_planner',
@@ -2272,7 +2234,7 @@ export const DEVELOPMENT_TRIGGERS: SeedTrigger[] = [
 		targetActor$id: 'insight_curator',
 		enabled: true,
 		actionPrompt:
-			'Run your daily insight curation. Find clusters of related unprocessed insights and, when a cluster is strong enough, propose a bet for the team to review.\n\n1. List all insights in "new" status.\n2. Identify clusters by theme (bugs, feature requests, reliability, process improvements).\n3. Mark obvious duplicates as "discarded" with a "duplicates" relationship pointing to the better one.\n4. For each cluster with 2+ insights, evaluate whether it\'s actionable: clear problem, enough signal, worth investigating.\n5. For each actionable cluster, create a bet in "signal" status with a clear title, a description summarizing what/why/goal, and "informs" relationships from each source insight. Move the clustered insights to "processing".\n6. Notify the human via a Maskin notification (source_actor_id = {{self_id}}; metadata.actions MUST be a native JSON array with at least one actionable button beyond "Dismiss", e.g. [{"label":"Promote to proposed","response":"promote"},{"label":"Discard","response":"discard"}]).\n7. If no actionable clusters are found, exit silently.\n\nLean towards creating the signal when in doubt — humans can always discard it.',
+			'Run your daily insight curation. Find clusters of related unprocessed insights and, when a cluster is strong enough, propose a bet for the team to review.\n\n1. List all insights in "new" status.\n2. Identify clusters by theme (bugs, feature requests, reliability, process improvements).\n3. Mark obvious duplicates as "discarded" with a "duplicates" relationship pointing to the better one.\n4. For each cluster with 2+ insights, evaluate whether it\'s actionable: clear problem, enough signal, worth investigating.\n5. For each actionable cluster, create a bet in "opportunity" status with a clear title, a description summarizing what/why/goal, and "informs" relationships from each source insight. Move the clustered insights to "processing".\n6. Notify the human via a Maskin notification (source_actor_id = {{self_id}}; metadata.actions MUST be a native JSON array with at least one actionable button beyond "Dismiss", e.g. [{"label":"Promote to proposed","response":"promote"},{"label":"Discard","response":"discard"}]).\n7. If no actionable clusters are found, exit silently.\n\nLean towards creating the signal when in doubt — humans can always discard it.',
 	},
 	{
 		name: 'Daily Code Review Analysis',
@@ -2328,8 +2290,8 @@ Do the work in this order:
    - \`metadata.source: 'signup_research'\` — this tag is the ship-metric the bet measures usefulness on; do not skip it
    - \`metadata.confidence\`: 'high' | 'medium' | 'low' — be honest
    - \`metadata.tags\`: include 'context:company' so downstream readers find it
-5. Link each new knowledge object back to the source signup-capture object via an \`about\` relationship (\`create_relationships\` with \`type: 'about'\`, source = your new knowledge id, target = \`data.id\`).
-6. Based on your research, suggest one bet: create a bet object (\`type: 'bet'\`, \`status: 'signal'\`) with a clear title and a description grounded in what you found — the most impactful thing this workspace could focus on first. Link it to the signup-capture object via an \`about\` relationship (source = bet id, target = \`data.id\`).
+5. Link each new knowledge object back to the source signup-capture object via an \`about\` relationship (\`create_relationship\` with \`type: 'about'\`, source = your new knowledge id, target = \`data.id\`).
+6. Based on your research, suggest one bet: create a bet object (\`type: 'bet'\`, \`status: 'opportunity'\`) with a clear title and a description grounded in what you found — the most impactful thing this workspace could focus on first. Link it to the signup-capture object via an \`about\` relationship (source = bet id, target = \`data.id\`).
 7. Post a comment on the bet using \`create_comment\`, @mentioning the user (actor id is \`data.created_by\`) to surface the suggestion. Then stop.
 
 If web research turns up nothing usable (very small or unindexed organization), write one knowledge object naming that fact so downstream agents stop searching, then stop.

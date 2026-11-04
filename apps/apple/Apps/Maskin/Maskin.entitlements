@@ -7,6 +7,10 @@
 	<!-- development in Debug, production in Release (MASKIN_APS_ENVIRONMENT in project.yml). -->
 	<key>aps-environment</key>
 	<string>$(MASKIN_APS_ENVIRONMENT)</string>
+	<!-- Lets decisions and needs_input pushes break through Focus. Needs "Time Sensitive Notifications"
+	     enabled on App ID io.maskin.app (it is); automatic signing picks it up on the next build. -->
+	<key>com.apple.developer.usernotifications.time-sensitive</key>
+	<true/>
 	<key>com.apple.developer.associated-domains</key>
 	<array>
 		<string>applinks:maskin.io</string>

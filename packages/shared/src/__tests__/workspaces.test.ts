@@ -26,7 +26,7 @@ describe('workspaceSettingsSchema', () => {
 			'discarded',
 		])
 		expect(result.statuses.bet).toEqual([
-			'signal',
+			'opportunity',
 			'define',
 			'active',
 			'live',

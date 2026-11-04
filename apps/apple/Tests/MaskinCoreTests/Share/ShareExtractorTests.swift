@@ -58,6 +58,36 @@ struct ShareExtractorTests {
 		#expect(content.text == "https://b.example")
 	}
 
+	@Test("three links at once: the first is the link, the others are kept in the text")
+	func threeLinks() async {
+		let content = await extractor().extract(
+			from: [.link("https://a.example"), .link("https://b.example"), .link("https://c.example")])
+		#expect(content.link == URL(string: "https://a.example"))
+		#expect(content.text?.contains("https://b.example") == true)
+		#expect(content.text?.contains("https://c.example") == true)
+	}
+
+	@Test("an image shared from Safari keeps the page link whichever order the items arrive in")
+	func safariImageKeepsPageLink() async {
+		let photo = scratch.image("web.jpg", width: 300, height: 200)
+		let page = ShareFakeSource.link("https://example.com/page")
+		let first = await extractor(maxFileBytes: 10 * 1024 * 1024).extract(from: [page, .image(photo)])
+		let second = await extractor(maxFileBytes: 10 * 1024 * 1024).extract(from: [.image(photo), page])
+		#expect(first.link == URL(string: "https://example.com/page") && first.attachments.count == 1)
+		#expect(second.link == URL(string: "https://example.com/page") && second.attachments.count == 1)
+	}
+
+	@Test("an image provider that also carries the page address keeps it as the link")
+	func imageProviderCarryingTheAddress() async {
+		let photo = scratch.image("both.jpg", width: 300, height: 200)
+		let both = ShareFakeSource(
+			typeIdentifiers: [UTType.jpeg.identifier, UTType.url.identifier],
+			url: URL(string: "https://example.com/page"), file: photo)
+		let content = await extractor(maxFileBytes: 10 * 1024 * 1024).extract(from: [both])
+		#expect(content.link == URL(string: "https://example.com/page"))
+		#expect(content.attachments.count == 1)
+	}
+
 	@Test("selected text next to a link keeps both; text equal to the title is dropped")
 	func textAndLink() async {
 		let both = await extractor().extract(
