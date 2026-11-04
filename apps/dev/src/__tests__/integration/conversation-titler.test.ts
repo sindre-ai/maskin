@@ -19,8 +19,12 @@ import { db, getTestActorId } from './global-setup'
 // Stub the adapter factory so the state machine (which is the part with real DB
 // semantics) is exercised against real Postgres without a live LLM.
 const chat = vi.fn()
+const createAdapter = vi.fn()
 vi.mock('../../lib/llm/index', () => ({
-	createLLMAdapter: () => ({ chat }),
+	createLLMAdapter: (...args: unknown[]) => {
+		createAdapter(...args)
+		return { chat }
+	},
 }))
 
 const { maybeGenerateConversationTitle } = await import('../../services/conversation-titler')
@@ -81,6 +85,7 @@ describe('Conversation auto-titler Integration', () => {
 
 	beforeEach(async () => {
 		chat.mockReset()
+		createAdapter.mockReset()
 		ownerId = getTestActorId()
 		const ws = await insertWorkspace(db, ownerId)
 		if (!ws) throw new Error('failed to create workspace')
@@ -355,6 +360,43 @@ describe('Conversation auto-titler Integration', () => {
 			title: 'Note Acme retry window Thursday',
 			titleAutoState: 'initial',
 		})
+	})
+
+	it('titles via the operator key when the workspace has no credential of its own', async () => {
+		// Enterprise-entitled with nothing chat-usable: resolveChatCredentials
+		// returns null, so before the operator route this ended on the derived
+		// fallback. The title must now come from the model (source=llm).
+		await db
+			.update(workspaces)
+			.set({ settings: {}, enterpriseGranted: true })
+			.where(eq(workspaces.id, workspaceId))
+		const previous = process.env.MASKIN_FALLBACK_OPENROUTER_KEY
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-operator-test'
+		chat.mockResolvedValue(titleResponse('YouTube integration scope'))
+		try {
+			await postMessages(1, 'Please review the scope of the YouTube integration')
+			await maybeGenerateConversationTitle({ db, workspaceId, conversationId })
+		} finally {
+			process.env.MASKIN_FALLBACK_OPENROUTER_KEY = previous ?? ''
+		}
+
+		expect(chat).toHaveBeenCalledTimes(1)
+		expect(createAdapter).toHaveBeenCalledWith(
+			'openai',
+			expect.objectContaining({
+				api_key: 'sk-or-operator-test',
+				base_url: 'https://openrouter.ai/api/v1',
+			}),
+		)
+		expect(await readConversation()).toEqual({
+			title: 'YouTube integration scope',
+			titleAutoState: 'initial',
+		})
+		const rows = await db
+			.select({ data: events.data })
+			.from(events)
+			.where(and(eq(events.entityType, 'conversation'), eq(events.entityId, conversationId)))
+		expect(rows[0]?.data).toMatchObject({ source: 'llm' })
 	})
 
 	it('stamps the audit event with source=derived when the fallback fired', async () => {
