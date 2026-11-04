@@ -5,10 +5,10 @@ import { z } from 'zod'
 // enforced twice: here at the apps/dev boundary, and again inside the VM by
 // desktopd, which is the last line of defence before anything reaches xdotool.
 
-// The picture agents see and the pixel space their coordinates use. The real screen
-// is larger (1600x900); desktopd scales the screenshot down and clicks up by 1.25.
-export const DESKTOP_SCREEN_WIDTH = 1280
-export const DESKTOP_SCREEN_HEIGHT = 720
+// The screen size, which is also the picture agents see and the pixel space their
+// coordinates use.
+export const DESKTOP_SCREEN_WIDTH = 1600
+export const DESKTOP_SCREEN_HEIGHT = 900
 
 const coordinate = (max: number) =>
 	z
@@ -81,9 +81,9 @@ export type DesktopExecResult = z.infer<typeof desktopExecResultSchema>
 export const TEACH_MAX_FRAMES = 60
 export const TEACH_MAX_EVENTS = 1500
 export const TEACH_MAX_DURATION_MS = 10 * 60 * 1000
-// Decoded JPEG size caps: a 1280x720 frame at quality ~0.6 is typically 40-100KB.
-export const TEACH_MAX_FRAME_BYTES = 400 * 1024
-export const TEACH_MAX_TOTAL_FRAME_BYTES = 8 * 1024 * 1024
+// Decoded JPEG size caps: a 1600x900 frame at quality ~0.6 is typically 60-160KB.
+export const TEACH_MAX_FRAME_BYTES = 625 * 1024
+export const TEACH_MAX_TOTAL_FRAME_BYTES = 12 * 1024 * 1024
 
 export const teachFrameIdSchema = z.string().regex(/^f\d{3}$/, 'frame id looks like f001')
 

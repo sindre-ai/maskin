@@ -50,10 +50,9 @@ Open `http://10.0.1.1:16080/vnc.html` from the server (or an SSH tunnel:
 bridge next to noVNC. The agent-server proxies to it; apps/dev exposes it as
 `/api/desktop/{screenshot,input,exec}` and the Maskin MCP as `desktop_*` tools.
 
-The screen is 1600x900 so a person watching or taking over sees more of the page, but agents
-work in a 1280x720 picture of it: `/screenshot` returns the scaled image and `/input` coordinates
-are pixels in that image, scaled up by 1.25 before they reach xdotool (`NATIVE_WIDTH/HEIGHT` in
-`desktopd.py` must match the entrypoint's `SCREEN_SIZE` default).
+The screen is 1600x900 and agents see all of it: `/screenshot` returns the full screen and
+`/input` coordinates are native pixels (`WIDTH/HEIGHT` in `desktopd.py` must match the
+entrypoint's `SCREEN_SIZE` default).
 
 It exists because `msb exec <vm> -- <cmd>` hangs (even `echo hi`) while the
 entrypoint's own `msb exec` holds the VM — verified on msb 0.5.7 — so the host
