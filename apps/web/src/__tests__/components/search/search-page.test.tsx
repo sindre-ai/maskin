@@ -132,8 +132,7 @@ const actor = (id: string, name: string, type = 'agent') => ({
 	agentState: null,
 })
 
-function withParticipantFilter(on = true) {
-	if (on) localStorage.setItem('ff:search-chat-participant-filter', 'on')
+function withParticipantFilter() {
 	vi.mocked(api.actors.list).mockResolvedValue([
 		actor(PM_ID, 'Product Marketing'),
 		actor(DEV_ID, 'Developer'),
@@ -229,17 +228,6 @@ describe('SearchPageV2 @ menu', () => {
 		renderPage()
 		await user.click(await screen.findByRole('button', { name: 'Clear filters' }))
 		expect(screen.queryByRole('button', { name: /Remove filter/ })).not.toBeInTheDocument()
-	})
-
-	it('does nothing with the flag off: no menu, and a participants link is ignored', async () => {
-		withParticipantFilter(false)
-		searchState.current = { participants: PM_ID }
-		const user = userEvent.setup()
-		renderPage()
-		await user.type(field(), '@prod')
-		expect(menu()).not.toBeInTheDocument()
-		expect(screen.queryByRole('button', { name: /Remove filter/ })).not.toBeInTheDocument()
-		await waitFor(() => expect(lastParams()).toEqual({ q: '@prod' }))
 	})
 })
 

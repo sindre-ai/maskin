@@ -313,7 +313,7 @@ describe('LinkedObjectCard', () => {
 	})
 
 	it('starts contracted with the title only, and the top toggles the text', async () => {
-		useObject.mockReturnValue({ data: objectRow() })
+		useObject.mockReturnValue({ data: objectRow({ type: 'insight' }) })
 		renderCard({ conversationId: CHAT, agentId: AGENT })
 		expect(screen.getByText('LinkedIn note to Catja')).toBeInTheDocument()
 		expect(screen.queryByText(/tillykke med fusionen/)).not.toBeInTheDocument()
@@ -336,6 +336,8 @@ describe('LinkedObjectCard', () => {
 	it('shows the status as a plain chip, with no menu, while contracted', async () => {
 		useObject.mockReturnValue({ data: objectRow() })
 		renderCard({ conversationId: CHAT, agentId: AGENT })
+		// A task starts open; the person contracts it.
+		await userEvent.click(screen.getByText('LinkedIn note to Catja'))
 		expect(screen.queryByLabelText('Status')).not.toBeInTheDocument()
 		expect(screen.getByText('in review')).toBeInTheDocument()
 		await expand()
@@ -622,7 +624,7 @@ describe('LinkedObjectCard', () => {
 		})
 
 		it('asks the panel to show the object, without toggling the card', async () => {
-			useObject.mockReturnValue({ data: objectRow() })
+			useObject.mockReturnValue({ data: objectRow({ type: 'insight' }) })
 			const openLinked = vi.fn()
 			render(
 				<LinkedPanelContext.Provider value={{ openLinked }}>
@@ -667,13 +669,13 @@ describe('LinkedCardOrLink', () => {
 		}
 	})
 
-	it('draws any other object as a reference card: type, status, priority, title, text and owner', () => {
+	it('draws any other object as a reference card: type, status, title, text and owner', () => {
 		useObject.mockReturnValue({
 			data: objectRow({
+				type: 'insight',
 				title: 'Ship the card',
 				status: 'in_review',
 				content: '## Plan\n\nDo **the thing** with [a link](https://x.test).',
-				metadata: { priority: 'P2' },
 				driver: 'actor-1',
 				updatedAt: new Date().toISOString(),
 				active_session_state: 'running',
@@ -684,10 +686,69 @@ describe('LinkedCardOrLink', () => {
 		const card = screen.getByRole('link')
 		expect(card).toHaveTextContent('Ship the card')
 		expect(card).toHaveTextContent('Plan Do the thing with a link.')
-		expect(card).toHaveTextContent('P2')
 		expect(card).toHaveTextContent('Developer')
 		expect(card).toHaveTextContent('Working now')
 		expect(screen.queryByText('the original link')).not.toBeInTheDocument()
+	})
+
+	it('draws a task with text alone on its own line as a card with its text, with no Approve', () => {
+		useObject.mockReturnValue({ data: objectRow(), isLoading: false })
+		renderObject()
+		expect(screen.queryByText('the original link')).not.toBeInTheDocument()
+		expect(screen.getByText('LinkedIn note to Catja')).toBeInTheDocument()
+		expect(screen.getByText(/tillykke med fusionen/)).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /Approve/ })).not.toBeInTheDocument()
+	})
+
+	it('keeps a task in a list as the link', () => {
+		useObject.mockReturnValue({ data: objectRow(), isLoading: false })
+		render(
+			<LinkedCardOrLink
+				workspaceId={WS}
+				target={{ kind: 'object', id: ID }}
+				fallback={link}
+				inList
+			/>,
+		)
+		expect(screen.getByText('the original link')).toBeInTheDocument()
+		expect(screen.queryByText(/tillykke med fusionen/)).not.toBeInTheDocument()
+	})
+
+	it('draws nothing for a task under a sentence', () => {
+		useObject.mockReturnValue({ data: objectRow(), isLoading: false })
+		const { container } = render(
+			<LinkedCardOrLink
+				workspaceId={WS}
+				target={{ kind: 'object', id: ID }}
+				fallback={link}
+				after
+			/>,
+		)
+		expect(container).toBeEmptyDOMElement()
+	})
+
+	it('keeps the reference card for a task outside chat, in a comment', () => {
+		useObject.mockReturnValue({ data: objectRow(), isLoading: false })
+		render(
+			<LinkedCardOrLink
+				workspaceId={WS}
+				target={{ kind: 'object', id: ID }}
+				fallback={link}
+				draftsAndFiles={false}
+			/>,
+		)
+		expect(screen.queryByText('the original link')).not.toBeInTheDocument()
+		expect(screen.getByRole('link')).toHaveTextContent('LinkedIn note to Catja')
+		expect(screen.queryByRole('button', { name: 'Copy the text' })).not.toBeInTheDocument()
+	})
+
+	it('copies the text of a task from the card', async () => {
+		const writeText = vi.fn().mockResolvedValue(undefined)
+		Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+		useObject.mockReturnValue({ data: objectRow(), isLoading: false })
+		renderObject()
+		await userEvent.click(screen.getByRole('button', { name: 'Copy the text' }))
+		expect(writeText).toHaveBeenCalledWith('Hej Catja, tillykke med fusionen.')
 	})
 
 	it('says Unassigned, and leaves out the text row and Working now, when there is nothing to show', () => {
@@ -702,7 +763,7 @@ describe('LinkedCardOrLink', () => {
 	})
 
 	it('keeps the link of a list item unless the object is a draft', () => {
-		useObject.mockReturnValue({ data: objectRow(), isLoading: false })
+		useObject.mockReturnValue({ data: objectRow({ type: 'insight' }), isLoading: false })
 		render(
 			<LinkedCardOrLink
 				workspaceId={WS}

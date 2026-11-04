@@ -46,17 +46,17 @@ export function extractLinkedFileIds(content: string, max = 3): string[] {
 }
 
 /**
- * Whether an object deserves a card in chat and in the drawer: it is something a person acts
- * on, a draft an integration can deliver (it has a `preview`). A contact, a company or a plain
- * task is a reference, and stays a link. Files are decided by type, not here.
+ * Whether an object deserves an approval card wherever a link can be one: it is something a
+ * person acts on, a draft an integration can deliver (it has a `preview`). A contact, a company
+ * or a plain task is a reference there, and stays a link. Files are decided by type, not here.
  */
 export function hasPreviewCard(object: { preview?: unknown | null } | null | undefined): boolean {
 	return Boolean(object?.preview)
 }
 
 /**
- * Whether a fetched object gets a card here: it is in this workspace, it is a draft worth acting
- * on (see {@link hasPreviewCard}) and it has text to show. Anything else stays a plain link.
+ * Whether a fetched object gets an approval card here: it is in this workspace, it is a draft worth
+ * acting on (see {@link hasPreviewCard}) and it has text to show. Anything else stays a plain link.
  */
 export function showsObjectCard(
 	object:
@@ -69,6 +69,25 @@ export function showsObjectCard(
 		object &&
 			object.workspaceId === workspaceId &&
 			hasPreviewCard(object) &&
+			object.content?.trim(),
+	)
+}
+
+/**
+ * Whether a task with text, in this workspace, is shown as its text. A task is where an agent puts
+ * text for a person to read and edit (a message to paste, a post, a template), whatever channel it
+ * is for and whether or not any integration can send it. Only where the link stands alone on its
+ * own line in chat, and in the Items drawer: in a sentence, a list or a comment it stays what it
+ * was, so a message that mentions many tasks does not grow into many open cards.
+ */
+export function showsTaskCard(
+	object: { workspaceId: string; content?: string | null; type?: string } | null | undefined,
+	workspaceId: string,
+): boolean {
+	return Boolean(
+		object &&
+			object.workspaceId === workspaceId &&
+			object.type === 'task' &&
 			object.content?.trim(),
 	)
 }

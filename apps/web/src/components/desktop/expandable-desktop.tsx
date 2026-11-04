@@ -92,7 +92,7 @@ export function ExpandableDesktop({
 						<Minimize2 size={15} />
 					</Button>
 					{/* min-w-0: the dialog is a grid, and a grid item will not shrink below its
-					    content (the 1280px noVNC canvas) unless told it may. */}
+					    content (the 1600px noVNC canvas) unless told it may. */}
 					<div className="min-w-0 pt-6">
 						{settled ? (
 							<DesktopViewer

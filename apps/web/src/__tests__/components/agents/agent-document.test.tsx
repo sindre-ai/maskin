@@ -336,6 +336,24 @@ describe('AgentDocument — header actions', () => {
 		expect(deleteMutate).not.toHaveBeenCalled()
 	})
 
+	it('deletes in the background and navigates to the agents index straight away', async () => {
+		const user = userEvent.setup()
+		const workspaceId = '11111111-1111-4111-8111-111111111111'
+		const agent = buildActorResponse({ id: 'actor-del', name: 'Scout', type: 'agent' })
+		render(<AgentDocument agent={agent} />, {
+			wrapper: createWorkspaceWrapper({ id: workspaceId }),
+		})
+
+		await user.click(screen.getByLabelText('Delete agent'))
+		await user.click(screen.getByText('Confirm'))
+
+		expect(deleteMutate).toHaveBeenCalledWith({ id: 'actor-del', name: 'Scout' })
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: '/$workspaceId/agents',
+			params: { workspaceId },
+		})
+	})
+
 	it('cancels the reset confirmation without calling the mutation', async () => {
 		const user = userEvent.setup()
 		const agent = buildActorResponse({ type: 'agent', isSystem: true })

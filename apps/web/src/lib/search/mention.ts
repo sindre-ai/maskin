@@ -7,9 +7,6 @@ import { SEARCH_MAX_PARTICIPANTS } from '@maskin/shared'
 import { type SearchParts, addPill, pillValues } from './parts'
 import type { ParticipantOption } from './vocabulary'
 
-/** Feature flag id (registered in FLAGS in apps/dev/src/lib/feature-flags.ts). */
-export const PARTICIPANT_FILTER_FLAG = 'search-chat-participant-filter'
-
 export const MAX_MENU_ROWS = 8
 
 export interface Mention {

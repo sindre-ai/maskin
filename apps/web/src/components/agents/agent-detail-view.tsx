@@ -25,7 +25,7 @@ import { useActorSessions } from '@/hooks/use-sessions'
 import { useTriggers } from '@/hooks/use-triggers'
 import { type AgentTab, DEFAULT_AGENT_TAB, deriveAgentFocus } from '@/lib/agent-detail'
 import { deriveAgentStatus, groupSessionsByAgent } from '@/lib/agent-status'
-import type { ActorResponse } from '@/lib/api'
+import { type ActorResponse, ApiError } from '@/lib/api'
 import { backgroundTitle, buildBackgroundThreads } from '@/lib/session-thread'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
@@ -102,12 +102,11 @@ export function AgentDetailView({
 	)
 
 	const handleDelete = useCallback(() => {
-		deleteActor.mutate(agent.id, {
-			onSuccess: () => {
-				navigate({ to: '/$workspaceId/agents', params: { workspaceId } })
-			},
-		})
-	}, [agent.id, deleteActor, navigate, workspaceId])
+		// The delete runs on in the background (toast in useDeleteActor), so leave now.
+		setConfirmDelete(false)
+		deleteActor.mutate({ id: agent.id, name: agent.name })
+		navigate({ to: '/$workspaceId/agents', params: { workspaceId } })
+	}, [agent.id, agent.name, deleteActor, navigate, workspaceId])
 
 	// Message hands the person to the agent's chat and its own composer.
 	const message = useCallback(
@@ -133,7 +132,10 @@ export function AgentDetailView({
 				)
 			}
 			onPause={() =>
-				pause.mutate(agent.id, { onError: () => toast.error(`Couldn't disable ${agent.name}`) })
+				pause.mutate(agent.id, {
+					onError: (err) =>
+						toast.error(err instanceof ApiError ? err.message : `Couldn't disable ${agent.name}`),
+				})
 			}
 			isRunPending={run.isPending}
 			isPausePending={pause.isPending}

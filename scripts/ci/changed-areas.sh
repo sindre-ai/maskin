@@ -4,6 +4,9 @@
 # Reads changed file paths on stdin (one per line) and prints, for $GITHUB_OUTPUT:
 #   backend=true|false   integration tests (apps/dev against real Postgres)
 #   e2e=true|false       Playwright specs (whole stack: web + dev + db)
+#   apple=true|false     inputs of the Apple drift checks that are not backend code: the Apple app,
+#                        its workflow, and the design tokens/CSS that Tokens.swift is generated from.
+#                        ci.yml runs the drift job when this OR backend is true.
 #
 # The rule is deliberately conservative: a path is only allowed to skip a job when it is
 # listed below as unable to affect it. Anything unknown, and an empty list (the diff could
@@ -14,11 +17,17 @@ set -euo pipefail
 
 backend=false
 e2e=false
+apple=false
 seen=false
 
 while IFS= read -r path || [ -n "$path" ]; do
 	[ -z "$path" ] && continue
 	seen=true
+	case "$path" in
+	apps/apple/* | .github/workflows/apple.yml | .claude/skills/maskin-design/tokens/* | apps/web/src/app.css)
+		apple=true
+		;;
+	esac
 	case "$path" in
 	# Cannot affect either suite: docs, other apps with their own workflows, repo chores.
 	*.md | docs/* | observability/* | apps/apple/* | bet-notes/* | .claude/* | LICENSE | \
@@ -40,7 +49,9 @@ done
 if [ "$seen" = false ]; then
 	backend=true
 	e2e=true
+	apple=true
 fi
 
 echo "backend=$backend"
 echo "e2e=$e2e"
+echo "apple=$apple"

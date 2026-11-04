@@ -1,4 +1,6 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderHook, waitFor } from '@testing-library/react'
+import { type ReactNode, createElement } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/api', () => ({
@@ -11,6 +13,7 @@ vi.mock('@/lib/api', () => ({
 			reset: vi.fn(),
 			pause: vi.fn(),
 			run: vi.fn(),
+			delete: vi.fn(),
 		},
 	},
 }))
@@ -19,6 +22,7 @@ vi.mock('sonner', () => ({
 	toast: {
 		success: vi.fn(),
 		error: vi.fn(),
+		loading: vi.fn(),
 	},
 }))
 
@@ -29,11 +33,13 @@ import {
 	useAgentPause,
 	useAgentRun,
 	useCreateActor,
+	useDeleteActor,
 	useResetActor,
 	useUpdateActor,
 } from '@/hooks/use-actors'
 import type { ActorListItem, ActorResponse, ActorWithKey } from '@/lib/api'
 import { api } from '@/lib/api'
+import { queryKeys } from '@/lib/query-keys'
 import { toast } from 'sonner'
 import { TestWrapper } from '../setup'
 
@@ -196,6 +202,88 @@ describe('useUpdateActor', () => {
 		result.current.mutate({ id: 'actor-1', data: { name: 'Nope' } })
 		await waitFor(() => expect(result.current.isError).toBe(true))
 		expect(result.current.error?.message).toBe('Not found')
+	})
+})
+
+describe('useDeleteActor', () => {
+	const keep = buildActorListItem({ id: 'keep', name: 'Keeper' })
+	const doomed = buildActorListItem({ id: 'doomed', name: 'Planner' })
+
+	function setup() {
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+		queryClient.setQueryData(queryKeys.actors.all(workspaceId), [keep, doomed])
+		const wrapper = ({ children }: { children: ReactNode }) =>
+			createElement(QueryClientProvider, { client: queryClient }, children)
+		const hook = renderHook(() => useDeleteActor(workspaceId), { wrapper })
+		return { queryClient, hook }
+	}
+
+	it('shows a loading toast, drops the agent from the list, then swaps in a success toast', async () => {
+		let finish: (v: { deleted: boolean }) => void = () => {}
+		vi.mocked(api.actors.delete).mockReturnValue(
+			new Promise((resolve) => {
+				finish = resolve
+			}),
+		)
+		vi.mocked(api.actors.list).mockResolvedValue([keep])
+		const { queryClient, hook } = setup()
+
+		hook.result.current.mutate({ id: 'doomed', name: 'Planner' })
+
+		await waitFor(() =>
+			expect(toast.loading).toHaveBeenCalledWith('Deleting Planner...', {
+				id: 'delete-actor-doomed',
+			}),
+		)
+		await waitFor(() =>
+			expect(queryClient.getQueryData(queryKeys.actors.all(workspaceId))).toEqual([keep]),
+		)
+		expect(toast.success).not.toHaveBeenCalled()
+
+		finish({ deleted: true })
+		await waitFor(() => expect(hook.result.current.isSuccess).toBe(true))
+		expect(api.actors.delete).toHaveBeenCalledWith('doomed', workspaceId)
+		expect(toast.success).toHaveBeenCalledWith('Deleted Planner', { id: 'delete-actor-doomed' })
+	})
+
+	it('says the agent was not deleted and brings it back when the delete fails', async () => {
+		vi.mocked(api.actors.delete).mockRejectedValue(new Error('Server error'))
+		vi.mocked(api.actors.list).mockResolvedValue([keep, doomed])
+		const { queryClient, hook } = setup()
+
+		hook.result.current.mutate({ id: 'doomed', name: 'Planner' })
+
+		await waitFor(() =>
+			expect(toast.error).toHaveBeenCalledWith('Planner was not deleted', {
+				id: 'delete-actor-doomed',
+			}),
+		)
+		expect(queryClient.getQueryData(queryKeys.actors.all(workspaceId))).toEqual([keep, doomed])
+		expect(toast.success).not.toHaveBeenCalled()
+	})
+
+	it('restores the previous list when the error refetch also fails', async () => {
+		vi.mocked(api.actors.delete).mockRejectedValue(new Error('Offline'))
+		vi.mocked(api.actors.list).mockRejectedValue(new Error('Offline'))
+		const { queryClient, hook } = setup()
+
+		hook.result.current.mutate({ id: 'doomed', name: 'Planner' })
+
+		await waitFor(() => expect(toast.error).toHaveBeenCalled())
+		expect(queryClient.getQueryData(queryKeys.actors.all(workspaceId))).toEqual([keep, doomed])
+	})
+
+	it('reports success when the request errors but the server finished the delete', async () => {
+		vi.mocked(api.actors.delete).mockRejectedValue(new Error('504 Gateway Timeout'))
+		vi.mocked(api.actors.list).mockResolvedValue([keep])
+		const { hook } = setup()
+
+		hook.result.current.mutate({ id: 'doomed', name: 'Planner' })
+
+		await waitFor(() =>
+			expect(toast.success).toHaveBeenCalledWith('Deleted Planner', { id: 'delete-actor-doomed' }),
+		)
+		expect(toast.error).not.toHaveBeenCalled()
 	})
 })
 

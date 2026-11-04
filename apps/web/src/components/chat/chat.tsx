@@ -738,6 +738,15 @@ export function Composer({
 		recording: dictation.recording,
 		transcribing: dictation.transcribing,
 	})
+	// Say why Send is off when an upload is the only thing in the way (a failed
+	// one has to be removed, a running one has to finish).
+	const failedUploads = pendingUploads.filter((p) => p.status === 'failed').length
+	const uploadBlockReason =
+		failedUploads > 0
+			? `Remove the failed upload${failedUploads === 1 ? '' : 's'} to send`
+			: pendingUploads.length > 0
+				? `Waiting for ${pendingUploads.length} upload${pendingUploads.length === 1 ? '' : 's'} to finish`
+				: null
 
 	// Text over the cap is uploaded whole as a .txt file and the message carries a short body.
 	// An upload that fails rejects, so the caller's catch keeps the draft in the box.
@@ -1378,6 +1387,9 @@ export function Composer({
 						</li>
 					))}
 				</ul>
+			)}
+			{uploadBlockReason && (
+				<output className="block px-1 text-xs text-muted-foreground">{uploadBlockReason}</output>
 			)}
 			<input
 				ref={fileInputRef}

@@ -13,6 +13,7 @@ import { useMediaQuery } from '@/hooks/use-media-query'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { usePersistedSidebarOpen } from '@/hooks/use-persisted-sidebar-open'
 import { useSSE } from '@/hooks/use-sse'
+import { useSweepBrowserNotifications } from '@/hooks/use-sweep-browser-notifications'
 import { useWorkspaces } from '@/hooks/use-workspaces'
 import { trackAppActive } from '@/lib/analytics'
 import { api } from '@/lib/api'
@@ -53,6 +54,7 @@ function WorkspaceLayout() {
 
 	// Connect SSE for real-time updates
 	const sseStatus = useSSE(workspaceId)
+	useSweepBrowserNotifications(workspaceId)
 
 	const workspace = useMemo(
 		() => workspaces?.find((w) => w.id === workspaceId),

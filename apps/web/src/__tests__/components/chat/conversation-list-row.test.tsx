@@ -29,6 +29,7 @@ function buildConversation(
 		snippet: 'The retry window is still open on three accounts.',
 		snippet_actor_id: null,
 		snippet_actor_name: null,
+		working_actor_ids: [],
 		participants: [
 			{
 				actorId: 'me',
@@ -174,5 +175,36 @@ describe('ConversationListRow', () => {
 	it('falls back to a placeholder when the conversation has no messages', () => {
 		renderRow(buildConversation({ snippet: null }))
 		expect(screen.getByText('No messages yet')).toBeInTheDocument()
+	})
+
+	it('shows the agent as working while its turn is open and it has not answered yet', () => {
+		renderRow(buildConversation({ working_actor_ids: ['agent-1'], snippet_actor_id: 'me' }))
+		expect(screen.getByText('Billing Agent is working…')).toBeInTheDocument()
+		expect(screen.queryByText(/retry window/)).not.toBeInTheDocument()
+	})
+
+	it('shows what the agent last sent, not "working", while its session is still live', () => {
+		renderRow(
+			buildConversation({
+				working_actor_ids: ['agent-1'],
+				snippet_actor_id: 'agent-1',
+				snippet_actor_name: 'Billing Agent',
+				snippet: 'Found where the tile gets its count. Reading how the sidebar uses it.',
+			}),
+		)
+		expect(screen.queryByText(/is working/)).not.toBeInTheDocument()
+		expect(screen.getByText('Billing Agent:')).toBeInTheDocument()
+		expect(screen.getByText(/Found where the tile gets its count/)).toBeInTheDocument()
+	})
+
+	it('shows no spinner on the working preview', () => {
+		renderRow(buildConversation({ working_actor_ids: ['agent-1'], snippet_actor_id: 'me' }))
+		expect(screen.queryByText('Loading')).not.toBeInTheDocument()
+	})
+
+	it('goes back to the last message once the agent is no longer working', () => {
+		renderRow(buildConversation({ working_actor_ids: [] }))
+		expect(screen.queryByText(/is working/)).not.toBeInTheDocument()
+		expect(screen.getByText(/retry window/)).toBeInTheDocument()
 	})
 })

@@ -39,6 +39,18 @@ public enum ChatPreviewText {
 
 	public static func plain(_ markdown: String) -> String { render(markdown, addressToken: nil) }
 
+	/// The message as it reads, for selecting words: `plain` line by line, so paragraphs and list items
+	/// stay on their own lines and a copied word carries no markup. Blank runs shrink to one blank line.
+	public static func selectable(_ markdown: String) -> String {
+		let lines = markdown.components(separatedBy: "\n").map { plain($0) }
+		var out: [String] = []
+		for line in lines {
+			if line.isEmpty, out.last?.isEmpty ?? true { continue }
+			out.append(line)
+		}
+		return out.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+	}
+
 	/// A run of the chat list line. `isLink` runs are the word "link" standing in for a bare address.
 	public struct Piece: Equatable, Sendable {
 		public var text: String

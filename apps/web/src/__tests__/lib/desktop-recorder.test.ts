@@ -72,7 +72,7 @@ function setup(
 ) {
 	const target = document.createElement('div')
 	const canvas = document.createElement('canvas')
-	// Displayed at half size: a 640x360 box standing in for the 1280x720 desktop.
+	// Displayed smaller: a 640x360 box standing in for the 1600x900 desktop.
 	canvas.getBoundingClientRect = () =>
 		({
 			left: 100,
@@ -113,14 +113,14 @@ describe('DesktopRecorder', () => {
 		recorder.start()
 		now += 1500
 
-		press(canvas) // (420-100)/640 -> 0.5 of 1280 = 640, (230-50)/360 -> 0.5 of 720 = 360
+		press(canvas) // (420-100)/640 -> 0.5 of 1600 = 800, (230-50)/360 -> 0.5 of 900 = 450
 
 		const demo = await recorder.stop()
 		expect(demo.events).toHaveLength(1)
 		expect(demo.events[0]).toMatchObject({
 			type: 'click',
-			x: 640,
-			y: 360,
+			x: 800,
+			y: 450,
 			button: 'left',
 			double: false,
 			t_ms: 1500,

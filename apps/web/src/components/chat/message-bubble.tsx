@@ -11,7 +11,6 @@ import {
 	useOtherWorkspaceLabel,
 } from '@/components/chat/linked-object-reference'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
-import { AttachedFileCard } from '@/components/shared/attached-file-card'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { ObjectReference } from '@/components/shared/object-reference'
 import { RelativeTime } from '@/components/shared/relative-time'
@@ -19,7 +18,6 @@ import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { useActors } from '@/hooks/use-actors'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useConversation, useEditMessage, useRetryMessage } from '@/hooks/use-conversation'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useFiles } from '@/hooks/use-files'
 import { useFitTextWidth } from '@/hooks/use-fit-text-width'
 import { useLinkedChat } from '@/hooks/use-linked-chat'
@@ -168,8 +166,6 @@ export function MessageBubble({
 		wasEditing.current = editing
 	}, [editing])
 	const retryMessage = useRetryMessage(message.conversationId, workspaceId)
-	// The one read of this flag: files and images lift out of the text bubble when it is on.
-	const attachmentsLifted = useFeatureFlag('chat-attachments-lifted')
 	const attachments = message.metadata?.attachments ?? []
 	// Resolve the file record for each attachment so the bubble renders the real
 	// filename — the metadata `name` is best-effort and older / MCP-posted
@@ -255,7 +251,7 @@ export function MessageBubble({
 	}
 
 	const liftedAttachments =
-		attachmentsLifted && attachments.length > 0 ? (
+		attachments.length > 0 ? (
 			<MessageAttachments
 				workspaceId={workspaceId}
 				align={isOwn ? 'end' : 'start'}
@@ -274,31 +270,9 @@ export function MessageBubble({
 			/>
 		) : null
 
-	const fileList =
-		!attachmentsLifted && attachments.length > 0 ? (
-			<ul className="flex flex-col gap-1" aria-label="Attached files">
-				{attachments.map((f) => {
-					const resolved = filesById.get(f.file_id)
-					return (
-						<li key={f.file_id}>
-							<AttachedFileCard
-								workspaceId={workspaceId}
-								file={{
-									id: f.file_id,
-									name: resolved?.name ?? f.name ?? 'Attachment',
-									sizeBytes: resolved?.sizeBytes ?? f.size_bytes ?? 0,
-									mimeType: resolved?.mimeType ?? f.mime_type,
-								}}
-							/>
-						</li>
-					)
-				})}
-			</ul>
-		) : null
-
 	if (isOwn) {
 		// A message that is only attachments has no bubble.
-		const hasPlate = !attachmentsLifted || editing || message.content.length > 0
+		const hasPlate = editing || message.content.length > 0
 		const startEditing = () => {
 			editMessage.reset()
 			setEditing(true)
@@ -313,8 +287,8 @@ export function MessageBubble({
 			<div
 				className={cn(
 					'flex flex-col items-end',
-					// Lifted attachments stack 4px above the text bubble.
-					attachmentsLifted ? 'gap-1' : 'gap-1.5',
+					// Attachments stack 4px above the text bubble.
+					'gap-1',
 					editing && 'w-full',
 				)}
 			>
@@ -384,7 +358,6 @@ export function MessageBubble({
 												: 'flex flex-col gap-1.5 rounded-2xl bg-secondary px-3.5 py-[9px] text-[15px] leading-[1.4] text-foreground'
 									}
 								>
-									{fileList}
 									{editing ? (
 										<EditMessageCard
 											workspaceId={workspaceId}
@@ -535,9 +508,7 @@ export function MessageBubble({
 					{isVoice ? <VoiceMessageMetaTag /> : null}
 				</div>
 				{activity ? <div className="mt-0.5">{activity}</div> : null}
-				{(liftedAttachments ?? fileList) ? (
-					<div className="mt-1.5">{liftedAttachments ?? fileList}</div>
-				) : null}
+				{liftedAttachments ? <div className="mt-1.5">{liftedAttachments}</div> : null}
 				{message.content.length > 0 ? (
 					<div className="mt-0.5 text-base leading-[1.45] [&_li]:text-foreground [&_p]:text-base [&_p]:leading-[1.45] [&_p]:text-foreground">
 						{/* `renderVisuals` turns a ```chart fenced block into the bounded

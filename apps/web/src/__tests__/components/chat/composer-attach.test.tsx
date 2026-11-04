@@ -1,6 +1,6 @@
 import { Composer, nameClipboardImage } from '@/components/chat/chat'
 import { EMPTY_CHAT_SELECTION } from '@/lib/chat-selection'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createWorkspaceWrapper } from '../../setup'
@@ -288,5 +288,52 @@ describe('Composer text over the message cap', () => {
 
 		await waitFor(() => expect(props.onSend).toHaveBeenCalledWith(longText.trim()))
 		expect(uploadFileMock).not.toHaveBeenCalled()
+	})
+})
+
+describe('Composer upload state', () => {
+	function pickFile(container: HTMLElement) {
+		const file = new File(['%PDF-1.4 hello'], 'report.pdf', { type: 'application/pdf' })
+		fireEvent.change(getFileInput(container), { target: { files: [file] } })
+	}
+
+	it('shows Preparing, then a percentage after a progress event, and says why Send is off', async () => {
+		uploadFileMock.mockReset()
+		let report: (p: number) => void = () => {}
+		uploadFileMock.mockImplementationOnce(
+			(_input: unknown, opts: { onProgress: (p: number) => void }) => {
+				report = opts.onProgress
+				return new Promise(() => {})
+			},
+		)
+		const { container } = renderComposer()
+		fireEvent.change(screen.getByRole('textbox'), { target: { value: 'hello' } })
+		pickFile(container)
+
+		expect(await screen.findByText('Preparing…')).toBeInTheDocument()
+		expect(screen.getByText('Waiting for 1 upload to finish')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
+
+		await waitFor(() => expect(uploadFileMock).toHaveBeenCalledTimes(1))
+		act(() => report(0.42))
+		expect(await screen.findByText('42%')).toBeInTheDocument()
+		expect(screen.queryByText('Preparing…')).not.toBeInTheDocument()
+		expect(screen.getByText('Waiting for 1 upload to finish')).toBeInTheDocument()
+	})
+
+	it('says a failed upload must be removed, and clears the reason once it is', async () => {
+		uploadFileMock.mockReset()
+		uploadFileMock.mockRejectedValueOnce(new Error('Storage is down'))
+		const { container } = renderComposer()
+		fireEvent.change(screen.getByRole('textbox'), { target: { value: 'hello' } })
+		pickFile(container)
+
+		expect(await screen.findByText('Storage is down')).toBeInTheDocument()
+		expect(screen.getByText('Remove the failed upload to send')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
+
+		fireEvent.click(screen.getByRole('button', { name: 'Remove failed upload report.pdf' }))
+		expect(screen.queryByText('Remove the failed upload to send')).not.toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled()
 	})
 })

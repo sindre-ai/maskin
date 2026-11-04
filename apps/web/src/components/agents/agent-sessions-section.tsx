@@ -15,7 +15,7 @@ import {
 	useStopSession,
 } from '@/hooks/use-sessions'
 import { useTriggers } from '@/hooks/use-triggers'
-import type { ActorResponse, SessionResponse } from '@/lib/api'
+import { type ActorResponse, ApiError, type SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { formatDurationCoarse } from '@/lib/format-duration'
 import { backgroundTitle, buildBackgroundThreads } from '@/lib/session-thread'
@@ -195,6 +195,7 @@ export function AgentSessionsSection({
 		const rows = buildBackgroundThreads(sessions ?? [], agent.name).map((thread) => ({
 			thread,
 			root: (sessions ?? []).find((s) => s.id === thread.id) as SessionResponse,
+			latest: (sessions ?? []).find((s) => s.id === thread.latestId),
 		}))
 		return rows.sort((a, b) =>
 			sortSessions(
@@ -286,10 +287,11 @@ export function AgentSessionsSection({
 				<p className="py-4 text-center text-sm text-muted-foreground">No sessions in that state.</p>
 			) : (
 				<ul className="flex flex-col border-t border-border">
-					{shownSessions.map(({ thread, root }) => (
+					{shownSessions.map(({ thread, root, latest }) => (
 						<li key={thread.id}>
 							<SessionCard
 								session={root}
+								latest={latest ?? root}
 								thread={thread}
 								title={backgroundTitle(
 									root.triggerId ? triggerNames.get(root.triggerId) : undefined,
@@ -345,6 +347,7 @@ const COMPACT_LABEL: Record<SessionState, string> = {
 
 function SessionCard({
 	session,
+	latest,
 	thread,
 	title,
 	agent,
@@ -354,6 +357,8 @@ function SessionCard({
 }: {
 	/** The run the thread started with: its trigger, prompt and snapshot. */
 	session: SessionResponse
+	/** The thread's newest run: the one Pause and Resume act on. */
+	latest: SessionResponse
 	/** The run and every follow-up after it; its status is the newest session's. */
 	thread: ConversationThread
 	/** What the row is called: the trigger's name. */
@@ -383,9 +388,16 @@ function SessionCard({
 	// exactly what `useCreateSession` does. It carries the trigger too, so the new
 	// run keeps the trigger's name as its title.
 	const prompt = session.actionPrompt?.trim() ?? ''
+	// A run on an agent server cannot be paused (snapshots are local-only), so a live one offers
+	// Restart beside Stop: the only way to start it over.
+	const runsOnAgentServer = thread.status === 'running' && !!latest.agentServerId
 	const canRestart =
 		prompt.length > 0 &&
-		(state === 'paused' || state === 'waiting' || state === 'failed' || state === 'stopped')
+		(runsOnAgentServer ||
+			state === 'paused' ||
+			state === 'waiting' ||
+			state === 'failed' ||
+			state === 'stopped')
 
 	const handleRestart = () =>
 		createSession.mutate(
@@ -405,8 +417,9 @@ function SessionCard({
 	// Mockup 2443's `s.b1`. The backend refuses anything but an exactly-running
 	// session for pause, and a paused session needs a snapshot to restore from —
 	// so the button only appears where the write path can actually succeed
-	// (apps/dev/src/services/session-manager.ts:896 / :1049).
-	const canPause = thread.status === 'running'
+	// (apps/dev/src/services/session-manager.ts:896 / :1049). A session on an agent
+	// server is refused too: snapshot and resume are local-only.
+	const canPause = thread.status === 'running' && !latest.agentServerId
 	const canResume = state === 'paused' && thread.latestId === session.id && !!session.snapshotPath
 	const isPauseResumePending = pauseSession.isPending || resumeSession.isPending
 
@@ -415,7 +428,8 @@ function SessionCard({
 			pauseSession.mutate(thread.latestId, {
 				onSuccess: () => toast.success('Session paused'),
 				onError: (err) => {
-					if (!isViewerRefusal(err)) toast.error("Couldn't pause this session")
+					if (!isViewerRefusal(err))
+						toast.error(err instanceof ApiError ? err.message : "Couldn't pause this session")
 				},
 			})
 			return
@@ -468,7 +482,13 @@ function SessionCard({
 			>
 				<RotateCcw size={12} aria-hidden />
 				<span className="sr-only md:not-sr-only">
-					{createSession.isPending ? 'Retrying…' : 'Retry'}
+					{runsOnAgentServer
+						? createSession.isPending
+							? 'Restarting…'
+							: 'Restart'
+						: createSession.isPending
+							? 'Retrying…'
+							: 'Retry'}
 				</span>
 			</Button>
 		</ViewerTooltip>
@@ -547,7 +567,7 @@ function SessionCard({
 				{label}
 			</button>
 			{(canPause || canResume) && <span className="shrink-0">{pauseResumeButton}</span>}
-			{canPause && <span className="shrink-0">{stopButton}</span>}
+			{thread.status === 'running' && <span className="shrink-0">{stopButton}</span>}
 			{canRestart && <span className="shrink-0">{restartButton}</span>}
 			<button
 				type="button"

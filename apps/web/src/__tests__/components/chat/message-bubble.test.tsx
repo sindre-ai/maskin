@@ -103,11 +103,6 @@ vi.mock('@/hooks/use-files', () => ({
 	}),
 }))
 
-const flagState = vi.hoisted(() => ({ lifted: false }))
-vi.mock('@/hooks/use-feature-flag', () => ({
-	useFeatureFlag: (id: string) => id === 'chat-attachments-lifted' && flagState.lifted,
-}))
-
 import { MessageBubble } from '@/components/chat/message-bubble'
 
 function buildMessage(overrides: Partial<MessageResponse> = {}): MessageResponse {
@@ -454,11 +449,9 @@ describe('MessageBubble', () => {
 
 describe('MessageBubble — lifted attachments', () => {
 	beforeEach(() => {
-		flagState.lifted = true
 		mockUseFiles.mockReturnValue({ data: [fileRow(image), fileRow(pdf)] })
 	})
 	afterEach(() => {
-		flagState.lifted = false
 		mockUseFiles.mockReturnValue({ data: [] })
 	})
 
@@ -521,19 +514,6 @@ describe('MessageBubble — lifted attachments', () => {
 		renderBubble(ownMessage({ content: '', metadata: { attachments: [pdf] } }))
 		expect(screen.getByText('File no longer available')).toBeInTheDocument()
 		expect(screen.queryByRole('link', { name: 'Open review.pdf' })).not.toBeInTheDocument()
-	})
-
-	it('keeps the files inside the bubble while the flag is off', () => {
-		flagState.lifted = false
-		const { container } = renderBubble(
-			ownMessage({
-				content: 'Read page 4 first.',
-				metadata: { attachments: [pdf] },
-			}),
-		)
-		expect(container.querySelector('.bg-secondary')).toContainElement(
-			screen.getByText('review.pdf'),
-		)
 	})
 })
 
@@ -690,7 +670,6 @@ describe('MessageBubble — own bubble fits its text', () => {
 	afterEach(() => {
 		Range.prototype.getClientRects = originalRects
 		HTMLElement.prototype.getBoundingClientRect = originalBox
-		flagState.lifted = false
 	})
 
 	const own = (overrides: Partial<MessageResponse> = {}) =>
@@ -705,7 +684,6 @@ describe('MessageBubble — own bubble fits its text', () => {
 	})
 
 	it('keeps lifted attachments as wide as the bubble, and not narrower than the minimum', () => {
-		flagState.lifted = true
 		Range.prototype.getClientRects = () =>
 			[{ left: 0, right: 40, width: 40 }] as unknown as DOMRectList
 		const { container } = renderBubble(

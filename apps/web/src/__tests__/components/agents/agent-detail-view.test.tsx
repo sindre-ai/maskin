@@ -1,11 +1,14 @@
 import { AgentDetailView } from '@/components/agents/agent-detail-view'
+import { ApiError } from '@/lib/api'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildActorResponse, buildSessionResponse } from '../../factories'
 import { createWorkspaceWrapper } from '../../setup'
 
 const deleteMutate = vi.fn()
+const pauseMutate = vi.fn()
 const navigateMock = vi.fn()
 
 vi.mock('@/hooks/use-actors', async (importOriginal) => ({
@@ -13,8 +16,10 @@ vi.mock('@/hooks/use-actors', async (importOriginal) => ({
 	useDeleteActor: () => ({ mutate: deleteMutate, isPending: false }),
 	useUpdateActor: () => ({ mutate: vi.fn(), isPending: false }),
 	useAgentRun: () => ({ mutate: vi.fn(), isPending: false }),
-	useAgentPause: () => ({ mutate: vi.fn(), isPending: false }),
+	useAgentPause: () => ({ mutate: pauseMutate, isPending: false }),
 }))
+
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 const sessionsMock = vi.hoisted(() => ({ data: [] as unknown[] }))
 const createSessionMutate = vi.hoisted(() => vi.fn())
@@ -76,6 +81,8 @@ beforeEach(() => {
 	sessionsMock.data = []
 	createSessionMutate.mockReset()
 	deleteMutate.mockReset()
+	pauseMutate.mockReset()
+	vi.mocked(toast.error).mockClear()
 	navigateMock.mockReset()
 })
 
@@ -103,10 +110,10 @@ describe('AgentDetailView delete action', () => {
 		await user.click(screen.getByRole('button', { name: 'Confirm' }))
 
 		expect(deleteMutate).toHaveBeenCalledTimes(1)
-		expect(deleteMutate.mock.calls[0][0]).toBe('agent-2')
+		expect(deleteMutate.mock.calls[0][0]).toEqual({ id: 'agent-2', name: 'Planner' })
 	})
 
-	it('navigates back to the agents index once the delete resolves', async () => {
+	it('closes the confirm and navigates to the agents index right away, without waiting for the delete', async () => {
 		const user = userEvent.setup()
 		const workspaceId = '11111111-1111-4111-8111-111111111111'
 		const agent = buildActorResponse({ id: 'agent-3', type: 'agent', name: 'Planner' })
@@ -117,13 +124,13 @@ describe('AgentDetailView delete action', () => {
 		await user.click(screen.getByRole('button', { name: 'Delete agent' }))
 		await user.click(screen.getByRole('button', { name: 'Confirm' }))
 
+		// deleteMutate never calls back, so this navigation is not tied to onSuccess.
 		expect(deleteMutate).toHaveBeenCalledTimes(1)
-		const options = deleteMutate.mock.calls[0][1]
-		options.onSuccess?.()
 		expect(navigateMock).toHaveBeenCalledWith({
 			to: '/$workspaceId/agents',
 			params: { workspaceId },
 		})
+		expect(screen.queryByText('Delete this agent?')).toBeNull()
 	})
 
 	it('cancels back to the trash icon without firing the mutation', async () => {
@@ -330,5 +337,33 @@ describe('AgentDetailView tabs and status', () => {
 			wrapper: createWorkspaceWrapper({}, { renderPageHeader: true }),
 		})
 		expect(screen.getByRole('tab', { name: 'Setup' })).toHaveAttribute('aria-selected', 'true')
+	})
+})
+
+describe('AgentDetailView disable action', () => {
+	it('shows the reason the server gave when disabling fails', async () => {
+		const user = userEvent.setup()
+		const agent = buildActorResponse({ id: 'agent-3', type: 'agent', name: 'Planner' })
+		pauseMutate.mockImplementation((_id, opts) =>
+			opts.onError(new ApiError(400, 'Agent is already paused')),
+		)
+		render(<AgentDetailView agent={agent} />, {
+			wrapper: createWorkspaceWrapper({}, { renderPageHeader: true }),
+		})
+
+		await user.click(screen.getByRole('button', { name: 'Disable agent' }))
+		expect(toast.error).toHaveBeenCalledWith('Agent is already paused')
+	})
+
+	it('falls back to the generic line when the error has no server message', async () => {
+		const user = userEvent.setup()
+		const agent = buildActorResponse({ id: 'agent-4', type: 'agent', name: 'Planner' })
+		pauseMutate.mockImplementation((_id, opts) => opts.onError(new Error('boom')))
+		render(<AgentDetailView agent={agent} />, {
+			wrapper: createWorkspaceWrapper({}, { renderPageHeader: true }),
+		})
+
+		await user.click(screen.getByRole('button', { name: 'Disable agent' }))
+		expect(toast.error).toHaveBeenCalledWith("Couldn't disable Planner")
 	})
 })

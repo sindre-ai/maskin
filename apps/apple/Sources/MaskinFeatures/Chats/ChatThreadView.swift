@@ -85,6 +85,7 @@ struct ChatThreadView: View {
 	/// The thread open on top of this chat (a pushed screen).
 	@State private var threadRoute: ThreadRoute?
 	@State private var showingLinked = false
+	@State private var selectingText: ChatMessage?
 	@State private var searching = false
 	@State private var searchText = ""
 	@State private var matchIndex: Int?
@@ -200,6 +201,7 @@ struct ChatThreadView: View {
 				// Arrow-only back button (user decision). The thread pushes the flow and the agent page.
 				.backChevronOnly()
 				.task { await runtime?.mentionRoster()?.load() }
+				.task { runtime?.chatOpened(store.conversationID) }
 				.onAppear { liveCalls?.visibleConversationID = store.conversationID }
 				.task {
 					// Drafts are per conversation: restored here, saved on every keystroke.
@@ -251,6 +253,9 @@ struct ChatThreadView: View {
 							chatAgentIDs: Set(store.participants.filter { $0.kind == .agent }.map(\.id)),
 							onRemove: { composer.text = $0 }, onVaulted: { composer.text = $0 })
 					}
+				}
+				.sheet(item: $selectingText) { message in
+					SelectTextSheet(text: ChatPreviewText.selectable(message.content))
 				}
 				.sheet(isPresented: $showingLinked) {
 					LinkedSheet(
@@ -556,6 +561,7 @@ struct ChatThreadView: View {
 			onOpenThread: { message in
 				if let route = ThreadRoute.opening(message) { threadRoute = route }
 			},
+			onSelectText: { selectingText = $0 },
 			matchIDs: matchSet,
 			currentMatchID: currentMatchID, call: call)
 		Color.clear.frame(height: 1).id(Self.bottomID)
@@ -1016,6 +1022,8 @@ struct ThreadTranscript: View {
 	var onJumpToMessage: (String) -> Void = { _ in }
 	/// Opens the thread under a message (the pill, or Reply in thread).
 	var onOpenThread: (ChatMessage) -> Void = { _ in }
+	/// Opens the message's text in the select-words sheet.
+	var onSelectText: (ChatMessage) -> Void = { _ in }
 	var matchIDs: Set<String> = []
 	var currentMatchID: String?
 	/// The call running in this thread: its card shows what you are saying as you say it.
@@ -1154,6 +1162,7 @@ struct ThreadTranscript: View {
 				Clipboard.copy(message.content)
 				MaskinHaptics.play(.selection)
 			}
+			actions.onSelectText = { onSelectText(message) }
 		}
 		if message.serverID != nil, message.kind == "message", !message.isFailed {
 			actions.reacted = Set(message.reactions.filter(\.reactedByMe).map(\.emoji))

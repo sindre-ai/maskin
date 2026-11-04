@@ -41,6 +41,7 @@ function buildConversation(
 		snippet: 'Still open on three accounts.',
 		snippet_actor_id: null,
 		snippet_actor_name: null,
+		working_actor_ids: [],
 		participants: [],
 		...overrides,
 	}

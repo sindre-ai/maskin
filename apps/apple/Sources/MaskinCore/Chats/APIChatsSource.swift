@@ -83,7 +83,7 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 			guard !value.isEmpty else { return nil }
 			return try JSONDecoder().decode(InitialMetadata.self, from: JSONEncoder().encode(value))
 		}
-		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let output = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.post_sol_api_sol_conversations(
 				.init(
 					headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),
@@ -341,7 +341,7 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 			// generated payload type decodes it without a field-by-field copy.
 			return try JSONDecoder().decode(Metadata.self, from: JSONEncoder().encode(value))
 		}
-		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let output = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages(
 				.init(
 					path: .init(id: conversationID),
