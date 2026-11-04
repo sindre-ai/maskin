@@ -15,7 +15,6 @@ import {
 	type GroupChatRoutingTrigger,
 	trackGroupChatMessageRouted,
 } from '../lib/analytics/group-chat-routing-events'
-import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
 import { logger } from '../lib/logger'
 import { loadSiblingSessionsNote, loadThreadSeed, takeSessionDigests } from './chat-session-context'
 import { insertConversationMessage } from './conversation-messages'
@@ -32,7 +31,7 @@ const MAX_CONSECUTIVE_AGENT_REPLIES = 5
 const LOOKBACK_LIMIT = 50
 const HISTORY_CONTEXT_MESSAGES = 15
 // Thread sessions one agent may have live in one chat, next to its main-chat session. A thread
-// message past this falls back to the single-session path.
+// message past this falls back to the main-chat session.
 const MAX_THREAD_SESSIONS_PER_AGENT = 3
 
 /**
@@ -659,9 +658,8 @@ function wakeReasonForRule(
  * Shared by the responder (a turn for a message just posted) and a chat card's approve or
  * status change, which tells the agent without posting a message (see chat-card-wake.ts).
  *
- * A message in a thread, from a person who has the thread-sessions flag, goes to a session of its
- * own for that thread (see pickSessionThread); everything else goes to the agent's one main-chat
- * session, as before.
+ * A message in a thread, from a person, goes to a session of its own for that thread (see
+ * pickSessionThread); everything else goes to the agent's one main-chat session.
  */
 export async function deliverTurnToAgent(params: {
 	db: Database
@@ -733,7 +731,7 @@ export async function deliverTurnToAgent(params: {
 		// The agent's session is still booting (pending/starting/queued) —
 		// its stdin isn't attached yet, so a writeInput would fail and a
 		// second createSession would lose to sessions_conversation_actor_
-		// active_uniq. Buffer the turn; drainPendingConversationTurns
+		// thread_active_uniq. Buffer the turn; drainPendingConversationTurns
 		// delivers it once the session comes up.
 		await bufferPendingTurn(db, {
 			conversationId,
@@ -798,15 +796,14 @@ export async function deliverTurnToAgent(params: {
 }
 
 /**
- * The thread whose own session should take this turn, or null for the single-session path (the
- * agent's one main-chat session). This is the one read of the thread-sessions flag.
+ * The thread whose own session should take this turn, or null for the main-chat session.
  *
  * A thread gets its own session only when the message is in a thread and was written by a person
- * who has the flag (never judged by the agent), and then: a live session for that thread is
- * reused as is, otherwise a new one starts unless the agent already has
- * MAX_THREAD_SESSIONS_PER_AGENT thread sessions in this chat or the workspace has no chat
- * capacity. In those two cases the turn falls back to the single-session path rather than
- * queueing, because a queued thread reply is slower than the main session answering it.
+ * (never judged by the agent), and then: a live session for that thread is reused as is,
+ * otherwise a new one starts unless the agent already has MAX_THREAD_SESSIONS_PER_AGENT thread
+ * sessions in this chat or the workspace has no chat capacity. In those two cases the turn falls
+ * back to the main-chat session rather than queueing, because a queued thread reply is slower
+ * than the main session answering it.
  */
 async function pickSessionThread(ctx: {
 	sessionManager: SessionManager
@@ -819,7 +816,6 @@ async function pickSessionThread(ctx: {
 	const { sessionManager, conversationId, agentId, threadRootId } = ctx
 	if (threadRootId === null) return null
 	if (ctx.message.authorType !== 'human') return null
-	if (!isFlagEnabled(ctx.message.actorId, FLAGS.CHAT_THREAD_SESSIONS)) return null
 
 	if (
 		await sessionManager.findConversationSessionAnyActive(conversationId, agentId, threadRootId)
@@ -1108,13 +1104,10 @@ async function bufferPendingTurn(
 	}
 }
 
-/** The two unique indexes that reject a second live session for the same chat and agent (the second adds the thread). */
-const SESSION_RACE_CONSTRAINTS = [
-	'sessions_conversation_actor_active_uniq',
-	'sessions_conversation_actor_thread_active_uniq',
-] as const
+/** The unique index that rejects a second live session for the same chat, agent and thread (the main chat counts as thread 0). */
+const SESSION_RACE_CONSTRAINT = 'sessions_conversation_actor_thread_active_uniq'
 
-/** Walks err.cause chain for a unique violation (23505) on either session index in SESSION_RACE_CONSTRAINTS. */
+/** Walks err.cause chain for a unique violation (23505) on the session index named by SESSION_RACE_CONSTRAINT. */
 function isConversationSessionRaceViolation(err: unknown): boolean {
 	for (let cur: unknown = err; cur && typeof cur === 'object'; ) {
 		const e = cur as {
@@ -1126,10 +1119,9 @@ function isConversationSessionRaceViolation(err: unknown): boolean {
 		}
 		if (e.code === '23505') {
 			const name = e.constraint_name ?? e.constraint
-			if (SESSION_RACE_CONSTRAINTS.some((c) => c === name)) return true
+			if (name === SESSION_RACE_CONSTRAINT) return true
 			const message = e.message
-			if (typeof message === 'string' && SESSION_RACE_CONSTRAINTS.some((c) => message.includes(c)))
-				return true
+			if (typeof message === 'string' && message.includes(SESSION_RACE_CONSTRAINT)) return true
 		}
 		cur = e.cause
 	}

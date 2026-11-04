@@ -113,7 +113,12 @@ function SignupPage() {
 						organization: trimmedOrg,
 						role: trimmedRole,
 					})
-					await api.objects.create(workspaceId, payload)
+					// The welcome is shown on New Chat for web sign-ups, so the server
+					// should not also put it on For You. Other clients leave this out.
+					await api.objects.create(workspaceId, {
+						...payload,
+						metadata: { ...payload.metadata, welcome_in_chat: true },
+					})
 					console.info('[maskin] wrote signup capture knowledge', {
 						workspaceId,
 						actorId,
@@ -144,7 +149,9 @@ function SignupPage() {
 					.emit([{ name: 'signup_complete', anonId, props: { fromGuest: true } }])
 					.catch(() => console.error('[maskin] failed to emit signup_complete'))
 			}
-			window.location.assign('/')
+			// Land on New Chat, where the Chief of Staff welcome is shown. Without a
+			// workspace id there is nowhere to point, so fall back to the index.
+			window.location.assign(workspaceId ? `/${workspaceId}/chats/new?welcome=1` : '/')
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Signup failed')
 		} finally {
