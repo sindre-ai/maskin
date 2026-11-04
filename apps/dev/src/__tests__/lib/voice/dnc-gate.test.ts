@@ -29,7 +29,6 @@ function clean(overrides: Record<string, unknown> = {}, status = 'voice_queued')
 			owner: 'sebk',
 			phone: '+4520123456',
 			company_type: 'aps',
-			cvr_ad_protection: false,
 			headcount: 12,
 			...overrides,
 		},
@@ -273,30 +272,6 @@ describe('runDncGate', () => {
 			})
 			expect(await refusal(clean({ company_type: undefined, phone: undefined }))).toMatchObject({
 				check: 'company_type',
-			})
-		})
-	})
-
-	describe('check 4a: CVR advertising protection', () => {
-		it('passes a contact whose cvr_ad_protection is false', async () => {
-			expect(await runDncGate(clean({ cvr_ad_protection: false }), deps())).toEqual({ pass: true })
-		})
-		it.each([
-			['true', true, 'is true'],
-			['missing', undefined, 'is missing'],
-			['null', null, 'is missing'],
-			['the string false', 'false', 'not a boolean'],
-		])('refuses cvr_ad_protection %s', async (_n, value, text) => {
-			const r = await refusal(clean({ cvr_ad_protection: value }))
-			expect(r.check).toBe('ad_protection')
-			expect(r.reason).toContain(text)
-		})
-		it('runs after the company type check', async () => {
-			expect(
-				await refusal(clean({ company_type: undefined, cvr_ad_protection: true })),
-			).toMatchObject({ check: 'company_type' })
-			expect(await refusal(clean({ cvr_ad_protection: true }))).toMatchObject({
-				check: 'ad_protection',
 			})
 		})
 	})

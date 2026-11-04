@@ -61,7 +61,6 @@ function seedContact(
 			owner: 'sebk',
 			phone: NUMBER,
 			company_type: 'aps',
-			cvr_ad_protection: false,
 			headcount: 12,
 			...metadata,
 		},
@@ -296,12 +295,6 @@ describe('the marker survives an import merge onto the erased row', () => {
 							skip: false,
 						},
 						{
-							sourceColumn: 'cvr_ad_protection',
-							targetField: 'metadata.cvr_ad_protection',
-							transform: 'boolean',
-							skip: false,
-						},
-						{
 							sourceColumn: 'headcount',
 							targetField: 'metadata.headcount',
 							transform: 'number',
@@ -334,7 +327,6 @@ describe('the marker survives an import merge onto the erased row', () => {
 					phone: '+4520888888',
 					owner: 'sebk',
 					company_type: 'aps',
-					cvr_ad_protection: 'false',
 					headcount: '12',
 				},
 			],
