@@ -95,6 +95,12 @@ struct TriggerDetailPage: View {
 					subtitle: [store.trigger.summary, lastFired].compactMap { $0 }.joined(separator: "\n"),
 					accessory: .state(WorkspacePageState.trigger(enabled: store.trigger.enabled)))
 			])
+			if store.trigger.kind == .event {
+				PageGroupLabel(text: "Reads as")
+				PageCard(rows: [
+					PageRowModel(id: "reads", title: "\(store.trigger.summary), run \(store.agentName).")
+				])
+			}
 			if store.trigger.kind != .cron {
 				PageGroupLabel(text: "Filters")
 				let filters = TriggerDescriber.filters(

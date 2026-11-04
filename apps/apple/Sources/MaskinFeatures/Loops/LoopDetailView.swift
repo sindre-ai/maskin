@@ -26,7 +26,7 @@ struct LoopDetailView: View {
 			.frame(maxWidth: .infinity)
 		}
 		.ambientBackground()
-		.navigationTitle(store.loop.displayName)
+		.navigationTitle("")
 		#if os(iOS)
 		.navigationBarTitleDisplayMode(.inline)
 		#endif
@@ -222,6 +222,7 @@ struct LoopDetailContent: View {
 			Text(store.loop.displayName)
 				.maskinText(.sheetTitle).foregroundStyle(MaskinColor.ink)
 				.fixedSize(horizontal: false, vertical: true)
+				.accessibilityAddTraits(.isHeader)
 			LoopStatusPill(loop: store.loop)
 			if let driver = store.driver { LoopDriverPill(id: driver.id, name: driver.name) }
 			if let notice = store.notice {

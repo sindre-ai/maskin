@@ -447,7 +447,8 @@ private struct ProfileRow: View {
 						Text(subtitle)
 							.font(MaskinTypeface.sans(MaskinFontSize.t13, relativeTo: .footnote))
 							.foregroundStyle(MaskinColor.ink4)
-							.lineLimit(1)
+							.lineLimit(value == nil ? 1 : 2)
+							.fixedSize(horizontal: false, vertical: true)
 					}
 				}
 				Spacer(minLength: MaskinSpace.s4)

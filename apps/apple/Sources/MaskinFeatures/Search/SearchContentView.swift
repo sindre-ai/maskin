@@ -138,7 +138,7 @@ struct SearchContentBody: View {
 					.accessibilityHidden(true)
 				VStack(alignment: .leading, spacing: MaskinSpace.s1) {
 					Text("Ask Chief of Staff").maskinText(.headline).foregroundStyle(MaskinColor.ink)
-					Text("\u{201C}\(typed)\u{201D}").maskinText(.subhead).foregroundStyle(MaskinColor.ink4).lineLimit(1)
+					Text("\u{201C}\(typed)\u{201D} \u{00B7} opens a new chat, nothing is sent").maskinText(.subhead).foregroundStyle(MaskinColor.ink4).lineLimit(2)
 				}
 				.frame(maxWidth: .infinity, alignment: .leading)
 				Image(systemName: "chevron.right").foregroundStyle(MaskinColor.ink5).accessibilityHidden(true)

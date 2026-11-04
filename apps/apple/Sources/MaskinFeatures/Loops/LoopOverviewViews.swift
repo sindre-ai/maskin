@@ -238,13 +238,10 @@ struct LoopNeedsYouSection: View {
 	private var decisions: [LoopPost] { store.posts.filter(\.isDecision) }
 
 	var body: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-			FlowSectionHeader("Needs you")
-			if decisions.isEmpty {
-				Text("Nothing needs you on this flow right now.")
-					.maskinText(.body).foregroundStyle(MaskinColor.ink4)
-					.loopNote()
-			} else {
+		// Nothing to show means no section: the handoff's Overview goes straight from Targets to outputs.
+		if !decisions.isEmpty {
+			VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+				FlowSectionHeader("Needs you")
 				ForEach(decisions) { post in
 					Button { runtime?.openObject(store.loop.id) } label: {
 						VStack(alignment: .leading, spacing: MaskinSpace.s3) {

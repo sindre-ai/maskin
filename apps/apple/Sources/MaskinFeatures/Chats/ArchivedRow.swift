@@ -88,9 +88,7 @@ struct ArchivedRow: View {
 					}
 					.padding(.horizontal, MaskinSpace.s8 + 1)
 					.padding(.vertical, MaskinSpace.s4)
-					.frame(minHeight: MaskinSpace.touchMin + MaskinSpace.s7)
-					.overlay(alignment: .top) { Divider().overlay(MaskinSurface.separator) }
-				}
+					.frame(minHeight: MaskinSpace.touchMin + MaskinSpace.s7)				}
 			}
 		}
 		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadiusLarge.tile, style: .continuous))

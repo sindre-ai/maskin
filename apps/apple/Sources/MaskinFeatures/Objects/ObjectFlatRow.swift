@@ -99,9 +99,10 @@ struct ObjectFlatRow: View {
 	private func askLine(_ ask: ObjectAsk) -> some View {
 		Group {
 			if let who = ask.askedBy, !who.isEmpty {
-				Text("\(who): ").fontWeight(.semibold) + Text(ask.text)
+				// The handoff reads "Ask SEO Researcher · proposed from …" with only "Ask" bold.
+				Text("Ask").fontWeight(.semibold) + Text(" \(who) · \(ask.text)")
 			} else {
-				Text(ask.text)
+				Text("Ask").fontWeight(.semibold) + Text(" \(ask.text)")
 			}
 		}
 		.maskinText(.subhead)

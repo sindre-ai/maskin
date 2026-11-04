@@ -482,7 +482,7 @@ extension View {
 	/// The list row look every Team row shares: edge to edge, hairline, 12 x 16 padding.
 	fileprivate func rowChrome() -> some View {
 		listRowBackground(Color.clear)
-			.listRowSeparatorTint(MaskinSurface.separator)
+			.listRowSeparator(.hidden)
 			.listRowInsets(
 				EdgeInsets(
 					top: MaskinSpace.s7, leading: MaskinSpace.s9, bottom: MaskinSpace.s7,
