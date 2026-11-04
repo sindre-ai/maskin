@@ -2,7 +2,7 @@
 title: Drafts and previews
 slug: drafts
 description: How an agent drafts an email, a LinkedIn message or post, or a Slack message as an ordinary object, how a person previews, edits and approves it in chat, For You and Claude, how files (HTML, markdown, images) preview, and how it is sent.
-last_updated: 2026-11-02
+last_updated: 2026-11-04
 ---
 
 # Drafts and previews
@@ -148,6 +148,24 @@ In chat, the card for a linked draft ends in **Approve draft**: it approves the 
 In Claude, the Approve button calls `approve_object_draft`, an MCP tool with `visibility: ['app']`: hidden from the model, so a model cannot approve its own draft.
 
 To have an agent send the moment a person approves (for example from the Claude card, where no reply comment wakes it), create an `event` [trigger](./notifications.md) on `entity_type` of the draft's type with `action: "approved"`.
+
+## Send permissions
+
+Whether a send waits for a person is a setting, per agent and per draft kind (`email`, `linkedin_message`, `linkedin_connection_request`, `linkedin_inmail`, `linkedin_post`, `linkedin_comment`, `linkedin_comment_reply`, `linkedin_post_edit`, `slack_message`):
+
+| Setting | What the send tool does |
+|---|---|
+| `always_allow` | Sends without asking and writes an `auto_sent` event on the draft: the kind, the content hash and the setting that allowed it (`data.setting`) |
+| `ask_first` | Refuses until a person has approved the exact text, as described above. The behaviour before this existed |
+| `deny` | Refuses, even for a text a person approved. The agent is told it is turned off |
+
+A workspace has a default per kind (`agent_id` null in `send_permissions`); an agent's own row beats it. With no row at all the starting table in `packages/shared/src/send-permissions.ts` applies: `ask_first` for email, LinkedIn messages, connection requests and InMail, `always_allow` for posts, comments, comment replies, post edits and Slack. Migration 0131 writes it as the workspace default of every workspace that existed then. A kind that is not in the table asks first.
+
+The gate is `authorizeSend` in `apps/dev/src/lib/send-permissions.ts`, called by every send tool that takes an `object_id` (Gmail, Resend, the LinkedIn tools, Slack). It reads the setting at send time, so a change applies to the next send, and decides in this order: Deny refuses; a person's approval of exactly this text releases the send under any other setting (an agent may still file a draft for approval where `always_allow` is set); `always_allow` releases it and records `auto_sent` (unless the send tool's own limit says no, see the Slack allowlist below); anything else waits for approval. The `auto_sent` event is the key the send is claimed under, one per (draft, text, agent), so a retry after an unclear failure cannot send twice. It is written when the send is released: a draft counts as sent by the agent only when a `delivered` event follows it. The send tools still read text, recipient and files from the draft, never from the call. A system prompt does not change a setting.
+
+`GET /api/send-permissions` returns the workspace default and each agent's resulting mode per kind, with where it came from (`agent`, `workspace` or `starting`). `PUT /api/send-permissions` with `{ agent_id, kind, mode }` changes one (`agent_id: null` for the workspace default, `mode: null` to remove an agent's own setting). Only a human admin or owner can; an agent, a member, a viewer and a call with `X-Client-Source: mcp` get 403, and no MCP tool wraps it. Every change writes a `send_permission_updated` event with the before and after.
+
+The Slack allowlist of direct-post channels (above) also limits Always allow for a `slack_message` draft sent by `object_id`: a draft to a channel that is not on the list is held for approval, as under Ask first, and no `auto_sent` is written; `authorizeSend` takes this as `canAutoSend`, which can only hold a send back. Deny still refuses first, and a person's approval of the exact text still releases the send to any channel. The same applies to `slack_update_message` with a draft.
 
 ## LinkedIn sends
 

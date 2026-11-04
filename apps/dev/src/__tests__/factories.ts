@@ -9,12 +9,14 @@ import {
 	notifications,
 	objects,
 	relationships,
+	sendPermissions,
 	sessionLogs,
 	sessions,
 	triggers,
 	workspaceMembers,
 	workspaces,
 } from '@maskin/db/schema'
+import { SEND_PERMISSION_KINDS, type SendPermissionMode } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 
 let counter = 0
@@ -706,6 +708,29 @@ export async function insertAgentGrant(
 		})
 		.returning()
 	return rows[0]
+}
+
+/**
+ * Saves a send setting. With no agent it is the workspace default for that kind. A workspace
+ * made by insertWorkspace has none, so the starting table applies (ask first for email and
+ * LinkedIn messages, always allow for posts, comments and Slack).
+ */
+export async function insertSendPermission(
+	db: Database,
+	setting: { workspaceId: string; kind: string; mode: SendPermissionMode; agentId?: string },
+) {
+	const rows = await db
+		.insert(sendPermissions)
+		.values({ ...setting, agentId: setting.agentId ?? null })
+		.returning()
+	return rows[0]
+}
+
+/** Makes every send in a workspace wait for a person: the behaviour before send settings. */
+export async function holdAllSends(db: Database, workspaceId: string) {
+	for (const kind of SEND_PERMISSION_KINDS) {
+		await insertSendPermission(db, { workspaceId, kind, mode: 'ask_first' })
+	}
 }
 
 /** The actor ids holding a grant on an integration, sorted. */
