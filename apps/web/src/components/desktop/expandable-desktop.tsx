@@ -114,7 +114,9 @@ export function ExpandableDesktop({
 							/>
 						) : (
 							<div className="flex min-w-0 flex-col gap-2">
-								<div className="flex h-7 items-center justify-end gap-2 pr-5">{popupEnd}</div>
+								<div className="flex h-7 items-center justify-end gap-2 pr-5 max-sm:pl-3 max-sm:pr-8">
+									{popupEnd}
+								</div>
 								<div
 									className="aspect-video w-full rounded-lg border bg-muted max-sm:rounded-none max-sm:border-0"
 									aria-hidden

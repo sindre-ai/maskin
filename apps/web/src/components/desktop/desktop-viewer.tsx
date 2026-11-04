@@ -317,7 +317,10 @@ export function DesktopViewer({
 		>
 			<span className="flex items-center gap-1.5 px-2 text-sm text-muted-foreground">
 				{controlling ? <MousePointer2 size={15} /> : <Eye size={15} />}
-				{controlling ? "You're in control" : 'Watching'}
+				{/* With the copy and paste buttons in the pill, a phone has no room for the words. */}
+				<span className={controlling && clipboardEnabled ? 'max-sm:hidden' : undefined}>
+					{controlling ? "You're in control" : 'Watching'}
+				</span>
 			</span>
 			{controlling && clipboardEnabled && (
 				<DesktopClipboardButtons rfbRef={rfbRef} remoteText={remoteText} rounded />
@@ -340,7 +343,7 @@ export function DesktopViewer({
 		<div className="flex min-w-0 flex-col gap-2">
 			{variant === 'immersive' && (
 				// pr-5 leaves room for the dialog's own close button, which sits in this row.
-				<div className="flex h-7 items-center justify-end gap-2 pr-5">
+				<div className="flex h-7 items-center justify-end gap-2 pr-5 max-sm:pl-3 max-sm:pr-8">
 					{phase === 'connected' && (recording ? controls : pill)}
 					{toolbarEnd}
 				</div>
