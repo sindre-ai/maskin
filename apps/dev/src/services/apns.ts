@@ -48,7 +48,13 @@ import { deviceTokens } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import { type WorkingAgent, encodeAgentsState } from './live-activity-agents'
-import type { PushChannel, PushDecision, PushMessage } from './push-types'
+import {
+	CLEAR_IDS_MAX,
+	type PushChannel,
+	type PushClear,
+	type PushDecision,
+	type PushMessage,
+} from './push-types'
 
 export interface ApnsConfig {
 	keyId: string
@@ -230,6 +236,30 @@ export function buildApnsPayload(msg: PushMessage): Record<string, unknown> {
 		if (byteLength(payload) <= APNS_PAYLOAD_MAX_BYTES) return payload
 	}
 	return build(BODY_MAX, false)
+}
+
+/**
+ * A silent background push (no alert, no sound) that tells the app to remove delivered
+ * notifications: `clear.notification_ids`, plus `clear.collapse_key` / `clear.thread_id` when
+ * set. `aps.badge` carries the new pending count. Kept apart from `buildApnsPayload`, which
+ * builds the alert; the app reads exactly these keys (see apps/apple/docs/push-and-links.md).
+ */
+export function buildApnsClearPayload(clear: PushClear): Record<string, unknown> {
+	const badge =
+		typeof clear.badge === 'number' && Number.isSafeInteger(clear.badge) && clear.badge >= 0
+			? clear.badge
+			: undefined
+	const collapseKey = clear.collapseKey?.trim()
+	const threadId = clear.threadId?.trim()
+	return {
+		aps: { 'content-available': 1, ...(badge !== undefined ? { badge } : {}) },
+		workspace_id: clear.workspaceId,
+		clear: {
+			notification_ids: clear.notificationIds.slice(0, CLEAR_IDS_MAX),
+			...(collapseKey ? { collapse_key: collapseKey.slice(0, 200) } : {}),
+			...(threadId ? { thread_id: threadId.slice(0, 200) } : {}),
+		},
+	}
 }
 
 // ── Live Activities ──────────────────────────────────────────────────────
@@ -481,6 +511,68 @@ export class ApnsSender implements PushChannel {
 		} catch (err) {
 			logger.warn('APNs sendToActor failed', { actorId, error: String(err) })
 		}
+	}
+
+	/** Silent clear push to every registered device of an actor. Never throws. */
+	async sendClearToActor(actorId: string, clear: PushClear): Promise<void> {
+		const config = this.config
+		if (!this.isEnabled() || !config) return
+		try {
+			const devices = await this.db
+				.select()
+				.from(deviceTokens)
+				.where(eq(deviceTokens.actorId, actorId))
+			if (devices.length === 0) return
+
+			const body = JSON.stringify(buildApnsClearPayload(clear))
+			const authorization = `bearer ${this.providerToken(config)}`
+
+			await Promise.all(
+				devices.map(async (device) => {
+					try {
+						const res = await this.transport.send({
+							host: APNS_HOSTS[device.environment === 'production' ? 'production' : 'sandbox'],
+							token: device.apnsToken,
+							headers: {
+								authorization,
+								'apns-topic': config.bundleId,
+								'apns-push-type': 'background',
+								'apns-priority': '5',
+								'content-type': 'application/json',
+							},
+							body,
+						})
+						if (res.status === 200) return
+						const reason = parseReason(res.body)
+						if (isDeadToken(res.status, reason)) {
+							await this.removeDeadToken(device, reason)
+							return
+						}
+						logger.warn('APNs clear push rejected', {
+							deviceId: device.id,
+							status: res.status,
+							reason,
+						})
+					} catch (err) {
+						logger.warn('APNs clear push failed', { deviceId: device.id, error: String(err) })
+					}
+				}),
+			)
+		} catch (err) {
+			logger.warn('APNs sendClearToActor failed', { actorId, error: String(err) })
+		}
+	}
+
+	private async removeDeadToken(device: typeof deviceTokens.$inferSelect, reason?: string) {
+		await this.db
+			.delete(deviceTokens)
+			.where(
+				and(
+					eq(deviceTokens.apnsToken, device.apnsToken),
+					eq(deviceTokens.environment, device.environment),
+				),
+			)
+		logger.info('APNs token unregistered, removed', { deviceId: device.id, reason })
 	}
 }
 

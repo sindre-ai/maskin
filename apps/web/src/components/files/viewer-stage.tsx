@@ -162,8 +162,16 @@ function MediaViewerStage({ file }: { file: FileDetail }) {
 	const Tag = file.mimeType.startsWith('audio/') ? 'audio' : 'video'
 	return (
 		<StageFrame>
-			<div className="flex h-full w-full items-center justify-center overflow-auto p-6">
-				<Tag src={src} controls preload="metadata" className="max-h-full max-w-full">
+			<div className="flex h-full w-full items-center justify-center overflow-auto p-0 md:p-6">
+				{/* w-full gives the element a real width on mobile (a flex-centred media element
+				    otherwise collapses); playsInline stops iOS forcing native fullscreen. */}
+				<Tag
+					src={src}
+					controls
+					playsInline
+					preload="metadata"
+					className="max-h-full w-full max-w-full md:w-auto"
+				>
 					<track kind="captions" />
 				</Tag>
 			</div>

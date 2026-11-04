@@ -1,5 +1,7 @@
 # Frontend — apps/web
 
+> **iOS parity:** any user-visible change here must also be made in `apps/apple` in the same PR (and vice versa). Native idiom may differ; capability, wording and behaviour may not. See `.claude/rules/web-ios-parity.md`.
+
 ## Product Philosophy
 This is a **steering interface for humans overseeing autonomous agents**, not a task management app where humans do the work. Humans care about **bets** (strategic decisions) and only drill into details when needed. Agents handle insights and tasks autonomously.
 

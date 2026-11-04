@@ -47528,6 +47528,8 @@ public enum Operations {
                             public typealias participantsPayload = [Operations.get_sol_api_sol_conversations.Output.Ok.Body.jsonPayload.conversationsPayloadPayload.participantsPayloadPayload]
                             /// - Remark: Generated from `#/paths/api/conversations/GET/responses/200/content/json/conversationsPayload/participants`.
                             public var participants: Operations.get_sol_api_sol_conversations.Output.Ok.Body.jsonPayload.conversationsPayloadPayload.participantsPayload
+                            /// - Remark: Generated from `#/paths/api/conversations/GET/responses/200/content/json/conversationsPayload/working_actor_ids`.
+                            public var working_actor_ids: [Swift.String]
                             /// Creates a new `conversationsPayloadPayload`.
                             ///
                             /// - Parameters:
@@ -47548,6 +47550,7 @@ public enum Operations {
                             ///   - snippet_actor_name:
                             ///   - snippet_is_caller:
                             ///   - participants:
+                            ///   - working_actor_ids:
                             public init(
                                 id: Swift.String,
                                 workspaceId: Swift.String,
@@ -47565,7 +47568,8 @@ public enum Operations {
                                 snippet_actor_id: Swift.String? = nil,
                                 snippet_actor_name: Swift.String? = nil,
                                 snippet_is_caller: Swift.Bool,
-                                participants: Operations.get_sol_api_sol_conversations.Output.Ok.Body.jsonPayload.conversationsPayloadPayload.participantsPayload
+                                participants: Operations.get_sol_api_sol_conversations.Output.Ok.Body.jsonPayload.conversationsPayloadPayload.participantsPayload,
+                                working_actor_ids: [Swift.String]
                             ) {
                                 self.id = id
                                 self.workspaceId = workspaceId
@@ -47584,6 +47588,7 @@ public enum Operations {
                                 self.snippet_actor_name = snippet_actor_name
                                 self.snippet_is_caller = snippet_is_caller
                                 self.participants = participants
+                                self.working_actor_ids = working_actor_ids
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case id
@@ -47603,6 +47608,7 @@ public enum Operations {
                                 case snippet_actor_name
                                 case snippet_is_caller
                                 case participants
+                                case working_actor_ids
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/GET/responses/200/content/json/conversations`.

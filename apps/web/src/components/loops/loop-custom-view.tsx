@@ -68,6 +68,11 @@ function ViewFrame({
 }) {
 	const iframeRef = useRef<HTMLIFrameElement>(null)
 	const [height, setHeight] = useState(MIN_HEIGHT)
+	// Width the view needs when it is wider than the box it sits in. The frame takes that width
+	// and the box scrolls sideways; null means "fit the box". Reset whenever the box changes
+	// width or the frame is replaced, so a view that fits again goes back to fitting.
+	const [contentWidth, setContentWidth] = useState<number | null>(null)
+	const boxRef = useRef<HTMLDivElement>(null)
 	// Shown by the host, outside the frame, so a view cannot hide it: an answer that hit the
 	// server's row/group cap is partial, and a view whose live refresh keeps failing is stale.
 	const [partial, setPartial] = useState(false)
@@ -267,12 +272,26 @@ function ViewFrame({
 		}
 	}, [workspaceId, srcDoc, frameKey])
 
+	useEffect(() => {
+		const box = boxRef.current
+		if (!box || !window.ResizeObserver) return
+		let width = box.clientWidth
+		const observer = new ResizeObserver(() => {
+			if (box.clientWidth === width) return
+			width = box.clientWidth
+			setContentWidth(null)
+		})
+		observer.observe(box)
+		return () => observer.disconnect()
+	}, [])
+
 	// A fresh frame (first mount, new document, or a reset) starts with no loads.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: srcDoc and frameKey are the triggers
 	useEffect(() => {
 		loadsRef.current = 0
 		blockedRef.current = false
 		setQueryFailed(false)
+		setContentWidth(null)
 	}, [srcDoc, frameKey])
 
 	return (
@@ -285,15 +304,17 @@ function ViewFrame({
 					{(stale || timerStale) && 'Live updates are failing, so this view may be out of date.'}
 				</p>
 			)}
-			<iframe
-				key={frameKey}
-				ref={iframeRef}
-				title="Custom loop view"
-				srcDoc={srcDoc}
-				sandbox="allow-scripts"
-				style={{ height }}
-				className="block w-full rounded-md border border-border bg-background"
-			/>
+			<div ref={boxRef} className="overflow-x-auto">
+				<iframe
+					key={frameKey}
+					ref={iframeRef}
+					title="Custom loop view"
+					srcDoc={srcDoc}
+					sandbox="allow-scripts"
+					style={{ height, width: contentWidth ?? '100%' }}
+					className="block max-w-none rounded-md border border-border bg-background"
+				/>
+			</div>
 		</>
 	)
 }

@@ -83,6 +83,14 @@ describe('show_computer', () => {
 		expect(result.isError).toBeUndefined()
 	})
 
+	it('tells the agent to tick a plain "I\'m not a robot" box itself and hand over only the real hand-offs', () => {
+		const description = tools.show_computer.description
+		expect(description).toContain('tick it yourself')
+		expect(description).toMatch(/image or puzzle challenge/)
+		expect(description).toContain('two-factor')
+		expect(tools.desktop_click.description).toContain('click it yourself')
+	})
+
 	it('never names another agent: the tool takes no agent_id at all', () => {
 		expect(Object.keys(tools.show_computer.inputSchema.shape).sort()).toEqual(
 			['task', 'workspace_id'].sort(),

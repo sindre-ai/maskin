@@ -9,7 +9,12 @@ import {
 import { CONVERSATION_TITLE_MAX_LENGTH, deriveConversationTitle } from '@maskin/shared'
 import { and, asc, count, eq } from 'drizzle-orm'
 import { recordEvent } from '../lib/events/record-event'
-import { resolveChatCredentials } from '../lib/llm-routing'
+import {
+	type ChatCredentials,
+	buildProviderPrefs,
+	readFallbackConfig,
+	resolveChatCredentials,
+} from '../lib/llm-routing'
 import type { LLMTool } from '../lib/llm/adapter'
 import { createLLMAdapter } from '../lib/llm/index'
 import { logger } from '../lib/logger'
@@ -55,6 +60,30 @@ type TitleAutoState = 'none' | 'initial' | 'refined' | 'manual'
  * derivation of a message the caller never asked to have titled.
  */
 const PLACEHOLDER_TITLE = 'New chat'
+
+/**
+ * Titling's own route onto the operator's OpenRouter account, the same one
+ * dictation (services/transcription.ts) bills to. A title is one tiny call on
+ * the small model, so it is not gated on the workspace's plan: enterprise and
+ * bring-your-own-model workspaces have no chat-usable key (Claude sign-in does
+ * not count) and would otherwise never get one. Deliberately separate from
+ * resolveChatCredentials, whose entitlement gate (#1487) still decides what the
+ * responder may spend. Returns null when the operator key isn't configured.
+ */
+function resolveOperatorTitleCredentials(): ChatCredentials | null {
+	const fallback = readFallbackConfig()
+	if (!fallback.apiKey) return null
+	const providerPrefs = buildProviderPrefs(fallback)
+	return {
+		provider: 'openai',
+		apiKey: fallback.apiKey,
+		// OpenAI-style path, as in resolveChatCredentials (fallback.baseUrl
+		// targets the Claude CLI and has no /v1).
+		baseUrl: 'https://openrouter.ai/api/v1',
+		model: fallback.smallModel ?? fallback.model ?? 'deepseek/deepseek-v4.1-flash',
+		...(providerPrefs && { providerPrefs }),
+	}
+}
 
 const SET_TITLE_TOOL: LLMTool = {
 	name: 'set_conversation_title',
@@ -241,25 +270,24 @@ export async function maybeGenerateConversationTitle(ctx: {
 		const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
 		const wsSettings = (ws?.settings as WorkspaceSettings) ?? {}
 
-		// No agent config: fall straight through resolveChatCredentials' chain to
-		// the workspace key and then the system fallback, which lands on the
-		// small/cheap model. Titling isn't attributable to any one agent.
-		const credentials = resolveChatCredentials({
-			wsSettings,
-			// Absent row => treat as entitled, i.e. refuse the Maskin key.
-			// Titling degrades to a placeholder title, which is the safe
-			// direction when we can't read the workspace.
-			workspace: {
-				enterpriseGranted: ws ? ws.enterpriseGranted : true,
-				billingOwnerId: ws?.billingOwnerId ?? null,
-			},
-			agent: { provider: null, apiKey: null, model: null },
-		})
+		// No agent config: the workspace's own key if it has a usable one, else
+		// the operator's small model (see resolveOperatorTitleCredentials).
+		// Titling isn't attributable to any one agent.
+		const credentials =
+			resolveChatCredentials({
+				wsSettings,
+				// Absent row => treat as entitled, i.e. refuse the Maskin key.
+				// Titling degrades to a placeholder title, which is the safe
+				// direction when we can't read the workspace.
+				workspace: {
+					enterpriseGranted: ws ? ws.enterpriseGranted : true,
+					billingOwnerId: ws?.billingOwnerId ?? null,
+				},
+				agent: { provider: null, apiKey: null, model: null },
+			}) ?? resolveOperatorTitleCredentials()
 		if (!credentials) {
-			// No LLM route the same-process call can use (e.g. an enterprise
-			// workspace whose only credential is Claude OAuth — deliberately
-			// skipped by resolveChatCredentials since it isn't a portable
-			// bearer token outside the CLI). Warn so an operator can tell
+			// No LLM route the same-process call can use (the operator key isn't
+			// configured either). Warn so an operator can tell
 			// titling took the LLM-less path, then still write a content-derived
 			// title on the initial pass so the conversation never sits on the
 			// placeholder the frontend passed as a fallback.

@@ -206,6 +206,10 @@ export function perfOverrides({ method, path, query, item, base, ctx }) {
 						sessionId: null,
 						createdAt: ago((MESSAGE_COUNT - i) * 7 + 1),
 						editedAt: null,
+						// null, as the real API sends it (a number marks a thread reply; see fixtures.mjs).
+						threadRootId: null,
+						threadAlsoInChannel: false,
+						thread: null,
 						spawned_sessions: [],
 					}
 				}),
