@@ -307,7 +307,7 @@ const BRIDGE_SCRIPT = `<script>(function(){var n=0,p={};window.maskin={query:fun
 // Reports the document's content height (not scrollHeight, which can never
 // shrink below the frame's own height) on load, resize and every layout change,
 // so an inline view can size its iframe to fit as data arrives.
-const VIEW_SIZE_REPORTER = `<script>(function(){function s(){try{var d=document.documentElement;parent.parent.postMessage({type:'${VIEWER_DOC_SIZE_MESSAGE}',w:d.scrollWidth,cw:d.clientWidth,h:Math.ceil(d.getBoundingClientRect().height)},'*')}catch(e){}}if(document.readyState==='complete')s();else window.addEventListener('load',s);window.addEventListener('resize',s);if(window.ResizeObserver)new ResizeObserver(s).observe(document.documentElement)})();</script>`
+const VIEW_SIZE_REPORTER = `<script>(function(){function s(){try{var d=document.documentElement;parent.parent.postMessage({type:'${VIEWER_DOC_SIZE_MESSAGE}',w:d.scrollWidth,cw:d.clientWidth,h:Math.ceil(Math.max(d.getBoundingClientRect().height,d.scrollHeight>window.innerHeight?d.scrollHeight:0))},'*')}catch(e){}}if(document.readyState==='complete')s();else window.addEventListener('load',s);window.addEventListener('resize',s);if(window.ResizeObserver)new ResizeObserver(s).observe(document.documentElement)})();</script>`
 
 // Inline-view variant of `prepareMiniAppHtml`: same CSP + data-slot bootstrap,
 // plus the size reporter and the bridge. One `injectIntoHtml` call, as above.
@@ -339,7 +339,7 @@ const escapeAttr = (s: string) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;
 /** The document the host puts in its iframe: it holds the view (from `prepareBridgedViewHtml`) in a frame of its own. */
 export function prepareIsolatedViewHtml(html: string): string {
 	// The load relay is an attribute, not a script, so it is bound before the first load can fire.
-	return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${ISOLATION_FRAME_CSP}"><style>html,body{margin:0;height:100%}iframe{display:block;border:0;width:100%;height:100%}</style></head><body><iframe sandbox="allow-scripts" onload="parent.postMessage({type:'${ISOLATION_LOAD_MESSAGE}'},'*')" srcdoc="${escapeAttr(prepareBridgedViewHtml(html))}"></iframe></body></html>`
+	return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${ISOLATION_FRAME_CSP}"><style>html,body{margin:0;height:100%;overflow:hidden}iframe{display:block;border:0;width:100%;height:100%}</style></head><body><iframe scrolling="no" sandbox="allow-scripts" onload="parent.postMessage({type:'${ISOLATION_LOAD_MESSAGE}'},'*')" srcdoc="${escapeAttr(prepareBridgedViewHtml(html))}"></iframe></body></html>`
 }
 
 export type ViewSourcesResult =
