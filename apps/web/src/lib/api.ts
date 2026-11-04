@@ -44,7 +44,14 @@ import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 import { reportApiFailure } from './faro'
 
-import type { ObjectPreview, SessionStatsRow, TeachRequest, TeachResponse } from '@maskin/shared'
+import type {
+	ObjectPreview,
+	SendPermissionKind,
+	SendPermissionMode,
+	SessionStatsRow,
+	TeachRequest,
+	TeachResponse,
+} from '@maskin/shared'
 
 export interface DesktopConnectResponse {
 	ticket: string
@@ -753,6 +760,20 @@ export const api = {
 			body: { name: string; server: CustomMcpServerSpec },
 		) =>
 			request<CustomMcpServerResponse>(`/custom-mcp-servers/${id}`, {
+				method: 'PUT',
+				body,
+				workspaceId,
+			}),
+	},
+	sendPermissions: {
+		get: (workspaceId: string) =>
+			request<SendPermissionsView>('/send-permissions', { workspaceId }),
+		/** `agentId` null is the workspace default; `mode` null removes an agent's own setting. */
+		set: (
+			workspaceId: string,
+			body: { agent_id: string | null; kind: SendPermissionKind; mode: SendPermissionMode | null },
+		) =>
+			request<{ agent_id: string | null; kind: string; mode: string | null }>('/send-permissions', {
 				method: 'PUT',
 				body,
 				workspaceId,
@@ -2356,6 +2377,26 @@ export interface IntegrationResponse {
 	agentGrants?: AgentGrant[]
 	/** Saved credentials shared with an agent for one chat only. */
 	chatGrants?: Array<{ actorId: string; conversationId: string }>
+}
+
+/** Where a send setting came from: the agent's own, the workspace default, or the starting table. */
+export type SendPermissionSource = 'agent' | 'workspace' | 'starting'
+
+export interface SendPermissionSetting {
+	mode: SendPermissionMode
+	source: SendPermissionSource
+}
+
+/** GET /api/send-permissions: the workspace default and each agent's resulting mode per kind. */
+export interface SendPermissionsView {
+	kinds: SendPermissionKind[]
+	modes: SendPermissionMode[]
+	workspace_default: Record<SendPermissionKind, SendPermissionSetting>
+	agents: Array<{
+		agent_id: string
+		name: string
+		settings: Record<SendPermissionKind, SendPermissionSetting>
+	}>
 }
 
 /** 'none' is an explicit no that beats a read default. A saved credential only uses read_write. */

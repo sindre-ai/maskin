@@ -81,6 +81,9 @@ export const queryKeys = {
 		activity: (workspaceId: string, loopId: string) =>
 			['loops', workspaceId, 'activity', loopId] as const,
 	},
+	sendPermissions: {
+		all: (workspaceId: string) => ['send-permissions', workspaceId] as const,
+	},
 	integrations: {
 		all: (workspaceId: string) => ['integrations', workspaceId] as const,
 		providers: () => ['integrations', 'providers'] as const,
