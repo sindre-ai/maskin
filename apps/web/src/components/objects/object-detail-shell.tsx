@@ -67,6 +67,7 @@ function ItemComposer({
 	focusOnMountRef,
 	mode,
 	onModeChange,
+	onPosted,
 }: {
 	object: ObjectResponse
 	workspaceId: string
@@ -76,6 +77,8 @@ function ItemComposer({
 	focusOnMountRef: React.MutableRefObject<boolean>
 	mode: 'comment' | 'message'
 	onModeChange: (mode: 'comment' | 'message') => void
+	/** Fires once a comment is on the server. */
+	onPosted?: () => void
 }) {
 	const isMobile = useIsMobile()
 	const { data: actors } = useActors(workspaceId)
@@ -110,6 +113,7 @@ function ItemComposer({
 					workspaceId={workspaceId}
 					objectId={object.id}
 					focusRef={focusRef}
+					onSubmitted={onPosted}
 					variant="bar"
 					// The full prompt wraps to three lines in a 375px bar, so the
 					// phone gets the short form.
@@ -243,6 +247,19 @@ export function ObjectDetailShell({
 	// (the ask lives on the timeline) and focuses the comment input; when the Message
 	// switch hides it, it is focused once the mode swap re-creates it.
 	const focusAfterTabRef = useRef(false)
+
+	// The timeline only renders on Activity, so a comment posted from Overview or
+	// Related would leave no visible trace. Say it landed and offer the way to it —
+	// never switch tabs behind the reader's back. Read through a ref: the toast
+	// outlives the render that posted the comment.
+	const tabRef = useRef(tab)
+	tabRef.current = tab
+	const handleCommentPosted = useCallback(() => {
+		if (tabRef.current === 'activity') return
+		toast('Comment posted', {
+			action: { label: 'View', onClick: () => changeTab('activity') },
+		})
+	}, [changeTab])
 	const [confirmDelete, setConfirmDelete] = useState(false)
 	const confirmedDeleteRef = useRef(false)
 
@@ -641,6 +658,7 @@ export function ObjectDetailShell({
 									focusOnMountRef={focusAfterTabRef}
 									mode={composerMode}
 									onModeChange={setComposerMode}
+									onPosted={handleCommentPosted}
 								/>
 							</div>
 						</Tabs>

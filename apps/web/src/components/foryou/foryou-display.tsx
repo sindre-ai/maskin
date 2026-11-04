@@ -24,13 +24,18 @@ export interface ForYouTypeOption {
 export function forYouTypeOptions(
 	unreadCount: number,
 	typeCounts: Map<string, number>,
+	activeKind?: string,
 ): ForYouTypeOption[] {
 	const kinds = Object.keys(FEED_KIND_LABEL)
 	const rank = (key: string) => (kinds.includes(key) ? kinds.indexOf(key) : kinds.length)
+	// The kind that is on stays listed at 0, so reading its last card never makes the
+	// menu say "Everything" while the feed is still filtered.
+	const entries = Array.from(typeCounts.entries())
+	if (activeKind && !typeCounts.has(activeKind)) entries.push([activeKind, 0])
 	return [
 		{ value: undefined, label: 'Everything', count: unreadCount },
-		...Array.from(typeCounts.entries())
-			.filter(([, count]) => count > 0)
+		...entries
+			.filter(([key, count]) => count > 0 || key === activeKind)
 			.sort(([a], [b]) => rank(a) - rank(b))
 			.map(([key, count]) => ({
 				value: key,
@@ -67,8 +72,8 @@ export function ForYouDisplay({
 	onFilterPillsChange,
 }: ForYouDisplayProps) {
 	const typeOptions = useMemo(
-		() => forYouTypeOptions(unreadCount, typeCounts),
-		[unreadCount, typeCounts],
+		() => forYouTypeOptions(unreadCount, typeCounts, typeFilter),
+		[unreadCount, typeCounts, typeFilter],
 	)
 	const activeLabel = typeOptions.find((option) => option.value === typeFilter)?.label
 

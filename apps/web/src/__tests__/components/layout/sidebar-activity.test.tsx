@@ -98,7 +98,7 @@ describe('SidebarActivity', () => {
 			isError: false,
 		})
 		render(<SidebarActivity workspaceId="ws-1" />)
-		expect(screen.getByLabelText('Agents')).toHaveAttribute(
+		expect(screen.getByLabelText(/^Agents: /)).toHaveAttribute(
 			'title',
 			'2 agents working · 3 sessions',
 		)
@@ -148,9 +148,10 @@ describe('SidebarActivity', () => {
 		})
 		render(<SidebarActivity workspaceId="ws-1" />)
 		expect(row().className).toContain('group-data-[collapsible=icon]:hidden')
-		const rail = screen.getByLabelText('Agents')
+		const rail = screen.getByLabelText(/^Agents: /)
 		expect(rail.className).toContain('group-data-[collapsible=icon]:grid')
 		// v3's rail shows the liveness dot only; the counts live in the title.
 		expect(rail).toHaveAttribute('title', expect.stringContaining('1 agent'))
+		expect(rail).toHaveAccessibleName('Agents: 1 working')
 	})
 })

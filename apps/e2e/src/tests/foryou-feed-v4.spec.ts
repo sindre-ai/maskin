@@ -424,6 +424,36 @@ test.describe('For You v4 — cards, options and the receipt', () => {
 		await expect(page.getByTestId('foryou-feed-card')).toHaveCount(all)
 		await expect(page.getByText('Is the feed too long?').first()).toBeVisible()
 	})
+
+	test('a filtered feed that runs dry says which filter is on and can show everything', async ({
+		page,
+		account,
+	}) => {
+		await page.route('**/api/for-you/dismissals', async (route) => {
+			if (route.request().method() !== 'POST') return route.fallback()
+			await route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' })
+		})
+		await mockFeed(page, account.workspaceId)
+		await page.goto(`/${account.workspaceId}`)
+		await expect(page.getByTestId('foryou-feed-card').first()).toBeVisible()
+
+		await openViewMenu(page)
+		await page.getByRole('button', { name: /^Decisions/ }).click()
+		await page.keyboard.press('Escape')
+
+		// The last card goes: the filter stays on, so the feed says so instead of reading as cleared.
+		const cards = page.getByTestId('foryou-feed-card')
+		while ((await cards.count()) > 0) {
+			await cards.first().getByRole('button', { name: 'Mark as read' }).click()
+		}
+		await expect(page.getByText('Nothing in Decisions')).toBeVisible()
+		await openViewMenu(page)
+		await expect(page.getByRole('button', { name: /^Decisions/ })).toBeVisible()
+		await page.keyboard.press('Escape')
+
+		await page.getByRole('button', { name: 'Show everything' }).click()
+		await expect(page.getByText('Feed cleared')).toBeVisible()
+	})
 })
 
 test.describe('For You v4 — the card\u2019s own controls', () => {

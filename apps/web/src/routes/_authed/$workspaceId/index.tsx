@@ -50,6 +50,7 @@ import {
 	recommendedAction,
 } from '@/lib/foryou-card-kind'
 import {
+	FEED_KIND_LABEL,
 	type FeedBucket,
 	bucketRank,
 	dismissableItems,
@@ -830,7 +831,12 @@ function ForYouFeed() {
 	// The tail rule closes an *empty* column — it says why there is nothing to
 	// read. With cards on the page it is noise, so it isn't drawn at all.
 	const feedIsEmpty = orderedCards.length === 0 && onboardingItems.length === 0
-	const tail = feedIsEmpty ? feedTailLabel({ filtered: Boolean(typeFilter) }) : null
+	const tail = feedIsEmpty
+		? feedTailLabel({
+				filtered: Boolean(typeFilter),
+				kindLabel: typeFilter ? FEED_KIND_LABEL[typeFilter] : undefined,
+			})
+		: null
 
 	return (
 		<div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2" data-testid="foryou-feed-root">
@@ -985,6 +991,13 @@ function ForYouFeed() {
 							<span className="h-px w-10 bg-border" />
 							{tail}
 							<span className="h-px w-10 bg-border" />
+						</div>
+					)}
+					{feedIsEmpty && typeFilter && (
+						<div className="flex justify-center pb-2.5">
+							<Button variant="outline" size="sm" onClick={() => setTypeFilter(undefined)}>
+								Show everything
+							</Button>
 						</div>
 					)}
 				</div>

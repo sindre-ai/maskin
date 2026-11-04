@@ -78,6 +78,8 @@ describe('feedTailLabel', () => {
 	it('explains an empty feed differently when a filter is on', () => {
 		expect(feedTailLabel({ filtered: false })).toBe('Feed cleared')
 		expect(feedTailLabel({ filtered: true })).toBe('Nothing here')
+		expect(feedTailLabel({ filtered: true, kindLabel: 'Updates' })).toBe('Nothing in Updates')
+		expect(feedTailLabel({ filtered: false, kindLabel: 'Updates' })).toBe('Feed cleared')
 	})
 })
 

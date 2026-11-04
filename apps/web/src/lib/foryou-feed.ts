@@ -68,8 +68,12 @@ export function feedItemKey(item: UnreadItem): string {
  * The line that closes an empty column (mockup's `tail`). It only ever renders
  * when there is nothing to read — a feed with cards in it needs no epitaph.
  */
-export function feedTailLabel({ filtered }: { filtered: boolean }): string {
-	return filtered ? 'Nothing here' : 'Feed cleared'
+export function feedTailLabel({
+	filtered,
+	kindLabel,
+}: { filtered: boolean; kindLabel?: string }): string {
+	if (!filtered) return 'Feed cleared'
+	return kindLabel ? `Nothing in ${kindLabel}` : 'Nothing here'
 }
 
 /**

@@ -36,6 +36,35 @@ describe('forYouTypeOptions', () => {
 			['Bets', 3],
 		])
 	})
+
+	it('keeps the kind that is on listed at 0, in its own place', () => {
+		const options = forYouTypeOptions(
+			2,
+			new Map([
+				['decision', 2],
+				['update', 0],
+			]),
+			'update',
+		)
+		expect(options.map((o) => [o.label, o.count])).toEqual([
+			['Everything', 2],
+			['Decisions', 2],
+			['Updates', 0],
+		])
+	})
+
+	it('adds the kind that is on even when the counts do not mention it at all', () => {
+		const options = forYouTypeOptions(0, new Map(), 'draft')
+		expect(options.map((o) => [o.value, o.label, o.count])).toEqual([
+			[undefined, 'Everything', 0],
+			['draft', 'Drafts', 0],
+		])
+	})
+
+	it('still drops an empty kind that is not on', () => {
+		const options = forYouTypeOptions(1, new Map([['update', 0]]), 'decision')
+		expect(options.map((o) => o.label)).toEqual(['Everything', 'Decisions'])
+	})
 })
 
 describe('ForYouDisplay', () => {
@@ -54,6 +83,19 @@ describe('ForYouDisplay', () => {
 		expect(await screen.findByText('Show')).toBeInTheDocument()
 		await user.click(screen.getByRole('button', { name: /Insights/ }))
 		expect(props.onTypeFilterChange).toHaveBeenCalledWith('insight')
+	})
+
+	it('names the active kind in the menu after its last card is gone', async () => {
+		const user = userEvent.setup()
+		renderDisplay({
+			typeFilter: 'update',
+			typeCounts: new Map([['decision', 1]]),
+			unreadCount: 1,
+		})
+		await user.click(screen.getByRole('button', { name: /Display/ }))
+		expect(await screen.findByText('Kind')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /^Updates/ })).toBeInTheDocument()
+		expect(screen.getAllByText('Updates').length).toBeGreaterThan(0)
 	})
 
 	it('counts the active type on the trigger and clears it when picked again', async () => {

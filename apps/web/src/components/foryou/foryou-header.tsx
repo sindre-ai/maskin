@@ -59,7 +59,7 @@ export function ForYouHeader({
 	bulkActions,
 	hideMenu = false,
 }: ForYouHeaderProps) {
-	const typeOptions = forYouTypeOptions(unreadCount, typeCounts)
+	const typeOptions = forYouTypeOptions(unreadCount, typeCounts, typeFilter)
 
 	// Nothing to draw: no pill rail and the menu lives on the first section heading.
 	if (hideMenu && !filterPills) return null

@@ -1,5 +1,5 @@
 import { ObjectDetailShell } from '@/components/objects/object-detail-shell'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import * as React from 'react'
 import { vi } from 'vitest'
 import { buildObjectResponse } from '../../factories'
@@ -57,8 +57,17 @@ vi.mock('@/lib/auth', () => ({
 	getStoredActor: () => ({ id: 'actor-1', name: 'Alice', type: 'human' }),
 }))
 
+// A post succeeds at once, so the shell's "Comment posted" feedback can be asserted.
 vi.mock('@/hooks/use-events', () => ({
-	useCreateComment: () => ({ mutate: vi.fn(), isPending: false }),
+	useCreateComment: () => ({
+		mutate: (_body: unknown, options?: { onSuccess?: () => void }) => options?.onSuccess?.(),
+		isPending: false,
+	}),
+}))
+
+const toastMock = vi.hoisted(() => vi.fn())
+vi.mock('sonner', () => ({
+	toast: Object.assign(toastMock, { error: vi.fn(), success: vi.fn(), message: vi.fn() }),
 }))
 
 // Lazily read, like settingsStore, so a test can seed mentionable actors.
@@ -147,6 +156,48 @@ describe('ObjectDetailShell', () => {
 		fireEvent.click(screen.getByRole('button', { name: /answer it/i }))
 		await waitFor(() => expect(document.activeElement).toBe(answerBox))
 		expect(screen.getByRole('tab', { name: /^Activity/ })).toHaveAttribute('aria-selected', 'true')
+	})
+
+	/** Types into the pinned comment box the way a keystroke would, then sends with Enter. */
+	function postComment(text: string) {
+		const box = screen.getByRole('textbox', { name: 'Comment' })
+		box.appendChild(document.createTextNode(text))
+		const range = document.createRange()
+		range.selectNodeContents(box)
+		range.collapse(false)
+		document.getSelection()?.removeAllRanges()
+		document.getSelection()?.addRange(range)
+		fireEvent.input(box)
+		fireEvent.keyDown(box, { key: 'Enter' })
+	}
+
+	it('offers a way to the timeline after a comment is posted from Overview', () => {
+		toastMock.mockClear()
+		const object = buildObjectResponse({ type: 'bet' })
+		render(<ObjectDetailShell object={object} />, {
+			wrapper: createWorkspaceWrapper(workspace, { renderPageHeader: true }),
+		})
+		postComment('Looks good')
+
+		expect(toastMock).toHaveBeenCalledTimes(1)
+		const [message, options] = toastMock.mock.calls[0]
+		expect(message).toBe('Comment posted')
+		// It does not move the reader on its own ...
+		expect(screen.getByRole('tab', { name: /^Overview/ })).toHaveAttribute('aria-selected', 'true')
+		// ... the View action does.
+		expect(options.action.label).toBe('View')
+		act(() => options.action.onClick())
+		expect(screen.getByRole('tab', { name: /^Activity/ })).toHaveAttribute('aria-selected', 'true')
+	})
+
+	it('stays quiet when the comment is posted from the Activity tab', () => {
+		toastMock.mockClear()
+		const object = buildObjectResponse({ type: 'bet' })
+		render(<ObjectDetailShell object={object} tab="activity" />, {
+			wrapper: createWorkspaceWrapper(workspace, { renderPageHeader: true }),
+		})
+		postComment('Looks good')
+		expect(toastMock).not.toHaveBeenCalled()
 	})
 
 	it.each(['overview', 'related', 'activity'] as const)(

@@ -29,6 +29,7 @@ export function ConversationListHeader({
 	onQueryChange,
 	workspaceId,
 	titled,
+	pageTitle = true,
 }: {
 	filter: ChatsFilter
 	onFilterChange: (next: ChatsFilter) => void
@@ -37,6 +38,9 @@ export function ConversationListHeader({
 	workspaceId: string
 	/** Draw the title and New chat here (desktop); false leaves them to the nav row. */
 	titled: boolean
+	/** The list's title is the page's `h1`. False on the new-chat screen, where the nav row
+	 *  keeps "New chat" as the `h1`. */
+	pageTitle?: boolean
 }) {
 	const searchRef = useRef<HTMLInputElement>(null)
 	const [focused, setFocused] = useState(false)
@@ -63,9 +67,16 @@ export function ConversationListHeader({
 			</div>
 		)
 	}
+	const Heading = pageTitle ? 'h1' : 'h2'
 	return (
 		<div className="flex flex-none items-center gap-2 pt-5 pr-5 pb-4 pl-7">
-			<h2 className={cn('page-title min-w-0 flex-1 truncate', expanded && 'hidden')}>Chats</h2>
+			{/* Always in the DOM so the page keeps its heading; while the search is open it is only
+			    visually hidden. */}
+			<Heading
+				className={cn('page-title min-w-0 flex-1 truncate', expanded && 'sr-only flex-none')}
+			>
+				Chats
+			</Heading>
 			<label
 				className={cn(
 					'flex h-8 min-w-0 cursor-pointer items-center gap-2 overflow-hidden rounded-full bg-background px-[9px] text-muted-foreground shadow-[inset_0_0_0_1px_var(--border)] transition-[flex] duration-300',

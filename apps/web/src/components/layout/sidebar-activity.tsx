@@ -52,16 +52,20 @@ export function SidebarActivity({ workspaceId }: { workspaceId: string }) {
 				to="/$workspaceId/agents"
 				params={{ workspaceId }}
 				title={summary}
-				aria-label="Agents"
+				aria-label={isWorking ? `Agents: ${agentCount} working` : 'Agents: idle'}
 				onClick={() => trackNavItemClicked({ item_key: 'agents', source: 'footer' })}
 				className="mx-auto hidden size-10 place-items-center rounded-[10px] border border-sidebar-border transition-colors duration-150 hover:bg-sidebar-accent group-data-[collapsible=icon]:grid"
 			>
-				{/* v3 rail: the tile is just the liveness dot, no number. */}
+				{/* v3 rail: the tile is just the liveness dot, no number. Working is a
+				    filled green dot; idle is a hollow ring, so the state does not rest on
+				    colour alone. */}
 				<span
 					aria-hidden="true"
 					className={cn(
 						'size-2 rounded-full',
-						isWorking ? 'bg-success motion-safe:animate-pulse' : 'bg-border-strong',
+						isWorking
+							? 'bg-success motion-safe:animate-pulse'
+							: 'border border-border-strong bg-transparent',
 					)}
 				/>
 			</Link>

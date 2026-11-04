@@ -4,20 +4,32 @@ import { defaultStatusColor, statusColors, statusLabel, statusStage } from '@/li
 
 type StatusBadgeVariant = 'default' | 'dot-word' | 'word' | 'ring'
 
+type StatusBadgeProps = {
+	status: string
+	className?: string
+} & (
+	| {
+			variant: 'ring'
+			// The ring is a read-only glyph: it accepts no click handler, so a
+			// caller can't ship a control that does nothing.
+			onClick?: never
+			// Pixel size of the ring (16 in rows, 14 in dense meta).
+			size?: number
+	  }
+	| {
+			variant?: Exclude<StatusBadgeVariant, 'ring'>
+			onClick?: () => void
+			size?: never
+	  }
+)
+
 export function StatusBadge({
 	status,
 	onClick,
 	className,
 	variant = 'default',
 	size = 16,
-}: {
-	status: string
-	onClick?: () => void
-	className?: string
-	variant?: StatusBadgeVariant
-	// Pixel size of the `ring` variant (16 in rows, 14 in dense meta).
-	size?: number
-}) {
+}: StatusBadgeProps) {
 	// `defaultStatusColor` rather than a literal: statuses are workspace-
 	// configurable, and the old fallback was light text sized for a dark pill.
 	// The `word` and `dot-word` variants drop the pill and render `text` on the
@@ -26,11 +38,12 @@ export function StatusBadge({
 	const label = status.replace(/_/g, ' ')
 
 	// The v3 row and group-header status: a small ring that fills as the work
-	// moves on (dashed, a third, three quarters, solid with a tick). The word
-	// stays available to assistive tech and as the hover title.
+	// moves on (dashed, a third, three quarters, solid with a tick), a cross for
+	// work that was dropped and a pause mark in the warning colour for work that is
+	// held up. The word stays available to assistive tech and as the hover title.
 	if (variant === 'ring') {
 		const stage = statusStage(status)
-		const started = stage !== 'todo'
+		const filled = stage === 'progress' || stage === 'review' || stage === 'done'
 		return (
 			<svg
 				width={size}
@@ -39,7 +52,15 @@ export function StatusBadge({
 				fill="none"
 				role="img"
 				aria-label={`Status ${label}`}
-				className={cn('shrink-0', started ? 'text-foreground' : 'text-muted-foreground', className)}
+				className={cn(
+					'shrink-0',
+					stage === 'blocked'
+						? 'text-warning'
+						: filled
+							? 'text-foreground'
+							: 'text-muted-foreground',
+					className,
+				)}
 			>
 				<title>{capitalize(statusLabel(status))}</title>
 				<circle
@@ -48,7 +69,7 @@ export function StatusBadge({
 					r="6.5"
 					stroke="currentColor"
 					strokeWidth="1.6"
-					strokeDasharray={started ? undefined : '2.2 2.2'}
+					strokeDasharray={stage === 'todo' ? '2.2 2.2' : undefined}
 					fill={stage === 'done' ? 'currentColor' : 'none'}
 				/>
 				{(stage === 'progress' || stage === 'review') && (
@@ -69,6 +90,22 @@ export function StatusBadge({
 						strokeWidth="1.6"
 						strokeLinecap="round"
 						strokeLinejoin="round"
+					/>
+				)}
+				{stage === 'cancelled' && (
+					<path
+						d="M6.5 6.5l5 5M11.5 6.5l-5 5"
+						stroke="currentColor"
+						strokeWidth="1.6"
+						strokeLinecap="round"
+					/>
+				)}
+				{stage === 'blocked' && (
+					<path
+						d="M7.4 6.4v5.2M10.6 6.4v5.2"
+						stroke="currentColor"
+						strokeWidth="1.8"
+						strokeLinecap="round"
 					/>
 				)}
 			</svg>

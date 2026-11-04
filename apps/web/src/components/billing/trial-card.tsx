@@ -22,18 +22,19 @@ function readNotTrial(workspaceId: string): boolean {
  * Upgrade pill). Renders nothing on any other plan or if usage has failed, and once the trial has ended (the expiry banner owns that).
  */
 export function TrialCard({ workspaceId }: { workspaceId: string }) {
-	const { data: usage, isPending } = useBillingUsage(workspaceId)
+	const { data: usage, isPending, isSuccess } = useBillingUsage(workspaceId)
 	const state = trialCardState(usage)
 
 	useEffect(() => {
-		if (isPending) return
+		// A failed read says nothing about the plan, so it must not flip the flag.
+		if (!isSuccess || !usage) return
 		try {
 			if (state) localStorage.removeItem(notTrialKey(workspaceId))
 			else localStorage.setItem(notTrialKey(workspaceId), '1')
 		} catch {
 			// Storage can be unavailable (private mode); the slot just is not remembered.
 		}
-	}, [isPending, state, workspaceId])
+	}, [isSuccess, usage, state, workspaceId])
 
 	if (!state) {
 		// Usage is still loading: hold the card's slot open so the rows below it do

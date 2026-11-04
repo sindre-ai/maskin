@@ -67,6 +67,7 @@ function ChatsLayout() {
 	// aside for the length of the call.
 	const onCall = useVoiceCallLive()
 	const narrowForCall = useMediaQuery('(max-width: 1279px)')
+	const isLg = useMediaQuery('(min-width: 1024px)')
 	const listAside = onCall && narrowForCall
 	const navigate = useNavigate()
 	const [query, setQuery] = useState('')
@@ -101,17 +102,23 @@ function ChatsLayout() {
 		[navigate],
 	)
 
+	// From md the list column draws the "Chats" h1 itself, but below lg an open chat hides the
+	// list, so the nav row keeps the h1 then (and in focus mode).
+	const listTitleInColumn = !isMobile && !isDraft && !wide && !listAside && (!hasThread || isLg)
+
 	// The shared nav row carries the title, search and New chat; the list column
 	// adds its own search and filter pills below it.
 	const header = (
 		<PageHeader
 			title={isDraft ? 'New chat' : 'Chats'}
-			subtitle={isDraft ? undefined : subtitle}
+			// Desktop's list column carries the title and the v3 mockup has no count beside it, so
+			// the nav row shows no subtitle there.
+			subtitle={isDraft || listTitleInColumn ? undefined : subtitle}
 			// The split pane owns two internal scrollers; without this the shared
 			// page container scrolls too and the surface double-scrolls.
 			scrollLocked
 			// Desktop draws its own title in the list column (v3); the nav row keeps New chat.
-			hideTitle={!isMobile && !isDraft}
+			hideTitle={listTitleInColumn}
 		/>
 	)
 	const listColumn = (
@@ -119,6 +126,7 @@ function ChatsLayout() {
 			<ConversationListHeader
 				workspaceId={workspaceId}
 				titled={!isMobile}
+				pageTitle={!isDraft}
 				filter={filter}
 				onFilterChange={handleFilterChange}
 				query={query}

@@ -8,6 +8,7 @@ import { useStar } from '@/hooks/use-star'
 import type { ActorListItem, NotificationResponse, ObjectResponse } from '@/lib/api'
 import type { BetStatusResult } from '@/lib/bet-status'
 import { cn } from '@/lib/cn'
+import { statusStage } from '@/lib/constants'
 import { Link } from '@tanstack/react-router'
 import type { VisibilityState } from '@tanstack/react-table'
 
@@ -302,9 +303,22 @@ export function ListRow({
 					</p>
 				)}
 			</div>
-			{/* v3 row status: the ring only. The word lives in its hover title and in
-			    the group header when grouped by status. */}
-			{showTag && <StatusBadge status={object.status} variant="ring" />}
+			{/* v3 row status: the ring. The word lives in its hover title and in the
+			    group header when grouped by status. A status the ring has no stage for
+			    (a custom one) keeps its word beside the ring from `sm` up, so it never
+			    reads as a stage it isn't. */}
+			{showTag && (
+				<>
+					{statusStage(object.status) === 'unknown' && (
+						<StatusBadge
+							status={object.status}
+							variant="word"
+							className="hidden text-[11px] font-semibold sm:inline"
+						/>
+					)}
+					<StatusBadge status={object.status} variant="ring" />
+				</>
+			)}
 			{showDriver && driver && (
 				// D2 · Driver avatar gains a violet conic-gradient ring when the
 				// object has an actively-running session on it. Replaces the old
