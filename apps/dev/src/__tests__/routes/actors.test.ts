@@ -1141,7 +1141,13 @@ describe('Actors Routes', () => {
 		it("removes the deleted agent's computer on the agent server", async () => {
 			desktopRemove.mockReset().mockResolvedValue(true)
 			const agentActor = buildActor({ type: 'agent' })
-			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			const { app, mockResults } = createTestApp(
+				actorsRoutes,
+				'/api/actors',
+				'test-actor-id',
+				'human',
+				createMockAgentStorage(),
+			)
 			mockResults.selectQueue = [
 				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
 				[agentActor],
@@ -1160,7 +1166,13 @@ describe('Actors Routes', () => {
 		it('still deletes the agent when its computer cannot be removed', async () => {
 			desktopRemove.mockReset().mockRejectedValue(new Error('agent-server down'))
 			const agentActor = buildActor({ type: 'agent' })
-			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			const { app, mockResults } = createTestApp(
+				actorsRoutes,
+				'/api/actors',
+				'test-actor-id',
+				'human',
+				createMockAgentStorage(),
+			)
 			mockResults.selectQueue = [
 				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
 				[agentActor],
