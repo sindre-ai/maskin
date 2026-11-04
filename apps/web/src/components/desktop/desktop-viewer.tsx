@@ -21,7 +21,6 @@ interface RfbHandle {
 	focus: () => void
 	clipboardPasteFrom: (text: string) => void
 	sendKey: (keysym: number, code: string | null, down?: boolean) => void
-	sendKey: (keysym: number, code: string | null, down?: boolean) => void
 }
 
 const STATUS_TEXT: Record<Phase, string> = {
