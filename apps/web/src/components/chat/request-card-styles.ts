@@ -5,7 +5,7 @@
  * are components (header, field row, folded answer) are in `request-card-parts.tsx`.
  */
 export const REQUEST_CARD =
-	'mt-2 flex min-w-0 max-w-110 flex-col gap-2 rounded-xl border border-border bg-card px-[18px] py-4'
+	'mt-2 flex w-full min-w-0 flex-col gap-3 rounded-xl bg-card px-[18px] py-4 shadow-[0_0_0_1px_var(--border)]'
 export const REQUEST_CARD_TITLE = 'text-[15px] font-bold'
 export const REQUEST_CARD_BODY = 'mt-0.5 break-words text-[13px] text-muted-foreground'
 export const REQUEST_CARD_BUTTON =

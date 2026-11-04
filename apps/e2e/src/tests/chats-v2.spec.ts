@@ -68,8 +68,9 @@ test.describe('Chats v2 — filter menu', () => {
 		await expect(page).toHaveURL(/[?&]filter=pinned/)
 		await expect(list.getByText(chats.pinned)).toBeVisible()
 		await expect(list.getByText(chats.plain)).toBeHidden()
-		await expect(page.getByRole('button', { name: /^Filter conversations/ })).toContainText(
-			'Pinned',
+		// The desktop list head draws the filter as an icon, so the active filter is in its name.
+		await expect(page.getByRole('button', { name: /^Filter conversations/ })).toHaveAccessibleName(
+			/Pinned/,
 		)
 
 		await page.reload()
@@ -129,8 +130,8 @@ test.describe('Chats v2 — layout', () => {
 			})
 			await expectNoHorizontalOverflow(page)
 
-			if (vp.width < 768) {
-				// Mobile stacks: the list is replaced by the thread.
+			if (vp.width < 1024) {
+				// Below lg the list and the thread take turns: the thread replaces the list.
 				await expect(list).toBeHidden()
 				await page.getByRole('button', { name: 'Back to conversations' }).click()
 			} else {
@@ -219,8 +220,14 @@ test.describe('Chats v2 — filter pill (v16)', () => {
 			const search = page.getByRole('searchbox', { name: 'Search chats' })
 			const pillBox = await pill.boundingBox()
 			const searchBox = await search.boundingBox()
-			expect(pillBox?.height).toBe(vp.width < 768 ? 44 : 34)
-			expect((pillBox?.y ?? 0) >= (searchBox?.y ?? 0) + (searchBox?.height ?? 0)).toBe(true)
+			if (vp.width < 768) {
+				expect(pillBox?.height).toBe(44)
+				expect((pillBox?.y ?? 0) >= (searchBox?.y ?? 0) + (searchBox?.height ?? 0)).toBe(true)
+			} else {
+				// v3 list head: the search is a round icon and the filter a 32px round icon beside it.
+				expect(pillBox?.height).toBe(32)
+				expect(pillBox?.width).toBe(32)
+			}
 			await pill.click()
 			await expect(page.getByRole('menuitemradio', { name: 'Pinned' })).toBeVisible()
 		})
@@ -240,16 +247,17 @@ test.describe('Chats v2 — list title and column', () => {
 			await page.goto(`/${account.workspaceId}/chats`)
 			await expect(list.getByText(chats.plain)).toBeVisible({ timeout: 15_000 })
 
-			// Exactly one "Chats" heading, drawn by the shared nav row like every other page.
+			// Exactly one "Chats" heading: the nav row's below md, the list column's from md (v3).
 			const title = page.getByRole('heading', { name: 'Chats', exact: true })
 			await expect(title).toHaveCount(1)
 			await expect(title).toBeVisible()
 			const size = await title.evaluate((el) => window.getComputedStyle(el).fontSize)
 			expect(size).toBe(vp.width >= 1024 ? '34px' : vp.width >= 768 ? '28px' : '24px')
-			// Same top edge as every other page: 20px from the top of the viewport.
 			const box = await title.boundingBox()
 			const listBox = await list.boundingBox()
-			expect(Math.abs((box?.y ?? 0) - 20)).toBeLessThanOrEqual(2)
+			// Below md it shares the shared top edge, 20px from the top of the viewport. From md
+			// it heads the list column, under the nav row.
+			if (vp.width < 768) expect(Math.abs((box?.y ?? 0) - 20)).toBeLessThanOrEqual(2)
 
 			// Section headers are present, and the list sits below the title row.
 			await expect(list.getByText('Earlier', { exact: true })).toBeVisible()
@@ -257,19 +265,17 @@ test.describe('Chats v2 — list title and column', () => {
 			await expectNoHorizontalOverflow(page)
 
 			// Selecting a chat opens the pane. With the thread open the title stays in
-			// the column from md up; on mobile the thread replaces the list.
+			// the column from lg up; below lg the thread replaces the list.
 			await list.getByText(chats.plain).click()
 			await expect(page.getByRole('heading', { name: chats.plain })).toBeVisible({
 				timeout: 15_000,
 			})
 			await expectNoHorizontalOverflow(page)
-			if (vp.width >= 768) {
+			if (vp.width >= 1024) {
 				await expect(page.getByRole('heading', { name: 'Chats', exact: true })).toBeVisible()
 				const column = await list.boundingBox()
-				// The column is 280px from md and 400px from xl (1280), minus its 1px divider.
-				if (vp.width >= 1024) {
-					expect(Math.round(column?.width ?? 0)).toBe(vp.width >= 1280 ? 399 : 279)
-				}
+				// The column is 280px from lg and 400px from xl (1280), minus its 1px divider.
+				expect(Math.round(column?.width ?? 0)).toBe(vp.width >= 1280 ? 399 : 279)
 				// The composer stays reachable beside the wider column.
 				await expect(page.getByLabel('Message this conversation')).toBeVisible()
 			} else {
@@ -444,11 +450,18 @@ test.describe('Chats v2 — light and dark', () => {
 					return { background: style.backgroundColor, color: style.color }
 				})
 			// The optimistic bubble is swapped for the saved one; a read taken mid-swap sees a
-			// detached element with no computed style, so wait for a real colour.
-			await expect.poll(async () => (await readPlate()).background).not.toBe('')
-			const plate = await readPlate()
-			expect(plate.background).not.toBe('rgba(0, 0, 0, 0)')
-			expect(plate.background).not.toBe(plate.color)
+			// detached element with no computed style. Poll the whole assertion, so one stale read
+			// cannot fail it and a real missing plate still does.
+			await expect
+				.poll(async () => {
+					const plate = await readPlate().catch(() => ({ background: '', color: '' }))
+					return (
+						plate.background !== '' &&
+						plate.background !== 'rgba(0, 0, 0, 0)' &&
+						plate.background !== plate.color
+					)
+				})
+				.toBe(true)
 		})
 	}
 })

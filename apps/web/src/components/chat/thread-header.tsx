@@ -195,37 +195,35 @@ export function ThreadHeader({
 
 	return (
 		<div className="flex min-h-[69px] shrink-0 flex-wrap items-center gap-x-3 gap-y-1 lg:flex-nowrap border-b border-border py-2 pr-4 pl-[var(--chat-gut)] md:pr-6">
-			{isMobile ? (
-				<Button
-					type="button"
-					variant="ghost"
-					size="icon"
-					className="-ml-2 size-8 shrink-0"
-					onClick={handleClose}
-					aria-label="Back to conversations"
-				>
-					<ArrowLeft size={16} />
-				</Button>
-			) : (
-				<span className="hidden shrink-0 lg:block">
-					{singleAgent ? (
-						<ActorAvatar
-							name={singleAgent.actorName}
-							type="agent"
-							id={singleAgent.actorId}
-							size="md"
-							className="size-[34px] rounded-[10px] text-xs font-bold"
-						/>
-					) : (
-						<span
-							aria-hidden
-							className="grid size-[34px] place-items-center rounded-[10px] bg-secondary text-xs font-bold text-foreground"
-						>
-							{tileLabel}
-						</span>
-					)}
-				</span>
-			)}
+			{/* Below lg the thread replaces the list, so the way back is always there. */}
+			<Button
+				type="button"
+				variant="ghost"
+				size="icon"
+				className="-ml-2 size-8 shrink-0 lg:hidden"
+				onClick={handleClose}
+				aria-label="Back to conversations"
+			>
+				<ArrowLeft size={16} />
+			</Button>
+			<span className="hidden shrink-0 lg:block">
+				{singleAgent ? (
+					<ActorAvatar
+						name={singleAgent.actorName}
+						type="agent"
+						id={singleAgent.actorId}
+						size="md"
+						className="size-[34px] rounded-[10px] text-xs font-bold"
+					/>
+				) : (
+					<span
+						aria-hidden
+						className="grid size-[34px] place-items-center rounded-[10px] bg-secondary text-xs font-bold text-foreground"
+					>
+						{tileLabel}
+					</span>
+				)}
+			</span>
 			<div className="min-w-[10rem] flex-1">
 				{isEditingTitle ? (
 					<Input
@@ -304,7 +302,7 @@ export function ThreadHeader({
 				isMobile ? (
 					<AgentCallButton agent={voiceAgent} variant="icon" />
 				) : (
-					<AgentCallButton agent={voiceAgent} variant="detail" label="Live" secondary />
+					<AgentCallButton agent={voiceAgent} variant="thread" tooltip="Talk live with this chat" />
 				)
 			) : null}
 			<DropdownMenu>
@@ -349,7 +347,7 @@ export function ThreadHeader({
 						<span>{conversation.archived ? 'Unarchive conversation' : 'Archive conversation'}</span>
 					</DropdownMenuItem>
 					{isMobile ? null : (
-						<DropdownMenuItem onSelect={toggleWide}>
+						<DropdownMenuItem onSelect={toggleWide} className="max-lg:hidden">
 							{wide ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
 							<span>{wide ? 'Show conversation list' : 'Hide conversation list'}</span>
 						</DropdownMenuItem>

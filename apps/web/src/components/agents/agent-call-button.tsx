@@ -15,13 +15,14 @@ export function AgentCallButton({
 	shortcut = true,
 	label,
 	secondary = false,
+	tooltip,
 }: {
 	agent: VoiceCallAgent
 	/** detail: the agent header's labelled button. row: the compact labelled
 	 *  button on an agents-list row (hover-reveal on md+, inline below). icon:
 	 *  the icon-only button in a chat thread header. composer: the round outline
 	 *  icon button beside the mic in a message composer. */
-	variant?: 'detail' | 'row' | 'icon' | 'composer'
+	variant?: 'detail' | 'row' | 'icon' | 'composer' | 'thread'
 	/** Whether V opens the dialog. Off for list rows, where many buttons share
 	 *  one page and V has no single agent to mean. */
 	shortcut?: boolean
@@ -30,6 +31,8 @@ export function AgentCallButton({
 	label?: string
 	/** Draws the `detail` variant as the quieter button beside a primary one. */
 	secondary?: boolean
+	/** Tooltip of the `thread` variant (the round icon), e.g. "Talk live with this chat". */
+	tooltip?: string
 }) {
 	const unavailable = useVoiceUnavailable()
 	// Starting a call reserves a voice session, which a viewer cannot do.
@@ -61,13 +64,16 @@ export function AgentCallButton({
 		<Button
 			type="button"
 			variant={
-				variant === 'composer' || variant === 'row' || (variant === 'detail' && secondary)
+				variant === 'composer' ||
+				variant === 'thread' ||
+				variant === 'row' ||
+				(variant === 'detail' && secondary)
 					? 'outline'
 					: variant === 'icon'
 						? 'ghost'
 						: 'default'
 			}
-			size={variant === 'icon' || variant === 'composer' ? 'icon' : 'sm'}
+			size={variant === 'icon' || variant === 'composer' || variant === 'thread' ? 'icon' : 'sm'}
 			className={cn(
 				// Reads as unavailable even when the row hover pushes opacity back to full.
 				'disabled:bg-muted disabled:text-muted-foreground',
@@ -85,12 +91,16 @@ export function AgentCallButton({
 				variant === 'icon' &&
 					'h-6 w-6 shrink-0 text-muted-foreground hover:text-foreground disabled:bg-transparent',
 				variant === 'composer' && 'h-7 w-7 shrink-0 rounded-full text-muted-foreground',
+				// v3 thread header: a 32px round outline icon beside the ··· and panel buttons.
+				variant === 'thread' && 'size-8 shrink-0 rounded-full',
 			)}
 			onClick={() => startVoiceCall(agent)}
 			disabled={unavailable || !canWrite}
 			aria-label={`Call ${agent.name}`}
 		>
-			{variant === 'detail' && (secondary || label === 'Live') ? (
+			{variant === 'thread' ? (
+				<AudioLines size={16} aria-hidden="true" />
+			) : variant === 'detail' && (secondary || label === 'Live') ? (
 				<AudioLines size={14} aria-hidden="true" />
 			) : (
 				variant !== 'row' && <Phone size={variant === 'icon' ? 13 : 14} aria-hidden="true" />
@@ -116,10 +126,12 @@ export function AgentCallButton({
 					</TooltipTrigger>
 					<TooltipContent>{VOICE_UNAVAILABLE_TOOLTIP}</TooltipContent>
 				</Tooltip>
-			) : variant === 'icon' || variant === 'composer' ? (
+			) : variant === 'icon' || variant === 'composer' || variant === 'thread' ? (
 				<Tooltip>
 					<TooltipTrigger asChild>{button}</TooltipTrigger>
-					<TooltipContent>{`Call ${agent.name} · V`}</TooltipContent>
+					<TooltipContent>
+						{variant === 'thread' ? (tooltip ?? 'Talk live') : `Call ${agent.name} · V`}
+					</TooltipContent>
 				</Tooltip>
 			) : (
 				button

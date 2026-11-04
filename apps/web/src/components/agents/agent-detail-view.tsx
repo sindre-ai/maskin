@@ -158,7 +158,7 @@ export function AgentDetailView({
 					Message
 				</Button>
 			</ViewerTooltip>
-			<AgentCallButton agent={agent} label="Live" secondary />
+			<AgentCallButton agent={agent} variant="thread" />
 			{runPause}
 			{!agent.isSystem &&
 				(confirmDelete ? (
@@ -214,9 +214,9 @@ export function AgentDetailView({
 				}}
 				actions={actions}
 			/>
-			{/* w-full: mx-auto stops a flex item stretching, so without it this shrink-wraps to its
-			    widest no-wrap text (an agent's description) and overflows a phone screen. */}
-			<div className="mx-auto flex w-full max-w-280 flex-col gap-6">
+			{/* w-full: a flex item otherwise shrink-wraps to its widest no-wrap text (an agent's
+			    description) and overflows a phone screen. Left-aligned, as in v3. */}
+			<div className="flex w-full max-w-280 flex-col gap-6">
 				<AgentDetailHeader agent={agent} portrait={portrait} />
 				{isDisabled ? (
 					<EditorBanner tone="info">

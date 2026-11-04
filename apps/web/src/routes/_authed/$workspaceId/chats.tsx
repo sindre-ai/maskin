@@ -110,11 +110,15 @@ function ChatsLayout() {
 			// The split pane owns two internal scrollers; without this the shared
 			// page container scrolls too and the surface double-scrolls.
 			scrollLocked
+			// Desktop draws its own title in the list column (v3); the nav row keeps New chat.
+			hideTitle={!isMobile && !isDraft}
 		/>
 	)
 	const listColumn = (
 		<>
 			<ConversationListHeader
+				workspaceId={workspaceId}
+				titled={!isMobile}
 				filter={filter}
 				onFilterChange={handleFilterChange}
 				query={query}
@@ -160,14 +164,28 @@ function ChatsLayout() {
 			{hasThread ? null : <ChatsListTitle />}
 			<div className={cn('flex min-h-0 flex-1', SHELL_BLEED)}>
 				{wide || listAside ? null : (
-					<div className="hidden shrink-0 flex-col border-r border-border bg-surface-sunken md:flex md:w-70 xl:w-100">
+					// Below lg (iPad portrait) the list and the thread take turns: the list fills the
+					// width until a chat is open, then the thread replaces it. From lg they sit side by side.
+					<div
+						className={cn(
+							'hidden min-w-0 flex-col border-r border-border bg-background lg:flex lg:w-70 lg:flex-none xl:w-100',
+							// With a chat open the list is lg-and-up only; otherwise it fills the width from md.
+							!hasThread && 'md:flex md:flex-1',
+						)}
+					>
 						{listColumn}
 					</div>
 				)}
 				{/* One gutter variable for the whole thread pane — the header,
 				    transcript and composer all read `--chat-gut` so they can never
 				    drift apart. */}
-				<div className="flex min-w-0 flex-1 flex-col [--chat-gut:clamp(14px,3vw,28px)] md:[--chat-gut:max(32px,calc((100%-900px)/2))]">
+				<div
+					className={cn(
+						'min-w-0 flex-1 flex-col [--chat-gut:clamp(14px,3vw,28px)] md:[--chat-gut:max(32px,calc((100%-900px)/2))]',
+						// Below lg the pane only shows with a chat open; the list holds the width otherwise.
+						hasThread || wide || listAside ? 'flex' : 'max-lg:hidden lg:flex',
+					)}
+				>
 					<Outlet />
 				</div>
 			</div>

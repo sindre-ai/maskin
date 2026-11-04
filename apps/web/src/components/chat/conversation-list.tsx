@@ -8,7 +8,7 @@ import { cn } from '@/lib/cn'
 import { groupConversations } from '@/lib/conversation-groups'
 import { focusField, usePageSearchShortcut } from '@/lib/page-search-shortcut'
 import { Link } from '@tanstack/react-router'
-import { ChevronDown, Search } from 'lucide-react'
+import { ChevronDown, Plus, Search } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { type ChatsFilter, ChatsFilterMenu } from './chats-filter-menu'
@@ -16,38 +16,88 @@ import { ConversationListRow } from './conversation-list-row'
 import { ReplyThreadList } from './replies/reply-thread-list'
 
 /**
- * The list column's head (mockup v11): a search pill beside the filter pill.
- * The title and New chat button stay in the shared nav row above.
+ * The list column's head (v3): the 34px "Chats" title, then a search pill that is
+ * a round icon until it is focused or holds text (it then takes the whole row and
+ * the title and buttons step aside), the filter icon and the black New chat
+ * button. Below md the shared nav row still carries the title and New chat, so
+ * the head keeps the plain search field and filter pill there.
  */
 export function ConversationListHeader({
 	filter,
 	onFilterChange,
 	query,
 	onQueryChange,
+	workspaceId,
+	titled,
 }: {
 	filter: ChatsFilter
 	onFilterChange: (next: ChatsFilter) => void
 	query: string
 	onQueryChange: (next: string) => void
+	workspaceId: string
+	/** Draw the title and New chat here (desktop); false leaves them to the nav row. */
+	titled: boolean
 }) {
 	const searchRef = useRef<HTMLInputElement>(null)
+	const [focused, setFocused] = useState(false)
 	usePageSearchShortcut(() => focusField(searchRef.current))
+	const expanded = focused || query !== ''
+	if (!titled) {
+		return (
+			<div className="flex flex-none flex-col gap-3 px-4 pt-3 pb-3 lg:pl-7">
+				<div className="flex flex-col items-start gap-2">
+					<label className="flex h-[34px] w-full min-w-0 items-center gap-2 rounded-full bg-secondary max-md:min-h-11 pointer-coarse:min-h-11 px-3 text-muted-foreground">
+						<Search size={14} aria-hidden className="shrink-0" />
+						<input
+							ref={searchRef}
+							type="search"
+							value={query}
+							onChange={(e) => onQueryChange(e.target.value)}
+							placeholder="Search chats"
+							aria-label="Search chats"
+							className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
+						/>
+					</label>
+					<ChatsFilterMenu value={filter} onChange={onFilterChange} />
+				</div>
+			</div>
+		)
+	}
 	return (
-		<div className="flex flex-none flex-col gap-3 px-4 pt-3 pb-3 lg:pl-7">
-			<div className="flex flex-col items-start gap-2">
-				<label className="flex h-[34px] w-full min-w-0 items-center gap-2 rounded-full bg-secondary max-md:min-h-11 pointer-coarse:min-h-11 px-3 text-muted-foreground">
-					<Search size={14} aria-hidden className="shrink-0" />
-					<input
-						ref={searchRef}
-						type="search"
-						value={query}
-						onChange={(e) => onQueryChange(e.target.value)}
-						placeholder="Search chats"
-						aria-label="Search chats"
-						className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
-					/>
-				</label>
-				<ChatsFilterMenu value={filter} onChange={onFilterChange} />
+		<div className="flex flex-none items-center gap-2 pt-5 pr-5 pb-4 pl-7">
+			<h2 className={cn('page-title min-w-0 flex-1 truncate', expanded && 'hidden')}>Chats</h2>
+			<label
+				className={cn(
+					'flex h-8 min-w-0 cursor-pointer items-center gap-2 overflow-hidden rounded-full bg-background px-[9px] text-muted-foreground shadow-[inset_0_0_0_1px_var(--border)] transition-[flex] duration-300',
+					expanded ? 'flex-1 cursor-text' : 'w-8 flex-none',
+				)}
+			>
+				<Search size={14} aria-hidden className="shrink-0" />
+				<input
+					ref={searchRef}
+					type="search"
+					value={query}
+					onChange={(e) => onQueryChange(e.target.value)}
+					onFocus={() => setFocused(true)}
+					onBlur={() => setFocused(false)}
+					placeholder="Search chats"
+					aria-label="Search chats"
+					className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
+				/>
+			</label>
+			<div className={cn('flex flex-none items-center gap-2', expanded && 'hidden')}>
+				<ChatsFilterMenu value={filter} onChange={onFilterChange} iconOnly />
+				<Button
+					asChild
+					size="icon"
+					className="size-8 rounded-full"
+					aria-label="New chat"
+					title="New chat"
+				>
+					<Link to="/$workspaceId/chats/new" params={{ workspaceId }}>
+						<Plus size={14} strokeWidth={2.6} aria-hidden />
+					</Link>
+				</Button>
 			</div>
 		</div>
 	)
