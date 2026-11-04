@@ -379,6 +379,9 @@ describe('GET /api/search against real Postgres', () => {
 				source.key === 'chats'
 					? {
 							...chats,
+							// The real count is against the real cap, so drop it: the partial flag then reads
+							// these capped candidates.
+							overScanCap: undefined,
 							candidates: (ctx: Parameters<typeof chats.candidates>[0]) => sql`
 								SELECT c2.id, c2.type, c2.title, c2.sub, c2.body, c2.status, c2.archived, c2.last_read, c2.updated_at,
 									(row_number() OVER (ORDER BY c2.updated_at DESC NULLS LAST, c2.id) <= 1) AS deep
@@ -405,6 +408,30 @@ describe('GET /api/search against real Postgres', () => {
 			)
 			expect(byTitle.results.map((r) => r.id)).toEqual([old.id])
 		})
+
+		it('reports the chats as partial once the caller has more than 2000 chats, with the real count', async () => {
+			const seed = async (count: number) => {
+				const rows = await db
+					.insert(conversations)
+					.values(
+						Array.from({ length: count }, (_, i) => ({
+							workspaceId,
+							createdBy: actorId,
+							title: `Capcount chat ${i}`,
+						})),
+					)
+					.returning({ id: conversations.id })
+				await db
+					.insert(conversationParticipants)
+					.values(rows.map((row) => ({ conversationId: row.id, actorId })))
+			}
+
+			await seed(2000)
+			expect((await search({ q: 'capcount' })).partial).toEqual([])
+
+			await seed(1)
+			expect((await search({ q: 'capcount' })).partial).toEqual(['chats'])
+		}, 60_000)
 
 		it('does not report partial for a search with no words', async () => {
 			await seedChat('Anything', [actorId])
