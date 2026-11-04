@@ -94,8 +94,9 @@ export function ExpandableDesktop({
 			<Dialog open={expanded} onOpenChange={setExpanded}>
 				{/* As wide as the screen allows while the 16:9 picture plus the top row still fit
 				    the height, so the picture never needs to scroll. The 5.5rem is the top row, the
-				    padding and a little air above and below the popup. */}
-				<DialogContent className="gap-2 p-3 pt-2.5 sm:max-w-[min(96vw,calc((100dvh_-_5.5rem)*16/9))]">
+				    padding and a little air above and below the popup. On a phone the popup is pinned
+				    to the top and runs edge to edge. */}
+				<DialogContent className="gap-2 p-3 pt-2.5 max-sm:top-0 max-sm:w-full max-sm:max-w-none max-sm:translate-y-0 max-sm:rounded-none max-sm:border-x-0 max-sm:border-t-0 max-sm:px-0 sm:max-w-[min(96vw,calc((100dvh_-_5.5rem)*16/9))]">
 					<DialogTitle className="sr-only">{agentName}'s computer</DialogTitle>
 					<DialogDescription className="sr-only">
 						Live view of {agentName}'s computer. Use Take control to control it.
@@ -114,7 +115,10 @@ export function ExpandableDesktop({
 						) : (
 							<div className="flex min-w-0 flex-col gap-2">
 								<div className="flex h-7 items-center justify-end gap-2 pr-5">{popupEnd}</div>
-								<div className="aspect-video w-full rounded-lg border bg-muted" aria-hidden />
+								<div
+									className="aspect-video w-full rounded-lg border bg-muted max-sm:rounded-none max-sm:border-0"
+									aria-hidden
+								/>
 							</div>
 						)}
 					</div>

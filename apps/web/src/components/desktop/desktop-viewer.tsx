@@ -7,8 +7,9 @@ import { useConnectDesktop } from '@/hooks/use-desktop'
 import { type TeachingStatus, useDesktopTeaching } from '@/hooks/use-desktop-teaching'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { cn } from '@/lib/cn'
+import { KEYBOARD_SENTINEL, SPECIAL_KEYS, diffTyped, keysymForChar } from '@/lib/desktop-keyboard'
 import type RfbClient from '@novnc/novnc/lib/rfb'
-import { Eye, Maximize2, MousePointer2, RefreshCw, Square } from 'lucide-react'
+import { Eye, Keyboard, Maximize2, MousePointer2, RefreshCw, Square } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 type Phase = 'starting' | 'connecting' | 'connected' | 'disconnected' | 'error'
@@ -20,6 +21,7 @@ interface RfbHandle {
 	focus: () => void
 	clipboardPasteFrom: (text: string) => void
 	sendKey: (keysym: number, code: string | null, down?: boolean) => void
+	sendKey: (keysym: number, code: string | null, down?: boolean) => void
 }
 
 const STATUS_TEXT: Record<Phase, string> = {
@@ -28,6 +30,12 @@ const STATUS_TEXT: Record<Phase, string> = {
 	connected: 'Live',
 	disconnected: 'Disconnected',
 	error: 'Not connected',
+}
+
+// A phone's main pointer is a finger: there is no hardware keyboard to type with, so the
+// viewer offers the on-screen one.
+function isTouchDevice(): boolean {
+	return typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches
 }
 
 function formatElapsed(ms: number): string {
@@ -122,6 +130,12 @@ export function DesktopViewer({
 	// What the computer last copied, for the Copy button.
 	const [remoteText, setRemoteText] = useState('')
 	const clipboardEnabled = useFeatureFlag('computer-clipboard')
+	const [keyboardUp, setKeyboardUp] = useState(false)
+	const keyboardRef = useRef<HTMLTextAreaElement>(null)
+	const lastTyped = useRef(KEYBOARD_SENTINEL)
+	// Set when the person hides the keyboard, so a tap on the picture does not bring it back.
+	const keyboardHidden = useRef(false)
+	const [touch] = useState(isTouchDevice)
 	const { mutateAsync: connectDesktop } = useConnectDesktop(workspaceId, agentId)
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: `attempt` is the retry trigger, not a value the effect reads.
@@ -191,7 +205,10 @@ export function DesktopViewer({
 		if (!rfb) return
 		rfb.viewOnly = !controlling
 		if (controlling) rfb.focus()
-		else setRemoteText('')
+		else {
+			setRemoteText('')
+			keyboardHidden.current = false
+		}
 	}, [controlling])
 
 	const busy = phase === 'starting' || phase === 'connecting'
@@ -205,6 +222,46 @@ export function DesktopViewer({
 	})
 	const recording = teaching.status === 'recording'
 	const sending = teaching.status === 'sending'
+	// The hidden textarea that raises the phone keyboard exists only while the person is in control.
+	const typing = touch && controlling && phase === 'connected'
+
+	const typeIntoComputer = (e: React.FormEvent<HTMLTextAreaElement>) => {
+		const area = e.currentTarget
+		const { backspaces, typed } = diffTyped(lastTyped.current, area.value)
+		for (let i = 0; i < backspaces; i++)
+			rfbRef.current?.sendKey(SPECIAL_KEYS.Backspace, 'Backspace')
+		for (const char of typed) rfbRef.current?.sendKey(keysymForChar(char), null)
+		// Keep room to delete in, and never let the text grow without end.
+		if (area.value.length < 50 || area.value.length > 150) area.value = KEYBOARD_SENTINEL
+		lastTyped.current = area.value
+	}
+
+	const pressSpecialKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+		const keysym = SPECIAL_KEYS[e.key]
+		if (!keysym) return
+		e.preventDefault()
+		rfbRef.current?.sendKey(keysym, e.code || null)
+	}
+
+	const toggleKeyboard = () => {
+		keyboardHidden.current = keyboardUp
+		if (keyboardUp) keyboardRef.current?.blur()
+		else keyboardRef.current?.focus()
+	}
+
+	const keyboardButton = typing ? (
+		<Button
+			variant={keyboardUp ? 'secondary' : 'outline'}
+			size="sm"
+			className={variant === 'immersive' ? 'rounded-full' : undefined}
+			aria-label={keyboardUp ? 'Hide keyboard' : 'Show keyboard'}
+			// Keeps the textarea focused through the tap, so this reads the real state.
+			onMouseDown={(e) => e.preventDefault()}
+			onClick={toggleKeyboard}
+		>
+			<Keyboard size={15} />
+		</Button>
+	) : null
 
 	const controls =
 		phase === 'connected' ? (
@@ -235,6 +292,7 @@ export function DesktopViewer({
 					{controlling && clipboardEnabled && (
 						<DesktopClipboardButtons rfbRef={rfbRef} remoteText={remoteText} />
 					)}
+					{keyboardButton}
 					<Button
 						variant={controlling ? 'default' : 'outline'}
 						size="sm"
@@ -265,6 +323,7 @@ export function DesktopViewer({
 			{controlling && clipboardEnabled && (
 				<DesktopClipboardButtons rfbRef={rfbRef} remoteText={remoteText} rounded />
 			)}
+			{keyboardButton}
 			<Button
 				variant={controlling ? 'secondary' : 'default'}
 				size="sm"
@@ -311,8 +370,14 @@ export function DesktopViewer({
 			<div
 				className={cn(
 					'group relative aspect-video w-full min-w-0 max-w-full overflow-hidden rounded-lg border bg-muted',
+					variant === 'immersive' && 'max-sm:rounded-none max-sm:border-0',
 					recording && 'ring-2 ring-destructive',
 				)}
+				// noVNC swallows touches on the picture, so listen on the way down: a tap while in
+				// control brings up the phone keyboard (it has to happen inside the tap to open).
+				onTouchEndCapture={() => {
+					if (typing && !keyboardHidden.current) keyboardRef.current?.focus()
+				}}
 			>
 				{/* noVNC mounts its canvas into this element and scales it to fit. */}
 				<div
@@ -324,6 +389,30 @@ export function DesktopViewer({
 						phase !== 'connected' && 'invisible',
 					)}
 				/>
+				{typing && (
+					<textarea
+						ref={keyboardRef}
+						aria-label="Type on the computer"
+						rows={1}
+						defaultValue={KEYBOARD_SENTINEL}
+						autoCapitalize="off"
+						autoCorrect="off"
+						autoComplete="off"
+						spellCheck={false}
+						// 16px: iOS zooms the page in on a smaller field.
+						className="absolute left-0 top-0 size-px resize-none text-base opacity-0"
+						onFocus={(e) => {
+							// Typing starts at the end of the text, so what changes is only what is added.
+							e.currentTarget.value = KEYBOARD_SENTINEL
+							e.currentTarget.setSelectionRange(KEYBOARD_SENTINEL.length, KEYBOARD_SENTINEL.length)
+							lastTyped.current = KEYBOARD_SENTINEL
+							setKeyboardUp(true)
+						}}
+						onBlur={() => setKeyboardUp(false)}
+						onInput={typeIntoComputer}
+						onKeyDown={pressSpecialKey}
+					/>
+				)}
 				{/* Not on the error state: that card holds a Reconnect button this must not cover. */}
 				{variant === 'preview' && onOpen && !failed && (
 					<button
