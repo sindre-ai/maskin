@@ -27,8 +27,8 @@ import Testing
 		#expect(result.first?.text == "+45 12-34-56-78")
 	}
 
-	@Test func aLocalNumberOfEightDigitsIsALink() {
-		#expect(linked("Min nummer er 12345678").first?.url == "tel:12345678")
+	@Test func aNumberWithACountryCodeAndNoSpacesIsALink() {
+		#expect(linked("Ring +4512345678 nu").first?.url == "tel:+4512345678")
 	}
 
 	@Test func aShortNumberIsNotALink() {

@@ -131,6 +131,7 @@ enum MarkdownLinkPolicy {
 	static func decision(for url: URL) -> Decision {
 		switch url.scheme?.lowercased() {
 		case "mailto": return url.absoluteString.count > "mailto:".count ? .open : .reject
+		case "tel": return PhoneNumberLink.isDialable(String(url.absoluteString.dropFirst("tel:".count))) ? .open : .reject
 		case "http", "https": return host(of: url) == nil ? .reject : .confirm
 		default: return .reject
 		}
