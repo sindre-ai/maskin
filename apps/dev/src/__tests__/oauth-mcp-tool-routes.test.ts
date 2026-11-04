@@ -23,12 +23,37 @@ import type { SessionManager } from '../services/session-manager'
 
 // Tools that call these routes answer a 403 under a Claude connector token in v1, on purpose.
 const UNAVAILABLE_UNDER_OAUTH = [
+	'DELETE /api/conversations/x/participants/x', // newer MCP tool, route not yet checked for the token's workspace pin
 	'DELETE /api/integrations/x', // disconnect_integration: third-party credentials
+	'GET /api/actors/x/access', // newer MCP tool, route not yet checked for the token's workspace pin
+	'GET /api/conversations', // newer MCP tool, route not yet checked for the token's workspace pin
+	'GET /api/data/query', // newer MCP tool, route not yet checked for the token's workspace pin
+	'GET /api/for-you', // newer MCP tool, route not yet checked for the token's workspace pin
+	'GET /api/sessions/x/activity', // newer MCP tool, route not yet checked for the token's workspace pin
+	'GET /api/sessions/x/keychain-credentials', // newer MCP tool, route not yet checked for the token's workspace pin
 	'PATCH /api/workspaces/x', // update_workspace: workspace settings
 	'POST /api/actors', // create_actor: returns a new API key
+	'POST /api/conversations', // newer MCP tool, route not yet checked for the token's workspace pin
+	'POST /api/conversations/x/participants', // newer MCP tool, route not yet checked for the token's workspace pin
+	'POST /api/for-you/withdrawals', // newer MCP tool, route not yet checked for the token's workspace pin
+	'POST /api/integrations/gmail/save-attachment', // newer MCP tool, route not yet checked for the token's workspace pin
+	'POST /api/integrations/gmail/send', // newer MCP tool, route not yet checked for the token's workspace pin
+	'POST /api/integrations/resend/send', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/integrations/x/connect', // connect_integration: third-party credentials
+	'POST /api/invites', // newer MCP tool, route not yet checked for the token's workspace pin
+	'POST /api/objects/x/approval', // newer MCP tool, route not yet checked for the token's workspace pin
+	'POST /api/sessions/x/ask', // newer MCP tool, route not yet checked for the token's workspace pin
+	'POST /api/sessions/x/computer-card', // newer MCP tool, route not yet checked for the token's workspace pin
+	'POST /api/sessions/x/connect-card', // newer MCP tool, route not yet checked for the token's workspace pin
+	'POST /api/sessions/x/continue', // newer MCP tool, route not yet checked for the token's workspace pin
+	'POST /api/sessions/x/input', // newer MCP tool, route not yet checked for the token's workspace pin
+	'POST /api/sessions/x/integration-access-card', // newer MCP tool, route not yet checked for the token's workspace pin
+	'POST /api/sessions/x/keychain-access-card', // newer MCP tool, route not yet checked for the token's workspace pin
+	'POST /api/sessions/x/keychain-card', // newer MCP tool, route not yet checked for the token's workspace pin
+	'POST /api/sessions/x/mcp-server-card', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/workspaces', // create_workspace
 	'POST /api/workspaces/x/members', // add_member: changes who is in a workspace
+	'PUT /api/integrations/x/default-access', // newer MCP tool, route not yet checked for the token's workspace pin
 ]
 
 // Pre-existing: the MCP server calls a route the API does not register. Not part of this change.

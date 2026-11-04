@@ -17,6 +17,7 @@ const ERASED = new Set([
 	'live_activity_tokens',
 	'notification_preferences',
 	'notifications',
+	'oauth_grants',
 	'read_state',
 	'slack_user_links',
 	'star_state',

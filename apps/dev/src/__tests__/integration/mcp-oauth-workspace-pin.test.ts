@@ -459,16 +459,18 @@ describe('who the caller is', () => {
 
 		expect(keyCaller).toBe(person.id)
 		expect(tokenCaller).toBe(person.id)
-		expect((await __resolveAgentActor(db, person.apiKey))?.actorId).toBe(keyCaller)
-		expect((await __resolveAgentActor(db, token))?.actorId).toBe(tokenCaller)
+		const byKey = await __resolveAgentActor(db, person.apiKey)
+		const byToken = await __resolveAgentActor(db, token)
+		expect(byKey.status === 'resolved' && byKey.actor.actorId).toBe(keyCaller)
+		expect(byToken.status === 'resolved' && byToken.actor.actorId).toBe(tokenCaller)
 	})
 
 	it('is nobody for a refresh token or an unknown token, on both paths', async () => {
 		await seedTwoWorkspaces()
 		__resetMcpActorCache()
 
-		expect(await __resolveAgentActor(db, mintToken('mrt_').raw)).toBeNull()
-		expect(await __resolveAgentActor(db, mintToken('mat_').raw)).toBeNull()
+		expect(await __resolveAgentActor(db, mintToken('mrt_').raw)).toEqual({ status: 'unresolved' })
+		expect(await __resolveAgentActor(db, mintToken('mat_').raw)).toEqual({ status: 'unresolved' })
 	})
 })
 
