@@ -75069,12 +75069,12 @@
 											"x": {
 												"type": "integer",
 												"minimum": 0,
-												"maximum": 1279
+												"maximum": 1599
 											},
 											"y": {
 												"type": "integer",
 												"minimum": 0,
-												"maximum": 719
+												"maximum": 899
 											},
 											"button": {
 												"type": "string",
@@ -75108,12 +75108,12 @@
 											"x": {
 												"type": "integer",
 												"minimum": 0,
-												"maximum": 1279
+												"maximum": 1599
 											},
 											"y": {
 												"type": "integer",
 												"minimum": 0,
-												"maximum": 719
+												"maximum": 899
 											}
 										},
 										"required": [
@@ -75134,22 +75134,22 @@
 											"from_x": {
 												"type": "integer",
 												"minimum": 0,
-												"maximum": 1279
+												"maximum": 1599
 											},
 											"from_y": {
 												"type": "integer",
 												"minimum": 0,
-												"maximum": 719
+												"maximum": 899
 											},
 											"to_x": {
 												"type": "integer",
 												"minimum": 0,
-												"maximum": 1279
+												"maximum": 1599
 											},
 											"to_y": {
 												"type": "integer",
 												"minimum": 0,
-												"maximum": 719
+												"maximum": 899
 											}
 										},
 										"required": [
@@ -75185,12 +75185,12 @@
 											"x": {
 												"type": "integer",
 												"minimum": 0,
-												"maximum": 1279
+												"maximum": 1599
 											},
 											"y": {
 												"type": "integer",
 												"minimum": 0,
-												"maximum": 719
+												"maximum": 899
 											}
 										},
 										"required": [
