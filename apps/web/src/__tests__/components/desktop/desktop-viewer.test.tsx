@@ -21,9 +21,11 @@ const { instances, FakeRfb } = vi.hoisted(() => {
 		addEventListener(type: string, listener: Listener) {
 			this.listeners.set(type, listener)
 		}
-		emit(type: string) {
-			this.listeners.get(type)?.(new CustomEvent(type))
+		emit(type: string, detail?: unknown) {
+			this.listeners.get(type)?.(new CustomEvent(type, { detail }))
 		}
+		clipboardPasteFrom = vi.fn()
+		sendKey = vi.fn()
 		disconnect() {
 			this.disconnected = true
 		}
@@ -33,11 +35,14 @@ const { instances, FakeRfb } = vi.hoisted(() => {
 })
 
 vi.mock('@novnc/novnc/lib/rfb', () => ({ default: FakeRfb }))
+vi.mock('@/hooks/use-feature-flag', () => ({ useFeatureFlag: vi.fn(() => false) }))
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 vi.mock('@/lib/api', () => ({
 	api: { desktop: { connect: vi.fn(), remove: vi.fn() } },
 }))
 
 import { DesktopViewer } from '@/components/desktop/desktop-viewer'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { api } from '@/lib/api'
 import { createWorkspaceWrapper } from '../../setup'
 
@@ -53,6 +58,7 @@ function renderViewer() {
 describe('DesktopViewer', () => {
 	beforeEach(() => {
 		instances.length = 0
+		vi.mocked(useFeatureFlag).mockReturnValue(false)
 		vi.mocked(api.desktop.connect).mockReset()
 		vi.mocked(api.desktop.connect).mockResolvedValue({
 			ticket: 'tkt',
@@ -113,6 +119,46 @@ describe('DesktopViewer', () => {
 
 		await user.click(screen.getByRole('button', { name: /stop controlling/i }))
 		expect(rfb.viewOnly).toBe(true)
+	})
+
+	describe('clipboard buttons', () => {
+		async function takeOver(user: ReturnType<typeof userEvent.setup>) {
+			renderViewer()
+			await waitFor(() => expect(instances).toHaveLength(1))
+			const rfb = instances[0] as InstanceType<typeof FakeRfb>
+			act(() => rfb.emit('connect'))
+			await screen.findByText('Live')
+			await user.click(screen.getByRole('button', { name: /take over/i }))
+			return rfb
+		}
+
+		it('are off without the flag', async () => {
+			const user = userEvent.setup()
+			await takeOver(user)
+
+			expect(screen.queryByRole('button', { name: /paste from your clipboard/i })).toBeNull()
+		})
+
+		it('show only while in control, with Copy waiting for text from the computer', async () => {
+			vi.mocked(useFeatureFlag).mockReturnValue(true)
+			const user = userEvent.setup()
+			renderViewer()
+			await waitFor(() => expect(instances).toHaveLength(1))
+			const rfb = instances[0] as InstanceType<typeof FakeRfb>
+			act(() => rfb.emit('connect'))
+			await screen.findByText('Live')
+			expect(screen.queryByRole('button', { name: /paste from your clipboard/i })).toBeNull()
+
+			await user.click(screen.getByRole('button', { name: /take over/i }))
+			expect(screen.getByRole('button', { name: /paste from your clipboard/i })).toBeEnabled()
+			expect(screen.getByRole('button', { name: /copy to your clipboard/i })).toBeDisabled()
+
+			act(() => rfb.emit('clipboard', { text: 'copied there' }))
+			expect(screen.getByRole('button', { name: /copy to your clipboard/i })).toBeEnabled()
+
+			await user.click(screen.getByRole('button', { name: /stop controlling/i }))
+			expect(screen.queryByRole('button', { name: /paste from your clipboard/i })).toBeNull()
+		})
 	})
 
 	it('does not offer takeover before the stream is live', async () => {

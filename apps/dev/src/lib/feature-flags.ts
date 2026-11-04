@@ -38,6 +38,13 @@ export const FLAGS = {
 	 * everyone.
 	 */
 	AGENT_PROACTIVE_1_1: 'agent-proactive-1-1',
+	/**
+	 * Gates the Paste and Copy buttons on the Computer view, which move plain text
+	 * between the person's clipboard and the agent's computer while they are in
+	 * control. Frontend only: read with useFeatureFlag in desktop-viewer. Retire
+	 * once the buttons are on for everyone.
+	 */
+	COMPUTER_CLIPBOARD: 'computer-clipboard',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
