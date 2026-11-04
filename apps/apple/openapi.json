@@ -42766,6 +42766,13 @@
 																"addedBy"
 															]
 														}
+													},
+													"working_actor_ids": {
+														"type": "array",
+														"items": {
+															"type": "string",
+															"format": "uuid"
+														}
 													}
 												},
 												"required": [
@@ -42785,7 +42792,8 @@
 													"snippet_actor_id",
 													"snippet_actor_name",
 													"snippet_is_caller",
-													"participants"
+													"participants",
+													"working_actor_ids"
 												]
 											}
 										},

@@ -413,6 +413,9 @@ export const conversationListItemResponseSchema = z.object({
 	// True when the caller wrote the snippet.
 	snippet_is_caller: z.boolean(),
 	participants: z.array(conversationParticipantResponseSchema),
+	// Agents with an open turn in this chat right now (not merely a live session — a chat
+	// session stays running between turns). The list row shows them as working.
+	working_actor_ids: z.array(z.string().uuid()),
 })
 
 export const conversationDetailResponseSchema = conversationListItemResponseSchema
@@ -421,6 +424,7 @@ export const conversationDetailResponseSchema = conversationListItemResponseSche
 		snippet_actor_id: true,
 		snippet_actor_name: true,
 		snippet_is_caller: true,
+		working_actor_ids: true,
 	})
 	.extend({
 		last_read_message_id: z.number().nullable(),

@@ -3,8 +3,6 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useReplyThreads } from '@/hooks/use-conversation'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
-import { useWorkspaceSessions } from '@/hooks/use-sessions'
-import { ACTIVE_STATUSES } from '@/lib/agent-status'
 import type { ConversationListItemResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { groupConversations } from '@/lib/conversation-groups'
@@ -135,19 +133,6 @@ function ChatConversationList({
 			(threadUnreadByChat.get(t.conversationId) ?? 0) + t.thread.unreadCount,
 		)
 	}
-	// Chats an agent is answering right now. Read from the workspace session list (kept fresh
-	// by SSE) so the row can say so instead of showing only the last message sent.
-	const { data: sessions } = useWorkspaceSessions(workspaceId)
-	const workingActorsByChat = new Map<string, Set<string>>()
-	for (const s of sessions ?? []) {
-		if (!ACTIVE_STATUSES.has(s.status)) continue
-		const chatId = (s.config as { conversation?: { conversation_id?: string } } | null)
-			?.conversation?.conversation_id
-		if (!chatId) continue
-		const actors = workingActorsByChat.get(chatId) ?? new Set<string>()
-		actors.add(s.actorId)
-		workingActorsByChat.set(chatId, actors)
-	}
 	const groups = groupConversations(conversations, {
 		mode: filter === 'archived' ? 'archived' : 'default',
 	})
@@ -237,7 +222,6 @@ function ChatConversationList({
 											workspaceId={workspaceId}
 											conversation={c}
 											threadUnread={threadUnreadByChat.get(c.id) ?? 0}
-											workingActorIds={workingActorsByChat.get(c.id)}
 										/>
 									))}
 								</div>

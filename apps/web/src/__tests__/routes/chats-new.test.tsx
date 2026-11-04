@@ -137,6 +137,7 @@ function conversationsPage(
 					snippet: null,
 					snippet_actor_id: null,
 					snippet_actor_name: null,
+					working_actor_ids: [],
 					participants: c.participants.map((p) => ({ ...p, joinedAt: null, addedBy: null })),
 				})),
 				has_more: false,

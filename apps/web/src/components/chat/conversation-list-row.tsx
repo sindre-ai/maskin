@@ -13,8 +13,6 @@ interface ConversationListRowProps {
 	/** Unread replies in this chat's threads (0 when none). Chat unread and thread unread are
 	 *  separate reads, so a chat can look read while a thread inside it is not. */
 	threadUnread?: number
-	/** Agents with a live session answering in this chat; the preview shows them working. */
-	workingActorIds?: Set<string>
 }
 
 /** How many participant plates the row draws before collapsing to a `+N`. */
@@ -24,7 +22,6 @@ export function ConversationListRow({
 	workspaceId,
 	conversation,
 	threadUnread = 0,
-	workingActorIds,
 }: ConversationListRowProps) {
 	// Counterparts first, the viewer last (mockup 6106–6108) — a one-to-one
 	// thread should read as "the agent's row", but once several people are in
@@ -42,8 +39,9 @@ export function ConversationListRow({
 	const visible = counterparts.slice(0, MAX_ROW_AVATARS)
 	const overflow = counterparts.length - visible.length
 	const isUnread = conversation.unread_count > 0
+	const workingActorIds = new Set(conversation.working_actor_ids)
 	const workingNames = conversation.participants
-		.filter((p) => workingActorIds?.has(p.actorId))
+		.filter((p) => workingActorIds.has(p.actorId))
 		.map((p) => p.actorName)
 	const workingLabel =
 		workingNames.length === 0
@@ -137,7 +135,7 @@ export function ConversationListRow({
 					{/* "Forge: …" / "You: …" — a preview with no attribution reads as
 					    if the viewer wrote every line (mockup 296). */}
 					{workingLabel ? (
-						<span className="inline-flex items-center gap-1.5 font-medium text-brand">
+						<span className="inline-flex items-center gap-1.5 font-medium">
 							<Spinner />
 							{workingLabel}
 						</span>

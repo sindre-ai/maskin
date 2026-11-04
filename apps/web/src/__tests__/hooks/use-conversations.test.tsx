@@ -50,6 +50,7 @@ function seedList(client: QueryClient) {
 						snippet: null,
 						snippet_actor_id: null,
 						snippet_actor_name: null,
+						working_actor_ids: [],
 						participants: [],
 					},
 				],

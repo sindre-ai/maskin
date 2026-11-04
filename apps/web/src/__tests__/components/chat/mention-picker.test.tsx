@@ -114,6 +114,7 @@ describe('buildMentionSections', () => {
 			snippet: null,
 			snippet_actor_id: null,
 			snippet_actor_name: null,
+			working_actor_ids: [],
 			participants: participantIds.map((pid) => ({
 				actorId: pid,
 				actorName: pid,
