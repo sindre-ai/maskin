@@ -399,6 +399,61 @@ describe('Conversation auto-titler Integration', () => {
 		expect(rows[0]?.data).toMatchObject({ source: 'llm' })
 	})
 
+	it('retries on the operator key when the workspace endpoint fails', async () => {
+		// The shape seen in production: an enterprise workspace saved an OpenRouter
+		// base URL without /v1. It still counts as a credential, so it used to win
+		// over the operator key, fail every time, and leave only the derived title.
+		await db
+			.update(workspaces)
+			.set({
+				settings: {
+					custom_llm: {
+						enabled: true,
+						base_url: 'https://openrouter.ai/api',
+						api_key: 'sk-or-workspace-test',
+						model: 'some/model',
+					},
+				},
+				enterpriseGranted: true,
+			})
+			.where(eq(workspaces.id, workspaceId))
+		const previous = process.env.MASKIN_FALLBACK_OPENROUTER_KEY
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-operator-test'
+		chat
+			.mockRejectedValueOnce(new Error('OpenAI API error: 404 Not Found'))
+			.mockResolvedValueOnce(titleResponse('YouTube integration scope'))
+		try {
+			await postMessages(1, 'Please review the scope of the YouTube integration')
+			await maybeGenerateConversationTitle({ db, workspaceId, conversationId })
+		} finally {
+			process.env.MASKIN_FALLBACK_OPENROUTER_KEY = previous ?? ''
+		}
+
+		expect(chat).toHaveBeenCalledTimes(2)
+		expect(createAdapter).toHaveBeenNthCalledWith(
+			1,
+			'openai',
+			expect.objectContaining({ api_key: 'sk-or-workspace-test' }),
+		)
+		expect(createAdapter).toHaveBeenNthCalledWith(
+			2,
+			'openai',
+			expect.objectContaining({
+				api_key: 'sk-or-operator-test',
+				base_url: 'https://openrouter.ai/api/v1',
+			}),
+		)
+		expect(await readConversation()).toEqual({
+			title: 'YouTube integration scope',
+			titleAutoState: 'initial',
+		})
+		const rows = await db
+			.select({ data: events.data })
+			.from(events)
+			.where(and(eq(events.entityType, 'conversation'), eq(events.entityId, conversationId)))
+		expect(rows[0]?.data).toMatchObject({ source: 'llm' })
+	})
+
 	it('stamps the audit event with source=derived when the fallback fired', async () => {
 		await postMessages(1, 'the deploy pipeline keeps failing on migrate')
 		chat.mockRejectedValue(new Error('provider is down'))
