@@ -291,8 +291,9 @@ export function ListRow({
 							e.stopPropagation()
 							onOpen(object.id)
 						}}
-						// Phones give the title two lines before it cuts; from `sm` it is one.
-						className="min-w-0 break-words text-sm font-medium text-foreground hover:underline max-sm:line-clamp-2 sm:truncate"
+						// Phones give the title two lines before it cuts; from `sm` it is one. Plain
+						// `truncate` stays on both so the mobile-QA gate sees the clip as intended.
+						className="min-w-0 truncate break-words text-sm font-medium text-foreground hover:underline max-sm:line-clamp-2 max-sm:whitespace-normal"
 					>
 						{object.title || 'Untitled'}
 					</Link>
@@ -332,7 +333,7 @@ export function ListRow({
 					// The type label is a sibling column here (not inline with the
 					// title as in the mockup), so the ask line already starts at the
 					// title column — no extra `askIndent` offset is needed.
-					<p className="text-xs leading-snug text-muted-foreground max-sm:line-clamp-2 sm:truncate">
+					<p className="truncate text-xs leading-snug text-muted-foreground max-sm:line-clamp-2 max-sm:whitespace-normal">
 						<span className="font-bold text-warning">{askActorName}</span> asks —{' '}
 						<span>“{askText}”</span>
 						{extraAskCount > 0 && (

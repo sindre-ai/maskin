@@ -291,7 +291,8 @@ describe('ListRow narrow layout', () => {
 		renderRow()
 		const title = screen.getByText('Ship the thing')
 		expect(title.className).toContain('max-sm:line-clamp-2')
-		expect(title.className).toContain('sm:truncate')
+		expect(title.className.split(' ')).toContain('truncate')
+		expect(title.className).toContain('max-sm:whitespace-normal')
 	})
 
 	it('hides the driver avatar below sm', () => {
