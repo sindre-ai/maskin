@@ -365,8 +365,10 @@ export function ListRow({
 				// object has an actively-running session on it. Replaces the old
 				// right-side <AgentWorkingBadge> — the ring is the row's only
 				// working indicator now, per the D2 acceptance criteria.
-				// Hidden below `sm` like the status word: the title needs the room.
-				<span className="hidden shrink-0 sm:inline-flex">
+				// Below `sm` the avatar is hidden like the status word (the title needs
+				// the room), except while the driver is working: the ring is the only
+				// working indicator, so it has to stay visible on phones.
+				<span className={cn('shrink-0 sm:inline-flex', isWorking ? 'inline-flex' : 'hidden')}>
 					<ActorAvatar
 						id={driver.id}
 						name={driver.name}
