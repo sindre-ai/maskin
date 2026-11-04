@@ -32,7 +32,6 @@ import {
 import { useActors } from '@/hooks/use-actors'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useLoop, useLoopActivity } from '@/hooks/use-loops'
 import { useDeleteObject, useObject, useObjects, useUpdateObject } from '@/hooks/use-objects'
 import { useRelationships } from '@/hooks/use-relationships'
@@ -52,9 +51,6 @@ import { toast } from 'sonner'
  * `LOOP_MEMBERSHIP_RELATIONSHIP_TYPE` in `apps/dev/src/routes/loops.ts`.
  * Source is the loop, target is the child object. */
 const LOOP_MEMBERSHIP_RELATIONSHIP_TYPE = 'in_loop'
-
-/** Mirrors `FLAGS.LOOP_CUSTOM_VIEW` in `apps/dev/src/lib/feature-flags.ts`. */
-const LOOP_CUSTOM_VIEW_FLAG = 'loop-custom-view'
 
 export const Route = createFileRoute('/_authed/$workspaceId/loops/$loopId')({
 	component: LoopDetailRoute,
@@ -105,15 +101,14 @@ function LoopDetailRoute() {
 	const [proposedEdit, setProposedEdit] = useState<ProposedEdit | null>(null)
 	const [confirmDelete, setConfirmDelete] = useState(false)
 
-	// Custom view: the one read of the flag for this page. An agent pins an HTML
-	// file with set_loop_view (metadata.view_file_id); with the flag on it replaces
-	// the stats and flow, and the toggle switches back. A view that cannot be shown
-	// sets customFailure and the default page renders with a note; choosing
-	// "Custom view" again clears it and retries.
-	const customViewFlag = useFeatureFlag(LOOP_CUSTOM_VIEW_FLAG)
+	// Custom view: an agent pins an HTML file with set_loop_view
+	// (metadata.view_file_id); it replaces the stats and flow, and the toggle
+	// switches back. A view that cannot be shown sets customFailure and the
+	// default page renders with a note; choosing "Custom view" again clears it
+	// and retries.
 	const viewFileId =
 		typeof object?.metadata?.view_file_id === 'string' ? object.metadata.view_file_id : null
-	const hasCustomView = customViewFlag && viewFileId !== null
+	const hasCustomView = viewFileId !== null
 	const [viewMode, setViewMode] = useState<'default' | 'custom'>('custom')
 	const [customFailure, setCustomFailure] = useState<string | null>(null)
 	const showCustomView = hasCustomView && viewMode === 'custom' && customFailure === null
