@@ -2,9 +2,8 @@
 // is highlighted, and whether Esc has put it away. The field owns the keys, the host
 // (page or launcher) owns where the menu is drawn. Focus never leaves the input.
 
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { getStoredActor } from '@/lib/auth'
-import { PARTICIPANT_FILTER_FLAG, findMention, mentionRows } from '@/lib/search/mention'
+import { findMention, mentionRows } from '@/lib/search/mention'
 import type { SearchParts } from '@/lib/search/parts'
 import type { ParticipantOption, Vocabulary } from '@/lib/search/vocabulary'
 import { useCallback, useEffect, useId, useMemo, useState } from 'react'
@@ -30,8 +29,8 @@ export function participantOptionId(listboxId: string, id: string): string {
 
 export function useParticipantMenu(input: {
 	parts: SearchParts
-	/** Who can be picked. Null leaves the menu off (feature flag). */
-	options: ParticipantOption[] | null
+	/** Who can be picked. */
+	options: ParticipantOption[]
 	onPick: (option: ParticipantOption, via: PickVia) => void
 }): ParticipantMenuState {
 	const { parts, options, onPick } = input
@@ -40,7 +39,7 @@ export function useParticipantMenu(input: {
 	const [dismissedAt, setDismissedAt] = useState<string | null>(null)
 	const [active, setActive] = useState(0)
 
-	const rows = useMemo(() => (options ? mentionRows(parts, options) : []), [parts, options])
+	const rows = useMemo(() => mentionRows(parts, options), [parts, options])
 	const open = rows.length > 0 && dismissedAt !== parts.text
 	const query = findMention(parts.text)?.query
 	// biome-ignore lint/correctness/useExhaustiveDependencies: a new query starts at the top row
@@ -78,13 +77,11 @@ export function useParticipantMenu(input: {
 
 /**
  * Who the @ menu offers: every person and agent in the workspace except the caller,
- * who is in all of their own chats. Null while the feature flag is off.
+ * who is in all of their own chats.
  */
-export function useParticipantOptions(vocab: Vocabulary): ParticipantOption[] | null {
-	const enabled = useFeatureFlag(PARTICIPANT_FILTER_FLAG)
+export function useParticipantOptions(vocab: Vocabulary): ParticipantOption[] {
 	return useMemo(() => {
-		if (!enabled) return null
 		const selfId = getStoredActor()?.id
 		return [...vocab.participants.values()].filter((p) => p.id !== selfId)
-	}, [enabled, vocab])
+	}, [vocab])
 }
