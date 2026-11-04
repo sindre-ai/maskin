@@ -22,18 +22,44 @@ function scrubUrl(raw: unknown): unknown {
 	return raw
 }
 
+// Every place posthog-js puts a page address or referrer: the page view itself, the session entry
+// (`$session_entry_*`), and the first-visit and session-entry person properties in `$set` / `$set_once`.
+const URL_KEYS = [
+	'$current_url',
+	'$referrer',
+	'$session_entry_url',
+	'$session_entry_referrer',
+	'$initial_current_url',
+	'$initial_referrer',
+]
+
+function scrubBag(bag: unknown): void {
+	if (!bag || typeof bag !== 'object') return
+	const record = bag as Record<string, unknown>
+	for (const key of URL_KEYS) {
+		if (key in record) record[key] = scrubUrl(record[key])
+	}
+}
+
 /**
  * The consent page's address holds the sign-in request (state, code challenge, return address), which must
- * not leave the browser. Drops the query string from page URLs on that page and from the login detour to it.
+ * not leave the browser. Drops the query string from every page URL and referrer an event carries when it is
+ * the consent page, or the login detour to it.
  */
-export function scrubAuthorizeUrls<T extends { properties?: Record<string, unknown> } | null>(
-	event: T,
-): T {
-	const props = event?.properties
-	if (!props) return event
-	for (const key of ['$current_url', '$referrer']) {
-		if (key in props) props[key] = scrubUrl(props[key])
-	}
+export function scrubAuthorizeUrls<
+	T extends {
+		properties?: Record<string, unknown>
+		$set?: Record<string, unknown>
+		$set_once?: Record<string, unknown>
+	} | null,
+>(event: T): T {
+	if (!event) return event
+	const props = event.properties
+	scrubBag(props)
+	scrubBag(props?.$set)
+	scrubBag(props?.$set_once)
+	scrubBag(event.$set)
+	scrubBag(event.$set_once)
 	return event
 }
 

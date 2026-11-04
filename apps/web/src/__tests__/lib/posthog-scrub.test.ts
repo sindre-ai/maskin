@@ -20,6 +20,30 @@ describe('scrubAuthorizeUrls', () => {
 		expect(event.properties.$current_url).toBe('https://app.example/login')
 	})
 
+	it('drops the query string from the session entry, first-visit and set-once addresses', () => {
+		const authorize = 'https://app.example/oauth/authorize?state=secret-state&code_challenge=abc'
+		const login = `https://app.example/login?redirect=${encodeURIComponent('/oauth/authorize?state=secret-state')}`
+		const event = scrubAuthorizeUrls({
+			properties: {
+				$current_url: authorize,
+				$session_entry_url: authorize,
+				$session_entry_referrer: authorize,
+				$set_once: { $initial_current_url: login },
+			},
+			$set: { $current_url: authorize },
+			$set_once: {
+				$current_url: authorize,
+				$initial_current_url: login,
+				$initial_referrer: authorize,
+				$initial_pathname: '/oauth/authorize',
+			},
+		})
+		expect(JSON.stringify(event)).not.toContain('secret-state')
+		expect(event.properties.$session_entry_url).toBe('https://app.example/oauth/authorize')
+		expect(event.$set_once.$initial_current_url).toBe('https://app.example/login')
+		expect(event.$set_once.$initial_pathname).toBe('/oauth/authorize')
+	})
+
 	it('leaves every other page alone', () => {
 		const url = 'https://app.example/ws-1/objects?filter=open'
 		expect(scrubAuthorizeUrls(pageview(url)).properties.$current_url).toBe(url)
