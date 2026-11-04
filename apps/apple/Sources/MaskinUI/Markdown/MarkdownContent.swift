@@ -101,7 +101,14 @@ public struct MarkdownContent: View {
 					}
 					if internalLinkHandler?(url) == true { return .handled }
 					switch MarkdownLinkPolicy.decision(for: url) {
-					case .open: return .systemAction
+					case .open:
+						// A phone number where this device cannot call (iPad without iPhone calling, Mac): copy it.
+						if url.scheme?.lowercased() == "tel", !canPlaceCalls {
+							MarkdownClipboard.copy(PhoneNumberLink.dialString(of: url))
+							showToast?("Copied")
+							return .handled
+						}
+						return .systemAction
 					case .confirm: pending = url; return .handled
 					case .reject: return .discarded
 					}

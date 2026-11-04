@@ -187,6 +187,7 @@ extension RootView {
 				.transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
 				.accessibilityElement(children: .combine)
 				.task(id: toast) {
+					AccessibilityNotification.Announcement(toast).post()
 					try? await Task.sleep(for: .seconds(2))
 					if !Task.isCancelled { self.toast = nil }
 				}
