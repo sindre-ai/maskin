@@ -11,6 +11,11 @@ export const TOOL_NAME_ALIASES = {
 	// agent system prompts in 31 other workspaces still told agents to call it,
 	// and those cannot be swept. Earliest removal: late January 2027.
 	run_agent: 'create_session',
+	// Folded into list_objects by the list contract (wave 2, T3): list_objects now takes q and
+	// pages a ranked search behind its one cursor. The name stays because stored prompts and older
+	// agents still call it, and every call forwards to the list_objects handler. Earliest removal:
+	// 2027-02-01, and not before a clean stored-prompt sweep.
+	search_objects: 'list_objects',
 } as const satisfies Record<string, string>
 
 export type ToolNameAlias = keyof typeof TOOL_NAME_ALIASES
@@ -26,3 +31,10 @@ export const RUN_AGENT_DROPPED_KEYS = [
 	'timeout_seconds',
 	'depends_on_session_ids',
 ] as const
+
+// The argument names a tool-name alias maps onto its target. The handler maps them and the
+// alias_use event reports them (names only, never values). `query` is also an alias row on the
+// tool itself (aliases.ts), listed here so one event carries the whole mapping.
+export const TOOL_ALIAS_ARG_RENAMES: Partial<Record<ToolNameAlias, Record<string, string>>> = {
+	search_objects: { query: 'q', driver_id: 'driver', offset: 'cursor' },
+}

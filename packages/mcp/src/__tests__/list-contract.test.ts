@@ -754,16 +754,28 @@ describe('list tools put the same payload on both channels', () => {
 		})
 	})
 
-	describe('list_objects and search_objects are unchanged', () => {
-		it('keep the page block they had: no has_more and no total', async () => {
+	describe('list_objects and search_objects carry the page block since T3', () => {
+		it('adds has_more and total, and keeps limit and returned', async () => {
 			stubFetch([
 				{ id: uuid('99999999', 1), type: 'task', title: 'A', createdAt: day(1), updatedAt: day(1) },
 			])
 			const listed = await call('list_objects', { limit: 5 })
-			expect(listed.structuredContent.page).toEqual({ limit: 5, returned: 1 })
+			expect(listed.structuredContent.page).toEqual({
+				limit: 5,
+				returned: 1,
+				has_more: false,
+				total: 1,
+			})
 
+			// A ranked walk: total is null, and page.offset stays for older search_objects callers.
 			const searched = await call('search_objects', { q: 'a', limit: 5 })
-			expect(searched.structuredContent.page).toEqual({ limit: 1, offset: 0, returned: 1 })
+			expect(searched.structuredContent.page).toEqual({
+				limit: 5,
+				returned: 1,
+				has_more: false,
+				total: null,
+				offset: 0,
+			})
 		})
 	})
 })
