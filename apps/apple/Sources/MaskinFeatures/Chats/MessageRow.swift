@@ -200,6 +200,7 @@ struct MessageRow: View {
 		case "Reply": actions.onReply?()
 		case "Reply in thread": actions.onThread?()
 		case "Copy": actions.onCopy?()
+		case "Select text": actions.onSelectText?()
 		case "Pin", "Unpin": actions.onPin?()
 		case "Edit": actions.onEdit?()
 		case "Try again": actions.onTryAgain?()

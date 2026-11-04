@@ -8,7 +8,7 @@ import {
 } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { FOR_YOU_KIND, parseCommentDecision } from '@maskin/shared'
-import { and, count, desc, eq, gte, sql } from 'drizzle-orm'
+import { and, count, desc, eq, gte, inArray, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import {
 	DEFAULT_PUSH_PREFS,
@@ -26,7 +26,17 @@ import {
 	pushCategoryOf,
 	withDeadline,
 } from './push-policy'
-import type { PushChannel, PushDecision, PushMessage } from './push-types'
+import {
+	CLEAR_IDS_MAX,
+	type PushChannel,
+	type PushClear,
+	type PushDecision,
+	type PushMessage,
+} from './push-types'
+
+/** Notification events that mean a row may have left `pending`. */
+const LEFT_PENDING_ACTIONS = new Set(['updated', 'resolved', 'responded'])
+const CHAT_READ_ACTION = 'conversation_participant_state_updated'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -48,6 +58,13 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  * for a nudge, and the in-app notification is unaffected). It can never double-send: the
  * delayed path runs once per notification per process, and a sent notification id is remembered
  * in the ledger; across replicas `apns-collapse-id` / the Web Push topic collapse duplicates.
+ *
+ * The other half: a push stays on the lock screen until tapped, so when a notification that was
+ * pushed leaves `pending` (updated, resolved or responded; a For You dismiss emits `updated`) or
+ * its chat is read to the notification's message, the actor's devices get a silent clear push
+ * (`sendClearToActor`, APNs only). Only pushes the ledger shows as sent are cleared, each once.
+ * Limits: the ledger is per process and lasts a day, a thread read emits no event, and a deleted
+ * row is gone before it can be looked up, so none of those clear anything.
  */
 export class NotificationPushFanout {
 	private handler: ((event: PgEvent) => void) | null = null
@@ -63,10 +80,19 @@ export class NotificationPushFanout {
 
 	start() {
 		this.handler = (event) => {
-			if (event.entity_type !== 'notification' || event.action !== 'created') return
-			this.handleEvent(event).catch((err) =>
-				logger.warn('Notification push fan-out failed', { error: String(err) }),
-			)
+			if (event.entity_type === 'notification' && event.action === 'created') {
+				this.handleEvent(event).catch((err) =>
+					logger.warn('Notification push fan-out failed', { error: String(err) }),
+				)
+			} else if (event.entity_type === 'notification' && LEFT_PENDING_ACTIONS.has(event.action)) {
+				this.handleLeftPending(event).catch((err) =>
+					logger.warn('Notification push clear failed', { error: String(err) }),
+				)
+			} else if (event.entity_type === 'conversation' && event.action === CHAT_READ_ACTION) {
+				this.handleChatRead(event).catch((err) =>
+					logger.warn('Chat read push clear failed', { error: String(err) }),
+				)
+			}
 		}
 		this.bridge.on('event', this.handler)
 	}
@@ -90,6 +116,138 @@ export class NotificationPushFanout {
 			.limit(1)
 		if (!n) return
 		await this.process(n, channels, null)
+	}
+
+	/** A notification was updated, resolved or responded to: clear its push if it is no longer pending. */
+	async handleLeftPending(event: PgEvent): Promise<void> {
+		if (!this.clearChannels().length) return
+		const [n] = await this.db
+			.select()
+			.from(notifications)
+			.where(eq(notifications.id, event.entity_id))
+			.limit(1)
+		if (!n?.targetActorId || n.status === 'pending') return
+		await this.clearHandled(n.targetActorId, [n.id])
+	}
+
+	/** The actor read a chat: clear the pushes of that chat's notifications the read now covers. */
+	async handleChatRead(event: PgEvent): Promise<void> {
+		if (!this.clearChannels().length) return
+		const actorId = event.actor_id
+		const sentIds = this.ledger.uncleared(actorId).map((r) => r.notificationId)
+		if (sentIds.length === 0) return
+		const rows = await this.db
+			.select()
+			.from(notifications)
+			.where(
+				and(
+					eq(notifications.targetActorId, actorId),
+					inArray(notifications.id, sentIds),
+					sql`${notifications.metadata}->>'conversation_id' = ${event.entity_id}`,
+				),
+			)
+		const read: string[] = []
+		for (const row of rows) {
+			const meta = (row.metadata ?? {}) as Record<string, unknown>
+			if (await this.alreadyRead(actorId, meta)) read.push(row.id)
+		}
+		if (read.length > 0) await this.clearHandled(actorId, read)
+	}
+
+	private clearChannels(): PushChannel[] {
+		return this.channels.filter((c) => c.isEnabled() && c.sendClearToActor)
+	}
+
+	/**
+	 * Send the clear push(es) for notifications the actor has handled. Ids are those whose push
+	 * left the server and was not cleared yet. A push that carried a collapse key stands for
+	 * every card sharing it, so that key is cleared only once none of them is still pending
+	 * (the For You rollup counts the actor's pending For You cards instead).
+	 */
+	private async clearHandled(actorId: string, handledIds: string[]): Promise<void> {
+		const channels = this.clearChannels()
+		const handled = new Set(handledIds)
+		const sent = this.ledger.uncleared(actorId)
+		const mine = sent.filter((r) => handled.has(r.notificationId))
+		const rollups = sent.filter((r) => r.rollup)
+		const ids = mine.filter((r) => !r.rollup).map((r) => r.notificationId)
+
+		const keys = new Map<string, RecentPush[]>()
+		for (const r of [...mine, ...rollups]) {
+			if (r.collapseKey) keys.set(r.collapseKey, [...(keys.get(r.collapseKey) ?? []), r])
+		}
+		const clearKeys: string[] = []
+		const clearedIds = new Set(ids)
+		for (const [key, entries] of keys) {
+			const pending = await this.stillPending(actorId, key, entries[0], sent, handled)
+			if (pending) continue
+			clearKeys.push(key)
+			for (const e of entries) clearedIds.add(e.notificationId)
+		}
+		if (clearedIds.size === 0) return
+
+		const badge = await this.pendingCount(actorId)
+		const workspaceId = (mine[0] ?? rollups[0])?.workspaceId
+		if (!workspaceId) return
+		const clears: PushClear[] = []
+		const chunks: string[][] = []
+		for (let i = 0; i < ids.length; i += CLEAR_IDS_MAX) chunks.push(ids.slice(i, i + CLEAR_IDS_MAX))
+		for (let i = 0; i < Math.max(chunks.length, clearKeys.length); i++) {
+			clears.push({
+				workspaceId,
+				notificationIds: chunks[i] ?? [],
+				collapseKey: clearKeys[i] ?? null,
+				badge,
+			})
+		}
+		this.ledger.markCleared(actorId, [...clearedIds])
+		for (const clear of clears) {
+			await Promise.allSettled(
+				channels.map((c) =>
+					(c.sendClearToActor as NonNullable<PushChannel['sendClearToActor']>)(actorId, clear),
+				),
+			)
+		}
+	}
+
+	/** Is any card behind this collapse key still pending (the handled ones excluded)? */
+	private async stillPending(
+		actorId: string,
+		key: string,
+		sample: RecentPush | undefined,
+		sent: RecentPush[],
+		handled: Set<string>,
+	): Promise<boolean> {
+		try {
+			if (sample?.rollup) {
+				const [row] = await this.db
+					.select({ value: count() })
+					.from(notifications)
+					.where(
+						and(
+							eq(notifications.targetActorId, actorId),
+							eq(notifications.workspaceId, sample.workspaceId),
+							eq(notifications.status, 'pending'),
+							eq(notifications.type, 'needs_input'),
+							sql`${notifications.metadata}->>'kind' = ${FOR_YOU_KIND}`,
+						),
+					)
+				return Number(row?.value) > 0
+			}
+			const others = sent
+				.filter((r) => r.collapseKey === key && !handled.has(r.notificationId))
+				.map((r) => r.notificationId)
+			if (others.length === 0) return false
+			const [row] = await this.db
+				.select({ value: count() })
+				.from(notifications)
+				.where(and(inArray(notifications.id, others), eq(notifications.status, 'pending')))
+			return Number(row?.value) > 0
+		} catch (err) {
+			logger.warn('Pending check for push clear failed', { actorId, error: String(err) })
+			// Unknown: leave the banner rather than remove one that still needs the person.
+			return true
+		}
 	}
 
 	/**

@@ -167,6 +167,9 @@ public final class ForYouStore {
 	/// Tells the home/lock-screen widgets the feed or a decision changed. No-op unless the runtime
 	/// installs the real (debounced) one.
 	@ObservationIgnored public var widgetReloader: any WidgetReloader = NoopWidgetReloader()
+	/// Told the object id of a card the person just answered or dismissed, so its push can leave the
+	/// lock screen. Unset where there is no push to clear.
+	@ObservationIgnored public var onCardHandled: (@MainActor (String) -> Void)?
 	private static let optionsKey = "foryou.displayOptions.v1"
 
 	public init(
@@ -386,6 +389,7 @@ public final class ForYouStore {
 		later.clear(card.id)
 		decisions.choose(option.label, note: note, on: DecisionTarget(card))
 		widgetReloader.reload()
+		onCardHandled?(card.id)
 	}
 
 	/// Send or skip one message of a card that carries several. The card stays on screen: it
@@ -399,7 +403,10 @@ public final class ForYouStore {
 		later.clear(card.id)
 		let queued = decisions.actOnDraft(
 			action, label: draft.label, to: draft.to, id: draft.id, on: DecisionTarget(card))
-		if queued { widgetReloader.reload() }
+		if queued {
+			widgetReloader.reload()
+			onCardHandled?(card.id)
+		}
 		return queued
 	}
 
@@ -408,6 +415,7 @@ public final class ForYouStore {
 		later.clear(card.id)
 		decisions.reply(text, on: DecisionTarget(card))
 		widgetReloader.reload()
+		onCardHandled?(card.id)
 	}
 
 	public func dismiss(_ card: ForYouCard) {
@@ -415,6 +423,7 @@ public final class ForYouStore {
 		later.clear(card.id)
 		decisions.markRead(DecisionTarget(card))
 		widgetReloader.reload()
+		onCardHandled?(card.id)
 	}
 
 	/// Take back the last action on a card (inside the Undo window, or a sent dismissal).

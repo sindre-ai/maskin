@@ -5,6 +5,7 @@ import { FOR_YOU_KIND, parseCommentDecision } from '@maskin/shared'
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import { findChiefOfStaffId } from '../lib/chief-of-staff'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { recordEvent } from '../lib/events/record-event'
 import { buildForYouItems, forYouItemSchema } from '../lib/for-you-items'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { isWorkspaceMember } from '../lib/workspace-auth'
@@ -195,7 +196,7 @@ async function setDismissed(
 
 	if (card) {
 		// Undo only reverses a dismissal; a card someone resolved stays resolved.
-		await db
+		const [changed] = await db
 			.update(notifications)
 			.set({ status: dismissed ? 'dismissed' : 'pending', updatedAt: new Date() })
 			.where(
@@ -204,6 +205,18 @@ async function setDismissed(
 					inArray(notifications.status, dismissed ? ['pending', 'seen'] : ['dismissed']),
 				),
 			)
+			.returning()
+		// So the push fan-out can clear this card's lock-screen push, like any other status change.
+		if (changed) {
+			await recordEvent(db, {
+				workspaceId,
+				actorId,
+				action: 'updated',
+				entityType: 'notification',
+				entityId: changed.id,
+				data: changed,
+			})
+		}
 	}
 	if (body.source_comment_id !== undefined) {
 		if (dismissed) {

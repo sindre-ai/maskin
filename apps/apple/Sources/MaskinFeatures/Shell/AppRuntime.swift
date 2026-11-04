@@ -206,13 +206,17 @@ public final class AppRuntime {
 	@ObservationIgnored private let signOutTimeout: Duration
 	@ObservationIgnored private let forYouDirectory: URL?
 	@ObservationIgnored private var forYouRuntime: ForYouRuntime?
+	/// Keeps delivered pushes and the icon badge in step with what is still pending. Nil off iOS,
+	/// or with nothing to badge.
+	@ObservationIgnored private let deliveredSync: DeliveredNotificationSync?
 
 	public init(
 		environment: AppEnvironment, push: PushRegistrar? = nil,
 		router: DeepLinkRouter? = nil,
 		signOutTimeout: Duration = .seconds(3), forYouDirectory: URL? = nil,
 		promptStorage: any NotificationPromptStorage = UserDefaultsNotificationPromptStorage(),
-		preferencesAPI: (any NotificationPreferencesAPI)? = nil
+		preferencesAPI: (any NotificationPreferencesAPI)? = nil,
+		deliveredSync: DeliveredNotificationSync? = nil
 	) {
 		self.forYouDirectory = forYouDirectory
 		self.preferencesAPI = preferencesAPI
@@ -223,6 +227,22 @@ public final class AppRuntime {
 		self.push = push
 		self.router = router ?? DeepLinkRouter(environment: environment)
 		self.signOutTimeout = signOutTimeout
+		self.deliveredSync = deliveredSync ?? Self.makeDeliveredSync(environment: environment, push: push)
+	}
+
+	private static func makeDeliveredSync(
+		environment: AppEnvironment, push: PushRegistrar?
+	) -> DeliveredNotificationSync? {
+		#if os(iOS)
+			guard let push else { return nil }
+			return DeliveredNotificationSync(
+				center: SystemDeliveredNotificationCenter(),
+				pending: APIPendingNotificationSource(client: environment.client),
+				workspaceId: { [environment] in environment.workspaceId },
+				setBadge: { [push] in push.setBadge($0) })
+		#else
+			return nil
+		#endif
 	}
 
 	// MARK: For You
@@ -244,6 +264,10 @@ public final class AppRuntime {
 			return ForYouRuntime.make(environment: environment, directory: forYouDirectory, start: false)
 		}
 		let runtime = ForYouRuntime.make(environment: environment, directory: forYouDirectory)
+		// Answering or dismissing a card here also drops its push from the lock screen.
+		runtime.store.onCardHandled = { [weak self] objectId in
+			Task { await self?.deliveredSync?.cardHandled(objectId: objectId) }
+		}
 		forYouRuntime = runtime
 		return runtime
 	}
@@ -342,6 +366,7 @@ public final class AppRuntime {
 		// Signed in or not: a pending push unregister is finished on every foreground.
 		if phase == .active { Task { await push?.foregrounded() } }
 		if phase == .active, let session = environment.auth.session {
+			Task { await deliveredSync?.reconcile() }
 			Task { await syncTimezone() }
 			ChatsRuntime.shared(environment: environment).outbox.appDidBecomeActive()
 			drainShareQueue(apiKey: session.apiKey)
@@ -436,8 +461,20 @@ public final class AppRuntime {
 		await push?.requestAuthorization()
 	}
 
-	/// The app icon carries no badge: keep it cleared rather than mirroring the unread count.
-	func updateBadge() { push?.setBadge(0) }
+	/// Take handled pushes off the lock screen and set the icon badge to the pending count. Runs at
+	/// launch and on every foreground; signed out, there is nothing pending to show.
+	func updateBadge() async {
+		guard environment.auth.session != nil else {
+			push?.setBadge(0)
+			return
+		}
+		await deliveredSync?.reconcile()
+	}
+
+	/// The person opened a chat: its pushes are read.
+	func chatOpened(_ conversationId: String) {
+		Task { await deliveredSync?.chatOpened(conversationId: conversationId) }
+	}
 
 	// MARK: Deep links
 

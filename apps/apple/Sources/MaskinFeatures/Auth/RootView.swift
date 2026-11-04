@@ -137,7 +137,7 @@ private let onRuntimeReady: (AppRuntime) -> Void
 		.task(id: auth.credentials) { environment.syncEvents() }
 		.task(id: runtime.syncKey) { runtime.sync() }
 		.task(id: auth.session?.actorId) { await runtime.actorChanged(auth.session?.actorId) }
-		.task { runtime.updateBadge() }
+		.task { await runtime.updateBadge() }
 		.onReceive(NotificationCenter.default.publisher(for: .NSSystemTimeZoneDidChange)) { _ in
 			runtime.timeZoneDidChange()
 		}

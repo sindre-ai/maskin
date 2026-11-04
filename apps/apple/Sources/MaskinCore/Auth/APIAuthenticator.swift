@@ -64,7 +64,7 @@ public struct APIAuthenticator: Authenticating {
 		do {
 			// Keys and passwords never reach a log line or an error: only statuses and the
 			// server's own field messages are carried out of here.
-			output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+			output = try await IdempotencyKey.bind(idempotencyKey) {
 				try await client.post_sol_api_sol_actors(
 					.init(
 						body: .json(
@@ -116,7 +116,7 @@ extension APIAuthenticator {
 			serverURL: origin.serverURL, clientSource: origin.clientSource, credentials: { MaskinCredentials(apiKey: key, workspaceId: workspaceId) })
 		do {
 			let metadata = try capture.metadata().mapValues { try OpenAPIValueContainer(unvalidatedValue: $0) }
-			let output = try await IdempotencyKey.$current.withValue("\(idempotencyKey)-capture") {
+			let output = try await IdempotencyKey.bind("\(idempotencyKey)-capture") {
 				try await authed.post_sol_api_sol_objects(
 					.init(
 						headers: .init(x_hyphen_workspace_hyphen_id: workspaceId),

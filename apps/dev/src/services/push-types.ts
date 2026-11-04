@@ -40,9 +40,26 @@ export interface PushMessage {
 	collapseKey?: string | null
 }
 
+/** At most this many notification ids travel in one clear push. */
+export const CLEAR_IDS_MAX = 20
+
+/** A request to take already-delivered pushes off the device: the person handled them elsewhere. */
+export interface PushClear {
+	workspaceId: string
+	/** Notification ids whose pushes to remove (at most `CLEAR_IDS_MAX` per clear). */
+	notificationIds: string[]
+	/** A rollup or object-level push carries a collapse key instead; clear it when all its cards are handled. */
+	collapseKey?: string | null
+	threadId?: string | null
+	/** App-icon badge to set (the actor's pending count); omitted leaves it untouched. */
+	badge?: number | null
+}
+
 export interface PushChannel {
 	/** False when the channel is not configured; callers skip all work for it. */
 	isEnabled(): boolean
 	/** Push to every registered destination of an actor. Must never throw. */
 	sendToActor(actorId: string, msg: PushMessage): Promise<void>
+	/** Optional: take handled pushes off the actor's devices. Must never throw. */
+	sendClearToActor?(actorId: string, clear: PushClear): Promise<void>
 }

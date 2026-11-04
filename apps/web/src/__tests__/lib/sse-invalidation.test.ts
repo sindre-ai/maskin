@@ -205,6 +205,18 @@ describe('invalidateFromSSE', () => {
 		})
 	})
 
+	it('invalidates actors for an installed_loop event, since a version update renames its agents', () => {
+		const qc = createMockQueryClient()
+		invalidateFromSSE(qc as never, workspaceId, {
+			entity_type: 'installed_loop',
+			entity_id: entityId,
+			action: 'updated',
+		} as never)
+		expect(qc.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: queryKeys.actors.all(workspaceId),
+		})
+	})
+
 	it('refreshes the integration list, and with it every agent access view, for an integration event', () => {
 		const qc = createMockQueryClient()
 		invalidateFromSSE(qc as never, workspaceId, {

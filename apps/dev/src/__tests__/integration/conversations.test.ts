@@ -19,7 +19,7 @@ import { createApiError, formatZodError } from '../../lib/errors'
 import { evaluateAndRespond } from '../../services/conversation-responder'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import type { SessionManager } from '../../services/session-manager'
-import { insertActor, insertSession, insertWorkspace } from '../factories'
+import { insertActor, insertSession, insertSessionLog, insertWorkspace } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
 
@@ -2804,6 +2804,84 @@ describe('Conversations Integration', () => {
 				),
 			)
 			expect(res.status).toBe(404)
+		})
+	})
+
+	describe('list: agents working now', () => {
+		async function chatWithAgent() {
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			const { app } = createConversationsApp(ownerId)
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Working chat', participant_actor_ids: [agent.id], initial_message: 'hi' },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(201)
+			const chatId = ((await res.json()) as { id: string }).id
+			return { agent, chatId }
+		}
+
+		async function workingIn(chatId: string) {
+			const { app } = createConversationsApp(ownerId)
+			const res = await app.request(
+				jsonGet('/api/conversations', { 'x-workspace-id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as {
+				conversations: Array<{ id: string; working_actor_ids: string[] }>
+			}
+			return body.conversations.find((c) => c.id === chatId)?.working_actor_ids
+		}
+
+		async function chatSession(
+			chatId: string,
+			agentId: string,
+			overrides: Record<string, unknown>,
+		) {
+			return insertSession(db, workspaceId, agentId, ownerId, {
+				conversationId: chatId,
+				...overrides,
+			})
+		}
+
+		it('lists the agent while its chat session is mid-turn', async () => {
+			const { agent, chatId } = await chatWithAgent()
+			const session = await chatSession(chatId, agent.id, { status: 'running', interactive: true })
+			await insertSessionLog(db, session.id, { content: '{"type":"assistant","message":{}}' })
+
+			expect(await workingIn(chatId)).toEqual([agent.id])
+		})
+
+		it('stops listing the agent once the turn has closed, though the session is still running', async () => {
+			const { agent, chatId } = await chatWithAgent()
+			const session = await chatSession(chatId, agent.id, { status: 'running', interactive: true })
+			await insertSessionLog(db, session.id, { content: '{"type":"assistant","message":{}}' })
+			await insertSessionLog(db, session.id, { content: '{"type":"result","subtype":"success"}' })
+
+			expect(await workingIn(chatId)).toEqual([])
+		})
+
+		it('lists the agent again when the next turn opens in the same session', async () => {
+			const { agent, chatId } = await chatWithAgent()
+			const session = await chatSession(chatId, agent.id, { status: 'running', interactive: true })
+			await insertSessionLog(db, session.id, { content: '{"type":"result","subtype":"success"}' })
+			await insertSessionLog(db, session.id, { content: '{"type":"user","message":{}}' })
+
+			expect(await workingIn(chatId)).toEqual([agent.id])
+		})
+
+		it('lists an agent whose session is still starting, and ignores a finished one', async () => {
+			const { agent, chatId } = await chatWithAgent()
+			await chatSession(chatId, agent.id, { status: 'starting', interactive: true })
+			expect(await workingIn(chatId)).toEqual([agent.id])
+
+			const { agent: other, chatId: otherChat } = await chatWithAgent()
+			await chatSession(otherChat, other.id, { status: 'completed', interactive: true })
+			expect(await workingIn(otherChat)).toEqual([])
 		})
 	})
 })

@@ -93,4 +93,12 @@ import Testing
 		#expect(ChatPreviewText.linePieces("") == [])
 		#expect(ChatPreviewText.linePieces("   ") == [])
 	}
+
+	@Test("selectable keeps paragraphs and drops markup")
+	func selectableKeepsLines() {
+		#expect(ChatPreviewText.selectable("Hi **there**\n\n\n\nSee [the post](https://maskin.io/x)") == "Hi there\n\nSee the post")
+		#expect(ChatPreviewText.selectable("- first\n- second") == "first\nsecond")
+		#expect(ChatPreviewText.selectable("```swift\nlet x = 1\n```") == "let x = 1")
+		#expect(ChatPreviewText.selectable("") == "")
+	}
 }

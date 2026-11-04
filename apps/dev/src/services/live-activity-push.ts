@@ -33,7 +33,28 @@ export const INTERACTIVE_TURN_STALE_MS = 20 * 60 * 1000
 /** Card bookkeeping older than this is dropped: the card is long gone. */
 export const CARD_TTL_MS = 24 * 60 * 60 * 1000
 
-const LIVE_STATUSES = ['pending', 'starting', 'running']
+export const LIVE_STATUSES = ['pending', 'starting', 'running']
+
+/**
+ * Whether an interactive (chat) session is mid-turn, read from its logs: its newest row is recent
+ * and is not the CLI's closing `result` envelope. A chat session stays `running` between turns, so
+ * its status says nothing about whether the agent is working right now.
+ */
+export async function isInteractiveTurnOpenByLog(
+	db: Database,
+	sessionId: string,
+	nowMs: number,
+): Promise<boolean> {
+	const [last] = await db
+		.select({ content: sessionLogs.content, createdAt: sessionLogs.createdAt })
+		.from(sessionLogs)
+		.where(eq(sessionLogs.sessionId, sessionId))
+		.orderBy(desc(sessionLogs.id))
+		.limit(1)
+	if (!last) return false
+	if (last.createdAt && nowMs - last.createdAt.getTime() > INTERACTIVE_TURN_STALE_MS) return false
+	return !last.content.includes('"type":"result"')
+}
 
 /**
  * session lifecycle action -> does it change the set of working agents? `session_updated` is the
@@ -277,18 +298,8 @@ export class LiveActivityFanout {
 	 * No in-process turn event (restart, or another node ran it): a chat session is mid-turn when
 	 * its newest log row is recent and is not the CLI's closing `result` envelope.
 	 */
-	private async turnOpenByLog(sessionId: string): Promise<boolean> {
-		const [last] = await this.db
-			.select({ content: sessionLogs.content, createdAt: sessionLogs.createdAt })
-			.from(sessionLogs)
-			.where(eq(sessionLogs.sessionId, sessionId))
-			.orderBy(desc(sessionLogs.id))
-			.limit(1)
-		if (!last) return false
-		if (last.createdAt && this.now() - last.createdAt.getTime() > INTERACTIVE_TURN_STALE_MS) {
-			return false
-		}
-		return !last.content.includes('"type":"result"')
+	private turnOpenByLog(sessionId: string): Promise<boolean> {
+		return isInteractiveTurnOpenByLog(this.db, sessionId, this.now())
 	}
 
 	private async doSync(

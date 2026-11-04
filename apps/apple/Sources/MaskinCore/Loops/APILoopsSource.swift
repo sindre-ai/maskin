@@ -139,7 +139,7 @@ public struct APILoopsSource: LoopsAPI {
 	}
 
 	public func setStatus(loopID: String, status: LoopPill, idempotencyKey: String) async throws {
-		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let output = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.patch_sol_api_sol_objects_sol__lcub_id_rcub_(
 				.init(
 					path: .init(id: loopID),
@@ -155,7 +155,7 @@ public struct APILoopsSource: LoopsAPI {
 	public func createLoop(name: String, content: String, idempotencyKey: String) async throws
 		-> String
 	{
-		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let output = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.post_sol_api_sol_objects(
 				.init(
 					headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),
@@ -173,7 +173,7 @@ public struct APILoopsSource: LoopsAPI {
 	public func updateLoop(loopID: String, name: String?, content: String?, idempotencyKey: String)
 		async throws
 	{
-		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let output = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.patch_sol_api_sol_objects_sol__lcub_id_rcub_(
 				.init(path: .init(id: loopID), body: .json(.init(title: name, content: content))))
 		}
