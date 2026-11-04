@@ -13,3 +13,4 @@ extension Components {
     /// Types generated from the `#/components/headers` section of the OpenAPI document.
     public enum Headers {}
 }
+// deliberately stale line
