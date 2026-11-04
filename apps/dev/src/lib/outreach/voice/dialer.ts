@@ -60,6 +60,9 @@ function callFieldText(v: unknown): string {
  * the contact does not have is sent as an empty string so the assistant never speaks a raw
  * placeholder. Text is flattened and capped because it came from the web and ends up in a prompt.
  * The contact title is never split into a name: stamp metadata.contact_name instead.
+ * The call variable contact_email takes metadata.email first and falls back to the older
+ * metadata.contact_email copy, so a corrected email is never overridden by a stale copy. A blank
+ * email counts as missing.
  */
 export function callFieldsOf(metadata: Record<string, unknown> | null): Record<string, string> {
 	const m = metadata ?? {}
@@ -69,7 +72,7 @@ export function callFieldsOf(metadata: Record<string, unknown> | null): Record<s
 		company_name: callFieldText(m.company_name),
 		industry: callFieldText(m.industry),
 		headcount: callFieldText(m.headcount),
-		contact_email: callFieldText(m.contact_email ?? m.email),
+		contact_email: callFieldText(m.email) || callFieldText(m.contact_email),
 	}
 }
 
