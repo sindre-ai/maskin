@@ -92,6 +92,8 @@ The For You list is the Chief of Staff's. An agent that needs a person to decide
 
 A draft with no `kind` still shows its text. It just has no recipient lines and no approval.
 
+With the `foryou-draft-edit` flag on, the draft text on the web card is a box. Nothing is saved while the person types: taking the sending option saves the text to the draft object (`PATCH /api/objects/:id`), then approves the hash of the saved text, then replies, in one tap. The object is read first, and if it no longer matches what the card showed (an agent edited it meanwhile) nothing is saved or sent and the card shows the new text. For a LinkedIn post with a header only the lines between the POST and MEDIA markers change. A draft whose message cannot be told from the rest of its text stays read only. Taking any other option (Hold, Skip) saves nothing.
+
 A card can also be about a **file** instead of text: `draft: { file_id, label }`. The feed returns the file's name, type and size as `draft.file`, and the card draws the file itself, open, above the buttons (see Files). A `file_id` from another workspace, or a deleted file, shows nothing (the stored `body`, if any, is used instead).
 
 A card disappears when its task reaches `done`, `archived`, `dismissed` or `discarded`, when the person replies, when the notification's `only_while_status` no longer holds, or when the decision's `expires_at` has passed.

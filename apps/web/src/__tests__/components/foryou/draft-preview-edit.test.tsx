@@ -1,9 +1,12 @@
 import { DraftPreview } from '@/components/foryou/draft-preview'
 import type { LatestMentionDecisionDraft } from '@/lib/api'
 import { clearDraftEdit, getDraftEdit } from '@/lib/foryou-draft-edits'
-import { act, render, screen } from '@testing-library/react'
+import { act, cleanup, render as rtlRender, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { TestWrapper } from '../../setup'
+
+const render = (ui: React.ReactElement) => rtlRender(ui, { wrapper: TestWrapper })
 
 const flag = vi.fn(() => true)
 vi.mock('@/hooks/use-feature-flag', () => ({ useFeatureFlag: () => flag() }))
@@ -24,6 +27,8 @@ const loaded = (content: string, previewBody?: string) =>
 	})
 
 afterEach(() => {
+	// Unmount first: clearing an edit tells every mounted box.
+	cleanup()
 	clearDraftEdit('obj-1')
 	flag.mockReturnValue(true)
 	useObject.mockReset()

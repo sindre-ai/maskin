@@ -12,7 +12,9 @@ import {
 	spliceDraftText,
 	subscribeDraftEdits,
 } from '@/lib/foryou-draft-edits'
-import { useSyncExternalStore } from 'react'
+import { queryKeys } from '@/lib/query-keys'
+import { useQueryClient } from '@tanstack/react-query'
+import { useEffect, useSyncExternalStore } from 'react'
 
 interface DraftPreviewProps {
 	workspaceId: string
@@ -102,6 +104,13 @@ function EditableDraftText({
 		() => getDraftChange(objectId),
 		() => undefined,
 	)
+	// A draft that changed under the person: the text the save found is shown at once, and the
+	// object is read again so the card follows it from then on.
+	const queryClient = useQueryClient()
+	useEffect(() => {
+		if (changedTo === undefined) return
+		queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(objectId) })
+	}, [changedTo, objectId, queryClient])
 	const content = object?.content ?? ''
 	const shown = (object?.preview?.body ?? content).trim()
 	if (!object || object.workspaceId !== workspaceId || !shown) {
@@ -119,7 +128,7 @@ function EditableDraftText({
 			<Textarea
 				autoResize
 				aria-label="Edit the text"
-				value={edit ?? shown}
+				value={edit ?? changedTo ?? shown}
 				onChange={(event) => {
 					const value = event.target.value
 					if (value === shown) clearDraftEdit(objectId)
