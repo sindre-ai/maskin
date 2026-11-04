@@ -139,7 +139,7 @@ describe('SidebarActivity', () => {
 		expect(container).toBeEmptyDOMElement()
 	})
 
-	it('hides the row and keeps the count tile in icon-collapsed mode', () => {
+	it('hides the row and keeps the live dot tile in icon-collapsed mode', () => {
 		mockUseActiveAgents.mockReturnValue({
 			agents: [agent()],
 			activeSessionCount: 1,
@@ -150,8 +150,7 @@ describe('SidebarActivity', () => {
 		expect(row().className).toContain('group-data-[collapsible=icon]:hidden')
 		const rail = screen.getByLabelText('Agents')
 		expect(rail.className).toContain('group-data-[collapsible=icon]:grid')
-		// The rail keeps the number, not just a dot — it is the only agents
-		// signal left once the labels are gone.
-		expect(rail).toHaveTextContent('1')
+		// v3's rail shows the liveness dot only; the counts live in the title.
+		expect(rail).toHaveAttribute('title', expect.stringContaining('1 agent'))
 	})
 })

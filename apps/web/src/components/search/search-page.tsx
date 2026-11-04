@@ -387,7 +387,7 @@ export function SearchPageV2() {
 
 				<FormSection label="Words">
 					<FormRow label="Search">
-						<div className="relative flex min-w-0 max-w-[420px] flex-1">
+						<div className="relative flex min-w-0 max-w-[55%] flex-1 md:max-w-75">
 							<SearchField
 								variant="row"
 								parts={parts}

@@ -54,10 +54,16 @@ export function SidebarActivity({ workspaceId }: { workspaceId: string }) {
 				title={summary}
 				aria-label="Agents"
 				onClick={() => trackNavItemClicked({ item_key: 'agents', source: 'footer' })}
-				className="relative mx-auto hidden size-8 place-items-center rounded-lg transition-colors duration-150 hover:bg-sidebar-accent group-data-[collapsible=icon]:grid"
+				className="mx-auto hidden size-10 place-items-center rounded-[10px] border border-sidebar-border transition-colors duration-150 hover:bg-sidebar-accent group-data-[collapsible=icon]:grid"
 			>
-				<CountTile count={agentCount} />
-				{isWorking && <LiveDot className="right-0.5 top-0.5" />}
+				{/* v3 rail: the tile is just the liveness dot, no number. */}
+				<span
+					aria-hidden="true"
+					className={cn(
+						'size-2 rounded-full',
+						isWorking ? 'bg-success motion-safe:animate-pulse' : 'bg-border-strong',
+					)}
+				/>
 			</Link>
 			<Link
 				to="/$workspaceId/agents"
@@ -93,29 +99,6 @@ export function SidebarActivity({ workspaceId }: { workspaceId: string }) {
 				<ChevronRight aria-hidden="true" className="size-2.5 flex-none text-muted-foreground" />
 			</Link>
 		</>
-	)
-}
-
-function CountTile({ count }: { count: number }) {
-	return (
-		<span className="grid size-[22px] place-items-center rounded-full border-[1.5px] border-border-strong text-[10px] font-bold text-secondary-foreground tabular-nums">
-			{count}
-		</span>
-	)
-}
-
-// Green, not brand: this reports liveness, and the nav's own brand dot already
-// means "unread". Ringed in the sidebar's own fill so it reads as a badge
-// sitting on the tile rather than a hole punched through it.
-function LiveDot({ className }: { className?: string }) {
-	return (
-		<span
-			aria-hidden="true"
-			className={cn(
-				'absolute size-1.5 rounded-full bg-success ring-[1.5px] ring-sidebar',
-				className,
-			)}
-		/>
 	)
 }
 

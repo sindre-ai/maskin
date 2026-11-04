@@ -80,7 +80,7 @@ test.describe('Settings v3 (part 1)', () => {
 				await page.goto(`/${account.workspaceId}`)
 
 				const card = page.getByRole('region', { name: 'Trial' })
-				await expect(card.getByText('Trial ends in 5 days')).toBeVisible()
+				await expect(card.getByText('5 days left')).toBeVisible()
 				await expect(card.getByRole('link', { name: 'Upgrade' })).toBeVisible()
 				const cardBox = await card.boundingBox()
 				const marketplaceBox = await page.getByRole('link', { name: 'Marketplace' }).boundingBox()

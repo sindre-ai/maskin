@@ -5,19 +5,19 @@ const DAY = 24 * 60 * 60 * 1000
 
 describe('trialCardState', () => {
 	it('counts whole days left, rounding up', () => {
-		expect(trialCardState({ plan: 'trial', period_resets_in_ms: 4.2 * DAY })).toEqual({
+		expect(trialCardState({ plan: 'trial', period_resets_in_ms: 4.2 * DAY })).toMatchObject({
 			title: 'Trial ends in 5 days',
 		})
 	})
 
 	it('says 1 day when exactly one day is left', () => {
-		expect(trialCardState({ plan: 'trial', period_resets_in_ms: DAY })).toEqual({
+		expect(trialCardState({ plan: 'trial', period_resets_in_ms: DAY })).toMatchObject({
 			title: 'Trial ends in 1 day',
 		})
 	})
 
 	it('says today inside the last day', () => {
-		expect(trialCardState({ plan: 'trial', period_resets_in_ms: DAY / 2 })).toEqual({
+		expect(trialCardState({ plan: 'trial', period_resets_in_ms: DAY / 2 })).toMatchObject({
 			title: 'Trial ends today',
 		})
 	})

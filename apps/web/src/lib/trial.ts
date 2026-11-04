@@ -12,11 +12,15 @@ const DAY_MS = 24 * 60 * 60 * 1000
  */
 export function trialCardState(
 	usage: Pick<BillingUsageResponse, 'plan' | 'period_resets_in_ms'> | undefined,
-): { title: string } | null {
+): { title: string; left: string } | null {
 	if (!usage || usage.plan !== 'trial') return null
 	const ms = usage.period_resets_in_ms
 	if (ms == null || ms <= 0) return null
 	const days = Math.ceil(ms / DAY_MS)
-	if (days <= 1) return { title: ms < DAY_MS ? 'Trial ends today' : 'Trial ends in 1 day' }
-	return { title: `Trial ends in ${days} days` }
+	if (days <= 1) {
+		return ms < DAY_MS
+			? { title: 'Trial ends today', left: 'Ends today' }
+			: { title: 'Trial ends in 1 day', left: '1 day left' }
+	}
+	return { title: `Trial ends in ${days} days`, left: `${days} days left` }
 }

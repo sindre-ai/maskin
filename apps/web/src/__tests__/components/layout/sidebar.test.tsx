@@ -213,8 +213,7 @@ describe('AppSidebar', () => {
 		it('shows the days left and an Upgrade link above Marketplace on a trial', () => {
 			vi.mocked(useBillingUsage).mockReturnValue(usage('trial', 4.2 * DAY))
 			render(<AppSidebar />)
-			const title = screen.getByText('Trial ends in 5 days')
-			expect(screen.getByText('Choose a plan to keep your agents running.')).toBeInTheDocument()
+			const title = screen.getByText('5 days left')
 			expect(screen.getByRole('link', { name: 'Upgrade' })).toBeInTheDocument()
 			expect(
 				title.compareDocumentPosition(screen.getByText('Marketplace')) &
@@ -225,13 +224,13 @@ describe('AppSidebar', () => {
 		it('is hidden on a paid plan', () => {
 			vi.mocked(useBillingUsage).mockReturnValue(usage('pro', 20 * DAY))
 			render(<AppSidebar />)
-			expect(screen.queryByText(/Trial ends/)).not.toBeInTheDocument()
+			expect(screen.queryByText(/days left/)).not.toBeInTheDocument()
 		})
 
 		it('is hidden once the trial has ended', () => {
 			vi.mocked(useBillingUsage).mockReturnValue(usage('trial', 0))
 			render(<AppSidebar />)
-			expect(screen.queryByText(/Trial ends/)).not.toBeInTheDocument()
+			expect(screen.queryByText(/days left/)).not.toBeInTheDocument()
 		})
 	})
 })
