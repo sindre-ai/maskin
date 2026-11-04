@@ -7,6 +7,7 @@ import type { Database } from '@maskin/db'
 import { getAllModules } from '@maskin/module-sdk'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import type { StorageProvider } from '@maskin/storage'
+import type { MiddlewareHandler } from 'hono'
 import { cors } from 'hono/cors'
 import { logger as honoLogger } from 'hono/logger'
 import { CLIENT_SOURCE_HEADER } from './lib/analytics/knowledge-events'
@@ -453,6 +454,17 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// Claude sign-in discovery documents. Mounted before the SPA fallthrough below, which would
 	// otherwise answer these paths with index.html.
 	app.route('/', oauthDiscoveryRoutes)
+
+	// The consent page is a web route (apps/web/src/routes/oauth.authorize.tsx), served by the SPA
+	// fallthrough below. A page with an Allow button is a clickjacking target, so it refuses to be
+	// framed. Registered here, ahead of serveStatic and the SPA fallback, so both answers carry it.
+	const refuseFraming: MiddlewareHandler = async (c, next) => {
+		c.header('Content-Security-Policy', "frame-ancestors 'none'")
+		c.header('X-Frame-Options', 'DENY')
+		await next()
+	}
+	app.use('/oauth/authorize', refuseFraming)
+	app.use('/oauth/authorize/*', refuseFraming)
 
 	// POST /oauth/token (public: the one-time code or refresh token is the credential). Same reason
 	// for the position: the SPA fallthrough below would otherwise swallow the path.

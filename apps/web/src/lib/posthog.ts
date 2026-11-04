@@ -4,6 +4,39 @@ const DEFAULT_HOST = 'https://eu.i.posthog.com'
 
 let initialized = false
 
+const AUTHORIZE_PATH = '/oauth/authorize'
+
+function scrubUrl(raw: unknown): unknown {
+	if (typeof raw !== 'string') return raw
+	try {
+		const url = new URL(raw)
+		if (url.pathname === AUTHORIZE_PATH) return `${url.origin}${url.pathname}`
+		// The login detour carries the whole authorize address in its redirect parameter.
+		if (url.searchParams.get('redirect')?.startsWith(AUTHORIZE_PATH)) {
+			url.searchParams.delete('redirect')
+			return url.toString()
+		}
+	} catch {
+		// Not a URL: leave it.
+	}
+	return raw
+}
+
+/**
+ * The consent page's address holds the sign-in request (state, code challenge, return address), which must
+ * not leave the browser. Drops the query string from page URLs on that page and from the login detour to it.
+ */
+export function scrubAuthorizeUrls<T extends { properties?: Record<string, unknown> } | null>(
+	event: T,
+): T {
+	const props = event?.properties
+	if (!props) return event
+	for (const key of ['$current_url', '$referrer']) {
+		if (key in props) props[key] = scrubUrl(props[key])
+	}
+	return event
+}
+
 export function initPosthog(): void {
 	if (initialized) return
 	const key = import.meta.env.VITE_POSTHOG_KEY
@@ -14,6 +47,7 @@ export function initPosthog(): void {
 			person_profiles: 'identified_only',
 			capture_pageview: true,
 			autocapture: false,
+			before_send: scrubAuthorizeUrls,
 		})
 		initialized = true
 	} catch {
