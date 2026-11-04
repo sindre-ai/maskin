@@ -1,9 +1,11 @@
 // import { TeachDialog } from '@/components/desktop/teach-dialog'
+import { DesktopClipboardButtons } from '@/components/desktop/desktop-clipboard-buttons'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useConnectDesktop } from '@/hooks/use-desktop'
 import { type TeachingStatus, useDesktopTeaching } from '@/hooks/use-desktop-teaching'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { cn } from '@/lib/cn'
 import type RfbClient from '@novnc/novnc/lib/rfb'
 import { Eye, Maximize2, MousePointer2, RefreshCw, Square } from 'lucide-react'
@@ -16,6 +18,8 @@ interface RfbHandle {
 	viewOnly: boolean
 	disconnect: () => void
 	focus: () => void
+	clipboardPasteFrom: (text: string) => void
+	sendKey: (keysym: number, code: string | null, down?: boolean) => void
 }
 
 const STATUS_TEXT: Record<Phase, string> = {
@@ -115,6 +119,9 @@ export function DesktopViewer({
 	const [error, setError] = useState<string | null>(null)
 	const [controlling, setControlling] = useState(false)
 	const [attempt, setAttempt] = useState(0)
+	// What the computer last copied, for the Copy button.
+	const [remoteText, setRemoteText] = useState('')
+	const clipboardEnabled = useFeatureFlag('computer-clipboard')
 	const { mutateAsync: connectDesktop } = useConnectDesktop(workspaceId, agentId)
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: `attempt` is the retry trigger, not a value the effect reads.
@@ -123,6 +130,7 @@ export function DesktopViewer({
 		setPhase('starting')
 		setError(null)
 		setControlling(false)
+		setRemoteText('')
 
 		void (async () => {
 			try {
@@ -149,6 +157,9 @@ export function DesktopViewer({
 				rfb.viewOnly = true
 				rfb.addEventListener('connect', () => {
 					if (!cancelled) setPhase('connected')
+				})
+				rfb.addEventListener('clipboard', (event) => {
+					if (!cancelled) setRemoteText(event.detail?.text ?? '')
 				})
 				rfb.addEventListener('disconnect', () => {
 					if (cancelled) return
@@ -180,6 +191,7 @@ export function DesktopViewer({
 		if (!rfb) return
 		rfb.viewOnly = !controlling
 		if (controlling) rfb.focus()
+		else setRemoteText('')
 	}, [controlling])
 
 	const busy = phase === 'starting' || phase === 'connecting'
@@ -220,6 +232,9 @@ export function DesktopViewer({
 						<span className="hidden sm:inline">Teach a task</span>
 					</Button>
 					*/}
+					{controlling && clipboardEnabled && (
+						<DesktopClipboardButtons rfbRef={rfbRef} remoteText={remoteText} />
+					)}
 					<Button
 						variant={controlling ? 'default' : 'outline'}
 						size="sm"
@@ -247,6 +262,9 @@ export function DesktopViewer({
 				{controlling ? <MousePointer2 size={15} /> : <Eye size={15} />}
 				{controlling ? "You're in control" : 'Watching'}
 			</span>
+			{controlling && clipboardEnabled && (
+				<DesktopClipboardButtons rfbRef={rfbRef} remoteText={remoteText} rounded />
+			)}
 			<Button
 				variant={controlling ? 'secondary' : 'default'}
 				size="sm"
