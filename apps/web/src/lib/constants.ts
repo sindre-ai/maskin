@@ -125,6 +125,22 @@ export function statusLabel(status: string): string {
 	return STATUS_LABELS[status] ?? status.replace(/_/g, ' ')
 }
 
+export type StatusStage = 'todo' | 'progress' | 'review' | 'done'
+
+// The v3 status ring has four stages: a dashed ring (not started), a third
+// filled (in progress), three quarters filled (in review) and a solid tick
+// (done). Workspace statuses are free text, so anything unrecognised reads as
+// not started rather than guessing a stage.
+export function statusStage(status: string): StatusStage {
+	const s = status.toLowerCase().replace(/[\s-]+/g, '_')
+	if (['done', 'completed', 'complete', 'validated', 'closed', 'shipped', 'merged'].includes(s))
+		return 'done'
+	if (['in_review', 'review', 'reviewing', 'ready_for_review'].includes(s)) return 'review'
+	if (['in_progress', 'active', 'processing', 'running', 'working', 'testing'].includes(s))
+		return 'progress'
+	return 'todo'
+}
+
 export function getStatusColor(status: string) {
 	return statusColors[status] ?? defaultStatusColor
 }

@@ -119,7 +119,20 @@ test.describe('Object description on the rich editor', () => {
 		await openDescription(page, account.workspaceId, bet.id)
 		const pm = await editor(page)
 		await pm.locator('p').first().click()
-		await page.keyboard.press('End')
+		// Put the caret at the end of the paragraph without the End key: on macOS
+		// End scrolls the page instead of moving the caret, so the word would land
+		// wherever the click happened.
+		await pm
+			.locator('p')
+			.first()
+			.evaluate((el) => {
+				const range = document.createRange()
+				range.selectNodeContents(el)
+				range.collapse(false)
+				const selection = window.getSelection()
+				selection?.removeAllRanges()
+				selection?.addRange(range)
+			})
 		await page.keyboard.type(' Reviewed.')
 		await leaveEditor(page)
 		await expect.poll(() => writes.length).toBe(1)

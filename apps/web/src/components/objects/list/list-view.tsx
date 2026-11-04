@@ -1,6 +1,7 @@
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
+import { StatusBadge } from '@/components/shared/status-badge'
 import { Button } from '@/components/ui/button'
 import { GROUP_PAGE_SIZE } from '@/hooks/use-objects'
 import type { ActorListItem, NotificationResponse, ObjectResponse } from '@/lib/api'
@@ -368,10 +369,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 				showBetStatusIndicator={showBetStatusIndicator}
 				ask={asksByObjectId?.get(object.id)}
 				pendingAskCount={pendingAskCountByObjectId?.get(object.id)}
-				// Under a Status group header the status word repeats the header.
-				columnVisibility={
-					groupBy === 'status' ? { ...columnVisibility, status: false } : columnVisibility
-				}
+				columnVisibility={columnVisibility}
 				anySelected={selectedIdSet.size > 0}
 				typeLabel={objectTypeLabel?.(object.type)}
 			/>
@@ -453,7 +451,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 											type="button"
 											onClick={() => toggleGroup(group)}
 											aria-expanded={open}
-											className="flex items-center gap-2 text-left text-[13px] font-semibold transition-opacity hover:opacity-75"
+											className="flex items-center gap-2 text-left text-[13.5px] font-semibold transition-opacity hover:opacity-75"
 										>
 											<ChevronRight
 												size={13}
@@ -463,8 +461,12 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 													open && 'rotate-90',
 												)}
 											/>
-											{/* The v11 group header: the label in the page's ink and the
-											    count in the muted colour, plain sentence case — no rule. */}
+											{/* The v3 group header: the status ring when grouped by status,
+											    the label in the page's ink and the count in the muted colour,
+											    plain sentence case — no rule. */}
+											{groupBy === 'status' && group.value !== NO_VALUE_GROUP && (
+												<StatusBadge status={group.value} variant="ring" />
+											)}
 											<span className="inline-block text-foreground first-letter:uppercase">
 												{getObjectGroupLabel(groupBy, group.value, actors)}
 											</span>

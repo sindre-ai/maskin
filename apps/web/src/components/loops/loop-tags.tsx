@@ -8,7 +8,7 @@ import { useRef, useState } from 'react'
 const TAG_MAX_LENGTH = 40
 
 /**
- * The flow's tags (`metadata.tags`) on the Overview tab: removable chips and a
+ * The flow's tags (`metadata.tags`) in the header chip row beside the status pill and driver: removable chips and a
  * "+ Tag" control that turns into an inline field. The first tag is the team the
  * Flows list groups under. Read-only viewers see the chips without controls, and
  * nothing renders for a flow with no tags they could add.
@@ -49,8 +49,7 @@ export function LoopTags({
 	}
 
 	return (
-		<section aria-label="Tags" className="flex flex-wrap items-center gap-2">
-			<span className="mr-1 text-[13px] font-semibold text-muted-foreground">Tags</span>
+		<section aria-label="Tags" className="contents">
 			{tags.map((tag) => (
 				<Badge key={tag} variant="secondary" className="h-8 gap-1.5 px-3.5 text-[13px] font-medium">
 					{tag}

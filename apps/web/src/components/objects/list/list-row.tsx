@@ -298,19 +298,9 @@ export function ListRow({
 					</p>
 				)}
 			</div>
-			{/* The mockup's row status is the bare coloured word — no dot, no pill
-			    (759). A dot beside it doubles the colour signal in 11px of space. */}
-			{showTag && (
-				<StatusBadge
-					status={object.status}
-					variant="word"
-					// Hidden below `sm`: at 375px the leading touch checkbox and star plus
-					// five columns leaves the title little room, and the status word is
-					// the one column the reader can already get from the group header
-					// (grouping rests on Status). It returns at 640px.
-					className="hidden text-[11px] font-semibold sm:inline"
-				/>
-			)}
+			{/* v3 row status: the ring only. The word lives in its hover title and in
+			    the group header when grouped by status. */}
+			{showTag && <StatusBadge status={object.status} variant="ring" />}
 			{showDriver && driver && (
 				// D2 · Driver avatar gains a violet conic-gradient ring when the
 				// object has an actively-running session on it. Replaces the old

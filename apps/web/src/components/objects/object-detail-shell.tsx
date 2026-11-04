@@ -239,8 +239,9 @@ export function ObjectDetailShell({
 	)
 
 	const answerRef = useRef<TagInputHandle>(null)
-	// The composer lives in the Activity tab, so answering from anywhere opens that
-	// tab (and the comment input) first and focuses once it is mounted.
+	// The composer is pinned under every tab. Answering still opens the Activity tab
+	// (the ask lives on the timeline) and focuses the comment input; when the Message
+	// switch hides it, it is focused once the mode swap re-creates it.
 	const focusAfterTabRef = useRef(false)
 	const [confirmDelete, setConfirmDelete] = useState(false)
 	const confirmedDeleteRef = useRef(false)
@@ -251,8 +252,10 @@ export function ObjectDetailShell({
 	// `liveAsk`) so the reference is stable across renders that don't change
 	// the pick.
 	const handleAnswerLatestAsk = useCallback(() => {
-		if (tab === 'activity' && composerMode === 'comment') {
+		if (composerMode === 'comment') {
+			// The composer is pinned under every tab, so it is already mounted.
 			answerRef.current?.focus()
+			if (tab !== 'activity') changeTab('activity')
 			return
 		}
 		focusAfterTabRef.current = true
@@ -620,25 +623,26 @@ export function ObjectDetailShell({
 							<TabsContent value="related" className="mt-0">
 								<RelatedTab object={object} />
 							</TabsContent>
-							<TabsContent value="activity" className="mt-0 flex min-h-0 flex-1 flex-col">
+							<TabsContent value="activity" className="mt-0">
 								<TimelineTab object={object} focusCommentId={focusCommentId} />
-
-								<div aria-hidden="true" className="min-h-6 flex-1" />
-
-								{/* The mockup's composer is a single bar — `+`, the field, one
-								    action button on one row, with no hint line under it. One
-								    composer at a time, switched Comment / Message <agent>. */}
-								<div className="sticky bottom-0 z-[6] mt-1.5 bg-gradient-to-b from-transparent via-background via-20% to-background pb-4 pt-[22px]">
-									<ItemComposer
-										object={object}
-										workspaceId={workspaceId}
-										focusRef={answerRef}
-										focusOnMountRef={focusAfterTabRef}
-										mode={composerMode}
-										onModeChange={setComposerMode}
-									/>
-								</div>
 							</TabsContent>
+
+							<div aria-hidden="true" className="min-h-6 flex-1" />
+
+							{/* v3: the composer is pinned under every tab, not only Activity.
+							    The mockup's composer is a single bar — `+`, the field, one
+							    action button on one row, with no hint line under it. One
+							    composer at a time, switched Comment / Message <agent>. */}
+							<div className="sticky bottom-0 z-[6] mt-1.5 bg-gradient-to-b from-transparent via-background via-20% to-background pb-4 pt-[22px]">
+								<ItemComposer
+									object={object}
+									workspaceId={workspaceId}
+									focusRef={answerRef}
+									focusOnMountRef={focusAfterTabRef}
+									mode={composerMode}
+									onModeChange={setComposerMode}
+								/>
+							</div>
 						</Tabs>
 					</div>
 				</div>

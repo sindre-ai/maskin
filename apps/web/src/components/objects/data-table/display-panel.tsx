@@ -127,7 +127,7 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
 // Every row of the panel is a plain menu row: 36px on pointer devices, 44px on
 // touch, label left, value right.
 const ROW_CLS =
-	'flex h-11 w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-muted md:h-9 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent'
+	'flex h-11 w-full items-center gap-2 rounded-lg px-2.5 text-left text-[13px] font-medium text-foreground transition-colors hover:bg-muted md:h-9 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent'
 
 // `Label … value ▾`. Forwards its ref and props so it can be a DropdownMenu
 // trigger (the value pickers) or a plain button (the Order toggle).
@@ -142,7 +142,7 @@ const ValueRow = forwardRef<
 	<button ref={ref} type="button" className={cn(ROW_CLS, className)} {...props}>
 		<span className="shrink-0">{label}</span>
 		<span className="flex-1" />
-		<span className="min-w-0 truncate text-xs font-medium capitalize text-muted-foreground">
+		<span className="min-w-0 truncate text-xs font-medium text-muted-foreground first-letter:uppercase">
 			{value}
 		</span>
 		{caret ?? <ChevronDown size={10} aria-hidden="true" className="shrink-0 opacity-60" />}

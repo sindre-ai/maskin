@@ -48,7 +48,12 @@ export function BoardCard({
 					{ id: 'updatedAt', label: 'Updated', canHide: true },
 				]
 	const visibleProperties = availableProperties.filter(
-		(column) => column.id !== 'title' && columnVisibility?.[column.id] !== false,
+		(column) =>
+			column.id !== 'title' &&
+			// v3 cards carry the last-updated age only; "Created" is opt-in.
+			(column.id === 'createdAt'
+				? columnVisibility?.createdAt === true
+				: columnVisibility?.[column.id] !== false),
 	)
 	const hasPendingAsk = ask?.status === 'pending'
 

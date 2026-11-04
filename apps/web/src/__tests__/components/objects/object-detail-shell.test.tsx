@@ -142,12 +142,23 @@ describe('ObjectDetailShell', () => {
 			wrapper: createWorkspaceWrapper(workspace, { renderPageHeader: true }),
 		})
 
-		// The composer lives in the Activity tab; the Overview does not mount it.
-		expect(screen.queryByRole('textbox', { name: 'Comment' })).toBeNull()
+		// The composer is pinned under every tab, so it is already there on Overview.
+		const answerBox = screen.getByRole('textbox', { name: 'Comment' })
 		fireEvent.click(screen.getByRole('button', { name: /answer it/i }))
-		const answerBox = await screen.findByRole('textbox', { name: 'Comment' })
 		await waitFor(() => expect(document.activeElement).toBe(answerBox))
+		expect(screen.getByRole('tab', { name: /^Activity/ })).toHaveAttribute('aria-selected', 'true')
 	})
+
+	it.each(['overview', 'related', 'activity'] as const)(
+		'pins the comment box under the %s tab',
+		(tab) => {
+			const object = buildObjectResponse({ type: 'bet' })
+			render(<ObjectDetailShell object={object} tab={tab} />, {
+				wrapper: createWorkspaceWrapper(workspace, { renderPageHeader: true }),
+			})
+			expect(screen.getAllByRole('textbox', { name: 'Comment' })).toHaveLength(1)
+		},
+	)
 
 	it('omits the ask banner when no _ask metadata', () => {
 		const object = buildObjectResponse({ type: 'bet' })

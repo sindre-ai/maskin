@@ -525,6 +525,7 @@ function LoopDetailRoute() {
 							<span className="text-muted-foreground">drives</span>
 						</span>
 					)}
+					<LoopTags tags={loop.tags} canWrite={canWrite && !!object} onChange={handleUpdateTags} />
 				</div>
 
 				<div className="mt-6">
@@ -571,12 +572,6 @@ function LoopDetailRoute() {
 								<LoopFirstRunBanner triggers={loopTriggers} />
 							</div>
 						)}
-
-						<LoopTags
-							tags={loop.tags}
-							canWrite={canWrite && !!object}
-							onChange={handleUpdateTags}
-						/>
 
 						<TargetsAndOwners loop={loop} actors={actors} />
 
