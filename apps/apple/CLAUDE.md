@@ -2,6 +2,8 @@
 
 One Swift package (`MaskinKit`) + thin app targets. Read `/Users/krumhausen/.claude/plans/let-s-build-an-ios-zippy-puffin.md` for the architecture and `.claude/rules/*` at the repo root for repo-wide rules.
 
+> **Web parity:** any user-visible change here must also be made in `apps/web` in the same PR (and vice versa). Native idiom may differ; capability, wording and behaviour may not. See `.claude/rules/web-ios-parity.md`.
+
 ## Layers (dependencies point down only)
 `Apps/*` → `MaskinFeatures` → `MaskinCore`, `MaskinUI` → `MaskinAPI`, `MaskinDesign`
 - `MaskinDesign` — tokens. `Generated/Tokens.swift` is GENERATED (`node scripts/gen-tokens.mjs`); never hand-edit. Hand-written iOS additions live beside it, not in it.
