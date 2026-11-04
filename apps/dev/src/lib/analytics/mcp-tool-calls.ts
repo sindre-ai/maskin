@@ -156,7 +156,7 @@ export interface McpHandshakeTrace {
 	mcpProtocolVersion?: McpProtocolVersionLabel
 	client: McpClient
 	transport: 'http'
-	authMethod: 'api_key' | null
+	authMethod: 'api_key' | 'oauth' | null
 	agentActorId: string | null
 }
 
