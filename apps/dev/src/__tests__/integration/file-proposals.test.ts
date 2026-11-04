@@ -204,6 +204,20 @@ describe('File proposals (integration)', () => {
 			expect(capture).not.toHaveBeenCalled()
 		})
 
+		it('rejects a file larger than 50 MB and stores nothing', async () => {
+			const file = await insertFile(workspaceId, mem)
+			await db
+				.update(files)
+				.set({ sizeBytes: 50 * 1024 * 1024 + 1 })
+				.where(eq(files.id, file.id))
+			const res = await submit(app, file.id, {
+				changes: [{ old_text: 'small', new_text: 'tight' }],
+			})
+			expect(res.status).toBe(400)
+			expect(await proposalCount(file.id)).toBe(0)
+			expect(capture).not.toHaveBeenCalled()
+		})
+
 		it('rejects the whole call when a change matches several times, naming its index', async () => {
 			const file = await insertFile(workspaceId, mem)
 			const res = await submit(app, file.id, {

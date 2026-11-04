@@ -421,6 +421,32 @@ describe('Deciding proposed changes (integration)', () => {
 		})
 	})
 
+	describe('a file larger than 50 MB', () => {
+		it('answers 400 to an accept and leaves the bytes, the row and the change alone', async () => {
+			const file = await insertFile()
+			const { proposal, changes } = await insertProposal(file.id, [
+				{ old: 'We ship on Friday.', next: 'We ship on Thursday.' },
+			])
+			await db
+				.update(files)
+				.set({ sizeBytes: 50 * 1024 * 1024 + 1 })
+				.where(eq(files.id, file.id))
+			const before = Buffer.from(mem.objects.get(file.storageKey) as Buffer)
+
+			const res = await accept(file.id, proposal.id, (changes[0] as { id: string }).id, ownerKey)
+
+			expect(res.status).toBe(400)
+			expect(mem.objects.get(file.storageKey)).toEqual(before)
+			const [row] = await db.select().from(files).where(eq(files.id, file.id))
+			expect(row?.sizeBytes).toBe(50 * 1024 * 1024 + 1)
+			const [change] = await db
+				.select()
+				.from(fileProposalChanges)
+				.where(eq(fileProposalChanges.id, (changes[0] as { id: string }).id))
+			expect(change?.status).toBe('pending')
+		})
+	})
+
 	describe('rejecting', () => {
 		it('records the rejection and never touches the file', async () => {
 			const file = await insertFile()

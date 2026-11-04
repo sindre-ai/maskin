@@ -9,6 +9,7 @@ import {
 	relationships,
 } from '@maskin/db/schema'
 import {
+	MAX_INLINE_FILE_SIZE_BYTES,
 	acceptFileProposalChangeSchema,
 	createFileProposalResponseSchema,
 	createFileProposalSchema,
@@ -49,6 +50,9 @@ import {
 	isWorkspaceMember,
 	isWorkspaceWriter,
 } from '../lib/workspace-auth'
+
+const tooLargeMessage =
+	'Changes can only be proposed and accepted on files up to 50 MB. The content of a larger file cannot be replaced; upload a new file instead'
 
 type Env = {
 	Variables: {
@@ -122,6 +126,12 @@ app.openapi(createProposalRoute, (async (c) => {
 			),
 			400,
 		)
+	}
+
+	// Same line the files route draws: a file this large is never loaded here, so
+	// its content cannot be replaced, and an accepted change would replace it.
+	if (file.sizeBytes > MAX_INLINE_FILE_SIZE_BYTES) {
+		return c.json(createApiError('VALIDATION_ERROR', tooLargeMessage), 400)
 	}
 
 	let bytes: Buffer
@@ -376,6 +386,10 @@ const proposalParamSchema = z.object({ id: z.string().uuid(), pid: z.string().uu
 const changeConflictSchema = errorSchema.extend({ staleChangeIds: z.array(z.string().uuid()) })
 
 const decisionResponses = {
+	400: {
+		content: { 'application/json': { schema: errorSchema } },
+		description: 'The file is larger than 50 MB, so its content cannot be changed',
+	},
 	403: {
 		content: { 'application/json': { schema: errorSchema } },
 		description: 'Not a person who can decide: a viewer, an agent, or the author of the proposal',
@@ -478,6 +492,11 @@ async function acceptChanges(
 			body: createApiError(target.status === 404 ? 'NOT_FOUND' : 'FORBIDDEN', target.message),
 		}
 	const { file, proposal } = target
+
+	// An accept writes the file, and a file this large cannot be rewritten through the API.
+	if (file.sizeBytes > MAX_INLINE_FILE_SIZE_BYTES) {
+		return { status: 400 as const, body: createApiError('VALIDATION_ERROR', tooLargeMessage) }
+	}
 
 	const checked = await checkPendingChanges(
 		db,
