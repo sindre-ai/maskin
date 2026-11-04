@@ -442,7 +442,20 @@ describe('prepareBridgedViewHtml', () => {
 		expect(prepared).toContain('__MASKIN_APP_DATA__')
 		expect(prepared.split(`content="${MINI_APP_CSP}"`).length - 1).toBe(1)
 		expect(prepared.indexOf('<head>') + 6).toBe(
-			prepared.indexOf('<meta http-equiv="Content-Security-Policy"'),
+			prepared.indexOf('<meta http-equiv="x-dns-prefetch-control" content="off">'),
+		)
+	})
+
+	it('switches DNS prefetch off before anything else, and drops an agent copy that turns it on', () => {
+		const prepared = prepareBridgedViewHtml(
+			'<html><head><meta http-equiv="X-DNS-Prefetch-Control" content="on"></head><body></body></html>',
+		)
+		const off = '<meta http-equiv="x-dns-prefetch-control" content="off">'
+		expect(prepared.split(/x-dns-prefetch-control/i).length - 1).toBe(1)
+		expect(prepared).not.toContain('content="on"')
+		expect(prepared.indexOf(off)).toBe(prepared.indexOf('<head>') + 6)
+		expect(prepared.indexOf('<meta http-equiv="Content-Security-Policy"')).toBe(
+			prepared.indexOf(off) + off.length,
 		)
 	})
 
