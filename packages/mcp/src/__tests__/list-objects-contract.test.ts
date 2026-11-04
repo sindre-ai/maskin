@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { LIST_CONTRACT_ENV_VAR } from '../list-contract'
 import type { TelemetryEvent } from '../telemetry'
-import { type AliasHarness, startAliasHarness } from './helpers/alias-harness'
+import { type AliasHarness, isValidationError, startAliasHarness } from './helpers/alias-harness'
 
 // Importing ../server runs its stdio entry point, which would listen on this process's stdin. The
 // harness builds its own server and talks over an in-memory transport, so the stdio one is
@@ -194,6 +194,39 @@ describe('list_objects, the one query tool', () => {
 				'relevance',
 			])
 			expect(props.detail?.enum).toEqual(['concise', 'full'])
+		})
+	})
+
+	describe('workspace_id', () => {
+		const OTHER_WS = '00000000-0000-4000-8000-0000000000bb'
+
+		it('is optional in the schema', async () => {
+			const tool = (await harness.listTools()).find((t) => t.name === 'list_objects')
+			const schema = tool?.inputSchema as {
+				properties: Record<string, unknown>
+				required?: string[]
+			}
+			expect(schema.properties).toHaveProperty('workspace_id')
+			expect(schema.required ?? []).not.toContain('workspace_id')
+		})
+
+		it('falls back to the default workspace when omitted', async () => {
+			const raw = await callRaw(harness, 'list_objects', { limit: 5 })
+			expect(raw.isError, raw.text).toBe(false)
+			expect(idsOf(raw)).toHaveLength(5)
+			expect(raw.requests.find((r) => r.path.startsWith('/api/objects'))?.workspace).toBe(WS)
+		})
+
+		it('uses the workspace it is given, and sends an unknown one on unchanged', async () => {
+			for (const given of [OTHER_WS, '00000000-0000-4000-8000-0000000000cc']) {
+				const raw = await callRaw(harness, 'list_objects', { workspace_id: given, limit: 5 })
+				expect(raw.requests.find((r) => r.path.startsWith('/api/objects'))?.workspace).toBe(given)
+			}
+		})
+
+		it('still refuses a workspace_id that is not a uuid', async () => {
+			const raw = await callRaw(harness, 'list_objects', { workspace_id: 'nope' })
+			expect(raw.isError).toBe(true)
 		})
 	})
 
@@ -644,6 +677,31 @@ describe('MASKIN_MCP_LIST_CONTRACT rollback switch', () => {
 			expect(Object.keys(list.inputSchema.properties)).not.toContain('detail')
 			expect(list.description).not.toContain('detail')
 			expect(search.description).toMatch(/^Search objects by text/)
+		} finally {
+			await harness.close()
+		}
+	})
+
+	it('off: list_objects still requires workspace_id, as before T4', async () => {
+		const { harness } = await withSwitch('off')
+		try {
+			const list = (await harness.listTools()).find((t) => t.name === 'list_objects') as {
+				inputSchema: { required?: string[] }
+			}
+			expect(list.inputSchema.required).toContain('workspace_id')
+			const outcome = await harness.call('list_objects', { limit: 5 })
+			expect(isValidationError(outcome)).toBe(true)
+		} finally {
+			await harness.close()
+		}
+	})
+
+	it('on: list_objects takes no workspace_id and uses the default one', async () => {
+		const { harness } = await withSwitch('on')
+		try {
+			const raw = await callRaw(harness, 'list_objects', { limit: 5 })
+			expect(raw.isError, raw.text).toBe(false)
+			expect(raw.requests.find((r) => r.path.startsWith('/api/objects'))?.workspace).toBe(WS)
 		} finally {
 			await harness.close()
 		}

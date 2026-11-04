@@ -80,8 +80,9 @@ const optionalWorkspaceId = z
 
 // Used by writes/reads that create or enumerate ambiguously-scoped
 // resources (a brand-new loop with no existing id to inherit a workspace
-// from, or an object listing/creation call) with side effects or result sets
-// that are expensive to get wrong. Requiring an explicit workspace_id here —
+// from, or an object creation call) with side effects that are expensive to
+// get wrong. list_objects no longer needs it (wave 2, T4); only its
+// MASKIN_MCP_LIST_CONTRACT=off definition still requires it. Requiring an explicit workspace_id here —
 // instead of silently falling back to DEFAULT_WORKSPACE_ID like tools that
 // operate on an already-identified resource — means a call can never land in
 // or leak from the wrong workspace by omission.
@@ -506,7 +507,7 @@ export const tools = {
 		description:
 			'List or search objects in the workspace, in one call. Filter by type, status (one value or a list), driver, last-updated window, or custom metadata fields. Without `q`, rows come ordered by creation date, newest first, unless `sort` says otherwise. With `q`, it is a text search on title and content, ranked by match quality: the ranking decides the order, and `sort` is accepted but does not reorder ranked results. Rows with `status = "archived"` are hidden by default — pass `include_archived: true` to see them. Default 25, max 100. Paginated via a snapshot-consistent cursor — pass `next_cursor` from the previous response as `cursor` to fetch the next page; keep the same filters and `q`. The response page block carries `has_more` and `total` (`total` is null when `q` is set). `detail: "concise"` returns id, type, title, status, driver, updatedAt and url per row, with no content.',
 		inputSchema: z.object({
-			workspace_id: requiredWorkspaceId,
+			workspace_id: optionalWorkspaceId,
 			q: z
 				.string()
 				.min(1)
