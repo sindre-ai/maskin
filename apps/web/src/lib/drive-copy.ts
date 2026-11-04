@@ -58,6 +58,4 @@ export const DRIVE_COPY = {
 	stopWatchLabel: (folder: string) => `Stop watch for ${folder}`,
 	idleHuman: 'No Drive reads yet',
 	recentActivityLabel: 'Recent Drive activity',
-	flagOffTitle: 'Google Drive is not available yet',
-	flagOffDescription: 'This integration is not turned on for your account.',
 } as const

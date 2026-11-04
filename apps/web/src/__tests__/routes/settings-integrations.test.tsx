@@ -455,7 +455,7 @@ describe('IntegrationsPage', () => {
 		})
 	})
 
-	describe('google drive provider card (google-drive-integration-ui flag)', () => {
+	describe('google drive provider card', () => {
 		const googleDriveProvider = {
 			name: 'google-drive',
 			displayName: 'Google Drive',
@@ -464,30 +464,7 @@ describe('IntegrationsPage', () => {
 			externalIdDisplay: 'email' as const,
 		}
 
-		afterEach(() => {
-			localStorage.removeItem('ff:google-drive-integration-ui')
-		})
-
-		it('hides the Drive card and Connect button when the flag is off', () => {
-			localStorage.setItem('ff:google-drive-integration-ui', 'off')
-			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
-			mockUseProviders.mockReturnValue({
-				data: [
-					googleDriveProvider,
-					{ ...googleDriveProvider, name: 'gmail', displayName: 'Gmail' },
-				],
-				isLoading: false,
-			})
-
-			render(<IntegrationsPage />)
-
-			expect(screen.queryByText('Google Drive')).not.toBeInTheDocument()
-			// Other OAuth providers are unaffected by the Drive flag.
-			expect(screen.getByText('Gmail')).toBeInTheDocument()
-		})
-
-		it('shows the Drive card next to the other OAuth providers when the flag is on', () => {
-			localStorage.setItem('ff:google-drive-integration-ui', 'on')
+		it('shows the Drive card next to the other OAuth providers', () => {
 			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
 			mockUseProviders.mockReturnValue({
 				data: [
@@ -505,7 +482,6 @@ describe('IntegrationsPage', () => {
 		})
 
 		it('shows the New pill, description, meta line and a Details link on the Drive card', () => {
-			localStorage.setItem('ff:google-drive-integration-ui', 'on')
 			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
 			mockUseProviders.mockReturnValue({ data: [googleDriveProvider], isLoading: false })
 
@@ -520,7 +496,6 @@ describe('IntegrationsPage', () => {
 		})
 
 		it('keeps the Details link on a connected Drive card', () => {
-			localStorage.setItem('ff:google-drive-integration-ui', 'on')
 			mockUseIntegrations.mockReturnValue({
 				data: [
 					buildIntegrationResponse({
@@ -541,7 +516,6 @@ describe('IntegrationsPage', () => {
 		})
 
 		it('does not put Drive extras on other providers', () => {
-			localStorage.setItem('ff:google-drive-integration-ui', 'on')
 			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
 			mockUseProviders.mockReturnValue({
 				data: [{ ...googleDriveProvider, name: 'gmail', displayName: 'Gmail' }],
