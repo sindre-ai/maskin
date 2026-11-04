@@ -230,7 +230,7 @@ export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
 									className={
 										claude.connected
 											? 'eyebrow ml-1.5 rounded bg-status-live-bg px-1.5 py-0.5 text-status-live-text!'
-											: 'eyebrow ml-1.5 rounded bg-muted px-1.5 py-0.5'
+											: 'eyebrow ml-1.5 rounded bg-brand-subtle px-1.5 py-0.5 text-brand-subtle-foreground!'
 									}
 								>
 									{claude.connected ? 'Connected' : 'Sign in'}

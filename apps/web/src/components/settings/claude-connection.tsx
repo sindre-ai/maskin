@@ -2,6 +2,7 @@ import { Steps } from '@/components/settings/mcp-steps'
 import { CodeBlock } from '@/components/shared/code-block'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { Button } from '@/components/ui/button'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import {
 	ResponsiveDialog,
 	ResponsiveDialogContent,
@@ -15,7 +16,7 @@ import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useDisconnectGrant, useOauthGrants } from '@/hooks/use-oauth'
 import { trackEvent } from '@/lib/analytics'
 import type { OauthGrantRow } from '@maskin/shared'
-import { TriangleAlert } from 'lucide-react'
+import { ChevronDown, TriangleAlert } from 'lucide-react'
 import { useState } from 'react'
 
 // The Claude tab of Settings > MCP: the real "Add to Claude" link and the list of Claude connections with
@@ -42,7 +43,11 @@ export function useClaudeTab() {
 }
 
 function formatConnectedDate(iso: string): string {
-	return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+	return new Date(iso).toLocaleDateString(undefined, {
+		day: 'numeric',
+		month: 'short',
+		year: 'numeric',
+	})
 }
 
 function ClaudeNotice({ onRetry }: { onRetry: () => void }) {
@@ -63,13 +68,7 @@ function ClaudeNotice({ onRetry }: { onRetry: () => void }) {
 function AddToClaude({ mcpUrl }: { mcpUrl: string }) {
 	return (
 		<>
-			<Steps
-				steps={[
-					'Click Add to Claude. The connector form opens with the name and URL filled in.',
-					'Click Add, then Connect. Sign in to Maskin when Claude asks.',
-				]}
-			/>
-			<Button asChild>
+			<Button asChild className="w-fit">
 				<a
 					href={buildAddToClaudeUrl(mcpUrl)}
 					target="_blank"
@@ -79,6 +78,12 @@ function AddToClaude({ mcpUrl }: { mcpUrl: string }) {
 					Add to Claude
 				</a>
 			</Button>
+			<Steps
+				steps={[
+					'Click Add to Claude. The connector form opens with the name and URL filled in.',
+					'Click Add, then Connect. Sign in to Maskin when Claude asks.',
+				]}
+			/>
 			<p className="text-xs text-muted-foreground">
 				On a Team or Enterprise plan? Ask your Claude admin to add Maskin, then click Connect.
 			</p>
@@ -86,21 +91,31 @@ function AddToClaude({ mcpUrl }: { mcpUrl: string }) {
 				No key to paste. Claude signs in with your Maskin account, and you choose which workspace it
 				can use.
 			</p>
-			<div className="space-y-3 border-t border-border-subtle pt-4">
-				<p className="text-[13px] font-semibold text-foreground">Or add it manually</p>
-				<Steps
-					steps={[
-						'In Claude, open Customize, then Connectors, then Add custom connector.',
-						'Paste this server URL, click Add, then click Connect and sign in to Maskin when Claude asks.',
-					]}
-				/>
-				<CodeBlock
-					label="Server URL"
-					text={mcpUrl}
-					toastMessage="Server URL copied"
-					onCopy={() => trackEvent('mcp_copy', { tab: 'claude' })}
-				/>
-			</div>
+			{/* Closed until asked for. Runs edge to edge under the panel's padding, like a footer row. */}
+			<Collapsible className="-mx-4 -mb-4 border-t border-border-subtle">
+				<CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 px-4 py-3 text-left text-[13px] font-semibold text-foreground transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+					Or add it manually
+					<ChevronDown
+						size={12}
+						aria-hidden="true"
+						className="text-muted-foreground transition-transform group-data-[state=open]:rotate-180"
+					/>
+				</CollapsibleTrigger>
+				<CollapsibleContent className="space-y-3 px-4 pt-0.5 pb-4">
+					<Steps
+						steps={[
+							'In Claude, open Customize, then Connectors, then Add custom connector.',
+							'Paste this server URL, click Add, then click Connect and sign in to Maskin when Claude asks.',
+						]}
+					/>
+					<CodeBlock
+						label="Server URL"
+						text={mcpUrl}
+						toastMessage="Server URL copied"
+						onCopy={() => trackEvent('mcp_copy', { tab: 'claude' })}
+					/>
+				</CollapsibleContent>
+			</Collapsible>
 		</>
 	)
 }
@@ -110,7 +125,7 @@ function ConnectionRow({
 	onDisconnect,
 }: { grant: OauthGrantRow; onDisconnect: (grant: OauthGrantRow) => void }) {
 	return (
-		<li className="flex flex-col gap-3 rounded-lg border border-border bg-card p-3.5 sm:flex-row sm:items-center sm:justify-between">
+		<li className="flex flex-col gap-3 rounded-lg border border-border bg-surface-sunken p-3.5 sm:flex-row sm:items-center sm:justify-between">
 			<div className="flex min-w-0 items-center gap-3">
 				<div
 					aria-hidden="true"

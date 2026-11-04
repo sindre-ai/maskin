@@ -324,6 +324,25 @@ describe('McpConnectionSection', () => {
 			expect(href.toString()).not.toContain(KEY)
 		})
 
+		it('puts the Add button first and keeps the manual steps closed until asked for', async () => {
+			const user = userEvent.setup()
+			mockFlagOn = true
+			render(<McpConnectionSection workspaceId="ws-1" />)
+
+			const add = screen.getByRole('link', { name: 'Add to Claude' })
+			const steps = screen.getByText(
+				'Click Add to Claude. The connector form opens with the name and URL filled in.',
+			)
+			expect(add.compareDocumentPosition(steps) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+			const manual = screen.getByRole('button', { name: 'Or add it manually' })
+			expect(manual).toHaveAttribute('aria-expanded', 'false')
+			expect(screen.queryByText('Server URL')).not.toBeInTheDocument()
+			await user.click(manual)
+			expect(manual).toHaveAttribute('aria-expanded', 'true')
+			expect(screen.getByText('https://app.example/mcp')).toBeInTheDocument()
+		})
+
 		it('shows the connection and hides Add when connected, even with the flag off', () => {
 			mockGrants = { data: [GRANT], isPending: false, isError: false, refetch: vi.fn() }
 			render(<McpConnectionSection workspaceId="ws-1" />)

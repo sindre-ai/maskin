@@ -8,7 +8,15 @@ import { cn } from '@/lib/cn'
 import { inviteRoleLabel } from '@/lib/invite-format'
 import type { OauthAuthorizeParams, OauthPreviewResponse } from '@maskin/shared'
 import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
-import { Check, CircleAlert, OctagonAlert, ShieldOff, X } from 'lucide-react'
+import {
+	Check,
+	CircleAlert,
+	CornerDownRight,
+	OctagonAlert,
+	ShieldCheck,
+	ShieldOff,
+	X,
+} from 'lucide-react'
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 
 // The consent page for "Connect" in Claude (docs/reference/mcp-oauth.md). Claude sends the person here with an
@@ -148,23 +156,28 @@ function StatusScreen({
 	const headingRef = useHeadingFocus(screen)
 	return (
 		<Shell>
-			<div className="space-y-3 text-center" role={live ? 'status' : undefined}>
+			<div
+				className="flex flex-col items-center gap-4 text-center"
+				role={live ? 'status' : undefined}
+			>
 				<div
 					aria-hidden="true"
-					className={cn('mx-auto grid size-11 place-items-center rounded-xl', tileTone[tone])}
+					className={cn('grid size-10 place-items-center rounded-full', tileTone[tone])}
 				>
 					{icon}
 				</div>
-				<h1
-					ref={headingRef}
-					tabIndex={-1}
-					className="text-2xl font-semibold tracking-tight outline-none"
-				>
-					{title}
-				</h1>
-				<p className="text-sm text-muted-foreground">{children}</p>
+				<div>
+					<h1
+						ref={headingRef}
+						tabIndex={-1}
+						className="text-2xl font-semibold tracking-tight outline-none"
+					>
+						{title}
+					</h1>
+					<p className="mt-1 text-sm text-muted-foreground [text-wrap:pretty]">{children}</p>
+				</div>
 			</div>
-			{action && <div className="flex justify-center">{action}</div>}
+			{action && <div className="space-y-2">{action}</div>}
 			{reference && (
 				<p className="text-center font-mono text-xs text-muted-foreground">
 					Reference: {reference}
@@ -222,7 +235,7 @@ function ErrorView({ error, onRetry }: { error: ErrorScreen; onRetry: () => void
 					reference={error.code}
 					action={
 						error.backUrl ? (
-							<Button asChild variant="outline">
+							<Button asChild className="w-full">
 								<a href={error.backUrl}>Back to Claude</a>
 							</Button>
 						) : undefined
@@ -240,7 +253,7 @@ function ErrorView({ error, onRetry }: { error: ErrorScreen; onRetry: () => void
 					icon={<CircleAlert size={20} />}
 					title="Maskin couldn't check this request"
 					action={
-						<Button type="button" variant="outline" onClick={onRetry}>
+						<Button type="button" className="w-full" onClick={onRetry}>
 							Try again
 						</Button>
 					}
@@ -287,7 +300,7 @@ function ConsentView({
 	const actor = getStoredActor()
 	const [picked, setPicked] = useState<string | null>(null)
 	const [busy, setBusy] = useState<'allow' | 'deny' | null>(null)
-	const [failed, setFailed] = useState(false)
+	const [failed, setFailed] = useState<'allow' | 'deny' | null>(null)
 	const [outcome, setOutcome] = useState<Outcome | null>(null)
 
 	const only = workspaces.length === 1 ? workspaces[0] : null
@@ -298,7 +311,7 @@ function ConsentView({
 
 	const finish = (kind: Outcome['kind'], url: string, workspaceName?: string) => {
 		if (!isWebUrl(url)) {
-			setFailed(true)
+			setFailed(kind === 'success' ? 'allow' : 'deny')
 			setBusy(null)
 			return
 		}
@@ -309,24 +322,24 @@ function ConsentView({
 	const allow = async () => {
 		if (!selected) return
 		setBusy('allow')
-		setFailed(false)
+		setFailed(null)
 		try {
 			const result = await api.oauth.approve({ ...params, workspace_id: selected.id })
 			finish('success', result.redirect_url, selected.name)
 		} catch {
-			setFailed(true)
+			setFailed('allow')
 			setBusy(null)
 		}
 	}
 
 	const deny = async () => {
 		setBusy('deny')
-		setFailed(false)
+		setFailed(null)
 		try {
 			const result = await api.oauth.deny({ ...params, workspace_id: selected?.id })
 			finish('denied', result.redirect_url)
 		} catch {
-			setFailed(true)
+			setFailed('deny')
 			setBusy(null)
 		}
 	}
@@ -349,18 +362,27 @@ function ConsentView({
 				icon={connected ? <Check size={20} /> : <X size={20} />}
 				title={connected ? 'Connected' : 'Request denied'}
 				action={
-					<a
-						href={outcome.url}
-						className="text-sm text-primary hover:text-primary-hover"
-						rel="noopener noreferrer"
-					>
-						Nothing happening? Continue to {client.redirect_host}
-					</a>
+					<p className="text-center text-xs text-muted-foreground">
+						Nothing happening?{' '}
+						<a
+							href={outcome.url}
+							className="rounded-sm font-medium text-primary underline underline-offset-4 hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background"
+							rel="noopener noreferrer"
+						>
+							Continue to {client.redirect_host}
+						</a>
+					</p>
 				}
 			>
-				{connected
-					? `${client.client_name} can now use ${outcome.workspaceName}. Going back to ${client.client_name}. You can close this page.`
-					: `Nothing was shared. Going back to ${client.client_name}. You can close this page.`}
+				{connected ? (
+					<>
+						{client.client_name} can now use{' '}
+						<span className="font-medium text-foreground">{outcome.workspaceName}</span>. Going back
+						to {client.client_name}. You can close this page.
+					</>
+				) : (
+					`Nothing was shared. Going back to ${client.client_name}. You can close this page.`
+				)}
 			</StatusScreen>
 		)
 	}
@@ -381,20 +403,22 @@ function ConsentView({
 						in {client.client_name} again.
 					</p>
 				</div>
-				<Button
-					type="button"
-					variant="outline"
-					className="w-full"
-					disabled={busy !== null}
-					onClick={deny}
-				>
-					Deny
-				</Button>
-				{failed && (
-					<p role="alert" className="text-xs text-error">
-						We couldn't connect {client.client_name}. Check your connection and try again.
-					</p>
-				)}
+				<div className="space-y-2">
+					{failed && (
+						<p role="alert" className="text-center text-xs text-error">
+							We couldn't send your answer. Check your connection and try again.
+						</p>
+					)}
+					<Button
+						type="button"
+						variant="outline"
+						className="w-full"
+						disabled={busy !== null}
+						onClick={deny}
+					>
+						Deny
+					</Button>
+				</div>
 			</Shell>
 		)
 	}
@@ -428,27 +452,34 @@ function ConsentView({
 				</p>
 			</div>
 
-			<div className="rounded-xl border border-border bg-card p-4">
-				<div className="flex items-center gap-3">
+			<div className="rounded-xl border border-border bg-card">
+				<div className="flex items-center gap-3 p-4">
 					<div
 						aria-hidden="true"
 						className="grid size-10 shrink-0 place-items-center rounded-lg bg-brand-subtle text-base font-semibold text-brand-subtle-foreground"
 					>
 						{client.client_name.charAt(0).toUpperCase()}
 					</div>
-					<div className="min-w-0">
+					<div className="min-w-0 flex-1">
 						<div className="flex flex-wrap items-center gap-x-2 gap-y-1">
 							<span className="text-sm font-semibold text-foreground">{client.client_name}</span>
-							<span className="rounded-md bg-status-live-bg px-1.5 py-0.5 text-[10.5px] font-semibold text-status-live-text">
+							<span className="inline-flex items-center gap-1 rounded-md bg-status-live-bg px-2 py-0.5 text-[11px] font-semibold text-status-live-text">
+								<ShieldCheck size={12} aria-hidden="true" />
 								Approved by Maskin
 							</span>
 						</div>
-						<div className="truncate font-mono text-xs text-muted-foreground">{clientHost}</div>
+						<div className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
+							{clientHost}
+						</div>
 					</div>
 				</div>
-				<p className="mt-3 border-t border-border-subtle pt-3 text-xs text-muted-foreground">
-					After you choose, you go back to {client.redirect_host}
-				</p>
+				<div className="flex items-center gap-2 border-t border-border-subtle px-4 py-2.5 text-xs text-muted-foreground">
+					<CornerDownRight size={14} aria-hidden="true" className="shrink-0" />
+					<span>
+						After you choose, you go back to{' '}
+						<span className="font-mono text-foreground">{client.redirect_host}</span>
+					</span>
+				</div>
 			</div>
 
 			{only ? (
@@ -494,48 +525,54 @@ function ConsentView({
 				</div>
 			)}
 
-			<div className="space-y-3 rounded-xl border border-border bg-surface-sunken p-4">
-				<h2 className="text-sm font-semibold text-foreground">What {client.client_name} can do</h2>
-				<ul className="space-y-2">
-					<AccessItem allowed>
-						See everything you can see in {workspaceLabel}: objects, files, comments and agents.
-					</AccessItem>
-					{viewerRole ? (
-						<AccessItem allowed={false}>
-							Can't change anything: you're a {inviteRoleLabel(viewerRole).toLowerCase()} in{' '}
-							{workspaceLabel}, so {client.client_name} can't either.
-						</AccessItem>
-					) : (
+			<section aria-labelledby="access-heading" className="space-y-2">
+				<h2 id="access-heading" className="text-sm font-semibold text-foreground">
+					What {client.client_name} can do
+				</h2>
+				<div className="rounded-xl border border-border bg-surface-sunken">
+					<ul className="space-y-2 p-4">
 						<AccessItem allowed>
-							Create and change things as you, including deleting them. Changes show under your
-							name.
+							See everything you can see in {workspaceLabel}: objects, files, comments and agents.
 						</AccessItem>
-					)}
-					<AccessItem allowed={false}>
-						Never gets your password or your other workspaces.
-					</AccessItem>
-				</ul>
-				<div className="space-y-1.5 border-t border-border-subtle pt-3 text-xs text-muted-foreground">
-					<p>
-						It stays connected until you disconnect it in Settings &gt; MCP. It also disconnects
-						itself after 30 days unused.
-					</p>
-					<p>
-						Removing Maskin inside {client.client_name} may not end access. Disconnect it in
-						Settings &gt; MCP too.
-					</p>
+						{viewerRole ? (
+							<AccessItem allowed={false}>
+								Can't change anything: you're a {inviteRoleLabel(viewerRole).toLowerCase()} in{' '}
+								{workspaceLabel}, so {client.client_name} can't either.
+							</AccessItem>
+						) : (
+							<AccessItem allowed>
+								Create and change things as you, including deleting them. Changes show under your
+								name.
+							</AccessItem>
+						)}
+						<AccessItem allowed={false}>
+							Never gets your password or your other workspaces.
+						</AccessItem>
+					</ul>
+					<div className="space-y-1.5 border-t border-border-subtle px-4 py-2.5 text-xs text-muted-foreground">
+						<p>
+							It stays connected until you disconnect it in Settings &gt; MCP. It also disconnects
+							itself after 30 days unused.
+						</p>
+						<p>
+							Removing Maskin inside {client.client_name} may not end access. Disconnect it in
+							Settings &gt; MCP too.
+						</p>
+					</div>
 				</div>
-			</div>
+			</section>
 
-			{failed && (
-				<p role="alert" className="text-xs text-error">
-					We couldn't connect {client.client_name}. Check your connection and try again.
-				</p>
-			)}
-			<div className="flex flex-col gap-2 sm:flex-row">
+			<div className="space-y-2">
+				{failed && (
+					<p role="alert" className="text-center text-xs text-error">
+						{failed === 'allow'
+							? `We couldn't connect ${client.client_name}. Check your connection and try again.`
+							: "We couldn't send your answer. Check your connection and try again."}
+					</p>
+				)}
 				<Button
 					type="button"
-					className="w-full sm:flex-1"
+					className="w-full"
 					disabled={!selected || busy !== null}
 					aria-describedby={selected ? undefined : 'allow-helper'}
 					onClick={allow}
@@ -552,18 +589,18 @@ function ConsentView({
 				<Button
 					type="button"
 					variant="outline"
-					className="w-full sm:flex-1"
+					className="w-full"
 					disabled={busy !== null}
 					onClick={deny}
 				>
 					Deny
 				</Button>
+				{!selected && (
+					<p id="allow-helper" className="text-center text-xs text-muted-foreground">
+						Choose a workspace to continue.
+					</p>
+				)}
 			</div>
-			{!selected && (
-				<p id="allow-helper" className="text-center text-xs text-muted-foreground">
-					Choose a workspace to continue.
-				</p>
-			)}
 		</Shell>
 	)
 }

@@ -70,6 +70,11 @@ test.describe('Claude connector: Settings > MCP > Claude tab', () => {
 				'On a Team or Enterprise plan? Ask your Claude admin to add Maskin, then click Connect.',
 			),
 		).toBeVisible()
+		// The manual steps sit in a disclosure that starts closed.
+		const manual = page.getByRole('button', { name: 'Or add it manually' })
+		await expect(manual).toHaveAttribute('aria-expanded', 'false')
+		await manual.click()
+		await expect(manual).toHaveAttribute('aria-expanded', 'true')
 		await expect(page.getByText(`${E2E_OAUTH_ISSUER}/mcp`, { exact: true })).toBeVisible()
 	})
 
@@ -82,6 +87,7 @@ test.describe('Claude connector: Settings > MCP > Claude tab', () => {
 		const doc = await (
 			await fetch(`${E2E_OAUTH_API_ORIGIN}/.well-known/oauth-protected-resource/mcp`)
 		).json()
+		await page.getByRole('button', { name: 'Or add it manually' }).click()
 		await expect(page.getByText(doc.resource, { exact: true })).toBeVisible()
 	})
 
@@ -97,7 +103,7 @@ test.describe('Claude connector: Settings > MCP > Claude tab', () => {
 			'true',
 		)
 		await expect(page.getByText(`Workspace: ${workspaceName}`)).toBeVisible()
-		await expect(page.getByText(/^Connected \S+ \S+$/)).toBeVisible()
+		await expect(page.getByText(/^Connected .*\d{4}$/)).toBeVisible()
 		await expect(page.getByRole('link', { name: 'Add to Claude' })).toHaveCount(0)
 
 		await page.getByRole('button', { name: 'Disconnect' }).click()
