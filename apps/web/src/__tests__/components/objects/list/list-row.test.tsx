@@ -64,8 +64,8 @@ describe('ListRow select affordance', () => {
 		expect(checkbox.className).toContain('opacity-0')
 	})
 
-	// Touch: a 16px visible box (no touch-size primitive) with a 44px tap area made
-	// of real padding (a wrapper for the checkbox, the button itself for the star),
+	// Touch: a 16px visible box (no touch-size primitive) with a 44px tap area
+	// made of real padding (a wrapper for the checkbox, the button itself for the star),
 	// and the star stays visible beside it instead of standing down.
 	it('keeps the checkbox at 16px with a 44px tap area and the star visible on touch', () => {
 		renderRow({ anySelected: false, isSelected: false })
@@ -196,5 +196,53 @@ describe('ListRow pending ask', () => {
 		renderRow({ ask: { ...ask, status: 'resolved' }, actors })
 		expect(screen.queryByText('Ask')).toBeNull()
 		expect(screen.queryByText('Scout asks')).toBeNull()
+	})
+})
+
+describe('ListRow narrow layout', () => {
+	it('shows the type as a glyph named with its full type name, at every width (v3)', () => {
+		// v3 mockup: no plate and no word in the row, so the title keeps the room
+		// on phones. The full name stays as the glyph's accessible name and tooltip.
+		renderRow({ typeLabel: 'Knowledge' })
+		expect(screen.queryByText('Knowledge')).toBeNull()
+		const glyph = screen.getByRole('img', { name: 'Knowledge' })
+		expect(glyph.getAttribute('title')).toBe('Knowledge')
+		expect(glyph.className).not.toContain('sm:hidden')
+		expect(glyph.className).not.toContain('max-sm:hidden')
+	})
+
+	it('lets the title run to two lines on phones and one line from sm', () => {
+		renderRow()
+		const title = screen.getByText('Ship the thing')
+		expect(title.className).toContain('max-sm:line-clamp-2')
+		expect(title.className.split(' ')).toContain('truncate')
+		expect(title.className).toContain('max-sm:whitespace-normal')
+	})
+
+	it('hides the driver avatar below sm while the driver is idle', () => {
+		const driver = buildActorListItem({ id: 'agent-1', name: 'Scout', type: 'agent' })
+		const { container } = renderRow({
+			object: buildObjectResponse({ id: 'obj-1', type: 'bet', driver: driver.id }),
+			actors: [driver],
+		})
+		const wrapper = container.querySelector('.sm\\:inline-flex')
+		expect(wrapper?.className.split(' ')).toContain('hidden')
+	})
+
+	it('keeps the driver avatar, and its working ring, on phones while the driver is working', () => {
+		const driver = buildActorListItem({ id: 'agent-1', name: 'Scout', type: 'agent' })
+		const { container } = renderRow({
+			object: buildObjectResponse({
+				id: 'obj-1',
+				type: 'bet',
+				driver: driver.id,
+				activeSessionId: 'sess-1',
+				active_session_state: 'running',
+			}),
+			actors: [driver],
+		})
+		const wrapper = container.querySelector('.sm\\:inline-flex')
+		expect(wrapper?.className.split(' ')).not.toContain('hidden')
+		expect(wrapper?.querySelector('.actor-avatar-working-ring')).not.toBeNull()
 	})
 })

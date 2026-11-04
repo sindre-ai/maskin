@@ -94,13 +94,14 @@ export function TypeBadge({
 	// plate carrying the type's display name in sentence case. Fixed width, not
 	// intrinsic — every title in the list then starts on the same x, which is
 	// what makes a mixed-type list scan as one column of titles rather than a
-	// ragged left edge. Overlong names ellipsize inside the plate.
+	// ragged left edge. Overlong names ellipsize inside the plate. The plate is
+	// 88px wide: 64px cut "Knowledge" at this size to "Knowle…".
 	if (variant === 'pill') {
 		return (
 			<span
 				title={label ?? type}
 				className={cn(
-					'inline-block w-16 shrink-0 truncate rounded-[5px] bg-muted px-2 py-0.5 text-center',
+					'inline-block w-22 shrink-0 truncate rounded-[5px] bg-muted px-2 py-0.5 text-center',
 					'text-[10.5px] font-semibold text-muted-foreground/70',
 					className,
 				)}

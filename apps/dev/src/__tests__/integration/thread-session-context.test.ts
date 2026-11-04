@@ -6,8 +6,7 @@ import {
 } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
-import { afterAll, vi } from 'vitest'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
+import { vi } from 'vitest'
 import {
 	THREAD_SEED_MAIN_CHAT_MESSAGES,
 	_resetSessionDigests,
@@ -46,28 +45,6 @@ describe('thread session seed, sibling note and digest (Integration)', () => {
 	let conversationId: string
 	let createSession: ReturnType<typeof vi.spyOn>
 
-	const savedEnv = {
-		testers: process.env.FF_TESTER_ACTOR_IDS,
-		features: process.env.FF_TESTER_FEATURES,
-	}
-
-	function setFlag(on: boolean) {
-		process.env.FF_TESTER_ACTOR_IDS = personId
-		process.env.FF_TESTER_FEATURES = on ? 'chat-thread-sessions' : ''
-		_resetFeatureFlagConfig()
-	}
-
-	afterAll(() => {
-		for (const [name, value] of [
-			['FF_TESTER_ACTOR_IDS', savedEnv.testers],
-			['FF_TESTER_FEATURES', savedEnv.features],
-		] as const) {
-			if (value === undefined) Reflect.deleteProperty(process.env, name)
-			else process.env[name] = value
-		}
-		_resetFeatureFlagConfig()
-	})
-
 	beforeEach(async () => {
 		_resetSessionDigests()
 		personId = getTestActorId()
@@ -87,7 +64,6 @@ describe('thread session seed, sibling note and digest (Integration)', () => {
 			.spyOn(manager, 'createSession')
 			.mockImplementation((ws, params) => original(ws, { ...params, autoStart: false }))
 		configureSessionLifecycle({ db, sessionManager: manager })
-		setFlag(true)
 	})
 
 	afterEach(async () => {
@@ -222,17 +198,6 @@ describe('thread session seed, sibling note and digest (Integration)', () => {
 		it('is left out when the agent has no other live session', async () => {
 			const rootId = await post(personId, 'the root')
 			const replyId = await post(personId, 'a reply', rootId)
-
-			await respond(replyId)
-
-			expect(seedPrompt()).not.toContain('Your other live sessions')
-		})
-
-		it('is left out with the flag off', async () => {
-			setFlag(false)
-			const rootId = await post(personId, 'the root')
-			const replyId = await post(personId, 'a reply', rootId)
-			await liveChatSession(null)
 
 			await respond(replyId)
 

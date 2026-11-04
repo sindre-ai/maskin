@@ -39,8 +39,6 @@ import { Route } from '@/routes/signup'
 
 const SignupPage = (Route as unknown as { component: React.FC }).component
 
-const ASSIGN_PATH = '/'
-
 async function fillAndSubmit(user: ReturnType<typeof userEvent.setup>) {
 	await user.type(screen.getByPlaceholderText('Your name'), 'Test User')
 	await user.type(screen.getByPlaceholderText('Company name'), 'Test Co')
@@ -206,6 +204,30 @@ describe('SignupPage', () => {
 		expect(meta.name).toBe('Test User')
 		expect(meta.organization).toBe('Test Co')
 		expect(meta.role).toBe('Founder')
+		expect(meta.welcome_in_chat).toBe(true)
+	})
+
+	it('lands on New Chat in the new workspace with the welcome flag', async () => {
+		mockSignup.mockResolvedValue({ id: 'actor-1', workspace_id: 'ws-1' })
+		vi.mocked(api.objects.create).mockResolvedValue({} as never)
+
+		const user = userEvent.setup()
+		render(<SignupPage />)
+		await fillAndSubmit(user)
+
+		await waitFor(() =>
+			expect(window.location.assign).toHaveBeenCalledWith('/ws-1/chats/new?welcome=1'),
+		)
+	})
+
+	it('falls back to the index when signup returns no workspace id', async () => {
+		mockSignup.mockResolvedValue({ id: 'actor-1' })
+
+		const user = userEvent.setup()
+		render(<SignupPage />)
+		await fillAndSubmit(user)
+
+		await waitFor(() => expect(window.location.assign).toHaveBeenCalledWith('/'))
 	})
 
 	it('emits signup_form_submitted with user_id + completed:true on success', async () => {

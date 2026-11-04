@@ -308,3 +308,45 @@ export function createWorkspaceDesktopService(db: Database): WorkspaceDesktopSer
 				.orderBy(asc(agentServers.createdAt)),
 	})
 }
+
+// A remove is a lookup on every server plus a DELETE that can take a while on
+// the agent-server (it tears a microVM down). Deleting an agent must not hang
+// on it.
+const REMOVE_BEST_EFFORT_TIMEOUT_MS = 15_000
+
+/**
+ * Removes the computers of agents that were just deleted. Best-effort: a
+ * failure is logged and never blocks or fails the delete that triggered it,
+ * because the agent row is already gone and cannot be retried. Call it after
+ * the delete has committed, never inside the transaction.
+ */
+export async function removeDesktopsForActors(
+	workspaceId: string,
+	actorIds: string[],
+	service: Pick<WorkspaceDesktopService, 'remove'>,
+): Promise<void> {
+	if (actorIds.length === 0) return
+	const outcomes = await Promise.allSettled(
+		actorIds.map((actorId) => {
+			let timer: ReturnType<typeof setTimeout> | undefined
+			const timeout = new Promise<never>((_, reject) => {
+				timer = setTimeout(
+					() => reject(new Error(`timed out after ${REMOVE_BEST_EFFORT_TIMEOUT_MS}ms`)),
+					REMOVE_BEST_EFFORT_TIMEOUT_MS,
+				)
+			})
+			return Promise.race([service.remove(workspaceId, actorId), timeout]).finally(() =>
+				clearTimeout(timer),
+			)
+		}),
+	)
+	for (const [index, outcome] of outcomes.entries()) {
+		if (outcome.status === 'rejected') {
+			logger.error('Could not remove the computer of a deleted agent', {
+				workspaceId,
+				actorId: actorIds[index],
+				error: outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason),
+			})
+		}
+	}
+}

@@ -236,6 +236,8 @@ export function ListRow({
 					/>
 				</span>
 			</span>
+			{/* v3: the type is a glyph only, so it never takes a plate's width from the
+			    title (main's phone fix for the same problem, #2958, is therefore not needed). */}
 			{showType && <TypeBadge type={object.type} label={typeLabel} variant="glyph" />}
 			<div className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
 				<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
@@ -264,7 +266,9 @@ export function ListRow({
 							e.stopPropagation()
 							onOpen(object.id)
 						}}
-						className="min-w-0 truncate text-[15px] font-medium text-foreground hover:underline"
+						// Phones give the title two lines before it cuts; from `sm` it is one. Plain
+						// `truncate` stays on both so the mobile-QA gate sees the clip as intended.
+						className="min-w-0 truncate break-words text-[15px] font-medium text-foreground hover:underline max-sm:line-clamp-2 max-sm:whitespace-normal"
 					>
 						{object.title || 'Untitled'}
 					</Link>
@@ -306,14 +310,19 @@ export function ListRow({
 				// object has an actively-running session on it. Replaces the old
 				// right-side <AgentWorkingBadge> — the ring is the row's only
 				// working indicator now, per the D2 acceptance criteria.
-				<ActorAvatar
-					id={driver.id}
-					name={driver.name}
-					type={driver.type}
-					className="shrink-0"
-					tile
-					working={isWorking}
-				/>
+				// Below `sm` the avatar is hidden (the title needs the room), except while
+				// the driver is working: the ring is the only working indicator, so it has
+				// to stay visible on phones. (Main's phone fix, #2958, on the v3 tile avatar.)
+				<span className={cn('shrink-0 sm:inline-flex', isWorking ? 'inline-flex' : 'hidden')}>
+					<ActorAvatar
+						id={driver.id}
+						name={driver.name}
+						type={driver.type}
+						className="shrink-0"
+						tile
+						working={isWorking}
+					/>
+				</span>
 			)}
 			{showUpdated && object.updatedAt && (
 				<RelativeTime
