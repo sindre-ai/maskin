@@ -1,6 +1,5 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { RelativeTime } from '@/components/shared/relative-time'
-import { Spinner } from '@/components/ui/spinner'
 import type { ConversationListItemResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
@@ -43,8 +42,15 @@ export function ConversationListRow({
 	const workingNames = conversation.participants
 		.filter((p) => workingActorIds.has(p.actorId))
 		.map((p) => p.actorName)
+	// An agent's own message is the best status there is — it says what it is doing — so the
+	// preview shows it as soon as one arrives. "Working" only covers the gap before that: the
+	// latest message is the person's and no agent has answered yet. A chat session stays live
+	// between turns, so the working flag alone must never outrank a message the agent sent.
+	const latestFromAgent = conversation.participants.some(
+		(p) => p.actorType === 'agent' && p.actorId === conversation.snippet_actor_id,
+	)
 	const workingLabel =
-		workingNames.length === 0
+		workingNames.length === 0 || latestFromAgent
 			? null
 			: workingNames.length === 1
 				? `${workingNames[0]} is working…`
@@ -135,10 +141,7 @@ export function ConversationListRow({
 					{/* "Forge: …" / "You: …" — a preview with no attribution reads as
 					    if the viewer wrote every line (mockup 296). */}
 					{workingLabel ? (
-						<span className="inline-flex items-center gap-1.5 font-medium">
-							<Spinner />
-							{workingLabel}
-						</span>
+						<span className="font-medium">{workingLabel}</span>
 					) : conversation.snippet ? (
 						<>
 							{snippetAuthor ? <span className="font-medium">{snippetAuthor}: </span> : null}
