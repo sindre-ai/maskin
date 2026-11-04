@@ -379,8 +379,11 @@ describe('GET /api/search against real Postgres', () => {
 				source.key === 'chats'
 					? {
 							...chats,
+							// The real count is against the real cap, so drop it: the partial flag then reads
+							// these capped candidates.
+							overScanCap: undefined,
 							candidates: (ctx: Parameters<typeof chats.candidates>[0]) => sql`
-								SELECT c2.id, c2.type, c2.title, c2.sub, c2.body, c2.status, c2.updated_at,
+								SELECT c2.id, c2.type, c2.title, c2.sub, c2.body, c2.status, c2.archived, c2.last_read, c2.updated_at,
 									(row_number() OVER (ORDER BY c2.updated_at DESC NULLS LAST, c2.id) <= 1) AS deep
 								FROM (${chats.candidates(ctx)}) c2`,
 						}
@@ -405,6 +408,30 @@ describe('GET /api/search against real Postgres', () => {
 			)
 			expect(byTitle.results.map((r) => r.id)).toEqual([old.id])
 		})
+
+		it('reports the chats as partial once the caller has more than 2000 chats, with the real count', async () => {
+			const seed = async (count: number) => {
+				const rows = await db
+					.insert(conversations)
+					.values(
+						Array.from({ length: count }, (_, i) => ({
+							workspaceId,
+							createdBy: actorId,
+							title: `Capcount chat ${i}`,
+						})),
+					)
+					.returning({ id: conversations.id })
+				await db
+					.insert(conversationParticipants)
+					.values(rows.map((row) => ({ conversationId: row.id, actorId })))
+			}
+
+			await seed(2000)
+			expect((await search({ q: 'capcount' })).partial).toEqual([])
+
+			await seed(1)
+			expect((await search({ q: 'capcount' })).partial).toEqual(['chats'])
+		}, 60_000)
 
 		it('does not report partial for a search with no words', async () => {
 			await seedChat('Anything', [actorId])
@@ -925,6 +952,69 @@ describe('GET /api/search against real Postgres', () => {
 				'Quarterly roadmap',
 				'Quarterly sync',
 			])
+		})
+	})
+
+	describe('work done per row', () => {
+		// A deliberate division by zero stands in for the costly part. If the search reaches it for a row
+		// it should have skipped, the source throws and is reported as partial.
+		const boom = sql`(1 / (length(s.title) - length(s.title)))`
+
+		it('works out a chat unread flag for the matched chats only', async () => {
+			await seedChat('Poison chat', [actorId])
+			const hit = await seedChat('Gizmo chat', [actorId])
+			await say(hit.id, otherUserId, 'hello')
+			const chats = SEARCH_SOURCES.find((s) => s.key === 'chats') as (typeof SEARCH_SOURCES)[number]
+			const sources = SEARCH_SOURCES.map((source) =>
+				source.key === 'chats'
+					? {
+							...chats,
+							lateStatus: () =>
+								sql`CASE WHEN s.title = 'Poison chat' THEN ${boom}::text ELSE 'read' END`,
+						}
+					: source,
+			)
+
+			const res = await runSearch(
+				db,
+				{ workspaceId, callerId: actorId },
+				query({ q: 'gizmo' }),
+				sources,
+			)
+
+			expect(res.partial).toEqual([])
+			expect(res.results.map((r) => r.id)).toEqual([hit.id])
+			// The chat is unread in the data, so 'read' can only come from the late status.
+			expect(res.results[0]?.status).toBe('read')
+		})
+
+		it('stops at the first word a row misses, so later words are not looked up for it', async () => {
+			await seedObjects('task', 'todo', 3, (i) => `plain task ${i}`)
+			const objectsSource = SEARCH_SOURCES.find(
+				(s) => s.key === 'objects',
+			) as (typeof SEARCH_SOURCES)[number]
+			// The second word reaches the stand-in through the deep text, which only chats have by default.
+			const sources = [
+				{
+					...objectsSource,
+					candidates: (ctx: Parameters<typeof objectsSource.candidates>[0]) => sql`
+						SELECT o2.id, o2.type, o2.title, o2.sub, o2.body, o2.status, o2.updated_at, true AS deep
+						FROM (${objectsSource.candidates(ctx)}) o2`,
+					deepHit: (pattern: string) =>
+						sql`(CASE WHEN ${pattern}::text = '%plain%' THEN ${boom} > 0 ELSE false END)`,
+				},
+			]
+
+			// "nosuchword" misses every row, so "plain" is never looked up for them.
+			const res = await runSearch(
+				db,
+				{ workspaceId, callerId: actorId },
+				query({ q: 'nosuchword plain' }),
+				sources,
+			)
+
+			expect(res.partial).toEqual([])
+			expect(res.total).toBe(0)
 		})
 	})
 
