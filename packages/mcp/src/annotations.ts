@@ -48,6 +48,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
 	'list_triggers',
 	'list_loops',
 	'get_loop',
+	'query_data',
 	'list_unread',
 	'list_sessions',
 	'get_session',
@@ -60,7 +61,9 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
 	'list_chats',
 	'list_conversation_messages',
 	'get_session_activity',
+	'get_chat_activity',
 	'list_notifications',
+	'list_for_you',
 	'list_keychain_credentials',
 	'desktop_list_ports',
 ])
@@ -84,10 +87,10 @@ function row(
 	}
 }
 
-// destructive: delete_*, stop_session, disconnect_integration, desktop_run (runs any command).
+// destructive: delete_*, stop_session, stop_chat_agent, disconnect_integration, desktop_run (runs any command).
 // idempotent: update_*, delete_*, pause_session, mark_read.
-// openWorld: create_session (starts an agent), the integration tools, and the two tools that
-// send a message out (gmail_send_email, approve_object_draft).
+// openWorld: create_session, its alias run_agent, create_sub_chat and create_chat (start an agent), the integration tools, and the two tools that
+// send a message out (gmail_send_email, resend_send_email, approve_object_draft).
 const ROWS: Record<string, Row> = {
 	// Objects + relationships
 	create_objects: row('Create objects'),
@@ -134,6 +137,11 @@ const ROWS: Record<string, Row> = {
 	list_chats: row('List chats'),
 	list_conversation_messages: row('List conversation messages'),
 	post_conversation_message: row('Post conversation message'),
+	create_chat: row('Create chat', { openWorld: true }),
+	add_chat_participant: row('Add chat participant'),
+	remove_chat_participant: row('Remove chat participant'),
+	get_chat_activity: row('Get chat activity'),
+	stop_chat_agent: row('Stop chat agent', { destructive: true }),
 	// Triggers
 	create_trigger: row('Create trigger'),
 	list_triggers: row('List triggers'),
@@ -144,12 +152,16 @@ const ROWS: Record<string, Row> = {
 	update_loop: row('Update loop', { idempotent: true }),
 	list_loops: row('List loops'),
 	get_loop: row('Get loop'),
+	set_loop_view: row('Set loop view', { idempotent: true }),
+	query_data: row('Query data'),
 	delete_loop: row('Delete loop', { destructive: true, idempotent: true }),
 	// Subscriptions
 	mark_read: row('Mark read', { idempotent: true }),
 	list_unread: row('List unread'),
 	// Sessions
 	create_session: row('Create session', { openWorld: true }),
+	create_sub_chat: row('Create sub-chat', { openWorld: true }),
+	run_agent: row('Run agent (deprecated alias of create_session)', { openWorld: true }),
 	list_sessions: row('List sessions'),
 	get_session: row('Get session'),
 	get_session_logs: row('Get session logs'),
@@ -171,11 +183,15 @@ const ROWS: Record<string, Row> = {
 	// Notifications
 	create_notification: row('Create notification'),
 	list_notifications: row('List notifications'),
+	list_for_you: row('List For You'),
+	withdraw_decision_card: row('Withdraw decision card', { idempotent: true }),
 	update_notification: row('Update notification', { idempotent: true }),
 	// Session activity, drafts, mail and access
 	get_session_activity: row('Get session activity'),
 	approve_object_draft: row('Approve object draft', { openWorld: true }),
 	gmail_send_email: row('Send Gmail email', { openWorld: true }),
+	gmail_save_attachment: row('Save Gmail attachment', { openWorld: true }),
+	resend_send_email: row('Send Resend email', { openWorld: true }),
 	update_integration_access: row('Update integration access', {
 		idempotent: true,
 		openWorld: true,
@@ -185,6 +201,7 @@ const ROWS: Record<string, Row> = {
 	list_keychain_credentials: row('List keychain credentials'),
 	request_keychain_access: row('Request keychain access'),
 	request_integration_access: row('Request integration access'),
+	add_mcp_server: row('Add MCP server'),
 	show_computer: row('Show computer'),
 	// Workspace desktop
 	desktop_screenshot: row('Desktop screenshot'),
@@ -195,6 +212,7 @@ const ROWS: Record<string, Row> = {
 	desktop_type: row('Desktop type'),
 	desktop_key: row('Desktop key'),
 	desktop_run: row('Desktop run command', { destructive: true }),
+	desktop_put_file: row('Desktop put file'),
 	desktop_expose_port: row('Desktop expose port'),
 	desktop_list_ports: row('Desktop list ports'),
 	desktop_close_port: row('Desktop close port'),

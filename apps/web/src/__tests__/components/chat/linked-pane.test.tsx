@@ -16,6 +16,13 @@ vi.mock('@/components/chat/linked-object-preview', () => ({
 		</div>
 	),
 }))
+vi.mock('@/components/chat/linked-object-reference', () => ({
+	ObjectReferenceCard: (p: { objectId: string; workspaceId: string }) => (
+		<div data-testid="reference-card" data-workspace={p.workspaceId}>
+			{p.objectId}
+		</div>
+	),
+}))
 vi.mock('@/components/objects/produced-pane', () => ({
 	ProducedObjectsGroup: ({ items }: { items: Array<{ entityId: string }> }) => (
 		<div data-testid="produced-objects">{items.map((i) => i.entityId).join(',')}</div>
@@ -23,9 +30,6 @@ vi.mock('@/components/objects/produced-pane', () => ({
 	ProducedFilesGroup: ({ items }: { items: Array<{ fileId: string }> }) => (
 		<div data-testid="produced-files">{items.map((i) => i.fileId).join(',')}</div>
 	),
-}))
-vi.mock('@/components/shared/object-reference', () => ({
-	ObjectReference: ({ objectId }: { objectId: string }) => <div data-testid="row">{objectId}</div>,
 }))
 vi.mock('@/components/shared/file-preview', () => ({
 	FilePreview: ({ fileId }: { fileId: string }) => <div data-testid="file">{fileId}</div>,
@@ -94,10 +98,33 @@ describe('LinkedPane', () => {
 		expect(screen.getByText(/from Scout/)).toBeInTheDocument()
 	})
 
-	it('draws a contact as a compact row', () => {
-		objects.o2 = { id: 'o2', workspaceId: 'ws', preview: null }
+	it('draws a plain object as the same reference card the transcript draws', () => {
+		objects.o2 = { id: 'o2', workspaceId: 'ws', content: 'Some words', preview: null }
 		render(<LinkedPane {...base} items={[item({ id: 'o2' })]} />)
-		expect(screen.getByTestId('row')).toBeInTheDocument()
+		expect(screen.getByTestId('reference-card')).toHaveTextContent('o2')
+		expect(screen.getByTestId('reference-card')).toHaveAttribute('data-workspace', 'ws')
+		expect(screen.queryByTestId('card')).toBeNull()
+	})
+
+	it('draws a contact, and an object with no text, as the reference card too', () => {
+		objects.o2 = { id: 'o2', type: 'contact', workspaceId: 'ws', preview: null }
+		objects.o3 = { id: 'o3', workspaceId: 'ws', content: '  ', preview: null }
+		render(<LinkedPane {...base} items={[item({ id: 'o2' }), item({ id: 'o3' })]} />)
+		expect(screen.getAllByTestId('reference-card')).toHaveLength(2)
+		expect(screen.queryByTestId('card')).toBeNull()
+	})
+
+	it('draws a draft with no text as the reference card, as the transcript does', () => {
+		objects.o2 = { id: 'o2', workspaceId: 'ws', content: '', preview: { body: '' } }
+		render(<LinkedPane {...base} items={[item({ id: 'o2' })]} />)
+		expect(screen.getByTestId('reference-card')).toBeInTheDocument()
+		expect(screen.queryByTestId('card')).toBeNull()
+	})
+
+	it('draws nothing for an object in another workspace', () => {
+		objects.o2 = { id: 'o2', workspaceId: 'elsewhere', content: 'x', preview: null }
+		render(<LinkedPane {...base} items={[item({ id: 'o2' })]} />)
+		expect(screen.queryByTestId('reference-card')).toBeNull()
 		expect(screen.queryByTestId('card')).toBeNull()
 	})
 

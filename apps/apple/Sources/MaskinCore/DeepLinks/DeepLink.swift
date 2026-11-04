@@ -13,6 +13,8 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 	case object(workspaceId: String, id: String)
 	/// `…/<ws>/chats/<id>`.
 	case chat(workspaceId: String, id: String)
+	/// `…/<ws>/chats/<id>?thread=<rootId>`: one reply thread of a chat (the root message's id).
+	case thread(workspaceId: String, id: String, rootId: Int)
 	/// `…/<ws>/files/<id>`: a file (an HTML page, document, image or PDF) an agent made or attached.
 	case file(workspaceId: String, id: String)
 	/// `maskin://<ws>/notifications` (or the web's workspace home): open the inbox.
@@ -21,6 +23,10 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 	case agents(workspaceId: String)
 	/// `…/<ws>/agents/<id>`: one agent.
 	case agent(workspaceId: String, id: String)
+	/// `…/<ws>/loops/<id>`: one loop (a flow).
+	case loop(workspaceId: String, id: String)
+	/// `…/<ws>/triggers/<id>`: one trigger.
+	case trigger(workspaceId: String, id: String)
 
 	public static let scheme = "maskin"
 
@@ -29,8 +35,8 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 
 	public var workspaceId: String {
 		switch self {
-		case .object(let ws, _), .chat(let ws, _), .file(let ws, _), .notifications(let ws), .agents(let ws),
-			.agent(let ws, _): ws
+		case .object(let ws, _), .chat(let ws, _), .thread(let ws, _, _), .file(let ws, _),
+			.notifications(let ws), .agents(let ws), .agent(let ws, _), .loop(let ws, _), .trigger(let ws, _): ws
 		}
 	}
 
@@ -39,13 +45,16 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 		var c = URLComponents()
 		c.scheme = Self.scheme
 		c.host = workspaceId
+		if case .thread(_, _, let rootId) = self { c.queryItems = [URLQueryItem(name: "thread", value: String(rootId))] }
 		switch self {
 		case .object(_, let id): c.path = "/objects/\(id)"
-		case .chat(_, let id): c.path = "/chats/\(id)"
+		case .chat(_, let id), .thread(_, let id, _): c.path = "/chats/\(id)"
 		case .file(_, let id): c.path = "/files/\(id)"
 		case .notifications: c.path = "/notifications"
 		case .agents: c.path = "/agents"
 		case .agent(_, let id): c.path = "/agents/\(id)"
+		case .loop(_, let id): c.path = "/loops/\(id)"
+		case .trigger(_, let id): c.path = "/triggers/\(id)"
 		}
 		return c.url!
 	}
@@ -55,13 +64,16 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 		var c = URLComponents()
 		c.scheme = "https"
 		c.host = host
+		if case .thread(_, _, let rootId) = self { c.queryItems = [URLQueryItem(name: "thread", value: String(rootId))] }
 		switch self {
 		case .object(let ws, let id): c.path = "/\(ws)/objects/\(id)"
-		case .chat(let ws, let id): c.path = "/\(ws)/chats/\(id)"
+		case .chat(let ws, let id), .thread(let ws, let id, _): c.path = "/\(ws)/chats/\(id)"
 		case .file(let ws, let id): c.path = "/\(ws)/files/\(id)"
 		case .notifications(let ws): c.path = "/\(ws)"
 		case .agents(let ws): c.path = "/\(ws)/agents"
 		case .agent(let ws, let id): c.path = "/\(ws)/agents/\(id)"
+		case .loop(let ws, let id): c.path = "/\(ws)/loops/\(id)"
+		case .trigger(let ws, let id): c.path = "/\(ws)/triggers/\(id)"
 		}
 		return c.url!
 	}
@@ -108,9 +120,16 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 			guard Self.isSafeID(rest[1]) else { return nil }
 			switch rest[0] {
 			case "objects": self = .object(workspaceId: workspace, id: rest[1])
-			case "chats": self = .chat(workspaceId: workspace, id: rest[1])
+			case "chats":
+				if let rootId = Self.threadRoot(c.queryItems) {
+					self = .thread(workspaceId: workspace, id: rest[1], rootId: rootId)
+				} else {
+					self = .chat(workspaceId: workspace, id: rest[1])
+				}
 			case "files": self = .file(workspaceId: workspace, id: rest[1])
 			case "agents": self = .agent(workspaceId: workspace, id: rest[1])
+			case "loops": self = .loop(workspaceId: workspace, id: rest[1])
+			case "triggers": self = .trigger(workspaceId: workspace, id: rest[1])
 			default: return nil
 			}
 		default:
@@ -121,6 +140,17 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 	public init?(string: String, universalHosts: Set<String> = DeepLink.defaultUniversalHosts) {
 		guard let url = URL(string: string) else { return nil }
 		self.init(url: url, universalHosts: universalHosts)
+	}
+
+	/// The `thread` query value: exactly one item holding a positive integer of at most nine digits.
+	/// Anything else (absent, repeated, signed, padded, huge) reads as no thread, so the link still
+	/// opens the chat.
+	private static func threadRoot(_ items: [URLQueryItem]?) -> Int? {
+		let found = (items ?? []).filter { $0.name == "thread" }
+		guard found.count == 1, let value = found[0].value, (1...9).contains(value.utf8.count),
+			value.utf8.allSatisfy({ $0 >= 0x30 && $0 <= 0x39 }), let n = Int(value), n > 0
+		else { return nil }
+		return n
 	}
 
 	/// Path segments, rejecting empty (`//`) and dot segments by returning a poisoned list that

@@ -100,6 +100,54 @@ export async function captureVoiceTurnCompleted(
 	await capturePosthogEvent(VOICE_TURN_COMPLETED_EVENT, humanActorId, props)
 }
 
+/**
+ * Sent once per Live call, when the call is connected. Ids only: the call, the person and the
+ * top card of the ranked For You list at that moment (null when the list was empty or could
+ * not be read). No card text.
+ */
+export const LIVE_CALL_STARTED_EVENT = 'live_call_started'
+
+export type LiveCallStartedProps = {
+	voice_session_id: string
+	actor_id: string
+	workspace_id: string
+	rank_1_card_id: string | null
+	[key: string]: string | number | boolean | null | undefined | string[] | number[]
+}
+
+export async function captureLiveCallStarted(
+	humanActorId: string,
+	props: LiveCallStartedProps,
+): Promise<void> {
+	await capturePosthogEvent(LIVE_CALL_STARTED_EVENT, humanActorId, props)
+}
+
+/**
+ * A For You card acted on during a Live call. Same event name and the same card_id, card_kind
+ * and action_id the web page sends on foryou_card_action, plus source voice. The server records
+ * no card action of its own (the web page sends it from the browser), so this is sent from the
+ * tool path. The web page does not set source, so a web action is told apart by its absence.
+ */
+export type ForYouCardActionByVoiceProps = {
+	voice_session_id: string
+	workspace_id: string
+	card_id: string
+	card_kind: 'decision' | 'thread'
+	action_id: string
+	[key: string]: string | number | boolean | null | undefined | string[] | number[]
+}
+
+export async function captureForYouCardActionByVoice(
+	humanActorId: string,
+	props: ForYouCardActionByVoiceProps,
+): Promise<void> {
+	await capturePosthogEvent('foryou_card_action', humanActorId, {
+		...props,
+		actor_id: humanActorId,
+		source: 'voice',
+	})
+}
+
 // PostHog event helpers for the [Voice v1 bet]
 // (https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/16bd0042-ff3d-4056-839c-410b0cd6f06e).
 //
@@ -143,6 +191,14 @@ export interface VoiceSessionEndedProps {
 	total_cost_usd: number
 	tool_calls_count: number
 	turn_count: number
+	/** Cards where a voice action ran ok (distinct cards, from the receipt rows). */
+	cards_cleared: number
+	/** Sends that went through the yes-before-send hold, including one still waiting at the end. */
+	writes_held: number
+	/** Writes that ran ok. */
+	writes_done: number
+	/** True when the closing receipt landed in the chat. */
+	receipt_posted: boolean
 }
 
 /**
@@ -174,5 +230,9 @@ export async function trackVoiceSessionEnded(
 		total_cost_usd: props.total_cost_usd,
 		tool_calls_count: props.tool_calls_count,
 		turn_count: props.turn_count,
+		cards_cleared: props.cards_cleared,
+		writes_held: props.writes_held,
+		writes_done: props.writes_done,
+		receipt_posted: props.receipt_posted,
 	})
 }

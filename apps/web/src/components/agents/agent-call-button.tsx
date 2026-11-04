@@ -1,6 +1,8 @@
 import type { VoiceCallAgent } from '@/components/agents/voice-call-dialog'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { cn } from '@/lib/cn'
 import { startVoiceCall } from '@/lib/voice-active-call'
 import { VOICE_UNAVAILABLE_TOOLTIP, useVoiceUnavailable } from '@/lib/voice-availability'
@@ -23,12 +25,14 @@ export function AgentCallButton({
 	shortcut?: boolean
 }) {
 	const unavailable = useVoiceUnavailable()
+	// Starting a call reserves a voice session, which a viewer cannot do.
+	const canWrite = useCanWrite()
 
 	// `V` starts the call when the agent detail is focused (anywhere on the
 	// page counts, provided the user isn't typing in an input). Global scope
 	// mirrors the SPEC: "V opens when the agent detail is focused."
 	useEffect(() => {
-		if (!shortcut || unavailable) return
+		if (!shortcut || unavailable || !canWrite) return
 		function onKey(e: KeyboardEvent) {
 			if (e.metaKey || e.ctrlKey || e.altKey) return
 			if (e.key.toLowerCase() !== 'v') return
@@ -44,12 +48,12 @@ export function AgentCallButton({
 		}
 		window.addEventListener('keydown', onKey)
 		return () => window.removeEventListener('keydown', onKey)
-	}, [shortcut, unavailable, agent])
+	}, [shortcut, unavailable, canWrite, agent])
 
 	const button = (
 		<Button
 			type="button"
-			variant={variant === 'composer' ? 'outline' : 'default'}
+			variant={variant === 'composer' ? 'outline' : variant === 'icon' ? 'ghost' : 'default'}
 			size={variant === 'icon' || variant === 'composer' ? 'icon' : 'sm'}
 			className={cn(
 				// Reads as unavailable even when the row hover pushes opacity back to full.
@@ -60,12 +64,14 @@ export function AgentCallButton({
 				// row) also reveals it, so it is never unreachable.
 				variant === 'row' &&
 					'mr-2 h-7 w-7 shrink-0 gap-1 px-0 text-xs font-semibold sm:mr-3 lg:w-auto lg:px-2.5 md:opacity-0 md:transition-opacity md:focus-visible:opacity-100 md:group-focus-within/row:opacity-100 md:group-hover/row:opacity-100',
+				// Plain ghost icon like Copy, Pin and Archive beside it. Disabled drops
+				// the muted plate so it dims instead of showing a grey square.
 				variant === 'icon' &&
-					'h-6 w-6 shrink-0 bg-brand text-brand-foreground hover:bg-brand-hover',
+					'h-6 w-6 shrink-0 text-muted-foreground hover:text-foreground disabled:bg-transparent',
 				variant === 'composer' && 'h-7 w-7 shrink-0 rounded-full text-muted-foreground',
 			)}
 			onClick={() => startVoiceCall(agent)}
-			disabled={unavailable}
+			disabled={unavailable || !canWrite}
 			aria-label={`Call ${agent.name}`}
 		>
 			<Phone size={variant === 'icon' ? 13 : 14} aria-hidden="true" />
@@ -73,6 +79,11 @@ export function AgentCallButton({
 			{variant === 'row' && <span className="hidden lg:inline">Call</span>}
 		</Button>
 	)
+
+	if (!canWrite) {
+		// The composer variant already sits under the composer's own viewer tooltip.
+		return variant === 'composer' ? button : <ViewerTooltip>{button}</ViewerTooltip>
+	}
 
 	return (
 		<>

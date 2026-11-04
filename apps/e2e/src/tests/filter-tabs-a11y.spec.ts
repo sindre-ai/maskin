@@ -19,7 +19,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Aria Test Bet',
-				status: 'signal',
+				status: 'opportunity',
 			})
 
 			await page.goto(`/${account.workspaceId}/objects`)

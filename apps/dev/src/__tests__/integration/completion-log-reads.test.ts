@@ -81,8 +81,12 @@ describe('remote session completion — log reads', () => {
 		return { row, captured }
 	}
 
+	// Only the newest-rows tail read counts. Usage is summed from a second read that keeps
+	// only the rows carrying a result line (a LIKE filter), which is small.
 	const contentReads = (queries: string[]) =>
-		queries.filter((q) => q.startsWith('select "content" from "session_logs"'))
+		queries.filter(
+			(q) => q.startsWith('select "content" from "session_logs"') && !q.includes(' LIKE '),
+		)
 
 	it('reads the stdout tail from session_logs exactly once', async () => {
 		const { captured } = await complete(0, [RESULT_LINE])

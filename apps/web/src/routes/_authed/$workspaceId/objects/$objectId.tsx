@@ -12,14 +12,23 @@ import { getDefaultStatusForType } from '@maskin/module-sdk'
 import { createFileRoute } from '@tanstack/react-router'
 import { useCallback, useEffect, useRef } from 'react'
 import { toast } from 'sonner'
+import { z } from 'zod'
+
+// `?comment=<event id>` deep-links to one comment (or reply) in the timeline.
+// Number-typed so a malformed value is dropped rather than reaching a selector.
+const objectSearchSchema = z.object({
+	comment: z.coerce.number().int().positive().optional().catch(undefined),
+})
 
 export const Route = createFileRoute('/_authed/$workspaceId/objects/$objectId')({
 	component: ObjectDetailPage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
+	validateSearch: objectSearchSchema,
 })
 
 function ObjectDetailPage() {
 	const { objectId } = Route.useParams()
+	const { comment: focusCommentId } = Route.useSearch()
 	const { workspaceId, workspace } = useWorkspace()
 	// Derive default statuses from workspace settings (first status per type)
 	const settings = workspace.settings as Record<string, unknown>
@@ -97,7 +106,7 @@ function ObjectDetailPage() {
 
 	// Once fully loaded with object data, render the full document editor
 	if (isCreated && object) {
-		return <ObjectDetailShell object={object} />
+		return <ObjectDetailShell object={object} focusCommentId={focusCommentId} />
 	}
 
 	// Create mode — show form with document-like sections

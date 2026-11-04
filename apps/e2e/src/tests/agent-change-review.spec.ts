@@ -37,7 +37,6 @@ const CHANGES = [
 test.describe('Agent change review in the file viewer', () => {
 	test.beforeEach(async ({ page }) => {
 		await page.addInitScript(() => {
-			localStorage.setItem('ff:rich-markdown-editor', 'on')
 			localStorage.setItem('ff:agent-change-review', 'on')
 		})
 	})

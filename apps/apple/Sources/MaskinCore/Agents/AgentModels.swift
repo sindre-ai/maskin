@@ -5,11 +5,12 @@ import Foundation
 public enum AgentStatus: String, Sendable, CaseIterable, Codable {
 	case running, paused, idle, failed
 
-	/// Web filter bucket label ("Working" / "Idle" / "Failed"; paused agents stand by with idle).
+	/// Row label ("Working" / "Idle" / "Failed"). A paused agent reads "Disabled": the action
+	/// that gets it there is "Disable agent", never "Pause".
 	public var label: String {
 		switch self {
 		case .running: "Working"
-		case .paused: "Paused"
+		case .paused: "Disabled"
 		case .idle: "Idle"
 		case .failed: "Failed"
 		}

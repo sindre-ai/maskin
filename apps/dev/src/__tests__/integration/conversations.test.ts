@@ -1577,7 +1577,7 @@ describe('Conversations Integration', () => {
 		})
 	})
 
-	describe('sessions_conversation_actor_active_uniq', () => {
+	describe('sessions_conversation_actor_thread_active_uniq', () => {
 		it('rejects a second active interactive session for the same (conversation, agent) pair', async () => {
 			const agent = await insertActor(db, { type: 'agent' })
 			await addMember(workspaceId, agent.id)
@@ -1671,8 +1671,8 @@ describe('Conversations Integration', () => {
 			// Regression test: a fresh 1:1 chat with an agent whose only LLM
 			// route is Claude OAuth (not chat-callable via resolveChatCredentials)
 			// used to silently never spawn a session for a plain, non-mentioning
-			// first message — checkRelevance failed closed and nothing surfaced
-			// it. Direct conversations now skip the relevance heuristic entirely.
+			// first message — the old model check failed closed and nothing surfaced
+			// it. Direct conversations always respond.
 			const agent = await insertActor(db, { type: 'agent' })
 			await addMember(workspaceId, agent.id)
 			const { app: ownerApp } = createConversationsApp(ownerId)
@@ -1712,11 +1712,9 @@ describe('Conversations Integration', () => {
 			expect(sessionManager.createSession.mock.calls[0]?.[1]).toMatchObject({ actorId: agent.id })
 		})
 
-		it('fails open in a group chat with no mention and no chat credentials configured', async () => {
-			// The relevance heuristic itself being uncallable (no chat-callable
-			// credential) is not proof the agent has no credentials at all — the
-			// real session launch supports Claude OAuth. So a missing heuristic
-			// credential should default to responding, not silently declining.
+		it('wakes nobody for the first untagged message in a group chat with two agents', async () => {
+			// The wake rule is plain and needs no credentials: with two agents and no tag
+			// there is nobody to pick, so nobody is woken (group chat wake rule).
 			const agent = await insertActor(db, { type: 'agent' })
 			const otherAgent = await insertActor(db, { type: 'agent' })
 			await addMember(workspaceId, agent.id)
@@ -1761,7 +1759,7 @@ describe('Conversations Integration', () => {
 				messageId: triggering.id,
 			})
 
-			expect(sessionManager.createSession).toHaveBeenCalledTimes(2)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
 
 		it('skips every agent once the consecutive-agent-reply cap is reached, even a @mentioned one', async () => {
@@ -2527,6 +2525,154 @@ describe('Conversations Integration', () => {
 			expect(res.status).toBe(200)
 			await new Promise((resolve) => setTimeout(resolve, 50))
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		describe('tags in an edit', () => {
+			// Owner plus two agents: a group chat, so the wake rule decides who answers. The message
+			// starts with the tags `stored` names, and is the newest unless `newerMessage` is set.
+			async function groupChatWithMessage(opts: {
+				stored: 'none' | 'a' | 'ab'
+				newerMessage: boolean
+			}) {
+				const agentA = await insertActor(db, { type: 'agent' })
+				const agentB = await insertActor(db, { type: 'agent' })
+				await addMember(workspaceId, agentA.id)
+				await addMember(workspaceId, agentB.id)
+				const { app, sessionManager } = createConversationsApp(ownerId)
+				const created = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/conversations',
+						{ title: 'Tag edit', participant_actor_ids: [agentA.id, agentB.id] },
+						{ 'x-workspace-id': workspaceId },
+					),
+				)
+				const conversation = (await created.json()) as { id: string }
+				const mentions = { none: [], a: [agentA.id], ab: [agentA.id, agentB.id] }[opts.stored]
+				const [msg] = await db
+					.insert(messages)
+					.values({
+						conversationId: conversation.id,
+						actorId: ownerId,
+						content: 'ask the agents',
+						metadata: { mentions },
+					})
+					.returning()
+				if (opts.newerMessage) {
+					await db.insert(messages).values({
+						conversationId: conversation.id,
+						actorId: agentA.id,
+						content: 'a later reply',
+					})
+				}
+				const edit = (body: Record<string, unknown>) =>
+					app.request(
+						jsonRequest(
+							'PATCH',
+							`/api/conversations/${conversation.id}/messages/${msg?.id}`,
+							body,
+							{ 'x-workspace-id': workspaceId },
+						),
+					)
+				const storedMentions = async () => {
+					const [row] = await db
+						.select()
+						.from(messages)
+						.where(eq(messages.id, msg?.id ?? -1))
+					return (row?.metadata as { mentions?: string[] } | null)?.mentions
+				}
+				const wokenAgentIds = () =>
+					sessionManager.createSession.mock.calls.map(
+						(call) => (call[1] as { actorId: string }).actorId,
+					)
+				return { agentA, agentB, sessionManager, edit, storedMentions, wokenAgentIds }
+			}
+
+			it('stores a newly tagged agent and wakes only that agent, even when the message is not the newest', async () => {
+				const { agentB, sessionManager, edit, storedMentions, wokenAgentIds } =
+					await groupChatWithMessage({ stored: 'none', newerMessage: true })
+
+				const res = await edit({
+					content: 'ask the agents, @B first',
+					metadata: { mentions: [agentB.id] },
+				})
+				expect(res.status).toBe(200)
+				const body = (await res.json()) as { metadata: { mentions?: string[] } | null }
+				expect(body.metadata?.mentions).toEqual([agentB.id])
+				expect(await storedMentions()).toEqual([agentB.id])
+
+				await waitForSessions(sessionManager, 1)
+				await new Promise((resolve) => setTimeout(resolve, 50))
+				expect(wokenAgentIds()).toEqual([agentB.id])
+			})
+
+			it('wakes only the added agent when another one was already tagged', async () => {
+				const { agentA, agentB, sessionManager, edit, storedMentions, wokenAgentIds } =
+					await groupChatWithMessage({ stored: 'a', newerMessage: false })
+
+				const res = await edit({
+					content: 'ask both',
+					metadata: { mentions: [agentA.id, agentB.id] },
+				})
+				expect(res.status).toBe(200)
+				expect(await storedMentions()).toEqual([agentA.id, agentB.id])
+
+				await waitForSessions(sessionManager, 1)
+				await new Promise((resolve) => setTimeout(resolve, 50))
+				expect(wokenAgentIds()).toEqual([agentB.id])
+			})
+
+			it('wakes nobody when the sent ids are the stored ids', async () => {
+				const { agentA, agentB, sessionManager, edit, storedMentions } = await groupChatWithMessage(
+					{ stored: 'ab', newerMessage: false },
+				)
+
+				const res = await edit({
+					content: 'reworded',
+					metadata: { mentions: [agentA.id, agentB.id] },
+				})
+				expect(res.status).toBe(200)
+				await new Promise((resolve) => setTimeout(resolve, 100))
+				expect(sessionManager.createSession).not.toHaveBeenCalled()
+				expect(await storedMentions()).toEqual([agentA.id, agentB.id])
+			})
+
+			it('stores the smaller list and wakes nobody when a tag is removed', async () => {
+				const { agentA, sessionManager, edit, storedMentions } = await groupChatWithMessage({
+					stored: 'ab',
+					newerMessage: false,
+				})
+
+				const res = await edit({ content: 'less', metadata: { mentions: [agentA.id] } })
+				expect(res.status).toBe(200)
+				await new Promise((resolve) => setTimeout(resolve, 100))
+				expect(sessionManager.createSession).not.toHaveBeenCalled()
+				expect(await storedMentions()).toEqual([agentA.id])
+			})
+
+			it('keeps the stored ids when the edit sends only content', async () => {
+				const { agentA, edit, storedMentions } = await groupChatWithMessage({
+					stored: 'a',
+					newerMessage: true,
+				})
+
+				const res = await edit({ content: 'only the words changed' })
+				expect(res.status).toBe(200)
+				expect(await storedMentions()).toEqual([agentA.id])
+			})
+
+			it('refuses an unknown tagged id, naming it, and keeps the message as it was', async () => {
+				const { edit, storedMentions } = await groupChatWithMessage({
+					stored: 'none',
+					newerMessage: true,
+				})
+				const unknownId = '99999999-9999-4999-8999-999999999999'
+
+				const res = await edit({ content: 'changed', metadata: { mentions: [unknownId] } })
+				expect(res.status).toBe(400)
+				expect(JSON.stringify(await res.json())).toContain(unknownId)
+				expect(await storedMentions()).toEqual([])
+			})
 		})
 
 		it("rejects editing someone else's message", async () => {

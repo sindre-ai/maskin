@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { capturePosthogEvent } from '../../lib/analytics/posthog'
 import { insertActor, insertSession, insertTrigger, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
-import { emitObjectCreated, newQueueRunner, pollUntil, setV2Flag } from './queue-helpers'
+import { emitObjectCreated, newQueueRunner, pollUntil } from './queue-helpers'
 
 // retry_at_x consumer proof for S3 (tech spec §4.6): a credit_exhaustion
 // session_failed carrying data.retry_at holds the trigger AND the workspace
@@ -24,7 +24,6 @@ vi.mock('../../lib/analytics/posthog', () => ({
 
 describe('S3 — retry_at_x consumer', () => {
 	afterEach(() => {
-		setV2Flag(null)
 		vi.mocked(capturePosthogEvent).mockClear()
 	})
 
@@ -74,7 +73,6 @@ describe('S3 — retry_at_x consumer', () => {
 
 	it('with data.retry_at: trigger backoff and workspace suppression both land on that timestamp, and the queue drains when it arrives', async () => {
 		const s = await seed()
-		setV2Flag(s.ws.id)
 		const { bridge, dispatches, runner, internals } = newQueueRunner()
 		await runner.start()
 		try {
@@ -142,7 +140,6 @@ describe('S3 — retry_at_x consumer', () => {
 
 	it('without data.retry_at: exponential backoff applies and the workspace is not suppressed', async () => {
 		const s = await seed()
-		setV2Flag(s.ws.id)
 		const { bridge, runner, internals } = newQueueRunner()
 		await runner.start()
 		try {
@@ -171,7 +168,6 @@ describe('S3 — retry_at_x consumer', () => {
 	it('with an unusable data.retry_at (past, or not a date): falls back to exponential backoff', async () => {
 		for (const retryAt of [new Date(Date.now() - 60_000).toISOString(), 'not-a-date', 12345]) {
 			const s = await seed()
-			setV2Flag(s.ws.id)
 			const { bridge, runner, internals } = newQueueRunner()
 			await runner.start()
 			try {
@@ -186,24 +182,6 @@ describe('S3 — retry_at_x consumer', () => {
 			} finally {
 				await runner.stop()
 			}
-		}
-	})
-
-	it('with trigger_engine_v2 off: data.retry_at is ignored', async () => {
-		const s = await seed()
-		setV2Flag(null)
-		const { bridge, runner, internals } = newQueueRunner()
-		await runner.start()
-		try {
-			await failSession(bridge, s, {
-				classification: 'credit_exhaustion',
-				retry_at: new Date(Date.now() + 10 * 60_000).toISOString(),
-			})
-			await pollUntil(() => internals.triggerFailures.has(s.trig.id))
-			expect(internals.triggerFailures.get(s.trig.id)?.reason).toBe('session_failed')
-			expect(internals.workspaceSuppressions.has(s.ws.id)).toBe(false)
-		} finally {
-			await runner.stop()
 		}
 	})
 })

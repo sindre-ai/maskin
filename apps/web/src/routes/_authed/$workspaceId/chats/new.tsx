@@ -1,5 +1,6 @@
 import { Composer } from '@/components/chat/chat'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { useActiveAgents } from '@/hooks/use-active-agents'
 import { useActors, useDefaultChatAgent } from '@/hooks/use-actors'
 import { useConversationsInfinite, useCreateConversation } from '@/hooks/use-conversations'
 import { useDocumentTitle } from '@/hooks/use-document-title'
@@ -9,11 +10,13 @@ import { deriveEntryAgentRole, trackChatSessionStarted } from '@/lib/analytics'
 import type { MessageMetadata } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import {
+	type ChatSelectionFile,
 	EMPTY_CHAT_SELECTION,
 	MAX_CHAT_OBJECT_REFERENCES,
 	chatSelectionReducer,
 } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
+import { type ComposerCue, deriveComposerCue } from '@/lib/composer-cue'
 import { useWorkspace } from '@/lib/workspace-context'
 import { MESSAGE_MAX_MENTIONS, deriveConversationTitle } from '@maskin/shared'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
@@ -34,6 +37,16 @@ import { toast } from 'sonner'
 const chatToPh = 'Add person or agent…'
 const chatGroupNote = 'Everyone sees everything'
 
+// Shown instead of the paragraph under the heading while nothing is running,
+// when there is no work yet for that paragraph to describe.
+const quietIntro =
+	'The Chief of Staff is your first point of contact. It sets up agents and loops and keeps the work moving.'
+const starterMessages = [
+	'Help me set up my first agent',
+	'What should I do first in this workspace?',
+	'Explain how agents, loops and tasks fit together',
+]
+
 interface NewChatSearch {
 	agentId?: string
 	agentName?: string
@@ -44,6 +57,8 @@ interface NewChatSearch {
 	objectType?: string
 	notificationId?: string
 	notificationTitle?: string
+	/** Text that fills the message box. Nothing is sent until the viewer sends it. */
+	text?: string
 }
 
 export const Route = createFileRoute('/_authed/$workspaceId/chats/new')({
@@ -58,6 +73,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/chats/new')({
 		notificationId: typeof search.notificationId === 'string' ? search.notificationId : undefined,
 		notificationTitle:
 			typeof search.notificationTitle === 'string' ? search.notificationTitle : undefined,
+		text: typeof search.text === 'string' ? search.text : undefined,
 	}),
 })
 
@@ -79,14 +95,26 @@ function NewChatRoute() {
 	const defaultAgent = useDefaultChatAgent()
 	const currentActor = getStoredActor()
 	const conversationsInfinite = useConversationsInfinite(workspaceId)
+	// Same signal the sidebar's "nothing running" line reads. While it loads we
+	// show neither paragraph, so a new user never flashes the one about work
+	// that does not exist.
+	const activity = useActiveAgents(workspaceId)
+	const nothingRunning =
+		!activity.isLoading && !activity.isError && activity.activeSessionCount === 0
+	const showRunningIntro = !activity.isLoading && !nothingRunning
 
 	const [recipients, setRecipients] = useState<Recipient[]>([])
 	const [query, setQuery] = useState('')
 	const [activeIndex, setActiveIndex] = useState(0)
 	const [selection, dispatchSelection] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
 	const [error, setError] = useState<string | null>(null)
-	const [draft, setDraft] = useState('')
+	const [draft, setDraft] = useState(search.text ?? '')
 	const [toFocused, setToFocused] = useState(false)
+	// The page stays mounted when the launcher opens /chats/new?text=... from
+	// here, so a new text has to replace the box; the initial value covers mount.
+	useEffect(() => {
+		if (search.text !== undefined) setDraft(search.text)
+	}, [search.text])
 	const inputRef = useRef<HTMLInputElement>(null)
 
 	// Objects handed over by "Ask an agent". Resolved so the chips read as
@@ -268,7 +296,7 @@ function NewChatRoute() {
 	)
 
 	const handleSend = useCallback(
-		async (content: string) => {
+		async (content: string, extras?: { files: ChatSelectionFile[] }) => {
 			setError(null)
 			// Fold both entry points for participants into the id set:
 			// (1) recipient chips picked in the To row above, and
@@ -299,8 +327,9 @@ function NewChatRoute() {
 					: selection.notifications
 
 			const metadata: MessageMetadata = {}
-			if (selection.files.length > 0) {
-				metadata.attachments = selection.files.map((f) => ({
+			const files = [...selection.files, ...(extras?.files ?? [])]
+			if (files.length > 0) {
+				metadata.attachments = files.map((f) => ({
 					file_id: f.fileId,
 					name: f.name,
 					mime_type: f.mimeType ?? 'application/octet-stream',
@@ -380,10 +409,46 @@ function NewChatRoute() {
 		return agents.size === 1 ? (agents.values().next().value ?? null) : null
 	}, [recipients, selection.agents, candidates])
 
-	const composerPlaceholder =
+	const todaysPlaceholder =
 		recipients.length === 1
 			? `Message ${recipients[0].name}…`
 			: 'Message… / reference or create · @ mention'
+
+	// Group-chat cue: this screen has its own composer wiring (it does not use ThreadComposer),
+	// so it calls the same shared function. A new chat has no messages,
+	// so nobody has spoken yet and the next message is the first one. Participants are you, the
+	// To-row chips and anyone tagged in the box, which is who the server adds when it creates
+	// the chat. Fewer than 3 participants: today's placeholder and no hint.
+	const cue = useMemo<ComposerCue | null>(() => {
+		const asParticipant = (r: Recipient) => ({
+			actorId: r.id,
+			actorName: r.name,
+			actorType: (r.type === 'agent' ? 'agent' : 'human') as 'agent' | 'human',
+		})
+		const people = new Map<string, ReturnType<typeof asParticipant>>()
+		if (currentActor) {
+			people.set(currentActor.id, asParticipant({ id: currentActor.id, name: '', type: 'human' }))
+		}
+		for (const r of recipients) people.set(r.id, asParticipant(r))
+		for (const id of selection.agents) {
+			if (people.has(id)) continue
+			// An id missing from the workspace lists counts as a person.
+			const known = candidates.find((c) => c.id === id)
+			people.set(
+				id,
+				asParticipant(known ?? { id, name: selection.agentNames[id] ?? '', type: 'human' }),
+			)
+		}
+		return deriveComposerCue({
+			selfId: currentActor?.id ?? '',
+			participants: [...people.values()],
+			taggedIds: selection.agents,
+			messages: null,
+			hasMoreMessages: false,
+			isNewChat: true,
+		})
+	}, [currentActor, recipients, selection.agents, selection.agentNames, candidates])
+	const composerPlaceholder = cue?.placeholder ?? todaysPlaceholder
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
@@ -526,19 +591,41 @@ function NewChatRoute() {
 					<h2 className="text-[clamp(20px,2.4vw,26px)] font-bold leading-tight tracking-[-0.025em]">
 						What are we working on?
 					</h2>
-					<p className="mt-2 max-w-[52ch] text-[13.5px] leading-relaxed text-balance text-muted-foreground">
-						Your agents are already inside the work — the loops they run, the objects they keep
-						current, the sessions live right now. You don't have to paste any of it in.
-					</p>
+					{nothingRunning ? (
+						<>
+							<p className="mt-2 max-w-[52ch] text-[13.5px] leading-relaxed text-balance text-muted-foreground">
+								{quietIntro}
+							</p>
+							<ul className="mt-4 flex list-none flex-wrap gap-2 p-0">
+								{starterMessages.map((text) => (
+									<li key={text}>
+										<button
+											type="button"
+											onClick={() => setDraft(text)}
+											className="rounded-full border border-border bg-card px-3 py-1.5 text-left text-[12.5px] text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+										>
+											{text}
+										</button>
+									</li>
+								))}
+							</ul>
+						</>
+					) : showRunningIntro ? (
+						<p className="mt-2 max-w-[52ch] text-[13.5px] leading-relaxed text-balance text-muted-foreground">
+							Your agents are already inside the work — the loops they run, the objects they keep
+							current, the sessions live right now. You don't have to paste any of it in.
+						</p>
+					) : null}
 				</div>
 			</div>
 
 			{/* The composer is pinned below the scroll region, gutter-aligned with
 			    the header and with no divider above it (mockup 645–646). */}
-			<div className="shrink-0 px-[clamp(14px,3vw,28px)] pt-2.5 pb-3.5">
+			<div className="shrink-0 px-[clamp(14px,3vw,28px)] pt-2.5 pb-[max(0.875rem,env(safe-area-inset-bottom))]">
 				<Composer
 					workspaceId={workspaceId}
 					onSend={handleSend}
+					longTextAsFile
 					disabled={createConversation.isPending}
 					pending={createConversation.isPending}
 					surface="sheet"
@@ -551,10 +638,12 @@ function NewChatRoute() {
 					onRemoveFile={(fileId) => dispatchSelection({ type: 'remove_file', fileId })}
 					externalError={error}
 					onDismissExternalError={() => setError(null)}
+					hint={cue ? cue.hint : undefined}
 					textareaLabel="Message this conversation"
 					value={draft}
 					onValueChange={setDraft}
 					callAgent={callAgent}
+					inlineTags
 				/>
 			</div>
 		</div>

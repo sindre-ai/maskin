@@ -22,7 +22,6 @@ struct NewChatSheet: View {
 	@State private var draft = NewConversationDraft()
 	@State private var query = ""
 	@State private var highlightedChip: String?
-	@State private var showAll = false
 	@State private var restoredDraft = false
 	@State private var isCreating = false
 	@State private var error: String?
@@ -31,7 +30,7 @@ struct NewChatSheet: View {
 
 	init(
 		store: ConversationsStore, currentActorID: String?, prefill: String = "",
-		initialRecipient: ChatParticipant? = nil,
+		initialRecipient: ChatParticipant? = nil, uploader: (any ChatFileUploading)? = nil,
 		onCreated: @escaping (ConversationSummary, _ live: Bool) -> Void
 	) {
 		self.store = store
@@ -39,7 +38,7 @@ struct NewChatSheet: View {
 		self.prefill = prefill
 		self.initialRecipient = initialRecipient
 		self.onCreated = onCreated
-		_composer = State(initialValue: ChatComposerModel(uploader: nil, selfActorID: currentActorID ?? ""))
+		_composer = State(initialValue: ChatComposerModel(uploader: uploader, selfActorID: currentActorID ?? ""))
 	}
 
 	private var recipients: [ChatParticipant] {
@@ -51,10 +50,11 @@ struct NewChatSheet: View {
 			ScrollView {
 				NewConversationForm(
 					store: store, currentActorID: currentActorID, initialRecipient: initialRecipient, error: error,
-					draft: $draft, query: $query, highlightedChip: $highlightedChip, showAll: $showAll,
+					draft: $draft, query: $query, highlightedChip: $highlightedChip,
 					toFocused: $toFocused)
 			}
-			.scrollDismissesKeyboard(.interactively)
+			// Dragging the open list must not drop the keyboard: that would blur To and close the list.
+			.scrollDismissesKeyboard(toFocused ? .never : .interactively)
 			.ambientBackground(showsBottom: false)
 			.safeAreaInset(edge: .bottom) { bottomBar }
 			.toolbar {
@@ -119,15 +119,17 @@ struct NewChatSheet: View {
 		let people = NewConversationForm.recipients(ids, store: store, initialRecipient: initialRecipient)
 		guard !people.isEmpty else { return }
 		// Live starts the call with no first message; the typed text stays in the composer.
-		let message: String? = live ? nil : composer.take()?.text
+		let taken = live ? nil : composer.take()
+		let message = taken?.text
 		guard live || message != nil else { return }
 		isCreating = true
 		error = nil
 		defer { isCreating = false }
 		do {
 			let created = try await store.create(
-				title: ThreadLayout.defaultTitle(for: people.map(\.name)),
-				participantIDs: people.map(\.id), firstMessage: message)
+				title: ThreadLayout.newChatTitle(for: people.map(\.name), startsLiveCall: live),
+				participantIDs: people.map(\.id), firstMessage: message,
+				firstMessageMetadata: taken?.metadata)
 			MaskinHaptics.play(.success)
 			onCreated(created, live)
 			dismiss()
@@ -150,10 +152,7 @@ struct NewConversationForm: View {
 	@Binding var query: String
 	/// The last chip, after one Backspace on an empty field; a second Backspace removes it.
 	@Binding var highlightedChip: String?
-	@Binding var showAll: Bool
 	var toFocused: FocusState<Bool>.Binding
-
-	private static let suggestedCount = 5
 
 	static func recipients(_ ids: [String], store: ConversationsStore, initialRecipient: ChatParticipant?) -> [ChatParticipant] {
 		ids.compactMap { id in
@@ -190,8 +189,13 @@ struct NewConversationForm: View {
 					.padding(.horizontal, MaskinSpace.s2)
 			}
 			if let error { FormError(error).padding(.top, MaskinSpace.s7) }
-			people
+			// The list only exists while To has focus, so no person row sits under the message box.
+			if toFocused.wrappedValue {
+				VStack(alignment: .leading, spacing: 0) { people }
+					.transition(.opacity.combined(with: .offset(y: MaskinSpace.s4)))
+			}
 		}
+		.animation(MaskinMotion.quick, value: toFocused.wrappedValue)
 		.padding(.horizontal, MaskinSpace.s11)
 		.padding(.top, MaskinSpace.s2)
 		.padding(.bottom, MaskinSpace.s12)
@@ -244,15 +248,11 @@ struct NewConversationForm: View {
 					.foregroundStyle(MaskinColor.ink4)
 					.padding(.horizontal, MaskinSpace.s2)
 			} else {
-				card(rows: matches, more: nil)
+				card(rows: matches)
 			}
-		} else {
-			let all = matches
-			let shown = showAll ? all : Array(all.prefix(Self.suggestedCount))
-			if !all.isEmpty {
-				sectionLabel("Suggested")
-				card(rows: shown, more: shown.count < all.count ? "Show all \(all.count)" : (showAll && all.count > Self.suggestedCount ? "Show fewer" : nil))
-			}
+		} else if !matches.isEmpty {
+			sectionLabel("Suggested")
+			card(rows: matches)
 		}
 	}
 
@@ -264,7 +264,7 @@ struct NewConversationForm: View {
 			.accessibilityAddTraits(.isHeader)
 	}
 
-	private func card(rows: [ChatActor], more: String?) -> some View {
+	private func card(rows: [ChatActor]) -> some View {
 		VStack(spacing: 0) {
 			ForEach(Array(rows.enumerated()), id: \.element.id) { index, actor in
 				Button { add(actor.id) } label: {
@@ -298,27 +298,6 @@ struct NewConversationForm: View {
 				.buttonStyle(.maskinPressed)
 				.overlay(alignment: .top) { if index > 0 { Divider().overlay(MaskinSurface.separator) } }
 				.accessibilityLabel("Add \(actor.participant.name), \(NewConversationCopy.role(of: actor))")
-			}
-			if let more {
-				Button {
-					withAnimation(MaskinMotion.standard) { showAll.toggle() }
-				} label: {
-					HStack {
-						Text(more)
-							.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold, relativeTo: .subheadline))
-							.foregroundStyle(MaskinColor.ink2)
-						Spacer()
-						Image(systemName: "chevron.right")
-							.maskinSymbol(MaskinFontSize.t13, weight: .semibold)
-							.foregroundStyle(MaskinColor.inkPlaceholder)
-							.rotationEffect(.degrees(showAll ? -90 : 90))
-					}
-					.padding(.horizontal, MaskinSpace.s8 + 1)
-					.frame(minHeight: MaskinSpace.touchMin + MaskinSpace.s2)
-					.contentShape(Rectangle())
-				}
-				.buttonStyle(.maskinPressed)
-				.overlay(alignment: .top) { Divider().overlay(MaskinSurface.separator) }
 			}
 		}
 		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadiusLarge.tile, style: .continuous))

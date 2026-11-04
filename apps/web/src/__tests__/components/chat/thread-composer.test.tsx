@@ -13,7 +13,15 @@ vi.mock('@/hooks/use-conversation', () => ({
 	// The composer names who you are answering ("Reply to Forge…"), so it reads
 	// the conversation's participants alongside the send mutation.
 	useConversation: () => ({ data: undefined }),
+	// The cue reads the thread cache.
+	useConversationMessages: () => ({ data: undefined, hasNextPage: false }),
+	flattenMessagesOldestFirst: () => [],
 }))
+
+vi.mock('@/hooks/use-actors', async () => {
+	const actual = await vi.importActual<typeof import('@/hooks/use-actors')>('@/hooks/use-actors')
+	return { ...actual, useActors: () => ({ data: [] }) }
+})
 
 vi.mock('@/components/chat/unified-slash-picker', async () => {
 	const { forwardRef } = await import('react')
@@ -98,7 +106,9 @@ describe('ThreadComposer — draft persistence', () => {
 		render(<ThreadComposer workspaceId="ws-1" conversationId="convo-1" />, {
 			wrapper: createWorkspaceWrapper(),
 		})
-		expect(screen.getByLabelText('Message this conversation')).toHaveValue('half-written prompt')
+		expect(screen.getByLabelText('Message this conversation')).toHaveTextContent(
+			'half-written prompt',
+		)
 	})
 
 	it('does not carry a draft into another conversation', async () => {
@@ -110,6 +120,6 @@ describe('ThreadComposer — draft persistence', () => {
 		await user.type(screen.getByLabelText('Message this conversation'), 'for convo one')
 
 		rerender(<ThreadComposer workspaceId="ws-1" conversationId="convo-2" />)
-		expect(screen.getByLabelText('Message this conversation')).toHaveValue('')
+		expect(screen.getByLabelText('Message this conversation').textContent).toBe('')
 	})
 })

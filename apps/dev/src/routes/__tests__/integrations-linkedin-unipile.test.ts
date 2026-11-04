@@ -55,6 +55,7 @@ vi.mock('../../lib/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }))
 
+import { mountLinkedInOperationRoutes } from '../../__tests__/linkedin-operations'
 import { decrypt } from '../../lib/crypto'
 import { findIntegrationRow, getCredential } from '../../lib/integrations/lookup'
 import { isWorkspaceMember } from '../../lib/workspace-auth'
@@ -163,6 +164,8 @@ function buildAppWithFakes(opts: {
 		c.set('actorId' as never, opts.actorId as unknown)
 		await next()
 	})
+	// Send and reply have no route any more; these suites call the operations directly.
+	mountLinkedInOperationRoutes(app, '/api/integrations/linkedin-unipile')
 	app.route('/api/integrations/linkedin-unipile', integrationsLinkedinRoutes)
 	return app
 }
@@ -999,4 +1002,41 @@ describe('GET /list-conversations — reads are NOT idempotency-tracked', () => 
 		expect(Array.isArray(json.conversations)).toBe(true)
 		expect(db.insert).not.toHaveBeenCalled()
 	})
+})
+
+describe('direct sends have no HTTP route', () => {
+	// A route that took the text from the caller would be a way round the approval a person
+	// gives on the card. Messages, replies, posts, comments and comment replies leave only through
+	// the MCP tools.
+	it.each(['/send-message', '/reply', '/publish-post', '/comment-on-post', '/reply-to-comment'])(
+		'POST %s is not served and never reaches LinkedIn',
+		async (path) => {
+			stubCredential(ACTOR_A, 'linkedin-A')
+			let calls = 0
+			fakeLinkedIn({
+				send: async () => {
+					calls++
+					return { status: 200, body: { id: 'msg-1' }, headers: {} }
+				},
+			})
+			const app = new Hono()
+			app.use('*', async (c, next) => {
+				c.set('db' as never, buildFakeDb() as unknown)
+				c.set('actorId' as never, ACTOR_A as unknown)
+				await next()
+			})
+			app.route('/api/integrations/linkedin-unipile', integrationsLinkedinRoutes)
+
+			const res = await req(app, 'POST', path, {
+				recipient_urn: 'urn:li:person:X',
+				thread_id: 'thread-1',
+				text: 'hi',
+				body: 'hi',
+				idempotency_key: 'k-direct',
+			})
+
+			expect(res.status).toBe(404)
+			expect(calls).toBe(0)
+		},
+	)
 })

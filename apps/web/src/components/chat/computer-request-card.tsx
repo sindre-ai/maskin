@@ -1,5 +1,7 @@
 import { ExpandableDesktop } from '@/components/desktop/expandable-desktop'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useCardAnswer, useSendMessage } from '@/hooks/use-conversation'
 import { useSendSessionInput } from '@/hooks/use-sessions'
 import type { MessageComputerRequest } from '@/lib/api'
@@ -43,6 +45,8 @@ export function ComputerRequestCard({
 	const sendMessage = useSendMessage(conversationId, workspaceId)
 	// A helper another agent started is not in this chat: Done goes to its own session.
 	const sendInput = useSendSessionInput(workspaceId)
+	// Done sends a message to the agent, which a viewer cannot do.
+	const canWrite = useCanWrite()
 	const [localPhase, setPhase] = useState<Phase>('idle')
 	const answered = useCardAnswer(conversationId, workspaceId, messageId) === 'done'
 	const phase: Phase = answered ? 'done' : localPhase
@@ -96,9 +100,11 @@ export function ComputerRequestCard({
 
 			<div className="flex flex-wrap items-center gap-2">
 				{phase === 'open' ? (
-					<Button type="button" size="sm" onClick={done}>
-						Done
-					</Button>
+					<ViewerTooltip>
+						<Button type="button" size="sm" onClick={done} disabled={!canWrite}>
+							Done
+						</Button>
+					</ViewerTooltip>
 				) : (
 					<Button type="button" size="sm" onClick={() => setPhase('open')}>
 						Open computer

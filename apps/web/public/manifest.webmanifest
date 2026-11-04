@@ -1,7 +1,7 @@
 {
 	"name": "Maskin",
 	"short_name": "Maskin",
-	"start_url": "/",
+	"start_url": "/workspaces",
 	"scope": "/",
 	"display": "standalone",
 	"background_color": "#ffffff",

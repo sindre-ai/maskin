@@ -89,7 +89,8 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 	}
 })
 
-vi.mock('@/hooks/use-objects', () => ({
+vi.mock('@/hooks/use-objects', async () => ({
+	...(await import('./objects-facets-mock')).facetHookMocks,
 	useBulkUpdateObjects: () => ({ mutate: vi.fn() }),
 	useBulkResultHandlers: () => ({ reportBulkResult: vi.fn(), retainOnlyFailed: vi.fn() }),
 }))
@@ -195,7 +196,7 @@ describe('validateSearch', () => {
 			sort: 'updatedAt',
 			order: 'desc',
 			q: undefined,
-			groupBy: 'status',
+			groupBy: 'none',
 		})
 	})
 

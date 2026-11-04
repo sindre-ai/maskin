@@ -321,8 +321,24 @@ export async function spawnSession(
 	})
 
 	logger.info('msb create starting', { sessionId: input.sessionId, image: input.image })
+	// Set when the name belongs to a live sandbox, which the cleanup below must not remove.
+	let nameHeldByRunning = false
 	try {
-		await run(deps.msbBin, args, { timeoutMs: CREATE_TIMEOUT_MS })
+		try {
+			await run(deps.msbBin, args, { timeoutMs: CREATE_TIMEOUT_MS })
+		} catch (err) {
+			// A killed first attempt can leave its name registered, so the retry for
+			// the same session id dies on the unique-name constraint. Clear the
+			// leftover (never a running one) and create once more.
+			if (!isNameTakenError(err)) throw err
+			const cleared = await clearStaleSandbox(input.sessionId, deps.msbBin, { run, sleep })
+			if (cleared === 'running') nameHeldByRunning = true
+			if (cleared !== 'cleared') throw err
+			logger.warn('removed stale sandbox with the same name, retrying msb create', {
+				sessionId: input.sessionId,
+			})
+			await run(deps.msbBin, args, { timeoutMs: CREATE_TIMEOUT_MS })
+		}
 	} catch (err) {
 		const e = err as { stderr?: unknown; stdout?: unknown; message?: string }
 		// execFile's message embeds the full command line, including every
@@ -339,7 +355,11 @@ export async function spawnSession(
 		// the same name on retry. Non-fatal — the original create error is the
 		// real signal — but a failed cleanup is still logged, not swallowed.
 		try {
-			await run(deps.msbBin, ['remove', '-f', '--quiet', input.sessionId], { timeoutMs: 15_000 })
+			if (!nameHeldByRunning) {
+				await run(deps.msbBin, ['remove', '-f', '--quiet', input.sessionId], {
+					timeoutMs: 15_000,
+				})
+			}
 		} catch (cleanupErr) {
 			logger.warn('session cleanup after create failure did not confirm removal', {
 				sessionId: input.sessionId,
@@ -378,6 +398,47 @@ export async function spawnSession(
 		envOverflowSpilled: overflow.length,
 		envSanitized: sanitizedCount,
 	}
+}
+
+const NAME_TAKEN_RE = /already exists/i
+const STALE_REMOVAL_POLL_ATTEMPTS = 10
+
+function isNameTakenError(err: unknown): boolean {
+	const e = err as { stderr?: unknown; message?: string }
+	return NAME_TAKEN_RE.test(`${e.stderr ?? ''} ${e.message ?? ''}`)
+}
+
+/**
+ * Frees a sandbox name left behind by a failed or killed create. Returns
+ * 'running' (name left alone) when the sandbox is Running, since that is a live
+ * session and not a leftover, and 'failed' when the name cannot be confirmed
+ * gone. `remove -f` can return before the name is actually released, so poll
+ * the list for it.
+ */
+async function clearStaleSandbox(
+	sessionId: string,
+	msbBin: string,
+	deps: { run: CommandRunner; sleep: (ms: number) => Promise<void> },
+): Promise<'cleared' | 'running' | 'failed'> {
+	const listNames = async (): Promise<MsbStatusRow[]> => {
+		const { stdout } = await deps.run(msbBin, ['list', '--format', 'json'], { timeoutMs: 5_000 })
+		return JSON.parse(stdout) as MsbStatusRow[]
+	}
+	try {
+		const existing = (await listNames()).find((s) => s.name === sessionId)
+		if (existing?.status?.toLowerCase() === 'running') return 'running'
+		await deps.run(msbBin, ['remove', '-f', '--quiet', sessionId], { timeoutMs: 15_000 })
+		for (let i = 0; i < STALE_REMOVAL_POLL_ATTEMPTS; i++) {
+			if (!(await listNames()).some((s) => s.name === sessionId)) return 'cleared'
+			await deps.sleep(STATUS_POLL_INTERVAL_MS)
+		}
+	} catch (err) {
+		logger.warn('could not clear stale sandbox before retrying create', {
+			sessionId,
+			error: String(err),
+		})
+	}
+	return 'failed'
 }
 
 export async function waitForRunning(
@@ -505,6 +566,25 @@ export async function listSandboxNames(deps: MicrosandboxDeps): Promise<string[]
 	return list.map((s) => s.name)
 }
 
+/**
+ * Whether a sandbox is still there and running, for explaining a failed relay.
+ * Never throws: `unknown` means msb could not be asked.
+ */
+export async function sandboxState(
+	name: string,
+	deps: MicrosandboxDeps,
+): Promise<'running' | 'stopped' | 'missing' | 'unknown'> {
+	try {
+		const run = deps.run ?? defaultRunner()
+		const { stdout } = await run(deps.msbBin, ['list', '--format', 'json'], { timeoutMs: 10_000 })
+		const entry = (JSON.parse(stdout) as MsbStatusRow[]).find((s) => s.name === name)
+		if (!entry) return 'missing'
+		return entry.status?.toLowerCase() === 'running' ? 'running' : 'stopped'
+	} catch {
+		return 'unknown'
+	}
+}
+
 export async function readMsbVersion(deps: { msbBin: string; run?: CommandRunner }): Promise<
 	string | null
 > {
@@ -586,6 +666,17 @@ export type SshRelay = {
 	stop: () => void
 }
 
+export type SshRelayResult =
+	| { ok: true; relay: SshRelay }
+	| {
+			ok: false
+			// Which step broke: no free port, `msb ssh serve`, or the `ssh -L` tunnel.
+			step: 'port' | 'serve' | 'tunnel'
+			// Plain-language cause, safe to show the agent: how the child ended and the
+			// last of its stderr, if it said anything.
+			detail: string
+	  }
+
 export type SshKeyInfo = {
 	privateKeyPath: string
 	publicKeyPath: string
@@ -664,6 +755,49 @@ function safeKill(proc: ChildProcess): void {
 	}
 }
 
+const RELAY_STDERR_TAIL_CHARS = 160
+
+const NO_INACTIVITY_TIMEOUT_FLAG = '--no-inactivity-timeout'
+
+// `msb ssh serve --no-inactivity-timeout` only exists in newer msb releases; an
+// older one rejects the unknown flag and exits, which failed every tunnel. Ask
+// this msb instead of assuming.
+async function serveHasNoInactivityTimeoutFlag(
+	msbBin: string,
+	run: CommandRunner,
+): Promise<boolean> {
+	try {
+		const { stdout, stderr } = await run(msbBin, ['ssh', 'serve', '--help'], { timeoutMs: 5_000 })
+		return `${stdout}\n${stderr}`.includes(NO_INACTIVITY_TIMEOUT_FLAG)
+	} catch {
+		return false
+	}
+}
+
+// Keeps the tail of a relay child's stderr and how it ended, so a failed tunnel
+// can say why instead of only that it never came up. The pipe is drained here:
+// an undrained stderr pipe would eventually block the child.
+function captureStderr(proc: ChildProcess): {
+	describe: (fallback: string) => string
+	exit: (message: string) => void
+} {
+	let tail = ''
+	let ended = ''
+	proc.stderr?.on('data', (chunk: Buffer | string) => {
+		tail = (tail + String(chunk)).slice(-RELAY_STDERR_TAIL_CHARS)
+	})
+	return {
+		exit: (message) => {
+			ended = message
+		},
+		// Host paths (key file, msb home) are not for the agent to see.
+		describe: (fallback) =>
+			[ended || fallback, tail.trim().replace(/(?:\/[\w.@-]+){2,}/g, '<path>')]
+				.filter(Boolean)
+				.join(': '),
+	}
+}
+
 /**
  * Open an SSH-relay tunnel from a host-loopback port into a single TCP port
  * inside a running msb sandbox. Two chained child processes:
@@ -677,8 +811,9 @@ function safeKill(proc: ChildProcess): void {
  *      host-loopback relayPort into the sandbox's OWN loopback.
  *
  * `relayPort` must already be reserved by the caller (reserveHostPort); it is
- * released here just before ssh binds it. Returns null (and tears down
- * whatever was started) on any failure — never throws past this boundary.
+ * released here just before ssh binds it. On any failure it tears down
+ * whatever was started and reports which step broke and why — never throws
+ * past this boundary.
  */
 export async function startSshRelay(
 	targetName: string,
@@ -686,7 +821,7 @@ export async function startSshRelay(
 	relayPort: number,
 	sshKeyPath: string,
 	deps: MicrosandboxDeps,
-): Promise<SshRelay | null> {
+): Promise<SshRelayResult> {
 	assertValidSessionId(targetName)
 	const sleep = deps.sleep ?? defaultSleep
 	const now = deps.now ?? Date.now
@@ -704,9 +839,16 @@ export async function startSshRelay(
 	} catch (err) {
 		logger.error('ssh relay: failed to allocate ssh serve port', { targetName, error: String(err) })
 		releaseHostPort(relayPort)
-		return null
+		return { ok: false, step: 'port', detail: 'No free local port was available.' }
 	}
 
+	const keepIdleTunnelOpen = await serveHasNoInactivityTimeoutFlag(
+		deps.msbBin,
+		deps.run ?? defaultRunner(),
+	)
+	if (!keepIdleTunnelOpen) {
+		logger.warn('msb ssh serve has no --no-inactivity-timeout, starting without it', { targetName })
+	}
 	const serveProc = spawnProcess(
 		deps.msbBin,
 		[
@@ -717,14 +859,17 @@ export async function startSshRelay(
 			SSH_RELAY_BIND_HOST,
 			'--port',
 			String(sshPort),
-			'--no-inactivity-timeout',
+			...(keepIdleTunnelOpen ? [NO_INACTIVITY_TIMEOUT_FLAG] : []),
 		],
-		{ stdio: 'ignore' },
+		{ stdio: ['ignore', 'ignore', 'pipe'] },
 	)
+	const serveLog = captureStderr(serveProc)
 	serveProc.on('error', (err) => {
+		serveLog.exit(`could not start: ${String(err)}`)
 		logger.error('msb ssh serve spawn error', { targetName, error: String(err) })
 	})
 	serveProc.on('close', (code, sig) => {
+		serveLog.exit(`exited with ${sig ? `signal ${sig}` : `code ${code}`}`)
 		logger.info('msb ssh serve process exited', { targetName, code, signal: sig })
 	})
 	serveProc.unref()
@@ -734,10 +879,21 @@ export async function startSshRelay(
 	try {
 		await tcpPollReady(SSH_RELAY_BIND_HOST, sshPort, SSH_SERVE_READY_TIMEOUT_MS)
 	} catch (err) {
-		logger.error('msb ssh serve did not become ready', { targetName, sshPort, error: String(err) })
+		const why = serveLog.describe(String(err))
+		logger.error('msb ssh serve did not become ready', {
+			targetName,
+			targetGuestPort,
+			relayPort,
+			sshPort,
+			why,
+		})
 		safeKill(serveProc)
 		releaseHostPort(relayPort)
-		return null
+		return {
+			ok: false,
+			step: 'serve',
+			detail: `The session's sandbox did not accept the tunnel (msb ssh serve ${why}).`,
+		}
 	}
 
 	const tunnelProc = spawnProcess(
@@ -760,14 +916,20 @@ export async function startSshRelay(
 			'BatchMode=yes',
 			'-o',
 			'ServerAliveInterval=30',
+			// Keeps ssh's "permanently added" notice out of the failure reason.
+			'-o',
+			'LogLevel=ERROR',
 			`root@${SSH_RELAY_BIND_HOST}`,
 		],
-		{ stdio: 'ignore' },
+		{ stdio: ['ignore', 'ignore', 'pipe'] },
 	)
+	const tunnelLog = captureStderr(tunnelProc)
 	tunnelProc.on('error', (err) => {
+		tunnelLog.exit(`could not start: ${String(err)}`)
 		logger.error('ssh tunnel spawn error', { targetName, error: String(err) })
 	})
 	tunnelProc.on('close', (code, sig) => {
+		tunnelLog.exit(`exited with ${sig ? `signal ${sig}` : `code ${code}`}`)
 		logger.info('ssh tunnel process exited', { targetName, code, signal: sig })
 	})
 	tunnelProc.unref()
@@ -778,21 +940,35 @@ export async function startSshRelay(
 	try {
 		await tcpPollReady(SSH_RELAY_BIND_HOST, relayPort, SSH_TUNNEL_READY_TIMEOUT_MS)
 	} catch (err) {
-		logger.error('ssh tunnel did not become ready', { targetName, relayPort, error: String(err) })
+		const why = tunnelLog.describe(String(err))
+		logger.error('ssh tunnel did not become ready', {
+			targetName,
+			targetGuestPort,
+			relayPort,
+			sshPort,
+			why,
+		})
 		safeKill(tunnelProc)
 		safeKill(serveProc)
-		return null
+		return {
+			ok: false,
+			step: 'tunnel',
+			detail: `ssh could not forward port ${targetGuestPort} (ssh ${why}).`,
+		}
 	}
 
 	logger.info('ssh relay established', { targetName, targetGuestPort, relayPort, sshPort })
 
 	return {
-		relayPort,
-		targetName,
-		targetGuestPort,
-		stop: () => {
-			safeKill(tunnelProc)
-			safeKill(serveProc)
+		ok: true,
+		relay: {
+			relayPort,
+			targetName,
+			targetGuestPort,
+			stop: () => {
+				safeKill(tunnelProc)
+				safeKill(serveProc)
+			},
 		},
 	}
 }

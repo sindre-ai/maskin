@@ -21,7 +21,9 @@ vi.mock('@tanstack/react-router', async () => {
 	}
 })
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	// `settings` is read by useEnabledModules, which the v2 composer's create
 	// picker reaches through — an empty object means "no modules enabled".
 	useWorkspace: () => ({ workspaceId: 'ws-1', workspace: { id: 'ws-1', settings: {} } }),

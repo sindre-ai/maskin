@@ -38,6 +38,10 @@ Open `http://10.0.1.1:16080/vnc.html` from the server (or an SSH tunnel:
 - Does the desktop appear and respond to mouse and keyboard?
 - Memory use (`msb` stats / `free -m` in the VM) idle and with Chromium open.
 - `xdotool` and `scrot` work in the VM (`DISPLAY=:99`) so an agent can drive it.
+- A web page's file chooser fits the 1280x720 screen with its Open button visible. GTK
+  restores the chooser size from `dock/keyfile` (`org/gtk/settings/file-chooser`,
+  `window-size` and `window-position`, both needed); unset it opens 1124x822, taller than
+  the screen. Select the file, then click Open: double click and Enter do not submit it.
 
 ## Agent control (desktopd)
 

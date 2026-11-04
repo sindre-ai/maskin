@@ -181,6 +181,8 @@ jobs:
         run: |
           docker run -d --name pg -p 5432:5432 --tmpfs /var/lib/postgresql/data -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=maskin_test postgres:16-alpine -c fsync=off -c synchronous_commit=off -c full_page_writes=off -c max_connections=300
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@v5
         with:
@@ -229,6 +231,40 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_test
           INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
 
+      # Real-container check for the MCP guard wrapper (maskin-mcp-guard): the
+      # round trip in mcp-guard-report.test.ts runs once on the host and once with
+      # the wrapper inside the agent-image built from this ref, so a script that
+      # runs on a laptop but not in the image (path, exec bit, node version) fails
+      # here and not on the first guarded session. Skipped on PRs that touch
+      # neither the image nor the guard code; always on for pushes to main.
+      - name: Did the guard wrapper inputs change?
+        id: guard
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ] &&
+            git diff --quiet "origin/${{ github.base_ref }}...HEAD" -- \
+              docker/agent-base turbo.json .github/workflows/ci.yml \
+              apps/dev/src/lib/integrations/mcp-guard.ts \
+              apps/dev/src/routes/mcp-guard.ts \
+              apps/dev/src/services/extension-guard-launch.ts \
+              apps/dev/src/__tests__/integration/mcp-guard-report.test.ts; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+        if: steps.guard.outputs.run == 'true'
+
+      # Reads the layer cache agent-base-docker.yml writes on main; never writes.
+      - name: Build agent-base image for the guard check
+        if: steps.guard.outputs.run == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/agent-base
+          load: true
+          tags: maskin-agent-base:guard-test
+          cache-from: type=gha
+
       - name: Wait for Postgres
         run: until docker exec pg pg_isready -U postgres; do sleep 1; done
 
@@ -239,6 +275,8 @@ jobs:
           INTEGRATION_WORKERS: 4
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_test
           INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+          # Empty means the in-container case is skipped.
+          GUARD_TEST_IMAGE: ${{ steps.guard.outputs.run == 'true' && 'maskin-agent-base:guard-test' || '' }}
 
   # Guards for scripts/bootstrap-local-devstack.sh, the no-Docker dev stack.
   # Nothing else runs that script, so a change that breaks a fresh bootstrap is
@@ -328,6 +366,10 @@ jobs:
   # script that aborts under `set -e` otherwise takes down every session at once.
   # The image build is skipped on PRs that don't touch its inputs; the job still
   # reports success so it can be a required check.
+  #
+  # It also proves the BYO guard wrapper fails closed: on an image without
+  # maskin-mcp-guard a guarded MCP server is dropped and logged, and on the
+  # image currently deployed (pulled below) it cannot start.
   agent-image-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -359,6 +401,24 @@ jobs:
           load: true
           tags: maskin-agent-base:smoke
           cache-from: type=gha
+
+      # The image agents run on today, for the guard-wrapper check in the smoke:
+      # a guarded MCP server must not be startable on an image without the
+      # wrapper. Read-only: a public pull, no login, nothing pushed, nothing
+      # restarted. A failed pull fails the job; an unreadable previous image is
+      # not a pass.
+      - name: Pull the currently deployed image
+        if: steps.changed.outputs.run == 'true'
+        env:
+          DEPLOYED_IMAGE: ${{ vars.AGENT_BASE_IMAGE }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DEPLOYED_IMAGE" ]; then
+            echo "::error::vars.AGENT_BASE_IMAGE is empty, so the previous image cannot be checked"
+            exit 1
+          fi
+          docker pull --platform linux/amd64 "$DEPLOYED_IMAGE:latest"
+          echo "PREVIOUS_IMAGE=$DEPLOYED_IMAGE:latest" >> "$GITHUB_ENV"
 
       - name: Sessions reach the agent launch
         if: steps.changed.outputs.run == 'true'

@@ -28,6 +28,7 @@ export type RouteReason =
 	| 'kept_decision'
 	| 'kept_attention'
 	| 'kept_group'
+	| 'kept_helper'
 	| 'no_origin'
 	| 'no_human_mention'
 
@@ -124,9 +125,10 @@ async function directChatState(
  * classification (session_origin, routed_to) is recorded for every comment.
  *
  * A human H is routed only when all hold: the commenter is an agent and the comment has no decision block; attention is absent or
- * below 4; the header session is the commenter's own in this workspace; that
- * session has a chat origin in this workspace; and the chat has exactly two
- * active participants, H and an agent.
+ * below 4; the header session is the commenter's own in this workspace and is
+ * the chat's own session (not a helper started from it); that session has a
+ * chat origin in this workspace; and the chat has exactly two active
+ * participants, H and an agent.
  */
 export async function planCommentRouting(
 	db: Database,
@@ -166,6 +168,11 @@ export async function planCommentRouting(
 		let kept: RouteReason | null = null
 		if (input.hasDecision) kept = 'kept_decision'
 		else if (input.attention !== undefined && input.attention >= 4) kept = 'kept_attention'
+		// A helper stays in its own thread: its result goes back to the agent that
+		// started it, and it reaches the person only by asking (ask_user_question).
+		// Copying its comment text into the chat would have it talking in a chat it
+		// was never part of.
+		else if (plan.sessionOrigin === 'chat_helper') kept = 'kept_helper'
 		else if (!origin) kept = 'no_origin'
 		else {
 			const state = await directChatState(db, {

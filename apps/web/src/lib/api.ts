@@ -4,14 +4,19 @@ import type {
 	ActorResponse,
 	AgentState,
 	CreateFileCommentInput,
+	DataQueryResult,
+	DataQuerySpec,
 	DisplaySettingsBody,
 	FileCommentDto,
 	FileProposalDto,
+	FileUploadSession,
 	FromSuggestedStep,
 	ListLoopsResponse,
 	LoopSummary,
 	NeededTool,
+	ObjectFacetsResponse,
 	SafeMetadata,
+	SearchResponse,
 	SendRoundInput,
 	SendRoundResponse,
 	SuggestedStep,
@@ -41,7 +46,7 @@ import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 import { reportApiFailure } from './faro'
 
-import type { ObjectPreview, TeachRequest, TeachResponse } from '@maskin/shared'
+import type { ObjectPreview, SessionStatsRow, TeachRequest, TeachResponse } from '@maskin/shared'
 
 export interface DesktopConnectResponse {
 	ticket: string
@@ -99,10 +104,22 @@ type RequestOptions = {
 	 *  this: the server sets an HttpOnly nonce cookie there, and the callback
 	 *  requires it back to prove the same browser started the flow. */
 	credentials?: RequestCredentials
+	/** Lets the caller cancel the request (TanStack Query passes its abort signal here). */
+	signal?: AbortSignal
+	/** Keep the message of a structured 502/503/504 from our own API instead of the generic service text. */
+	keepServerErrorMessage?: boolean
 }
 
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-	const { method = 'GET', body, headers = {}, workspaceId, credentials } = opts
+	const {
+		method = 'GET',
+		body,
+		headers = {},
+		workspaceId,
+		credentials,
+		signal,
+		keepServerErrorMessage,
+	} = opts
 	const apiKey = getApiKey()
 
 	const reqHeaders: Record<string, string> = {
@@ -132,6 +149,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 			headers: reqHeaders,
 			body: body !== undefined ? JSON.stringify(body) : undefined,
 			...(credentials ? { credentials } : {}),
+			...(signal ? { signal } : {}),
 		})
 	} catch (err) {
 		// No status to report — offline, DNS, CORS or a dropped connection — but
@@ -188,8 +206,10 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 
 		// A gateway answering for a down backend (502/503/504) usually carries an
 		// HTML or empty body and, over HTTP/2, no statusText — which surfaced as a
-		// blank toast. Those statuses always get the friendly message.
-		if (SERVICE_UNAVAILABLE_STATUSES.has(res.status) || !message?.trim()) {
+		// blank toast. Those statuses always get the friendly message, unless the
+		// caller asked to keep a message our own API wrote (it sends a code).
+		const ownMessage = keepServerErrorMessage && code !== undefined
+		if ((SERVICE_UNAVAILABLE_STATUSES.has(res.status) && !ownMessage) || !message?.trim()) {
 			message = SERVICE_UNAVAILABLE_MESSAGE
 		}
 
@@ -286,11 +306,161 @@ function uploadFileWithProgress(
 }
 
 // Objects
+// ── Custom extensions ─────────────────────────────────────────────────────
+
+export type ExtensionStatus = 'active' | 'disabled' | 'draft'
+
+export interface ExtensionResponse {
+	id: string
+	workspaceId: string
+	slug: string
+	name: string
+	status: ExtensionStatus
+	mcpConfig: unknown | null
+	webhookConfig: ExtensionWebhookConfig | null
+	webhookToken: string | null
+	webhookUrl: string | null
+	/** True when a signing secret is stored. The secret itself is never returned. */
+	hasSigningSecret: boolean
+	/** True when an MCP API key is stored. The key itself is never returned. */
+	hasMcpKey: boolean
+	toolGrants: ExtensionToolGrants
+	mcpLastError: string | null
+	createdBy: string | null
+	createdAt: string
+	updatedAt: string
+	/** Most recent committed delivery in the last 14 days. */
+	lastDeliveryAt: string | null
+	committedDeliveries: number
+}
+
+export type ExtensionToolEffect = 'allow' | 'deny'
+
+/** Plain effect, or the object form that carries an expiry (not enforced yet). */
+export type ExtensionToolGrant =
+	| ExtensionToolEffect
+	| { effect: ExtensionToolEffect; expires_at: string | null; grant_id: string }
+
+/** agentId -> toolName -> grant. An agent with no entry is denied every tool. */
+export type ExtensionToolGrants = Record<string, Record<string, ExtensionToolGrant>>
+
+export interface ExtensionTool {
+	name: string
+	kind: 'read' | 'write'
+	description?: string
+}
+
+export interface ExtensionGrants {
+	toolGrants: ExtensionToolGrants
+	tools: ExtensionTool[]
+}
+
+export interface ExtensionAttempted {
+	windowDays: number
+	agents: { agentId: string; tools: string[]; lastAttemptedAt: string }[]
+}
+
+export type ExtensionSignatureScheme = 'hmac-sha256' | 'hmac-sha1' | 'timestamp'
+
+export type LiteralOrPath = { literal: string } | { path: string }
+
+/** The stdio server V1 runs: npx mcp-remote <url>, key passed as an Authorization header. */
+export interface ExtensionMcpConfig {
+	envKey: string
+	server:
+		| { type: 'stdio'; command: string; args: string[]; envFromCredential?: string }
+		| { type: 'http'; url: string }
+	autoInject: boolean
+	credentialProvider: string
+	tools: ExtensionTool[]
+}
+
+export type ExtensionMcpProbeResult =
+	| { ok: true; tools: ExtensionTool[] }
+	| {
+			ok: false
+			reason: 'rejected' | 'unreachable' | 'invalid' | 'blocked'
+			message: string
+	  }
+
+export interface ExtensionWebhookConfig {
+	signatureScheme: ExtensionSignatureScheme
+	signatureHeader: string
+	signaturePrefix?: string
+	timestampHeader?: string
+	timestampBodyTemplate?: string
+	maxAgeSeconds?: number
+	secretSource?: 'env' | 'credential'
+	eventMap: {
+		externalIdPath: string
+		entityType: LiteralOrPath
+		action: LiteralOrPath
+		dataPath?: string
+	}
+	rateLimit?: { perMinute: number }
+}
+
+export interface VendorRecipe {
+	slug: string
+	displayName: string
+	mcpConfig?: ExtensionMcpConfig
+	webhookConfig?: Partial<ExtensionWebhookConfig>
+	docsUrl: string
+}
+
+export interface CreateExtensionInput {
+	slug: string
+	name: string
+	status?: ExtensionStatus
+	mcp_config?: ExtensionMcpConfig | null
+	webhook_config?: ExtensionWebhookConfig | null
+	signing_secret?: string
+	mcp_api_key?: string
+}
+
+export interface UpdateExtensionInput {
+	name?: string
+	status?: ExtensionStatus
+	mcp_config?: ExtensionMcpConfig | null
+	webhook_config?: ExtensionWebhookConfig | null
+	signing_secret?: string
+	mcp_api_key?: string
+}
+
+export interface ExtensionDeliveries {
+	windowDays: number
+	committed: number
+	deliveries: { id: string; externalId: string; receivedAt: string; processedAt: string }[]
+}
+
+export type ExtensionSampleResult =
+	| {
+			ok: true
+			event: { externalId: string; entityType: string; action: string; data: unknown }
+	  }
+	| { ok: false; field: string; message: string }
+
 export const api = {
+	// The unified search endpoint: all five sources, true counts, AND matching.
+	search: {
+		query: (
+			workspaceId: string,
+			params: Record<string, string>,
+			opts?: { signal?: AbortSignal },
+		) => {
+			const qs = Object.keys(params).length > 0 ? `?${new URLSearchParams(params)}` : ''
+			return request<SearchResponse>(`/search${qs}`, { workspaceId, signal: opts?.signal })
+		},
+	},
 	objects: {
 		list: (workspaceId: string, params?: Record<string, string>) => {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<ObjectResponse[]>(`/objects${qs}`, { workspaceId })
+		},
+		// Exact totals under the list's filters — tab counts, group headers, filter chips.
+		facets: (workspaceId: string, params: Record<string, string>) => {
+			const qs = `?${new URLSearchParams(params)}`
+			return request<ObjectFacetsResponse>(`/objects/facets${qs}`, { workspaceId })
 		},
 		board: (workspaceId: string, params: Record<string, string>) => {
 			const qs = `?${new URLSearchParams(params)}`
@@ -541,6 +711,18 @@ export const api = {
 			request<{ events: EventResponse[] }>(`/loops/${id}/activity`, { workspaceId }),
 	},
 
+	data: {
+		query: (workspaceId: string, spec: DataQuerySpec) =>
+			request<DataQueryResult>(`/data/query?spec=${encodeURIComponent(JSON.stringify(spec))}`, {
+				workspaceId,
+			}),
+		nextChange: (workspaceId: string, spec: DataQuerySpec) =>
+			request<{ in_ms: number | null }>(
+				`/data/next-change?spec=${encodeURIComponent(JSON.stringify(spec))}`,
+				{ workspaceId },
+			),
+	},
+
 	triggers: {
 		list: (workspaceId: string) => request<TriggerResponse[]>('/triggers', { workspaceId }),
 		get: (id: string, workspaceId: string) =>
@@ -597,7 +779,7 @@ export const api = {
 			}),
 		createByoLogin: (
 			workspaceId: string,
-			body: { displayName: string; username: string; password: string },
+			body: { displayName: string; username: string; password: string; email?: string },
 		) =>
 			request<{ integrationId: string }>('/integrations/byo-login', {
 				method: 'POST',
@@ -612,6 +794,7 @@ export const api = {
 				rawSecret?: string
 				username?: string
 				password?: string
+				email?: string
 			},
 		) =>
 			request<{ id: string; renamed: boolean; secretReplaced: boolean }>(
@@ -690,7 +873,12 @@ export const api = {
 		connect: (
 			workspaceId: string,
 			provider: string,
-			body?: { api_key?: string; receive_subdomain?: string; install_new_org?: boolean },
+			body?: {
+				api_key?: string
+				receive_subdomain?: string
+				install_new_org?: boolean
+				origin?: string
+			},
 		) =>
 			request<{
 				install_url?: string
@@ -740,6 +928,14 @@ export const api = {
 				method: 'DELETE',
 				workspaceId,
 			}),
+		disconnectGoogle: (
+			workspaceId: string,
+			body: { email: string; scope: 'drive' | 'drive-meet' | 'google' },
+		) =>
+			request<{ disconnected: { id: string; provider: string }[] }>(
+				'/integrations/google/disconnect',
+				{ method: 'POST', body, workspaceId },
+			),
 		githubLinkable: (workspaceId: string) =>
 			request<LinkableGithubInstallation[]>('/integrations/github/linkable', { workspaceId }),
 		githubLink: (workspaceId: string, installationId: string) =>
@@ -774,6 +970,13 @@ export const api = {
 			request<LinkedInIdentitySummary[]>('/integrations/linkedin-unipile/identities', {
 				workspaceId,
 			}),
+		driveWatches: (workspaceId: string) =>
+			request<DriveWatch[]>('/integrations/google-drive/watched-folders', { workspaceId }),
+		stopDriveWatch: (workspaceId: string, folderId: string) =>
+			request<{ ok: true; folderId: string }>(
+				`/integrations/google-drive/watched-folders/${encodeURIComponent(folderId)}`,
+				{ method: 'DELETE', workspaceId },
+			),
 	},
 
 	notifications: {
@@ -856,6 +1059,7 @@ export const api = {
 			const qs = new URLSearchParams(params).toString()
 			return request<SessionUsageResponse>(`/sessions/usage?${qs}`, { workspaceId })
 		},
+		stats: (workspaceId: string) => request<SessionStatsRow[]>('/sessions/stats', { workspaceId }),
 	},
 
 	events: {
@@ -884,7 +1088,7 @@ export const api = {
 			return all
 		},
 		create: (workspaceId: string, data: CreateCommentInput, idempotencyKey?: string) =>
-			request<EventResponse>('/events', {
+			request<CreateCommentResponse>('/events', {
 				method: 'POST',
 				body: data,
 				workspaceId,
@@ -1122,6 +1326,13 @@ export const api = {
 
 	forYou: {
 		list: (workspaceId: string) => request<ForYouResponse>('/for-you', { workspaceId }),
+		// Dismiss is its own record, separate from the read position: opening a page does not
+		// retire a card, this does. Curated cards go by notification id, decision cards by the
+		// comment that raised them.
+		dismiss: (workspaceId: string, body: ForYouDismissBody) =>
+			request<{ ok: true }>('/for-you/dismissals', { method: 'POST', body, workspaceId }),
+		undismiss: (workspaceId: string, body: ForYouDismissBody) =>
+			request<{ ok: true }>('/for-you/dismissals/undo', { method: 'POST', body, workspaceId }),
 	},
 
 	webPush: {
@@ -1147,14 +1358,20 @@ export const api = {
 		// Chat dictation: base64 WAV in, text out. Billed to the operator account,
 		// so the workspace header is required (a read-only viewer is refused).
 		create: (workspaceId: string, body: { audio: string; language?: string }) =>
-			request<{ text: string }>('/transcriptions', { method: 'POST', body, workspaceId }),
+			request<{ text: string }>('/transcriptions', {
+				method: 'POST',
+				body,
+				workspaceId,
+				// The route says which upstream failed (busy, account or key, timeout).
+				keepServerErrorMessage: true,
+			}),
 	},
 
 	voiceSessions: {
 		// Reserves the caller's live-call slot for the caller-agent pair. No vendor
 		// credential comes back: the connection to the vendor is made by the
 		// server when the offer below is posted.
-		create: (workspaceId: string, body: { agent_actor_id: string }) =>
+		create: (workspaceId: string, body: { agent_actor_id: string; conversation_id?: string }) =>
 			request<{ voice_session_id: string }>('/voice-sessions', {
 				method: 'POST',
 				body,
@@ -1163,10 +1380,19 @@ export const api = {
 		// Hands the browser's WebRTC offer to the server, which connects it to the
 		// vendor and attaches its own tool connection. tools_available is false when
 		// that attach failed; the call still runs, and the agent says tools are down.
-		offer: (workspaceId: string, voiceSessionId: string, sdp: string) =>
+		offer: (
+			workspaceId: string,
+			voiceSessionId: string,
+			sdp: string,
+			noiseReduction?: 'near_field' | 'far_field',
+		) =>
 			request<{ sdp: string; tools_available: boolean; persist_transcripts: boolean }>(
 				`/voice-sessions/${voiceSessionId}/offer`,
-				{ method: 'POST', body: { sdp }, workspaceId },
+				{
+					method: 'POST',
+					body: { sdp, ...(noiseReduction ? { noise_reduction: noiseReduction } : {}) },
+					workspaceId,
+				},
 			),
 		// Ends the call server-side: row status, ended_at, cost, voice_session_ended.
 		// Idempotent, so a double hangup (End button then dialog close) is harmless.
@@ -1205,6 +1431,65 @@ export const api = {
 				`/user-display-settings/${encodeURIComponent(objectType)}`,
 				{ method: 'PUT', body: { settings }, workspaceId },
 			),
+	},
+
+	extensions: {
+		list: (workspaceId: string) => request<ExtensionResponse[]>('/extensions', { workspaceId }),
+		get: (workspaceId: string, id: string) =>
+			request<ExtensionResponse>(`/extensions/${id}`, { workspaceId }),
+		create: (workspaceId: string, data: CreateExtensionInput) =>
+			request<ExtensionResponse>('/extensions', { method: 'POST', body: data, workspaceId }),
+		update: (workspaceId: string, id: string, data: UpdateExtensionInput) =>
+			request<ExtensionResponse>(`/extensions/${id}`, {
+				method: 'PATCH',
+				body: data,
+				workspaceId,
+			}),
+		recipes: (workspaceId: string) =>
+			request<VendorRecipe[]>('/extensions/recipes', { workspaceId }),
+		probeMcp: (workspaceId: string, data: { server_url: string; api_key?: string }) =>
+			request<ExtensionMcpProbeResult>('/extensions/mcp/probe', {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+		generateSecret: (workspaceId: string) =>
+			request<{ secret: string }>('/extensions/generate-secret', { method: 'POST', workspaceId }),
+		regenerateToken: (workspaceId: string, id: string) =>
+			request<ExtensionResponse>(`/extensions/${id}/regenerate-token`, {
+				method: 'POST',
+				workspaceId,
+			}),
+		deliveries: (workspaceId: string, id: string) =>
+			request<ExtensionDeliveries>(`/extensions/${id}/deliveries`, { workspaceId }),
+		sample: (
+			workspaceId: string,
+			id: string,
+			data: { payload: string; webhook_config?: ExtensionWebhookConfig },
+		) =>
+			request<ExtensionSampleResult>(`/extensions/${id}/sample`, {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+		setAgentGrant: (
+			workspaceId: string,
+			id: string,
+			agentId: string,
+			tools?: Record<string, ExtensionToolEffect>,
+		) =>
+			request<ExtensionGrants>(`/extensions/${id}/grants/${agentId}`, {
+				method: 'PUT',
+				body: tools ? { tools } : {},
+				workspaceId,
+			}),
+		revokeAgentGrant: (workspaceId: string, id: string, agentId: string) =>
+			request<ExtensionGrants>(`/extensions/${id}/grants/${agentId}`, {
+				method: 'DELETE',
+				workspaceId,
+			}),
+		attempted: (workspaceId: string, id: string) =>
+			request<ExtensionAttempted>(`/extensions/${id}/attempted`, { workspaceId }),
 	},
 
 	workspaceSkills: {
@@ -1358,6 +1643,20 @@ export const api = {
 				body: data,
 				workspaceId,
 			}),
+		// Threads the caller started or replied in, across their conversations.
+		replyThreads: (workspaceId: string, params?: { limit?: number }) => {
+			const qs = params?.limit ? `?limit=${params.limit}` : ''
+			return request<ReplyThreadListResponse>(`/conversations/threads${qs}`, { workspaceId })
+		},
+		markThreadRead: (id: string, workspaceId: string, rootId: number, lastReadMessageId: number) =>
+			request<{ last_read_message_id: number }>(
+				`/conversations/${id}/messages/${rootId}/thread/read`,
+				{
+					method: 'PUT',
+					body: { last_read_message_id: lastReadMessageId },
+					workspaceId,
+				},
+			),
 	},
 
 	files: {
@@ -1385,6 +1684,25 @@ export const api = {
 			data: CreateFileInput,
 			opts?: { onProgress?: (progress: number) => void; signal?: AbortSignal },
 		) => uploadFileWithProgress(workspaceId, data, opts),
+		startUpload: (
+			workspaceId: string,
+			data: { name: string; mime_type: string; size_bytes: number; description?: string | null },
+		) => request<FileUploadSession>('/files/uploads', { method: 'POST', body: data, workspaceId }),
+		completeUpload: (
+			workspaceId: string,
+			uploadId: string,
+			parts: { part_number: number; etag: string }[],
+		) =>
+			request<FileDetail>(`/files/uploads/${uploadId}/complete`, {
+				method: 'POST',
+				body: { parts },
+				workspaceId,
+			}),
+		abortUpload: (workspaceId: string, uploadId: string) =>
+			request<{ aborted: boolean }>(`/files/uploads/${uploadId}`, {
+				method: 'DELETE',
+				workspaceId,
+			}),
 		update: (workspaceId: string, id: string, data: UpdateFileInput) =>
 			request<FileDetail>(`/files/${id}`, { method: 'PATCH', body: data, workspaceId }),
 		delete: (workspaceId: string, id: string) =>
@@ -1643,7 +1961,9 @@ export interface UnreadItem {
 	latest_mention?: LatestMention
 	// Set for an item the Chief of Staff curated. Its headline and rationale are what the card
 	// shows when there is no source comment to lead with.
-	curated?: { headline: string; rationale: string | null }
+	// notification_id is what Dismiss names for it; absent for a decision card, which is dismissed
+	// by its comment instead.
+	curated?: { headline: string; rationale: string | null; notification_id?: string | null }
 }
 
 export interface LatestMentionDecisionOption {
@@ -1652,6 +1972,8 @@ export interface LatestMentionDecisionOption {
 	recommended?: boolean
 	/** The option that sends or otherwise reaches real people. */
 	destructive?: boolean
+	/** Tapping this option changes the status of an object (the one the card is on by default). */
+	set_status?: { status: string; object_id?: string }
 }
 
 /**
@@ -1715,6 +2037,11 @@ export interface ForYouItem {
 	session_id: string | null
 	object?: ObjectResponse
 	latest_mention?: LatestMention
+}
+
+export interface ForYouDismissBody {
+	notification_id?: string
+	source_comment_id?: number
 }
 
 export interface ForYouResponse {
@@ -1867,6 +2194,10 @@ export interface WorkspaceResponse {
 	id: string
 	name: string
 	settings: Record<string, unknown>
+	/** Whether a BYO key is stored. The keys themselves are never returned. */
+	llm_configured?: { anthropic: boolean; openai: boolean; custom_llm: boolean }
+	/** Last four characters of each stored key, for a workspace admin or owner only. */
+	llm_key_hints?: { anthropic: string | null; openai: string | null; custom_llm: string | null }
 	enterprise: boolean
 	// Single accountable human payer for this workspace's plan — read-only,
 	// server-set. See apps/dev/src/lib/workspace-capacity.ts.
@@ -1908,9 +2239,7 @@ export interface CreateInviteInput {
 	role: 'member' | 'viewer'
 }
 
-export type CreateInviteResponse =
-	| { status: 'linked'; member: { workspaceId: string; actorId: string; role: string } }
-	| { status: 'pending'; invite: InviteSummary }
+export type CreateInviteResponse = { status: 'pending'; invite: InviteSummary }
 
 export interface DeviceAuthPreview {
 	client: 'tvos'
@@ -2053,6 +2382,8 @@ export interface IntegrationResponse {
 	missingScopes?: string[]
 	/** True when `missingScopes` is non-empty — reconnecting re-consents and fixes it. */
 	needsReconnect?: boolean
+	/** Scopes the install's token response carried. Names only, never the token. */
+	grantedScopes?: string[]
 	/** Keychain: where the credential came from. Never the value. */
 	source?: string
 	/** Keychain: for source chat_capture, the session the key was pasted into. */
@@ -2134,6 +2465,21 @@ export interface ChatCaptureResponse {
 	undoUrl: string | null
 	/** stopped: the old session is gone, post the marker message to respawn it. failed: it may still be running. */
 	relaunch: 'stopped' | 'failed'
+}
+
+/** One watched Drive folder, as the Folder watches section lists it. Optional
+ *  fields are null when the watch has no stored value for them. */
+export interface DriveWatch {
+	folderId: string
+	name: string
+	path: string | null
+	addedAt: string | null
+	lastFiredAt: string | null
+	integrationId: string
+	/** Google account (email) of the Drive connection the watch lives on. */
+	account: string | null
+	/** Enabled triggers whose filter names this folder; empty when none do. */
+	triggers: Array<{ id: string; name: string }>
 }
 
 /** A GitHub App installation the current actor can bind to this workspace,
@@ -2321,6 +2667,10 @@ export interface FileDetail extends FileListItem {
 	annotations: FileAnnotation[]
 	/** sha256 of the stored bytes, echoed as if_match so a save cannot overwrite a newer version. */
 	contentHash?: string | null
+	/** True for files too large to inline: `content` is empty, read the bytes from `downloadUrl`. */
+	contentOmitted?: boolean
+	/** Short-lived storage URL for the bytes of a file with `contentOmitted`. Expires; refetch the file for a fresh one. */
+	downloadUrl?: string
 }
 
 export interface CreateFileInput {
@@ -2502,6 +2852,8 @@ export interface MessageKeychainRequest {
 	kind: 'api_key' | 'login'
 	suggested_name?: string
 	hint?: string
+	/** Agents the asker said will use it; ticked on the card even when not in the chat. */
+	target_agents?: Array<{ id: string; name: string }>
 }
 
 /** An agent's request to use an existing credential, surfaced into chat as an Allow card. */
@@ -2560,6 +2912,25 @@ export interface MessageIntegrationAccessRequest {
 	reason?: string
 }
 
+/** An agent asking the person to add a tool (MCP) server, surfaced as a card. Holds no secret. */
+export interface MessageMcpServerRequest {
+	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
+	name: string
+	hint?: string
+	type?: 'stdio' | 'http'
+	command?: string
+	args?: string[]
+	url?: string
+	/** Values the agent may know (not secret): a region, or a Keychain reference. */
+	env?: Record<string, string>
+	headers?: Record<string, string>
+	/** Names the person types the value for in the card. */
+	secret_env?: string[]
+	secret_headers?: string[]
+}
+
 /** An agent asking the person to act on its own computer (the card opens it). */
 export interface MessageComputerRequest {
 	session_id: string
@@ -2613,6 +2984,8 @@ export interface MessageMetadata {
 	keychain_access_request?: MessageKeychainAccessRequest
 	/** Backend-owned: an agent's request for access to a connected integration, rendered as a card. */
 	integration_access_request?: MessageIntegrationAccessRequest
+	/** Backend-owned: an agent's request to add a tool (MCP) server, rendered as a card. */
+	mcp_server_request?: MessageMcpServerRequest
 	computer_request?: MessageComputerRequest
 	/** Backend-owned: a helper's result handed to its sender; hidden from the chat. */
 	helper_return?: string
@@ -2648,6 +3021,39 @@ export interface MessageResponse {
 	 * and for callers that are not participants of the conversation.
 	 */
 	spawned_sessions?: SpawnedSession[]
+	/** The root this message replies under; null or absent on a top-level message. */
+	threadRootId?: number | null
+	/** A reply that was also sent to the main timeline. */
+	threadAlsoInChannel?: boolean
+	/** Reply summary on a top-level message that has replies; null when it has none. */
+	thread?: ReplyThreadSummary | null
+}
+
+export interface ReplyThreadParticipant {
+	actorId: string
+	actorName: string
+	actorType: string
+}
+
+export interface ReplyThreadSummary {
+	replyCount: number
+	lastReplyId: number
+	lastReplyAt: string | null
+	/** Replies by others newer than the caller's thread read cursor. */
+	unreadCount: number
+	participants: ReplyThreadParticipant[]
+}
+
+export interface ReplyThreadListItem {
+	conversationId: string
+	conversationTitle: string
+	root: MessageResponse
+	thread: ReplyThreadSummary
+	lastReply: MessageResponse | null
+}
+
+export interface ReplyThreadListResponse {
+	threads: ReplyThreadListItem[]
 }
 
 /**
@@ -2691,6 +3097,8 @@ export interface SessionStateChangedPayload {
 
 export interface EditMessageInput {
 	content: string
+	/** Tagged ids after the edit. Left out: the message keeps the ids it has. */
+	metadata?: { mentions: string[] }
 }
 
 export interface MessagesListResponse {
@@ -2703,6 +3111,8 @@ export interface MessagesListResponse {
 export interface CreateConversationInput {
 	title: string
 	participant_actor_ids: string[]
+	/** Open the pair's one direct message instead of a new topical chat. */
+	direct?: boolean
 	initial_message?: string
 	initial_message_metadata?: MessageMetadata
 }
@@ -2722,6 +3132,10 @@ export interface PostMessageInput {
 	content: string
 	metadata?: MessageMetadata
 	session_id?: string
+	/** Post as a reply under this top-level message. */
+	thread_root_id?: number
+	/** With thread_root_id: also show the reply in the main timeline. */
+	also_in_channel?: boolean
 }
 
 export interface SessionConfigInput {
@@ -2764,6 +3178,10 @@ export interface SessionResponse {
 	createdAt: string | null
 	updatedAt: string | null
 	currentActivity: string | null
+	/** The agent server the session runs on; null or absent for a session on the local host. Those on a server cannot be paused. */
+	agentServerId?: string | null
+	/** The thread (its root message id) a chat session answers in; null or absent for the main chat. */
+	threadRootId?: number | null
 	// Postgres `numeric` — serialized as a string; null until the session reports a cost.
 	totalCostUsd?: string | number | null
 }
@@ -2822,6 +3240,17 @@ export interface EventResponse {
 	createdAt: string | null
 	/** Pre-formatted human-readable sentence (populated by /api/objects/:id/graph; absent on other event endpoints). */
 	description?: string
+}
+
+/** `POST /events`: the comment, plus what happened when the reply was a tap on a status button. */
+export interface CreateCommentResponse extends EventResponse {
+	status_action?: {
+		applied: boolean
+		object_id: string
+		status?: string
+		reason?: 'moved_on' | 'not_found' | 'invalid_status'
+		current_status?: string | null
+	}
 }
 
 export interface CreateCommentInput {

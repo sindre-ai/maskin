@@ -19,6 +19,8 @@ vi.mock('@/hooks/use-conversation', () => ({
 	useConversation: () => ({
 		data: { participants: [{ actorId: 'agent-1', actorName: 'Infra' }] },
 	}),
+	useConversationMessages: () => ({ data: undefined, hasNextPage: false }),
+	flattenMessagesOldestFirst: () => [],
 }))
 vi.mock('@/hooks/use-sessions', async () => {
 	const actual =

@@ -1,7 +1,9 @@
 import { AgentAccess } from '@/components/integrations/agent-access'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Switch } from '@/components/ui/switch'
 import { useActors } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import {
 	useRemoveAgentGrant,
 	useSetAgentGrant,
@@ -64,6 +66,7 @@ function ToolServerSwitches({
 }) {
 	const [open, setOpen] = useState(false)
 	const { workspace } = useWorkspace()
+	const canWrite = useCanWrite()
 	const { data: actors } = useActors(workspaceId)
 	const setGrant = useSetAgentGrant(workspaceId, integration.id)
 	const removeGrant = useRemoveAgentGrant(workspaceId, integration.id)
@@ -74,6 +77,7 @@ function ToolServerSwitches({
 	const agents = (actors ?? []).filter((a) => a.type === 'agent')
 	const me = getStoredActor()
 	const canEdit =
+		canWrite &&
 		me?.type === 'human' &&
 		(integration.createdBy === me.id || workspace.role === 'owner' || workspace.role === 'admin')
 	const busy = setGrant.isPending || removeGrant.isPending || setDefault.isPending
@@ -115,12 +119,14 @@ function ToolServerSwitches({
 								Also every agent added later, unless switched off below
 							</p>
 						</div>
-						<Switch
-							checked={defaultAccess !== 'none'}
-							onCheckedChange={(on) => setDefault.mutate(on ? 'read' : 'none')}
-							disabled={!canEdit || busy}
-							aria-label={`${integration.displayName ?? 'Tool server'} for all agents`}
-						/>
+						<ViewerTooltip>
+							<Switch
+								checked={defaultAccess !== 'none'}
+								onCheckedChange={(on) => setDefault.mutate(on ? 'read' : 'none')}
+								disabled={!canEdit || busy}
+								aria-label={`${integration.displayName ?? 'Tool server'} for all agents`}
+							/>
+						</ViewerTooltip>
 					</div>
 
 					{agents.map((agent) => (
@@ -132,15 +138,17 @@ function ToolServerSwitches({
 								<ActorAvatar name={agent.name} type={agent.type} size="sm" />
 								<p className="truncate text-sm font-medium text-foreground">{agent.name}</p>
 							</div>
-							<Switch
-								checked={toolServerEnabled(
-									defaultAccess,
-									grants.find((g) => g.actorId === agent.id),
-								)}
-								onCheckedChange={(on) => toggle(agent.id, on)}
-								disabled={!canEdit || busy}
-								aria-label={`${integration.displayName ?? 'Tool server'} for ${agent.name}`}
-							/>
+							<ViewerTooltip>
+								<Switch
+									checked={toolServerEnabled(
+										defaultAccess,
+										grants.find((g) => g.actorId === agent.id),
+									)}
+									onCheckedChange={(on) => toggle(agent.id, on)}
+									disabled={!canEdit || busy}
+									aria-label={`${integration.displayName ?? 'Tool server'} for ${agent.name}`}
+								/>
+							</ViewerTooltip>
 						</div>
 					))}
 

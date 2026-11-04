@@ -22,6 +22,19 @@ const VOICE_TOOLS = [
 		description: 'List objects',
 		parameters: { type: 'object', properties: { cursor: { type: 'string' } } },
 	},
+	// Not in the core set: reachable only through ask_workspace.
+	{
+		type: 'function' as const,
+		name: 'delete_object',
+		description: 'Delete an object',
+		parameters: { type: 'object', properties: { id: { type: 'string' } } },
+	},
+	{
+		type: 'function' as const,
+		name: 'acme__send',
+		description: 'Attached server tool',
+		parameters: { type: 'object', properties: {} },
+	},
 ]
 
 function membershipRow() {
@@ -48,6 +61,7 @@ afterEach(() => {
 	setOpenRealtimeSocketFn(null)
 	setVoiceInvokeToolFactory(null)
 	vi.unstubAllGlobals()
+	vi.unstubAllEnvs()
 	process.env.MASKIN_VOICE_OPENAI_API_KEY = undefined
 })
 
@@ -211,8 +225,10 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 		systemPrompt: 'You are the Chief of Staff.',
 		tools: null,
 	})
-	const post = (app: { request: (r: Request) => Response | Promise<Response> }) =>
-		app.request(jsonRequest('POST', `/api/voice-sessions/${SESSION}/offer`, OFFER))
+	const post = (
+		app: { request: (r: Request) => Response | Promise<Response> },
+		body: Record<string, unknown> = OFFER,
+	) => app.request(jsonRequest('POST', `/api/voice-sessions/${SESSION}/offer`, body))
 
 	function openSocketImmediately() {
 		setOpenRealtimeSocketFn((_url, _key, handlers) => {
@@ -319,7 +335,7 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 		expect(JSON.stringify(calls.inserts)).not.toContain(agentKey)
 	})
 
-	it('sends the offer to the GA calls endpoint with the pinned model and the full MCP tool list', async () => {
+	it('sends the offer to the GA calls endpoint with the pinned model and the core tool list plus ask_workspace', async () => {
 		openSocketImmediately()
 		setVoiceInvokeToolFactory(async () => ({
 			tools: VOICE_TOOLS,
@@ -341,6 +357,7 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 			[memberRow()],
 			[offerAgent()],
 			[], // agentSkills
+			[{ name: 'Sam', timezone: null }], // caller
 			[{ settings: null }], // transcript persistence
 		]
 		mockResults.update = [{ id: SESSION }]
@@ -368,8 +385,164 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 		}
 		expect(sent.type).toBe('realtime')
 		expect(sent.model).toBe('gpt-realtime-2.1')
-		expect(sent.tools).toEqual(VOICE_TOOLS)
+		// Core tools of the toolkit, then the call's own tools. Everything else is behind ask_workspace.
+		expect(sent.tools.map((t) => t.name)).toEqual([
+			'list_objects',
+			'show_in_chat',
+			'wait_for_user',
+			'ask_workspace',
+		])
+		// ask_workspace carries its own confirmation_id; show_in_chat is never held.
+		const byName = Object.fromEntries(sent.tools.map((t) => [t.name, JSON.stringify(t)]))
+		expect(byName.ask_workspace).toContain('confirmation_id')
+		expect(byName.show_in_chat).not.toContain('confirmation_id')
 		expect(sent.tool_choice).toBe('auto')
+	})
+
+	it('sends the offer to the GA calls endpoint with every tool and no ask_workspace when MASKIN_VOICE_TOOL_MODE is full', async () => {
+		vi.stubEnv('MASKIN_VOICE_TOOL_MODE', 'full')
+		openSocketImmediately()
+		setVoiceInvokeToolFactory(async () => ({
+			tools: VOICE_TOOLS,
+			invokeTool: vi.fn(),
+			readOnlyTools: new Set(['list_objects']),
+			unreachableServers: [],
+			close: async () => {},
+		}))
+		const fetchMock = vi.fn().mockResolvedValue(
+			new Response('v=0 vendor answer', {
+				status: 201,
+				headers: { location: '/v1/realtime/calls/rtc_abc' },
+			}),
+		)
+		vi.stubGlobal('fetch', fetchMock)
+		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
+		mockResults.selectQueue = [
+			[sessionRow()],
+			[memberRow()],
+			[offerAgent()],
+			[], // agentSkills
+			[{ name: 'Sam', timezone: null }], // caller
+			[{ settings: null }], // transcript persistence
+		]
+		mockResults.update = [{ id: SESSION }]
+
+		const res = await post(app)
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({
+			sdp: 'v=0 vendor answer',
+			tools_available: true,
+			persist_transcripts: true,
+		})
+
+		const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+		expect(url).toBe('https://api.openai.com/v1/realtime/calls')
+		const headers = init.headers as Record<string, string>
+		expect(headers.Authorization).toBe('Bearer test-key')
+		expect(headers['OpenAI-Beta']).toBeUndefined()
+		const form = init.body as FormData
+		expect(form.get('sdp')).toBe(OFFER.sdp)
+		const sent = JSON.parse(form.get('session') as string) as {
+			type: string
+			model: string
+			tools: Array<{ type: string; name: string }>
+			tool_choice: string
+		}
+		expect(sent.type).toBe('realtime')
+		expect(sent.model).toBe('gpt-realtime-2.1')
+		expect(sent.tools.map((t) => t.name)).toEqual([
+			'list_objects',
+			'delete_object',
+			'acme__send',
+			'show_in_chat',
+			'wait_for_user',
+		])
+		expect(sent.tool_choice).toBe('auto')
+	})
+
+	it('rejects a noise_reduction value that is not near_field or far_field', async () => {
+		const { app } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
+		expect((await post(app, { ...OFFER, noise_reduction: 'stadium' })).status).toBe(400)
+	})
+
+	it('passes the offer body noise_reduction on to the vendor session', async () => {
+		openSocketImmediately()
+		setVoiceInvokeToolFactory(async () => ({
+			tools: VOICE_TOOLS,
+			invokeTool: vi.fn(),
+			readOnlyTools: new Set<string>(),
+			unreachableServers: [],
+			close: async () => {},
+		}))
+		const fetchMock = vi.fn().mockResolvedValue(
+			new Response('v=0 vendor answer', {
+				status: 201,
+				headers: { location: '/v1/realtime/calls/rtc_abc' },
+			}),
+		)
+		vi.stubGlobal('fetch', fetchMock)
+		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
+		mockResults.selectQueue = [
+			[sessionRow()],
+			[memberRow()],
+			[offerAgent()],
+			[],
+			[{ name: 'Sam', timezone: null }],
+			[{ name: 'Acme ApS' }],
+			[{ settings: null }],
+		]
+		mockResults.update = [{ id: SESSION }]
+		expect((await post(app, { ...OFFER, noise_reduction: 'near_field' })).status).toBe(200)
+		const form = (fetchMock.mock.calls[0] as [string, RequestInit])[1].body as FormData
+		const sent = JSON.parse(form.get('session') as string) as {
+			audio: { input: { noise_reduction: { type: string } } }
+		}
+		expect(sent.audio.input.noise_reduction).toEqual({ type: 'near_field' })
+	})
+
+	it('puts the expected languages, the three names and the configured voice in the vendor session', async () => {
+		process.env.MASKIN_VOICE_REALTIME_VOICE = 'cedar'
+		try {
+			openSocketImmediately()
+			setVoiceInvokeToolFactory(async () => ({
+				tools: VOICE_TOOLS,
+				invokeTool: vi.fn(),
+				readOnlyTools: new Set<string>(),
+				unreachableServers: [],
+				close: async () => {},
+			}))
+			const fetchMock = vi.fn().mockResolvedValue(
+				new Response('v=0 vendor answer', {
+					status: 201,
+					headers: { location: '/v1/realtime/calls/rtc_abc' },
+				}),
+			)
+			vi.stubGlobal('fetch', fetchMock)
+			const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
+			mockResults.selectQueue = [
+				[sessionRow()],
+				[memberRow()],
+				[offerAgent()],
+				[], // agentSkills
+				[{ name: 'Sam', timezone: null }], // caller
+				[{ name: 'Acme ApS' }], // workspace name
+				[{ settings: null }], // transcript persistence
+			]
+			mockResults.update = [{ id: SESSION }]
+
+			expect((await post(app)).status).toBe(200)
+			const form = (fetchMock.mock.calls[0] as [string, RequestInit])[1].body as FormData
+			const sent = JSON.parse(form.get('session') as string) as {
+				audio: { input: { transcription: Record<string, unknown> }; output: { voice: string } }
+			}
+			expect(sent.audio.input.transcription).toMatchObject({
+				languages: ['da', 'en'],
+				keywords: ['Sam', 'Chief of Staff', 'Acme ApS'],
+			})
+			expect(sent.audio.output.voice).toBe('cedar')
+		} finally {
+			process.env.MASKIN_VOICE_REALTIME_VOICE = undefined
+		}
 	})
 
 	describe('when the session was started from a chat', () => {
@@ -397,6 +570,7 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 				[memberRow()],
 				[offerAgent()],
 				[], // agentSkills
+				[{ name: 'Sam', timezone: null }], // caller
 				opts.callerStillInChat ? [{ id: CHAT }] : [],
 				...(opts.callerStillInChat
 					? [
@@ -434,6 +608,71 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 		})
 	})
 
+	describe('call instructions', () => {
+		async function instructionsFor(opts: {
+			skills?: Array<{ name: string; content: string }>
+			caller: { name: string; timezone: string | null }
+		}) {
+			openSocketImmediately()
+			setVoiceInvokeToolFactory(async () => ({
+				tools: VOICE_TOOLS,
+				invokeTool: vi.fn(),
+				readOnlyTools: new Set<string>(),
+				unreachableServers: [],
+				close: async () => {},
+			}))
+			const fetchMock = vi.fn().mockResolvedValue(
+				new Response('v=0 vendor answer', {
+					status: 201,
+					headers: { location: '/v1/realtime/calls/rtc_abc' },
+				}),
+			)
+			vi.stubGlobal('fetch', fetchMock)
+			const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
+			mockResults.selectQueue = [
+				[sessionRow()],
+				[memberRow()],
+				[offerAgent()],
+				opts.skills ?? [],
+				[opts.caller],
+				[{ settings: null }], // transcript persistence
+			]
+			mockResults.update = [{ id: SESSION }]
+			const res = await post(app)
+			expect(res.status).toBe(200)
+			const form = (fetchMock.mock.calls[0] as [string, RequestInit])[1].body as FormData
+			return (JSON.parse(form.get('session') as string) as { instructions: string }).instructions
+		}
+
+		it("states who is calling and the date and time in the caller's time zone", async () => {
+			const instructions = await instructionsFor({
+				caller: { name: 'Sam', timezone: 'Europe/Copenhagen' },
+			})
+			expect(instructions).toContain('You are speaking with Sam.')
+			expect(instructions).toMatch(
+				/It is now \w+ \d+ \w+ \d{4}, \d{2}:\d{2} \(Europe\/Copenhagen\)\./,
+			)
+		})
+
+		it('gives the time in UTC when the caller has no time zone', async () => {
+			const instructions = await instructionsFor({ caller: { name: 'Sam', timezone: null } })
+			expect(instructions).toMatch(/It is now \w+ \d+ \w+ \d{4}, \d{2}:\d{2} UTC\./)
+		})
+
+		it('drops the longest skill when the attached skills pass the size cap', async () => {
+			const instructions = await instructionsFor({
+				caller: { name: 'Sam', timezone: null },
+				skills: [
+					{ name: 'short-skill', content: 'Keep me.' },
+					{ name: 'giant-skill', content: 'x'.repeat(60_000) },
+				],
+			})
+			expect(instructions).toContain('## Skill: short-skill')
+			expect(instructions).not.toContain('giant-skill')
+			expect(instructions.length).toBeLessThan(30_000)
+		})
+	})
+
 	it('reports tools_available false when the server socket cannot attach', async () => {
 		setCreateRealtimeCallFn(async () => ({
 			kind: 'ok',
@@ -457,6 +696,7 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 			[memberRow()],
 			[offerAgent()],
 			[],
+			[{ name: 'Sam', timezone: null }],
 			[{ settings: null }],
 		]
 		mockResults.update = [{ id: SESSION }]

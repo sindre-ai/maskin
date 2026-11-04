@@ -7,6 +7,29 @@
 echo "STUB_CLAUDE_RAN base_url=${ANTHROPIC_BASE_URL:-<unset>} args=$*"
 echo '{"type":"result","subtype":"success","is_error":false,"result":"stub"}'
 
+# MCP view, for the guard cases in agent-image-smoke.sh. SERVERS is what
+# agent-run.sh left in the --mcp-config file. STARTABLE is the subset whose
+# command exists in this image: a server whose command is missing cannot be
+# spawned by the real CLI, so it does not start.
+cfg=""
+prev=""
+for arg in "$@"; do
+	[ "$prev" = "--mcp-config" ] && cfg="$arg"
+	prev="$arg"
+done
+if [ -n "$cfg" ] && [ -f "$cfg" ]; then
+	echo "STUB_MCP_SERVERS=$(jq -r '.mcpServers | keys | join(",")' "$cfg")"
+	startable=""
+	while IFS=$'\t' read -r name cmd; do
+		if [ -n "$cmd" ] && command -v "$cmd" >/dev/null 2>&1; then
+			startable="${startable:+$startable,}$name"
+		fi
+	done < <(jq -r '.mcpServers | to_entries | sort_by(.key)[] | [.key, (.value.command // "")] | @tsv' "$cfg")
+	echo "STUB_MCP_STARTABLE=$startable"
+else
+	echo "STUB_MCP_SERVERS=<none>"
+fi
+
 # With STUB_RUN_MCP_STDIO=1, start every stdio entry of the --mcp-config file the
 # way Claude Code does (the container environment plus the entry's env block) and
 # report the NAMES of the Maskin and GitHub variables the child can see. Values

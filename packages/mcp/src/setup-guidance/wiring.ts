@@ -93,16 +93,20 @@ export async function safeBuildSetupBlock(
 }
 
 /**
- * Read workspace LLM readiness from the settings object returned by
- * `GET /api/workspaces`. Any non-empty provider value in `llm_keys` or any
- * shape of `claude_oauth` counts.
+ * Read workspace LLM readiness from a row returned by `GET /api/workspaces`.
+ * A key counts when `llm_configured` says one is stored (the keys themselves
+ * are never returned) or, for an older server, when `settings.llm_keys` holds
+ * a non-empty value. Any shape of `claude_oauth` counts.
  */
 export function readWorkspaceLlmReadiness(
 	settings: Record<string, unknown> | null | undefined,
+	llmConfigured?: { anthropic?: boolean; openai?: boolean } | null,
 ): WorkspaceLlmReadiness {
 	const s = settings ?? {}
 	const llmKeys = (s.llm_keys ?? {}) as Record<string, unknown>
-	const hasLlmKey = Object.values(llmKeys).some((v) => typeof v === 'string' && v.trim().length > 0)
+	const hasLlmKey =
+		Boolean(llmConfigured?.anthropic || llmConfigured?.openai) ||
+		Object.values(llmKeys).some((v) => typeof v === 'string' && v.trim().length > 0)
 	const claudeOAuth = s.claude_oauth
 	const hasClaudeOAuth =
 		claudeOAuth != null && (typeof claudeOAuth !== 'object' || Object.keys(claudeOAuth).length > 0)
@@ -225,6 +229,7 @@ export function mergeBetSetupBlocks(blocks: SetupBlock[]): SetupBlock {
 type WorkspaceRow = {
 	id: string
 	settings?: Record<string, unknown> | null
+	llm_configured?: { anthropic?: boolean; openai?: boolean } | null
 }
 
 async function loadWorkspace(
@@ -295,7 +300,10 @@ export async function buildBetSetupBlockFromApi(
 			options.workspace !== undefined
 				? options.workspace
 				: await loadWorkspace(apiCall, options.workspaceId, options.defaultWorkspaceId)
-		const readiness = readWorkspaceLlmReadiness(workspace?.settings ?? undefined)
+		const readiness = readWorkspaceLlmReadiness(
+			workspace?.settings ?? undefined,
+			workspace?.llm_configured,
+		)
 		const statusOrder = readStatusOrder(workspace?.settings ?? undefined, bet.type)
 		return buildBetSetupBlock(bet, readiness, statusOrder)
 	})

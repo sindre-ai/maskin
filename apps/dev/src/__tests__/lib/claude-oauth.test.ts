@@ -51,6 +51,8 @@ function createMockDb(workspace?: Record<string, unknown>) {
 		update: vi.fn().mockReturnValue({
 			set: vi.fn().mockReturnValue({ where: mockUpdateWhere }),
 		}),
+		// persistRefreshedSlot sets lock_timeout / statement_timeout first.
+		execute: vi.fn().mockResolvedValue([]),
 		transaction: mockTransaction,
 	}
 	mockTransaction.mockImplementation(async (fn: (tx: typeof db) => Promise<unknown>) => fn(db))
@@ -560,6 +562,10 @@ describe('refresh failure record', () => {
 			errorType: 'invalid_grant',
 		})
 		expect(typeof recorded()[0]?.extra.failedAt).toBe('string')
+		expect(vi.mocked(Sentry.captureMessage).mock.calls[0]?.[0]).toBe(
+			'Claude OAuth token refresh failed',
+		)
+		expect(recorded()[0]?.tags).toMatchObject({ workspace_id: 'ws-1' })
 	})
 
 	it('reads the error type from a nested error object', async () => {

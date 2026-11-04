@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { decodeLogin, encodeLogin } from '../../../lib/integrations/byo-login'
 import {
+	LOGIN_EMAIL_MAX_LENGTH,
 	LOGIN_PASSWORD_MAX_LENGTH,
 	LOGIN_USERNAME_MAX_LENGTH,
 	LoginValueError,
@@ -37,6 +38,22 @@ describe('checkLoginFields', () => {
 	})
 })
 
+describe('checkLoginFields with an email', () => {
+	it('accepts a login with no email, or a well-formed one', () => {
+		expect(checkLoginFields('me', 'pw')).toBeNull()
+		expect(checkLoginFields('me', 'pw', 'me@example.test')).toBeNull()
+	})
+
+	it('holds the email to the username rules', () => {
+		expect(checkLoginFields('me', 'pw', '')).toBe('email_length')
+		expect(checkLoginFields('me', 'pw', 'a'.repeat(LOGIN_EMAIL_MAX_LENGTH + 1))).toBe(
+			'email_length',
+		)
+		expect(checkLoginFields('me', 'pw', ' me@example.test')).toBe('email_edge_whitespace')
+		expect(checkLoginFields('me', 'pw', 'me@exa\u0000mple.test')).toBe('email_control_character')
+	})
+})
+
 describe('assertValidLoginFields', () => {
 	it('throws a 400 whose message names the rule and never the value', () => {
 		const password = 'secret\nvalue'
@@ -57,8 +74,15 @@ describe('encodeLogin / decodeLogin', () => {
 		expect(decodeLogin(encodeLogin(login))).toEqual(login)
 	})
 
+	it('round-trips an email, and a login without one stays without', () => {
+		const withEmail = { username: 'me', password: 'pw', email: 'me@example.test' }
+		expect(decodeLogin(encodeLogin(withEmail))).toEqual(withEmail)
+		expect(encodeLogin({ username: 'me', password: 'pw' })).not.toContain('email')
+	})
+
 	it.each([
 		['not json'],
+		['{"username":"me","password":"pw","email":1}'],
 		['null'],
 		['"a string"'],
 		['{"username":"me"}'],

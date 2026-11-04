@@ -15,13 +15,6 @@ import { toast } from 'sonner'
 
 const ACCEPTED_MIME = new Set(['image/png', 'image/jpeg'])
 
-// `avatar_url` is not on the shared response schema yet — the agent avatar
-// uploader reads it the same defensive way (see agent-avatar-upload.tsx).
-function readAvatarUrl(actor: ActorResponse): string | undefined {
-	const url = (actor as unknown as { avatar_url?: unknown }).avatar_url
-	return typeof url === 'string' && url.length > 0 ? url : undefined
-}
-
 /**
  * Your profile — mockup screen `Profile` (v2 line 2518).
  *
@@ -70,7 +63,6 @@ function IdentityHeader({
 }) {
 	const upload = useUploadActorAvatar(workspaceId)
 	const inputRef = useRef<HTMLInputElement>(null)
-	const avatarUrl = readAvatarUrl(actor)
 
 	async function handleFile(file: File | undefined) {
 		if (!file) return
@@ -99,7 +91,7 @@ function IdentityHeader({
 					id={actor.id}
 					name={actor.name}
 					type={actor.type}
-					imageUrl={avatarUrl}
+					imageUrl={actor.avatar_url ?? undefined}
 					className="size-12 text-lg"
 				/>
 				{/* The camera strip is the only affordance saying the plate is a

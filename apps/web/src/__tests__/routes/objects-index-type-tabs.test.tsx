@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { buildWorkspaceWithRole } from '../factories'
+import { buildFacets, facetsState, resetFacetsState } from './objects-facets-mock'
 
 // This suite pins the fix for the bug Magnus flagged: on a workspace with more
 // than one page of objects, every type-tab must stay visible even if the type
@@ -92,7 +93,8 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 	}
 })
 
-vi.mock('@/hooks/use-objects', () => ({
+vi.mock('@/hooks/use-objects', async () => ({
+	...(await import('./objects-facets-mock')).facetHookMocks,
 	useBulkUpdateObjects: () => ({ mutate: vi.fn() }),
 	useBulkResultHandlers: () => ({ reportBulkResult: vi.fn(), retainOnlyFailed: vi.fn() }),
 }))
@@ -192,62 +194,66 @@ beforeEach(() => {
 	infiniteState.pages = []
 	infiniteState.hasNextPage = false
 	infiniteState.isLoading = false
+	resetFacetsState()
 })
 
-describe('ObjectsPage type-tab strip — lazy-load safety', () => {
-	it('keeps every enabled type-tab visible while more pages could still load', () => {
-		// First page is full (50 bet rows) and more pages exist. Task/Insight are
-		// enabled types but 0 of them landed on page 1. Before the fix, both tabs
-		// would be pruned by `count === 0` and the user couldn't switch to them.
+describe('ObjectsPage type-tab strip — server totals', () => {
+	it('shows the real count for a type none of whose rows have loaded', () => {
+		// Only 50 bet rows are in hand, but the workspace has 289 bets and 40
+		// tasks. The tabs read the server's totals, not the loaded rows.
 		infiniteState.pages = [Array.from({ length: 50 }, (_, i) => ({ id: `b-${i}`, type: 'bet' }))]
 		infiniteState.hasNextPage = true
+		facetsState.data = buildFacets({ by_type: { bet: 289, task: 40, insight: 3 } })
 
 		render(<ObjectsPage />)
 
-		expect(screen.getByRole('button', { name: 'Bets (50)' })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Tasks (0)' })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Insights (0)' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'All (332)' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Bets (289)' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Tasks (40)' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Insights (3)' })).toBeInTheDocument()
 	})
 
-	it('keeps every enabled type-tab visible while the first page is still loading', () => {
+	it('keeps every enabled type-tab, without counts, until the totals arrive', () => {
 		infiniteState.pages = []
-		infiniteState.hasNextPage = false
 		infiniteState.isLoading = true
+		facetsState.data = undefined
+		facetsState.isLoading = true
 
 		render(<ObjectsPage />)
 
-		expect(screen.getByRole('button', { name: 'Bets (0)' })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Tasks (0)' })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Insights (0)' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Bets' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Tasks' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Insights' })).toBeInTheDocument()
 	})
 
-	it('prunes a genuinely unused type-tab once the infinite query has drained', () => {
-		// Workspace has bet rows only, and every page has landed
-		// (`hasNextPage: false`, `isLoading: false`). Only then is it safe to hide
-		// tabs whose count is truly zero — the mockup rule that keeps an empty
-		// workspace at one `All` tab.
-		infiniteState.pages = [[{ id: 'b-1', type: 'bet' }]]
-		infiniteState.hasNextPage = false
-		infiniteState.isLoading = false
+	it('prunes a type the workspace genuinely has none of', () => {
+		facetsState.data = buildFacets({ by_type: { bet: 1 } })
 
 		render(<ObjectsPage />)
 
 		expect(screen.getByRole('button', { name: 'All (1)' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Bets (1)' })).toBeInTheDocument()
-		expect(screen.queryByRole('button', { name: 'Tasks (0)' })).toBeNull()
-		expect(screen.queryByRole('button', { name: 'Insights (0)' })).toBeNull()
+		expect(screen.queryByRole('button', { name: /^Tasks/ })).toBeNull()
+		expect(screen.queryByRole('button', { name: /^Insights/ })).toBeNull()
 	})
 
 	it('collapses an empty workspace to the All tab (single-tab baseline)', () => {
-		infiniteState.pages = [[]]
-		infiniteState.hasNextPage = false
-		infiniteState.isLoading = false
+		facetsState.data = buildFacets()
 
 		render(<ObjectsPage />)
 
 		expect(screen.getByRole('button', { name: 'All (0)' })).toBeInTheDocument()
-		expect(screen.queryByRole('button', { name: 'Bets (0)' })).toBeNull()
-		expect(screen.queryByRole('button', { name: 'Tasks (0)' })).toBeNull()
-		expect(screen.queryByRole('button', { name: 'Insights (0)' })).toBeNull()
+		expect(screen.queryByRole('button', { name: /^Bets/ })).toBeNull()
+		expect(screen.queryByRole('button', { name: /^Tasks/ })).toBeNull()
+		expect(screen.queryByRole('button', { name: /^Insights/ })).toBeNull()
+	})
+
+	it('keeps the open type tab even when the filters leave it empty', () => {
+		searchState.current = { ...searchState.current, type: 'task' }
+		facetsState.data = buildFacets({ by_type: { bet: 4 } })
+
+		render(<ObjectsPage />)
+
+		expect(screen.getByRole('button', { name: 'Tasks (0)' })).toBeInTheDocument()
 	})
 })

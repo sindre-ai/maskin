@@ -7,10 +7,17 @@ import SwiftUI
 struct GlanceRoot<Content: View>: View {
 	private let environment: AppEnvironment
 	private let content: (ForYouRuntime?) -> Content
+	private let signedOut: (AuthSession) -> AnyView
 	@State private var forYou: ForYouRuntime?
 
-	init(environment: AppEnvironment, @ViewBuilder content: @escaping (ForYouRuntime?) -> Content) {
+	/// `signedOut` is what shows before sign-in; the default is the email-and-password form (watch).
+	init(
+		environment: AppEnvironment,
+		signedOut: @escaping (AuthSession) -> AnyView = { AnyView(GlanceLogin(auth: $0)) },
+		@ViewBuilder content: @escaping (ForYouRuntime?) -> Content
+	) {
 		self.environment = environment
+		self.signedOut = signedOut
 		self.content = content
 	}
 
@@ -20,7 +27,7 @@ struct GlanceRoot<Content: View>: View {
 			if auth.session != nil {
 				content(forYou)
 			} else {
-				GlanceLogin(auth: auth)
+				signedOut(auth)
 			}
 		}
 		.task(id: auth.session?.apiKey) { await environment.workspaces.refresh() }

@@ -40,6 +40,20 @@ const SECOND_SEGMENT_ENVELOPE = JSON.stringify({
 	},
 })
 
+// A later turn of the same resumed process: its tokens and duration are for that turn alone,
+// and total_cost_usd keeps running on from the first turn's 0.25.
+const SECOND_TURN_ENVELOPE = JSON.stringify({
+	type: 'result',
+	total_cost_usd: 0.4,
+	duration_ms: 500,
+	usage: {
+		input_tokens: 100,
+		output_tokens: 50,
+		cache_creation_input_tokens: 1,
+		cache_read_input_tokens: 2,
+	},
+})
+
 // A remote session that was paused and resumed must end with the usage of all
 // its segments, not just the last one. The sessions row is what billing and
 // the pricing checks read.
@@ -114,6 +128,31 @@ describe('SessionManager.markRemoteSessionComplete — usage across a resume (In
 		expect(row?.outputTokens).toBe(700)
 		expect(row?.totalCostUsd).toBe('0.750000')
 		expect(row?.durationMs).toBe(5000)
+	})
+
+	it('sums every turn of the resumed segment and takes its last running cost', async () => {
+		const session = await resumedSession()
+		// A second turn in the same process: tokens and duration are per turn, the cost a running total.
+		await insertSessionLog(db, session.id, {
+			stream: 'stdout',
+			content: `${SECOND_TURN_ENVELOPE}\n`,
+		})
+
+		const manager = new SessionManager(db, stubStorage())
+		try {
+			await manager.markRemoteSessionComplete(session.id, 0)
+		} finally {
+			await manager.stop()
+		}
+
+		const row = await readRow(session.id)
+		expect(row?.inputTokens).toBe(1400 + 100)
+		expect(row?.outputTokens).toBe(700 + 50)
+		expect(row?.cacheCreationInputTokens).toBe(15 + 1)
+		expect(row?.cacheReadInputTokens).toBe(27 + 2)
+		expect(row?.durationMs).toBe(5000 + 500)
+		// 0.5 saved at pause + 0.4 running total of the resumed process, not 0.25 + 0.4.
+		expect(row?.totalCostUsd).toBe('0.900000')
 	})
 
 	it('keeps the stored totals when the report finds no result envelope', async () => {

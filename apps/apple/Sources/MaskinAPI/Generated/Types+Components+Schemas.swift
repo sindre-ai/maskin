@@ -143,15 +143,32 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/VoiceSessionOfferBody/sdp`.
             public var sdp: Swift.String
+            /// Microphone type: near_field for headsets and phones, far_field for a laptop mic. Absent means far_field.
+            ///
+            /// - Remark: Generated from `#/components/schemas/VoiceSessionOfferBody/noise_reduction`.
+            @frozen public enum noise_reductionPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                case near_field = "near_field"
+                case far_field = "far_field"
+            }
+            /// Microphone type: near_field for headsets and phones, far_field for a laptop mic. Absent means far_field.
+            ///
+            /// - Remark: Generated from `#/components/schemas/VoiceSessionOfferBody/noise_reduction`.
+            public var noise_reduction: Components.Schemas.VoiceSessionOfferBody.noise_reductionPayload?
             /// Creates a new `VoiceSessionOfferBody`.
             ///
             /// - Parameters:
             ///   - sdp: The browser’s WebRTC SDP offer.
-            public init(sdp: Swift.String) {
+            ///   - noise_reduction: Microphone type: near_field for headsets and phones, far_field for a laptop mic. Absent means far_field.
+            public init(
+                sdp: Swift.String,
+                noise_reduction: Components.Schemas.VoiceSessionOfferBody.noise_reductionPayload? = nil
+            ) {
                 self.sdp = sdp
+                self.noise_reduction = noise_reduction
             }
             public enum CodingKeys: String, CodingKey {
                 case sdp
+                case noise_reduction
             }
         }
         /// - Remark: Generated from `#/components/schemas/HangupVoiceSessionResponse`.
@@ -247,6 +264,48 @@ extension Components {
                 case reason
                 case input_audio_seconds
                 case output_audio_seconds
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/TranscribeResponse`.
+        public struct TranscribeResponse: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/TranscribeResponse/text`.
+            public var text: Swift.String
+            /// Creates a new `TranscribeResponse`.
+            ///
+            /// - Parameters:
+            ///   - text:
+            public init(text: Swift.String) {
+                self.text = text
+            }
+            public enum CodingKeys: String, CodingKey {
+                case text
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/TranscribeBody`.
+        public struct TranscribeBody: Codable, Hashable, Sendable {
+            /// Base64 of a WAV file (16 kHz mono recommended).
+            ///
+            /// - Remark: Generated from `#/components/schemas/TranscribeBody/audio`.
+            public var audio: Swift.String
+            /// Optional language hint, e.g. "en" or "nb-NO".
+            ///
+            /// - Remark: Generated from `#/components/schemas/TranscribeBody/language`.
+            public var language: Swift.String?
+            /// Creates a new `TranscribeBody`.
+            ///
+            /// - Parameters:
+            ///   - audio: Base64 of a WAV file (16 kHz mono recommended).
+            ///   - language: Optional language hint, e.g. "en" or "nb-NO".
+            public init(
+                audio: Swift.String,
+                language: Swift.String? = nil
+            ) {
+                self.audio = audio
+                self.language = language
+            }
+            public enum CodingKeys: String, CodingKey {
+                case audio
+                case language
             }
         }
     }

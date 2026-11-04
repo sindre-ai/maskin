@@ -88,7 +88,11 @@ public struct APIForYouBackend: ForYouSource, DecisionBackend {
 				objectTitle: item.object?.title, objectType: item.object?._type,
 				status: item.object?.status, unreadCount: 1,
 				maxAttention: item.latest_mention?.attention.map { Int($0) },
-				latestEventId: item.latest_mention.map { Int($0.event_id) },
+				// A curated item with no source comment has no `latest_mention`; the server then puts
+				// the newest activity on the object in `latest_event_id`. Same fallback as the web.
+				// Without it a swipe to mark read has nothing to mark and the card springs back.
+				latestEventId: item.latest_mention.map { Int($0.event_id) }
+					?? item.latest_event_id.map { Int($0) },
 				latestActivityAt: item.latest_mention.flatMap { Self.date($0.created_at) }
 					?? item.created_at.flatMap(Self.date),
 				mention: mention, rank: position)

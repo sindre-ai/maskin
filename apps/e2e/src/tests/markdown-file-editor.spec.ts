@@ -4,7 +4,7 @@ import type { TestAPI } from '../helpers/api.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 // Bet "Rich Markdown editor across Maskin", Slice A: a markdown file opens as an
-// editable document in the file viewer behind the rich-markdown-editor flag.
+// editable document in the file viewer.
 //
 // createFile persists bytes to S3/SeaweedFS, which the verify-e2e CI job does
 // not provision (postgres only) — same constraint as file-viewer.spec.ts. The
@@ -104,12 +104,6 @@ function changedLines(before: string, after: string): string[] {
 
 test.describe('Markdown file editor in the file viewer', () => {
 	test.skip(!!process.env.CI, 'S3/SeaweedFS not available in CI')
-
-	test.beforeEach(async ({ page }) => {
-		await page.addInitScript(() => {
-			localStorage.setItem('ff:rich-markdown-editor', 'on')
-		})
-	})
 
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
 		test(`opens a report.md with a generic type in the editor and saves nothing at ${viewport.label}`, async ({

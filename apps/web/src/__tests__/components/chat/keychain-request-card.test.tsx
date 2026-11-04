@@ -31,7 +31,7 @@ vi.mock('@/hooks/use-sessions', () => ({
 	useContinueSession: () => ({ mutate: continueMutate }),
 }))
 
-import { KeychainRequestCard, keychainEnvNames } from '@/components/chat/keychain-request-card'
+import { KeychainRequestCard, keychainUseHint } from '@/components/chat/keychain-request-card'
 
 const SESSION_ID = '11111111-1111-1111-1111-111111111111'
 const ASKING_AGENT = 'agent-1'
@@ -91,6 +91,35 @@ describe('KeychainRequestCard', () => {
 		expect(screen.getByRole('checkbox', { name: 'Analyst' })).toBeChecked()
 		// People in the chat are not agents and are not offered.
 		expect(screen.queryByRole('checkbox', { name: 'Magnus' })).not.toBeInTheDocument()
+	})
+
+	it('lists a named target that is not in the chat as ticked, and unticks the chat agents that are not named', async () => {
+		const user = userEvent.setup()
+		renderCard(request({ target_agents: [{ id: 'agent-9', name: 'Infra & DevOps' }] }))
+
+		expect(screen.getByRole('checkbox', { name: 'Infra & DevOps' })).toBeChecked()
+		// The asker stays ticked; the other chat agent starts unticked but can be ticked.
+		expect(screen.getByRole('checkbox', { name: 'Bookkeeper' })).toBeChecked()
+		expect(screen.getByRole('checkbox', { name: 'Analyst' })).not.toBeChecked()
+		await user.click(screen.getByRole('checkbox', { name: 'Analyst' }))
+		expect(screen.getByRole('checkbox', { name: 'Analyst' })).toBeChecked()
+
+		await user.click(screen.getByRole('checkbox', { name: 'Infra & DevOps' }))
+		expect(screen.getByRole('checkbox', { name: 'Infra & DevOps' })).not.toBeChecked()
+	})
+
+	it('shares with the named target after Save', async () => {
+		const user = userEvent.setup()
+		renderCard(request({ target_agents: [{ id: 'agent-9', name: 'Infra & DevOps' }] }))
+		await fillLogin(user)
+
+		await user.click(screen.getByRole('button', { name: 'Save to Keychain' }))
+
+		await waitFor(() => expect(mockChatCapture).toHaveBeenCalledTimes(1))
+		expect(mockChatCapture).toHaveBeenCalledWith(
+			'ws-1',
+			expect.objectContaining({ agentIds: [ASKING_AGENT, 'agent-9'] }),
+		)
 	})
 
 	it('asks for a single secret, not a username, when an API key was requested', () => {
@@ -180,8 +209,9 @@ describe('KeychainRequestCard', () => {
 		expect(sendMutate).toHaveBeenCalledTimes(1)
 		const content = (sendMutate.mock.calls[0]?.[0] as { content: string }).content
 		expect(content).toContain('e-conomic')
-		expect(content).toContain('KEYCHAIN_BYO_LOGIN_E_CONOMIC_USERNAME')
-		expect(content).toContain('KEYCHAIN_BYO_LOGIN_E_CONOMIC_PASSWORD')
+		expect(content).toContain('{{keychain:e-conomic.username}}')
+		expect(content).toContain('{{keychain:e-conomic.password}}')
+		expect(content).not.toContain('KEYCHAIN_BYO_LOGIN')
 		// The message is visible to everyone in the chat and to the agent: no value in it.
 		expect(content).not.toContain(PASSWORD)
 		expect(content).not.toContain('me@example.test')
@@ -199,7 +229,7 @@ describe('KeychainRequestCard', () => {
 		expect(continueMutate).toHaveBeenCalledTimes(1)
 		const call = continueMutate.mock.calls[0]?.[0] as { id: string; content: string }
 		expect(call.id).toBe(SESSION_ID)
-		expect(call.content).toContain('KEYCHAIN_BYO_LOGIN_E_CONOMIC_PASSWORD')
+		expect(call.content).toContain('{{keychain:e-conomic.password}}')
 		expect(call.content).not.toContain(PASSWORD)
 	})
 
@@ -285,13 +315,12 @@ describe('KeychainRequestCard', () => {
 	})
 })
 
-describe('keychainEnvNames', () => {
-	it('names the same env vars the session launch injects', () => {
-		expect(keychainEnvNames('login', 'e-conomic')).toEqual([
-			'KEYCHAIN_BYO_LOGIN_E_CONOMIC_USERNAME',
-			'KEYCHAIN_BYO_LOGIN_E_CONOMIC_PASSWORD',
-		])
-		expect(keychainEnvNames('api_key', 'Stripe')).toEqual(['KEYCHAIN_BYO_APIKEY_STRIPE'])
-		expect(keychainEnvNames('api_key', '🔑')).toEqual([])
+describe('keychainUseHint', () => {
+	it('puts an API key in the environment and tells the agent to type a login by reference', () => {
+		expect(keychainUseHint('api_key', 'Stripe')).toContain('KEYCHAIN_BYO_APIKEY_STRIPE')
+		expect(keychainUseHint('api_key', '🔑')).toBe('')
+		const login = keychainUseHint('login', 'e-conomic')
+		expect(login).toContain('{{keychain:e-conomic.password}}')
+		expect(login).not.toContain('KEYCHAIN_BYO_LOGIN')
 	})
 })

@@ -70,12 +70,23 @@ public final class DeepLinkRouter {
 		// for it. If it ever arrives here (cold launch, sheet already gone) there is nothing to
 		// navigate to, and it must not read as a broken link or hold a pending route.
 		if IntegrationConnectOutcome.isCallback(url) { return true }
+		// The share extension's "Open Maskin" link only brings the app forward. It must not be read
+		// as the inbox of a workspace called "open" (a not-a-member rejection).
+		if Self.isOpenApp(url) { return true }
 		guard let link = DeepLink(url: url, universalHosts: universalHosts) else {
 			rejection = .unrecognized
 			return false
 		}
 		open(link)
 		return true
+	}
+
+	/// The bare open-the-app link: foreground the app, navigate nowhere.
+	public static func isOpenApp(_ url: URL) -> Bool {
+		guard url.scheme?.lowercased() == DeepLink.scheme, url.host?.lowercased() == "open",
+			url.user == nil, url.port == nil
+		else { return false }
+		return url.path.isEmpty || url.path == "/"
 	}
 
 	public func open(_ link: DeepLink) {

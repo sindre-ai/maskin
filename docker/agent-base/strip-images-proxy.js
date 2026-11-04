@@ -146,12 +146,89 @@ function upstreamOptions(req, bytes, target) {
 	}
 }
 
+// Response headers kept in the log when the upstream refuses a request. An
+// allow list, so a credential or cookie can never reach the session log; every
+// other header is logged by name only.
+const LOGGED_RESPONSE_HEADERS = [
+	'cf-ray',
+	'cf-mitigated',
+	'server',
+	'content-type',
+	'content-encoding',
+	'retry-after',
+	'date',
+]
+// How much of an error body is read to look for the Ray ID a Cloudflare block
+// page prints. Only the id is kept; the body itself is never logged.
+const ERROR_SAMPLE_BYTES = 8192
+const PAGE_RAY_ID = /Ray ID:?\s*(?:<[^>]*>\s*)*([0-9a-f]{16})\b/i
+
+// "model=... request_bytes=... messages=..." for the request that was refused.
+// The prompt itself is never logged, only its size. Parsed here, on the error
+// path only, so a healthy request pays nothing.
+function describeRequest(bytes) {
+	let model = 'unknown'
+	let messages = 'unknown'
+	if (bytes.length <= MAX_PARSE_BYTES) {
+		try {
+			const payload = JSON.parse(bytes.toString('utf8'))
+			if (typeof payload.model === 'string') model = payload.model.replace(/\s/g, '_').slice(0, 100)
+			if (Array.isArray(payload.messages)) messages = payload.messages.length
+		} catch {
+			// Not JSON (or compressed): the size alone still goes in the log.
+		}
+	}
+	return `model=${model} request_bytes=${bytes.length} messages=${messages}`
+}
+
+// One log line per refused request (status 400 or above), written when the
+// reply has been read. This is where the real Cloudflare Ray ID shows up: the
+// Claude CLI keeps only a block page's title, but the cf-ray header and the
+// page both carry the id. Reads a copy of the reply as it streams to the client.
+function logUpstreamError(req, bytes, upstreamRes) {
+	const headers = upstreamRes.headers
+	const chunks = []
+	let sampled = 0
+	let logged = false
+	const log = () => {
+		if (logged) return
+		logged = true
+		const known = LOGGED_RESPONSE_HEADERS.filter((name) => headers[name] !== undefined).map(
+			(name) => `${name.replace(/-/g, '_')}=${JSON.stringify(String(headers[name]).slice(0, 200))}`,
+		)
+		// A compressed page cannot be read here; the cf-ray header still can.
+		const pageRayId = headers['content-encoding']
+			? null
+			: (PAGE_RAY_ID.exec(Buffer.concat(chunks).toString('utf8'))?.[1] ?? null)
+		const pathname = (req.url || '').split('?')[0]
+		console.error(
+			`strip-images-proxy: upstream_error status=${upstreamRes.statusCode} path=${pathname} ${describeRequest(bytes)} ${known.join(' ')} page_ray_id=${pageRayId ?? 'none'} header_names=${Object.keys(headers).join(',')}`,
+		)
+	}
+	upstreamRes.on('data', (chunk) => {
+		if (sampled >= ERROR_SAMPLE_BYTES) return
+		chunks.push(chunk)
+		sampled += chunk.length
+	})
+	// 'close' as well as 'end': a client that hangs up mid-reply must not lose the line.
+	upstreamRes.on('end', log)
+	upstreamRes.on('close', log)
+}
+
+// Send an upstream reply on to the client. `head` is any part of the body
+// already read (the time-to-first-token guard holds the start of a stream back).
+function relay(req, res, bytes, upstreamRes, head) {
+	res.writeHead(upstreamRes.statusCode, upstreamRes.headers)
+	if (head?.length) res.write(head)
+	upstreamRes.on('error', () => res.destroy())
+	upstreamRes.pipe(res)
+	if (upstreamRes.statusCode >= 400) logUpstreamError(req, bytes, upstreamRes)
+}
+
 function forward(req, res, bytes, target) {
 	const lib = target.protocol === 'https:' ? https : http
 	const upstream = lib.request(upstreamOptions(req, bytes, target), (upstreamRes) => {
-		res.writeHead(upstreamRes.statusCode, upstreamRes.headers)
-		upstreamRes.on('error', () => res.destroy())
-		upstreamRes.pipe(res)
+		relay(req, res, bytes, upstreamRes)
 	})
 	upstream.on('error', (err) => {
 		console.error(`strip-images-proxy: upstream error: ${err.message}`)
@@ -226,10 +303,7 @@ function forwardGuarded(req, res, bodyFor, plan, target, timeoutMs) {
 			settled = true
 			clearTimeout(timer)
 			if (onData) upstreamRes.removeListener('data', onData)
-			res.writeHead(upstreamRes.statusCode, upstreamRes.headers)
-			if (head.length) res.write(head)
-			upstreamRes.on('error', () => res.destroy())
-			upstreamRes.pipe(res)
+			relay(req, res, bytes, upstreamRes, head)
 		}
 
 		function retry(reason) {

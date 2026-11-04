@@ -1,16 +1,60 @@
 import type { Database } from '@maskin/db'
-import type { InvokeTool } from '@maskin/mcp'
+import type { InvokeTool, VoiceRealtimeTool } from '@maskin/mcp'
 import { z } from 'zod'
-import { captureVoiceToolCall, captureVoiceTurnCompleted } from '../lib/analytics/voice-events'
+import {
+	captureForYouCardActionByVoice,
+	captureVoiceToolCall,
+	captureVoiceTurnCompleted,
+} from '../lib/analytics/voice-events'
 import { logger } from '../lib/logger'
 import { captureVoiceException } from '../lib/sentry-voice'
+import {
+	type VoiceCallState,
+	cardIdOf,
+	matchStartCard,
+	noteCardNamed,
+	voiceCallState,
+} from './voice-call-state'
+import {
+	type DelegateCallOutcome,
+	type DelegateModel,
+	VOICE_ASK_WORKSPACE_TOOL,
+	VOICE_DELEGATE_ANSWER_CHARS,
+	redactSecrets,
+	runVoiceDelegate,
+} from './voice-delegate'
+import {
+	type HoldPreview,
+	buildHoldPreview,
+	formatHoldPreviewForModel,
+	postHoldPreview,
+	readAloudInstruction,
+} from './voice-hold-preview'
+import { repairToolIdArgs } from './voice-id-resolution'
+import {
+	type ReceiptDraft,
+	type ReceiptOutcome,
+	type ReceiptSendInfo,
+	describeToolCall,
+	notDoneDraft,
+	postReceiptLine,
+	targetIdsOf,
+} from './voice-receipt'
 import { endVoiceSession, recordVoiceToolCall, recordVoiceTurn } from './voice-session-lifecycle'
+import { VOICE_SHOW_IN_CHAT_TOOL, VoiceShowInChatError, showInChat } from './voice-show-in-chat'
+import { recordVoiceToolCallLog } from './voice-tool-call-log'
+import { capToolOutput } from './voice-tool-output'
 import {
 	type VoiceSessionRow,
 	isTranscriptPersistenceEnabled,
 	writeVoiceTranscriptLine,
 } from './voice-transcript'
-import { VOICE_CONFIRM_ARG, type WriteReview, createWriteGate } from './voice-write-gate'
+import {
+	type HoldEnd,
+	VOICE_CONFIRM_ARG,
+	type WriteReview,
+	createWriteGate,
+} from './voice-write-gate'
 
 /**
  * Per-call logic for the server's socket to a Realtime call (see
@@ -43,10 +87,27 @@ import { VOICE_CONFIRM_ARG, type WriteReview, createWriteGate } from './voice-wr
  *     error           { code }
  */
 
+/**
+ * `wait_for_user`: a tool with no effect, for audio that was not meant for the agent (side talk, a
+ * TV, a breath). The model calls it instead of speaking; the call answers it and stays silent
+ * (voice-realtime-call.ts does not ask the model to speak after a turn made only of these).
+ */
+export const VOICE_WAIT_FOR_USER_TOOL = 'wait_for_user'
+
+export const voiceWaitForUserTool = {
+	type: 'function' as const,
+	name: VOICE_WAIT_FOR_USER_TOOL,
+	description:
+		'Call this, and say nothing, when what you heard was not meant for you: the person talking to someone else, a TV or radio, background noise, or a sound that is not a request. Do not call it when the person asked you something or is waiting for your answer. Runs at once; it does not need a yes.',
+	parameters: { type: 'object', properties: {} },
+}
+
 /** Largest inbound frame we parse. A spoken turn or a tool call's arguments are far below this. */
 export const VOICE_MAX_FRAME_BYTES = 256 * 1024
 /** Cap on a tool result handed back to the model, so one huge read cannot flood a Realtime turn. */
 export const VOICE_MAX_TOOL_OUTPUT_CHARS = 20_000
+/** How many fresh ask_workspace requests one call may make; each runs a stronger, costlier model. */
+export const VOICE_ASK_WORKSPACE_MAX_CALLS = 20
 
 const clientMessageSchema = z.discriminatedUnion('type', [
 	z.object({
@@ -102,6 +163,11 @@ export interface VoiceChannelDeps {
 	isReadOnlyTool: (name: string) => boolean
 	send: (message: VoiceServerMessage) => void
 	now?: () => number
+	/**
+	 * What ask_workspace runs with: every tool of the toolkit and the text model that drives them.
+	 * Absent when the call pins all tools itself (MASKIN_VOICE_TOOL_MODE=full).
+	 */
+	delegate?: { tools: VoiceRealtimeTool[]; model: DelegateModel; signal?: AbortSignal }
 }
 
 export interface VoiceChannel {
@@ -130,30 +196,74 @@ function toolResultText(result: unknown): { text: string; isError: boolean } {
 }
 
 function cap(text: string): string {
-	return text.length > VOICE_MAX_TOOL_OUTPUT_CHARS
-		? `${text.slice(0, VOICE_MAX_TOOL_OUTPUT_CHARS)}… [truncated]`
-		: text
+	return capToolOutput(text, VOICE_MAX_TOOL_OUTPUT_CHARS)
 }
 
-function heldMessage(tool: string, review: Exclude<WriteReview, { kind: 'run' }>): string {
+/** Tools that write something the person decided: a comment or a change on a card. */
+const DECISION_WRITE_TOOLS: ReadonlySet<string> = new Set(['create_comment', 'update_objects'])
+
+/**
+ * True when the call would record an answer on a decision card the call started with. Such a write
+ * is held until the person has said a clear yes to a read-back (voice-write-gate.ts), so a filler
+ * sound can never be recorded as a go or a stop. A comment that itself carries a decision is the
+ * agent asking, not answering, so it is not counted.
+ */
+export function isDecisionCardWrite(
+	state: Pick<VoiceCallState, 'startCards'>,
+	tool: string,
+	args: unknown,
+): boolean {
+	if (!DECISION_WRITE_TOOLS.has(tool)) return false
+	if (tool === 'create_comment' && (args as { decision?: unknown } | null)?.decision != null)
+		return false
+	const card = matchStartCard(state, targetIdsOf(args))
+	return card?.source === 'decision'
+}
+
+function heldMessage(
+	tool: string,
+	review: Exclude<WriteReview, { kind: 'run' }>,
+	inChat: boolean,
+	/** How the model repeats the call; by default the same tool with the same arguments. */
+	repeat = `call ${tool} again with the same arguments plus ${VOICE_CONFIRM_ARG}`,
+): string {
 	if (review.kind === 'refuse') {
 		return review.reason === 'declined'
 			? `The person said no, so ${tool} was not run. Do not call it again unless they ask for it.`
 			: `${tool} was not run: no yes from the person was heard after you asked. Ask them again, wait for their answer, then repeat the same call.`
 	}
+	if (review.decision) {
+		const preview = review.preview
+			? `\n\n${formatHoldPreviewForModel(review.preview)}\n\n`
+			: '\n\nNo preview could be made for this call.\n\n'
+		return `Not done yet. This would record the person's decision on a card, and a decision is only recorded after they have clearly answered a specific question. Nothing has been written. Mm, mhm, okay, yeah or go on said while listening is not an answer. Do not call it again until you have: (1) asked the person the actual question (for example approve or reject, go or stop), and heard a clear answer; (2) read the decision back in one short sentence ("So that's a go on the Unipile bet, right?") and heard a clear yes after it. If they said no or something else, do not record it. Then ${repeat} "${review.id}".${review.changed ? ' The earlier yes does not count for the changed text.' : ''} A yes only counts if the person says it out loud after your read-back.${preview}`
+	}
 	const target = review.risky
 		? ' This one is risky: say exactly what it will affect (who gets it, what is removed or run) and what will happen.'
 		: ''
-	return `Not done yet. ${tool} changes things, so the person has to say yes first. Tell them in one plain sentence what you are about to do, ask for a yes, and wait for their answer.${target} If they say yes, call ${tool} again with the same arguments plus ${VOICE_CONFIRM_ARG} "${review.id}". If they say no, do not call it again. A yes only counts if the person says it out loud after your question.`
+	const changed = review.changed
+		? ' The text changed after the person was asked, so their earlier yes does not count for it. Tell them it changed.'
+		: ''
+	const preview = review.preview
+		? `\n\n${formatHoldPreviewForModel(review.preview)}\n\n${readAloudInstruction(review.preview, inChat)}`
+		: '\n\nNo preview could be made for this call. Say in one plain sentence what you are about to do and that you cannot read out the exact text, then ask once for a yes.'
+	return `Not done yet. ${tool} reaches outside the workspace or cannot easily be undone, so the person has to say yes first. What it will do is below: tell them as the instruction below says, ask for a yes, and wait for their answer.${target}${changed} If they say yes, ${repeat} "${review.id}". If they say no, do not call it again. A yes only counts if the person says it out loud after your question.${preview}`
 }
 
 export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 	const { db, session, agentName, invokeTool, send } = deps
 	const now = deps.now ?? Date.now
+	const callState: VoiceCallState = voiceCallState(session.id)
+	const toolCallLogWrites = new Set<Promise<void>>()
 	const writeGate = createWriteGate({
 		voiceSessionId: session.id,
 		isReadOnlyTool: deps.isReadOnlyTool,
+		previewFor: (tool, args) =>
+			buildHoldPreview({ db, workspaceId: session.workspaceId, tool, args }),
+		onHoldEnded: (end) => noteHoldEnded(end),
+		isDecisionWrite: (tool, args) => isDecisionCardWrite(callState, tool, args),
 	})
+	callState.pendingHold = () => writeGate.pendingHold()
 	let knownConversationId = session.conversationId
 	// Transcript lines are written one at a time, in arrival order: lines must
 	// land in message-id order, and the first one lazily creates the
@@ -172,6 +282,332 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 		}
 	}
 
+	// The held text goes into the call's chat as well as being read out. A failure here is logged,
+	// never thrown: the hold still works, and the model is then told to read the text out in full.
+	async function showHoldInChat(preview: HoldPreview): Promise<boolean> {
+		try {
+			const conversationId = await postHoldPreview({ db, session, agentName, preview })
+			if (conversationId !== knownConversationId) {
+				knownConversationId = conversationId
+				send({ type: 'conversation', conversation_id: conversationId })
+			}
+			return true
+		} catch (err) {
+			logger.warn('Voice hold preview could not be posted to the chat', {
+				voice_session_id: session.id,
+				error: err instanceof Error ? err.message : String(err),
+			})
+			return false
+		}
+	}
+
+	// One line in the call's chat for what a tool call did. A failure here is logged, never thrown:
+	// the call itself must carry on, and the closing receipt is built from the lines that did land.
+	async function postReceipt(
+		tool: string,
+		draft: ReceiptDraft,
+		outcome: ReceiptOutcome,
+		extra: { reason?: string; send?: ReceiptSendInfo; cardId?: string | null } = {},
+	) {
+		try {
+			const conversationId = await postReceiptLine({
+				db,
+				session,
+				agentName,
+				tool,
+				draft,
+				outcome,
+				nowMs: now(),
+				...extra,
+			})
+			if (conversationId !== knownConversationId) {
+				knownConversationId = conversationId
+				send({ type: 'conversation', conversation_id: conversationId })
+			}
+		} catch (err) {
+			logger.warn('Voice receipt line could not be posted', {
+				voice_session_id: session.id,
+				tool_name: tool,
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
+	}
+
+	// A hold that ended without running (turned down, timed out, replaced by another request) is a
+	// write that was not done. A hold replaced by the same send asked again (same tool, same
+	// arguments) is not: it carries on. Another send with the same tool is a different write.
+	function noteHoldEnded(end: HoldEnd) {
+		if (
+			end.state === 'superseded' &&
+			end.replacedByTool === end.tool &&
+			end.replacedByArgsKey === end.argsKey
+		) {
+			return
+		}
+		const reason =
+			end.state === 'declined'
+				? 'You said no.'
+				: end.state === 'expired'
+					? 'No yes was heard in time.'
+					: 'It was replaced by a newer request.'
+		const pending = postReceipt(end.tool, notDoneDraft(end.summary), 'not_done', {
+			reason,
+			send: { yesCount: end.yesCount, readBackMatches: null },
+		})
+		callState.inflight.add(pending)
+		void pending.finally(() => callState.inflight.delete(pending))
+	}
+
+	// The lines a finished tool call earns: one per object written, plus an "opened task" line for
+	// a single task the person asked to open. Reads of anything else leave no line.
+	async function recordToolReceipt(
+		toolName: string,
+		args: Record<string, unknown>,
+		outcome: ReceiptOutcome,
+		detail: { resultText: string | null; reason?: string; send?: ReceiptSendInfo },
+	) {
+		const readOnly = deps.isReadOnlyTool(toolName)
+		if (toolName === 'list_for_you' && outcome === 'ran') callState.forYouRead = true
+		// Reads leave no line, except an opened task; a failed read always does.
+		if (readOnly && outcome !== 'failed' && (toolName !== 'get_objects' || outcome !== 'ran'))
+			return
+		let drafts: ReceiptDraft[]
+		try {
+			drafts = await describeToolCall({
+				db,
+				workspaceId: session.workspaceId,
+				tool: toolName,
+				args,
+				resultText: detail.resultText,
+				state: callState,
+				outcome,
+			})
+		} catch (err) {
+			logger.warn('Voice receipt could not describe a tool call', {
+				voice_session_id: session.id,
+				tool_name: toolName,
+				error: err instanceof Error ? err.message : String(err),
+			})
+			return
+		}
+		const targets = targetIdsOf(args)
+		for (const draft of drafts) {
+			// One item of a batch can fail inside a call that otherwise ran.
+			const lineOutcome = draft.outcome ?? outcome
+			const ids = draft.objectId ? [draft.objectId] : targets
+			const card = lineOutcome === 'ran' && !readOnly ? matchStartCard(callState, ids) : null
+			if (lineOutcome === 'ran') noteCardNamed(callState, ids)
+			const cardId = card ? cardIdOf(card) : null
+			await postReceipt(toolName, draft, lineOutcome, {
+				reason: draft.reason ?? detail.reason,
+				send: detail.send,
+				cardId,
+			})
+			if (card && cardId) {
+				void captureForYouCardActionByVoice(session.humanActorId, {
+					voice_session_id: session.id,
+					workspace_id: session.workspaceId,
+					card_id: cardId,
+					card_kind: card.source === 'decision' ? 'decision' : 'thread',
+					action_id: toolName,
+				})
+			}
+		}
+	}
+
+	// Calls the delegate's tools held for a yes, by hold id. When the voice model repeats
+	// ask_workspace with that id, the held call itself runs (through the gate again), so the text
+	// model is not asked to rebuild it and cannot swap in something the person did not hear.
+	const heldDelegated = new Map<string, { tool: string; args: Record<string, unknown> }>()
+	let delegatedCalls = 0
+	let askWorkspaceCalls = 0
+
+	// One tool call made on behalf of ask_workspace. It takes the same road as a direct call:
+	// id repair, the write gate, the hold preview in the chat, a receipt line and a log row.
+	async function delegatedCall(
+		parentCallId: string,
+		name: string,
+		rawArgs: Record<string, unknown>,
+		opts: { confirmation?: string | null; argsFinal?: boolean } = {},
+	): Promise<DelegateCallOutcome> {
+		const startedAt = now()
+		const logId = `${parentCallId}#${++delegatedCalls}`
+		const { [VOICE_CONFIRM_ARG]: _ignored, ...toolArgs } = rawArgs
+		const repaired = opts.argsFinal
+			? toolArgs
+			: await repairToolIdArgs(db, session.workspaceId, toolArgs, callState.startCards).catch(
+					() => toolArgs,
+				)
+		const args = { ...repaired, workspace_id: session.workspaceId }
+		let outcome: DelegateCallOutcome
+		let errorCode: string | null = null
+		let logError: string | null = null
+		let rawChars: number | null = null
+		try {
+			const review = await writeGate.review(name, args, opts.confirmation ?? null, {
+				delegated: true,
+			})
+			if (review.kind !== 'run') {
+				errorCode =
+					review.kind === 'hold' ? 'voice_confirmation_required' : 'voice_confirmation_missing'
+				logError = `${name} held: ${errorCode}`
+				if (review.kind === 'hold') heldDelegated.set(review.id, { tool: name, args })
+				const inChat =
+					review.kind === 'hold' && review.preview ? await showHoldInChat(review.preview) : false
+				outcome = {
+					kind: 'held',
+					errorCode,
+					output: JSON.stringify({
+						error: heldMessage(
+							name,
+							review,
+							inChat,
+							`call ${VOICE_ASK_WORKSPACE_TOOL} again with the same request plus ${VOICE_CONFIRM_ARG}`,
+						),
+						error_code: errorCode,
+					}),
+				}
+			} else {
+				const result = await invokeTool(name, args, {
+					actorId: session.agentActorId,
+					workspaceId: session.workspaceId,
+				})
+				const { text, isError } = toolResultText(result)
+				rawChars = text.length
+				outcome = { kind: 'result', text, isError }
+				if (isError) {
+					errorCode = 'voice_tool_failed'
+					logError = text
+				}
+				const pending = recordToolReceipt(name, args, isError ? 'failed' : 'ran', {
+					resultText: isError ? null : text,
+					reason: isError ? text : undefined,
+					send: review.confirmed
+						? {
+								yesCount: review.confirmed.yesCount,
+								readBackMatches: review.confirmed.readBackMatches,
+							}
+						: undefined,
+				})
+				callState.inflight.add(pending)
+				try {
+					await pending
+				} finally {
+					callState.inflight.delete(pending)
+				}
+			}
+		} catch (err) {
+			errorCode = 'voice_tool_failed'
+			logError = err instanceof Error ? err.message : String(err)
+			logger.error('Voice delegated tool call failed', {
+				voice_session_id: session.id,
+				tool_name: name,
+				error: logError,
+			})
+			outcome = {
+				kind: 'result',
+				isError: true,
+				text: `The ${name} call failed: ${logError.slice(0, 300)}`,
+			}
+		}
+		const ok = errorCode === null
+		const logged = (async () =>
+			recordVoiceToolCallLog(db, {
+				voiceSessionId: session.id,
+				workspaceId: session.workspaceId,
+				callId: logId,
+				startedAt: new Date(startedAt),
+				toolName: name,
+				args: rawArgs,
+				success: ok,
+				errorCode,
+				errorMessage: logError,
+				outputChars: rawChars ?? 0,
+				outputTruncated: rawChars !== null && rawChars > VOICE_MAX_TOOL_OUTPUT_CHARS,
+				latencyMs: now() - startedAt,
+				output: outcome.kind === 'held' ? outcome.output : cap(outcome.text),
+			}))().catch(() => {})
+		toolCallLogWrites.add(logged)
+		void logged.finally(() => toolCallLogWrites.delete(logged))
+		void captureVoiceToolCall(session.humanActorId, {
+			voice_session_id: session.id,
+			tool_name: name,
+			success: ok,
+			latency_ms: now() - startedAt,
+			error_code: errorCode,
+		})
+		return outcome
+	}
+
+	// ask_workspace: the text model runs the request with the full toolkit, or (on a repeat with a
+	// hold id) the held call runs. Returns what the voice model hears.
+	async function askWorkspace(
+		callId: string,
+		toolArgs: Record<string, unknown>,
+		confirmation: string | null,
+	): Promise<{ ok: boolean; errorCode: string | null; output: string }> {
+		const fail = (error: string, errorCode: string) => ({
+			ok: false,
+			errorCode,
+			output: JSON.stringify({ error, error_code: errorCode }),
+		})
+		const delegate = deps.delegate
+		if (!delegate) return fail('ask_workspace is not available on this call.', 'voice_tool_failed')
+		const held = confirmation ? heldDelegated.get(confirmation) : undefined
+		if (confirmation && held) {
+			heldDelegated.delete(confirmation)
+			const outcome = await delegatedCall(callId, held.tool, held.args, {
+				confirmation,
+				argsFinal: true,
+			})
+			if (outcome.kind === 'held') {
+				return { ok: false, errorCode: outcome.errorCode, output: outcome.output }
+			}
+			// The same redaction and cap as a fresh delegate answer: this text is spoken too.
+			const spoken = capToolOutput(redactSecrets(outcome.text), VOICE_DELEGATE_ANSWER_CHARS)
+			return outcome.isError
+				? fail(spoken, 'voice_tool_failed')
+				: { ok: true, errorCode: null, output: JSON.stringify({ result: spoken }) }
+		}
+		const request = typeof toolArgs.request === 'string' ? toolArgs.request.trim() : ''
+		if (!request) return fail('ask_workspace needs a request.', 'voice_tool_failed')
+		if (askWorkspaceCalls >= VOICE_ASK_WORKSPACE_MAX_CALLS) {
+			return {
+				ok: true,
+				errorCode: null,
+				output: JSON.stringify({
+					result:
+						'ask_workspace is used up for this call. Tell the person plainly that you cannot look anything else up or change anything more on this call.',
+				}),
+			}
+		}
+		askWorkspaceCalls += 1
+		const result = await runVoiceDelegate({
+			request: request.slice(0, 4_000),
+			tools: delegate.tools,
+			model: delegate.model,
+			signal: delegate.signal,
+			voiceSessionId: session.id,
+			context: `Today is ${new Date(now()).toISOString().slice(0, 10)}.`,
+			callTool: (name, args) => delegatedCall(callId, name, args),
+		})
+		if (result.kind === 'held')
+			return { ok: false, errorCode: result.errorCode, output: result.output }
+		if (result.kind === 'incomplete') {
+			const why =
+				result.reason === 'time'
+					? 'it took too long'
+					: result.reason === 'steps'
+						? 'it needed too many steps'
+						: 'it could not finish'
+			return fail(
+				`ask_workspace did not finish: ${why}. ${result.text} Tell the person plainly and offer to try a smaller request.`,
+				'voice_delegate_incomplete',
+			)
+		}
+		return { ok: true, errorCode: null, output: JSON.stringify({ result: result.text }) }
+	}
+
 	async function handleToolCall(
 		msg: Extract<z.infer<typeof clientMessageSchema>, { type: 'tool_call' }>,
 	) {
@@ -179,6 +615,17 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 		let ok = false
 		let errorCode: string | null = null
 		let output: string
+		// What the receipt needs once the call is over.
+		let receiptArgs: Record<string, unknown> | null = null
+		let receiptResultText: string | null = null
+		let receiptReason: string | undefined
+		let receiptSend: ReceiptSendInfo | undefined
+		let receiptState: 'ran' | 'failed' | 'skip' = 'skip'
+		// What the tool call log keeps: the arguments as the model sent them, the length of what the
+		// tool returned before the cap, and the error text.
+		let loggedArgs: unknown = null
+		let rawOutputChars: number | null = null
+		let logError: string | null = null
 		try {
 			let rawArgs: unknown
 			try {
@@ -187,41 +634,117 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 			} catch {
 				rawArgs = null
 			}
+			loggedArgs = rawArgs
 			if (rawArgs == null || typeof rawArgs !== 'object' || Array.isArray(rawArgs)) {
 				throw new Error(`Arguments for ${msg.name} must be a JSON object.`)
 			}
 			// Same call a chat agent makes. The call's workspace is applied last, so a
 			// workspace_id the model passes can never point a tool at another workspace.
 			const { [VOICE_CONFIRM_ARG]: confirmation, ...toolArgs } = rawArgs as Record<string, unknown>
-			const args = { ...toolArgs, workspace_id: session.workspaceId }
-			const review = await writeGate.review(
-				msg.name,
-				args,
-				typeof confirmation === 'string' ? confirmation : null,
-			)
-			if (review.kind !== 'run') {
-				errorCode =
-					review.kind === 'hold' ? 'voice_confirmation_required' : 'voice_confirmation_missing'
-				output = JSON.stringify({
-					error: heldMessage(msg.name, review),
-					error_code: errorCode,
-				})
-			} else {
-				const result = await invokeTool(msg.name, args, {
-					actorId: session.agentActorId,
-					workspaceId: session.workspaceId,
-				})
-				const { text, isError } = toolResultText(result)
-				if (isError) {
-					errorCode = 'voice_tool_failed'
-					output = JSON.stringify({ error: cap(text), error_code: errorCode })
-				} else {
+			const startCards = callState.startCards
+			// A garbled or shortened id is repaired when exactly one object fits; otherwise untouched.
+			const repaired =
+				msg.name === VOICE_SHOW_IN_CHAT_TOOL ||
+				msg.name === VOICE_WAIT_FOR_USER_TOOL ||
+				msg.name === VOICE_ASK_WORKSPACE_TOOL
+					? toolArgs
+					: await repairToolIdArgs(db, session.workspaceId, toolArgs, startCards).catch(
+							() => toolArgs,
+						)
+			const args = { ...repaired, workspace_id: session.workspaceId }
+			receiptArgs = args
+			if (msg.name === VOICE_WAIT_FOR_USER_TOOL) {
+				// No effect and nothing in the chat; the model stays silent.
+				ok = true
+				output = JSON.stringify({ ok: true })
+			} else if (msg.name === VOICE_ASK_WORKSPACE_TOOL) {
+				// Its own calls go through the write gate one by one (delegatedCall), so the call
+				// itself is neither held nor given a receipt line here.
+				const asked = await askWorkspace(
+					msg.call_id,
+					toolArgs,
+					typeof confirmation === 'string' ? confirmation : null,
+				)
+				ok = asked.ok
+				errorCode = asked.errorCode
+				output = asked.output
+				if (!ok) logError = asked.output
+			} else if (msg.name === VOICE_SHOW_IN_CHAT_TOOL) {
+				// Handled here, not by the MCP server: it only ever writes into this call's own chat.
+				try {
+					const shown = await showInChat({ db, session, agentName, args: toolArgs, startCards })
+					if (shown.conversationId !== knownConversationId) {
+						knownConversationId = shown.conversationId
+						send({ type: 'conversation', conversation_id: shown.conversationId })
+					}
 					ok = true
-					output = cap(text)
+					output = JSON.stringify({ shown: true })
+					// The resolved ids, not what the model typed, so a repaired id still counts as the card.
+					noteCardNamed(callState, shown.objectIds)
+				} catch (err) {
+					if (!(err instanceof VoiceShowInChatError)) throw err
+					errorCode = 'voice_tool_failed'
+					logError = err.message
+					output = JSON.stringify({
+						error: err.message,
+						error_code: errorCode,
+						shown: false,
+						...(err.detail.unresolvedIds ? { unresolved_ids: err.detail.unresolvedIds } : {}),
+						...(err.detail.say ? { say: err.detail.say } : {}),
+					})
+					receiptState = 'failed'
+					receiptReason = err.message
+				}
+			} else {
+				const review = await writeGate.review(
+					msg.name,
+					args,
+					typeof confirmation === 'string' ? confirmation : null,
+				)
+				if (review.kind !== 'run') {
+					errorCode =
+						review.kind === 'hold' ? 'voice_confirmation_required' : 'voice_confirmation_missing'
+					logError = `${msg.name} held: ${errorCode}`
+					const inChat =
+						review.kind === 'hold' && review.preview ? await showHoldInChat(review.preview) : false
+					output = JSON.stringify({
+						error: heldMessage(msg.name, review, inChat),
+						error_code: errorCode,
+					})
+				} else {
+					const result = await invokeTool(msg.name, args, {
+						actorId: session.agentActorId,
+						workspaceId: session.workspaceId,
+					})
+					const { text, isError } = toolResultText(result)
+					rawOutputChars = text.length
+					if (review.confirmed) {
+						receiptSend = {
+							yesCount: review.confirmed.yesCount,
+							readBackMatches: review.confirmed.readBackMatches,
+						}
+					}
+					if (isError) {
+						errorCode = 'voice_tool_failed'
+						logError = text
+						output = JSON.stringify({ error: cap(text), error_code: errorCode })
+						receiptState = 'failed'
+						receiptReason = text
+					} else {
+						ok = true
+						output = cap(text)
+						receiptState = 'ran'
+						receiptResultText = text
+					}
 				}
 			}
 		} catch (err) {
 			errorCode = 'voice_tool_failed'
+			logError = err instanceof Error ? err.message : String(err)
+			if (receiptArgs && msg.name !== VOICE_SHOW_IN_CHAT_TOOL) {
+				receiptState = 'failed'
+				receiptReason = err instanceof Error ? err.message : String(err)
+			}
 			logger.error('Voice tool call failed', {
 				voice_session_id: session.id,
 				tool_name: msg.name,
@@ -234,6 +757,20 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 			})
 		}
 
+		// The line goes in before the model hears the result, so it is there when a hangup follows.
+		if (receiptArgs && receiptState !== 'skip') {
+			const pending = recordToolReceipt(msg.name, receiptArgs, receiptState, {
+				resultText: receiptResultText,
+				reason: receiptReason,
+				send: receiptSend,
+			})
+			callState.inflight.add(pending)
+			try {
+				await pending
+			} finally {
+				callState.inflight.delete(pending)
+			}
+		}
 		send({
 			type: 'tool_result',
 			call_id: msg.call_id,
@@ -260,6 +797,26 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 				tool_name: msg.name,
 			})
 		}
+		// Fire and forget: the call is over and the model has its answer. recordVoiceToolCallLog
+		// never throws; idle() waits for it so tests can read the row back.
+		const logged = (async () =>
+			recordVoiceToolCallLog(db, {
+				voiceSessionId: session.id,
+				workspaceId: session.workspaceId,
+				callId: msg.call_id,
+				startedAt: new Date(startedAt),
+				toolName: msg.name,
+				args: loggedArgs ?? msg.arguments,
+				success: ok,
+				errorCode,
+				errorMessage: logError,
+				outputChars: rawOutputChars ?? output.length,
+				outputTruncated: rawOutputChars !== null && rawOutputChars > VOICE_MAX_TOOL_OUTPUT_CHARS,
+				latencyMs,
+				output,
+			}))().catch(() => {})
+		toolCallLogWrites.add(logged)
+		void logged.finally(() => toolCallLogWrites.delete(logged))
 		await recordCounter(session.id, () => recordVoiceToolCall(db, session.id))
 		void captureVoiceToolCall(session.humanActorId, {
 			voice_session_id: session.id,
@@ -363,6 +920,9 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 			}
 		},
 
-		idle: () => transcriptQueue,
+		idle: async () => {
+			await transcriptQueue
+			await Promise.all([...toolCallLogWrites])
+		},
 	}
 }

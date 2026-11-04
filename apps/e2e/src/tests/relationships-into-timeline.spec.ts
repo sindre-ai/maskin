@@ -34,7 +34,7 @@ test.describe('Relationships into the timeline (AC-U11)', () => {
 			const bet = await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Relationships timeline bet',
-				status: 'signal',
+				status: 'opportunity',
 			})
 			const informingInsight = await account.api.createObject(account.workspaceId, {
 				type: 'insight',

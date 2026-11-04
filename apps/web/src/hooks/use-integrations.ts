@@ -38,14 +38,22 @@ export function useConnectIntegration(workspaceId: string) {
 			// that showed the Connect card. Absent means Settings → Integrations. The
 			// backend only honours a plain path inside this workspace.
 			returnTo?: string
+			// Symbolic key of the page the flow started from, so a cancel on the
+			// consent screen lands back there. Only the backend's known keys work.
+			origin?: string
 		}) => {
 			const body =
-				input.apiKey || input.receiveSubdomain || input.installNewOrg || input.returnTo
+				input.apiKey ||
+				input.receiveSubdomain ||
+				input.installNewOrg ||
+				input.returnTo ||
+				input.origin
 					? {
 							...(input.apiKey ? { api_key: input.apiKey } : {}),
 							...(input.receiveSubdomain ? { receive_subdomain: input.receiveSubdomain } : {}),
 							...(input.installNewOrg ? { install_new_org: true } : {}),
 							...(input.returnTo ? { return_to: input.returnTo } : {}),
+							...(input.origin ? { origin: input.origin } : {}),
 						}
 					: undefined
 			return api.integrations.connect(workspaceId, input.provider, body)
@@ -140,6 +148,19 @@ export function useCompleteIntegration(workspaceId: string) {
 	})
 }
 
+/** Bulk disconnect of one human's Google rows, from the Drive disable modal.
+ *  No toast: the detail page shows its own inline callout on success. */
+export function useDisconnectGoogle(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (input: { email: string; scope: 'drive' | 'drive-meet' | 'google' }) =>
+			api.integrations.disconnectGoogle(workspaceId, input),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
+}
+
 export function useDisconnectIntegration(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
@@ -194,6 +215,24 @@ export function useLinkedInIdentities(workspaceId: string) {
 	})
 }
 
+/** Folder watches on the workspace Drive connections, for the Drive detail page. */
+export function useDriveWatches(workspaceId: string) {
+	return useQuery({
+		queryKey: queryKeys.integrations.driveWatches(workspaceId),
+		queryFn: () => api.integrations.driveWatches(workspaceId),
+	})
+}
+
+export function useStopDriveWatch(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (folderId: string) => api.integrations.stopDriveWatch(workspaceId, folderId),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.driveWatches(workspaceId) })
+		},
+	})
+}
+
 /** Keychain: paste an API key. The secret goes up once and is never kept in the cache. */
 export function useCreateByoApiKey(workspaceId: string) {
 	const queryClient = useQueryClient()
@@ -210,8 +249,12 @@ export function useCreateByoApiKey(workspaceId: string) {
 export function useCreateByoLogin(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
-		mutationFn: (input: { displayName: string; username: string; password: string }) =>
-			api.integrations.createByoLogin(workspaceId, input),
+		mutationFn: (input: {
+			displayName: string
+			username: string
+			password: string
+			email?: string
+		}) => api.integrations.createByoLogin(workspaceId, input),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
 		},
@@ -231,6 +274,7 @@ export function useUpdateCredential(workspaceId: string, integrationId: string) 
 			rawSecret?: string
 			username?: string
 			password?: string
+			email?: string
 		}) => api.integrations.updateCredential(integrationId, workspaceId, body),
 		onSuccess: () => {
 			toast.success('Credential updated')

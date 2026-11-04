@@ -114,12 +114,12 @@ describe('formatEventDescription', () => {
 				action: 'status_changed',
 				entityType: 'bet',
 				data: {
-					previous: { status: 'signal' },
+					previous: { status: 'opportunity' },
 					updated: { status: 'proposed' },
 				},
 			})
 
-			expect(formatEventDescription(event)).toBe('changed status from Signal to Proposed')
+			expect(formatEventDescription(event)).toBe('changed status from Opportunity to Proposed')
 		})
 
 		it('formats multi-word status with title case', () => {
@@ -212,13 +212,13 @@ describe('formatEventDescription', () => {
 				action: 'status_changed',
 				entityType: 'bet',
 				data: {
-					previous: { status: 'signal', content: 'old' },
+					previous: { status: 'opportunity', content: 'old' },
 					updated: { status: 'proposed', content: 'new' },
 				},
 			})
 
 			expect(formatEventDescription(event)).toBe(
-				'changed status from Signal to Proposed and updated content',
+				'changed status from Opportunity to Proposed and updated content',
 			)
 		})
 
@@ -253,8 +253,8 @@ describe('formatEventDescription', () => {
 				action: 'updated',
 				entityType: 'bet',
 				data: {
-					previous: { status: 'signal', title: 'same' },
-					updated: { status: 'signal', title: 'same' },
+					previous: { status: 'opportunity', title: 'same' },
+					updated: { status: 'opportunity', title: 'same' },
 				},
 			})
 
@@ -268,11 +268,11 @@ describe('formatEventDescription', () => {
 				action: 'status_changed',
 				entityType: 'bet',
 				data: {
-					changes: [{ field: 'status', old: 'signal', new: 'proposed' }],
+					changes: [{ field: 'status', old: 'opportunity', new: 'proposed' }],
 				},
 			})
 
-			expect(formatEventDescription(event)).toBe('changed status from Signal to Proposed')
+			expect(formatEventDescription(event)).toBe('changed status from Opportunity to Proposed')
 		})
 
 		it('formats title change from a changes array', () => {
@@ -312,14 +312,14 @@ describe('formatEventDescription', () => {
 				data: {
 					changes: [
 						{ field: 'content', old: 'old', new: 'new' },
-						{ field: 'status', old: 'signal', new: 'proposed' },
+						{ field: 'status', old: 'opportunity', new: 'proposed' },
 						{ field: 'driver', old: 'actor-alice', new: 'actor-bob' },
 					],
 				},
 			})
 
 			expect(formatEventDescription(event, { actorsById: actorsMap([alice, bob]) })).toBe(
-				'changed status from Signal to Proposed, changed driver from Alice to Bob, and updated content',
+				'changed status from Opportunity to Proposed, changed driver from Alice to Bob, and updated content',
 			)
 		})
 

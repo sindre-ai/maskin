@@ -15,6 +15,18 @@ const HIDDEN_KEYS = new Set(['source', 'kind', 'previous_status', 'pending_draft
 const MAX_VALUE_LENGTH = 60
 const MAX_PROPERTIES = 4
 
+/** What a card's preview block already shows, so the line of properties does not say it again. */
+export interface ShownElsewhere {
+	/** Names and addresses of the recipients the preview lists. */
+	recipients: Array<string | null | undefined>
+	/** The preview's own label ("LinkedIn message"), drawn in the card header. */
+	label?: string | null
+}
+
+function same(a: string, b: string | null | undefined): boolean {
+	return !!b && a.trim().toLowerCase() === b.trim().toLowerCase()
+}
+
 function humanize(value: string): string {
 	const words = value.replace(/[_-]+/g, ' ').trim()
 	return words.charAt(0).toUpperCase() + words.slice(1)
@@ -26,8 +38,10 @@ function humanize(value: string): string {
  * priority or a recipient. Long text, empty values, lists and objects, internal keys
  * (a leading underscore) and the agent's own bookkeeping are left out. Nothing here is
  * specific to one agent or workflow: any object that carries a `channel` gets it shown.
+ * With `shown`, a value the card already shows elsewhere (a recipient, the preview's label) is
+ * left out so it reads once.
  */
-export function describeObjectProperties(metadata: unknown): string[] {
+export function describeObjectProperties(metadata: unknown, shown?: ShownElsewhere): string[] {
 	if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return []
 	const entries = Object.entries(metadata as Record<string, unknown>).filter(
 		([key]) => !key.startsWith('_') && !HIDDEN_KEYS.has(key),
@@ -36,7 +50,8 @@ export function describeObjectProperties(metadata: unknown): string[] {
 	// The channel leads: it says what kind of thing the object is about.
 	const channel = entries.find(([key]) => key === 'channel')?.[1]
 	if (typeof channel === 'string' && channel.trim()) {
-		lines.push(CHANNEL_LABELS[channel.trim()] ?? humanize(channel))
+		const line = CHANNEL_LABELS[channel.trim()] ?? humanize(channel)
+		if (!same(line, shown?.label)) lines.push(line)
 	}
 	for (const [key, value] of entries) {
 		if (key === 'channel') continue
@@ -44,6 +59,7 @@ export function describeObjectProperties(metadata: unknown): string[] {
 			lines.push(`${humanize(key)}: ${value}`)
 		} else if (typeof value === 'string') {
 			const text = value.trim()
+			if (shown?.recipients.some((recipient) => same(text, recipient))) continue
 			if (text && text.length <= MAX_VALUE_LENGTH && !text.includes('\n')) {
 				// A short code like "P1" reads as itself; a word reads as a label.
 				lines.push(/^[A-Z]\d+$/.test(text) ? text : `${humanize(key)}: ${text}`)

@@ -27,7 +27,6 @@ import {
 } from '../lib/capabilities/sources'
 import { findChiefOfStaffId } from '../lib/chief-of-staff'
 import { recordEvent } from '../lib/events/record-event'
-import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { logger } from '../lib/logger'
 import { runCapabilityDigest } from './capability-digest'
 
@@ -35,6 +34,9 @@ const TICK_MS = 24 * 60 * 60 * 1000
 const BOOT_DELAY_MS = 60_000
 /** The boot tick only scans a workspace that has no completed scan this recent. */
 const BOOT_SKIP_WINDOW_MS = 20 * 60 * 60 * 1000
+
+/** FEATURE_CAPABILITY_SCAN=0 stops the scanner from starting. Default is on. */
+export const KILLSWITCH_ENV_VAR = 'FEATURE_CAPABILITY_SCAN'
 
 export const CAPABILITY_ACTIONS = {
 	snapshot: 'capability_snapshot',
@@ -50,21 +52,22 @@ export interface CapabilityScannerOptions {
 	/** Test seam: replaces the network and in-process probes. */
 	probe?: ProbeFn
 	now?: () => Date
+	/** Test seam: replaces process.env for the kill switch. */
+	env?: NodeJS.ProcessEnv
 }
 
 export type WorkspaceScanResult =
 	| { status: 'scanned'; mode: 'baseline' | 'diff'; findingsWritten: number }
-	| { status: 'skipped'; reason: 'flag_off' | 'no_chief_of_staff' | 'recent_scan' | 'lock_busy' }
+	| { status: 'skipped'; reason: 'no_chief_of_staff' | 'recent_scan' | 'lock_busy' }
 
 /**
  * Daily capability scan. A server job: no model, no session. For
- * each flagged workspace it asks every tool source what it can do, compares the
+ * each workspace it asks every tool source what it can do, compares the
  * answer with the stored snapshot and writes the result as events. Shape of
  * MeetWatchRenewer: start, stop, interval tick, running re-entrancy guard.
  *
- * Shadow mode unless a person has the agent-proactive-1-1 flag: findings pile up
- * as capability_changed events (readable with get_events) and the digest at the
- * end of each workspace scan messages only recipients with that flag on.
+ * Findings are written as capability_changed events (readable with get_events)
+ * and the digest at the end of each workspace scan messages each recipient.
  */
 export class CapabilityScanner {
 	private timer: NodeJS.Timeout | null = null
@@ -72,6 +75,7 @@ export class CapabilityScanner {
 	private running = false
 	private readonly probe: ProbeFn
 	private readonly now: () => Date
+	private readonly env: NodeJS.ProcessEnv
 
 	constructor(
 		private db: Database,
@@ -79,10 +83,15 @@ export class CapabilityScanner {
 	) {
 		this.probe = options.probe ?? probeSource
 		this.now = options.now ?? (() => new Date())
+		this.env = options.env ?? process.env
 	}
 
 	start(): void {
 		if (this.timer) return
+		if (this.env[KILLSWITCH_ENV_VAR] === '0') {
+			logger.info('Capability scanner disabled by kill switch', { envVar: KILLSWITCH_ENV_VAR })
+			return
+		}
 		this.timer = setInterval(() => void this.tick(), TICK_MS)
 		// Deploys are exactly when built-in tools change, so scan once after boot,
 		// unless this workspace already scanned within the last 20 hours.
@@ -109,7 +118,6 @@ export class CapabilityScanner {
 			let scanned = 0
 			let skipped = 0
 			for (const { id } of rows) {
-				if (!isFlagEnabledForWorkspace(id, FLAGS.CAPABILITY_SCAN)) continue
 				try {
 					const result = await this.scanWorkspace(id, opts)
 					if (result.status === 'scanned') {
@@ -151,9 +159,6 @@ export class CapabilityScanner {
 		workspaceId: string,
 		opts: { boot?: boolean } = {},
 	): Promise<WorkspaceScanResult> {
-		if (!isFlagEnabledForWorkspace(workspaceId, FLAGS.CAPABILITY_SCAN)) {
-			return { status: 'skipped', reason: 'flag_off' }
-		}
 		// Chief of Staff is an agent, so finding one also means the workspace has one.
 		const actorId = await findChiefOfStaffId(this.db, workspaceId)
 		if (!actorId) {

@@ -28,4 +28,30 @@ describe('parseForYouMetadata', () => {
 	it('ignores extra keys an agent adds', () => {
 		expect(parseForYouMetadata({ ...base, tags: ['posthog'] })).not.toBeNull()
 	})
+
+	it('keeps a card whose optional fields are null, as if they were absent', () => {
+		const parsed = parseForYouMetadata({
+			...base,
+			rationale: null,
+			source_comment_id: null,
+			only_while_status: null,
+		})
+		expect(parsed).not.toBeNull()
+		expect(parsed?.only_while_status).toBeUndefined()
+		expect(parsed?.source_comment_id).toBeUndefined()
+		expect(parsed?.rationale).toBeUndefined()
+	})
+
+	it('keeps a card whose only_while_status is an empty list, with no status constraint', () => {
+		const parsed = parseForYouMetadata({ ...base, only_while_status: [] })
+		expect(parsed).not.toBeNull()
+		expect(parsed?.only_while_status).toBeUndefined()
+	})
+
+	it('still honours a real only_while_status and still rejects a malformed one', () => {
+		const kept = parseForYouMetadata({ ...base, only_while_status: ['proposed'] })
+		expect(kept?.only_while_status).toEqual(['proposed'])
+		expect(parseForYouMetadata({ ...base, only_while_status: [''] })).toBeNull()
+		expect(parseForYouMetadata({ ...base, only_while_status: 'proposed' })).toBeNull()
+	})
 })

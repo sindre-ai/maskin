@@ -1,4 +1,5 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
@@ -111,19 +112,21 @@ describe('ThreadMessages — voice call boundaries', () => {
 		expect(boundaries[0]?.textContent).toMatch(/^Voice call · 2:14 · /)
 		expect(boundaries[1]?.textContent).toBe('Call ended')
 
+		// No receipts for this call, so its spoken lines are drawn as ever, with
+		// the head divider in the first voice message's row and the tail in the last.
 		const rows = [1, 2, 3, 4].map((id) =>
 			document.querySelector(`[data-message-id="${id}"]`),
 		) as HTMLElement[]
-		// Head sits inside the first voice message's row, above its bubble.
 		expect(
 			within(rows[1] as HTMLElement).getByText('Voice call', { exact: false }),
 		).toBeInTheDocument()
 		expect(within(rows[2] as HTMLElement).getByText('Call ended')).toBeInTheDocument()
 		expect(within(rows[0] as HTMLElement).queryByTestId('voice-call-boundary')).toBeNull()
 		expect(within(rows[3] as HTMLElement).queryByTestId('voice-call-boundary')).toBeNull()
+		expect(screen.getByText('search for the loops v4 bet')).toBeInTheDocument()
 	})
 
-	it('tags each voice message with the mono "voice" meta tag, and only those', async () => {
+	it('tags each spoken line of a call without receipts with the "voice" meta tag, and only those', async () => {
 		await renderThread([
 			buildMessage({ id: 1, content: 'typed', metadata: null }),
 			buildMessage({ id: 2, content: 'spoken', metadata: voice() }),
@@ -139,6 +142,112 @@ describe('ThreadMessages — voice call boundaries', () => {
 		expect(screen.getAllByTestId('voice-message-meta-tag')).toHaveLength(2)
 		const typedRow = document.querySelector('[data-message-id="1"]') as HTMLElement
 		expect(within(typedRow).queryByTestId('voice-message-meta-tag')).toBeNull()
+	})
+
+	it("folds a call's spoken lines away once the call has a receipt, keeping its dividers", async () => {
+		await renderThread([
+			buildMessage({ id: 1, content: 'spoken first', metadata: voice() }),
+			buildMessage({
+				id: 2,
+				content: 'Opened the task',
+				metadata: {
+					...voice(),
+					kind: 'receipt',
+					event: 'opened_task',
+					text: 'Opened the cancel task',
+					t: 12,
+					outcome: 'ran',
+				} as never,
+			}),
+			buildMessage({ id: 3, content: 'spoken last', metadata: voice() }),
+		])
+		expect(screen.queryByText('spoken first')).toBeNull()
+		expect(screen.queryByText('spoken last')).toBeNull()
+		expect(screen.getByText('Opened the cancel task')).toBeInTheDocument()
+		expect(
+			screen.getAllByTestId('voice-call-boundary').map((b) => b.getAttribute('data-variant')),
+		).toEqual(['start', 'end'])
+	})
+
+	it('decides each call on its own: one with receipts folds, one without keeps its lines', async () => {
+		await renderThread([
+			buildMessage({ id: 1, content: 'folded line', metadata: voice(CALL) }),
+			buildMessage({
+				id: 2,
+				content: 'row',
+				metadata: {
+					...voice(CALL),
+					kind: 'receipt',
+					event: 'decided',
+					text: 'Decided to backfill',
+					t: 3,
+					outcome: 'ran',
+				} as never,
+			}),
+			buildMessage({ id: 3, content: 'kept line', metadata: voice(OTHER_CALL) }),
+		])
+		expect(screen.queryByText('folded line')).toBeNull()
+		expect(screen.getByText('Decided to backfill')).toBeInTheDocument()
+		expect(screen.getByText('kept line')).toBeInTheDocument()
+	})
+
+	it("keeps a summarised call's spoken lines out of the thread, and shows them in the Transcript view from the summary card", async () => {
+		await renderThread([
+			buildMessage({ id: 1, content: 'typed', metadata: null }),
+			buildMessage({
+				id: 2,
+				actorId: 'me',
+				actorName: 'Me',
+				actorType: 'human',
+				content: 'spoken by me',
+				metadata: voice(),
+				createdAt: '2026-09-30T10:05:00.000Z',
+			}),
+			buildMessage({
+				id: 3,
+				content: 'spoken back',
+				metadata: voice(),
+				createdAt: '2026-09-30T10:05:18.000Z',
+			}),
+			buildMessage({
+				id: 5,
+				content: 'Here is the draft you asked for',
+				metadata: { ...voice(), kind: 'show' } as never,
+				createdAt: '2026-09-30T10:05:19.000Z',
+			}),
+			buildMessage({
+				id: 4,
+				// The server's closing message body (voice-receipt.ts): markdown, no title.
+				content:
+					'**Call receipt** (0 min 18 s)\nDone:\n- Created task [Ship it](http://localhost/ws-1/objects/obj-1)\nTop card at start: unknown. First card named: unknown. Cards cleared: 0. No sends. Call ended by hangup.',
+				metadata: {
+					...voice(),
+					kind: 'receipt_summary',
+					duration_seconds: 18,
+					decided: ['Ship it'],
+					created: [],
+					next: [],
+					not_done: [],
+					// The receipt fields are not on MessageMetadata's typed shape.
+				} as never,
+				createdAt: '2026-09-30T10:05:20.000Z',
+			}),
+		])
+		expect(screen.queryByText('spoken by me')).toBeNull()
+		expect(screen.queryByText('spoken back')).toBeNull()
+		// The summary message's markdown body is not the card's heading.
+		expect(screen.getByRole('article', { name: 'Live meeting summary' })).toBeInTheDocument()
+		expect(screen.queryByText(/Call receipt/)).toBeNull()
+		expect(screen.queryByText(/\*\*/)).toBeNull()
+		// A show_in_chat message carries a kind, so it is not a spoken line.
+		expect(screen.getByText('Here is the draft you asked for')).toBeInTheDocument()
+
+		await userEvent.click(screen.getByRole('button', { name: 'Read transcript' }))
+		const view = await screen.findByRole('dialog', { name: 'Transcript' })
+		expect(within(view).getByText('spoken by me')).toBeInTheDocument()
+		expect(within(view).getByText('spoken back')).toBeInTheDocument()
+		expect(within(view).getByText('0:18')).toBeInTheDocument()
+		expect(within(view).queryByText('Here is the draft you asked for')).toBeNull()
 	})
 
 	it('draws a separate head and tail for two different calls in one conversation', async () => {

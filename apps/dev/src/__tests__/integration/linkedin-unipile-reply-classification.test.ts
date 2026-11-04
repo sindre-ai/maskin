@@ -4,7 +4,6 @@ import { __resetLinkedInMcpRegistryForTests } from '@maskin/mcp/linkedin'
 import { and, eq } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encrypt } from '../../lib/crypto'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import {
 	LOOKUP_TIMEOUT_MS,
 	__resetSenderCachesForTests,
@@ -26,7 +25,6 @@ import { createIntegrationApp, db, getTestActorId, sql } from './global-setup'
 const SECRET = 'wes_test_secret'
 const ACCOUNT_ID = 'acc_unipile_classify_01'
 const SENDER = 'ACoAAExampleSenderProviderId'
-const FLAG = 'linkedin-unipile-events'
 const WORK_BUDGET_MS = 4000
 
 const ENV_KEYS = [
@@ -34,8 +32,6 @@ const ENV_KEYS = [
 	'UNIPILE_BASE_URL',
 	'UNIPILE_API_KEY',
 	'INTEGRATION_ENCRYPTION_KEY',
-	'FF_TESTER_ACTOR_IDS',
-	'FF_TESTER_FEATURES',
 	'POSTHOG_API_KEY',
 ] as const
 const ORIGINAL_ENV: Record<string, string | undefined> = {}
@@ -83,7 +79,6 @@ afterAll(() => {
 		if (ORIGINAL_ENV[key] === undefined) delete process.env[key]
 		else process.env[key] = ORIGINAL_ENV[key]
 	}
-	_resetFeatureFlagConfig()
 	__resetLinkedInMcpRegistryForTests()
 })
 
@@ -117,10 +112,6 @@ beforeEach(async () => {
 		.returning()
 	if (!row) throw new Error('integration insert returned no row')
 	integrationId = row.id
-
-	process.env.FF_TESTER_ACTOR_IDS = ownerActorId
-	process.env.FF_TESTER_FEATURES = FLAG
-	_resetFeatureFlagConfig()
 })
 
 afterEach(() => {

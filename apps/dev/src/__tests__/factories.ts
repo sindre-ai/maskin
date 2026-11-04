@@ -64,7 +64,7 @@ export function buildWorkspace(overrides?: Record<string, unknown>) {
 			},
 			statuses: {
 				insight: ['new', 'processing', 'clustered', 'discarded'],
-				bet: ['signal', 'proposed', 'active', 'completed', 'succeeded', 'failed', 'paused'],
+				bet: ['opportunity', 'proposed', 'active', 'completed', 'succeeded', 'failed', 'paused'],
 				task: ['todo', 'in_progress', 'done', 'blocked'],
 				loop: ['running', 'waiting', 'paused', 'archived'],
 			},

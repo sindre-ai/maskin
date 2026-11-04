@@ -16,7 +16,7 @@ public enum ProfileMenuGroup: String, CaseIterable, Hashable, Identifiable, Send
 }
 
 public enum ProfileMenuItem: String, CaseIterable, Hashable, Identifiable, Sendable {
-	case marketplace, artefacts, members, integrations, triggers, billing, keys
+	case marketplace, artefacts, members, integrations, keychain, triggers, billing, keys
 	case settings, autonomy
 
 	public var id: String { rawValue }
@@ -27,6 +27,7 @@ public enum ProfileMenuItem: String, CaseIterable, Hashable, Identifiable, Senda
 		case .artefacts: "Artefacts"
 		case .members: "Members"
 		case .integrations: "Integrations"
+		case .keychain: "Keychain"
 		case .triggers: "Triggers"
 		case .billing: "Billing"
 		case .keys: "Keys & MCP"
@@ -42,6 +43,7 @@ public enum ProfileMenuItem: String, CaseIterable, Hashable, Identifiable, Senda
 		case .artefacts: "Pages, PDFs and files your agents made"
 		case .members: "People and agents in this workspace"
 		case .integrations: "Accounts your flows can use"
+		case .keychain: "Keys and logins your agents use"
 		case .triggers: "What starts a flow on its own"
 		case .billing: "Plan, seats, invoices"
 		case .keys: "API keys and the MCP server for outside tools"
@@ -52,7 +54,7 @@ public enum ProfileMenuItem: String, CaseIterable, Hashable, Identifiable, Senda
 
 	public var group: ProfileMenuGroup {
 		switch self {
-		case .marketplace, .artefacts, .members, .integrations, .triggers, .billing, .keys:
+		case .marketplace, .artefacts, .members, .integrations, .keychain, .triggers, .billing, .keys:
 			.workspace
 		case .settings, .autonomy: .you
 		}
@@ -61,7 +63,7 @@ public enum ProfileMenuItem: String, CaseIterable, Hashable, Identifiable, Senda
 	/// These belong to a workspace; without one there is nothing to open.
 	var needsWorkspace: Bool {
 		switch self {
-		case .marketplace, .members, .integrations, .triggers, .billing, .keys, .autonomy: true
+		case .marketplace, .members, .integrations, .keychain, .triggers, .billing, .keys, .autonomy: true
 		default: false
 		}
 	}

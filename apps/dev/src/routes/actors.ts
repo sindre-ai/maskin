@@ -35,6 +35,7 @@ import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'driz
 import { maskLlmConfigSecrets, restoreMaskedLlmConfig } from '../lib/actor-llm-config-redaction'
 import { toActorWithKeyResponse } from '../lib/actor-response'
 import { redactActorToolsForCaller, restoreMaskedToolValues } from '../lib/actor-tools-redaction'
+import { withHumanPauseMarker, withoutHumanPauseMarker } from '../lib/agent-pause'
 import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { resolveBearerCaller } from '../lib/bearer-caller'
@@ -46,6 +47,7 @@ import {
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { describeAgentAccess } from '../lib/integrations/agent-access-view'
+import { mailboxTakenBy, normalizeMailbox } from '../lib/integrations/providers/resend/mailbox'
 import { PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { shouldSkipOnboardingKickoff } from '../lib/onboarding/chief-of-staff-kickoff'
@@ -109,6 +111,11 @@ function sameEnvFrom(next: unknown, stored: unknown): boolean {
 function actorEventData(actor: { id: string; type: string; name: string; isSystem: boolean }) {
 	return { id: actor.id, type: actor.type, name: actor.name, is_system: actor.isSystem }
 }
+
+/** Where the actor's picture is served, or null. `v` changes on every upload so the URL can be cached forever. */
+const actorAvatarUrlSql = sql<
+	string | null
+>`CASE WHEN ${actors.metadata}->>'avatar_version' IS NOT NULL THEN '/api/actors/' || ${actors.id} || '/avatar?v=' || (${actors.metadata}->>'avatar_version') END`
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
@@ -755,6 +762,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					createdAt: actors.createdAt,
 					role: workspaceMembers.role,
 					voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
+					avatar_url: actorAvatarUrlSql,
 				})
 				.from(workspaceMembers)
 				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
@@ -809,6 +817,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					createdAt: actors.createdAt,
 					role: workspaceMembers.role,
 					voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
+					avatar_url: actorAvatarUrlSql,
 				})
 				.from(workspaceMembers)
 				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
@@ -1039,6 +1048,7 @@ app.openapi(getActorRoute, (async (c) => {
 				updatedAt: actors.updatedAt,
 				installedLoopId: sql<string | null>`${actors.metadata}->>'installed_loop_id'`,
 				voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
+				avatar_url: actorAvatarUrlSql,
 			})
 			.from(actors)
 			.where(eq(actors.id, id))
@@ -1189,7 +1199,12 @@ app.openapi(updateActorRoute, (async (c) => {
 	const body = c.req.valid('json')
 
 	const [existing] = await db
-		.select({ type: actors.type, tools: actors.tools, llmConfig: actors.llmConfig })
+		.select({
+			type: actors.type,
+			tools: actors.tools,
+			llmProvider: actors.llmProvider,
+			llmConfig: actors.llmConfig,
+		})
 		.from(actors)
 		.where(eq(actors.id, id))
 		.limit(1)
@@ -1255,6 +1270,43 @@ app.openapi(updateActorRoute, (async (c) => {
 		)
 	}
 
+	// The mailbox is the sender address of every email the agent sends, so an agent must not be
+	// able to set its own or another's: only a human admin or owner, on an agent, and never an
+	// address another actor already holds.
+	let mailbox: string | null | undefined
+	if (body.mailbox !== undefined) {
+		if (existing.type !== 'agent') {
+			return c.json(createApiError('BAD_REQUEST', 'Only an agent has a mailbox'), 400)
+		}
+		if (!(await isAdminOfSharedWorkspace(db, actorId, id, workspaceId, { humanOnly: true }))) {
+			return c.json(
+				createApiError('FORBIDDEN', 'Only a human workspace admin can set an agent mailbox'),
+				403,
+			)
+		}
+		if (body.mailbox === null) {
+			mailbox = null
+		} else {
+			mailbox = normalizeMailbox(body.mailbox)
+			if (!mailbox) {
+				return c.json(
+					createApiError('BAD_REQUEST', 'The mailbox must be one plain email address', [
+						{ field: 'mailbox', message: 'Use an address like name@example.com' },
+					]),
+					400,
+				)
+			}
+			if (await mailboxTakenBy(db, mailbox, id)) {
+				return c.json(
+					createApiError('CONFLICT', 'Another agent already uses that mailbox', [
+						{ field: 'mailbox', message: 'Already in use' },
+					]),
+					409,
+				)
+			}
+		}
+	}
+
 	// A default workspace is a personal preference: only the actor itself may set
 	// it, and only to a workspace it belongs to (null clears it).
 	if (body.default_workspace_id !== undefined) {
@@ -1303,15 +1355,21 @@ app.openapi(updateActorRoute, (async (c) => {
 		tools = restored.tools as typeof tools
 	}
 
-	// Same for llm_config: its api key is read back masked.
+	// Same for llm_config: its api key is read back masked. The stored key belongs
+	// to the stored provider, so it is only restored while the provider is unchanged;
+	// otherwise it would be sent to the wrong vendor.
 	let llmConfig = body.llm_config
 	if (llmConfig !== undefined) {
-		const restored = restoreMaskedLlmConfig(llmConfig, existing.llmConfig)
+		const providerChanged =
+			body.llm_provider !== undefined && body.llm_provider !== existing.llmProvider
+		const restored = restoreMaskedLlmConfig(llmConfig, providerChanged ? null : existing.llmConfig)
 		if (restored.unresolved.length > 0) {
 			return c.json(
 				createApiError(
 					'BAD_REQUEST',
-					'Masked llm_config values have no stored value to keep; send the real value or leave the entry unchanged',
+					providerChanged
+						? 'The llm_provider is changing, so the stored api key cannot be kept; send a new api key for the new provider'
+						: 'Masked llm_config values have no stored value to keep; send the real value or leave the entry unchanged',
 					restored.unresolved.map((field) => ({
 						field,
 						message: 'Masked value cannot be saved',
@@ -1337,6 +1395,12 @@ app.openapi(updateActorRoute, (async (c) => {
 			...(body.default_workspace_id !== undefined && {
 				defaultWorkspaceId: body.default_workspace_id,
 			}),
+			...(mailbox !== undefined && {
+				metadata:
+					mailbox === null
+						? sql`coalesce(${actors.metadata}, '{}'::jsonb) - 'mailbox'`
+						: sql`coalesce(${actors.metadata}, '{}'::jsonb) || ${JSON.stringify({ mailbox })}::jsonb`,
+			}),
 			updatedAt: new Date(),
 		})
 		.where(eq(actors.id, id))
@@ -1357,6 +1421,7 @@ app.openapi(updateActorRoute, (async (c) => {
 			createdAt: actors.createdAt,
 			updatedAt: actors.updatedAt,
 			voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
+			avatar_url: actorAvatarUrlSql,
 			default_workspace_id: actors.defaultWorkspaceId,
 		})
 
@@ -1513,8 +1578,10 @@ app.openapi(resetActorRoute, (async (c) => {
 			isSystem: actors.isSystem,
 			agentState: actors.agentState,
 			agentStateUpdatedAt: actors.agentStateUpdatedAt,
+			createdAt: actors.createdAt,
 			updatedAt: actors.updatedAt,
 			voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
+			avatar_url: actorAvatarUrlSql,
 		})
 
 	if (!updated) {
@@ -1712,7 +1779,7 @@ app.openapi(deleteActorRoute, (async (c) => {
 	return c.json({ deleted: true })
 }) as RouteHandler<typeof deleteActorRoute, Env>)
 
-// Returning shape used by /pause, /run, and /voice-mode handlers — full actor
+// Returning shape used by /pause, /run, /enable, and /voice-mode handlers — full actor
 // row. voice_enabled is projected off the metadata JSONB so the wire shape
 // stays flat and callers never reach into raw metadata.
 const actorReturningCols = {
@@ -1827,6 +1894,7 @@ app.openapi(pauseAgentRoute, (async (c) => {
 		.set({
 			agentState: 'paused',
 			agentStateUpdatedAt: new Date(),
+			metadata: withHumanPauseMarker,
 			updatedAt: new Date(),
 		})
 		.where(eq(actors.id, id))
@@ -1988,6 +2056,7 @@ app.openapi(runAgentRoute, (async (c) => {
 		.set({
 			agentState: 'running',
 			agentStateUpdatedAt: new Date(),
+			metadata: withoutHumanPauseMarker,
 			updatedAt: new Date(),
 		})
 		.where(eq(actors.id, id))
@@ -2015,5 +2084,113 @@ app.openapi(runAgentRoute, (async (c) => {
 		}) as z.infer<typeof actorResponseSchema>,
 	)
 }) as RouteHandler<typeof runAgentRoute, Env>)
+
+// POST /:id/enable - Lift a person's pause without starting anything
+const enableAgentRoute = createRoute({
+	method: 'post',
+	path: '/{id}/enable',
+	'x-viewer-policy': 'writer',
+	tags: ['Actors'],
+	summary: 'Enable a paused agent without starting a session',
+	description:
+		'Clears the pause so chat messages, @mentions and triggers reach the agent again. Unlike /run it never starts or resumes a session: a paused session stays paused. An agent that is not paused is returned unchanged.',
+	request: {
+		params: idParamSchema,
+		headers: workspaceIdHeader,
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: actorResponseSchema } },
+			description: 'Agent enabled',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Cannot enable agent',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Actor not found in workspace',
+		},
+	},
+})
+
+app.openapi(enableAgentRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	const [existing] = await db.select().from(actors).where(eq(actors.id, id)).limit(1)
+	if (!existing) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	// Same membership-before-type order as /pause and /run, so a member of one
+	// workspace can't probe actors in another.
+	if (!(await isWorkspaceMember(db, id, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	if (existing.type !== 'agent') {
+		return c.json(createApiError('BAD_REQUEST', 'Actor is not an agent'), 400)
+	}
+
+	// Only a paused agent changes. Compare-and-set on the state so a session that
+	// finished and wrote its own state meanwhile is not overwritten.
+	const [liveSession] = await db
+		.select({ id: sessions.id })
+		.from(sessions)
+		.where(
+			and(
+				eq(sessions.actorId, id),
+				eq(sessions.workspaceId, workspaceId),
+				inArray(sessions.status, RUNNING_SESSION_STATUSES),
+			),
+		)
+		.limit(1)
+
+	const [updated] = await db
+		.update(actors)
+		.set({
+			agentState: liveSession ? 'running' : 'idle',
+			agentStateUpdatedAt: new Date(),
+			metadata: withoutHumanPauseMarker,
+			updatedAt: new Date(),
+		})
+		.where(and(eq(actors.id, id), eq(actors.agentState, 'paused')))
+		.returning(actorReturningCols)
+
+	if (updated) {
+		await recordEvent(db, {
+			workspaceId,
+			actorId,
+			action: 'agent_enabled',
+			entityType: 'actor',
+			entityId: id,
+			data: {},
+		})
+	}
+
+	const row =
+		updated ??
+		(await db.select(actorReturningCols).from(actors).where(eq(actors.id, id)).limit(1))[0]
+	if (!row) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	const tools = await redactActorToolsForCaller(db, actorId, id, row.tools)
+	return c.json(
+		serialize({
+			...row,
+			tools,
+			llm_config: maskLlmConfigSecrets(row.llm_config),
+		}) as z.infer<typeof actorResponseSchema>,
+	)
+}) as RouteHandler<typeof enableAgentRoute, Env>)
 
 export default app

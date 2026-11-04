@@ -1,4 +1,5 @@
 import { AgentCallButton } from '@/components/agents/agent-call-button'
+import { LiveCapsule } from '@/components/agents/live-call-surface'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { Button } from '@/components/ui/button'
 import {
@@ -19,6 +20,7 @@ import { useLoop } from '@/hooks/use-loops'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { trackNavItemClicked } from '@/lib/analytics'
 import { cn } from '@/lib/cn'
+import { useVoiceCallView } from '@/lib/voice-call-view'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import {
 	Archive,
@@ -80,6 +82,7 @@ export function ThreadHeader({
 		const only = agents.length === 1 ? agents[0] : null
 		return only ? { id: only.actorId, name: only.actorName, type: only.actorType } : null
 	}, [conversation?.participants])
+	const liveCall = useVoiceCallView()
 	const { data: loop } = useLoop(loopId ?? '', workspaceId)
 	const [isEditingTitle, setIsEditingTitle] = useState(false)
 	const [titleDraft, setTitleDraft] = useState('')
@@ -331,7 +334,11 @@ export function ThreadHeader({
 					</Tooltip>
 				) : null}
 				<span className="ml-auto" />
-				{voiceAgent ? <AgentCallButton agent={voiceAgent} variant="icon" /> : null}
+				{liveCall ? (
+					<LiveCapsule />
+				) : voiceAgent ? (
+					<AgentCallButton agent={voiceAgent} variant="icon" />
+				) : null}
 				{/* At ≤640px, Copy · Pin · Mark-unread · Archive collapse into a
 				    ⋯ menu; Focus + Close stay inline. */}
 				<DropdownMenu>

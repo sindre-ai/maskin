@@ -1,9 +1,10 @@
 import {
+	commentShape,
 	deriveEntryAgentRole,
 	deriveSidebarViewport,
 	trackAgentCreated,
-	trackAgentSessionCompleted,
 	trackAgentSessionStarted,
+	trackAppActive,
 	trackAskBannerDecideClicked,
 	trackBetArchived,
 	trackBetCreated,
@@ -28,6 +29,7 @@ import {
 	trackObjectsListGroupToggled,
 	trackRelationshipCreated,
 	trackScrollToTop,
+	trackSearchFilterChanged,
 	trackSidebarToggle,
 	trackSidebarWorkspaceSwitcherDismissedImmediately,
 	trackSidebarWorkspaceSwitcherOpenAttempted,
@@ -36,7 +38,6 @@ import {
 	trackSindreMessageSent,
 	trackSpecialistSummonedManually,
 	trackTriggerCreated,
-	trackTriggerFired,
 	trackTriggerUpdated,
 } from '@/lib/analytics'
 import { setStoredActor } from '@/lib/auth'
@@ -167,55 +168,14 @@ describe('v1 taxonomy helpers', () => {
 		expect(capture).toHaveBeenCalledWith('bet_archived', expect.objectContaining({ source: 'web' }))
 	})
 
-	it('agent_session_* events use entity_type=session and carry outcome on completion', () => {
+	it('agent_session_started uses entity_type=session', () => {
 		const capture = captureSpy()
 
 		trackAgentSessionStarted({ entity_id: 'sess-1', entity_type: 'session' })
-		trackAgentSessionCompleted({
-			entity_id: 'sess-1',
-			entity_type: 'session',
-			outcome: 'failed',
-			flow_id: 'evt-77',
-		})
 
-		expect(capture).toHaveBeenNthCalledWith(
-			1,
+		expect(capture).toHaveBeenCalledWith(
 			'agent_session_started',
 			expect.objectContaining({ entity_id: 'sess-1', entity_type: 'session' }),
-		)
-		expect(capture).toHaveBeenNthCalledWith(
-			2,
-			'agent_session_completed',
-			expect.objectContaining({ outcome: 'failed', flow_id: 'evt-77' }),
-		)
-	})
-
-	it('agent_session_completed carries G2 trigger provenance and defaults it to null', () => {
-		const capture = captureSpy()
-
-		trackAgentSessionCompleted({
-			entity_id: 'sess-1',
-			entity_type: 'session',
-			outcome: 'completed',
-			flow_id: 'evt-1',
-			trigger_id: 'trig-1',
-			trigger_type: 'cron',
-		})
-		trackAgentSessionCompleted({
-			entity_id: 'sess-2',
-			entity_type: 'session',
-			outcome: 'completed',
-		})
-
-		expect(capture).toHaveBeenNthCalledWith(
-			1,
-			'agent_session_completed',
-			expect.objectContaining({ trigger_id: 'trig-1', trigger_type: 'cron' }),
-		)
-		expect(capture).toHaveBeenNthCalledWith(
-			2,
-			'agent_session_completed',
-			expect.objectContaining({ trigger_id: null, trigger_type: null }),
 		)
 	})
 
@@ -340,7 +300,7 @@ describe('v1 taxonomy helpers', () => {
 		expect(deriveEntryAgentRole(undefined)).toBeNull()
 	})
 
-	it('comment_posted captures is_reply, attachment_count, and content', () => {
+	it('comment_posted captures is_reply, attachment_count, is_multiline and length_bucket, never the text', () => {
 		const capture = captureSpy()
 
 		trackCommentPosted({
@@ -348,32 +308,87 @@ describe('v1 taxonomy helpers', () => {
 			entity_type: 'task',
 			is_reply: true,
 			attachment_count: 2,
-			content: 'first line\nsecond line',
+			...commentShape('first line\nsecond line'),
 			flow_id: 'draft-99',
 		})
 
-		expect(capture).toHaveBeenCalledWith(
-			'comment_posted',
-			expect.objectContaining({
-				entity_id: 'task-1',
-				entity_type: 'task',
-				is_reply: true,
-				attachment_count: 2,
-				content: 'first line\nsecond line',
-				flow_id: 'draft-99',
-			}),
-		)
+		expect(capture).toHaveBeenCalledWith('comment_posted', {
+			entity_id: 'task-1',
+			entity_type: 'task',
+			source: 'web',
+			is_reply: true,
+			attachment_count: 2,
+			is_multiline: true,
+			length_bucket: '1-50',
+			flow_id: 'draft-99',
+		})
 	})
 
-	it('trigger_fired forces source=trigger', () => {
+	it('commentShape buckets the length and flags a line break, ignoring surrounding whitespace', () => {
+		expect(commentShape('one line')).toEqual({ is_multiline: false, length_bucket: '1-50' })
+		expect(commentShape('a\nb')).toEqual({ is_multiline: true, length_bucket: '1-50' })
+		expect(commentShape('line\n')).toEqual({ is_multiline: false, length_bucket: '1-50' })
+		expect(commentShape('x'.repeat(51)).length_bucket).toBe('51-200')
+		expect(commentShape('x'.repeat(201)).length_bucket).toBe('201-1000')
+		expect(commentShape('x'.repeat(1001)).length_bucket).toBe('1000+')
+	})
+
+	it('search_filter_changed never sends the participant value (an actor id)', () => {
 		const capture = captureSpy()
 
-		trackTriggerFired({ entity_id: 'trg-1', entity_type: 'trigger' })
+		trackSearchFilterChanged({
+			surface: 'search_view',
+			dimension: 'participant',
+			action: 'add',
+			value: 'actor-uuid-1',
+			kind: 'chip',
+			via: 'click',
+		})
+		trackSearchFilterChanged({
+			surface: 'search_view',
+			dimension: 'status',
+			action: 'add',
+			value: 'in_progress',
+			kind: 'chip',
+			via: 'click',
+		})
 
-		expect(capture).toHaveBeenCalledWith(
-			'trigger_fired',
-			expect.objectContaining({ source: 'trigger', entity_type: 'trigger' }),
-		)
+		const [participant, status] = capture.mock.calls.map((c) => c[1] as Record<string, unknown>)
+		expect(participant.dimension).toBe('participant')
+		expect(participant.value).toBeUndefined()
+		expect(JSON.stringify(participant)).not.toContain('actor-uuid-1')
+		expect(status.value).toBe('in_progress')
+	})
+
+	it('app_active sends once per UTC day for the browser, then again the next day', () => {
+		const capture = captureSpy()
+
+		expect(trackAppActive(new Date('2026-11-02T08:00:00Z'))).toBe(true)
+		expect(trackAppActive(new Date('2026-11-02T23:59:00Z'))).toBe(false)
+		expect(trackAppActive(new Date('2026-11-03T00:01:00Z'))).toBe(true)
+
+		expect(capture).toHaveBeenCalledTimes(2)
+		expect(capture).toHaveBeenNthCalledWith(1, 'app_active', { utc_day: '2026-11-02' })
+	})
+
+	it('app_active skips a day already stored by an earlier page load', () => {
+		const capture = captureSpy()
+		localStorage.setItem('maskin-app-active-day', '2026-11-04')
+
+		expect(trackAppActive(new Date('2026-11-04T10:00:00Z'))).toBe(false)
+		expect(capture).not.toHaveBeenCalled()
+	})
+
+	it('app_active still sends once when storage is unavailable', () => {
+		const capture = captureSpy()
+		vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+			throw new Error('SecurityError')
+		})
+		const now = new Date('2026-11-05T10:00:00Z')
+
+		expect(trackAppActive(now)).toBe(true)
+		expect(trackAppActive(now)).toBe(false)
+		expect(capture).toHaveBeenCalledTimes(1)
 	})
 
 	it('relationship_created records the edge type as a custom prop', () => {
@@ -531,13 +546,11 @@ describe('v1 taxonomy helpers', () => {
 		trackMiniAppFileViewed({
 			entity_id: 'file-1',
 			entity_type: 'file',
-			file_name: 'curriculum.html',
 		})
 
 		expect(capture).toHaveBeenCalledWith('mini_app_file_viewed', {
 			entity_id: 'file-1',
 			entity_type: 'file',
-			file_name: 'curriculum.html',
 			source: 'web',
 			flow_id: null,
 		})
@@ -546,12 +559,11 @@ describe('v1 taxonomy helpers', () => {
 	it('mini_app_file_viewed defaults source to web and flow_id to null when omitted', () => {
 		const capture = captureSpy()
 
-		trackMiniAppFileViewed({ entity_id: 'file-2', entity_type: 'file', file_name: 'hub.html' })
+		trackMiniAppFileViewed({ entity_id: 'file-2', entity_type: 'file' })
 
 		expect(capture).toHaveBeenCalledWith('mini_app_file_viewed', {
 			entity_id: 'file-2',
 			entity_type: 'file',
-			file_name: 'hub.html',
 			source: 'web',
 			flow_id: null,
 		})
@@ -845,7 +857,7 @@ describe('file_viewer events', () => {
 			entity_type: 'file',
 			is_reply: false,
 			attachment_count: 0,
-			content: 'centered logo drifts on scroll',
+			...commentShape('centered logo drifts on scroll'),
 			source: 'file_viewer',
 		})
 

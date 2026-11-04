@@ -11,12 +11,15 @@ import './extensions.js'
 import { getAllModules, getModuleDefaultSettings } from '@maskin/module-sdk'
 import {
 	type CustomExtensionEntry,
+	FOR_YOU_TOOL_DEFAULT_LIMIT,
+	type ForYouItemLike,
 	type McpEra,
 	type McpProtocolVersionLabel,
 	type ObjectPreview,
 	type WebAppTarget,
 	buildWebAppHref,
 	resolveWebAppBaseUrl,
+	slimForYouItems,
 	stripTrailingSlash,
 } from '@maskin/shared'
 import {
@@ -28,7 +31,8 @@ import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mc
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Cron } from 'croner'
 import type { z } from 'zod'
-import { TOOL_ANNOTATIONS } from './annotations.js'
+import { needsNormalise, normaliseArgs, wrapInputSchema } from './alias-layer.js'
+import { READ_ONLY_TOOLS, TOOL_ANNOTATIONS } from './annotations.js'
 import {
 	CURSOR_MAX_OFFSET,
 	type CursorState,
@@ -38,9 +42,18 @@ import {
 	toSnapshotAt,
 } from './cursor.js'
 import {
+	type IntegrationRow,
+	integrationSortKey,
+	leanIntegrationRow,
+	matchesIntegrationFilters,
+	summarizeIntegrations,
+} from './integrations-list.js'
+import { buildListPayload, listText } from './list-response.js'
+import {
 	READ_TOOL_NAMES,
 	buildReadErrorBody,
 	parseApiErrorStatus,
+	reasonFromError,
 	toolErrorResponse,
 } from './read-error.js'
 import { RESUME_CURSOR, applyResponseTokenCap } from './response-cap.js'
@@ -63,10 +76,12 @@ import {
 	type TelemetrySink,
 	createDefaultSink,
 	currentToolCallSeq,
+	recordAliasUse,
 	recordMutation,
 	recordToolCall,
 	recordToolCallResponseSize,
 } from './telemetry.js'
+import { RUN_AGENT_DROPPED_KEYS, TOOL_NAME_ALIASES } from './tool-aliases.js'
 import { parseListActorsInclude, tools } from './tools.js'
 
 export interface McpConfig {
@@ -229,6 +244,7 @@ const CARD_METADATA_KEYS: Record<string, string | null> = {
 	integration_connect: 'connect_integration',
 	keychain_request: 'request_keychain_credential',
 	keychain_access_request: 'request_keychain_access',
+	mcp_server_request: 'add_mcp_server',
 	computer_request: 'show_computer',
 	question: 'ask_user_question',
 	needed_tools: null,
@@ -399,6 +415,16 @@ function workspaceSetupHint(config: McpConfig): string {
 		? 'Either pass workspace_id to this tool or set an `X-Workspace-Id: <YOUR_WORKSPACE_ID>` header on the MCP request. Call list_workspaces to find your workspace ID.'
 		: 'Either pass workspace_id to this tool, set DEFAULT_WORKSPACE_ID environment variable, or call list_workspaces to find your workspace ID.'
 }
+
+// Echoed in the set_loop_view success response; the full guidance is in the tool description.
+const LOOP_VIEW_CHECKLIST = [
+	'Opens with the loop outcome in one plain sentence and where it stands against it.',
+	'Three to five metrics at most, each with a value and unit, a comparison and its source.',
+	'Every number has a declared source in maskin-sources and an empty and an error state that shows the message.',
+	'No query is truncated (rows_truncated and groups_truncated false), or the view says its numbers are partial.',
+	'Says what needs a person now, if anything. Nothing that does not change a decision.',
+	'One self-contained file, no network calls, readable in light and dark.',
+]
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -743,6 +769,42 @@ async function assertAgentsExist(
 }
 
 /**
+ * Validate a loop's driver: it must be an agent in this workspace (not a
+ * human) and not paused. Same workspace-scoped `GET /api/actors?ids=` lookup as
+ * assertAgentsExist. Throws a message that tells the caller how to pick one.
+ */
+async function assertLoopDriver(
+	config: McpConfig,
+	driverId: string | undefined,
+	workspaceId?: string,
+): Promise<void> {
+	const pick =
+		"Pick an agent whose job covers the loop's outcome (find one with list_actors), or ask the Chief of Staff to create one. Do not borrow an unrelated agent."
+	if (!driverId) {
+		throw new Error(`driver_id is required: every loop needs one agent who drives it. ${pick}`)
+	}
+	const rows = (await apiCall(
+		config,
+		'GET',
+		`/api/actors?ids=${encodeURIComponent(driverId)}`,
+		undefined,
+		{ workspaceId },
+	)) as Array<{ id: string; type: string; agentState?: string }>
+	const actor = (Array.isArray(rows) ? rows : []).find((r) => r.id === driverId)
+	if (!actor) {
+		throw new Error(
+			`Invalid driver_id ${driverId}: not found or not a member of this workspace. ${pick}`,
+		)
+	}
+	if (actor.type !== 'agent') {
+		throw new Error(`Invalid driver_id ${driverId}: it is a ${actor.type}, not an agent. ${pick}`)
+	}
+	if (actor.agentState === 'paused') {
+		throw new Error(`Invalid driver_id ${driverId}: that agent is paused. ${pick}`)
+	}
+}
+
+/**
  * Delete every `in_loop` edge for a loop (source = loop, no target filter) —
  * used by delete_loop. `relationships` rows have no FK/cascade from either
  * side, so these are orphaned unless explicitly cleaned up before the loop
@@ -891,10 +953,11 @@ async function fetchLoopStepsView(
 	}
 }
 
-/** Strip fields that don't apply to a loop (a loop is never driven or run
- *  directly — its steps are the triggers that do the work). */
+/** Strip fields that don't apply to a loop (a loop is never run directly —
+ *  its steps are the triggers that do the work). The driver stays: it is the
+ *  agent accountable for the loop. */
 function stripLoopOnlyFields(entity: Record<string, unknown>): Record<string, unknown> {
-	const { driver: _driver, activeSessionId: _activeSessionId, ...rest } = entity
+	const { activeSessionId: _activeSessionId, ...rest } = entity
 	return rest
 }
 
@@ -963,10 +1026,20 @@ async function assertLoopTypesValid(
 async function getWorkspace(
 	config: McpConfig,
 	workspaceId: string,
-): Promise<{ id: string; name: string; settings: Record<string, unknown> }> {
+): Promise<{
+	id: string
+	name: string
+	settings: Record<string, unknown>
+	llm_configured?: { anthropic?: boolean; openai?: boolean }
+}> {
 	const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
 		skipWorkspace: true,
-	})) as Array<{ id: string; name: string; settings: Record<string, unknown> }>
+	})) as Array<{
+		id: string
+		name: string
+		settings: Record<string, unknown>
+		llm_configured?: { anthropic?: boolean; openai?: boolean }
+	}>
 	const workspace = workspaces.find((w) => w.id === workspaceId)
 	if (!workspace) throw new Error('Workspace not found')
 	return workspace
@@ -1267,12 +1340,49 @@ function waitPollDelayMs(attempt: number): number {
 const MAX_POLL_FAILURES = 5
 
 /**
+ * What the caller reads when a handover did not start. A chat agent that only sees a
+ * bare API error tends to tell the person it handed the work over anyway.
+ */
+function sessionNotStartedResult(
+	config: McpConfig,
+	toolName: 'create_session' | 'create_sub_chat',
+	workspaceId: string | undefined,
+	err: unknown,
+) {
+	const reason = err instanceof Error ? err.message : String(err)
+	console.error(`${toolName}: could not start the session`, err)
+	return {
+		_meta: meta(toolName, config, workspaceId),
+		isError: true,
+		content: [
+			{
+				type: 'text' as const,
+				text: `Not started: ${reason}. Nothing was handed over. Tell the person in the same reply that the handover failed and why. Do not say the work was handed over or is in progress.`,
+			},
+		],
+	}
+}
+
+/**
+ * Added to a started session so the caller has something real to quote to the person: the
+ * link to its chat, never the session id.
+ */
+function handoffNote(session: { id: string; status?: string }, url?: unknown) {
+	const status = session.status ?? 'pending'
+	if (typeof url !== 'string' || !url) {
+		return `Started: the session is ${status}. Say it is queued if it has not started running yet. Never show the person a session id.`
+	}
+	return `Started: the session is ${status}. When you tell the person you handed this over, give them this link to its chat as a markdown link: ${url}. Say it is queued if it has not started running yet. Never show the person a session id.`
+}
+
+/**
  * The `wait: true` path of `create_session`: start the session, then wait for it to
  * reach a terminal state and return `{ session, logs }`.
  */
 async function createSessionAndWait(
 	config: McpConfig,
 	args: z.infer<typeof tools.create_session.inputSchema>,
+	toolName: 'create_session' | 'create_sub_chat' = 'create_session',
 ) {
 	// `notify_on_complete` is no longer a parameter; a caller that still sends it is
 	// ignored, and it is never true on this create call (registered below instead).
@@ -1288,19 +1398,21 @@ async function createSessionAndWait(
 	// returns the result inline, so it is only registered (below) if the wait runs
 	// out. False, not omitted, because an omitted value defaults on for a helper
 	// started from a chat, and the waiting caller would get the result twice.
-	const session = (await apiCall(
-		config,
-		'POST',
-		'/api/sessions',
-		{ ...createBody, notify_on_complete: false },
-		wsOpts,
-	)) as {
-		id: string
-		status: string
+	let session: { id: string; status: string }
+	try {
+		session = (await apiCall(
+			config,
+			'POST',
+			'/api/sessions',
+			{ ...createBody, notify_on_complete: false },
+			wsOpts,
+		)) as { id: string; status: string }
+	} catch (err) {
+		return sessionNotStartedResult(config, toolName, workspace_id, err)
 	}
 
 	return waitForSessionResult(config, {
-		toolName: 'create_session',
+		toolName,
 		workspaceId: workspace_id,
 		session,
 		registerReturn: true,
@@ -1316,7 +1428,12 @@ async function createSessionAndWait(
 async function waitForSessionResult(
 	config: McpConfig,
 	opts: {
-		toolName: 'create_session' | 'get_session' | 'resume_session' | 'send_session_message'
+		toolName:
+			| 'create_session'
+			| 'create_sub_chat'
+			| 'get_session'
+			| 'resume_session'
+			| 'send_session_message'
 		workspaceId: string | undefined
 		session: { id: string; status: string }
 		registerReturn?: boolean
@@ -1441,9 +1558,9 @@ async function waitForSessionResult(
 
 	const stopMessage =
 		stoppedBecause === 'waiting_for_input'
-			? `The session is waiting for input and is not finished. It cannot be answered from the MCP surface yet. Answer it in the web app or @mention the agent. Check it with get_session, read the latest output with get_session_logs (newest first, the question is usually at the end), or stop it with stop_session. Session id: ${sessionId}. The logs field in this response is the first 500 lines, oldest first, so it will likely not contain the question.${notifyOnComplete?.state === 'registered' ? ' Its result will come back to you when it finishes.' : ''}`
+			? `The session is waiting for input and is not finished. It cannot be answered from the MCP surface yet. Answer it in the web app or @mention the agent. Check it with get_session, read the latest output with get_session_logs (newest first, the question is usually at the end), or stop it with stop_session. The logs field in this response is the first 500 lines, oldest first, so it will likely not contain the question.${notifyOnComplete?.state === 'registered' ? ' Its result will come back to you when it finishes.' : ''}`
 			: stoppedBecause === 'paused'
-				? `The session is paused and is not finished: it will not progress until it is resumed. Carry on with it using resume_session. Session id: ${sessionId}.`
+				? 'The session is paused and is not finished: it will not progress until it is resumed. Carry on with it using resume_session.'
 				: undefined
 
 	const wsId = workspace_id ?? config.defaultWorkspaceId
@@ -1489,6 +1606,281 @@ async function waitForSessionResult(
 			},
 		],
 	}
+}
+
+// ─── Chats: agent status and waiting for replies ──────────────────────────
+
+/** A chat's session as the sessions list returns it (verbose rows). */
+interface ChatSessionRow {
+	id: string
+	actorId: string
+	status: string
+	updatedAt?: string
+}
+
+type ChatAgentStatus = 'starting' | 'running' | 'waiting_for_input' | 'paused' | 'not_running'
+
+/**
+ * What an agent is doing in a chat, from its session. `running` means it has a live
+ * session: it is either working on a turn or ready for the next message. The session
+ * does not say which, so read get_chat_activity for the detail.
+ */
+function chatAgentStatus(status: string | undefined): ChatAgentStatus {
+	if (status === 'pending' || status === 'starting' || status === 'snapshotting') return 'starting'
+	if (status === 'running') return 'running'
+	if (status === 'waiting_for_input') return 'waiting_for_input'
+	if (status === 'paused') return 'paused'
+	return 'not_running'
+}
+
+/** Every session in a chat, newest first. A failed lookup is an empty list, never an error. */
+async function fetchChatSessions(
+	config: McpConfig,
+	workspaceId: string | undefined,
+	conversationId: string,
+): Promise<ChatSessionRow[]> {
+	try {
+		const rows = await apiCall(
+			config,
+			'GET',
+			`/api/sessions?conversation_id=${conversationId}&verbose=true&limit=50`,
+			undefined,
+			{ workspaceId },
+		)
+		return Array.isArray(rows) ? (rows as ChatSessionRow[]) : []
+	} catch {
+		return []
+	}
+}
+
+/** The newest session of each agent. `rows` must already be newest first. */
+function latestSessionByActor(rows: ChatSessionRow[]): Map<string, ChatSessionRow> {
+	const latest = new Map<string, ChatSessionRow>()
+	for (const row of rows) {
+		if (row.actorId && !latest.has(row.actorId)) latest.set(row.actorId, row)
+	}
+	return latest
+}
+
+// A chat reply can take a long time, but not forever: a wait that has not been answered by
+// then returns what it has, with settled false.
+const CHAT_WAIT_MAX_MS = 30 * 60_000
+// Polls to let a woken agent's session appear before "it has no live session" counts.
+const CHAT_WAIT_GRACE_POLLS = 3
+// Consecutive polls with no live session after which an agent is given up on.
+const CHAT_WAIT_IDLE_POLLS = 3
+
+interface ChatReplyMessage {
+	id: number
+	actorId: string
+	actorName?: string
+	actorType?: string
+	content: string
+	metadata?: { source?: string } | null
+	createdAt?: string
+}
+
+/**
+ * Holds until each awaited agent has finished its reply to the message at
+ * `afterMessageId`. An agent has finished when its closing message for the turn
+ * arrives (the one the platform posts at the end of a turn; interim notes do not
+ * count), or when it has no live session any more, so a failed run does not hold the
+ * caller for the full wait.
+ */
+async function waitForChatReplies(
+	config: McpConfig,
+	opts: {
+		workspaceId: string | undefined
+		conversationId: string
+		afterMessageId: number
+		awaitedActorIds: string[]
+	},
+) {
+	const wsOpts = { workspaceId: opts.workspaceId }
+	const pending = new Set(opts.awaitedActorIds)
+	const seen = new Map<number, ChatReplyMessage>()
+	const idlePolls = new Map<string, number>()
+	const unanswered = new Set<string>()
+	const deadline = Date.now() + CHAT_WAIT_MAX_MS
+	let attempt = 0
+	let pollFailures = 0
+	let pollError: string | undefined
+
+	while (pending.size > 0 && Date.now() < deadline) {
+		await new Promise((resolve) => setTimeout(resolve, waitPollDelayMs(attempt)))
+		attempt += 1
+		try {
+			const page = (await apiCall(
+				config,
+				'GET',
+				`/api/conversations/${opts.conversationId}/messages?after_id=${opts.afterMessageId}&limit=200`,
+				undefined,
+				wsOpts,
+			)) as { messages?: ChatReplyMessage[] }
+			pollFailures = 0
+			pollError = undefined
+			for (const message of page.messages ?? []) {
+				if (!opts.awaitedActorIds.includes(message.actorId)) continue
+				seen.set(message.id, message)
+				if (message.metadata?.source === 'final_output') pending.delete(message.actorId)
+			}
+		} catch (err) {
+			pollFailures += 1
+			pollError = err instanceof Error ? err.message : String(err)
+			if (pollFailures >= MAX_POLL_FAILURES) break
+			continue
+		}
+		if (pending.size === 0 || attempt <= CHAT_WAIT_GRACE_POLLS) continue
+
+		const latest = latestSessionByActor(
+			await fetchChatSessions(config, opts.workspaceId, opts.conversationId),
+		)
+		for (const actorId of [...pending]) {
+			const live = latest.get(actorId)
+			const hasLiveSession =
+				!!live && !ENDED_SESSION_STATUSES.includes(live.status) && live.status !== 'paused'
+			const idle = hasLiveSession ? 0 : (idlePolls.get(actorId) ?? 0) + 1
+			idlePolls.set(actorId, idle)
+			if (idle >= CHAT_WAIT_IDLE_POLLS) {
+				pending.delete(actorId)
+				unanswered.add(actorId)
+			}
+		}
+	}
+	for (const actorId of pending) unanswered.add(actorId)
+
+	const replies = [...seen.values()].sort((a, b) => a.id - b.id)
+	return {
+		settled: unanswered.size === 0,
+		replies,
+		...(unanswered.size > 0
+			? {
+					unanswered_actor_ids: [...unanswered],
+					message:
+						'Some agents did not finish a reply: they have no live session, or the wait ran out. Read the chat with list_conversation_messages, or see what they did with get_chat_activity.',
+				}
+			: {}),
+		...(pollError ? { poll_error: pollError } : {}),
+	}
+}
+
+interface CommentReplyEvent {
+	id: number
+	actorId: string
+	actorName?: string
+	data?: { content?: string; parentEventId?: number | null } | null
+	createdAt?: string
+}
+
+/**
+ * Holds until each awaited agent has replied in the thread of the comment
+ * `commentId` on `objectId`. A reply is a later comment by that agent whose parent is
+ * `threadRootId`: the server collapses every reply to the thread root, so for a comment
+ * posted inside a thread that is the comment's own parent, not the comment itself. An
+ * agent that never replies is given up on when it has no live session any more, so a
+ * failed run does not hold the caller for the full wait.
+ */
+async function waitForCommentReplies(
+	config: McpConfig,
+	opts: {
+		workspaceId: string | undefined
+		objectId: string
+		commentId: number
+		threadRootId: number
+		awaitedActorIds: string[]
+	},
+) {
+	const wsOpts = { workspaceId: opts.workspaceId }
+	const pending = new Set(opts.awaitedActorIds)
+	const seen = new Map<number, CommentReplyEvent>()
+	const idlePolls = new Map<string, number>()
+	const unanswered = new Set<string>()
+	const deadline = Date.now() + CHAT_WAIT_MAX_MS
+	let attempt = 0
+	let pollFailures = 0
+	let pollError: string | undefined
+
+	while (pending.size > 0 && Date.now() < deadline) {
+		await new Promise((resolve) => setTimeout(resolve, waitPollDelayMs(attempt)))
+		attempt += 1
+		try {
+			const query = new URLSearchParams({
+				entity_type: 'object',
+				entity_id: opts.objectId,
+				action: 'commented',
+				since: String(opts.commentId),
+				limit: '100',
+			})
+			const rows = (await apiCall(
+				config,
+				'GET',
+				`/api/events/history?${query}`,
+				undefined,
+				wsOpts,
+			)) as CommentReplyEvent[]
+			pollFailures = 0
+			pollError = undefined
+			for (const row of Array.isArray(rows) ? rows : []) {
+				if (!opts.awaitedActorIds.includes(row.actorId)) continue
+				if (row.id <= opts.commentId || row.data?.parentEventId !== opts.threadRootId) continue
+				seen.set(row.id, row)
+				pending.delete(row.actorId)
+			}
+		} catch (err) {
+			pollFailures += 1
+			pollError = err instanceof Error ? err.message : String(err)
+			if (pollFailures >= MAX_POLL_FAILURES) break
+			continue
+		}
+		if (pending.size === 0 || attempt <= CHAT_WAIT_GRACE_POLLS) continue
+
+		for (const actorId of [...pending]) {
+			let hasLiveSession = false
+			try {
+				const sessions = (await apiCall(
+					config,
+					'GET',
+					`/api/sessions?actor_id=${actorId}&limit=5`,
+					undefined,
+					wsOpts,
+				)) as ChatSessionRow[]
+				const live = latestSessionByActor(Array.isArray(sessions) ? sessions : []).get(actorId)
+				hasLiveSession =
+					!!live && !ENDED_SESSION_STATUSES.includes(live.status) && live.status !== 'paused'
+			} catch {
+				// A failed lookup is not evidence the agent is gone: keep waiting.
+				continue
+			}
+			const idle = hasLiveSession ? 0 : (idlePolls.get(actorId) ?? 0) + 1
+			idlePolls.set(actorId, idle)
+			if (idle >= CHAT_WAIT_IDLE_POLLS) {
+				pending.delete(actorId)
+				unanswered.add(actorId)
+			}
+		}
+	}
+	for (const actorId of pending) unanswered.add(actorId)
+
+	const replies = [...seen.values()].sort((a, b) => a.id - b.id)
+	return {
+		settled: unanswered.size === 0,
+		replies,
+		...(unanswered.size > 0
+			? {
+					unanswered_actor_ids: [...unanswered],
+					message:
+						'Some agents did not reply: they have no live session, or the wait ran out. Read the thread with get_comments, or see what they did with get_session_activity.',
+				}
+			: {}),
+		...(pollError ? { poll_error: pollError } : {}),
+	}
+}
+
+/** A participant as the conversation route returns it. */
+interface ChatParticipant {
+	actorId: string
+	actorName: string
+	actorType: string
 }
 
 /**
@@ -1721,6 +2113,40 @@ function extractWorkspaceId(args: unknown): string | undefined {
 }
 
 /**
+ * Refuses a write that names a workspace other than the one the agent session
+ * is running in. The model's own workspace_id wins over the session's default
+ * in every handler, so without this an agent whose key reaches several
+ * workspaces can write to any of them by passing the id.
+ *
+ * Applies only when the call belongs to a session (over HTTP the
+ * X-Maskin-Session-Id header, on stdio the container's SESSION_ID) and a
+ * default workspace is known, so human-driven use outside a session is
+ * untouched. A write is anything not in READ_ONLY_TOOLS, so a new tool is
+ * covered until someone marks it read-only; reads keep taking any workspace
+ * the key reaches. create_workspace is exempt: it has no session workspace to
+ * stay inside. Throws rather than rewriting the id so the model sees its error.
+ */
+function assertWriteStaysInSessionWorkspace(
+	config: McpConfig,
+	toolName: string,
+	args: unknown,
+): void {
+	if (READ_ONLY_TOOLS.has(toolName) || toolName === 'create_workspace') return
+	const sessionWorkspaceId = config.defaultWorkspaceId
+	if (!sessionWorkspaceId) return
+	const sessionId =
+		config.transport === 'http'
+			? config.maskinSessionId
+			: (config.maskinSessionId ?? process.env.SESSION_ID)
+	if (!sessionId) return
+	const requested = extractWorkspaceId(args)
+	if (requested === undefined || requested === sessionWorkspaceId) return
+	throw new Error(
+		`${toolName} was called with workspace_id ${requested}, but this session runs in workspace ${sessionWorkspaceId}. Agents can only write to the workspace they run in. Omit workspace_id or pass ${sessionWorkspaceId}.`,
+	)
+}
+
+/**
  * Inspects a mutation tool response to decide whether it actually mutated
  * something. Tools like `update_objects` aggregate per-target outcomes, so we
  * count one mutation event per call when at least one inner item explicitly
@@ -1852,6 +2278,36 @@ export interface HeroCardPayload {
 }
 
 const HERO_CARD_UI_PAGE_SIZE = 25
+
+/**
+ * Max `relationships` and `connected_objects` rows get_objects returns per
+ * object. The graph endpoint returns every edge, so a hub object with hundreds
+ * of edges produced a 600k+ character result no client could read. Callers
+ * page the rest with list_relationships({ object_id }).
+ */
+export const GET_OBJECTS_EDGE_CAP = 100
+
+/**
+ * Cap one graph block at GET_OBJECTS_EDGE_CAP rows. When rows are dropped the
+ * second element tells the caller the real total and where to page the rest;
+ * it is null when everything fit, so small objects keep their exact shape.
+ */
+function capGraphBlock(
+	rows: unknown,
+	block: 'relationships' | 'connected_objects',
+	objectId: string,
+): [unknown, Record<string, unknown> | null] {
+	if (!Array.isArray(rows) || rows.length <= GET_OBJECTS_EDGE_CAP) return [rows, null]
+	return [
+		rows.slice(0, GET_OBJECTS_EDGE_CAP),
+		{
+			returned: GET_OBJECTS_EDGE_CAP,
+			total: rows.length,
+			truncated: true,
+			hint: `Showing the first ${GET_OBJECTS_EDGE_CAP} of ${rows.length}. Call list_relationships with object_id ${objectId} to page the rest${block === 'connected_objects' ? ', then get_objects on the endpoint ids you need' : ''}.`,
+		},
+	]
+}
 
 interface RawObject {
 	id: string
@@ -2433,6 +2889,7 @@ function buildTriggerHeroCardObject(
 	trigger: RawTrigger,
 	driver: HeroCardActor | null,
 	nowMs = Date.now(),
+	compact = false,
 ): HeroCardObject {
 	return {
 		id: trigger.id,
@@ -2441,7 +2898,8 @@ function buildTriggerHeroCardObject(
 		status: trigger.enabled ? 'enabled' : 'disabled',
 		driver,
 		contextLine: buildTriggerContextLine(trigger, nowMs),
-		actionPrompt: trigger.actionPrompt ?? null,
+		// The action prompt is most of a row's size; compact rows leave it out.
+		...(compact ? {} : { actionPrompt: trigger.actionPrompt ?? null }),
 		config: trigger.config,
 	}
 }
@@ -2643,6 +3101,11 @@ export function getServerHandlers(server: McpServer): Map<string, McpToolHandler
 	return serverHandlers.get(server) ?? new Map()
 }
 
+// Tools whose schema rejects a top-level argument name it does not know instead
+// of stripping it. Only tools where a dropped list reads as a finished write;
+// other tools keep stripping, since agents often send harmless extra keys.
+const REJECT_UNKNOWN_KEYS_TOOLS = new Set(['update_objects'])
+
 export function createMcpServer(config: McpConfig) {
 	const server = new McpServer({
 		name: 'maskin',
@@ -2680,7 +3143,38 @@ export function createMcpServer(config: McpConfig) {
 	// without losing the per-tool input schema inference; the wrapper is purely
 	// pass-through so giving up the wrapper's signature is safe.
 	// biome-ignore lint/suspicious/noExplicitAny: see comment above.
-	const registerAppTool = ((s: any, name: string, definition: any, handler: any) => {
+	const registerAppTool = ((s: any, name: string, baseDefinition: any, handler: any) => {
+		// Old parameter spellings are rewritten inside the input schema, because the
+		// SDK validates arguments before our handler runs. A tool with no alias
+		// rows passes through untouched, so its tools/list entry is unchanged.
+		const definition =
+			baseDefinition?.inputSchema && (needsNormalise(name) || REJECT_UNKNOWN_KEYS_TOOLS.has(name))
+				? {
+						...baseDefinition,
+						inputSchema: wrapInputSchema(
+							baseDefinition.inputSchema,
+							(raw) => {
+								const normalised = normaliseArgs(name, raw)
+								// One event per call that used at least one old name. Here, not in
+								// the handler, so it fires before validation and a call that then
+								// fails validation is still counted. Fire and forget; key names
+								// only. A separate event type from tool_call, so the server-side
+								// trace is not double counted.
+								if (normalised.renames.length > 0) {
+									recordAliasUse(telemetrySink, telemetryTarget, {
+										tool_name: name,
+										workspace_id: extractWorkspaceId(raw),
+										renames: normalised.renames,
+										both_sent: normalised.bothSent,
+										transport: config.transport,
+									})
+								}
+								return normalised.args
+							},
+							{ rejectUnknownKeys: REJECT_UNKNOWN_KEYS_TOOLS.has(name) },
+						),
+					}
+				: baseDefinition
 		const defHasRichRender = Boolean(definition?._meta?.ui)
 		const mutationKind = MUTATION_TOOL_KINDS[name]
 		const isReadTool = READ_TOOL_NAMES.has(name)
@@ -2689,6 +3183,7 @@ export function createMcpServer(config: McpConfig) {
 			const start = Date.now()
 			let response: unknown
 			try {
+				assertWriteStaysInSessionWorkspace(config, name, args)
 				response = await handler(args, extra)
 			} catch (err) {
 				recordToolCall(telemetrySink, telemetryTarget, {
@@ -3035,11 +3530,13 @@ export function createMcpServer(config: McpConfig) {
 			// to a single `unknown` check — surfacing "no LLM keys" as certain
 			// when we actually couldn't check would be a false negative.
 			let sharedWorkspaceSettings: Record<string, unknown> | null = null
+			let sharedWorkspaceLlmConfigured: { anthropic?: boolean; openai?: boolean } | undefined
 			let sharedWorkspaceError: unknown = null
 			if (wsId) {
 				try {
 					const workspace = await getWorkspace(config, wsId)
 					sharedWorkspaceSettings = workspace.settings
+					sharedWorkspaceLlmConfigured = workspace.llm_configured
 				} catch (err) {
 					sharedWorkspaceError = err
 				}
@@ -3080,10 +3577,22 @@ export function createMcpServer(config: McpConfig) {
 					}
 					const extras: Record<string, unknown> = {}
 					if (includeSet.has('relationships') && graph && 'relationships' in graph) {
-						extras.relationships = graph.relationships
+						const [rows, page] = capGraphBlock(
+							graph.relationships,
+							'relationships',
+							withUrl.id as string,
+						)
+						extras.relationships = rows
+						if (page) extras.relationships_page = page
 					}
 					if (includeSet.has('connected_objects') && graph && 'connected_objects' in graph) {
-						extras.connected_objects = graph.connected_objects
+						const [rows, page] = capGraphBlock(
+							graph.connected_objects,
+							'connected_objects',
+							withUrl.id as string,
+						)
+						extras.connected_objects = rows
+						if (page) extras.connected_objects_page = page
 					}
 					if (includeSet.has('events') && graph && 'events' in graph) {
 						extras.events = graph.events
@@ -3101,7 +3610,7 @@ export function createMcpServer(config: McpConfig) {
 								content: (withUrl.content as string | undefined) ?? null,
 								driver: (withUrl.driver as string | undefined) ?? null,
 							},
-							readWorkspaceLlmReadiness(sharedWorkspaceSettings),
+							readWorkspaceLlmReadiness(sharedWorkspaceSettings, sharedWorkspaceLlmConfigured),
 							readStatusOrder(sharedWorkspaceSettings, withUrl.type as string),
 						)
 					})
@@ -3974,14 +4483,16 @@ export function createMcpServer(config: McpConfig) {
 				;(result as Record<string, unknown>).workspace_id = bornInWorkspace
 				;(result as Record<string, unknown>).role = 'member'
 			} else if (targetWorkspace && !isAgent && !createBody.auto_create_workspace) {
-				// Humans only: add the new actor as a member
+				// Humans only: a person can't be added by id without accepting, so the
+				// workspace invites them by email and they join when they accept.
 				try {
-					await apiCall(config, 'POST', `/api/workspaces/${targetWorkspace}/members`, {
-						actor_id: result.id,
+					await apiCall(config, 'POST', '/api/invites', {
+						workspaceId: targetWorkspace,
+						email: createBody.email,
 						role: role ?? 'member',
 					})
 					;(result as Record<string, unknown>).workspace_id = targetWorkspace
-					;(result as Record<string, unknown>).role = role ?? 'member'
+					;(result as Record<string, unknown>).invited_role = role ?? 'member'
 				} catch (error) {
 					;(result as Record<string, unknown>).workspace_membership_error = String(error)
 				}
@@ -4561,19 +5072,18 @@ export function createMcpServer(config: McpConfig) {
 									hasMore: heroObjects.length > HERO_CARD_UI_PAGE_SIZE,
 								},
 							}
+			const payload = buildListPayload({
+				key: 'workspaces',
+				rows: safeRows,
+				limit: pagination.limit,
+				nextCursor,
+				total: rows.length,
+			})
 			return {
 				_meta: uiMeta('list_workspaces', config, webContextWorkspaceId, UI_RESOURCES.heroCard),
-				content: [
-					{
-						type: 'text' as const,
-						text: buildListContentText({ workspaces: safeRows }),
-					},
-				],
-				structuredContent: {
-					heroCard,
-					workspaces: safeRows,
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
-				},
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				// The card is presentation only; every datum is in the payload the text carries too.
+				structuredContent: { heroCard, ...payload },
 			}
 		},
 	)
@@ -5248,6 +5758,7 @@ export function createMcpServer(config: McpConfig) {
 			if (args.mime_type !== undefined) body.mime_type = args.mime_type
 			if (args.content !== undefined) body.content = args.content
 			if (args.encoding !== undefined) body.encoding = args.encoding
+			if (args.if_match !== undefined) body.if_match = args.if_match
 			const result = await apiCall(config, 'PATCH', `/api/files/${args.id}`, body, {
 				workspaceId: wsId,
 			})
@@ -5383,9 +5894,10 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id, no_thread, ...body } = args as {
+			const { workspace_id, no_thread, wait, ...body } = args as {
 				workspace_id?: string
 				no_thread?: boolean
+				wait?: boolean
 				parent_event_id?: number
 				[key: string]: unknown
 			}
@@ -5408,9 +5920,59 @@ export function createMcpServer(config: McpConfig) {
 			const result = await apiCall(config, 'POST', '/api/events', body, {
 				workspaceId: workspace_id,
 			})
+			let waitResult:
+				| Awaited<ReturnType<typeof waitForCommentReplies>>
+				| { note: string; lookup_errors?: string[] }
+				| undefined
+			if (wait) {
+				const posted = result as {
+					id?: number
+					actorId?: string
+					data?: { parentEventId?: number | null } | null
+				}
+				const mentioned = ((body.mentions as string[] | undefined) ?? []).filter(
+					(id) => id !== posted.actorId,
+				)
+				const agentIds: string[] = []
+				const lookupErrors: string[] = []
+				for (const id of mentioned) {
+					try {
+						const actor = (await apiCall(config, 'GET', `/api/actors/${id}`, undefined, {
+							workspaceId: workspace_id,
+						})) as ActorRow
+						if (actor?.type === 'agent') agentIds.push(id)
+					} catch (err) {
+						lookupErrors.push(`${id}: ${err instanceof Error ? err.message : String(err)}`)
+					}
+				}
+				if (typeof posted.id !== 'number' || agentIds.length === 0) {
+					waitResult = {
+						note:
+							lookupErrors.length > 0
+								? 'No agent could be confirmed, so nothing was waited for: looking up some mentioned actors failed (see lookup_errors).'
+								: 'No agent was mentioned, so there is nothing to wait for.',
+						...(lookupErrors.length > 0 ? { lookup_errors: lookupErrors } : {}),
+					}
+				} else {
+					const replies = await waitForCommentReplies(config, {
+						workspaceId: workspace_id,
+						objectId: String(body.entity_id),
+						commentId: posted.id,
+						// The server stores a reply under the thread root, and replies to it likewise.
+						threadRootId: posted.data?.parentEventId ?? posted.id,
+						awaitedActorIds: agentIds,
+					})
+					waitResult =
+						lookupErrors.length > 0 ? { ...replies, lookup_errors: lookupErrors } : replies
+				}
+			}
+			const payload =
+				waitResult && result && typeof result === 'object'
+					? { ...(result as object), wait: waitResult }
+					: result
 			return {
 				_meta: meta('create_comment', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
 			}
 		},
 	)
@@ -5425,13 +5987,22 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
 		},
 		async (args) => {
-			const result = await apiCall(
+			const result = (await apiCall(
 				config,
 				'GET',
 				`/api/conversations/${args.conversation_id}`,
 				undefined,
 				{ workspaceId: args.workspace_id },
-			)
+			)) as { participants?: Array<ChatParticipant & { status?: ChatAgentStatus }> }
+			// Say who is busy, so an agent does not @mention one that is not running.
+			if (Array.isArray(result.participants)) {
+				const latest = latestSessionByActor(
+					await fetchChatSessions(config, args.workspace_id, args.conversation_id),
+				)
+				for (const p of result.participants) {
+					if (p.actorType === 'agent') p.status = chatAgentStatus(latest.get(p.actorId)?.status)
+				}
+			}
 			return {
 				_meta: meta('get_conversation', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
@@ -5461,6 +6032,10 @@ export function createMcpServer(config: McpConfig) {
 			params.set('offset', String(offset))
 			if (args.updated_after) params.set('updated_after', args.updated_after)
 			if (args.has_human) params.set('has_human', 'true')
+			if (args.subject_type && args.subject_id) {
+				params.set('subject_type', args.subject_type)
+				params.set('subject_id', args.subject_id)
+			}
 			const raw = (await apiCall(config, 'GET', `/api/conversations?${params}`, undefined, {
 				workspaceId: args.workspace_id,
 			})) as {
@@ -5525,6 +6100,7 @@ export function createMcpServer(config: McpConfig) {
 			const params = new URLSearchParams()
 			if (args.before_id) params.set('before_id', String(args.before_id))
 			if (args.after_id) params.set('after_id', String(args.after_id))
+			if (args.thread_root_id) params.set('thread_root_id', String(args.thread_root_id))
 			params.set('limit', String(args.limit))
 			const result = await apiCall(
 				config,
@@ -5553,7 +6129,8 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id, conversation_id, mention_names, ...body } = args
+			const { workspace_id, conversation_id, mention_names, wait, sub_chat_session_id, ...body } =
+				args
 			rejectCardMetadata(body.metadata)
 			// Names are friendlier than UUIDs, and a mistyped UUID silently mentions
 			// nobody. Resolve against the live participant list and report misses.
@@ -5584,24 +6161,340 @@ export function createMcpServer(config: McpConfig) {
 			// config.maskinSessionId carries the caller's id and wins. Undefined
 			// outside an agent session (e.g. a human testing the MCP server
 			// locally), in which case the field is simply omitted.
+			// A sub-chat hangs from a message of this chat. Replying in that message's thread is
+			// what sends the words to its agent, so the message is looked up from the sub-chat.
+			let threadRootId = body.thread_root_id
+			if (sub_chat_session_id && threadRootId === undefined) {
+				const subChat = (await apiCall(
+					config,
+					'GET',
+					`/api/sessions/${sub_chat_session_id}`,
+					undefined,
+					{ workspaceId: workspace_id },
+				)) as { spawnedByMessageId?: number | null }
+				if (typeof subChat.spawnedByMessageId !== 'number') {
+					throw new Error(
+						`Sub-chat ${sub_chat_session_id} is not attached to a message in a chat yet, so there is no thread to reply in. Talk to it with send_session_message instead.`,
+					)
+				}
+				threadRootId = subChat.spawnedByMessageId
+			}
 			const result = await apiCall(
 				config,
 				'POST',
 				`/api/conversations/${conversation_id}/messages`,
-				{ ...body, session_id: config.maskinSessionId ?? process.env.SESSION_ID },
+				{
+					...body,
+					thread_root_id: threadRootId,
+					session_id: config.maskinSessionId ?? process.env.SESSION_ID,
+				},
 				{ workspaceId: workspace_id },
 			)
 			const withMentionReport =
 				unresolvedMentions.length > 0
 					? { ...(result as Record<string, unknown>), unresolved_mentions: unresolvedMentions }
 					: result
+
+			// Hold for the answer: the agents @mentioned, or every other agent in the chat.
+			let waited: Awaited<ReturnType<typeof waitForChatReplies>> | { note: string } | undefined
+			const posted = result as { id?: number; actorId?: string }
+			if (wait && typeof posted.id === 'number') {
+				// Read after posting: an @mentioned agent has joined the chat by now.
+				const conversation = (await apiCall(
+					config,
+					'GET',
+					`/api/conversations/${conversation_id}`,
+					undefined,
+					{ workspaceId: workspace_id },
+				)) as { participants?: ChatParticipant[] }
+				const mentioned = new Set(body.metadata?.mentions ?? [])
+				const agents = (conversation.participants ?? []).filter(
+					(p) => p.actorType === 'agent' && p.actorId !== posted.actorId,
+				)
+				const awaited = (
+					mentioned.size > 0 ? agents.filter((p) => mentioned.has(p.actorId)) : agents
+				).map((p) => p.actorId)
+				waited =
+					awaited.length > 0
+						? await waitForChatReplies(config, {
+								workspaceId: workspace_id,
+								conversationId: conversation_id,
+								afterMessageId: posted.id,
+								awaitedActorIds: awaited,
+							})
+						: { note: 'There is no agent in this chat to wait for, so nothing was waited on.' }
+			}
 			return {
 				_meta: meta(
 					'post_conversation_message',
 					config,
 					(args as { workspace_id?: string }).workspace_id,
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(withMentionReport, null, 2) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify(
+							waited
+								? { ...(withMentionReport as Record<string, unknown>), wait: waited }
+								: withMentionReport,
+							null,
+							2,
+						),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'create_chat',
+		{
+			description: tools.create_chat.description,
+			inputSchema: tools.create_chat.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
+		},
+		async (args) => {
+			const {
+				workspace_id,
+				title,
+				participant_actor_ids,
+				first_message,
+				subject_type,
+				subject_id,
+				topical,
+				wait,
+			} = args
+			if ((subject_type === undefined) !== (subject_id === undefined)) {
+				throw new Error('subject_type and subject_id go together: give both or neither.')
+			}
+			// One other actor and no subject is the direct message with them, unless a
+			// separate topical chat was asked for. The API gets or creates it.
+			const direct = participant_actor_ids.length === 1 && subject_id === undefined && !topical
+			const wsOpts = { workspaceId: workspace_id }
+			const conversation = (await apiCall(
+				config,
+				'POST',
+				'/api/conversations',
+				{
+					title,
+					participant_actor_ids,
+					...(direct ? { direct: true } : {}),
+					...(subject_type && subject_id
+						? { subject: { type: subject_type, id: subject_id } }
+						: {}),
+				},
+				wsOpts,
+			)) as { id: string; participants?: ChatParticipant[] }
+
+			// The first message is its own call, so the agents can be @mentioned by id: the
+			// mention is what wakes them, and the create call does not know who is an agent.
+			let firstMessage: unknown
+			let waitResult: Awaited<ReturnType<typeof waitForChatReplies>> | undefined
+			if (first_message) {
+				const requested = new Set(participant_actor_ids)
+				const agentIds = (conversation.participants ?? [])
+					.filter((p) => p.actorType === 'agent' && requested.has(p.actorId))
+					.map((p) => p.actorId)
+				firstMessage = await apiCall(
+					config,
+					'POST',
+					`/api/conversations/${conversation.id}/messages`,
+					{
+						content: first_message,
+						...(agentIds.length > 0 ? { metadata: { mentions: agentIds } } : {}),
+						session_id: config.maskinSessionId ?? process.env.SESSION_ID,
+					},
+					wsOpts,
+				)
+				const posted = firstMessage as { id?: number; actorId?: string }
+				if (wait && typeof posted.id === 'number') {
+					waitResult = await waitForChatReplies(config, {
+						workspaceId: workspace_id,
+						conversationId: conversation.id,
+						afterMessageId: posted.id,
+						awaitedActorIds: agentIds.filter((id) => id !== posted.actorId),
+					})
+				}
+			}
+			return {
+				_meta: meta('create_chat', config, workspace_id),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({
+							conversation,
+							...(firstMessage ? { first_message: firstMessage } : {}),
+							...(waitResult ? { wait: waitResult } : {}),
+						}),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'add_chat_participant',
+		{
+			description: tools.add_chat_participant.description,
+			inputSchema: tools.add_chat_participant.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
+		},
+		async (args) => {
+			const participants = await apiCall(
+				config,
+				'POST',
+				`/api/conversations/${args.conversation_id}/participants`,
+				{ actor_ids: args.actor_ids },
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta('add_chat_participant', config, args.workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify({ participants }) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'remove_chat_participant',
+		{
+			description: tools.remove_chat_participant.description,
+			inputSchema: tools.remove_chat_participant.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
+		},
+		async (args) => {
+			// The route answers 204 with no body, so there is nothing to parse.
+			await apiFetch(
+				config,
+				'DELETE',
+				`/api/conversations/${args.conversation_id}/participants/${args.actor_id}`,
+				undefined,
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta('remove_chat_participant', config, args.workspace_id),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ removed: true, actor_id: args.actor_id }),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'get_chat_activity',
+		{
+			description: tools.get_chat_activity.description,
+			inputSchema: tools.get_chat_activity.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
+		},
+		async (args) => {
+			const { workspace_id, conversation_id, actor_id, session_id, limit_turns } = args
+			if (!conversation_id && !session_id) {
+				throw new Error('Give a conversation_id (and optionally an actor_id), or a session_id.')
+			}
+			const wsOpts = { workspaceId: workspace_id }
+			let targets: ChatSessionRow[]
+			if (session_id) {
+				const row = (await apiCall(
+					config,
+					'GET',
+					`/api/sessions/${session_id}`,
+					undefined,
+					wsOpts,
+				)) as Partial<ChatSessionRow>
+				targets = [{ id: session_id, actorId: row.actorId ?? '', status: row.status ?? '' }]
+			} else {
+				const latest = latestSessionByActor(
+					await fetchChatSessions(config, workspace_id, conversation_id as string),
+				)
+				targets = [...latest.values()].filter((s) => !actor_id || s.actorId === actor_id)
+			}
+			const wsId = workspace_id ?? config.defaultWorkspaceId
+			const names = wsId ? await fetchActorNameMap(config, wsId) : {}
+			const agents = await Promise.all(
+				targets.map(async (s) => {
+					const base = {
+						actor_id: s.actorId,
+						actor_name: names[s.actorId] ?? null,
+						session_id: s.id,
+						status: chatAgentStatus(s.status),
+					}
+					try {
+						const activity = await apiCall(
+							config,
+							'GET',
+							`/api/sessions/${s.id}/activity?limit_turns=${limit_turns ?? 3}`,
+							undefined,
+							wsOpts,
+						)
+						return { ...base, activity }
+					} catch (err) {
+						return { ...base, error: err instanceof Error ? err.message : String(err) }
+					}
+				}),
+			)
+			const payload = { agents }
+			return {
+				_meta: meta('get_chat_activity', config, workspace_id),
+				// Same full payload on both channels (see known-pitfalls.md).
+				content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
+				structuredContent: payload,
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'stop_chat_agent',
+		{
+			description: tools.stop_chat_agent.description,
+			inputSchema: tools.stop_chat_agent.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
+		},
+		async (args) => {
+			const { workspace_id, conversation_id, actor_id, session_id } = args
+			const wsOpts = { workspaceId: workspace_id }
+			let sessionIds: string[]
+			if (session_id) {
+				sessionIds = [session_id]
+			} else if (conversation_id && actor_id) {
+				const rows = await fetchChatSessions(config, workspace_id, conversation_id)
+				sessionIds = rows
+					.filter((s) => s.actorId === actor_id && !ENDED_SESSION_STATUSES.includes(s.status))
+					.map((s) => s.id)
+			} else {
+				throw new Error('Give a conversation_id and an actor_id, or a session_id.')
+			}
+			if (sessionIds.length === 0) {
+				return {
+					_meta: meta('stop_chat_agent', config, workspace_id),
+					content: [
+						{
+							type: 'text' as const,
+							text: JSON.stringify({
+								stopped: false,
+								note: 'That agent has nothing running in this chat, so there is nothing to stop.',
+							}),
+						},
+					],
+				}
+			}
+			const stopped: string[] = []
+			for (const id of sessionIds) {
+				await apiCall(config, 'POST', `/api/sessions/${id}/stop`, undefined, wsOpts)
+				stopped.push(id)
+			}
+			return {
+				_meta: meta('stop_chat_agent', config, workspace_id),
+				content: [
+					{ type: 'text' as const, text: JSON.stringify({ stopped: true, session_ids: stopped }) },
+				],
 			}
 		},
 	)
@@ -5639,12 +6532,26 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
-	registerAppTool(
+	// The upstream signature accepts a raw shape; list_triggers passes its strict
+	// schema object so the SDK rejects unknown parameters, so the narrow type is
+	// spelled out here. Same cast as registerWrappedSchemaTool below.
+	const registerStrictSchemaTool = registerAppTool as unknown as (
+		s: typeof server,
+		name: string,
+		definition: {
+			description: string
+			inputSchema: typeof tools.list_triggers.inputSchema
+			_meta: Record<string, unknown>
+		},
+		handler: (args: z.infer<typeof tools.list_triggers.inputSchema>) => Promise<unknown>,
+	) => unknown
+	registerStrictSchemaTool(
 		server,
 		'list_triggers',
 		{
 			description: tools.list_triggers.description,
-			inputSchema: tools.list_triggers.inputSchema.shape,
+			// The strict object itself, not its shape: the SDK then rejects unknown parameters.
+			inputSchema: tools.list_triggers.inputSchema,
 			_meta: { ui: { resourceUri: UI_RESOURCES.heroCard, csp: CSP } },
 		},
 		async (args) => {
@@ -5661,6 +6568,9 @@ export function createMcpServer(config: McpConfig) {
 				params.set('cursor_created_at', pagination.cursor.k.sortValue)
 				params.set('cursor_id', pagination.cursor.k.id)
 			}
+			if (args.agent_id) params.set('target_actor_id', args.agent_id)
+			if (args.status) params.set('enabled', String(args.status === 'enabled'))
+			if (args.q) params.set('q', args.q)
 			const { data, response } = await apiCallWithResponse(
 				config,
 				'GET',
@@ -5674,7 +6584,13 @@ export function createMcpServer(config: McpConfig) {
 				rawRows as Array<{ id: string; createdAt?: string | null }>,
 			)
 			const rows = trimmed as RawTrigger[]
-			const trimmedData = Array.isArray(data) ? (data as unknown[]).slice(0, rows.length) : data
+			const trimmedData = Array.isArray(data)
+				? (data as Array<Record<string, unknown>>).slice(0, rows.length).map((t) => {
+						if (!args.compact) return t
+						const { actionPrompt: _actionPrompt, ...rest } = t
+						return rest
+					})
+				: data
 			const ownerIds = rows
 				.map((t) => t.targetActorId)
 				.filter((v): v is string => typeof v === 'string')
@@ -5683,6 +6599,8 @@ export function createMcpServer(config: McpConfig) {
 				buildTriggerHeroCardObject(
 					t,
 					t.targetActorId ? (actors.get(t.targetActorId) ?? null) : null,
+					Date.now(),
+					args.compact,
 				),
 			)
 			const totalCount = parseTotalCountHeader(response, heroObjects.length)
@@ -5815,6 +6733,7 @@ export function createMcpServer(config: McpConfig) {
 			const {
 				workspace_id,
 				name,
+				driver_id,
 				content,
 				status,
 				entry_condition,
@@ -5833,6 +6752,7 @@ export function createMcpServer(config: McpConfig) {
 
 			// Validate everything up-front so nothing is created on a bad request.
 			await Promise.all([
+				assertLoopDriver(config, driver_id, workspace_id),
 				assertTriggersExist(config, existingTriggerIds, workspace_id),
 				assertObjectsExist(config, memberObjectIds, workspace_id),
 				assertAgentsExist(
@@ -5886,6 +6806,7 @@ export function createMcpServer(config: McpConfig) {
 					type: 'loop',
 					title: name,
 					status,
+					driver: driver_id,
 					metadata,
 				}
 				if (content !== undefined) node.content = content
@@ -5986,6 +6907,7 @@ export function createMcpServer(config: McpConfig) {
 				workspace_id,
 				id,
 				name,
+				driver_id,
 				content,
 				status,
 				entry_condition,
@@ -6026,6 +6948,7 @@ export function createMcpServer(config: McpConfig) {
 				const stepsStartEnabled = effectiveStatus !== 'paused'
 
 				await Promise.all([
+					driver_id !== undefined ? assertLoopDriver(config, driver_id, workspace_id) : undefined,
 					assertTriggersExist(config, add_trigger_ids ?? [], workspace_id),
 					assertObjectsExist(config, add_object_ids ?? [], workspace_id),
 					assertAgentsExist(
@@ -6094,6 +7017,7 @@ export function createMcpServer(config: McpConfig) {
 
 					const body: Record<string, unknown> = {}
 					if (name !== undefined) body.title = name
+					if (driver_id !== undefined) body.driver = driver_id
 					if (content !== undefined) body.content = content
 					if (status !== undefined) body.status = status
 					if (Object.keys(metadataPatch).length > 0) body.metadata = metadataPatch
@@ -6279,18 +7203,17 @@ export function createMcpServer(config: McpConfig) {
 					id: loop.id as string,
 				})
 			})
+			const payload = buildListPayload({
+				key: 'loops',
+				rows: enriched,
+				limit: pagination.limit,
+				nextCursor,
+				total: loops.length,
+			})
 			return {
 				_meta: meta('list_loops', config, (args as { workspace_id?: string }).workspace_id),
-				content: [
-					{
-						type: 'text' as const,
-						text: buildListContentText({ loops: enriched }),
-					},
-				],
-				structuredContent: {
-					loops: enriched,
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
-				},
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				structuredContent: payload,
 			}
 		},
 	)
@@ -6405,6 +7328,96 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
+	registerAppTool(
+		server,
+		'set_loop_view',
+		{
+			description: tools.set_loop_view.description,
+			inputSchema: tools.set_loop_view.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, loop_id, file_id } = args
+			const loop = (await apiCall(config, 'GET', `/api/objects/${loop_id}`, undefined, {
+				workspaceId: workspace_id,
+			})) as { type?: string; metadata?: Record<string, unknown> | null }
+			if (loop.type !== 'loop') {
+				throw new Error(
+					`Object ${loop_id} has type '${String(loop.type)}', not 'loop'. set_loop_view only operates on loops — use list_loops to find loop ids.`,
+				)
+			}
+			if (file_id !== null) {
+				const rows = (await apiCall(
+					config,
+					'GET',
+					`/api/files?ids=${encodeURIComponent(file_id)}`,
+					undefined,
+					{ workspaceId: workspace_id },
+				)) as Array<{ id: string; mimeType?: string | null }>
+				const file = Array.isArray(rows) ? rows.find((r) => r.id === file_id) : undefined
+				if (!file) {
+					throw new Error(
+						`File ${file_id} not found in this workspace. Create the HTML file with create_file first, or find it with list_files.`,
+					)
+				}
+				if (!file.mimeType?.toLowerCase().startsWith('text/html')) {
+					throw new Error(
+						`File ${file_id} is '${String(file.mimeType)}', not text/html. A loop view must be an HTML file.`,
+					)
+				}
+			}
+			const current = loop.metadata?.view_file_id
+			const unchanged = (typeof current === 'string' ? current : null) === file_id
+			if (!unchanged) {
+				await apiCall(
+					config,
+					'PATCH',
+					`/api/objects/${loop_id}`,
+					{ metadata: { view_file_id: file_id } },
+					{ workspaceId: workspace_id },
+				)
+			}
+			return {
+				_meta: meta('set_loop_view', config, (args as { workspace_id?: string }).workspace_id),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({
+							loop_id,
+							view_file_id: file_id,
+							changed: !unchanged,
+							...(file_id === null ? {} : { checklist: LOOP_VIEW_CHECKLIST }),
+						}),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'query_data',
+		{
+			description: tools.query_data.description,
+			inputSchema: tools.query_data.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, ...spec } = args
+			const result = await apiCall(
+				config,
+				'GET',
+				`/api/data/query?spec=${encodeURIComponent(JSON.stringify(spec))}`,
+				undefined,
+				{ workspaceId: workspace_id },
+			)
+			return {
+				_meta: meta('query_data', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
 	// ─── Notifications ────────────────────────────────────────
 	// create_notification, list_notifications and update_notification are live: the
 	// Chief of Staff curates the For You list with them. get_notification and
@@ -6448,6 +7461,56 @@ export function createMcpServer(config: McpConfig) {
 			return {
 				_meta: meta(
 					'create_notification',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'list_for_you',
+		{
+			description: tools.list_for_you.description,
+			inputSchema: tools.list_for_you.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const params = new URLSearchParams({ for_actor_id: args.actor_id })
+			const result = (await apiCall(config, 'GET', `/api/for-you?${params}`, undefined, {
+				workspaceId: args.workspace_id,
+			})) as { items?: ForYouItemLike[] }
+			const payload = slimForYouItems(
+				Array.isArray(result?.items) ? result.items : [],
+				args.limit ?? FOR_YOU_TOOL_DEFAULT_LIMIT,
+				args.offset ?? 0,
+			)
+			return {
+				_meta: meta('list_for_you', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
+				structuredContent: payload,
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'withdraw_decision_card',
+		{
+			description: tools.withdraw_decision_card.description,
+			inputSchema: tools.withdraw_decision_card.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, ...body } = args
+			const result = await apiCall(config, 'POST', '/api/for-you/withdrawals', body, {
+				workspaceId: workspace_id,
+			})
+			return {
+				_meta: meta(
+					'withdraw_decision_card',
 					config,
 					(args as { workspace_id?: string }).workspace_id,
 				),
@@ -6611,56 +7674,136 @@ export function createMcpServer(config: McpConfig) {
 				getSortValue: (row) => row.latest_activity_at ?? null,
 				getId: (row) => row.entity_id,
 			})
+			const payload = buildListPayload({
+				key: 'items',
+				rows: pagedItems,
+				limit: pagination.limit,
+				nextCursor,
+				total: items.length,
+			})
 			return {
 				_meta: meta('list_unread', config, (args as { workspace_id?: string }).workspace_id),
-				content: [
-					{
-						type: 'text' as const,
-						text: buildListContentText({ items: pagedItems }),
-					},
-				],
-				structuredContent: {
-					items: pagedItems,
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
-				},
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				structuredContent: payload,
 			}
 		},
 	)
 
 	// ─── Sessions ─────────────────────────────────────────────
-	registerAppTool(
+	// create_sub_chat is the new name for create_session: one handler, two names, so
+	// prompts that still say create_session keep working.
+	for (const toolName of ['create_sub_chat', 'create_session'] as const) {
+		registerAppTool(
+			server,
+			toolName,
+			{
+				description: tools[toolName].description,
+				inputSchema: tools[toolName].inputSchema.shape,
+				_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
+			},
+			async (args) => {
+				if (args.wait) return createSessionAndWait(config, args, toolName)
+
+				// `wait` never goes to the create route. The result is always sent back to
+				// the caller, with no opt-out: not waiting means not holding the call open,
+				// not never finding out how it went.
+				const { workspace_id, wait, ...rest } = args
+				const createBody = { ...rest, notify_on_complete: true }
+
+				let result: SessionRow
+				try {
+					result = (await apiCall(config, 'POST', '/api/sessions', createBody, {
+						workspaceId: workspace_id,
+					})) as SessionRow
+				} catch (err) {
+					return sessionNotStartedResult(config, toolName, workspace_id, err)
+				}
+				const wsId = workspace_id ?? config.defaultWorkspaceId
+				const enriched = await enrichSessionActorName(config, wsId, result)
+				const withUrl = wsId
+					? addUrl(enriched as Record<string, unknown>, config, wsId, {
+							kind: 'session',
+							id: enriched.id,
+							actorId: (enriched as { actorId?: string }).actorId,
+						})
+					: enriched
+				return {
+					_meta: meta(toolName, config, (args as { workspace_id?: string }).workspace_id),
+					content: [
+						{
+							type: 'text' as const,
+							text: JSON.stringify({
+								...withUrl,
+								handoff: handoffNote(enriched, (withUrl as { url?: unknown }).url),
+							}),
+						},
+					],
+				}
+			},
+		)
+	}
+
+	// Listed alias of create_session with wait on (see tool-aliases.ts). Registered
+	// through the same wrapper as a real tool, so it gets the same tool_call row,
+	// size event, token cap and mutation event. The handler calls the wait path of
+	// create_session directly rather than the registered create_session handler,
+	// which would record a second tool_call row for one call.
+	//
+	// Argument mapping, derived from run_agent as it was before PR 1986:
+	//   actor_id, action_prompt, spawned_by_message_id  carried over one to one
+	//   workspace_id                                    filled from the default when absent
+	//   notify_on_complete                              accepted and ignored: create_session no longer
+	//                                                   takes it and registers the same fallback itself
+	//                                                   when the wait times out
+	//   config, poll_interval_seconds, timeout_seconds,
+	//   depends_on_session_ids                          no equivalent, dropped, names recorded
+	// The upstream signature accepts a raw shape; this tool passes a schema object
+	// (the alias layer's preprocess wrapper), so the narrow type is spelled out
+	// here. It is still registered through the same wrapper as every other tool.
+	const registerWrappedSchemaTool = registerAppTool as unknown as (
+		s: typeof server,
+		name: string,
+		definition: {
+			description: string
+			inputSchema: z.ZodTypeAny
+			_meta: Record<string, unknown>
+		},
+		handler: (args: z.infer<typeof tools.run_agent.inputSchema>) => Promise<unknown>,
+	) => unknown
+	registerWrappedSchemaTool(
 		server,
-		'create_session',
+		'run_agent',
 		{
-			description: tools.create_session.description,
-			inputSchema: tools.create_session.inputSchema.shape,
+			description: tools.run_agent.description,
+			// The dropped key names are read in this preprocess step, before the
+			// schema strips them, and before validation, so a call that then fails
+			// validation is still counted. Same wrapper the alias rows use; this
+			// tool has no alias rows, so registerAppTool leaves the schema as given.
+			inputSchema: wrapInputSchema(tools.run_agent.inputSchema.shape, (raw) => {
+				const sent =
+					typeof raw === 'object' && raw !== null && !Array.isArray(raw)
+						? (raw as Record<string, unknown>)
+						: {}
+				recordAliasUse(telemetrySink, telemetryTarget, {
+					tool_name: 'run_agent',
+					workspace_id: extractWorkspaceId(raw),
+					dropped_keys: RUN_AGENT_DROPPED_KEYS.filter((key) => key in sent),
+					tool_alias: { old: 'run_agent', new: TOOL_NAME_ALIASES.run_agent },
+					transport: config.transport,
+				})
+				return raw
+			}),
 			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
-			if (args.wait) return createSessionAndWait(config, args)
-
-			// `wait` never goes to the create route. The result is always sent back to
-			// the caller, with no opt-out: not waiting means not holding the call open,
-			// not never finding out how it went.
-			const { workspace_id, wait, ...rest } = args
-			const createBody = { ...rest, notify_on_complete: true }
-
-			const result = (await apiCall(config, 'POST', '/api/sessions', createBody, {
-				workspaceId: workspace_id,
-			})) as SessionRow
-			const wsId = workspace_id ?? config.defaultWorkspaceId
-			const enriched = await enrichSessionActorName(config, wsId, result)
-			const withUrl = wsId
-				? addUrl(enriched as Record<string, unknown>, config, wsId, {
-						kind: 'session',
-						id: enriched.id,
-						actorId: (enriched as { actorId?: string }).actorId,
-					})
-				: enriched
-			return {
-				_meta: meta('create_session', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(withUrl) }],
-			}
+			const { workspace_id, actor_id, action_prompt, spawned_by_message_id } = args
+			return createSessionAndWait(config, {
+				workspace_id: workspace_id ?? config.defaultWorkspaceId,
+				actor_id,
+				action_prompt,
+				spawned_by_message_id,
+				wait: true,
+			})
 		},
 	)
 
@@ -6778,6 +7921,83 @@ export function createMcpServer(config: McpConfig) {
 					sent.mode === 'approved_draft'
 						? 'Sent: the email went out exactly as the person approved it. Do not send it again.'
 						: 'Sent. Do not send it again.',
+				)
+			} catch (err) {
+				// The server words every refusal for the agent (what happened, what to do next),
+				// so pass it on as a result instead of a thrown error.
+				if (parseApiErrorStatus(err) === null) throw err
+				const detail = (err instanceof Error ? err.message : String(err)).replace(
+					/^API error \d{3}:\s*/,
+					'',
+				)
+				return reply(`Not sent. ${detail}`, true)
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'gmail_save_attachment',
+		{
+			description: tools.gmail_save_attachment.description,
+			inputSchema: tools.gmail_save_attachment.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const reply = (text: string, isError = false) => ({
+				_meta: meta('gmail_save_attachment', config, args.workspace_id),
+				content: [{ type: 'text' as const, text }],
+				...(isError ? { isError: true } : {}),
+			})
+			try {
+				const saved = await apiCall(
+					config,
+					'POST',
+					'/api/integrations/gmail/save-attachment',
+					{
+						message_id: args.message_id,
+						attachment_id: args.attachment_id,
+						part_id: args.part_id,
+					},
+					{ workspaceId: args.workspace_id },
+				)
+				return reply(JSON.stringify(saved))
+			} catch (err) {
+				// The server words every refusal for the agent, so pass it on as a result.
+				if (parseApiErrorStatus(err) === null) throw err
+				const detail = (err instanceof Error ? err.message : String(err)).replace(
+					/^API error \d{3}:\s*/,
+					'',
+				)
+				return reply(`Not saved. ${detail}`, true)
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'resend_send_email',
+		{
+			description: tools.resend_send_email.description,
+			inputSchema: tools.resend_send_email.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const reply = (text: string, isError = false) => ({
+				_meta: meta('resend_send_email', config, args.workspace_id),
+				content: [{ type: 'text' as const, text }],
+				...(isError ? { isError: true } : {}),
+			})
+			try {
+				const sent = (await apiCall(
+					config,
+					'POST',
+					'/api/integrations/resend/send',
+					{ object_id: args.object_id },
+					{ workspaceId: args.workspace_id },
+				)) as { email_id: string; from: string }
+				return reply(
+					`Sent from ${sent.from}: the email went out exactly as the person approved it. Do not send it again.`,
 				)
 			} catch (err) {
 				// The server words every refusal for the agent (what happened, what to do next),
@@ -7070,7 +8290,8 @@ export function createMcpServer(config: McpConfig) {
 					} else {
 						messageNote = {
 							message_delivered: false,
-							message_note: `The session was resumed but is not running yet, so your message was not delivered. Send it with send_session_message once it is. Session id: ${id}.`,
+							message_note:
+								'The session was resumed but is not running yet, so your message was not delivered. Send it with send_session_message once it is.',
 						}
 					}
 				}
@@ -7183,44 +8404,62 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
+			const input = args as {
+				limit?: number
+				cursor?: string
+				provider?: string
+				status?: string
+				q?: string
+				verbose?: boolean
+				workspace_id?: string
+			}
+			// The whole list is fetched and paged here, so the full page size is available: there is
+			// no "+ 1" sentinel to leave room for.
 			const pagination = resolveListPagination({
-				limit: (args as { limit?: number }).limit,
-				cursor: (args as { cursor?: string }).cursor,
+				limit: input.limit,
+				cursor: input.cursor,
+				maxLimit: LIST_ENDPOINT_MAX_LIMIT,
 			})
 			const result = (await apiCall(config, 'GET', '/api/integrations', undefined, {
 				workspaceId: args.workspace_id,
 			})) as unknown
-			const rows = Array.isArray(result)
-				? (result as Array<{
-						id: string
-						createdAt?: string | null
-						provider?: string
-						status?: string
-					}>)
-				: []
+			const allRows = Array.isArray(result) ? (result as IntegrationRow[]) : []
+			// Filters apply before paging, so `total` and `has_more` describe the matches. A row added
+			// after the walk began stays out of every hop of it.
+			const matching = allRows.filter(
+				(row) =>
+					matchesIntegrationFilters(row, input) &&
+					(!row.createdAt || row.createdAt <= pagination.snapshotAt),
+			)
+			// Live connections first, then the newest. The cursor carries that composite key, so the
+			// snapshot check above stands in for the one `paginateClientSide` would do on a timestamp.
 			const { page: pagedRows, nextCursor } = paginateClientSide({
-				rows,
+				rows: matching,
 				limit: pagination.limit,
 				snapshotAt: pagination.snapshotAt,
-				order: pagination.order,
+				order: 'desc',
 				cursor: pagination.cursor,
-				getSortValue: (row) => row.createdAt ?? null,
+				getSortValue: integrationSortKey,
 				getId: (row) => row.id,
+				applySnapshotFilter: false,
 			})
-			const reconnectHint = buildReconnectHint(pagedRows)
-			const listText = buildListContentText({ integrations: pagedRows })
+			const rows = input.verbose ? pagedRows : pagedRows.map(leanIntegrationRow)
+			// Judged over every row, not just this page: a broken connection must not depend on
+			// which page it landed on.
+			const reconnectHint = buildReconnectHint(allRows)
+			const payload = buildListPayload({
+				key: 'integrations',
+				rows,
+				limit: pagination.limit,
+				nextCursor,
+				total: matching.length,
+				extra: { summary: summarizeIntegrations(allRows) },
+				notes: reconnectHint ? [reconnectHint] : [],
+			})
 			return {
 				_meta: meta('list_integrations', config, (args as { workspace_id?: string }).workspace_id),
-				content: [
-					{
-						type: 'text' as const,
-						text: reconnectHint ? `${listText}\n\n${reconnectHint}` : listText,
-					},
-				],
-				structuredContent: {
-					integrations: pagedRows,
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
-				},
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				structuredContent: payload,
 			}
 		},
 	)
@@ -7354,6 +8593,7 @@ export function createMcpServer(config: McpConfig) {
 						kind: args.kind,
 						...(args.suggested_name ? { suggested_name: args.suggested_name } : {}),
 						...(args.hint ? { hint: args.hint } : {}),
+						...(args.target_agent_ids?.length ? { target_agent_ids: args.target_agent_ids } : {}),
 					},
 					{ workspaceId: args.workspace_id },
 				)
@@ -7375,7 +8615,7 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: `A Keychain card for ${args.kind === 'login' ? 'a login' : 'an API key'}${args.suggested_name ? ` (${args.suggested_name})` : ''} is now in the chat. The user types it in there and it goes straight to their vault; you never see it. Do not ask the user to paste the secret in chat. End your turn now without a closing message; they will tell you when it is saved, and you will be restarted with it in your environment.`,
+						text: `A Keychain card for ${args.kind === 'login' ? 'a login' : 'an API key'}${args.suggested_name ? ` (${args.suggested_name})` : ''} is now in the chat. The user types it in there and it goes straight to their vault; you never see it. Do not ask the user to paste the secret in chat. End your turn now without a closing message; they will tell you when it is saved, and you will be restarted with it. ${args.kind === 'login' ? 'A login is never in your environment: type it on your computer with desktop_type, using {{keychain:<Name>.username}} and {{keychain:<Name>.password}}.' : 'It is in your environment as KEYCHAIN_BYO_APIKEY_<NAME>.'}`,
 					},
 				],
 			}
@@ -7466,7 +8706,7 @@ export function createMcpServer(config: McpConfig) {
 						content: [
 							{
 								type: 'text' as const,
-								text: `You already have access to ${args.credential_name}. It is in your environment; if it is missing, you were started before it was shared, so ask the user to send you a new message.`,
+								text: `You already have access to ${args.credential_name}. An API key is in your environment; a login is never there, so type it on your computer with desktop_type using {{keychain:<Name>.username}} and {{keychain:<Name>.password}}. If it does not work, you were started before it was shared, so ask the user to send you a new message.`,
 							},
 						],
 					}
@@ -7490,7 +8730,7 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: `A card asking to use ${args.credential_name} is now in the chat. The user decides there; you never see the value. End your turn now without a closing message. If they allow it you are restarted with it in your environment.`,
+						text: `A card asking to use ${args.credential_name} is now in the chat. The user decides there; you never see the value. End your turn now without a closing message. If they allow it you are restarted with it: an API key is in your environment; a login is never there, so type it on your computer with desktop_type using {{keychain:<Name>.username}} and {{keychain:<Name>.password}}.`,
 					},
 				],
 			}
@@ -7572,6 +8812,62 @@ export function createMcpServer(config: McpConfig) {
 					{
 						type: 'text' as const,
 						text: 'A card asking for that access is now in the chat. The user decides there. End your turn now without a closing message. If they allow it you are restarted with the new access.',
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'add_mcp_server',
+		{
+			description: tools.add_mcp_server.description,
+			inputSchema: tools.add_mcp_server.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			// A card in the chat with the server's details; the person adds it there (secrets typed
+			// into the card, never through the model), which saves it, gives it to the agent that
+			// asked and restarts that session. The agent can never add a server or widen its own
+			// access from here.
+			const sessionId = config.maskinSessionId ?? process.env.SESSION_ID
+			const toolMeta = meta(
+				'add_mcp_server',
+				config,
+				(args as { workspace_id?: string }).workspace_id,
+			)
+			const fail = (text: string) => ({
+				_meta: toolMeta,
+				isError: true,
+				content: [{ type: 'text' as const, text }],
+			})
+			if (!sessionId || !UUID_RE.test(sessionId)) {
+				return fail(
+					'There is no chat to show a card in. Say in your reply what server you need and how to run it; a person can add it under Settings → Integrations.',
+				)
+			}
+			const { workspace_id: workspaceId, ...card } = args
+			try {
+				await apiCall(config, 'POST', `/api/sessions/${sessionId}/mcp-server-card`, card, {
+					workspaceId,
+				})
+			} catch (err) {
+				const status = parseApiErrorStatus(err)
+				if (status === 409) {
+					return fail(
+						'This session has no person in a chat to ask, so no card could be shown. Say in your reply what server you need and how to run it; a person can add it under Settings → Integrations.',
+					)
+				}
+				if (status === 400) return fail(reasonFromError(err, 'invalid_param'))
+				throw err
+			}
+			return {
+				_meta: toolMeta,
+				content: [
+					{
+						type: 'text' as const,
+						text: 'A card to add that server is now in the chat, with its details filled in. The user checks it, types any key it needs and presses Add. End your turn now without a closing message. If they add it you are restarted with the server attached.',
 					},
 				],
 			}
@@ -7839,18 +9135,17 @@ export function createMcpServer(config: McpConfig) {
 				getId: (row) => row.id,
 				applySnapshotFilter: false,
 			})
+			const payload = buildListPayload({
+				key: 'extensions',
+				rows: pagedRows,
+				limit: pagination.limit,
+				nextCursor,
+				total: result.length,
+			})
 			return {
 				_meta: meta('list_extensions', config, (args as { workspace_id?: string }).workspace_id),
-				content: [
-					{
-						type: 'text' as const,
-						text: buildListContentText({ extensions: pagedRows }),
-					},
-				],
-				structuredContent: {
-					extensions: pagedRows,
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
-				},
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				structuredContent: payload,
 			}
 		},
 	)
@@ -8678,6 +9973,30 @@ ${claudeCredsBlock}`,
 			)
 			return {
 				_meta: meta('desktop_run', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'desktop_put_file',
+		{
+			description: tools.desktop_put_file.description,
+			inputSchema: tools.desktop_put_file.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, agent_id, ...body } = args
+			const result = await apiCall(
+				config,
+				'POST',
+				desktopPath('/api/desktop/put-file', agent_id),
+				body,
+				{ workspaceId: workspace_id },
+			)
+			return {
+				_meta: meta('desktop_put_file', config, workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},

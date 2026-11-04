@@ -55,7 +55,7 @@ describe('LinkedObjectsForFile', () => {
 			}),
 		])
 		vi.mocked(api.objects.list).mockResolvedValue([
-			buildObjectResponse({ id: OBJ_ID, title: 'Anchor bet', type: 'bet', status: 'signal' }),
+			buildObjectResponse({ id: OBJ_ID, title: 'Anchor bet', type: 'bet', status: 'opportunity' }),
 		])
 		vi.mocked(api.files.list).mockResolvedValue([])
 

@@ -15,12 +15,12 @@ async function seedTwoObjects(account: { api: TestAPI; workspaceId: string }) {
 	await account.api.createObject(account.workspaceId, {
 		type: 'bet',
 		title: 'Bulk Select Bet A',
-		status: 'signal',
+		status: 'opportunity',
 	})
 	await account.api.createObject(account.workspaceId, {
 		type: 'bet',
 		title: 'Bulk Select Bet B',
-		status: 'signal',
+		status: 'opportunity',
 	})
 }
 

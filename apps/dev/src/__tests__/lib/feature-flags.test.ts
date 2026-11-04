@@ -47,25 +47,6 @@ describe('resolveFlags', () => {
 		}
 	})
 
-	it('resolves the live registry — a listed flag is on for a listed tester only', () => {
-		const c = config({
-			FF_TESTER_FEATURES: FLAGS.TRIGGER_ENGINE_V2,
-			FF_TESTER_ACTOR_IDS: TESTER,
-		})
-		// Assert the tester sees the listed flag ON while every other registered
-		// flag stays OFF — the check is per-flag so it survives future flags being
-		// added to FLAGS without churn.
-		const tester = resolveFlags(TESTER, c)
-		const nonTester = resolveFlags(NON_TESTER, c)
-		expect(tester[FLAGS.TRIGGER_ENGINE_V2]).toBe(true)
-		expect(nonTester[FLAGS.TRIGGER_ENGINE_V2]).toBe(false)
-		for (const other of Object.values(FLAGS)) {
-			if (other === FLAGS.TRIGGER_ENGINE_V2) continue
-			expect(tester[other]).toBe(false)
-			expect(nonTester[other]).toBe(false)
-		}
-	})
-
 	it('is false for every flag when the env is empty', () => {
 		expect(resolveFlags(TESTER, config({}), REGISTRY)).toEqual({ [FLAG]: false })
 	})

@@ -10,7 +10,7 @@ struct ShellTabTests {
 	}
 
 	@Test func titlesUseTeamAndFlows() {
-		#expect(ShellTab.allCases.map(\.title) == ["For you", "Team", "Flows", "Objects", "Search"])
+		#expect(ShellTab.allCases.map(\.title) == ["For you", "Chats", "Flows", "Items", "Search"])
 	}
 
 	@Test func barItemsPerTab() {
@@ -44,7 +44,7 @@ struct ProfileMenuTests {
 		#expect(
 			ProfileMenu.items(in: .workspace, hasWorkspace: true, role: .owner).map(\.title)
 				== [
-					"Marketplace", "Artefacts", "Members", "Integrations", "Triggers",
+					"Marketplace", "Artefacts", "Members", "Integrations", "Keychain", "Triggers",
 					"Billing", "Keys & MCP",
 				])
 		#expect(

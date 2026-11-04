@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import {
-	FLAGS,
 	type FeatureFlagConfig,
 	isFlagEnabled,
 	isFlagEnabledForWorkspace,
@@ -20,8 +19,8 @@ const TESTER = '3f7c1e2a-9b4d-4f21-8c6e-5a0d7b91e442'
 const NON_TESTER = 'c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f'
 
 // Registry injected explicitly so tests survive future additions to FLAGS.
-const FLAG = 'trigger-engine-v2-fixture'
-const REGISTRY = { TRIGGER_ENGINE_V2_FIXTURE: FLAG }
+const FLAG = 'sample-flag'
+const REGISTRY = { SAMPLE: FLAG }
 
 // Config is built from a plain object rather than process.env, so these tests
 // never mutate the ambient environment.
@@ -141,18 +140,6 @@ describe('isFlagEnabledForWorkspace — OR semantics', () => {
 		expect(
 			isFlagEnabledForWorkspace(WORKSPACE_A, 'not-a-real-flag', { flagConfig }, REGISTRY),
 		).toBe(false)
-	})
-
-	it('resolves the live TRIGGER_ENGINE_V2 flag against the live registry', () => {
-		const flagConfig = config({
-			FF_WORKSPACE_FEATURES: `${WORKSPACE_A}:${FLAGS.TRIGGER_ENGINE_V2}`,
-		})
-		expect(isFlagEnabledForWorkspace(WORKSPACE_A, FLAGS.TRIGGER_ENGINE_V2, { flagConfig })).toBe(
-			true,
-		)
-		expect(isFlagEnabledForWorkspace(WORKSPACE_B, FLAGS.TRIGGER_ENGINE_V2, { flagConfig })).toBe(
-			false,
-		)
 	})
 })
 

@@ -216,4 +216,96 @@ describe('buildMentionSections', () => {
 		expect(inConv?.rows.map((r) => r.id)).toContain('alice')
 		expect(recent?.rows.map((r) => r.id) ?? []).not.toContain('alice')
 	})
+
+	it('keeps the three sections when the query is empty', () => {
+		const sections = buildMentionSections({
+			actors,
+			conversations: [makeConversation('c', '2026-06-01T00:00:00Z', ['carol'])],
+			conversationParticipantIds: ['alice'],
+			query: '',
+			selfActorId: null,
+		})
+		expect(sections.map((s) => s.heading)).toEqual([
+			'In this conversation',
+			'Recent collaborators',
+			'Everyone',
+		])
+	})
+
+	describe('with a typed query', () => {
+		const developer: MentionPickerActor = { id: 'dev', name: 'Developer', type: 'agent' }
+		const reviewer: MentionPickerActor = { id: 'rev', name: 'Code Reviewer', type: 'agent' }
+		const designer: MentionPickerActor = { id: 'des', name: 'Product Designer', type: 'agent' }
+		const pool = [developer, reviewer, designer]
+
+		it('puts the name that starts with the query first, even when it is the least recent', () => {
+			const conversations: ConversationListItemResponse[] = [
+				makeConversation('conv-new', '2026-06-01T00:00:00Z', ['rev', 'des']),
+				makeConversation('conv-old', '2026-01-01T00:00:00Z', ['dev']),
+			]
+			const sections = buildMentionSections({
+				actors: pool,
+				conversations,
+				conversationParticipantIds: [],
+				query: 'de',
+				selfActorId: null,
+			})
+			expect(sections).toHaveLength(1)
+			expect(sections[0]?.heading).toBe('Matches — "de"')
+			// Developer starts with "de", Product Designer has a word that does, Code Reviewer only contains it.
+			expect(sections[0]?.rows.map((r) => r.id)).toEqual(['dev', 'des', 'rev'])
+		})
+
+		it('ranks exact, then prefix, then word start, then substring', () => {
+			const exact: MentionPickerActor = { id: 'a', name: 'Dev', type: 'agent' }
+			const prefix: MentionPickerActor = { id: 'b', name: 'Developer', type: 'agent' }
+			const word: MentionPickerActor = { id: 'c', name: 'Front Dev', type: 'agent' }
+			const substring: MentionPickerActor = { id: 'd', name: 'Undevout', type: 'human' }
+			const sections = buildMentionSections({
+				actors: [substring, word, prefix, exact],
+				conversations: [],
+				conversationParticipantIds: [],
+				query: 'dev',
+				selfActorId: null,
+			})
+			expect(sections[0]?.rows.map((r) => r.id)).toEqual(['a', 'b', 'c', 'd'])
+		})
+
+		it('keeps the old order between rows of the same rank', () => {
+			const dana: MentionPickerActor = { id: 'dana', name: 'Dana', type: 'human' }
+			const dean: MentionPickerActor = { id: 'dean', name: 'Dean', type: 'human' }
+			const dora: MentionPickerActor = { id: 'dora', name: 'Dora', type: 'human' }
+			const sections = buildMentionSections({
+				actors: [dana, dean, dora],
+				conversations: [makeConversation('c', '2026-06-01T00:00:00Z', ['dora'])],
+				conversationParticipantIds: ['dean'],
+				query: 'd',
+				selfActorId: null,
+			})
+			// In this conversation (Dean), then recent (Dora), then alphabetical (Dana).
+			expect(sections[0]?.rows.map((r) => r.id)).toEqual(['dean', 'dora', 'dana'])
+		})
+
+		it('matches regardless of case', () => {
+			const sections = buildMentionSections({
+				actors: pool,
+				conversations: [],
+				conversationParticipantIds: [],
+				query: 'DE',
+				selfActorId: null,
+			})
+			expect(sections[0]?.rows[0]?.id).toBe('dev')
+		})
+
+		it('still returns no sections when nothing matches', () => {
+			const sections = buildMentionSections({
+				actors: pool,
+				conversations: [],
+				conversationParticipantIds: [],
+				query: 'no match',
+				selfActorId: null,
+			})
+			expect(sections).toEqual([])
+		})
+	})
 })

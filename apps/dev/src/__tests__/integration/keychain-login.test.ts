@@ -216,6 +216,8 @@ describe('POST /api/integrations/byo-login', () => {
 		['a password with a line break', { password: 'abc\ndef' }],
 		['a username with surrounding whitespace', { username: ' someone ' }],
 		['a missing username', { username: undefined }],
+		['an empty email', { email: '' }],
+		['an email with surrounding whitespace', { email: ' me@work.test ' }],
 	])('refuses %s with a 400 that never repeats the value', async (_label, override) => {
 		const human = getTestActorId()
 		const ws = await insertWorkspace(db, human)
@@ -357,14 +359,16 @@ describe('SessionManager.buildLaunchSpec — login env injection', () => {
 		return ((await res.json()) as { integrationId: string }).integrationId
 	}
 
-	it('gives a granted agent KEYCHAIN_BYO_LOGIN_<SLUG>_USERNAME and _PASSWORD, exactly as typed', async () => {
+	it('never puts a granted login in the agent environment, so echo has nothing to print', async () => {
 		const s = await setupWithAgent()
 		await vaultLogin(s, 'e-conomic')
 
 		const env = await launchEnv(s.session)
 
-		expect(env.KEYCHAIN_BYO_LOGIN_E_CONOMIC_USERNAME).toBe(USERNAME)
-		expect(env.KEYCHAIN_BYO_LOGIN_E_CONOMIC_PASSWORD).toBe(PASSWORD)
+		expect(Object.keys(env).filter((k) => k.startsWith('KEYCHAIN_BYO_LOGIN_'))).toEqual([])
+		// Not under another name either.
+		expect(Object.values(env)).not.toContain(USERNAME)
+		expect(Object.values(env)).not.toContain(PASSWORD)
 	})
 
 	it('gives an agent that was not ticked nothing', async () => {
@@ -399,7 +403,7 @@ describe('SessionManager.buildLaunchSpec — login env injection', () => {
 		expect(env.KEYCHAIN_BYO_LOGIN_E_CONOMIC_PASSWORD).toBeUndefined()
 	})
 
-	it('injects a key and a login side by side', async () => {
+	it('injects an API key but not a login saved beside it', async () => {
 		const s = await setupWithAgent()
 		await vaultLogin(s, 'e-conomic')
 		const keyRes = await post(appFor(s.human), 'chat-capture', s.ws.id, {
@@ -415,6 +419,6 @@ describe('SessionManager.buildLaunchSpec — login env injection', () => {
 		const env = await launchEnv(s.session)
 
 		expect(env.KEYCHAIN_BYO_APIKEY_STRIPE).toBe(`key_${'CANARY0123'.repeat(3)}`)
-		expect(env.KEYCHAIN_BYO_LOGIN_E_CONOMIC_PASSWORD).toBe(PASSWORD)
+		expect(env.KEYCHAIN_BYO_LOGIN_E_CONOMIC_PASSWORD).toBeUndefined()
 	})
 })

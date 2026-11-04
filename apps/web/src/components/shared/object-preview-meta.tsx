@@ -1,4 +1,5 @@
 import type { ObjectPreview } from '@maskin/shared'
+import { useLayoutEffect, useRef, useState } from 'react'
 
 interface ObjectPreviewMetaProps {
 	preview: ObjectPreview
@@ -29,14 +30,7 @@ export function ObjectPreviewMeta({ preview }: ObjectPreviewMetaProps) {
 	return (
 		<div className="flex flex-col gap-1">
 			{/* What the draft answers, so the text below is read in context. Not sent. */}
-			{preview.context ? (
-				<figure className="mb-1">
-					<figcaption className="text-[11px] text-muted-foreground">In reply to</figcaption>
-					<blockquote className="line-clamp-5 whitespace-pre-wrap border-l-2 border-border pl-2 text-[12.5px] text-muted-foreground">
-						{preview.context}
-					</blockquote>
-				</figure>
-			) : null}
+			{preview.context ? <ReplyContext key={preview.context} text={preview.context} /> : null}
 			{rows.length > 0 ? (
 				<dl className="flex flex-col gap-0.5 text-[12.5px]">
 					{rows.map((row) => (
@@ -53,6 +47,50 @@ export function ObjectPreviewMeta({ preview }: ObjectPreviewMetaProps) {
 				</p>
 			))}
 		</div>
+	)
+}
+
+/**
+ * The message a draft answers, clamped to five lines. A reply is approved after reading what it
+ * answers, so a longer message opens in full with Show more; the toggle only appears when the
+ * quote is actually cut off.
+ */
+function ReplyContext({ text }: { text: string }) {
+	const quoteRef = useRef<HTMLQuoteElement>(null)
+	const [expanded, setExpanded] = useState(false)
+	const [clamped, setClamped] = useState(false)
+
+	// Measured only while collapsed: once open, the toggle stays so it can be closed again.
+	useLayoutEffect(() => {
+		const quote = quoteRef.current
+		if (quote && !expanded) setClamped(quote.scrollHeight > quote.clientHeight)
+	}, [expanded])
+
+	return (
+		<figure className="mb-1">
+			<figcaption className="text-[11px] text-muted-foreground">In reply to</figcaption>
+			<blockquote
+				ref={quoteRef}
+				className={`whitespace-pre-wrap border-l-2 border-border pl-2 text-[12.5px] text-muted-foreground ${expanded ? '' : 'line-clamp-5'}`}
+			>
+				{text}
+			</blockquote>
+			{clamped || expanded ? (
+				<button
+					type="button"
+					aria-expanded={expanded}
+					aria-label={
+						expanded
+							? 'Show less of the message this answers'
+							: 'Show more of the message this answers'
+					}
+					onClick={() => setExpanded((open) => !open)}
+					className="mt-0.5 text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+				>
+					{expanded ? 'Show less' : 'Show more'}
+				</button>
+			) : null}
+		</figure>
 	)
 }
 

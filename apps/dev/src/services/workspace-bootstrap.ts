@@ -39,6 +39,7 @@ import {
 	ownershipCapForTier,
 	resolvePlanTier,
 } from '../lib/workspace-capacity'
+import { sealWorkspaceLlmSecrets } from '../lib/workspace-secrets'
 import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
 import { startSession } from './session-lifecycle'
 import type { SessionManager } from './session-manager'
@@ -304,7 +305,7 @@ export async function pinDefaultAgentIfUnset(
  * same actor/skill pair (e.g. Chief of Staff re-resolved via
  * ensureChiefOfStaffActor on every bootstrap run).
  */
-async function attachSkill(
+export async function attachSkill(
 	db: Database,
 	agentStorage: AgentStorageManager,
 	workspaceId: string,
@@ -722,6 +723,16 @@ export async function bootstrapDefaultAgents(
 	}
 }
 
+/** Lowercased part after the last "@", or undefined if there is no usable domain. */
+function emailDomain(email: string | null | undefined): string | undefined {
+	if (!email?.includes('@')) return undefined
+	const domain = email
+		.slice(email.lastIndexOf('@') + 1)
+		.trim()
+		.toLowerCase()
+	return domain || undefined
+}
+
 /**
  * The single, canonical "make a fully-provisioned workspace" path.
  *
@@ -776,7 +787,10 @@ export async function provisionWorkspace(params: {
 			: params.settings
 
 	const parsedSettings = workspaceSettingsSchema.parse(requestedSettings ?? {})
-	const settings = applyModuleDefaults(parsedSettings, parsedSettings.enabled_modules)
+	// The request may carry LLM keys in plain text; the row only ever holds sealed ones.
+	const settings = sealWorkspaceLlmSecrets(
+		applyModuleDefaults(parsedSettings, parsedSettings.enabled_modules),
+	)
 
 	let chiefOfStaffId: string | undefined
 
@@ -838,11 +852,32 @@ export async function provisionWorkspace(params: {
 
 	if (!workspace) return null
 
+	// The workspace is already committed, so a failed owner lookup must never
+	// fail provisioning — the event just goes out without owner_email_domain.
+	// Read here, once, rather than reusing the welcome-session read below: that
+	// one is gated on sessionManager and may not run.
+	let ownerEmailDomain: string | undefined
+	try {
+		const [ownerRow] = await db
+			.select({ email: actors.email })
+			.from(actors)
+			.where(eq(actors.id, ownerActorId))
+			.limit(1)
+		ownerEmailDomain = emailDomain(ownerRow?.email)
+	} catch (err) {
+		logger.warn(
+			'provisionWorkspace: owner email lookup failed — sending workspace_created without owner_email_domain',
+			{ workspaceId: workspace.id, err },
+		)
+	}
+
 	// Fire-and-forget by design — the analytics client never throws (see posthog.ts).
+	// Only the domain is sent; the full address is PII and stays out of PostHog.
 	void capturePosthogEvent('workspace_created', workspace.id, {
 		workspace_id: workspace.id,
 		workspace_name: workspace.name,
 		created_by: ownerActorId,
+		...(ownerEmailDomain ? { owner_email_domain: ownerEmailDomain } : {}),
 	})
 
 	// The actor + member rows are already committed above, so this call is a

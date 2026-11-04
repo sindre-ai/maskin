@@ -81,6 +81,10 @@ public struct OutboxAuthRequired: Error, Sendable, Equatable {
 }
 
 /// Performs one queued write. The outbox has already set `IdempotencyKey.current`.
+///
+/// Do not bind a key again in an executor: a source that takes the key as a parameter binds it
+/// with `IdempotencyKey.bind`, which is a no-op for the same key. Binding a different key here
+/// nests `withValue`, which aborts on iOS 17 (see `IdempotencyKey.bind`).
 public protocol OutboxExecuting: Sendable {
 	func execute(kind: String, payload: Data) async throws
 }
@@ -124,6 +128,10 @@ public final class Outbox {
 	@ObservationIgnored private var inFlight: Set<UUID> = []
 	@ObservationIgnored private var draining = false
 	@ObservationIgnored private var drainAgain = false
+	/// When the last pass last looked at what was due (see `scheduleWake`).
+	@ObservationIgnored private var lastEvaluatedAt = Date.distantPast
+	/// Lanes whose head failed during the current pass, so were not tried again in it.
+	@ObservationIgnored private var lanesFailedThisPass: Set<String> = []
 	@ObservationIgnored private var subscribers: [UUID: AsyncStream<OutboxEvent>.Continuation] = [:]
 	@ObservationIgnored nonisolated(unsafe) private var wake: Task<Void, Never>?
 	@ObservationIgnored nonisolated(unsafe) private var tasks: [Task<Void, Never>] = []
@@ -346,13 +354,17 @@ public final class Outbox {
 	private func drainPass() async {
 		adoptEntriesFromFile()
 		var blocked: Set<String> = []
+		lanesFailedThisPass = []
 		while true {
 			isOnline = network.isOnline
+			// Stamped before the online check: an offline pass never reaches `nextDue`, and
+			// without this the stale stamp would make `scheduleWake` poll every 10 ms.
+			lastEvaluatedAt = now()
 			guard isOnline, let entry = nextDue(excludingLanes: blocked) else { return }
 			inFlight.insert(entry.id)
 			var outcome: Result<Void, any Error> = .success(())
 			do {
-				try await IdempotencyKey.$current.withValue(entry.idempotencyKey) {
+				try await IdempotencyKey.bind(entry.idempotencyKey) {
 					try await executor.execute(kind: entry.kind, payload: entry.payload)
 				}
 			} catch {
@@ -379,6 +391,7 @@ public final class Outbox {
 					reject(entry, message: rejection.message)
 				} else {
 					blocked.insert(entry.lane)
+					lanesFailedThisPass.insert(entry.lane)
 					retryLater(entry, error: error)
 				}
 			}
@@ -488,7 +501,16 @@ public final class Outbox {
 		wake?.cancel()
 		wake = nil
 		let t = now()
-		let next = entries.map { max($0.notBefore, $0.nextAttemptAt) }.filter { $0 > t }.min()
+		// "Not due yet" is judged at the moment the last pass looked, not now: if this task was
+		// descheduled for longer than a back-off (a busy device), an entry that fell due in the
+		// meantime would otherwise be neither sent by the pass nor waited for here, and sit in the
+		// queue until some unrelated trigger drained it.
+		// A lane whose head just failed was set aside for the rest of the pass, not looked at, so
+		// its retry time counts however early it is.
+		let next = entries
+			.map { (due: max($0.notBefore, $0.nextAttemptAt), lane: $0.lane) }
+			.filter { $0.due > lastEvaluatedAt || lanesFailedThisPass.contains($0.lane) }
+			.map(\.due).min()
 		guard let next else { return }
 		let delay = max(next.timeIntervalSince(t), 0.01)
 		wake = Task { [weak self] in

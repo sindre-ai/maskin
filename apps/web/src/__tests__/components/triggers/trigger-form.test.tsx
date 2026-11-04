@@ -4,16 +4,11 @@ import userEvent from '@testing-library/user-event'
 import { buildTriggerResponse, buildWorkspaceWithRole } from '../../factories'
 import { TestWrapper } from '../../setup'
 
-const { useAutoSave, useEntityEvents, useFeatureFlag } = vi.hoisted(() => {
+const { useAutoSave, useEntityEvents } = vi.hoisted(() => {
 	const useAutoSave = vi.fn()
 	const useEntityEvents = vi.fn()
-	const useFeatureFlag = vi.fn()
-	return { useAutoSave, useEntityEvents, useFeatureFlag }
+	return { useAutoSave, useEntityEvents }
 })
-
-vi.mock('@/hooks/use-feature-flag', () => ({
-	useFeatureFlag: (id: string) => useFeatureFlag(id),
-}))
 
 vi.mock('@/hooks/use-auto-save', () => ({
 	useAutoSave: (args: unknown) => useAutoSave(args),
@@ -88,7 +83,6 @@ describe('TriggerForm', () => {
 		vi.clearAllMocks()
 		useAutoSave.mockReturnValue({ showSaved: false })
 		useEntityEvents.mockReturnValue({ data: [] })
-		useFeatureFlag.mockReturnValue(false)
 	})
 
 	it('renders the trigger name as an in-place editable heading', () => {
@@ -248,7 +242,7 @@ describe('TriggerForm', () => {
 		expect(screen.getByText('created')).toBeInTheDocument()
 	})
 
-	describe('commented action (trigger_engine_v2 on)', () => {
+	describe('commented action', () => {
 		const commentedTrigger = () =>
 			buildTriggerResponse({
 				name: 'Comment trigger',
@@ -256,10 +250,6 @@ describe('TriggerForm', () => {
 				config: { entity_type: 'object', action: 'commented' },
 				targetActorId: 'agent-1',
 			})
-
-		beforeEach(() => {
-			useFeatureFlag.mockImplementation((id: string) => id === 'trigger_engine_v2')
-		})
 
 		it('shows "On comment posted" and lists every action for a saved commented trigger', async () => {
 			const user = userEvent.setup()

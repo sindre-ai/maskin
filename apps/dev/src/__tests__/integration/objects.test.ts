@@ -257,7 +257,7 @@ describe('Objects Integration', () => {
 			})
 			const bet = await insertObject(db, workspaceId, getTestActorId(), {
 				type: 'bet',
-				status: 'signal',
+				status: 'opportunity',
 			})
 
 			// Set owner on both — a field every type accepts — so this exercises the
@@ -294,7 +294,7 @@ describe('Objects Integration', () => {
 			})
 			const bet = await insertObject(db, workspaceId, getTestActorId(), {
 				type: 'bet',
-				status: 'signal',
+				status: 'opportunity',
 			})
 
 			// 'in_progress' is valid for task but not for bet — bet should fail, task should succeed.
@@ -322,7 +322,7 @@ describe('Objects Integration', () => {
 			const [taskAfter] = await db.select().from(objects).where(eq(objects.id, task.id))
 			const [betAfter] = await db.select().from(objects).where(eq(objects.id, bet.id))
 			expect(taskAfter.status).toBe('in_progress')
-			expect(betAfter.status).toBe('signal') // unchanged
+			expect(betAfter.status).toBe('opportunity') // unchanged
 		})
 
 		it('filters out ids that belong to a different workspace', async () => {
@@ -842,7 +842,7 @@ describe('Objects Integration', () => {
 			})
 			await insertObject(db, workspaceId, getTestActorId(), {
 				type: 'bet',
-				status: 'signal',
+				status: 'opportunity',
 				updatedAt: before,
 			})
 

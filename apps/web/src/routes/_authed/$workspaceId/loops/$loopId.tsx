@@ -1,5 +1,6 @@
 import { PageHeader } from '@/components/layout/page-header'
 import { AskBanner } from '@/components/loops/ask-banner'
+import { LoopCustomView } from '@/components/loops/loop-custom-view'
 import { LoopFirstRunBanner } from '@/components/loops/loop-first-run-banner'
 import { LoopFlow } from '@/components/loops/loop-flow'
 import { LOOP_PILL_STYLES, isLiveLoopPill } from '@/components/loops/loop-pill'
@@ -19,7 +20,9 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
+import { ButtonGroup } from '@/components/ui/button-group'
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -27,6 +30,7 @@ import {
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useActors } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useLoop, useLoopActivity } from '@/hooks/use-loops'
@@ -49,6 +53,9 @@ import { toast } from 'sonner'
  * Source is the loop, target is the child object. */
 const LOOP_MEMBERSHIP_RELATIONSHIP_TYPE = 'in_loop'
 
+/** Mirrors `FLAGS.LOOP_CUSTOM_VIEW` in `apps/dev/src/lib/feature-flags.ts`. */
+const LOOP_CUSTOM_VIEW_FLAG = 'loop-custom-view'
+
 export const Route = createFileRoute('/_authed/$workspaceId/loops/$loopId')({
 	component: LoopDetailRoute,
 	errorComponent: ({ error }) => <RouteError error={error} />,
@@ -67,15 +74,7 @@ interface ProposedEdit {
 function LoopDetailRoute() {
 	const { loopId } = Route.useParams()
 	const { workspaceId, workspace } = useWorkspace()
-	// Sub-flag for D5 (bet/d166-loops-v4-polish). Off → the Targets & owners
-	// section never renders even when the loop has targets, so a rollback is
-	// a flag flip rather than a code change.
-	const targetsFlag = useFeatureFlag('loops-v4-polish.targets')
-	// D8 sub-flag boundary — read once at this route, then threaded into
-	// TimelineTab as an options prop so the shared component stays flag-free
-	// for Objects and every other consumer. Off preserves the pre-bet unread
-	// divider so a rollback is a flag flip, not a code change.
-	const unreadPolishFlag = useFeatureFlag('loops-v4-polish.unread')
+	const canWrite = useCanWrite()
 	const {
 		data: loop,
 		isLoading: loopLoading,
@@ -105,6 +104,19 @@ function LoopDetailRoute() {
 	const composerRef = useRef<HTMLDivElement>(null)
 	const [proposedEdit, setProposedEdit] = useState<ProposedEdit | null>(null)
 	const [confirmDelete, setConfirmDelete] = useState(false)
+
+	// Custom view: the one read of the flag for this page. An agent pins an HTML
+	// file with set_loop_view (metadata.view_file_id); with the flag on it replaces
+	// the stats and flow, and the toggle switches back. A view that cannot be shown
+	// sets customFailure and the default page renders with a note; choosing
+	// "Custom view" again clears it and retries.
+	const customViewFlag = useFeatureFlag(LOOP_CUSTOM_VIEW_FLAG)
+	const viewFileId =
+		typeof object?.metadata?.view_file_id === 'string' ? object.metadata.view_file_id : null
+	const hasCustomView = customViewFlag && viewFileId !== null
+	const [viewMode, setViewMode] = useState<'default' | 'custom'>('custom')
+	const [customFailure, setCustomFailure] = useState<string | null>(null)
+	const showCustomView = hasCustomView && viewMode === 'custom' && customFailure === null
 
 	// D3 AskBanner wiring — the shared `useWaitingOnViewer` (T1) takes a getter
 	// so `packages/shared` stays React-free. The loop-level `waitingOnViewer` bit
@@ -168,12 +180,13 @@ function LoopDetailRoute() {
 	// `/loops` since the current route's data has just been removed. Mirrors the
 	// agent-detail trash affordance restored in PR #1667.
 	const handleDelete = useCallback(() => {
+		if (!canWrite) return
 		deleteObject.mutate(loopId, {
 			onSuccess: () => {
 				navigate({ to: '/$workspaceId/loops', params: { workspaceId } })
 			},
 		})
-	}, [deleteObject, loopId, navigate, workspaceId])
+	}, [deleteObject, loopId, navigate, workspaceId, canWrite])
 
 	// An utterance is read back as a diff against the plan snapshot `/loops/new`
 	// wrote to `metadata.plan`. Loops without one (marketplace installs, MCP
@@ -206,7 +219,7 @@ function LoopDetailRoute() {
 	)
 
 	const applyProposedEdit = useCallback(() => {
-		if (!proposedEdit) return
+		if (!proposedEdit || !canWrite) return
 		updateObject.mutate(
 			{
 				id: loopId,
@@ -227,7 +240,7 @@ function LoopDetailRoute() {
 				onError: () => toast.error('Could not apply that change'),
 			},
 		)
-	}, [proposedEdit, updateObject, loopId])
+	}, [proposedEdit, updateObject, loopId, canWrite])
 
 	if (loopLoading && !loop) {
 		return (
@@ -301,11 +314,13 @@ function LoopDetailRoute() {
 	// re-earns trust rather than snapping back to full autonomy. The trigger
 	// re-enable is handled server-side by the status hook in
 	// PATCH /api/objects/:id, so this only writes the status.
-	const togglePause = () =>
+	const togglePause = () => {
+		if (!canWrite) return
 		updateObject.mutate({
 			id: loop.id,
 			data: { status: isPaused ? 'learning' : 'paused' },
 		})
+	}
 
 	return (
 		<>
@@ -318,14 +333,16 @@ function LoopDetailRoute() {
 						// LoopUtteranceInput at the bottom of the page on mobile.
 						<div className="flex items-center gap-2">
 							<span className="text-xs text-error">Delete this loop?</span>
-							<Button
-								variant="destructive"
-								size="sm"
-								onClick={handleDelete}
-								disabled={deleteObject.isPending}
-							>
-								{deleteObject.isPending ? 'Deleting...' : 'Confirm'}
-							</Button>
+							<ViewerTooltip>
+								<Button
+									variant="destructive"
+									size="sm"
+									onClick={handleDelete}
+									disabled={deleteObject.isPending || !canWrite}
+								>
+									{deleteObject.isPending ? 'Deleting...' : 'Confirm'}
+								</Button>
+							</ViewerTooltip>
 							<Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>
 								Cancel
 							</Button>
@@ -350,18 +367,24 @@ function LoopDetailRoute() {
 								{pill.label}
 							</span>
 							<DropdownMenu>
-								<DropdownMenuTrigger asChild>
-									<Button
-										variant="ghost"
-										size="icon"
-										className="h-7 w-7 text-muted-foreground"
-										aria-label="More"
-									>
-										<MoreHorizontal size={15} />
-									</Button>
-								</DropdownMenuTrigger>
+								<ViewerTooltip>
+									<DropdownMenuTrigger asChild>
+										<Button
+											variant="ghost"
+											size="icon"
+											className="h-7 w-7 text-muted-foreground"
+											aria-label="More"
+											disabled={!canWrite}
+										>
+											<MoreHorizontal size={15} />
+										</Button>
+									</DropdownMenuTrigger>
+								</ViewerTooltip>
 								<DropdownMenuContent align="end">
-									<DropdownMenuItem onSelect={togglePause} disabled={updateObject.isPending}>
+									<DropdownMenuItem
+										onSelect={togglePause}
+										disabled={updateObject.isPending || !canWrite}
+									>
 										{isPaused ? (
 											<>
 												<Play size={14} /> Resume loop
@@ -374,6 +397,7 @@ function LoopDetailRoute() {
 									</DropdownMenuItem>
 									<DropdownMenuItem
 										onSelect={() => setConfirmDelete(true)}
+										disabled={!canWrite}
 										className="text-error focus:text-error"
 									>
 										<Trash2 size={14} /> Delete loop
@@ -388,7 +412,7 @@ function LoopDetailRoute() {
 				<EditableTitle
 					value={loop.name}
 					entityId={loop.id}
-					onChange={object ? handleUpdateTitle : undefined}
+					onChange={object && canWrite ? handleUpdateTitle : undefined}
 					ariaLabel="Loop title"
 					placeholder="Untitled loop"
 				/>
@@ -437,13 +461,52 @@ function LoopDetailRoute() {
 					)}
 				</div>
 
+				{hasCustomView && (
+					<div className="mt-5 flex flex-wrap items-center justify-between gap-2">
+						<p className="text-xs text-muted-foreground">
+							{viewMode === 'custom' && customFailure
+								? `Custom view unavailable: ${customFailure} Showing the default page.`
+								: ''}
+						</p>
+						<ButtonGroup aria-label="Loop view">
+							<Button
+								type="button"
+								variant={viewMode === 'default' ? 'secondary' : 'ghost'}
+								size="sm"
+								onClick={() => setViewMode('default')}
+							>
+								Default
+							</Button>
+							<Button
+								type="button"
+								variant={viewMode === 'custom' ? 'secondary' : 'ghost'}
+								size="sm"
+								onClick={() => {
+									setCustomFailure(null)
+									setViewMode('custom')
+								}}
+							>
+								Custom view
+							</Button>
+						</ButtonGroup>
+					</div>
+				)}
+
 				<div className="mt-5">
-					<LoopStats
-						loop={loop}
-						cyclesRunning={cyclesRunning}
-						asksWaiting={asksWaiting}
-						nextFire={nextFire}
-					/>
+					{showCustomView && viewFileId ? (
+						<LoopCustomView
+							workspaceId={workspaceId}
+							fileId={viewFileId}
+							onFailure={setCustomFailure}
+						/>
+					) : (
+						<LoopStats
+							loop={loop}
+							cyclesRunning={cyclesRunning}
+							asksWaiting={asksWaiting}
+							nextFire={nextFire}
+						/>
+					)}
 				</div>
 
 				{isPreFirstRun && (
@@ -452,17 +515,19 @@ function LoopDetailRoute() {
 					</div>
 				)}
 
-				{targetsFlag && <TargetsAndOwners loop={loop} actors={actors} />}
+				<TargetsAndOwners loop={loop} actors={actors} />
 
-				<div className="mt-7">
-					<LoopFlow
-						workspaceId={workspaceId}
-						triggers={loopTriggers}
-						actors={actors}
-						childObjects={children ?? []}
-						loop={loop}
-					/>
-				</div>
+				{!showCustomView && (
+					<div className="mt-7">
+						<LoopFlow
+							workspaceId={workspaceId}
+							triggers={loopTriggers}
+							actors={actors}
+							childObjects={children ?? []}
+							loop={loop}
+						/>
+					</div>
+				)}
 
 				{/* The same Activity block object detail carries (mockup 1138–1143):
 				    a mono micro-heading on a hairline rule, then the shared timeline.
@@ -477,7 +542,7 @@ function LoopDetailRoute() {
 						</div>
 						<TimelineTab
 							object={object}
-							loopsV4PolishUnread={unreadPolishFlag ? { loopId } : undefined}
+							loopUnread={{ loopId }}
 							additionalEvents={activityEvents}
 						/>
 					</div>

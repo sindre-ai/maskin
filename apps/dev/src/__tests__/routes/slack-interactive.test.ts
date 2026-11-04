@@ -64,6 +64,7 @@ function makeInteractiveRequest(formBody: string, headers: Record<string, string
 
 describe('POST /api/webhooks/slack-interactive', () => {
 	beforeEach(() => {
+		vi.stubEnv('SLACK_SIGNING_SECRET', 'test-signing-secret')
 		mockGetProvider.mockReset()
 		mockListProviders.mockReset()
 		mockVerify.mockReset()
@@ -73,6 +74,10 @@ describe('POST /api/webhooks/slack-interactive', () => {
 		mockSendEphemeral.mockReset()
 		mockDispatchAccountLink.mockReset()
 		mockGetProvider.mockReturnValue({ config: { webhook: SLACK_WEBHOOK_CONFIG } })
+	})
+
+	afterEach(() => {
+		vi.unstubAllEnvs()
 	})
 
 	it('returns 401 when signature verification fails', async () => {

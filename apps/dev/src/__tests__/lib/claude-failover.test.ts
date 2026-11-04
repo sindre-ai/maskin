@@ -37,6 +37,7 @@ import {
 	FAILOVER_TRIGGERED_ACTION,
 	isClaudeFailoverEnabled,
 	isTransientCredentialError,
+	reportClaudeSessionAuthDeath,
 	resolveClaudeCredentialsWithFailover,
 } from '../../lib/claude-failover'
 import type { ClassifierInput } from '../../lib/claude-failure-classifier'
@@ -1272,5 +1273,58 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 			})
 			expect(result).toBeNull()
 		})
+	})
+})
+
+describe('reportClaudeSessionAuthDeath', () => {
+	beforeEach(() => {
+		vi.mocked(Sentry.captureMessage).mockClear()
+	})
+
+	it('tags the event with the workspace and session ids', () => {
+		reportClaudeSessionAuthDeath({
+			sessionId: 'session-1',
+			workspaceId: 'workspace-1',
+			config: { llm_route: 'claude_oauth', llm_oauth_slot: 'primary' },
+		})
+		expect(Sentry.captureMessage).toHaveBeenCalledTimes(1)
+		const [title, options] = vi.mocked(Sentry.captureMessage).mock.calls[0] as [
+			string,
+			{ tags: Record<string, string>; fingerprint: string[] },
+		]
+		expect(title).toBe('Claude session died on a 401')
+		expect(options.tags).toEqual({
+			workspace_id: 'workspace-1',
+			session_id: 'session-1',
+			route: 'claude_oauth',
+			slot: 'primary',
+			refresh_withheld: 'false',
+		})
+		expect(options.fingerprint).toEqual(['claude-session-auth-death', 'claude_oauth', 'false'])
+	})
+
+	it('marks a session that was launched without a refresh token', () => {
+		reportClaudeSessionAuthDeath({
+			sessionId: 'session-1',
+			workspaceId: 'workspace-1',
+			config: { llm_route: 'claude_oauth', claude_oauth_expires_at: 1_700_000_000_000 },
+		})
+		const [, options] = vi.mocked(Sentry.captureMessage).mock.calls[0] as [
+			string,
+			{ tags: Record<string, string> },
+		]
+		expect(options.tags.refresh_withheld).toBe('true')
+		expect(options.tags.slot).toBe('none')
+	})
+
+	it('does not throw when the config is missing or Sentry fails', () => {
+		vi.mocked(Sentry.captureMessage).mockImplementationOnce(() => {
+			throw new Error('sentry down')
+		})
+		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+		expect(() =>
+			reportClaudeSessionAuthDeath({ sessionId: 's', workspaceId: 'w', config: null }),
+		).not.toThrow()
+		errorSpy.mockRestore()
 	})
 })

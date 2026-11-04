@@ -264,7 +264,7 @@ test.describe('For You v4 — the feed at every ship-gate viewport', () => {
 			// desktop wording). Once the Object detail split lands `placeholder`
 			// on the composer — see the TODO in feed-card.tsx — this should
 			// tighten back to /Reply to /.
-			await expect(page.getByPlaceholder(/Write a comment/).first()).toBeVisible()
+			await expect(page.getByRole('textbox', { name: 'Comment' }).first()).toBeVisible()
 
 			// A plain mention carries its whole body on the card — nothing is held
 			// behind a "Read the rest" link any more.
@@ -276,13 +276,13 @@ test.describe('For You v4 — the feed at every ship-gate viewport', () => {
 
 			// List view collapses them to one line each — the composer goes away.
 			await pickView(page, /^List/)
-			await expect(page.getByPlaceholder(/Write a comment/)).toHaveCount(0)
+			await expect(page.getByRole('textbox', { name: 'Comment' })).toHaveCount(0)
 			await expect(page.getByText('Merge the trigger settings rewrite?').first()).toBeVisible()
 			await assertNoHorizontalOverflow(page, `${vp.label} list`)
 
 			// A row opens back up in place.
 			await page.getByRole('button', { name: /Merge the trigger settings rewrite\?/ }).click()
-			await expect(page.getByPlaceholder(/Write a comment/).first()).toBeVisible()
+			await expect(page.getByRole('textbox', { name: 'Comment' }).first()).toBeVisible()
 		})
 	}
 })
@@ -372,7 +372,7 @@ test.describe('For You v4 — cards, options and the receipt', () => {
 		await page.goto(`/${account.workspaceId}`)
 
 		const fyi = page.getByTestId('foryou-feed-card').filter({ hasText: 'Is the feed too long?' })
-		await expect(fyi.getByPlaceholder(/Write a comment/)).toBeVisible()
+		await expect(fyi.getByRole('textbox', { name: 'Comment' })).toBeVisible()
 		await expect(fyi.getByRole('button', { name: 'Merge now' })).toHaveCount(0)
 		await expect(fyi.getByRole('button', { name: 'Send back' })).toHaveCount(0)
 	})
@@ -456,12 +456,12 @@ test.describe('For You v4 — the card\u2019s own controls', () => {
 		await expect(card.getByText('On this object', { exact: true })).toHaveCount(0)
 	})
 
-	test('the per-card mark-as-read takes the card out of the feed', async ({ page, account }) => {
-		let readCalls = 0
-		await page.route('**/api/subscriptions/read', async (route) => {
+	test('the per-card dismiss takes the card out of the feed', async ({ page, account }) => {
+		let dismissCalls = 0
+		await page.route('**/api/for-you/dismissals', async (route) => {
 			if (route.request().method() !== 'POST') return route.fallback()
-			readCalls++
-			await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' })
+			dismissCalls++
+			await route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' })
 		})
 		await mockFeed(page, account.workspaceId)
 		await page.goto(`/${account.workspaceId}`)
@@ -472,7 +472,7 @@ test.describe('For You v4 — the card\u2019s own controls', () => {
 		await expect(
 			page.getByTestId('foryou-feed-card').filter({ hasText: 'Is the feed too long?' }),
 		).toHaveCount(0)
-		expect(readCalls).toBeGreaterThan(0)
+		expect(dismissCalls).toBeGreaterThan(0)
 	})
 
 	test('"Take every suggested option" answers each open card at once', async ({
@@ -495,6 +495,12 @@ test.describe('For You v4 — the card\u2019s own controls', () => {
 
 		await page.getByRole('button', { name: 'Feed actions' }).click()
 		await page.getByRole('menuitem', { name: /Take every suggested option/ }).click()
+
+		// The bulk tap opens a confirm step first; nothing is posted until it is taken.
+		const dialog = page.getByRole('dialog', { name: 'Take every suggested option?' })
+		await expect(dialog).toBeVisible()
+		expect(posted.length).toBe(0)
+		await dialog.getByRole('button', { name: 'Answer 3 cards' }).click()
 
 		// Three of the five cards carry an agent-authored decision. The plain
 		// insight and the blocked bet are mentions with nothing to answer.

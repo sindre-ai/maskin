@@ -15,13 +15,21 @@ import Testing
 	@Test func phasesRead() {
 		#expect(text() == "Listening…")
 		#expect(text(words: true) == "Hearing you…")
-		#expect(text(.thinking) == "Relay is thinking…")
+		#expect(text(.thinking) == "Working on it…")
 		#expect(text(.speaking) == "Relay is speaking…")
 		#expect(text(.speaking, yourTurn: true) == "Your turn…")
+		#expect(
+			LiveCallStatus.text(
+				phase: .speaking, isMuted: false, failure: nil, notice: nil, leadName: "Relay", hasWords: false,
+				interruptible: true) == "Speaking. Tap to interrupt")
+	}
+
+	@Test func aFreshCallReadsListening() {
+		#expect(text(RealtimeCallMachine().phase) == "Listening…")
 	}
 
 	@Test func mutedBeatsListeningButNoticesAndFailuresBeatMuted() {
-		#expect(text(muted: true) == "Muted")
+		#expect(text(muted: true) == "Microphone off")
 		#expect(text(muted: true, notice: "No connection") == "No connection")
 		#expect(text(muted: true, failure: "Mic denied", notice: "x") == "Mic denied")
 	}
