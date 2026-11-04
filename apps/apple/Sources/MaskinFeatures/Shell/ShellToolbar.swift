@@ -14,8 +14,9 @@ import SwiftUI
 ///                 Toggle("Show done", isOn: $showDone)
 ///             }))
 ///
-/// Order in the pill is Live, Display, the avatar, then New at the very right; search is a collapsed icon at the very left, all inside ONE glass capsule (a single
-/// `ToolbarItemGroup`). The per-tab sets are `ShellTab.barItems`. While the content is scrolled New folds away (Live, Display and the
+/// Order in the pill is Display, the avatar, then New at the very right, inside ONE glass capsule (a single
+/// `ToolbarItemGroup`). Live is the primary button: a black disc of its own at the very right, after
+/// that capsule. The per-tab sets are `ShellTab.barItems`. While the content is scrolled New folds away (Live, Display and the
 /// avatar stay). Search is never a bar item: it is the trailing search tab.
 public struct ShellActions {
 	/// Three horizontal lines: For you and Flows.
@@ -26,7 +27,10 @@ public struct ShellActions {
 	public var new: (() -> Void)?
 	/// The "+" button's accessibility label.
 	public var newLabel: String
-	/// The dark Live button that opens the live daily briefing (For you only).
+	/// Draws the "+" as the primary button: the same filled inverse disc as Live.
+	public var newIsPrimary: Bool
+	/// The black primary Live button, at the very right of the bar, that opens the live daily
+	/// briefing (For you only).
 	public var live: Bool
 	/// The filter-icon menu. Nil hides it.
 	public var display: ShellDisplayMenu?
@@ -46,8 +50,9 @@ public struct ShellActions {
 		new: (() -> Void)? = nil, newLabel: String = "New", live: Bool = false,
 		display: ShellDisplayMenu? = nil, displaySymbol: String = ShellActions.filterSymbol,
 		displayActive: Bool = false, displayToggle: (() -> Void)? = nil,
-		hidesAvatar: Bool = false, newAlwaysVisible: Bool = false
+		hidesAvatar: Bool = false, newAlwaysVisible: Bool = false, newIsPrimary: Bool = false
 	) {
+		self.newIsPrimary = newIsPrimary
 		self.hidesAvatar = hidesAvatar
 		self.newAlwaysVisible = newAlwaysVisible
 		self.displayToggle = displayToggle
@@ -111,16 +116,7 @@ private struct ShellToolbarModifier: ViewModifier {
 				// edge to edge.
 				ToolbarItemGroup(placement: .primaryAction) {
 					Group {
-					// Live leads the pill, then Display, then the avatar (v3).
-					if actions.live {
-						Button {
-							liveMeeting.present(.dailyBriefing)
-						} label: {
-							ShellInkCircle(
-								symbol: "waveform", label: LiveMeetingRequest.dailyBriefing.buttonLabel)
-						}
-						.buttonStyle(.plain)
-					}
+					// Display, then the avatar; Live is its own primary button after this capsule.
 					if let display = actions.display {
 						Menu {
 							display.content
@@ -157,11 +153,23 @@ private struct ShellToolbarModifier: ViewModifier {
 					}
 					if let new = actions.new, !scrolled || actions.newAlwaysVisible {
 						Button(action: new) {
-							ShellInkCircle(symbol: "plus", label: actions.newLabel)
+							ShellInkCircle(symbol: "plus", label: actions.newLabel, filled: actions.newIsPrimary)
 						}
 						.buttonStyle(.plain)
 					}
 
+					}
+				}
+				// Live: the primary button, a black disc at the very right (44 pt target, adaptive tokens).
+				if actions.live {
+					ToolbarItem(placement: .primaryAction) {
+						Button {
+							liveMeeting.present(.dailyBriefing)
+						} label: {
+							ShellInkCircle(
+								symbol: "waveform", label: LiveMeetingRequest.dailyBriefing.buttonLabel, filled: true)
+						}
+						.buttonStyle(.plain)
 					}
 				}
 			}
@@ -174,12 +182,16 @@ private struct ShellToolbarModifier: ViewModifier {
 struct ShellInkCircle: View {
 	let symbol: String
 	let label: String
+	/// The primary look, shared by Live and a primary "+": the inverse disc (black in light mode,
+	/// light in dark) with an on-inverse glyph. The avatar keeps the blue nav-ink disc.
+	var filled = false
 
 	var body: some View {
 		Image(systemName: symbol)
 			.maskinSymbol(16, weight: .semibold)
-			.foregroundStyle(MaskinColor.ink)
+			.foregroundStyle(filled ? MaskinSurface.onInverse : MaskinColor.ink)
 			.frame(width: MaskinSpace.s14 + MaskinSpace.s2, height: MaskinSpace.s14 + MaskinSpace.s2)
+			.background(Circle().fill(filled ? MaskinSurface.inverse : Color.clear))
 			.frame(minWidth: MaskinSpace.touchMin, minHeight: MaskinSpace.touchMin)
 			.contentShape(Circle())
 			.accessibilityLabel(label)

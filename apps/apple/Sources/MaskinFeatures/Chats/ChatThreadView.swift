@@ -131,12 +131,6 @@ struct ChatThreadView: View {
 		return others.count == 1 ? others.first : nil
 	}
 
-	/// The agent in the chat, else the other person, else the title: who the composer addresses.
-	private var leadName: String {
-		let others = store.participants.filter { $0.id != store.currentActorID }
-		return others.first { $0.kind == .agent }?.name ?? others.first?.name ?? store.title
-	}
-
 	/// A one-to-one chat with its own topic is titled by the topic, with the person under it.
 	private var topic: String? {
 		ThreadNav.topic(
@@ -160,16 +154,14 @@ struct ChatThreadView: View {
 		return .quiet(name)
 	}
 
-	/// "Type your answer…" while a flow ask waits on the user; "Message {name}" otherwise.
+	/// "Type your answer…" while a flow ask waits on the user; plain "Message" otherwise.
 	private var placeholder: String {
 		if let last = store.messages.last, last.author == .agent, !last.questions.isEmpty,
 			last.serverID.map({ !store.answeredQuestionIDs.contains($0) }) ?? false
 		{
 			return "Type your answer…"
 		}
-		// A new chat invites either: type, or press Live (live meeting handoff, step 1).
-		if store.messages.isEmpty, call == nil, liveLead != nil { return "Ask \(leadName), or talk" }
-		return "Message \(leadName)"
+		return "Message"
 	}
 
 	private var quickReplies: [String] {
@@ -289,13 +281,27 @@ struct ChatThreadView: View {
 	@ToolbarContentBuilder
 	private var toolbarContent: some ToolbarContent {
 		ToolbarItem(placement: .principal) {
-			ThreadNavTitle(
-				title: navTitle, status: navStatus,
-				onTap: titleAction ?? {
-					newTitle = store.title
-					renaming = true
-				},
-				hint: titleAction == nil ? "Renames the chat" : nil)
+			// The people's pictures sit beside the name, not in the button capsule on the right.
+			HStack(spacing: MaskinSpace.s5) {
+				if !memberStack.isEmpty {
+					if ThreadNav.showsMemberStack(participants: store.participants, flow: flow) {
+						Button(action: onShowParticipants) {
+							ThreadNavAvatars(participants: memberStack, leadID: flow?.leadID, limit: flow == nil ? 4 : 3)
+						}
+						.buttonStyle(.maskinPressed)
+						.accessibilityHint("Opens People")
+					} else {
+						ThreadNavAvatars(participants: Array(memberStack.prefix(1)), leadID: nil, limit: 1)
+					}
+				}
+				ThreadNavTitle(
+					title: navTitle, status: navStatus,
+					onTap: titleAction ?? {
+						newTitle = store.title
+						renaming = true
+					},
+					hint: titleAction == nil ? "Renames the chat" : nil)
+			}
 		}
 		// One group so iOS keeps everything in the bar instead of folding into a "More" overflow.
 		ToolbarItemGroup(placement: .primaryAction) {
@@ -311,13 +317,6 @@ struct ChatThreadView: View {
 				.accessibilityLabel("Linked")
 				.accessibilityValue("\(linkedEntries.count)")
 				.accessibilityHint("Shows the drafts, pages and objects this chat links to")
-			}
-			if ThreadNav.showsMemberStack(participants: store.participants, flow: flow) {
-				Button(action: onShowParticipants) {
-					ThreadNavAvatars(participants: memberStack, leadID: flow?.leadID, limit: flow == nil ? 4 : 3)
-				}
-				.buttonStyle(.maskinPressed)
-				.accessibilityHint("Opens People")
 			}
 			if flow != nil, let conversations, let row = conversations.conversation(id: store.conversationID) {
 				Button {
@@ -395,9 +394,17 @@ struct ChatThreadView: View {
 				Button {
 					liveMeeting.present(.thread(chat: store, lead: lead))
 				} label: {
-					ShellInkCircle(symbol: "waveform", label: "Live")
+					// The primary action of the bar: a filled inverse disc, like the profile avatar.
+					Image(systemName: "waveform")
+						.maskinSymbol(16, weight: .semibold)
+						.foregroundStyle(MaskinSurface.onNavInk)
+						.frame(width: MaskinSpace.s14 + MaskinSpace.s2, height: MaskinSpace.s14 + MaskinSpace.s2)
+						.background(Circle().fill(MaskinSurface.navInk))
+						.frame(minWidth: MaskinSpace.touchMin, minHeight: MaskinSpace.touchMin)
+						.contentShape(Circle())
+						.accessibilityLabel("Live")
 				}
-				.buttonStyle(.maskinPressed)
+				.buttonStyle(.plain)
 			}
 		}
 	}
@@ -559,7 +566,7 @@ struct ChatThreadView: View {
 				.padding(.bottom, MaskinSpace.s9)
 		}
 		if store.messages.isEmpty, call?.lines.isEmpty ?? true {
-			if let call { LiveCallEmptyState(session: call) } else { emptyHint }
+			if let call { LiveCallEmptyState(session: call) }
 		}
 		ThreadTranscript(
 			store: store, lazy: lazy, onEdit: beginEdit(_:), onReply: reply(to:), onFillStep: { composer.fill($0) },
@@ -732,16 +739,6 @@ struct ChatThreadView: View {
 			.padding(.top, MaskinSpace.s2)
 			.padding(.bottom, MaskinSpace.s10)
 			.accessibilityAddTraits(.isHeader)
-	}
-
-	private var emptyHint: some View {
-		Text("Ask \(leadName) anything. Type @ to bring someone else in, or + to attach a file.")
-			.font(MaskinTypeface.sans(MaskinFontSize.t15, relativeTo: .subheadline))
-			.foregroundStyle(MaskinColor.ink4)
-			.multilineTextAlignment(.center)
-			.frame(maxWidth: .infinity)
-			.padding(.vertical, MaskinSpace.s14 + MaskinSpace.s2)
-			.padding(.horizontal, MaskinSpace.s10)
 	}
 
 	// MARK: Composer stack

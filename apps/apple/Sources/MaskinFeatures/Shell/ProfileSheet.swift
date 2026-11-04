@@ -60,6 +60,12 @@ struct ProfileSheet: View {
 					profileCard
 					workspaceCard
 					statTiles
+					VStack(spacing: 0) {
+						ProfileRow(title: "Search", subtitle: "Chats, flows, agents and items", symbol: "magnifyingglass") {
+							runtime.presentation = .search
+						}
+					}
+					.profileCard()
 					ForEach(ProfileMenuGroup.allCases) { group in
 						let items = ProfileMenu.items(in: group, hasWorkspace: hasWorkspace, role: role)
 						if !items.isEmpty {

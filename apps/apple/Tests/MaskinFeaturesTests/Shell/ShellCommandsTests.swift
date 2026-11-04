@@ -22,4 +22,22 @@ struct ShellCommandsTests {
 		#expect(runtime.presentation == nil)
 		#expect(runtime.newConversationRequested)
 	}
+
+	@MainActor @Test func searchOpensAsASheetAndKeepsTheTab() {
+		let runtime = AppRuntime(environment: .preview())
+		runtime.selectedTab = .objects
+		runtime.selectedTab = .search
+		#expect(runtime.selectedTab == .objects)
+		#expect(runtime.presentation == .search)
+	}
+
+	@MainActor @Test func theTabBarPlusStartsAChiefOfStaffChatAndStaysOnChats() {
+		let runtime = AppRuntime(environment: .preview())
+		runtime.selectedTab = .objects
+		runtime.presentation = .settings
+		runtime.selectedTab = .newChat
+		#expect(runtime.selectedTab == .chats)
+		#expect(runtime.presentation == nil)
+		#expect(runtime.chiefChatRequested)
+	}
 }

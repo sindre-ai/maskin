@@ -369,3 +369,35 @@ private let oneHourCallJSON = """
 		#expect(summaries == ["one"])
 	}
 }
+
+@MainActor
+@Suite("Transcript of a call held elsewhere") struct HeldElsewhereTranscriptTests {
+	private func spoken(_ id: Int, _ text: String, actor: String, call: String = "v1", at seconds: TimeInterval) -> ChatMessage {
+		.confirmed(
+			serverID: id, conversationID: "c", actorID: actor, actorName: actor == "me" ? "Sebastian" : "Chief",
+			author: actor == "me" ? .human : .agent, content: text, createdAt: Date(timeIntervalSince1970: 1_000 + seconds),
+			metadata: .object(["source": .string("voice"), "voice_session_id": .string(call)]))
+	}
+
+	@Test("builds the lines from spoken messages of that call, in order, timed from the first")
+	func buildsLines() throws {
+		let messages = [
+			spoken(2, "Sure.", actor: "agent", at: 14),
+			spoken(1, "Brief me.", actor: "me", at: 0),
+			spoken(3, "Other call", actor: "agent", call: "v2", at: 20),
+		]
+		let transcript = try #require(
+			LiveTranscript(
+				voiceSessionID: "v1", title: "Live meeting", durationSeconds: 60, messages: messages, currentActorID: "me"))
+		#expect(transcript.lines.map(\.text) == ["Brief me.", "Sure."])
+		#expect(transcript.lines.map(\.seconds) == [0, 14])
+		#expect(transcript.lines.map(\.speaker) == [LiveMeetingNote.youName, "Chief"])
+	}
+
+	@Test("is nil when no spoken line carries the call's id")
+	func nilWithoutLines() {
+		let messages = [spoken(1, "x", actor: "me", call: "v2", at: 0)]
+		#expect(
+			LiveTranscript(voiceSessionID: "v1", title: "t", durationSeconds: nil, messages: messages, currentActorID: "me") == nil)
+	}
+}

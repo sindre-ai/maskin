@@ -4,13 +4,13 @@ import Testing
 
 @Suite("ShellTab")
 struct ShellTabTests {
-	@Test func fourTabsThenSearchInOrder() {
-		#expect(ShellTab.allCases == [.forYou, .chats, .loops, .objects, .search])
+	@Test func fourTabsThenTheNewChatButtonInOrder() {
+		#expect(ShellTab.allCases == [.forYou, .chats, .loops, .objects, .search, .newChat])
 		#expect(ShellTab.primary == [.forYou, .chats, .loops, .objects])
 	}
 
 	@Test func titlesUseTeamAndFlows() {
-		#expect(ShellTab.allCases.map(\.title) == ["For you", "Chats", "Flows", "Items", "Search"])
+		#expect(ShellTab.allCases.map(\.title) == ["For you", "Chats", "Flows", "Items", "Search", "New chat with Chief of Staff"])
 	}
 
 	@Test func barItemsPerTab() {
