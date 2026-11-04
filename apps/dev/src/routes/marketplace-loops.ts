@@ -43,6 +43,10 @@ import {
 } from '../services/loop-provisioning'
 import { stopSessionsForActors } from '../services/session-cleanup'
 import type { SessionManager } from '../services/session-manager'
+import {
+	createWorkspaceDesktopService,
+	removeDesktopsForActors,
+} from '../services/workspace-desktop'
 
 type Env = {
 	Variables: {
@@ -768,6 +772,10 @@ app.openapi(uninstallItemRoute, (async (c) => {
 			},
 		})
 	})
+
+	if (type === 'actor' && !keepProvisionedItems) {
+		await removeDesktopsForActors(workspaceId, [entityId], createWorkspaceDesktopService(db))
+	}
 
 	if (removedSkillId) {
 		try {
