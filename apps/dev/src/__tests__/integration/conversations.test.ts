@@ -2050,7 +2050,7 @@ describe('Conversations Integration', () => {
 			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
 			expect(sessionManager.createSession.mock.calls[0]?.[1]).toMatchObject({ actorId: agent.id })
 			// Regression: the dead session must be marked failed so it stops
-			// satisfying sessions_conversation_actor_active_uniq — otherwise the
+			// satisfying sessions_conversation_actor_thread_active_uniq — otherwise the
 			// fresh createSession above collides with its own zombie on every
 			// subsequent message (see the race-recovery test below).
 			expect(sessionManager.markSessionFailedAfterContainerLoss).toHaveBeenCalledWith(
@@ -2064,7 +2064,7 @@ describe('Conversations Integration', () => {
 			// unique-constraint race-recovery path re-looks-up the "winner" and tries
 			// writeInput on it. If that winner is itself dead (the same self-heal gap
 			// as the primary reuse path), it used to be logged and dropped forever,
-			// permanently wedging sessions_conversation_actor_active_uniq for this
+			// permanently wedging sessions_conversation_actor_thread_active_uniq for this
 			// (conversation, agent) pair until the 2h timeout reaper caught it.
 			const agent = await insertActor(db, { type: 'agent' })
 			await addMember(workspaceId, agent.id)
@@ -2091,7 +2091,7 @@ describe('Conversations Integration', () => {
 
 			const raceViolation = Object.assign(new Error('duplicate key value'), {
 				code: '23505',
-				constraint_name: 'sessions_conversation_actor_active_uniq',
+				constraint_name: 'sessions_conversation_actor_thread_active_uniq',
 			})
 			const sessionManager = {
 				// No existing session visible on the first lookup — goes straight to
@@ -2315,7 +2315,7 @@ describe('Conversations Integration', () => {
 
 			const raceViolation = Object.assign(new Error('duplicate key value'), {
 				code: '23505',
-				constraint_name: 'sessions_conversation_actor_active_uniq',
+				constraint_name: 'sessions_conversation_actor_thread_active_uniq',
 			})
 			const sessionManager = {
 				createSession: vi.fn().mockRejectedValue(raceViolation),
