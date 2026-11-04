@@ -88,11 +88,31 @@ export interface SearchSource {
 	deepHit?: (pattern: string) => SQL
 	hitSnippet?: (patterns: string[]) => SQL
 	/**
+	 * Optional. The candidates with the words already applied, for the strict pass: every pattern
+	 * must hit the title or the body, written on the table's own columns so an index can answer it.
+	 * When a source has it and the query has words, runSource uses it instead of `candidates` and
+	 * skips the generic match, so it must keep exactly the rows that match would. Sources with a
+	 * sub line or deep text cannot use it.
+	 */
+	wordFiltered?: (ctx: SearchContext, patterns: string[]) => SQL
+	/**
 	 * Optional. A boolean: true when the source holds rows outside the deep scan cap. It counts the
 	 * source's rows and nothing else, so the partial flag does not run `candidates` a second time
 	 * (the people list and last message of every chat). Without it the flag reads `candidates`.
 	 */
 	overScanCap?: (ctx: SearchContext) => SQL
+}
+
+/** The objects source rows (loops have their own source), optionally cut to the rows holding every word. */
+function objectCandidates({ workspaceId }: SearchContext, patterns: string[] = []): SQL {
+	const wordFilter = patterns.map(
+		(pattern) => sql` AND (o.title ILIKE ${pattern} OR o.content ILIKE ${pattern})`,
+	)
+	return sql`
+			SELECT o.id AS id, o.type AS type, COALESCE(o.title, '') AS title, NULL::text AS sub,
+				o.content AS body, o.status AS status, o.updated_at AS updated_at
+			FROM objects o
+			WHERE o.workspace_id = ${workspaceId} AND o.type <> 'loop'${sql.join(wordFilter, sql``)}`
 }
 
 export const SEARCH_SOURCES: SearchSource[] = [
@@ -221,11 +241,10 @@ export const SEARCH_SOURCES: SearchSource[] = [
 		statusPairs: ({ workspaceId }) => sql`
 			SELECT DISTINCT o.type AS type, o.status AS status FROM objects o
 			WHERE o.workspace_id = ${workspaceId} AND o.type <> 'loop'`,
-		candidates: ({ workspaceId }) => sql`
-			SELECT o.id AS id, o.type AS type, COALESCE(o.title, '') AS title, NULL::text AS sub,
-				o.content AS body, o.status AS status, o.updated_at AS updated_at
-			FROM objects o
-			WHERE o.workspace_id = ${workspaceId} AND o.type <> 'loop'`,
+		candidates: (ctx) => objectCandidates(ctx),
+		// The trigram indexes on objects.title and objects.content (migrations 0129, 0130) answer this
+		// filter. COALESCE(title, '') would hide the title column from them, so the raw columns are used.
+		wordFiltered: (ctx, patterns) => objectCandidates(ctx, patterns),
 	},
 	{
 		key: 'automations',
@@ -467,7 +486,12 @@ async function runSource(
 
 	// Deep text only matters when there is a word to look for.
 	const hasDeep = Boolean(source.deepHit) && tokens.length > 0
-	const match = matchCondition(tokens, source, hasDeep)
+	// A source that filters the words inside its candidates has nothing left for the generic match.
+	const wordFiltered = !hasDeep && tokens.length > 0 ? source.wordFiltered : undefined
+	const match = wordFiltered ? sql`true` : matchCondition(tokens, source, hasDeep)
+	const candidates = wordFiltered
+		? wordFiltered(ctx, tokens.map(tokenIlikePattern))
+		: source.candidates(ctx)
 	const participantsOk = participantsCondition(query, source)
 	const inWindow = cutoff ? sql`coalesce(s.updated_at > ${cutoff}::timestamptz, false)` : sql`true`
 	const pairList = sql.join(
@@ -502,7 +526,7 @@ async function runSource(
 					${hasDeep ? sql`s.deep,` : sql``}
 					${scoreExpression(tokens, source, hasDeep)} AS score,
 					${inWindow} AS in_window
-				FROM (${source.candidates(ctx)}) s
+				FROM (${candidates}) s
 				WHERE ${match}
 			),
 			counted AS (
