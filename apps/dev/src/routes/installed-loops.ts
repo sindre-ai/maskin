@@ -38,7 +38,7 @@ import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, jsonbField } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import { isWorkspaceMember, isWorkspaceWriter } from '../lib/workspace-auth'
 import { type AgentStorageManager, workspaceSkillKey } from '../services/agent-storage'
 import {
 	type MarketplaceItemType,
@@ -62,6 +62,10 @@ import {
 } from '../services/session-cleanup'
 import type { SessionManager } from '../services/session-manager'
 import { autoSubscribe } from '../services/subscriptions'
+import {
+	createWorkspaceDesktopService,
+	removeDesktopsForActors,
+} from '../services/workspace-desktop'
 
 type Env = {
 	Variables: {
@@ -227,6 +231,7 @@ app.openapi(listInstalledLoopsRoute, async (c) => {
 const installLoopRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['installed-loops'],
 	summary: 'Install a marketplace loop into a workspace',
 	request: {
@@ -271,7 +276,7 @@ app.openapi(installLoopRoute, async (c) => {
 	// 1. Caller must belong to the target workspace. We check resource-scoped
 	//    membership here rather than via the workspace-id header because the
 	//    workspace is part of the install body, not the request envelope.
-	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+	if (!(await isWorkspaceWriter(db, actorId, workspaceId))) {
 		return c.json(createApiError('FORBIDDEN', 'You are not a member of the target workspace'), 403)
 	}
 
@@ -662,6 +667,7 @@ const forkResponseSchema = z.object({
 const forkLoopRoute = createRoute({
 	method: 'post',
 	path: '/{id}/fork',
+	'x-viewer-policy': 'writer',
 	tags: ['installed-loops'],
 	summary: 'Fork an installed loop so the workspace owns its elements',
 	request: {
@@ -708,7 +714,7 @@ app.openapi(forkLoopRoute, async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Installed loop not found'), 404)
 	}
 
-	if (!(await isWorkspaceMember(db, actorId, install.workspaceId))) {
+	if (!(await isWorkspaceWriter(db, actorId, install.workspaceId))) {
 		return c.json(createApiError('FORBIDDEN', 'You are not a member of the install workspace'), 403)
 	}
 
@@ -865,6 +871,7 @@ const uninstallResponseSchema = z.object({
 const uninstallLoopRoute = createRoute({
 	method: 'delete',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['installed-loops'],
 	summary: 'Remove an installed loop from a workspace',
 	request: {
@@ -910,7 +917,7 @@ app.openapi(uninstallLoopRoute, async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Installed loop not found'), 404)
 	}
 
-	if (!(await isWorkspaceMember(db, actorId, install.workspaceId))) {
+	if (!(await isWorkspaceWriter(db, actorId, install.workspaceId))) {
 		return c.json(createApiError('FORBIDDEN', 'You are not a member of the install workspace'), 403)
 	}
 
@@ -928,6 +935,8 @@ app.openapi(uninstallLoopRoute, async (c) => {
 	// sandboxes keep running as agents the user just uninstalled, holding
 	// agent-server capacity until the 2h timeout.
 	let strandedSessions: CapturedLiveSession[] = []
+	// Ids of the agents this uninstall deleted, for removing their computers after commit.
+	let deletedActorIds: string[] = []
 
 	await db.transaction(async (tx) => {
 		if (keepProvisionedItems) {
@@ -1056,6 +1065,7 @@ app.openapi(uninstallLoopRoute, async (c) => {
 
 			if (actorIds.length > 0) {
 				strandedSessions = await captureLiveSessions(tx, actorIds)
+				deletedActorIds = actorIds
 
 				// Delete triggers that target or were created by provisioned actors.
 				// The metadata-based delete above only removed marketplace-managed triggers;
@@ -1202,6 +1212,11 @@ app.openapi(uninstallLoopRoute, async (c) => {
 	})
 
 	await stopCapturedSandboxes(db, strandedSessions)
+	await removeDesktopsForActors(
+		install.workspaceId,
+		deletedActorIds,
+		createWorkspaceDesktopService(db),
+	)
 
 	for (const skillId of removedSkillIds) {
 		try {

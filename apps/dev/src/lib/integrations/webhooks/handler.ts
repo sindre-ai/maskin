@@ -1,11 +1,15 @@
-import { getEnvOrThrow } from '../env'
 import type { WebhookConfig } from '../types'
 import { verifyHmacSha1, verifyHmacSha256, verifyTimestampSignature } from './signatures'
 
 export class WebhookHandler {
-	/** Verify a webhook signature using the provider's configured scheme. */
-	verify(config: WebhookConfig, body: string, headers: Record<string, string>): boolean {
-		const secret = getEnvOrThrow(config.secretEnv)
+	/** Verify a webhook signature using the provider's configured scheme. The caller resolves the secret. */
+	verify(
+		config: WebhookConfig,
+		body: string,
+		headers: Record<string, string>,
+		opts: { secret: string },
+	): boolean {
+		const { secret } = opts
 
 		if (config.signatureScheme === 'timestamp') {
 			if (

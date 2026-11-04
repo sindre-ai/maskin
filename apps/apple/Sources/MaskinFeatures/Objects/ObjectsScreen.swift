@@ -14,6 +14,7 @@ public struct ObjectsScreen: View {
 	@State private var picking = SelectionModel()
 	@State private var intents = ObjectsListIntents()
 	@State private var path: [ObjectRoute] = []
+	@State private var showDisplay = false
 	@Namespace private var zoom
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 
@@ -53,12 +54,13 @@ public struct ObjectsScreen: View {
 	}
 
 	/// The title lives in the content (tap it for Go to); the pill holds Display and the avatar.
-	/// Search is the list's own `.searchable`.
+	/// The Objects page has no search field in its top bar.
 	private var shellActions: ShellActions {
 		ShellActions(
-			display: ShellDisplayMenu { ObjectsDisplayMenu(store: store, picking: picking, intents: intents) },
 			displaySymbol: ShellActions.slidersSymbol,
-			displayActive: store.display.isCustomised || store.statusFilter != nil)
+			displayActive: store.display.isCustomised || store.statusFilter != nil,
+			displayToggle: { showDisplay = true },
+			hidesAvatar: true)
 	}
 
 	// MARK: Asks
@@ -102,6 +104,9 @@ public struct ObjectsScreen: View {
 				store: store, board: board, selection: nil, zoomNamespace: zoom, picking: picking, intents: intents,
 				askActions: askActions, onOpen: { path.append(ObjectRoute(id: $0)) })
 				.shellToolbar(environment: environment, title: nil, actions: shellActions)
+				.sheet(isPresented: $showDisplay) {
+					ObjectsDisplaySheet(store: store, picking: picking, intents: intents)
+				}
 				.navigationDestination(for: ObjectRoute.self) { route in
 					detail(route, onOpen: { path.append(ObjectRoute(id: $0)) }, onClose: { path.removeLast() })
 					.zoomDestination(id: route.id, in: zoom)

@@ -4,6 +4,7 @@ import { Label } from '@/components/ui/label'
 import { useAuth } from '@/hooks/use-auth'
 import { trackEvent } from '@/lib/analytics'
 import { api } from '@/lib/api'
+import { identifyForWorkspace } from '@/lib/posthog'
 import { safeInternalPath } from '@/lib/safe-redirect'
 import { buildSignupCaptureKnowledge } from '@maskin/shared'
 import { Link, createFileRoute } from '@tanstack/react-router'
@@ -121,7 +122,12 @@ function SignupPage() {
 						organization: trimmedOrg,
 						role: trimmedRole,
 					})
-					await api.objects.create(workspaceId, payload)
+					// The welcome is shown on New Chat for web sign-ups, so the server
+					// should not also put it on For You. Other clients leave this out.
+					await api.objects.create(workspaceId, {
+						...payload,
+						metadata: { ...payload.metadata, welcome_in_chat: true },
+					})
 					console.info('[maskin] wrote signup capture knowledge', {
 						workspaceId,
 						actorId,
@@ -141,14 +147,24 @@ function SignupPage() {
 					user_id: actorId,
 					completed: true,
 				})
+				// Identify before signup_completed so the signup lands on the person
+				// the rest of the funnel reads from. A new account has the default
+				// privacy settings, so it is identified in the clear.
+				await identifyForWorkspace(actorId, false, { name: trimmedName, email: email.trim() })
+				trackEvent('signup_completed', { user_id: actorId, workspace_id: workspaceId })
 			}
 			if (anonId) {
 				api.landingEvents
 					.emit([{ name: 'signup_complete', anonId, props: { fromGuest: true } }])
 					.catch(() => console.error('[maskin] failed to emit signup_complete'))
 			}
-			// Full navigation, as login does, so the target's query string survives.
-			window.location.assign(redirect ?? '/')
+			// Full navigation, as login does, so the target's query string survives. A return
+			// path (the Claude consent page) wins; otherwise land on New Chat, where the Chief of
+			// Staff welcome is shown. Without a workspace id there is nowhere to point, so fall
+			// back to the index.
+			window.location.assign(
+				redirect ?? (workspaceId ? `/${workspaceId}/chats/new?welcome=1` : '/'),
+			)
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Signup failed')
 		} finally {
@@ -204,6 +220,11 @@ function SignupPage() {
 							placeholder="What you do"
 						/>
 					</div>
+
+					<p className="-mt-2 text-xs text-muted-foreground">
+						We use Organization and Role to prepare your first workspace. We may look up you and
+						your organization from public sources.
+					</p>
 
 					<div>
 						<Label className="mb-1 text-muted-foreground">Email</Label>

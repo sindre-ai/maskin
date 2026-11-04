@@ -8,7 +8,7 @@ import {
 	insertWorkspace,
 } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
-import { createIntegrationApp, db, getTestActorId } from './global-setup'
+import { createIntegrationApp, db, getTestActorId, sql as pg } from './global-setup'
 
 const { default: objectsRoutes } = await import('../../routes/objects')
 
@@ -257,7 +257,7 @@ describe('Objects Integration', () => {
 			})
 			const bet = await insertObject(db, workspaceId, getTestActorId(), {
 				type: 'bet',
-				status: 'signal',
+				status: 'opportunity',
 			})
 
 			// Set owner on both — a field every type accepts — so this exercises the
@@ -294,7 +294,7 @@ describe('Objects Integration', () => {
 			})
 			const bet = await insertObject(db, workspaceId, getTestActorId(), {
 				type: 'bet',
-				status: 'signal',
+				status: 'opportunity',
 			})
 
 			// 'in_progress' is valid for task but not for bet — bet should fail, task should succeed.
@@ -322,7 +322,7 @@ describe('Objects Integration', () => {
 			const [taskAfter] = await db.select().from(objects).where(eq(objects.id, task.id))
 			const [betAfter] = await db.select().from(objects).where(eq(objects.id, bet.id))
 			expect(taskAfter.status).toBe('in_progress')
-			expect(betAfter.status).toBe('signal') // unchanged
+			expect(betAfter.status).toBe('opportunity') // unchanged
 		})
 
 		it('filters out ids that belong to a different workspace', async () => {
@@ -842,7 +842,7 @@ describe('Objects Integration', () => {
 			})
 			await insertObject(db, workspaceId, getTestActorId(), {
 				type: 'bet',
-				status: 'signal',
+				status: 'opportunity',
 				updatedAt: before,
 			})
 
@@ -1754,6 +1754,63 @@ describe('Objects Integration', () => {
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(body.unique_contexts).toBe(0)
+		})
+	})
+
+	describe('PATCH /api/objects/:id — metadata merge under the row lock', () => {
+		it('keeps a metadata key written between the pre-transaction read and the lock', async () => {
+			const app = createApp()
+			const obj = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				status: 'todo',
+				metadata: { source: 'slack' },
+			})
+
+			// A second writer takes the row lock first. The PATCH below does its
+			// pre-transaction read (which does not lock), then blocks on its own
+			// SELECT ... FOR UPDATE until this writer commits.
+			let lockHeld!: () => void
+			const held = new Promise<void>((resolve) => {
+				lockHeld = resolve
+			})
+			let releaseWriter!: () => void
+			const writerMayCommit = new Promise<void>((resolve) => {
+				releaseWriter = resolve
+			})
+			const otherWriter = db.transaction(async (tx) => {
+				await tx.select().from(objects).where(eq(objects.id, obj.id)).for('update')
+				lockHeld()
+				await writerMayCommit
+				await tx
+					.update(objects)
+					.set({ metadata: { source: 'slack', dial_count: 3 } })
+					.where(eq(objects.id, obj.id))
+			})
+			await held
+
+			const patch = app.request(
+				jsonRequest('PATCH', `/api/objects/${obj.id}`, { metadata: { company_type: 'b2b' } }),
+			)
+
+			// Wait until the PATCH is parked on the row lock, so its pre-transaction
+			// read is guaranteed to predate the other writer's commit.
+			for (let i = 0; i < 100; i++) {
+				const [{ n }] = await pg<{ n: number }[]>`
+					select count(*)::int as n from pg_stat_activity
+					where datname = current_database()
+						and wait_event_type = 'Lock'
+						and query ilike '%for update%'`
+				if (n > 0) break
+				await new Promise((r) => setTimeout(r, 50))
+			}
+			releaseWriter()
+			await otherWriter
+
+			const res = await patch
+			expect(res.status).toBe(200)
+
+			const [after] = await db.select().from(objects).where(eq(objects.id, obj.id))
+			expect(after.metadata).toEqual({ source: 'slack', dial_count: 3, company_type: 'b2b' })
 		})
 	})
 })

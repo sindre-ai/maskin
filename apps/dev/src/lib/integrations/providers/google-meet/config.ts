@@ -11,7 +11,7 @@ import type { ProviderConfig } from '../../types'
  *
  * Scope choices (per bet lock-down, Reshape §1):
  *  - `openid` + `userinfo.email` — `resolveGoogleEmail` (external_id) and
- *    `people.get(me)` (People-id fetch at callback) both ride these two.
+ *    `resolveMeetPeopleId` (the account id, from the same userinfo response).
  *  - `meetings.space.readonly` — read conferenceRecords / transcripts /
  *    participants / recordings; JTBDs #1–#3 + #5.
  *  - `meetings.space.created` — create Meet spaces via

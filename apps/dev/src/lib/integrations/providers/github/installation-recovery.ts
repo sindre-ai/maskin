@@ -4,6 +4,7 @@ import { and, eq, ne } from 'drizzle-orm'
 import { decrypt, encrypt } from '../../../crypto'
 import { recordEvent } from '../../../events/record-event'
 import { logger } from '../../../logger'
+import { requireCredentials } from '../../credential-column'
 import type { StoredCredentials } from '../../types'
 
 export interface PersistRecoveredInstallationIdInput {
@@ -62,7 +63,7 @@ export async function persistRecoveredInstallationId(
 			.limit(1)
 		if (!current) return { persisted: false }
 
-		const currentCreds: StoredCredentials = JSON.parse(decrypt(current.credentials))
+		const currentCreds: StoredCredentials = JSON.parse(decrypt(requireCredentials(current)))
 		if (currentCreds.installation_id !== expectedOldInstallationId) {
 			return { persisted: false }
 		}
@@ -143,7 +144,7 @@ export async function propagateRecoveredInstallationId(
 	// The lookup itself sits inside the best-effort boundary too. It used to run
 	// outside it, so a transient DB error here escaped into the token route's
 	// catch and turned an already-minted, perfectly valid token into a 400.
-	let siblings: { id: string; workspaceId: string; credentials: string }[]
+	let siblings: { id: string; workspaceId: string; credentials: string | null }[]
 	try {
 		siblings = await db
 			.select({
@@ -172,7 +173,7 @@ export async function propagateRecoveredInstallationId(
 	const updatedIntegrationIds: string[] = []
 	for (const sibling of siblings) {
 		try {
-			const creds: StoredCredentials = JSON.parse(decrypt(sibling.credentials))
+			const creds: StoredCredentials = JSON.parse(decrypt(requireCredentials(sibling)))
 			if (creds.installation_id !== expectedOldInstallationId) continue
 
 			await db

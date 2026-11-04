@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { buildWorkspaceWithRole } from '../factories'
+import { buildFacets, facetsState, resetFacetsState } from './objects-facets-mock'
 
 // Follow-up to T5: when the DisplayPanel "Include archived" toggle is on, the
 // desktop chip strip should surface `Include: archived ✕` alongside the
@@ -85,7 +86,8 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 })
 
 const bulkUpdateCapture = vi.hoisted(() => ({ mutate: vi.fn() }))
-vi.mock('@/hooks/use-objects', () => ({
+vi.mock('@/hooks/use-objects', async () => ({
+	...(await import('./objects-facets-mock')).facetHookMocks,
 	useBulkUpdateObjects: () => ({ mutate: bulkUpdateCapture.mutate }),
 	useBulkResultHandlers: () => ({ reportBulkResult: vi.fn(), retainOnlyFailed: vi.fn() }),
 }))
@@ -292,6 +294,7 @@ const ObjectsPageComponent = RouteOptions.component
 const ObjectsPage = ObjectsPageComponent
 
 beforeEach(() => {
+	resetFacetsState()
 	searchState.current = {
 		type: 'bet',
 		status: undefined,
@@ -463,6 +466,7 @@ describe('ObjectsPage — pinned filter chips', () => {
 
 describe('ObjectsPage — published screen identity', () => {
 	it('publishes the Objects title and the type-tab strip, with no separate count', () => {
+		facetsState.data = buildFacets()
 		render(<ObjectsPage />)
 		expect(screen.getByRole('heading', { name: 'Objects' })).toBeInTheDocument()
 		// No count beside the <h1> — the active type tab carries it instead.

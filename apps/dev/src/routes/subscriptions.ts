@@ -1,10 +1,12 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, objects, subscriptions } from '@maskin/db/schema'
+import { events, files, objects, subscriptions } from '@maskin/db/schema'
 import {
+	type DecisionDraft,
 	commentDecisionSchema,
 	markReadBodySchema,
 	markUnreadBodySchema,
+	objectPreviewSchema,
 	parseCommentDecision,
 	subscribeBodySchema,
 	subscribersQuerySchema,
@@ -13,6 +15,9 @@ import {
 } from '@maskin/shared'
 import { and, count, desc, eq, gt, inArray, max, ne, or, sql } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { findFinishedDraftCards } from '../lib/for-you-visibility'
+import { withDeliveryState } from '../lib/object-delivery'
+import { buildObjectPreview } from '../lib/object-preview'
 import { errorSchema, objectResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
 import {
@@ -79,6 +84,33 @@ const subscribersResponseSchema = z.object({
 	),
 })
 
+// The decision as the feed returns it: each draft also carries the `preview` of the
+// object behind it. Response only, so it is not part of what an agent can write.
+const feedDraftSchema = z.object({
+	id: z.string().optional(),
+	object_id: z.string().optional(),
+	file_id: z.string().optional(),
+	label: z.string().optional(),
+	to: z.string().optional(),
+	body: z.string().optional(),
+	preview: objectPreviewSchema.optional(),
+	// What the card needs to draw a file without a second lookup of its metadata. The
+	// content itself is fetched by the client, so a large file never rides in the feed.
+	file: z
+		.object({
+			id: z.string().uuid(),
+			name: z.string(),
+			mime_type: z.string(),
+			size_bytes: z.number(),
+		})
+		.optional(),
+})
+export const feedDecisionSchema = commentDecisionSchema.extend({
+	draft: feedDraftSchema.optional(),
+	drafts: z.array(feedDraftSchema).optional(),
+})
+type FeedDraft = z.infer<typeof feedDraftSchema>
+
 const unreadItemSchema = z.object({
 	entity_type: z.string(),
 	entity_id: z.string().uuid(),
@@ -119,7 +151,7 @@ const unreadItemSchema = z.object({
 			attention: z.number().nullable(),
 			// Present only when the agent asked for a structured decision. The
 			// card renders its options as the buttons the reader taps.
-			decision: commentDecisionSchema.nullable(),
+			decision: feedDecisionSchema.nullable(),
 		})
 		.optional(),
 })
@@ -135,7 +167,7 @@ type LatestMention = NonNullable<z.infer<typeof unreadItemSchema>['latest_mentio
  * block that no longer parses degrades to `null`, and the card falls back to
  * rendering the comment body.
  */
-function toLatestMention(event: typeof events.$inferSelect): LatestMention {
+export function toLatestMention(event: typeof events.$inferSelect): LatestMention {
 	const data = (event.data ?? {}) as Record<string, unknown>
 	const rawContent = typeof data.content === 'string' ? data.content : ''
 	const attention = Number(data.attention)
@@ -150,6 +182,121 @@ function toLatestMention(event: typeof events.$inferSelect): LatestMention {
 		attention: Number.isFinite(attention) ? attention : null,
 		decision,
 	}
+}
+
+/** Longest draft body the card is sent. The schema caps a stored body at the same length. */
+const DRAFT_BODY_MAX = 20_000
+
+/**
+ * Fills `decision.draft.body` from the draft object's CURRENT description, so the
+ * card shows what the object says now, not what it said when the comment was
+ * posted. Objects the feed already loaded for its cards are reused; the rest
+ * come in one keyed query, scoped to the workspace so a draft cannot point at a
+ * foreign object. A draft whose object is gone or empty falls back to a stored
+ * `body`, and with neither it is dropped rather than sent as an empty box.
+ */
+export async function fillDraftBodies(
+	db: Database,
+	workspaceId: string,
+	mentions: LatestMention[],
+	loaded: Map<string, typeof objects.$inferSelect>,
+): Promise<void> {
+	const allDrafts = mentions.flatMap((m) => [
+		...(m.decision?.draft ? [m.decision.draft] : []),
+		...(m.decision?.drafts ?? []),
+	])
+	const missing = [
+		...new Set(
+			allDrafts.flatMap((d) => (d.object_id && !loaded.has(d.object_id) ? [d.object_id] : [])),
+		),
+	]
+	const fetched = new Map<string, { content: string | null; metadata: unknown }>()
+	if (missing.length > 0) {
+		const rows = await db
+			.select({ id: objects.id, content: objects.content, metadata: objects.metadata })
+			.from(objects)
+			.where(and(eq(objects.workspaceId, workspaceId), inArray(objects.id, missing)))
+		for (const row of rows) fetched.set(row.id, row)
+	}
+
+	// Files a card is about: only the metadata, scoped to the workspace, so a card cannot
+	// point at another workspace's file. The client fetches the bytes when it draws it.
+	const fileIds = [...new Set(allDrafts.flatMap((d) => (d.file_id ? [d.file_id] : [])))]
+	const fileById = new Map<string, NonNullable<FeedDraft['file']>>()
+	if (fileIds.length > 0) {
+		const rows = await db
+			.select({
+				id: files.id,
+				name: files.name,
+				mimeType: files.mimeType,
+				sizeBytes: files.sizeBytes,
+			})
+			.from(files)
+			.where(and(eq(files.workspaceId, workspaceId), inArray(files.id, fileIds)))
+		for (const row of rows) {
+			fileById.set(row.id, {
+				id: row.id,
+				name: row.name,
+				mime_type: row.mimeType,
+				size_bytes: row.sizeBytes,
+			})
+		}
+	}
+
+	// One draft, filled from its object's live text, or null when there is nothing
+	// to show (object gone or empty, and no stored body).
+	const fill = (draft: DecisionDraft): FeedDraft | null => {
+		// A card about a file shows the file. It needs no text of its own, and a file that is
+		// gone or in another workspace falls through to the stored body, if there is one.
+		const file = draft.file_id ? fileById.get(draft.file_id) : undefined
+		if (file) {
+			return { ...draft, label: (draft.label ?? file.name).slice(0, 30), file }
+		}
+		const source = draft.object_id
+			? (loaded.get(draft.object_id) ?? fetched.get(draft.object_id) ?? null)
+			: null
+		const live = source?.content ?? null
+		const preview = source ? buildObjectPreview(source) : null
+		// A previewable object shows its parsed text (the subject line is its own field);
+		// anything else keeps showing the description as before.
+		const text = preview ? preview.body : live
+		const body = (text?.trim() ? text : draft.body)?.slice(0, DRAFT_BODY_MAX)
+		if (!body) return null
+		return {
+			...draft,
+			label: draft.label ?? preview?.label ?? 'Draft',
+			body,
+			...(preview ? { preview } : {}),
+		}
+	}
+
+	for (const mention of mentions) {
+		const decision = mention.decision
+		if (!decision) continue
+		if (decision.draft) decision.draft = fill(decision.draft) ?? undefined
+		if (decision.drafts) {
+			// A message with nothing to show is left out, the rest of the stack stays.
+			const filled = decision.drafts.flatMap((d) => {
+				const f = fill(d)
+				return f ? [f] : []
+			})
+			decision.drafts = filled.length > 0 ? filled : undefined
+		}
+	}
+
+	// Where each previewable draft stands (draft, approved, sent), so the card can show a
+	// receipt instead of a Send button for a message that has already gone.
+	const previewed = mentions.flatMap((m) =>
+		[...(m.decision?.draft ? [m.decision.draft] : []), ...(m.decision?.drafts ?? [])].filter(
+			(d) => d.preview && d.object_id,
+		),
+	)
+	await Promise.all(
+		previewed.map(async (d) => {
+			if (!d.preview || !d.object_id) return
+			d.preview = await withDeliveryState(db, workspaceId, d.object_id, d.preview)
+		}),
+	)
 }
 
 const unreadResponseSchema = z.object({
@@ -526,7 +673,21 @@ app.openapi(listUnreadRoute, (async (c) => {
 		for (const e of fetched) mentionsByEventId.set(Number(e.id), e)
 	}
 
-	const items = rows.map((r) => {
+	const mentions = new Map<number, LatestMention>()
+	for (const [eventId, event] of mentionsByEventId) mentions.set(eventId, toLatestMention(event))
+	await fillDraftBodies(db, workspaceId, [...mentions.values()], objectsById)
+
+	// A decision whose every draft has been sent or skipped has nothing left to approve, so it
+	// leaves the feed. Older app builds read this list, not GET /api/for-you.
+	const finishedDraftCards = await findFinishedDraftCards(db, workspaceId, [
+		...mentionsByEventId.values(),
+	])
+
+	const liveRows = rows.filter(
+		(r) => r.latestEventId == null || !finishedDraftCards.has(Number(r.latestEventId)),
+	)
+
+	const items = liveRows.map((r) => {
 		const obj = r.entityType === 'object' ? objectsById.get(r.entityId) : undefined
 		const mentionEvent =
 			r.latestEventId == null ? undefined : mentionsByEventId.get(Number(r.latestEventId))
@@ -540,7 +701,7 @@ app.openapi(listUnreadRoute, (async (c) => {
 			latest_activity_at:
 				r.latestActivityAt instanceof Date ? r.latestActivityAt.toISOString() : r.latestActivityAt,
 			...(obj ? { object: serialize(obj) as z.infer<typeof objectResponseSchema> } : {}),
-			...(mentionEvent ? { latest_mention: toLatestMention(mentionEvent) } : {}),
+			...(mentionEvent ? { latest_mention: mentions.get(Number(mentionEvent.id)) } : {}),
 		}
 	})
 

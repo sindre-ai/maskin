@@ -71,26 +71,42 @@ final class FlowTimelineModel {
 	}
 }
 
-/// The timeline itself, grouped by day with replies under their parents. Hold an event to reply.
+/// The timeline itself, grouped by day with replies under their parents. Hold an event to reply;
+/// tap an object a comment links to to open it.
 struct FlowTimelineView: View {
-	let model: FlowTimelineModel
+	@Bindable var model: FlowTimelineModel
 	var now: Date = Date()
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 
 	var body: some View {
-		ObjectActivityView(
-			store: model.store, onOpenObject: nil, onReply: { model.startReply(to: $0) }, now: now)
+		VStack(alignment: .leading, spacing: 0) {
+			ObjectActivityView(
+				store: model.store, onOpenObject: { runtime?.openObject($0) },
+				onReply: { model.startReply(to: $0) }, now: now)
+		}
 	}
 }
 
 /// The shared composer for a flow's timeline: pin it to the bottom from the host.
 struct FlowTimelineComposer: View {
 	let model: FlowTimelineModel
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 
 	var body: some View {
-		MaskinComposer(model: model.composer, config: model.config, onSend: { model.send() })
+		MaskinComposer(model: model.composer, config: config, onSend: { model.send() })
+			.task { await runtime?.mentionRoster()?.load() }
 			.onChange(of: model.composer.replyTo == nil) { _, cleared in
 				if cleared { model.clearReply() }
 			}
+	}
+}
+
+extension FlowTimelineComposer {
+	/// The workspace roster, with roles, like every other composer's `@` list.
+	var config: MaskinComposerConfig {
+		var config = model.config
+		config.roster = runtime?.mentionRoster()?.roster
+		return config
 	}
 }
 

@@ -36,6 +36,18 @@ public struct TimelineItem: Identifiable, Sendable, Equatable {
 	/// Files attached to the comment: ids, resolved to names by the store.
 	public var attachments: [String] = []
 
+	/// A status move the event recorded (`data.changes` entry for `status`), when it is one.
+	public var statusChange: StatusChange?
+
+	public struct StatusChange: Sendable, Equatable {
+		public var from: String?
+		public var to: String
+		public init(from: String?, to: String) {
+			self.from = from
+			self.to = to
+		}
+	}
+
 	public var isLocal: Bool { eventId == nil }
 
 	public init(
@@ -92,7 +104,7 @@ public enum RelatedGrouping {
 		var order: [String] = []
 		var buckets: [String: [ObjectLink]] = [:]
 		for link in links where !excluding.contains(link.otherId) {
-			let label = link.otherType == flowType ? flowLabel : sentence(link.phrase)
+			let label = link.otherType == flowType ? flowLabel : heading(for: link)
 			if buckets[label] == nil { order.append(label) }
 			buckets[label, default: []].append(link)
 		}
@@ -101,6 +113,21 @@ public enum RelatedGrouping {
 			order.insert(flowLabel, at: 0)
 		}
 		return order.map { RelatedGroup(label: $0, links: buckets[$0] ?? []) }
+	}
+
+	/// What a group of links is called on the page, in plain words rather than the relation's
+	/// name: "Waiting on", "Belongs to", "Based on". Relations without a plain name keep their
+	/// phrase, sentence-cased.
+	static func heading(for link: ObjectLink) -> String {
+		switch (link.relation, link.isOutgoing) {
+		case ("blocks", true): "Blocking"
+		case ("blocks", false): "Waiting on"
+		case ("informs", true): "Feeds into"
+		case ("informs", false): "Based on"
+		case ("breaks_into", true): "Broken into"
+		case ("breaks_into", false): "Belongs to"
+		default: sentence(link.phrase)
+		}
 	}
 
 	static func sentence(_ phrase: String) -> String {
@@ -445,9 +472,28 @@ public final class ObjectDetailStore {
 		}
 		let summary = (event.summary?.isEmpty == false ? event.summary : nil)
 			?? event.action.replacingOccurrences(of: "_", with: " ")
-		return TimelineItem(
+		var item = TimelineItem(
 			id: "e-\(event.id)", kind: .activity(summary), actorId: event.actorId, date: event.createdAt,
 			delivery: .sent, eventId: event.id)
+		item.statusChange = Self.statusChange(in: event.data)
+		return item
+	}
+
+	/// The status move in an `updated` / `status_changed` payload: the diff shape
+	/// (`changes: [{field, old, new}]`) or the older `{previous, updated}` snapshots.
+	public static func statusChange(in data: JSONValue?) -> TimelineItem.StatusChange? {
+		if case .array(let changes)? = data?["changes"] {
+			for change in changes where change["field"]?.stringValue == "status" {
+				guard let to = change["new"]?.stringValue, !to.isEmpty else { return nil }
+				return TimelineItem.StatusChange(from: change["old"]?.stringValue, to: to)
+			}
+			return nil
+		}
+		if let to = data?["updated"]?["status"]?.stringValue, !to.isEmpty {
+			let from = data?["previous"]?["status"]?.stringValue
+			return from == to ? nil : TimelineItem.StatusChange(from: from, to: to)
+		}
+		return nil
 	}
 
 	// MARK: Comments

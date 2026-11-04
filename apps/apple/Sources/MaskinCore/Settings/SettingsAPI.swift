@@ -39,6 +39,15 @@ public protocol IntegrationsAPI: Sendable {
 	func providers() async throws -> [IntegrationProvider]
 	func connected() async throws -> [ConnectedIntegration]
 	func disconnect(id: String, idempotencyKey: String) async throws
+	/// `POST …/connect` with `native_return_url = maskin://integrations/callback`. `provider` is
+	/// the slug; LinkedIn goes to its own route.
+	func startConnect(provider: String, idempotencyKey: String) async throws -> IntegrationConnectStart
+	/// `GET /api/integrations/github/pending-selection/{id}`: installations a pending GitHub
+	/// connect can bind to.
+	func pendingInstallations(integrationId: String) async throws -> [GitHubInstallationChoice]
+	/// `POST /api/integrations/github/select-installation`.
+	func selectInstallation(integrationId: String, installationId: String, idempotencyKey: String)
+		async throws
 }
 
 public protocol APIKeysAPI: Sendable {

@@ -13,6 +13,7 @@ import { recordEvent, recordEvents } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { errorSchema } from '../lib/openapi-schemas'
 import { serializeArray } from '../lib/serialize'
+import { ViewerReadOnlyError, isWorkspaceWriter } from '../lib/workspace-auth'
 
 // UI is the default caller — the frontend does not set X-Client-Source. The
 // MCP client explicitly sends 'mcp' (see packages/mcp/src/server.ts:apiFetch).
@@ -155,6 +156,7 @@ app.openapi(listAttachedSkillsRoute, (async (c) => {
 const attachSkillRoute = createRoute({
 	method: 'post',
 	path: '/{actorId}/workspace-skills',
+	'x-viewer-policy': 'writer',
 	tags: ['Agent Skill Attachments'],
 	summary: 'Attach a workspace skill to an agent',
 	request: {
@@ -215,7 +217,7 @@ app.openapi(attachSkillRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Workspace skill not found'), 404)
 	}
 
-	if (!(await isWorkspaceMember(db, skill.workspaceId, callerActorId))) {
+	if (!(await isWorkspaceWriter(db, callerActorId, skill.workspaceId))) {
 		return c.json(createApiError('FORBIDDEN', "Not a member of the skill's workspace"), 403)
 	}
 
@@ -312,6 +314,7 @@ const batchAttachResultSchema = z.object({
 const attachSkillsBatchRoute = createRoute({
 	method: 'post',
 	path: '/{actorId}/workspace-skills/batch',
+	'x-viewer-policy': 'writer',
 	tags: ['Agent Skill Attachments'],
 	summary: 'Attach multiple workspace skills to an agent in one call',
 	request: {
@@ -366,7 +369,7 @@ app.openapi(attachSkillsBatchRoute, (async (c) => {
 			? [[], []]
 			: await Promise.all([
 					db
-						.select({ workspaceId: workspaceMembers.workspaceId })
+						.select({ workspaceId: workspaceMembers.workspaceId, role: workspaceMembers.role })
 						.from(workspaceMembers)
 						.where(
 							and(
@@ -384,6 +387,8 @@ app.openapi(attachSkillsBatchRoute, (async (c) => {
 							),
 						),
 				])
+	// A viewer in any of the skills' workspaces refuses the whole request, not one skill.
+	if (callerMemberships.some((row) => row.role === 'viewer')) throw new ViewerReadOnlyError()
 	// Under a Claude connector token only the pinned workspace counts as a membership.
 	const pin = getOAuthPin()
 	const inPin = (id: string) => !pin || id.toLowerCase() === pin.workspaceId.toLowerCase()
@@ -522,6 +527,7 @@ app.openapi(attachSkillsBatchRoute, (async (c) => {
 const detachSkillRoute = createRoute({
 	method: 'delete',
 	path: '/{actorId}/workspace-skills/{workspaceSkillId}',
+	'x-viewer-policy': 'writer',
 	tags: ['Agent Skill Attachments'],
 	summary: 'Detach a workspace skill from an agent',
 	request: {
@@ -566,7 +572,7 @@ app.openapi(detachSkillRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Workspace skill not found'), 404)
 	}
 
-	if (!(await isWorkspaceMember(db, skill.workspaceId, callerActorId))) {
+	if (!(await isWorkspaceWriter(db, callerActorId, skill.workspaceId))) {
 		return c.json(createApiError('FORBIDDEN', "Not a member of the skill's workspace"), 403)
 	}
 

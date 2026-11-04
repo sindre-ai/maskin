@@ -12,9 +12,10 @@ import UniformTypeIdentifiers
 private struct Fixed: Authenticating {
 	var signUpResult: Result<SignUpResult, SignUpError> = .failure(.emailTaken)
 	func login(email: String, password: String) async throws -> LoginResult { throw AuthError.invalidCredentials }
-	func signUp(name: String, email: String, password: String, idempotencyKey: String) async throws
-		-> SignUpResult
-	{ try signUpResult.get() }
+	func signUp(
+		name: String, organization: String, role: String, email: String, password: String,
+		idempotencyKey: String
+	) async throws -> SignUpResult { try signUpResult.get() }
 }
 
 @MainActor
@@ -71,7 +72,7 @@ struct AuthSnapshotTests {
 				try write(AuthView(auth: auth(), model: bad), name: "signup-invalid", width: width, dark: dark)
 
 				let taken = AuthScreenModel(mode: .createAccount, config: legal)
-				taken.name = "Sam"; taken.email = "sam@example.com"; taken.password = "correct-horse"
+				taken.name = "Sam"; taken.organization = "Acme"; taken.role = "Founder"; taken.email = "sam@example.com"; taken.password = "correct-horse"; taken.confirmPassword = "correct-horse"
 				let takenAuth = auth()
 				await taken.submit(auth: takenAuth)
 				try write(AuthView(auth: takenAuth, model: taken), name: "signup-taken", width: width, dark: dark)

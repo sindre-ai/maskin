@@ -35,7 +35,9 @@ describe('ProducedPane · states', () => {
 	it('renders the empty state with the verbatim Designer copy when both counts are 0', () => {
 		renderPane()
 		expect(screen.getByText('Nothing produced yet')).toBeInTheDocument()
-		expect(screen.getByText(/This chat hasn't spawned any sessions/i)).toBeInTheDocument()
+		expect(
+			screen.getByText(/When an agent creates an object or file from a message here/i),
+		).toBeInTheDocument()
 	})
 
 	it('shows skeleton placeholders while loading', () => {

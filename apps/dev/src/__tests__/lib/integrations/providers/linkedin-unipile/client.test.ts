@@ -310,4 +310,18 @@ describe('write-surface routes', () => {
 		expect(call?.path).toBe('/v2/acc_1/chats/chat-1/messages/send')
 		expect(call?.body).toEqual({ text: 'takk' })
 	})
+
+	it('sends the attachments array with a reply, and leaves it out when empty', async () => {
+		const attachment = { content: 'JVBERg==', content_type: 'application/pdf', filename: 'a.pdf' }
+		await client().reply({
+			account_id,
+			thread_id: 'chat-1',
+			body: 'takk',
+			attachments: [attachment],
+		})
+		expect(mock.inbox().at(-1)?.body).toEqual({ text: 'takk', attachments: [attachment] })
+
+		await client().reply({ account_id, thread_id: 'chat-1', body: 'takk', attachments: [] })
+		expect(mock.inbox().at(-1)?.body).toEqual({ text: 'takk' })
+	})
 })

@@ -86,36 +86,31 @@ describe('buildActorInsert', () => {
 		expect(snake.llmProvider).toBe('anthropic')
 	})
 
-	it('always mints a fresh apiKey, ignoring any value in the snapshot', () => {
-		// Snapshot has no apiKey → mints a fresh one.
+	it('never carries an apiKey, even when the snapshot has one', () => {
+		// Keys live hashed in api_keys, so the insert row has no apiKey at all. A publisher key in
+		// the snapshot is untrusted input and must not be copied into the installer's workspace.
 		const fromEmpty = buildActorInsert({ name: 'A' }, { installed_loop_id: 'i' }, null)
-		expect(fromEmpty.apiKey).toMatch(/^ank_/)
+		expect(fromEmpty).not.toHaveProperty('apiKey')
 
-		// Snapshot carries a publisher apiKey → ignored. Honoring it would
-		// either leak the publisher's bearer token into the installer workspace
-		// or collide on the actors.api_key unique index.
 		const fromPublisherKey = buildActorInsert(
 			{ name: 'A', apiKey: 'ank_publisherleak' },
 			{ installed_loop_id: 'i' },
 			null,
 		)
-		expect(fromPublisherKey.apiKey).toMatch(/^ank_/)
-		expect(fromPublisherKey.apiKey).not.toBe('ank_publisherleak')
+		expect(fromPublisherKey).not.toHaveProperty('apiKey')
+		expect(JSON.stringify(fromPublisherKey)).not.toContain('ank_publisherleak')
 	})
 
-	it("expands the snapshot's browser capability into a real MCP entry", () => {
-		// Publishing strips mcpServers (secrets), leaving only tools.browser.
-		// Without this expansion the installed agent has no @playwright/mcp and
-		// session-manager.ts never provisions a Chromium sidecar for it.
+	it('drops the legacy tools.browser flag from an old snapshot', () => {
 		const out = buildActorInsert(
 			{ name: 'Event Producer', tools: { browser: true } },
 			{ installed_loop_id: 'i' },
 			null,
 		)
-		expect(JSON.stringify(out.tools)).toContain('${BROWSER_CDP_URL}')
+		expect(out.tools).toEqual({})
 	})
 
-	it('leaves tools alone for actors without the browser capability', () => {
+	it('leaves tools alone for actors without the legacy flag', () => {
 		const out = buildActorInsert({ name: 'A', tools: {} }, { installed_loop_id: 'i' }, null)
 		expect(out.tools).toEqual({})
 	})

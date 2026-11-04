@@ -1,6 +1,9 @@
 import {
+	BRIDGE_QUERY_MESSAGE,
 	DATA_SLOT_ID,
+	ISOLATION_LOAD_MESSAGE,
 	MINI_APP_CSP,
+	SOURCES_SLOT_ID,
 	VIEWER_DOC_SIZE_MESSAGE,
 	VIEWER_GOTO_PAGE_MESSAGE,
 	VIEWER_PAGE_MESSAGE,
@@ -9,13 +12,16 @@ import {
 	applyViewerPage,
 	collectViewerSlides,
 	injectIntoHtml,
+	prepareBridgedViewHtml,
+	prepareIsolatedViewHtml,
 	prepareMiniAppHtml,
 	prepareViewerHtml,
+	readViewSources,
 	showViewerPage,
 	stripAgentCsp,
 	stripMetaRefresh,
 } from '@/lib/mini-app'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 // Extracts the data-slot bootstrap <script> body from a prepared document so
 // the getter can be evaluated against a live jsdom document (jsdom does not
@@ -406,5 +412,138 @@ describe('viewer paging controller', () => {
 		// report is retried across frames until the slide has a non-zero box.
 		expect(paged).toContain('getBoundingClientRect')
 		expect(paged).toContain('requestAnimationFrame')
+	})
+})
+
+describe('prepareBridgedViewHtml', () => {
+	const html = '<html><head></head><body><h1>View</h1></body></html>'
+
+	it('carries the unchanged platform CSP, with no network allowed from the frame', () => {
+		const prepared = prepareBridgedViewHtml(html)
+		expect(prepared).toContain(`content="${MINI_APP_CSP}"`)
+		expect(prepared).toContain("connect-src 'none'")
+		expect(MINI_APP_CSP).toBe(
+			"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'",
+		)
+	})
+
+	it('still strips an agent CSP and refresh meta', () => {
+		const prepared = prepareBridgedViewHtml(
+			'<html><head><meta http-equiv="Content-Security-Policy" content="connect-src *"><meta http-equiv="refresh" content="0;url=https://evil.example"></head><body></body></html>',
+		)
+		expect(prepared).not.toContain('connect-src *')
+		expect(prepared).not.toContain('evil.example')
+	})
+
+	it('injects window.maskin.query and the data slot once, in a single footer', () => {
+		const prepared = prepareBridgedViewHtml(html)
+		expect(prepared).toContain('window.maskin={query:')
+		expect(prepared).toContain(BRIDGE_QUERY_MESSAGE)
+		expect(prepared).toContain('__MASKIN_APP_DATA__')
+		expect(prepared.split(`content="${MINI_APP_CSP}"`).length - 1).toBe(1)
+		expect(prepared.indexOf('<head>') + 6).toBe(
+			prepared.indexOf('<meta http-equiv="x-dns-prefetch-control" content="off">'),
+		)
+	})
+
+	it('switches DNS prefetch off before anything else, and drops an agent copy that turns it on', () => {
+		const prepared = prepareBridgedViewHtml(
+			'<html><head><meta http-equiv="X-DNS-Prefetch-Control" content="on"></head><body></body></html>',
+		)
+		const off = '<meta http-equiv="x-dns-prefetch-control" content="off">'
+		expect(prepared.split(/x-dns-prefetch-control/i).length - 1).toBe(1)
+		expect(prepared).not.toContain('content="on"')
+		expect(prepared.indexOf(off)).toBe(prepared.indexOf('<head>') + 6)
+		expect(prepared.indexOf('<meta http-equiv="Content-Security-Policy"')).toBe(
+			prepared.indexOf(off) + off.length,
+		)
+	})
+
+	it('reports its height but does not swallow wheel events, so the page can scroll', () => {
+		const prepared = prepareBridgedViewHtml(html)
+		expect(prepared).toContain(VIEWER_DOC_SIZE_MESSAGE)
+		expect(prepared).not.toContain(VIEWER_WHEEL_MESSAGE)
+	})
+
+	it('only trusts results that come from the host, one frame above its parent', () => {
+		const prepared = prepareBridgedViewHtml(html)
+		expect(prepared).toContain('e.source!==parent.parent')
+		expect(prepared).toContain(`parent.parent.postMessage({type:'${BRIDGE_QUERY_MESSAGE}'`)
+		expect(prepared).toContain(`parent.parent.postMessage({type:'${VIEWER_DOC_SIZE_MESSAGE}'`)
+	})
+})
+
+describe('prepareIsolatedViewHtml', () => {
+	const html = '<html><head></head><body><h1>View</h1></body></html>'
+	const outer = () => new DOMParser().parseFromString(prepareIsolatedViewHtml(html), 'text/html')
+
+	it('gives its own document no policy but frame-src none, so the view keeps its own CSP alone', () => {
+		const metas = [...outer().querySelectorAll('meta[http-equiv="Content-Security-Policy"]')]
+		expect(metas.map((m) => m.getAttribute('content'))).toEqual(["frame-src 'none'"])
+	})
+
+	it('holds exactly one sandboxed frame, script-only, with the bridged view as its srcdoc', () => {
+		const frames = outer().querySelectorAll('iframe')
+		expect(frames).toHaveLength(1)
+		expect(frames[0].getAttribute('sandbox')).toBe('allow-scripts')
+		expect(frames[0].getAttribute('srcdoc')).toBe(prepareBridgedViewHtml(html))
+	})
+
+	it('contains no script of its own: the load relay is an attribute on the frame', () => {
+		const doc = outer()
+		expect(doc.querySelectorAll('script')).toHaveLength(0)
+		expect(doc.querySelector('iframe')?.getAttribute('onload')).toContain(ISOLATION_LOAD_MESSAGE)
+	})
+
+	it('cannot be broken out of by a view that closes the attribute or the tag', () => {
+		const hostile = '<html><body>"><script>top.x=1</script><iframe srcdoc="</body></html>'
+		const doc = new DOMParser().parseFromString(prepareIsolatedViewHtml(hostile), 'text/html')
+		expect(doc.querySelectorAll('iframe')).toHaveLength(1)
+		expect(doc.querySelectorAll('script')).toHaveLength(0)
+		expect(doc.querySelector('iframe')?.getAttribute('srcdoc')).toBe(
+			prepareBridgedViewHtml(hostile),
+		)
+	})
+})
+
+describe('readViewSources', () => {
+	const doc = (sources: string) =>
+		`<html><body><script id="${SOURCES_SLOT_ID}" type="application/json">${sources}</script></body></html>`
+
+	it('reads declared sources by name', () => {
+		const result = readViewSources(
+			doc(
+				'{"by_status":{"type":"task","group_by":"status"},"open":{"type":"bet","scope":"workspace"}}',
+			),
+		)
+		expect(result.ok).toBe(true)
+		if (!result.ok) return
+		expect([...result.sources.keys()]).toEqual(['by_status', 'open'])
+		expect(result.sources.get('by_status')).toMatchObject({ type: 'task', group_by: 'status' })
+		expect(result.sources.get('open')?.scope).toBe('workspace')
+	})
+
+	it('treats a document with no sources block as a view with no data', () => {
+		const result = readViewSources('<html><body>static</body></html>')
+		expect(result).toEqual({ ok: true, sources: new Map() })
+	})
+
+	it('does not run scripts while reading', () => {
+		const spy = vi.fn()
+		;(window as unknown as { __ran?: () => void }).__ran = spy
+		readViewSources(`<html><body><script>window.__ran()</script>${doc('{}')}</body></html>`)
+		expect(spy).not.toHaveBeenCalled()
+	})
+
+	it.each([
+		['JSON that does not parse', '{nope'],
+		['an array', '[]'],
+		['a source that is not a query', '{"a":{"type":"task","group_by":"title"}}'],
+		['a source with an unknown key', '{"a":{"type":"task","rows":true}}'],
+		['a sum without a field', '{"a":{"type":"task","aggregate":{"op":"sum"}}}'],
+	])('rejects %s', (_label, sources) => {
+		const result = readViewSources(doc(sources))
+		expect(result.ok).toBe(false)
+		if (!result.ok) expect(result.error.length).toBeGreaterThan(0)
 	})
 })

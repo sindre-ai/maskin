@@ -10,7 +10,7 @@ vi.mock('../../lib/integrations/providers/linkedin-unipile/mcp-registry-self-hea
 }))
 
 vi.mock('../../lib/workspace-auth', () => ({
-	isWorkspaceMember: vi.fn().mockResolvedValue(true),
+	isWorkspaceWriter: vi.fn().mockResolvedValue(true),
 }))
 
 /**
@@ -29,7 +29,7 @@ vi.mock('../../lib/workspace-auth', () => ({
  * level: every registered identity is served as its own MCP instance
  * (`linkedin-{unipileAccSlug}-{identitySlug}`) with a scoped tool name
  * and an "AS <displayName>" description. Workspace membership
- * (`isWorkspaceMember` at the top of the route) is the auth boundary,
+ * (`isWorkspaceWriter` at the top of the route) is the auth boundary,
  * same as slack's MCP.
  *
  * This test reads the route source directly and asserts the where-clause

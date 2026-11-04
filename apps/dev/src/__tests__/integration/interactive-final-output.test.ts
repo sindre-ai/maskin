@@ -1,6 +1,13 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { events, conversations, messages, sessionLogs, sessions } from '@maskin/db/schema'
+import {
+	events,
+	conversations,
+	messages,
+	sessionLogs,
+	sessions,
+	workspaces,
+} from '@maskin/db/schema'
 import { and, count, desc, eq, sql } from 'drizzle-orm'
 import {
 	InteractiveTurnFinalizer,
@@ -614,6 +621,99 @@ ${surviving}
 		).toBe(trigger.id)
 	})
 
+	it('posts the reply in the thread when the turn was triggered by a thread reply', async () => {
+		const session = await seedSession()
+		if (!session) throw new Error('no session')
+
+		const [root] = await db
+			.insert(messages)
+			.values({ conversationId, actorId: humanId, content: 'dry run finished' })
+			.returning()
+		if (!root) throw new Error('no root message')
+		const [reply] = await db
+			.insert(messages)
+			.values({
+				conversationId,
+				actorId: humanId,
+				content: 'keep Qualifier',
+				threadRootId: root.id,
+			})
+			.returning()
+		if (!reply) throw new Error('no reply message')
+
+		await feed(
+			session.id,
+			`${JSON.stringify({
+				type: 'user',
+				message: { role: 'user', content: 'keep Qualifier' },
+				maskin_message_id: reply.id,
+			})}\n`,
+		)
+		await feed(session.id, `${resultLine()}\n`)
+
+		const [posted] = await db
+			.select()
+			.from(messages)
+			.where(eq(messages.actorId, agentId))
+			.orderBy(desc(messages.id))
+			.limit(1)
+		expect(posted?.threadRootId).toBe(root.id)
+		expect(posted?.threadAlsoInChannel).toBe(false)
+	})
+
+	it('posts a thread session reply in its own thread, whichever message started the turn', async () => {
+		const [root] = await db
+			.insert(messages)
+			.values({ conversationId, actorId: humanId, content: 'dry run finished' })
+			.returning()
+		if (!root) throw new Error('no root message')
+		const session = await seedSession({ threadRootId: root.id })
+		if (!session) throw new Error('no session')
+		// The turn was started by a top-level message, so the turn-origin guess would say
+		// main timeline; the session's own thread wins.
+		const [trigger] = await db
+			.insert(messages)
+			.values({ conversationId, actorId: humanId, content: 'an unrelated top level message' })
+			.returning()
+		if (!trigger) throw new Error('no trigger message')
+		await feed(session.id, `${userTurnLine(trigger.id)}\n`)
+		await feed(session.id, `${resultLine()}\n`)
+
+		const [posted] = await db
+			.select()
+			.from(messages)
+			.where(eq(messages.actorId, agentId))
+			.orderBy(desc(messages.id))
+			.limit(1)
+		expect(posted?.threadRootId).toBe(root.id)
+	})
+
+	it('keeps a reply to a top-level message in the main timeline', async () => {
+		const session = await seedSession()
+		if (!session) throw new Error('no session')
+		const [trigger] = await db
+			.insert(messages)
+			.values({ conversationId, actorId: humanId, content: 'top level question' })
+			.returning()
+		if (!trigger) throw new Error('no trigger message')
+		await feed(
+			session.id,
+			`${JSON.stringify({
+				type: 'user',
+				message: { role: 'user', content: 'top level question' },
+				maskin_message_id: trigger.id,
+			})}\n`,
+		)
+		await feed(session.id, `${resultLine()}\n`)
+		const [posted] = await db
+			.select()
+			.from(messages)
+			.where(eq(messages.actorId, agentId))
+			.orderBy(desc(messages.id))
+			.limit(1)
+		expect(posted?.threadRootId).toBeNull()
+	})
+
 	// The transport that fills session_logs must preserve the trailing newline
 	// on every row. onStdout re-splits what it is given with splitLines(), which
 	// pops the final segment as an incomplete "remainder" — so a row that does
@@ -667,6 +767,97 @@ ${surviving}
 		// The finalizer never calls evaluateAndRespond, so exactly one message
 		// appears and no responder chain can start from it.
 		expect(after).toHaveLength(before.length + 1)
+	})
+
+	describe('turn-finished signal (drives the Live Activity)', () => {
+		function withSignal() {
+			const finished: Array<{ sessionId: string; outcome: string }> = []
+			const calls: unknown[] = []
+			const instance = new InteractiveTurnFinalizer(db, {
+				onTurnFinished: (sessionId, outcome) => finished.push({ sessionId, outcome }),
+				retryTurn: async (_s, payload) => {
+					calls.push(payload)
+				},
+				delay: async () => {},
+			})
+			return { instance, finished, calls }
+		}
+
+		it('signals done once when the reply is posted, and not again for a redelivered line', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, finished } = withSignal()
+			finalizer = instance
+			await feed(session.id, `${userTurnLine(31)}\n`)
+			await feed(session.id, `${resultLine()}\n`)
+			await feed(session.id, `${resultLine()}\n`)
+			expect(finished).toEqual([{ sessionId: session.id, outcome: 'done' }])
+		})
+
+		it('signals done for a turn that replied through the chat tool and ended silently', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, finished } = withSignal()
+			finalizer = instance
+			await feed(session.id, `${userTurnLine(32)}\n`)
+			await feed(session.id, `${toolUseLine('mcp__maskin__post_conversation_message')}\n`)
+			await feed(session.id, `${toolResultLine()}\n`)
+			await feed(session.id, `${resultLine({ result: '' })}\n`)
+			expect(finished).toEqual([{ sessionId: session.id, outcome: 'done' }])
+		})
+
+		it('does not signal while a blank turn is being retried', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, finished } = withSignal()
+			finalizer = instance
+			// A blank result with no reply is not silence by choice: it is replayed, so the turn
+			// is still going and the Live Activity must stay up.
+			await feed(session.id, `${userTurnLine(34)}\n`)
+			await feed(session.id, `${resultLine({ result: '' })}\n`)
+			expect(finished).toEqual([])
+		})
+
+		it('signals failed when the human is told the turn failed', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, finished } = withSignal()
+			finalizer = instance
+			await feed(session.id, `${userTurnLine(33)}\n`)
+			await feed(
+				session.id,
+				`${resultLine({ is_error: true, result: 'Credit balance is too low' })}\n`,
+			)
+			expect(finished).toEqual([{ sessionId: session.id, outcome: 'failed' }])
+		})
+
+		it('does not signal while a transient failure is being replayed', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, finished, calls } = withSignal()
+			finalizer = instance
+			await feed(session.id, `${userTurnLine(34)}\n`)
+			await feed(
+				session.id,
+				`${resultLine({ is_error: true, result: 'API Error: {"type":"error","error":{"type":"api_error","message":"Internal server error"},"request_id":"req_x"}' })}\n`,
+			)
+			await finalizer.settlePendingRetries()
+			expect(calls).toHaveLength(1)
+			expect(finished).toEqual([])
+		})
+
+		it('survives a throwing listener', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			finalizer = new InteractiveTurnFinalizer(db, {
+				onTurnFinished: () => {
+					throw new Error('boom')
+				},
+			})
+			await feed(session.id, `${userTurnLine(35)}\n`)
+			await feed(session.id, `${resultLine()}\n`)
+			expect(await messagesFor(conversationId)).toHaveLength(1)
+		})
 	})
 
 	describe('a turn that failed against the model API', () => {
@@ -771,6 +962,40 @@ ${surviving}
 			expect(finalOutput?.retries).toBe(2)
 		})
 
+		it('retries a provider 403 block page, then shows a short message and logs the provider', async () => {
+			const session = await seedSession({ config: { llm_route: 'maskin_plan' } })
+			if (!session) throw new Error('no session')
+			const { instance, calls } = withRetry()
+			finalizer = instance
+			const blockLine = (rayId: string) =>
+				resultLine({
+					is_error: true,
+					result: `Failed to authenticate. API Error: 403 Attention Required! | Cloudflare Ray ID: <strong>${rayId}</strong>`,
+				})
+
+			await feed(session.id, `${userTurnLine(13)}\n`)
+			await feed(session.id, `${blockLine('aaaaaaaaaaaaaaaa')}\n`)
+			await feed(session.id, `${blockLine('bbbbbbbbbbbbbbbb')}\n`)
+			await feed(session.id, `${blockLine('cccccccccccccccc')}\n`)
+			await finalizer.settlePendingRetries()
+
+			expect(calls).toHaveLength(2)
+			const rows = await messagesFor(conversationId)
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.content).toContain('Something went wrong. Try again in a minute.')
+			expect(rows[0]?.content).not.toContain('Failed to authenticate')
+
+			const logged = await db
+				.select({ content: sessionLogs.content })
+				.from(sessionLogs)
+				.where(and(eq(sessionLogs.sessionId, session.id), eq(sessionLogs.stream, 'system')))
+			const notes = logged.map((row) => row.content).filter((c) => c.includes('provider_block'))
+			expect(notes).toHaveLength(3)
+			expect(notes[0]).toContain('provider="OpenRouter"')
+			expect(notes[0]).toContain('status=403')
+			expect(notes[0]).toContain('cf_ray=aaaaaaaaaaaaaaaa')
+		})
+
 		it('does not replay a failure no retry could fix', async () => {
 			const session = await seedSession()
 			if (!session) throw new Error('no session')
@@ -799,6 +1024,102 @@ ${surviving}
 			).toBe('permanent')
 		})
 
+		describe('a turn that hits "Credit balance is too low"', () => {
+			async function markOf(): Promise<{ at: number } | undefined> {
+				const [row] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId))
+				return (row?.settings as Record<string, { at: number } | undefined>)
+					?.anthropic_key_out_of_credit
+			}
+
+			beforeEach(async () => {
+				await db
+					.update(workspaces)
+					.set({
+						settings: sql`${workspaces.settings} || '{"llm_keys":{"anthropic":"FAKE-key"}}'::jsonb`,
+					})
+					.where(eq(workspaces.id, workspaceId))
+			})
+
+			it('marks the workspace key out of credit when the session ran on it', async () => {
+				const session = await seedSession({ config: { llm_route: 'workspace_api_key' } })
+				if (!session) throw new Error('no session')
+
+				await feed(session.id, `${userTurnLine(14)}\n`)
+				await feed(
+					session.id,
+					`${resultLine({ is_error: true, result: 'API Error: 400 Credit balance is too low' })}\n`,
+				)
+				await finalizer.settlePendingRetries()
+
+				expect((await markOf())?.at).toBeGreaterThan(0)
+			})
+
+			it('tags the failed turn so the idle close can tell a credit-only chat apart', async () => {
+				const session = await seedSession({ config: { llm_route: 'workspace_api_key' } })
+				if (!session) throw new Error('no session')
+
+				await feed(session.id, `${userTurnLine(17)}\n`)
+				await feed(
+					session.id,
+					`${resultLine({ is_error: true, result: 'API Error: 400 Credit balance is too low' })}\n`,
+				)
+				await finalizer.settlePendingRetries()
+
+				const rows = await messagesFor(conversationId)
+				expect(rows).toHaveLength(1)
+				expect(
+					(rows[0]?.metadata as { final_output?: { credit_balance_low?: boolean } })?.final_output
+						?.credit_balance_low,
+				).toBe(true)
+			})
+
+			it('does not tag a different permanent failure', async () => {
+				const session = await seedSession({ config: { llm_route: 'workspace_api_key' } })
+				if (!session) throw new Error('no session')
+
+				await feed(session.id, `${userTurnLine(18)}\n`)
+				await feed(
+					session.id,
+					`${resultLine({ is_error: true, result: "You've hit your weekly limit" })}\n`,
+				)
+				await finalizer.settlePendingRetries()
+
+				const rows = await messagesFor(conversationId)
+				expect(
+					(rows[0]?.metadata as { final_output?: { credit_balance_low?: boolean } })?.final_output
+						?.credit_balance_low,
+				).toBeUndefined()
+			})
+
+			it('leaves the key alone when the session ran on another route', async () => {
+				const session = await seedSession({ config: { llm_route: 'claude_oauth' } })
+				if (!session) throw new Error('no session')
+
+				await feed(session.id, `${userTurnLine(15)}\n`)
+				await feed(
+					session.id,
+					`${resultLine({ is_error: true, result: 'API Error: 400 Credit balance is too low' })}\n`,
+				)
+				await finalizer.settlePendingRetries()
+
+				expect(await markOf()).toBeUndefined()
+			})
+
+			it('leaves the key alone for a different failure on the workspace key', async () => {
+				const session = await seedSession({ config: { llm_route: 'workspace_api_key' } })
+				if (!session) throw new Error('no session')
+
+				await feed(session.id, `${userTurnLine(16)}\n`)
+				await feed(
+					session.id,
+					`${resultLine({ is_error: true, result: "You've hit your weekly limit" })}\n`,
+				)
+				await finalizer.settlePendingRetries()
+
+				expect(await markOf()).toBeUndefined()
+			})
+		})
+
 		it('moves the workspace to the next subscription when a turn hits a limit', async () => {
 			// An interactive session never exits, so the session-exit failover
 			// never sees a spent subscription. Without this the workspace stayed
@@ -823,11 +1144,10 @@ ${surviving}
 
 			expect(moved).toEqual([{ sessionId: session.id, reason: 'weekly_limit' }])
 			const rows = await messagesFor(conversationId)
-			// Copy names the stop explicitly — the current session is going away, so
-			// the human's next message here spawns a fresh session on the new slot.
+			// The spent session is stopped and the message is answered again on the
+			// new slot, so the copy no longer asks the human to send it again (#2601).
 			expect(rows[0]?.content).toContain('switched this workspace to the next connected one')
-			expect(rows[0]?.content).toContain('stopped this session')
-			expect(rows[0]?.content).toContain("Send your next message here and I'll pick up")
+			expect(rows[0]?.content).toContain("I'm picking your message back up on the new subscription")
 			expect(
 				(rows[0]?.metadata as { final_output?: { subscription_moved_to?: string } })?.final_output
 					?.subscription_moved_to,

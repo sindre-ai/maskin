@@ -46,7 +46,7 @@ private struct SearchScreenContent: View {
 		_store = State(
 			initialValue: SearchStore(
 				remote: remote, recents: SearchRecents(actorId: auth.session?.actorId ?? ""),
-				workspaceId: { auth.session?.workspaceId }))
+				workspaceId: { auth.session?.workspaceId }, currentActorId: { auth.session?.actorId }))
 		self.environment = environment
 		self.open = open
 	}

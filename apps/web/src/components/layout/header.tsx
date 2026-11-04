@@ -141,6 +141,7 @@ export function Header() {
 		title,
 		subtitle,
 		actions,
+		leadingActions,
 		titleTabs,
 		stickyIdentity,
 		crumb,
@@ -189,7 +190,7 @@ export function Header() {
 	// search, split New button or back arrow competing for the row.
 	if (crumb) {
 		return (
-			<header className="flex flex-none flex-wrap items-center gap-2 border-b border-border px-[clamp(16px,3vw,36px)] py-[13px]">
+			<header className="flex flex-none flex-wrap items-center gap-2 border-b border-border px-[clamp(16px,3vw,36px)] pt-[calc(env(safe-area-inset-top)+13px)] pb-[13px]">
 				<SidebarTrigger className="md:hidden -ml-0.5 h-[30px] w-[30px] shrink-0" />
 				<Link
 					to={crumb.parentTo}
@@ -218,7 +219,7 @@ export function Header() {
 	}
 
 	return (
-		<header className="flex min-h-11 flex-none flex-wrap items-center gap-2 gap-y-1.5 border-b border-border px-[clamp(16px,4vw,44px)] py-1.5">
+		<header className="flex min-h-11 flex-none flex-wrap items-center gap-2 gap-y-1.5 border-b border-border px-[clamp(16px,4vw,44px)] pt-[calc(env(safe-area-inset-top)+0.375rem)] pb-1.5">
 			<SidebarTrigger className="md:hidden -ml-1 h-[30px] w-[30px] shrink-0" />
 			{isDetail && (
 				<Button
@@ -286,6 +287,7 @@ export function Header() {
 			    zero-basis title above. It still right-aligns the controls when no
 			    heading or breadcrumb renders. */}
 			<div className="ml-auto flex shrink-0 items-center gap-2">
+				{leadingActions}
 				<NavSearch />
 				{actions}
 				<span aria-hidden="true" className="mx-0.5 h-5 w-px shrink-0 bg-border" />

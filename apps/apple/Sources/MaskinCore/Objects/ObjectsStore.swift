@@ -129,7 +129,7 @@ public final class ObjectsStore {
 	// MARK: Derived
 
 	/// The cached head is the newest-updated page; another server order must not be stored as it.
-	private var cachesHead: Bool { display.sort.serverField == "updatedAt" }
+	private var cachesHead: Bool { display.serverOrder == ServerOrder(field: "updatedAt", ascending: false) }
 
 	/// A saved view resolves to the scope it narrows to.
 	public var effectiveScope: ObjectsScope {
@@ -174,7 +174,9 @@ public final class ObjectsStore {
 	public var presentTypes: [String] {
 		var seen = seenTypes.union(inventory.map(\.type))
 		if let typeFilter { seen.insert(typeFilter) }
-		if seen.isEmpty { seen = Set(directory.schema.types) }
+		// The inventory is only the newest page: a type whose objects are all older never shows up
+		// in it, so once it is full every configured type stays on offer.
+		if seen.isEmpty || inventoryCapped { seen.formUnion(directory.schema.types) }
 		let schema = directory.schema
 		return ObjectTypeCatalog.sorted(Array(seen)) { schema.displayName(for: $0) }
 	}
@@ -209,7 +211,8 @@ public final class ObjectsStore {
 
 	public var groups: [ObjectGroup] {
 		ObjectsGrouper.group(
-			visibleObjects, by: display.groupBy, schema: directory.schema, type: typeFilter, sort: display.sort)
+			visibleObjects, by: display.groupBy, schema: directory.schema, type: typeFilter, sort: display.sort,
+			reversed: display.isReversed)
 	}
 
 	/// Statuses offered by the status filter for the current type filter.
@@ -223,7 +226,8 @@ public final class ObjectsStore {
 		ObjectsQuery(
 			type: typeFilter, status: statusFilter,
 			search: searchText.trimmingCharacters(in: .whitespacesAndNewlines),
-			limit: Self.pageSize, offset: 0, sort: display.sort)
+			limit: Self.pageSize, offset: 0, sort: display.sort,
+			reversed: display.isReversed)
 	}
 
 	// MARK: Loading
@@ -371,13 +375,38 @@ public final class ObjectsStore {
 
 	public func setSort(_ sort: ObjectsSort) async {
 		guard sort != display.sort else { return }
-		let reorders = sort.serverField != display.sort.serverField
+		let before = display.serverOrder
 		display.sort = sort
-		// A different server order (name) needs its own first page; the tiers are local.
-		if reorders { await fetchFirstPage(showSpinner: false) }
+		// A different server order (name, or the opposite direction) needs its own first page; the
+		// tiers are local.
+		if display.serverOrder != before { await fetchFirstPage(showSpinner: false) }
+	}
+
+	/// The Order chip. A different server direction needs its own first page.
+	public func setReversed(_ on: Bool) async {
+		guard on != display.reversed else { return }
+		let before = display.serverOrder
+		display.reversed = on
+		if display.serverOrder != before { await fetchFirstPage(showSpinner: false) }
 	}
 
 	public func setNeedsYouOnly(_ on: Bool) { display.needsYouOnly = on }
+
+	/// Whether Reset has anything to undo: a display choice off its default, or a status or type filter.
+	public var canResetDisplay: Bool { display.isCustomised || statusFilter != nil || typeFilter != nil }
+
+	/// Display's Reset: every display choice and the status and type filters back to their defaults.
+	/// Where the person is (favourites, a saved view) stays.
+	public func resetDisplay() async {
+		display.needsYouOnly = false
+		display.groupBy = .status
+		display.shown = Set(ObjectsProperty.allCases)
+		display.reversed = false
+		await setSort(.needsYou)
+		await setLayout(.list)
+		if statusFilter != nil { await setStatus(nil) }
+		if typeFilter != nil { await setScope(.all) }
+	}
 
 	public func toggleProperty(_ property: ObjectsProperty) { display.toggle(property) }
 

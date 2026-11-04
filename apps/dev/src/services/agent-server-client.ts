@@ -68,9 +68,7 @@ export type StartSessionRequest = {
 	env?: Record<string, string>
 	memoryMib?: number
 	cpus?: number
-	browserRequired?: boolean
 	sourceSessionId?: string
-	previewGuestPorts?: number[]
 	/**
 	 * Workspace skills to stage into `<sessionDir>/skills/` host-side, before
 	 * `spawnSession` mounts the dir as `/agent` in the guest. Optional and
@@ -87,8 +85,6 @@ export type StartSessionResponse = {
 	connection: { host: string; port: number }
 	env_overflow_spilled?: number
 	env_sanitized?: number
-	preview_url?: string
-	preview_forwarding_failed?: boolean
 }
 
 export type AgentServerClientDeps = {

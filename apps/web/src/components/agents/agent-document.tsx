@@ -1,4 +1,5 @@
 import { ForkDialog } from '@/components/marketplace/fork-dialog'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
@@ -20,6 +21,7 @@ import {
 	useResetActor,
 	useUpdateActor,
 } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useDuration } from '@/hooks/use-duration'
 import { useEvents } from '@/hooks/use-events'
 import { useInstalledLoops } from '@/hooks/use-installed-loops'
@@ -59,7 +61,6 @@ import { TypeBadge } from '../shared/type-badge'
 import { AgentAvatarUpload } from './agent-avatar-upload'
 import { AgentRunPauseButton } from './agent-run-pause-button'
 import { AgentUsageChart } from './agent-usage-chart'
-import { McpServers } from './mcp-servers'
 import { FailureCard, SessionDetailPanel, parseFailureReason } from './session-detail-panel'
 import { getLatestActivityPreview, isSessionIdleAwaitingInput } from './session-log-transcript'
 import { Skills } from './skills'
@@ -78,7 +79,6 @@ interface AgentDocumentViewProps {
 	onUpdateSystemPrompt: (systemPrompt: string) => void
 	onUpdateLlmProvider: (provider: string) => void
 	onUpdateLlmConfig: (config: Record<string, unknown>) => void
-	onUpdateTools: (tools: Record<string, unknown>) => void
 	onUpdateMemory: (memory: Record<string, unknown>) => void
 	onRun: () => void
 	onPause: () => void
@@ -122,7 +122,6 @@ export function AgentDocumentView({
 	onUpdateSystemPrompt,
 	onUpdateLlmProvider,
 	onUpdateLlmConfig,
-	onUpdateTools,
 	onUpdateMemory,
 	onRun,
 	onPause,
@@ -431,11 +430,6 @@ export function AgentDocumentView({
 						</div>
 					</Section>
 
-					{/* MCP Servers */}
-					<Section title="MCP Servers">
-						<McpServers tools={agent.tools} onUpdate={onUpdateTools} readOnly={isManaged} />
-					</Section>
-
 					{/* Skills */}
 					<Section title="Skills">
 						<Skills actorId={agent.id} readOnly={isManaged} />
@@ -591,6 +585,7 @@ function SessionRow({
 	const isFailed = session.status === 'failed' || session.status === 'timeout'
 	const [showError, setShowError] = useState(false)
 	const createSession = useCreateSession(workspaceId)
+	const canWrite = useCanWrite()
 	const navigate = useNavigate()
 
 	const result = session.result as Record<string, unknown> | null
@@ -648,23 +643,25 @@ function SessionRow({
 						>
 							{showError ? 'Hide' : 'Error'}
 						</button>
-						<button
-							type="button"
-							className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer min-h-[44px] inline-flex items-center"
-							onClick={(e) => {
-								e.stopPropagation()
-								createSession.mutate(
-									{
-										actor_id: agentId,
-										action_prompt: session.actionPrompt,
-									},
-									{ onError: (err) => toastSessionCreateError(err, navigate, workspaceId) },
-								)
-							}}
-							disabled={createSession.isPending}
-						>
-							{createSession.isPending ? 'Restarting…' : 'Restart'}
-						</button>
+						<ViewerTooltip>
+							<button
+								type="button"
+								className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer min-h-[44px] inline-flex items-center"
+								onClick={(e) => {
+									e.stopPropagation()
+									createSession.mutate(
+										{
+											actor_id: agentId,
+											action_prompt: session.actionPrompt,
+										},
+										{ onError: (err) => toastSessionCreateError(err, navigate, workspaceId) },
+									)
+								}}
+								disabled={createSession.isPending || !canWrite}
+							>
+								{createSession.isPending ? 'Restarting…' : 'Restart'}
+							</button>
+						</ViewerTooltip>
 					</>
 				)}
 				{duration && <span className="text-xs text-muted-foreground shrink-0">{duration}</span>}
@@ -738,12 +735,11 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 	const [confirmReset, setConfirmReset] = useState(false)
 
 	const handleDelete = useCallback(() => {
-		deleteActor.mutate(agent.id, {
-			onSuccess: () => {
-				navigate({ to: '/$workspaceId/agents', params: { workspaceId } })
-			},
-		})
-	}, [agent.id, deleteActor, navigate, workspaceId])
+		// The delete runs on in the background (toast in useDeleteActor), so leave now.
+		setConfirmDelete(false)
+		deleteActor.mutate({ id: agent.id, name: agent.name })
+		navigate({ to: '/$workspaceId/agents', params: { workspaceId } })
+	}, [agent.id, agent.name, deleteActor, navigate, workspaceId])
 
 	const handleReset = useCallback(() => {
 		resetActor.mutate(agent.id, {
@@ -853,13 +849,6 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 		[agent.id, agent.name, updateActor],
 	)
 
-	const handleUpdateTools = useCallback(
-		(tools: Record<string, unknown>) => {
-			updateActor.mutate({ id: agent.id, data: { tools } })
-		},
-		[agent.id, updateActor],
-	)
-
 	const handleUpdateMemory = useCallback(
 		(memory: Record<string, unknown>) => {
 			updateActor.mutate({ id: agent.id, data: { memory } })
@@ -884,7 +873,6 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 				onUpdateSystemPrompt={handleUpdateSystemPrompt}
 				onUpdateLlmProvider={handleUpdateLlmProvider}
 				onUpdateLlmConfig={handleUpdateLlmConfig}
-				onUpdateTools={handleUpdateTools}
 				onUpdateMemory={handleUpdateMemory}
 				onRun={() =>
 					run.mutate(

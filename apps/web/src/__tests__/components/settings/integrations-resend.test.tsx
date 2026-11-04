@@ -5,7 +5,7 @@ import { TestWrapper } from '../../setup'
 
 // The dialog is exercised in its own test file; here we only need to know
 // it received an `open` prop and (optionally) a prefill. Stubbing it keeps
-// this file focused on flag-gating and the resume affordance's decoding.
+// this file focused on the resume affordance's decoding.
 vi.mock('@/components/integrations/resend/resend-connect-dialog', () => ({
 	ResendConnectDialog: ({
 		open,
@@ -17,13 +17,14 @@ vi.mock('@/components/integrations/resend/resend-connect-dialog', () => ({
 		open ? <div data-testid="resend-dialog" data-prefill={prefill ? 'true' : 'false'} /> : null,
 }))
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
 
 const mockUseIntegrations = vi.fn()
 const mockUseProviders = vi.fn()
-const mockUseFeatureFlag = vi.fn()
 
 vi.mock('@/hooks/use-integrations', async (importOriginal) => {
 	const original = await importOriginal<Record<string, unknown>>()
@@ -40,10 +41,6 @@ vi.mock('@/hooks/use-integrations', async (importOriginal) => {
 		useGithubPendingSelection: () => ({ data: null, isLoading: false }),
 	}
 })
-
-vi.mock('@/hooks/use-feature-flag', () => ({
-	useFeatureFlag: (id: string) => mockUseFeatureFlag(id),
-}))
 
 vi.mock('@/hooks/use-actors', () => ({
 	useActors: () => ({ data: [] }),
@@ -111,35 +108,13 @@ const AWAITING_SECRET_RESEND_ROW: IntegrationResponse = {
 // our mocked `createFileRoute` above.
 ;(Route as unknown as { useSearch: () => Record<string, unknown> }).useSearch = () => ({})
 
-describe('IntegrationsPage — resend gate', () => {
+describe('IntegrationsPage — resend', () => {
 	beforeEach(() => {
 		mockUseIntegrations.mockReset()
 		mockUseProviders.mockReset()
-		mockUseFeatureFlag.mockReset()
 	})
 
-	it('hides the Resend provider card AND the awaiting_secret resume affordance when flag is off', () => {
-		mockUseFeatureFlag.mockImplementation(() => false)
-		mockUseProviders.mockReturnValue({ data: [RESEND_PROVIDER], isLoading: false })
-		mockUseIntegrations.mockReturnValue({
-			data: [AWAITING_SECRET_RESEND_ROW],
-			isLoading: false,
-		})
-
-		render(
-			<TestWrapper>
-				<IntegrationsPage />
-			</TestWrapper>,
-		)
-
-		// Card gone.
-		expect(screen.queryByText('Resend')).not.toBeInTheDocument()
-		// Resume section gone.
-		expect(screen.queryByRole('button', { name: /resume connect/i })).not.toBeInTheDocument()
-	})
-
-	it('shows the Resend provider card AND surfaces a Resume affordance for awaiting_secret rows when flag is on', () => {
-		mockUseFeatureFlag.mockImplementation((id: string) => id === 'resend-integration-ui')
+	it('shows the Resend provider card AND surfaces a Finish setup affordance for awaiting_secret rows', () => {
 		mockUseProviders.mockReturnValue({ data: [RESEND_PROVIDER], isLoading: false })
 		mockUseIntegrations.mockReturnValue({
 			data: [AWAITING_SECRET_RESEND_ROW],
@@ -153,7 +128,7 @@ describe('IntegrationsPage — resend gate', () => {
 		)
 
 		expect(screen.getByText('Resend')).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /resume connect/i })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /finish setup/i })).toBeInTheDocument()
 		expect(screen.getByText(/mail\.example\.com/)).toBeInTheDocument()
 	})
 })

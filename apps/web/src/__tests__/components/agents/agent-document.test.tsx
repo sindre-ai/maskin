@@ -64,10 +64,6 @@ vi.mock('@/components/agents/session-detail-panel', () => ({
 	parseFailureReason: () => null,
 }))
 
-vi.mock('@/components/agents/mcp-servers', () => ({
-	McpServers: () => null,
-}))
-
 vi.mock('@/components/agents/skills', () => ({
 	Skills: () => null,
 }))
@@ -109,7 +105,6 @@ function baseProps(overrides: Record<string, unknown> = {}) {
 		onUpdateSystemPrompt: vi.fn(),
 		onUpdateLlmProvider: vi.fn(),
 		onUpdateLlmConfig: vi.fn(),
-		onUpdateTools: vi.fn(),
 		onUpdateMemory: vi.fn(),
 		onRun: vi.fn(),
 		onPause: vi.fn(),
@@ -338,6 +333,24 @@ describe('AgentDocument — header actions', () => {
 			expect.objectContaining({ onSuccess: expect.any(Function) }),
 		)
 		expect(deleteMutate).not.toHaveBeenCalled()
+	})
+
+	it('deletes in the background and navigates to the agents index straight away', async () => {
+		const user = userEvent.setup()
+		const workspaceId = '11111111-1111-4111-8111-111111111111'
+		const agent = buildActorResponse({ id: 'actor-del', name: 'Scout', type: 'agent' })
+		render(<AgentDocument agent={agent} />, {
+			wrapper: createWorkspaceWrapper({ id: workspaceId }),
+		})
+
+		await user.click(screen.getByLabelText('Delete agent'))
+		await user.click(screen.getByText('Confirm'))
+
+		expect(deleteMutate).toHaveBeenCalledWith({ id: 'actor-del', name: 'Scout' })
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: '/$workspaceId/agents',
+			params: { workspaceId },
+		})
 	})
 
 	it('cancels the reset confirmation without calling the mutation', async () => {

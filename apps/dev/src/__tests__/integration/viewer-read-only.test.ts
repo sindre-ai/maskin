@@ -1,16 +1,24 @@
 import { randomUUID } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { authMiddleware } from '@maskin/auth'
-import { files, workspaceMembers } from '@maskin/db/schema'
+import {
+	fileUploads,
+	files,
+	notifications,
+	voiceSessions,
+	workspaceMembers,
+} from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { createApiError, mapStatusToCode } from '../../lib/errors'
 import { getWorkspaceRole, isWorkspaceMember, isWorkspaceWriter } from '../../lib/workspace-auth'
 import {
 	buildCreateGraphBody,
+	buildCreateNotificationBody,
 	buildCreateObjectBody,
 	buildCreateRelationshipBody,
 	buildFile,
 	insertActor,
+	insertNotification,
 	insertObject,
 	insertWorkspace,
 } from '../factories'
@@ -21,21 +29,25 @@ const { default: objectsRoutes } = await import('../../routes/objects')
 const { default: relationshipsRoutes } = await import('../../routes/relationships')
 const { default: graphRoutes } = await import('../../routes/graph')
 const { default: filesRoutes } = await import('../../routes/files')
+const { default: actorAvatarRoutes } = await import('../../routes/actor-avatar')
 const { default: fileCommentsRoutes } = await import('../../routes/file-comments')
 const { default: eventsRoutes } = await import('../../routes/events')
 const { default: importsRoutes } = await import('../../routes/imports')
+const { default: voiceSessionsRoutes } = await import('../../routes/voice-sessions')
+const { default: notificationsRoutes } = await import('../../routes/notifications')
+const { default: briefingRoutes } = await import('../../routes/briefing')
 
 // Real authMiddleware (the role comes from its membership lookup) in front of the
 // real routes, so a viewer API key goes through the same path as in production.
-function createApp() {
+function createApp(storage: unknown = {}) {
 	const app = new OpenAPIHono()
 	app.use('*', authMiddleware(db, { cacheTtlMs: 0 }))
 	app.use('*', async (c, next) => {
 		c.set('db' as never, db as never)
 		const sessionManager = { stopSession: async () => {}, createSession: async () => ({}) }
 		c.set('sessionManager' as never, sessionManager as never)
-		// A viewer is turned away before any route touches storage.
-		c.set('storageProvider' as never, {} as never)
+		// Most viewer writes are turned away before any route touches storage.
+		c.set('storageProvider' as never, storage as never)
 		c.set('notifyBridge' as never, {} as never)
 		await next()
 	})
@@ -49,9 +61,13 @@ function createApp() {
 	app.route('/api/relationships', relationshipsRoutes as never)
 	app.route('/api/graph', graphRoutes as never)
 	app.route('/api/files', filesRoutes as never)
+	app.route('/api/actors', actorAvatarRoutes as never)
 	app.route('/api/files', fileCommentsRoutes as never)
 	app.route('/api/events', eventsRoutes as never)
 	app.route('/api/imports', importsRoutes as never)
+	app.route('/api/voice-sessions', voiceSessionsRoutes as never)
+	app.route('/api/notifications', notificationsRoutes as never)
+	app.route('/api/briefing', briefingRoutes as never)
 	return app
 }
 
@@ -163,6 +179,69 @@ describe('Viewer role is read-only', () => {
 		expect(list.status).toBe(200)
 	})
 
+	it('returns 403 to a viewer, demoted mid-upload, on completing or abandoning their own upload', async () => {
+		const app = createApp()
+		const fileId = randomUUID()
+		const [upload] = await db
+			.insert(fileUploads)
+			.values({
+				workspaceId,
+				fileId,
+				name: 'clip.mp4',
+				mimeType: 'video/mp4',
+				sizeBytes: 100 * 1024 * 1024,
+				storageKey: `files/${workspaceId}/${fileId}`,
+				s3UploadId: 'mpu-1',
+				partSize: 8 * 1024 * 1024,
+				partCount: 13,
+				createdBy: viewerId,
+				expiresAt: new Date(Date.now() + 60_000),
+			})
+			.returning()
+		const bearerOnly = { Authorization: `Bearer ${viewerKey}` }
+
+		const complete = await app.request(
+			jsonRequest(
+				'POST',
+				`/api/files/uploads/${upload?.id}/complete`,
+				{ parts: [{ part_number: 1, etag: '"e1"' }] },
+				bearerOnly,
+			),
+		)
+		expect(complete.status).toBe(403)
+		const abort = await app.request(jsonDelete(`/api/files/uploads/${upload?.id}`, bearerOnly))
+		expect(abort.status).toBe(403)
+
+		const [row] = await db
+			.select()
+			.from(fileUploads)
+			.where(eq(fileUploads.id, upload?.id as string))
+		expect(row?.status).toBe('pending')
+	})
+
+	it('lets a viewer upload their own avatar but not another actor’s', async () => {
+		const put = vi.fn(async () => {})
+		const app = createApp({ put, delete: vi.fn(async () => {}) })
+		const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00])
+		const upload = (actorId: string) => {
+			const form = new FormData()
+			form.append('file', new File([PNG], 'avatar.png', { type: 'image/png' }))
+			return new Request(`http://localhost/api/actors/${actorId}/avatar`, {
+				method: 'POST',
+				headers: auth(viewerKey),
+				body: form,
+			})
+		}
+
+		const own = await app.request(upload(viewerId))
+		expect(own.status).toBe(200)
+		expect(put).toHaveBeenCalledOnce()
+
+		const other = await app.request(upload(getTestActorId()))
+		expect(other.status).toBe(403)
+		expect(put).toHaveBeenCalledOnce()
+	})
+
 	it('returns 403 to a viewer on file comment writes and 200 on reads', async () => {
 		const app = createApp()
 		const [file] = await db
@@ -269,6 +348,234 @@ describe('Viewer role is read-only', () => {
 			jsonRequest('POST', '/api/objects', buildCreateObjectBody(), auth(viewerKey)),
 		)
 		expect(res.status).toBe(201)
+	})
+
+	describe('voice calls', () => {
+		const addAgent = async () => {
+			const agent = await insertActor(db, { type: 'agent', name: 'Chief of Staff', email: null })
+			await db.insert(workspaceMembers).values({ workspaceId, actorId: agent.id, role: 'member' })
+			return agent
+		}
+
+		it('returns 403 to a viewer who tries to start a call', async () => {
+			const agent = await addAgent()
+			const res = await createApp().request(
+				jsonRequest('POST', '/api/voice-sessions', { agent_actor_id: agent.id }, auth(viewerKey)),
+			)
+			expect(res.status).toBe(403)
+			const rows = await db
+				.select()
+				.from(voiceSessions)
+				.where(eq(voiceSessions.humanActorId, viewerId))
+			expect(rows).toHaveLength(0)
+		})
+
+		it('returns 403 to a member demoted to viewer after the call was reserved', async () => {
+			const agent = await addAgent()
+			const [session] = await db
+				.insert(voiceSessions)
+				.values({
+					workspaceId,
+					agentActorId: agent.id,
+					humanActorId: viewerId,
+					status: 'pending',
+					model: 'gpt-realtime',
+					timeoutAt: new Date(Date.now() + 15 * 60_000),
+				})
+				.returning()
+			const res = await createApp().request(
+				jsonRequest(
+					'POST',
+					`/api/voice-sessions/${session?.id}/offer`,
+					{ sdp: 'v=0' },
+					auth(viewerKey),
+				),
+			)
+			expect(res.status).toBe(403)
+		})
+
+		it('lets a viewer hang up their own call, so a demotion mid-call cannot strand it', async () => {
+			const agent = await addAgent()
+			const [session] = await db
+				.insert(voiceSessions)
+				.values({
+					workspaceId,
+					agentActorId: agent.id,
+					humanActorId: viewerId,
+					status: 'active',
+					vendorSessionId: 'vs_test',
+					model: 'gpt-realtime',
+					timeoutAt: new Date(Date.now() + 15 * 60_000),
+				})
+				.returning()
+			const res = await createApp().request(
+				jsonRequest(
+					'POST',
+					`/api/voice-sessions/${session?.id}/hangup`,
+					{ reason: 'user_hangup' },
+					auth(viewerKey),
+				),
+			)
+			expect(res.status).toBe(200)
+		})
+	})
+
+	describe('notifications', () => {
+		it('returns 403 to a viewer and 201 to a member on POST /api/notifications', async () => {
+			const app = createApp()
+			const body = buildCreateNotificationBody({ source_actor_id: getTestActorId() })
+
+			const asViewer = await app.request(
+				jsonRequest('POST', '/api/notifications', body, auth(viewerKey)),
+			)
+			expect(asViewer.status).toBe(403)
+			expect((await asViewer.json()).error.code).toBe('FORBIDDEN')
+
+			const asMember = await app.request(
+				jsonRequest('POST', '/api/notifications', body, auth(memberKey)),
+			)
+			expect(asMember.status).toBe(201)
+		})
+
+		it('returns 403 to a viewer on edit of a notification that is not theirs, 200 to a member', async () => {
+			const app = createApp()
+			const other = await insertNotification(db, workspaceId, getTestActorId(), {
+				targetActorId: getTestActorId(),
+			})
+			const bearerOnly = { Authorization: `Bearer ${viewerKey}` }
+
+			const asViewer = await app.request(
+				jsonRequest('PATCH', `/api/notifications/${other?.id}`, { status: 'seen' }, bearerOnly),
+			)
+			expect(asViewer.status).toBe(403)
+
+			const asMember = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/notifications/${other?.id}`,
+					{ status: 'seen' },
+					auth(memberKey),
+				),
+			)
+			expect(asMember.status).toBe(200)
+			expect((await asMember.json()).status).toBe('seen')
+		})
+
+		it('returns 403 to a viewer on delete of a notification that is not theirs, 200 to a member', async () => {
+			const app = createApp()
+			const other = await insertNotification(db, workspaceId, getTestActorId(), {
+				targetActorId: getTestActorId(),
+			})
+			// A notification with no target is nobody's own.
+			const untargeted = await insertNotification(db, workspaceId, getTestActorId())
+			const bearerOnly = { Authorization: `Bearer ${viewerKey}` }
+
+			for (const n of [other, untargeted]) {
+				const res = await app.request(jsonDelete(`/api/notifications/${n?.id}`, bearerOnly))
+				expect(res.status).toBe(403)
+			}
+
+			const asMember = await app.request(
+				jsonDelete(`/api/notifications/${other?.id}`, auth(memberKey)),
+			)
+			expect(asMember.status).toBe(200)
+		})
+
+		it('lets a viewer mark their own notification read and delete it', async () => {
+			const app = createApp()
+			const own = await insertNotification(db, workspaceId, getTestActorId(), {
+				targetActorId: viewerId,
+			})
+			const bearerOnly = { Authorization: `Bearer ${viewerKey}` }
+
+			const read = await app.request(
+				jsonRequest('PATCH', `/api/notifications/${own?.id}`, { status: 'seen' }, bearerOnly),
+			)
+			expect(read.status).toBe(200)
+			expect((await read.json()).status).toBe('seen')
+
+			const del = await app.request(jsonDelete(`/api/notifications/${own?.id}`, bearerOnly))
+			expect(del.status).toBe(200)
+		})
+
+		it('returns 403 to a viewer who writes metadata on their own notification', async () => {
+			const app = createApp()
+			const own = await insertNotification(db, workspaceId, getTestActorId(), {
+				targetActorId: viewerId,
+			})
+			const bearerOnly = { Authorization: `Bearer ${viewerKey}` }
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/notifications/${own?.id}`,
+					{ status: 'resolved', metadata: { response: 'forged' } },
+					bearerOnly,
+				),
+			)
+			expect(res.status).toBe(403)
+
+			const [row] = await db
+				.select()
+				.from(notifications)
+				.where(eq(notifications.id, own?.id as string))
+			expect(row?.status).toBe('pending')
+			expect(row?.metadata).toBeNull()
+		})
+
+		it('keeps a non-member on 404 for edit and delete', async () => {
+			const app = createApp()
+			const other = await insertNotification(db, workspaceId, getTestActorId())
+			const stranger = await insertActor(db, { name: 'Stranger' })
+			const headers = { Authorization: `Bearer ${stranger.apiKey}` }
+
+			const patch = await app.request(
+				jsonRequest('PATCH', `/api/notifications/${other?.id}`, { status: 'seen' }, headers),
+			)
+			expect(patch.status).toBe(404)
+			const del = await app.request(jsonDelete(`/api/notifications/${other?.id}`, headers))
+			expect(del.status).toBe(404)
+		})
+	})
+
+	describe('spoken briefing', () => {
+		// In-memory storage so the test can see whether the cache was written.
+		function createStorage() {
+			const files = new Map<string, Buffer>()
+			return {
+				files,
+				exists: async (key: string) => files.has(key),
+				get: async (key: string) => files.get(key) as Buffer,
+				put: async (key: string, data: Buffer) => {
+					files.set(key, data)
+				},
+			}
+		}
+
+		it('serves a viewer without writing the cache, and a writer writes it', async () => {
+			const storage = createStorage()
+			const app = createApp(storage)
+
+			const asViewer = await app.request(
+				jsonRequest('POST', '/api/briefing/spoken', undefined, auth(viewerKey)),
+			)
+			expect(asViewer.status).toBe(200)
+			expect((await asViewer.json()).cached).toBe(false)
+			expect(storage.files.size).toBe(0)
+
+			const asMember = await app.request(
+				jsonRequest('POST', '/api/briefing/spoken', undefined, auth(memberKey)),
+			)
+			expect(asMember.status).toBe(200)
+			expect(storage.files.size).toBe(1)
+
+			// Once a writer has produced it, a viewer is served that cached brief.
+			const again = await app.request(
+				jsonRequest('POST', '/api/briefing/spoken', undefined, auth(viewerKey)),
+			)
+			expect(again.status).toBe(200)
+			expect((await again.json()).cached).toBe(true)
+		})
 	})
 
 	describe('workspace-auth helpers', () => {

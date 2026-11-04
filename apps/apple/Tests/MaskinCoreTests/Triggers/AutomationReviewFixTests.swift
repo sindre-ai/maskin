@@ -242,22 +242,24 @@ struct AutomationLiveTests {
 	@Test("a burst of session events becomes one agents reload")
 	func agentsDebounce() async {
 		let api = FakeAgentsAPI([agentRow("forge")])
-		let hub = scriptedHub((1...4).map {
+		let bodies = (1...4).map {
 			conversationFrame($0, conversation: "s\($0)", action: "updated", entity: "session")
-		})
+		}
+		let script = SSEScript(bodies)
+		let hub = scriptedHub(script)
 		let gate = SleepGate()
 		let store = AgentsStore(api: api, events: hub, debounce: .seconds(1), sleep: { _ in await gate.wait() })
 		await store.start()
 		let baseline = await api.calls
 		hub.connect(workspaceId: "w1")
 		// Four events open exactly one debounce window (reload counts are not asserted: the
-		// scripted stream also reconnects once, which reloads immediately).
+		// scripted stream also reconnects, which reloads immediately). The window is held shut
+		// until the script has been read to its end, so no event can arrive after it fires.
+		#expect(await eventually { await script.opens > bodies.count })
 		#expect(await eventually { await gate.waiting == 1 })
-		try? await Task.sleep(for: .milliseconds(60))
-		#expect(await gate.waiting == 1)
 		await gate.open()
 		#expect(await eventually { await api.calls > baseline })
-		try? await Task.sleep(for: .milliseconds(60))
+		// Anything that would have opened a second window has long since been read.
 		#expect(await gate.waiting == 1)
 		store.stop()
 	}

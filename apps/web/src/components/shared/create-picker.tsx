@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/select'
 import { useActors, useCreateActor, useDefaultChatAgent } from '@/hooks/use-actors'
 import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useCreateConversation } from '@/hooks/use-conversations'
 import { useCreateObject } from '@/hooks/use-objects'
 import { useCreateTrigger } from '@/hooks/use-triggers'
@@ -33,6 +34,7 @@ import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { TYPE_LABELS, getTypeColor } from '@/lib/constants'
 import { useWorkspace } from '@/lib/workspace-context'
+import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
 import { deriveConversationTitle } from '@maskin/shared'
 import { LOOP_STATUSES, type LoopStatus } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
@@ -151,6 +153,16 @@ export function CreatePicker({
 
 	const typeGroupId = useId()
 	const commandListId = useId()
+
+	// The picker is reachable from the New menu, the command palette, list empty
+	// states and the create shortcut. A viewer creates nothing, so every one of
+	// those doors closes here and says why, instead of each caller checking.
+	const canWrite = useCanWrite()
+	useEffect(() => {
+		if (!open || canWrite) return
+		toast.info(VIEWER_READ_ONLY_MESSAGE, { id: 'viewer-read-only' })
+		onOpenChange(false)
+	}, [open, canWrite, onOpenChange])
 
 	// `entityKind` is set only for loop/agent/trigger; `objectType` only for an
 	// object subtype. Both null = the conversation branch.
@@ -484,7 +496,7 @@ export function CreatePicker({
 	) : null
 
 	return (
-		<ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+		<ResponsiveDialog open={open && canWrite} onOpenChange={onOpenChange}>
 			<ResponsiveDialogContent
 				onEscapeKeyDown={(event) => {
 					if (full) {

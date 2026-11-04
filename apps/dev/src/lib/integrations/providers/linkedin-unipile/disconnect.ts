@@ -121,7 +121,7 @@ export async function deleteUnipileAccountBestEffort(
 
 /**
  * `preDisconnect` hook for the `linkedin-unipile` provider. Wired in
- * `registry.ts` alongside `stopGmailWatch` / `revokeGoogleCalendarGrant`.
+ * `registry.ts` alongside `stopGmailWatch` / `stopMeetWatch`.
  *
  * Reads the Unipile account id from `ctx.externalId` (the R11-A
  * `integrations.external_id` column, set to the Unipile-issued `acc_…` id at

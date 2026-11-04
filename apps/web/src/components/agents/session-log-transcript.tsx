@@ -2,6 +2,7 @@ import { AgentOutput } from '@/components/shared/agent-output'
 import type { SessionLogResponse } from '@/lib/api'
 import { type ChatEvent, parseChatLine } from '@/lib/chat-stream'
 import { cn } from '@/lib/cn'
+import { formatToolName } from '@/lib/tool-name'
 import { ChevronDown, ChevronRight, Settings, User, Wrench } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
@@ -213,14 +214,16 @@ function isConversationReplyTool(name: string): boolean {
 	return name === 'post_conversation_message' || name.endsWith('__post_conversation_message')
 }
 
-function describeEvent(event: ChatEvent): string | null {
+export function describeEvent(event: ChatEvent): string | null {
 	switch (event.kind) {
 		case 'text':
-			return truncate(event.text.replace(/\s+/g, ' ').trim(), 80) || null
+			return truncate(stripInlineMarkdown(event.text).replace(/\s+/g, ' ').trim(), 80) || null
 		case 'tool_use':
-			return isConversationReplyTool(event.name) ? CONVERSATION_REPLY_LABEL : `Using ${event.name}`
+			return isConversationReplyTool(event.name)
+				? CONVERSATION_REPLY_LABEL
+				: formatToolName(event.name)
 		case 'thinking':
-			return event.redacted ? 'Thinking (redacted)…' : 'Thinking…'
+			return 'Thinking…'
 		case 'user':
 			return 'The user sent a message'
 		case 'result':
@@ -231,6 +234,21 @@ function describeEvent(event: ChatEvent): string | null {
 		case 'debug':
 			return null
 	}
+}
+
+/**
+ * The preview is a single plain-text line, so markdown markers would show up as
+ * literal stars and backticks. Strips them before the line is truncated, so a
+ * cut can't leave half a pair behind.
+ */
+function stripInlineMarkdown(text: string): string {
+	return text
+		.replace(/^\s{0,3}(?:#{1,6}|>|[-*+]|\d+\.)\s+/gm, '')
+		.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+		.replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, '$2')
+		.replace(/\*(?=\S)([^*\n]*?\S)\*/g, '$1')
+		.replace(/\b_(?=\S)([^_\n]*?\S)_\b/g, '$1')
+		.replace(/`([^`\n]+)`/g, '$1')
 }
 
 function truncate(text: string, max: number): string {
@@ -353,7 +371,7 @@ function ToolUseBlock({ name, input }: { name: string; input: unknown }) {
 					<ChevronRight size={14} className="shrink-0 text-muted-foreground" />
 				)}
 				<Wrench size={12} className="shrink-0 text-muted-foreground" />
-				<span className="font-mono text-foreground shrink-0">{name}</span>
+				<span className="font-mono text-foreground shrink-0">{formatToolName(name)}</span>
 				{preview && !open && (
 					<span className="truncate font-mono text-muted-foreground min-w-0 flex-1">{preview}</span>
 				)}
@@ -369,7 +387,7 @@ function ToolUseBlock({ name, input }: { name: string; input: unknown }) {
 
 function ThinkingBlock({ text, redacted }: { text: string; redacted?: boolean }) {
 	const [open, setOpen] = useState(false)
-	const label = redacted ? 'Thinking (redacted)' : 'Thinking'
+	const label = 'Thinking'
 	const body = redacted
 		? 'Anthropic withheld the internal reasoning for this turn. The agent still thought about the problem — the content just isn’t available here.'
 		: text

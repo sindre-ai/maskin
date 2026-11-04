@@ -5,6 +5,7 @@ import { and, eq } from 'drizzle-orm'
 import { createMiddleware } from 'hono/factory'
 import { validateApiKey } from './api-keys'
 import { createAuthCaches, resolveAuthCacheTtlMs } from './auth-cache'
+import { hashApiKey } from './key-hash'
 import { isMcpOAuthEnabled, isOAuthTokenPrefix } from './mcp-credential'
 import { authenticateOAuthToken } from './oauth-middleware'
 
@@ -33,7 +34,7 @@ export function authMiddleware(db: Database, options: { cacheTtlMs?: number } = 
 		// API key auth
 		if (token.startsWith('ank_')) {
 			const result = await caches.apiKeys.get(
-				token,
+				hashApiKey(token),
 				() => validateApiKey(db, token),
 				(value) => value !== null,
 			)

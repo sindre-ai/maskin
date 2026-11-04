@@ -3,15 +3,27 @@ import type { LinkedInMcpInstanceConfig } from '@maskin/mcp/linkedin'
 import { toolName } from '@maskin/mcp/linkedin'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { credentialMock } = vi.hoisted(() => ({ credentialMock: vi.fn() }))
+const { getCredentialMock } = vi.hoisted(() => ({ getCredentialMock: vi.fn() }))
 vi.mock('../../../../../lib/integrations/lookup', () => ({
 	actorScopedProviders: new Set(['linkedin-unipile']),
-	getIntegrationCredential: credentialMock,
+	findIntegrationRow: vi.fn(),
+	getCredential: getCredentialMock,
 }))
 vi.mock('../../../../../lib/workspace-auth', () => ({ isWorkspaceMember: async () => true }))
 vi.mock('../../../../../lib/crypto', () => ({
 	decrypt: () => JSON.stringify({ account_id: 'acc_1' }),
 	encrypt: (v: string) => v,
+}))
+// The action log and the profile-view cap need a real database (a transaction and inserts), which
+// the fake one below does not have. This test pins the request path and the result shape, so the
+// call goes straight through; the log and the cap are tested against Postgres elsewhere.
+vi.mock('../../../../../lib/integrations/providers/linkedin-unipile/action-log', async (orig) => ({
+	...(await orig<Record<string, unknown>>()),
+	withActionLog: async (
+		_ctx: unknown,
+		_spec: unknown,
+		run: (recorder: { set: () => void; markNoop: () => void }) => Promise<unknown>,
+	) => run({ set: () => {}, markNoop: () => {} }),
 }))
 
 import {
@@ -113,11 +125,9 @@ beforeEach(() => {
 	mock.resetInbox()
 	process.env.UNIPILE_BASE_URL = mock.baseUrl
 	process.env.UNIPILE_API_KEY = 'test-api-key'
-	credentialMock.mockResolvedValue({
+	getCredentialMock.mockResolvedValue({
 		id: 'int-1',
-		actorId: 'sebastian',
-		status: 'active',
-		credentials: 'encrypted',
+		value: JSON.stringify({ account_id: 'acc_1' }),
 	})
 })
 

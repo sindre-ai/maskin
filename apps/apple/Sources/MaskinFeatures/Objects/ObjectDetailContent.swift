@@ -42,6 +42,8 @@ struct ObjectDetailContent<Decision: View>: View {
 	var onEdit: () -> Void = {}
 	var onReply: ((TimelineItem) -> Void)?
 	var onShowActivity: () -> Void = {}
+	var onMessage: (() -> Void)?
+	var sessionActions = ObjectSessionActions.none
 	/// Pins "now" and opens the description (snapshots).
 	var now: Date = Date()
 	var descriptionExpanded = false
@@ -60,11 +62,13 @@ struct ObjectDetailContent<Decision: View>: View {
 			if let object = store.object {
 				switch part {
 				case .all:
-					ObjectHeaderView(store: store, object: object, interactiveChips: interactiveChips)
+					ObjectHeaderView(store: store, object: object, interactiveChips: interactiveChips, onMessage: onMessage,
+						sessionActions: sessionActions)
 					overview(object)
 					ObjectRelatedView(store: store, onOpenObject: onOpenObject)
 					ObjectActivityView(store: store, onOpenObject: onOpenObject, onReply: onReply, now: now)
-				case .header: ObjectHeaderView(store: store, object: object, interactiveChips: interactiveChips)
+				case .header: ObjectHeaderView(store: store, object: object, interactiveChips: interactiveChips, onMessage: onMessage,
+						sessionActions: sessionActions)
 				case .overview: overview(object)
 				case .related: ObjectRelatedView(store: store, onOpenObject: onOpenObject)
 				case .activity: ObjectActivityView(store: store, onOpenObject: onOpenObject, onReply: onReply, now: now)
@@ -91,7 +95,8 @@ struct ObjectDetailContent<Decision: View>: View {
 
 	private func overview(_ object: WorkObject) -> some View {
 		ObjectOverviewView(
-			store: store, object: object, descriptionExpanded: descriptionExpanded, onShowActivity: onShowActivity
+			store: store, object: object, descriptionExpanded: descriptionExpanded, onShowActivity: onShowActivity,
+			sessionActions: sessionActions
 		) { decision() }
 	}
 }

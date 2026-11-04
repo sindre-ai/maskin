@@ -1,4 +1,5 @@
 import { ApiError } from '@/lib/api'
+import { isViewerRefusal } from '@/lib/workspace-role'
 import type { useNavigate } from '@tanstack/react-router'
 import { toast } from 'sonner'
 
@@ -12,7 +13,7 @@ function showPlanLimitToast(navigate: Navigate, workspaceId: string, isTrial: bo
 		{
 			action: {
 				label: 'Go to Billing',
-				onClick: () => navigate({ to: '/$workspaceId/settings/keys', params: { workspaceId } }),
+				onClick: () => navigate({ to: '/$workspaceId/settings/billing', params: { workspaceId } }),
 			},
 		},
 	)
@@ -35,6 +36,8 @@ export function toastSessionCreateError(
 		showPlanLimitToast(navigate, workspaceId, err.planCapContext?.plan === 'trial')
 		return
 	}
+	// A viewer's refused start already got the shared message from the global handler.
+	if (isViewerRefusal(err)) return
 	// `fallbackMessage` lets a call site keep its own more specific copy for
 	// non-billing failures (e.g. the agents grid, where the card knows which
 	// agent failed) without having to re-test for PLAN_CAP_EXCEEDED itself.

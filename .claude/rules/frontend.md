@@ -1,5 +1,12 @@
 # Frontend Rules — Component Reuse & Consistency
 
+## Protected Design Rules — Read First
+
+Before changing any UI under `apps/web`, read `design-system/invariants.md`.
+
+- If your change makes one of its named checks fail, **fix the change**. Never edit the check or the rule to make it pass.
+- Changing, loosening or deleting a rule needs a human-review PR.
+
 ## Core Principle: Reuse Everything, Create Nothing (Unless Absolutely Necessary)
 
 The #1 frontend rule is **DRY and consistency**. Before building anything new, exhaust every existing option. Creating a new component should be extremely rare and requires a strong, specific justification.

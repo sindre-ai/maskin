@@ -193,6 +193,7 @@ export const READ_TOOL_NAMES = new Set<string>([
 	'list_integrations',
 	'list_integration_providers',
 	'list_extensions',
+	'list_for_you',
 	'get_started',
 ])
 
@@ -294,11 +295,11 @@ const GUIDANCE: Record<string, ToolGuidance> = {
 	get_workspace_skill: {
 		notFound: {
 			tool: 'list_workspace_skills',
-			hint: 'list_workspace_skills({ workspace_id: "<uuid>" }) to find valid skill names, then retry get_workspace_skill({ name: "<name>" }).',
+			hint: 'list_workspace_skills({ workspace_id: "<uuid>" }) to find valid skill ids and names, then retry get_workspace_skill({ name: "<id or name>" }).',
 		},
 		invalidParam: {
 			tool: 'get_workspace_skill',
-			hint: 'get_workspace_skill({ workspace_id: "<uuid>", name: "<skill-name>" }) — name must be a non-empty string.',
+			hint: 'get_workspace_skill({ workspace_id: "<uuid>", name: "<skill id or name>" }) — name must be a non-empty string.',
 		},
 	},
 	list_files: {
@@ -369,6 +370,16 @@ const GUIDANCE: Record<string, ToolGuidance> = {
 		invalidParam: {
 			tool: 'get_loop',
 			hint: 'get_loop({ id: "<uuid>" }) — id must be a UUID.',
+		},
+	},
+	list_for_you: {
+		notFound: {
+			tool: 'list_actors',
+			hint: 'list_actors() to find the person\'s actor id (they must be a member of the workspace), then list_for_you({ actor_id: "<uuid>" }).',
+		},
+		invalidParam: {
+			tool: 'list_for_you',
+			hint: 'list_for_you({ actor_id: "<uuid>", limit: 10 }) — actor_id is required; a person can only read their own list.',
 		},
 	},
 	list_unread: {

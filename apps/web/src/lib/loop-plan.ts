@@ -171,7 +171,7 @@ const OBJECT_TYPE_VOCAB: Array<{ keywords: string[]; spec: ObjectTypeSpec }> = [
 		spec: {
 			type: 'bet',
 			name: 'Bet',
-			baseChain: ['signal', 'active', 'at_risk', 'rescue'],
+			baseChain: ['opportunity', 'active', 'at_risk', 'rescue'],
 			role: 'A wager on an outcome',
 		},
 	},

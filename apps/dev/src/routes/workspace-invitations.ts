@@ -1,5 +1,5 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
-import { generateApiKey, hashPassword, validateApiKey } from '@maskin/auth'
+import { hashPassword, issueApiKey, validateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
 	events,
@@ -10,9 +10,11 @@ import {
 } from '@maskin/db/schema'
 import { InviteEmailSendError, sendInviteEmail } from '@maskin/email'
 import { and, count, desc, eq, gt, lte, min, sql } from 'drizzle-orm'
+import { maskLlmConfigSecrets } from '../lib/actor-llm-config-redaction'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { isEnterpriseActor } from '../lib/enterprise'
 import { createApiError, formatZodError, validationFailureHook } from '../lib/errors'
+import { createWindowLimiter } from '../lib/fixed-window-limiter'
 import { takeInvitePreviewToken } from '../lib/invite-preview-throttle'
 import { generateInviteToken, hashInviteToken } from '../lib/invites-token'
 import { logger } from '../lib/logger'
@@ -74,6 +76,7 @@ const previewResponseSchema = z.object({
 	workspaceId: z.string().uuid(),
 	workspaceName: z.string(),
 	inviterName: z.string(),
+	role: z.string(),
 	inviteEmail: z.string(),
 	expiresAt: z.string(),
 })
@@ -90,9 +93,10 @@ function isInviteExpired(invite: { expiresAt: Date; status: string }): boolean {
 
 function stripActorSecretsForResponse(
 	actor: typeof actors.$inferSelect,
+	apiKey: string,
 ): z.infer<typeof actorResponseInAcceptSchema> {
 	const {
-		apiKey,
+		apiKey: _legacyApiKey,
 		passwordHash: _passwordHash,
 		systemPrompt,
 		llmProvider,
@@ -103,8 +107,8 @@ function stripActorSecretsForResponse(
 		...serialize(rest),
 		system_prompt: systemPrompt,
 		llm_provider: llmProvider,
-		llm_config: llmConfig,
-		api_key: apiKey ?? '',
+		llm_config: maskLlmConfigSecrets(llmConfig),
+		api_key: apiKey,
 	} as z.infer<typeof actorResponseInAcceptSchema>
 }
 
@@ -145,6 +149,63 @@ function isEmailUniqueViolation(err: unknown): boolean {
 // lives on the sibling endpoints in this file (and T2's endpoints in the same
 // file) — the accept endpoint's contract is documented in the code comment
 // below and in the parent bet's shaping doc.
+
+// The handler stays a plain app.post() (see above); this only publishes the contract in
+// /api/openapi.json so native clients can generate against it.
+app.openAPIRegistry.registerPath({
+	method: 'post',
+	path: '/{token}/accept',
+	tags: ['workspace-invitations'],
+	operationId: 'acceptInvite',
+	summary: 'Accept an invite by token (public path; reads Authorization itself)',
+	description:
+		'Send `Authorization: Bearer ank_...` with an EMPTY body to join as the existing actor, or ' +
+		'`{ email, password, name? }` with no Authorization to sign up and join. Do not send ' +
+		'X-Workspace-Id. The authenticated branch returns `{ workspaceId, actorId }`; the signup ' +
+		'branch returns `{ actor (with api_key), workspaceId }`. Already-a-member is not an error.',
+	request: {
+		params: z.object({ token: z.string().min(1) }),
+		body: {
+			required: false,
+			content: { 'application/json': { schema: acceptBodySchema } },
+		},
+	},
+	responses: {
+		200: {
+			description: 'Authenticated accept: joined (or already a member)',
+			content: {
+				'application/json': {
+					schema: z.object({ workspaceId: z.string().uuid(), actorId: z.string().uuid() }),
+				},
+			},
+		},
+		201: {
+			description: 'Signup accept: actor created and joined',
+			content: {
+				'application/json': {
+					schema: z.object({
+						actor: actorResponseInAcceptSchema,
+						workspaceId: z.string().uuid(),
+					}),
+				},
+			},
+		},
+		400: { description: 'Invalid body', content: { 'application/json': { schema: errorSchema } } },
+		401: {
+			description: 'Missing or invalid API key (authenticated branch)',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Workspace seat cap reached',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: { description: 'Unknown token', content: { 'application/json': { schema: errorSchema } } },
+		410: {
+			description: 'Invite expired, revoked or already used',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
 
 app.post('/:token/accept', async (c) => {
 	const db = c.get('db')
@@ -255,7 +316,9 @@ app.post('/:token/accept', async (c) => {
 			)
 		}
 
-		const { key: apiKey } = generateApiKey()
+		// Hashed at rest, so the new account's key is minted inside the accept transaction and shown
+		// once, in this response.
+		let apiKey = ''
 		const passwordHash = await hashPassword(body.password ?? '')
 		const displayName = (body.name ?? body.email ?? '').trim() || (body.email ?? '')
 
@@ -283,7 +346,6 @@ app.post('/:token/accept', async (c) => {
 						type: 'human',
 						name: displayName,
 						email: body.email,
-						apiKey,
 						passwordHash,
 						createdBy: null,
 					})
@@ -296,6 +358,7 @@ app.post('/:token/accept', async (c) => {
 					// instead of a TypeError deep in the join below.
 					throw new Error('Actor insert returned no row')
 				}
+				apiKey = (await issueApiKey(tx, { actorId: insertedActor.id, kind: 'primary' })).key
 
 				// Lock workspace, run seat-cap check exactly like POST /workspaces/:id/members.
 				const [locked] = await tx
@@ -409,7 +472,7 @@ app.post('/:token/accept', async (c) => {
 
 		return c.json(
 			{
-				actor: stripActorSecretsForResponse(outcome.actor),
+				actor: stripActorSecretsForResponse(outcome.actor, apiKey),
 				workspaceId: outcome.workspaceId,
 			},
 			201,
@@ -692,6 +755,7 @@ app.openapi(previewRoute, async (c) => {
 			workspaceId: workspace.id,
 			workspaceName: workspace.name,
 			inviterName: inviter.name,
+			role: invite.role,
 			inviteEmail: invite.email,
 			expiresAt: invite.expiresAt.toISOString(),
 		},
@@ -708,6 +772,22 @@ const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const INVITE_RATE_WINDOW_MS = 24 * 60 * 60 * 1000
 // The 21st invite inside the window is rejected.
 const INVITE_RATE_LIMIT = 20
+
+// Per-caller brake on every create attempt. The workspace cap above only counts
+// invites that were stored, so it never sees the "email already has an account"
+// branch, which answers differently from the pending branch and so tells a
+// caller which addresses are registered.
+const INVITE_ATTEMPT_LIMIT = 30
+const INVITE_ATTEMPT_WINDOW_MS = 60 * 60 * 1000
+const inviteAttemptLimiter = createWindowLimiter({
+	limit: INVITE_ATTEMPT_LIMIT,
+	windowMs: INVITE_ATTEMPT_WINDOW_MS,
+})
+
+// Test-only reset so integration tests can isolate cases per describe/it.
+export function _resetInviteAttemptLimiter(): void {
+	inviteAttemptLimiter.reset()
+}
 
 export const createInviteBodySchema = z.object({
 	workspaceId: z.string().uuid(),
@@ -726,15 +806,6 @@ export const inviteSummarySchema = z.object({
 export const pendingInviteResponseSchema = z.object({
 	status: z.literal('pending'),
 	invite: inviteSummarySchema,
-})
-
-export const linkedMemberResponseSchema = z.object({
-	status: z.literal('linked'),
-	member: z.object({
-		workspaceId: z.string().uuid(),
-		actorId: z.string().uuid(),
-		role: z.string(),
-	}),
 })
 
 export const revokeInviteResponseSchema = z.object({ revoked: z.literal(true) })
@@ -806,12 +877,13 @@ function sendFailureLogContext(err: unknown) {
 const createInviteRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['workspace-invitations'],
 	summary: 'Invite someone to a workspace by email',
 	description:
-		'If the email belongs to an existing actor who is not yet a member, that actor is added ' +
-		'directly (status "linked"). Otherwise a pending invite is created and emailed (status ' +
-		'"pending"). Re-inviting an email with a live pending invite returns that invite unchanged.',
+		'A pending invite is created and emailed (status "pending"), whether or not the email ' +
+		'already has an account; the person joins by accepting it. Re-inviting an email with a live ' +
+		'pending invite returns that invite unchanged.',
 	request: {
 		body: { content: { 'application/json': { schema: createInviteBodySchema } } },
 	},
@@ -821,15 +893,11 @@ const createInviteRoute = createRoute({
 			content: { 'application/json': { schema: pendingInviteResponseSchema } },
 		},
 		201: {
-			description: 'Actor linked directly, or a new pending invite created and emailed',
-			content: {
-				'application/json': {
-					schema: z.union([linkedMemberResponseSchema, pendingInviteResponseSchema]),
-				},
-			},
+			description: 'A new pending invite was created and emailed',
+			content: { 'application/json': { schema: pendingInviteResponseSchema } },
 		},
 		403: {
-			description: 'Caller is not a human owner/admin of the workspace, or the seat cap is reached',
+			description: 'Caller is not a human owner/admin of the workspace',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		404: {
@@ -841,7 +909,8 @@ const createInviteRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		429: {
-			description: 'This workspace already sent 20 invites in the last 24 hours',
+			description:
+				'This workspace already sent 20 invites in the last 24 hours, or the caller made too many attempts in the last hour',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		502: {
@@ -863,119 +932,46 @@ app.openapi(createInviteRoute, (async (c) => {
 		)
 	}
 
-	const emailLower = email.toLowerCase()
-
-	// Branch A / C: the email already belongs to a Maskin actor.
-	const [existingActor] = await db
-		.select({ id: actors.id, type: actors.type })
-		.from(actors)
-		.where(sql`lower(${actors.email}) = ${emailLower}`)
-		.limit(1)
-
-	if (existingActor) {
-		type LinkOutcome =
-			| { kind: 'added' }
-			| { kind: 'already_member' }
-			| { kind: 'workspace_missing' }
-		let outcome: LinkOutcome
-		try {
-			outcome = await db.transaction(async (tx): Promise<LinkOutcome> => {
-				// Same lock + seat-cap + insert sequence as POST /workspaces/:id/members.
-				const [locked] = await tx
-					.select({
-						id: workspaces.id,
-						settings: workspaces.settings,
-						billingOwnerId: workspaces.billingOwnerId,
-					})
-					.from(workspaces)
-					.where(eq(workspaces.id, workspaceId))
-					.for('update')
-					.limit(1)
-				if (!locked) return { kind: 'workspace_missing' }
-
-				if (existingActor.type === 'human' && !isEnterpriseActor(locked.billingOwnerId)) {
-					const [alreadyMember] = await tx
-						.select({ actorId: workspaceMembers.actorId })
-						.from(workspaceMembers)
-						.where(
-							and(
-								eq(workspaceMembers.workspaceId, workspaceId),
-								eq(workspaceMembers.actorId, existingActor.id),
-							),
-						)
-						.limit(1)
-					// A member is never blocked by the cap, so answer 409 rather than 403.
-					if (alreadyMember) return { kind: 'already_member' }
-					const plan = resolvePlanTier(locked.settings)
-					const cap = seatCapForPlan(plan)
-					if (cap !== null) {
-						const used = await countHumanMembers(tx, workspaceId)
-						if (used >= cap) throw new SeatCapExceededError({ workspaceId, plan, used, cap })
-					}
-				}
-
-				const inserted = await tx
-					.insert(workspaceMembers)
-					.values({ workspaceId, actorId: existingActor.id, role })
-					.onConflictDoNothing({
-						target: [workspaceMembers.workspaceId, workspaceMembers.actorId],
-					})
-					.returning()
-				if (!inserted.length) return { kind: 'already_member' }
-
-				await tx.insert(events).values({
-					workspaceId,
-					actorId: callerId,
-					action: 'created',
-					entityType: 'workspace_member',
-					entityId: existingActor.id,
-					data: { role, added_actor_id: existingActor.id },
-				})
-				return { kind: 'added' }
-			})
-		} catch (err) {
-			if (err instanceof SeatCapExceededError) {
-				logger.warn('Invite blocked by seat cap (link existing actor)', {
-					workspaceId: err.workspaceId,
-					plan: err.plan,
-					used: err.used,
-					cap: err.cap,
-				})
-				return c.json(seatCapErrorBody(err), 403)
-			}
-			throw err
-		}
-
-		if (outcome.kind === 'workspace_missing') {
-			return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
-		}
-		if (outcome.kind === 'already_member') {
-			return c.json(
-				createApiError('CONFLICT', `${email} is already a member of this workspace`, [
-					{ field: 'email', message: 'Already a member of this workspace' },
-				]),
-				409,
-			)
-		}
-
-		void capturePosthogEvent('workspace_member_invited', callerId, {
-			invite_method: 'email',
-			workspace_id: workspaceId,
-			role,
-		})
-		// A direct link is not a redemption, so this is not from_invite.
-		void capturePosthogEvent('workspace_member_joined', existingActor.id, {
-			from_invite: false,
-			workspace_id: workspaceId,
-			role,
-		})
+	const attempt = inviteAttemptLimiter.hit(callerId)
+	if (!attempt.allowed) {
+		c.header('Retry-After', String(Math.ceil(attempt.retryAfterMs / 1000)))
 		return c.json(
-			{ status: 'linked' as const, member: { workspaceId, actorId: existingActor.id, role } },
-			201,
+			createApiError(
+				'RATE_LIMITED',
+				`Too many invite attempts: at most ${INVITE_ATTEMPT_LIMIT} per hour`,
+			),
+			429,
 		)
 	}
 
-	// Branch B: no matching actor, so a pending invite.
+	const emailLower = email.toLowerCase()
+
+	// Branch C: the email belongs to someone already in this workspace. This only
+	// reveals what the caller can already read from the members list. An account
+	// in any other workspace is invited exactly like an unknown address, so the
+	// answer never says whether an email is registered, and nobody becomes a
+	// member until they accept with their own key.
+	const [alreadyMember] = await db
+		.select({ actorId: workspaceMembers.actorId })
+		.from(workspaceMembers)
+		.innerJoin(actors, eq(actors.id, workspaceMembers.actorId))
+		.where(
+			and(
+				eq(workspaceMembers.workspaceId, workspaceId),
+				sql`lower(${actors.email}) = ${emailLower}`,
+			),
+		)
+		.limit(1)
+	if (alreadyMember) {
+		return c.json(
+			createApiError('CONFLICT', `${email} is already a member of this workspace`, [
+				{ field: 'email', message: 'Already a member of this workspace' },
+			]),
+			409,
+		)
+	}
+
+	// Branch B: a pending invite.
 	const now = new Date()
 
 	// An invite past its expiry keeps status 'pending' until something flips it,
@@ -1129,6 +1125,7 @@ app.openapi(createInviteRoute, (async (c) => {
 const resendInviteRoute = createRoute({
 	method: 'post',
 	path: '/{id}/resend',
+	'x-viewer-policy': 'writer',
 	tags: ['workspace-invitations'],
 	summary: 'Resend a pending invite with a fresh token and expiry',
 	request: { params: idParamSchema },
@@ -1256,6 +1253,7 @@ app.openapi(resendInviteRoute, (async (c) => {
 const revokeInviteRoute = createRoute({
 	method: 'delete',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['workspace-invitations'],
 	summary: 'Revoke a pending invite',
 	request: { params: idParamSchema },

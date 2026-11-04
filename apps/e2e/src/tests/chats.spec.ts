@@ -1,5 +1,5 @@
 import type { Browser, Page } from '@playwright/test'
-import { CHATS_V4_FLAGS, expect, test } from '../fixtures/auth.fixture'
+import { expect, test } from '../fixtures/auth.fixture'
 import { TestAPI, createTestActor } from '../helpers/api.helper'
 import { sendFromComposer } from '../helpers/composer.helper'
 import { grantPlanHeadroom } from '../helpers/plan.helper'
@@ -21,16 +21,11 @@ async function signInAsActor(
 	const context = await browser.newContext()
 	const page = await context.newPage()
 	await page.addInitScript(
-		(data: { apiKey: string; actor: typeof actor; flags: readonly string[] }) => {
+		(data: { apiKey: string; actor: typeof actor }) => {
 			localStorage.setItem('maskin-api-key', data.apiKey)
 			localStorage.setItem('maskin-actor', JSON.stringify(data.actor))
-			// This context bypasses the auth fixture, so it needs the Chats v4
-			// flag override too — the partner page asserts v4 header controls.
-			for (const flag of data.flags) {
-				localStorage.setItem(`ff:${flag}`, 'on')
-			}
 		},
-		{ apiKey, actor, flags: CHATS_V4_FLAGS },
+		{ apiKey, actor },
 	)
 	return page
 }
@@ -39,7 +34,7 @@ async function setUpConversation(api: TestAPI, workspaceId: string, apiKey: stri
 	// A trial workspace allows a single human seat — this spec needs two.
 	await grantPlanHeadroom(apiKey, workspaceId)
 	const secondHuman = await createTestActor({ name: `E2E Chat Partner ${Date.now()}` })
-	await api.addWorkspaceMember(workspaceId, secondHuman.id)
+	await api.addHumanByInvite(workspaceId, secondHuman)
 	const agent = await api.createAgentActor(`E2E Chat Agent ${Date.now()}`)
 	await api.addWorkspaceMember(workspaceId, agent.id)
 
@@ -307,9 +302,9 @@ test.describe('Chats — full-screen multi-party chat', () => {
 			await editButton.click()
 
 			// After entering edit mode the icon button unmounts, so the label
-			// uniquely addresses the inline textarea.
-			const editor = page.getByLabel('Edit message')
-			await expect(editor).toHaveValue('Original wording with a typo')
+			// uniquely addresses the edit card's text box.
+			const editor = page.getByRole('textbox', { name: 'Edit message' })
+			await expect(editor).toHaveText('Original wording with a typo')
 			await editor.fill('Corrected wording, no typo')
 			await page.getByRole('button', { name: 'Save' }).click()
 

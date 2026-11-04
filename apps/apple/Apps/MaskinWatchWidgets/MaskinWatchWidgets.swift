@@ -11,19 +11,65 @@ import WidgetKit
 //   circular     the top flow's progress ring
 //   rectangular  "Needs you · <next decision>" on two lines
 //   inline       "2 need you"
+// plus a circular Ask complication, a microphone that opens the app ready to ask.
 // The rectangular entry carries `relevance`, which lifts the card in the Smart Stack when a
 // decision is waiting. Patina is signal only: the gauge and ring are the only accent drawn.
 
-/// The URL a complication opens; the watch app's `onOpenURL` selects the Needs you page for it.
-/// Duplicated in `WatchHome` because the two targets share no source file for it.
+/// The URLs a complication opens; the watch app's `onOpenURL` (in `WatchHome`) routes them.
+/// Duplicated there because the two targets share no source file for it.
 private enum WatchLink {
 	static let needsYou = URL(string: "maskin-watch://needs-you")!
+	static let ask = URL(string: "maskin-watch://ask")!
+
+	/// The circular ring opens the flow it draws; every other family opens Needs you.
+	static func flow(_ id: String) -> URL? {
+		id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+			.flatMap { URL(string: "maskin-watch://flow/\($0)") }
+	}
 }
 
 @main
 struct MaskinWatchWidgetBundle: WidgetBundle {
 	var body: some Widget {
 		NeedsYouComplication()
+		AskComplication()
+	}
+}
+
+/// A microphone on the watch face: one tap opens the app on Home, where the mic is.
+struct AskComplication: Widget {
+	static let kind = "io.maskin.widget.watch-ask"
+
+	var body: some WidgetConfiguration {
+		StaticConfiguration(kind: Self.kind, provider: AskProvider()) { _ in
+			Image(systemName: "mic.fill")
+				.font(.title3)
+				.foregroundStyle(MaskinColor.sigHi)
+				.widgetAccentable()
+				.accessibilityLabel("Ask Maskin")
+				.widgetURL(WatchLink.ask)
+				.containerBackground(for: .widget) { AccessoryWidgetBackground() }
+		}
+		.configurationDisplayName("Ask")
+		.description("Ask your Chief of Staff by voice.")
+		.supportedFamilies([.accessoryCircular])
+	}
+}
+
+struct AskEntry: TimelineEntry {
+	let date: Date
+}
+
+/// Nothing to refresh: the button looks the same all day.
+struct AskProvider: TimelineProvider {
+	func placeholder(in context: Context) -> AskEntry { AskEntry(date: Date()) }
+
+	func getSnapshot(in context: Context, completion: @escaping (AskEntry) -> Void) {
+		completion(AskEntry(date: Date()))
+	}
+
+	func getTimeline(in context: Context, completion: @escaping (Timeline<AskEntry>) -> Void) {
+		completion(Timeline(entries: [AskEntry(date: Date())], policy: .never))
 	}
 }
 
@@ -33,8 +79,6 @@ struct NeedsYouComplication: Widget {
 	var body: some WidgetConfiguration {
 		StaticConfiguration(kind: Self.kind, provider: WatchComplicationProvider()) { entry in
 			ComplicationView(entry: entry)
-				// Tapping any family opens the watch app on its Needs you page.
-				.widgetURL(WatchLink.needsYou)
 				.containerBackground(for: .widget) { AccessoryWidgetBackground() }
 		}
 		.configurationDisplayName("Needs you")
@@ -49,6 +93,7 @@ struct NeedsYouComplication: Widget {
 
 /// The top flow, reduced to what a ring needs.
 struct ComplicationFlow: Equatable, Sendable {
+	var id: String
 	var name: String
 	var progress: Double
 	var paused: Bool
@@ -132,7 +177,7 @@ enum ComplicationFlowLoader {
 				UserDefaults.standard.removeObject(forKey: defaultsKey)
 				return nil
 			}
-			let flow = ComplicationFlow(name: top.displayName, progress: top.ringProgress, paused: top.isPaused)
+			let flow = ComplicationFlow(id: top.id, name: top.displayName, progress: top.ringProgress, paused: top.isPaused)
 			store(flow)
 			return flow
 		} catch {
@@ -142,14 +187,15 @@ enum ComplicationFlowLoader {
 
 	private static func store(_ flow: ComplicationFlow) {
 		UserDefaults.standard.set(
-			["name": flow.name, "progress": flow.progress, "paused": flow.paused], forKey: defaultsKey)
+			["id": flow.id, "name": flow.name, "progress": flow.progress, "paused": flow.paused], forKey: defaultsKey)
 	}
 
 	private static func cached() -> ComplicationFlow? {
 		guard let raw = UserDefaults.standard.dictionary(forKey: defaultsKey),
-			let name = raw["name"] as? String, let progress = raw["progress"] as? Double
+			let id = raw["id"] as? String, let name = raw["name"] as? String,
+			let progress = raw["progress"] as? Double
 		else { return nil }
-		return ComplicationFlow(name: name, progress: progress, paused: raw["paused"] as? Bool ?? false)
+		return ComplicationFlow(id: id, name: name, progress: progress, paused: raw["paused"] as? Bool ?? false)
 	}
 }
 
@@ -172,7 +218,7 @@ private func withDeadline<T: Sendable>(
 
 extension ComplicationFlow {
 	/// Gallery data. Invented, never real content.
-	static let sample = ComplicationFlow(name: "Outreach", progress: 0.62, paused: false)
+	static let sample = ComplicationFlow(id: "sample", name: "Outreach", progress: 0.62, paused: false)
 }
 
 // MARK: - Views
@@ -183,11 +229,18 @@ private struct ComplicationView: View {
 
 	var body: some View {
 		switch family {
-		case .accessoryCorner: CornerView(state: entry.state)
-		case .accessoryRectangular: RectangularView(state: entry.state)
-		case .accessoryInline: InlineView(state: entry.state)
-		default: CircularView(state: entry.state, flow: entry.flow)
+		case .accessoryCorner: CornerView(state: entry.state).widgetURL(WatchLink.needsYou)
+		case .accessoryRectangular: RectangularView(state: entry.state).widgetURL(WatchLink.needsYou)
+		case .accessoryInline: InlineView(state: entry.state).widgetURL(WatchLink.needsYou)
+		default:
+			CircularView(state: entry.state, flow: entry.flow).widgetURL(circularURL)
 		}
+	}
+
+	/// The flow the ring draws, else Needs you when the face shows the count instead.
+	private var circularURL: URL {
+		if case .content = entry.state, let id = entry.flow?.id, let url = WatchLink.flow(id) { return url }
+		return WatchLink.needsYou
 	}
 }
 

@@ -149,16 +149,23 @@ export function TestWrapper({ children }: { children: ReactNode }) {
 
 /**
  * Stands in for the app shell's nav row: renders whatever the page under test
- * published through `PageHeader` (its crumb label and its actions). Opt in via
+ * published through `PageHeader` (its crumb label, title tabs and actions). Opt in via
  * `createWorkspaceWrapper(overrides, { renderPageHeader: true })` when the
  * assertions cover controls the page publishes rather than renders itself.
  */
 function PageHeaderOutlet({ children }: { children: ReactNode }) {
-	const { crumb, actions } = usePageHeader()
+	const { crumb, actions, leadingActions, titleTabs } = usePageHeader()
 	return React.createElement(
 		React.Fragment,
 		null,
-		React.createElement('header', null, crumb ? crumb.label : null, actions),
+		React.createElement(
+			'header',
+			null,
+			crumb ? crumb.label : null,
+			titleTabs,
+			leadingActions,
+			actions,
+		),
 		children,
 	)
 }
@@ -196,3 +203,19 @@ export function createWorkspaceWrapper(
 			),
 		)
 }
+
+// The editor's bubble menu does `import tippy from 'tippy.js'`. tippy.js ships
+// CommonJS as its main entry, so under Vitest that import is the exports object and
+// the first editor transaction throws "tippy is not a function". Positioning is not
+// under test in jsdom, so stand in a no-op popper.
+vi.mock('tippy.js', () => {
+	const tippy = () => ({
+		popper: document.createElement('div'),
+		state: { isVisible: false },
+		setProps: () => {},
+		show: () => {},
+		hide: () => {},
+		destroy: () => {},
+	})
+	return { default: tippy, roundArrow: '' }
+})

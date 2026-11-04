@@ -18,6 +18,7 @@ struct FlowChannelScreen: View {
 	@State private var showDetail = false
 	@State private var showMembers = false
 	@Environment(\.horizontalSizeClass) private var sizeClass
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 
 	/// Agents on the flow, the lead (first) leading. Names resolve through the workspace directory;
 	/// an id that does not resolve is left out rather than shown.
@@ -117,6 +118,7 @@ struct FlowChannelScreen: View {
 
 	private func composerConfig(_ model: FlowTimelineModel) -> MaskinComposerConfig {
 		var config = model.config
+		config.roster = runtime?.mentionRoster()?.roster
 		if model.replyingTo == nil { config.placeholder = "Message \(room.name)" }
 		return config
 	}

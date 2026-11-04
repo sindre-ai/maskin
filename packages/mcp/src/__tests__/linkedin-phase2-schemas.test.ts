@@ -155,23 +155,28 @@ describe('R11 tool input schemas', () => {
 	it('publishPostInputSchema accepts text-only', () => {
 		const parsed = publishPostInputSchema.parse({ text: 'Hello LinkedIn.' })
 		expect(parsed.text).toBe('Hello LinkedIn.')
-		expect(parsed.attachments).toBeUndefined()
+		expect(parsed.attachment_file_ids).toBeUndefined()
 	})
 
-	it('publishPostInputSchema accepts an image carousel', () => {
-		const parsed = publishPostInputSchema.parse({
-			text: 'Deck slides.',
-			attachments: [image('a.jpg'), image('b.jpg')],
-		})
-		expect(parsed.attachments).toHaveLength(2)
+	it('publishPostInputSchema accepts workspace file ids for an image post', () => {
+		const ids = ['0d3c5b7e-2f4a-4c1e-9a67-1b2c3d4e5f60', '5b1f6c2a-8d3e-4f70-a1b2-c3d4e5f60718']
+		const parsed = publishPostInputSchema.parse({ text: 'Deck slides.', attachment_file_ids: ids })
+		expect(parsed.attachment_file_ids).toEqual(ids)
 	})
 
-	it('publishPostInputSchema rejects mixed-type attachments', () => {
-		const parsed = publishPostInputSchema.safeParse({
-			text: 'Post with attachment.',
-			attachments: [image(), video()],
-		})
-		expect(parsed.success).toBe(false)
+	it('publishPostInputSchema drops raw attachments: the agent never sends file bytes', () => {
+		const parsed = publishPostInputSchema.parse({ text: 'Post.', attachments: [image()] })
+		expect(parsed).not.toHaveProperty('attachments')
+	})
+
+	it('publishPostInputSchema rejects a file id that is not a uuid and more than 9 ids', () => {
+		expect(
+			publishPostInputSchema.safeParse({ text: 'x', attachment_file_ids: ['not-an-id'] }).success,
+		).toBe(false)
+		const ten = Array.from({ length: 10 }, () => '0d3c5b7e-2f4a-4c1e-9a67-1b2c3d4e5f60')
+		expect(publishPostInputSchema.safeParse({ text: 'x', attachment_file_ids: ten }).success).toBe(
+			false,
+		)
 	})
 
 	it('sendMessageInputSchema accepts a text-only DM', () => {
@@ -180,17 +185,17 @@ describe('R11 tool input schemas', () => {
 			body: 'Hi.',
 			idempotency_key: 'abc:1',
 		})
-		expect(parsed.attachments).toBeUndefined()
+		expect(parsed).not.toHaveProperty('attachments')
 	})
 
-	it('sendMessageInputSchema passes send_mode through on an attachment', () => {
+	it('sendMessageInputSchema drops attachments: a file goes out only on an approved object', () => {
 		const parsed = sendMessageInputSchema.parse({
 			recipient_urn: 'ACo-abc',
 			body: 'File attached.',
 			idempotency_key: 'abc:2',
-			attachments: [{ ...document(), send_mode: 'file' }],
+			attachments: [document()],
 		})
-		expect(parsed.attachments?.[0]?.send_mode).toBe('file')
+		expect(parsed).not.toHaveProperty('attachments')
 	})
 
 	it('editPostInputSchema accepts a text-only edit', () => {

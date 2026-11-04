@@ -289,3 +289,180 @@ describe('Actor tool config redaction — POST /api/actors/:id/pause', () => {
 		expect(JSON.parse(text).tools.mcpServers.docs.headers).toEqual({ Authorization: MASKED_VALUE })
 	})
 })
+
+// A command-style server with the credential written into its args.
+const FAKE_ARG_TOKEN = 'fake-arg-token-not-a-secret'
+
+function buildStoredArgsTools() {
+	return {
+		mcpServers: {
+			meetings: {
+				type: 'stdio',
+				command: 'npx',
+				// The update schema fills in env, so seed it to compare the stored row as-is.
+				env: {},
+				args: [
+					'-y',
+					'fake-remote-proxy',
+					'https://mcp.example.test/mcp',
+					'--header',
+					`Authorization: Bearer ${FAKE_ARG_TOKEN}`,
+				],
+			},
+		},
+	}
+}
+
+function buildMaskedArgsTools() {
+	const tools = buildStoredArgsTools()
+	tools.mcpServers.meetings.args[4] = `Authorization: Bearer ${MASKED_VALUE}`
+	return tools
+}
+
+async function seedWorkspaceWithArgsAgent() {
+	const ws = await insertWorkspace(db, getTestActorId())
+	const target = await insertActor(db, {
+		type: 'agent',
+		name: 'Args Agent',
+		tools: buildStoredArgsTools(),
+	})
+	await addMember(ws.id, target.id, 'member')
+	return { ws, target }
+}
+
+describe('Actor tool config redaction — tokens in args', () => {
+	it('masks the token in args for a non-admin peer on get and keeps the rest readable', async () => {
+		const { ws, target } = await seedWorkspaceWithArgsAgent()
+		const peer = await insertActor(db, { type: 'agent', name: 'Peer Agent' })
+		await addMember(ws.id, peer.id, 'member')
+
+		const res = await createAppAs(peer.id).request(jsonGet(`/api/actors/${target.id}`))
+
+		const text = await res.text()
+		expect(res.status).toBe(200)
+		expect(text).not.toContain(FAKE_ARG_TOKEN)
+		expect(JSON.parse(text).tools).toEqual(buildMaskedArgsTools())
+	})
+
+	it('shows the real args to the actor itself and to an admin', async () => {
+		const { ws, target } = await seedWorkspaceWithArgsAgent()
+		const admin = await insertActor(db, { type: 'agent', name: 'Admin Agent' })
+		await addMember(ws.id, admin.id, 'admin')
+
+		for (const callerId of [target.id, admin.id]) {
+			const res = await createAppAs(callerId).request(jsonGet(`/api/actors/${target.id}`))
+			expect((await res.json()).tools).toEqual(buildStoredArgsTools())
+		}
+	})
+
+	it('keeps every stored arg when an unrelated update sends the masked config back', async () => {
+		const { target } = await seedWorkspaceWithArgsAgent()
+
+		const res = await createAppAs(getTestActorId()).request(
+			jsonRequest('PATCH', `/api/actors/${target.id}`, {
+				description: 'unrelated edit',
+				tools: buildMaskedArgsTools(),
+			}),
+		)
+
+		expect(res.status).toBe(200)
+		expect(await storedTools(target.id)).toEqual(buildStoredArgsTools())
+	})
+
+	it('rejects a masked arg sent with a changed url and saves nothing', async () => {
+		const { target } = await seedWorkspaceWithArgsAgent()
+		const tools = buildMaskedArgsTools()
+		tools.mcpServers.meetings.args[2] = 'https://attacker.example.test/mcp'
+
+		const res = await createAppAs(getTestActorId()).request(
+			jsonRequest('PATCH', `/api/actors/${target.id}`, { description: 'should not save', tools }),
+		)
+
+		expect(res.status).toBe(400)
+		expect(await res.text()).not.toContain(FAKE_ARG_TOKEN)
+		expect(await storedTools(target.id)).toEqual(buildStoredArgsTools())
+		const [row] = await db
+			.select({ description: actors.description })
+			.from(actors)
+			.where(eq(actors.id, target.id))
+		expect(row.description).not.toBe('should not save')
+	})
+})
+
+// The stored llm_config api key belongs to the stored provider.
+const FAKE_LLM_KEY = 'fake-llm-key-not-a-secret'
+const FAKE_NEW_LLM_KEY = 'fake-new-llm-key-not-a-secret'
+
+async function seedAgentWithLlmKey() {
+	const ws = await insertWorkspace(db, getTestActorId())
+	const target = await insertActor(db, {
+		type: 'agent',
+		name: 'Keyed Agent',
+		llmProvider: 'anthropic',
+		llmConfig: { model: 'fake-model', api_key: FAKE_LLM_KEY },
+	})
+	await addMember(ws.id, target.id, 'member')
+	return { ws, target }
+}
+
+async function storedLlm(id: string) {
+	const [row] = await db
+		.select({ llmProvider: actors.llmProvider, llmConfig: actors.llmConfig })
+		.from(actors)
+		.where(eq(actors.id, id))
+	return row
+}
+
+describe('Actor llm_config key restore — PATCH /api/actors/:id', () => {
+	it('keeps the stored key when the masked key comes back with the same provider', async () => {
+		const { target } = await seedAgentWithLlmKey()
+
+		const res = await createAppAs(getTestActorId()).request(
+			jsonRequest('PATCH', `/api/actors/${target.id}`, {
+				llm_provider: 'anthropic',
+				llm_config: { model: 'other-fake-model', api_key: MASKED_VALUE },
+			}),
+		)
+
+		expect(res.status).toBe(200)
+		expect(await storedLlm(target.id)).toEqual({
+			llmProvider: 'anthropic',
+			llmConfig: { model: 'other-fake-model', api_key: FAKE_LLM_KEY },
+		})
+	})
+
+	it('rejects the masked key when the provider changes and leaves the row unchanged', async () => {
+		const { target } = await seedAgentWithLlmKey()
+
+		const res = await createAppAs(getTestActorId()).request(
+			jsonRequest('PATCH', `/api/actors/${target.id}`, {
+				llm_provider: 'openai',
+				llm_config: { model: 'fake-model', api_key: MASKED_VALUE },
+			}),
+		)
+
+		expect(res.status).toBe(400)
+		expect(await res.text()).not.toContain(FAKE_LLM_KEY)
+		expect(await storedLlm(target.id)).toEqual({
+			llmProvider: 'anthropic',
+			llmConfig: { model: 'fake-model', api_key: FAKE_LLM_KEY },
+		})
+	})
+
+	it('saves a new key sent with a changed provider', async () => {
+		const { target } = await seedAgentWithLlmKey()
+
+		const res = await createAppAs(getTestActorId()).request(
+			jsonRequest('PATCH', `/api/actors/${target.id}`, {
+				llm_provider: 'openai',
+				llm_config: { model: 'fake-model', api_key: FAKE_NEW_LLM_KEY },
+			}),
+		)
+
+		expect(res.status).toBe(200)
+		expect(await storedLlm(target.id)).toEqual({
+			llmProvider: 'openai',
+			llmConfig: { model: 'fake-model', api_key: FAKE_NEW_LLM_KEY },
+		})
+	})
+})

@@ -11,8 +11,8 @@ public enum ObjectsSort: String, Sendable, CaseIterable, Identifiable, Codable {
 	public var title: String {
 		switch self {
 		case .needsYou: "Needs you"
-		case .updated: "Updated"
-		case .name: "Name"
+		case .updated: "Last updated"
+		case .name: "Title"
 		}
 	}
 
@@ -47,9 +47,17 @@ public enum ObjectsProperty: String, Sendable, CaseIterable, Identifiable, Codab
 	}
 }
 
+struct ServerOrder: Equatable, Sendable {
+	var field: String
+	var ascending: Bool
+}
+
 /// The person's Display choices for the Objects tab.
 public struct ObjectsDisplay: Equatable, Sendable, Codable {
 	public var sort: ObjectsSort = .needsYou
+	/// The Order chip: the opposite of the sort's natural direction (oldest first, Z to A). The
+	/// needs-you tiers have no opposite, so it is ignored there.
+	public var reversed = false
 	public var needsYouOnly = false
 	public var shown: Set<ObjectsProperty> = Set(ObjectsProperty.allCases)
 	public var layout: ObjectsLayout = .list
@@ -62,8 +70,10 @@ public struct ObjectsDisplay: Equatable, Sendable, Codable {
 	public init(
 		sort: ObjectsSort = .needsYou, needsYouOnly: Bool = false,
 		shown: Set<ObjectsProperty> = Set(ObjectsProperty.allCases), layout: ObjectsLayout = .list,
-		groupBy: ObjectsGrouping = .status, collapsed: [ObjectsGrouping: Set<String>] = [:]
+		groupBy: ObjectsGrouping = .status, collapsed: [ObjectsGrouping: Set<String>] = [:],
+		reversed: Bool = false
 	) {
+		self.reversed = reversed
 		self.sort = sort
 		self.needsYouOnly = needsYouOnly
 		self.shown = shown
@@ -76,11 +86,20 @@ public struct ObjectsDisplay: Equatable, Sendable, Codable {
 	public init(from decoder: any Decoder) throws {
 		let c = try decoder.container(keyedBy: CodingKeys.self)
 		sort = try c.decodeIfPresent(ObjectsSort.self, forKey: .sort) ?? .needsYou
+		reversed = try c.decodeIfPresent(Bool.self, forKey: .reversed) ?? false
 		needsYouOnly = try c.decodeIfPresent(Bool.self, forKey: .needsYouOnly) ?? false
 		shown = try c.decodeIfPresent(Set<ObjectsProperty>.self, forKey: .shown) ?? Set(ObjectsProperty.allCases)
 		layout = try c.decodeIfPresent(ObjectsLayout.self, forKey: .layout) ?? .list
 		groupBy = try c.decodeIfPresent(ObjectsGrouping.self, forKey: .groupBy) ?? .status
 		collapsed = try c.decodeIfPresent([ObjectsGrouping: Set<String>].self, forKey: .collapsed) ?? [:]
+	}
+
+	/// Whether the list runs against the sort's natural direction.
+	public var isReversed: Bool { reversed && sort != .needsYou }
+
+	/// The order a page is asked for: field and direction, with the Order chip applied.
+	var serverOrder: ServerOrder {
+		ServerOrder(field: sort.serverField, ascending: sort.serverAscending != isReversed)
 	}
 
 	public func shows(_ property: ObjectsProperty) -> Bool { shown.contains(property) }
@@ -99,7 +118,7 @@ public struct ObjectsDisplay: Equatable, Sendable, Codable {
 
 	/// Anything off its default, so the Display button can show it.
 	public var isCustomised: Bool {
-		sort != .needsYou || needsYouOnly || shown != Set(ObjectsProperty.allCases) || layout != .list
+		sort != .needsYou || isReversed || needsYouOnly || shown != Set(ObjectsProperty.allCases) || layout != .list
 			|| groupBy != .status
 	}
 }

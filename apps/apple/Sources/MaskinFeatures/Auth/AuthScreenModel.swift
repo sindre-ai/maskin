@@ -26,14 +26,19 @@ final class AuthScreenModel {
 		var title: String { self == .signIn ? "Sign in" : "Create account" }
 	}
 
-	enum Field: Hashable, Sendable { case name, email, password }
+	enum Field: Hashable, Sendable { case name, organization, role, email, password, confirmPassword }
 
 	private(set) var mode: Mode
 	let config: AuthConfig
 
 	var name = "" { didSet { if name != oldValue { fieldEdited(.name) } } }
+	var organization = "" { didSet { if organization != oldValue { fieldEdited(.organization) } } }
+	var role = "" { didSet { if role != oldValue { fieldEdited(.role) } } }
 	var email = "" { didSet { if email != oldValue { fieldEdited(.email) } } }
 	var password = "" { didSet { if password != oldValue { fieldEdited(.password) } } }
+	var confirmPassword = "" {
+		didSet { if confirmPassword != oldValue { fieldEdited(.confirmPassword) } }
+	}
 
 	/// Fields the user has left (or tried to submit past): live hints appear only for these, so
 	/// an empty form doesn't open covered in red.
@@ -46,10 +51,13 @@ final class AuthScreenModel {
 	}
 
 	var signIn: LoginForm { LoginForm(email: email, password: password) }
-	var signUp: SignUpForm { SignUpForm(name: name, email: email, password: password) }
+	var signUp: SignUpForm { SignUpForm(
+			name: name, organization: organization, role: role, email: email, password: password,
+			confirmPassword: confirmPassword) }
 
 	/// Fields in on-screen (and focus) order for the current mode.
-	var fields: [Field] { mode == .signIn ? [.email, .password] : [.name, .email, .password] }
+	var fields: [Field] { mode == .signIn
+			? [.email, .password] : [.name, .organization, .role, .email, .password, .confirmPassword] }
 
 	func next(after field: Field) -> Field? {
 		guard let i = fields.firstIndex(of: field), i + 1 < fields.count else { return nil }
@@ -74,8 +82,11 @@ final class AuthScreenModel {
 		guard mode == .createAccount, touched.contains(field) else { return nil }
 		switch field {
 		case .name: return signUp.nameProblem
+		case .organization: return signUp.organizationProblem
+		case .role: return signUp.roleProblem
 		case .email: return signUp.emailProblem
 		case .password: return signUp.passwordProblem
+		case .confirmPassword: return signUp.confirmPasswordProblem
 		}
 	}
 
@@ -116,7 +127,9 @@ final class AuthScreenModel {
 			await auth.signIn(email: signIn.trimmedEmail, password: password)
 		case .createAccount:
 			let form = signUp
-			await auth.signUp(name: form.trimmedName, email: form.trimmedEmail, password: password)
+			await auth.signUp(
+				name: form.trimmedName, organization: form.trimmedOrganization, role: form.trimmedRole,
+				email: form.trimmedEmail, password: password)
 			applyServerErrors(auth.lastSignUpError)
 		}
 		return true

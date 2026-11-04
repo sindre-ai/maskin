@@ -56,10 +56,22 @@ public enum PresentationParser {
 		Double(slides.count) * secondsPerCard
 	}
 
-	/// "4 cards · 0:40"
-	public static func summary(of slides: [PresentationSlide]) -> String {
+	/// How many cards the page holds before the `maxSlides` cap, so a trimmed deck can say so.
+	public static func totalCount(html: String) -> Int {
+		let cleaned = html
+			.replacingOccurrences(of: "(?is)<(script|style|head)\\b.*?</\\1\\s*>", with: " ", options: .regularExpression)
+		return split(cleaned).filter { !plain($0).isEmpty }.count
+	}
+
+	/// "4 cards · 0:40", or "8 of 18 cards · 1:20" when the page holds more than the cap keeps.
+	public static func summary(of slides: [PresentationSlide], total: Int? = nil) -> String {
 		let seconds = Int(duration(of: slides))
-		let cards = slides.count == 1 ? "1 card" : "\(slides.count) cards"
+		let cards: String
+		if let total, total > slides.count {
+			cards = "\(slides.count) of \(total) cards"
+		} else {
+			cards = slides.count == 1 ? "1 card" : "\(slides.count) cards"
+		}
 		return "\(cards) \u{00B7} \(seconds / 60):" + String(format: "%02d", seconds % 60)
 	}
 
@@ -89,9 +101,7 @@ public enum PresentationParser {
 	static func plain(_ html: String) -> String {
 		var text = html.replacingOccurrences(of: "(?i)</(p|div|li|tr|h[1-6]|section)>|<br\\s*/?>", with: "\n", options: .regularExpression)
 		text = text.replacingOccurrences(of: "<[^>]*>", with: "", options: .regularExpression)
-		for (entity, char) in [("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"), ("&nbsp;", " ")] {
-			text = text.replacingOccurrences(of: entity, with: char)
-		}
+		text = HTMLEntities.decode(text)
 		return text.components(separatedBy: "\n")
 			.map { $0.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
 			.filter { !$0.isEmpty }.joined(separator: "\n")

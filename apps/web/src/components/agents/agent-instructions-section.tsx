@@ -1,5 +1,6 @@
 import { AgentSectionHeading } from '@/components/agents/agent-section-heading'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -12,8 +13,10 @@ import {
 } from '@/components/ui/responsive-dialog'
 import { Textarea } from '@/components/ui/textarea'
 import { useUpdateActor } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import type { ActorResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
+import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
 import { AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
@@ -43,6 +46,7 @@ export function describeDraft(draft: string): string {
 export function AgentInstructionsSection({ agent }: { agent: ActorResponse }) {
 	const [open, setOpen] = useState(false)
 	const [expanded, setExpanded] = useState(false)
+	const canWrite = useCanWrite()
 	const prompt = agent.system_prompt?.trim() ?? ''
 
 	const paragraphs = useMemo(() => splitParagraphs(prompt), [prompt])
@@ -58,14 +62,17 @@ export function AgentInstructionsSection({ agent }: { agent: ActorResponse }) {
 				title="Instructions"
 				note="system prompt"
 				action={
-					<Button
-						variant="ghost"
-						size="sm"
-						className="h-7 shrink-0 px-2 text-xs font-medium"
-						onClick={() => setOpen(true)}
-					>
-						Edit
-					</Button>
+					<ViewerTooltip>
+						<Button
+							variant="ghost"
+							size="sm"
+							className="h-7 shrink-0 px-2 text-xs font-medium"
+							disabled={!canWrite}
+							onClick={() => setOpen(true)}
+						>
+							Edit
+						</Button>
+					</ViewerTooltip>
 				}
 			/>
 			<div className="rounded-xl border border-border bg-muted/40 px-4 py-4 text-[12.5px] leading-[1.65] text-foreground">
@@ -110,6 +117,7 @@ interface EditModalProps {
 export function AgentInstructionsEditModal({ agent, open, onOpenChange }: EditModalProps) {
 	const { workspaceId } = useWorkspace()
 	const updateActor = useUpdateActor(workspaceId)
+	const canWrite = useCanWrite()
 	const saved = agent.system_prompt ?? ''
 	const [draft, setDraft] = useState(saved)
 
@@ -120,6 +128,7 @@ export function AgentInstructionsEditModal({ agent, open, onOpenChange }: EditMo
 	const isDirty = draft !== saved
 
 	const handleSave = () => {
+		if (!canWrite) return
 		if (!isDirty) {
 			onOpenChange(false)
 			return
@@ -172,7 +181,12 @@ export function AgentInstructionsEditModal({ agent, open, onOpenChange }: EditMo
 						aria-label="System prompt"
 						value={draft}
 						onChange={(e) => setDraft(e.target.value)}
-						placeholder="Describe what this agent should always do — one idea per paragraph."
+						disabled={!canWrite}
+						placeholder={
+							canWrite
+								? 'Describe what this agent should always do — one idea per paragraph.'
+								: VIEWER_READ_ONLY_MESSAGE
+						}
 						className="min-h-[240px] text-[12.5px] leading-[1.7]"
 					/>
 				</div>
@@ -203,9 +217,15 @@ export function AgentInstructionsEditModal({ agent, open, onOpenChange }: EditMo
 						<Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
 							Cancel
 						</Button>
-						<Button size="sm" onClick={handleSave} disabled={!isDirty || updateActor.isPending}>
-							{updateActor.isPending ? 'Saving…' : 'Save'}
-						</Button>
+						<ViewerTooltip>
+							<Button
+								size="sm"
+								onClick={handleSave}
+								disabled={!canWrite || !isDirty || updateActor.isPending}
+							>
+								{updateActor.isPending ? 'Saving…' : 'Save'}
+							</Button>
+						</ViewerTooltip>
 					</div>
 				</ResponsiveDialogFooter>
 			</ResponsiveDialogContent>

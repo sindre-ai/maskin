@@ -7,6 +7,7 @@ import SwiftUI
 /// when a running flow needs the viewer a "{n} need you ›" pill appears under it and filters the
 /// list to those flows (handoff `7-Chat.md` §10). Flows carry no tags, so there is no filter bar.
 struct LoopsListView: View {
+	@Environment(\.horizontalSizeClass) private var sizeClass
 	let store: LoopsStore
 	@Binding var selection: String?
 	let search: String
@@ -15,7 +16,6 @@ struct LoopsListView: View {
 	var isGrid = false
 	var zoomNamespace: Namespace.ID?
 	var onNew: () -> Void = {}
-	var onBrowse: () -> Void = {}
 
 	var body: some View {
 		let loops = store.filtered(query: search)
@@ -31,8 +31,17 @@ struct LoopsListView: View {
 		LoopCard(
 			loop: loop, needsYou: store.needsYou(loop),
 			hasUpdate: store.installs[loop.id]?.hasUpdate == true,
-			update: store.latestUpdate(for: loop),
-			target: LoopOutcomes.cards(for: [loop]).first)
+			update: store.display.showsSummary ? store.latestUpdate(for: loop) : nil,
+			onReview: { selection = loop.id })
+	}
+
+	/// The lead sentence and the tag chips above the cards.
+	@ViewBuilder
+	private var header: some View {
+		if search.isEmpty {
+			if let lead = FlowsOverview.lead(store.loops) { FlowsLead(sentence: lead) }
+			FlowTagChips(tags: store.tags, selection: Binding(get: { store.tagFilter }, set: { store.tagFilter = $0 }))
+		}
 	}
 
 	/// 2-3 cards across (adaptive columns); a card pushes the flow's detail full width.
@@ -45,13 +54,11 @@ struct LoopsListView: View {
 				if let notice = store.notice {
 					FormError(notice).onTapGesture { store.notice = nil }
 				}
-				if search.isEmpty, store.needYouCount > 0 {
-					FlowsNeedsYouPill(count: store.needYouCount, isOn: store.needsYouOnly) {
-						withAnimation(MaskinMotion.quick) { store.needsYouOnly.toggle() }
-					}
-				}
+				header
 				LazyVGrid(
-					columns: [GridItem(.adaptive(minimum: 340, maximum: 520), spacing: MaskinSpace.s9, alignment: .top)],
+					columns: sizeClass == .regular
+						? Array(repeating: GridItem(.flexible(), spacing: MaskinSpace.s9, alignment: .top), count: 2)
+						: [GridItem(.adaptive(minimum: 340, maximum: 520), spacing: MaskinSpace.s9, alignment: .top)],
 					alignment: .leading, spacing: MaskinSpace.s9
 				) {
 					ForEach(loops) { loop in
@@ -79,23 +86,10 @@ struct LoopsListView: View {
 					.listRowBackground(Color.clear)
 					.onTapGesture { store.notice = nil }
 			}
-			if search.isEmpty, store.needYouCount > 0 {
-				FlowsNeedsYouPill(count: store.needYouCount, isOn: store.needsYouOnly) {
-					withAnimation(MaskinMotion.quick) { store.needsYouOnly.toggle() }
-				}
-				.listRowInsets(EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
+			header
+				.listRowInsets(EdgeInsets(top: 0, leading: MaskinSpace.s7, bottom: MaskinSpace.s4, trailing: MaskinSpace.s7))
 				.listRowSeparator(.hidden)
 				.listRowBackground(Color.clear)
-			}
-			if search.isEmpty, !store.needsYouOnly {
-				let cards = LoopOutcomes.cards(for: store.loops)
-				if !cards.isEmpty {
-					OutcomeScoreRow(cards: cards) { selection = $0 }
-						.listRowInsets(EdgeInsets())
-						.listRowSeparator(.hidden)
-						.listRowBackground(Color.clear)
-				}
-			}
 			ForEach(loops) { loop in
 				card(loop)
 				.tag(loop.id)
@@ -137,16 +131,16 @@ struct LoopsListView: View {
 					EmptyState(symbol: "checkmark", title: "Nothing needs you right now") {
 						Button("Show all flows") { store.needsYouOnly = false }.buttonStyle(.secondaryAction)
 					}
+				} else if store.runningOnly {
+					EmptyState(symbol: "pause.circle", title: "No flows are running") {
+						Button("Show all flows") { store.filter = .everything }.buttonStyle(.secondaryAction)
+					}
 				} else if search.isEmpty {
 					EmptyState(
 						symbol: "arrow.triangle.2.circlepath", title: "No flows running",
-						message: "A flow is a few agents working together. Describe one in chat, or pick one from the marketplace."
+						message: "Ask the Chief of Staff to set one up. Nothing runs until you approve it."
 					) {
-						VStack(spacing: MaskinSpace.s5) {
-							Button("Build a flow in chat", action: onNew).buttonStyle(.primaryAction)
-							Button("Browse marketplace", action: onBrowse).buttonStyle(.secondaryAction)
-						}
-						.frame(maxWidth: 320)
+						Button("Build a flow in chat", action: onNew).buttonStyle(.primaryAction)
 					}
 				} else {
 					ContentUnavailableView.search(text: search)
@@ -156,43 +150,37 @@ struct LoopsListView: View {
 	}
 }
 
-/// "{n} need you ›" on `sigTint`/`sigInk` with a `sig` dot; while filtering it inverts to ink
-/// and reads "Showing {n} that need you · Show all". 34pt tall, like the handoff.
-struct FlowsNeedsYouPill: View {
-	let count: Int
-	let isOn: Bool
-	let action: () -> Void
-
-	/// The handoff's pill height: the spacing scale stops at 32, so 32 + 2.
-	static let height: CGFloat = MaskinSpace.s14 + MaskinSpace.s1
-
-	static func label(count: Int, isOn: Bool) -> String {
-		if isOn { return "Showing \(count) that need you · Show all" }
-		return count == 1 ? "1 needs you ›" : "\(count) need you ›"
-	}
+/// "2 of 4 flows need you." in the ink, under the title.
+struct FlowsLead: View {
+	let sentence: String
 
 	var body: some View {
-		Button(action: action) {
-			HStack(spacing: MaskinSpace.s4) {
-				Circle()
-					.fill(isOn ? MaskinSurface.onInverse : MaskinColor.sig)
-					.frame(width: MaskinSpace.s3, height: MaskinSpace.s3)
-					.accessibilityHidden(true)
-				Text(Self.label(count: count, isOn: isOn))
-					.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .bold, relativeTo: .subheadline))
-					.lineLimit(1)
+		Text(sentence)
+			.font(MaskinTypeface.sans(MaskinFontSize.t20, weight: .semibold, relativeTo: .title3))
+			.foregroundStyle(MaskinColor.ink)
+			.frame(maxWidth: .infinity, alignment: .leading)
+			.fixedSize(horizontal: false, vertical: true)
+			.accessibilityAddTraits(.isHeader)
+	}
+}
+
+/// "All" and one chip per tag on any flow; hidden when no flow has a tag.
+struct FlowTagChips: View {
+	let tags: [String]
+	@Binding var selection: String?
+
+	var body: some View {
+		if !tags.isEmpty {
+			ScrollView(.horizontal, showsIndicators: false) {
+				HStack(spacing: MaskinSpace.s4) {
+					AgentFilterChip(label: "All", selected: selection == nil) { selection = nil }
+					ForEach(tags, id: \.self) { tag in
+						AgentFilterChip(label: tag, selected: selection?.lowercased() == tag.lowercased()) {
+							selection = tag
+						}
+					}
+				}
 			}
-			.foregroundStyle(isOn ? MaskinSurface.onInverse : MaskinColor.sigInk)
-			.padding(.leading, MaskinSpace.s6)
-			.padding(.trailing, MaskinSpace.s8)
-			.frame(minHeight: Self.height)
-			.background(isOn ? MaskinSurface.inverse : MaskinColor.sigTint, in: Capsule())
-			.contentShape(Capsule())
 		}
-		.buttonStyle(.maskinPressed)
-		.frame(minHeight: MaskinSpace.touchMin, alignment: .leading)
-		.accessibilityLabel(isOn ? "Showing \(count) flows that need you" : "\(count) flows need you")
-		.accessibilityHint(isOn ? "Shows all flows" : "Shows only the flows that need you")
-		.accessibilityAddTraits(isOn ? .isSelected : [])
 	}
 }

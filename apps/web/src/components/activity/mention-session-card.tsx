@@ -4,12 +4,15 @@ import {
 	isSessionIdleAwaitingInput,
 } from '@/components/agents/session-log-transcript'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { useActor } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useSessionLogs, useStopSession } from '@/hooks/use-sessions'
 import type { SessionLogResponse, SessionResponse } from '@/lib/api'
 import { type ChatEvent, parseChatLine } from '@/lib/chat-stream'
 import { cn } from '@/lib/cn'
 import { formatDurationBetween } from '@/lib/format-duration'
+import { formatToolName } from '@/lib/tool-name'
 import {
 	CheckCircle2,
 	ChevronDown,
@@ -21,7 +24,7 @@ import {
 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
-const TERMINAL_STATUSES = new Set(['completed', 'failed', 'timeout', 'paused'])
+const TERMINAL_STATUSES = new Set(['completed', 'failed', 'timeout', 'user_stopped', 'paused'])
 
 interface MentionSessionCardProps {
 	session: SessionResponse
@@ -72,6 +75,7 @@ function ActiveCard({
 	const { data: actor } = useActor(session.actorId)
 	const { data: logs } = useSessionLogs(session.id, workspaceId, true, { live: true })
 	const stopMutation = useStopSession(workspaceId)
+	const canWrite = useCanWrite()
 
 	const idle = useMemo(() => isSessionIdleAwaitingInput(logs ?? []), [logs])
 	const preview = useMemo(() => getLatestActivityPreview(logs ?? []), [logs])
@@ -94,23 +98,25 @@ function ActiveCard({
 					<span className="text-sm text-muted-foreground truncate min-w-0 flex-1">{preview}</span>
 				)}
 				<div className="ml-auto shrink-0 flex items-center gap-0.5">
-					<button
-						type="button"
-						onClick={(e) => {
-							e.stopPropagation()
-							stopMutation.mutate(session.id)
-						}}
-						disabled={stopMutation.isPending}
-						className="rounded p-1 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-50"
-						aria-label="Stop session"
-						title="Stop session"
-					>
-						{stopMutation.isPending ? (
-							<Loader2 size={12} className="animate-spin" />
-						) : (
-							<Square size={12} />
-						)}
-					</button>
+					<ViewerTooltip>
+						<button
+							type="button"
+							onClick={(e) => {
+								e.stopPropagation()
+								stopMutation.mutate(session.id)
+							}}
+							disabled={stopMutation.isPending || !canWrite}
+							className="rounded p-1 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-50"
+							aria-label="Stop session"
+							title="Stop session"
+						>
+							{stopMutation.isPending ? (
+								<Loader2 size={12} className="animate-spin" />
+							) : (
+								<Square size={12} />
+							)}
+						</button>
+					</ViewerTooltip>
 					{activities.length > 0 && (
 						<button
 							type="button"
@@ -206,7 +212,7 @@ function friendlyToolName(name: string): string {
 	if (lower.includes('web') || lower.includes('fetch') || lower.includes('search'))
 		return 'Searching'
 	if (lower.includes('todo')) return 'Updating plan'
-	return `Using ${name}`
+	return formatToolName(name)
 }
 
 function ActivityRow({
@@ -273,5 +279,7 @@ function getTerminalStatus(status: SessionResponse['status']): {
 	if (status === 'timeout') return { Icon: Clock, label: 'Timed out', iconClass: 'text-error' }
 	if (status === 'paused')
 		return { Icon: Clock, label: 'Paused', iconClass: 'text-muted-foreground' }
+	if (status === 'user_stopped')
+		return { Icon: XCircle, label: 'Stopped', iconClass: 'text-muted-foreground' }
 	return { Icon: CheckCircle2, label: 'Finished', iconClass: 'text-success' }
 }

@@ -9,7 +9,9 @@ vi.mock('@tanstack/react-router', async () => {
 	}
 })
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
 
@@ -19,6 +21,10 @@ vi.mock('@/components/shared/route-error', () => ({
 
 vi.mock('@/components/extensions/extensions-manager', () => ({
 	ExtensionsManager: () => <div>ExtensionsManager</div>,
+}))
+
+vi.mock('@/components/extensions/custom-extensions-section', () => ({
+	CustomExtensionsSection: () => <div>CustomExtensionsSection</div>,
 }))
 
 import { Route } from '@/routes/_authed/$workspaceId/settings/extensions'

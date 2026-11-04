@@ -1,13 +1,15 @@
 import Foundation
 
-/// How the Team list is laid out (the Display menu): one row per person or agent under UNREAD and
-/// PEOPLE & AGENTS, or every conversation on its own row, newest first, in day groups.
+/// How the Team list is laid out (the Display menu): Sections with the conversations in day groups,
+/// Sections with one row per person or agent under PEOPLE, or "One list": every conversation on its
+/// own row, newest first, in day groups.
 public enum ConversationGroupBy: String, CaseIterable, Sendable, Identifiable {
-	case person, recent
+	case time, person, recent
 
 	public var id: String { rawValue }
 	public var title: String {
 		switch self {
+		case .time: "By time period"
 		case .person: "By person"
 		case .recent: "One list"
 		}
@@ -67,6 +69,9 @@ public enum ChatListTime {
 	public static func label(
 		for date: Date, now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current
 	) -> String {
+		let elapsed = now.timeIntervalSince(date)
+		if elapsed >= 0, elapsed < 60 { return "Just now" }
+		if elapsed >= 60, elapsed < 3600 { return "\(Int(elapsed / 60))m" }
 		let days =
 			calendar.dateComponents(
 				[.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: now)

@@ -20,7 +20,7 @@ struct ActorPickerList: View {
 	var body: some View {
 		let visible = actors.filter {
 			!excluding.contains($0.id) && (includeSystem || !$0.isSystem)
-				&& (query.isEmpty || $0.participant.name.localizedCaseInsensitiveContains(query))
+				&& (query.isEmpty || ActorSearch.rank(name: $0.participant.name, query: query) != nil)
 		}
 		let rank = Dictionary(recent.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
 		let ordered = visible.sorted {

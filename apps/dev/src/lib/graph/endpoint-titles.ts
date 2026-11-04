@@ -1,5 +1,6 @@
 import type { Database, Transaction } from '@maskin/db'
 import { conversations, objects, sessions } from '@maskin/db/schema'
+import { sessionTitleFromPrompt } from '@maskin/shared'
 import { and, eq, inArray } from 'drizzle-orm'
 
 // Batch-resolvable graph endpoint kinds. `file` is deliberately excluded —
@@ -82,12 +83,5 @@ export async function resolveEndpointTitles(
  * through the DB.
  */
 export function sessionTitleFrom(actionPrompt: string | null, sessionId: string): string {
-	const MAX = 80
-	const raw = (actionPrompt ?? '')
-		.split('\n')
-		.find((line) => line.trim().length > 0)
-		?.trim()
-	if (!raw) return `Session ${sessionId.slice(0, 8)}`
-	if (raw.length <= MAX) return raw
-	return `${raw.slice(0, MAX - 1).trimEnd()}…`
+	return sessionTitleFromPrompt(actionPrompt, 80) ?? `Session ${sessionId.slice(0, 8)}`
 }

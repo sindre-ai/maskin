@@ -30,17 +30,47 @@ struct DeepLinkTests {
 		#expect(DeepLink(string: "https://maskin.io/\(ws)/objects/\(id)?tab=comments#x") == .object(workspaceId: ws, id: id))
 	}
 
+	@Test("a file link opens the file: the web's /files/<id> route and the maskin:// form")
+	func fileLinks() {
+		#expect(DeepLink(string: "https://maskin.io/\(ws)/files/\(id)") == .file(workspaceId: ws, id: id))
+		#expect(DeepLink(string: "maskin://\(ws)/files/\(id)") == .file(workspaceId: ws, id: id))
+		#expect(DeepLink(string: "https://maskin.io/\(ws)/files/\(id)?v=2#top") == .file(workspaceId: ws, id: id))
+		let link = DeepLink.file(workspaceId: ws, id: id)
+		#expect(DeepLink(url: link.url) == link)
+		#expect(DeepLink(url: link.universalURL()) == link)
+		#expect(DeepLink(string: "https://maskin.io/\(ws)/files/../x") == nil)
+		#expect(DeepLink(string: "https://evil.example/\(ws)/files/\(id)") == nil)
+	}
+
+	@Test("a chat link with ?thread opens that thread, and a bad value falls back to the chat")
+	func threadQuery() {
+		let chat = DeepLink.chat(workspaceId: ws, id: id)
+		#expect(DeepLink(string: "maskin://\(ws)/chats/\(id)?thread=42") == .thread(workspaceId: ws, id: id, rootId: 42))
+		#expect(
+			DeepLink(string: "https://maskin.io/\(ws)/chats/\(id)?thread=7&x=1")
+				== .thread(workspaceId: ws, id: id, rootId: 7))
+		for bad in ["", "0", "-3", "+3", "1.5", "abc", "1234567890", "4%202", "42&thread=43"] {
+			#expect(DeepLink(string: "maskin://\(ws)/chats/\(id)?thread=\(bad)") == chat, "thread=\(bad)")
+		}
+		// Only chats carry a thread.
+		#expect(DeepLink(string: "maskin://\(ws)/objects/\(id)?thread=42") == .object(workspaceId: ws, id: id))
+	}
+
 	@Test("round-trips through its canonical URLs")
 	func roundTrip() {
 		for link in [
 			DeepLink.object(workspaceId: ws, id: id), .chat(workspaceId: ws, id: id),
 			.notifications(workspaceId: ws), .agents(workspaceId: ws), .agent(workspaceId: ws, id: id),
+			.thread(workspaceId: ws, id: id, rootId: 42),
 		] {
 			#expect(DeepLink(url: link.url) == link)
 			#expect(DeepLink(url: link.universalURL()) == link)
 		}
 		#expect(DeepLink.chat(workspaceId: ws, id: id).url.absoluteString == "maskin://\(ws)/chats/\(id)")
 		#expect(DeepLink.object(workspaceId: ws, id: id).universalURL().absoluteString == "https://maskin.io/\(ws)/objects/\(id)")
+		#expect(
+			DeepLink.thread(workspaceId: ws, id: id, rootId: 42).url.absoluteString
+				== "maskin://\(ws)/chats/\(id)?thread=42")
 		#expect(DeepLink.agents(workspaceId: ws).url.absoluteString == "maskin://\(ws)/agents")
 		#expect(DeepLink.agent(workspaceId: ws, id: id).universalURL().absoluteString == "https://maskin.io/\(ws)/agents/\(id)")
 	}

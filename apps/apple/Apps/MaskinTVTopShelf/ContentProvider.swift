@@ -1,6 +1,7 @@
 import MaskinAPI
 import MaskinCore
 import TVServices
+import UIKit
 
 /// The Apple TV Top Shelf: the first two decisions waiting on you and today's briefing, shown
 /// above the app icon. Decisions come from the same snapshot the iOS widgets read, with the session
@@ -21,6 +22,7 @@ final class ContentProvider: TVTopShelfContentProvider {
 			let items = snapshot.decisions.prefix(2).map { decision -> TVTopShelfSectionedItem in
 				let item = TVTopShelfSectionedItem(identifier: decision.objectId)
 				item.title = decision.title
+				Self.setImage(on: item, id: decision.objectId, headline: decision.title, eyebrow: "NEEDS YOU")
 				let url = snapshot.url(for: decision)
 				item.displayAction = TVTopShelfAction(url: url)
 				item.playAction = TVTopShelfAction(url: url)
@@ -33,7 +35,8 @@ final class ContentProvider: TVTopShelfContentProvider {
 		if let briefing {
 			let item = TVTopShelfSectionedItem(identifier: "daily-briefing")
 			item.title = briefing.headline
-			// For you is where the app opens; the link only has to be one the app accepts and ignores.
+			Self.setImage(on: item, id: "daily-briefing", headline: briefing.headline, eyebrow: "TODAY'S BRIEFING")
+			// The app opens For you and plays the briefing for the workspace's home link.
 			let url = DeepLink.notifications(workspaceId: workspaceId ?? briefing.workspaceId).url
 			item.displayAction = TVTopShelfAction(url: url)
 			item.playAction = TVTopShelfAction(url: url)
@@ -75,6 +78,49 @@ final class ContentProvider: TVTopShelfContentProvider {
 			let first = await group.next() ?? nil
 			group.cancelAll()
 			return first
+		}
+	}
+
+	// MARK: Tile images
+
+	/// A sectioned item with no image renders as a blank tile, and the shelf cannot fetch anything
+	/// from the app bundle, so each tile gets a card drawn here and written to the extension's caches.
+	private static func setImage(on item: TVTopShelfSectionedItem, id: String, headline: String, eyebrow: String) {
+		item.imageShape = .hdtv
+		let safeID = id.filter { $0.isLetter || $0.isNumber || $0 == "-" }
+		let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+		for (scale, trait) in [(1.0, TVTopShelfItem.ImageTraits.screenScale1x), (2.0, .screenScale2x)] {
+			let url = caches.appendingPathComponent("shelf-\(safeID)-\(Int(scale))x.png")
+			guard let data = card(headline: headline, eyebrow: eyebrow, scale: scale).pngData() else { continue }
+			try? data.write(to: url, options: .atomic)
+			item.setImageURL(url, for: trait)
+		}
+	}
+
+	private static func card(headline: String, eyebrow: String, scale: CGFloat) -> UIImage {
+		let size = CGSize(width: 640, height: 360)
+		let format = UIGraphicsImageRendererFormat()
+		format.scale = scale
+		return UIGraphicsImageRenderer(size: size, format: format).image { context in
+			let bounds = CGRect(origin: .zero, size: size)
+			UIColor(red: 0.11, green: 0.11, blue: 0.12, alpha: 1).setFill()
+			context.fill(bounds)
+			let inset = bounds.insetBy(dx: 36, dy: 36)
+			let eyebrowAttributes: [NSAttributedString.Key: Any] = [
+				.font: UIFont.monospacedSystemFont(ofSize: 24, weight: .semibold),
+				.foregroundColor: UIColor(white: 0.62, alpha: 1),
+			]
+			eyebrow.draw(in: CGRect(x: inset.minX, y: inset.minY, width: inset.width, height: 32), withAttributes: eyebrowAttributes)
+			let paragraph = NSMutableParagraphStyle()
+			paragraph.lineBreakMode = .byTruncatingTail
+			let headlineAttributes: [NSAttributedString.Key: Any] = [
+				.font: UIFont.systemFont(ofSize: 40, weight: .bold),
+				.foregroundColor: UIColor.white,
+				.paragraphStyle: paragraph,
+			]
+			headline.draw(
+				with: CGRect(x: inset.minX, y: inset.minY + 52, width: inset.width, height: inset.height - 52),
+				options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: headlineAttributes, context: nil)
 		}
 	}
 }

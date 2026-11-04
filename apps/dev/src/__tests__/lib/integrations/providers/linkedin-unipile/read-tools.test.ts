@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const { credentialMock } = vi.hoisted(() => ({ credentialMock: vi.fn() }))
 vi.mock('../../../../../lib/integrations/lookup', () => ({
 	actorScopedProviders: new Set(['linkedin-unipile']),
-	getIntegrationCredential: credentialMock,
+	findIntegrationRow: credentialMock,
+	getCredential: vi.fn(async () => ({ value: JSON.stringify({ account_id: 'acc_1' }) })),
 }))
 vi.mock('../../../../../lib/workspace-auth', () => ({ isWorkspaceMember: async () => true }))
 vi.mock('../../../../../lib/crypto', () => ({
@@ -230,6 +231,56 @@ describe('searchLinkedInPeople', () => {
 		expect(buildPeopleSearchUrl('product manager oslo')).toBe(
 			'https://www.linkedin.com/search/results/people/?keywords=product%20manager%20oslo',
 		)
+	})
+
+	it('returns the search_url it ran, built from keywords', async () => {
+		stubClient(LIVE_SEARCH)
+		const res = await searchLinkedInPeople(ctx, { keywords: 'Lyse driftsleder' })
+		expect(res.search_url).toBe(buildPeopleSearchUrl('Lyse driftsleder'))
+		expect(res.is_partial).toBeUndefined()
+		expect(res.dropped_rows).toBeUndefined()
+		expect(res.empty_reason).toBeUndefined()
+	})
+
+	it('returns a caller-supplied search_url as given', async () => {
+		stubClient(LIVE_SEARCH)
+		const url = 'https://www.linkedin.com/search/results/people/?keywords=cto&geoUrn=123'
+		const res = await searchLinkedInPeople(ctx, { keywords: 'ignored', search_url: url })
+		expect(res.search_url).toBe(url)
+	})
+
+	it('flags dropped rows when some rows cannot be parsed', async () => {
+		stubClient({ data: [...LIVE_SEARCH.data, { object: 'PeopleSearchResult' }] })
+		const res = await searchLinkedInPeople(ctx, { keywords: 'engineer' })
+		expect(res.people).toHaveLength(1)
+		expect(res.dropped_rows).toBe(1)
+		expect(res.is_partial).toBe(true)
+		expect(res.empty_reason).toBeUndefined()
+	})
+
+	it('flags is_partial, not an upstream zero, when every row is unparseable', async () => {
+		stubClient({ data: [{ object: 'PeopleSearchResult' }, { object: 'PeopleSearchResult' }] })
+		const res = await searchLinkedInPeople(ctx, { keywords: 'engineer' })
+		expect(res.people).toEqual([])
+		expect(res.dropped_rows).toBe(2)
+		expect(res.is_partial).toBe(true)
+		expect(res.empty_reason).toBeUndefined()
+	})
+
+	it('says an empty page is an upstream zero when nothing was dropped', async () => {
+		stubClient({ data: [] })
+		const res = await searchLinkedInPeople(ctx, { keywords: 'engineer' })
+		expect(res.people).toEqual([])
+		expect(res.empty_reason).toBe('upstream_returned_no_rows')
+		expect(res.is_partial).toBeUndefined()
+		expect(res.dropped_rows).toBeUndefined()
+		expect(res.search_url).toBe(buildPeopleSearchUrl('engineer'))
+	})
+
+	it('does not add search fields to list_connections', async () => {
+		stubClient(LIVE_RELATIONS)
+		const res = await listLinkedInConnections(ctx, { limit: 10 })
+		expect(Object.keys(res).sort()).toEqual(['next_cursor', 'people'])
 	})
 
 	it('requires keywords or search_url', async () => {

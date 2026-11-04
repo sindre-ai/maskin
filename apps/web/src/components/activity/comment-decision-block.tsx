@@ -1,4 +1,4 @@
-import { DecisionOptionCard, DecisionOptionGrid } from '@/components/shared/decision-option-card'
+import { DecisionOptions } from '@/components/shared/decision-option-card'
 import { useCreateComment } from '@/hooks/use-events'
 import { trackForyouCardAction } from '@/lib/analytics'
 import type { EventResponse } from '@/lib/api'
@@ -39,18 +39,12 @@ export function CommentDecisionBlock({
 
 	const options = useMemo(() => {
 		if (!decision) return []
-		return (
-			decision.options
-				.map((option) => ({
-					id: actionIdFromLabel(option.label),
-					label: option.label,
-					consequences: option.consequences,
-					recommended: option.recommended,
-				}))
-				// The recommended option sits last, where the layout puts the filled
-				// bar. Matches the feed, so the same ask has the same shape on both.
-				.sort((a, b) => (a.recommended ? 1 : 0) - (b.recommended ? 1 : 0))
-		)
+		return decision.options.map((option) => ({
+			id: actionIdFromLabel(option.label),
+			label: option.label,
+			consequences: option.consequences,
+			recommended: option.recommended,
+		}))
 	}, [decision])
 
 	// An answer is a reply whose text is one of the option labels. Comparing on
@@ -102,17 +96,7 @@ export function CommentDecisionBlock({
 			<p className="text-foreground text-pretty text-[13px] font-semibold leading-[1.5]">
 				{decision.ask}
 			</p>
-			<DecisionOptionGrid>
-				{options.map((option) => (
-					<DecisionOptionCard
-						key={option.id}
-						option={option}
-						pending={pendingId === option.id}
-						disabled={pendingId !== null}
-						onChoose={() => choose(option)}
-					/>
-				))}
-			</DecisionOptionGrid>
+			<DecisionOptions options={options} pendingId={pendingId} onChoose={choose} />
 		</div>
 	)
 }

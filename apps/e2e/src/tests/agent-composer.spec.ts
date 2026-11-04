@@ -25,6 +25,7 @@ test.describe('Agent detail — bottom composer', () => {
 			let createdPayload: {
 				title: string
 				participant_actor_ids: string[]
+				direct?: boolean
 				initial_message: string
 			} | null = null
 			const conversationId = 'conv-new'
@@ -36,6 +37,7 @@ test.describe('Agent detail — bottom composer', () => {
 				const body = route.request().postDataJSON() as {
 					title: string
 					participant_actor_ids: string[]
+					direct?: boolean
 					initial_message: string
 				}
 				createdPayload = body
@@ -126,7 +128,7 @@ test.describe('Agent detail — bottom composer', () => {
 			for (const scheme of ['light', 'dark'] as const) {
 				await page.emulateMedia({ colorScheme: scheme })
 				await expect(input).toBeVisible()
-				await expect(composer.getByText('Starts a new chat')).toBeVisible()
+				await expect(composer.getByText('Opens your chat with Cass Composer')).toBeVisible()
 			}
 			await page.emulateMedia({ colorScheme: 'light' })
 
@@ -138,11 +140,14 @@ test.describe('Agent detail — bottom composer', () => {
 			const payload = createdPayload as {
 				title: string
 				participant_actor_ids: string[]
+				direct?: boolean
 				initial_message: string
 			}
 			expect(payload.initial_message).toBe('Sweep the backlog before standup')
 			expect(payload.participant_actor_ids).toEqual([agent.id])
-			// The composer navigates to the newly-created chat so the user
+			// The send opens the person's one direct message with the agent.
+			expect(payload.direct).toBe(true)
+			// The composer navigates to the returned chat so the user
 			// lands on the reply thread rather than the agent page.
 			await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/chats/${conversationId}`))
 		})
