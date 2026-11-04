@@ -132,15 +132,13 @@ struct ForYouFeedView: View {
 	/// Width of the feed, to pick the briefing card size with or without the sidebar open.
 	@State private var feedWidth: CGFloat = 0
 	@State private var expansion = CardExpansion()
-	/// The card whose Later presets are showing (the Later pill, or a swipe left).
-	@State private var laterOpenId: String?
+	/// "Take every suggested option?" is asking for confirmation.
+	@State private var confirmTakeSuggested = false
 	/// Frozen "now" for snapshots; live screens pass nil.
 	var fixedNow: Date?
 
 	@Environment(\.scenePhase) private var scenePhase
 	@State private var openedAt = Date()
-	/// "Take every suggested option?" is asking for confirmation.
-	@State private var confirmTakeSuggested = false
 
 	private let readableWidth: CGFloat = 680
 	/// Compact width reads as a 680 pt column; the wide feed uses the full width (4-iPad.md).
@@ -196,6 +194,9 @@ struct ForYouFeedView: View {
 			}
 			.animation(store.isFetching ? nil : MaskinMotion.standard, value: layoutKey)
 			.onChange(of: cardIds) { _, ids in expansion.prune(keeping: Set(ids)) }
+			.onChange(of: store.options.opening, initial: true) { _, opening in
+				expansion.setStartsOpen(opening == .expanded)
+			}
 			.onChange(of: scenePhase) { _, phase in
 				switch phase {
 				case .active:
@@ -514,7 +515,7 @@ struct ForYouFeedView: View {
 		let rows = handled.compactMap { entry in
 			HandledSummary.make(for: entry, sender: store.senderName(of: entry.card)).map { (entry, $0) }
 		}
-		if store.options.showsHandled, !rows.isEmpty {
+		if !rows.isEmpty {
 			SectionHeader(title: "HANDLED TODAY", count: rows.count, mono: true)
 				.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 			SummaryList {
@@ -571,18 +572,6 @@ struct ForYouFeedView: View {
 					}
 				}
 			}
-			.swipeActions(edge: .trailing, allowsFullSwipe: true) {
-				// Swipe left opens Later (the mockup's left swipe).
-				if entry.record == nil {
-					Button {
-						withAnimation(MaskinMotion.standard) { laterOpenId = entry.id }
-						MaskinHaptics.play(.light)
-					} label: {
-						Label("Later", systemImage: "clock")
-					}
-					.tint(MaskinSurface.inverse)
-				}
-			}
 	}
 
 	private func liveActions(_ entry: FeedEntry) -> DecisionCardView.Actions {
@@ -610,18 +599,10 @@ struct ForYouFeedView: View {
 		let agent = store.agent(of: entry.card)
 		if wide {
 			// The Chief of Staff thread opens in a form sheet; the card stays compact behind it.
-			actions.expand = { Task { await chief?.openThread(card: entry.card) } }
+			actions.expand = { Task { await chief?.openThread(card: entry.card, agent: agent) } }
 		} else {
 			actions.expand = { withAnimation(MaskinMotion.standard) { expansion.expand(id) } }
 			actions.collapse = { withAnimation(MaskinMotion.standard) { expansion.collapse(id) } }
-		}
-		actions.toggleLater = {
-			withAnimation(MaskinMotion.standard) { laterOpenId = laterOpenId == id ? nil : id }
-		}
-		let deferTo = actions.deferTo
-		actions.deferTo = { preset in
-			laterOpenId = nil
-			deferTo?(preset)
 		}
 		if let agent, let openAgent { actions.openAgent = { openAgent(agent.id) } }
 		let view = DecisionCardView(
@@ -629,7 +610,7 @@ struct ForYouFeedView: View {
 			expanded: !wide && expansion.isManuallyExpanded(id), style: wide ? .card : .row,
 			now: fixedNow ?? Date(),
 			actions: actions, chief: chief, threadInDetail: wide, agent: agent,
-			laterOpen: laterOpenId == id, acceptsReturnKey: wide,
+			acceptsReturnKey: wide,
 			typeLabel: store.typeLabel(for:), draftIsElsewhere: { entry.bucket == .needs && entry.record == nil && store.isInStrip($0) },
 			unsentEditNote: entry.bucket == .needs && entry.record == nil ? store.unsentEditNote(for: entry.card) : nil)
 		// Cards lift under a pointer; flat rows have nothing to lift.
@@ -642,7 +623,6 @@ struct ForYouFeedView: View {
 		var actions = liveActions(entry)
 		actions.expand = nil
 		actions.collapse = nil
-		actions.toggleLater = nil
 		return AnyView(
 			DecisionCardView(
 				entry: entry, sender: store.senderName(of: entry.card), expanded: false,
@@ -721,8 +701,8 @@ private struct ReadableRow: ViewModifier {
 /// "You're caught up": the feed is genuinely empty.
 struct CaughtUp: View {
 	var filtered = false
-	/// Under "You're caught up": who is carrying on because of the reader's calls.
-	var detail = "Nothing needs you right now. The flows keep running \u{2014} you\u{2019}ll hear when one does."
+	/// Under "You're caught up": who is carrying on because of the reader's calls. Nil says nothing.
+	var detail: String?
 
 	var body: some View {
 		VStack(spacing: MaskinSpace.s7) {
@@ -735,8 +715,10 @@ struct CaughtUp: View {
 				.accessibilityHidden(true)
 			Text(filtered ? "Nothing of this kind" : "You're caught up")
 				.maskinText(.title).foregroundStyle(MaskinColor.ink)
-			Text(filtered ? "Nothing in your feed matches this filter." : detail)
-			.maskinText(.body).foregroundStyle(MaskinColor.ink4).multilineTextAlignment(.center)
+			if !filtered, let detail {
+				Text(detail)
+					.maskinText(.body).foregroundStyle(MaskinColor.ink4).multilineTextAlignment(.center)
+			}
 		}
 		.frame(maxWidth: .infinity)
 		.padding(MaskinSpace.s12 + MaskinSpace.s4)

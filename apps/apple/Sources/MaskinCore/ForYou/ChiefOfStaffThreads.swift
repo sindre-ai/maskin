@@ -101,6 +101,8 @@ public final class ChiefOfStaffDesk {
 		public var conversationID: String
 		public var card: ForYouCard
 		public var pending: Pending?
+		/// Who the thread is with: the sheet names exactly this recipient.
+		public var recipient: AgentThreads.Recipient = .chiefOfStaff
 		public var id: String { conversationID }
 	}
 
@@ -165,59 +167,83 @@ public final class ChiefOfStaffDesk {
 			.prefix(5).map { $0 }
 	}
 
-	/// Sends what is in the card's composer to the Chief of Staff and opens the pop-up. Nothing
-	/// here touches the card's decision: a message is never a choice.
-	public func submit(card: ForYouCard) async {
+	/// Sends what is in the card's composer to `agent` (the one behind the card; the Chief of Staff
+	/// when nil) and opens the pop-up. Nothing here touches the card's decision: a message is never
+	/// a choice.
+	public func submit(card: ForYouCard, agent: ForYouActor? = nil) async {
 		let model = composer(for: card)
 		guard let (text, metadata) = model.take() else { return }
-		await open(card: card, text: text, metadata: metadata) {
+		await open(card: card, agent: agent, text: text, metadata: metadata) {
 			// Give the words back rather than lose them.
 			model.text = text
 		}
 	}
 
 	/// A quick-question chip: the question goes as the reader's message.
-	public func ask(_ question: String, card: ForYouCard) async {
-		await open(card: card, text: question, metadata: nil) {}
+	public func ask(_ question: String, card: ForYouCard, agent: ForYouActor? = nil) async {
+		await open(card: card, agent: agent, text: question, metadata: nil) {}
 	}
 
 	/// Opens the card's thread with nothing to send, for the iPad detail column ("Ask" there goes
 	/// straight to the conversation instead of expanding the card).
-	public func openThread(card: ForYouCard) async {
+	public func openThread(card: ForYouCard, agent: ForYouActor? = nil) async {
 		guard !isOpening else { return }
 		isOpening = true
 		defer { isOpening = false }
 		do {
-			let outcome = try await ChiefOfStaffThreads.open(
-				about: card, alsoInvite: [], conversations: conversations)
-			presented = Presented(conversationID: outcome.conversation.id, card: card, pending: nil)
-		} catch is ChiefOfStaffThreads.NoChiefOfStaff {
-			notice = "This workspace has no Chief of Staff to message."
+			let (outcome, recipient) = try await resolveThread(card: card, agent: agent, alsoInvite: [])
+			presented = Presented(
+				conversationID: outcome.conversation.id, card: card, pending: nil, recipient: recipient)
 		} catch {
-			notice = "Couldn't open the conversation. \(ChatStore.message(error))"
+			notice = Self.notice(for: error, agent: agent)
 		}
 	}
 
+	/// The thread with the card's agent, or with the Chief of Staff when the card has none.
+	private func resolveThread(
+		card: ForYouCard, agent: ForYouActor?, alsoInvite: [String]
+	) async throws -> (ChiefOfStaffThreads.Outcome, AgentThreads.Recipient) {
+		if let agent {
+			let opened = try await AgentThreads.open(
+				withAgent: agent.id, titled: ChiefOfStaffThreads.title(for: card), alsoInvite: alsoInvite,
+				conversations: conversations)
+			return (opened.outcome, opened.recipient)
+		}
+		let outcome = try await ChiefOfStaffThreads.open(
+			about: card, alsoInvite: alsoInvite, conversations: conversations)
+		return (outcome, .chiefOfStaff)
+	}
+
+	private static func notice(for error: any Error, agent: ForYouActor?) -> String {
+		if error is ChiefOfStaffThreads.NoChiefOfStaff {
+			return "This workspace has no Chief of Staff to message."
+		}
+		if error is AgentThreads.AgentNotFound {
+			return "\(agent?.name ?? "That agent") is no longer in this workspace."
+		}
+		return "Couldn't open the conversation. \(ChatStore.message(error))"
+	}
+
 	private func open(
-		card: ForYouCard, text: String, metadata: ChatSendMetadata?, restore: () -> Void
+		card: ForYouCard, agent: ForYouActor?, text: String, metadata: ChatSendMetadata?,
+		restore: () -> Void
 	) async {
 		guard !isOpening else { restore(); return }
 		isOpening = true
 		defer { isOpening = false }
 		do {
-			let outcome = try await ChiefOfStaffThreads.open(
-				about: card, alsoInvite: metadata?.mentions ?? [], conversations: conversations)
+			let (outcome, recipient) = try await resolveThread(
+				card: card, agent: agent, alsoInvite: metadata?.mentions ?? [])
 			let body: String
 			if case .created = outcome { body = ChiefOfStaffThreads.firstMessage(text, about: card) } else { body = text }
+			// A specific agent is tagged, so it is woken whatever the chat's size becomes.
+			let sent = recipient.id.map { AgentThreads.tagging($0, in: metadata) } ?? metadata
 			presented = Presented(
 				conversationID: outcome.conversation.id, card: card,
-				pending: Pending(text: body, metadata: metadata))
-		} catch is ChiefOfStaffThreads.NoChiefOfStaff {
-			restore()
-			notice = "This workspace has no Chief of Staff to message."
+				pending: Pending(text: body, metadata: sent), recipient: recipient)
 		} catch {
 			restore()
-			notice = "Couldn't open the conversation. \(ChatStore.message(error))"
+			notice = Self.notice(for: error, agent: agent)
 		}
 	}
 

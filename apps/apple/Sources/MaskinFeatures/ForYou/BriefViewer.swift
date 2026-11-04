@@ -71,9 +71,6 @@ struct BriefViewer: View {
 							runtime?.openChat(conversationID)
 						}
 						.frame(maxHeight: proxy.size.height * 0.4)
-					} else {
-						actions(card)
-						BriefFollowUpChips { question in ask(question, card) }
 					}
 					MaskinComposer(
 						model: followUp.composer,
@@ -92,7 +89,9 @@ struct BriefViewer: View {
 		.offset(y: dragY)
 		.background { arrowKeys }
 		.simultaneousGesture(swipeDown)
-		.preferredColorScheme(.dark)
+		// The viewer draws on a fixed dark backdrop. Scope the dark styling to this view so the rest of
+		// the app (and the system appearance) stays as the person set it.
+		.environment(\.colorScheme, .dark)
 		.accessibilityElement(children: .contain)
 		.accessibilityAction(.escape, close)
 		.task(id: autoAdvances) { await runClock() }
@@ -221,6 +220,20 @@ struct BriefViewer: View {
 						.lineLimit(1)
 				}
 				Spacer(minLength: 0)
+				if case .page(let output) = card.content {
+					Button { fullPage = output } label: {
+						Image(systemName: "arrow.up.forward.square")
+							.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold))
+							.foregroundStyle(BriefViewerPalette.ink)
+							.frame(width: MaskinSpace.s14 + MaskinSpace.s3, height: MaskinSpace.s14 + MaskinSpace.s3)
+							.background(BriefViewerPalette.fill, in: Circle())
+							.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
+							.contentShape(Circle())
+					}
+					.buttonStyle(.maskinPressed)
+					.accessibilityLabel("Open page")
+					.accessibilityHint("Opens the page so you can scroll and use it")
+				}
 				Button(action: close) {
 					Image(systemName: "xmark")
 						.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold))
@@ -275,48 +288,6 @@ struct BriefViewer: View {
 		}
 	}
 
-	private func actions(_ card: StoryCard) -> some View {
-		actionRow(card)
-	}
-
-	private func actionRow(_ card: StoryCard) -> some View {
-		HStack(spacing: MaskinSpace.s5) {
-			Button { tellMeMore(card) } label: {
-				HStack {
-					Text("Tell me more")
-						.font(MaskinTypeface.sans(MaskinFontSize.t17, weight: MaskinFontWeight.w650))
-					Spacer(minLength: 0)
-					Image(systemName: "chevron.right")
-						.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold))
-						.foregroundStyle(BriefViewerPalette.inkFaint)
-						.accessibilityHidden(true)
-				}
-				.foregroundStyle(BriefViewerPalette.ink)
-				.padding(.horizontal, MaskinSpace.s10)
-				.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin + MaskinSpace.s9)
-				.background(BriefViewerPalette.fillSoft, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-				.overlay(
-					RoundedRectangle(cornerRadius: 26, style: .continuous)
-						.strokeBorder(BriefViewerPalette.stroke, lineWidth: 1))
-				.contentShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
-			}
-			.buttonStyle(.maskinPressed(.shrink))
-			if case .page(let output) = card.content {
-				Button { fullPage = output } label: {
-					Image(systemName: "arrow.up.forward.square")
-						.font(MaskinTypeface.sans(MaskinFontSize.t17, weight: .semibold))
-						.foregroundStyle(BriefViewerPalette.ink)
-						.frame(width: MaskinSpace.touchMin + MaskinSpace.s9, height: MaskinSpace.touchMin + MaskinSpace.s9)
-						.background(BriefViewerPalette.fillSoft, in: Circle())
-						.overlay(Circle().strokeBorder(BriefViewerPalette.stroke, lineWidth: 1))
-				}
-				.buttonStyle(.maskinPressed(.shrink))
-				.accessibilityLabel("Open page")
-				.accessibilityHint("Opens the page so you can scroll and use it")
-			}
-		}
-	}
-
 	/// Sends a question about the slide to the Chief of Staff's chat and opens the exchange panel.
 	private func ask(_ question: String, _ card: StoryCard) {
 		composerFocused = false
@@ -325,12 +296,6 @@ struct BriefViewer: View {
 				ChiefOfStaffSheet.makeChat(environment: environment, desk: desk, conversationID: id)
 			}
 		}
-	}
-
-	private func tellMeMore(_ card: StoryCard) {
-		let text = BriefSequence.tellMeMore(about: card)
-		close()
-		runtime?.buildInChat(text)
 	}
 }
 
