@@ -76,7 +76,7 @@ export function SendPermissionsSection({ workspaceId }: { workspaceId: string })
 								<TableRow>
 									<TableHead className="min-w-40">Agent</TableHead>
 									{view.kinds.map((kind) => (
-										<TableHead key={kind} className="min-w-44">
+										<TableHead key={kind} className="min-w-52">
 											{SEND_PERMISSION_KIND_LABELS[kind]}
 										</TableHead>
 									))}
