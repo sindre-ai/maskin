@@ -3,30 +3,20 @@ import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 /**
- * The agent-built custom view on the loop page, behind the loop-custom-view flag.
+ * The agent-built custom view on the loop page.
  *
- * The flag is switched with the client's test-only localStorage override so both sides of
- * the boundary run without a second actor. Dark mode goes through the app's own
- * maskin-theme key: the app defaults to light and ignores prefers-color-scheme unless the
- * stored theme is "system".
+ * Dark mode goes through the app's own maskin-theme key: the app defaults to light and
+ * ignores prefers-color-scheme unless the stored theme is "system".
  *
  * The view declares one loop-scoped source and writes the count into the page, so a
  * number on screen proves the whole path: pinned file -> sandboxed frame -> bridge ->
  * GET /api/data/query against the real database. The aggregation SQL itself is covered
  * against real Postgres in apps/dev's data-query integration test.
  */
-const FLAG_KEY = 'ff:loop-custom-view'
 const FRAME = 'iframe[title="Custom loop view"]'
 
 // The view runs in a frame inside the frame the page renders (the isolation frame).
 const viewFrame = (page: Page) => page.frameLocator(FRAME).frameLocator('iframe')
-
-async function setFlag(page: Page, value: 'on' | 'off') {
-	await page.addInitScript(
-		([key, v]) => localStorage.setItem(key as string, v as string),
-		[FLAG_KEY, value],
-	)
-}
 
 async function setTheme(page: Page, theme: 'light' | 'dark') {
 	await page.addInitScript((t) => localStorage.setItem('maskin-theme', t), theme)
@@ -90,12 +80,11 @@ async function seedLoopWithView(account: {
 
 test.describe('Loop page — custom view', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
-		test(`flag on: the pinned view renders live numbers and the toggle works @ ${vp.label}`, async ({
+		test(`the pinned view renders live numbers and the toggle works @ ${vp.label}`, async ({
 			page,
 			account,
 		}) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
-			await setFlag(page, 'on')
 			const { loop } = await seedLoopWithView(account)
 
 			await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
@@ -134,7 +123,6 @@ test.describe('Loop page — custom view', () => {
 		// The isolation frame's frame-src 'none' blocks a frame navigating itself. Verified in
 		// Chrome only, which is what this suite runs. Resource hints (rel=prerender) are a known
 		// gap and are deliberately not asserted here.
-		await setFlag(page, 'on')
 		const requested: string[] = []
 		await page.route('https://exfil.invalid/**', (route) => {
 			requested.push(route.request().url())
@@ -159,8 +147,7 @@ test.describe('Loop page — custom view', () => {
 	})
 
 	for (const theme of ['light', 'dark'] as const) {
-		test(`flag on: the frame is visible in ${theme} mode`, async ({ page, account }) => {
-			await setFlag(page, 'on')
+		test(`the frame is visible in ${theme} mode`, async ({ page, account }) => {
 			await setTheme(page, theme)
 			const { loop } = await seedLoopWithView(account)
 
@@ -173,24 +160,7 @@ test.describe('Loop page — custom view', () => {
 		})
 	}
 
-	test('flag off: a loop with a pinned view is the default page, with no toggle and no frame', async ({
-		page,
-		account,
-	}) => {
-		await setFlag(page, 'off')
-		const { loop } = await seedLoopWithView(account)
-
-		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
-
-		await expect(page.getByRole('heading', { name: 'Feedback loop' })).toBeVisible({
-			timeout: 15_000,
-		})
-		await expect(page.getByLabel('Loop view', { exact: true })).toHaveCount(0)
-		await expect(page.locator(FRAME)).toHaveCount(0)
-	})
-
-	test('flag on with no view pinned: no toggle and no frame', async ({ page, account }) => {
-		await setFlag(page, 'on')
+	test('no view pinned: no toggle and no frame', async ({ page, account }) => {
 		const loop = await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Plain loop',
@@ -206,11 +176,10 @@ test.describe('Loop page — custom view', () => {
 		await expect(page.locator(FRAME)).toHaveCount(0)
 	})
 
-	test('flag on, view file is not HTML: falls back to the default page with a note', async ({
+	test('view file is not HTML: falls back to the default page with a note', async ({
 		page,
 		account,
 	}) => {
-		await setFlag(page, 'on')
 		const loop = await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Broken view loop',
