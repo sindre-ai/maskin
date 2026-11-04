@@ -11,11 +11,11 @@ import XCTest
 /// - Assert on what the person sees or does (a button by its label, the screen that opens), not on
 ///   colours or layout. Looks are the snapshot tests' job.
 ///
-/// Runs against the offline demo workspace, no real backend:
+/// What these tests prove, and what they do not: a button exists, and the call or thread screen opens, on
+/// DEMO data. They do not prove that a call connects (no microphone, no voice backend) or that data the
+/// demo does not contain renders. Buttons are found by accessibility label, so the label is the contract.
 ///
-///   PORT=3010 node scripts/demo-server/server.mjs
-///   xcodebuild test -project Maskin.xcodeproj -scheme Maskin -destination 'platform=iOS Simulator,name=iPhone 17' \
-///     MASKIN_API_BASE_URL=http://localhost:3010 -only-testing:MaskinUITests/MustKeepTests
+/// Run: `scripts/run-must-keep.sh` (starts the demo server on a free port, runs these, stops it).
 @MainActor
 final class MustKeepTests: XCTestCase {
 	private static let session =
@@ -42,11 +42,16 @@ final class MustKeepTests: XCTestCase {
 		row.tap()
 	}
 
-	/// The in-call screen: only a running live call has an End call button.
+	/// The in-call screen: only a call has End call and Minimise call. In the demo the call never connects
+	/// (no microphone or voice backend: the status line reads "Couldn't connect the call"), so this proves
+	/// the call screen opens, not that a call works.
 	private func assertLiveCallScreen(_ what: String, file: StaticString = #filePath, line: UInt = #line) {
+		let end = app.buttons["End call"].firstMatch
+		if !end.waitForExistence(timeout: 15) { dumpScreen("call-screen-missing") }
+		XCTAssertTrue(end.exists, "\(what): the live call screen (End call button) opens", file: file, line: line)
 		XCTAssertTrue(
-			app.buttons["End call"].firstMatch.waitForExistence(timeout: 15),
-			"\(what): the live call screen (End call button) opens", file: file, line: line)
+			app.buttons["Minimise call"].firstMatch.waitForExistence(timeout: 5),
+			"\(what): the call card (Minimise call button) shows", file: file, line: line)
 	}
 
 	/// Leaves evidence of what the screen showed when a step fails: element tree and a screenshot.
@@ -64,24 +69,27 @@ final class MustKeepTests: XCTestCase {
 		XCTAssertTrue(live.waitForExistence(timeout: 10), "For you shows a 'Live briefing' button in the top bar")
 		live.tap()
 		assertLiveCallScreen("Live briefing from For you")
-		XCTAssertTrue(
-			app.staticTexts["Chief of Staff"].firstMatch.waitForExistence(timeout: 5), "the call is with the Chief of Staff")
 	}
 
 	// MARK: MK-02 Live with an agent from its chat
 
-	/// Chats → the Chief of Staff chat → a Live button → the live call. Where the button sits (chat
-	/// header 'Live' or composer waveform 'Start a live conversation') is a design choice; that an
-	/// agent chat offers one is not.
-	func testMK02_LiveWithAgentFromChat() throws {
-		openChat("Chief of Staff")
+	/// Chats → an agent chat → a Live button → the live call. Where the button sits (chat header 'Live' or
+	/// composer waveform 'Start a live conversation') is a design choice; that an agent chat offers one is
+	/// not. Two chats: the Chief of Staff (one agent) and Outreach (a room with several), which take
+	/// different paths in the app.
+	private func assertLiveFromChat(_ chat: String) {
+		openChat(chat)
 		let live = app.buttons.matching(
 			NSPredicate(format: "label == 'Live' OR label == 'Start a live conversation'")).firstMatch
-		if !live.waitForExistence(timeout: 10) { dumpScreen("mk02-chat") }
-		XCTAssertTrue(live.exists, "an agent chat offers a Live button (header or composer)")
+		if !live.waitForExistence(timeout: 10) { dumpScreen("mk02-\(chat)") }
+		XCTAssertTrue(live.exists, "the '\(chat)' chat offers a Live button (header or composer)")
 		live.tap()
-		assertLiveCallScreen("Live with an agent from its chat")
+		assertLiveCallScreen("Live from the '\(chat)' chat")
 	}
+
+	func testMK02a_LiveWithChiefOfStaffFromChat() throws { assertLiveFromChat("Chief of Staff") }
+
+	func testMK02b_LiveWithAgentRoomFromChat() throws { assertLiveFromChat("Outreach") }
 
 	// MARK: MK-03 Reply in a thread
 
@@ -107,5 +115,27 @@ final class MustKeepTests: XCTestCase {
 		item.tap()
 		let field = app.textFields.matching(NSPredicate(format: "label == 'Reply' OR placeholderValue == 'Reply'")).firstMatch
 		XCTAssertTrue(field.waitForExistence(timeout: 10), "the thread screen opens with a Reply field")
+	}
+
+	// MARK: MK-04 A thread with replies
+
+	/// Priya Rao chat: a message with two replies shows "2 replies", the replies stay out of the main
+	/// timeline, and tapping the pill opens the thread with both replies. The demo data has one such
+	/// thread (`fixtures.mjs`, room 302).
+	func testMK04_ThreadWithRepliesOpens() throws {
+		openChat("Priya Rao")
+		func any(_ text: String) -> XCUIElement {
+			app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
+		}
+		XCTAssertTrue(any("Can you also check the pricing page?").waitForExistence(timeout: 15), "the root message shows")
+		let pill = app.buttons.matching(NSPredicate(format: "label CONTAINS '2 replies'")).firstMatch
+		if !pill.waitForExistence(timeout: 5) { dumpScreen("mk04-timeline") }
+		XCTAssertTrue(pill.exists, "the root shows a '2 replies' pill")
+		XCTAssertFalse(
+			any("the pricing page looks right").exists, "replies are not shown in the main timeline")
+		pill.tap()
+		XCTAssertTrue(
+			any("the pricing page looks right").waitForExistence(timeout: 10), "the thread shows the first reply")
+		XCTAssertTrue(any("I will ship it today").waitForExistence(timeout: 5), "the thread shows the second reply")
 	}
 }
