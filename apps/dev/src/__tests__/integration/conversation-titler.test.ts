@@ -215,7 +215,7 @@ describe('Conversation auto-titler Integration', () => {
 		// message was actually about — even though the LLM never answered.
 		// postMessages() appends the row index to `contentPrefix` (i.e. " 0").
 		expect(await readConversation()).toEqual({
-			title: 'the deploy pipeline keeps…',
+			title: 'Deploy pipeline keeps failing',
 			titleAutoState: 'initial',
 		})
 	})
@@ -231,14 +231,13 @@ describe('Conversation auto-titler Integration', () => {
 			.update(conversations)
 			.set({ title: 'Developer' })
 			.where(eq(conversations.id, conversationId))
-		// Short enough to stay intact under any title cap.
 		await postMessages(1, 'deploy keeps failing')
 		chat.mockRejectedValue(new Error('provider is down'))
 
 		await maybeGenerateConversationTitle({ db, workspaceId, conversationId })
 
 		expect(await readConversation()).toEqual({
-			title: 'deploy keeps failing 0',
+			title: 'Deploy keeps failing 0',
 			titleAutoState: 'initial',
 		})
 	})
@@ -309,7 +308,7 @@ describe('Conversation auto-titler Integration', () => {
 		// A workspace routed at a model that just doesn't tool-call still gets
 		// a real title on message #1, matching what the frontend would derive.
 		expect(await readConversation()).toEqual({
-			title: 'Why did trial signups dip last…',
+			title: 'Trial signups dip last week',
 			titleAutoState: 'initial',
 		})
 	})
@@ -351,9 +350,9 @@ describe('Conversation auto-titler Integration', () => {
 		}
 
 		expect(chat).not.toHaveBeenCalled()
-		// The derived title is cut on a word boundary at the 32-character cap.
+		// The derived title is the first message's keywords, not its opening words.
 		expect(await readConversation()).toEqual({
-			title: 'Draft the note to Acme about…',
+			title: 'Note Acme retry window Thursday',
 			titleAutoState: 'initial',
 		})
 	})
@@ -370,7 +369,7 @@ describe('Conversation auto-titler Integration', () => {
 			.where(and(eq(events.entityType, 'conversation'), eq(events.entityId, conversationId)))
 		expect(rows).toHaveLength(1)
 		expect(rows[0]?.data).toMatchObject({
-			title: 'the deploy pipeline keeps…',
+			title: 'Deploy pipeline keeps failing',
 			auto: true,
 			source: 'derived',
 		})
