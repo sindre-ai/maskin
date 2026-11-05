@@ -737,7 +737,6 @@ describe('GET /api/billing/usage', () => {
 				},
 			],
 			[],
-			[], // research sum
 			[{ n: 0 }],
 			[
 				{
@@ -746,7 +745,6 @@ describe('GET /api/billing/usage', () => {
 				},
 			],
 			[],
-			[], // research sum
 			[{ n: 0 }],
 			[
 				{
@@ -755,7 +753,6 @@ describe('GET /api/billing/usage', () => {
 				},
 			],
 			[],
-			[], // research sum
 			[{ n: 0 }],
 		]
 
@@ -795,11 +792,9 @@ describe('GET /api/billing/usage', () => {
 		mockResults.selectQueue = [
 			[{ id: proWs, settings: { billing: { plan: 'pro', status: 'active' } } }],
 			[],
-			[], // research sum
 			[{ n: 0 }],
 			[{ id: teamWs, settings: { billing: { plan: 'team', status: 'active' } } }],
 			[],
-			[], // research sum
 			[{ n: 0 }],
 		]
 
@@ -1082,7 +1077,7 @@ describe('GET /api/billing/usage', () => {
 			const workspaceId = randomUUID()
 
 			const tester = createTestApp(billingRoutes, '/api/billing', 'tester-actor')
-			tester.mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], [], [], [{ n: 2 }]]
+			tester.mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], [], [{ n: 2 }]]
 			const testerRes = await tester.app.request(usageGet(workspaceId))
 			expect(await testerRes.json()).toMatchObject({
 				linkedin_identity_addon: { count: 2 },
@@ -1091,7 +1086,7 @@ describe('GET /api/billing/usage', () => {
 			const other = createTestApp(billingRoutes, '/api/billing', 'other-actor')
 			// A different count proves the second read ran its own query rather than
 			// being answered from the first actor's cached entry.
-			other.mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], [], [], [{ n: 5 }]]
+			other.mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], [], [{ n: 5 }]]
 			const otherRes = await other.app.request(usageGet(workspaceId))
 			expect(otherRes.status).toBe(200)
 			expect(await otherRes.json()).toMatchObject({ linkedin_identity_addon: { count: 5 } })
@@ -1107,12 +1102,10 @@ describe('GET /api/billing/usage', () => {
 			mockResults.selectQueue = [
 				[{ id: workspaceId, settings: { billing: paid } }],
 				[],
-				[], // research sum
 				[{ n: 0 }],
 				[{ id: workspaceId, settings: { billing: paid }, billingOwnerId: 'test-actor-id' }],
 				[{ id: workspaceId, settings: { billing: { plan: 'trial', status: 'canceled' } } }],
 				[],
-				[], // research sum
 				[{ n: 0 }],
 			]
 
@@ -1135,11 +1128,9 @@ describe('GET /api/billing/usage', () => {
 			mockResults.selectQueue = [
 				[{ id: wsA, settings: { billing: { plan: 'pro', status: 'active' } } }],
 				[],
-				[], // research sum
 				[{ n: 0 }],
 				[{ id: wsB, settings: {} }],
 				[],
-				[], // research sum
 				[{ n: 0 }],
 			]
 
@@ -1158,7 +1149,6 @@ describe('GET /api/billing/usage', () => {
 			mockResults.selectQueue = [
 				[{ id: workspaceId, settings: {} }],
 				[], // sessions sum
-				[], // research sum
 				[{ n: 0 }], // integrations count → 0
 			]
 
@@ -1175,7 +1165,6 @@ describe('GET /api/billing/usage', () => {
 			mockResults.selectQueue = [
 				[{ id: workspaceId, settings: {} }],
 				[], // sessions sum
-				[], // research sum
 				[{ n: 3 }], // integrations count → 3 connected identities
 			]
 
@@ -1210,7 +1199,6 @@ describe('GET /api/billing/usage', () => {
 					},
 				],
 				[{ totalCostUsd: '1.23', inputTokens: 100, outputTokens: 50 }], // sessions sum → 123 cents
-				[], // research sum
 				[{ n: 5 }], // 5 identities × $49 = $245 = 24_500 USD cents; must NOT contribute to usd_cents_used
 			]
 
