@@ -29,6 +29,7 @@ import {
 	api,
 } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { DraftChangedError, approveDraftText } from '@/lib/draft-edits'
 import {
 	cardHeadline,
 	classifyCardKind,
@@ -423,10 +424,14 @@ function ForYouFeed() {
 						toast.warning('Reply sent, but the thread stayed unread.')
 					}
 				})
-				.catch(() => {
+				.catch((error: unknown) => {
 					decidingRef.current.delete(decideKey)
 					undoDecision(key)
-					toast.error("Couldn't send your reply — try again.")
+					toast.error(
+						error instanceof DraftChangedError
+							? 'The draft changed while you were editing it. Nothing was sent; check the new text.'
+							: "Couldn't send your reply — try again.",
+					)
 				})
 		},
 		[handleDraftAction, markItemRead, postReply, undoDecision],
@@ -775,11 +780,12 @@ function draftCallKey(item: UnreadItem, draft: LatestMentionDecisionDraft): stri
 }
 
 // Records the person's approval of the object behind a draft, bound to the text the card
-// showed. A draft without a preview (plain text on the card) has nothing to approve and
-// resolves at once; the reply to the agent is what carries the decision for those.
-function approveDraft(draft: LatestMentionDecisionDraft | undefined): Promise<unknown> {
-	if (!draft?.preview || !draft.object_id) return Promise.resolve()
-	return api.objects.approve(draft.object_id, draft.preview.content_hash)
+// showed. A text the person edited on the card is saved first and approved by the hash of the
+// saved text, in the same step (the step the chat card takes too: see `approveDraftText`).
+// A draft without a preview (plain text on the card) has nothing to approve and resolves
+// once saved; the reply to the agent is what carries the decision for those.
+async function approveDraft(draft: LatestMentionDecisionDraft | undefined): Promise<void> {
+	if (draft) await approveDraftText(draft)
 }
 
 // Shared keydown guard for the `Alt+U` For You bulk-dismiss shortcut. Alt on

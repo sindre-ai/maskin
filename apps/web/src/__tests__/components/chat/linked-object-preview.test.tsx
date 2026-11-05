@@ -1,6 +1,11 @@
-import { render, screen } from '@testing-library/react'
+import { clearDraftEdit, getDraftEdit } from '@/lib/draft-edits'
+import { render as rtlRender, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { TestWrapper } from '../../setup'
+
+// The draft box reads the query client, as the real card's tree provides it.
+const render = (ui: React.ReactElement) => rtlRender(ui, { wrapper: TestWrapper })
 
 const useObject = vi.fn()
 const updateMutate = vi.fn()
@@ -8,8 +13,11 @@ const approveMutate = vi.fn()
 
 vi.mock('@/hooks/use-objects', () => ({
 	useObject: (id: string) => useObject(id),
-	useApproveObject: () => ({ mutate: approveMutate, isPending: false, error: null }),
 	useUpdateObject: () => ({ mutate: updateMutate, mutateAsync: vi.fn(), error: null }),
+}))
+vi.mock('@/hooks/use-draft-editor', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@/hooks/use-draft-editor')>()),
+	useApproveDraft: () => ({ mutate: approveMutate, isPending: false, error: null }),
 }))
 vi.mock('@/components/shared/file-preview', () => ({
 	FilePreview: ({ fileId }: { fileId: string }) => <div data-testid="file-preview">{fileId}</div>,
@@ -103,6 +111,15 @@ function renderCard(props: { conversationId?: string; agentId?: string } = {}) {
 	return render(<LinkedObjectCard workspaceId={WS} objectId={ID} {...props} />)
 }
 
+// What the card hands the approve step: the draft as it read, and the chat whose agent is told.
+const approvedAs = (hash: string) => ({
+	draft: expect.objectContaining({
+		object_id: ID,
+		preview: expect.objectContaining({ content_hash: hash }),
+	}),
+	chat: CARD,
+})
+
 const DRAFT_PREVIEW = {
 	kind: 'email',
 	label: 'Email',
@@ -157,7 +174,7 @@ describe('LinkedObjectCard', () => {
 		await expand()
 		expect(screen.queryByRole('button', { name: /Move to/ })).not.toBeInTheDocument()
 		await userEvent.click(screen.getByRole('button', { name: /Approve draft/ }))
-		expect(approveMutate).toHaveBeenCalledWith({ id: ID, contentHash: 'hash-1', chat: CARD })
+		expect(approveMutate).toHaveBeenCalledWith(approvedAs('hash-1'))
 	})
 
 	it('shows what the draft answers and who it goes to, above the text', async () => {
@@ -421,7 +438,28 @@ describe('LinkedObjectCard', () => {
 			renderCard({ conversationId: CHAT, agentId: AGENT })
 			await expandDraft()
 			await userEvent.click(screen.getByRole('button', { name: 'Approve draft' }))
-			expect(approveMutate).toHaveBeenCalledWith({ id: ID, contentHash: 'hash-1', chat: CARD })
+			expect(approveMutate).toHaveBeenCalledWith(approvedAs('hash-1'))
+		})
+
+		it('lets the person change the text in a box, held until they approve', async () => {
+			useObject.mockReturnValue({ data: draft() })
+			renderCard({ conversationId: CHAT, agentId: AGENT })
+			await expandDraft()
+			const box = screen.getByRole('textbox', { name: 'Edit the text' })
+			await userEvent.type(box, ' Ses vi?')
+			expect(getDraftEdit(ID)).toContain('Ses vi?')
+			// Nothing is saved while typing: the approve step saves it, then approves the saved text.
+			expect(updateMutate).not.toHaveBeenCalled()
+			await userEvent.click(screen.getByRole('button', { name: 'Approve draft' }))
+			expect(approveMutate).toHaveBeenCalledWith(approvedAs('hash-1'))
+			clearDraftEdit(ID)
+		})
+
+		it('does not offer the box on a card that has no agent to tell', async () => {
+			useObject.mockReturnValue({ data: draft() })
+			renderCard()
+			await expandDraft()
+			expect(screen.queryByRole('textbox', { name: 'Edit the text' })).toBeNull()
 		})
 
 		it('cannot be approved from a card that has no agent to tell', async () => {
@@ -545,7 +583,7 @@ describe('LinkedObjectCard', () => {
 			advance(600)
 			await userEvent.click(approveButton())
 			expect(approveMutate).toHaveBeenCalledTimes(1)
-			expect(approveMutate).toHaveBeenCalledWith({ id: ID, contentHash: 'hash-1', chat: CARD })
+			expect(approveMutate).toHaveBeenCalledWith(approvedAs('hash-1'))
 		})
 
 		it('ignores a second tap right after the full text opens, and approves once the moment has passed', async () => {
@@ -568,7 +606,7 @@ describe('LinkedObjectCard', () => {
 			await userEvent.click(screen.getByRole('button', { name: 'Show all' }))
 			expect(approveMutate).not.toHaveBeenCalled()
 			await userEvent.click(approveButton())
-			expect(approveMutate).toHaveBeenCalledWith({ id: ID, contentHash: 'hash-1', chat: CARD })
+			expect(approveMutate).toHaveBeenCalledWith(approvedAs('hash-1'))
 		})
 
 		it('asks to read the full draft again after Show less', async () => {

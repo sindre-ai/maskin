@@ -45,6 +45,12 @@ export const FLAGS = {
 	 * once the buttons are on for everyone.
 	 */
 	COMPUTER_CLIPBOARD: 'computer-clipboard',
+	/**
+	 * Gates editing a draft's text in place on the web For You card, with Send saving the
+	 * edit and approving the saved text in one step. Frontend only: read with useFeatureFlag
+	 * in draft-preview. Retire once editing is on for everyone.
+	 */
+	FORYOU_DRAFT_EDIT: 'foryou-draft-edit',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
