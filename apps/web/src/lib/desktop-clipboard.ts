@@ -67,6 +67,37 @@ export async function copyFromDesktop(text: string): Promise<ClipboardResult> {
 	}
 }
 
+/** Remembers that the person just pressed copy, so the computer's next clipboard text is theirs to keep. */
+export function createCopyArming(now: () => number = Date.now) {
+	let armedUntil = 0
+	return {
+		arm() {
+			armedUntil = now() + COPY_WINDOW_MS
+		},
+		disarm() {
+			armedUntil = 0
+		},
+		/** True once per copy key press, and only within the window. */
+		take() {
+			if (now() > armedUntil) return false
+			armedUntil = 0
+			return true
+		},
+	}
+}
+
+/**
+ * The computer sent its clipboard. If the person pressed copy a moment ago, writes it to their
+ * clipboard and says how that went; null means this text was not theirs to take.
+ */
+export async function takeRemoteCopy(
+	arming: ReturnType<typeof createCopyArming>,
+	text: string,
+): Promise<ClipboardResult | null> {
+	if (!text || !arming.take()) return null
+	return copyFromDesktop(text)
+}
+
 export interface ClipboardShortcutHandlers {
 	/** The paste key press found nothing to paste. */
 	onPasteFailed: (message: string) => void
@@ -98,12 +129,12 @@ export function attachClipboardShortcuts(
 		const rfb = getRfb()
 		if (!rfb) return
 		const plain = !e.shiftKey && !e.altKey
-		if (plain && (e.ctrlKey || e.metaKey) && e.code === 'KeyV') {
+		if (plain && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
 			// Not preventDefault: that would cancel the paste event.
 			e.stopPropagation()
 			return
 		}
-		if (plain && (e.ctrlKey || e.metaKey) && e.code === 'KeyC') {
+		if (plain && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
 			handlers.onCopyPressed()
 			if (!e.metaKey) return
 			e.stopPropagation()

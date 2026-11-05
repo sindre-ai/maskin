@@ -7,7 +7,7 @@ import { useConnectDesktop } from '@/hooks/use-desktop'
 import { type TeachingStatus, useDesktopTeaching } from '@/hooks/use-desktop-teaching'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { cn } from '@/lib/cn'
-import { COPY_WINDOW_MS, attachClipboardShortcuts, copyFromDesktop } from '@/lib/desktop-clipboard'
+import { attachClipboardShortcuts, createCopyArming, takeRemoteCopy } from '@/lib/desktop-clipboard'
 import { KEYBOARD_SENTINEL, SPECIAL_KEYS, diffTyped, keysymForChar } from '@/lib/desktop-keyboard'
 import type RfbClient from '@novnc/novnc/lib/rfb'
 import { Eye, Keyboard, Maximize2, MousePointer2, RefreshCw, Square } from 'lucide-react'
@@ -131,7 +131,7 @@ export function DesktopViewer({
 	// What the computer last copied, for the Copy button.
 	const [remoteText, setRemoteText] = useState('')
 	// Set by Ctrl/Cmd+C: until then, the computer's clipboard is not the person's to take.
-	const copyArmedUntil = useRef(0)
+	const [copyArming] = useState(() => createCopyArming())
 	// The browser refused to take what the computer copied (Safari): the Copy button steps in.
 	const [copyBlocked, setCopyBlocked] = useState(false)
 	const clipboardEnabled = useFeatureFlag('computer-clipboard')
@@ -181,10 +181,8 @@ export function DesktopViewer({
 					if (cancelled) return
 					const text = event.detail?.text ?? ''
 					setRemoteText(text)
-					if (!text || Date.now() > copyArmedUntil.current) return
-					copyArmedUntil.current = 0
-					void copyFromDesktop(text).then((result) => {
-						if (cancelled) return
+					void takeRemoteCopy(copyArming, text).then((result) => {
+						if (cancelled || !result) return
 						setCopyBlocked(!result.ok)
 						if (result.ok) toast.success('Copied to your clipboard')
 					})
@@ -212,7 +210,7 @@ export function DesktopViewer({
 			rfbRef.current?.disconnect()
 			rfbRef.current = null
 		}
-	}, [workspaceId, agentId, attempt, connectDesktop])
+	}, [workspaceId, agentId, attempt, connectDesktop, copyArming])
 
 	useEffect(() => {
 		const rfb = rfbRef.current
@@ -222,10 +220,10 @@ export function DesktopViewer({
 		else {
 			setRemoteText('')
 			setCopyBlocked(false)
-			copyArmedUntil.current = 0
+			copyArming.disarm()
 			keyboardHidden.current = false
 		}
-	}, [controlling])
+	}, [controlling, copyArming])
 
 	// Ctrl/Cmd+V and Ctrl/Cmd+C on the picture, while the person is in control.
 	const shortcutsOn = controlling && clipboardEnabled && phase === 'connected'
@@ -235,10 +233,10 @@ export function DesktopViewer({
 		return attachClipboardShortcuts(target, () => rfbRef.current, {
 			onPasteFailed: (message) => toast.error(message),
 			onCopyPressed: () => {
-				copyArmedUntil.current = Date.now() + COPY_WINDOW_MS
+				copyArming.arm()
 			},
 		})
-	}, [shortcutsOn])
+	}, [shortcutsOn, copyArming])
 
 	const busy = phase === 'starting' || phase === 'connecting'
 	const failed = phase === 'disconnected' || phase === 'error'

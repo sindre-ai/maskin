@@ -1,4 +1,11 @@
-import { attachClipboardShortcuts, copyFromDesktop, pasteToDesktop } from '@/lib/desktop-clipboard'
+import {
+	COPY_WINDOW_MS,
+	attachClipboardShortcuts,
+	copyFromDesktop,
+	createCopyArming,
+	pasteToDesktop,
+	takeRemoteCopy,
+} from '@/lib/desktop-clipboard'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 function fakeRfb() {
@@ -72,6 +79,72 @@ describe('desktop clipboard', () => {
 			ok: false,
 			message: expect.stringMatching(/blocked/i),
 		})
+	})
+})
+
+describe('taking what the computer copied', () => {
+	let clock: number
+	let arming: ReturnType<typeof createCopyArming>
+
+	beforeEach(() => {
+		clock = 1000
+		arming = createCopyArming(() => clock)
+	})
+
+	it('writes the computer clipboard to the browser after the person pressed copy', async () => {
+		const writeText = vi.fn().mockResolvedValue(undefined)
+		stubClipboard({ writeText })
+		arming.arm()
+		clock += COPY_WINDOW_MS
+
+		expect(await takeRemoteCopy(arming, 'from the computer')).toEqual({ ok: true })
+		expect(writeText).toHaveBeenCalledWith('from the computer')
+	})
+
+	it('reports a refused write, so the Copy button can step in', async () => {
+		stubClipboard({
+			writeText: vi.fn().mockRejectedValue(new DOMException('no', 'NotAllowedError')),
+		})
+		arming.arm()
+
+		expect(await takeRemoteCopy(arming, 'x')).toMatchObject({ ok: false })
+	})
+
+	it('ignores clipboard text when the person did not press copy', async () => {
+		const writeText = vi.fn()
+		stubClipboard({ writeText })
+
+		expect(await takeRemoteCopy(arming, 'x')).toBeNull()
+		expect(writeText).not.toHaveBeenCalled()
+	})
+
+	it('ignores clipboard text that arrives after the window', async () => {
+		const writeText = vi.fn()
+		stubClipboard({ writeText })
+		arming.arm()
+		clock += COPY_WINDOW_MS + 1
+
+		expect(await takeRemoteCopy(arming, 'x')).toBeNull()
+		expect(writeText).not.toHaveBeenCalled()
+	})
+
+	it('takes one copy per key press, and nothing after disarm', async () => {
+		stubClipboard({ writeText: vi.fn().mockResolvedValue(undefined) })
+		arming.arm()
+		expect(await takeRemoteCopy(arming, 'a')).toEqual({ ok: true })
+		expect(await takeRemoteCopy(arming, 'b')).toBeNull()
+
+		arming.arm()
+		arming.disarm()
+		expect(await takeRemoteCopy(arming, 'c')).toBeNull()
+	})
+
+	it('ignores an empty clipboard and keeps the copy armed', async () => {
+		stubClipboard({ writeText: vi.fn().mockResolvedValue(undefined) })
+		arming.arm()
+
+		expect(await takeRemoteCopy(arming, '')).toBeNull()
+		expect(await takeRemoteCopy(arming, 'real')).toEqual({ ok: true })
 	})
 })
 
@@ -172,6 +245,12 @@ describe('clipboard shortcuts on the computer picture', () => {
 		expect(reachedNoVnc).toEqual(['a', 'c'])
 		expect(handlers.onCopyPressed).not.toHaveBeenCalled()
 		expect(rfb.sendKey).not.toHaveBeenCalled()
+	})
+
+	it('matches the typed letter, not the key position (Dvorak)', () => {
+		press({ key: 'v', code: 'Period', ctrlKey: true })
+
+		expect(reachedNoVnc).toEqual([])
 	})
 
 	it('stops listening when detached', () => {
