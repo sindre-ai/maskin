@@ -283,7 +283,7 @@ const screenshotRoute = createRoute({
 	'x-viewer-policy': 'writer',
 	tags: ['Desktop'],
 	summary: "Screenshot of an agent's desktop",
-	description: 'Starts the desktop if needed. Returns a base64 JPEG of the 1600x900 screen.',
+	description: 'Starts the desktop if needed. Returns a base64 JPEG of the 1920x1080 screen.',
 	request: { headers: workspaceIdHeader, query: agentQuery },
 	responses: {
 		200: {
