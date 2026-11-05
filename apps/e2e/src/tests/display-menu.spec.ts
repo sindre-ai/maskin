@@ -99,12 +99,12 @@ test.describe('Display menu', () => {
 					'aria-pressed',
 					'true',
 				)
-				// Show lists its values with counts, open by default.
+				// Show lists the card kinds with counts, open by default.
 				await expect(panel.getByRole('button', { name: /^Everything/ })).toBeVisible()
-				await expect(panel.getByRole('button', { name: /^Bets/ })).toBeVisible()
+				await expect(panel.getByRole('button', { name: /^Decisions/ })).toBeVisible()
 
-				// Narrowing to Bets puts a count on the trigger and offers Reset filters.
-				await panel.getByRole('button', { name: /^Bets/ }).click()
+				// Narrowing to Decisions puts a count on the trigger and offers Reset filters.
+				await panel.getByRole('button', { name: /^Decisions/ }).click()
 				await expect(panel.getByRole('button', { name: 'Reset filters' })).toBeVisible()
 				await panel.getByRole('button', { name: 'Reset filters' }).click()
 				await expect(panel.getByRole('button', { name: 'Reset filters' })).toHaveCount(0)
@@ -163,7 +163,7 @@ test.describe('Display menu', () => {
 
 				await page.goto(`/${account.workspaceId}/agents`)
 				panel = await openDisplay(page)
-				await expect(panel.getByText('Reset all')).toBeVisible()
+				await expect(panel.getByText('Reset display')).toBeVisible()
 				await assertNoHorizontalOverflow(page, vp.label)
 			})
 		}

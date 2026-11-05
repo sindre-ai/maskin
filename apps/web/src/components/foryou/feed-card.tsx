@@ -244,19 +244,16 @@ export function FeedCard({
 						size="sm"
 					/>
 					<span className="min-w-0 flex-1 truncate text-[12.5px] text-muted-foreground">
-						{sender?.name ? sender.name : ''}
+						{sender?.name ? `${sender.name}${objectless ? '' : ' · '}` : ''}
 						{!objectless && (
-							<>
-								{sender?.name ? ' · ' : ''}
-								<Link
-									to="/$workspaceId/objects/$objectId"
-									params={{ workspaceId, objectId }}
-									className="hover:text-foreground hover:underline"
-								>
-									{objectTitle || 'Open'}
-									<ArrowUpRight size={10} className="ml-0.5 inline" aria-hidden />
-								</Link>
-							</>
+							<Link
+								to="/$workspaceId/objects/$objectId"
+								params={{ workspaceId, objectId }}
+								className="hover:text-foreground hover:underline"
+							>
+								{objectTitle || 'Open'}
+								<ArrowUpRight size={10} className="ml-0.5 inline" aria-hidden />
+							</Link>
 						)}
 					</span>
 					{!objectless && (

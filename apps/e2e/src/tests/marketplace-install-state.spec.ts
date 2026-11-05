@@ -147,7 +147,7 @@ test.describe('Marketplace install state', () => {
 			const dotBg = await dot.evaluate((el) => getComputedStyle(el).backgroundColor)
 			expect(dotBg).not.toBe('rgba(0, 0, 0, 0)')
 
-			await expect(detail.getByText('Permissions')).toBeVisible()
+			await expect(detail.getByRole('heading', { name: 'Permissions' })).toBeVisible()
 			await expect(detail.getByText('This workspace only')).toBeVisible()
 		}
 

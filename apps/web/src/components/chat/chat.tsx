@@ -1505,7 +1505,7 @@ export function Composer({
 							// Focus and paste are caught on the wrapper: the tag input has no hooks for them.
 							<div
 								ref={tagWrapRef}
-								className="min-w-0 flex-1 px-1 py-1.5 max-md:py-2.5"
+								className="min-w-0 flex-1 px-1 py-1.5 max-md:py-2"
 								onFocus={() => setTextareaFocused(true)}
 								onBlur={() => setTextareaFocused(false)}
 								onPasteCapture={handlePaste}

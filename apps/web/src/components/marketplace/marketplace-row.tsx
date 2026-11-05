@@ -80,4 +80,4 @@ export function RowPill({
 /** Shared class for the row's one action button: outline pill, 64px wide,
  * 44px tall on touch widths. */
 export const ROW_ACTION_CLASS =
-	'relative h-7 min-w-16 rounded-full px-3 text-[12.5px] font-semibold max-md:min-h-11'
+	'relative h-7 min-w-16 rounded-full px-3 text-[12.5px] font-semibold max-lg:min-h-11'

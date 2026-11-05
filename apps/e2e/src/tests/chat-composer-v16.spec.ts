@@ -29,7 +29,7 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 				account,
 			}) => {
 				await page.goto(`/${account.workspaceId}/chats/new`)
-				const textbox = page.locator('textarea').last()
+				const textbox = page.getByRole('textbox').last()
 				await expect(textbox).toBeVisible({ timeout: 10_000 })
 				const plus = page.getByRole('button', { name: 'Attach file' })
 				await expect(plus).toBeVisible()
@@ -37,8 +37,9 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 
 				// A long placeholder may wrap in a narrow column, so measure the one-line bar.
 				await textbox.fill('x')
-				// The bar is the textarea's parent: 52 px (4 px padding around 44 px buttons on touch).
-				const bar = textbox.locator('xpath=..')
+				// The bar is the form's first box, around the + , the field and the action button:
+				// 52 px (4 px padding around 44 px buttons on touch).
+				const bar = textbox.locator('xpath=ancestor::form[1]/div[1]')
 				const barBox = await bar.boundingBox()
 				expect(barBox?.height ?? 0, 'bar height').toBeGreaterThanOrEqual(52)
 				expect(barBox?.height ?? 0, 'bar height').toBeLessThanOrEqual(53)
@@ -86,7 +87,7 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 				account,
 			}) => {
 				await page.goto(`/${account.workspaceId}/chats/new`)
-				await expect(page.locator('textarea').last()).toBeVisible({ timeout: 10_000 })
+				await expect(page.getByRole('textbox').last()).toBeVisible({ timeout: 10_000 })
 				await page.getByRole('button', { name: 'Attach file' }).click()
 				for (const name of ['Photo', 'File', 'Item', 'Person or agent']) {
 					await expect(page.getByRole('menuitem', { name })).toBeVisible()
@@ -96,7 +97,7 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 
 				// Person or agent types the @ and the mention picker opens.
 				await page.getByRole('menuitem', { name: 'Person or agent' }).click()
-				await expect(page.locator('textarea').last()).toHaveValue('@')
+				await expect(page.getByRole('textbox').last()).toHaveText('@')
 			})
 		})
 	}

@@ -45,8 +45,8 @@ test.describe('Marketplace detail pages', () => {
 			await expect(detail.getByText('The flow, once installed')).toBeVisible()
 			await expect(detail.getByText('What it brings')).toBeVisible()
 			await expect(detail.getByText('How it runs')).toBeVisible()
-			await expect(detail.getByText('Version')).toBeVisible()
-			await expect(detail.getByText('Permissions')).toBeVisible()
+			await expect(detail.getByText('Version', { exact: true })).toBeVisible()
+			await expect(detail.getByRole('heading', { name: 'Permissions' })).toBeVisible()
 			await expect(detail.getByText('This workspace only')).toBeVisible()
 
 			// Layout gate — the detail page must not overflow the viewport.
@@ -75,7 +75,7 @@ test.describe('Marketplace detail pages', () => {
 		const detail = page.getByRole('main')
 		await expect(detail.getByText('The flow, once installed')).toBeVisible({ timeout: 20000 })
 		await expect(detail.getByText('How it runs')).toBeVisible()
-		await expect(detail.getByText('Permissions')).toBeVisible()
+		await expect(detail.getByRole('heading', { name: 'Permissions' })).toBeVisible()
 	})
 
 	test('opens an item detail page from the Agents section and links back to its loop', async ({

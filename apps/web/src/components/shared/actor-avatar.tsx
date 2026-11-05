@@ -206,7 +206,8 @@ function ActorAvatarView({
 					aria-hidden="true"
 					data-avatar-status={status}
 					className={cn(
-						'absolute -bottom-0.5 -right-0.5 rounded-full border-2 border-background',
+						// 1px out, not 2: the avatar's scroll width must stay within the 1px overflow gate.
+						'absolute -bottom-px -right-px rounded-full border-2 border-background',
 						size === 'xl' ? 'size-3.5' : 'size-2.5',
 						status === 'failed' ? 'bg-error' : 'bg-success motion-safe:animate-pulse',
 					)}

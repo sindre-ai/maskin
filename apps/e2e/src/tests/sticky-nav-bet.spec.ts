@@ -86,16 +86,16 @@ test.describe('Sticky nav — bet identity (interim contract)', () => {
 		})
 	}
 
-	// The detail bar is taller than the 44px list-screen nav — the mockup gives
-	// it 13px of padding around a 28px control (1033), i.e. 55px with the bottom
-	// border, while the built bar measures 57 because its controls are 30px.
-	// That 2px is a design question, not the one this test answers: the contract
-	// here is that the bar is the SAME height at every width and does not shift
-	// when the hero scrolls out from under it. So the first measurement sets the
-	// expectation and every later one must match it, with a loose band that
-	// still catches a bar that collapses or doubles.
+	// The detail bar is taller than the 44px list-screen nav. From md up it pads
+	// 20px above the 30px controls and nothing below (50px); on a phone it pads
+	// 13px above and below (56px, the v3 mockup's 1033). The contract here is that
+	// the bar keeps its height at each width and does not shift when the hero
+	// scrolls out from under it: the first desktop measurement sets the desktop
+	// expectation, every other desktop must match it, and the phone bar is 56px.
+	// A loose band on the desktop bar still catches one that collapses or doubles.
 	const MIN_BAR_HEIGHT = 44
 	const MAX_BAR_HEIGHT = 72
+	const PHONE_BAR_HEIGHT = 56
 	test('detail bar keeps one height across all three widths', async ({ page, account }) => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
@@ -104,7 +104,7 @@ test.describe('Sticky nav — bet identity (interim contract)', () => {
 			status: 'active',
 		})
 
-		let expectedHeight: number | undefined
+		let desktopHeight: number | undefined
 
 		for (const viewport of [WIDE_DESKTOP, NARROW_DESKTOP, MOBILE]) {
 			await page.setViewportSize(viewport)
@@ -113,12 +113,18 @@ test.describe('Sticky nav — bet identity (interim contract)', () => {
 				timeout: 10000,
 			})
 
+			let expectedHeight: number
 			const bar = page.locator('main header').first()
 			const preHeight = await bar.evaluate((el) => el.getBoundingClientRect().height)
-			if (expectedHeight === undefined) {
+			if (viewport === MOBILE) {
+				expectedHeight = PHONE_BAR_HEIGHT
+			} else if (desktopHeight === undefined) {
 				expect(preHeight, 'detail bar height').toBeGreaterThanOrEqual(MIN_BAR_HEIGHT)
 				expect(preHeight, 'detail bar height').toBeLessThanOrEqual(MAX_BAR_HEIGHT)
+				desktopHeight = preHeight
 				expectedHeight = preHeight
+			} else {
+				expectedHeight = desktopHeight
 			}
 			expect(preHeight, `bar height at ${viewport.width}px pre-scroll`).toBe(expectedHeight)
 
