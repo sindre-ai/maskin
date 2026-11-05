@@ -8,15 +8,19 @@ import { toast } from 'sonner'
  * Paste (browser clipboard to the computer) and Copy (what the computer last
  * copied to the browser clipboard). Shown only while the person is in control.
  * The browser lets a page touch the clipboard only from a click, hence buttons.
+ * With a keyboard, Ctrl/Cmd+V and Ctrl/Cmd+C do this and these are the fallback:
+ * `copyOnly` leaves out Paste, which the keys do everywhere.
  */
 export function DesktopClipboardButtons({
 	rfbRef,
 	remoteText,
+	copyOnly = false,
 	rounded = false,
 }: {
 	rfbRef: RefObject<ClipboardRfb | null>
 	/** The text the computer last copied; empty until something is copied there. */
 	remoteText: string
+	copyOnly?: boolean
 	rounded?: boolean
 }) {
 	const className = rounded ? 'rounded-full' : undefined
@@ -36,16 +40,18 @@ export function DesktopClipboardButtons({
 
 	return (
 		<>
-			<Button
-				variant="outline"
-				size="sm"
-				className={className}
-				aria-label="Paste from your clipboard"
-				onClick={() => void paste()}
-			>
-				<ClipboardPaste size={15} />
-				<span className="hidden sm:inline">Paste</span>
-			</Button>
+			{!copyOnly && (
+				<Button
+					variant="outline"
+					size="sm"
+					className={className}
+					aria-label="Paste from your clipboard"
+					onClick={() => void paste()}
+				>
+					<ClipboardPaste size={15} />
+					<span className="hidden sm:inline">Paste</span>
+				</Button>
+			)}
 			<Button
 				variant="outline"
 				size="sm"
