@@ -45,6 +45,40 @@ export function isInlineImage(mimeType: string): boolean {
 	return mimeType.startsWith('image/') && !UNSAFE_INLINE_MIME.has(mimeType)
 }
 
+export function isAudio(mimeType: string): boolean {
+	return mimeType.startsWith('audio/')
+}
+
+export function isVideo(mimeType: string): boolean {
+	return mimeType.startsWith('video/')
+}
+
+/**
+ * Player for an audio or video file. `<audio>`/`<video>` requests do not carry our bearer
+ * token, so a large file streams from its short-lived storage URL (seekable, nothing buffered)
+ * and a small one is rebuilt from its inline bytes as a Blob URL.
+ */
+export function MediaPlayer({ file, className }: { file: FileDetail; className?: string }) {
+	const src = useMemo(() => {
+		if (file.downloadUrl) return file.downloadUrl
+		const b64 = file.encoding === 'base64' ? file.content : btoa(file.content)
+		return URL.createObjectURL(
+			new Blob([base64ToBytes(b64).buffer as ArrayBuffer], { type: file.mimeType }),
+		)
+	}, [file.downloadUrl, file.content, file.encoding, file.mimeType])
+	useEffect(() => {
+		if (file.downloadUrl) return
+		return () => URL.revokeObjectURL(src)
+	}, [src, file.downloadUrl])
+	const Tag = isAudio(file.mimeType) ? 'audio' : 'video'
+	return (
+		// playsInline stops iOS forcing native fullscreen for video.
+		<Tag src={src} controls playsInline preload="metadata" className={className}>
+			<track kind="captions" />
+		</Tag>
+	)
+}
+
 export function isPlainText(mimeType: string): boolean {
 	if (UNSAFE_INLINE_MIME.has(mimeType)) return true // shown as preformatted text, never rendered
 	return (
