@@ -36,6 +36,7 @@ export const SEND_PERMISSION_KINDS = [
 	'linkedin_comment_reply',
 	'linkedin_post_edit',
 	'slack_message',
+	'manual_message',
 ] as const
 export type SendPermissionKind = (typeof SEND_PERMISSION_KINDS)[number]
 
@@ -49,6 +50,7 @@ export const SEND_PERMISSION_KIND_LABELS: Record<SendPermissionKind, string> = {
 	linkedin_comment_reply: 'LinkedIn comment reply',
 	linkedin_post_edit: 'LinkedIn post edit',
 	slack_message: 'Slack message',
+	manual_message: 'Message sent by hand',
 }
 
 /**
@@ -68,6 +70,8 @@ export const STARTING_SEND_MODES: Record<SendPermissionKind, SendPermissionMode>
 	linkedin_comment_reply: 'always_allow',
 	linkedin_post_edit: 'always_allow',
 	slack_message: 'always_allow',
+	// Typed by hand outside any integration to someone outside the company, so it asks first.
+	manual_message: 'ask_first',
 }
 
 export const isSendPermissionKind = (value: string): value is SendPermissionKind =>

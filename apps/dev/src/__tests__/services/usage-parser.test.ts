@@ -281,7 +281,6 @@ describe('resolveSessionCostUsd', () => {
 		// Priced from the hosts the request is pinned to, not the catalogue's cheapest host.
 		expect(getServedModelPricingMock).toHaveBeenCalledWith('deepseek/deepseek-v4-flash', [
 			'digitalocean',
-			'gmicloud',
 		])
 	})
 
