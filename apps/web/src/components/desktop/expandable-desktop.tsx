@@ -47,11 +47,11 @@ export function ExpandableDesktop({
 	const popupEnd = (
 		<>
 			{/* Same height as the rest of the row, so the popup's top bar stays one slim line. */}
-			{actions ? <div className="[&_button]:h-7">{actions}</div> : null}
+			{actions ? <div className="[&_button]:h-7 sm:[&_button]:h-6">{actions}</div> : null}
 			<Button
 				variant="ghost"
 				size="icon"
-				className="size-7"
+				className="size-7 sm:size-6"
 				aria-label="Close popup"
 				onClick={() => setExpanded(false)}
 			>
@@ -93,10 +93,13 @@ export function ExpandableDesktop({
 
 			<Dialog open={expanded} onOpenChange={setExpanded}>
 				{/* As wide as the screen allows while the 16:9 picture plus the top row still fit
-				    the height, so the picture never needs to scroll. The 5.5rem is the top row, the
+				    the height, so the picture never needs to scroll. The 3rem is the top row, the 4px
 				    padding and a little air above and below the popup. On a phone the popup is pinned
 				    to the top and runs edge to edge. */}
-				<DialogContent className="gap-2 p-3 pt-2.5 max-sm:top-0 max-sm:w-full max-sm:max-w-none max-sm:translate-y-0 max-sm:rounded-none max-sm:border-x-0 max-sm:border-t-0 max-sm:px-0 sm:max-w-[min(96vw,calc((100dvh_-_5.5rem)*16/9))]">
+				<DialogContent
+					closeClassName="sm:right-2 sm:top-2"
+					className="gap-2 p-3 pt-2.5 max-sm:top-0 max-sm:w-full max-sm:max-w-none max-sm:translate-y-0 max-sm:rounded-none max-sm:border-x-0 max-sm:border-t-0 max-sm:px-0 sm:gap-1 sm:p-1 sm:max-w-[min(98vw,calc((100dvh_-_3rem)*16/9))]"
+				>
 					<DialogTitle className="sr-only">{agentName}'s computer</DialogTitle>
 					<DialogDescription className="sr-only">
 						Live view of {agentName}'s computer. Use Take control to control it.
@@ -113,8 +116,8 @@ export function ExpandableDesktop({
 								toolbarEnd={popupEnd}
 							/>
 						) : (
-							<div className="flex min-w-0 flex-col gap-2">
-								<div className="flex h-7 items-center justify-end gap-2 pr-5 max-sm:pl-3 max-sm:pr-8">
+							<div className="flex min-w-0 flex-col gap-2 sm:gap-1">
+								<div className="flex h-7 items-center justify-end gap-2 pr-5 max-sm:pl-3 max-sm:pr-8 sm:h-6 sm:pr-7">
 									{popupEnd}
 								</div>
 								<div
