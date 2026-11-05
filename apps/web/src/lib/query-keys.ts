@@ -170,6 +170,10 @@ export const queryKeys = {
 	fileComments: {
 		all: (workspaceId: string, fileId: string) => ['file-comments', workspaceId, fileId] as const,
 	},
+	fileProposals: {
+		open: (workspaceId: string, fileId: string) =>
+			['file-proposals', workspaceId, fileId, 'open'] as const,
+	},
 	attachingObjects: {
 		byFile: (workspaceId: string, fileId: string) =>
 			['attaching-objects', workspaceId, fileId] as const,

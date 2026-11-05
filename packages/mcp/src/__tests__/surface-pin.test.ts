@@ -214,6 +214,17 @@ describe('MCP surface pin', () => {
 		expect(violations, violations.join('\n')).toEqual([])
 	})
 
+	it('registers propose_file_changes as a plain write, not a read, delete or idempotent update', () => {
+		expect(registeredTools.has('propose_file_changes')).toBe(true)
+		expect(TOOL_ANNOTATIONS.propose_file_changes).toMatchObject({
+			readOnlyHint: false,
+			destructiveHint: false,
+			idempotentHint: false,
+			openWorldHint: false,
+		})
+		expect(MUTATION_TOOL_KINDS.propose_file_changes).toBe('file_propose')
+	})
+
 	it('every alias row targets a registered tool', async () => {
 		const { ALIASES } = await import('../aliases')
 		const violations: string[] = []

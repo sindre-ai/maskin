@@ -51,6 +51,16 @@ export const FLAGS = {
 	 * in draft-preview. Retire once editing is on for everyone.
 	 */
 	FORYOU_DRAFT_EDIT: 'foryou-draft-edit',
+	/**
+	 * Gates the visual layer of agent change review (bet
+	 * [Humans accept, edit or reject an agent's proposed changes to a file instead of re-reading the whole thing](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/a0daec7c-7c63-4898-bfac-a4dfc98a2d23)):
+	 * the proposal banner above a markdown file and the review view that
+	 * replaces the editor. Off means the file viewer is unchanged. The tables,
+	 * endpoints and MCP tool behind it are not gated: nothing in a file changes
+	 * until a non-viewer human accepts. Read once, in
+	 * `EditableMarkdownStage`. Retire once the review is on for everyone.
+	 */
+	AGENT_CHANGE_REVIEW: 'agent-change-review',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

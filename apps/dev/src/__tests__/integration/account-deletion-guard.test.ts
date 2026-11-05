@@ -41,6 +41,8 @@ const KEPT: Record<string, string> = {
 	conversation_pending_turns: 'agent turn queue of a kept conversation (agent actor, not a person)',
 	files: 'content authored by the person is kept',
 	file_comments: 'content authored by the person is kept',
+	file_proposals: 'content authored by the person is kept, attributed to the deleted user',
+	file_proposal_changes: 'decided_by on a kept proposal; the decision stays with the deleted user',
 	file_uploads:
 		'transient ledger of an in-flight upload; the reaper aborts the stored upload and settles the row when it expires, so erasing it here would strand the stored parts',
 	for_you_withdrawals:
