@@ -10,13 +10,34 @@ export interface ClipboardRfb {
 
 export type ClipboardResult = { ok: true } | { ok: false; message: string }
 
+const NO_TEXT = 'Your clipboard has no text to paste.'
 const BLOCKED = 'Your browser blocked clipboard access. Allow it for this site and try again.'
 
 const XK_CONTROL_L = 0xffe3
+const XK_C = 0x63
 const XK_V = 0x76
 
 // x11vnc takes the text in asynchronously; Ctrl+V sent at once would paste the old clipboard.
 const REMOTE_SETTLE_MS = 150
+
+/** How long after Ctrl/Cmd+C the computer's clipboard is still taken as the answer to that key press. */
+export const COPY_WINDOW_MS = 3000
+
+/** Presses Ctrl+<key> on the computer. The computer is Linux, so this is Ctrl even when the person pressed Cmd. */
+function pressCtrl(rfb: ClipboardRfb, keysym: number, code: string) {
+	rfb.sendKey(XK_CONTROL_L, 'ControlLeft', true)
+	rfb.sendKey(keysym, code, true)
+	rfb.sendKey(keysym, code, false)
+	rfb.sendKey(XK_CONTROL_L, 'ControlLeft', false)
+}
+
+/** Puts text on the computer's clipboard, then presses Ctrl+V there so it lands in the focused field. */
+async function sendPaste(rfb: ClipboardRfb, text: string) {
+	rfb.clipboardPasteFrom(text)
+	await new Promise((resolve) => setTimeout(resolve, REMOTE_SETTLE_MS))
+	pressCtrl(rfb, XK_V, 'KeyV')
+	rfb.focus()
+}
 
 /**
  * Sends what is on the person's clipboard to the computer, then presses Ctrl+V
@@ -30,15 +51,9 @@ export async function pasteToDesktop(rfb: ClipboardRfb): Promise<ClipboardResult
 	} catch {
 		return { ok: false, message: BLOCKED }
 	}
-	if (!text) return { ok: false, message: 'Your clipboard has no text to paste.' }
+	if (!text) return { ok: false, message: NO_TEXT }
 
-	rfb.clipboardPasteFrom(text)
-	await new Promise((resolve) => setTimeout(resolve, REMOTE_SETTLE_MS))
-	rfb.sendKey(XK_CONTROL_L, 'ControlLeft', true)
-	rfb.sendKey(XK_V, 'KeyV', true)
-	rfb.sendKey(XK_V, 'KeyV', false)
-	rfb.sendKey(XK_CONTROL_L, 'ControlLeft', false)
-	rfb.focus()
+	await sendPaste(rfb, text)
 	return { ok: true }
 }
 
@@ -49,5 +64,73 @@ export async function copyFromDesktop(text: string): Promise<ClipboardResult> {
 		return { ok: true }
 	} catch {
 		return { ok: false, message: BLOCKED }
+	}
+}
+
+export interface ClipboardShortcutHandlers {
+	/** The paste key press found nothing to paste. */
+	onPasteFailed: (message: string) => void
+	/** The person pressed copy: the computer's clipboard that arrives next is theirs to keep. */
+	onCopyPressed: () => void
+}
+
+/**
+ * Makes Ctrl/Cmd+V and Ctrl/Cmd+C work on the computer's picture. noVNC swallows every
+ * key press on its canvas, which also stops the browser's paste event, so these keys are
+ * caught first (capture phase) and kept from noVNC:
+ * - V is only kept from noVNC. The browser then fires its paste event, which hands over
+ *   the text without a permission prompt.
+ * - C is sent as Ctrl+C. Ctrl+C on a PC already reaches the computer as it is; Cmd+C on
+ *   a Mac is turned into Ctrl+C.
+ * - Cmd (Meta) never reaches the computer: a raw Super+V would do nothing there.
+ * Returns a function that removes the listeners.
+ */
+export function attachClipboardShortcuts(
+	target: HTMLElement,
+	getRfb: () => ClipboardRfb | null,
+	handlers: ClipboardShortcutHandlers,
+): () => void {
+	function onKeyDown(e: KeyboardEvent) {
+		if (e.key === 'Meta') {
+			e.stopPropagation()
+			return
+		}
+		const rfb = getRfb()
+		if (!rfb) return
+		const plain = !e.shiftKey && !e.altKey
+		if (plain && (e.ctrlKey || e.metaKey) && e.code === 'KeyV') {
+			// Not preventDefault: that would cancel the paste event.
+			e.stopPropagation()
+			return
+		}
+		if (plain && (e.ctrlKey || e.metaKey) && e.code === 'KeyC') {
+			handlers.onCopyPressed()
+			if (!e.metaKey) return
+			e.stopPropagation()
+			e.preventDefault()
+			pressCtrl(rfb, XK_C, 'KeyC')
+			return
+		}
+		// Any other Cmd shortcut would reach the computer as a plain letter.
+		if (e.metaKey) e.stopPropagation()
+	}
+
+	function onPaste(e: ClipboardEvent) {
+		const rfb = getRfb()
+		if (!rfb) return
+		e.preventDefault()
+		const text = e.clipboardData?.getData('text/plain') ?? ''
+		if (!text) {
+			handlers.onPasteFailed(NO_TEXT)
+			return
+		}
+		void sendPaste(rfb, text)
+	}
+
+	target.addEventListener('keydown', onKeyDown, true)
+	target.addEventListener('paste', onPaste)
+	return () => {
+		target.removeEventListener('keydown', onKeyDown, true)
+		target.removeEventListener('paste', onPaste)
 	}
 }
