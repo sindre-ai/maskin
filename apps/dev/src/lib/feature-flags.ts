@@ -27,21 +27,6 @@
 // first step of introducing a new flag.
 export const FLAGS = {
 	/**
-	 * Google Drive integration visibility on the Settings > Integrations page.
-	 * When off, the provider card + Connect button are filtered out of the
-	 * providers list rendered by `apps/web/src/routes/_authed/$workspaceId/settings/integrations.tsx`
-	 * — the customer sees no google-drive entry point at all. When on, google-drive
-	 * appears alongside every other OAuth provider with a standard Connect button.
-	 * Per-actor behaviour gate, never shared state: the backend still registers the
-	 * provider unconditionally, so `POST /api/integrations/google-drive/connect` and
-	 * the `google_drive__*` MCP tools stay reachable for tester actors (add them to
-	 * `FF_TESTER_ACTOR_IDS` + `google-drive-integration-ui` to `FF_TESTER_FEATURES`).
-	 * See parent bet [Google Drive MCP — cover the Drive-shaped JTBDs across the workspace](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/e5cd108b-ad30-498b-a4ac-e961587389c5)
-	 * for the rollout plan. Retire (drop the boundary + delete this entry) once
-	 * google-drive ships to every workspace.
-	 */
-	GOOGLE_DRIVE_INTEGRATION_UI: 'google-drive-integration-ui',
-	/**
 	 * Gates the weekly capability note that Chief of Staff sends in a person's
 	 * 1-1 (bet
 	 * [Agents look through connected integrations for new things they can do](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/3dae5ff5-7c94-41ee-8687-0023b37994f2)).
@@ -54,48 +39,18 @@ export const FLAGS = {
 	 */
 	AGENT_PROACTIVE_1_1: 'agent-proactive-1-1',
 	/**
-	 * Gates the @ menu in the web search page and the Cmd+K launcher (task
-	 * [Search: filter chats by person or agent](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1cb2e889-5037-4ef8-b449-b84fba4712f3)).
-	 * Read by the web app with useFeatureFlag. Off means no @ menu, no participant pill,
-	 * and a participants param in a search link is ignored. The search endpoint accepts
-	 * the participants param whatever the flag says: it only narrows chats the caller is
-	 * already in, so it is safe to leave unflagged. Retire once the filter is on for everyone.
+	 * Gates the Paste and Copy buttons on the Computer view, which move plain text
+	 * between the person's clipboard and the agent's computer while they are in
+	 * control. Frontend only: read with useFeatureFlag in desktop-viewer. Retire
+	 * once the buttons are on for everyone.
 	 */
-	SEARCH_CHAT_PARTICIPANT_FILTER: 'search-chat-participant-filter',
+	COMPUTER_CLIPBOARD: 'computer-clipboard',
 	/**
-	 * Web chat: images and files on a message sit outside the text bubble (images as their own
-	 * rounded blocks, files as cards), and only the text keeps a bubble. Read once, in
-	 * `apps/web/src/components/chat/message-bubble.tsx`. Off keeps the files inside the bubble as
-	 * before. Visual only, per actor; no data or API change. Retire (drop the old branch and this
-	 * entry) once it is on for everyone.
+	 * Gates editing a draft's text in place on the web For You card, with Send saving the
+	 * edit and approving the saved text in one step. Frontend only: read with useFeatureFlag
+	 * in draft-preview. Retire once editing is on for everyone.
 	 */
-	CHAT_ATTACHMENTS_LIFTED: 'chat-attachments-lifted',
-	/**
-	 * Custom agent-built view on the loop page (task
-	 * [Prototype: agent-built custom view on the loop page (HTML + data bridge)](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/c9d7469b-7922-4123-8681-925bd7f30044)).
-	 * Read once, in the loop detail route in apps/web. Off means the loop page is
-	 * exactly the default page (stats and flow). On, a loop with
-	 * metadata.view_file_id gets a Default / Custom view toggle and renders that
-	 * HTML file in place of the stats and flow, with live data from the read-only
-	 * bridge. Per-actor visual gate only: set_loop_view, query_data and
-	 * GET /api/data/query are read-only or metadata-only and stay reachable for
-	 * everyone. Not for customers until a view cannot send what it has read to
-	 * another site. Self-navigation is blocked in Chrome by the isolation frame
-	 * (frame-src 'none', untested elsewhere), but a view can still make Chrome
-	 * fetch an address of its choosing with <link rel=prerender>. Retire once that
-	 * is closed and the view ships to everyone.
-	 */
-	LOOP_CUSTOM_VIEW: 'loop-custom-view',
-	/**
-	 * Agents answer in the main chat and in every thread at the same time (bet
-	 * [Agents answer in the main chat and in every thread at the same time](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/44b1b91c-3902-4fab-99ca-d7db7af4155d)).
-	 * Backend only, per actor, keyed to the person who wrote the message (never the agent). Read once, in
-	 * `deliverTurnToAgent` in `apps/dev/src/services/conversation-responder.ts`, where a thread message
-	 * decides whether to start or reuse a session of its own for that thread. Off means the single-session
-	 * path runs exactly as before. Needs the old per-chat session index dropped before it can go on, see the
-	 * bet's index-drop task. Retire (drop the old path and this entry) once it is on for everyone.
-	 */
-	CHAT_THREAD_SESSIONS: 'chat-thread-sessions',
+	FORYOU_DRAFT_EDIT: 'foryou-draft-edit',
 	/**
 	 * Gates the visual layer of agent change review (bet
 	 * [Humans accept, edit or reject an agent's proposed changes to a file instead of re-reading the whole thing](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/a0daec7c-7c63-4898-bfac-a4dfc98a2d23)):

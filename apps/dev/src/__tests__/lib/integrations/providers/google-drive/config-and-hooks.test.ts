@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { FLAGS } from '../../../../../lib/feature-flags'
 import { actorScopedProviders } from '../../../../../lib/integrations/lookup'
 import { config } from '../../../../../lib/integrations/providers/google-drive/config'
 import { resolveExternalId } from '../../../../../lib/integrations/providers/google-drive/resolve-id'
@@ -82,12 +81,6 @@ describe('google-drive registry wiring', () => {
 		expect(await p.customWebhookVerifier?.('{}', { 'x-goog-channel-id': 'abc' })).toBe(false)
 		expect(p.webhookPreHandler).toBeUndefined()
 		expect(p.webhookFanOut).toBeUndefined()
-	})
-})
-
-describe('feature flag', () => {
-	it('registers GOOGLE_DRIVE_INTEGRATION_UI as google-drive-integration-ui', () => {
-		expect(FLAGS.GOOGLE_DRIVE_INTEGRATION_UI).toBe('google-drive-integration-ui')
 	})
 })
 

@@ -2,8 +2,7 @@ import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 
 /**
- * The Google Drive detail page (/settings/integrations/google-drive), behind
- * the google-drive-integration-ui flag.
+ * The Google Drive detail page (/settings/integrations/google-drive).
  *
  * GET /api/integrations is stubbed because a Drive row only exists after a
  * real Google OAuth round trip. The backend half (that the list reports
@@ -12,13 +11,10 @@ import { expect, test } from '../fixtures/auth.fixture'
  * stubbed with a webhook_url body so the client does not navigate to Google;
  * the spec asserts the request was sent, not that Google accepts it.
  *
- * The flag is switched with the client's test-only localStorage override, the
- * same way the Chats v4 specs do, so both sides of the boundary run without a
- * second actor. Dark mode is switched through the app's own maskin-theme key:
+ * Dark mode is switched through the app's own maskin-theme key:
  * the app defaults to light and ignores prefers-color-scheme unless the stored
  * theme is "system", so emulateMedia alone would leave every "dark" run light.
  */
-const FLAG_KEY = 'ff:google-drive-integration-ui'
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive'
 
 const WIDTHS = [
@@ -91,13 +87,6 @@ async function stubConnect(page: Page) {
 	)
 }
 
-async function setFlag(page: Page, value: 'on' | 'off') {
-	await page.addInitScript(({ key, value }) => localStorage.setItem(key, value), {
-		key: FLAG_KEY,
-		value,
-	})
-}
-
 async function setTheme(page: Page, theme: 'light' | 'dark') {
 	await page.addInitScript((value) => localStorage.setItem('maskin-theme', value), theme)
 }
@@ -116,34 +105,10 @@ async function expectNoSidewaysScroll(page: Page) {
 }
 
 test.describe('Settings — Google Drive detail page', () => {
-	test('flag off: the route shows the not-available state and no Drive surface', async ({
+	test('the providers list shows the Drive card with its New pill and a Details link', async ({
 		page,
 		account,
 	}) => {
-		await setFlag(page, 'off')
-		await stubIntegrations(page, [driveRow(account.workspaceId, 'kai@acme.test')])
-		await openDetail(page, account.workspaceId)
-
-		await expect(page.getByText('Google Drive is not available yet')).toBeVisible()
-		await expect(page.getByTestId('drive-detail')).toHaveCount(0)
-		await expect(page.getByTestId('scope-list')).toHaveCount(0)
-	})
-
-	test('flag off: the providers list does not show a Drive row', async ({ page, account }) => {
-		await setFlag(page, 'off')
-		await stubIntegrations(page, [])
-		await page.goto(`/${account.workspaceId}/settings/integrations`)
-		await page.waitForLoadState('load')
-
-		await expect(page.getByText('Slack', { exact: true }).first()).toBeVisible()
-		await expect(page.getByText('Google Drive')).toHaveCount(0)
-	})
-
-	test('flag on: the providers list shows the Drive card with its New pill and a Details link', async ({
-		page,
-		account,
-	}) => {
-		await setFlag(page, 'on')
 		await stubIntegrations(page, [])
 		await page.goto(`/${account.workspaceId}/settings/integrations`)
 		await page.waitForLoadState('load')
@@ -162,7 +127,6 @@ test.describe('Settings — Google Drive detail page', () => {
 	})
 
 	test('loading: a skeleton shows until the integrations resolve', async ({ page, account }) => {
-		await setFlag(page, 'on')
 		let release: () => void = () => {}
 		const gate = new Promise<void>((resolve) => {
 			release = resolve
@@ -192,7 +156,6 @@ test.describe('Settings — Google Drive detail page', () => {
 		account,
 	}) => {
 		const ws = account.workspaceId
-		await setFlag(page, 'on')
 		await stubConnect(page)
 		await stubIntegrations(page, [
 			integrationRow(ws, 'gmail', 'priya@acme.test'),
@@ -243,7 +206,6 @@ test.describe('Settings — Google Drive detail page', () => {
 
 	test('connected: every human has Drive, no banner and no CTA', async ({ page, account }) => {
 		const ws = account.workspaceId
-		await setFlag(page, 'on')
 		await stubIntegrations(page, [
 			integrationRow(ws, 'gmail', 'priya@acme.test'),
 			driveRow(ws, 'priya@acme.test'),
@@ -268,7 +230,6 @@ test.describe('Settings — Google Drive detail page', () => {
 		account,
 	}) => {
 		const ws = account.workspaceId
-		await setFlag(page, 'on')
 		await stubConnect(page)
 		await stubIntegrations(page, [
 			driveRow(ws, 'priya@acme.test'),
@@ -302,7 +263,6 @@ test.describe('Settings — Google Drive detail page', () => {
 	})
 
 	test('all-disconnected: the wizard starts the Drive connect flow', async ({ page, account }) => {
-		await setFlag(page, 'on')
 		await stubConnect(page)
 		await stubIntegrations(page, [])
 		await openDetail(page, account.workspaceId)
@@ -328,7 +288,6 @@ test.describe('Settings — Google Drive detail page', () => {
 		account,
 	}) => {
 		const ws = account.workspaceId
-		await setFlag(page, 'on')
 		await stubIntegrations(page, [driveRow(ws, 'priya@acme.test'), driveRow(ws, 'kai@acme.test')])
 		await openDetail(page, ws)
 
@@ -345,7 +304,6 @@ test.describe('Settings — Google Drive detail page', () => {
 				account,
 			}) => {
 				const ws = account.workspaceId
-				await setFlag(page, 'on')
 				await stubIntegrations(page, [
 					driveRow(ws, 'priya@acme.test'),
 					driveRow(ws, 'kai@acme.test', { needsReconnect: true, grantedScopes: ['openid'] }),
@@ -447,7 +405,6 @@ test.describe('Settings — Google Drive folder watches', () => {
 		account,
 	}) => {
 		const ws = account.workspaceId
-		await setFlag(page, 'on')
 		await stubIntegrations(page, [driveRow(ws, 'priya@acme.test')])
 		await stubWatches(page, [
 			watchStub('f-rec', {
@@ -480,7 +437,6 @@ test.describe('Settings — Google Drive folder watches', () => {
 
 	test('Stop sends a DELETE for that folder and the row disappears', async ({ page, account }) => {
 		const ws = account.workspaceId
-		await setFlag(page, 'on')
 		await stubIntegrations(page, [driveRow(ws, 'priya@acme.test')])
 		const { stopped } = await stubWatches(page, [
 			watchStub('f-a', { name: 'Meet Recordings' }),
@@ -506,7 +462,6 @@ test.describe('Settings — Google Drive folder watches', () => {
 		account,
 	}) => {
 		const ws = account.workspaceId
-		await setFlag(page, 'on')
 		await stubIntegrations(page, [driveRow(ws, 'priya@acme.test')])
 		await stubWatches(page, [watchStub('f-only', { name: 'Meet Recordings' })])
 		await openDetail(page, ws)
@@ -517,27 +472,6 @@ test.describe('Settings — Google Drive folder watches', () => {
 		await expect(page.getByRole('button', { name: /Stop watch/ })).toHaveCount(0)
 	})
 
-	test('with the flag off the section is unreachable and its endpoint is never called', async ({
-		page,
-		account,
-	}) => {
-		let called = false
-		await page.route(
-			(url) => url.pathname.startsWith(WATCHES_PATH),
-			(route) => {
-				called = true
-				return route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
-			},
-		)
-		await setFlag(page, 'off')
-		await stubIntegrations(page, [driveRow(account.workspaceId, 'priya@acme.test')])
-		await openDetail(page, account.workspaceId)
-
-		await expect(page.getByText('Google Drive is not available yet')).toBeVisible()
-		await expect(page.getByTestId('folder-watches')).toHaveCount(0)
-		expect(called).toBe(false)
-	})
-
 	for (const viewport of WIDTHS) {
 		for (const scheme of ['light', 'dark'] as const) {
 			test(`folder watches fit at ${viewport.label}px in ${scheme} mode`, async ({
@@ -545,7 +479,6 @@ test.describe('Settings — Google Drive folder watches', () => {
 				account,
 			}) => {
 				const ws = account.workspaceId
-				await setFlag(page, 'on')
 				await stubIntegrations(page, [driveRow(ws, 'priya@acme.test')])
 				await stubWatches(page, [
 					watchStub('f-long', { name: 'Q3 briefs', path: LONG_PATH }),

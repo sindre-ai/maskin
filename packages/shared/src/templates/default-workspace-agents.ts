@@ -118,9 +118,10 @@ A message you are allowed to send now stays as it is: send it and log it. No tas
    | \`linkedin_comment_reply\` | \`post_id\` and \`comment_id\` (both required): the comment answered; \`reply_to\`: its text | 3000 characters |
    | \`linkedin_post_edit\` | \`post_id\` (required): a post already published; the content is the new post text | 3000 characters |
    | \`slack_message\` | \`channel\` (required): the name, like \`#general\`, never the id | |
+   | \`manual_message\` | \`to\` and \`channel\` (both required): who it goes to and where you type it, like \`Facebook\` | |
 
    Never invent an address or a recipient. If you do not have one, leave \`kind\` off and say so in the comment.
-4. **Another channel** (a portal form, a text): no kind exists yet. Make the task with the message text as content and \`metadata.channel\`, so it can be found and reviewed.
+4. **Text you type or send by hand** (a Facebook message through the computer, a portal form, a text): use \`manual_message\` with \`to\` (required, a name or profile link) and \`channel\` (required, for example \`Facebook\`). It shows who, where and what, and the person's approval is bound to that text. Send exactly the approved text, nothing else.
 5. **Status**: ready for review is \`todo\`, plus the decision card below. For later is \`backlog\`, with \`metadata.follow_up_on\` (ISO date) and the reason in a comment.
 
 ## When the draft is a reply: show what they wrote
@@ -1261,8 +1262,8 @@ export const DEFAULT_WORKSPACE_TRIGGERS: SeedTrigger[] = [
 Otherwise, exit silently.
 
 If firing:
-1. Post ONE comment on this knowledge object (create_comment, attention 3) addressed to the user. 2–3 sentences, warm: "Here's a first pass on who you are and where you work — take a skim and let me know. If it's on the money, I'll set the Researcher loose on a proper deep dive (your org, competitors, the market you're in)."
-2. On that same comment, attach a \`decision\`: the deep dive does not start until they answer, so it is a real call. Options are "Looks right" / "Needs correction" / "Wrong entirely", each with 2-3 one-clause consequences and exactly one recommended, plus a title, a summary carrying a real number, and a first-person ask. See the \`decision\` param docs on \`create_comment\` for the rules the API enforces.
+1. Post ONE comment on this knowledge object (create_comment, attention 3) addressed to the user. 2–3 sentences, warm, in plain words: "Here's what we found about you and where you work — take a skim and let me know. If it's on the money, I'll have the Researcher dig into your company, your competitors and the market you're in." Never use the words "brief" or "deep dive" in the comment or the decision card.
+2. On that same comment, attach a \`decision\`: the further research does not start until they answer, so it is a real call. Options are "Looks right" / "Needs correction" / "Wrong entirely", each with 2-3 one-clause consequences and exactly one recommended, plus the title "Check what we found about you and your company", a summary carrying a real number, and a first-person ask. See the \`decision\` param docs on \`create_comment\` for the rules the API enforces.
 3. Do NOT change the knowledge status yourself. The user's answer is what confirms the brief; you'll act on their reply per the onboarding arc in your system prompt (Beat 2).
 4. As the FINAL step, once the confirmation comment + decision have been posted, call \`update_trigger\` with \`id: {{trigger_id}}\` and \`enabled: false\`. This trigger is onboarding-only and one-shot per workspace — self-disabling prevents every subsequent \`knowledge.created\` event from spawning a redundant Chief of Staff session just to run the "is this the first Researcher brief?" gate.`,
 		targetActor$id: 'chief_of_staff',

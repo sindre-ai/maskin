@@ -62,6 +62,10 @@ import {
 } from '../services/session-cleanup'
 import type { SessionManager } from '../services/session-manager'
 import { autoSubscribe } from '../services/subscriptions'
+import {
+	createWorkspaceDesktopService,
+	removeDesktopsForActors,
+} from '../services/workspace-desktop'
 
 type Env = {
 	Variables: {
@@ -931,6 +935,8 @@ app.openapi(uninstallLoopRoute, async (c) => {
 	// sandboxes keep running as agents the user just uninstalled, holding
 	// agent-server capacity until the 2h timeout.
 	let strandedSessions: CapturedLiveSession[] = []
+	// Ids of the agents this uninstall deleted, for removing their computers after commit.
+	let deletedActorIds: string[] = []
 
 	await db.transaction(async (tx) => {
 		if (keepProvisionedItems) {
@@ -1059,6 +1065,7 @@ app.openapi(uninstallLoopRoute, async (c) => {
 
 			if (actorIds.length > 0) {
 				strandedSessions = await captureLiveSessions(tx, actorIds)
+				deletedActorIds = actorIds
 
 				// Delete triggers that target or were created by provisioned actors.
 				// The metadata-based delete above only removed marketplace-managed triggers;
@@ -1205,6 +1212,11 @@ app.openapi(uninstallLoopRoute, async (c) => {
 	})
 
 	await stopCapturedSandboxes(db, strandedSessions)
+	await removeDesktopsForActors(
+		install.workspaceId,
+		deletedActorIds,
+		createWorkspaceDesktopService(db),
+	)
 
 	for (const skillId of removedSkillIds) {
 		try {

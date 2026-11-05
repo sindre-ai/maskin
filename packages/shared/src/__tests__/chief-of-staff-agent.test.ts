@@ -3,6 +3,7 @@ import {
 	CHIEF_OF_STAFF_DEFAULT,
 	CHIEF_OF_STAFF_SYSTEM_PROMPT,
 	CONTINUOUS_ONBOARDING_SKILL,
+	DEFAULT_WORKSPACE_TRIGGERS,
 } from '../templates/default-workspace-agents'
 
 describe('Chief of Staff default template', () => {
@@ -120,5 +121,21 @@ describe('CONTINUOUS_ONBOARDING_SKILL', () => {
 
 	it('names setting a human driver as an anti-pattern', () => {
 		expect(content).toMatch(/Setting the human owner as `driver` on a knowledge object/)
+	})
+})
+
+describe('First-pass confirmation card copy', () => {
+	const trigger = DEFAULT_WORKSPACE_TRIGGERS.find(
+		(t) => t.name === 'First-pass brief filed → present for confirmation',
+	)
+
+	it('titles the card in plain words', () => {
+		expect(trigger?.actionPrompt).toContain('Check what we found about you and your company')
+	})
+
+	it('only mentions brief and deep dive to forbid them in the card', () => {
+		const prompt = trigger?.actionPrompt ?? ''
+		expect(prompt).toContain('Never use the words "brief" or "deep dive"')
+		expect(prompt).not.toMatch(/proper deep dive|the deep dive does not start/)
 	})
 })

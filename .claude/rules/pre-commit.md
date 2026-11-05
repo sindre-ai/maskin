@@ -13,4 +13,8 @@ Before running `git commit`, always run these three checks and fix any failures:
    - Run `pnpm build` to confirm no build files are missing
    - If you added env vars, confirm they're in `turbo.json` `globalPassThroughEnv`
 
+6. **Web ↔ iOS parity**: If your changes touch `apps/web` or `apps/apple` in a user-visible way:
+   - Confirm the equivalent change exists in the other app (see `.claude/rules/web-ios-parity.md`)
+   - Put the `Web: … · iOS: …` parity line in the PR body
+
 If any check fails, fix the issue before committing. Never use `--no-verify` to skip checks.

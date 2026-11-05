@@ -2722,6 +2722,8 @@ export interface ConversationListItemResponse {
 	snippet_actor_id: string | null
 	snippet_actor_name: string | null
 	participants: ConversationParticipantResponse[]
+	/** Agents with an open turn in this chat right now — a chat session stays running between turns. */
+	working_actor_ids: string[]
 }
 
 export interface ConversationListResponse {

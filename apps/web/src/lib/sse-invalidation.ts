@@ -279,6 +279,11 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 		case 'actor':
 			invalidate(queryClient, { queryKey: queryKeys.actors.all(workspaceId) })
 			break
+		case 'installed_loop':
+			// A loop version update rewrites the loop's agents (name, description, tools) in place
+			// and emits only this event, never an `actor` one — so the agent list kept the old name.
+			invalidate(queryClient, { queryKey: queryKeys.actors.all(workspaceId) })
+			break
 		case 'workspace':
 			invalidate(queryClient, { queryKey: queryKeys.workspaces.all() })
 			break

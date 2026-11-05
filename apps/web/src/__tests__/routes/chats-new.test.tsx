@@ -137,6 +137,7 @@ function conversationsPage(
 					snippet: null,
 					snippet_actor_id: null,
 					snippet_actor_name: null,
+					working_actor_ids: [],
 					participants: c.participants.map((p) => ({ ...p, joinedAt: null, addedBy: null })),
 				})),
 				has_more: false,
@@ -166,6 +167,20 @@ describe('New chat', () => {
 		render(<NewChatPage />)
 		expect(screen.queryByText('What needs a decision from me today?')).not.toBeInTheDocument()
 		expect(screen.queryByText('Summarise what the loops did overnight')).not.toBeInTheDocument()
+	})
+
+	describe('welcome after signup', () => {
+		it('shows the Chief of Staff welcome, greeting the person by name, when sent here by signup', () => {
+			mockSearch.mockReturnValue({ welcome: true } as never)
+			render(<NewChatPage />)
+			expect(screen.getByText(/Hi You 👋 Welcome to Maskin/)).toBeInTheDocument()
+			expect(screen.getByText(/Researcher is putting together a first look/)).toBeInTheDocument()
+		})
+
+		it('shows no welcome on an ordinary visit', () => {
+			render(<NewChatPage />)
+			expect(screen.queryByText(/Welcome to Maskin/)).not.toBeInTheDocument()
+		})
 	})
 
 	describe('intro under the heading', () => {

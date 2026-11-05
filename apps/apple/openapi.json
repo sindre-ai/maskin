@@ -39026,7 +39026,7 @@
 									"amount_usd_cents": {
 										"type": "integer",
 										"minimum": 1000,
-										"maximum": 50000
+										"maximum": 3490000
 									},
 									"success_url": {
 										"type": "string",
@@ -42766,6 +42766,13 @@
 																"addedBy"
 															]
 														}
+													},
+													"working_actor_ids": {
+														"type": "array",
+														"items": {
+															"type": "string",
+															"format": "uuid"
+														}
 													}
 												},
 												"required": [
@@ -42785,7 +42792,8 @@
 													"snippet_actor_id",
 													"snippet_actor_name",
 													"snippet_is_caller",
-													"participants"
+													"participants",
+													"working_actor_ids"
 												]
 											}
 										},
@@ -76969,7 +76977,7 @@
 					"Desktop"
 				],
 				"summary": "Screenshot of an agent's desktop",
-				"description": "Starts the desktop if needed. Returns a base64 JPEG of the 1280x720 screen.",
+				"description": "Starts the desktop if needed. Returns a base64 JPEG of the 1600x900 screen.",
 				"parameters": [
 					{
 						"schema": {
@@ -77298,12 +77306,12 @@
 											"x": {
 												"type": "integer",
 												"minimum": 0,
-												"maximum": 1279
+												"maximum": 1599
 											},
 											"y": {
 												"type": "integer",
 												"minimum": 0,
-												"maximum": 719
+												"maximum": 899
 											},
 											"button": {
 												"type": "string",
@@ -77337,12 +77345,12 @@
 											"x": {
 												"type": "integer",
 												"minimum": 0,
-												"maximum": 1279
+												"maximum": 1599
 											},
 											"y": {
 												"type": "integer",
 												"minimum": 0,
-												"maximum": 719
+												"maximum": 899
 											}
 										},
 										"required": [
@@ -77363,22 +77371,22 @@
 											"from_x": {
 												"type": "integer",
 												"minimum": 0,
-												"maximum": 1279
+												"maximum": 1599
 											},
 											"from_y": {
 												"type": "integer",
 												"minimum": 0,
-												"maximum": 719
+												"maximum": 899
 											},
 											"to_x": {
 												"type": "integer",
 												"minimum": 0,
-												"maximum": 1279
+												"maximum": 1599
 											},
 											"to_y": {
 												"type": "integer",
 												"minimum": 0,
-												"maximum": 719
+												"maximum": 899
 											}
 										},
 										"required": [
@@ -77414,12 +77422,12 @@
 											"x": {
 												"type": "integer",
 												"minimum": 0,
-												"maximum": 1279
+												"maximum": 1599
 											},
 											"y": {
 												"type": "integer",
 												"minimum": 0,
-												"maximum": 719
+												"maximum": 899
 											}
 										},
 										"required": [
