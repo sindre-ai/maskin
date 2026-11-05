@@ -2,7 +2,7 @@ import { LoopCustomView } from '@/components/loops/loop-custom-view'
 import type { FileDetail } from '@/lib/api'
 import { api } from '@/lib/api'
 import { BRIDGE_QUERY_MESSAGE, ISOLATION_LOAD_MESSAGE, MINI_APP_CSP } from '@/lib/mini-app'
-import { act, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
@@ -86,6 +86,7 @@ describe('LoopCustomView', () => {
 		vi.mocked(api.data.nextChange).mockReset()
 		vi.mocked(api.data.nextChange).mockResolvedValue({ in_ms: null })
 		sseListeners.length = 0
+		localStorage.clear()
 	})
 
 	it('renders the view in a script-only sandbox under the unchanged platform CSP', () => {
@@ -236,6 +237,184 @@ describe('LoopCustomView', () => {
 			await ask(container)
 
 			expect(screen.getByText(/Some numbers in this view are partial/)).toBeTruthy()
+		})
+
+		describe('saved answers', () => {
+			const SPEC_KEY = JSON.stringify({ type: 'task', group_by: 'status' })
+			const savedAt = new Date(2026, 10, 4, 9, 5).getTime()
+
+			function save(result: object) {
+				localStorage.setItem(
+					`maskin-loop-view:ws-1:${SPEC_KEY}`,
+					JSON.stringify({ at: savedAt, result }),
+				)
+			}
+
+			/** Asks as the frame would and returns the answers the host posted back to it. */
+			async function askAndRead(container: HTMLElement) {
+				const { view } = viewWindowOf(container)
+				await act(async () => {
+					window.dispatchEvent(
+						new MessageEvent('message', {
+							data: { type: BRIDGE_QUERY_MESSAGE, id: 1, name: 'by_status' },
+							source: view as unknown as Window,
+						}),
+					)
+				})
+				return view.postMessage.mock.calls.map(([message]) => message.data)
+			}
+
+			it('gives the view the saved answer at once, shows when it was saved, and spins until the server answers', async () => {
+				save(answer())
+				let resolve: (value: ReturnType<typeof answer>) => void = () => {}
+				vi.mocked(api.data.query).mockReturnValue(
+					new Promise((r) => {
+						resolve = r
+					}),
+				)
+				const { container } = renderView()
+				await act(async () => {})
+				const posted = await askAndRead(container)
+
+				expect(posted).toEqual([answer()])
+				expect(screen.getByText('Updated 4th Nov 09:05')).toBeTruthy()
+				expect(container.querySelector('svg.animate-spin')).not.toBeNull()
+
+				await act(async () => resolve(answer()))
+				expect(container.querySelector('svg.animate-spin')).toBeNull()
+				expect(screen.queryByText('Updated 4th Nov 09:05')).toBeNull()
+				expect(
+					screen.getByText(/^Updated \d{1,2}(st|nd|rd|th) [A-Z][a-z]{2} \d\d:\d\d$/),
+				).toBeTruthy()
+			})
+
+			it('keeps the frame when the server agrees with the saved answer', async () => {
+				save(answer())
+				vi.mocked(api.data.query).mockResolvedValue(answer())
+				const { container } = renderView()
+				await act(async () => {})
+				const first = container.querySelector('iframe')
+				await ask(container)
+				expect(container.querySelector('iframe')).toBe(first)
+			})
+
+			it('replaces the frame, and hands it the server answer, when the server disagrees', async () => {
+				save(answer())
+				const latest = answer({ total: { count: 9, value: 9 } })
+				vi.mocked(api.data.query).mockResolvedValue(latest)
+				const { container } = renderView()
+				await act(async () => {})
+				const first = container.querySelector('iframe')
+				expect(await askAndRead(container)).toEqual([answer()])
+
+				expect(container.querySelector('iframe')).not.toBe(first)
+				expect(await askAndRead(container)).toEqual([latest])
+				expect(vi.mocked(api.data.query)).toHaveBeenCalledTimes(1)
+			})
+
+			it('keeps the saved answer, says the refresh failed and offers a Refresh button', async () => {
+				vi.spyOn(console, 'error').mockImplementation(() => {})
+				save(answer())
+				vi.mocked(api.data.query).mockRejectedValue(new Error('boom'))
+				const { container } = renderView()
+				await act(async () => {})
+				const first = container.querySelector('iframe')
+				await ask(container)
+
+				expect(container.querySelector('iframe')).toBe(first)
+				expect(screen.getByText('Refresh failed')).toBeTruthy()
+				expect(screen.getByRole('button', { name: /Refresh/ })).toBeTruthy()
+				expect(screen.getByText('Updated 4th Nov 09:05')).toBeTruthy()
+			})
+
+			it('clears the failure and the old time when Refresh succeeds with the same numbers', async () => {
+				vi.spyOn(console, 'error').mockImplementation(() => {})
+				save(answer())
+				vi.mocked(api.data.query).mockRejectedValueOnce(new Error('boom'))
+				const { container } = renderView()
+				await act(async () => {})
+				const first = container.querySelector('iframe')
+				await ask(container)
+
+				vi.mocked(api.data.query).mockResolvedValue(answer())
+				await act(async () => {
+					fireEvent.click(screen.getByRole('button', { name: /Refresh/ }))
+				})
+
+				expect(screen.queryByText('Refresh failed')).toBeNull()
+				expect(screen.queryByRole('button', { name: /Refresh/ })).toBeNull()
+				expect(screen.queryByText('Updated 4th Nov 09:05')).toBeNull()
+				expect(container.querySelector('iframe')).toBe(first)
+			})
+
+			it('redraws with the new numbers when Refresh finds a different answer', async () => {
+				vi.spyOn(console, 'error').mockImplementation(() => {})
+				save(answer())
+				const latest = answer({ total: { count: 9, value: 9 } })
+				vi.mocked(api.data.query).mockRejectedValueOnce(new Error('boom'))
+				const { container } = renderView()
+				await act(async () => {})
+				const first = container.querySelector('iframe')
+				await ask(container)
+
+				vi.mocked(api.data.query).mockResolvedValue(latest)
+				await act(async () => {
+					fireEvent.click(screen.getByRole('button', { name: /Refresh/ }))
+				})
+
+				expect(container.querySelector('iframe')).not.toBe(first)
+				expect(await askAndRead(container)).toEqual([latest])
+			})
+
+			it('still says refresh failed, and keeps the button, when Refresh fails again', async () => {
+				vi.spyOn(console, 'error').mockImplementation(() => {})
+				save(answer())
+				vi.mocked(api.data.query).mockRejectedValue(new Error('boom'))
+				const { container } = renderView()
+				await act(async () => {})
+				await ask(container)
+
+				await act(async () => {
+					fireEvent.click(screen.getByRole('button', { name: /Refresh/ }))
+				})
+
+				expect(screen.getByText('Refresh failed')).toBeTruthy()
+				expect(screen.getByRole('button', { name: /Refresh/ })).toBeTruthy()
+			})
+
+			it('offers Refresh when a live query failed and nothing was saved', async () => {
+				vi.spyOn(console, 'error').mockImplementation(() => {})
+				vi.mocked(api.data.query).mockRejectedValueOnce(new Error('boom'))
+				const { container } = renderView()
+				await act(async () => {})
+				await ask(container)
+				expect(screen.getByText('Refresh failed')).toBeTruthy()
+
+				vi.mocked(api.data.query).mockResolvedValue(answer())
+				await act(async () => {
+					fireEvent.click(screen.getByRole('button', { name: /Refresh/ }))
+				})
+				expect(screen.queryByText('Refresh failed')).toBeNull()
+			})
+
+			it('saves a live answer for the next visit', async () => {
+				vi.mocked(api.data.query).mockResolvedValue(answer())
+				const { container } = renderView()
+				await act(async () => {})
+				await ask(container)
+				const saved = JSON.parse(
+					localStorage.getItem(`maskin-loop-view:ws-1:${SPEC_KEY}`) ?? 'null',
+				)
+				expect(saved.result).toEqual(answer())
+			})
+
+			it('ignores a saved answer that is not a valid result', async () => {
+				localStorage.setItem(`maskin-loop-view:ws-1:${SPEC_KEY}`, '{"at":1,"result":{"nope":true}}')
+				vi.mocked(api.data.query).mockResolvedValue(answer())
+				const { container } = renderView()
+				await act(async () => {})
+				expect(await askAndRead(container)).toEqual([answer()])
+			})
 		})
 
 		it('shows no note for an answer that is complete', async () => {
