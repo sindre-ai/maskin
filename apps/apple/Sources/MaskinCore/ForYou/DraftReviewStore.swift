@@ -110,8 +110,7 @@ public final class DraftReviewStore {
 	public func blockedReason(_ draft: ReviewDraft) -> String? {
 		if canApprove(draft) { return nil }
 		if let first = draft.missing.first { return "Still needs: \(first)" }
-		if draft.isEmail, (edit(for: draft).subject ?? "").trimmed.isEmpty { return "Add a subject to approve." }
-		return "Add some text to approve."
+		return edit(for: draft).approveBlockedReason(isEmail: draft.isEmail)
 	}
 
 	/// The receipts that are still in flight or done, newest last.

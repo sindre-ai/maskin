@@ -196,7 +196,9 @@ struct LinkedDraftCard: View {
 			switch preview.delivery {
 			case .sent: receipt("Sent")
 			case .approved: receipt("Approved")
-			case .draft, nil: approveButton
+			case .draft, nil:
+				approveButton
+				if let reason = blockedReason { reasonRow(reason) }
 			}
 			if case .failed(let message)? = phase {
 				Text(message)
@@ -215,6 +217,19 @@ struct LinkedDraftCard: View {
 			.maskinText(.caption).fontWeight(.semibold)
 			.foregroundStyle(MaskinColor.ink4)
 			.frame(minHeight: MaskinSpace.touchMin)
+	}
+
+	/// Why Approve is off, when the reader can fix it by typing.
+	private var blockedReason: String? {
+		guard canEdit, preview.canApprove, !isApproving else { return nil }
+		return current.approveBlockedReason(isEmail: isEmail)
+	}
+
+	private func reasonRow(_ reason: String) -> some View {
+		Text(reason)
+			.maskinText(.caption)
+			.foregroundStyle(MaskinColor.ink3)
+			.frame(maxWidth: .infinity, alignment: .trailing)
 	}
 
 	private var approveButton: some View {

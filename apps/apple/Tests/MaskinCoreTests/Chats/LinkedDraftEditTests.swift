@@ -168,3 +168,17 @@ struct LinkedDraftEditTests {
 		#expect(remote.approveCalls.isEmpty)
 	}
 }
+
+@Suite struct DraftEditBlockedReasonTests {
+	@Test func anEmailWithoutASubjectSaysWhy() {
+		#expect(DraftEdit(body: "Hi", subject: "").approveBlockedReason(isEmail: true) == "Add a subject to approve.")
+		#expect(DraftEdit(body: "Hi", subject: "  ").approveBlockedReason(isEmail: true) == "Add a subject to approve.")
+		#expect(DraftEdit(body: "Hi", subject: "Hello").approveBlockedReason(isEmail: true) == nil)
+	}
+
+	@Test func emptyTextSaysWhyAndASubjectIsOnlyForEmail() {
+		#expect(DraftEdit(body: "  ", subject: "Hello").approveBlockedReason(isEmail: true) == "Add some text to approve.")
+		#expect(DraftEdit(body: "Post", subject: nil).approveBlockedReason(isEmail: false) == nil)
+		#expect(DraftEdit(body: " ", subject: nil).approveBlockedReason(isEmail: false) == "Add some text to approve.")
+	}
+}
