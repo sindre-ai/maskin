@@ -39,6 +39,15 @@ export const FLAGS = {
 	 */
 	AGENT_PROACTIVE_1_1: 'agent-proactive-1-1',
 	/**
+	 * The deep_research MCP tool and its routes (POST /api/research, GET /api/research/:id), read per
+	 * actor with isFlagEnabled at the top of both handlers in `apps/dev/src/routes/research.ts`. Off
+	 * means the tool answers "not enabled" and no run row is created. The research_runs table and
+	 * the plan-cap sum are in place for everyone and unchanged by the flag. Turn on for the
+	 * Researcher and the Strategist first (FF_TESTER_ACTOR_IDS + deep-research in
+	 * FF_TESTER_FEATURES). Retire (drop the checks and this entry) once the bet is called Won.
+	 */
+	DEEP_RESEARCH: 'deep-research',
+	/**
 	 * Gates the Daily budget setting in Settings, Billing (bet [A daily token budget,
 	 * spent on the right work first](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/0f3ae096-7efc-4412-aba0-7a21a91ba040),
 	 * slice 1a). UI only: the route layout reads it once and mounts the section

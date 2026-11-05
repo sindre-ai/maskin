@@ -85,6 +85,7 @@ import objectsRoutes from './routes/objects'
 import publicBetStrategistRoutes from './routes/public-bet-strategist'
 import publicLandingEventsRoutes from './routes/public-landing-events'
 import relationshipsRoutes from './routes/relationships'
+import researchRoutes from './routes/research'
 import searchRoutes from './routes/search'
 import sendPermissionsRoutes from './routes/send-permissions'
 import sessionsRoutes from './routes/sessions'
@@ -452,6 +453,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/workspaces', workspaceSkillsRoutes)
 	app.route('/api/invites', workspaceInvitationsRoutes)
 	app.route('/api/relationships', relationshipsRoutes)
+	app.route('/api/research', researchRoutes)
 	app.route('/api/triggers', triggersRoutes)
 	app.route('/api/loops', loopsRoutes)
 	app.route('/api/data', dataQueryRoutes)

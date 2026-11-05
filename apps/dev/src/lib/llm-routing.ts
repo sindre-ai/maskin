@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { sessions } from '@maskin/db/schema'
+import { researchRuns, sessions } from '@maskin/db/schema'
 import type { SessionResultFailureReason } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
 import {
@@ -320,6 +320,7 @@ export function sessionUsageCents(row: {
  * session's own reported `total_cost_usd` (populated from the CLI's own
  * reported cost, so it reflects whichever model actually ran) and falls back
  * to a flat token-rate estimate only for sessions that never reported one.
+ * Research runs add their own `cost_cents` (see the research_runs table).
  * Tracking dollars instead of raw tokens is what lets different agents run
  * different models — each with a different $/token ratio — without the cap
  * silently over- or under-counting usage. The route filter is what makes
@@ -335,7 +336,7 @@ export async function getWorkspacePlanUsdCentsUsage(
 	workspaceId: string,
 	periodStartMs?: number,
 ): Promise<number> {
-	const rows = await db
+	const sessionRows = db
 		.select({
 			totalCostUsd: sessions.totalCostUsd,
 			inputTokens: sessions.inputTokens,
@@ -344,7 +345,24 @@ export async function getWorkspacePlanUsdCentsUsage(
 		.from(sessions)
 		.where(planUsageConds(workspaceId, periodStartMs))
 
-	let totalCents = 0
+	// Research runs (deep_research) are metered in cents already, so they are
+	// summed in SQL. Only the maskin_plan route counts, like sessions: a run on
+	// the workspace's own key is not plan spend.
+	const researchConds = [
+		eq(researchRuns.workspaceId, workspaceId),
+		eq(researchRuns.llmRoute, LLM_ROUTE_MASKIN_PLAN),
+	]
+	if (periodStartMs !== undefined) {
+		researchConds.push(gte(researchRuns.createdAt, new Date(periodStartMs)))
+	}
+	const researchRows = db
+		.select({ costCents: sql<string | null>`sum(${researchRuns.costCents})` })
+		.from(researchRuns)
+		.where(and(...researchConds))
+
+	const [rows, researchSum] = await Promise.all([sessionRows, researchRows])
+
+	let totalCents = Number(researchSum[0]?.costCents ?? 0)
 	for (const row of rows) totalCents += sessionUsageCents(row)
 	// Round once on the aggregate, not per-row, so small per-session fractions
 	// of a cent don't compound into meaningfully over-counted usage.
@@ -417,7 +435,7 @@ export function getWorkspacePlanCap(wsSettings: WorkspaceSettings): number | nul
 	return effectivePlanCap(plan as MaskinPlan, billing?.hard_cap_usd_cents ?? undefined)
 }
 
-function effectivePeriodEnd(
+export function effectivePeriodEnd(
 	periodStartMs: number | undefined,
 	periodEndMs: number | undefined,
 ): number | null {
@@ -549,6 +567,36 @@ function buildCustomLlmEnv(custom: WorkspaceSettings['custom_llm']): Record<stri
 	}
 }
 
+/** The one value a session's pin_llm_route may hold; anything else means no pin. */
+export function readPinnedRoute(config: unknown): typeof LLM_ROUTE_CUSTOM | undefined {
+	return (config as { pin_llm_route?: unknown } | null)?.pin_llm_route === LLM_ROUTE_CUSTOM
+		? LLM_ROUTE_CUSTOM
+		: undefined
+}
+
+/** Route 3 on its own, for a session pinned to the workspace's custom endpoint. */
+function resolvePinnedCustomRoute(
+	wsSettings: WorkspaceSettings,
+	enterprise: boolean,
+): LlmRoutingResult {
+	// Custom endpoints are a BYO entitlement, the same gate routes 2-4 sit behind.
+	let customEnv: Record<string, string> | null = null
+	try {
+		customEnv = enterprise ? buildCustomLlmEnv(wsSettings.custom_llm) : null
+	} catch (err) {
+		if (err instanceof SecretUnreadableError) throw unreadableKeyError(err)
+		throw err
+	}
+	if (!customEnv) {
+		throw new LlmCredentialsUnavailableError(
+			'This session is pinned to the workspace custom model endpoint, and the workspace has none that is enabled and complete.',
+			false,
+			{ noCredentialsConfigured: true },
+		)
+	}
+	return { route: LLM_ROUTE_CUSTOM, envVars: customEnv }
+}
+
 /**
  * Builds the env vars for the Maskin-funded OpenRouter route. Returns null
  * when the workspace is not on a maskin-plan-routed plan or the operator
@@ -673,8 +721,18 @@ export async function resolveLlmRoute(params: {
 	 * production callers omit it.
 	 */
 	env?: NodeJS.ProcessEnv
+	/**
+	 * Restricts the session to the workspace's own custom endpoint. Only narrows:
+	 * no subscription, API key or Maskin-funded route is tried, and a workspace
+	 * without a usable custom endpoint gets no credentials instead of another route.
+	 */
+	pinRoute?: typeof LLM_ROUTE_CUSTOM
 }): Promise<LlmRoutingResult | null> {
 	const { db, workspaceId, actorId, wsSettings, agent, enterprise, claudeProbe } = params
+
+	if (params.pinRoute === LLM_ROUTE_CUSTOM) {
+		return resolvePinnedCustomRoute(wsSettings, enterprise)
+	}
 
 	/** Set when route #2 failed; folded into the error when nothing else resolves. */
 	let oauthFailure: string | null = null

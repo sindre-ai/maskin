@@ -180,6 +180,7 @@ import {
 	getWorkspacePlanCap,
 	getWorkspacePlanUsdCentsUsage,
 	preflightLlmCredentials,
+	readPinnedRoute,
 	resolveLlmRoute,
 	unreadableKeyError,
 	withCredentialResolutionTimeout,
@@ -2600,6 +2601,7 @@ ${cont.continues_prompt}
 						apiKey: (llmConfig.api_key as string | undefined) ?? null,
 						model: (llmConfig.model as string | undefined)?.trim() || null,
 					},
+					pinRoute: readPinnedRoute(session.config),
 				}),
 			)
 			if (resolved) {
@@ -2753,6 +2755,7 @@ ${cont.continues_prompt}
 		if (sessionConfig.runtime_config) {
 			const rtConfig = sessionConfig.runtime_config as Record<string, unknown>
 			if (rtConfig.max_turns) envVars.MAX_TURNS = String(rtConfig.max_turns)
+			if (rtConfig.max_budget_usd) envVars.MAX_BUDGET_USD = String(rtConfig.max_budget_usd)
 			if (rtConfig.approval_mode) envVars.CODEX_APPROVAL_MODE = rtConfig.approval_mode as string
 			if (rtConfig.command) envVars.CUSTOM_COMMAND = rtConfig.command as string
 		}
@@ -3192,6 +3195,7 @@ ${cont.continues_prompt}
 			'MASKIN_DISABLE_WEB_SEARCH',
 			'OPENAI_API_KEY',
 			'MAX_TURNS',
+			'MAX_BUDGET_USD',
 			'CODEX_APPROVAL_MODE',
 			'CUSTOM_COMMAND',
 			'MCP_SERVERS_JSON',

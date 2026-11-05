@@ -83,6 +83,7 @@ export const mcpServerSchema = z.preprocess(
 
 export const runtimeConfigSchema = z.object({
 	max_turns: z.number().int().positive().optional(),
+	max_budget_usd: z.number().positive().optional(),
 	approval_mode: z.string().optional(),
 	command: z.string().optional(),
 })
