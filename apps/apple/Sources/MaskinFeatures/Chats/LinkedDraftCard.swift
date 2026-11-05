@@ -198,6 +198,13 @@ struct LinkedDraftCard: View {
 			case .approved: receipt("Approved")
 			case .draft, nil: approveButton
 			}
+			if let reason = blockedReason {
+				Text(reason)
+					.maskinText(.caption)
+					.foregroundStyle(MaskinColor.ink4)
+					.frame(maxWidth: .infinity, alignment: .trailing)
+					.multilineTextAlignment(.trailing)
+			}
 			if case .failed(let message)? = phase {
 				Text(message)
 					.maskinText(.caption)
@@ -208,6 +215,13 @@ struct LinkedDraftCard: View {
 			}
 		}
 		.frame(maxWidth: .infinity, alignment: .trailing)
+	}
+
+	/// Why Approve is off because of what the reader typed. Something the draft itself lacks is
+	/// not explained here, as before.
+	private var blockedReason: String? {
+		guard canEdit, preview.canApprove, !isApproving else { return nil }
+		return current.blockedReason(isEmail: isEmail)
 	}
 
 	private func receipt(_ text: String) -> some View {

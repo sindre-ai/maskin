@@ -41,6 +41,14 @@ extension DraftEdit {
 	public func isApprovable(isEmail: Bool) -> Bool {
 		!body.trimmed.isEmpty && (!isEmail || !(subject ?? "").trimmed.isEmpty)
 	}
+
+	/// Why Approve is off, as one line for the card; nil when it is available. The same words as
+	/// the For you card.
+	public func blockedReason(isEmail: Bool) -> String? {
+		if isApprovable(isEmail: isEmail) { return nil }
+		if isEmail, (subject ?? "").trimmed.isEmpty { return "Add a subject to approve." }
+		return "Add some text to approve."
+	}
 }
 
 /// The one path from an edited draft to an approval, used by the For you card and the chat card:

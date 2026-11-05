@@ -167,4 +167,14 @@ struct LinkedDraftEditTests {
 		}
 		#expect(remote.approveCalls.isEmpty)
 	}
+
+	@Test("the reason Approve is off: a missing subject, then missing text, else none")
+	func blockedReason() {
+		#expect(DraftEdit(body: "Hi", subject: "").blockedReason(isEmail: true) == "Add a subject to approve.")
+		#expect(DraftEdit(body: "Hi", subject: nil).blockedReason(isEmail: true) == "Add a subject to approve.")
+		#expect(DraftEdit(body: "  ", subject: "Hello").blockedReason(isEmail: true) == "Add some text to approve.")
+		#expect(DraftEdit(body: "").blockedReason(isEmail: false) == "Add some text to approve.")
+		#expect(DraftEdit(body: "Hi", subject: "Hello").blockedReason(isEmail: true) == nil)
+		#expect(DraftEdit(body: "Hi").blockedReason(isEmail: false) == nil)
+	}
 }
