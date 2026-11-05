@@ -503,11 +503,11 @@ describe('resolveLlmRoute priority order', () => {
 				return result?.envVars
 			}
 
-			it('restricts agent sessions to DigitalOcean and GMICloud by default', async () => {
+			it('restricts agent sessions to DigitalOcean by default', async () => {
 				Reflect.deleteProperty(process.env, 'MASKIN_FALLBACK_PROVIDER_ONLY')
 				const env = await resolveEnv()
 				expect(JSON.parse(env?.MASKIN_PROVIDER_PREFS ?? 'null')).toEqual({
-					only: ['digitalocean', 'gmicloud'],
+					only: ['digitalocean'],
 				})
 			})
 
@@ -1504,8 +1504,8 @@ describe('MASKIN_FALLBACK_PROVIDER_IGNORE block list', () => {
 })
 
 describe('MASKIN_FALLBACK_PROVIDER_ONLY allow list', () => {
-	it('defaults to DigitalOcean and GMICloud when unset', () => {
-		expect(readFallbackConfig({}).onlyProviders).toEqual(['digitalocean', 'gmicloud'])
+	it('defaults to DigitalOcean when unset', () => {
+		expect(readFallbackConfig({}).onlyProviders).toEqual(['digitalocean'])
 	})
 
 	it('parses a comma separated list, trimming blanks', () => {
@@ -1526,7 +1526,7 @@ describe('MASKIN_FALLBACK_PROVIDER_ONLY allow list', () => {
 			workspace: NOT_ENTITLED,
 			agent: { provider: null, apiKey: null, model: null },
 		})
-		expect(creds?.providerPrefs).toEqual({ only: ['digitalocean', 'gmicloud'] })
+		expect(creds?.providerPrefs).toEqual({ only: ['digitalocean'] })
 	})
 
 	it('does not send it to a customer endpoint or key', () => {
