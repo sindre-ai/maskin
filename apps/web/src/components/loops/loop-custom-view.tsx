@@ -242,6 +242,9 @@ function ViewFrame({
 					},
 					post: (message) => viewWindow()?.postMessage(message, '*'),
 					onDocHeight: (h) => setHeight(Math.max(MIN_HEIGHT, Math.ceil(h))),
+					// A view wider than its box takes the width it needs and the box scrolls
+					// sideways, rather than the view clipping or the page overflowing.
+					onDocOverflow: (w) => setContentWidth(Math.ceil(w)),
 					onQueryError: () => setQueryFailed(true),
 				},
 				event,

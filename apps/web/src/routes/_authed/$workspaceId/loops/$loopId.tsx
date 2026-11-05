@@ -571,7 +571,13 @@ function LoopDetailRoute() {
 						<TargetsAndOwners loop={loop} actors={actors} />
 
 						{hasCustomView && (
-							<div className="mt-5 flex flex-wrap items-center justify-between gap-2">
+							<div
+								className={cn(
+									'flex flex-wrap items-center justify-between gap-2',
+									// The view sits right under its switch, not a whole section away.
+									showCustomView && '-mb-4',
+								)}
+							>
 								<p className="text-xs text-muted-foreground">
 									{viewMode === 'custom' && customFailure
 										? `Custom view unavailable: ${customFailure} Showing the default page.`
@@ -602,11 +608,14 @@ function LoopDetailRoute() {
 						)}
 
 						{showCustomView && viewFileId && (
-							<LoopCustomView
-								workspaceId={workspaceId}
-								fileId={viewFileId}
-								onFailure={setCustomFailure}
-							/>
+							// One block, so the "Updated" line and the view are not spaced as sections.
+							<div className="min-w-0">
+								<LoopCustomView
+									workspaceId={workspaceId}
+									fileId={viewFileId}
+									onFailure={setCustomFailure}
+								/>
+							</div>
 						)}
 
 						{!showCustomView && (
