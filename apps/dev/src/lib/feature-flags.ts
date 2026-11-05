@@ -39,6 +39,15 @@ export const FLAGS = {
 	 */
 	AGENT_PROACTIVE_1_1: 'agent-proactive-1-1',
 	/**
+	 * Gates the Daily budget setting in Settings, Billing (bet [A daily token budget,
+	 * spent on the right work first](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/0f3ae096-7efc-4412-aba0-7a21a91ba040),
+	 * slice 1a). UI only: the route layout reads it once and mounts the section
+	 * under the usage banner. Off means Billing looks as it does today. The
+	 * storage and API behind it are additive and safe with the flag off. Retire
+	 * once the daily budget is on for everyone.
+	 */
+	DAILY_BUDGET: 'daily-budget',
+	/**
 	 * Gates the Paste and Copy buttons on the Computer view, which move plain text
 	 * between the person's clipboard and the agent's computer while they are in
 	 * control. Frontend only: read with useFeatureFlag in desktop-viewer. Retire

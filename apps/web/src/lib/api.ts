@@ -46,7 +46,14 @@ import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 import { reportApiFailure } from './faro'
 
-import type { ObjectPreview, SessionStatsRow, TeachRequest, TeachResponse } from '@maskin/shared'
+import type {
+	DailyBudget,
+	DailyBudgetResponse,
+	ObjectPreview,
+	SessionStatsRow,
+	TeachRequest,
+	TeachResponse,
+} from '@maskin/shared'
 
 export interface DesktopConnectResponse {
 	ticket: string
@@ -1183,6 +1190,14 @@ export const api = {
 			request<BillingUsageResponse>('/billing/usage', { workspaceId }),
 		cancel: (workspaceId: string) =>
 			request<{ ok: true }>('/billing/cancel', { method: 'POST', workspaceId }),
+		dailyBudget: (workspaceId: string) =>
+			request<DailyBudgetResponse>('/billing/daily-budget', { workspaceId }),
+		setDailyBudget: (workspaceId: string, daily_budget: DailyBudget | null) =>
+			request<DailyBudgetResponse>('/billing/daily-budget', {
+				method: 'PUT',
+				body: { daily_budget },
+				workspaceId,
+			}),
 	},
 
 	marketplaceLoops: {
