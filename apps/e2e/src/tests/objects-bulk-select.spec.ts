@@ -65,7 +65,7 @@ test.describe('Bulk-select — grouped list selection', () => {
 
 			await page.goto(`/${account.workspaceId}/objects?groupBy=status`)
 			// Groups rest open, so the header and its leaves render together.
-			await expect(page.getByRole('button', { name: /^define \d+$/ })).toBeVisible({
+			await expect(page.getByRole('button', { name: /define \d+$/i })).toBeVisible({
 				timeout: 10000,
 			})
 			await expect(page.getByText('Group Define Bet A')).toBeVisible()
@@ -81,7 +81,7 @@ test.describe('Bulk-select — grouped list selection', () => {
 			await expect(page.getByLabel('2 selected')).toBeVisible()
 
 			// Selection is keyed by object id and survives collapsing the group.
-			await page.getByRole('button', { name: /^define \d+$/ }).click()
+			await page.getByRole('button', { name: /define \d+$/i }).click()
 			await expect(page.getByText('Group Define Bet A')).not.toBeVisible()
 			await expect(page.getByLabel('2 selected')).toBeVisible()
 		})

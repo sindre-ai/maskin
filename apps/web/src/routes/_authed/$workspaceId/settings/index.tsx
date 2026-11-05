@@ -54,7 +54,7 @@ function GeneralPage() {
 							aria-label="Workspace name"
 							placeholder={canWrite ? undefined : VIEWER_READ_ONLY_MESSAGE}
 							disabled={!canWrite}
-							className="w-full rounded-full border-0 bg-secondary sm:w-72"
+							className="w-full rounded-full border-0 bg-secondary lg:w-72"
 						/>
 					</ViewerTooltip>
 				</SettingsRow>
@@ -109,7 +109,9 @@ function SettingsSection({
 	)
 }
 
-/** One row: title and optional description on the left, the control on the right. */
+/** One row: title and optional description on the left, the control on the right.
+ *  Below lg the settings nav leaves the content column about 224px wide at 768, so the
+ *  row stacks and the control takes the full width. */
 function SettingsRow({
 	title,
 	description,
@@ -120,7 +122,7 @@ function SettingsRow({
 	children?: React.ReactNode
 }) {
 	return (
-		<div className="flex flex-col gap-3 px-2 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+		<div className="flex flex-col gap-3 px-2 py-3.5 lg:flex-row lg:items-center lg:justify-between lg:gap-4">
 			<div className="min-w-0">
 				<span className="block text-[15px] font-medium leading-tight">{title}</span>
 				{description ? (
@@ -310,7 +312,7 @@ function ThemePicker() {
 	return (
 		<SettingsSection title="Appearance">
 			<SettingsRow title="Theme" description="Light, Dark, or System (follows your device).">
-				<div className="flex w-full gap-1 rounded-full bg-secondary p-1 sm:inline-flex sm:w-auto">
+				<div className="flex w-full gap-1 rounded-full bg-secondary p-1 lg:inline-flex lg:w-auto">
 					{themeOptions.map((option) => {
 						const Icon = option.icon
 						const isActive = theme === option.value
@@ -320,13 +322,13 @@ function ThemePicker() {
 								type="button"
 								onClick={() => setTheme(option.value)}
 								className={cn(
-									'flex flex-1 items-center justify-center gap-1.5 rounded-full px-4 py-1.5 text-[12.5px] font-semibold transition-colors sm:flex-none',
+									'flex flex-1 items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-[12.5px] lg:px-4 font-semibold transition-colors lg:flex-none',
 									isActive
 										? 'bg-primary text-primary-foreground'
 										: 'text-muted-foreground hover:text-foreground',
 								)}
 							>
-								<Icon size={14} />
+								<Icon size={14} className="hidden lg:block" />
 								{option.label}
 							</button>
 						)

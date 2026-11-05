@@ -79,7 +79,7 @@ function TabButton<T extends string | undefined>({
 				'whitespace-nowrap transition-colors duration-150',
 				isChip
 					? cn(
-							'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-3.5 text-[13px] font-semibold',
+							'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-3 text-[13px] font-semibold lg:px-3.5',
 							isActive
 								? 'border-primary bg-primary text-primary-foreground'
 								: variant === 'chip'
@@ -259,11 +259,13 @@ function FoldablePillTabs<T extends string | undefined>({
 				)}
 			</div>
 			{/* Off-screen copy of every chip plus a worst-case More chip, measured to
-			    decide the fold. Invisible, inert and out of the accessibility tree. */}
+			    decide the fold. Invisible, inert and out of the accessibility tree.
+			    Zero tall and clipped: the chips keep their natural width for the
+			    measurement, but the copy adds nothing to the row's scroll width. */}
 			<div
 				ref={measureRef}
 				aria-hidden="true"
-				className="pointer-events-none invisible absolute top-0 left-0 flex gap-2"
+				className="pointer-events-none invisible absolute top-0 left-0 flex h-0 gap-2 overflow-hidden"
 			>
 				{tabs.map((tab) => (
 					<span key={tab.label} className="flex">
