@@ -311,6 +311,6 @@ public final class AgentsStore {
 	}
 
 	static func message(_ error: Error) -> String {
-		(error as? AgentsError)?.message ?? error.localizedDescription
+		(error as? AgentsError)?.message ?? "Couldn't reach the server. Check your connection."
 	}
 }

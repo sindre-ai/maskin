@@ -55,7 +55,8 @@ private let onRuntimeReady: (AppRuntime) -> Void
 		let lock = appLock ?? AppLockController(authenticator: LocalAuthenticator())
 		_appLock = State(initialValue: lock)
 		#if os(iOS)
-			_appLockWindow = State(initialValue: AppLockWindowPresenter(lock: lock))
+			_appLockWindow = State(initialValue: AppLockWindowPresenter(
+					lock: lock, workspaceName: { [environment] in environment.workspaces.selected?.name }))
 		#endif
 		_runtime = State(initialValue: AppRuntime(environment: environment, push: push))
 		_invites = State(initialValue: Self.makeInvites(environment))
@@ -67,6 +68,9 @@ private let onRuntimeReady: (AppRuntime) -> Void
 				environment.flatMap { LinkedItemStores.store(for: $0) }
 			}))
 	}
+
+	/// Named on the lock screen ("Use Face ID to open Værksted.").
+	private var lockWorkspaceName: String? { environment.workspaces.selected?.name }
 
 	public var body: some View {
 		let auth = environment.auth
@@ -85,7 +89,7 @@ private let onRuntimeReady: (AppRuntime) -> Void
 		}
 		.animation(reduceMotion ? nil : .default, value: auth.session != nil)
 		.animation(reduceMotion ? nil : .snappy, value: toast)
-		.appLockCover(appLock)
+		.appLockCover(appLock, workspaceName: lockWorkspaceName)
 		.environment(appLock)
 		.onChange(of: auth.session != nil, initial: true) { _, hasSession in
 			appLock.sessionChanged(hasSession: hasSession)
@@ -99,7 +103,9 @@ private let onRuntimeReady: (AppRuntime) -> Void
 		.task(id: firstUseActorId) {
 			welcomeChatId = firstUseActorId == nil ? nil : await welcomeConversationId?()
 		}
-		.handlesDeepLinks(runtime.router, intercept: { invites.open($0) }) { runtime.present($0) }
+		.handlesDeepLinks(
+			runtime.router, intercept: { invites.open($0) }, connect: { runtime.presentDeviceSignIn(code: $0) }
+		) { runtime.present($0) }
 		.onChange(of: auth.session?.actorId, initial: true) { _, id in
 			if id == nil { invites.signedOut() } else { invites.resume(isSignedIn: true) }
 		}

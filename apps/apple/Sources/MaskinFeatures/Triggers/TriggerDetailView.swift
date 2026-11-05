@@ -58,6 +58,12 @@ struct TriggerDetailView: View {
 				TextField("What should the agent do?", text: $store.edit.actionPrompt, axis: .vertical)
 					.lineLimit(3...12)
 			}
+			if store.trigger.kind == .event {
+				Section("Reads as") {
+					Text("\(store.trigger.summary), run \(store.agentName).")
+						.maskinText(.subhead).foregroundStyle(MaskinColor.ink2)
+				}
+			}
 			if let error = store.error {
 				Section { FormError(error) }
 			}

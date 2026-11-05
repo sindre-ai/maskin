@@ -35,23 +35,20 @@ struct IntegrationAccessCard: View {
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s6) {
 			if let line = settledLine {
-				RequestCardSettled(symbol: "key.fill", text: line)
+				RequestCardDeclined(
+					symbol: "key.fill", text: line,
+					onAskAgain: declined && !allowedNow && state != .allowed && !request.replyToSession
+						? { onReply(request.askAgainText, ChatSendMetadata()) } : nil)
 				if stillRunning {
 					Text("The agent is still running with its old access. Stop it from the chat, then send a message to start it again.")
 						.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
 				}
 			} else {
-				VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-					Text("Allow \(request.displayName)?")
-						.maskinText(.headline).foregroundStyle(MaskinColor.ink)
-						.fixedSize(horizontal: false, vertical: true)
-					Text("For \(agentName ?? "this agent")")
-						.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
-					if let reason = request.reason, !reason.isEmpty {
-						Text(reason).maskinText(.caption).foregroundStyle(MaskinColor.ink4)
-							.fixedSize(horizontal: false, vertical: true)
-					}
-				}
+				RequestCardTitle(
+					title: "Allow \(request.displayName)?",
+					subtitle: ["For \(agentName ?? "this agent")." , request.reason].compactMap { $0 }
+						.filter { !$0.isEmpty }.joined(separator: " "),
+					symbol: "key")
 				accessRows
 				if let error { Text(error).maskinText(.caption).foregroundStyle(MaskinColor.ink3) }
 				VStack(spacing: MaskinSpace.s4) {

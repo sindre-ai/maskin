@@ -105,8 +105,11 @@ public final class AgentDetailStore {
 			let epoch = mutationEpoch
 			do {
 				async let loadedProfile = api.profile(agentID: agentID)
-				async let loadedSessions = api.sessions(agentID: agentID, limit: 20)
-				let (fresh, runs) = try await (loadedProfile, loadedSessions)
+				// Runs are context: a session list that won't load keeps what is shown, so the agent
+				// still opens.
+				async let loadedSessions = try? api.sessions(agentID: agentID, limit: 20)
+				let (fresh, loadedRuns) = try await (loadedProfile, loadedSessions)
+				let runs = loadedRuns ?? sessions
 				// A local action landed while this was in flight: its result is newer than ours.
 				if epoch == mutationEpoch {
 					profile = fresh

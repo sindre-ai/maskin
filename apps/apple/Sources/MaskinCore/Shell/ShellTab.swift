@@ -4,12 +4,14 @@ import Foundation
 /// There is no More tab and no Agents tab: Agents, Marketplace, Artefacts, Settings, Notifications and
 /// Triggers open from the profile sheet (`ProfileMenu`).
 public enum ShellTab: String, CaseIterable, Hashable, Identifiable, Sendable {
-	case forYou, chats, loops, objects, search
+	case forYou, chats, loops, objects, search, newChat
 
 	public var id: String { rawValue }
 
-	/// The tabs that hold a screen of their own, in order. Search is the detached trailing tab.
-	public static let primary: [ShellTab] = allCases.filter { $0 != .search }
+	/// The tabs that hold a screen of their own, in order. `newChat` is the detached trailing button
+	/// (it starts a chat with the Chief of Staff and never stays selected); Search is a sheet opened
+	/// from the profile sheet, and setting `selectedTab = .search` still opens it.
+	public static let primary: [ShellTab] = allCases.filter { $0 != .search && $0 != .newChat }
 
 	public var title: String {
 		switch self {
@@ -18,6 +20,7 @@ public enum ShellTab: String, CaseIterable, Hashable, Identifiable, Sendable {
 		case .loops: "Flows"
 		case .objects: "Items"
 		case .search: "Search"
+		case .newChat: "New chat with Chief of Staff"
 		}
 	}
 
@@ -29,7 +32,7 @@ public enum ShellTab: String, CaseIterable, Hashable, Identifiable, Sendable {
 		case .chats: [.display, .new, .avatar]
 		case .loops: [.display, .avatar]
 		case .objects: [.display, .avatar]
-		case .search: [.avatar]
+		case .search, .newChat: [.avatar]
 		}
 	}
 }

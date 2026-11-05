@@ -2,12 +2,15 @@ import Foundation
 import Observation
 
 /// Which For you decision cards are showing their expanded form (object chip, suggested line,
-/// reply composer). Cards start compact; the reader opens one with Ask, or it opens itself while
-/// the reply is being worked on. Per card, in memory: a relaunch starts compact again.
+/// reply composer). Cards start the way the Display setting says (compact by default); the reader
+/// opens or folds one by hand, or it opens itself while the reply is being worked on. Per card, in
+/// memory: a relaunch starts from the setting again.
 @MainActor @Observable
 public final class CardExpansion {
-	/// Cards the reader opened by hand.
-	public private(set) var manual: Set<String> = []
+	/// The Display setting: rows start open.
+	public private(set) var startsOpen = false
+	/// Cards the reader flipped away from `startsOpen`.
+	private var flipped: Set<String> = []
 
 	public init() {}
 
@@ -33,15 +36,27 @@ public final class CardExpansion {
 		manual || engagement.isEngaged
 	}
 
-	public func isManuallyExpanded(_ id: String) -> Bool { manual.contains(id) }
-
-	public func isExpanded(_ id: String, engagement: Engagement = Engagement()) -> Bool {
-		Self.isExpanded(manual: manual.contains(id), engagement: engagement)
+	/// Changing the default drops the reader's per-card flips: every row starts the new way.
+	public func setStartsOpen(_ open: Bool) {
+		guard open != startsOpen else { return }
+		startsOpen = open
+		flipped = []
 	}
 
-	public func expand(_ id: String) { manual.insert(id) }
+	/// Open by the setting, or by the reader's hand against it.
+	public func isManuallyExpanded(_ id: String) -> Bool { startsOpen != flipped.contains(id) }
 
-	public func collapse(_ id: String) { manual.remove(id) }
+	public func isExpanded(_ id: String, engagement: Engagement = Engagement()) -> Bool {
+		Self.isExpanded(manual: isManuallyExpanded(id), engagement: engagement)
+	}
+
+	public func expand(_ id: String) {
+		if startsOpen { flipped.remove(id) } else { flipped.insert(id) }
+	}
+
+	public func collapse(_ id: String) {
+		if startsOpen { flipped.insert(id) } else { flipped.remove(id) }
+	}
 
 	/// "Show less" only means something while nothing is holding the card open.
 	public func canCollapse(_ id: String, engagement: Engagement = Engagement()) -> Bool {
@@ -50,8 +65,8 @@ public final class CardExpansion {
 
 	/// Forgets cards that left the feed so the set cannot grow without bound.
 	public func prune(keeping ids: Set<String>) {
-		let kept = manual.intersection(ids)
-		if kept != manual { manual = kept }
+		let kept = flipped.intersection(ids)
+		if kept != flipped { flipped = kept }
 	}
 }
 

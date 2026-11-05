@@ -58,9 +58,13 @@ public struct APILoopsSource: LoopsAPI {
 	}
 
 	public func latestPost(loopID: String) async throws -> LoopPost? {
-		guard let objects else { return nil }
+		try await posts(loopID: loopID).first
+	}
+
+	public func posts(loopID: String) async throws -> [LoopPost] {
+		guard let objects else { return [] }
 		let graph = try await objects.graph(objectId: loopID)
-		return LoopOverviewBuilder.posts(from: graph.events).first
+		return LoopOverviewBuilder.posts(from: graph.events)
 	}
 
 	public func loops() async throws -> [LoopSummary] {

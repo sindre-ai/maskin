@@ -144,11 +144,9 @@ struct ForYouStoreTests {
 		])
 		await store.load()
 		#expect(store.entries.map(\.id) == ["high", "low", "none", "fyi"])
-		store.options.sort = .latest
-		#expect(store.entries.map(\.id) == ["none", "low", "high", "fyi"])
 	}
 
-	@Test func keepsTheChiefOfStaffsRankingOverAttentionAndTheSortSetting() async {
+	@Test func keepsTheChiefOfStaffsRankingOverAttention() async {
 		let (store, source, _, _) = make()
 		var first = decisionCard("first", attention: 1, age: 900)
 		first.rank = 0
@@ -158,8 +156,6 @@ struct ForYouStoreTests {
 		third.rank = 2
 		source.feed = .success([third, second, first])
 		await store.load()
-		#expect(store.entries.map(\.id) == ["first", "second", "third"])
-		store.options.sort = .latest
 		#expect(store.entries.map(\.id) == ["first", "second", "third"])
 	}
 
@@ -172,20 +168,20 @@ struct ForYouStoreTests {
 		#expect(store.intentCount(.approvals) == 1)
 		#expect(store.intentCount(.questions) == 1)
 		store.options = ForYouDisplayOptions(
-			mode: .list, sort: .latest, intent: .questions, filterBarOn: true, showsHandled: false)
+			opening: .expanded, intent: .questions, filterBarOn: true)
 		#expect(store.entries.map(\.id) == ["b"])
 		let (reopened, _, _, _) = make(defaults: defaults)
 		#expect(
 			reopened.options
 				== ForYouDisplayOptions(
-					mode: .list, sort: .latest, intent: .questions, filterBarOn: true, showsHandled: false))
+					opening: .expanded, intent: .questions, filterBarOn: true))
 	}
 
 	@Test func optionsSavedBeforeIntentsStillDecode() throws {
-		let old = #"{"mode":"list","sort":"latest","typeFilter":"task"}"#
+		let old = #"{"mode":"list","sort":"latest","showsHandled":false,"typeFilter":"task"}"#
 		let options = try JSONDecoder().decode(ForYouDisplayOptions.self, from: Data(old.utf8))
-		#expect(options == ForYouDisplayOptions(mode: .list, sort: .latest))
-		#expect(options.showsHandled)
+		// The old Cards / List layout is gone: it reads as the default opening.
+		#expect(options == ForYouDisplayOptions())
 	}
 
 	@Test func actingOnOneMessageOfAStackSendsItsReplyAndLeavesTheCardOpen() async {
@@ -237,7 +233,7 @@ struct ForYouStoreTests {
 		#expect(store.needsCount == 3)
 		#expect(store.unreadCount == 4)
 		store.choose(store.entries[0].card.decision!.options[0], on: store.entries[0].card)
-		store.deferCard(store.entries.first(where: { $0.bucket == .needs })!.card, to: .tomorrowMorning)
+		store.later.defer(store.entries.first(where: { $0.bucket == .needs })!.card.id, preset: .tomorrowMorning)
 		#expect(store.needsCount == 1)
 		#expect(store.unreadCount == 2)
 		for entry in store.entries where entry.bucket == .needs {
@@ -371,17 +367,18 @@ struct ForYouStoreTests {
 		#expect(store.entries.count == 2)
 	}
 
-	@Test func laterHidesACardAndUndoBringsItBack() async {
+	@Test func aDeferralFromANotificationHidesACardAndRestoreBringsItBack() async {
 		let (store, source, _, _) = make()
 		source.feed = .success([decisionCard("a"), decisionCard("b")])
 		await store.load()
 		let card = store.entries[0].card
 		let other = store.entries[1].id
-		let previous = store.deferCard(card, to: .tomorrowMorning)
+		let previous = store.later.entry(for: card.id)
+		store.later.defer(card.id, preset: .tomorrowMorning)
 		#expect(store.entries.map(\.id) == [other])
 		#expect(store.laterEntries.map(\.id) == [card.id])
 		#expect(store.needsCount == 1)
-		store.undoLater(card, restoring: previous)
+		store.later.restore(card.id, to: previous)
 		#expect(store.entries.count == 2)
 		#expect(store.laterEntries.isEmpty)
 	}
@@ -390,7 +387,7 @@ struct ForYouStoreTests {
 		let (store, source, _, _) = make()
 		source.feed = .success([decisionCard("a")])
 		await store.load()
-		store.deferCard(store.entries[0].card, to: .thisEvening)
+		store.later.defer(store.entries[0].card.id, preset: .thisEvening)
 		#expect(store.entries.isEmpty)
 		store.bringBack(store.laterEntries[0].card)
 		#expect(store.entries.map(\.id) == ["a"])
@@ -401,7 +398,7 @@ struct ForYouStoreTests {
 		let (store, source, _, _) = make(now: { clock.now })
 		source.feed = .success([decisionCard("a")])
 		await store.load()
-		store.deferCard(store.entries[0].card, to: .tomorrowMorning)
+		store.later.defer(store.entries[0].card.id, preset: .tomorrowMorning)
 		#expect(store.entries.isEmpty)
 		clock.now = clock.now.addingTimeInterval(3 * 86_400)
 		#expect(store.entries.map(\.id) == ["a"])
@@ -415,7 +412,7 @@ struct ForYouStoreTests {
 		let (store, source, _, _) = make()
 		source.feed = .success([decisionCard("a")])
 		await store.load()
-		store.deferCard(store.entries[0].card, to: .thisEvening)
+		store.later.defer(store.entries[0].card.id, preset: .thisEvening)
 		store.bringBack(store.laterEntries[0].card)
 		store.choose(store.entries[0].card.decision!.options[0], on: store.entries[0].card)
 		#expect(store.later.entry(for: "a") == nil)
@@ -466,7 +463,7 @@ struct ForYouStoreTests {
 		let (store, source, _, _) = make(window: 5)
 		source.feed = .success([decisionCard("a")])
 		await store.load()
-		#expect(store.caughtUpDetail.hasPrefix("Nothing needs you right now."))
+		#expect(store.caughtUpDetail == nil)
 		store.choose(store.entries[0].card.decision!.options[0], on: store.entries[0].card)
 		#expect(store.caughtUpDetail == "Your calls are in motion with Forge. You\u{2019}ll hear when one needs you again.")
 	}

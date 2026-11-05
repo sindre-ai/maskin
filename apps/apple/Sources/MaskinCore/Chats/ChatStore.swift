@@ -1261,7 +1261,7 @@ public final class ChatStore {
 		return (rows, clears)
 	}
 
-	static func message(_ error: Error) -> String {
+	public static func message(_ error: Error) -> String {
 		if let http = error as? ChatsHTTPError { return http.message }
 		return (error as? ChatsError)?.message ?? error.localizedDescription
 	}

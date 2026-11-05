@@ -41,6 +41,8 @@ public final class ConversationsStore {
 	public var threadSections: ThreadListSections { ThreadListSections(threads) }
 	/// Last mutation error (pin/archive/read), surfaced by the screen as a transient notice.
 	public var notice: String?
+	/// Display > Chats > Archived: the list shows the archived chats instead of the active ones.
+	public var showsArchivedList = false
 	public var scope: Scope = .active {
 		didSet { if scope != oldValue { Task { await refresh() } } }
 	}

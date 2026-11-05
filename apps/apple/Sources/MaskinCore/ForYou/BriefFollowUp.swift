@@ -4,9 +4,6 @@ import Foundation
 /// on screen and the real agent answers in a real chat. Nothing here invents a reply; this is the
 /// wording, the thread naming and the slice of that chat the viewer shows.
 public enum BriefFollowUp {
-	/// The two suggestions above the composer. Plain text, sent as the reader's own message.
-	public static let chips = ["Explain this slide", "Go ahead with this"]
-
 	/// A slide carries no author agent id, only the loop's name, so every slide's follow-up goes to
 	/// the one agent every workspace has.
 	public static let author = StoryCard.chiefOfStaffUnit

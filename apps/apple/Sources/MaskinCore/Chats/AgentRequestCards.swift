@@ -75,6 +75,9 @@ public struct IntegrationAccessRequest: Equatable, Sendable {
 		self.replyToSession = raw["reply_to_session"]?.boolValue == true
 	}
 
+	/// A normal chat message that asks the agent to put the request again after a decline.
+	public var askAgainText: String { "Please ask me again about \(displayName). I've changed my mind." }
+
 	/// The levels the person may grant: what was asked for or less (the card lets them lower it
 	/// before Allow, never raise it).
 	public var choosableLevels: [Level] { level == .readWrite ? [.read, .readWrite] : [.read] }

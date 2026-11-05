@@ -7,7 +7,9 @@ enum SettingsRoute: Hashable, Identifiable {
 	var id: Self { self }
 	case profile, notifications, workspace, skills, objectTypes, deleteAccount, deleteWorkspace
 	case members, integrations, files, autonomy, keys, triggers, billing
-	case deviceSignIn
+	case deviceSignIn, appLock, workspaces
+	/// `maskin://connect?code=`: Sign in a device with the code already typed.
+	case deviceCode(String)
 }
 
 /// The Settings slice's dependencies, built once per screen from `AppEnvironment`.

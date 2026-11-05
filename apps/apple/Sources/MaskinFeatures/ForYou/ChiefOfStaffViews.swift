@@ -132,9 +132,10 @@ struct ChiefOfStaffSheet: View {
 
 	private var header: some View {
 		HStack(spacing: MaskinSpace.s7) {
-			ChiefOfStaffTile(size: MaskinSpace.s14 + MaskinSpace.s3)
+			ActorAvatar(name: presented.recipient.name, kind: .agent, size: MaskinSpace.s14 + MaskinSpace.s3)
+				.accessibilityHidden(true)
 			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-				Text("Chief of Staff").maskinText(.sheetTitle).foregroundStyle(MaskinColor.ink)
+				Text(presented.recipient.name).maskinText(.sheetTitle).foregroundStyle(MaskinColor.ink)
 				Text(ChiefOfStaffThreads.title(for: presented.card))
 					.maskinText(.caption).foregroundStyle(MaskinColor.ink4).lineLimit(1)
 			}

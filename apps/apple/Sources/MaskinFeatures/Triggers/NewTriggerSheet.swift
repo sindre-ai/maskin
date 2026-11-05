@@ -44,6 +44,13 @@ struct NewTriggerSheet: View {
 				} header: {
 					Text("Then")
 				}
+				if let sentence = draft.readBack(agentName: store.directory.name(draft.targetActorID)) {
+					Section {
+						Text(sentence).maskinText(.subhead).foregroundStyle(MaskinColor.ink2)
+					} header: {
+						Text("Reads as")
+					}
+				}
 				Section {
 					TextField("Optional", text: $draft.name)
 				} header: {

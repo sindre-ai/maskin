@@ -13,7 +13,12 @@
 		private var windows: [ObjectIdentifier: UIWindow] = [:]
 		private var started = false
 
-		init(lock: AppLockController) { self.lock = lock }
+		private let workspaceName: @MainActor () -> String?
+
+		init(lock: AppLockController, workspaceName: @escaping @MainActor () -> String? = { nil }) {
+			self.lock = lock
+			self.workspaceName = workspaceName
+		}
 
 		func start() {
 			guard !started else { return }
@@ -37,7 +42,7 @@
 				for scene in scenes where windows[ObjectIdentifier(scene)] == nil {
 					let window = UIWindow(windowScene: scene)
 					window.windowLevel = .alert + 1
-					let host = UIHostingController(rootView: AppLockWindowContent(lock: lock))
+					let host = UIHostingController(rootView: AppLockWindowContent(lock: lock, workspaceName: workspaceName))
 					host.view.backgroundColor = .clear
 					window.rootViewController = host
 					windows[ObjectIdentifier(scene)] = window
@@ -51,11 +56,13 @@
 
 	private struct AppLockWindowContent: View {
 		let lock: AppLockController
+		let workspaceName: @MainActor () -> String?
 
 		var body: some View {
 			AppLockView(
 				isLocked: lock.isLocked, isAuthenticating: lock.isAuthenticating,
 				lastAttemptFailed: lock.lastAttemptFailed,
+				biometryName: lock.biometryName, workspaceName: workspaceName(),
 				onUnlock: { Task { await lock.unlock() } })
 		}
 	}
