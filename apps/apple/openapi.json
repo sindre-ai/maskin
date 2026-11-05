@@ -77638,7 +77638,7 @@
 					"Desktop"
 				],
 				"summary": "Screenshot of an agent's desktop",
-				"description": "Starts the desktop if needed. Returns a base64 JPEG of the 1600x900 screen.",
+				"description": "Starts the desktop if needed. Returns a base64 JPEG of the 1920x1080 screen.",
 				"parameters": [
 					{
 						"schema": {
@@ -77967,12 +77967,12 @@
 											"x": {
 												"type": "integer",
 												"minimum": 0,
-												"maximum": 1599
+												"maximum": 1919
 											},
 											"y": {
 												"type": "integer",
 												"minimum": 0,
-												"maximum": 899
+												"maximum": 1079
 											},
 											"button": {
 												"type": "string",
@@ -78006,12 +78006,12 @@
 											"x": {
 												"type": "integer",
 												"minimum": 0,
-												"maximum": 1599
+												"maximum": 1919
 											},
 											"y": {
 												"type": "integer",
 												"minimum": 0,
-												"maximum": 899
+												"maximum": 1079
 											}
 										},
 										"required": [
@@ -78032,22 +78032,22 @@
 											"from_x": {
 												"type": "integer",
 												"minimum": 0,
-												"maximum": 1599
+												"maximum": 1919
 											},
 											"from_y": {
 												"type": "integer",
 												"minimum": 0,
-												"maximum": 899
+												"maximum": 1079
 											},
 											"to_x": {
 												"type": "integer",
 												"minimum": 0,
-												"maximum": 1599
+												"maximum": 1919
 											},
 											"to_y": {
 												"type": "integer",
 												"minimum": 0,
-												"maximum": 899
+												"maximum": 1079
 											}
 										},
 										"required": [
@@ -78083,12 +78083,12 @@
 											"x": {
 												"type": "integer",
 												"minimum": 0,
-												"maximum": 1599
+												"maximum": 1919
 											},
 											"y": {
 												"type": "integer",
 												"minimum": 0,
-												"maximum": 899
+												"maximum": 1079
 											}
 										},
 										"required": [
