@@ -35,6 +35,7 @@ const UNAVAILABLE_UNDER_OAUTH = [
 	'POST /api/actors', // create_actor: returns a new API key
 	'POST /api/conversations', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/conversations/x/participants', // newer MCP tool, route not yet checked for the token's workspace pin
+	'POST /api/files/x/proposals', // propose_file_changes: newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/for-you/withdrawals', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/integrations/gmail/save-attachment', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/integrations/gmail/send', // newer MCP tool, route not yet checked for the token's workspace pin
