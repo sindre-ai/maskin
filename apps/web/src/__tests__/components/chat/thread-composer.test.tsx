@@ -106,7 +106,9 @@ describe('ThreadComposer — draft persistence', () => {
 		render(<ThreadComposer workspaceId="ws-1" conversationId="convo-1" />, {
 			wrapper: createWorkspaceWrapper(),
 		})
-		expect(screen.getByLabelText('Message this conversation')).toHaveValue('half-written prompt')
+		expect(screen.getByLabelText('Message this conversation')).toHaveTextContent(
+			'half-written prompt',
+		)
 	})
 
 	it('does not carry a draft into another conversation', async () => {
@@ -118,6 +120,6 @@ describe('ThreadComposer — draft persistence', () => {
 		await user.type(screen.getByLabelText('Message this conversation'), 'for convo one')
 
 		rerender(<ThreadComposer workspaceId="ws-1" conversationId="convo-2" />)
-		expect(screen.getByLabelText('Message this conversation')).toHaveValue('')
+		expect(screen.getByLabelText('Message this conversation').textContent).toBe('')
 	})
 })

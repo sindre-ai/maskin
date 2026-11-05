@@ -70,18 +70,24 @@ vi.mock('@/hooks/use-objects', () => ({
 
 const retryMutate = vi.fn()
 vi.mock('@/hooks/use-conversation', () => ({
-	useEditMessage: () => ({ mutate: vi.fn(), isPending: false }),
+	useConversation: () => ({ data: { participants: [] } }),
+	useEditMessage: () => ({ mutate: vi.fn(), reset: vi.fn(), isPending: false, isError: false }),
 	useRetryMessage: () => ({ mutate: retryMutate, isPending: false }),
 	useSendMessage: () => ({ mutate: vi.fn() }),
+}))
+
+vi.mock('@/hooks/use-conversations', () => ({
+	useConversationsInfinite: () => ({ data: undefined }),
 }))
 
 vi.mock('@/hooks/use-object-type-label', () => ({
 	useObjectTypeLabel: () => (type: string) => type,
 }))
 
+const actorsState = vi.hoisted(() => ({ list: [] as unknown[] }))
 vi.mock('@/hooks/use-actors', async () => {
 	const actual = await vi.importActual<typeof import('@/hooks/use-actors')>('@/hooks/use-actors')
-	return { ...actual, useActors: () => ({ data: [] }) }
+	return { ...actual, useActors: () => ({ data: actorsState.list }) }
 })
 
 const mockUseFiles = vi.fn((_workspaceId: string, _params?: { ids?: string[] }) => ({
@@ -95,11 +101,6 @@ vi.mock('@/hooks/use-files', () => ({
 			: undefined,
 		isError: false,
 	}),
-}))
-
-const flagState = vi.hoisted(() => ({ lifted: false }))
-vi.mock('@/hooks/use-feature-flag', () => ({
-	useFeatureFlag: (id: string) => id === 'chat-attachments-lifted' && flagState.lifted,
 }))
 
 import { MessageBubble } from '@/components/chat/message-bubble'
@@ -162,6 +163,47 @@ describe('MessageBubble', () => {
 		const body = screen.getByText('Here is what I found.')
 		expect(body.parentElement?.className).toContain('bg-primary')
 		expect(screen.queryByText('Me')).not.toBeInTheDocument()
+	})
+
+	describe('tags in your own message', () => {
+		const agent = (id: string, name: string) => ({
+			id,
+			name,
+			type: 'agent',
+			isSystem: false,
+			description: null,
+			email: null,
+		})
+		beforeEach(() => {
+			actorsState.list = [agent('a-cto', 'CTO'), agent('a-dev', 'Developer')]
+		})
+		afterEach(() => {
+			actorsState.list = []
+		})
+		const own = (content: string, mentions: string[]) =>
+			buildMessage({
+				actorId: 'me',
+				actorName: 'Me',
+				actorType: 'human',
+				content,
+				metadata: { mentions },
+			})
+
+		it('keeps the "You mentioned" row on an old message whose tags are all outside the text', () => {
+			renderBubble(own('please start on the MCP tool', ['a-cto']))
+			expect(screen.getByText('You mentioned')).toBeInTheDocument()
+		})
+
+		it('draws a tag in the text as a chip with no row', () => {
+			renderBubble(own('please start @CTO', ['a-cto']))
+			expect(screen.queryByText('You mentioned')).not.toBeInTheDocument()
+		})
+
+		it('shows no row when an id is left over but another tag sits in the text', () => {
+			// A thread reply's default recipient rides as a mention without being in the words.
+			renderBubble(own('Thanks @Developer can you pick this up?', ['a-cto', 'a-dev']))
+			expect(screen.queryByText('You mentioned')).not.toBeInTheDocument()
+		})
 	})
 
 	describe('a link to an object in your own message', () => {
@@ -407,11 +449,9 @@ describe('MessageBubble', () => {
 
 describe('MessageBubble — lifted attachments', () => {
 	beforeEach(() => {
-		flagState.lifted = true
 		mockUseFiles.mockReturnValue({ data: [fileRow(image), fileRow(pdf)] })
 	})
 	afterEach(() => {
-		flagState.lifted = false
 		mockUseFiles.mockReturnValue({ data: [] })
 	})
 
@@ -474,17 +514,6 @@ describe('MessageBubble — lifted attachments', () => {
 		renderBubble(ownMessage({ content: '', metadata: { attachments: [pdf] } }))
 		expect(screen.getByText('File no longer available')).toBeInTheDocument()
 		expect(screen.queryByRole('link', { name: 'Open review.pdf' })).not.toBeInTheDocument()
-	})
-
-	it('keeps the files inside the bubble while the flag is off', () => {
-		flagState.lifted = false
-		const { container } = renderBubble(
-			ownMessage({
-				content: 'Read page 4 first.',
-				metadata: { attachments: [pdf] },
-			}),
-		)
-		expect(container.querySelector('.bg-primary')).toContainElement(screen.getByText('review.pdf'))
 	})
 })
 
@@ -641,7 +670,6 @@ describe('MessageBubble — own bubble fits its text', () => {
 	afterEach(() => {
 		Range.prototype.getClientRects = originalRects
 		HTMLElement.prototype.getBoundingClientRect = originalBox
-		flagState.lifted = false
 	})
 
 	const own = (overrides: Partial<MessageResponse> = {}) =>
@@ -656,7 +684,6 @@ describe('MessageBubble — own bubble fits its text', () => {
 	})
 
 	it('keeps lifted attachments as wide as the bubble, and not narrower than the minimum', () => {
-		flagState.lifted = true
 		Range.prototype.getClientRects = () =>
 			[{ left: 0, right: 40, width: 40 }] as unknown as DOMRectList
 		const { container } = renderBubble(

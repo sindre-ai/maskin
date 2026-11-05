@@ -1177,6 +1177,9 @@ export async function settleSession(
 					workspaceId: row.workspaceId,
 					actorId: row.actorId,
 					outcome: mapKindToOutcomeProp(outcome.kind) as AiGenerationOutcome,
+					failureReasonCode:
+						outcome.failureReason?.reason_code ?? row.result?.failure_reason?.reason_code,
+					classification: outcome.classification,
 					config: row.config,
 					modelName: row.modelName ?? null,
 					inputTokens: totals.inputTokens,

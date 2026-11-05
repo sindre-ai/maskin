@@ -19,8 +19,12 @@ import { db, getTestActorId } from './global-setup'
 // Stub the adapter factory so the state machine (which is the part with real DB
 // semantics) is exercised against real Postgres without a live LLM.
 const chat = vi.fn()
+const createAdapter = vi.fn()
 vi.mock('../../lib/llm/index', () => ({
-	createLLMAdapter: () => ({ chat }),
+	createLLMAdapter: (...args: unknown[]) => {
+		createAdapter(...args)
+		return { chat }
+	},
 }))
 
 const { maybeGenerateConversationTitle } = await import('../../services/conversation-titler')
@@ -81,6 +85,7 @@ describe('Conversation auto-titler Integration', () => {
 
 	beforeEach(async () => {
 		chat.mockReset()
+		createAdapter.mockReset()
 		ownerId = getTestActorId()
 		const ws = await insertWorkspace(db, ownerId)
 		if (!ws) throw new Error('failed to create workspace')
@@ -215,7 +220,7 @@ describe('Conversation auto-titler Integration', () => {
 		// message was actually about — even though the LLM never answered.
 		// postMessages() appends the row index to `contentPrefix` (i.e. " 0").
 		expect(await readConversation()).toEqual({
-			title: 'the deploy pipeline keeps…',
+			title: 'Deploy pipeline keeps failing',
 			titleAutoState: 'initial',
 		})
 	})
@@ -231,14 +236,13 @@ describe('Conversation auto-titler Integration', () => {
 			.update(conversations)
 			.set({ title: 'Developer' })
 			.where(eq(conversations.id, conversationId))
-		// Short enough to stay intact under any title cap.
 		await postMessages(1, 'deploy keeps failing')
 		chat.mockRejectedValue(new Error('provider is down'))
 
 		await maybeGenerateConversationTitle({ db, workspaceId, conversationId })
 
 		expect(await readConversation()).toEqual({
-			title: 'deploy keeps failing 0',
+			title: 'Deploy keeps failing 0',
 			titleAutoState: 'initial',
 		})
 	})
@@ -309,7 +313,7 @@ describe('Conversation auto-titler Integration', () => {
 		// A workspace routed at a model that just doesn't tool-call still gets
 		// a real title on message #1, matching what the frontend would derive.
 		expect(await readConversation()).toEqual({
-			title: 'Why did trial signups dip last…',
+			title: 'Trial signups dip last week',
 			titleAutoState: 'initial',
 		})
 	})
@@ -351,11 +355,103 @@ describe('Conversation auto-titler Integration', () => {
 		}
 
 		expect(chat).not.toHaveBeenCalled()
-		// The derived title is cut on a word boundary at the 32-character cap.
+		// The derived title is the first message's keywords, not its opening words.
 		expect(await readConversation()).toEqual({
-			title: 'Draft the note to Acme about…',
+			title: 'Note Acme retry window Thursday',
 			titleAutoState: 'initial',
 		})
+	})
+
+	it('titles via the operator key when the workspace has no credential of its own', async () => {
+		// Enterprise-entitled with nothing chat-usable: resolveChatCredentials
+		// returns null, so before the operator route this ended on the derived
+		// fallback. The title must now come from the model (source=llm).
+		await db
+			.update(workspaces)
+			.set({ settings: {}, enterpriseGranted: true })
+			.where(eq(workspaces.id, workspaceId))
+		const previous = process.env.MASKIN_FALLBACK_OPENROUTER_KEY
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-operator-test'
+		chat.mockResolvedValue(titleResponse('YouTube integration scope'))
+		try {
+			await postMessages(1, 'Please review the scope of the YouTube integration')
+			await maybeGenerateConversationTitle({ db, workspaceId, conversationId })
+		} finally {
+			process.env.MASKIN_FALLBACK_OPENROUTER_KEY = previous ?? ''
+		}
+
+		expect(chat).toHaveBeenCalledTimes(1)
+		expect(createAdapter).toHaveBeenCalledWith(
+			'openai',
+			expect.objectContaining({
+				api_key: 'sk-or-operator-test',
+				base_url: 'https://openrouter.ai/api/v1',
+			}),
+		)
+		expect(await readConversation()).toEqual({
+			title: 'YouTube integration scope',
+			titleAutoState: 'initial',
+		})
+		const rows = await db
+			.select({ data: events.data })
+			.from(events)
+			.where(and(eq(events.entityType, 'conversation'), eq(events.entityId, conversationId)))
+		expect(rows[0]?.data).toMatchObject({ source: 'llm' })
+	})
+
+	it('retries on the operator key when the workspace endpoint fails', async () => {
+		// The shape seen in production: an enterprise workspace saved an OpenRouter
+		// base URL without /v1. It still counts as a credential, so it used to win
+		// over the operator key, fail every time, and leave only the derived title.
+		await db
+			.update(workspaces)
+			.set({
+				settings: {
+					custom_llm: {
+						enabled: true,
+						base_url: 'https://openrouter.ai/api',
+						api_key: 'sk-or-workspace-test',
+						model: 'some/model',
+					},
+				},
+				enterpriseGranted: true,
+			})
+			.where(eq(workspaces.id, workspaceId))
+		const previous = process.env.MASKIN_FALLBACK_OPENROUTER_KEY
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-operator-test'
+		chat
+			.mockRejectedValueOnce(new Error('OpenAI API error: 404 Not Found'))
+			.mockResolvedValueOnce(titleResponse('YouTube integration scope'))
+		try {
+			await postMessages(1, 'Please review the scope of the YouTube integration')
+			await maybeGenerateConversationTitle({ db, workspaceId, conversationId })
+		} finally {
+			process.env.MASKIN_FALLBACK_OPENROUTER_KEY = previous ?? ''
+		}
+
+		expect(chat).toHaveBeenCalledTimes(2)
+		expect(createAdapter).toHaveBeenNthCalledWith(
+			1,
+			'openai',
+			expect.objectContaining({ api_key: 'sk-or-workspace-test' }),
+		)
+		expect(createAdapter).toHaveBeenNthCalledWith(
+			2,
+			'openai',
+			expect.objectContaining({
+				api_key: 'sk-or-operator-test',
+				base_url: 'https://openrouter.ai/api/v1',
+			}),
+		)
+		expect(await readConversation()).toEqual({
+			title: 'YouTube integration scope',
+			titleAutoState: 'initial',
+		})
+		const rows = await db
+			.select({ data: events.data })
+			.from(events)
+			.where(and(eq(events.entityType, 'conversation'), eq(events.entityId, conversationId)))
+		expect(rows[0]?.data).toMatchObject({ source: 'llm' })
 	})
 
 	it('stamps the audit event with source=derived when the fallback fired', async () => {
@@ -370,7 +466,7 @@ describe('Conversation auto-titler Integration', () => {
 			.where(and(eq(events.entityType, 'conversation'), eq(events.entityId, conversationId)))
 		expect(rows).toHaveLength(1)
 		expect(rows[0]?.data).toMatchObject({
-			title: 'the deploy pipeline keeps…',
+			title: 'Deploy pipeline keeps failing',
 			auto: true,
 			source: 'derived',
 		})

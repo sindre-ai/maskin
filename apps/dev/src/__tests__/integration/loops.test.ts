@@ -104,6 +104,85 @@ describe('Loops read API integration', () => {
 		expect(byId.get(malformed.id)).toEqual([])
 	})
 
+	it('returns driverId on the list and on a single-loop read, null when no driver is set', async () => {
+		const driver = await insertActor(db)
+		const driven = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'learning',
+			title: 'Has a driver',
+			driver: driver.id,
+		})
+		const undriven = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'draft',
+			title: 'No driver',
+			driver: null,
+		})
+
+		const app = makeApp(actorId)
+		const headers = { 'x-workspace-id': workspaceId }
+		const listRes = await app.request(jsonGet('/api/loops', headers))
+		expect(listRes.status).toBe(200)
+		const list = (await listRes.json()) as { loops: Array<{ id: string; driverId: string | null }> }
+		const byId = new Map(list.loops.map((l) => [l.id, l.driverId]))
+		expect(byId.get(driven.id)).toBe(driver.id)
+		expect(byId.get(undriven.id)).toBeNull()
+
+		for (const [loop, expected] of [
+			[driven, driver.id],
+			[undriven, null],
+		] as const) {
+			const res = await app.request(jsonGet(`/api/loops?id=${loop.id}`, headers))
+			expect(res.status).toBe(200)
+			const one = (await res.json()) as { loops: Array<{ driverId: string | null }> }
+			expect(one.loops).toHaveLength(1)
+			expect(one.loops[0]?.driverId).toBe(expected)
+		}
+	})
+
+	it('does not leak a driver from another workspace loop', async () => {
+		const otherActor = await insertActor(db)
+		const otherWs = await insertWorkspace(db, otherActor.id)
+		const foreign = await insertObject(db, otherWs.id, otherActor.id, {
+			type: 'loop',
+			status: 'learning',
+			title: 'Foreign loop',
+			driver: otherActor.id,
+		})
+
+		const app = makeApp(actorId)
+		const res = await app.request(
+			jsonGet(`/api/loops?id=${foreign.id}`, { 'x-workspace-id': workspaceId }),
+		)
+		expect(res.status).toBe(200)
+		expect(((await res.json()) as { loops: unknown[] }).loops).toEqual([])
+	})
+
+	it('returns tags set through the normal object update on the loop read', async () => {
+		const app = makeApp(actorId)
+		app.route('/api/objects', objectsRoutes)
+		const headers = { 'x-workspace-id': workspaceId }
+		const loop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'learning',
+			title: 'Retag me',
+		})
+
+		const patchRes = await app.request(
+			jsonRequest(
+				'PATCH',
+				`/api/objects/${loop.id}`,
+				{ metadata: { tags: ['Sales', 'EMEA'] } },
+				headers,
+			),
+		)
+		expect(patchRes.status).toBe(200)
+
+		const res = await app.request(jsonGet(`/api/loops?id=${loop.id}`, headers))
+		const body = (await res.json()) as { loops: Array<{ tags: string[] }> }
+		expect(body.loops[0]?.tags).toEqual(['Sales', 'EMEA'])
+	})
+
 	it('returns loops filtered by workspace with the T3 render shape', async () => {
 		// Foreign workspace with its own loop — a workspace filter regression
 		// would leak this into the primary workspace's response. Guarded by

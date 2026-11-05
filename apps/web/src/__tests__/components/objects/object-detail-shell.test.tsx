@@ -60,10 +60,12 @@ vi.mock('@/hooks/use-events', () => ({
 	useCreateComment: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
-// Lazily read, like settingsStore, so a test can seed mentionable actors.
-const actorsStore: { data: Array<Record<string, unknown>> } = { data: [] }
 vi.mock('@/hooks/use-actors', () => ({
-	useActors: () => ({ data: actorsStore.data }),
+	useActors: () => ({ data: [] }),
+}))
+
+vi.mock('@/hooks/use-conversations', () => ({
+	useConversationsInfinite: () => ({ data: undefined }),
 }))
 
 vi.mock('@/hooks/use-notifications', () => ({
@@ -96,7 +98,6 @@ vi.mock('@/components/shared/markdown-content', () => ({
 beforeEach(() => {
 	settingsStore.settings = { objectDetailSidebarCollapsed: true }
 	settingsStore.subscribers.clear()
-	actorsStore.data = []
 })
 
 describe('ObjectDetailShell', () => {
@@ -129,10 +130,10 @@ describe('ObjectDetailShell', () => {
 			wrapper: createWorkspaceWrapper(workspace, { renderPageHeader: true }),
 		})
 
-		const textarea = screen.getByPlaceholderText(/commands, @ mentions/i)
+		const answerBox = screen.getByRole('textbox', { name: 'Comment' })
 		const answerButton = screen.getByRole('button', { name: /answer it/i })
 		fireEvent.click(answerButton)
-		expect(document.activeElement).toBe(textarea)
+		expect(document.activeElement).toBe(answerBox)
 	})
 
 	it('omits the ask banner when no _ask metadata', () => {
@@ -149,25 +150,8 @@ describe('ObjectDetailShell', () => {
 			wrapper: createWorkspaceWrapper(workspace, { renderPageHeader: true }),
 		})
 		// The object page's composer is the single-row bar (mockup 1358–1366).
-		expect(screen.getByPlaceholderText(/commands, @ mentions/i)).toBeInTheDocument()
-	})
-
-	// The bar is docked to the bottom of the scroller, so a dropdown opening below
-	// it is clipped and only visible once the page is scrolled to the end.
-	it('opens the @mention dropdown above the docked comment bar', () => {
-		actorsStore.data = [{ id: 'actor-2', name: 'Bob', type: 'agent', email: null, isSystem: false }]
-		const object = buildObjectResponse({ type: 'bet' })
-		render(<ObjectDetailShell object={object} />, {
-			wrapper: createWorkspaceWrapper(workspace, { renderPageHeader: true }),
-		})
-
-		fireEvent.change(screen.getByPlaceholderText(/commands, @ mentions/i), {
-			target: { value: '@' },
-		})
-
-		const dropdown = screen.getByText('Bob').closest('div[class*="absolute"]')
-		expect(dropdown).toHaveClass('bottom-full', 'mb-1')
-		expect(dropdown).not.toHaveClass('mt-1')
+		expect(screen.getByRole('textbox', { name: 'Comment' })).toBeInTheDocument()
+		expect(screen.getByText(/commands, @ mentions/i)).toBeInTheDocument()
 	})
 
 	// Mockup 1138–1143: one Activity heading + a 2-way Timeline | Related

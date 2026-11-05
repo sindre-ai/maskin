@@ -65,6 +65,10 @@ export const ALIASES: readonly AliasRow[] = [
 	// parameter check list_triggers carries, which wrapInputSchema guarantees (alias-layer.ts).
 	{ tool: 'list_triggers', oldPath: 'actor_id', newPath: 'agent_id', kind: 'rename' },
 
+	// The same object_id mix-up on the write side: create_comment advertises
+	// entity_id, the object the comment goes on.
+	{ tool: 'create_comment', oldPath: 'object_id', newPath: 'entity_id', kind: 'rename' },
+
 	// id sent to a tool that wants a list of ids.
 	{ tool: 'get_objects', oldPath: 'id', newPath: 'ids', kind: 'wrap' },
 

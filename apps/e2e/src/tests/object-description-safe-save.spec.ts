@@ -78,8 +78,8 @@ async function editor(page: Page) {
 }
 
 async function leaveEditor(page: Page) {
-	// The title field is the nearest other focus target on the page.
-	await page.locator('textarea').first().click()
+	// The comment box is the nearest other focus target on the page.
+	await page.getByRole('textbox', { name: 'Comment' }).click()
 }
 
 test.describe('Object description on the rich editor', () => {

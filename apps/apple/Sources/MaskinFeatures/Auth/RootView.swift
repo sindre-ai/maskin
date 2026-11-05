@@ -1,4 +1,5 @@
 import MaskinCore
+import MaskinDesign
 import MaskinUI
 import SwiftUI
 
@@ -33,6 +34,8 @@ private let onRuntimeReady: (AppRuntime) -> Void
 	@State private var invites: InviteCoordinator
 	/// Opt-in Face ID / Touch ID / passcode lock (Settings → Security). Off by default.
 	@State private var appLock: AppLockController
+	/// The short confirmation ("Copied") any screen can ask for through the environment.
+	@State private var toast: String?
 	#if os(iOS)
 		/// Covers sheets too, which a SwiftUI overlay on this view cannot.
 		@State private var appLockWindow: AppLockWindowPresenter
@@ -81,6 +84,7 @@ private let onRuntimeReady: (AppRuntime) -> Void
 			}
 		}
 		.animation(reduceMotion ? nil : .default, value: auth.session != nil)
+		.animation(reduceMotion ? nil : .snappy, value: toast)
 		.appLockCover(appLock)
 		.environment(appLock)
 		.onChange(of: auth.session != nil, initial: true) { _, hasSession in
@@ -118,6 +122,9 @@ private let onRuntimeReady: (AppRuntime) -> Void
 		.environment(\.markdownChipPreview, { @MainActor [environment] url in
 			LinkedItemStores.chipPreview(for: url, environment: environment)
 		})
+		.environment(\.canPlaceCalls, Self.canPlaceCalls)
+		.environment(\.showToast, { @MainActor message in toast = message })
+		.overlay(alignment: .bottom) { toastView }
 		.environment(
 			\.attachmentImages,
 			AttachmentImages(
@@ -131,7 +138,7 @@ private let onRuntimeReady: (AppRuntime) -> Void
 		.task(id: auth.credentials) { environment.syncEvents() }
 		.task(id: runtime.syncKey) { runtime.sync() }
 		.task(id: auth.session?.actorId) { await runtime.actorChanged(auth.session?.actorId) }
-		.task { runtime.updateBadge() }
+		.task { await runtime.updateBadge() }
 		.onReceive(NotificationCenter.default.publisher(for: .NSSystemTimeZoneDidChange)) { _ in
 			runtime.timeZoneDidChange()
 		}
@@ -156,6 +163,37 @@ private let onRuntimeReady: (AppRuntime) -> Void
 }
 
 extension RootView {
+	/// An iPhone can call; an iPad or Mac can when the system can open a `tel:` link (iPhone calling set up).
+	fileprivate static var canPlaceCalls: Bool {
+		#if os(iOS)
+			guard let dial = URL(string: "tel:0") else { return false }
+			return UIApplication.shared.canOpenURL(dial)
+		#else
+			return false
+		#endif
+	}
+
+	/// A short glass pill ("Copied") over the bottom of the app, gone after two seconds.
+	@ViewBuilder
+	fileprivate var toastView: some View {
+		if let toast {
+			Text(toast)
+				.maskinText(.subhead)
+				.foregroundStyle(MaskinColor.ink)
+				.padding(.horizontal, MaskinSpace.s9)
+				.frame(minHeight: MaskinSpace.touchMin)
+				.maskinGlass(in: Capsule())
+				.padding(.bottom, MaskinSpace.s11)
+				.transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+				.accessibilityElement(children: .combine)
+				.task(id: toast) {
+					AccessibilityNotification.Announcement(toast).post()
+					try? await Task.sleep(for: .seconds(2))
+					if !Task.isCancelled { self.toast = nil }
+				}
+		}
+	}
+
 	fileprivate static func makeInvites(_ environment: AppEnvironment) -> InviteCoordinator {
 		let remote = APIInviteRemote(
 			baseURL: environment.baseURL, clientSource: environment.clientSource)

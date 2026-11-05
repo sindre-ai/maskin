@@ -28,6 +28,12 @@ import {
 	updateConversationSchema,
 } from '@maskin/shared'
 import { and, desc, eq, gt, inArray, isNull, lt, ne, sql } from 'drizzle-orm'
+import {
+	resolveChatTagClient,
+	trackMessageEditedWithTags,
+	trackMessageSentTagged,
+} from '../lib/analytics/chat-tag-events'
+import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
 import { createApiError, formatZodError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { refuseRawSecret } from '../lib/integrations/raw-secret-backstop'
@@ -53,6 +59,7 @@ import { insertConversationMessage, mirrorAsObjectComment } from '../services/co
 import { evaluateAndRespond } from '../services/conversation-responder'
 import { maybeGenerateConversationTitle } from '../services/conversation-titler'
 import { findOrCreateDirectChat } from '../services/direct-chat'
+import { LIVE_STATUSES, isInteractiveTurnOpenByLog } from '../services/live-activity-push'
 import { loadReactionsByMessage } from '../services/message-reactions'
 import { listCallerThreadRootIds, loadThreadSummaries } from '../services/message-threads'
 import { importObjectComments } from '../services/object-chat-sync'
@@ -102,6 +109,59 @@ type ParticipantRow = {
 	actorType: string
 	joinedAt: Date | null
 	addedBy: string | null
+}
+
+/**
+ * Messages the thread shows: not a helper's result handed back to the agent that started it
+ * (`helper_return`), and not a card button's nudge (`hidden_from_chat`). Mirrors the filter in
+ * apps/web `thread-messages.tsx`.
+ */
+const visibleInChat = sql`(${messages.metadata}->>'helper_return') IS NULL AND coalesce(${messages.metadata}->>'hidden_from_chat', 'false') <> 'true'`
+
+/**
+ * Which agents are answering in each chat right now. A chat session stays `running` between turns,
+ * so a live status alone would keep the row "working" until the container dies; an interactive
+ * session only counts while its turn is open (see `isInteractiveTurnOpenByLog`).
+ */
+async function loadWorkingActorsByConversation(
+	db: Database,
+	conversationIds: string[],
+): Promise<Map<string, string[]>> {
+	const byConversation = new Map<string, string[]>()
+	if (conversationIds.length === 0) return byConversation
+	const live = await db
+		.select({
+			id: sessions.id,
+			actorId: sessions.actorId,
+			conversationId: sessions.conversationId,
+			interactive: sessions.interactive,
+			status: sessions.status,
+		})
+		.from(sessions)
+		.where(
+			and(
+				inArray(sessions.conversationId, conversationIds),
+				inArray(sessions.status, LIVE_STATUSES),
+			),
+		)
+	const now = Date.now()
+	await Promise.all(
+		live.map(async (s) => {
+			if (!s.conversationId) return
+			// A session still booting has no logs yet but is on its way to answering; only a running
+			// chat session can be sitting idle between turns.
+			if (
+				s.interactive &&
+				s.status === 'running' &&
+				!(await isInteractiveTurnOpenByLog(db, s.id, now))
+			)
+				return
+			const actors = byConversation.get(s.conversationId) ?? []
+			if (!actors.includes(s.actorId)) actors.push(s.actorId)
+			byConversation.set(s.conversationId, actors)
+		}),
+	)
+	return byConversation
 }
 
 async function loadParticipantsByConversation(
@@ -220,6 +280,46 @@ async function addParticipantsToConversation(
 				set: { leftAt: null, addedBy, updatedAt: new Date() },
 			})
 	}
+}
+
+/**
+ * Splits tagged actor ids into those who still need to join the conversation and those that
+ * are neither in it nor workspace members. The unresolved ones wake nobody and are reported
+ * back, so a mistyped UUID does not fail silently.
+ */
+async function resolveMentionedActors(
+	db: Database,
+	workspaceId: string,
+	conversationId: string,
+	mentionedIds: string[],
+): Promise<{ toAdd: string[]; unresolved: string[] }> {
+	if (mentionedIds.length === 0) return { toAdd: [], unresolved: [] }
+	const activeParticipants = await loadParticipantsByConversation(db, [conversationId])
+	const activeIds = new Set((activeParticipants.get(conversationId) ?? []).map((p) => p.actorId))
+	const notYetJoined = mentionedIds.filter((actorId) => !activeIds.has(actorId))
+	if (notYetJoined.length === 0) return { toAdd: [], unresolved: [] }
+	const memberIds = await loadWorkspaceMemberIds(db, workspaceId, notYetJoined)
+	return {
+		toAdd: notYetJoined.filter((actorId) => memberIds.has(actorId)),
+		unresolved: Array.from(new Set(notYetJoined.filter((actorId) => !memberIds.has(actorId)))),
+	}
+}
+
+/** Pulls tagged workspace members into the conversation so they are candidates for the very message that tagged them. */
+async function joinMentionedActors(
+	db: Database,
+	ctx: { workspaceId: string; conversationId: string; callerId: string; toAdd: string[] },
+): Promise<void> {
+	if (ctx.toAdd.length === 0) return
+	await addParticipantsToConversation(db, ctx.conversationId, ctx.toAdd, ctx.callerId)
+	await recordEvent(db, {
+		workspaceId: ctx.workspaceId,
+		actorId: ctx.callerId,
+		action: 'conversation_participant_added',
+		entityType: 'conversation',
+		entityId: ctx.conversationId,
+		data: { added_actor_ids: ctx.toAdd, via: 'mention' },
+	})
 }
 
 /** Load a conversation and verify the caller is an active (non-left) participant. */
@@ -690,56 +790,61 @@ app.openapi(listConversationsRoute, (async (c) => {
 	const page = rows.slice(0, query.limit)
 	const conversationIds = page.map((r) => r.conversation.id)
 
-	const [participantsByConversation, unreadRows, snippets] = await Promise.all([
-		loadParticipantsByConversation(db, conversationIds),
-		conversationIds.length === 0
-			? Promise.resolve([])
-			: db
-					.select({
-						conversationId: messages.conversationId,
-						unreadCount: sql<number>`count(*)::int`,
-					})
-					.from(messages)
-					.innerJoin(
-						conversationParticipants,
-						and(
-							eq(conversationParticipants.conversationId, messages.conversationId),
-							eq(conversationParticipants.actorId, callerId),
-						),
-					)
-					.where(
-						and(
-							inArray(messages.conversationId, conversationIds),
-							ne(messages.actorId, callerId),
-							sql`${messages.id} > COALESCE(${conversationParticipants.lastReadMessageId}, 0)`,
-						),
-					)
-					.groupBy(messages.conversationId),
-		Promise.all(
-			page.map(async (r) => {
-				// The sender comes back with the preview so the row can say who is
-				// talking. Left-joined: a message from an actor that has since been
-				// deleted still yields its text rather than dropping the snippet.
-				const [latest] = await db
-					.select({
-						content: messages.content,
-						actorId: messages.actorId,
-						actorName: actors.name,
-					})
-					.from(messages)
-					.leftJoin(actors, eq(actors.id, messages.actorId))
-					.where(eq(messages.conversationId, r.conversation.id))
-					.orderBy(desc(messages.id))
-					.limit(1)
-				return {
-					conversationId: r.conversation.id,
-					snippet: latest?.content ?? null,
-					snippetActorId: latest?.actorId ?? null,
-					snippetActorName: latest?.actorName ?? null,
-				}
-			}),
-		),
-	])
+	const [participantsByConversation, unreadRows, snippets, workingByConversation] =
+		await Promise.all([
+			loadParticipantsByConversation(db, conversationIds),
+			conversationIds.length === 0
+				? Promise.resolve([])
+				: db
+						.select({
+							conversationId: messages.conversationId,
+							unreadCount: sql<number>`count(*)::int`,
+						})
+						.from(messages)
+						.innerJoin(
+							conversationParticipants,
+							and(
+								eq(conversationParticipants.conversationId, messages.conversationId),
+								eq(conversationParticipants.actorId, callerId),
+							),
+						)
+						.where(
+							and(
+								inArray(messages.conversationId, conversationIds),
+								ne(messages.actorId, callerId),
+								sql`${messages.id} > COALESCE(${conversationParticipants.lastReadMessageId}, 0)`,
+							),
+						)
+						.groupBy(messages.conversationId),
+			Promise.all(
+				page.map(async (r) => {
+					// Only what the thread itself shows: a helper's result handed to the agent that started
+					// it, and a card button's nudge, are delivered to the agent but hidden from the chat, so
+					// they must not be the row's preview either (the thread filters them the same way).
+					// The sender comes back with the preview so the row can say who is
+					// talking. Left-joined: a message from an actor that has since been
+					// deleted still yields its text rather than dropping the snippet.
+					const [latest] = await db
+						.select({
+							content: messages.content,
+							actorId: messages.actorId,
+							actorName: actors.name,
+						})
+						.from(messages)
+						.leftJoin(actors, eq(actors.id, messages.actorId))
+						.where(and(eq(messages.conversationId, r.conversation.id), visibleInChat))
+						.orderBy(desc(messages.id))
+						.limit(1)
+					return {
+						conversationId: r.conversation.id,
+						snippet: latest?.content ?? null,
+						snippetActorId: latest?.actorId ?? null,
+						snippetActorName: latest?.actorName ?? null,
+					}
+				}),
+			),
+			loadWorkingActorsByConversation(db, conversationIds),
+		])
 
 	const unreadByConversation = new Map(unreadRows.map((r) => [r.conversationId, r.unreadCount]))
 	const snippetByConversation = new Map(snippets.map((s) => [s.conversationId, s]))
@@ -755,6 +860,7 @@ app.openapi(listConversationsRoute, (async (c) => {
 			snippet_actor_name: snippetByConversation.get(r.conversation.id)?.snippetActorName ?? null,
 			snippet_is_caller: snippetByConversation.get(r.conversation.id)?.snippetActorId === callerId,
 			participants: participantsByConversation.get(r.conversation.id) ?? [],
+			working_actor_ids: workingByConversation.get(r.conversation.id) ?? [],
 		})) as z.infer<typeof conversationListItemResponseSchema>[],
 		has_more: hasMore,
 	})
@@ -1448,27 +1554,27 @@ app.openapi(postMessageRoute, (async (c) => {
 	// Ids that are neither already in the conversation nor workspace members:
 	// nothing joins them and nothing wakes them. Reported back so a mistyped
 	// UUID doesn't fail silently (same contract as POST /events comments).
-	let unresolvedMentions: string[] = []
+	const { toAdd: mentionedToAdd, unresolved: unresolvedMentions } = await resolveMentionedActors(
+		db,
+		workspaceId,
+		id,
+		mentionedIds,
+	)
+	await joinMentionedActors(db, {
+		workspaceId,
+		conversationId: id,
+		callerId,
+		toAdd: mentionedToAdd,
+	})
 	if (mentionedIds.length > 0) {
-		const activeParticipants = await loadParticipantsByConversation(db, [id])
-		const activeIds = new Set((activeParticipants.get(id) ?? []).map((p) => p.actorId))
-		const notYetJoined = mentionedIds.filter((actorId) => !activeIds.has(actorId))
-		if (notYetJoined.length > 0) {
-			const memberIds = await loadWorkspaceMemberIds(db, workspaceId, notYetJoined)
-			const toAdd = notYetJoined.filter((actorId) => memberIds.has(actorId))
-			unresolvedMentions = Array.from(new Set(notYetJoined.filter((id) => !memberIds.has(id))))
-			if (toAdd.length > 0) {
-				await addParticipantsToConversation(db, id, toAdd, callerId)
-				await recordEvent(db, {
-					workspaceId,
-					actorId: callerId,
-					action: 'conversation_participant_added',
-					entityType: 'conversation',
-					entityId: id,
-					data: { added_actor_ids: toAdd, via: 'mention' },
-				})
-			}
-		}
+		void trackMessageSentTagged(db, {
+			workspaceId,
+			actorId: callerId,
+			conversationId: id,
+			client: resolveChatTagClient(c.req.header(CLIENT_SOURCE_HEADER)),
+			content: body.content,
+			taggedIds: mentionedIds,
+		})
 	}
 
 	// A reply under a message that a sub-chat hangs from goes to that sub-chat's agent too,
@@ -1593,13 +1699,62 @@ app.openapi(editMessageRoute, (async (c) => {
 	})
 	if (secretRefusal) return c.json(secretRefusal, 400)
 
+	// Tagged ids sent with the edit replace the stored ones; none sent keeps them. Only ids the
+	// message did not carry before are new: they are checked and joined like a new message's tags,
+	// and they are the only ones that wake anyone.
+	const sentMentions = body.metadata?.mentions
+	const nextMentions = sentMentions ? Array.from(new Set(sentMentions)) : undefined
+	const storedMetadata = (message.metadata ?? {}) as { mentions?: string[] }
+	const storedMentions = new Set(storedMetadata.mentions ?? [])
+	const addedMentions = nextMentions?.filter((mentionId) => !storedMentions.has(mentionId)) ?? []
+	const { toAdd: mentionedToAdd, unresolved: unresolvedMentions } = await resolveMentionedActors(
+		db,
+		workspaceId,
+		id,
+		addedMentions,
+	)
+	if (unresolvedMentions.length > 0) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				`Tagged id not found in this workspace: ${unresolvedMentions.join(', ')}`,
+			),
+			400,
+		)
+	}
+
+	let nextMetadata: Record<string, unknown> | undefined
+	if (nextMentions) {
+		nextMetadata = { ...storedMetadata, mentions: nextMentions }
+	}
+
 	const editedAt = new Date()
 	const [updated] = await db
 		.update(messages)
-		.set({ content: body.content, editedAt })
+		.set({
+			content: body.content,
+			editedAt,
+			...(nextMetadata !== undefined ? { metadata: nextMetadata } : {}),
+		})
 		.where(eq(messages.id, messageId))
 		.returning()
 	if (!updated) throw new Error('Failed to update message')
+
+	await joinMentionedActors(db, {
+		workspaceId,
+		conversationId: id,
+		callerId,
+		toAdd: mentionedToAdd,
+	})
+	if (addedMentions.length > 0) {
+		void trackMessageEditedWithTags({
+			workspaceId,
+			actorId: callerId,
+			conversationId: id,
+			client: resolveChatTagClient(c.req.header(CLIENT_SOURCE_HEADER)),
+			addedCount: addedMentions.length,
+		})
+	}
 
 	await recordEvent(db, {
 		workspaceId,
@@ -1610,25 +1765,26 @@ app.openapi(editMessageRoute, (async (c) => {
 		data: { message_id: messageId },
 	})
 
-	// Re-notify agents only when the edited message is still the newest real
-	// message in the conversation — a correction of the message they are (or
-	// should be) responding to. Editing something further up is a silent fix;
-	// re-running the responder for it would produce a confusing out-of-order
-	// agent turn.
+	// Newly tagged agents are woken whatever the message's position: the tag is a fresh ask. With
+	// no new tag, agents are re-notified only when the edited message is still the newest real
+	// message in the conversation — a correction of the message they are (or should be)
+	// responding to. Editing something further up is a silent fix; re-running the responder for
+	// it would produce a confusing out-of-order agent turn.
 	const [newest] = await db
 		.select({ id: messages.id })
 		.from(messages)
 		.where(and(eq(messages.conversationId, id), eq(messages.kind, 'message')))
 		.orderBy(desc(messages.id))
 		.limit(1)
-	if (newest?.id === messageId) {
+	if (addedMentions.length > 0 || newest?.id === messageId) {
 		evaluateAndRespond({
 			db,
 			sessionManager,
 			workspaceId,
 			conversationId: id,
 			messageId,
-			options: { isEdit: true },
+			// Ids sent with the edit: a group chat wakes only the new ones.
+			options: { isEdit: true, ...(nextMentions ? { wakeOnlyIds: addedMentions } : {}) },
 		}).catch((err: unknown) =>
 			logger.error('Conversation responder failed after edit', {
 				conversationId: id,

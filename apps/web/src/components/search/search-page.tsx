@@ -5,7 +5,6 @@ import { TypeBadge } from '@/components/shared/type-badge'
 import { Button } from '@/components/ui/button'
 import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useObjects } from '@/hooks/use-objects'
 import { useOnlineStatus } from '@/hooks/use-online-status'
 import { useParticipantMenu, useParticipantOptions } from '@/hooks/use-participant-menu'
@@ -35,7 +34,6 @@ import {
 	failedTypeKeys,
 } from '@/lib/search/chips'
 import { explainEmpty } from '@/lib/search/empty-state'
-import { PARTICIPANT_FILTER_FLAG } from '@/lib/search/mention'
 import { navigateToSearchRow } from '@/lib/search/open-row'
 import { hasPill, queryText } from '@/lib/search/parts'
 import { shortcutLabel } from '@/lib/search/platform'
@@ -118,12 +116,7 @@ export function SearchPageV2() {
 		[objectTypes],
 	)
 
-	// Off, a participants param in a link is ignored and the next URL write drops it.
-	const participantFilterOn = useFeatureFlag(PARTICIPANT_FILTER_FLAG)
-	const urlState = useMemo(() => {
-		const parsed = parseSearchState(search as Record<string, unknown>)
-		return participantFilterOn ? parsed : { ...parsed, participants: [] }
-	}, [search, participantFilterOn])
+	const urlState = useMemo(() => parseSearchState(search as Record<string, unknown>), [search])
 	const urlKey = JSON.stringify(serializeSearchState(urlState))
 	const { state, dispatch, suggestion, types, statuses, participants } = useSearchState(
 		vocab,

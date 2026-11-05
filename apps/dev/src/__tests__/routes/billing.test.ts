@@ -428,6 +428,74 @@ describe('POST /api/billing/credits/checkout', () => {
 		expect(res.status).toBe(400)
 	})
 
+	describe('per-currency amount bounds', () => {
+		async function postTopup(amount: number, currency?: string) {
+			const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+			const workspaceId = randomUUID()
+			mockResults.select = [
+				{
+					id: workspaceId,
+					...OWNER_CALLER,
+					settings: {
+						billing: { plan: 'pro', status: 'active', stripe_customer_id: 'cus_x' },
+					},
+				},
+			]
+			vi.mocked(createCreditCheckoutSession).mockResolvedValue({
+				id: 'cs_credit_bounds',
+				url: 'https://checkout.stripe.com/c/cs_credit_bounds',
+			} as Awaited<ReturnType<typeof createCreditCheckoutSession>>)
+			return app.request(
+				jsonRequest(
+					'POST',
+					'/api/billing/credits/checkout',
+					{
+						amount_usd_cents: amount,
+						success_url: 'https://app.test/success',
+						cancel_url: 'https://app.test/cancel',
+						...(currency ? { currency } : {}),
+					},
+					{ 'X-Workspace-Id': workspaceId },
+				),
+			)
+		}
+
+		it.each([
+			['eur', 2_250],
+			['eur', 50_001],
+			['eur', 450_000],
+			['dkk', 17_500],
+			['dkk', 50_001],
+			['dkk', 3_490_000],
+		])('accepts %s at %i minor units', async (currency, amount) => {
+			expect((await postTopup(amount, currency)).status).toBe(200)
+		})
+
+		it.each([
+			['eur', 2_249],
+			['eur', 450_001],
+			['dkk', 17_499],
+			['dkk', 3_490_001],
+		])('rejects %s at %i minor units', async (currency, amount) => {
+			expect((await postTopup(amount, currency)).status).toBe(400)
+		})
+
+		it.each([
+			['usd', 50_001],
+			[undefined, 50_001],
+			[undefined, 999],
+		])('keeps the $10 to $500 range for currency=%s at %i', async (currency, amount) => {
+			expect((await postTopup(amount, currency)).status).toBe(400)
+		})
+
+		it.each([
+			['usd', 50_000],
+			[undefined, 1_000],
+		])('still accepts currency=%s at %i', async (currency, amount) => {
+			expect((await postTopup(amount, currency)).status).toBe(200)
+		})
+	})
+
 	it('returns the checkout URL for an eligible pro workspace', async () => {
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()

@@ -69,6 +69,8 @@ const ALL_TOOL_NAMES = [
 	'update_loop',
 	'list_loops',
 	'get_loop',
+	'set_loop_view',
+	'query_data',
 	'delete_loop',
 	'create_session',
 	'create_sub_chat',

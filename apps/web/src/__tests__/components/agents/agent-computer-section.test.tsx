@@ -125,9 +125,15 @@ describe('AgentComputerSection', () => {
 		// The inline view closed its stream; the popup opened the only live one.
 		expect(inline.disconnected).toBe(true)
 		act(() => (instances[1] as InstanceType<typeof FakeRfb>).emit('connect'))
-		// The popup's controls float under the picture once it is live.
-		expect(await within(dialog).findByRole('button', { name: 'Take over' })).toBeInTheDocument()
+		// The popup's controls sit in the top row, with minimize, once it is live: none under the picture.
+		const takeOver = await within(dialog).findByRole('button', { name: 'Take over' })
 		expect(within(dialog).getByText('Take control')).toBeInTheDocument()
+		const closePopup = within(dialog).getByRole('button', { name: 'Close popup' })
+		expect(takeOver.parentElement?.parentElement).toBe(closePopup.parentElement)
+		const picture = dialog.querySelector('.aspect-video') as HTMLElement
+		expect(
+			picture.compareDocumentPosition(takeOver) & Node.DOCUMENT_POSITION_PRECEDING,
+		).toBeTruthy()
 		expect(screen.getByText(/is open in a popup/i)).toBeInTheDocument()
 
 		await user.click(within(dialog).getByRole('button', { name: 'Close popup' }))

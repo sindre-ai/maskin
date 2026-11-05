@@ -16,7 +16,8 @@ import type { WorkspaceSettings } from './types'
  * An option with `set_status` is a button that moves an object. Posting the card stamps the
  * status the object was in; the For You list drops the card once the object leaves it, and a
  * tap changes the status only while it is still there, so an old card tapped later cannot pull
- * a bet backwards.
+ * a bet backwards. A card with no such option gets the same stamp on the object it sits on
+ * (and the same drop), unless it sets only_while_status or keep_on_status_change.
  */
 
 export interface StatusActionTarget {
@@ -44,7 +45,11 @@ async function statusesOfType(
  */
 export async function prepareStatusActions(
 	db: Database,
-	params: { workspaceId: string; object: { id: string; type: string }; decision: CommentDecision },
+	params: {
+		workspaceId: string
+		object: { id: string; type: string; status: string | null }
+		decision: CommentDecision
+	},
 ): Promise<{ violations: DecisionProseViolation[] } | { decision: CommentDecision }> {
 	const { workspaceId, object, decision } = params
 	// Whatever the agent sent in the stamp is replaced, or removed when there is no action.
@@ -56,7 +61,16 @@ export async function prepareStatusActions(
 	if (actions.length === 0) {
 		const statuses = await statusesOfType(db, workspaceId, object.type)
 		const violations = statuses ? findStatusActionViolations(rest, statuses) : []
-		return violations.length > 0 ? { violations } : { decision: rest }
+		if (violations.length > 0) return { violations }
+		// A card with no status button still goes stale when its object moves on. Unless the
+		// writer named the statuses it assumed or opted out, remember the status it was posted in.
+		// An object with no status has nothing to compare, so its card is left unstamped.
+		const stampable = !rest.only_while_status && !rest.keep_on_status_change && object.status
+		return {
+			decision: stampable
+				? { ...rest, status_stamp: { object_id: object.id, status: object.status as string } }
+				: rest,
+		}
 	}
 
 	const targetIds = new Set(actions.map((a) => a.object_id ?? object.id))

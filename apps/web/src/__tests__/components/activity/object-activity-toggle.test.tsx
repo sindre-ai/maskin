@@ -10,6 +10,10 @@ vi.mock('@/hooks/use-actors', () => ({
 	useActors: () => ({ data: [] }),
 }))
 
+vi.mock('@/hooks/use-conversations', () => ({
+	useConversationsInfinite: () => ({ data: undefined }),
+}))
+
 vi.mock('@/hooks/use-events', () => ({
 	useCreateComment: () => ({ mutate: vi.fn(), isPending: false }),
 }))

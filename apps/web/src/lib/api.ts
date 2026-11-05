@@ -4,6 +4,8 @@ import type {
 	ActorResponse,
 	AgentState,
 	CreateFileCommentInput,
+	DataQueryResult,
+	DataQuerySpec,
 	DisplaySettingsBody,
 	FileCommentDto,
 	FileUploadSession,
@@ -702,6 +704,18 @@ export const api = {
 		list: (workspaceId: string) => request<ListLoopsResponse>('/loops', { workspaceId }),
 		activity: (id: string, workspaceId: string) =>
 			request<{ events: EventResponse[] }>(`/loops/${id}/activity`, { workspaceId }),
+	},
+
+	data: {
+		query: (workspaceId: string, spec: DataQuerySpec) =>
+			request<DataQueryResult>(`/data/query?spec=${encodeURIComponent(JSON.stringify(spec))}`, {
+				workspaceId,
+			}),
+		nextChange: (workspaceId: string, spec: DataQuerySpec) =>
+			request<{ in_ms: number | null }>(
+				`/data/next-change?spec=${encodeURIComponent(JSON.stringify(spec))}`,
+				{ workspaceId },
+			),
 	},
 
 	triggers: {
@@ -2666,6 +2680,8 @@ export interface ConversationListItemResponse {
 	snippet_actor_id: string | null
 	snippet_actor_name: string | null
 	participants: ConversationParticipantResponse[]
+	/** Agents with an open turn in this chat right now — a chat session stays running between turns. */
+	working_actor_ids: string[]
 }
 
 export interface ConversationListResponse {
@@ -3041,6 +3057,8 @@ export interface SessionStateChangedPayload {
 
 export interface EditMessageInput {
 	content: string
+	/** Tagged ids after the edit. Left out: the message keeps the ids it has. */
+	metadata?: { mentions: string[] }
 }
 
 export interface MessagesListResponse {
@@ -3120,6 +3138,8 @@ export interface SessionResponse {
 	createdAt: string | null
 	updatedAt: string | null
 	currentActivity: string | null
+	/** The agent server the session runs on; null or absent for a session on the local host. Those on a server cannot be paused. */
+	agentServerId?: string | null
 	/** The thread (its root message id) a chat session answers in; null or absent for the main chat. */
 	threadRootId?: number | null
 	// Postgres `numeric` — serialized as a string; null until the session reports a cost.

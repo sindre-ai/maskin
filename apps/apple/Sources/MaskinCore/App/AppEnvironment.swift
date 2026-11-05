@@ -10,7 +10,7 @@ import OpenAPIRuntime
 ///   and `X-Client-Source`. Wrap it in a private per-store adapter; never use generated operation
 ///   names outside that adapter.
 /// - `events` is the shared real-time hub. Subscribe once per store.
-/// - Writes that must be replayable go through `IdempotencyKey.$current.withValue(_:)`.
+/// - Writes that must be replayable go through `IdempotencyKey.bind(_:)`.
 @MainActor
 public final class AppEnvironment {
 	public let baseURL: URL

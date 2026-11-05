@@ -205,10 +205,12 @@ describe('buildWorkingAckBlocks / buildUnlinkedAckBlocks', () => {
 		expect(subscript?.elements?.[0]?.text).toContain('↳ Workspace Coach')
 		expect(subscript?.elements?.[0]?.text).toContain('#7C1F1A')
 	})
-	it('routes unlinked users to the maskin → slack link page and includes subscript', () => {
-		const blocks = buildUnlinkedAckBlocks('Workspace Coach')
+	it('routes unlinked users to the workspace integrations settings page and includes subscript', () => {
+		const blocks = buildUnlinkedAckBlocks('ws-123', 'Workspace Coach')
 		const text = JSON.stringify(blocks)
-		expect(text).toContain('https://maskin.test/integrations/slack')
+		expect(text).toContain('/ws-123/settings/integrations')
+		expect(text).toContain('https://maskin.test/ws-123/settings/integrations')
+		expect(text).not.toContain('/integrations/slack')
 		expect(text).toContain('↳ Workspace Coach')
 	})
 })
@@ -262,7 +264,7 @@ describe('handleSlackMention', () => {
 		await handleSlackMention({ db: db as never, ...baseArgs() })
 		expect(slackPostMock).toHaveBeenCalledTimes(1)
 		const [, , body] = slackPostMock.mock.calls[0] as [string, string, Record<string, unknown>]
-		expect(JSON.stringify(body.blocks)).toContain('https://maskin.test/integrations/slack')
+		expect(JSON.stringify(body.blocks)).toContain('https://maskin.test/ws-1/settings/integrations')
 	})
 
 	it('AC-U5: flips integration to revoked on token_revoked from chat.postEphemeral and stops', async () => {

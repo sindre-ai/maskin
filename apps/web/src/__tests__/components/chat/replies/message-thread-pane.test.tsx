@@ -186,7 +186,7 @@ describe('MessageThreadPane', () => {
 		const user = userEvent.setup()
 		setup()
 		const box = await screen.findByLabelText('Reply in thread')
-		await waitFor(() => expect(box).toHaveAttribute('placeholder', 'Reply to Forge…'))
+		await screen.findByText('Reply to Forge…')
 
 		const checkbox = screen.getByRole('checkbox', { name: 'Also send to chat' })
 		await user.click(checkbox)
@@ -221,8 +221,8 @@ describe('MessageThreadPane', () => {
 			],
 			replies: [],
 		})
-		const box = await screen.findByLabelText('Reply in thread')
-		expect(box).toHaveAttribute('placeholder', 'Reply…')
+		await screen.findByLabelText('Reply in thread')
+		expect(screen.getByText('Reply…')).toBeInTheDocument()
 		expect(await screen.findByText('No replies yet')).toBeInTheDocument()
 	})
 

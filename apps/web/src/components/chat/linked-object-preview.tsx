@@ -21,6 +21,7 @@ import { type LinkedCardsOptions, MarkdownContent } from '@/components/shared/ma
 import { ObjectPreviewMeta } from '@/components/shared/object-preview-meta'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { Button } from '@/components/ui/button'
+import { CopyButton } from '@/components/ui/copy-button'
 import { useActors } from '@/hooks/use-actors'
 import { useFiles } from '@/hooks/use-files'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
@@ -33,6 +34,7 @@ import {
 	type SettingsTarget,
 	isOtherWorkspace,
 	showsObjectCard,
+	showsTaskCard,
 } from '@/lib/linked-objects'
 import { describeObjectProperties } from '@/lib/object-properties'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -74,18 +76,20 @@ export function LinkedObjectCard({
 	const approve = useApproveObject()
 	const linkedPanel = useLinkedPanel()
 	// A draft is always a full card (its text and Approve are what the person came for), so it
-	// starts open. Any other object starts contracted, showing the header and title; the text and
+	// starts open, and so does a task (its text is what the person came for). Any other object starts contracted, showing the header and title; the text and
 	// the next-phase button appear once the top of the card is clicked. `toggled` is the person's
 	// own choice and wins once made.
 	const [toggled, setToggled] = useState<boolean | null>(null)
-	const expanded = toggled ?? (defaultExpanded || Boolean(object?.preview))
+	const expanded =
+		toggled ?? (defaultExpanded || Boolean(object?.preview) || object?.type === 'task')
 	// A long draft shows about 12 lines until the person asks for all of it. `revealedHash` is the
 	// text they opened in full, so a draft that changes underneath them is clamped again.
 	const [revealedHash, setRevealedHash] = useState<string | null>(null)
 	const textRef = useRef<HTMLDivElement>(null)
 	const revealedAt = useRef(0)
 	const [overflowing, setOverflowing] = useState(false)
-	const draftHash = object?.preview?.content_hash
+	// What the person has seen in full: the draft's hash, or for a task with no preview its text.
+	const draftHash = object?.preview?.content_hash ?? object?.content ?? undefined
 	const clamped = Boolean(draftHash) && draftHash !== revealedHash
 
 	// Whether the text is taller than the clamp. Measured, not counted, because a wrapped
@@ -302,7 +306,7 @@ export function LinkedObjectCard({
 							}}
 						/>
 					</div>
-					{preview && (gated || (overflowing && !clamped)) ? (
+					{gated || (overflowing && !clamped) ? (
 						<div className="px-3 pt-1">
 							<Button
 								type="button"
@@ -322,6 +326,7 @@ export function LinkedObjectCard({
 					) : null}
 					{preview ? (
 						<div aria-live="polite" className="flex items-center justify-end gap-2 px-3 pb-3 pt-1">
+							<CopyButton text={shown} label ariaLabel="Copy the text" />
 							{delivery === 'sent' ? (
 								<span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
 									<Check size={13} aria-hidden />
@@ -347,7 +352,8 @@ export function LinkedObjectCard({
 							)}
 						</div>
 					) : canAct && nextStatus ? (
-						<div className="flex items-center justify-end px-3 pb-3 pt-1">
+						<div className="flex items-center justify-end gap-2 px-3 pb-3 pt-1">
+							<CopyButton text={shown} label ariaLabel="Copy the text" />
 							<Button
 								type="button"
 								size="sm"
@@ -359,7 +365,9 @@ export function LinkedObjectCard({
 							</Button>
 						</div>
 					) : (
-						<div className="pb-3" />
+						<div className="flex items-center justify-end px-3 pb-3 pt-1">
+							<CopyButton text={shown} label ariaLabel="Copy the text" />
+						</div>
 					)}
 				</>
 			) : null}
@@ -642,6 +650,19 @@ function ObjectCardOrLink({
 	if (showsObjectCard(object, workspaceId)) {
 		return withLabel(
 			inList ? label : undefined,
+			<LinkedObjectCard
+				workspaceId={workspaceId}
+				objectId={objectId}
+				conversationId={conversationId}
+				agentId={agentId}
+				updated={updated}
+			/>,
+		)
+	}
+	// A task with text, alone on its own line in chat, is its text; see `showsTaskCard`.
+	if (draftsAndFiles && !after && !inList && showsTaskCard(object, workspaceId)) {
+		return withLabel(
+			label,
 			<LinkedObjectCard
 				workspaceId={workspaceId}
 				objectId={objectId}

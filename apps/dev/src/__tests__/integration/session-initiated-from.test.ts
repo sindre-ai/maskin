@@ -1,6 +1,7 @@
 import { events, objects, sessions } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
+import { __resetPosthogEventBudgetForTesting } from '../../lib/analytics/event-budget'
 import { RuntimeTelemetry, type TelemetryClient } from '../../services/runtime-telemetry'
 import { SessionManager } from '../../services/session-manager'
 import { insertObject, insertSession, insertWorkspace } from '../factories'
@@ -56,13 +57,23 @@ describe('SessionManager — initiated_from context (Integration)', () => {
 	let workspaceId: string
 	let actorId: string
 
+	let randomSpy: ReturnType<typeof vi.spyOn>
+
 	beforeEach(async () => {
+		// runtime_session_ended is sampled; a draw of 0 is always under the rate.
+		randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0)
+		__resetPosthogEventBudgetForTesting()
 		actorId = getTestActorId()
 		// enterpriseGranted short-circuits `checkPlanCap` inside createSession's
 		// pre-flight so these tests can focus on the enrichment persistence,
 		// not billing plumbing (same posture as session-trigger-provenance).
 		const ws = await insertWorkspace(db, actorId, { enterpriseGranted: true })
 		workspaceId = ws.id
+	})
+
+	afterEach(() => {
+		randomSpy.mockRestore()
+		__resetPosthogEventBudgetForTesting()
 	})
 
 	it('persists both initiated_from_object columns on the sessions row', async () => {
