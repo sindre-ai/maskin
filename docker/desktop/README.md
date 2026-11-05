@@ -38,14 +38,14 @@ Open `http://10.0.1.1:16080/vnc.html` from the server (or an SSH tunnel:
 - Does the desktop appear and respond to mouse and keyboard?
 - Memory use (`msb` stats / `free -m` in the VM) idle and with Chromium open.
 - `xdotool` and `scrot` work in the VM (`DISPLAY=:99`) so an agent can drive it.
-- A web page's file chooser fits the 1600x900 screen with its Open button visible. GTK
+- A web page's file chooser fits the 1920x1080 screen with its Open button visible. GTK
   restores the chooser size from `dock/keyfile` (`org/gtk/settings/file-chooser`,
   `window-size` and `window-position`, both needed); unset it opens 1124x822, taller than
   the screen. Select the file, then click Open: double click and Enter do not submit it.
-- Chromium opens a page at 80 percent zoom (a page's `innerWidth` is 2000 on the 1600
+- Chromium opens a page at 67 percent zoom (a page's `innerWidth` is 2866 on the 1920
   pixel screen). The default comes from `chromium/preferences.json`, installed as the
   profile's `Preferences`; change `partition.default_zoom_level.x` (log(zoom)/log(1.2):
-  -1.2239 is 80 percent, -0.5779 is 90 percent) to move it. The screen size is unchanged.
+  -2.1966 is 67 percent, -1.2239 is 80 percent) to move it. The screen size is unchanged.
 
 ## Agent control (desktopd)
 
@@ -54,7 +54,7 @@ Open `http://10.0.1.1:16080/vnc.html` from the server (or an SSH tunnel:
 bridge next to noVNC. The agent-server proxies to it; apps/dev exposes it as
 `/api/desktop/{screenshot,input,exec}` and the Maskin MCP as `desktop_*` tools.
 
-The screen is 1600x900 and agents see all of it: `/screenshot` returns the full screen and
+The screen is 1920x1080 and agents see all of it: `/screenshot` returns the full screen and
 `/input` coordinates are native pixels (`WIDTH/HEIGHT` in `desktopd.py` must match the
 entrypoint's `SCREEN_SIZE` default).
 

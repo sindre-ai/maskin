@@ -173,6 +173,10 @@ export const queryKeys = {
 	fileComments: {
 		all: (workspaceId: string, fileId: string) => ['file-comments', workspaceId, fileId] as const,
 	},
+	fileProposals: {
+		open: (workspaceId: string, fileId: string) =>
+			['file-proposals', workspaceId, fileId, 'open'] as const,
+	},
 	attachingObjects: {
 		byFile: (workspaceId: string, fileId: string) =>
 			['attaching-objects', workspaceId, fileId] as const,
@@ -187,6 +191,7 @@ export const queryKeys = {
 	billing: {
 		all: (workspaceId: string) => ['billing', workspaceId] as const,
 		usage: (workspaceId: string) => ['billing', workspaceId, 'usage'] as const,
+		dailyBudget: (workspaceId: string) => ['billing', workspaceId, 'daily-budget'] as const,
 	},
 	forYou: {
 		list: (workspaceId: string) => ['for-you', workspaceId] as const,

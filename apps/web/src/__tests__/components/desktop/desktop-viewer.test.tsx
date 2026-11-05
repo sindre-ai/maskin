@@ -1,6 +1,6 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { instances, FakeRfb } = vi.hoisted(() => {
 	type Listener = (event: CustomEvent) => void
@@ -44,6 +44,7 @@ vi.mock('@/lib/api', () => ({
 import { DesktopViewer } from '@/components/desktop/desktop-viewer'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { api } from '@/lib/api'
+import { KEYBOARD_SENTINEL } from '@/lib/desktop-keyboard'
 import { createWorkspaceWrapper } from '../../setup'
 
 const WS = '11111111-1111-4111-8111-111111111111'
@@ -139,7 +140,7 @@ describe('DesktopViewer', () => {
 			expect(screen.queryByRole('button', { name: /paste from your clipboard/i })).toBeNull()
 		})
 
-		it('show only while in control, with Copy waiting for text from the computer', async () => {
+		it('are not shown without a touch screen: the keys do the work', async () => {
 			vi.mocked(useFeatureFlag).mockReturnValue(true)
 			const user = userEvent.setup()
 			renderViewer()
@@ -150,14 +151,34 @@ describe('DesktopViewer', () => {
 			expect(screen.queryByRole('button', { name: /paste from your clipboard/i })).toBeNull()
 
 			await user.click(screen.getByRole('button', { name: /take over/i }))
-			expect(screen.getByRole('button', { name: /paste from your clipboard/i })).toBeEnabled()
-			expect(screen.getByRole('button', { name: /copy to your clipboard/i })).toBeDisabled()
+			expect(screen.queryByRole('button', { name: /paste from your clipboard/i })).toBeNull()
+			expect(screen.queryByRole('button', { name: /copy to your clipboard/i })).toBeNull()
 
+			// Text from the computer that the person did not ask for is not theirs to take.
 			act(() => rfb.emit('clipboard', { text: 'copied there' }))
-			expect(screen.getByRole('button', { name: /copy to your clipboard/i })).toBeEnabled()
+			expect(screen.queryByRole('button', { name: /copy to your clipboard/i })).toBeNull()
+		})
+
+		it('bring in Copy only after the browser refused the write', async () => {
+			vi.mocked(useFeatureFlag).mockReturnValue(true)
+			const user = userEvent.setup()
+			const rfb = await takeOver(user)
+			const refused = new DOMException('no', 'NotAllowedError')
+			const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValue(refused)
+
+			act(() => {
+				rfb.target.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'c', code: 'KeyC', ctrlKey: true, bubbles: true }),
+				)
+			})
+			act(() => rfb.emit('clipboard', { text: 'copied there' }))
+
+			expect(await screen.findByRole('button', { name: /copy to your clipboard/i })).toBeEnabled()
+			expect(writeText).toHaveBeenCalledWith('copied there')
+			expect(screen.queryByRole('button', { name: /paste from your clipboard/i })).toBeNull()
 
 			await user.click(screen.getByRole('button', { name: /stop controlling/i }))
-			expect(screen.queryByRole('button', { name: /paste from your clipboard/i })).toBeNull()
+			expect(screen.queryByRole('button', { name: /copy to your clipboard/i })).toBeNull()
 		})
 	})
 
@@ -242,5 +263,123 @@ describe('DesktopViewer', () => {
 		unmount()
 
 		expect((instances[0] as InstanceType<typeof FakeRfb>).disconnected).toBe(true)
+	})
+
+	describe('on a phone', () => {
+		const originalMatchMedia = window.matchMedia
+		afterEach(() => {
+			window.matchMedia = originalMatchMedia
+		})
+
+		function usePrimaryPointer(coarse: boolean) {
+			window.matchMedia = ((query: string) =>
+				({
+					matches: coarse && query === '(pointer: coarse)',
+					media: query,
+					onchange: null,
+					addEventListener: () => {},
+					removeEventListener: () => {},
+					addListener: () => {},
+					removeListener: () => {},
+					dispatchEvent: () => false,
+				}) as unknown as MediaQueryList) as typeof window.matchMedia
+		}
+
+		async function takeControl() {
+			const user = userEvent.setup()
+			renderViewer()
+			await waitFor(() => expect(instances).toHaveLength(1))
+			const rfb = instances[0] as InstanceType<typeof FakeRfb>
+			act(() => rfb.emit('connect'))
+			await user.click(await screen.findByRole('button', { name: /take over/i }))
+			return rfb
+		}
+
+		it('offers the keyboard only while in control', async () => {
+			usePrimaryPointer(true)
+			const user = userEvent.setup()
+			renderViewer()
+			await waitFor(() => expect(instances).toHaveLength(1))
+			act(() => (instances[0] as InstanceType<typeof FakeRfb>).emit('connect'))
+
+			await user.click(await screen.findByRole('button', { name: /take over/i }))
+			expect(screen.getByRole('button', { name: 'Show keyboard' })).toBeInTheDocument()
+			expect(screen.getByLabelText('Type on the computer')).toBeInTheDocument()
+
+			await user.click(screen.getByRole('button', { name: /stop controlling/i }))
+			expect(screen.queryByRole('button', { name: 'Show keyboard' })).not.toBeInTheDocument()
+			expect(screen.queryByLabelText('Type on the computer')).not.toBeInTheDocument()
+		})
+
+		it('keeps both clipboard buttons, with Copy waiting for text from the computer', async () => {
+			vi.mocked(useFeatureFlag).mockReturnValue(true)
+			usePrimaryPointer(true)
+			const user = userEvent.setup()
+			const rfb = await takeControl()
+
+			expect(screen.getByRole('button', { name: /paste from your clipboard/i })).toBeEnabled()
+			expect(screen.getByRole('button', { name: /copy to your clipboard/i })).toBeDisabled()
+
+			act(() => rfb.emit('clipboard', { text: 'copied there' }))
+			expect(screen.getByRole('button', { name: /copy to your clipboard/i })).toBeEnabled()
+
+			await user.click(screen.getByRole('button', { name: /stop controlling/i }))
+			expect(screen.queryByRole('button', { name: /paste from your clipboard/i })).toBeNull()
+		})
+
+		it('has no on-screen keyboard where a real keyboard is the main input', async () => {
+			usePrimaryPointer(false)
+			await takeControl()
+
+			expect(screen.queryByRole('button', { name: 'Show keyboard' })).not.toBeInTheDocument()
+			expect(screen.queryByLabelText('Type on the computer')).not.toBeInTheDocument()
+		})
+
+		it('sends typed text to the computer as key presses', async () => {
+			usePrimaryPointer(true)
+			const rfb = await takeControl()
+			const field = screen.getByLabelText('Type on the computer')
+
+			fireEvent.input(field, { target: { value: `${KEYBOARD_SENTINEL}Hi` } })
+
+			expect(rfb.sendKey.mock.calls).toEqual([
+				[0x48, null],
+				[0x69, null],
+			])
+		})
+
+		it('sends Backspace when the keyboard deletes a letter', async () => {
+			usePrimaryPointer(true)
+			const rfb = await takeControl()
+			const field = screen.getByLabelText('Type on the computer')
+
+			fireEvent.input(field, { target: { value: KEYBOARD_SENTINEL.slice(1) } })
+
+			expect(rfb.sendKey.mock.calls).toEqual([[0xff08, 'Backspace']])
+		})
+
+		it('sends Enter as Return', async () => {
+			usePrimaryPointer(true)
+			const rfb = await takeControl()
+			const field = screen.getByLabelText('Type on the computer')
+
+			const notCancelled = fireEvent.keyDown(field, { key: 'Enter', code: 'Enter' })
+
+			expect(notCancelled).toBe(false)
+			expect(rfb.sendKey.mock.calls).toEqual([[0xff0d, 'Enter']])
+		})
+
+		it('puts the keyboard away when asked, and brings it back', async () => {
+			usePrimaryPointer(true)
+			const user = userEvent.setup()
+			await takeControl()
+			const field = screen.getByLabelText('Type on the computer')
+
+			await user.click(screen.getByRole('button', { name: 'Show keyboard' }))
+			expect(field).toHaveFocus()
+			await user.click(screen.getByRole('button', { name: 'Hide keyboard' }))
+			expect(field).not.toHaveFocus()
+			expect(screen.getByRole('button', { name: 'Show keyboard' })).toBeInTheDocument()
+		})
 	})
 })

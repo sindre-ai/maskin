@@ -172,6 +172,29 @@ struct LinkedCardSnapshotTests {
 		}
 	}
 
+	@Test("an open draft card with the reader's edit, Edited and Revert, at phone and tablet widths")
+	func editedDraft() async throws {
+		let store = await store()
+		let target = LinkedTarget(kind: .object, uuid: draftID)
+		guard case .draft(let object, let preview)? = store.item(for: target) else {
+			Issue.record("draft did not resolve")
+			return
+		}
+		var edit = DraftEdit(preview: preview)
+		edit.body = "Hi Torben,\n\nThanks for Tuesday. We start with two teams and review after four weeks.\n\nBest,\nSam"
+		edit.subject = "Pilot: next steps"
+		for dark in [false, true] {
+			for width in [375.0, 768.0] {
+				let content = VStack(alignment: .leading, spacing: MaskinSpace.s7) {
+					LinkedDraftCard(object: object, preview: preview, defaultExpanded: true)
+					LinkedDraftCard(object: object, preview: preview, defaultExpanded: true, edited: edit)
+				}
+				.environment(\.linkedItems, store)
+				try await render(content, width: width, dark: dark, name: "linked-draft-edit")
+			}
+		}
+	}
+
 	@Test("a message with a stand-alone link shows the card in place and keeps its words")
 	func inMessage() async throws {
 		let store = await store()

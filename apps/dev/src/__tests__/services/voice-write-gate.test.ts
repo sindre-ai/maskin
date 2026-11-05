@@ -703,6 +703,7 @@ describe('every tool of the real toolkit has a write-gate decision', () => {
 		'get_started',
 		'gmail_save_attachment',
 		'pause_session',
+		'propose_file_changes',
 		'remove_chat_participant',
 		'set_loop_view',
 		'show_computer',

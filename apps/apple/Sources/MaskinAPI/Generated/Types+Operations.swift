@@ -18685,6 +18685,107 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/billing`.
                         public var billing: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.billingPayload?
+                        /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget`.
+                        public struct daily_budgetPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/unit`.
+                            @frozen public enum unitPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case tokens = "tokens"
+                                case dollars = "dollars"
+                            }
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/unit`.
+                            public var unit: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.unitPayload
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/amount`.
+                            public var amount: Swift.Double
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/stop_share`.
+                            public struct stop_sharePayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/stop_share/value1`.
+                                public var value1: Swift.Double?
+                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/stop_share/value2`.
+                                public var value2: Swift.Double?
+                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/stop_share/value3`.
+                                public var value3: Swift.Double?
+                                /// Creates a new `stop_sharePayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - value1:
+                                ///   - value2:
+                                ///   - value3:
+                                public init(
+                                    value1: Swift.Double? = nil,
+                                    value2: Swift.Double? = nil,
+                                    value3: Swift.Double? = nil
+                                ) {
+                                    self.value1 = value1
+                                    self.value2 = value2
+                                    self.value3 = value3
+                                }
+                                public init(from decoder: any Swift.Decoder) throws {
+                                    var errors: [any Swift.Error] = []
+                                    do {
+                                        self.value1 = try decoder.decodeFromSingleValueContainer()
+                                    } catch {
+                                        errors.append(error)
+                                    }
+                                    do {
+                                        self.value2 = try decoder.decodeFromSingleValueContainer()
+                                    } catch {
+                                        errors.append(error)
+                                    }
+                                    do {
+                                        self.value3 = try decoder.decodeFromSingleValueContainer()
+                                    } catch {
+                                        errors.append(error)
+                                    }
+                                    try Swift.DecodingError.verifyAtLeastOneSchemaIsNotNil(
+                                        [
+                                            self.value1,
+                                            self.value2,
+                                            self.value3
+                                        ],
+                                        type: Self.self,
+                                        codingPath: decoder.codingPath,
+                                        errors: errors
+                                    )
+                                }
+                                public func encode(to encoder: any Swift.Encoder) throws {
+                                    try encoder.encodeFirstNonNilValueToSingleValueContainer([
+                                        self.value1,
+                                        self.value2,
+                                        self.value3
+                                    ])
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/stop_share`.
+                            public var stop_share: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.stop_sharePayload?
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/timezone`.
+                            public var timezone: Swift.String?
+                            /// Creates a new `daily_budgetPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - unit:
+                            ///   - amount:
+                            ///   - stop_share:
+                            ///   - timezone:
+                            public init(
+                                unit: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.unitPayload,
+                                amount: Swift.Double,
+                                stop_share: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.stop_sharePayload? = nil,
+                                timezone: Swift.String? = nil
+                            ) {
+                                self.unit = unit
+                                self.amount = amount
+                                self.stop_share = stop_share
+                                self.timezone = timezone
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case unit
+                                case amount
+                                case stop_share
+                                case timezone
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget`.
+                        public var daily_budget: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload?
                         /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/voice`.
                         public struct voicePayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/voice/persist_transcripts`.
@@ -18779,6 +18880,7 @@ public enum Operations {
                         ///   - privacy:
                         ///   - custom_llm:
                         ///   - billing:
+                        ///   - daily_budget:
                         ///   - voice:
                         ///   - north_star_metric:
                         ///   - default_agent_id:
@@ -18799,6 +18901,7 @@ public enum Operations {
                             privacy: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.privacyPayload? = nil,
                             custom_llm: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.custom_llmPayload? = nil,
                             billing: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.billingPayload? = nil,
+                            daily_budget: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload? = nil,
                             voice: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.voicePayload? = nil,
                             north_star_metric: Swift.String? = nil,
                             default_agent_id: Swift.String? = nil,
@@ -18819,6 +18922,7 @@ public enum Operations {
                             self.privacy = privacy
                             self.custom_llm = custom_llm
                             self.billing = billing
+                            self.daily_budget = daily_budget
                             self.voice = voice
                             self.north_star_metric = north_star_metric
                             self.default_agent_id = default_agent_id
@@ -18840,6 +18944,7 @@ public enum Operations {
                             case privacy
                             case custom_llm
                             case billing
+                            case daily_budget
                             case voice
                             case north_star_metric
                             case default_agent_id
@@ -20609,6 +20714,107 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/billing`.
                         public var billing: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.billingPayload?
+                        /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget`.
+                        public struct daily_budgetPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/unit`.
+                            @frozen public enum unitPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case tokens = "tokens"
+                                case dollars = "dollars"
+                            }
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/unit`.
+                            public var unit: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.unitPayload
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/amount`.
+                            public var amount: Swift.Double
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/stop_share`.
+                            public struct stop_sharePayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/stop_share/value1`.
+                                public var value1: Swift.Double?
+                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/stop_share/value2`.
+                                public var value2: Swift.Double?
+                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/stop_share/value3`.
+                                public var value3: Swift.Double?
+                                /// Creates a new `stop_sharePayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - value1:
+                                ///   - value2:
+                                ///   - value3:
+                                public init(
+                                    value1: Swift.Double? = nil,
+                                    value2: Swift.Double? = nil,
+                                    value3: Swift.Double? = nil
+                                ) {
+                                    self.value1 = value1
+                                    self.value2 = value2
+                                    self.value3 = value3
+                                }
+                                public init(from decoder: any Swift.Decoder) throws {
+                                    var errors: [any Swift.Error] = []
+                                    do {
+                                        self.value1 = try decoder.decodeFromSingleValueContainer()
+                                    } catch {
+                                        errors.append(error)
+                                    }
+                                    do {
+                                        self.value2 = try decoder.decodeFromSingleValueContainer()
+                                    } catch {
+                                        errors.append(error)
+                                    }
+                                    do {
+                                        self.value3 = try decoder.decodeFromSingleValueContainer()
+                                    } catch {
+                                        errors.append(error)
+                                    }
+                                    try Swift.DecodingError.verifyAtLeastOneSchemaIsNotNil(
+                                        [
+                                            self.value1,
+                                            self.value2,
+                                            self.value3
+                                        ],
+                                        type: Self.self,
+                                        codingPath: decoder.codingPath,
+                                        errors: errors
+                                    )
+                                }
+                                public func encode(to encoder: any Swift.Encoder) throws {
+                                    try encoder.encodeFirstNonNilValueToSingleValueContainer([
+                                        self.value1,
+                                        self.value2,
+                                        self.value3
+                                    ])
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/stop_share`.
+                            public var stop_share: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.stop_sharePayload?
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/timezone`.
+                            public var timezone: Swift.String?
+                            /// Creates a new `daily_budgetPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - unit:
+                            ///   - amount:
+                            ///   - stop_share:
+                            ///   - timezone:
+                            public init(
+                                unit: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.unitPayload,
+                                amount: Swift.Double,
+                                stop_share: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.stop_sharePayload? = nil,
+                                timezone: Swift.String? = nil
+                            ) {
+                                self.unit = unit
+                                self.amount = amount
+                                self.stop_share = stop_share
+                                self.timezone = timezone
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case unit
+                                case amount
+                                case stop_share
+                                case timezone
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget`.
+                        public var daily_budget: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload?
                         /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/voice`.
                         public struct voicePayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/voice/persist_transcripts`.
@@ -20703,6 +20909,7 @@ public enum Operations {
                         ///   - privacy:
                         ///   - custom_llm:
                         ///   - billing:
+                        ///   - daily_budget:
                         ///   - voice:
                         ///   - north_star_metric:
                         ///   - default_agent_id:
@@ -20723,6 +20930,7 @@ public enum Operations {
                             privacy: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.privacyPayload? = nil,
                             custom_llm: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.custom_llmPayload? = nil,
                             billing: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.billingPayload? = nil,
+                            daily_budget: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload? = nil,
                             voice: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.voicePayload? = nil,
                             north_star_metric: Swift.String? = nil,
                             default_agent_id: Swift.String? = nil,
@@ -20743,6 +20951,7 @@ public enum Operations {
                             self.privacy = privacy
                             self.custom_llm = custom_llm
                             self.billing = billing
+                            self.daily_budget = daily_budget
                             self.voice = voice
                             self.north_star_metric = north_star_metric
                             self.default_agent_id = default_agent_id
@@ -20764,6 +20973,7 @@ public enum Operations {
                             case privacy
                             case custom_llm
                             case billing
+                            case daily_budget
                             case voice
                             case north_star_metric
                             case default_agent_id

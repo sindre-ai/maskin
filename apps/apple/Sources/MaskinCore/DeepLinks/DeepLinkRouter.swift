@@ -28,6 +28,10 @@ public final class DeepLinkRouter {
 	/// A link received but not yet resolvable (signed out, workspaces still loading).
 	public private(set) var incoming: DeepLink?
 	public private(set) var rejection: Rejection?
+	/// A device sign-in code (`maskin://connect?code=`) ready to open Settings on the approve page.
+	public private(set) var pendingConnect: String?
+	/// The same, received before sign-in; promoted by `evaluate()` once there is a session.
+	public private(set) var incomingConnect: String?
 
 	@ObservationIgnored private let isSignedIn: () -> Bool
 	@ObservationIgnored private let currentWorkspaceId: () -> String?
@@ -73,6 +77,17 @@ public final class DeepLinkRouter {
 		// The share extension's "Open Maskin" link only brings the app forward. It must not be read
 		// as the inbox of a workspace called "open" (a not-a-member rejection).
 		if Self.isOpenApp(url) { return true }
+		// `connect` is a route, not a workspace: it must not be read as the inbox of one.
+		if let connect = DeviceConnectLink(url: url) {
+			rejection = nil
+			incomingConnect = connect.code
+			evaluate()
+			return true
+		}
+		if url.scheme?.lowercased() == DeepLink.scheme, url.host?.lowercased() == "connect" {
+			rejection = .unrecognized
+			return false
+		}
 		guard let link = DeepLink(url: url, universalHosts: universalHosts) else {
 			rejection = .unrecognized
 			return false
@@ -97,6 +112,10 @@ public final class DeepLinkRouter {
 
 	/// Re-attempt a held link. Call when sign-in completes or the workspace list loads.
 	public func evaluate() {
+		if let code = incomingConnect, isSignedIn() {
+			incomingConnect = nil
+			pendingConnect = code
+		}
 		guard let link = incoming, isSignedIn() else { return }
 		guard let members = memberWorkspaceIds() else { return }  // still loading
 		incoming = nil
@@ -117,12 +136,21 @@ public final class DeepLinkRouter {
 		return pending
 	}
 
+	/// The shell took `pendingConnect`.
+	@discardableResult
+	public func consumeConnect() -> String? {
+		defer { pendingConnect = nil }
+		return pendingConnect
+	}
+
 	public func clearRejection() { rejection = nil }
 
 	/// Sign-out: drop anything held, so a link can't fire for the next user.
 	public func reset() {
 		pending = nil
 		incoming = nil
+		pendingConnect = nil
+		incomingConnect = nil
 		rejection = nil
 	}
 }

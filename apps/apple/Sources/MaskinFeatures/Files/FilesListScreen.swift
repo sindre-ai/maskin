@@ -179,6 +179,7 @@ enum FileKindIcon {
 		case .html: "globe"
 		case .image: "photo"
 		case .pdf: "doc.text"
+		case .audio: "waveform"
 		case .other: "doc"
 		}
 	}

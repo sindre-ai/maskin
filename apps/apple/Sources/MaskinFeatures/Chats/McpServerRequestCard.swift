@@ -53,11 +53,10 @@ struct McpServerRequestCard: View {
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s6) {
 			if let line = settledLine {
-				HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s3) {
-					Image(systemName: "puzzlepiece.extension").foregroundStyle(MaskinColor.ink4).accessibilityHidden(true)
-					Text(line).maskinText(.subhead).foregroundStyle(MaskinColor.ink3)
-				}
-				.accessibilityElement(children: .combine)
+				RequestCardDeclined(
+					symbol: "puzzlepiece.extension", text: line,
+					onAskAgain: declined && addedName == nil && !request.replyToSession
+						? { onReply(request.askAgainText, ChatSendMetadata()) } : nil)
 				if stillRunning {
 					Text("The agent is still running without it. Stop it from the chat, then send a message to start it again with the server.")
 						.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
@@ -104,37 +103,22 @@ struct McpServerRequestCard: View {
 
 	@ViewBuilder
 	private var form: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-			Text("\(agentName.map { $0.isEmpty ? "An agent" : $0 } ?? "An agent") wants a tool server")
-				.maskinText(.headline).foregroundStyle(MaskinColor.ink)
-				.fixedSize(horizontal: false, vertical: true)
-			Text("Add MCP server").maskinText(.caption).foregroundStyle(MaskinColor.ink4)
-			Text(
-				(request.hint.map { $0 + " " } ?? "")
-					+ "It is saved for this workspace and given to this agent only, with read and write access. You can change that in Settings."
-			)
-			.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
-			.fixedSize(horizontal: false, vertical: true)
-		}
-		VStack(alignment: .leading, spacing: MaskinSpace.s2) {
+		RequestCardTitle(
+			title: "Add the \(request.name) tool server?",
+			subtitle: [agentName.flatMap { $0.isEmpty ? nil : "Asked for by \($0)." }, request.hint]
+				.compactMap { $0 }.joined(separator: " "),
+			symbol: "puzzlepiece.extension")
+		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
 			if let commandLine = request.commandLine {
-				Text("Runs this command inside the agent").maskinText(.microLabel).foregroundStyle(MaskinColor.ink4)
-				Text(commandLine)
-					.maskinText(.caption).monospaced().foregroundStyle(MaskinColor.ink2)
-					.textSelection(.enabled)
-					.fixedSize(horizontal: false, vertical: true)
+				RequestCardRow(label: "Runs inside the agent", value: commandLine, monospaced: true)
 			}
 			if let url = request.url {
-				Text("Connects to").maskinText(.microLabel).foregroundStyle(MaskinColor.ink4)
-				Text(url)
-					.maskinText(.caption).monospaced().foregroundStyle(MaskinColor.ink2)
-					.textSelection(.enabled)
-					.fixedSize(horizontal: false, vertical: true)
+				RequestCardRow(label: "Connects to", value: url, monospaced: true)
 			}
 			ForEach(request.givenValues, id: \.self) { line in
-				Text(line).maskinText(.caption).monospaced().foregroundStyle(MaskinColor.ink4)
-					.fixedSize(horizontal: false, vertical: true)
+				RequestCardRow(label: "Given", value: line, monospaced: true)
 			}
+			RequestCardRow(label: "Access", value: "Read and write, this agent only")
 		}
 		if savedServerID != nil {
 			Text("The server is added. Give it to this agent to finish; nothing more to type.")
@@ -162,10 +146,10 @@ struct McpServerRequestCard: View {
 			Text(error).maskinText(.caption).foregroundStyle(MaskinColor.ink3)
 		}
 		VStack(spacing: MaskinSpace.s4) {
-			choice(busy ? "Allowing…" : (savedServerID != nil ? "Give to this agent" : "Allow"), primary: true, enabled: canAdd) {
+			choice(busy ? "Adding…" : (savedServerID != nil ? "Give to this agent" : "Add"), primary: true, enabled: canAdd) {
 				await add()
 			}
-			choice("Decline", primary: false, enabled: !busy) { await decline() }
+			choice("Not now", primary: false, enabled: !busy) { await decline() }
 		}
 	}
 

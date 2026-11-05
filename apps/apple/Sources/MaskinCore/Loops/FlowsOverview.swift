@@ -59,22 +59,46 @@ public enum FlowTags {
 
 /// What the Flows list and its cards say, worked out from the loops alone.
 public enum FlowsOverview {
-	/// "2 of 4 flows need you." / "Nothing needs you right now." Nil with no flows. The mockup adds
-	/// one clause per flow naming the ask; the API has no per-flow ask text, so it is left out.
-	public static func lead(_ loops: [LoopSummary]) -> String? {
-		guard !loops.isEmpty else { return nil }
-		let needing = loops.filter { $0.status.isLive && ($0.pill == .waitingOnYou || $0.waitingCount > 0) }.count
-		if needing == 0 { return "Nothing needs you right now." }
-		let total = loops.count
-		if total == 1 { return "1 flow needs you." }
-		return "\(needing) of \(total) flow\(total == 1 ? "" : "s") \(needing == 1 ? "needs" : "need") you."
-	}
-
-	/// The card's footer message: how many decisions wait on the viewer. Nil when none do.
-	public static func banner(_ loop: LoopSummary) -> String? {
+	/// The card's footer message, specific to the decision: "Decide: <title>" for one, "3 decisions
+	/// waiting: <title>" for several, naming the newest unanswered one. Without a title it counts
+	/// only ("1 decision waits on you"). Nil when none wait on the viewer.
+	public static func banner(_ loop: LoopSummary, decisionTitle: String? = nil) -> String? {
 		guard loop.status.isLive, loop.waitingCount > 0 else { return nil }
 		let n = loop.waitingCount
-		return n == 1 ? "1 decision waits on you" : "\(n) decisions wait on you"
+		let title = decisionTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard let title, !title.isEmpty else {
+			return n == 1 ? "1 decision waits on you" : "\(n) decisions wait on you"
+		}
+		return n == 1 ? "Decide: \(title)" : "\(n) decisions waiting: \(title)"
+	}
+
+	/// What a decision post is called: its own title, else the first sentence of its text.
+	public static func decisionTitle(from post: LoopPost?) -> String? {
+		guard let post, post.isDecision else { return nil }
+		if let title = post.decisionTitle, !title.isEmpty { return title }
+		let text = LoopLatestUpdate.sentence(from: post.text, limit: LoopLatestUpdate.cardLimit)
+		return text.isEmpty ? nil : text
+	}
+
+	/// The overview strip above the cards: what is running, what needs the viewer and the work
+	/// moving through the flows, all counted from the list the API returned. Empty without flows.
+	public static func kpis(_ loops: [LoopSummary]) -> [LoopQuality.Stat] {
+		guard !loops.isEmpty else { return [] }
+		let live = loops.filter(\.status.isLive)
+		return [
+			.init(label: "Need you", value: "\(live.filter { $0.pill == .waitingOnYou || $0.waitingCount > 0 }.count)"),
+			.init(label: "Running", value: "\(live.count) of \(loops.count)"),
+			.init(label: "In progress", value: "\(loops.reduce(0) { $0 + $1.inProgressCount })"),
+			.init(label: "Closed", value: "\(loops.reduce(0) { $0 + $1.closedCount })"),
+		]
+	}
+
+	/// "2 in progress · 5 closed" under a card's figure; nil when the flow has no work yet.
+	public static func workLine(_ loop: LoopSummary) -> String? {
+		var parts: [String] = []
+		if loop.inProgressCount > 0 { parts.append("\(loop.inProgressCount) in progress") }
+		if loop.closedCount > 0 { parts.append("\(loop.closedCount) closed") }
+		return parts.isEmpty ? nil : parts.joined(separator: " · ")
 	}
 
 	/// The status word beside the dot: Needs you, or the stage / Paused / Draft.

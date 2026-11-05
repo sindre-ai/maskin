@@ -104,6 +104,9 @@ struct ObjectPropertiesCard: View {
 	let object: WorkObject
 	@State private var showAll = false
 	@State private var pickingDue = false
+	@State private var addingProperty = false
+	@State private var schema: SchemaStore?
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@Environment(\.openURL) private var openURL
 	@Environment(\.canPlaceCalls) private var canPlaceCalls
 	@Environment(\.showToast) private var showToast
@@ -214,6 +217,14 @@ struct ObjectPropertiesCard: View {
 						}
 						.maskinText(.subhead)
 					}
+					if let schema, schema.canEdit {
+						Button { addingProperty = true } label: {
+							Label("Add property", systemImage: "plus")
+								.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin, alignment: .leading)
+						}
+						.maskinText(.subhead)
+						.foregroundStyle(MaskinColor.ink3)
+					}
 					if all.count > Self.preview {
 						Button(showAll ? "Show fewer" : "Show all \(all.count)") {
 							withAnimation(reduceMotion ? nil : MaskinMotion.standard) { showAll.toggle() }
@@ -229,6 +240,14 @@ struct ObjectPropertiesCard: View {
 			}
 			.sheet(isPresented: $pickingDue) {
 				DuePickerSheet(date: nil) { date in Task { await store.setDueDate(date) } }
+			}
+			.task {
+				if schema == nil, let environment = runtime?.environment {
+					schema = SettingsServices(environment: environment).schemaStore()
+				}
+			}
+			.sheet(isPresented: $addingProperty) {
+				if let schema { AddPropertySheet(store: store, schema: schema, type: object.type) }
 			}
 		}
 	}

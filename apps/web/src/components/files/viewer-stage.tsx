@@ -46,7 +46,15 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { EditableMarkdownStage, useEditableMarkdown } from './editable-markdown-stage'
-import { PdfPreview, isHtml, isInlineImage, isMarkdown, isPdf, isPlainText } from './file-body'
+import {
+	MediaPlayer,
+	PdfPreview,
+	isHtml,
+	isInlineImage,
+	isMarkdown,
+	isPdf,
+	isPlainText,
+} from './file-body'
 import { ThumbnailRail } from './thumbnail-rail'
 
 // 8 seconds is the spec's `iframe-blocked` timeout: the sandboxed frame that
@@ -151,29 +159,12 @@ function PreviewUnavailableStage({ file }: { file: FileDetail }) {
 }
 
 function MediaViewerStage({ file }: { file: FileDetail }) {
-	// A large file streams from its storage URL (seekable, nothing buffered);
-	// a small one is rebuilt from its inline bytes.
-	const src = useMemo(() => {
-		if (file.downloadUrl) return file.downloadUrl
-		return URL.createObjectURL(
-			new Blob([base64ToBytes(file.content).buffer as ArrayBuffer], { type: file.mimeType }),
-		)
-	}, [file.downloadUrl, file.content, file.mimeType])
-	const Tag = file.mimeType.startsWith('audio/') ? 'audio' : 'video'
 	return (
 		<StageFrame>
 			<div className="flex h-full w-full items-center justify-center overflow-auto p-0 md:p-6">
 				{/* w-full gives the element a real width on mobile (a flex-centred media element
-				    otherwise collapses); playsInline stops iOS forcing native fullscreen. */}
-				<Tag
-					src={src}
-					controls
-					playsInline
-					preload="metadata"
-					className="max-h-full w-full max-w-full md:w-auto"
-				>
-					<track kind="captions" />
-				</Tag>
+				    otherwise collapses). */}
+				<MediaPlayer file={file} className="max-h-full w-full max-w-full md:w-auto" />
 			</div>
 		</StageFrame>
 	)

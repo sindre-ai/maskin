@@ -49,6 +49,7 @@ import eventsRoutes from './routes/events'
 import extensionsRoutes from './routes/extensions'
 import featureFlagsRoutes from './routes/feature-flags'
 import fileCommentsRoutes from './routes/file-comments'
+import fileProposalsRoutes from './routes/file-proposals'
 import filesRoutes from './routes/files'
 import forYouRoutes from './routes/for-you'
 import graphRoutes from './routes/graph'
@@ -89,6 +90,7 @@ import publicBetStrategistRoutes from './routes/public-bet-strategist'
 import publicLandingEventsRoutes from './routes/public-landing-events'
 import relationshipsRoutes from './routes/relationships'
 import searchRoutes from './routes/search'
+import sendPermissionsRoutes from './routes/send-permissions'
 import sessionsRoutes from './routes/sessions'
 import stripeWebhookRoutes from './routes/stripe-webhook'
 import subscriptionsRoutes from './routes/subscriptions'
@@ -491,6 +493,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/integrations', integrationsRoutes)
 	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
 	app.route('/api/integrations/slack/direct-post-channels', integrationsSlackDirectChannelsRoutes)
+	// Who may send what without a person approving it; human admins and owners write.
+	app.route('/api/send-permissions', sendPermissionsRoutes)
 	// Stripe webhook mounted at /api/webhooks/stripe BEFORE the integrations
 	// catchall (`/api/webhooks/:provider`) so the more-specific match wins.
 	// Stripe is billing, not an integration provider.
@@ -525,6 +529,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// prefix so the nested /:id/comments paths sit under the existing files
 	// surface without touching files.ts.
 	app.route('/api/files', fileCommentsRoutes)
+	app.route('/api/files', fileProposalsRoutes)
 	app.route('/api/extensions', extensionsRoutes)
 	app.route('/api/claude-oauth', claudeOauthRoutes)
 	// The consent and connections API for the Claude connector. Behind authMiddleware like the rest

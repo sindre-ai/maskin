@@ -1,5 +1,6 @@
 import { type BillingBuyCreditsInput, type BillingCheckoutInput, api } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
+import type { DailyBudget } from '@maskin/shared'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 /**
@@ -37,5 +38,24 @@ export function useBillingCancel(workspaceId: string) {
 		mutationFn: () => api.billing.cancel(workspaceId),
 		onSuccess: () =>
 			queryClient.invalidateQueries({ queryKey: queryKeys.billing.usage(workspaceId) }),
+	})
+}
+
+/** The workspace daily target (null when off) and whether the dollar unit may be used. */
+export function useDailyBudget(workspaceId: string) {
+	return useQuery({
+		queryKey: queryKeys.billing.dailyBudget(workspaceId),
+		queryFn: () => api.billing.dailyBudget(workspaceId),
+		enabled: Boolean(workspaceId),
+		staleTime: 10_000,
+	})
+}
+
+export function useSetDailyBudget(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (dailyBudget: DailyBudget | null) =>
+			api.billing.setDailyBudget(workspaceId, dailyBudget),
+		onSuccess: (data) => queryClient.setQueryData(queryKeys.billing.dailyBudget(workspaceId), data),
 	})
 }

@@ -6,8 +6,8 @@ import SwiftUI
 
 /// The profile sheet the avatar opens on every root tab (large detent): who is signed in (tap for
 /// Your profile), the workspace with Switch, three stat tiles that are links (For you · Flows ·
-/// Members), the WORKSPACE and YOU groups, and Log out. Replaces the More tab. There is no Agents
-/// row: agents live inside Members (handoff `7-Chat.md` §10).
+/// Members), the WORKSPACE and YOU groups, and Log out. Replaces the More tab. Agents is the first
+/// row of WORKSPACE with the working count (v3); Members lists them beside the people too.
 ///
 /// The sheet hosts ONE `NavigationStack`. Every row pushes a page onto it (Your profile, Members,
 /// Integrations, Triggers, Billing, Keys & MCP, and the existing Marketplace, Artefacts and Settings
@@ -60,6 +60,12 @@ struct ProfileSheet: View {
 					profileCard
 					workspaceCard
 					statTiles
+					VStack(spacing: 0) {
+						ProfileRow(title: "Search", subtitle: "Chats, flows, agents and items", symbol: "magnifyingglass") {
+							runtime.presentation = .search
+						}
+					}
+					.profileCard()
 					ForEach(ProfileMenuGroup.allCases) { group in
 						let items = ProfileMenu.items(in: group, hasWorkspace: hasWorkspace, role: role)
 						if !items.isEmpty {
@@ -126,6 +132,8 @@ struct ProfileSheet: View {
 	private func page(for item: ProfileMenuItem) -> some View {
 		let services = SettingsServices(environment: environment)
 		switch item {
+		case .agents:
+			AgentsScreen(environment: environment)
 		case .marketplace:
 			if let workspaceID = environment.workspaceId {
 				MarketplaceSheet(
@@ -202,10 +210,10 @@ struct ProfileSheet: View {
 		}
 	}
 
-	/// "Owner · Workspace name", else the email when no workspace is selected.
+	/// "Workspace name · Owner" (v3), else the email when no workspace is selected.
 	private func profileSubtitle(email: String?) -> String {
 		guard let name = environment.workspaces.selected?.name else { return email ?? "" }
-		return "\(role.label) \u{00B7} \(name)"
+		return "\(name) \u{00B7} \(role.label)"
 	}
 
 	/// "4 agents · 3 flows · switch workspace".
@@ -267,11 +275,21 @@ struct ProfileSheet: View {
 				if index > 0 { separator() }
 				ProfileRow(
 					title: item.title, subtitle: item.subtitle, symbol: item.symbol,
-					value: item == .members ? environment.workspaces.selected.map { "\($0.memberCount)" } : nil
+					value: rowValue(for: item)
 				) { path.append(.item(item)) }
 			}
 		}
 		.profileCard()
+	}
+
+	/// The trailing text of a row: the member count, or how many agents are at work.
+	private func rowValue(for item: ProfileMenuItem) -> String? {
+		switch item {
+		case .members: environment.workspaces.selected.map { "\($0.memberCount)" }
+		case .agents:
+			(agents?.workingCount ?? 0) > 0 ? "\(agents?.workingCount ?? 0) working" : nil
+		default: nil
+		}
 	}
 
 	private func groupLabel(_ text: String) -> some View {
@@ -327,6 +345,7 @@ struct ProfileSheet: View {
 extension ProfileMenuItem {
 	fileprivate var symbol: String {
 		switch self {
+		case .agents: "sparkles"
 		case .marketplace: "square.grid.2x2"
 		case .artefacts: "doc.text"
 		case .settings: "gearshape"
@@ -434,7 +453,8 @@ private struct ProfileRow: View {
 						Text(subtitle)
 							.font(MaskinTypeface.sans(MaskinFontSize.t13, relativeTo: .footnote))
 							.foregroundStyle(MaskinColor.ink4)
-							.lineLimit(1)
+							.lineLimit(value == nil ? 1 : 2)
+							.fixedSize(horizontal: false, vertical: true)
 					}
 				}
 				Spacer(minLength: MaskinSpace.s4)

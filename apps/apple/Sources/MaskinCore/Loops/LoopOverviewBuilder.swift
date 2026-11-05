@@ -28,9 +28,12 @@ public enum LoopOverviewBuilder {
 			else { return nil }
 			let isDecision: Bool
 			if case .object? = event.data?["decision"] { isDecision = true } else { isDecision = false }
+			let title = CommentDecision.parse(event.data?["decision"])?.title
+				.trimmingCharacters(in: .whitespacesAndNewlines)
 			return LoopPost(
 				id: event.id, actorID: event.actorId, text: text, date: event.createdAt,
-				replyCount: replies[event.id] ?? 0, isDecision: isDecision)
+				replyCount: replies[event.id] ?? 0, isDecision: isDecision,
+				decisionTitle: (title?.isEmpty == false) ? title : nil)
 		}
 		.sorted { ($0.date ?? .distantPast, $0.id) > ($1.date ?? .distantPast, $1.id) }
 	}

@@ -338,6 +338,12 @@ struct MessageRow: View {
 
 	/// Pictures and files come first, outside the bubble; a message that is only attachments has no
 	/// bubble at all.
+	/// "Developer · 10:42" for the image viewer.
+	private var attachmentCaption: String {
+		let time = message.createdAt?.formatted(date: .omitted, time: .shortened)
+		return [message.actorName, time].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+	}
+
 	private var attachmentsOnly: Bool {
 		!message.attachments.isEmpty && quote == nil && bodyText.isEmpty && !message.isErrorReply
 	}
@@ -359,7 +365,7 @@ struct MessageRow: View {
 			VStack(alignment: .trailing, spacing: AttachmentLayout.gap) {
 				MessageAttachments(
 					attachments: message.attachments, alignment: .trailing, threadWidth: rowWidth,
-					transfer: ownTransfer, onRetry: onRetrySend)
+					transfer: ownTransfer, onRetry: onRetrySend, caption: attachmentCaption)
 				if !attachmentsOnly {
 					Group {
 						if let soleCard {
@@ -446,7 +452,7 @@ struct MessageRow: View {
 					onOpen: message.author == .agent && runtime != nil ? { runtime?.openAgent(message.actorID) } : nil)
 			}
 			VStack(alignment: .leading, spacing: AttachmentLayout.gap) {
-				MessageAttachments(attachments: message.attachments, threadWidth: rowWidth)
+				MessageAttachments(attachments: message.attachments, threadWidth: rowWidth, caption: attachmentCaption)
 				if message.isEmojiOnly {
 					Text(message.content).maskinSymbol(emojiSize)
 				} else if !attachmentsOnly {
@@ -503,8 +509,8 @@ struct MessageRow: View {
 			}
 			if let access = IntegrationAccessRequest(message: message) {
 				IntegrationAccessCard(
-					request: access, agentID: message.actorID, agentName: message.actorName, messageID: message.serverID, answered: cardOutcome,
-					onReply: onKeychainReply)
+					request: access, agentID: message.actorID, agentName: message.actorName, messageID: message.serverID,
+					answered: cardOutcome, onReply: onKeychainReply)
 			}
 			if let computer = ComputerRequest(message: message) {
 				ComputerRequestCard(

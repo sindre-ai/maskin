@@ -93,6 +93,8 @@ public final class LinkedItemStore {
 	}
 
 	@ObservationIgnored private let objects: any ObjectDraftsRemote
+	/// Saves an edited draft and approves it: the path the For you card takes too.
+	@ObservationIgnored private let saver: DraftSaveAndApprove
 	@ObservationIgnored private let files: any FilesRemote
 	@ObservationIgnored private let places: (any LinkedPlacesRemote)?
 	@ObservationIgnored private let loadActors: (@Sendable () async throws -> [ActorRef])?
@@ -147,6 +149,7 @@ public final class LinkedItemStore {
 		retryAfter: TimeInterval = 30, now: @escaping @MainActor () -> Date = { Date() }
 	) {
 		self.objects = objects
+		self.saver = DraftSaveAndApprove(remote: objects)
 		self.files = files
 		self.places = places
 		self.loadActors = actors
@@ -401,12 +404,13 @@ public final class LinkedItemStore {
 		return .object(LinkedObject(object: object, kindLabel: Self.label(forType: object.type)))
 	}
 
-	/// A file is a card when it can be read in place: a page, a document, a picture or plain text.
+	/// A file is a card when it can be read or heard in place: a page, a document, a picture, plain
+	/// text or a sound.
 	func classify(_ summary: FileSummary) -> LinkedItem {
 		let reference = FileReference(
 			id: summary.id, name: summary.name, mimeType: summary.mimeType, sizeBytes: summary.sizeBytes)
 		switch summary.kind {
-		case .markdown, .text, .html, .image: return .file(reference)
+		case .markdown, .text, .html, .image, .audio: return .file(reference)
 		case .pdf, .source, .other:
 			return .plain(
 				LinkedReference(
@@ -443,6 +447,11 @@ public final class LinkedItemStore {
 		} catch {
 			remember(.error, for: file.id)
 		}
+	}
+
+	/// The whole file, for a card that plays it (audio) rather than reading its text.
+	public func loadFile(id: String) async throws -> FileDetail {
+		try await files.file(id: id)
 	}
 
 	/// Reads again after an error.
@@ -508,6 +517,48 @@ public final class LinkedItemStore {
 			approvals[objectID] = .failed(failure.message)
 			return .failed(failure)
 		}
+	}
+
+	/// Saves the reader's edit to the draft, then approves the text as saved, in one step. An edit
+	/// changes the fingerprint and withdraws any older approval, so the save comes first. An edit
+	/// equal to the text shown is a plain approval. A draft that changed under the reader is not
+	/// saved over and not approved: the card re-reads it and shows the new text. A failed save or
+	/// approval leaves the edit with the caller, and a retry does not save twice.
+	@discardableResult
+	public func approve(objectID: String, preview: ObjectPreview, edit: DraftEdit) async -> ApprovalResult {
+		let shown = DraftShown(objectId: objectID, preview: preview)
+		guard edit.differs(from: shown) else { return await approve(objectID: objectID, preview: preview) }
+		guard approvals[objectID] != .approving else { return .failed(.other("Already approving.")) }
+		approvals[objectID] = .approving
+		let target = LinkedTarget(kind: .object, uuid: objectID)
+		do {
+			switch try await saver.run(shown, edit: edit) {
+			case .approved(let updated), .alreadyApproved(let updated):
+				approvals[objectID] = nil
+				replacePreview(objectID: objectID, with: updated)
+				return .approved(updated)
+			case .alreadySent:
+				// Nothing to approve: read it again so the card says "Sent". Not a yes, so the agent is
+				// not told.
+				approvals[objectID] = nil
+				await refresh(target)
+				return .failed(.changed)
+			}
+		} catch {
+			let failure = Self.approvalFailure(for: error)
+			if failure == .changed || failure == .notFound { await refresh(target) }
+			approvals[objectID] = .failed(failure.message)
+			return .failed(failure)
+		}
+	}
+
+	private static func approvalFailure(for error: any Error) -> ObjectApprovalError {
+		if let error = error as? ObjectApprovalError { return error }
+		if let error = error as? DraftReviewError { return .other(error.message) }
+		if let error = error as? ObjectsError {
+			return error.isOffline ? .offline : .other(error.message)
+		}
+		return .other("Couldn't save your edit. Nothing was sent.")
 	}
 
 	public func clearApprovalFailure(_ objectID: String) {

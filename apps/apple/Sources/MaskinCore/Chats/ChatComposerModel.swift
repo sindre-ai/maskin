@@ -183,7 +183,7 @@ public final class ChatComposerModel {
 
 	private var caret: Range<Int> { selection ?? text.count..<text.count }
 
-	private func setText(_ new: String, selecting range: Range<Int>) {
+	func setText(_ new: String, selecting range: Range<Int>) {
 		text = new
 		selection = range
 		selectionRequests += 1

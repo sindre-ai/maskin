@@ -142,6 +142,33 @@ describe('buildObjectPreview', () => {
 	})
 })
 
+describe('manual_message (text sent by hand)', () => {
+	const draft = (content: string, metadata: Record<string, unknown>) =>
+		buildObjectPreview({ content, metadata: { kind: 'manual_message', ...metadata } })
+
+	it('previews who, where and what, with no send tool', () => {
+		const preview = draft('Hej Mette, ses vi torsdag?', { to: 'Mette Holm', channel: 'Facebook' })
+		expect(preview?.label).toBe('Message sent by hand')
+		expect(preview?.recipients).toEqual([{ role: 'to', name: null, address: 'Mette Holm' }])
+		expect(preview?.details).toEqual([{ label: 'Channel', value: 'Facebook' }])
+		expect(preview?.body).toBe('Hej Mette, ses vi torsdag?')
+		expect(preview?.missing).toEqual([])
+		expect(preview?.warnings).toEqual([])
+		expect(listDeliverableKinds().find((k) => k.deliverable.kind === 'manual_message')).toBeTruthy()
+	})
+
+	it('cannot be approved without a recipient or a channel', () => {
+		expect(draft('Hej', {})?.missing).toEqual(['To', 'Channel'])
+	})
+
+	it('binds the approval to the text, the recipient and the channel', () => {
+		const base = draft('Hej', { to: 'Mette', channel: 'Facebook' })?.content_hash
+		expect(draft('Hej!', { to: 'Mette', channel: 'Facebook' })?.content_hash).not.toBe(base)
+		expect(draft('Hej', { to: 'Dan', channel: 'Facebook' })?.content_hash).not.toBe(base)
+		expect(draft('Hej', { to: 'Mette', channel: 'Messenger' })?.content_hash).not.toBe(base)
+	})
+})
+
 describe('deliverables declarations', () => {
 	it('declares each kind once across providers', () => {
 		const kinds = listProviders().flatMap((p) => (p.config.deliverables ?? []).map((d) => d.kind))
@@ -153,7 +180,7 @@ describe('deliverables declarations', () => {
 		).toEqual([...kinds].sort())
 	})
 
-	it('gives every kind a send tool and at most one field per slot', () => {
+	it('names the send tool of every kind that has one, and gives at most one field per slot', () => {
 		for (const { deliverable } of listDeliverableKinds()) {
 			expect(deliverable.sendTool).not.toBe('')
 			const keys = deliverable.fields.map((f) => f.key)
@@ -422,6 +449,7 @@ describe('deliverables declarations, matching', () => {
 			'linkedin_message',
 			'linkedin_post',
 			'linkedin_post_edit',
+			'manual_message',
 			'slack_message',
 		])
 	})

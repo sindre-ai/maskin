@@ -13,16 +13,21 @@ struct LoopCard: View {
 	let needsYou: Bool
 	var hasUpdate = false
 	var update: LoopLatestUpdate.Line?
+	/// The title of the decision that waits, for the banner. Nil reads the count alone.
+	var decisionTitle: String?
 	/// Opens the flow from the banner's button.
 	var onReview: () -> Void = {}
 
 	private var figures: FlowsOverview.Figures? { FlowsOverview.figures(loop) }
-	private var banner: String? { FlowsOverview.banner(loop) }
+	private var banner: String? { FlowsOverview.banner(loop, decisionTitle: decisionTitle) }
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s6) {
 			header
 			if let figures { metric(figures) }
+			if let work = FlowsOverview.workLine(loop) {
+				Text(work).maskinText(.subhead).foregroundStyle(MaskinColor.ink4).lineLimit(1)
+			}
 			if let update { latest(update) }
 			if let banner { bannerView(banner) }
 		}
@@ -130,6 +135,7 @@ struct LoopCard: View {
 	private var accessibilityLabel: String {
 		var parts = [loop.displayName, statusWord]
 		if let figures { parts.append("\(figures.label), \(figures.value), \(figures.status.label)") }
+		if let work = FlowsOverview.workLine(loop) { parts.append(work) }
 		if let update { parts.append(([update.author, update.text].compactMap { $0 }).joined(separator: " ")) }
 		if let banner { parts.append(banner) }
 		if hasUpdate { parts.append("update available") }

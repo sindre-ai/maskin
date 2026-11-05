@@ -1,4 +1,5 @@
 import { useCanWrite } from '@/hooks/use-can-write'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import {
 	FileConflictError,
 	FileRetryableError,
@@ -10,6 +11,7 @@ import { queryKeys } from '@/lib/query-keys'
 import { isMarkdownFile } from '@maskin/shared'
 import { useQueryClient } from '@tanstack/react-query'
 import { useMemo } from 'react'
+import { ChangeReviewLayer } from './change-review'
 import { MarkdownFileEditor } from './markdown-file-editor'
 
 function fileText(file: FileDetail): string {
@@ -25,21 +27,34 @@ export function useEditableMarkdown(file: FileDetail | undefined): boolean {
 }
 
 export function EditableMarkdownStage({ file }: { file: FileDetail }) {
+	// The one read of the agent-change-review flag: banner and review view only.
+	const reviewEnabled = useFeatureFlag('agent-change-review')
 	const client = useFileSaveClient(file)
 	// Viewers get the rendered document and no editor.
 	const canWrite = useCanWrite()
 	const hash = file.contentHash ?? null
 	const canEdit = hash !== null && canWrite
+	const canReview = canWrite
+	const text = fileText(file)
+	const editor = (
+		<MarkdownFileEditor
+			fileId={file.id}
+			text={text}
+			hash={hash ?? ''}
+			client={client}
+			canEdit={canEdit}
+		/>
+	)
 	return (
 		<div className="h-full w-full overflow-auto">
 			<div className="mx-auto max-w-[740px] px-6 py-8">
-				<MarkdownFileEditor
-					fileId={file.id}
-					text={fileText(file)}
-					hash={hash ?? ''}
-					client={client}
-					canEdit={canEdit}
-				/>
+				{reviewEnabled && canReview ? (
+					<ChangeReviewLayer file={file} fileText={text}>
+						{editor}
+					</ChangeReviewLayer>
+				) : (
+					editor
+				)}
 			</div>
 		</div>
 	)

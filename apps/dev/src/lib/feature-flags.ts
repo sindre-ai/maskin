@@ -39,6 +39,15 @@ export const FLAGS = {
 	 */
 	AGENT_PROACTIVE_1_1: 'agent-proactive-1-1',
 	/**
+	 * Gates the Daily budget setting in Settings, Billing (bet [A daily token budget,
+	 * spent on the right work first](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/0f3ae096-7efc-4412-aba0-7a21a91ba040),
+	 * slice 1a). UI only: the route layout reads it once and mounts the section
+	 * under the usage banner. Off means Billing looks as it does today. The
+	 * storage and API behind it are additive and safe with the flag off. Retire
+	 * once the daily budget is on for everyone.
+	 */
+	DAILY_BUDGET: 'daily-budget',
+	/**
 	 * Gates the Paste and Copy buttons on the Computer view, which move plain text
 	 * between the person's clipboard and the agent's computer while they are in
 	 * control. Frontend only: read with useFeatureFlag in desktop-viewer. Retire
@@ -55,6 +64,22 @@ export const FLAGS = {
 	 * See docs/reference/mcp-oauth.md. Retire when the connector ships to everyone.
 	 */
 	MCP_OAUTH_CONSENT: 'mcp-oauth-consent',
+	/**
+	 * Gates editing a draft's text in place on the web For You card, with Send saving the
+	 * edit and approving the saved text in one step. Frontend only: read with useFeatureFlag
+	 * in draft-preview. Retire once editing is on for everyone.
+	 */
+	FORYOU_DRAFT_EDIT: 'foryou-draft-edit',
+	/**
+	 * Gates the visual layer of agent change review (bet
+	 * [Humans accept, edit or reject an agent's proposed changes to a file instead of re-reading the whole thing](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/a0daec7c-7c63-4898-bfac-a4dfc98a2d23)):
+	 * the proposal banner above a markdown file and the review view that
+	 * replaces the editor. Off means the file viewer is unchanged. The tables,
+	 * endpoints and MCP tool behind it are not gated: nothing in a file changes
+	 * until a non-viewer human accepts. Read once, in
+	 * `EditableMarkdownStage`. Retire once the review is on for everyone.
+	 */
+	AGENT_CHANGE_REVIEW: 'agent-change-review',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

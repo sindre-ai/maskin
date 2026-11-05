@@ -83,12 +83,22 @@ public enum ObjectApprovalError: Error, Equatable, Sendable {
 	}
 }
 
-/// The two calls a draft card makes on an object. Kept apart from `ObjectsRemote` so the card's
-/// logic tests against a two-method fake.
+/// The calls a draft card makes on an object. Kept apart from `ObjectsRemote` so the card's
+/// logic tests against a small fake.
 public protocol ObjectDraftsRemote: Sendable {
 	/// `GET /api/objects/{id}`, with the draft `preview` when the object has one.
 	func detail(objectId: String) async throws -> ObjectDetail
 	/// `POST /api/objects/{id}/approval`: a person's yes to the draft exactly as the preview shows
 	/// it. Returns the preview as it reads now (delivery `approved`). Throws `ObjectApprovalError`.
 	func approve(objectId: String, contentHash: String, idempotencyKey: String) async throws -> ObjectPreview
+	/// `PATCH /api/objects/{id}`: saves an edit. `content` is the whole description, `subject` goes
+	/// to the object's subject field. Nil leaves that part alone. A remote that cannot edit keeps
+	/// the default, which refuses.
+	func save(objectId: String, content: String?, subject: String?, idempotencyKey: String) async throws
+}
+
+extension ObjectDraftsRemote {
+	public func save(objectId: String, content: String?, subject: String?, idempotencyKey: String) async throws {
+		throw ObjectsError("Editing isn't available here.")
+	}
 }

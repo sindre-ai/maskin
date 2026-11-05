@@ -14,7 +14,7 @@ enum ComposerAttachAction: String, CaseIterable, Identifiable {
 		case .photo: "Photo or video"
 		case .camera: "Camera"
 		case .file: "File"
-		case .object: "Object"
+		case .object: "Item"
 		case .person: "Person or agent"
 		case .paste: "Paste image"
 		}

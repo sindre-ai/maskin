@@ -8,6 +8,7 @@ import type {
 	DataQuerySpec,
 	DisplaySettingsBody,
 	FileCommentDto,
+	FileProposalDto,
 	FileUploadSession,
 	FromSuggestedStep,
 	ListLoopsResponse,
@@ -35,6 +36,7 @@ export type {
 	CreateFileCommentInput,
 	DisplaySettingsBody,
 	FileCommentDto,
+	FileProposalDto,
 	ListLoopsResponse,
 	LoopSummary,
 	OauthAuthorizeParams,
@@ -50,7 +52,14 @@ import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 import { reportApiFailure } from './faro'
 
-import type { ObjectPreview, SessionStatsRow, TeachRequest, TeachResponse } from '@maskin/shared'
+import type {
+	DailyBudget,
+	DailyBudgetResponse,
+	ObjectPreview,
+	SessionStatsRow,
+	TeachRequest,
+	TeachResponse,
+} from '@maskin/shared'
 
 export interface DesktopConnectResponse {
 	ticket: string
@@ -80,6 +89,8 @@ export class ApiError extends Error {
 	retryAfter?: number
 	/** The verified return link on an OAuth authorize refusal, when the server sent one. Never built in the browser. */
 	redirectUrl?: string
+	/** On a 409 from accepting proposed changes: the changes that no longer match the file. */
+	staleChangeIds?: string[]
 
 	constructor(
 		public status: number,
@@ -231,6 +242,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		}
 		err.retryAfterMs = retryAfterMs
 		err.redirectUrl = redirectUrl
+		if (Array.isArray(data.staleChangeIds)) err.staleChangeIds = data.staleChangeIds
 		const retryAfter = Number(res.headers.get('Retry-After'))
 		if (Number.isFinite(retryAfter) && retryAfter > 0) err.retryAfter = retryAfter
 		// This is the single chokepoint for every /api call the UI makes, so a
@@ -1209,6 +1221,14 @@ export const api = {
 			request<BillingUsageResponse>('/billing/usage', { workspaceId }),
 		cancel: (workspaceId: string) =>
 			request<{ ok: true }>('/billing/cancel', { method: 'POST', workspaceId }),
+		dailyBudget: (workspaceId: string) =>
+			request<DailyBudgetResponse>('/billing/daily-budget', { workspaceId }),
+		setDailyBudget: (workspaceId: string, daily_budget: DailyBudget | null) =>
+			request<DailyBudgetResponse>('/billing/daily-budget', {
+				method: 'PUT',
+				body: { daily_budget },
+				workspaceId,
+			}),
 	},
 
 	marketplaceLoops: {
@@ -1733,6 +1753,43 @@ export const api = {
 			request<FileDetail>(`/files/${id}`, { method: 'PATCH', body: data, workspaceId }),
 		delete: (workspaceId: string, id: string) =>
 			request<{ deleted: boolean }>(`/files/${id}`, { method: 'DELETE', workspaceId }),
+	},
+
+	fileProposals: {
+		listOpen: (workspaceId: string, fileId: string) =>
+			request<{ proposals: FileProposalDto[] }>(`/files/${fileId}/proposals?status=open`, {
+				workspaceId,
+			}),
+		accept: (
+			workspaceId: string,
+			fileId: string,
+			proposalId: string,
+			changeId: string,
+			appliedText?: string,
+		) =>
+			request<unknown>(`/files/${fileId}/proposals/${proposalId}/changes/${changeId}/accept`, {
+				method: 'POST',
+				body: appliedText === undefined ? {} : { applied_text: appliedText },
+				workspaceId,
+			}),
+		reject: (workspaceId: string, fileId: string, proposalId: string, changeId: string) =>
+			request<unknown>(`/files/${fileId}/proposals/${proposalId}/changes/${changeId}/reject`, {
+				method: 'POST',
+				workspaceId,
+			}),
+		// All or nothing on the server: a stale change refuses the whole accept with a 409.
+		acceptAll: (workspaceId: string, fileId: string, proposalId: string, changeIds: string[]) =>
+			request<unknown>(`/files/${fileId}/proposals/${proposalId}/changes/accept`, {
+				method: 'POST',
+				body: { change_ids: changeIds },
+				workspaceId,
+			}),
+		rejectAll: (workspaceId: string, fileId: string, proposalId: string, changeIds: string[]) =>
+			request<unknown>(`/files/${fileId}/proposals/${proposalId}/changes/reject`, {
+				method: 'POST',
+				body: { change_ids: changeIds },
+				workspaceId,
+			}),
 	},
 
 	fileComments: {

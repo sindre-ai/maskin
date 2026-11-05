@@ -97,24 +97,31 @@ struct HandoffRow: View {
 		}
 	}
 
+	/// The status as a small pill, as in the design: Working in the signal tint, Done quiet, Failed in warning.
 	@ViewBuilder
 	private var statusLabel: some View {
 		switch session.pill {
-		case .queued?:
-			Text(HandoffPill.queued.label).maskinText(.caption).foregroundStyle(MaskinColor.ink4)
+		case .queued?: pill(HandoffPill.queued.label, fg: MaskinColor.ink4, bg: MaskinSurface.fill)
 		case .working?:
-			HStack(spacing: MaskinSpace.s3) {
-				Text(HandoffPill.working.label).maskinText(.caption).foregroundStyle(MaskinColor.ink4)
+			HStack(spacing: MaskinSpace.s2) {
+				Text(HandoffPill.working.label)
 				EqualiserBars()
 			}
+			.maskinText(.caption).fontWeight(.semibold).foregroundStyle(MaskinColor.sigInk)
+			.padding(.horizontal, MaskinSpace.s4).padding(.vertical, MaskinSpace.s1)
+			.background(MaskinColor.sigTint, in: Capsule())
 		case .failed?:
-			Label(HandoffPill.failed.label, systemImage: "exclamationmark.triangle.fill")
-				.maskinText(.caption).foregroundStyle(MaskinColor.warningStrong)
+			pill(HandoffPill.failed.label, fg: MaskinColor.warningStrong, bg: MaskinColor.warningTint)
 		case .done?:
-			Label(HandoffPill.done.label, systemImage: "checkmark")
-				.maskinText(.caption).foregroundStyle(MaskinColor.doneFg)
+			pill(HandoffPill.done.label, fg: MaskinColor.doneFg, bg: MaskinColor.doneBg)
 		case nil:
 			EmptyView()
 		}
+	}
+
+	private func pill(_ text: String, fg: Color, bg: Color) -> some View {
+		Text(text).maskinText(.caption).fontWeight(.semibold).foregroundStyle(fg)
+			.padding(.horizontal, MaskinSpace.s4).padding(.vertical, MaskinSpace.s1)
+			.background(bg, in: Capsule())
 	}
 }

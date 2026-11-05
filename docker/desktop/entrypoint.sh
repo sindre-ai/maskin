@@ -20,9 +20,9 @@ fi
 export DISPLAY=:99
 VNC_PORT=5900
 NOVNC_PORT=6080
-# 1600x900: a person watching or taking over and the agent see the same picture. Keep
+# 1920x1080: a person watching or taking over and the agent see the same picture. Keep
 # this in step with WIDTH/HEIGHT in desktopd.py.
-SCREEN="${SCREEN_SIZE:-1600x900x24}"
+SCREEN="${SCREEN_SIZE:-1920x1080x24}"
 
 # Per-boot VNC password; read it with `msb exec <name> -- cat /tmp/vnc-password`.
 VNC_PASSWORD="${VNC_PASSWORD:-$(head -c 12 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')}"
