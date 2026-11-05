@@ -176,8 +176,17 @@ public enum ThreadLayout {
 				case .summary(let summary):
 					let index = calls.firstIndex { LiveCallWindow.closes($0, message) }
 					let placed = index.map { summary.placed(in: calls[$0]) } ?? summary
-					let transcript = index.map {
+					var transcript = index.map {
 						LiveTranscript(record: calls[$0], messages: members[$0], currentActorID: currentActorID)
+					}
+					// A call held elsewhere (the web, another device) has no record here; its spoken
+					// lines are in the thread under the call's voice session id.
+					if transcript?.lines.isEmpty ?? true, let callID = summary.callID,
+						let held = LiveTranscript(
+							voiceSessionID: callID, title: "Live meeting",
+							durationSeconds: summary.durationSeconds, messages: messages, currentActorID: currentActorID)
+					{
+						transcript = held
 					}
 					items.append(.callSummary(placed, transcript: transcript))
 				}

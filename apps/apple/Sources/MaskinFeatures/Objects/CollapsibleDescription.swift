@@ -23,6 +23,9 @@ struct CollapsibleDescription: View {
 	var body: some View {
 		VStack(alignment: .leading, spacing: 0) {
 			MarkdownContent(content, style: .description)
+				#if os(iOS) || os(macOS)
+				.textSelection(.enabled)
+				#endif
 				.fixedSize(horizontal: false, vertical: true)
 				.frame(maxHeight: isCollapsed ? Self.collapsedHeight : nil, alignment: .top)
 				.clipped()

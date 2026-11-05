@@ -260,6 +260,28 @@ struct LoopsLatestUpdateTests {
 		#expect(line?.author != nil)
 	}
 
+	@Test("a decision post gives the card the decision's own title")
+	func loadsDecisionTitle() async {
+		let api = FakeLoopsAPI([loopRow("a", waiting: 1)])
+		await api.setPost(
+			LoopPost(id: 4, actorID: "agent-1", text: "Long body.", date: Date(), isDecision: true, decisionTitle: "Post text only?"),
+			for: "a")
+		let store = LoopsStore(api: api, events: nil)
+		await store.start()
+		await store.loadLatestUpdates()
+		#expect(store.decisionTitle(for: store.loops[0]) == "Post text only?")
+	}
+
+	@Test("a plain post leaves the card without a decision title")
+	func plainPostNoTitle() async {
+		let api = FakeLoopsAPI([loopRow("a")])
+		await api.setPost(post("Scored the week's leads."), for: "a")
+		let store = LoopsStore(api: api, events: nil)
+		await store.start()
+		await store.loadLatestUpdates()
+		#expect(store.decisionTitle(for: store.loops[0]) == nil)
+	}
+
 	@Test("only the ten most recently touched non-draft flows are read")
 	func bounded() async {
 		var rows: [LoopSummary] = []

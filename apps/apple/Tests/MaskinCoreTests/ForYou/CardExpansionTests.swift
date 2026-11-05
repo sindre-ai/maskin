@@ -62,6 +62,35 @@ struct CardExpansionTests {
 		#expect(expansion.isManuallyExpanded("a") == false)
 		#expect(expansion.isManuallyExpanded("b"))
 	}
+
+	@Test func theExpandedSettingStartsEveryRowOpenAndAFoldSticksPerCard() {
+		let expansion = CardExpansion()
+		expansion.setStartsOpen(true)
+		#expect(expansion.isManuallyExpanded("a"))
+		expansion.collapse("a")
+		#expect(expansion.isManuallyExpanded("a") == false)
+		#expect(expansion.isManuallyExpanded("b"))
+		expansion.expand("a")
+		#expect(expansion.isManuallyExpanded("a"))
+	}
+
+	@Test func changingTheSettingDropsTheReadersPerCardChoices() {
+		let expansion = CardExpansion()
+		expansion.expand("a")
+		expansion.setStartsOpen(true)
+		expansion.collapse("b")
+		expansion.setStartsOpen(false)
+		#expect(expansion.isManuallyExpanded("a") == false)
+		#expect(expansion.isManuallyExpanded("b") == false)
+	}
+
+	@Test func pruneForgetsFoldedCardsToo() {
+		let expansion = CardExpansion()
+		expansion.setStartsOpen(true)
+		expansion.collapse("a")
+		expansion.prune(keeping: ["b"])
+		#expect(expansion.isManuallyExpanded("a"))
+	}
 }
 
 @Suite("ObjectLinks")

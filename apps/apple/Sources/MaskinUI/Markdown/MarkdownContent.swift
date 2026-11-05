@@ -64,13 +64,17 @@ enum MarkdownParseCache {
 /// styling from `AttributedString(markdown:)`, restyled with design tokens.
 ///
 /// The text is untrusted (agents and other people write it), so links are filtered: only
-/// http(s) and mailto survive, and an http(s) link asks for confirmation naming its host first.
+/// http(s), mailto and tel survive, and an http(s) link asks for confirmation naming its host first.
+/// A `tel:` link is never taken from the author: a phone number in the text becomes one here, and the
+/// system shows its own Call confirmation.
 public struct MarkdownContent: View {
 	private let blocks: [MarkdownBlock]
 	private let style: MarkdownStyle
 	@Environment(\.openURL) private var openURL
 	@Environment(\.markdownInternalLinkHandler) private var internalLinkHandler
 	@Environment(\.markdownChipPreview) private var chipPreview
+	@Environment(\.canPlaceCalls) private var canPlaceCalls
+	@Environment(\.showToast) private var showToast
 	@State private var pending: URL?
 	@State private var preview: ChipPreview?
 
@@ -97,7 +101,14 @@ public struct MarkdownContent: View {
 					}
 					if internalLinkHandler?(url) == true { return .handled }
 					switch MarkdownLinkPolicy.decision(for: url) {
-					case .open: return .systemAction
+					case .open:
+						// A phone number where this device cannot call (iPad without iPhone calling, Mac): copy it.
+						if url.scheme?.lowercased() == "tel", !canPlaceCalls {
+							MarkdownClipboard.copy(PhoneNumberLink.dialString(of: url))
+							showToast?("Copied")
+							return .handled
+						}
+						return .systemAction
 					case .confirm: pending = url; return .handled
 					case .reject: return .discarded
 					}
@@ -127,6 +138,7 @@ enum MarkdownLinkPolicy {
 	static func decision(for url: URL) -> Decision {
 		switch url.scheme?.lowercased() {
 		case "mailto": return url.absoluteString.count > "mailto:".count ? .open : .reject
+		case "tel": return PhoneNumberLink.isDialable(String(url.absoluteString.dropFirst("tel:".count))) ? .open : .reject
 		case "http", "https": return host(of: url) == nil ? .reject : .confirm
 		default: return .reject
 		}
@@ -229,7 +241,11 @@ private struct MarkdownBlockView: View {
 				MarkdownBlocksView(blocks: inner).foregroundStyle(onInverse ? primary.opacity(0.8) : MaskinColor.ink3)
 			}
 		case .codeBlock(let language, let code):
-			MarkdownCodeBlock(language: language, code: code, showsHeader: style == .chat)
+			if language?.lowercased() == "chart" {
+				MarkdownChartBlock(source: code)
+			} else {
+				MarkdownCodeBlock(language: language, code: code, showsHeader: style == .chat)
+			}
 		case .table(let header, let alignments, let rows):
 			MarkdownTable(header: header, alignments: alignments, rows: rows)
 		case .thematicBreak:
@@ -589,8 +605,9 @@ enum MarkdownInline {
 				} else if !arrow.isEmpty {
 					edits.append((run.range, .text(String(attr[run.range].characters) + arrow)))
 				}
-			} else if let link = run.link, MarkdownLinkPolicy.decision(for: link) == .reject {
-				// tel:, sms:, facetime:, maskin:// ...: shown as plain text, never tappable.
+			} else if let link = run.link, link.scheme?.lowercased() == "tel" || MarkdownLinkPolicy.decision(for: link) == .reject {
+				// An author's tel: link, sms:, facetime:, maskin:// ...: shown as plain text, never tappable.
+				// (A phone number in the text is linked below, from what it says.)
 				attr[run.range].link = nil
 			} else if run.link != nil {
 				attr[run.range].foregroundColor = linkColor
@@ -604,7 +621,27 @@ enum MarkdownInline {
 			case .chip(let chip): attr.replaceSubrange(range, with: chip)
 			}
 		}
+		linkPhoneNumbers(in: &attr, color: linkColor)
 		return attr
+	}
+
+	/// A phone number in plain prose becomes a `tel:` link in the same style as any other link. Text that is
+	/// already a link, and inline code, is left as it is.
+	private static func linkPhoneNumbers(in attr: inout AttributedString, color: Color) {
+		let text = String(attr.characters)
+		let found = PhoneNumberLink.matches(in: text)
+		guard !found.isEmpty else { return }
+		// Back to front, so earlier ranges stay valid.
+		for match in found.reversed() {
+			guard let range = Range(match.range, in: text), let url = PhoneNumberLink.url(for: match.number) else { continue }
+			let start = attr.characters.index(attr.characters.startIndex, offsetBy: text.distance(from: text.startIndex, to: range.lowerBound))
+			let end = attr.characters.index(start, offsetBy: text.distance(from: range.lowerBound, to: range.upperBound))
+			let taken = attr[start..<end].runs.contains { $0.link != nil || ($0.inlinePresentationIntent ?? []).contains(.code) }
+			if taken { continue }
+			attr[start..<end].link = url
+			attr[start..<end].foregroundColor = color
+			attr[start..<end].underlineStyle = .single
+		}
 	}
 
 	private enum Edit {

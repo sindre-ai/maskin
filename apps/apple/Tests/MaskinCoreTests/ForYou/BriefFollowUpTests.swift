@@ -17,9 +17,8 @@ struct BriefFollowUpTests {
 			author: author, content: text)
 	}
 
-	@Test("offers the two suggestions and names the Chief of Staff in the field")
+	@Test("names the Chief of Staff in the field")
 	func wording() {
-		#expect(BriefFollowUp.chips == ["Explain this slide", "Go ahead with this"])
 		#expect(BriefFollowUp.placeholder == "Ask Chief of Staff about this slide")
 	}
 

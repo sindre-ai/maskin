@@ -42,6 +42,10 @@ Open `http://10.0.1.1:16080/vnc.html` from the server (or an SSH tunnel:
   restores the chooser size from `dock/keyfile` (`org/gtk/settings/file-chooser`,
   `window-size` and `window-position`, both needed); unset it opens 1124x822, taller than
   the screen. Select the file, then click Open: double click and Enter do not submit it.
+- Chromium opens a page at 80 percent zoom (a page's `innerWidth` is 2000 on the 1600
+  pixel screen). The default comes from `chromium/preferences.json`, installed as the
+  profile's `Preferences`; change `partition.default_zoom_level.x` (log(zoom)/log(1.2):
+  -1.2239 is 80 percent, -0.5779 is 90 percent) to move it. The screen size is unchanged.
 
 ## Agent control (desktopd)
 

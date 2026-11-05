@@ -53,7 +53,7 @@ public struct ObjectsScreen: View {
 		}
 	}
 
-	/// The title lives in the content (tap it for Go to); the pill holds Display and the avatar.
+	/// The title lives in the content; the pill holds Display and the avatar. Go to opens from Display.
 	/// The Objects page has no search field in its top bar.
 	private var shellActions: ShellActions {
 		ShellActions(

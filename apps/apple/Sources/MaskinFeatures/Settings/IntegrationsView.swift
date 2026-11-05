@@ -83,7 +83,10 @@ struct IntegrationsView: View {
 			if let services {
 				IntegrationAccessView(
 					store: services.integrationAccessStore(integrationId: integration.id, agents: accessAgents),
-					title: store.displayName(for: integration))
+					title: store.displayName(for: integration),
+					scopes: IntegrationScopesStore(http: services.http, integrationID: integration.id),
+					onReconnect: store.canManage && store.supportsNativeConnect(integration.provider)
+						? { startConnect(integration.provider) } : nil)
 			}
 		}
 		.navigationDestination(isPresented: $showClaude) {

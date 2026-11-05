@@ -102,7 +102,7 @@ private struct ChatsContainer: View {
 					new: { newChat = NewChatRequest() }, newLabel: "New conversation",
 					displaySymbol: ShellActions.slidersSymbol, displayActive: !store.displayOptions.isDefault,
 					displayToggle: { showDisplay = true },
-					hidesAvatar: true, newAlwaysVisible: true))
+					hidesAvatar: true, newAlwaysVisible: true, newIsPrimary: true))
 			.sheet(isPresented: $showDisplay) { ChatsDisplaySheet(store: store) }
 			// iPad spec: the Team column is 430 wide.
 			.navigationSplitViewColumnWidth(min: 360, ideal: 430, max: 520)
@@ -129,6 +129,11 @@ private struct ChatsContainer: View {
 			guard runtime?.newConversationRequested == true else { return }
 			runtime?.newConversationRequested = false
 			newChat = NewChatRequest()
+		}
+		.onChange(of: runtime?.chiefChatRequested, initial: true) {
+			guard runtime?.chiefChatRequested == true else { return }
+			runtime?.chiefChatRequested = false
+			Task { await newChatWithChiefOfStaff() }
 		}
 		.onChange(of: runtime?.agentChatRequest, initial: true) {
 			guard let request = runtime?.agentChatRequest else { return }
@@ -206,6 +211,16 @@ extension ChatsContainer {
 		} catch {
 			newChat = NewChatRequest(recipient: agent)
 		}
+	}
+
+	/// The tab bar's "+": the new-chat sheet addressed to the workspace's Chief of Staff. Without one
+	/// the sheet opens with nobody picked; it never claims a recipient it did not find.
+	fileprivate func newChatWithChiefOfStaff() async {
+		await store.loadActors()
+		let chief = store.actors.first {
+			$0.isSystem && $0.participant.kind == .agent && $0.participant.name == "Chief of Staff"
+		}
+		newChat = NewChatRequest(recipient: chief?.participant)
 	}
 
 	/// Agents and loops are never built through a form: the Chief of Staff scopes them with the

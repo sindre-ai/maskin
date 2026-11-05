@@ -122,6 +122,7 @@ export function ObjectDetailShell({
 	)
 
 	const answerRef = useRef<TagInputHandle>(null)
+	const composerRef = useRef<HTMLDivElement>(null)
 	const [confirmDelete, setConfirmDelete] = useState(false)
 	const confirmedDeleteRef = useRef(false)
 
@@ -131,6 +132,7 @@ export function ObjectDetailShell({
 	// `liveAsk`) so the reference is stable across renders that don't change
 	// the pick.
 	const handleAnswerLatestAsk = useCallback(() => {
+		composerRef.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })
 		answerRef.current?.focus()
 	}, [])
 
@@ -426,7 +428,7 @@ export function ObjectDetailShell({
 						{askText && (
 							<ObjectAskBanner
 								question={askText}
-								onAnswerClick={() => answerRef.current?.focus()}
+								onAnswerClick={handleAnswerLatestAsk}
 								actorName={askActor?.name}
 								actorId={askActor?.id}
 								actorType={askActor?.type}
@@ -470,7 +472,10 @@ export function ObjectDetailShell({
 
 						{/* The mockup's composer is a single bar — `+`, the field, mic and
 						    send on one row (1358–1366), with no hint line under it. */}
-						<div className="sticky bottom-0 z-[6] mt-1.5 bg-gradient-to-b from-transparent via-background via-20% to-background pb-4 pt-[22px]">
+						<div
+							ref={composerRef}
+							className="sticky bottom-0 z-[6] mt-1.5 bg-gradient-to-b from-transparent via-background via-20% to-background pb-4 pt-[22px]"
+						>
 							<CommentInput
 								workspaceId={workspaceId}
 								objectId={object.id}

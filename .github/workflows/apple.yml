@@ -22,6 +22,9 @@ name: Apple
 #   2. Platform builds — iOS, macOS, watchOS, tvOS each compile the app shells
 #                        against MaskinKit. A change that is fine on iOS but uses
 #                        an unavailable API on watchOS/tvOS only shows up here.
+#                        Pull requests build iOS only; pushes to main build all four,
+#                        so a watchOS, tvOS or macOS break is caught right after the
+#                        merge, on main, instead of before it.
 #
 # Two jobs, because one job was too long: `swift test` runs in `apple`, and the four platform
 # builds run in parallel in `apple-build`. Run in one job, the steps added up to 35-47 minutes
@@ -135,20 +138,12 @@ jobs:
     strategy:
       # Let the other platforms finish: one failing platform should not hide a second one.
       fail-fast: false
+      # Pull requests build iOS only; pushes to main build all four platforms. Each platform is a
+      # separate Mac runner, and the Mac queue was the slow part of a pull request (56 min wait on
+      # one run). iOS is the platform most changes can break; watchOS, tvOS and macOS-only API
+      # misuse is caught on main right after the merge instead of before it.
       matrix:
-        include:
-          - platform: iOS
-            scheme: Maskin
-            destination: 'generic/platform=iOS Simulator'
-          - platform: macOS
-            scheme: Maskin
-            destination: 'generic/platform=macOS'
-          - platform: watchOS
-            scheme: MaskinWatch
-            destination: 'generic/platform=watchOS Simulator'
-          - platform: tvOS
-            scheme: MaskinTV
-            destination: 'generic/platform=tvOS Simulator'
+        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"platform":"iOS","scheme":"Maskin","destination":"generic/platform=iOS Simulator"}]' || '[{"platform":"iOS","scheme":"Maskin","destination":"generic/platform=iOS Simulator"},{"platform":"macOS","scheme":"Maskin","destination":"generic/platform=macOS"},{"platform":"watchOS","scheme":"MaskinWatch","destination":"generic/platform=watchOS Simulator"},{"platform":"tvOS","scheme":"MaskinTV","destination":"generic/platform=tvOS Simulator"}]') }}
     steps:
       - uses: actions/checkout@v6
 

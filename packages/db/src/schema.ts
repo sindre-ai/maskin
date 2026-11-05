@@ -3,6 +3,7 @@ import type {
 	WebhookConfig as ExtensionWebhookConfig,
 	FileAnnotation,
 	McpConfig,
+	SendPermissionMode,
 	SessionResult,
 	ToolGrants,
 } from '@maskin/shared'
@@ -214,6 +215,11 @@ export const objects = pgTable(
 		index('objects_active_session_idx')
 			.on(t.activeSessionId)
 			.where(sql`${t.activeSessionId} IS NOT NULL`),
+		// Workspace id + trigram indexes for the object word filter in the search (services/search.ts,
+		// the objects source). Extensions are from migrations 0122 and 0123; these are 0129 and 0130,
+		// built CONCURRENTLY.
+		index('objects_ws_title_trgm_idx').using('gin', t.workspaceId, t.title.op('gin_trgm_ops')),
+		index('objects_ws_content_trgm_idx').using('gin', t.workspaceId, t.content.op('gin_trgm_ops')),
 	],
 )
 
@@ -461,6 +467,42 @@ export const agentGrants = pgTable(
 	],
 )
 export type AgentGrant = typeof agentGrants.$inferSelect
+
+/**
+ * How an agent's sends of one draft kind are treated: always_allow, ask_first or deny. A row
+ * with a null agent_id is the workspace default for that kind; a row with an agent is that
+ * agent's own setting and beats the default. No row at all falls back to the starting table in
+ * packages/shared/src/send-permissions.ts. Only a human admin or owner writes it. Read at send
+ * time by apps/dev/src/lib/send-permissions.ts.
+ */
+export const sendPermissions = pgTable(
+	'send_permissions',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		// Null is the workspace default.
+		agentId: uuid('agent_id').references(() => actors.id, { onDelete: 'cascade' }),
+		kind: text('kind').notNull(),
+		mode: text('mode').$type<SendPermissionMode>().notNull(),
+		updatedBy: uuid('updated_by').references(() => actors.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		// One setting per agent and kind, and one workspace default per kind. Two indexes
+		// because a null agent_id would never collide in a single unique constraint.
+		uniqueIndex('send_permissions_agent_kind_uniq')
+			.on(t.workspaceId, t.agentId, t.kind)
+			.where(sql`agent_id IS NOT NULL`),
+		uniqueIndex('send_permissions_default_kind_uniq')
+			.on(t.workspaceId, t.kind)
+			.where(sql`agent_id IS NULL`),
+		check('send_permissions_mode_enum', sql`${t.mode} IN ('always_allow', 'ask_first', 'deny')`),
+	],
+)
+export type SendPermission = typeof sendPermissions.$inferSelect
 
 /**
  * Access to a saved credential for one conversation ("Allow in this chat"). Reaches only
@@ -2503,6 +2545,71 @@ export const fileComments = pgTable(
 
 export type FileComment = typeof fileComments.$inferSelect
 export type NewFileComment = typeof fileComments.$inferInsert
+
+// ── File Proposals ──────────────────────────────────────────────────────────
+// An agent's proposed text changes to a markdown file. Two tables, not objects
+// or events: proposals are high volume and short lived, and event payloads are
+// capped at 8 KB. Whether a change is stale is NOT stored; it is computed on
+// every read from the file's current bytes (see lib/file-proposals.ts).
+
+export const fileProposals = pgTable(
+	'file_proposals',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		fileId: uuid('file_id')
+			.notNull()
+			.references(() => files.id, { onDelete: 'cascade' }),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		authorId: uuid('author_id')
+			.notNull()
+			.references(() => actors.id),
+		// From the X-Maskin-Session-Id header file writes already use.
+		sessionId: uuid('session_id'),
+		summary: text('summary'),
+		// SHA-256 (hex) of the file at submit time. Audit and a softer "file
+		// changed since this was proposed" hint only; staleness is per change.
+		baseSha256: text('base_sha256').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index('file_proposals_file_created_at_idx').on(t.fileId, t.createdAt)],
+)
+
+export const fileProposalChanges = pgTable(
+	'file_proposal_changes',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		proposalId: uuid('proposal_id')
+			.notNull()
+			.references(() => fileProposals.id, { onDelete: 'cascade' }),
+		ordinal: integer('ordinal').notNull(),
+		oldText: text('old_text').notNull(),
+		newText: text('new_text').notNull(),
+		reason: text('reason'),
+		// About 40 characters of the file on each side of old_text, taken at submit.
+		contextBefore: text('context_before').notNull().default(''),
+		contextAfter: text('context_after').notNull().default(''),
+		// pending | accepted | rejected
+		status: text('status').notNull().default('pending'),
+		decidedBy: uuid('decided_by').references(() => actors.id),
+		decidedAt: timestamp('decided_at', { withTimezone: true }),
+		// What was actually written; differs from new_text when the human edited it.
+		appliedText: text('applied_text'),
+	},
+	(t) => [
+		unique('file_proposal_changes_proposal_ordinal_unique').on(t.proposalId, t.ordinal),
+		check(
+			'file_proposal_changes_status_check',
+			sql`${t.status} IN ('pending', 'accepted', 'rejected')`,
+		),
+	],
+)
+
+export type FileProposal = typeof fileProposals.$inferSelect
+export type NewFileProposal = typeof fileProposals.$inferInsert
+export type FileProposalChange = typeof fileProposalChanges.$inferSelect
+export type NewFileProposalChange = typeof fileProposalChanges.$inferInsert
 
 // ── Google Meet — create_space idempotency ─────────────────────────────────
 // Maskin-side dedup ledger for `google_meet__create_space`. Meet's spaces.create

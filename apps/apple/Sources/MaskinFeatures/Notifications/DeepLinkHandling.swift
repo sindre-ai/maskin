@@ -12,15 +12,17 @@ extension View {
 	///         .handlesDeepLinks(router) { link in /* select tab, push id */ }
 	public func handlesDeepLinks(
 		_ router: DeepLinkRouter, intercept: @escaping (URL) -> Bool = { _ in false },
+		connect: @escaping (String) -> Void = { _ in },
 		perform: @escaping (DeepLink) -> Void
 	) -> some View {
-		modifier(DeepLinkHandling(router: router, intercept: intercept, perform: perform))
+		modifier(DeepLinkHandling(router: router, intercept: intercept, connect: connect, perform: perform))
 	}
 }
 
 private struct DeepLinkHandling: ViewModifier {
 	let router: DeepLinkRouter
 	let intercept: (URL) -> Bool
+	let connect: (String) -> Void
 	let perform: (DeepLink) -> Void
 
 	func body(content: Content) -> some View {
@@ -28,6 +30,9 @@ private struct DeepLinkHandling: ViewModifier {
 			.onOpenURL { url in if !intercept(url) { router.open(url) } }
 			.onChange(of: router.pending, initial: true) {
 				if let link = router.consume() { perform(link) }
+			}
+			.onChange(of: router.pendingConnect, initial: true) {
+				if let code = router.consumeConnect() { connect(code) }
 			}
 	}
 }

@@ -119,7 +119,7 @@ struct FlowChannelScreen: View {
 	private func composerConfig(_ model: FlowTimelineModel) -> MaskinComposerConfig {
 		var config = model.config
 		config.roster = runtime?.mentionRoster()?.roster
-		if model.replyingTo == nil { config.placeholder = "Message \(room.name)" }
+		if model.replyingTo == nil { config.placeholder = "Message" }
 		return config
 	}
 

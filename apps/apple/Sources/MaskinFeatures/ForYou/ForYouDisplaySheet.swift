@@ -3,8 +3,8 @@ import MaskinDesign
 import SwiftUI
 
 /// The For you Display sheet (handoff v3), one design with Items, Flows, Chats and Agents:
-/// Layout and Sort by are saved settings only (no effect on the feed yet); the Filter bar and
-/// Handled today rows change what the feed shows. Reset puts all four back.
+/// Cards sets how the rows start (compact or expanded); the Filter bar row shows or hides the
+/// intent pills. Reset puts both back.
 struct ForYouDisplaySheet: View {
 	let store: ForYouStore
 
@@ -13,15 +13,9 @@ struct ForYouDisplaySheet: View {
 		DisplaySheet(canReset: !store.options.isDefaultDisplay, onReset: { store.options.resetDisplay() }) {
 			DisplaySection(title: nil, showsDivider: false) {
 				DisplayChoice(
-					label: "Layout",
-					options: [(ForYouDisplayOptions.Mode.cards, "Cards"), (.list, "List")],
-					selection: $store.options.mode)
-			}
-			DisplaySection(title: "Ordering") {
-				DisplayChoice(
-					label: "Sort by",
-					options: [(ForYouDisplayOptions.Sort.attention, "Attention"), (.latest, "Latest")],
-					selection: $store.options.sort)
+					label: "Cards",
+					options: [(ForYouDisplayOptions.Opening.compact, "Compact"), (.expanded, "Expanded")],
+					selection: $store.options.opening)
 			}
 			DisplaySection(title: "Filters") {
 				DisplayChoice(
@@ -33,12 +27,6 @@ struct ForYouDisplaySheet: View {
 							store.options.filterBarOn = on
 							if !on { store.options.intent = nil }
 						}))
-			}
-			DisplaySection(title: "Show") {
-				DisplayChoice(
-					label: "Handled today",
-					options: [(true, "Show"), (false, "Hide")],
-					selection: $store.options.showsHandled)
 			}
 		}
 	}

@@ -48,15 +48,37 @@ export const FLAGS = {
 	 */
 	DEEP_RESEARCH: 'deep-research',
 	/**
-	 * Agents answer in the main chat and in every thread at the same time (bet
-	 * [Agents answer in the main chat and in every thread at the same time](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/44b1b91c-3902-4fab-99ca-d7db7af4155d)).
-	 * Backend only, per actor, keyed to the person who wrote the message (never the agent). Read once, in
-	 * `deliverTurnToAgent` in `apps/dev/src/services/conversation-responder.ts`, where a thread message
-	 * decides whether to start or reuse a session of its own for that thread. Off means the single-session
-	 * path runs exactly as before. Needs the old per-chat session index dropped before it can go on, see the
-	 * bet's index-drop task. Retire (drop the old path and this entry) once it is on for everyone.
+	 * Gates the Daily budget setting in Settings, Billing (bet [A daily token budget,
+	 * spent on the right work first](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/0f3ae096-7efc-4412-aba0-7a21a91ba040),
+	 * slice 1a). UI only: the route layout reads it once and mounts the section
+	 * under the usage banner. Off means Billing looks as it does today. The
+	 * storage and API behind it are additive and safe with the flag off. Retire
+	 * once the daily budget is on for everyone.
 	 */
-	CHAT_THREAD_SESSIONS: 'chat-thread-sessions',
+	DAILY_BUDGET: 'daily-budget',
+	/**
+	 * Gates the Paste and Copy buttons on the Computer view, which move plain text
+	 * between the person's clipboard and the agent's computer while they are in
+	 * control. Frontend only: read with useFeatureFlag in desktop-viewer. Retire
+	 * once the buttons are on for everyone.
+	 */
+	COMPUTER_CLIPBOARD: 'computer-clipboard',
+	/**
+	 * Gates editing a draft's text in place on the web For You card, with Send saving the
+	 * edit and approving the saved text in one step. Frontend only: read with useFeatureFlag
+	 * in draft-preview. Retire once editing is on for everyone.
+	 */
+	FORYOU_DRAFT_EDIT: 'foryou-draft-edit',
+	/**
+	 * Gates the visual layer of agent change review (bet
+	 * [Humans accept, edit or reject an agent's proposed changes to a file instead of re-reading the whole thing](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/a0daec7c-7c63-4898-bfac-a4dfc98a2d23)):
+	 * the proposal banner above a markdown file and the review view that
+	 * replaces the editor. Off means the file viewer is unchanged. The tables,
+	 * endpoints and MCP tool behind it are not gated: nothing in a file changes
+	 * until a non-viewer human accepts. Read once, in
+	 * `EditableMarkdownStage`. Retire once the review is on for everyone.
+	 */
+	AGENT_CHANGE_REVIEW: 'agent-change-review',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

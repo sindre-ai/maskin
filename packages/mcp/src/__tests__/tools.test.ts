@@ -53,6 +53,7 @@ const ALL_TOOL_NAMES = [
 	'list_files',
 	'get_file',
 	'update_file',
+	'propose_file_changes',
 	'delete_file',
 	'get_events',
 	'get_comments',

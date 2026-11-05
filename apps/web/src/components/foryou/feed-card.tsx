@@ -30,7 +30,7 @@ import {
 	classifyCardKind,
 	decisionOf,
 } from '@/lib/foryou-card-kind'
-import { heldNote } from '@/lib/foryou-feed'
+import { heldNote, isObjectlessCard } from '@/lib/foryou-feed'
 import { markImpressed } from '@/lib/foryou-impressions'
 import { Link } from '@tanstack/react-router'
 import { ArrowUpRight, Check, ChevronDown, ChevronUp } from 'lucide-react'
@@ -85,6 +85,8 @@ export function FeedCard({
 	onDraftsDone,
 }: FeedCardProps) {
 	const objectId = item.entity_id
+	// A card with no object (the morning budget card): nothing to open, no thread to reply in.
+	const objectless = isObjectlessCard(item)
 	const object = item.object
 	const cardKind: CardKind = classifyCardKind(item)
 	const decision = decisionOf(item)
@@ -220,17 +222,21 @@ export function FeedCard({
 								className="text-[8px] font-bold tracking-[0.08em]"
 							/>
 						)}{' '}
-						<Link
-							to="/$workspaceId/objects/$objectId"
-							params={{ workspaceId, objectId }}
-							className="border-b border-border font-bold text-muted-foreground hover:border-foreground hover:text-foreground"
-						>
-							{objectTitle || 'Open'}
-							<ArrowUpRight size={10} className="ml-0.5 inline" aria-hidden />
-						</Link>
+						{!objectless && (
+							<Link
+								to="/$workspaceId/objects/$objectId"
+								params={{ workspaceId, objectId }}
+								className="border-b border-border font-bold text-muted-foreground hover:border-foreground hover:text-foreground"
+							>
+								{objectTitle || 'Open'}
+								<ArrowUpRight size={10} className="ml-0.5 inline" aria-hidden />
+							</Link>
+						)}
 						{sender?.name ? ` · from ${sender.name}` : ''}
 					</span>
-					<TimelineHistory workspaceId={workspaceId} objectId={objectId} item={item} />
+					{!objectless && (
+						<TimelineHistory workspaceId={workspaceId} objectId={objectId} item={item} />
+					)}
 					{waiting ? (
 						<span className="shrink-0 text-[11px] font-medium text-status-clustered-text">
 							Waiting on {who}
@@ -323,18 +329,20 @@ export function FeedCard({
 					/>
 				)}
 
-				<CommentInput
-					workspaceId={workspaceId}
-					objectId={objectId}
-					// The composer answers the comment that put this card in the feed,
-					// so a typed reply threads under it exactly as a taken option does.
-					parentEventId={item.latest_mention?.event_id}
-					// TODO: restore `variant="bar"` and `placeholder` once the
-					// Object detail split lands them on the v2 composer (branch
-					// commit 9c126196). Until then the composer renders in its
-					// stacked form with the default placeholder.
-					onSubmitted={onReplied}
-				/>
+				{!objectless && (
+					<CommentInput
+						workspaceId={workspaceId}
+						objectId={objectId}
+						// The composer answers the comment that put this card in the feed,
+						// so a typed reply threads under it exactly as a taken option does.
+						parentEventId={item.latest_mention?.event_id}
+						// TODO: restore `variant="bar"` and `placeholder` once the
+						// Object detail split lands them on the v2 composer (branch
+						// commit 9c126196). Until then the composer renders in its
+						// stacked form with the default placeholder.
+						onSubmitted={onReplied}
+					/>
+				)}
 			</div>
 		</CardShell>
 	)
