@@ -21,6 +21,8 @@ describe('ObjectAskBanner', () => {
 	})
 
 	describe('when the question is cut off', () => {
+		// scrollWidth and clientWidth live on Element.prototype, so there is no own
+		// descriptor on HTMLElement.prototype: the stub is removed again, not restored.
 		const scrollWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollWidth')
 		const clientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth')
 		beforeEach(() => {
@@ -35,7 +37,9 @@ describe('ObjectAskBanner', () => {
 		})
 		afterEach(() => {
 			if (scrollWidth) Object.defineProperty(HTMLElement.prototype, 'scrollWidth', scrollWidth)
+			else Reflect.deleteProperty(HTMLElement.prototype, 'scrollWidth')
 			if (clientWidth) Object.defineProperty(HTMLElement.prototype, 'clientWidth', clientWidth)
+			else Reflect.deleteProperty(HTMLElement.prototype, 'clientWidth')
 		})
 
 		it('expands the full text in place and collapses it again', async () => {
