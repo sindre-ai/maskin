@@ -434,6 +434,23 @@ export const tools = {
 				.describe(
 					'Opt-in blocks to add to each object response. Default `[]` returns only the core fields `{id, type, title, status, contextLine, url, workspaceId}` plus `setup` per object; each listed value adds one more block. `setup` is always attached regardless of whether it is listed here — the enum value is accepted only for backward compatibility and is a no-op.',
 				),
+			wait_for_status: z
+				.array(z.string().min(1))
+				.min(1)
+				.max(20)
+				.optional()
+				.describe(
+					'Hold until every object in `ids` has one of these statuses (for example ["done"] or ["done", "cancelled"]), then return the objects as usual. List every status you would accept: an object that never reaches one holds the call for the whole `wait_timeout_seconds`. The response carries `wait: { settled, waited_seconds, reason? }`; settled false means the wait stopped first (reason: timeout, not_found with `missing_ids`, or status_check_failed) and the objects show where they are now. An object counts once it has had one of these statuses at a check; it is not rechecked after. Only use this when you cannot go on until the object moves.',
+				),
+			wait_timeout_seconds: z
+				.number()
+				.int()
+				.min(1)
+				.max(3600)
+				.default(600)
+				.describe(
+					'With wait_for_status: the longest to wait, in seconds (default 600, max 3600). Objects have no timeout of their own, unlike sessions, so the wait always stops here.',
+				),
 		}),
 	},
 	update_objects: {
