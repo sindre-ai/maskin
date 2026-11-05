@@ -82,20 +82,25 @@ final class AudioPlaybackModel {
 		let url = FileManager.default.temporaryDirectory
 			.appendingPathComponent("maskin-audio", isDirectory: true)
 			.appendingPathComponent("\(UUID().uuidString).\(ext)")
+		// Claimed before the first await: teardown() clears it, which is how a load that was
+		// superseded (view gone, bytes changed) finds out and cleans up after itself.
+		fileURL = url
 		do {
 			try await Task.detached(priority: .userInitiated) {
 				try FileManager.default.createDirectory(
 					at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
 				try data.write(to: url, options: .atomic)
 			}.value
-			fileURL = url
+			guard fileURL == url else {
+				try? FileManager.default.removeItem(at: url)
+				return
+			}
 			let asset = AVURLAsset(url: url)
 			guard try await asset.load(.isPlayable) else {
 				failed = true
 				return
 			}
 			let seconds = try await asset.load(.duration).seconds
-			// The view may have gone away (or the bytes changed) while the asset loaded.
 			guard fileURL == url else { return }
 			duration = seconds.isFinite ? seconds : 0
 			let player = AVPlayer(playerItem: AVPlayerItem(asset: asset))

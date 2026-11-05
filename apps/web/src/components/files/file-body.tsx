@@ -59,17 +59,22 @@ export function isVideo(mimeType: string): boolean {
  * and a small one is rebuilt from its inline bytes as a Blob URL.
  */
 export function MediaPlayer({ file, className }: { file: FileDetail; className?: string }) {
-	const src = useMemo(() => {
-		if (file.downloadUrl) return file.downloadUrl
-		const b64 = file.encoding === 'base64' ? file.content : btoa(file.content)
-		return URL.createObjectURL(
-			new Blob([base64ToBytes(b64).buffer as ArrayBuffer], { type: file.mimeType }),
-		)
-	}, [file.downloadUrl, file.content, file.encoding, file.mimeType])
+	// The Blob URL is made and revoked inside one effect, so StrictMode's mount → cleanup → mount
+	// gets a fresh URL instead of reusing one the cleanup already revoked.
+	const [blobUrl, setBlobUrl] = useState<string>()
 	useEffect(() => {
 		if (file.downloadUrl) return
-		return () => URL.revokeObjectURL(src)
-	}, [src, file.downloadUrl])
+		const b64 = file.encoding === 'base64' ? file.content : btoa(file.content)
+		const url = URL.createObjectURL(
+			new Blob([base64ToBytes(b64).buffer as ArrayBuffer], { type: file.mimeType }),
+		)
+		setBlobUrl(url)
+		return () => {
+			URL.revokeObjectURL(url)
+			setBlobUrl(undefined)
+		}
+	}, [file.downloadUrl, file.content, file.encoding, file.mimeType])
+	const src = file.downloadUrl || blobUrl
 	const Tag = isAudio(file.mimeType) ? 'audio' : 'video'
 	return (
 		// playsInline stops iOS forcing native fullscreen for video.
