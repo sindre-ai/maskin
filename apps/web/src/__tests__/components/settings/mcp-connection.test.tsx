@@ -302,7 +302,7 @@ describe('McpConnectionSection', () => {
 
 		it('is not rendered without the flag and without a connection', () => {
 			render(<McpConnectionSection workspaceId="ws-1" />)
-			expect(screen.queryByRole('tab', { name: 'Claude', exact: true })).not.toBeInTheDocument()
+			expect(screen.queryByRole('tab', { name: 'Claude' })).not.toBeInTheDocument()
 			expect(screen.getByRole('tab', { name: 'Claude Code' })).toHaveAttribute(
 				'aria-selected',
 				'true',
