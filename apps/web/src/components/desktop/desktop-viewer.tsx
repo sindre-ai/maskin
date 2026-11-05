@@ -313,7 +313,7 @@ export function DesktopViewer({
 		<div
 			role="toolbar"
 			aria-label="Computer controls"
-			className="flex h-7 items-center gap-1 rounded-full border bg-card pl-1 [&_button]:h-7"
+			className="flex h-7 items-center gap-1 rounded-full border bg-card pl-1 sm:h-6 [&_button]:h-7 sm:[&_button]:h-6"
 		>
 			<span className="flex items-center gap-1.5 px-2 text-sm text-muted-foreground">
 				{controlling ? <MousePointer2 size={15} /> : <Eye size={15} />}
@@ -340,10 +340,10 @@ export function DesktopViewer({
 	)
 
 	return (
-		<div className="flex min-w-0 flex-col gap-2">
+		<div className={cn('flex min-w-0 flex-col gap-2', variant === 'immersive' && 'sm:gap-1')}>
 			{variant === 'immersive' && (
-				// pr-5 leaves room for the dialog's own close button, which sits in this row.
-				<div className="flex h-7 items-center justify-end gap-2 pr-5 max-sm:pl-3 max-sm:pr-8">
+				// pr-5 (pr-7 on wider screens) leaves room for the dialog's own close button, which sits in this row.
+				<div className="flex h-7 items-center justify-end gap-2 pr-5 max-sm:pl-3 max-sm:pr-8 sm:h-6 sm:pr-7">
 					{phase === 'connected' && (recording ? controls : pill)}
 					{toolbarEnd}
 				</div>
