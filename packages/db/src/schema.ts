@@ -3,6 +3,7 @@ import type {
 	WebhookConfig as ExtensionWebhookConfig,
 	FileAnnotation,
 	McpConfig,
+	SendPermissionMode,
 	SessionResult,
 	ToolGrants,
 } from '@maskin/shared'
@@ -466,6 +467,42 @@ export const agentGrants = pgTable(
 	],
 )
 export type AgentGrant = typeof agentGrants.$inferSelect
+
+/**
+ * How an agent's sends of one draft kind are treated: always_allow, ask_first or deny. A row
+ * with a null agent_id is the workspace default for that kind; a row with an agent is that
+ * agent's own setting and beats the default. No row at all falls back to the starting table in
+ * packages/shared/src/send-permissions.ts. Only a human admin or owner writes it. Read at send
+ * time by apps/dev/src/lib/send-permissions.ts.
+ */
+export const sendPermissions = pgTable(
+	'send_permissions',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		// Null is the workspace default.
+		agentId: uuid('agent_id').references(() => actors.id, { onDelete: 'cascade' }),
+		kind: text('kind').notNull(),
+		mode: text('mode').$type<SendPermissionMode>().notNull(),
+		updatedBy: uuid('updated_by').references(() => actors.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		// One setting per agent and kind, and one workspace default per kind. Two indexes
+		// because a null agent_id would never collide in a single unique constraint.
+		uniqueIndex('send_permissions_agent_kind_uniq')
+			.on(t.workspaceId, t.agentId, t.kind)
+			.where(sql`agent_id IS NOT NULL`),
+		uniqueIndex('send_permissions_default_kind_uniq')
+			.on(t.workspaceId, t.kind)
+			.where(sql`agent_id IS NULL`),
+		check('send_permissions_mode_enum', sql`${t.mode} IN ('always_allow', 'ask_first', 'deny')`),
+	],
+)
+export type SendPermission = typeof sendPermissions.$inferSelect
 
 /**
  * Access to a saved credential for one conversation ("Allow in this chat"). Reaches only

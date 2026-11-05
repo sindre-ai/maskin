@@ -170,7 +170,7 @@ describe('callLlm', () => {
 			vi.stubGlobal('fetch', fetchMock)
 
 			await callLlm({ system: 's', user: 'u' })
-			expect(sentBody(fetchMock).provider).toEqual({ only: ['digitalocean', 'gmicloud'] })
+			expect(sentBody(fetchMock).provider).toEqual({ only: ['digitalocean'] })
 		})
 
 		it('sends no provider block when zdr is off and the allow list is lifted', async () => {
