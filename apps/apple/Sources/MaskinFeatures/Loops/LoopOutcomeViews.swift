@@ -22,6 +22,7 @@ enum OutcomeLabels {
 		case .markdown: "Document"
 		case .image: "Image"
 		case .text: "Text"
+		case .audio: "Audio"
 		case .source, .other: "File"
 		}
 	}

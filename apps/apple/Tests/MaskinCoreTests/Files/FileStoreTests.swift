@@ -27,6 +27,9 @@ struct FileContentKindTests {
 		("image/svg+xml", .source),
 		("image/png", .image),
 		("application/pdf", .pdf),
+		("audio/mpeg", .audio),
+		("audio/mp4", .audio),
+		("audio/wav", .audio),
 		("application/zip", .other),
 	])
 	func routes(mime: String, kind: FileContentKind) {
@@ -38,6 +41,27 @@ struct FileContentKindTests {
 		#expect(FileContentKind.classify(mimeType: "application/octet-stream", name: "Plan.MD") == .markdown)
 		#expect(FileContentKind.classify(mimeType: "application/octet-stream", name: "scan.pdf") == .pdf)
 		#expect(FileContentKind.classify(mimeType: "application/octet-stream", name: "blob.bin") == .other)
+		#expect(FileContentKind.classify(mimeType: "application/octet-stream", name: "Memo.M4A") == .audio)
+	}
+}
+
+@Suite("FileAudio")
+struct FileAudioTests {
+	@Test("reads time as m:ss, with hours when there are any", arguments: [
+		(0.0, "0:00"), (5.4, "0:05"), (65.0, "1:05"), (754.0, "12:34"), (3723.0, "1:02:03"),
+		(-3.0, "0:00"), (Double.nan, "0:00"), (Double.infinity, "0:00"),
+	])
+	func timeText(seconds: Double, text: String) {
+		#expect(FileAudio.timeText(seconds) == text)
+	}
+
+	@Test("keeps the file's own extension, else takes one from the MIME type")
+	func fileExtension() {
+		#expect(FileAudio.fileExtension(mimeType: "audio/mpeg", name: "Memo.WAV") == "wav")
+		#expect(FileAudio.fileExtension(mimeType: "audio/mpeg", name: "memo") == "mp3")
+		#expect(FileAudio.fileExtension(mimeType: "audio/x-wav; codecs=1", name: "") == "wav")
+		#expect(FileAudio.fileExtension(mimeType: "audio/mp4", name: "") == "m4a")
+		#expect(FileAudio.fileExtension(mimeType: "audio/mpeg", name: "a.b/../c") == "mp3")
 	}
 }
 

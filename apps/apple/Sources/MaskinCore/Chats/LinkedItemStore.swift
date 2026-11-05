@@ -404,12 +404,13 @@ public final class LinkedItemStore {
 		return .object(LinkedObject(object: object, kindLabel: Self.label(forType: object.type)))
 	}
 
-	/// A file is a card when it can be read in place: a page, a document, a picture or plain text.
+	/// A file is a card when it can be read or heard in place: a page, a document, a picture, plain
+	/// text or a sound.
 	func classify(_ summary: FileSummary) -> LinkedItem {
 		let reference = FileReference(
 			id: summary.id, name: summary.name, mimeType: summary.mimeType, sizeBytes: summary.sizeBytes)
 		switch summary.kind {
-		case .markdown, .text, .html, .image: return .file(reference)
+		case .markdown, .text, .html, .image, .audio: return .file(reference)
 		case .pdf, .source, .other:
 			return .plain(
 				LinkedReference(
@@ -446,6 +447,11 @@ public final class LinkedItemStore {
 		} catch {
 			remember(.error, for: file.id)
 		}
+	}
+
+	/// The whole file, for a card that plays it (audio) rather than reading its text.
+	public func loadFile(id: String) async throws -> FileDetail {
+		try await files.file(id: id)
 	}
 
 	/// Reads again after an error.
