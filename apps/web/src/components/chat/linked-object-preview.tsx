@@ -345,7 +345,10 @@ export function LinkedObjectCard({
 						</div>
 					) : null}
 					{preview ? (
-						<div aria-live="polite" className="flex items-center justify-end gap-2 px-3 pb-3 pt-1">
+						<div
+							aria-live="polite"
+							className="flex flex-wrap items-center justify-end gap-2 px-3 pb-3 pt-1"
+						>
 							<CopyButton text={copied} label ariaLabel="Copy the text" />
 							{delivery === 'sent' ? (
 								<span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
