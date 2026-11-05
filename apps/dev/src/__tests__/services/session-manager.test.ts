@@ -3670,22 +3670,77 @@ describe('SessionManager', () => {
 			// Should resolve (not throw) so the auto-pause loop doesn't keep retrying
 		})
 
-		it('refuses to pause a session on an agent server and leaves it running', async () => {
+		it('stops a remote sandbox with reason pause and puts the row back to running if the agent-server refuses', async () => {
 			const session = buildSession({
 				status: 'running',
 				containerId: 'remote-sandbox',
 				agentServerId: 'agent-server-1',
 			})
-			mockResults.select = [session]
-			// inspect default mock returns { running: false }: local Docker knows nothing of it
+			const server = {
+				id: 'agent-server-1',
+				url: 'https://agent-finland.maskin.test:3001',
+				secret: 'x'.repeat(32),
+			}
+			// 1st select: the session. 2nd: the agent_servers row. 1st update: the claim
+			// (running to snapshotting), whose .returning() must yield a row.
+			mockResults.selectQueue = [[session], [server]]
+			mockResults.updateQueue = [[{ id: session.id }]]
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockResolvedValue(new Response('boom', { status: 500 }))
 
-			await expect(manager.pauseSession(session.id)).rejects.toThrow('runs on an agent server')
+			try {
+				await expect(manager.pauseSession(session.id)).rejects.toThrow(
+					'agent-server returned HTTP 500',
+				)
 
-			// Not marked failed, no snapshot work, no status write at all
-			expect(calls.updates).toEqual([])
-			expect(mockContainerManager.inspect).not.toHaveBeenCalled()
-			expect(mockContainerManager.copyFrom).not.toHaveBeenCalled()
-			expect(mockContainerManager.stop).not.toHaveBeenCalled()
+				// The stop body carries reason pause; the agent-server rejects it without one.
+				expect(fetchSpy).toHaveBeenCalledTimes(1)
+				const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit]
+				expect(url).toBe(`${server.url}/sessions/${session.id}/stop`)
+				expect(JSON.parse(String(init.body))).toEqual({ reason: 'pause', source: 'user-stop' })
+
+				// An archive from an earlier pause is cleared first, so a later check for the
+				// archive can only be satisfied by this pause's upload.
+				expect(storageProvider.delete).toHaveBeenCalledWith(
+					`session-workspaces/${session.id}.tar.gz`,
+				)
+
+				// The sandbox was not stopped, so the row goes back to running.
+				expect(calls.updates).toMatchObject([{ status: 'snapshotting' }, { status: 'running' }])
+
+				// Local Docker knows nothing of a remote sandbox and must not be touched.
+				expect(mockContainerManager.inspect).not.toHaveBeenCalled()
+				expect(mockContainerManager.copyFrom).not.toHaveBeenCalled()
+				expect(mockContainerManager.stop).not.toHaveBeenCalled()
+			} finally {
+				fetchSpy.mockRestore()
+			}
+		})
+
+		it('does not stop a remote sandbox when another request already claimed the pause', async () => {
+			const session = buildSession({
+				status: 'running',
+				containerId: 'remote-sandbox',
+				agentServerId: 'agent-server-1',
+			})
+			const server = {
+				id: 'agent-server-1',
+				url: 'https://agent-finland.maskin.test:3001',
+				secret: 'x'.repeat(32),
+			}
+			mockResults.selectQueue = [[session], [server]]
+			// The claim matches no row: the status is no longer running.
+			mockResults.updateQueue = [[]]
+			const fetchSpy = vi.spyOn(globalThis, 'fetch')
+
+			try {
+				await expect(manager.pauseSession(session.id)).rejects.toThrow('not in running state')
+				expect(fetchSpy).not.toHaveBeenCalled()
+				expect(storageProvider.delete).not.toHaveBeenCalled()
+			} finally {
+				fetchSpy.mockRestore()
+			}
 		})
 
 		it('marks session failed when container vanishes mid-pause', async () => {
@@ -3893,6 +3948,30 @@ describe('SessionManager', () => {
 			await expect(manager.resumeSession(session.id)).rejects.toThrow(
 				'not in paused state or no snapshot',
 			)
+		})
+
+		it('does not dispatch a second sandbox when another resume already claimed a remote session', async () => {
+			const session = buildSession({
+				status: 'paused',
+				agentServerId: 'agent-server-1',
+				snapshotPath: 'session-workspaces/abc.tar.gz',
+				containerId: null,
+			})
+			mockResults.select = [session]
+			// The claim (paused to pending) matches no row: the status already moved on.
+			mockResults.updateQueue = [[]]
+			const fetchSpy = vi.spyOn(globalThis, 'fetch')
+
+			try {
+				await expect(manager.resumeSession(session.id)).rejects.toThrow(
+					'not in paused state or no snapshot',
+				)
+				// Nothing was started and local Docker was not touched.
+				expect(fetchSpy).not.toHaveBeenCalled()
+				expect(mockContainerManager.create).not.toHaveBeenCalled()
+			} finally {
+				fetchSpy.mockRestore()
+			}
 		})
 
 		it('re-attaches stdin when resuming an interactive session', async () => {

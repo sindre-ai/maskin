@@ -306,9 +306,9 @@ function SessionCard({
 	// Mockup 2443's `s.b1`. The backend refuses anything but an exactly-running
 	// session for pause, and a paused session needs a snapshot to restore from —
 	// so the button only appears where the write path can actually succeed
-	// (apps/dev/src/services/session-manager.ts:896 / :1049). A session on an agent
-	// server is refused too: snapshot and resume are local-only.
-	const canPause = thread.status === 'running' && !latest.agentServerId
+	// (apps/dev/src/services/session-manager.ts, pauseSession / resumeSession).
+	// Sessions on an agent server pause and resume too.
+	const canPause = thread.status === 'running'
 	const canResume = state === 'paused' && thread.latestId === session.id && !!session.snapshotPath
 	const isPauseResumePending = pauseSession.isPending || resumeSession.isPending
 
