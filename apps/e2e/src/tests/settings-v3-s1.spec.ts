@@ -66,7 +66,7 @@ test.describe('Settings v3 (part 1)', () => {
 					await expect(page.getByRole('button', { name: 'Upgrade to Pro' })).toBeVisible()
 
 					// Usage is listed by agent and always shown, not behind a disclosure.
-					await expect(page.getByText('By agent')).toBeVisible()
+					await expect(page.getByText('By agent', { exact: true })).toBeVisible()
 					await expectNoHorizontalOverflow(page)
 				})
 			}
