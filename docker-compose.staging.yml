@@ -73,6 +73,7 @@ services:
       FRONTEND_URL: http://tx1rtwycgh9cublidpuegjnz.46.225.131.164.sslip.io
       AGENT_SERVERS: ${AGENT_SERVERS:-}
       AGENT_SERVER_SECRET: ${AGENT_SERVER_SECRET:-}
+      MASKIN_ENTERPRISE_ACTOR_IDS: ${MASKIN_ENTERPRISE_ACTOR_IDS:-}
     depends_on:
       postgres:
         condition: service_healthy
