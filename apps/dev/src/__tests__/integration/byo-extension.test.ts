@@ -14,6 +14,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
 	buildCalcomDelivery,
 	buildFirefliesDelivery,
+	buildTelnyxDelivery,
+	generateTelnyxKeys,
 } from '../../../tests/integrations/fixtures/signed-deliveries'
 import { decrypt } from '../../lib/crypto'
 import { deliveryEntityId, resetWebhookRateLimits } from '../../lib/integrations/extensions'
@@ -812,6 +814,92 @@ describe('Cal.com second-vendor smoke (integration)', () => {
 			await runner.stop()
 		}
 		expect(createSession).toHaveBeenCalledTimes(1)
+	})
+})
+
+describe('Telnyx Ed25519 webhook (integration)', () => {
+	let workspaceId: string
+	const keys = generateTelnyxKeys()
+
+	beforeEach(async () => {
+		resetWebhookRateLimits()
+		workspaceId = (await insertWorkspace(db, getTestActorId())).id
+	})
+
+	const telnyxBody = (overrides: Record<string, unknown> = {}) => ({
+		slug: 'telnyx',
+		name: 'Telnyx',
+		webhook_config: {
+			signatureScheme: 'ed25519',
+			signatureHeader: 'telnyx-signature-ed25519',
+			timestampHeader: 'telnyx-timestamp',
+			timestampBodyTemplate: '{timestamp}|{body}',
+			secretSource: 'credential',
+			eventMap: {
+				externalIdPath: '$.data.id',
+				entityType: { literal: 'telnyx.event' },
+				action: { path: '$.data.event_type' },
+			},
+		},
+		signing_secret: keys.publicKeyBase64,
+		...overrides,
+	})
+
+	async function setup() {
+		const app = buildApp()
+		const { res, json } = await createExtension(app, workspaceId, telnyxBody())
+		expect(res.status).toBe(201)
+		return { app, token: json.webhookToken as string }
+	}
+
+	it('refuses to save a signing secret that is not an Ed25519 public key', async () => {
+		const app = buildApp()
+		const { res } = await createExtension(
+			app,
+			workspaceId,
+			telnyxBody({ signing_secret: 'f'.repeat(64) }),
+		)
+		expect(res.status).toBe(400)
+		expect(JSON.stringify(await res.json())).toContain('Ed25519 public key')
+	})
+
+	it('commits one delivery row and one events row for a signed delivery, then ignores a repeat', async () => {
+		const { app, token } = await setup()
+		const delivery = buildTelnyxDelivery({ privateKey: keys.privateKey })
+
+		const first = await app.request(deliveryRequest(token, delivery))
+		expect(first.status).toBe(200)
+		expect(await first.json()).toMatchObject({ status: 'committed' })
+		expect(await ledgerRows(workspaceId, 'telnyx')).toHaveLength(1)
+		const evts = await eventRows(workspaceId, 'telnyx.event')
+		expect(evts).toHaveLength(1)
+		expect(evts[0]?.action).toBe('call.hangup')
+
+		const repeat = await app.request(deliveryRequest(token, delivery))
+		expect(repeat.status).toBe(200)
+		expect(await repeat.json()).toMatchObject({ status: 'duplicate' })
+		expect(await ledgerRows(workspaceId, 'telnyx')).toHaveLength(1)
+		expect(await eventRows(workspaceId, 'telnyx.event')).toHaveLength(1)
+	})
+
+	it('answers 401 and writes nothing for a wrong key, a tampered body and a stale timestamp', async () => {
+		const { app, token } = await setup()
+		const wrongKey = buildTelnyxDelivery({ privateKey: generateTelnyxKeys().privateKey })
+		const good = buildTelnyxDelivery({ privateKey: keys.privateKey, eventId: 'evt-tamper' })
+		const stale = buildTelnyxDelivery({
+			privateKey: keys.privateKey,
+			eventId: 'evt-stale',
+			timestamp: Math.floor(Date.now() / 1000) - 3600,
+		})
+		for (const d of [
+			wrongKey,
+			{ ...good, body: good.body.replace('call.hangup', 'call.answered') },
+			stale,
+		]) {
+			expect((await app.request(deliveryRequest(token, d))).status).toBe(401)
+		}
+		expect(await ledgerRows(workspaceId, 'telnyx')).toHaveLength(0)
+		expect(await eventRows(workspaceId, 'telnyx.event')).toHaveLength(0)
 	})
 })
 

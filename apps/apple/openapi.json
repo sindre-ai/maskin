@@ -70787,7 +70787,8 @@
 												"enum": [
 													"hmac-sha256",
 													"hmac-sha1",
-													"timestamp"
+													"timestamp",
+													"ed25519"
 												]
 											},
 											"signatureHeader": {
@@ -71920,7 +71921,8 @@
 												"enum": [
 													"hmac-sha256",
 													"hmac-sha1",
-													"timestamp"
+													"timestamp",
+													"ed25519"
 												]
 											},
 											"signatureHeader": {
@@ -72854,7 +72856,8 @@
 												"enum": [
 													"hmac-sha256",
 													"hmac-sha1",
-													"timestamp"
+													"timestamp",
+													"ed25519"
 												]
 											},
 											"signatureHeader": {

@@ -367,7 +367,7 @@ export interface ExtensionAttempted {
 	agents: { agentId: string; tools: string[]; lastAttemptedAt: string }[]
 }
 
-export type ExtensionSignatureScheme = 'hmac-sha256' | 'hmac-sha1' | 'timestamp'
+export type ExtensionSignatureScheme = 'hmac-sha256' | 'hmac-sha1' | 'timestamp' | 'ed25519'
 
 export type LiteralOrPath = { literal: string } | { path: string }
 

@@ -29,6 +29,7 @@ import {
 	generateWebhookToken,
 	mapWebhookEvent,
 	mcpConfigWriteError,
+	webhookSecretWriteError,
 } from '../lib/integrations/extensions'
 import {
 	ensureExtensionSystemActor,
@@ -441,6 +442,16 @@ app.openapi(createExtensionRoute, async (c) => {
 		)
 	}
 
+	const keyError = body.signing_secret
+		? webhookSecretWriteError(body.webhook_config, body.signing_secret)
+		: null
+	if (keyError) {
+		return c.json(
+			createApiError('BAD_REQUEST', keyError, [{ field: 'signing_secret', message: keyError }]),
+			400,
+		)
+	}
+
 	const webhookToken = body.webhook_config ? generateWebhookToken() : null
 
 	let row: ExtensionRow
@@ -587,6 +598,21 @@ app.openapi(updateExtensionRoute, async (c) => {
 			createApiError('BAD_REQUEST', 'A webhook needs a signing secret', [
 				{ field: 'signing_secret', message: 'Required when webhook_config is set' },
 			]),
+			400,
+		)
+	}
+
+	// An ed25519 secret is the vendor's public key. Check a new one now, and refuse to
+	// switch an existing webhook to ed25519 on the old random secret, which can never verify.
+	const schemeOf = (cfg: unknown) => (cfg as { signatureScheme?: string } | null)?.signatureScheme
+	const keyError = body.signing_secret
+		? webhookSecretWriteError({ signatureScheme: schemeOf(nextWebhook) }, body.signing_secret)
+		: schemeOf(nextWebhook) === 'ed25519' && schemeOf(existing.webhookConfig) !== 'ed25519'
+			? 'Paste the vendor public key as the signing secret'
+			: null
+	if (keyError) {
+		return c.json(
+			createApiError('BAD_REQUEST', keyError, [{ field: 'signing_secret', message: keyError }]),
 			400,
 		)
 	}
