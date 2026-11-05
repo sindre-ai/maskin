@@ -179,7 +179,9 @@ extension RootView {
 		#endif
 	}
 
-	/// A short glass pill ("Copied") over the bottom of the app, gone after two seconds.
+	/// A short glass pill ("Copied") over the bottom of the app, gone after two seconds. It never
+	/// takes a tap, and sits one composer bar (a one-line box, 44pt) plus a gap above the bottom
+	/// edge so it does not cover the chat message box.
 	@ViewBuilder
 	fileprivate var toastView: some View {
 		if let toast {
@@ -189,7 +191,8 @@ extension RootView {
 				.padding(.horizontal, MaskinSpace.s9)
 				.frame(minHeight: MaskinSpace.touchMin)
 				.maskinGlass(in: Capsule())
-				.padding(.bottom, MaskinSpace.s11)
+				.padding(.bottom, MaskinSpace.s11 + MaskinSpace.touchMin + MaskinSpace.s9)
+				.allowsHitTesting(false)
 				.transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
 				.accessibilityElement(children: .combine)
 				.task(id: toast) {
