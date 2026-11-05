@@ -71,6 +71,8 @@ services:
       POSTHOG_HOST: ${POSTHOG_HOST:-}
       APP_URL: http://tx1rtwycgh9cublidpuegjnz.46.225.131.164.sslip.io
       FRONTEND_URL: http://tx1rtwycgh9cublidpuegjnz.46.225.131.164.sslip.io
+      MASKIN_BACKEND_URL: http://tx1rtwycgh9cublidpuegjnz.46.225.131.164.sslip.io
+      AGENT_BASE_IMAGE: magnusnoeddegaard/agent-base:latest
       AGENT_SERVERS: ${AGENT_SERVERS:-}
       AGENT_SERVER_SECRET: ${AGENT_SERVER_SECRET:-}
       MASKIN_ENTERPRISE_ACTOR_IDS: ${MASKIN_ENTERPRISE_ACTOR_IDS:-}
