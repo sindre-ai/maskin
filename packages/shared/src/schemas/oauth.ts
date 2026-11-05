@@ -93,6 +93,7 @@ export const oauthPreviewResponseSchema = z.object({
 	),
 	scope: z.string(),
 })
+export type OauthPreviewResponse = z.infer<typeof oauthPreviewResponseSchema>
 
 /**
  * Error body of preview, approve and deny. redirect_url is absent (never null or empty) unless

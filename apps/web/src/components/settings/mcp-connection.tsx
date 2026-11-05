@@ -1,3 +1,5 @@
+import { ClaudeTabPanel, useClaudeTab } from '@/components/settings/claude-connection'
+import { Steps } from '@/components/settings/mcp-steps'
 import { CodeBlock } from '@/components/shared/code-block'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -6,10 +8,12 @@ import { getApiKey } from '@/lib/auth'
 import { TriangleAlert } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
-type Tab = 'claude-code' | 'cursor' | 'vscode' | 'claude-desktop' | 'other'
+type PanelTab = 'claude-code' | 'cursor' | 'vscode' | 'claude-desktop' | 'other'
 
-// The Claude tab is not here yet: it arrives with the OAuth consent page.
-const tabs: { value: Tab; label: string }[] = [
+// The Claude tab is added in front of these when the person may use it (see useClaudeTab).
+type TabValue = 'claude' | PanelTab
+
+const tabs: { value: PanelTab; label: string }[] = [
 	{ value: 'claude-code', label: 'Claude Code' },
 	{ value: 'cursor', label: 'Cursor' },
 	{ value: 'vscode', label: 'VS Code' },
@@ -69,7 +73,7 @@ function buildPanels(mcpUrl: string, apiKey: string, workspaceId: string) {
 	]
 	const json = (value: unknown) => JSON.stringify(value, null, 2)
 
-	const panels: Record<Tab, Panel> = {
+	const panels: Record<PanelTab, Panel> = {
 		'claude-code': {
 			steps: [
 				'Run this command in your terminal.',
@@ -174,29 +178,16 @@ function NoKeyNotice() {
 	)
 }
 
-function Steps({ steps }: { steps: string[] }) {
-	return (
-		<ol className="space-y-2">
-			{steps.map((step, i) => (
-				<li key={step} className="flex items-baseline gap-[11px]">
-					<span
-						aria-hidden="true"
-						className="grid size-5 flex-none -translate-y-px place-items-center rounded-full bg-muted font-mono text-[10.5px] font-bold text-muted-foreground"
-					>
-						{i + 1}
-					</span>
-					<span className="min-w-0 text-[13px] leading-[1.55] text-foreground [text-wrap:pretty]">
-						{step}
-					</span>
-				</li>
-			))}
-		</ol>
-	)
-}
-
 export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
-	const [activeTab, setActiveTab] = useState<Tab>('claude-code')
+	const claude = useClaudeTab()
+	const [chosenTab, setChosenTab] = useState<TabValue | null>(null)
 	const listRef = useRef<HTMLDivElement>(null)
+
+	// The Claude tab opens first when it is there; until the person picks a tab, the default follows it.
+	const activeTab: TabValue =
+		chosenTab === 'claude' && !claude.visible
+			? 'claude-code'
+			: (chosenTab ?? (claude.visible ? 'claude' : 'claude-code'))
 
 	// getApiKey is read on each render and again at click time for the install links, so the
 	// key is never held in state and never rendered into an href.
@@ -204,7 +195,7 @@ export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
 	const hasKey = !!storedKey
 	const mcpUrl = getMcpUrl()
 	const panels = buildPanels(mcpUrl, storedKey ?? KEY_PLACEHOLDER, workspaceId)
-	const panel = panels[activeTab]
+	const panel = activeTab === 'claude' ? null : panels[activeTab]
 
 	// On a narrow screen the strip scrolls; keep the selected tab in view so the next one peeks out.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: re-run when the active tab changes
@@ -216,7 +207,7 @@ export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
 
 	const handleAdd = () => {
 		const key = getApiKey()
-		if (!key || !panel.add) return
+		if (!key || !panel?.add) return
 		trackEvent('mcp_add_click', { tab: activeTab })
 		window.location.assign(panel.add.buildLink(key))
 	}
@@ -230,8 +221,22 @@ export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
 
 			<div className="settings-label mt-6 mb-2">Add it to your app</div>
 			<div className="overflow-hidden rounded-xl border border-border">
-				<Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as Tab)}>
+				<Tabs value={activeTab} onValueChange={(v) => setChosenTab(v as TabValue)}>
 					<TabsList ref={listRef} variant="line" aria-label="App" className="px-2">
+						{claude.visible && (
+							<TabsTrigger value="claude">
+								Claude
+								<span
+									className={
+										claude.connected
+											? 'eyebrow ml-1.5 rounded bg-status-live-bg px-1.5 py-0.5 text-status-live-text!'
+											: 'eyebrow ml-1.5 rounded bg-brand-subtle px-1.5 py-0.5 text-brand-subtle-foreground!'
+									}
+								>
+									{claude.connected ? 'Connected' : 'Sign in'}
+								</span>
+							</TabsTrigger>
+						)}
 						{tabs.map((tab) => (
 							<TabsTrigger key={tab.value} value={tab.value}>
 								{tab.label}
@@ -239,25 +244,31 @@ export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
 						))}
 					</TabsList>
 					<TabsContent value={activeTab} className="mt-0 space-y-4 p-4">
-						{!hasKey && <NoKeyNotice />}
-						<Steps steps={panel.steps} />
-						{panel.add && (
-							<Button type="button" disabled={!hasKey} onClick={handleAdd}>
-								{panel.add.label}
-							</Button>
+						{panel === null ? (
+							<ClaudeTabPanel mcpUrl={mcpUrl} />
+						) : (
+							<>
+								{!hasKey && <NoKeyNotice />}
+								<Steps steps={panel.steps} />
+								{panel.add && (
+									<Button type="button" disabled={!hasKey} onClick={handleAdd}>
+										{panel.add.label}
+									</Button>
+								)}
+								{panel.blocks.map((block) => (
+									<CodeBlock
+										key={block.label}
+										label={block.label}
+										fileName={block.fileName}
+										text={block.text}
+										toastMessage={block.holdsKey ? 'Copied with your API key' : 'Server URL copied'}
+										copyDisabled={block.holdsKey && !hasKey}
+										onCopy={() => trackEvent('mcp_copy', { tab: activeTab })}
+									/>
+								))}
+								{panel.note && <p className="text-xs text-muted-foreground">{panel.note}</p>}
+							</>
 						)}
-						{panel.blocks.map((block) => (
-							<CodeBlock
-								key={block.label}
-								label={block.label}
-								fileName={block.fileName}
-								text={block.text}
-								toastMessage={block.holdsKey ? 'Copied with your API key' : 'Server URL copied'}
-								copyDisabled={block.holdsKey && !hasKey}
-								onCopy={() => trackEvent('mcp_copy', { tab: activeTab })}
-							/>
-						))}
-						{panel.note && <p className="text-xs text-muted-foreground">{panel.note}</p>}
 					</TabsContent>
 				</Tabs>
 			</div>

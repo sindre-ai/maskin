@@ -1,5 +1,6 @@
 import {
 	__setInitializedForTesting,
+	beforeSend,
 	capture,
 	hashDistinctId,
 	identifyForWorkspace,
@@ -256,7 +257,7 @@ describe('posthog helper', () => {
 				capture_pageleave: false,
 				capture_performance: false,
 				autocapture: false,
-				before_send: withSharedProperties,
+				before_send: beforeSend,
 			})
 			expect(isPosthogReady()).toBe(true)
 		})

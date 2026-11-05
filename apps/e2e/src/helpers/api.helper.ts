@@ -727,7 +727,9 @@ export class TestAPI {
 }
 
 export async function createTestActor(
-	data: { name: string; email?: string; password?: string } = { name: `E2E Test ${Date.now()}` },
+	data: { name: string; email?: string; password?: string; id?: string } = {
+		name: `E2E Test ${Date.now()}`,
+	},
 ): Promise<CreateActorResponse> {
 	const email = data.email ?? `e2e-${Date.now()}@test.invalid`
 	const password = data.password ?? 'e2e-test-password-123'

@@ -1,4 +1,7 @@
 export const queryKeys = {
+	oauthGrants: {
+		all: () => ['oauthGrants'] as const,
+	},
 	account: {
 		deletionPreview: (deleteSoleWorkspaces: boolean) =>
 			['account', 'deletion-preview', { deleteSoleWorkspaces }] as const,

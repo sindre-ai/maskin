@@ -17,6 +17,22 @@ vi.mock('sonner', () => ({
 	toast: { success: vi.fn() },
 }))
 
+// The Claude tab reads the connector flag and the person's connections. Off and empty by default.
+let mockFlagOn = false
+let mockGrants: {
+	data?: unknown[]
+	isPending: boolean
+	isError: boolean
+	refetch: () => void
+} = { data: [], isPending: false, isError: false, refetch: vi.fn() }
+const mockDisconnect = { mutate: vi.fn(), reset: vi.fn(), isPending: false, isError: false }
+
+vi.mock('@/hooks/use-feature-flag', () => ({ useFeatureFlag: () => mockFlagOn }))
+vi.mock('@/hooks/use-oauth', () => ({
+	useOauthGrants: () => mockGrants,
+	useDisconnectGrant: () => mockDisconnect,
+}))
+
 const KEY = 'ank_test123'
 
 function stubLocationAssign() {
@@ -39,6 +55,8 @@ describe('McpConnectionSection', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		mockApiKey = KEY
+		mockFlagOn = false
+		mockGrants = { data: [], isPending: false, isError: false, refetch: vi.fn() }
 		location = stubLocationAssign()
 	})
 
@@ -268,6 +286,130 @@ describe('McpConnectionSection', () => {
 			const [serverUrlCopy, headersCopy] = screen.getAllByRole('button', { name: 'Copy' })
 			expect(serverUrlCopy).toBeEnabled()
 			expect(headersCopy).toBeDisabled()
+		})
+	})
+
+	describe('Claude tab', () => {
+		const GRANT = {
+			id: 'g-1',
+			client_id: 'https://claude.ai/oauth/mcp-oauth-client-metadata',
+			client_name: 'Claude',
+			workspace_id: 'ws-1',
+			workspace_name: 'Acme Studio',
+			created_at: '2026-11-03T10:00:00.000Z',
+			last_used_at: null,
+		}
+
+		it('is not rendered without the flag and without a connection', () => {
+			render(<McpConnectionSection workspaceId="ws-1" />)
+			expect(screen.queryByRole('tab', { name: 'Claude' })).not.toBeInTheDocument()
+			expect(screen.getByRole('tab', { name: 'Claude Code' })).toHaveAttribute(
+				'aria-selected',
+				'true',
+			)
+		})
+
+		it('opens first with the flag on, tagged Sign in, with a prefill link that carries no key', () => {
+			mockFlagOn = true
+			render(<McpConnectionSection workspaceId="ws-1" />)
+
+			const tab = screen.getByRole('tab', { name: /^Claude\s*Sign in$/i })
+			expect(tab).toHaveAttribute('aria-selected', 'true')
+			const link = screen.getByRole('link', { name: 'Add to Claude' })
+			const href = new URL(link.getAttribute('href') ?? '')
+			expect(`${href.origin}${href.pathname}`).toBe('https://claude.ai/customize/connectors')
+			expect(href.searchParams.get('modal')).toBe('add-custom-connector')
+			expect(href.searchParams.get('connectorName')).toBe('Maskin')
+			expect(href.searchParams.get('connectorUrl')).toBe('https://app.example/mcp')
+			expect(href.toString()).not.toContain(KEY)
+		})
+
+		it('puts the Add button first and keeps the manual steps closed until asked for', async () => {
+			const user = userEvent.setup()
+			mockFlagOn = true
+			render(<McpConnectionSection workspaceId="ws-1" />)
+
+			const add = screen.getByRole('link', { name: 'Add to Claude' })
+			const steps = screen.getByText(
+				'Click Add to Claude. The connector form opens with the name and URL filled in.',
+			)
+			expect(add.compareDocumentPosition(steps) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+			const manual = screen.getByRole('button', { name: 'Or add it manually' })
+			expect(manual).toHaveAttribute('aria-expanded', 'false')
+			expect(screen.queryByText('Server URL')).not.toBeInTheDocument()
+			await user.click(manual)
+			expect(manual).toHaveAttribute('aria-expanded', 'true')
+			expect(screen.getByText('https://app.example/mcp')).toBeInTheDocument()
+		})
+
+		it('shows the connection and hides Add when connected, even with the flag off', () => {
+			mockGrants = { data: [GRANT], isPending: false, isError: false, refetch: vi.fn() }
+			render(<McpConnectionSection workspaceId="ws-1" />)
+
+			expect(screen.getByRole('tab', { name: /^Claude\s*Connected$/i })).toHaveAttribute(
+				'aria-selected',
+				'true',
+			)
+			expect(screen.getByText('Workspace: Acme Studio')).toBeInTheDocument()
+			expect(screen.queryByRole('link', { name: 'Add to Claude' })).not.toBeInTheDocument()
+			expect(
+				screen.getByText(/Adding new Claude connections is switched off for now/),
+			).toBeInTheDocument()
+			expect(screen.queryByText(/One row per workspace/)).not.toBeInTheDocument()
+		})
+
+		it('lists newest first and explains the one-row-per-workspace rule for two connections', () => {
+			mockFlagOn = true
+			mockGrants = {
+				data: [
+					GRANT,
+					{
+						...GRANT,
+						id: 'g-2',
+						workspace_name: 'Personal',
+						created_at: '2026-11-04T10:00:00.000Z',
+					},
+				],
+				isPending: false,
+				isError: false,
+				refetch: vi.fn(),
+			}
+			render(<McpConnectionSection workspaceId="ws-1" />)
+
+			const rows = screen.getAllByText(/^Workspace: /).map((row) => row.textContent)
+			expect(rows).toEqual(['Workspace: Personal', 'Workspace: Acme Studio'])
+			expect(screen.getByText(/One row per workspace/)).toBeInTheDocument()
+			expect(screen.queryByText(/switched off for now/)).not.toBeInTheDocument()
+		})
+
+		it('disconnects the chosen row after the dialog is confirmed', async () => {
+			const user = userEvent.setup()
+			mockGrants = { data: [GRANT], isPending: false, isError: false, refetch: vi.fn() }
+			render(<McpConnectionSection workspaceId="ws-1" />)
+
+			await user.click(screen.getByRole('button', { name: 'Disconnect' }))
+			expect(screen.getByRole('heading', { name: 'Disconnect Claude?' })).toBeInTheDocument()
+			expect(screen.getByText(/Claude may then show "connection expired"/)).toBeInTheDocument()
+			expect(mockDisconnect.mutate).not.toHaveBeenCalled()
+
+			await user.click(
+				within(screen.getByRole('dialog')).getByRole('button', { name: 'Disconnect' }),
+			)
+			expect(mockDisconnect.mutate).toHaveBeenCalledWith('g-1', expect.any(Object))
+		})
+
+		it('keeps the Add steps when the check fails, with a Try again', async () => {
+			const user = userEvent.setup()
+			const refetch = vi.fn()
+			mockFlagOn = true
+			mockGrants = { data: undefined, isPending: false, isError: true, refetch }
+			render(<McpConnectionSection workspaceId="ws-1" />)
+
+			expect(screen.getByText("We couldn't check whether Claude is connected.")).toBeInTheDocument()
+			expect(screen.getByRole('link', { name: 'Add to Claude' })).toBeInTheDocument()
+			await user.click(screen.getByRole('button', { name: 'Try again' }))
+			expect(refetch).toHaveBeenCalled()
 		})
 	})
 })

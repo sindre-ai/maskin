@@ -2,7 +2,7 @@
 title: MCP sign-in for Claude (OAuth)
 slug: mcp-oauth
 description: How Claude discovers and completes Maskin's MCP sign-in, what /mcp answers without a credential, the pinned Claude client record, the consent and token routes, how a connection ends, and the switch and flag that control it.
-last_updated: 2026-10-14
+last_updated: 2026-11-04
 ---
 
 # MCP sign-in for Claude (OAuth)
@@ -64,6 +64,14 @@ All under `/api/oauth`, behind `authMiddleware` with the person's own `ank_` key
 Preview, approve and deny answer 404 when the switch is off and 403 `access_denied` when the flag is off or the caller is not a person. They are limited to 30 calls a minute per person.
 
 Errors from preview, approve and deny are `{ error, error_description, redirect_url? }` with one of seven codes. `client_not_allowlisted` and `bad_redirect_uri` are identity codes and never carry a link. `pkce_missing`, `invalid_request`, `unsupported_response_type`, `invalid_scope` and `invalid_target` carry `redirect_url`: built from the pinned redirect address, never from the request's, with the matching OAuth error (`pkce_missing` goes back as `invalid_request`) and `state` only if it is 8 to 512 printable characters, always as an encoded query parameter. The field is absent, not empty, when there is no verified link.
+
+## The consent page and the Claude tab
+
+The consent page is a web route, `apps/web/src/routes/oauth.authorize.tsx`, at `/oauth/authorize`. It sits outside `_authed`: a signed-out visit goes to `/login` with the whole address (every authorize parameter) as the return path, and sign-in or sign-up brings the person back to it. It calls preview on load, shows the pinned client name and return host the server sent, and navigates only to the `redirect_url` the server returns from approve or deny. It never builds a redirect and prints no value from the request. Five error screens cover the preview answers: client not allowlisted, bad redirect address, incomplete request (with a "Back to Claude" link only when the server sent a verified one), cannot check (network, timeout, rate limit, server error) and not available yet (preview 403 or 404). There is no "request expired" screen.
+
+The app answers `/oauth/authorize` with `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY` (middleware in `apps/dev/src/app-factory.ts`, ahead of the static files and the SPA fallback), because a page with an Allow button is a clickjacking target. PostHog page views on the consent page, and on the login detour that carries it, are sent without the query string (`scrubAuthorizeUrls` in `apps/web/src/lib/posthog.ts`).
+
+Settings > MCP has a Claude tab, in front of the other tabs. It shows when the `mcp-oauth-consent` flag is on for the person or when they have at least one live connection, so the only Disconnect button never disappears with the flag. Add to Claude is a plain link to `claude.ai/customize/connectors` with `modal=add-custom-connector`, `connectorName=Maskin` and `connectorUrl` set to the encoded server URL, which is `window.location.origin` plus `/mcp`: byte for byte the resource in the discovery documents when `MASKIN_OAUTH_ISSUER` (or the default issuer) is the web app origin. The Connected apps list is `GET /api/oauth/grants`, one row per workspace; Disconnect calls `DELETE /api/oauth/grants/:id`, works with the flag and the switch off, and does not sign the person out.
 
 ## The token endpoint
 
