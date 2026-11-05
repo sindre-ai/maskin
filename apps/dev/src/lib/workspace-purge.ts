@@ -113,6 +113,8 @@ export const WORKSPACE_PURGE_CASCADE = [
 	'credential_chain_snapshots',
 	'extensions',
 	'file_comments',
+	'file_proposal_changes',
+	'file_proposals',
 	'file_uploads',
 	'files',
 	'for_you_dismissals',

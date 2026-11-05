@@ -98,6 +98,9 @@ public struct McpServerRequest: Equatable, Sendable {
 			+ (replyToSession ? "" : " Reply with one short line to say you have it.")
 	}
 
+	/// A normal chat message that asks the agent to put the request again after a decline.
+	public var askAgainText: String { "Please ask me again about adding the \(name) tool server. I've changed my mind." }
+
 	public var declinedReply: String {
 		"Not now: please don't add the \(name) tool server yet. Carry on without it, or tell me what you need instead."
 	}

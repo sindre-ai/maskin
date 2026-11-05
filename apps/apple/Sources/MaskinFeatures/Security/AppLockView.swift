@@ -10,7 +10,19 @@ struct AppLockView: View {
 	var isLocked: Bool
 	var isAuthenticating: Bool
 	var lastAttemptFailed: Bool
+	/// "Face ID", "Touch ID" or "Optic ID"; nil when the device only has a passcode.
+	var biometryName: String?
+	/// The workspace the app opens into, named in the sentence under the title. Nil leaves it out.
+	var workspaceName: String?
 	var onUnlock: () -> Void
+
+	/// "Use Face ID to open Værksted." With no biometry it asks for the passcode; with no workspace
+	/// name it opens "Maskin".
+	nonisolated static func subtitle(_ biometry: String?, _ workspace: String?) -> String {
+		let name = workspace?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+		let target = name.isEmpty ? "Maskin" : name
+		return biometry.map { "Use \($0) to open \(target)." } ?? "Enter your passcode to open \(target)."
+	}
 
 	var body: some View {
 		VStack(spacing: MaskinSpace.s9) {
@@ -20,12 +32,11 @@ struct AppLockView: View {
 					.maskinText(.largeTitle)
 					.foregroundStyle(MaskinColor.ink)
 					.accessibilityAddTraits(.isHeader)
-				if lastAttemptFailed {
-					Text("Couldn't unlock. Try again.")
-						.maskinText(.body)
-						.foregroundStyle(MaskinColor.ink4)
-				}
-				Button("Unlock", action: onUnlock)
+				Text(lastAttemptFailed ? "Couldn't unlock. Try again." : Self.subtitle(biometryName, workspaceName))
+					.maskinText(.body)
+					.foregroundStyle(MaskinColor.ink4)
+					.multilineTextAlignment(.center)
+				Button(biometryName.map { "Unlock with \($0)" } ?? "Unlock with passcode", action: onUnlock)
 					.buttonStyle(PrimaryActionButtonStyle())
 					.disabled(isAuthenticating)
 					.frame(maxWidth: 280)
@@ -42,13 +53,14 @@ struct AppLockView: View {
 extension View {
 	/// Hides this view behind the lock screen whenever the controller says to. The content stays
 	/// mounted (no state lost) but is hidden from rendering and VoiceOver.
-	func appLockCover(_ lock: AppLockController?) -> some View {
-		modifier(AppLockCover(lock: lock))
+	func appLockCover(_ lock: AppLockController?, workspaceName: String? = nil) -> some View {
+		modifier(AppLockCover(lock: lock, workspaceName: workspaceName))
 	}
 }
 
 private struct AppLockCover: ViewModifier {
 	let lock: AppLockController?
+	var workspaceName: String?
 	@Environment(\.scenePhase) private var scenePhase
 
 	func body(content: Content) -> some View {
@@ -61,6 +73,7 @@ private struct AppLockCover: ViewModifier {
 					AppLockView(
 						isLocked: lock.isLocked, isAuthenticating: lock.isAuthenticating,
 						lastAttemptFailed: lock.lastAttemptFailed,
+						biometryName: lock.biometryName, workspaceName: workspaceName,
 						onUnlock: { Task { await lock.unlock() } })
 				}
 			}

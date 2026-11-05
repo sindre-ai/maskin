@@ -256,8 +256,8 @@ export interface DeliverableKind {
 	bodyBlock?: DeliverableBodyBlock
 	/** Longest body the channel takes, in characters. */
 	bodyMaxLength?: number
-	/** Name of the MCP tool that delivers it. Named in the preview's warnings and in agent docs. */
-	sendTool: string
+	/** Name of the MCP tool that delivers it. Named in the preview's warnings and in agent docs. Absent when a person or an agent sends it by hand (no integration). */
+	sendTool?: string
 }
 
 // ── Provider config ────────────────────────────────────────────────────────

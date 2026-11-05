@@ -9,7 +9,13 @@ struct DeviceSignInView: View {
 	@State private var store: DeviceSignInStore
 	@Environment(\.dismiss) private var dismiss
 
-	init(store: DeviceSignInStore) { _store = State(initialValue: store) }
+	/// A code that arrived by link (`maskin://connect?code=`) is typed and looked up on open.
+	private let initialCode: String?
+
+	init(store: DeviceSignInStore, initialCode: String? = nil) {
+		_store = State(initialValue: store)
+		self.initialCode = initialCode
+	}
 
 	var body: some View {
 		WorkspacePage(title: title) {
@@ -26,6 +32,11 @@ struct DeviceSignInView: View {
 			if let error = store.error { FormError(error) }
 		}
 		.overlay { if store.isBusy { ProgressView() } }
+		.task {
+			guard let initialCode, store.code.isEmpty else { return }
+			store.setCode(initialCode)
+			if store.canContinue { await store.lookUp() }
+		}
 	}
 
 	private var title: String {

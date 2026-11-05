@@ -66,13 +66,17 @@ public struct ObjectsDisplay: Equatable, Sendable, Codable {
 	/// Group ids the reader folded, remembered per grouping so folding a status does not fold a
 	/// type of the same name.
 	public var collapsed: [ObjectsGrouping: Set<String>] = [:]
+	/// The type tabs row (Needs you / All / one per type) under the title. Off by default: the list
+	/// opens on the chips alone, and Display turns the tabs on.
+	public var showsTypeTabs = false
 
 	public init(
 		sort: ObjectsSort = .needsYou, needsYouOnly: Bool = false,
 		shown: Set<ObjectsProperty> = Set(ObjectsProperty.allCases), layout: ObjectsLayout = .list,
 		groupBy: ObjectsGrouping = .status, collapsed: [ObjectsGrouping: Set<String>] = [:],
-		reversed: Bool = false
+		reversed: Bool = false, showsTypeTabs: Bool = false
 	) {
+		self.showsTypeTabs = showsTypeTabs
 		self.reversed = reversed
 		self.sort = sort
 		self.needsYouOnly = needsYouOnly
@@ -92,6 +96,7 @@ public struct ObjectsDisplay: Equatable, Sendable, Codable {
 		layout = try c.decodeIfPresent(ObjectsLayout.self, forKey: .layout) ?? .list
 		groupBy = try c.decodeIfPresent(ObjectsGrouping.self, forKey: .groupBy) ?? .status
 		collapsed = try c.decodeIfPresent([ObjectsGrouping: Set<String>].self, forKey: .collapsed) ?? [:]
+		showsTypeTabs = try c.decodeIfPresent(Bool.self, forKey: .showsTypeTabs) ?? false
 	}
 
 	/// Whether the list runs against the sort's natural direction.
@@ -119,7 +124,7 @@ public struct ObjectsDisplay: Equatable, Sendable, Codable {
 	/// Anything off its default, so the Display button can show it.
 	public var isCustomised: Bool {
 		sort != .needsYou || isReversed || needsYouOnly || shown != Set(ObjectsProperty.allCases) || layout != .list
-			|| groupBy != .status
+			|| groupBy != .status || showsTypeTabs
 	}
 }
 

@@ -11,6 +11,7 @@ import {
 	feedKindOf,
 	feedTailLabel,
 	heldNote,
+	isObjectlessCard,
 } from '@/lib/foryou-feed'
 import { leadLine } from '@/routes/_authed/$workspaceId/index'
 
@@ -62,6 +63,18 @@ describe('heldNote', () => {
 describe('feedItemKey', () => {
 	it('keys an item by its entity type and id', () => {
 		expect(feedItemKey(buildItem({ entity_id: 'x' }))).toBe('object:x')
+	})
+})
+
+describe('isObjectlessCard', () => {
+	it('is true only for a card keyed by its notification', () => {
+		expect(isObjectlessCard(buildItem({ entity_type: 'notification', entity_id: 'n-1' }))).toBe(
+			true,
+		)
+		expect(isObjectlessCard(buildItem())).toBe(false)
+		expect(feedItemKey(buildItem({ entity_type: 'notification', entity_id: 'n-1' }))).toBe(
+			'notification:n-1',
+		)
 	})
 })
 

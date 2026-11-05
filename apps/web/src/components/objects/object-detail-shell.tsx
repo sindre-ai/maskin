@@ -260,6 +260,7 @@ export function ObjectDetailShell({
 			action: { label: 'View', onClick: () => changeTab('activity') },
 		})
 	}, [changeTab])
+	const composerRef = useRef<HTMLDivElement>(null)
 	const [confirmDelete, setConfirmDelete] = useState(false)
 	const confirmedDeleteRef = useRef(false)
 
@@ -271,6 +272,7 @@ export function ObjectDetailShell({
 	const handleAnswerLatestAsk = useCallback(() => {
 		if (composerMode === 'comment') {
 			// The composer is pinned under every tab, so it is already mounted.
+			composerRef.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })
 			answerRef.current?.focus()
 			if (tab !== 'activity') changeTab('activity')
 			return
@@ -650,7 +652,10 @@ export function ObjectDetailShell({
 							    The mockup's composer is a single bar — `+`, the field, one
 							    action button on one row, with no hint line under it. One
 							    composer at a time, switched Comment / Message <agent>. */}
-							<div className="sticky bottom-0 z-[6] mt-1.5 bg-gradient-to-b from-transparent via-background via-20% to-background pb-4 pt-[22px]">
+							<div
+								ref={composerRef}
+								className="sticky bottom-0 z-[6] mt-1.5 bg-gradient-to-b from-transparent via-background via-20% to-background pb-4 pt-[22px]"
+							>
 								<ItemComposer
 									object={object}
 									workspaceId={workspaceId}

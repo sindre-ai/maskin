@@ -115,15 +115,17 @@ private struct LoopsContainer: View {
 			store: loops, selection: $loopSelection, search: search, isLive: isLive, isGrid: sizeClass == .regular, zoomNamespace: zoom,
 			onNew: { buildLoopInChat() }
 		)
-		// Same as Team: the field stays tucked away until the list is pulled down, so the top bar has
-		// no search icon.
+		// Search is a button in the top bar that opens into a field and looks only through the
+		// flows on this page; it folds back into the button when dismissed.
 		.flowsSearch(text: $search, isPresented: $searchPresented)
+		.searchMinimized()
 		// Closing the field can't leave a stale query behind.
 		.onChange(of: searchPresented) { if !searchPresented, !search.isEmpty { search = "" } }
 		// Flows carry no tags, so there is no tag filter bar; Display holds the sort, filter and Summary.
 		.shellToolbar(
 			environment: environment, title: "Flows",
 			actions: ShellActions(
+				new: { buildLoopInChat() }, newLabel: "New flow",
 				displaySymbol: ShellActions.slidersSymbol, displayActive: loops.isDisplayCustomised,
 				displayToggle: { showDisplay = true })
 		)
@@ -230,14 +232,8 @@ struct FlowsDisplaySheet: View {
 }
 
 extension View {
-	/// Flows search: a pull-down field, like Team's.
+	/// Flows search: the system's collapsing search (iOS 26: a toolbar button that expands into the field).
 	fileprivate func flowsSearch(text: Binding<String>, isPresented: Binding<Bool>) -> some View {
-		#if os(iOS)
-			searchable(
-				text: text, isPresented: isPresented, placement: .navigationBarDrawer(displayMode: .automatic),
-				prompt: "Search flows")
-		#else
-			searchable(text: text, isPresented: isPresented, prompt: "Search flows")
-		#endif
+		searchable(text: text, isPresented: isPresented, prompt: "Search flows")
 	}
 }

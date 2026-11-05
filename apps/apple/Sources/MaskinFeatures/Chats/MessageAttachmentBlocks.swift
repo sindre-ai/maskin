@@ -249,6 +249,8 @@ struct MessageImageBlock: View {
 	let width: CGFloat
 	var transfer: AttachmentTransfer = .ready
 	var onRetry: () -> Void = {}
+	/// "Developer · 10:42", shown under the name in the viewer.
+	var caption: String?
 	@State private var viewing: ViewerStart?
 
 	var body: some View {
@@ -260,7 +262,7 @@ struct MessageImageBlock: View {
 			}
 		}
 		.presentViewer($viewing) { start in
-			ImageViewer(files: images, start: start.index)
+			ImageViewer(files: images, start: start.index, caption: caption)
 		}
 	}
 
@@ -334,50 +336,78 @@ extension View {
 
 // MARK: Viewer
 
-/// The in-app viewer: opens on the tapped picture with "2 of 4", previous and next, download and
-/// close, and swipes between pictures. Download hands the file to the app's file screen, which
-/// has the share sheet.
+/// The in-app viewer (design 2c): dark and full-bleed, close at the top left, the name with who sent
+/// it and when, pinch to zoom, swipe down to close, and Share and Download below. Several pictures
+/// swipe sideways. Download hands the file to the app's file screen, which has the share sheet.
 struct ImageViewer: View {
 	let files: [ChatAttachmentRef]
+	/// "Developer · 10:42": who sent the pictures and when.
+	var caption: String?
 	@State var index: Int
+	@State private var dragY: CGFloat = 0
+	@State private var zoomed = false
+	@State private var sharing: DecodedImage?
 	@Environment(\.dismiss) private var dismiss
 	@Environment(\.openAttachment) private var open
 
-	init(files: [ChatAttachmentRef], start: Int) {
+	init(files: [ChatAttachmentRef], start: Int, caption: String? = nil) {
 		self.files = files
+		self.caption = caption
 		_index = State(initialValue: min(max(start, 0), max(files.count - 1, 0)))
 	}
 
 	var body: some View {
 		VStack(spacing: 0) {
 			bar
-			ZStack {
-				pages
-				HStack {
-					step(-1, symbol: "chevron.left", label: "Previous image")
-					Spacer(minLength: 0)
-					step(1, symbol: "chevron.right", label: "Next image")
-				}
-				.padding(.horizontal, MaskinSpace.s5)
-			}
+			pages
+			actions
 		}
 		.frame(maxWidth: .infinity, maxHeight: .infinity)
-		.background(MaskinSurface.grouped.opacity(0.97).ignoresSafeArea())
+		.background(MaskinSurface.grouped.opacity(1 - min(abs(dragY) / 600, 0.5)).ignoresSafeArea())
+		.preferredColorScheme(.dark)
 		.accessibilityAddTraits(.isModal)
 	}
+
+	private static let actionSize = MaskinSpace.touchMin + MaskinSpace.s7
 
 	private var current: ChatAttachmentRef { files[index] }
 
 	private var bar: some View {
 		HStack(spacing: MaskinSpace.s3) {
-			Text(current.name ?? "Image")
-				.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold, relativeTo: .subheadline))
-				.foregroundStyle(MaskinColor.ink).lineLimit(1).truncationMode(.middle)
-				.frame(maxWidth: .infinity, alignment: .leading)
-			Text("\(index + 1) of \(files.count)")
-				.font(MaskinTypeface.sans(MaskinFontSize.t12, relativeTo: .caption)).foregroundStyle(MaskinColor.ink4)
-				.monospacedDigit()
-			barButton("arrow.down.to.line", label: "Download") {
+			circle("xmark", label: "Close viewer", size: MaskinSpace.touchMin) { dismiss() }
+			VStack(spacing: 0) {
+				Text(current.name ?? "Image")
+					.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold, relativeTo: .subheadline))
+					.foregroundStyle(MaskinColor.ink).lineLimit(1).truncationMode(.middle)
+				Text(subtitle)
+					.font(MaskinTypeface.sans(MaskinFontSize.t12, relativeTo: .caption)).foregroundStyle(MaskinColor.ink4)
+					.lineLimit(1).monospacedDigit()
+			}
+			.frame(maxWidth: .infinity)
+			Color.clear.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
+		}
+		.padding(.horizontal, MaskinSpace.s6)
+		.padding(.vertical, MaskinSpace.s2)
+		.opacity(dragY == 0 ? 1 : 0.4)
+	}
+
+	/// The sender line, with "2 of 4" when there are several pictures.
+	private var subtitle: String {
+		let position = files.count > 1 ? "\(index + 1) of \(files.count)" : nil
+		return [caption, position].compactMap { $0 }.joined(separator: " · ")
+	}
+
+	private var actions: some View {
+		HStack(spacing: MaskinSpace.s13) {
+			if let image = sharing {
+				ShareLink(
+					item: Image(decorative: image.cgImage, scale: 1), preview: SharePreview(current.name ?? "Image")
+				) {
+					circleLabel("square.and.arrow.up")
+				}
+				.accessibilityLabel("Share")
+			}
+			circle("arrow.down.to.line", label: "Download", size: Self.actionSize) {
 				let id = current.fileID
 				dismiss()
 				// The file screen is a sheet; let this cover finish leaving before it comes up.
@@ -386,19 +416,25 @@ struct ImageViewer: View {
 					open?(id)
 				}
 			}
-			barButton("xmark", label: "Close viewer") { dismiss() }
 		}
-		.padding(.leading, MaskinSpace.s9)
-		.padding(.trailing, MaskinSpace.s3)
-		.padding(.vertical, MaskinSpace.s2)
+		.padding(.bottom, MaskinSpace.s14)
+		.opacity(dragY == 0 ? 1 : 0.4)
 	}
 
-	private func barButton(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
+	private func circleLabel(_ symbol: String) -> some View {
+		Image(systemName: symbol).maskinSymbol(MaskinFontSize.t18, weight: .medium)
+			.foregroundStyle(MaskinColor.ink)
+			.frame(width: Self.actionSize, height: Self.actionSize)
+			.background(MaskinSurface.fill, in: Circle())
+	}
+
+	private func circle(_ symbol: String, label: String, size: CGFloat, action: @escaping () -> Void) -> some View {
 		Button(action: action) {
 			Image(systemName: symbol).maskinSymbol(MaskinFontSize.t16, weight: .semibold)
-				.foregroundStyle(MaskinColor.ink3)
-				.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
-				.contentShape(Rectangle())
+				.foregroundStyle(MaskinColor.ink)
+				.frame(width: size, height: size)
+				.background(MaskinSurface.fill, in: Circle())
+				.contentShape(Circle())
 		}
 		.buttonStyle(.maskinPressed)
 		.accessibilityLabel(label)
@@ -422,11 +458,9 @@ struct ImageViewer: View {
 		ImagePhaseReader(file: file) { phase in
 			switch phase {
 			case .loaded(let image):
-				Image(decorative: image.cgImage, scale: 3).resizable().scaledToFit()
-					.clipShape(RoundedRectangle(cornerRadius: MaskinRadius.panelLg, style: .continuous))
-					.tileHairline(radius: MaskinRadius.panelLg)
-					.padding(MaskinSpace.s9)
+				ZoomableImage(image: image, zoomed: $zoomed, dragY: $dragY, onClose: { dismiss() })
 					.accessibilityLabel("Image, \(file.name ?? "")")
+					.onAppear { if file.id == current.id { sharing = image } }
 			case .loading:
 				ProgressView()
 			case .broken:
@@ -436,23 +470,62 @@ struct ImageViewer: View {
 		}
 		.frame(maxWidth: .infinity, maxHeight: .infinity)
 	}
+}
 
-	private func step(_ delta: Int, symbol: String, label: String) -> some View {
-		let target = index + delta
-		return Button {
-			withAnimation(MaskinMotion.standard) { index = target }
-		} label: {
-			Image(systemName: symbol).maskinSymbol(MaskinFontSize.t16, weight: .semibold)
-				.foregroundStyle(MaskinColor.ink)
-				.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
-				.background(MaskinSurface.card, in: Circle())
-				.overlay(Circle().strokeBorder(MaskinSurface.line, lineWidth: 1))
-		}
-		.buttonStyle(.maskinPressed)
-		.opacity(files.indices.contains(target) ? 1 : 0)
-		.disabled(!files.indices.contains(target))
-		.accessibilityLabel(label)
-		.accessibilityHidden(!files.indices.contains(target))
+/// One picture that pinches to zoom, double-taps between fit and 2.5x, pans while zoomed, and, at
+/// fit size, follows a downward drag that closes the viewer past a threshold.
+private struct ZoomableImage: View {
+	let image: DecodedImage
+	@Binding var zoomed: Bool
+	@Binding var dragY: CGFloat
+	let onClose: () -> Void
+	@State private var scale: CGFloat = 1
+	@GestureState private var pinch: CGFloat = 1
+	@State private var pan: CGSize = .zero
+	@GestureState private var panning: CGSize = .zero
+
+	private static let maxScale: CGFloat = 5
+	private static let closeDistance: CGFloat = 120
+
+	var body: some View {
+		let live = min(max(scale * pinch, 1), Self.maxScale)
+		Image(decorative: image.cgImage, scale: 3).resizable().scaledToFit()
+			.scaleEffect(live)
+			.offset(
+				x: live > 1 ? pan.width + panning.width : 0,
+				y: live > 1 ? pan.height + panning.height : dragY
+			)
+			.gesture(
+				MagnifyGesture()
+					.updating($pinch) { value, state, _ in state = value.magnification }
+					.onEnded { value in
+						scale = min(max(scale * value.magnification, 1), Self.maxScale)
+						if scale == 1 { pan = .zero }
+						zoomed = scale > 1
+					}
+			)
+			.simultaneousGesture(
+				DragGesture()
+					.updating($panning) { value, state, _ in if scale > 1 { state = value.translation } }
+					.onChanged { value in if scale == 1 { dragY = value.translation.height } }
+					.onEnded { value in
+						if scale > 1 {
+							pan = CGSize(width: pan.width + value.translation.width, height: pan.height + value.translation.height)
+						} else if abs(value.translation.height) > Self.closeDistance {
+							onClose()
+						} else {
+							withAnimation(MaskinMotion.standard) { dragY = 0 }
+						}
+					}
+			)
+			.onTapGesture(count: 2) {
+				withAnimation(MaskinMotion.standard) {
+					scale = scale > 1 ? 1 : 2.5
+					pan = .zero
+					zoomed = scale > 1
+				}
+			}
+			.frame(maxWidth: .infinity, maxHeight: .infinity)
 	}
 }
 
@@ -652,6 +725,7 @@ struct MessageAttachments: View {
 	var threadWidth: CGFloat = 0
 	var transfer: AttachmentTransfer = .ready
 	var onRetry: () -> Void = {}
+	var caption: String?
 	@Environment(\.openAttachment) private var open
 
 	var body: some View {
@@ -662,7 +736,7 @@ struct MessageAttachments: View {
 				if !photos.isEmpty {
 					MessageImageBlock(
 						images: photos, width: AttachmentLayout.width(thread: threadWidth, fraction: AttachmentLayout.imageFraction),
-						transfer: transfer, onRetry: onRetry)
+						transfer: transfer, onRetry: onRetry, caption: caption)
 				}
 				ForEach(files) { file in
 					MessageFileCard(

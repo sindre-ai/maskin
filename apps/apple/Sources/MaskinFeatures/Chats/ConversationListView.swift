@@ -36,7 +36,6 @@ struct ConversationListView: View {
 	@State private var undoOffer: UndoOffer?
 	@State private var expandedPeople: Set<String> = []
 	@State private var expandedSections: Set<String> = []
-	@State private var archivedExpanded = false
 	@State private var menuTarget: TeamRowMenuTarget?
 	@State private var deleteTarget: DeleteTarget?
 
@@ -65,111 +64,35 @@ struct ConversationListView: View {
 			if !isLive {
 				OfflineBanner(message: "Live updates paused. Reconnecting…").plainRow()
 			}
-			if store.displayOptions.showsFilterChips, pillPlacement == .top, !picking.isActive {
-				TeamFilterChips(
-					chip: $store.chip, unreadCount: layout.unreadCount,
-					threadsUnread: store.threadSections.unreadCount, onThreads: onThreads)
-					.plainRow(insets: EdgeInsets(top: 0, leading: 0, bottom: MaskinSpace.s4, trailing: 0))
-			}
-			if let onThreads, !store.displayOptions.showsFilterChips, !store.threads.isEmpty, !picking.isActive {
-				ThreadsEntryRow(unread: store.threadSections.unreadCount, onOpen: onThreads)
-					.plainRow(insets: EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
-			}
-			if !layout.tiles.isEmpty {
-				Section {
-					PinnedTiles(
-						tiles: layout.tiles, currentActorID: currentActorID, workingAgentIDs: store.workingAgentIDs,
-						picking: picking.isActive ? picking : nil,
-						onOpen: { tile in
-							if picking.isActive {
-								if case .conversation(let c) = tile.kind { picking.toggle(c.id) }
-							} else {
-								open(tile: tile)
-							}
-						},
-						onMove: { id, before in store.movePin(id, before: before, tiles: layout.tiles.map(\.id)) }
-					) { tile in
-						TeamRowMenuItems(actions: actions(for: tile, among: layout.tiles.map(\.id)))
-					}
-					.plainRow(insets: EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
-				} header: {
-					TeamSectionHeader(label: "Pinned", count: nil)
-				}
-			}
-			ForEach(layout.sections) { section in
-				Section {
-					ForEach(section.rows) { row in
-						rowView(row, now: now)
-					}
-					if let footer = section.canCollapse ? "Show fewer" : section.moreLabel {
-						Button {
-							withAnimation(MaskinMotion.standard) {
-								if section.canCollapse { expandedSections.remove(section.id) } else { expandedSections.insert(section.id) }
-							}
-						} label: {
-							HStack(spacing: MaskinSpace.s5) {
-								Text(footer)
-									.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold, relativeTo: .subheadline))
-									.foregroundStyle(MaskinColor.ink2)
-								Spacer()
-								Image(systemName: "chevron.right")
-									.maskinSymbol(MaskinFontSize.t13, weight: .semibold)
-									.foregroundStyle(MaskinColor.inkPlaceholder)
-									.rotationEffect(.degrees(section.canCollapse ? -90 : 90))
-							}
-							.frame(minHeight: MaskinSpace.touchMin - MaskinSpace.s12)
-							.contentShape(Rectangle())
-						}
-						.buttonStyle(.maskinPressed)
-						.rowChrome()
-					}
-				} header: {
-					TeamSectionHeader(
-						label: section.label, count: section.count,
-						countColor: section.kind == .unread ? MaskinColor.sig : MaskinColor.inkPlaceholder
-					) {
-						if section.showsMarkAllRead, !picking.isActive {
-							Button("Mark all read") {
-								MaskinHaptics.play(.selection)
-								Task { await store.markRead(section.unreadConversationIDs) }
-							}
-							.buttonStyle(.maskinPressed)
-							.maskinText(.subhead).fontWeight(.semibold)
-							.foregroundStyle(MaskinColor.ink4)
-						}
-					}
-				}
-			}
-			if let empty = layout.empty, store.phase == .loaded {
-				TeamEmptyState(empty: empty, onSuggestion: onSuggestion) { act(on: empty, query: search) }.plainRow()
-			}
-			if layout.showsArchived, !picking.isActive {
-				ArchivedRow(
-					items: layout.isFiltering ? layout.archivedMatches : store.archivedConversations,
-					currentActorID: currentActorID, expanded: $archivedExpanded, forceExpanded: layout.isFiltering,
-					onUnarchive: { item in
-						Task {
-							if await store.setArchived(item.id, false) {
-								undoOffer = UndoOffer(message: "Unarchived. Undo.") { _ = await store.setArchived(item.id, true) }
-							}
-						}
-					},
-					onOpen: { item in selection = item.id })
-				.plainRow(insets: EdgeInsets(top: MaskinSpace.s3, leading: MaskinSpace.s9, bottom: MaskinSpace.s3, trailing: MaskinSpace.s9))
+			if store.showsArchivedList {
+				archivedSection
+			} else {
+				activeContent(layout: layout, now: now)
 			}
 		}
 		#if os(iOS)
-		.listStyle(.insetGrouped)
-		.listSectionSpacing(MaskinSpace.s11 + MaskinSpace.s1)
+		// v3: edge-to-edge rows with hairlines on the page, not cards in an inset group.
+		.listStyle(.plain)
 		#else
 		.listStyle(.inset)
 		#endif
 		.scrollContentBackground(.hidden)
+		// Groups sit close: the plain list's header minimum and section gap are what made them drift apart.
+		.environment(\.defaultMinListHeaderHeight, MaskinSpace.s1)
+		#if os(iOS)
+		.listSectionSpacing(.compact)
+		#endif
 		.ambientBackground()
-		.teamSearch(text: $search)
+		// v3 has no search field on Chats: Search is its own tab. `teamSearch` stays for callers that want it.
 		// A search looks through every archived chat, so the pages past the first are fetched.
 		.task(id: !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
 			if !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { await store.loadMoreArchived() }
+		}
+		.task(id: store.showsArchivedList) {
+			if store.showsArchivedList {
+				await store.refreshArchived()
+				await store.loadMoreArchived()
+			}
 		}
 		.overlay { overlay }
 		.refreshable { await store.refresh() }
@@ -197,7 +120,7 @@ struct ConversationListView: View {
 				Task { for id in target.conversationIDs { await store.delete(id) } }
 			}
 		} message: { _ in
-			Text("It disappears from Team. This can't be undone.")
+			Text("It disappears from your chats. This can't be undone.")
 		}
 	}
 
@@ -242,7 +165,7 @@ struct ConversationListView: View {
 					Label("New conversation", systemImage: "plus")
 						.maskinText(.subhead).fontWeight(.semibold)
 						.foregroundStyle(MaskinColor.sigInk)
-						.padding(.leading, ConversationRow.clusterWidth + MaskinSpace.s7)
+						.padding(.leading, ConversationRow.clusterWidth + MaskinSpace.s8)
 						.frame(maxWidth: .infinity, alignment: .leading)
 						.contentShape(Rectangle())
 				}
@@ -408,6 +331,110 @@ struct ConversationListView: View {
 		.disabled(picking.isEmpty)
 	}
 
+	@ViewBuilder
+	private func sectionFooter(_ section: TeamLayout.Section) -> some View {
+		if let footer = section.canCollapse ? "Show fewer" : section.moreLabel {
+			Button {
+				withAnimation(MaskinMotion.standard) {
+					if section.canCollapse { expandedSections.remove(section.id) } else { expandedSections.insert(section.id) }
+				}
+			} label: {
+				HStack(spacing: MaskinSpace.s5) {
+					Text(footer)
+						.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold, relativeTo: .subheadline))
+						.foregroundStyle(MaskinColor.ink2)
+					Spacer()
+					Image(systemName: "chevron.right")
+						.maskinSymbol(MaskinFontSize.t13, weight: .semibold)
+						.foregroundStyle(MaskinColor.inkPlaceholder)
+						.rotationEffect(.degrees(section.canCollapse ? -90 : 90))
+				}
+				.frame(minHeight: MaskinSpace.touchMin - MaskinSpace.s12)
+				.contentShape(Rectangle())
+			}
+			.buttonStyle(.maskinPressed)
+			.rowChrome()
+		}
+	}
+
+	/// The active chats: filter chips, pinned tiles, then the day or person sections.
+	@ViewBuilder
+	private func activeContent(layout: TeamLayout, now: Date) -> some View {
+			if store.displayOptions.showsFilterChips, pillPlacement == .top, !picking.isActive {
+				TeamFilterChips(
+					chip: $store.chip, unreadCount: layout.unreadCount,
+					threadsUnread: store.threadSections.unreadCount, onThreads: onThreads)
+					.plainRow(insets: EdgeInsets(top: 0, leading: 0, bottom: MaskinSpace.s4, trailing: 0))
+			}
+			if let onThreads, !store.displayOptions.showsFilterChips, !store.threads.isEmpty, !picking.isActive {
+				ThreadsEntryRow(unread: store.threadSections.unreadCount, onOpen: onThreads)
+					.plainRow(insets: EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
+			}
+			if !layout.tiles.isEmpty {
+				Section {
+					PinnedTiles(
+						tiles: layout.tiles, currentActorID: currentActorID, workingAgentIDs: store.workingAgentIDs,
+						picking: picking.isActive ? picking : nil,
+						onOpen: { tile in
+							if picking.isActive {
+								if case .conversation(let c) = tile.kind { picking.toggle(c.id) }
+							} else {
+								open(tile: tile)
+							}
+						},
+						onMove: { id, before in store.movePin(id, before: before, tiles: layout.tiles.map(\.id)) }
+					) { tile in
+						TeamRowMenuItems(actions: actions(for: tile, among: layout.tiles.map(\.id)))
+					}
+					.plainRow(insets: EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
+				} header: {
+					TeamSectionHeader(label: "Pinned", count: layout.tiles.count)
+				}
+			}
+			ForEach(layout.sections) { section in
+				Section {
+					ForEach(section.rows) { row in
+						rowView(row, now: now)
+					}
+					sectionFooter(section)
+				} header: {
+					TeamSectionHeader(
+						label: section.label, count: section.count,
+						countColor: section.kind == .unread ? MaskinColor.sig : MaskinColor.inkPlaceholder)
+				}
+			}
+			if let empty = layout.empty, store.phase == .loaded {
+				TeamEmptyState(empty: empty, onSuggestion: onSuggestion) { act(on: empty, query: search) }.plainRow()
+			}
+	}
+
+	/// The archive, reached from Display > Chats > Archived: a flat list, each row opens or unarchives.
+	@ViewBuilder
+	private var archivedSection: some View {
+		Section {
+			if store.archivedConversations.isEmpty {
+				Text("No archived chats")
+					.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+					.plainRow(insets: EdgeInsets(top: MaskinSpace.s4, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
+			} else {
+				ArchivedRow(
+					items: store.archivedConversations, currentActorID: currentActorID,
+					expanded: .constant(true), showsHeader: false,
+					onUnarchive: { item in
+						Task {
+							if await store.setArchived(item.id, false) {
+								undoOffer = UndoOffer(message: "Unarchived. Undo.") { _ = await store.setArchived(item.id, true) }
+							}
+						}
+					},
+					onOpen: { item in selection = item.id })
+				.plainRow(insets: EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: 0, trailing: MaskinSpace.s9))
+			}
+		} header: {
+			TeamSectionHeader(label: "Archived", count: store.archivedConversations.count)
+		}
+	}
+
 	private func run(_ ids: [String], _ action: @escaping ([String]) async -> BulkResult) {
 		MaskinHaptics.play(.selection)
 		picking.exit()
@@ -431,7 +458,7 @@ struct ConversationListView: View {
 			if store.conversations.isEmpty { LoadingSkeleton(rows: 4).padding(MaskinSpace.s9) }
 		case .failed(let reason):
 			EmptyState(
-				symbol: "wifi.exclamationmark", title: "Couldn't load Team", message: Self.failureMessage(reason)) {
+				symbol: "wifi.exclamationmark", title: "Couldn't load chats", message: Self.failureMessage(reason)) {
 				Button("Try again") { Task { await store.refresh() } }.buttonStyle(.secondaryAction)
 			}
 		case .loaded:
@@ -460,6 +487,9 @@ struct ChatsDisplaySheet: View {
 			}
 			DisplaySection(title: "Filters") {
 				DisplayChoice(
+					label: "Chats", options: [(false, "Active"), (true, "Archived")],
+					selection: $store.showsArchivedList)
+				DisplayChoice(
 					label: "Show", options: [(false, "All chats"), (true, "Unread")],
 					selection: $store.displayOptions.unreadOnly)
 				DisplayChoice(
@@ -479,10 +509,10 @@ struct ChatsDisplaySheet: View {
 }
 
 extension View {
-	/// The list row look every Team row shares: card fill, hairline, 12 x 16 padding.
+	/// The list row look every Team row shares: edge to edge, hairline, 12 x 16 padding.
 	fileprivate func rowChrome() -> some View {
-		listRowBackground(MaskinSurface.card)
-			.listRowSeparatorTint(MaskinSurface.separator)
+		listRowBackground(Color.clear)
+			.listRowSeparator(.hidden)
 			.listRowInsets(
 				EdgeInsets(
 					top: MaskinSpace.s7, leading: MaskinSpace.s9, bottom: MaskinSpace.s7,
@@ -497,7 +527,7 @@ extension View {
 	}
 }
 
-/// A section header in the Team list: a mono label, its count and an optional action.
+/// A section header in the Team list: a sentence-case label, its count and an optional action (v3).
 struct TeamSectionHeader<Trailing: View>: View {
 	let label: String
 	let count: Int?
@@ -506,12 +536,20 @@ struct TeamSectionHeader<Trailing: View>: View {
 
 	var body: some View {
 		HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s4) {
-			MonoLabel(label, color: MaskinColor.ink5, size: .section)
-			if let count { MonoLabel("\(count)", color: countColor, size: .section) }
+			Text(label)
+				.maskinText(.subhead).fontWeight(.semibold)
+				.foregroundStyle(MaskinColor.ink3)
+			if let count {
+				Text("\(count)")
+					.maskinText(.subhead)
+					.monospacedDigit()
+					.foregroundStyle(countColor)
+			}
 			Spacer(minLength: 0)
 			trailing
 		}
 		.textCase(nil)
+		.padding(.top, MaskinSpace.s3)
 		.accessibilityElement(children: .combine)
 		.accessibilityAddTraits(.isHeader)
 	}
@@ -549,7 +587,7 @@ struct TeamConversationRow: View {
 				if conversation.isUnread { UnreadBadge(count: conversation.unreadCount) }
 			}
 		}
-		.padding(.leading, ConversationRow.clusterWidth + MaskinSpace.s7)
+		.padding(.leading, ConversationRow.clusterWidth + MaskinSpace.s8)
 		.contentShape(Rectangle())
 		.maskinHover()
 		.accessibilityElement(children: .combine)

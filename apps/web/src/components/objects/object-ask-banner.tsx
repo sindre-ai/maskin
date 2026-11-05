@@ -1,6 +1,8 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/cn'
 import { ArrowDown } from 'lucide-react'
+import { useLayoutEffect, useRef, useState } from 'react'
 
 interface ObjectAskBannerProps {
 	question: string
@@ -15,9 +17,9 @@ interface ObjectAskBannerProps {
 /**
  * The open ask, one line under the title (mockup 1097–1104): avatar, a bolded
  * lead ("<Agent> asks · ") running straight into the question on a single
- * truncated line, and the jump-to-answer button. It is a pointer to the ask
- * further down the timeline, not the ask itself — so it never wraps to two
- * lines and never grows past 26px of button.
+ * truncated line, and the jump-to-answer button. A question that does not fit
+ * on the line gets a "Show all" toggle that expands it in place, so a long
+ * welcome can be read without leaving the banner.
  */
 export function ObjectAskBanner({
 	question,
@@ -26,6 +28,23 @@ export function ObjectAskBanner({
 	actorId,
 	actorType,
 }: ObjectAskBannerProps) {
+	const textRef = useRef<HTMLParagraphElement>(null)
+	const [expanded, setExpanded] = useState(false)
+	const [overflows, setOverflows] = useState(false)
+
+	// Measured while collapsed: the toggle only appears when the line is cut.
+	// Re-measured on resize, since phone and desktop widths cut at different points.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: re-measure when the text changes.
+	useLayoutEffect(() => {
+		if (expanded) return
+		const el = textRef.current
+		if (!el) return
+		const measure = () => setOverflows(el.scrollWidth > el.clientWidth)
+		measure()
+		window.addEventListener('resize', measure)
+		return () => window.removeEventListener('resize', measure)
+	}, [expanded, question, actorName])
+
 	return (
 		<div className="mt-3.5 flex flex-wrap items-center gap-2 rounded-[11px] border border-ask-border bg-ask-surface px-[11px] py-[9px]">
 			{actorName && (
@@ -37,12 +56,28 @@ export function ObjectAskBanner({
 					className="size-5 shrink-0 text-[8.5px]"
 				/>
 			)}
-			<p className="min-w-0 flex-1 truncate text-[11.5px] leading-[1.45] text-muted-foreground">
+			<p
+				ref={textRef}
+				className={cn(
+					'min-w-0 flex-1 text-[11.5px] leading-[1.45] text-muted-foreground',
+					expanded ? 'whitespace-pre-wrap break-words' : 'truncate',
+				)}
+			>
 				<span className="font-bold text-foreground">
 					{actorName ? `${actorName} asks` : 'Open question'} ·{' '}
 				</span>
 				{question}
 			</p>
+			{(overflows || expanded) && (
+				<button
+					type="button"
+					onClick={() => setExpanded((v) => !v)}
+					aria-expanded={expanded}
+					className="shrink-0 text-[11.5px] font-semibold text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+				>
+					{expanded ? 'Show less' : 'Show all'}
+				</button>
+			)}
 			<Button
 				size="sm"
 				onClick={onAnswerClick}
