@@ -2,6 +2,7 @@ import { LoopCustomView } from '@/components/loops/loop-custom-view'
 import type { FileDetail } from '@/lib/api'
 import { api } from '@/lib/api'
 import { BRIDGE_QUERY_MESSAGE, ISOLATION_LOAD_MESSAGE, MINI_APP_CSP } from '@/lib/mini-app'
+import { dataQuerySpecSchema } from '@maskin/shared'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
@@ -240,7 +241,10 @@ describe('LoopCustomView', () => {
 		})
 
 		describe('saved answers', () => {
-			const SPEC_KEY = JSON.stringify({ type: 'task', group_by: 'status' })
+			// The host keys the cache by the spec as parsed, so the schema's defaults are part of the key.
+			const SPEC_KEY = JSON.stringify(
+				dataQuerySpecSchema.parse({ type: 'task', group_by: 'status' }),
+			)
 			const savedAt = new Date(2026, 10, 4, 9, 5).getTime()
 
 			function save(result: object) {
