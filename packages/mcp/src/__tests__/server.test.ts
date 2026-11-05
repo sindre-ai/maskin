@@ -1916,7 +1916,49 @@ describe('tool handlers', () => {
 				wait_for_status: ['done'],
 			})) as { structuredContent: { wait: { settled: boolean; reason?: string } } }
 			expect(pollCount(spy)).toBe(1)
-			expect(result.structuredContent.wait).toMatchObject({ settled: false, reason: 'not_found' })
+			expect(result.structuredContent.wait).toMatchObject({
+				settled: false,
+				reason: 'not_found',
+				missing_ids: ['bet-1'],
+			})
+		})
+
+		it('gives up with reason status_check_failed after repeated failed checks', async () => {
+			vi.useFakeTimers()
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				if ((url as string).endsWith('/api/objects/bet-1')) {
+					return { ok: false, status: 502, text: () => Promise.resolve('Bad gateway') } as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			vi.spyOn(console, 'error').mockImplementation(() => {})
+			const promise = getHandler('get_objects')({
+				ids: ['bet-1'],
+				wait_for_status: ['done'],
+			}) as Promise<{ structuredContent: { wait: { reason?: string } } }>
+			await vi.advanceTimersByTimeAsync(60_000)
+			const result = await promise
+			expect(result.structuredContent.wait.reason).toBe('status_check_failed')
+		})
+
+		it('stops at the deadline even when a status check never answers', async () => {
+			vi.useFakeTimers()
+			vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+				if ((url as string).endsWith('/api/objects/bet-1')) return new Promise<Response>(() => {})
+				return Promise.resolve({ ok: true, json: () => Promise.resolve([]) } as Response)
+			})
+			const promise = getHandler('get_objects')({
+				ids: ['bet-1'],
+				wait_for_status: ['done'],
+				wait_timeout_seconds: 8,
+			}) as Promise<{ structuredContent: { wait: unknown } }>
+			await vi.advanceTimersByTimeAsync(9_000)
+			const result = await promise
+			expect(result.structuredContent.wait).toEqual({
+				settled: false,
+				waited_seconds: 8,
+				reason: 'timeout',
+			})
 		})
 	})
 

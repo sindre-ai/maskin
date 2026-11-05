@@ -1343,12 +1343,15 @@ type ObjectWaitResult = {
 	settled: boolean
 	waited_seconds: number
 	reason?: 'timeout' | 'not_found' | 'status_check_failed'
+	/** With reason `not_found`: the ids the API said do not exist. */
+	missing_ids?: string[]
 }
 
 /**
  * The `wait_for_status` path of `get_objects`: polls until every object has one of the
  * wanted statuses. Unlike a session, an object never ends on its own, so the wait is
- * bounded by `timeoutMs`. Stops early on a missing object or repeated failed checks.
+ * bounded by `timeoutMs`, including a single check that hangs. Stops early on a missing
+ * object or repeated failed checks.
  */
 async function waitForObjectStatus(
 	config: McpConfig,
@@ -1368,25 +1371,61 @@ async function waitForObjectStatus(
 	let pollFailures = 0
 	let attempt = 0
 
+	// One round of checks, cut off at the deadline so a request that never answers
+	// cannot hold the call past `wait_timeout_seconds`.
+	const checkPending = async () => {
+		let timer: ReturnType<typeof setTimeout> | undefined
+		const expired = new Promise<'timeout'>((resolve) => {
+			timer = setTimeout(() => resolve('timeout'), Math.max(deadline - Date.now(), 0))
+		})
+		try {
+			return await Promise.race([
+				expired,
+				Promise.all(
+					pending.map(async (id) => {
+						try {
+							const row = (await apiCall(
+								config,
+								'GET',
+								`/api/objects/${id}`,
+								undefined,
+								wsOpts,
+							)) as { status?: string | null }
+							return { id, reached: wanted.has(row.status ?? ''), missing: false }
+						} catch (err) {
+							// The normal get_objects read that follows reports the missing object per id.
+							if (/API error 404/.test(err instanceof Error ? err.message : String(err))) {
+								return { id, reached: false, missing: true }
+							}
+							throw err
+						}
+					}),
+				),
+			])
+		} finally {
+			clearTimeout(timer)
+		}
+	}
+
 	while (true) {
 		try {
-			const rows = await Promise.all(
-				pending.map(async (id) => {
-					const row = (await apiCall(config, 'GET', `/api/objects/${id}`, undefined, wsOpts)) as {
-						status?: string | null
-					}
-					return { id, reached: wanted.has(row.status ?? '') }
-				}),
-			)
+			const rows = await checkPending()
+			if (rows === 'timeout') {
+				return { settled: false, waited_seconds: elapsed(), reason: 'timeout' }
+			}
 			pollFailures = 0
+			const missing = rows.filter((r) => r.missing).map((r) => r.id)
+			if (missing.length > 0) {
+				return {
+					settled: false,
+					waited_seconds: elapsed(),
+					reason: 'not_found',
+					missing_ids: missing,
+				}
+			}
 			pending = rows.filter((r) => !r.reached).map((r) => r.id)
 			if (pending.length === 0) return { settled: true, waited_seconds: elapsed() }
 		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			// The normal get_objects read that follows reports the missing object per id.
-			if (/API error 404/.test(message)) {
-				return { settled: false, waited_seconds: elapsed(), reason: 'not_found' }
-			}
 			pollFailures += 1
 			if (pollFailures >= MAX_POLL_FAILURES) {
 				console.error('get_objects: gave up polling object status', err)

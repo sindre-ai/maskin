@@ -440,7 +440,7 @@ export const tools = {
 				.max(20)
 				.optional()
 				.describe(
-					'Hold until every object in `ids` has one of these statuses (for example ["done"] or ["done", "cancelled"]), then return the objects as usual. List every status you would accept: an object that never reaches one holds the call for the whole `wait_timeout_seconds`. The response carries `wait: { settled, waited_seconds, reason? }`; settled false means the wait stopped first (reason: timeout, not_found or status_check_failed) and the objects show where they are now. Only use this when you cannot go on until the object moves.',
+					'Hold until every object in `ids` has one of these statuses (for example ["done"] or ["done", "cancelled"]), then return the objects as usual. List every status you would accept: an object that never reaches one holds the call for the whole `wait_timeout_seconds`. The response carries `wait: { settled, waited_seconds, reason? }`; settled false means the wait stopped first (reason: timeout, not_found with `missing_ids`, or status_check_failed) and the objects show where they are now. An object counts once it has had one of these statuses at a check; it is not rechecked after. Only use this when you cannot go on until the object moves.',
 				),
 			wait_timeout_seconds: z
 				.number()
