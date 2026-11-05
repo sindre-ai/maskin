@@ -1817,6 +1817,109 @@ describe('tool handlers', () => {
 		})
 	})
 
+	describe('get_objects handler (wait_for_status)', () => {
+		// The status the object has at each poll of GET /api/objects/:id, in order; the last repeats.
+		const objectStatuses = (statuses: Array<string | 404>) => {
+			let polls = 0
+			return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.endsWith('/graph')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								object: {
+									id: 'bet-1',
+									type: 'bet',
+									title: 'Bet',
+									status: 'done',
+									workspaceId: 'ws',
+								},
+							}),
+					} as Response
+				}
+				if (urlStr.endsWith('/api/objects/bet-1')) {
+					const next = statuses[Math.min(polls++, statuses.length - 1)]
+					if (next === 404) {
+						return { ok: false, status: 404, text: () => Promise.resolve('Not found') } as Response
+					}
+					return {
+						ok: true,
+						json: () => Promise.resolve({ id: 'bet-1', status: next }),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+		}
+		const pollCount = (spy: { mock: { calls: unknown[][] } }) =>
+			spy.mock.calls.filter(([url]) => (url as string).endsWith('/api/objects/bet-1')).length
+
+		afterEach(() => vi.useRealTimers())
+
+		it('without wait_for_status: no polling and no wait block', async () => {
+			const spy = objectStatuses(['active'])
+			const result = (await getHandler('get_objects')({ ids: ['bet-1'] })) as {
+				content: Array<{ text: string }>
+				structuredContent: Record<string, unknown>
+			}
+			expect(pollCount(spy)).toBe(0)
+			expect(result.content).toHaveLength(1)
+			expect(result.structuredContent).not.toHaveProperty('wait')
+		})
+
+		it('returns settled once the object reaches a wanted status', async () => {
+			vi.useFakeTimers()
+			const spy = objectStatuses(['active', 'active', 'done'])
+			const promise = getHandler('get_objects')({
+				ids: ['bet-1'],
+				wait_for_status: ['done', 'cancelled'],
+			}) as Promise<{ content: Array<{ text: string }>; structuredContent: { wait: unknown } }>
+			await vi.advanceTimersByTimeAsync(10_000)
+			const result = await promise
+
+			expect(pollCount(spy)).toBe(3)
+			expect(result.structuredContent.wait).toEqual({ settled: true, waited_seconds: 10 })
+			expect(JSON.parse(result.content[1].text)).toEqual({ wait: result.structuredContent.wait })
+		})
+
+		it('checks once before sleeping, so an object already there returns at once', async () => {
+			const spy = objectStatuses(['done'])
+			const result = (await getHandler('get_objects')({
+				ids: ['bet-1'],
+				wait_for_status: ['done'],
+			})) as { structuredContent: { wait: { settled: boolean } } }
+			expect(pollCount(spy)).toBe(1)
+			expect(result.structuredContent.wait.settled).toBe(true)
+		})
+
+		it('stops with settled false and reason timeout when the status never comes', async () => {
+			vi.useFakeTimers()
+			objectStatuses(['active'])
+			const promise = getHandler('get_objects')({
+				ids: ['bet-1'],
+				wait_for_status: ['done'],
+				wait_timeout_seconds: 12,
+			}) as Promise<{ structuredContent: { wait: unknown } }>
+			await vi.advanceTimersByTimeAsync(20_000)
+			const result = await promise
+			expect(result.structuredContent.wait).toEqual({
+				settled: false,
+				waited_seconds: 12,
+				reason: 'timeout',
+			})
+		})
+
+		it('stops at once with reason not_found when the object does not exist', async () => {
+			const spy = objectStatuses([404])
+			const result = (await getHandler('get_objects')({
+				ids: ['bet-1'],
+				wait_for_status: ['done'],
+			})) as { structuredContent: { wait: { settled: boolean; reason?: string } } }
+			expect(pollCount(spy)).toBe(1)
+			expect(result.structuredContent.wait).toMatchObject({ settled: false, reason: 'not_found' })
+		})
+	})
+
 	describe('get_objects handler (partial failure)', () => {
 		it('returns a structured error for failed IDs without rejecting', async () => {
 			vi.spyOn(globalThis, 'fetch')
