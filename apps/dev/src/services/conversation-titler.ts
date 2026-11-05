@@ -272,20 +272,30 @@ export async function maybeGenerateConversationTitle(ctx: {
 
 		// No agent config: the workspace's own key if it has a usable one, else
 		// the operator's small model (see resolveOperatorTitleCredentials).
-		// Titling isn't attributable to any one agent.
-		const credentials =
-			resolveChatCredentials({
-				wsSettings,
-				// Absent row => treat as entitled, i.e. refuse the Maskin key.
-				// Titling degrades to a placeholder title, which is the safe
-				// direction when we can't read the workspace.
-				workspace: {
-					enterpriseGranted: ws ? ws.enterpriseGranted : true,
-					billingOwnerId: ws?.billingOwnerId ?? null,
-				},
-				agent: { provider: null, apiKey: null, model: null },
-			}) ?? resolveOperatorTitleCredentials()
-		if (!credentials) {
+		// Titling isn't attributable to any one agent. The operator route is also
+		// the second try when the workspace's own route fails: a saved endpoint
+		// that is merely mis-typed (an OpenRouter base URL without /v1) is still a
+		// credential, so it would otherwise shadow the operator key forever.
+		const workspaceCredentials = resolveChatCredentials({
+			wsSettings,
+			// Absent row => treat as entitled, i.e. refuse the Maskin key.
+			// Titling degrades to a placeholder title, which is the safe
+			// direction when we can't read the workspace.
+			workspace: {
+				enterpriseGranted: ws ? ws.enterpriseGranted : true,
+				billingOwnerId: ws?.billingOwnerId ?? null,
+			},
+			agent: { provider: null, apiKey: null, model: null },
+		})
+		const operatorCredentials = resolveOperatorTitleCredentials()
+		const routes: { route: 'workspace' | 'operator'; credentials: ChatCredentials }[] = []
+		if (workspaceCredentials) routes.push({ route: 'workspace', credentials: workspaceCredentials })
+		// The workspace already resolved to the operator key (Maskin-funded plan):
+		// a second identical call would only repeat the failure.
+		if (operatorCredentials && operatorCredentials.apiKey !== workspaceCredentials?.apiKey) {
+			routes.push({ route: 'operator', credentials: operatorCredentials })
+		}
+		if (routes.length === 0) {
 			// No LLM route the same-process call can use (the operator key isn't
 			// configured either). Warn so an operator can tell
 			// titling took the LLM-less path, then still write a content-derived
@@ -311,38 +321,55 @@ export async function maybeGenerateConversationTitle(ctx: {
 			return
 		}
 
-		const adapter = createLLMAdapter(credentials.provider, {
-			api_key: credentials.apiKey,
-			base_url: credentials.baseUrl,
-			extra_body: credentials.providerPrefs && { provider: credentials.providerPrefs },
-		})
-		const response = await withTimeout(
-			adapter.chat({
-				model: credentials.model,
-				temperature: 0,
-				tools: [SET_TITLE_TOOL],
-				messages: [
-					{ role: 'system', content: SYSTEM_PROMPT },
-					{ role: 'user', content: `Conversation:\n${formatConversationTranscript(historyRows)}` },
-				],
-			}),
-			TITLE_CALL_TIMEOUT_MS,
-		)
-
-		const call = response.tool_calls.find((tc) => tc.name === 'set_conversation_title')
-		const title = sanitizeTitle(call?.arguments.title)
-		if (!title) {
-			// A model that couldn't (or wouldn't) tool-call. The old behaviour
-			// released the claim and waited for the next message to try the same
-			// model again — reliably empty for workspaces routed at a model that
-			// simply doesn't emit tool calls for this prompt, which is how a
-			// conversation sits on the "New chat" placeholder for its whole life.
-			// Fall back to the deterministic first-message derivation so at
-			// least the initial pass always yields a content-based title.
+		let title: string | null = null
+		let lastError: unknown
+		for (const { route, credentials } of routes) {
+			try {
+				title = await requestTitle(credentials, historyRows)
+			} catch (err) {
+				// Network error, non-2xx, malformed response, or the timeout: infra,
+				// not the model's answer. Try the next route before giving up.
+				lastError = err
+				logger.warn('Conversation auto-title route failed', {
+					conversationId,
+					route,
+					model: credentials.model,
+					error: String(err),
+				})
+				continue
+			}
+			if (title) {
+				logger.info('Conversation auto-title generated', {
+					conversationId,
+					source: 'llm',
+					route,
+					model: credentials.model,
+					pass: target,
+				})
+				break
+			}
 			logger.warn('Conversation auto-title produced no usable title', {
 				conversationId,
+				route,
 				model: credentials.model,
 			})
+		}
+
+		if (!title) {
+			// No route produced a title. The old behaviour released the claim and
+			// waited for the next message to try the same model again — reliably
+			// empty for a workspace routed at a model that never answers, which is how
+			// a conversation sits on its placeholder for its whole life. Fall back to
+			// the deterministic first-message derivation so at least the initial pass
+			// always yields a content-based title.
+			if (lastError !== undefined) {
+				logger.error('Conversation auto-title failed', {
+					conversationId,
+					workspaceId,
+					titleCommitted: false,
+					error: String(lastError),
+				})
+			}
 			if (!(await applyDeterministicFallback())) await releaseClaim()
 			return
 		}
@@ -381,6 +408,32 @@ export async function maybeGenerateConversationTitle(ctx: {
 		}
 		await releaseClaim()
 	}
+}
+
+/** One titling call on one route. Throws on any provider or network failure. */
+async function requestTitle(
+	credentials: ChatCredentials,
+	historyRows: { actorName: string; content: string }[],
+): Promise<string | null> {
+	const adapter = createLLMAdapter(credentials.provider, {
+		api_key: credentials.apiKey,
+		base_url: credentials.baseUrl,
+		extra_body: credentials.providerPrefs && { provider: credentials.providerPrefs },
+	})
+	const response = await withTimeout(
+		adapter.chat({
+			model: credentials.model,
+			temperature: 0,
+			tools: [SET_TITLE_TOOL],
+			messages: [
+				{ role: 'system', content: SYSTEM_PROMPT },
+				{ role: 'user', content: `Conversation:\n${formatConversationTranscript(historyRows)}` },
+			],
+		}),
+		TITLE_CALL_TIMEOUT_MS,
+	)
+	const call = response.tool_calls.find((tc) => tc.name === 'set_conversation_title')
+	return sanitizeTitle(call?.arguments.title)
 }
 
 /**

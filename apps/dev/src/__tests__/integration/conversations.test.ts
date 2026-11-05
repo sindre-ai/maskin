@@ -2884,4 +2884,73 @@ describe('Conversations Integration', () => {
 			expect(await workingIn(otherChat)).toEqual([])
 		})
 	})
+
+	describe('list: preview skips messages the thread hides', () => {
+		async function previewOf(chatId: string) {
+			const { app } = createConversationsApp(ownerId)
+			const res = await app.request(
+				jsonGet('/api/conversations', { 'x-workspace-id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as {
+				conversations: Array<{
+					id: string
+					snippet: string | null
+					snippet_actor_id: string | null
+				}>
+			}
+			return body.conversations.find((c) => c.id === chatId)
+		}
+
+		async function chatWithCto() {
+			const cto = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, cto.id)
+			const developer = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, developer.id)
+			const { app } = createConversationsApp(ownerId)
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Status', participant_actor_ids: [cto.id], initial_message: 'status?' },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(201)
+			const chatId = ((await res.json()) as { id: string }).id
+			return { cto, developer, chatId }
+		}
+
+		it('previews the last message the thread shows, not a helper result handed to the agent', async () => {
+			const { cto, developer, chatId } = await chatWithCto()
+			await db
+				.insert(messages)
+				.values({ conversationId: chatId, actorId: cto.id, content: 'The fix is merged.' })
+			await db.insert(messages).values({
+				conversationId: chatId,
+				actorId: developer.id,
+				content: 'Developer finished the work you handed it.',
+				metadata: { helper_return: crypto.randomUUID() },
+			})
+
+			const row = await previewOf(chatId)
+			expect(row?.snippet).toBe('The fix is merged.')
+			expect(row?.snippet_actor_id).toBe(cto.id)
+		})
+
+		it('skips a card nudge hidden from the chat', async () => {
+			const { cto, chatId } = await chatWithCto()
+			await db
+				.insert(messages)
+				.values({ conversationId: chatId, actorId: cto.id, content: 'Allow this credential?' })
+			await db.insert(messages).values({
+				conversationId: chatId,
+				actorId: ownerId,
+				content: 'Not now',
+				metadata: { hidden_from_chat: true },
+			})
+
+			expect((await previewOf(chatId))?.snippet).toBe('Allow this credential?')
+		})
+	})
 })

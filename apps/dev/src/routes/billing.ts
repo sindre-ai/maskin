@@ -465,20 +465,31 @@ app.openapi(checkoutRoute, async (c) => {
 	}
 })
 
+// The schema only takes the widest range any currency allows. The exact
+// min/max for the chosen currency is checked in the handler, otherwise this
+// check would cap EUR/DKK callers at the USD maximum.
+const BUY_CREDITS_WIDEST_MIN_MINOR = Math.min(
+	CREDIT_TOPUP_MIN_USD * 100,
+	...Object.values(CREDIT_TOPUP_BOUNDS_MINOR).map((b) => b.min),
+)
+const BUY_CREDITS_WIDEST_MAX_MINOR = Math.max(
+	CREDIT_TOPUP_MAX_USD * 100,
+	...Object.values(CREDIT_TOPUP_BOUNDS_MINOR).map((b) => b.max),
+)
+
 const buyCreditsBodySchema = z.object({
 	amount_usd_cents: z
 		.number()
 		.int()
-		.min(CREDIT_TOPUP_MIN_USD * 100)
-		.max(CREDIT_TOPUP_MAX_USD * 100),
+		.min(BUY_CREDITS_WIDEST_MIN_MINOR)
+		.max(BUY_CREDITS_WIDEST_MAX_MINOR),
 	success_url: z.string().url(),
 	cancel_url: z.string().url(),
 	/**
 	 * Optional currency for the top-up (custom-amount top-up uses the
-	 * maskin_credits_custom Price). When set, the route re-validates the
-	 * amount against the per-currency bounds from CREDIT_TOPUP_BOUNDS_MINOR
-	 * (spec Delta 1b) so a EUR/DKK caller can't sneak in outside the
-	 * currency-specific min/max.
+	 * maskin_credits_custom Price). EUR/DKK amounts are checked against the
+	 * per-currency bounds from CREDIT_TOPUP_BOUNDS_MINOR (spec Delta 1b);
+	 * USD or no currency keeps the $10 to $500 range.
 	 */
 	currency: z.enum(['usd', 'eur', 'dkk']).optional(),
 })
@@ -525,20 +536,23 @@ app.openapi(buyCreditsRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const { amount_usd_cents, success_url, cancel_url, currency } = c.req.valid('json')
 
-	// Delta 1b currency-scoped bounds. The USD bounds already ran in
-	// buyCreditsBodySchema above; this adds the stricter per-currency min/max
-	// for EUR/DKK callers.
-	if (currency && currency !== 'usd') {
-		const bounds = CREDIT_TOPUP_BOUNDS_MINOR[currency as MaskinCreditsCurrency]
-		if (amount_usd_cents < bounds.min || amount_usd_cents > bounds.max) {
-			return c.json(
-				createApiError(
-					'BAD_REQUEST',
-					`amount_usd_cents must be between ${bounds.min} and ${bounds.max} for currency=${currency}`,
-				),
-				400,
-			)
-		}
+	// Delta 1b currency-scoped bounds. The body schema only enforces the widest
+	// range across currencies; USD (or no currency) keeps $10 to $500 and
+	// EUR/DKK use their own table entry.
+	const bounds =
+		currency && currency !== 'usd'
+			? CREDIT_TOPUP_BOUNDS_MINOR[currency as MaskinCreditsCurrency]
+			: { min: CREDIT_TOPUP_MIN_USD * 100, max: CREDIT_TOPUP_MAX_USD * 100 }
+	if (amount_usd_cents < bounds.min || amount_usd_cents > bounds.max) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				`amount_usd_cents must be between ${bounds.min} and ${bounds.max}${
+					currency ? ` for currency=${currency}` : ''
+				}`,
+			),
+			400,
+		)
 	}
 
 	const [workspace] = await db

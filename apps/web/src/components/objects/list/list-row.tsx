@@ -243,7 +243,27 @@ export function ListRow({
 					/>
 				</span>
 			</span>
-			{showType && <TypeBadge type={object.type} label={typeLabel} variant="pill" />}
+			{showType && (
+				<>
+					{/* Below `sm` the 88px plate would take a quarter of the row from the
+					    title, so the type shrinks to its coloured dot. The wrapper names
+					    it for screen readers and the hover title. */}
+					<span
+						role="img"
+						aria-label={typeLabel ?? object.type}
+						title={typeLabel ?? object.type}
+						className="flex shrink-0 items-center sm:hidden"
+					>
+						<TypeBadge type={object.type} variant="dot" />
+					</span>
+					<TypeBadge
+						type={object.type}
+						label={typeLabel}
+						variant="pill"
+						className="max-sm:hidden"
+					/>
+				</>
+			)}
 			<div className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
 				<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
 					<Link
@@ -271,7 +291,9 @@ export function ListRow({
 							e.stopPropagation()
 							onOpen(object.id)
 						}}
-						className="min-w-0 truncate text-sm font-medium text-foreground hover:underline"
+						// Phones give the title two lines before it cuts; from `sm` it is one. Plain
+						// `truncate` stays on both so the mobile-QA gate sees the clip as intended.
+						className="min-w-0 truncate break-words text-sm font-medium text-foreground hover:underline max-sm:line-clamp-2 max-sm:whitespace-normal"
 					>
 						{object.title || 'Untitled'}
 					</Link>
@@ -311,7 +333,7 @@ export function ListRow({
 					// The type label is a sibling column here (not inline with the
 					// title as in the mockup), so the ask line already starts at the
 					// title column — no extra `askIndent` offset is needed.
-					<p className="truncate text-xs leading-snug text-muted-foreground">
+					<p className="truncate text-xs leading-snug text-muted-foreground max-sm:line-clamp-2 max-sm:whitespace-normal">
 						<span className="font-bold text-warning">{askActorName}</span> asks —{' '}
 						<span>“{askText}”</span>
 						{extraAskCount > 0 && (
@@ -343,13 +365,18 @@ export function ListRow({
 				// object has an actively-running session on it. Replaces the old
 				// right-side <AgentWorkingBadge> — the ring is the row's only
 				// working indicator now, per the D2 acceptance criteria.
-				<ActorAvatar
-					id={driver.id}
-					name={driver.name}
-					type={driver.type}
-					className="shrink-0"
-					working={isWorking}
-				/>
+				// Below `sm` the avatar is hidden like the status word (the title needs
+				// the room), except while the driver is working: the ring is the only
+				// working indicator, so it has to stay visible on phones.
+				<span className={cn('shrink-0 sm:inline-flex', isWorking ? 'inline-flex' : 'hidden')}>
+					<ActorAvatar
+						id={driver.id}
+						name={driver.name}
+						type={driver.type}
+						className="shrink-0"
+						working={isWorking}
+					/>
+				</span>
 			)}
 			{showUpdated && object.updatedAt && (
 				<RelativeTime

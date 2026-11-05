@@ -112,6 +112,13 @@ type ParticipantRow = {
 }
 
 /**
+ * Messages the thread shows: not a helper's result handed back to the agent that started it
+ * (`helper_return`), and not a card button's nudge (`hidden_from_chat`). Mirrors the filter in
+ * apps/web `thread-messages.tsx`.
+ */
+const visibleInChat = sql`(${messages.metadata}->>'helper_return') IS NULL AND coalesce(${messages.metadata}->>'hidden_from_chat', 'false') <> 'true'`
+
+/**
  * Which agents are answering in each chat right now. A chat session stays `running` between turns,
  * so a live status alone would keep the row "working" until the container dies; an interactive
  * session only counts while its turn is open (see `isInteractiveTurnOpenByLog`).
@@ -811,6 +818,9 @@ app.openapi(listConversationsRoute, (async (c) => {
 						.groupBy(messages.conversationId),
 			Promise.all(
 				page.map(async (r) => {
+					// Only what the thread itself shows: a helper's result handed to the agent that started
+					// it, and a card button's nudge, are delivered to the agent but hidden from the chat, so
+					// they must not be the row's preview either (the thread filters them the same way).
 					// The sender comes back with the preview so the row can say who is
 					// talking. Left-joined: a message from an actor that has since been
 					// deleted still yields its text rather than dropping the snippet.
@@ -822,7 +832,7 @@ app.openapi(listConversationsRoute, (async (c) => {
 						})
 						.from(messages)
 						.leftJoin(actors, eq(actors.id, messages.actorId))
-						.where(eq(messages.conversationId, r.conversation.id))
+						.where(and(eq(messages.conversationId, r.conversation.id), visibleInChat))
 						.orderBy(desc(messages.id))
 						.limit(1)
 					return {

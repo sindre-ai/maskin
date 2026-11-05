@@ -103,6 +103,8 @@ targets:
         UILaunchScreen:
           UIColorName: LaunchBackground
           UIImageName: LaunchMark
+        # canOpenURL(tel:) decides whether a tapped phone number calls or is copied (RootView.canPlaceCalls).
+        LSApplicationQueriesSchemes: [tel]
         # Handoff from the watch ("Open on iPhone"): see HandoffActivity.
         NSUserActivityTypes: [io.maskin.app.open-object]
         # maskin://<workspaceId>/objects/<id> (and chats/<id>, notifications): the form the backend

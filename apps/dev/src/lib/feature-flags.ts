@@ -47,6 +47,19 @@ export const FLAGS = {
 	 * once the daily budget is on for everyone.
 	 */
 	DAILY_BUDGET: 'daily-budget',
+	/**
+	 * Gates the Paste and Copy buttons on the Computer view, which move plain text
+	 * between the person's clipboard and the agent's computer while they are in
+	 * control. Frontend only: read with useFeatureFlag in desktop-viewer. Retire
+	 * once the buttons are on for everyone.
+	 */
+	COMPUTER_CLIPBOARD: 'computer-clipboard',
+	/**
+	 * Gates editing a draft's text in place on the web For You card, with Send saving the
+	 * edit and approving the saved text in one step. Frontend only: read with useFeatureFlag
+	 * in draft-preview. Retire once editing is on for everyone.
+	 */
+	FORYOU_DRAFT_EDIT: 'foryou-draft-edit',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

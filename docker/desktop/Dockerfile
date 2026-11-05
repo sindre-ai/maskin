@@ -45,6 +45,13 @@ RUN printf '%s\n' \
     'export CHROMIUM_FLAGS="$CHROMIUM_FLAGS --disable-gpu --disable-dev-shm-usage --no-first-run --no-default-browser-check"' \
     > /etc/chromium.d/desktop-flags
 
+# Pages open at 80 percent zoom so more of each page fits on the 1600x900 screen. The
+# setting is the profile's default page zoom (log(0.8)/log(1.2) = -1.2239), not a
+# device scale factor, so the tab strip and address bar keep their normal size.
+# Ctrl+0 returns to this default, not to 100 percent.
+RUN mkdir -p /home/user/.config/chromium/Default
+COPY chromium/preferences.json /home/user/.config/chromium/Default/Preferences
+
 # Compositor on: Plank needs it for its translucent, rounded dock. It is software
 # (xrender) rendering, but the screen is mostly static so the cost is small.
 RUN mkdir -p /home/user/.config/xfce4/xfconf/xfce-perchannel-xml \

@@ -214,6 +214,11 @@ export const objects = pgTable(
 		index('objects_active_session_idx')
 			.on(t.activeSessionId)
 			.where(sql`${t.activeSessionId} IS NOT NULL`),
+		// Workspace id + trigram indexes for the object word filter in the search (services/search.ts,
+		// the objects source). Extensions are from migrations 0122 and 0123; these are 0129 and 0130,
+		// built CONCURRENTLY.
+		index('objects_ws_title_trgm_idx').using('gin', t.workspaceId, t.title.op('gin_trgm_ops')),
+		index('objects_ws_content_trgm_idx').using('gin', t.workspaceId, t.content.op('gin_trgm_ops')),
 	],
 )
 
