@@ -9,14 +9,23 @@ struct IntegrationAccessView: View {
 	@State private var store: IntegrationAccessStore
 	@State private var target: IntegrationAccessStore.AgentRef?
 	let title: String
+	/// Granted and requested permissions above the agent list (nil hides them).
+	let scopes: IntegrationScopesStore?
+	let onReconnect: (() -> Void)?
 
-	init(store: IntegrationAccessStore, title: String) {
+	init(
+		store: IntegrationAccessStore, title: String, scopes: IntegrationScopesStore? = nil,
+		onReconnect: (() -> Void)? = nil
+	) {
 		_store = State(initialValue: store)
 		self.title = title
+		self.scopes = scopes
+		self.onReconnect = onReconnect
 	}
 
 	var body: some View {
 		WorkspacePage(title: title) {
+			if let scopes { IntegrationScopesBlock(store: scopes, providerName: title, onReconnect: onReconnect) }
 			switch store.phase {
 			case .loaded:
 				if store.agents.isEmpty {
@@ -34,8 +43,14 @@ struct IntegrationAccessView: View {
 			default: PageStatus(text: "Loading agent access")
 			}
 		}
-		.task { await store.load() }
-		.refreshable { await store.load() }
+		.task {
+			await scopes?.load()
+			await store.load()
+		}
+		.refreshable {
+			await scopes?.load()
+			await store.load()
+		}
 		.confirmationDialog(
 			target?.name ?? "Agent",
 			isPresented: Binding(get: { target != nil }, set: { if !$0 { target = nil } }),

@@ -19,7 +19,7 @@ struct TeamRow: View {
 	var onToggleExpanded: () -> Void = {}
 
 	var body: some View {
-		HStack(alignment: .center, spacing: MaskinSpace.s7) {
+		HStack(alignment: .center, spacing: MaskinSpace.s8) {
 			avatar.frame(width: ConversationRow.clusterWidth, height: ConversationRow.avatarSize)
 			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
 				Text(title)
@@ -278,9 +278,10 @@ struct ConversationRow: View {
 			status: ConversationRowStatus.make(conversation: conversation), currentActorID: currentActorID, now: now)
 	}
 
-	static let avatarSize: CGFloat = MaskinSpace.s14 + MaskinSpace.s4
-	/// A group chat's two avatars sit in a 44 x 40 cluster.
-	static let clusterWidth: CGFloat = MaskinSpace.s14 + MaskinSpace.s7
+	/// v3: a 28pt plate on a row (the mockup's single avatar).
+	static let avatarSize: CGFloat = MaskinSpace.s13
+	/// A group chat's two 19pt plates overlap into a 32pt cluster.
+	static let clusterWidth: CGFloat = MaskinSpace.s14
 }
 
 /// The unread count: `badge` fill, `badgeFg` label, 18pt minimum, radius 9.
@@ -317,15 +318,22 @@ struct ConversationAvatar: View {
 				name: only.name, kind: only.kind == .agent ? .agent : .human, size: size, seed: only.id,
 				working: working)
 		} else if participants.count >= 2 {
-			let small = size * 0.65
-			ZStack {
-				avatar(participants[0], small).offset(x: -size * 0.225, y: -size * 0.175)
+			// Two plates side by side, the second over the first (v3: 19pt plates overlapping by 6pt in a
+			// row, scaled with `size`), each ringed so the overlap reads.
+			let small = size * 0.68
+			HStack(spacing: -size * 0.21) {
+				avatar(participants[0], small)
 				avatar(participants[1], small)
-					.offset(x: size * 0.225, y: size * 0.175)
+					.background(
+						RoundedRectangle(cornerRadius: small * 0.3, style: .continuous)
+							.stroke(MaskinSurface.card, lineWidth: MaskinSpace.s1 * 1.5)
+							.padding(-MaskinSpace.s1 * 0.75)
+					)
+					.zIndex(1)
 			}
-			.frame(width: size * 1.1, height: size)
+			.frame(width: size * 1.15, height: size)
 		} else {
-			Circle().fill(MaskinSurface.fill).frame(width: size, height: size)
+			RoundedRectangle(cornerRadius: size * 0.3, style: .continuous).fill(MaskinSurface.fill).frame(width: size, height: size)
 		}
 	}
 

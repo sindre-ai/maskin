@@ -25,7 +25,33 @@ public final class AppRuntime {
 
 	/// The tab on screen. (Notification permission is NOT asked on a tab change: it waits for a
 	/// moment of value, see `valueMomentSeen()`.)
-	var selectedTab: ShellTab = .forYou
+	var selectedTab: ShellTab = .forYou {
+		didSet {
+			// Two entries of the tab bar are not tabs: the detached "+" starts a chat with the Chief of
+			// Staff, and Search opens as a sheet (also reachable from the profile sheet). Neither stays
+			// selected, so the tab you were on stays on screen.
+			switch selectedTab {
+			case .search:
+				selectedTab = oldValue
+				presentation = .search
+			case .newChat:
+				selectedTab = oldValue
+				requestChiefChat()
+			default: break
+			}
+		}
+	}
+
+	/// Set by the tab bar's "+"; `ChatsScreen` takes it and resets it to false: a new chat with the
+	/// workspace's Chief of Staff in the new-chat sheet.
+	public var chiefChatRequested = false
+
+	/// Opens Chats and asks it for a new chat with the Chief of Staff.
+	func requestChiefChat() {
+		presentation = nil
+		selectedTab = .chats
+		chiefChatRequested = true
+	}
 
 	/// The Team filter pill the tab bar carries as its bottom accessory (iPhone, iOS 26.1+).
 	let teamPill = TeamPillModel()
@@ -42,6 +68,7 @@ public final class AppRuntime {
 		case files
 		case agents
 		case settings
+		case search
 
 		public var id: String {
 			switch self {
@@ -53,6 +80,7 @@ public final class AppRuntime {
 			case .files: "files"
 			case .agents: "agents"
 			case .settings: "settings"
+			case .search: "search"
 			}
 		}
 	}
@@ -491,6 +519,15 @@ public final class AppRuntime {
 		case .trigger(_, let id):
 			openTrigger(id)
 		}
+	}
+
+	/// The code from `maskin://connect?code=`, while Settings is open on the approve page for it.
+	public var deviceCode: String?
+
+	/// Opens Settings on "Sign in a device" with the code already typed in.
+	public func presentDeviceSignIn(code: String) {
+		deviceCode = code
+		presentation = .settings
 	}
 
 	/// For You and the shell's own surfaces open objects through here.

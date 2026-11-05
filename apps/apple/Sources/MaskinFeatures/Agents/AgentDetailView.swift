@@ -96,7 +96,8 @@ struct AgentDetailView: View {
 					SessionLogsView(
 						sessionID: session.id,
 						api: APISessionLogsSource(client: runtime.environment.client, workspaceID: workspaceID),
-						session: store.sessions.first { $0.id == session.id } ?? session)
+						session: store.sessions.first { $0.id == session.id } ?? session,
+						onStop: { _ = await store.stopSession(session.id) })
 				}
 				.presentationDetents([.large])
 			}

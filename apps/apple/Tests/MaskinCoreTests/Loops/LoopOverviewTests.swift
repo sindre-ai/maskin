@@ -52,6 +52,21 @@ struct LoopOverviewTests {
 		#expect(!posts[1].isDecision)
 	}
 
+	@Test("a decision post carries its own title, and one without options has none")
+	func decisionTitle() {
+		let options: JSONValue = .array([.object(["label": .string("Yes")]), .object(["label": .string("No")])])
+		let titled = ObjectEvent(
+			id: 1, actorId: "a", action: "commented",
+			data: .object([
+				"content": .string("Body"), "decision": .object(["title": .string("Post text only?"), "options": options]),
+			]), createdAt: Date(timeIntervalSince1970: 10))
+		let bare = comment(2, "Body", decision: true, at: 20)
+		let posts = LoopOverviewBuilder.posts(from: [titled, bare])
+		#expect(posts.first { $0.id == 1 }?.decisionTitle == "Post text only?")
+		#expect(posts.first { $0.id == 2 }?.decisionTitle == nil)
+		#expect(posts.first { $0.id == 2 }?.isDecision == true)
+	}
+
 	@Test("outputs de-duplicate and put HTML first")
 	func outputs() {
 		let loopFiles = [LoopOutput(id: "f1", name: "notes.md"), LoopOutput(id: "f2", name: "brief.html")]

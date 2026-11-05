@@ -123,12 +123,14 @@ struct ThreadNavAvatars: View {
 							.font(MaskinTypeface.sans(size * 0.38, weight: .semibold, relativeTo: .caption))
 							.foregroundStyle(MaskinSurface.onInverse)
 							.frame(width: size, height: size)
-							.background(MaskinSurface.inverse, in: Circle())
+							.background(MaskinSurface.inverse, in: RoundedRectangle(cornerRadius: size * 0.3, style: .continuous))
 					} else {
 						ActorAvatar(name: p.name, kind: p.kind == .agent ? .agent : .human, size: size, seed: p.id)
 					}
 				}
-				.overlay(Circle().strokeBorder(MaskinSurface.card, lineWidth: MaskinSpace.s1))
+				.overlay(
+					RoundedRectangle(cornerRadius: size * 0.3, style: .continuous)
+						.strokeBorder(MaskinSurface.card, lineWidth: MaskinSpace.s1))
 			}
 		}
 		.accessibilityElement(children: .ignore)

@@ -32,8 +32,10 @@ const DialogContent = React.forwardRef<
 	React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
 		/** Restyles the scrim behind the content (e.g. a lighter one for an immersive viewer). */
 		overlayClassName?: string
+		/** Moves the built-in close button (e.g. into a slim top row). */
+		closeClassName?: string
 	}
->(({ className, overlayClassName, children, ...props }, ref) => (
+>(({ className, overlayClassName, closeClassName, children, ...props }, ref) => (
 	<DialogPortal>
 		<DialogOverlay className={overlayClassName} />
 		<DialogPrimitive.Content
@@ -45,7 +47,12 @@ const DialogContent = React.forwardRef<
 			{...props}
 		>
 			{children}
-			<DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-accent-foreground">
+			<DialogPrimitive.Close
+				className={cn(
+					'absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-accent-foreground',
+					closeClassName,
+				)}
+			>
 				<X className="h-4 w-4" />
 				<span className="sr-only">Close</span>
 			</DialogPrimitive.Close>

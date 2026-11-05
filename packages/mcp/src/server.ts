@@ -1339,6 +1339,107 @@ function waitPollDelayMs(attempt: number): number {
 // already running.
 const MAX_POLL_FAILURES = 5
 
+type ObjectWaitResult = {
+	settled: boolean
+	waited_seconds: number
+	reason?: 'timeout' | 'not_found' | 'status_check_failed'
+	/** With reason `not_found`: the ids the API said do not exist. */
+	missing_ids?: string[]
+}
+
+/**
+ * The `wait_for_status` path of `get_objects`: polls until every object has one of the
+ * wanted statuses. Unlike a session, an object never ends on its own, so the wait is
+ * bounded by `timeoutMs`, including a single check that hangs. Stops early on a missing
+ * object or repeated failed checks.
+ */
+async function waitForObjectStatus(
+	config: McpConfig,
+	opts: {
+		workspaceId: string | undefined
+		ids: string[]
+		statuses: string[]
+		timeoutMs: number
+	},
+): Promise<ObjectWaitResult> {
+	const wsOpts = { workspaceId: opts.workspaceId }
+	const wanted = new Set(opts.statuses)
+	const started = Date.now()
+	const deadline = started + opts.timeoutMs
+	const elapsed = () => Math.round((Date.now() - started) / 1000)
+	let pending = [...opts.ids]
+	let pollFailures = 0
+	let attempt = 0
+
+	// One round of checks, cut off at the deadline so a request that never answers
+	// cannot hold the call past `wait_timeout_seconds`.
+	const checkPending = async () => {
+		let timer: ReturnType<typeof setTimeout> | undefined
+		const expired = new Promise<'timeout'>((resolve) => {
+			timer = setTimeout(() => resolve('timeout'), Math.max(deadline - Date.now(), 0))
+		})
+		try {
+			return await Promise.race([
+				expired,
+				Promise.all(
+					pending.map(async (id) => {
+						try {
+							const row = (await apiCall(
+								config,
+								'GET',
+								`/api/objects/${id}`,
+								undefined,
+								wsOpts,
+							)) as { status?: string | null }
+							return { id, reached: wanted.has(row.status ?? ''), missing: false }
+						} catch (err) {
+							// The normal get_objects read that follows reports the missing object per id.
+							if (/API error 404/.test(err instanceof Error ? err.message : String(err))) {
+								return { id, reached: false, missing: true }
+							}
+							throw err
+						}
+					}),
+				),
+			])
+		} finally {
+			clearTimeout(timer)
+		}
+	}
+
+	while (true) {
+		try {
+			const rows = await checkPending()
+			if (rows === 'timeout') {
+				return { settled: false, waited_seconds: elapsed(), reason: 'timeout' }
+			}
+			pollFailures = 0
+			const missing = rows.filter((r) => r.missing).map((r) => r.id)
+			if (missing.length > 0) {
+				return {
+					settled: false,
+					waited_seconds: elapsed(),
+					reason: 'not_found',
+					missing_ids: missing,
+				}
+			}
+			pending = rows.filter((r) => !r.reached).map((r) => r.id)
+			if (pending.length === 0) return { settled: true, waited_seconds: elapsed() }
+		} catch (err) {
+			pollFailures += 1
+			if (pollFailures >= MAX_POLL_FAILURES) {
+				console.error('get_objects: gave up polling object status', err)
+				return { settled: false, waited_seconds: elapsed(), reason: 'status_check_failed' }
+			}
+		}
+		const remaining = deadline - Date.now()
+		if (remaining <= 0) return { settled: false, waited_seconds: elapsed(), reason: 'timeout' }
+		await new Promise((resolve) =>
+			setTimeout(resolve, Math.min(waitPollDelayMs(attempt++), remaining)),
+		)
+	}
+}
+
 /**
  * What the caller reads when a handover did not start. A chat agent that only sees a
  * bare API error tends to tell the person it handed the work over anyway.
@@ -3465,6 +3566,14 @@ export function createMcpServer(config: McpConfig) {
 		async (args) => {
 			const { workspace_id, include } = args
 			const includeSet = new Set(include ?? [])
+			const wait = args.wait_for_status
+				? await waitForObjectStatus(config, {
+						workspaceId: workspace_id,
+						ids: args.ids,
+						statuses: args.wait_for_status,
+						timeoutMs: (args.wait_timeout_seconds ?? 600) * 1000,
+					})
+				: undefined
 			const results = await Promise.all(
 				args.ids.map(async (id) => {
 					try {
@@ -3635,11 +3744,17 @@ export function createMcpServer(config: McpConfig) {
 
 			return {
 				_meta: uiMeta('get_objects', config, workspace_id, pickResourceUri(heroCard)),
-				content: [{ type: 'text' as const, text: JSON.stringify(projectedResults) }],
+				content: [
+					{ type: 'text' as const, text: JSON.stringify(projectedResults) },
+					// A second block, so a caller that parses content[0] as the results
+					// array keeps working. The same object sits in structuredContent.
+					...(wait ? [{ type: 'text' as const, text: JSON.stringify({ wait }) }] : []),
+				],
 				structuredContent: {
 					heroCard,
 					results: slimResults,
 					objects: canonicalObjects,
+					...(wait ? { wait } : {}),
 				},
 			}
 		},
@@ -5764,6 +5879,32 @@ export function createMcpServer(config: McpConfig) {
 			})
 			return {
 				_meta: meta('update_file', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'propose_file_changes',
+		{
+			description: tools.propose_file_changes.description,
+			inputSchema: tools.propose_file_changes.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const body: Record<string, unknown> = { changes: args.changes }
+			if (args.summary !== undefined) body.summary = args.summary
+			const result = await apiCall(config, 'POST', `/api/files/${args.id}/proposals`, body, {
+				workspaceId: wsId,
+			})
+			return {
+				_meta: meta(
+					'propose_file_changes',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},

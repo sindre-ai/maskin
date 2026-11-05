@@ -573,9 +573,10 @@ struct AppRuntimeSearchRoutingTests {
 		#expect(runtime.presentation == nil)
 	}
 
-	@Test("the tab bar has four tabs and search, no More")
+	@Test("the tab bar has four tabs and the new-chat button, no More; search is a sheet")
 	func tabs() {
-		#expect(ShellTab.allCases == [.forYou, .chats, .loops, .objects, .search])
+		#expect(ShellTab.allCases == [.forYou, .chats, .loops, .objects, .search, .newChat])
+		#expect(ShellTab.primary == [.forYou, .chats, .loops, .objects])
 	}
 }
 
@@ -693,10 +694,10 @@ struct AppRuntimePresentationTests {
 		#expect(recents.load(workspaceId: "ws-1").isEmpty)
 	}
 
-	@Test("Search is the last tab, and the first is For you")
+	@Test("the new-chat button is last, and the first tab is For you")
 	func tabOrder() {
 		#expect(ShellTab.allCases.first == .forYou)
-		#expect(ShellTab.allCases.last == .search)
+		#expect(ShellTab.allCases.last == .newChat)
 	}
 }
 

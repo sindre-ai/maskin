@@ -162,7 +162,7 @@ describe('POST /api/desktop/teach', () => {
 		) as unknown[]
 		const log = JSON.parse((logCall[4] as Buffer).toString('utf8'))
 		expect(log.task).toBe('Export the weekly report to PDF')
-		expect(log.screen).toEqual({ width: 1600, height: 900 })
+		expect(log.screen).toEqual({ width: 1920, height: 1080 })
 		expect(log.actions[0]).toMatchObject({
 			step: 1,
 			action: 'click',

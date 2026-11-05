@@ -6,11 +6,11 @@ import SwiftUI
 /// The signed-in app: a tab bar on iPhone that becomes a sidebar on iPad and Mac, from one
 /// declaration (`.sidebarAdaptable`).
 ///
-/// Four tabs (For you, Team, Flows, Objects) and the trailing system search tab. No More tab: the
+/// Four tabs (For you, Team, Flows, Objects) and the trailing round "+" (a chat with the Chief of Staff). No More tab: the
 /// avatar on every root screen opens the profile sheet (`ProfileSheet`).
 ///
 /// CONTRACT FOR SCREENS. Each tab hosts a screen taking `AppEnvironment`:
-/// `ForYouScreen`, `ChatsScreen`, `LoopsScreen`, `ObjectsScreen`, `SearchScreen`. A screen OWNS its
+/// `ForYouScreen`, `ChatsScreen`, `LoopsScreen`, `ObjectsScreen`. A screen OWNS its
 /// `NavigationStack` (or split view) and applies `.shellToolbar(environment:)` to its root content
 /// so its bar items and the profile avatar appear.
 public struct MainShell: View {
@@ -19,6 +19,8 @@ public struct MainShell: View {
 	@State private var badges = ShellBadges()
 	@State private var liveCalls = LiveCallCenter()
 	@State private var pictures = ActorPicturesStore()
+	/// The offline banner's View: what is waiting to send.
+	@State private var showQueue = false
 	@Environment(\.scenePhase) private var scenePhase
 
 	public init(environment: AppEnvironment, runtime: AppRuntime) {
@@ -33,7 +35,7 @@ public struct MainShell: View {
 				AdaptiveTabs(environment: environment, runtime: runtime, badges: badges)
 			} else {
 				TabView(selection: $runtime.selectedTab) {
-					ForEach(ShellTab.allCases) { tab in
+					ForEach(ShellTab.primary) { tab in
 						ShellTabContent(tab: tab, environment: environment, runtime: runtime)
 							.tabItem { Label(tab.title, systemImage: tab.systemImage) }
 							.badge(tab.badge(runtime: runtime, badges: badges).label.map { Text($0) })
@@ -86,11 +88,19 @@ public struct MainShell: View {
 			"Can't start the call", isPresented: Binding(get: { liveCalls.problem != nil }, set: { if !$0 { liveCalls.problem = nil } }),
 			actions: { Button("OK", role: .cancel) {} }, message: { Text(liveCalls.problem ?? "") })
 		.focusedSceneValue(\.appRuntime, runtime)
+		.sheet(isPresented: $showQueue) { OutboxQueueSheet(queue: queue) }
 		.safeAreaInset(edge: .top, spacing: 0) {
-			OfflineBanner(isVisible: !runtime.isOnline, message: offlineMessage) {
-				Task {
-					runtime.syncCoordinator?.requestRefresh(reason: "retry")
-					await runtime.forYou.store.refresh()
+			OfflineBanner(
+				isVisible: !runtime.isOnline, message: offlineMessage, symbol: "icloud.slash",
+				actionTitle: queuedCount > 0 ? "View" : "Retry"
+			) {
+				if queuedCount > 0 {
+					showQueue = true
+				} else {
+					Task {
+						runtime.syncCoordinator?.requestRefresh(reason: "retry")
+						await runtime.forYou.store.refresh()
+					}
 				}
 			}
 				.padding(.horizontal, MaskinSpace.s8)
@@ -113,7 +123,7 @@ public struct MainShell: View {
 				}
 			}
 		}
-		.sheet(item: $runtime.presentation) { presentation in
+		.sheet(item: $runtime.presentation, onDismiss: { runtime.deviceCode = nil }) { presentation in
 			PresentationContent(
 				presentation: presentation, environment: environment, runtime: runtime)
 		}
@@ -123,12 +133,18 @@ public struct MainShell: View {
 			message: { Text(runtime.rejectionMessage ?? "") })
 	}
 
-	/// "Can't reach Maskin. Showing what we had at 08:14. Decisions queue offline."
+	private var queue: OutboxQueue {
+		OutboxQueue(outboxes: [runtime.forYou.outbox, ChatsRuntime.shared(environment: environment).outbox])
+	}
+
+	/// Writes (decisions, messages) still waiting for the connection, across For you and Chats.
+	private var queuedCount: Int { queue.entries.count }
+
+	/// "Offline. 3 waiting to send." With nothing queued: "Can't reach Maskin. Showing what we had at 08:14."
 	private var offlineMessage: String {
-		var text = "Can\u{2019}t reach Maskin. " + OfflineCopy.message(since: runtime.forYou.store.freshness.updatedAt)
-		let queued = runtime.forYou.outbox.pendingCount
-		if queued > 0 { text += " \(queued) waiting to send." }
-		return text
+		let queued = queuedCount
+		if queued > 0 { return "Offline. \(queued) waiting to send." }
+		return "Can\u{2019}t reach Maskin. " + OfflineCopy.message(since: runtime.forYou.store.freshness.updatedAt)
 	}
 
 	private var rejectionBinding: Binding<Bool> {
@@ -153,10 +169,12 @@ private struct AdaptiveTabs: View {
 				}
 				.badge(tab.badge(runtime: runtime, badges: badges).label.map { Text($0) })
 			}
-			// The system search role: a detached search button on iOS 26 (a plain trailing tab
-			// before that, a sidebar entry on iPad and the Mac). The only search entry point.
-			Tab(value: ShellTab.search, role: .search) {
-				ShellTabContent(tab: .search, environment: environment, runtime: runtime)
+			// The detached round button on iOS 26 (a plain trailing tab before that, a sidebar entry
+			// on iPad and the Mac). It rides the system search role for the detached look, but it is a
+			// button: picking it starts a chat with the Chief of Staff (see `AppRuntime.selectedTab`)
+			// and the tab you were on stays. Search lives in the profile sheet.
+			Tab(ShellTab.newChat.title, systemImage: ShellTab.newChat.systemImage, value: ShellTab.newChat, role: .search) {
+				Color.clear
 			}
 		}
 		.tabViewStyle(.sidebarAdaptable)
@@ -174,6 +192,9 @@ private struct AdaptiveTabs: View {
 				.environment(\.shellShowsAvatar, false)
 		}
 		.modifier(TeamFoldingTabBar(runtime: runtime))
+		#if canImport(UIKit) && !os(watchOS) && !os(tvOS)
+			.background { TabBarBadgeStyler().frame(width: 0, height: 0) }
+		#endif
 	}
 }
 
@@ -252,9 +273,18 @@ private struct PresentationContent: View {
 			FilesListScreen(environment: environment, onDone: { runtime.showFiles = false })
 		case .agents:
 			AgentsScreen(environment: environment)
+		case .search:
+			SearchScreen(environment: environment) { runtime.openSearchResult($0) }
 		case .settings:
-			SettingsScreen(environment: environment)
-				.environment(runtime)
+			Group {
+				if let code = runtime.deviceCode {
+					SettingsScreen(environment: environment, deviceCode: code)
+				} else {
+					SettingsScreen(environment: environment)
+				}
+			}
+			.id(runtime.deviceCode)
+			.environment(runtime)
 		}
 	}
 }
@@ -273,8 +303,8 @@ private struct ShellTabContent: View {
 				environment: environment, requestedConversationId: $runtime.requestedConversationId)
 		case .loops: LoopsScreen(environment: environment, requestedLoopId: $runtime.requestedLoopId)
 		case .objects: ObjectsScreen(environment: environment)
-		case .search:
-			SearchScreen(environment: environment) { runtime.openSearchResult($0) }
+		case .search, .newChat:
+			EmptyView()
 		}
 	}
 }

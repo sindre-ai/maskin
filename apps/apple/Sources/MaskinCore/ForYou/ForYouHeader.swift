@@ -34,15 +34,46 @@ public enum ForYouHeader {
 		return first.isEmpty ? "Good \(part)" : "Good \(part), \(first)"
 	}
 
-	/// The first sentence under the title: how many decisions wait on the reader.
+	/// The prose under the title (v3): how many decisions wait on the reader, then, when there is
+	/// something real to say, how many calls they have answered and who is carrying on because of them.
 	/// - Nothing is said until the feed has loaded, so a slow start never claims "Nothing is blocked".
 	/// - With none open: "Nothing is blocked on you."
-	public static func summary(blocking: [FeedEntry], loaded: Bool) -> String? {
+	/// - `answered` counts the reader's own decisions this sitting; `carryingOn` names the agents
+	///   working on them. A part with nothing behind it (0, empty) is left out, never invented.
+	public static func summary(
+		blocking: [FeedEntry], answered: Int = 0, carryingOn: [String] = [], loaded: Bool
+	) -> String? {
 		guard loaded else { return nil }
+		var sentences: [String]
 		switch blocking.count {
-		case 0: return "Nothing is blocked on you."
-		case 1: return "1 decision is waiting on you."
-		case let n: return "\(n) decisions are waiting on you."
+		case 0: sentences = ["Nothing is blocked on you."]
+		case 1: sentences = ["1 decision is waiting on you."]
+		case let n: sentences = ["\(n) decisions are waiting on you."]
+		}
+		if let tail = progressClause(answered: answered, carryingOn: carryingOn) {
+			sentences.append(tail)
+		}
+		return sentences.joined(separator: " ")
+	}
+
+	/// "You've answered 3 so far, and Developer is carrying on." Nil when there is nothing to say.
+	static func progressClause(answered: Int, carryingOn: [String]) -> String? {
+		let names = naturalList(carryingOn)
+		switch (answered > 0, names) {
+		case (true, let names?):
+			return "You\u{2019}ve answered \(answered) so far, and \(names) \(carryingOn.count == 1 ? "is" : "are") carrying on."
+		case (true, nil): return "You\u{2019}ve answered \(answered) so far."
+		case (false, let names?): return "\(names) \(carryingOn.count == 1 ? "is" : "are") carrying on."
+		case (false, nil): return nil
+		}
+	}
+
+	/// "A", "A and B", "A, B and C"; nil for an empty list.
+	static func naturalList(_ names: [String]) -> String? {
+		switch names.count {
+		case 0: return nil
+		case 1: return names[0]
+		default: return names.dropLast().joined(separator: ", ") + " and " + names[names.count - 1]
 		}
 	}
 }

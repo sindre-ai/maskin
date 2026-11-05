@@ -12,19 +12,53 @@ struct SearchNeedsYou: Identifiable, Equatable {
 	let type: String?
 }
 
+/// A results group heading in the v3 style: sentence case, semibold, like the Chats list.
+struct SearchHeader: View {
+	let text: String
+	init(_ text: String) { self.text = text }
+
+	var body: some View {
+		Text(text).maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.ink3)
+	}
+}
+
+/// What the Create rows under the results can start.
+enum SearchCreate: CaseIterable {
+	case item, flow, chat
+
+	var title: String {
+		switch self {
+		case .item: "New item"
+		case .flow: "New flow"
+		case .chat: "New chat"
+		}
+	}
+
+	var symbol: String {
+		switch self {
+		case .item: "square.stack.3d.up"
+		case .flow: "arrow.triangle.2.circlepath"
+		case .chat: "bubble.left"
+		}
+	}
+}
+
 /// The search tab's content for a given store state, in a scroll view.
 struct SearchContentView: View {
 	let store: SearchStore
 	var needsYou: [SearchNeedsYou] = []
 	var onOpenNeedsYou: (String) -> Void = { _ in }
 	var onAskChiefOfStaff: (String) -> Void = { _ in }
+	/// The Create rows under the results; nil hides that row.
+	var onCreate: (SearchCreate, String) -> Void = { _, _ in }
+	var createKinds: [SearchCreate] = [.flow, .chat]
 	let onSelect: (SearchResult) -> Void
 
 	var body: some View {
 		ScrollView {
 			SearchContentBody(
 				store: store, onSelect: onSelect, showsChips: true, needsYou: needsYou,
-				onOpenNeedsYou: onOpenNeedsYou, onAskChiefOfStaff: onAskChiefOfStaff)
+				onOpenNeedsYou: onOpenNeedsYou, onAskChiefOfStaff: onAskChiefOfStaff, onCreate: onCreate, createKinds: createKinds)
 				.padding(.horizontal, MaskinSpace.s9)
 				.padding(.vertical, MaskinSpace.s5)
 				.frame(maxWidth: 760)
@@ -44,6 +78,11 @@ struct SearchContentBody: View {
 	var needsYou: [SearchNeedsYou] = []
 	var onOpenNeedsYou: (String) -> Void = { _ in }
 	var onAskChiefOfStaff: (String) -> Void = { _ in }
+	var onCreate: ((SearchCreate, String) -> Void)?
+	/// The Create rows to offer; New item only when the shell can start one.
+	var createKinds: [SearchCreate] = [.flow, .chat]
+
+	private var typed: String { store.query.trimmingCharacters(in: .whitespacesAndNewlines) }
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s9) {
@@ -51,7 +90,9 @@ struct SearchContentBody: View {
 			SearchParticipantPills(store: store)
 			let suggestions = store.mentionSuggestions
 			if suggestions.isEmpty {
+				if !typed.isEmpty, askRowShows { askRow }
 				phaseContent
+				if !typed.isEmpty, onCreate != nil, store.phase == .results { createSection }
 			} else {
 				mentionMenu(suggestions)
 			}
@@ -78,11 +119,63 @@ struct SearchContentBody: View {
 		}
 	}
 
+	private var askRowShows: Bool {
+		switch store.phase {
+		case .searching, .results: true
+		default: false
+		}
+	}
+
+	/// "Ask Chief of Staff" over the results: hands the typed words to a chat (v3 card 1c).
+	private var askRow: some View {
+		Button { onAskChiefOfStaff(typed) } label: {
+			HStack(spacing: MaskinSpace.s5) {
+				Image(systemName: "sparkles")
+					.maskinSymbol(MaskinFontSize.t16)
+					.foregroundStyle(MaskinColor.ink)
+					.frame(width: MaskinSpace.s13, height: MaskinSpace.s13)
+					.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.input, style: .continuous))
+					.accessibilityHidden(true)
+				VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+					Text("Ask Chief of Staff").maskinText(.headline).foregroundStyle(MaskinColor.ink)
+					Text("\u{201C}\(typed)\u{201D} \u{00B7} opens a new chat, nothing is sent").maskinText(.subhead).foregroundStyle(MaskinColor.ink4).lineLimit(2)
+				}
+				.frame(maxWidth: .infinity, alignment: .leading)
+				Image(systemName: "chevron.right").foregroundStyle(MaskinColor.ink5).accessibilityHidden(true)
+			}
+			.padding(.horizontal, MaskinSpace.s7)
+			.padding(.vertical, MaskinSpace.s5)
+			.frame(minHeight: MaskinSpace.touchMin)
+			.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
+			.contentShape(Rectangle())
+		}
+		.buttonStyle(.maskinPressed)
+	}
+
+	/// New item, New flow and New chat, carrying what was typed, under the results.
+	private var createSection: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s4) {
+			SearchHeader("Create").accessibilityAddTraits(.isHeader)
+			card {
+				ForEach(Array(createKinds.enumerated()), id: \.element) { index, create in
+					if index > 0 { Divider() }
+					Button { onCreate?(create, typed) } label: {
+						Label(create.title, systemImage: create.symbol)
+							.maskinText(.body).foregroundStyle(MaskinColor.ink)
+							.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin, alignment: .leading)
+							.contentShape(Rectangle())
+					}
+					.buttonStyle(.maskinPressed)
+				}
+			}
+		}
+	}
+
 	/// The "@" menu: people and agents that match what was typed after the "@". Tapping one makes it
 	/// a pill. When nobody matches, this is not shown and the text is searched as it is.
 	private func mentionMenu(_ suggestions: [SearchPerson]) -> some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s4) {
-			MonoLabel("People and agents").accessibilityAddTraits(.isHeader)
+			SearchHeader("People and agents").accessibilityAddTraits(.isHeader)
 			card {
 				ForEach(Array(suggestions.enumerated()), id: \.element.id) { index, person in
 					if index > 0 { Divider() }
@@ -110,7 +203,7 @@ struct SearchContentBody: View {
 	@ViewBuilder private var needsYouSection: some View {
 		if !needsYou.isEmpty {
 			VStack(alignment: .leading, spacing: MaskinSpace.s4) {
-				MonoLabel("Needs you").accessibilityAddTraits(.isHeader)
+				SearchHeader("Needs you").accessibilityAddTraits(.isHeader)
 				card {
 					ForEach(Array(needsYou.enumerated()), id: \.element.id) { index, item in
 						if index > 0 { Divider() }
@@ -152,7 +245,7 @@ struct SearchContentBody: View {
 		} else {
 			VStack(alignment: .leading, spacing: MaskinSpace.s4) {
 				HStack {
-					MonoLabel("Recent")
+					SearchHeader("Recent")
 					Spacer()
 					Button("Clear") { store.clearRecents() }
 						.maskinText(.caption)
@@ -194,7 +287,7 @@ struct SearchContentBody: View {
 			ForEach(sections) { section in
 				VStack(alignment: .leading, spacing: MaskinSpace.s4) {
 					HStack(spacing: MaskinSpace.s4) {
-						MonoLabel(section.group.title)
+						SearchHeader(section.group.title)
 						Text("\(section.results.count)").maskinText(.mono).foregroundStyle(MaskinColor.ink5)
 					}
 					.accessibilityAddTraits(.isHeader)

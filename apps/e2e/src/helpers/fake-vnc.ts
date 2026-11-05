@@ -5,7 +5,7 @@ import type { Page } from '@playwright/test'
 
 /**
  * A just-enough VNC server for noVNC, running as a real WebSocket server in the
- * test process. It speaks the RFB 3.8 handshake (no-auth security, a 1600x900
+ * test process. It speaks the RFB 3.8 handshake (no-auth security, a 1920x1080
  * ServerInit) and then idles, which is all noVNC needs to report "connected". It records the
  * key presses the client sends (`keys`, as X11 keysyms) so a test can see what was typed.
  *
@@ -27,8 +27,8 @@ function frame(payload: Buffer): Buffer {
 function serverInit(): Buffer {
 	const name = Buffer.from('e2e')
 	const init = Buffer.alloc(24 + name.length)
-	init.writeUInt16BE(1600, 0)
-	init.writeUInt16BE(900, 2)
+	init.writeUInt16BE(1920, 0)
+	init.writeUInt16BE(1080, 2)
 	init.writeUInt8(32, 4) // bits per pixel
 	init.writeUInt8(24, 5) // depth
 	init.writeUInt8(0, 6) // big-endian

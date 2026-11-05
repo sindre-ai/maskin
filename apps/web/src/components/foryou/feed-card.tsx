@@ -31,7 +31,7 @@ import {
 	classifyCardKind,
 	decisionOf,
 } from '@/lib/foryou-card-kind'
-import { heldNote } from '@/lib/foryou-feed'
+import { heldNote, isObjectlessCard } from '@/lib/foryou-feed'
 import { markImpressed } from '@/lib/foryou-impressions'
 import {
 	type LaterOption,
@@ -100,6 +100,8 @@ export function FeedCard({
 	onBringBack,
 }: FeedCardProps) {
 	const objectId = item.entity_id
+	// A card with no object (the morning budget card): nothing to open, no thread to reply in.
+	const objectless = isObjectlessCard(item)
 	const object = item.object
 	const cardKind: CardKind = classifyCardKind(item)
 	const decision = decisionOf(item)
@@ -242,17 +244,24 @@ export function FeedCard({
 						size="sm"
 					/>
 					<span className="min-w-0 flex-1 truncate text-[12.5px] text-muted-foreground">
-						{sender?.name ? `${sender.name} · ` : ''}
-						<Link
-							to="/$workspaceId/objects/$objectId"
-							params={{ workspaceId, objectId }}
-							className="hover:text-foreground hover:underline"
-						>
-							{objectTitle || 'Open'}
-							<ArrowUpRight size={10} className="ml-0.5 inline" aria-hidden />
-						</Link>
+						{sender?.name ? sender.name : ''}
+						{!objectless && (
+							<>
+								{sender?.name ? ' · ' : ''}
+								<Link
+									to="/$workspaceId/objects/$objectId"
+									params={{ workspaceId, objectId }}
+									className="hover:text-foreground hover:underline"
+								>
+									{objectTitle || 'Open'}
+									<ArrowUpRight size={10} className="ml-0.5 inline" aria-hidden />
+								</Link>
+							</>
+						)}
 					</span>
-					<TimelineHistory workspaceId={workspaceId} objectId={objectId} item={item} />
+					{!objectless && (
+						<TimelineHistory workspaceId={workspaceId} objectId={objectId} item={item} />
+					)}
 					{waiting ? (
 						<span className="shrink-0 text-[11px] font-medium text-status-clustered-text">
 							Waiting on {who}
@@ -352,16 +361,18 @@ export function FeedCard({
 
 				{onLater && options.length > 0 && <LaterControl onLater={onLater} />}
 
-				<CommentInput
-					workspaceId={workspaceId}
-					objectId={objectId}
-					// The composer answers the comment that put this card in the feed,
-					// so a typed reply threads under it exactly as a taken option does.
-					parentEventId={item.latest_mention?.event_id}
-					variant="bar"
-					placeholder={`Ask ${sender?.name ?? 'the agent'} or give instructions`}
-					onSubmitted={onReplied}
-				/>
+				{!objectless && (
+					<CommentInput
+						workspaceId={workspaceId}
+						objectId={objectId}
+						// The composer answers the comment that put this card in the feed,
+						// so a typed reply threads under it exactly as a taken option does.
+						parentEventId={item.latest_mention?.event_id}
+						variant="bar"
+						placeholder={`Ask ${sender?.name ?? 'the agent'} or give instructions`}
+						onSubmitted={onReplied}
+					/>
+				)}
 			</div>
 		</CardShell>
 	)

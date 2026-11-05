@@ -243,6 +243,7 @@ export function ObjectDetailShell({
 	)
 
 	const answerRef = useRef<TagInputHandle>(null)
+	const composerRef = useRef<HTMLDivElement>(null)
 	// The composer is pinned under every tab. Answering still opens the Activity tab
 	// (the ask lives on the timeline) and focuses the comment input; when the Message
 	// switch hides it, it is focused once the mode swap re-creates it.
@@ -269,8 +270,10 @@ export function ObjectDetailShell({
 	// `liveAsk`) so the reference is stable across renders that don't change
 	// the pick.
 	const handleAnswerLatestAsk = useCallback(() => {
+		// The composer is pinned under every tab, so it is already mounted. Bring it
+		// into view, focus it, and open Activity (the ask lives on the timeline).
 		if (composerMode === 'comment') {
-			// The composer is pinned under every tab, so it is already mounted.
+			composerRef.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })
 			answerRef.current?.focus()
 			if (tab !== 'activity') changeTab('activity')
 			return
@@ -650,7 +653,10 @@ export function ObjectDetailShell({
 							    The mockup's composer is a single bar — `+`, the field, one
 							    action button on one row, with no hint line under it. One
 							    composer at a time, switched Comment / Message <agent>. */}
-							<div className="sticky bottom-0 z-[6] mt-1.5 bg-gradient-to-b from-transparent via-background via-20% to-background pb-4 pt-[22px]">
+							<div
+								ref={composerRef}
+								className="sticky bottom-0 z-[6] mt-1.5 bg-gradient-to-b from-transparent via-background via-20% to-background pb-4 pt-[22px]"
+							>
 								<ItemComposer
 									object={object}
 									workspaceId={workspaceId}

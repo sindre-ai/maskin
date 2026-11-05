@@ -83,6 +83,30 @@ struct DeepLinkRouterTests {
 		#expect(h.router.pending == .chat(workspaceId: "ws-1", id: "c1"))
 	}
 
+	@Test("a connect link is a device code, never a workspace, and waits for sign-in")
+	func connectLink() {
+		let h = Harness()
+		h.signedIn = false
+		#expect(h.router.open(URL(string: "maskin://connect?code=bcdf2345")!))
+		#expect(h.router.pending == nil && h.router.rejection == nil && h.router.pendingConnect == nil)
+		h.signedIn = true
+		h.router.evaluate()
+		#expect(h.router.consumeConnect() == "BCDF-2345")
+		#expect(h.router.consumeConnect() == nil)
+		#expect(h.selected.isEmpty)
+	}
+
+	@Test("a connect link with no usable code is not a link")
+	func badConnectLink() {
+		let h = Harness()
+		#expect(DeviceConnectLink(url: URL(string: "maskin://connect")!) == nil)
+		#expect(DeviceConnectLink(url: URL(string: "maskin://connect?code=abc")!) == nil)
+		#expect(DeviceConnectLink(url: URL(string: "maskin://connect?code=BCDF-2345&code=AAAA-1111")!) == nil)
+		#expect(DeviceConnectLink(url: URL(string: "maskin://connect/x?code=BCDF-2345")!) == nil)
+		#expect(DeviceConnectLink(url: URL(string: "https://maskin.io/connect?code=BCDF-2345")!) == nil)
+		_ = h
+	}
+
 	@Test("consume hands the link over once")
 	func consume() {
 		let h = Harness()
