@@ -26,6 +26,7 @@ import { useMemo } from 'react'
 import { NavUser } from './nav-user'
 import { SidebarActivity } from './sidebar-activity'
 import { SidebarNavItem } from './sidebar-nav-item'
+import { WhatsNewCard } from './whats-new-card'
 import { WorkspaceSwitcher } from './workspace-switcher'
 
 // `navSecondaryDefs` (Marketplace) from the mockup. Agents and Triggers are
@@ -107,6 +108,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 				</SidebarGroup>
 			</SidebarContent>
 			<SidebarFooter className="gap-1.5 px-2.5 pt-2.5 pb-5">
+				<WhatsNewCard />
 				<TrialCard workspaceId={workspaceId} />
 				<SidebarMenu className="gap-0">
 					<SidebarNavItem item={marketplaceItem} source="footer" />

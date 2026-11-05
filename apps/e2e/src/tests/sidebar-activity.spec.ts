@@ -382,4 +382,41 @@ test.describe('Sidebar Activity card', () => {
 			await expect(page.getByTestId('sidebar-activity')).toBeVisible()
 		})
 	}
+
+	// What's new card: static entries in the repo, dismissal kept in this browser.
+	test.describe("What's new card", () => {
+		for (const width of [1024, 1280]) {
+			for (const scheme of ['light', 'dark'] as const) {
+				test(`shows at ${width} in ${scheme} mode`, async ({ page, account }) => {
+					await page.setViewportSize({ width, height: 800 })
+					await page.emulateMedia({ colorScheme: scheme })
+					await page.goto(`/${account.workspaceId}`)
+					const card = page.getByRole('region', { name: "What's new" })
+					await expect(card).toBeVisible()
+					await expect(card.getByText('Filters on Chats and Items')).toBeVisible()
+					await expect(card.getByRole('button', { name: 'Dismiss' })).toBeVisible()
+				})
+			}
+		}
+
+		test('dismissed state persists after reload', async ({ page, account }) => {
+			await page.setViewportSize({ width: 1280, height: 800 })
+			await page.goto(`/${account.workspaceId}`)
+			const card = page.getByRole('region', { name: "What's new" })
+			await card.getByRole('button', { name: 'Dismiss' }).click()
+			await expect(card).toBeHidden()
+			await page.reload()
+			await expect(page.getByTestId('sidebar-activity')).toBeVisible()
+			await expect(page.getByRole('region', { name: "What's new" })).toHaveCount(0)
+		})
+
+		test('is hidden on the collapsed rail', async ({ page, account }) => {
+			await page.setViewportSize({ width: 1280, height: 800 })
+			await page.goto(`/${account.workspaceId}`)
+			const card = page.getByRole('region', { name: "What's new" })
+			await expect(card).toBeVisible()
+			await page.getByRole('button', { name: 'Toggle Sidebar' }).first().click()
+			await expect(card).not.toBeVisible()
+		})
+	})
 })
