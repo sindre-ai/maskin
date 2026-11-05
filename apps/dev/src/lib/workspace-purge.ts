@@ -127,7 +127,6 @@ export const WORKSPACE_PURGE_CASCADE = [
 	'message_reactions',
 	'message_thread_reads',
 	'messages',
-	'research_runs',
 	'send_permissions',
 	'session_dispatch_attempts',
 	'slack_user_links',

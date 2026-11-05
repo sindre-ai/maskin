@@ -57186,8 +57186,6 @@ public enum Operations {
                         public struct runtime_configPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/sessions/POST/requestBody/json/config/runtime_config/max_turns`.
                             public var max_turns: Swift.Int?
-                            /// - Remark: Generated from `#/paths/api/sessions/POST/requestBody/json/config/runtime_config/max_budget_usd`.
-                            public var max_budget_usd: Swift.Double?
                             /// - Remark: Generated from `#/paths/api/sessions/POST/requestBody/json/config/runtime_config/approval_mode`.
                             public var approval_mode: Swift.String?
                             /// - Remark: Generated from `#/paths/api/sessions/POST/requestBody/json/config/runtime_config/command`.
@@ -57196,23 +57194,19 @@ public enum Operations {
                             ///
                             /// - Parameters:
                             ///   - max_turns:
-                            ///   - max_budget_usd:
                             ///   - approval_mode:
                             ///   - command:
                             public init(
                                 max_turns: Swift.Int? = nil,
-                                max_budget_usd: Swift.Double? = nil,
                                 approval_mode: Swift.String? = nil,
                                 command: Swift.String? = nil
                             ) {
                                 self.max_turns = max_turns
-                                self.max_budget_usd = max_budget_usd
                                 self.approval_mode = approval_mode
                                 self.command = command
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case max_turns
-                                case max_budget_usd
                                 case approval_mode
                                 case command
                             }

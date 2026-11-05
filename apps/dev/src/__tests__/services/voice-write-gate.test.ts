@@ -696,7 +696,6 @@ describe('every tool of the real toolkit has a write-gate decision', () => {
 		'create_sub_chat',
 		'create_workspace',
 		'create_workspace_field',
-		'deep_research',
 		'desktop_close_port',
 		'desktop_move',
 		'desktop_screenshot',
