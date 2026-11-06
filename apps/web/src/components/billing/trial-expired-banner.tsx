@@ -8,6 +8,7 @@ import {
 	DialogTitle,
 } from '@/components/ui/dialog'
 import { useBillingCancel, useBillingUsage, useStripeCheckout } from '@/hooks/use-billing'
+import { trackCreditLowShown, trackUpgradeClicked } from '@/lib/analytics'
 import type { BillingPlan } from '@/lib/api'
 import { Link } from '@tanstack/react-router'
 import { AlertTriangle } from 'lucide-react'
@@ -50,6 +51,10 @@ export function TrialExpiredBanner({ workspaceId }: { workspaceId: string }) {
 			setExpiredPlan(null)
 		}
 	}, [usage])
+
+	useEffect(() => {
+		if (expiredPlan) trackCreditLowShown({ placement: 'banner', plan: expiredPlan })
+	}, [expiredPlan])
 
 	if (!expiredPlan) return null
 
@@ -94,6 +99,7 @@ function PlanExpiredDialog({
 	const cancel = useBillingCancel(workspaceId)
 
 	const handleUpgrade = (target: 'pro' | 'team') => {
+		trackUpgradeClicked({ source: 'expired_dialog', target_plan: target, current_plan: plan })
 		const base = window.location.href.split('?')[0]
 		checkout.mutate(
 			{

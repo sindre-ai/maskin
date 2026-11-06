@@ -18,7 +18,7 @@ import {
 	useUserDisplaySettings,
 } from '@/hooks/use-user-display-settings'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
-import { deriveSidebarViewport, trackSidebarToggle } from '@/lib/analytics'
+import { deriveSidebarViewport, trackCreditLowShown, trackSidebarToggle } from '@/lib/analytics'
 import type { DisplaySettingsBody, ObjectResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { typeLabel } from '@/lib/constants'
@@ -216,7 +216,12 @@ export function ObjectDetailShell({
 
 	// D6 credits chip predicate — workspace-scoped selector reacts to SSE
 	// invalidation on session lifecycle events (see `sse-invalidation.ts`).
-	const { credits_state } = useUsageState(workspaceId)
+	const { credits_state, usage: usageForCredits } = useUsageState(workspaceId)
+	const creditsPlan = usageForCredits?.plan ?? 'unknown'
+	useEffect(() => {
+		if (credits_state === 'empty')
+			trackCreditLowShown({ placement: 'object_chip', plan: creditsPlan })
+	}, [credits_state, creditsPlan])
 
 	// D4: whole button disabled at 60% opacity when the object is
 	// non-editable. `archived` bets are the only observable read-only state

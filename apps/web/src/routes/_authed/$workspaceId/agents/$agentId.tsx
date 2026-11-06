@@ -8,6 +8,7 @@ import { RouteError } from '@/components/shared/route-error'
 import { useActor, useAgent, useCreateActor, useUpdateActor } from '@/hooks/use-actors'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { type AgentTab, DEFAULT_AGENT_TAB, parseAgentTab } from '@/lib/agent-detail'
+import { trackAgentOpened } from '@/lib/analytics'
 import { ApiError } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
@@ -110,6 +111,16 @@ function AgentDetailLoaded({
 	onTabChange: (tab: AgentTab) => void
 }) {
 	const { data: agent, isLoading, isError, error, refetch } = useActor(agentId)
+
+	// One event per open of an agent's page. Keyed on the id so refetches and
+	// StrictMode's double effect do not repeat it.
+	const openedAgentRef = useRef<string | null>(null)
+	const loadedAgentId = agent?.id ?? null
+	useEffect(() => {
+		if (!loadedAgentId || openedAgentRef.current === loadedAgentId) return
+		openedAgentRef.current = loadedAgentId
+		trackAgentOpened({ entity_id: loadedAgentId })
+	}, [loadedAgentId])
 
 	if (isLoading) {
 		return (
