@@ -7,7 +7,7 @@ import {
 	workspaceMembers,
 	workspaces,
 } from '@maskin/db/schema'
-import { eq } from 'drizzle-orm'
+import { eq, inArray } from 'drizzle-orm'
 import type { AgentStorageManager } from '../services/agent-storage'
 import type { SessionManager } from '../services/session-manager'
 import { provisionWorkspace } from '../services/workspace-bootstrap'
@@ -51,6 +51,8 @@ export interface MarketplaceSyncResult {
 	inserted: string[]
 	updated: string[]
 	unchanged: string[]
+	/** Slugs newly retired because they are no longer in the seed list. */
+	retired: string[]
 }
 
 /**
@@ -59,6 +61,12 @@ export interface MarketplaceSyncResult {
  * code-defined version differs from the stored row is updated in place (its
  * marketplace_loop_items are replaced wholesale); a loop whose version
  * matches is left untouched. Safe to call on every startup/deploy.
+ *
+ * A marketplace_loops row whose slug is no longer in the seed list is retired
+ * (retired_at set), not deleted: installed_loops.source_loop_id has no ON DELETE
+ * rule and the version pusher, installed list and uninstall all join on the row,
+ * so existing installs must keep it. A retired slug that comes back in the seed
+ * list is restored (retired_at cleared) and re-snapshotted like an update.
  *
  * Bumping a loop's `version` is the deliberate signal that propagates a
  * change: `LoopVersionPusher` (services/loop-version-pusher.ts) polls
@@ -77,6 +85,7 @@ export async function seedMarketplaceLoops(db: Database): Promise<MarketplaceSyn
 			id: marketplaceLoops.id,
 			slug: marketplaceLoops.slug,
 			version: marketplaceLoops.version,
+			retiredAt: marketplaceLoops.retiredAt,
 		})
 		.from(marketplaceLoops)
 	const existingBySlug = new Map(existingRows.map((r) => [r.slug, r]))
@@ -84,11 +93,14 @@ export async function seedMarketplaceLoops(db: Database): Promise<MarketplaceSyn
 	const inserted: string[] = []
 	const updated: string[] = []
 	const unchanged: string[] = []
+	const retired: string[] = []
 
 	await db.transaction(async (tx) => {
 		for (const config of MARKETPLACE_SEED_CONFIGS) {
 			const existing = existingBySlug.get(config.loop.slug)
-			if (existing && existing.version === config.loop.version) {
+			// A retired row is never "unchanged": it falls through to the update path,
+			// which clears retired_at and re-snapshots the items.
+			if (existing && existing.version === config.loop.version && !existing.retiredAt) {
 				unchanged.push(config.loop.slug)
 				continue
 			}
@@ -115,6 +127,7 @@ export async function seedMarketplaceLoops(db: Database): Promise<MarketplaceSyn
 						description: config.loop.description,
 						version: config.loop.version,
 						useCase: config.loop.useCase,
+						retiredAt: null,
 						updatedAt: new Date(),
 					})
 					.where(eq(marketplaceLoops.id, existing.id))
@@ -162,9 +175,24 @@ export async function seedMarketplaceLoops(db: Database): Promise<MarketplaceSyn
 				})),
 			])
 		}
+
+		const seededSlugs = new Set(MARKETPLACE_SEED_CONFIGS.map((config) => config.loop.slug))
+		const toRetire = existingRows.filter((r) => !seededSlugs.has(r.slug) && !r.retiredAt)
+		if (toRetire.length > 0) {
+			await tx
+				.update(marketplaceLoops)
+				.set({ retiredAt: new Date(), updatedAt: new Date() })
+				.where(
+					inArray(
+						marketplaceLoops.id,
+						toRetire.map((r) => r.id),
+					),
+				)
+			retired.push(...toRetire.map((r) => r.slug))
+		}
 	})
 
-	return { inserted, updated, unchanged }
+	return { inserted, updated, unchanged, retired }
 }
 
 /**

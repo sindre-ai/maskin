@@ -308,6 +308,51 @@ describe('seedMarketplaceLoops', () => {
 		expect(calls.inserts).toEqual([])
 	})
 
+	it('retires a marketplace row whose slug is no longer in the seed list', async () => {
+		process.env.NODE_ENV = 'production'
+		const { db, mockResults, calls } = createTestContext()
+		mockResults.select = [
+			...matchingMarketplaceRows(),
+			{ id: 'loop-old', slug: 'old-loop', version: '1.0.0', retiredAt: null },
+		]
+
+		const result = await seedMarketplaceLoops(db)
+
+		expect(result.retired).toEqual(['old-loop'])
+		expect(result.unchanged.length).toBe(ALL_PACKAGES.length)
+		expect(calls.updates).toEqual([expect.objectContaining({ retiredAt: expect.any(Date) })])
+		expect(calls.inserts).toEqual([])
+	})
+
+	it('leaves an already retired row alone', async () => {
+		process.env.NODE_ENV = 'production'
+		const { db, mockResults, calls } = createTestContext()
+		mockResults.select = [
+			...matchingMarketplaceRows(),
+			{ id: 'loop-old', slug: 'old-loop', version: '1.0.0', retiredAt: new Date() },
+		]
+
+		const result = await seedMarketplaceLoops(db)
+
+		expect(result.retired).toEqual([])
+		expect(calls.updates).toEqual([])
+	})
+
+	it('restores a retired loop that is back in the seed list, even at the same version', async () => {
+		process.env.NODE_ENV = 'production'
+		const { db, mockResults, calls } = createTestContext()
+		mockResults.select = matchingMarketplaceRows().map((row) =>
+			row.slug === DISCOVERY_LOOP.slug ? { ...row, retiredAt: new Date() } : row,
+		)
+		mockResults.insert = [{ id: 'loop-1' }]
+
+		const result = await seedMarketplaceLoops(db)
+
+		expect(result.updated).toEqual([DISCOVERY_LOOP.slug])
+		expect(result.retired).toEqual([])
+		expect(calls.updates).toEqual([expect.objectContaining({ retiredAt: null })])
+	})
+
 	it('updates a loop and replaces its items when its version has changed', async () => {
 		process.env.NODE_ENV = 'production'
 		const { db, mockResults, calls } = createTestContext()
