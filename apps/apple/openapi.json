@@ -16093,6 +16093,9 @@
 											},
 											"isDefault": {
 												"type": "boolean"
+											},
+											"isTeam": {
+												"type": "boolean"
 											}
 										},
 										"required": [
@@ -16108,7 +16111,8 @@
 											"updatedAt",
 											"role",
 											"memberCount",
-											"isDefault"
+											"isDefault",
+											"isTeam"
 										]
 									}
 								}

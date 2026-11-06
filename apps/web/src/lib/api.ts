@@ -2228,6 +2228,8 @@ export interface WorkspaceWithRole extends WorkspaceResponse {
 	memberCount: number
 	/** True for the workspace the caller chose as their default in Settings. */
 	isDefault: boolean
+	/** Whether the caller is on our own team. Only used to mark analytics events. */
+	isTeam: boolean
 }
 
 export interface UpdateWorkspaceInput {

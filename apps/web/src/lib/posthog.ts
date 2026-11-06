@@ -75,6 +75,8 @@ export interface WorkspaceSuperProperties {
 	workspace_id: string
 	actor_id: string
 	actor_type: string
+	// True when the person is on our own team. A plain boolean, never a name or email.
+	is_team: boolean
 }
 
 // Pins the Synthesizer's join keys onto every subsequent capture call —

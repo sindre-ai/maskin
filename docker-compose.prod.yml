@@ -108,6 +108,9 @@ services:
       # reaches the container, however it is set in Coolify. The server-side
       # PostHog capture reads this key; empty disables capture.
       POSTHOG_API_KEY: ${POSTHOG_API_KEY:-}
+      # Id of our own workspace. A human member of it is "the team": their
+      # PostHog events carry is_team = true. Empty means nobody is the team.
+      POSTHOG_TEAM_WORKSPACE_ID: ${POSTHOG_TEAM_WORKSPACE_ID:-}
       # Feature flags (apps/dev/src/lib/feature-flags.ts). Same rule as above:
       # not listed here means never in the container. All three are read once
       # at boot, so a change needs a restart. Empty means every flag is off for

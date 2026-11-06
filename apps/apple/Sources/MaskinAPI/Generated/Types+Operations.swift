@@ -17476,6 +17476,8 @@ public enum Operations {
                         public var memberCount: Swift.Int
                         /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/isDefault`.
                         public var isDefault: Swift.Bool
+                        /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/isTeam`.
+                        public var isTeam: Swift.Bool
                         /// Creates a new `jsonPayloadPayload`.
                         ///
                         /// - Parameters:
@@ -17493,6 +17495,7 @@ public enum Operations {
                         ///   - role:
                         ///   - memberCount:
                         ///   - isDefault:
+                        ///   - isTeam:
                         public init(
                             id: Swift.String,
                             name: Swift.String,
@@ -17507,7 +17510,8 @@ public enum Operations {
                             updatedAt: Swift.String? = nil,
                             role: Swift.String,
                             memberCount: Swift.Int,
-                            isDefault: Swift.Bool
+                            isDefault: Swift.Bool,
+                            isTeam: Swift.Bool
                         ) {
                             self.id = id
                             self.name = name
@@ -17523,6 +17527,7 @@ public enum Operations {
                             self.role = role
                             self.memberCount = memberCount
                             self.isDefault = isDefault
+                            self.isTeam = isTeam
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -17539,6 +17544,7 @@ public enum Operations {
                             case role
                             case memberCount
                             case isDefault
+                            case isTeam
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/json`.
