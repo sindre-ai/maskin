@@ -48,6 +48,13 @@ import {
 	matchesIntegrationFilters,
 	summarizeIntegrations,
 } from './integrations-list.js'
+import {
+	conciseObjectRow,
+	isListContractEnabled,
+	resolveListSort,
+	statusFilterParam,
+} from './list-contract.js'
+import { inSnapshot, matchesText, normalizeStatusFilter } from './list-filters.js'
 import { buildListPayload, listText } from './list-response.js'
 import {
 	READ_TOOL_NAMES,
@@ -81,8 +88,13 @@ import {
 	recordToolCall,
 	recordToolCallResponseSize,
 } from './telemetry.js'
-import { RUN_AGENT_DROPPED_KEYS, TOOL_NAME_ALIASES } from './tool-aliases.js'
-import { parseListActorsInclude, tools } from './tools.js'
+import {
+	RUN_AGENT_DROPPED_KEYS,
+	TOOL_ALIAS_ARG_RENAMES,
+	TOOL_NAME_ALIASES,
+	type ToolNameAlias,
+} from './tool-aliases.js'
+import { legacyListTools, parseListActorsInclude, tools } from './tools.js'
 
 export interface McpConfig {
 	apiBaseUrl: string
@@ -625,6 +637,48 @@ function countNonMaskinMcpServers(tools: unknown): number {
 		?.mcpServers
 	if (!mcpServers || typeof mcpServers !== 'object') return 0
 	return Object.keys(mcpServers).filter((name) => name !== 'maskin').length
+}
+
+/**
+ * The stored status of every loop in the workspace, keyed by loop id. `/api/loops` reports a
+ * folded status (stored pilot, live and archived all come back as draft), so a status filter
+ * reads the objects route, which returns the status as stored. Walks the route's own keyset to
+ * the end, archived loops included.
+ */
+async function fetchStoredLoopStatuses(
+	config: McpConfig,
+	workspaceId: string | undefined,
+): Promise<Map<string, string>> {
+	const pageSize = LIST_ENDPOINT_MAX_LIMIT
+	const snapshotAt = toSnapshotAt(new Date())
+	const statuses = new Map<string, string>()
+	let after: { createdAt: string; id: string } | null = null
+	// Bounded so a route that stops advancing cannot loop forever; 100 pages is 10,000 loops.
+	for (let hop = 0; hop < 100; hop++) {
+		const params = new URLSearchParams({
+			type: 'loop',
+			include_archived: 'true',
+			sort: 'createdAt',
+			order: 'desc',
+			limit: String(pageSize),
+			snapshot_at: snapshotAt,
+		})
+		if (after) {
+			params.set('cursor_created_at', after.createdAt)
+			params.set('cursor_id', after.id)
+		}
+		const rows = (await apiCall(config, 'GET', `/api/objects?${params}`, undefined, {
+			workspaceId,
+		})) as Array<{ id: string; status?: string | null; createdAt?: string | null }>
+		if (!Array.isArray(rows)) break
+		for (const row of rows) {
+			if (typeof row.status === 'string') statuses.set(row.id, row.status)
+		}
+		const last = rows[rows.length - 1]
+		if (rows.length < pageSize || !last?.createdAt) break
+		after = { createdAt: last.createdAt, id: last.id }
+	}
+	return statuses
 }
 
 /** Parse an `X-Total-Count`-style header, falling back to a default. */
@@ -2913,6 +2967,7 @@ async function buildCollectionHeroCard(
 
 interface RawTrigger {
 	id: string
+	workspaceId?: string | null
 	name: string
 	type: string
 	config: Record<string, unknown> | null
@@ -3202,6 +3257,196 @@ export function getServerHandlers(server: McpServer): Map<string, McpToolHandler
 	return serverHandlers.get(server) ?? new Map()
 }
 
+/** Arguments of the list contract's one query path (list_objects, and search_objects as its alias). */
+interface ListObjectsArgs {
+	workspace_id?: string
+	q?: string
+	type?: string
+	status?: string | string[]
+	driver?: string
+	updated_before?: string
+	updated_after?: string
+	sort?: Parameters<typeof resolveListSort>[0]
+	detail?: 'concise' | 'full'
+	limit?: number
+	cursor?: string
+	metadata_eq?: Record<string, string>
+	include_archived?: boolean
+	/** Start offset of a ranked walk when no cursor carries one. Only search_objects sends it. */
+	offset?: number
+}
+
+/**
+ * list_objects after the list contract (wave 2, T3), and the handler search_objects forwards to.
+ *
+ * Without `q` the walk is a keyset walk on created-at or updated-at, as before. With `q` the API
+ * ranks by match quality, which a keyset cannot follow, so the walk pages by offset and the offset
+ * travels in the same opaque cursor (n). Both walks freeze at the first call (snapshot_at), carry
+ * has_more from a limit-plus-one fetch, and resume after the last row a token cap lets through.
+ */
+async function listObjectsPage(
+	config: McpConfig,
+	args: ListObjectsArgs,
+	toolName: 'list_objects' | 'search_objects',
+) {
+	const ranked = Boolean(args.q)
+	const sort = resolveListSort(args.sort, ranked)
+	const pagination = resolveListPagination({
+		limit: args.limit,
+		cursor: args.cursor,
+		order: sort.order,
+		maxLimit: LIST_ENDPOINT_MAX_LIMIT,
+	})
+	const offset = ranked ? (pagination.cursor?.n ?? args.offset ?? 0) : 0
+	const params = new URLSearchParams()
+	if (args.q) params.set('q', args.q)
+	if (args.type) params.set('type', args.type)
+	const status = statusFilterParam(args.status)
+	if (status) params.set('status', status)
+	if (args.driver) params.set('driver', args.driver)
+	if (args.updated_before) params.set('updated_before', args.updated_before)
+	if (args.updated_after) params.set('updated_after', args.updated_after)
+	params.set('sort', sort.apiSort)
+	params.set('order', pagination.order)
+	// The `+ 1` sentinel tells us whether more rows follow; at the endpoint cap
+	// there is no room for it, so a full page is probed with a one-row call.
+	params.set('limit', String(Math.min(pagination.limit + 1, LIST_ENDPOINT_MAX_LIMIT)))
+	params.set('snapshot_at', pagination.snapshotAt)
+	if (ranked) {
+		if (offset > 0) params.set('offset', String(offset))
+	} else if (pagination.cursor) {
+		params.set('cursor_created_at', pagination.cursor.k.sortValue)
+		params.set('cursor_id', pagination.cursor.k.id)
+	}
+	for (const [field, value] of Object.entries(args.metadata_eq ?? {})) {
+		if (typeof value === 'string' && value.length > 0) params.set(`metadata.${field}`, value)
+	}
+	if (args.include_archived) params.set('include_archived', 'true')
+	const apiOptions = { workspaceId: args.workspace_id }
+	const sortValueOf = (row: RawObject) =>
+		sort.apiSort === 'updatedAt' ? row.updatedAt : row.createdAt
+	// A text search goes to the search route, which ranks by match quality and returns no count;
+	// a plain list goes to the list route, which sends X-Total-Count.
+	const route = ranked ? '/api/objects/search' : '/api/objects'
+	const { data, response } = await apiCallWithResponse(
+		config,
+		'GET',
+		`${route}?${params}`,
+		undefined,
+		apiOptions,
+	)
+	let raw = data as RawObject[]
+	const lastRaw = raw[raw.length - 1]
+	if (pagination.limit === LIST_ENDPOINT_MAX_LIMIT && lastRaw && raw.length === pagination.limit) {
+		const probeParams = new URLSearchParams(params)
+		probeParams.set('limit', '1')
+		const lastSortValue = sortValueOf(lastRaw)
+		if (ranked) {
+			probeParams.set('offset', String(offset + pagination.limit))
+		} else if (lastSortValue) {
+			probeParams.set('cursor_created_at', lastSortValue)
+			probeParams.set('cursor_id', lastRaw.id)
+		}
+		if (ranked || lastSortValue) {
+			const probe = (await apiCall(
+				config,
+				'GET',
+				`${route}?${probeParams}`,
+				undefined,
+				apiOptions,
+			)) as RawObject[]
+			raw = [...raw, ...probe]
+		}
+	}
+
+	// A ranked cursor at an offset the envelope cannot carry would decode as "no cursor" and send
+	// the walk back to page 1, so the walk ends there instead.
+	const rankedCursor = (nextOffset: number, last: RawObject | undefined): string | null => {
+		if (!last || nextOffset > CURSOR_MAX_OFFSET) return null
+		return encodeCursor({
+			s: pagination.snapshotAt,
+			o: pagination.order,
+			// Only here so the envelope validates; a ranked walk resumes from n.
+			k: { sortValue: sortValueOf(last) ?? pagination.snapshotAt, id: last.id },
+			n: nextOffset,
+		})
+	}
+	let result: RawObject[]
+	let nextCursor: string | null
+	if (ranked) {
+		result = raw.slice(0, pagination.limit)
+		nextCursor =
+			raw.length > pagination.limit ? rankedCursor(offset + result.length, result.at(-1)) : null
+	} else {
+		const encoded = encodeNextCursor(pagination, raw, sortValueOf)
+		result = encoded.trimmed
+		nextCursor = encoded.nextCursor
+	}
+	// The count under the walk's filters and snapshot. The search route sends none, so a ranked
+	// walk reports null (the page block's contract: total is null when the tool cannot know).
+	const total = ranked ? null : parseTotalCountHeader(response, result.length)
+	const heroCard = await buildCollectionHeroCard(
+		config,
+		toolName,
+		result,
+		args.workspace_id,
+		total ?? result.length,
+		ranked ? offset : 0,
+		nextCursor !== null,
+	)
+	const wsId = args.workspace_id ?? config.defaultWorkspaceId
+	const enriched = wsId
+		? result.map((obj) =>
+				addUrl(obj as unknown as Record<string, unknown>, config, wsId, {
+					kind: 'object',
+					id: obj.id,
+				}),
+			)
+		: (result as unknown as Record<string, unknown>[])
+	const rows = args.detail === 'concise' ? enriched.map(conciseObjectRow) : enriched
+	return {
+		_meta: uiMeta(toolName, config, args.workspace_id, pickCollectionResourceUri(heroCard)),
+		content: [
+			{
+				type: 'text' as const,
+				text: buildListContentText(rows),
+			},
+		],
+		structuredContent: {
+			heroCard,
+			objects: rows,
+			page: {
+				limit: pagination.limit,
+				returned: result.length,
+				has_more: nextCursor !== null,
+				total,
+				// Older search_objects callers read page.offset to walk.
+				...(ranked ? { offset } : {}),
+				...(nextCursor ? { next_cursor: nextCursor } : {}),
+			},
+			...(nextCursor ? { next_cursor: nextCursor } : {}),
+		},
+		// If the token cap trims this page, the walk resumes after the last row
+		// that actually ships instead of after the whole pre-trim page. The shipped row may be a
+		// concise one, so the position comes from the full row with the same id.
+		[RESUME_CURSOR]: (lastShipped: unknown) => {
+			const id = (lastShipped as { id?: string } | undefined)?.id
+			const index = result.findIndex((row) => row.id === id)
+			const row = result[index]
+			if (!row) return null
+			if (ranked) return rankedCursor(offset + index + 1, row)
+			const sortValue = sortValueOf(row)
+			return sortValue
+				? encodeCursor({
+						s: pagination.snapshotAt,
+						o: pagination.order,
+						k: { sortValue, id: row.id },
+					})
+				: null
+		},
+	}
+}
+
 // Tools whose schema rejects a top-level argument name it does not know instead
 // of stripping it. Only tools where a dropped list reads as a finished write;
 // other tools keep stripping, since agents often send harmless extra keys.
@@ -3218,6 +3463,11 @@ export function createMcpServer(config: McpConfig) {
 	// Attached to the server via `serverHandlers` so `getServerHandlers`
 	// (and `createInvokeTool` in ./invoke.ts) can dispatch tools directly.
 	const handlers = new Map<string, McpToolHandler>()
+
+	// The rollback switch for the list contract: off registers the pre-contract list_objects and
+	// search_objects (definition and handler). Read once at server creation, from the process
+	// environment, so a changed value needs a restart.
+	const listContractOn = isListContractEnabled()
 
 	const telemetrySink: TelemetrySink = config.telemetrySink ?? createDefaultSink()
 	const telemetryTarget = {
@@ -3256,17 +3506,33 @@ export function createMcpServer(config: McpConfig) {
 							baseDefinition.inputSchema,
 							(raw) => {
 								const normalised = normaliseArgs(name, raw)
+								// A tool reached under an old NAME (a listed alias) counts on every
+								// call, with the names of the arguments it maps. With the list
+								// contract off, search_objects is the real tool again.
+								const toolAlias =
+									name in TOOL_NAME_ALIASES && (listContractOn || name !== 'search_objects')
+										? { old: name, new: TOOL_NAME_ALIASES[name as ToolNameAlias] }
+										: undefined
+								const renames = [...normalised.renames]
+								for (const [from, to] of Object.entries(
+									(toolAlias && TOOL_ALIAS_ARG_RENAMES[name as ToolNameAlias]) || {},
+								)) {
+									const sent = typeof raw === 'object' && raw !== null && from in raw
+									if (sent && !renames.some((r) => r.old === from))
+										renames.push({ old: from, new: to })
+								}
 								// One event per call that used at least one old name. Here, not in
 								// the handler, so it fires before validation and a call that then
 								// fails validation is still counted. Fire and forget; key names
 								// only. A separate event type from tool_call, so the server-side
 								// trace is not double counted.
-								if (normalised.renames.length > 0) {
+								if (renames.length > 0 || toolAlias) {
 									recordAliasUse(telemetrySink, telemetryTarget, {
 										tool_name: name,
 										workspace_id: extractWorkspaceId(raw),
-										renames: normalised.renames,
+										renames,
 										both_sent: normalised.bothSent,
+										tool_alias: toolAlias,
 										transport: config.transport,
 									})
 								}
@@ -4097,15 +4363,25 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
+	const listDefinitions = listContractOn
+		? { list_objects: tools.list_objects, search_objects: tools.search_objects }
+		: legacyListTools
+
 	registerAppTool(
 		server,
 		'list_objects',
 		{
-			description: tools.list_objects.description,
-			inputSchema: tools.list_objects.inputSchema.shape,
+			description: listDefinitions.list_objects.description,
+			inputSchema: listDefinitions.list_objects.inputSchema.shape,
 			_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 		},
-		async (args) => {
+		// The definition is one of two schemas (see listDefinitions), which stops the compiler
+		// inferring the arguments, so they are typed here: the contract's on the way in, the
+		// pre-contract's below.
+		async (contractArgs: z.infer<typeof tools.list_objects.inputSchema>) => {
+			if (listContractOn) return listObjectsPage(config, contractArgs, 'list_objects')
+			const args = contractArgs as z.infer<typeof legacyListTools.list_objects.inputSchema>
+			// Pre-contract handler, kept for the rollback switch.
 			// The API's cursor keyset can seek on either `createdAt` (default) or
 			// `updatedAt` (when `sort` is set) — both are real timestamp columns
 			// with a supporting index, so the cursor walk works uniformly either
@@ -4234,11 +4510,18 @@ export function createMcpServer(config: McpConfig) {
 		server,
 		'search_objects',
 		{
-			description: tools.search_objects.description,
-			inputSchema: tools.search_objects.inputSchema.shape,
+			description: listDefinitions.search_objects.description,
+			inputSchema: listDefinitions.search_objects.inputSchema.shape,
 			_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 		},
 		async (args) => {
+			// A listed alias of list_objects: the old argument names map onto the new ones and the
+			// call runs the list_objects path (see TOOL_ALIAS_ARG_RENAMES).
+			if (listContractOn) {
+				const { driver_id, ...rest } = args
+				return listObjectsPage(config, { ...rest, driver: driver_id }, 'search_objects')
+			}
+			// Pre-contract handler, kept for the rollback switch.
 			// The `/api/objects/search` route ranks matches by token-hit count
 			// whenever `q` tokenizes to a non-empty set (T2). Under that
 			// ORDER BY, the API's `(createdAt, id)` keyset seek no longer
@@ -5544,17 +5827,6 @@ export function createMcpServer(config: McpConfig) {
 				cursor: args.cursor,
 				maxLimit: LIST_ENDPOINT_MAX_LIMIT,
 			})
-			const params = new URLSearchParams()
-			// The `+ 1` sentinel tells us whether more rows follow; at the endpoint cap
-			// there is no room for it, so a full page is probed with a one-row call.
-			params.set('limit', String(Math.min(pagination.limit + 1, LIST_ENDPOINT_MAX_LIMIT)))
-			params.set('snapshot_at', pagination.snapshotAt)
-			params.set('order', pagination.order)
-			if (pagination.cursor) {
-				params.set('cursor_created_at', pagination.cursor.k.sortValue)
-				params.set('cursor_id', pagination.cursor.k.id)
-			}
-			const skillsPath = `/api/workspaces/${wsId}/skills`
 			type SkillListRow = {
 				id: string
 				name: string
@@ -5562,47 +5834,42 @@ export function createMcpServer(config: McpConfig) {
 				isValid?: boolean
 				createdAt?: string | null
 			}
-			let raw = (await apiCall(config, 'GET', `${skillsPath}?${params}`, undefined, {
+			// The skills route returns every skill when it gets no limit, and the rows carry no
+			// SKILL.md body, so the filter and the page are cut here, on the whole set.
+			const all = (await apiCall(config, 'GET', `/api/workspaces/${wsId}/skills`, undefined, {
 				workspaceId: wsId,
 			})) as SkillListRow[]
-			const lastRaw = raw[raw.length - 1]
-			if (
-				pagination.limit === LIST_ENDPOINT_MAX_LIMIT &&
-				lastRaw?.createdAt &&
-				raw.length === pagination.limit
-			) {
-				const probeParams = new URLSearchParams(params)
-				probeParams.set('limit', '1')
-				probeParams.set('cursor_created_at', lastRaw.createdAt)
-				probeParams.set('cursor_id', lastRaw.id)
-				const probe = (await apiCall(config, 'GET', `${skillsPath}?${probeParams}`, undefined, {
-					workspaceId: wsId,
-				})) as SkillListRow[]
-				raw = [...raw, ...probe]
-			}
-			const { nextCursor, trimmed } = encodeNextCursor(pagination, raw)
-			const result = trimmed as SkillListRow[]
+			const matching = inSnapshot(
+				(Array.isArray(all) ? all : []).filter((skill) =>
+					matchesText(args.q, skill.name, skill.description),
+				),
+				pagination.snapshotAt,
+				(skill) => skill.createdAt,
+			)
+			const { page: result, nextCursor } = paginateClientSide<SkillListRow>({
+				rows: matching,
+				limit: pagination.limit,
+				snapshotAt: pagination.snapshotAt,
+				order: pagination.order,
+				cursor: pagination.cursor,
+				getSortValue: (row) => row.createdAt ?? null,
+				getId: (row) => row.id,
+			})
+			const payload = buildListPayload({
+				key: 'skills',
+				rows: result,
+				limit: pagination.limit,
+				nextCursor,
+				total: matching.length,
+			})
 			return {
 				_meta: meta(
 					'list_workspace_skills',
 					config,
 					(args as { workspace_id?: string }).workspace_id,
 				),
-				content: [
-					{
-						type: 'text' as const,
-						text: buildListContentText(result),
-					},
-				],
-				structuredContent: {
-					skills: result,
-					page: {
-						limit: pagination.limit,
-						returned: result.length,
-						...(nextCursor ? { next_cursor: nextCursor } : {}),
-					},
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
-				},
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				structuredContent: payload,
 				// If the token cap trims this page, the walk resumes after the last row
 				// that actually ships instead of ending at the pre-trim page.
 				[RESUME_CURSOR]: (lastShipped: unknown) => {
@@ -6670,12 +6937,18 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.heroCard, csp: CSP } },
 		},
 		async (args) => {
-			const pagination = resolveListPagination({ limit: args.limit, cursor: args.cursor })
+			const pagination = resolveListPagination({
+				limit: args.limit,
+				cursor: args.cursor,
+				maxLimit: LIST_ENDPOINT_MAX_LIMIT,
+			})
 			// `/api/triggers` still expects an `offset` query param — the cursor
 			// keyset supersedes it for actual pagination, so this tool always
 			// sends 0 rather than accept an offset param from the caller.
 			const offset = 0
-			const fetchCap = pagination.limit + 1
+			// The `+ 1` sentinel tells us whether more rows follow; at the endpoint cap
+			// there is no room for it, so a full page is probed with a one-row call.
+			const fetchCap = Math.min(pagination.limit + 1, LIST_ENDPOINT_MAX_LIMIT)
 			const params = new URLSearchParams({ limit: String(fetchCap), offset: String(offset) })
 			params.set('snapshot_at', pagination.snapshotAt)
 			params.set('order', pagination.order)
@@ -6686,13 +6959,27 @@ export function createMcpServer(config: McpConfig) {
 			if (args.agent_id) params.set('target_actor_id', args.agent_id)
 			if (args.status) params.set('enabled', String(args.status === 'enabled'))
 			if (args.q) params.set('q', args.q)
-			const { data, response } = await apiCallWithResponse(
-				config,
-				'GET',
-				`/api/triggers?${params}`,
-				undefined,
-				{ workspaceId: args.workspace_id },
-			)
+			const first = await apiCallWithResponse(config, 'GET', `/api/triggers?${params}`, undefined, {
+				workspaceId: args.workspace_id,
+			})
+			const { response } = first
+			let data = first.data
+			const lastFetched = Array.isArray(data) ? (data[data.length - 1] as RawTrigger) : undefined
+			if (
+				pagination.limit === LIST_ENDPOINT_MAX_LIMIT &&
+				lastFetched?.createdAt &&
+				Array.isArray(data) &&
+				data.length === pagination.limit
+			) {
+				const probeParams = new URLSearchParams(params)
+				probeParams.set('limit', '1')
+				probeParams.set('cursor_created_at', lastFetched.createdAt)
+				probeParams.set('cursor_id', lastFetched.id)
+				const probe = await apiCall(config, 'GET', `/api/triggers?${probeParams}`, undefined, {
+					workspaceId: args.workspace_id,
+				})
+				data = [...data, ...(Array.isArray(probe) ? probe : [])]
+			}
 			const rawRows = Array.isArray(data) ? (data as RawTrigger[]) : []
 			const { nextCursor, trimmed } = encodeNextCursor(
 				pagination,
@@ -6750,6 +7037,13 @@ export function createMcpServer(config: McpConfig) {
 							}),
 						)
 					: trimmedData
+			const payload = buildListPayload({
+				key: 'triggers',
+				rows: Array.isArray(enriched) ? enriched : [],
+				limit: pagination.limit,
+				nextCursor,
+				total: totalCount,
+			})
 			return {
 				_meta: uiMeta(
 					'list_triggers',
@@ -6757,25 +7051,13 @@ export function createMcpServer(config: McpConfig) {
 					args.workspace_id,
 					pickCollectionResourceUri(heroCard),
 				),
-				content: [
-					{
-						type: 'text' as const,
-						text: buildListContentText(enriched),
-					},
-				],
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				// The rows already ride in heroCard, so only the page block and cursor sit beside it;
+				// the text carries the whole payload. Rows here too would ship them twice, untrimmed.
 				structuredContent: {
 					heroCard,
-					...(nextCursor
-						? {
-								next_cursor: nextCursor,
-								page: {
-									limit: rows.length,
-									offset,
-									returned: rows.length,
-									next_cursor: nextCursor,
-								},
-							}
-						: {}),
+					page: payload.page,
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
 				},
 			}
 		},
@@ -7288,12 +7570,30 @@ export function createMcpServer(config: McpConfig) {
 			const pagination = resolveListPagination({
 				limit: (args as { limit?: number }).limit,
 				cursor: (args as { cursor?: string }).cursor,
+				maxLimit: LIST_ENDPOINT_MAX_LIMIT,
 			})
 			const data = (await apiCall(config, 'GET', '/api/loops', undefined, {
 				workspaceId: args.workspace_id,
 			})) as { loops: Array<Record<string, unknown>> }
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId
-			const loops = Array.isArray(data?.loops) ? data.loops : []
+			const allLoops = Array.isArray(data?.loops) ? data.loops : []
+			// /api/loops folds the stored status into its own pill values, so a status filter reads
+			// the stored status of each loop from the objects route instead.
+			const wantedStatuses = normalizeStatusFilter(args.status)
+			const storedStatuses = wantedStatuses
+				? await fetchStoredLoopStatuses(config, args.workspace_id)
+				: null
+			const loops = inSnapshot(
+				allLoops.filter((loop) => {
+					if (wantedStatuses && storedStatuses) {
+						const status = storedStatuses.get(loop.id as string) ?? String(loop.status ?? '')
+						if (!wantedStatuses.includes(status.toLowerCase())) return false
+					}
+					return matchesText(args.q, loop.name as string | undefined)
+				}),
+				pagination.snapshotAt,
+				(loop) => loop.createdAt as string | null | undefined,
+			)
 			const { page: pagedLoops, nextCursor } = paginateClientSide({
 				rows: loops,
 				limit: pagination.limit,
@@ -9231,11 +9531,20 @@ export function createMcpServer(config: McpConfig) {
 						]
 					: []
 
-			const result = [...moduleExtensions, ...trackedCustomExtensions, ...untrackedExtensions]
+			const result = [
+				...moduleExtensions,
+				...trackedCustomExtensions,
+				...untrackedExtensions,
+			].filter(
+				(ext) =>
+					(args.enabled === undefined || ext.enabled === args.enabled) &&
+					matchesText(args.q, ext.id, ext.name),
+			)
 
 			const pagination = resolveListPagination({
 				limit: (args as { limit?: number }).limit,
 				cursor: (args as { cursor?: string }).cursor,
+				maxLimit: LIST_ENDPOINT_MAX_LIMIT,
 			})
 			// Extensions are derived from workspace settings + registered modules —
 			// there's no per-row insert timestamp, so cursor uses the id string and

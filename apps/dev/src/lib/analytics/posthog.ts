@@ -4,6 +4,7 @@ import { actors, workspaces } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { logger } from '../logger'
 import { admitPosthogEvent } from './event-budget'
+import { __resetTeamMemberForTesting, configureTeamMember, isTeamActor } from './team-member'
 
 const DEFAULT_POSTHOG_HOST = 'https://eu.i.posthog.com'
 const CAPTURE_TIMEOUT_MS = 2_000
@@ -80,6 +81,7 @@ export function configurePosthogPrivacy(db: Database): void {
 		if (row?.type === 'human' || row?.type === 'agent') return row.type
 		return 'system'
 	}
+	configureTeamMember(db)
 }
 
 /** Test-only: drops the lookups and their caches. */
@@ -88,6 +90,7 @@ export function __resetPosthogPrivacyForTesting(): void {
 	privacyCache.clear()
 	readActorType = null
 	actorTypeCache.clear()
+	__resetTeamMemberForTesting()
 }
 
 /**
@@ -200,9 +203,11 @@ export function warnIfPosthogKeyUnset(): void {
  * Volume: each event name is sampled or capped per UTC day, see
  * `event-budget.ts`; tier 1 events are never touched.
  *
- * Shared properties: every event carries `surface: 'backend'` and an `actor_type`
- * (human, agent, trigger or system). Events whose actor is not a human are sent
- * with the person-profile flag off, so only people get a profile.
+ * Shared properties: every event carries `surface: 'backend'`, an `actor_type`
+ * (human, agent, trigger or system) and `is_team` (a plain boolean, true only for
+ * a human member of our own workspace, see `team-member.ts`). Events whose actor
+ * is not a human are sent with the person-profile flag off, so only people get a
+ * profile.
  *
  * Contract: never throws, never blocks the caller. If `POSTHOG_API_KEY` is
  * unset (local dev, CI without analytics), we log once at debug and return.
@@ -265,6 +270,7 @@ export async function capturePosthogEvent(
 		...outProps,
 		surface: 'backend',
 		actor_type: actorType,
+		is_team: await isTeamActor(distinctId, actorType),
 		...(actorType === 'human' ? {} : { $process_person_profile: false }),
 	}
 

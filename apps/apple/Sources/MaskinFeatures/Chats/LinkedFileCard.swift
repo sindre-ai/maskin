@@ -19,7 +19,7 @@ struct LinkedFileCard: View {
 
 	private var kind: FileContentKind { .classify(mimeType: file.mimeType, name: file.name) }
 	private var target: LinkedTarget { LinkedTarget(kind: .file, uuid: file.id) }
-	private var foldsOpen: Bool { kind == .markdown || kind == .text }
+	private var foldsOpen: Bool { kind == .markdown || kind == .text || kind == .audio }
 
 	var body: some View {
 		LinkedCardChrome {
@@ -35,7 +35,9 @@ struct LinkedFileCard: View {
 					.padding(.horizontal, MaskinSpace.s6)
 					.padding(.bottom, MaskinSpace.s6)
 				}
-				if foldsOpen, expanded { preview }
+				if foldsOpen, expanded {
+					if kind == .audio { audioPreview } else { preview }
+				}
 			}
 		}
 		.accessibilityElement(children: .contain)
@@ -76,6 +78,16 @@ struct LinkedFileCard: View {
 		}
 		.padding(.leading, MaskinSpace.s6)
 		.padding(.trailing, MaskinSpace.s3)
+	}
+
+	/// A sound plays in place; the bytes are read once the card opens.
+	private var audioPreview: some View {
+		VStack(spacing: 0) {
+			Rectangle().fill(MaskinSurface.separator).frame(height: 1)
+			LinkedAudioBody(file: file, store: store)
+				.padding(.horizontal, MaskinSpace.s6)
+				.padding(.vertical, MaskinSpace.s5)
+		}
 	}
 
 	@ViewBuilder
@@ -119,5 +131,50 @@ struct LinkedFileCard: View {
 		.padding(.horizontal, MaskinSpace.s6)
 		.padding(.vertical, MaskinSpace.s5)
 		.task(id: expanded) { await store?.loadText(of: file) }
+	}
+}
+
+/// Reads an audio file's bytes and hands them to the player.
+private struct LinkedAudioBody: View {
+	let file: FileReference
+	let store: LinkedItemStore?
+	@State private var phase: Phase = .loading
+
+	private enum Phase {
+		case loading
+		case ready(FileDetail)
+		case error
+	}
+
+	var body: some View {
+		Group {
+			switch phase {
+			case .ready(let detail):
+				FileAudioView(data: detail.data, name: detail.name, mimeType: detail.mimeType)
+			case .error:
+				HStack(spacing: MaskinSpace.s4) {
+					Text("Couldn't load this file.").maskinText(.caption).foregroundStyle(MaskinColor.ink4)
+					Spacer(minLength: 0)
+					Button("Retry") { Task { await load() } }
+						.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: MaskinFontWeight.w650))
+						.foregroundStyle(MaskinColor.ink3)
+						.frame(minHeight: MaskinSpace.touchMin)
+						.buttonStyle(.maskinPressed)
+				}
+			case .loading:
+				ProgressView().controlSize(.small).frame(maxWidth: .infinity, alignment: .leading)
+			}
+		}
+		.task { await load() }
+	}
+
+	private func load() async {
+		phase = .loading
+		do {
+			guard let store else { throw FileError("No file store.") }
+			phase = .ready(try await store.loadFile(id: file.id))
+		} catch {
+			phase = .error
+		}
 	}
 }

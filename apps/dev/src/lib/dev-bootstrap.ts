@@ -25,6 +25,12 @@ import {
 	DEV_PIPELINE_TRIGGER_IDS,
 } from './marketplace-loops/dev-pipeline-loop'
 import {
+	DISCOVERY_ACTOR_IDS,
+	DISCOVERY_LOOP,
+	DISCOVERY_SKILL_IDS,
+	DISCOVERY_TRIGGER_IDS,
+} from './marketplace-loops/discovery-loop'
+import {
 	GROWTH_BET_ACTOR_IDS,
 	GROWTH_BET_LOOP,
 	GROWTH_BET_SKILL_IDS,
@@ -79,6 +85,12 @@ import {
 	getTriggerData,
 } from './marketplace-loops/loop-data'
 import { actorSnapshot, skillSnapshot, triggerSnapshot } from './marketplace-loops/loop-snapshot'
+import {
+	MARKET_WATCH_ACTOR_IDS,
+	MARKET_WATCH_LOOP,
+	MARKET_WATCH_SKILL_IDS,
+	MARKET_WATCH_TRIGGER_IDS,
+} from './marketplace-loops/market-watch-loop'
 import {
 	STRATEGY_GROWTH_ACTOR_IDS,
 	STRATEGY_GROWTH_LOOP,
@@ -164,6 +176,18 @@ const MARKETPLACE_SEED_CONFIGS: readonly MarketplaceLoopSeedConfig[] = [
 		actorIds: GROWTH_MEETING_ACTOR_IDS,
 		triggerIds: GROWTH_MEETING_TRIGGER_IDS,
 		skillIds: GROWTH_MEETING_SKILL_IDS,
+	},
+	{
+		loop: MARKET_WATCH_LOOP,
+		actorIds: MARKET_WATCH_ACTOR_IDS,
+		triggerIds: MARKET_WATCH_TRIGGER_IDS,
+		skillIds: MARKET_WATCH_SKILL_IDS,
+	},
+	{
+		loop: DISCOVERY_LOOP,
+		actorIds: DISCOVERY_ACTOR_IDS,
+		triggerIds: DISCOVERY_TRIGGER_IDS,
+		skillIds: DISCOVERY_SKILL_IDS,
 	},
 ]
 
