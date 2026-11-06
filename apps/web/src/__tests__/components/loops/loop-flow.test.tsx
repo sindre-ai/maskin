@@ -224,4 +224,62 @@ describe('LoopFlow', () => {
 		expect(name.classList.contains('min-w-0')).toBe(true)
 		expect(name.classList.contains('break-words')).toBe(true)
 	})
+
+	it('gives every card a readable line: name, then what it asks the agent to do', async () => {
+		const t = buildTriggerResponse({
+			id: 't-a',
+			targetActorId: 'relay',
+			type: 'event',
+			name: 'Weekday briefs',
+			actionPrompt: 'The researcher drafts the five briefs.\nThen posts them.',
+			config: { entity_type: 'task', action: 'created' },
+		})
+		render(<LoopFlow workspaceId="ws-1" triggers={[t]} actors={[relay]} />, { wrapper: wrapper() })
+
+		expect(await screen.findByText('Weekday briefs')).toBeInTheDocument()
+		expect(screen.getByText('The researcher drafts the five briefs.')).toBeInTheDocument()
+		expect(screen.queryByText(/Then posts them/)).not.toBeInTheDocument()
+	})
+
+	it('falls back to the instruction, then to when it fires, never a blank or an id', async () => {
+		const noName = buildTriggerResponse({
+			id: 't-b',
+			targetActorId: 'relay',
+			type: 'event',
+			name: '  ',
+			actionPrompt: 'Sweep the stuck insights',
+			config: { entity_type: 'insight', action: 'created' },
+		})
+		const bare = buildTriggerResponse({
+			id: 't-c',
+			targetActorId: 'compass',
+			type: 'event',
+			name: '',
+			actionPrompt: '',
+			config: { entity_type: 'task', action: 'created' },
+		})
+		render(<LoopFlow workspaceId="ws-1" triggers={[noName, bare]} actors={[relay, compass]} />, {
+			wrapper: wrapper(),
+		})
+
+		expect(await screen.findByText('Sweep the stuck insights')).toBeInTheDocument()
+		expect(screen.getByText('When task is created')).toBeInTheDocument()
+		expect(screen.queryByText('t-b')).not.toBeInTheDocument()
+	})
+
+	it('keeps a very long agent name on one line in its chip', async () => {
+		const longAgent = buildActorListItem({
+			id: 'long',
+			name: 'An agent with an extraordinarily long name that keeps going past any column',
+			type: 'agent',
+		})
+		const t = buildTriggerResponse({ id: 't-l', targetActorId: 'long', type: 'event', config: {} })
+		render(<LoopFlow workspaceId="ws-1" triggers={[relayEvent, t]} actors={[relay, longAgent]} />, {
+			wrapper: wrapper(),
+		})
+
+		const chip = await screen.findByRole('button', { name: /An agent with an extraordinarily/ })
+		expect(chip.className).toContain('max-w-full')
+		expect(chip.querySelector('.truncate')).not.toBeNull()
+	})
 })

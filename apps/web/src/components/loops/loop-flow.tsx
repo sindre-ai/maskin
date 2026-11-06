@@ -1,4 +1,5 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { describeTrigger } from '@/components/triggers/trigger-row'
 import { Switch } from '@/components/ui/switch'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useUpdateTrigger } from '@/hooks/use-triggers'
@@ -10,7 +11,7 @@ import { toast } from 'sonner'
 
 function chipClasses(active: boolean) {
 	return cn(
-		'inline-flex h-[30px] items-center gap-[7px] rounded-full border px-[13px] text-[12.5px] font-semibold transition-colors',
+		'inline-flex h-[30px] max-w-full items-center gap-[7px] rounded-full border px-[13px] text-[12.5px] font-semibold transition-colors',
 		active
 			? 'border-primary bg-primary text-primary-foreground'
 			: 'border-border bg-background text-foreground hover:border-border-strong',
@@ -73,6 +74,12 @@ function TriggerCard({
 	const canWrite = useCanWrite()
 	const update = useUpdateTrigger(workspaceId)
 	const kind = trigger.type === 'cron' ? 'Schedule' : 'Event'
+	// The card reads as what happens: the trigger's name, then the first line of what it asks the
+	// agent to do. A trigger with neither says when it fires, so no card is ever blank.
+	const when = describeTrigger(trigger)
+	const instruction = trigger.actionPrompt?.trim().split('\n')[0]?.slice(0, 160) ?? ''
+	const title = trigger.name?.trim() || instruction || when
+	const detail = instruction && instruction !== title ? instruction : title !== when ? when : ''
 	return (
 		// The card opens the trigger's own page; the switch sits on top of it and acts
 		// without opening it. With `/triggers` folded into flows, this card is the only
@@ -92,13 +99,18 @@ function TriggerCard({
 					{kind}
 				</span>
 				<span className="min-w-0 break-words text-[13px] leading-[1.35] text-foreground">
-					{trigger.name}
+					{title}
 				</span>
+				{detail && (
+					<span className="min-w-0 break-words text-[12px] leading-[1.35] text-muted-foreground">
+						{detail}
+					</span>
+				)}
 			</Link>
 			<Switch
 				checked={trigger.enabled}
 				disabled={!canWrite || update.isPending}
-				aria-label={`${trigger.enabled ? 'Pause' : 'Turn on'} ${trigger.name}`}
+				aria-label={`${trigger.enabled ? 'Pause' : 'Turn on'} ${title}`}
 				onCheckedChange={(enabled) =>
 					update.mutate(
 						{ id: trigger.id, data: { enabled } },
@@ -117,6 +129,7 @@ export function LoopFlow({
 	actors,
 	loop,
 	onAddTrigger,
+	addingTrigger = false,
 }: {
 	workspaceId: string
 	triggers: TriggerResponse[]
@@ -124,6 +137,8 @@ export function LoopFlow({
 	loop?: LoopSummary
 	/** Adds a trigger to this flow. Omitted for viewers, so the control is not offered. */
 	onAddTrigger?: () => void
+	/** A trigger is being added; the control waits so a double click adds one. */
+	addingTrigger?: boolean
 }) {
 	const [agentFilter, setAgentFilter] = useState<string | null>(null)
 	const actorsById = new Map((actors ?? []).map((a) => [a.id, a]))
@@ -143,7 +158,8 @@ export function LoopFlow({
 					<button
 						type="button"
 						onClick={onAddTrigger}
-						className="text-[12.5px] font-semibold text-muted-foreground transition-colors hover:text-foreground"
+						disabled={addingTrigger}
+						className="text-[12.5px] font-semibold text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
 					>
 						+ Add trigger
 					</button>
@@ -167,7 +183,7 @@ export function LoopFlow({
 							onClick={() => setAgentFilter(agentFilter === step.agentId ? null : step.agentId)}
 							className={chipClasses(agentFilter === step.agentId)}
 						>
-							{step.agent?.name ?? 'Unknown agent'}
+							<span className="min-w-0 truncate">{step.agent?.name ?? 'Unknown agent'}</span>
 							<span className="opacity-55">{step.triggers.length}</span>
 						</button>
 					))}
