@@ -60,7 +60,7 @@
 		"react-dom": "^19.0.0"
 	},
 	"dependencies": {
-		"@tiptap/core": "^2.10.0",
+		"@tiptap/core": "^3.30.5",
 		"@tiptap/extension-bubble-menu": "^2.10.0",
 		"@tiptap/extension-code-block-lowlight": "^2.10.0",
 		"@tiptap/extension-link": "^2.10.0",
