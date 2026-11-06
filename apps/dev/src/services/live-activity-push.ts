@@ -10,7 +10,7 @@ import {
 	workspaceMembers,
 } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
-import { and, desc, eq, inArray } from 'drizzle-orm'
+import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import { LIVE_ACTIVITY_STALE_S } from './apns'
 import type { ApnsSender, LiveActivityEvent } from './apns'
@@ -54,6 +54,44 @@ export async function isInteractiveTurnOpenByLog(
 	if (!last) return false
 	if (last.createdAt && nowMs - last.createdAt.getTime() > INTERACTIVE_TURN_STALE_MS) return false
 	return !last.content.includes('"type":"result"')
+}
+
+/**
+ * `isInteractiveTurnOpenByLog` for many sessions in one statement: the ids whose turn is open.
+ * Same rule (newest log row is recent and is not the closing `result` envelope), one lateral
+ * lookup per id inside the database instead of one round trip each.
+ */
+export async function openInteractiveTurnsByLog(
+	db: Database,
+	sessionIds: string[],
+	nowMs: number,
+): Promise<Set<string>> {
+	const open = new Set<string>()
+	if (sessionIds.length === 0) return open
+	// Literal, table-qualified column references — see known-pitfalls.md on Drizzle column
+	// objects rendering unqualified inside raw `sql` templates.
+	const rows = (await db.execute(sql`
+		SELECT ids.session_id AS session_id,
+			floor(extract(epoch FROM latest.created_at) * 1000)::float8 AS created_ms,
+			strpos(latest.content, '"type":"result"') > 0 AS has_result
+		FROM unnest(ARRAY[${sql.join(
+			sessionIds.map((id) => sql`${id}::uuid`),
+			sql`, `,
+		)}]) AS ids(session_id)
+		CROSS JOIN LATERAL (
+			SELECT l.content, l.created_at
+			FROM session_logs l
+			WHERE l.session_id = ids.session_id
+			ORDER BY l.id DESC
+			LIMIT 1
+		) latest
+	`)) as unknown as Array<{ session_id: string; created_ms: number | null; has_result: boolean }>
+	for (const row of rows) {
+		if (row.created_ms !== null && nowMs - Number(row.created_ms) > INTERACTIVE_TURN_STALE_MS)
+			continue
+		if (!row.has_result) open.add(row.session_id)
+	}
+	return open
 }
 
 /**
