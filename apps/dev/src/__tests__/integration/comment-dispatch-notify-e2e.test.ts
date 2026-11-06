@@ -26,6 +26,15 @@ vi.mock('../../lib/analytics/posthog', () => ({
 	capturePosthogEvent: (...args: unknown[]) => capturePosthogEvent(...args),
 }))
 
+// startSession fires the admission write in the background (not awaited). These tests
+// start sessions through the real startSession with a stubbed session manager and end
+// as soon as the dispatch is seen, so a write still in flight would hit a closed
+// database connection. The real write is covered in daily-budget-events.test.ts.
+vi.mock('../../services/daily-budget-events', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../services/daily-budget-events')>()),
+	recordSessionAdmission: vi.fn().mockResolvedValue(undefined),
+}))
+
 function createMockSessionManager() {
 	return {
 		enqueueSession: vi.fn().mockResolvedValue({ id: 'session-stub' }),

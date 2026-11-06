@@ -173,18 +173,19 @@ export const DEFAULT_TEXT_ONLY_MODEL_PATTERNS = ['deepseek']
  * may serve a funded request. Chosen on measured time to first token and tok/s:
  * most other hosts of the fallback model were 10-30s to first token at 5-25
  * tok/s. MASKIN_FALLBACK_PROVIDER_ONLY (comma separated) overrides it; empty or
- * "none" lifts the restriction. A model neither host serves fails with a 404
- * ("no endpoints found") instead of falling back to a slow host.
+ * "none" lifts the restriction. A model the host does not serve fails with a 404
+ * ("no endpoints found") instead of falling back to a slow host. GMICloud was
+ * dropped in November 2026: the OpenRouter account now enforces zero data
+ * retention and GMICloud is not on that list, so it always 404'd.
  */
-export const DEFAULT_ONLY_PROVIDERS = ['digitalocean', 'gmicloud']
+export const DEFAULT_ONLY_PROVIDERS = ['digitalocean']
 
 /**
  * A funded request that has produced no token after this long is cancelled and
- * retried once, then sent to the other allowed provider (two tries there). The
- * last try has no timeout, so a request that is slow everywhere is still served.
- * Measured first tokens on the allowed providers:
- * DigitalOcean 1-3s, GMICloud 3-4.5s (one 69s outlier in 20 large requests), so
- * 8s leaves headroom for both and still catches the stalls.
+ * retried once, then sent to the other allowed provider if there is more than one
+ * (two tries there). The last try has no timeout, so a request that is slow
+ * everywhere is still served. Measured first tokens on DigitalOcean: 1-3s, so
+ * 8s leaves headroom and still catches the stalls.
  */
 export const DEFAULT_TTFT_TIMEOUT_MS = 8000
 

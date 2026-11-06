@@ -62,7 +62,7 @@ public struct APITriggersSource: TriggersAPI {
 		])
 		let payload = try Self.decode(
 			Operations.post_sol_api_sol_triggers.Input.Body.jsonPayload.self, from: body)
-		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let output = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.post_sol_api_sol_triggers(
 				.init(
 					headers: .init(x_hyphen_workspace_hyphen_id: workspaceID), body: .json(payload)))
@@ -90,7 +90,7 @@ public struct APITriggersSource: TriggersAPI {
 		let payload = try Self.decode(
 			Operations.patch_sol_api_sol_triggers_sol__lcub_id_rcub_.Input.Body.jsonPayload.self,
 			from: body)
-		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let output = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.patch_sol_api_sol_triggers_sol__lcub_id_rcub_(
 				.init(path: .init(id: id), body: .json(payload)))
 		}
@@ -102,7 +102,7 @@ public struct APITriggersSource: TriggersAPI {
 	}
 
 	public func delete(id: String, idempotencyKey: String) async throws {
-		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let output = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.delete_sol_api_sol_triggers_sol__lcub_id_rcub_(.init(path: .init(id: id)))
 		}
 		switch output {

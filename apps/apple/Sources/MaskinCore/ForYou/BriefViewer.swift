@@ -59,15 +59,6 @@ public struct BriefSequence: Equatable, Sendable {
 			if case .page(let output) = card.content { output } else { nil }
 		}
 	}
-
-	/// What "Tell me more" sends the Chief of Staff: the agent reads only the text, so it names the slide.
-	public static func tellMeMore(about card: StoryCard) -> String {
-		switch card.content {
-		case .briefing(let headline, let script):
-			"Tell me more about today's briefing: \"\(briefingText(headline: headline, script: script).title)\". "
-		case .page: "Tell me more about \"\(card.headline)\" (from \(card.unit)). "
-		}
-	}
 }
 
 /// Where the viewer is: which slide, how far through it, and whether it is held. Time comes in

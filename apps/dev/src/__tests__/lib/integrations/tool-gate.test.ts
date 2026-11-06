@@ -275,14 +275,17 @@ describe('buildAccessPreamble', () => {
 		expect(text).toContain('- Slack: Read (read tools only')
 		expect(text).toMatch(/- linear: Read & write/i)
 		expect(text).toMatch(/- gmail: No access/i)
-		expect(text).toContain('do not retry')
+		expect(text).toContain('do not retry the same call')
+		expect(text).not.toContain('workaround')
 		expect(text.endsWith('\n\n')).toBe(true)
 	})
 
 	it('points an agent with a person to ask at the missing-tool steps, others at Settings', () => {
 		const rows = [row('slack', 'read')]
 		const withPerson = buildAccessPreamble(rows, { personReachable: true })
-		expect(withPerson).toContain('Follow "When a tool or login is missing" below.')
+		expect(withPerson).toContain(
+			'follow "When a tool, integration, login or permission is missing" below',
+		)
 		expect(withPerson).not.toContain('Settings')
 		const alone = buildAccessPreamble(rows)
 		expect(alone).toContain('a workspace admin can change it under Settings')
@@ -298,9 +301,12 @@ describe('buildAccessPreamble', () => {
 			'request_keychain_credential',
 			'connect_integration',
 			'request_integration_access',
+			'desktop_run',
+			'show_computer',
 		]) {
 			expect(MISSING_TOOL_BLOCK).toContain(tool)
 		}
+		expect(MISSING_TOOL_BLOCK).toContain('Never answer "I can\'t"')
 		expect(MISSING_TOOL_BLOCK.endsWith('\n\n')).toBe(true)
 	})
 

@@ -150,7 +150,7 @@ struct PinnedTile: View {
 		.padding(.top, MaskinSpace.s8)
 		.padding(.horizontal, MaskinSpace.s4)
 		.padding(.bottom, MaskinSpace.s7)
-		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadiusLarge.tile, style: .continuous))
+		.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadiusLarge.tile, style: .continuous))
 		.overlay(alignment: .topTrailing) {
 			if tile.unreadCount > 0 {
 				UnreadBadge(count: tile.unreadCount).padding(MaskinSpace.s4 + 1)

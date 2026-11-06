@@ -10,8 +10,14 @@ interface SessionLike {
 
 export const ACTIVE_STATUSES = new Set(['running', 'starting', 'pending'])
 
-export function getActiveAgentSessions<T extends SessionLike>(sessions: T[]): T[] {
-	const active = sessions.filter((s) => ACTIVE_STATUSES.has(s.status))
+/** Sessions that are executing right now, not waiting to start. */
+export const RUNNING_STATUSES: ReadonlySet<string> = new Set(['running'])
+
+export function getActiveAgentSessions<T extends SessionLike>(
+	sessions: T[],
+	statuses: ReadonlySet<string> = ACTIVE_STATUSES,
+): T[] {
+	const active = sessions.filter((s) => statuses.has(s.status))
 	const byActor = new Map<string, T>()
 	for (const session of active) {
 		const existing = byActor.get(session.actorId)

@@ -1,7 +1,8 @@
 import Foundation
 
-/// The rows of the profile sheet below the profile and workspace cards, in two groups. There is
-/// no Agents row: agents live inside Members (handoff `7-Chat.md` §10).
+/// The rows of the profile sheet below the profile and workspace cards, in two groups. Agents is
+/// the first row of the Workspace group, with how many are working (v3 profile sheet); Members
+/// still lists them next to the people.
 public enum ProfileMenuGroup: String, CaseIterable, Hashable, Identifiable, Sendable {
 	case workspace, you
 
@@ -16,13 +17,14 @@ public enum ProfileMenuGroup: String, CaseIterable, Hashable, Identifiable, Send
 }
 
 public enum ProfileMenuItem: String, CaseIterable, Hashable, Identifiable, Sendable {
-	case marketplace, artefacts, members, integrations, keychain, triggers, billing, keys
+	case agents, marketplace, artefacts, members, integrations, keychain, triggers, billing, keys
 	case settings, autonomy
 
 	public var id: String { rawValue }
 
 	public var title: String {
 		switch self {
+		case .agents: "Agents"
 		case .marketplace: "Marketplace"
 		case .artefacts: "Artefacts"
 		case .members: "Members"
@@ -39,6 +41,7 @@ public enum ProfileMenuItem: String, CaseIterable, Hashable, Identifiable, Senda
 	/// The one-line description under the title, from the prototype.
 	public var subtitle: String {
 		switch self {
+		case .agents: "The agents that work for you"
 		case .marketplace: "Hire an agent or install a flow"
 		case .artefacts: "Pages, PDFs and files your agents made"
 		case .members: "People and agents in this workspace"
@@ -54,7 +57,7 @@ public enum ProfileMenuItem: String, CaseIterable, Hashable, Identifiable, Senda
 
 	public var group: ProfileMenuGroup {
 		switch self {
-		case .marketplace, .artefacts, .members, .integrations, .keychain, .triggers, .billing, .keys:
+		case .agents, .marketplace, .artefacts, .members, .integrations, .keychain, .triggers, .billing, .keys:
 			.workspace
 		case .settings, .autonomy: .you
 		}
@@ -63,7 +66,7 @@ public enum ProfileMenuItem: String, CaseIterable, Hashable, Identifiable, Senda
 	/// These belong to a workspace; without one there is nothing to open.
 	var needsWorkspace: Bool {
 		switch self {
-		case .marketplace, .members, .integrations, .keychain, .triggers, .billing, .keys, .autonomy: true
+		case .agents, .marketplace, .members, .integrations, .keychain, .triggers, .billing, .keys, .autonomy: true
 		default: false
 		}
 	}

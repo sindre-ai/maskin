@@ -18,7 +18,7 @@ import { useAgentPause, useAgentRun, useDeleteActor } from '@/hooks/use-actors'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useActorSessions } from '@/hooks/use-sessions'
 import { deriveAgentStatus, groupSessionsByAgent } from '@/lib/agent-status'
-import type { ActorResponse } from '@/lib/api'
+import { type ActorResponse, ApiError } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
 import { Trash2 } from 'lucide-react'
@@ -41,12 +41,11 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 	const portrait = getPortraitStatus(agent, deriveAgentStatus(agent.id, sessionsByAgent))
 
 	const handleDelete = useCallback(() => {
-		deleteActor.mutate(agent.id, {
-			onSuccess: () => {
-				navigate({ to: '/$workspaceId/agents', params: { workspaceId } })
-			},
-		})
-	}, [agent.id, deleteActor, navigate, workspaceId])
+		// The delete runs on in the background (toast in useDeleteActor), so leave now.
+		setConfirmDelete(false)
+		deleteActor.mutate({ id: agent.id, name: agent.name })
+		navigate({ to: '/$workspaceId/agents', params: { workspaceId } })
+	}, [agent.id, agent.name, deleteActor, navigate, workspaceId])
 
 	// The detail bar's one agent-level control is the enable/disable switch
 	// (mockup 2313: `adPaused ? "Enable agent" : "Disable agent"`), bordered and
@@ -66,7 +65,10 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 				)
 			}
 			onPause={() =>
-				pause.mutate(agent.id, { onError: () => toast.error(`Couldn't disable ${agent.name}`) })
+				pause.mutate(agent.id, {
+					onError: (err) =>
+						toast.error(err instanceof ApiError ? err.message : `Couldn't disable ${agent.name}`),
+				})
 			}
 			isRunPending={run.isPending}
 			isPausePending={pause.isPending}

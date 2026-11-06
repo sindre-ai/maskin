@@ -434,6 +434,23 @@ export const tools = {
 				.describe(
 					'Opt-in blocks to add to each object response. Default `[]` returns only the core fields `{id, type, title, status, contextLine, url, workspaceId}` plus `setup` per object; each listed value adds one more block. `setup` is always attached regardless of whether it is listed here — the enum value is accepted only for backward compatibility and is a no-op.',
 				),
+			wait_for_status: z
+				.array(z.string().min(1))
+				.min(1)
+				.max(20)
+				.optional()
+				.describe(
+					'Hold until every object in `ids` has one of these statuses (for example ["done"] or ["done", "cancelled"]), then return the objects as usual. List every status you would accept: an object that never reaches one holds the call for the whole `wait_timeout_seconds`. The response carries `wait: { settled, waited_seconds, reason? }`; settled false means the wait stopped first (reason: timeout, not_found with `missing_ids`, or status_check_failed) and the objects show where they are now. An object counts once it has had one of these statuses at a check; it is not rechecked after. Only use this when you cannot go on until the object moves.',
+				),
+			wait_timeout_seconds: z
+				.number()
+				.int()
+				.min(1)
+				.max(3600)
+				.default(600)
+				.describe(
+					'With wait_for_status: the longest to wait, in seconds (default 600, max 3600). Objects have no timeout of their own, unlike sessions, so the wait always stops here.',
+				),
 		}),
 	},
 	update_objects: {
@@ -1225,6 +1242,34 @@ export const tools = {
 				.describe(
 					'Version check. The `contentHash` from get_file. If the file changed since, the update is refused with a 409 conflict and nothing is written. Optional.',
 				),
+		}),
+	},
+	propose_file_changes: {
+		description:
+			'Propose text changes to a markdown file instead of overwriting it, so a person can review each change. Pass the file `id` and a list of `changes`, each with `old_text` (the exact text to replace, copied from the file), `new_text` and an optional `reason`. The shape matches the edit tool coding agents already use. Each `old_text` is matched against the raw markdown source and must occur exactly once, so include enough surrounding text to be unique; changes may not overlap. If any change fails the whole call is rejected with the change index and a plain message, and nothing is stored. Limits: 50 changes, `old_text` up to 4000 characters, `new_text` up to 8000. Markdown files only (.md, .markdown or text/markdown). The file is not changed: the proposal is stored and the driver of each object the file is attached to is notified. Returns the proposal id and the file URL. Use update_file instead for a new file or a full rewrite that nobody needs to review.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z.string().uuid().describe('File ID.'),
+			summary: z
+				.string()
+				.max(1000)
+				.optional()
+				.describe('One line on what the proposal does overall.'),
+			changes: z
+				.array(
+					z.object({
+						old_text: z
+							.string()
+							.min(1)
+							.max(4000)
+							.describe('Exact text to replace, from the raw markdown. Must match exactly once.'),
+						new_text: z.string().max(8000).describe('Replacement text. Empty string deletes.'),
+						reason: z.string().max(1000).optional().describe('Why, shown to the reviewer.'),
+					}),
+				)
+				.min(1)
+				.max(50)
+				.describe('The proposed changes, up to 50. Must not overlap.'),
 		}),
 	},
 	delete_file: {
@@ -2504,7 +2549,7 @@ export const tools = {
 	},
 	show_computer: {
 		description:
-			'Bring your own computer into the chat and ask the user to do something on it, by showing a card they can open to see and control the screen. Use it when a step needs a person: approving a two-factor prompt, solving a CAPTCHA, signing in with a login you are not able to use, confirming a payment, or any choice you must not make for them. Before calling it, get the computer to the right place with the desktop tools (open the site, go to the page) so the user lands on the screen where they need to act, and so the card does not open on an empty desktop. `task` is shown on the card as the instruction: say exactly what to do and when they are done, e.g. "Approve the 2FA prompt on e-conomic, then press Done." Use `request_keychain_credential` instead when what you need is a secret you can then use yourself. It is always your own computer: you cannot show another agent\'s. After calling this, end your turn without a closing message. The user presses Done on the card, which sends you a message saying they finished; then call `desktop_screenshot` to see what changed before carrying on. If they close the card without acting, they will tell you. Only works in a chat with a person; otherwise it fails and you should say what you need in your reply.',
+			'Bring your own computer into the chat and ask the user to do something on it, by showing a card they can open to see and control the screen. Use it when a step needs a person: approving a two-factor prompt, an image or puzzle challenge, signing in with a login you are not able to use, confirming a payment, or any choice you must not make for them. A plain "I\'m not a robot" checkbox is not one of these: you are acting for the person, so tick it yourself and carry on. Only hand it over if the check then turns into an image or puzzle challenge. Before calling it, get the computer to the right place with the desktop tools (open the site, go to the page) so the user lands on the screen where they need to act, and so the card does not open on an empty desktop. `task` is shown on the card as the instruction: say exactly what to do and when they are done, e.g. "Approve the 2FA prompt on e-conomic, then press Done." Use `request_keychain_credential` instead when what you need is a secret you can then use yourself. It is always your own computer: you cannot show another agent\'s. After calling this, end your turn without a closing message. The user presses Done on the card, which sends you a message saying they finished; then call `desktop_screenshot` to see what changed before carrying on. If they close the card without acting, they will tell you. Only works in a chat with a person; otherwise it fails and you should say what you need in your reply.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			task: z
@@ -2674,13 +2719,13 @@ export const tools = {
 				.describe('Extension ID to remove. Pass the extension ID, not individual type names.'),
 		}),
 	},
-	// Agent computer: every agent has its own long-lived Linux desktop (1280x720,
+	// Agent computer: every agent has its own long-lived Linux desktop (1920x1080,
 	// Chromium + xterm) that it drives and humans can watch and take over from the
 	// Desktop page. An agent always gets ITS OWN; only a person calling these
 	// tools has to say whose (agent_id). Behind the `workspace-desktop` flag.
 	desktop_screenshot: {
 		description:
-			'Take a screenshot of your computer (a 1280x720 Linux screen with Chromium and a terminal). Starts your computer if it is not running (a sleeping one wakes in a few seconds) — the first call can take up to a minute. Humans can watch this same screen live on the Desktop page and may take over, so call this again to see the current state before acting. Coordinates for desktop_click, desktop_move, desktop_drag and desktop_scroll are pixels in this image: (0,0) is the top-left.',
+			'Take a screenshot of your computer (a 1920x1080 Linux screen with Chromium and a terminal). Starts your computer if it is not running (a sleeping one wakes in a few seconds) — the first call can take up to a minute. Humans can watch this same screen live on the Desktop page and may take over, so call this again to see the current state before acting. Coordinates for desktop_click, desktop_move, desktop_drag and desktop_scroll are pixels in this image: (0,0) is the top-left.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,
@@ -2688,7 +2733,7 @@ export const tools = {
 	},
 	desktop_click: {
 		description:
-			'Click at a pixel position on your computer. Take a screenshot first to find the target, and another afterwards to confirm the result. Humans watching see the pointer move and click.',
+			'Click at a pixel position on your computer. Take a screenshot first to find the target, and another afterwards to confirm the result. Humans watching see the pointer move and click. If a page shows a plain "I\'m not a robot" checkbox, click it yourself; use show_computer only if it turns into an image or puzzle challenge.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,

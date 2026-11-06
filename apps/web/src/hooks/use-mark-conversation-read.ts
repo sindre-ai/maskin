@@ -5,6 +5,7 @@ import {
 } from '@/hooks/use-conversation'
 import { useUpdateConversationMe } from '@/hooks/use-conversations'
 import { useMarkNewestRead } from '@/hooks/use-mark-newest-read'
+import { closeShownNotifications, isChatTag } from '@/lib/web-push'
 import { useMemo } from 'react'
 
 /**
@@ -27,7 +28,14 @@ export function useMarkConversationRead(conversationId: string, workspaceId: str
 		conversation && newestMessageId > 0 && newestMessageId !== conversation.last_read_message_id
 			? newestMessageId
 			: null,
-		(messageId) =>
-			updateMe.mutateAsync({ id: conversationId, data: { last_read_message_id: messageId } }),
+		async (messageId) => {
+			const result = await updateMe.mutateAsync({
+				id: conversationId,
+				data: { last_read_message_id: messageId },
+			})
+			// Read here means the push for this chat is handled, so this browser drops it too.
+			void closeShownNotifications((shown) => shown.filter((n) => isChatTag(n.tag, conversationId)))
+			return result
+		},
 	)
 }

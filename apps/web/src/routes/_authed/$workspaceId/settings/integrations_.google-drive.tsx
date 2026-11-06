@@ -6,12 +6,10 @@ import { McpTag } from '@/components/integrations/drive/mcp-tag'
 import { ScopeDriftBanner } from '@/components/integrations/drive/scope-drift-banner'
 import { ScopeChip, ScopeRow } from '@/components/integrations/drive/scope-row'
 import { StatusPill, type StatusPillTone } from '@/components/integrations/drive/status-pill'
-import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import {
 	useConnectIntegration,
 	useDisconnectGoogle,
@@ -40,7 +38,7 @@ import { ChevronLeft } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/integrations_/google-drive')({
-	component: DriveDetailPage,
+	component: DriveDetail,
 	// Google sends a cancelled consent back with oauth=cancelled (see the OAuth
 	// callback). Any other value is dropped.
 	validateSearch: (search: Record<string, unknown>) => ({
@@ -48,22 +46,6 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings/integration
 	}),
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
-
-function DriveDetailPage() {
-	// One boundary for the whole Drive surface: with the flag off nothing below
-	// renders and no query fires.
-	const enabled = useFeatureFlag('google-drive-integration-ui')
-	if (!enabled) {
-		return (
-			<EmptyState
-				title={DRIVE_COPY.flagOffTitle}
-				description={DRIVE_COPY.flagOffDescription}
-				action={<BackToIntegrations />}
-			/>
-		)
-	}
-	return <DriveDetail />
-}
 
 function BackToIntegrations() {
 	const { workspaceId } = useWorkspace()

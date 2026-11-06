@@ -137,6 +137,7 @@ function conversationsPage(
 					snippet: null,
 					snippet_actor_id: null,
 					snippet_actor_name: null,
+					working_actor_ids: [],
 					participants: c.participants.map((p) => ({ ...p, joinedAt: null, addedBy: null })),
 				})),
 				has_more: false,
@@ -166,6 +167,11 @@ describe('New chat', () => {
 		render(<NewChatPage />)
 		expect(screen.queryByText('What needs a decision from me today?')).not.toBeInTheDocument()
 		expect(screen.queryByText('Summarise what the loops did overnight')).not.toBeInTheDocument()
+	})
+
+	it('shows no welcome message — that now lives in the Chief of Staff chat opened at signup', () => {
+		render(<NewChatPage />)
+		expect(screen.queryByText(/Welcome to Maskin/)).not.toBeInTheDocument()
 	})
 
 	describe('intro under the heading', () => {

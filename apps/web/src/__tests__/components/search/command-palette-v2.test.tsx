@@ -411,7 +411,6 @@ describe('launcher with words and pills', () => {
 	})
 
 	it('offers an @ menu, and Cmd+Enter hands the participant pill to the search page', async () => {
-		localStorage.setItem('ff:search-chat-participant-filter', 'on')
 		const PM = '00000000-0000-4000-8000-0000000000a1'
 		actorsRef.current = [{ id: PM, name: 'Product Marketing', type: 'agent', isSystem: false }]
 		const user = userEvent.setup()

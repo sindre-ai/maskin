@@ -6,6 +6,7 @@ import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useCreateObject, useObject, useUpdateObject } from '@/hooks/use-objects'
+import { trackKnowledgePageViewed } from '@/lib/analytics'
 import { ApiError } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getDefaultStatusForType } from '@maskin/module-sdk'
@@ -46,6 +47,16 @@ function ObjectDetailPage() {
 		if (object) isCreatedRef.current = true
 	}, [object])
 	const isCreated = isCreatedRef.current || !!object
+
+	// One event per open of a knowledge page. Keyed on the id so refetches and
+	// StrictMode's double effect do not repeat it.
+	const knowledgeId = object?.type === 'knowledge' ? object.id : null
+	const viewedKnowledgeRef = useRef<string | null>(null)
+	useEffect(() => {
+		if (!knowledgeId || viewedKnowledgeRef.current === knowledgeId) return
+		viewedKnowledgeRef.current = knowledgeId
+		trackKnowledgePageViewed({ entity_id: knowledgeId, entity_type: 'knowledge' })
+	}, [knowledgeId])
 
 	const handleAutoCreate = async (data: {
 		type: string

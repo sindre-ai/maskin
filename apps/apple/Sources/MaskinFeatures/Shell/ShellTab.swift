@@ -8,6 +8,7 @@ extension ShellTab {
 		case .loops: "arrow.clockwise"
 		case .objects: "square.stack.3d.up"
 		case .search: "magnifyingglass"
+		case .newChat: "plus"
 		}
 	}
 }

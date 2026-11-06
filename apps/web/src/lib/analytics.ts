@@ -306,6 +306,43 @@ export function trackMiniAppFileViewed(p: BaseProps & { entity_type: 'file' }): 
 	trackEvent('mini_app_file_viewed', fillBase(p))
 }
 
+// Usage questions the weekly data pack could not answer. Each fires once per
+// open, with `workspace_id` / `actor_id` riding as super-properties, and carries
+// ids only: no titles, names or text.
+//
+// A person opened a knowledge page. `entity_id` is the knowledge object id.
+export function trackKnowledgePageViewed(p: BaseProps & { entity_type: 'knowledge' }): void {
+	trackEvent('knowledge_page_viewed', fillBase(p))
+}
+
+// A person opened a briefing: a For You story card, or a deck in the file
+// viewer. `entity_id` is the file id.
+export type BriefingKind = 'story' | 'deck'
+
+export function trackBriefingViewed(
+	p: BaseProps & { entity_type: 'file'; kind: BriefingKind },
+): void {
+	trackEvent('briefing_viewed', { ...fillBase(p), kind: p.kind })
+}
+
+// Agent change review: fires when the human opens the review view from the
+// proposal banner. The other two review events (change_proposal_submitted,
+// change_reviewed) are sent from the server. Only mounted behind the
+// agent-change-review flag, so with the flag off it cannot fire.
+export function trackChangeReviewOpened(p: {
+	workspace_id: string
+	actor_id: string | null
+	file_name: string
+	proposal_id: string
+}): void {
+	trackEvent('change_review_opened', {
+		workspace_id: p.workspace_id,
+		actor_id: p.actor_id,
+		file_name: p.file_name,
+		proposal_id: p.proposal_id,
+	})
+}
+
 // iPadOS 13+ reports `MacIntel` from `navigator.userAgent` / `navigator.platform`
 // and only the `maxTouchPoints > 1` signal distinguishes it from a real Mac, so
 // the touch-point check is load-bearing — not paranoia. Returning 'web' for

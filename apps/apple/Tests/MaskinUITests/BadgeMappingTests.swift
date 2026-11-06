@@ -69,6 +69,15 @@ import Testing
 		#expect(ActorIdentity.initials(for: "x") == "X")
 	}
 
+	@Test("the plate hue follows the mockup's (h * 31 + c) % 360 and is stable")
+	func plateHue() {
+		#expect(ActorIdentity.hue(seed: "a") == (0 * 31 + 97) % 360)
+		#expect(ActorIdentity.hue(seed: "ab") == (97 * 31 + 98) % 360)
+		#expect(ActorIdentity.hue(seed: "Forge") == ActorIdentity.hue(seed: "Forge"))
+		#expect((0..<360).contains(ActorIdentity.hue(seed: "Some long actor id 123")))
+		#expect(ActorIdentity.hue(seed: "") == ActorIdentity.hue(seed: "?"))
+	}
+
 	@Test("an agent keeps the same shape and colour on every call")
 	func agentLookIsStable() {
 		#expect(ActorIdentity.agentShape(seed: "relay-1") == ActorIdentity.agentShape(seed: "relay-1"))

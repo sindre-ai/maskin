@@ -11,13 +11,16 @@ struct ArchivedRow: View {
 	let currentActorID: String?
 	@Binding var expanded: Bool
 	var forceExpanded = false
+	/// False: no header, only the rows (the archive opened from Display).
+	var showsHeader = true
 	let onUnarchive: (ConversationSummary) -> Void
 	var onOpen: (ConversationSummary) -> Void = { _ in }
 
-	private var isOpen: Bool { expanded || forceExpanded }
+	private var isOpen: Bool { expanded || forceExpanded || !showsHeader }
 
 	var body: some View {
 		VStack(spacing: 0) {
+			if showsHeader {
 			Button {
 				withAnimation(MaskinMotion.standard) { expanded.toggle() }
 			} label: {
@@ -47,6 +50,7 @@ struct ArchivedRow: View {
 			.buttonStyle(.maskinPressed)
 			.accessibilityLabel("Archived, \(items.count)")
 			.accessibilityHint(isOpen ? "Hides the archived conversations" : "Shows the archived conversations")
+			}
 			if isOpen {
 				ForEach(items) { item in
 					HStack(spacing: MaskinSpace.s7) {
@@ -88,9 +92,7 @@ struct ArchivedRow: View {
 					}
 					.padding(.horizontal, MaskinSpace.s8 + 1)
 					.padding(.vertical, MaskinSpace.s4)
-					.frame(minHeight: MaskinSpace.touchMin + MaskinSpace.s7)
-					.overlay(alignment: .top) { Divider().overlay(MaskinSurface.separator) }
-				}
+					.frame(minHeight: MaskinSpace.touchMin + MaskinSpace.s7)				}
 			}
 		}
 		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadiusLarge.tile, style: .continuous))

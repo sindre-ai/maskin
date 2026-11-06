@@ -44,4 +44,62 @@ struct IdempotencyTests {
 	}
 }
 
+@Suite("IdempotencyKey.bind")
+struct IdempotencyBindTests {
+	@Test("sets the key for the operation and restores it after")
+	func sets() async {
+		#expect(IdempotencyKey.current == nil)
+		let inside = await IdempotencyKey.bind("k1") { IdempotencyKey.current }
+		#expect(inside == "k1")
+		#expect(IdempotencyKey.current == nil)
+	}
+
+	@Test("a nested bind of the same key keeps the key")
+	func nestedSame() async {
+		let inside = await IdempotencyKey.bind("k1") {
+			await IdempotencyKey.bind("k1") { IdempotencyKey.current }
+		}
+		#expect(inside == "k1")
+	}
+
+	@Test("a nested bind of another key or nil still overrides")
+	func nestedDifferent() async {
+		let other = await IdempotencyKey.bind("k1") {
+			await IdempotencyKey.bind("k2") { IdempotencyKey.current }
+		}
+		let cleared = await IdempotencyKey.bind("k1") {
+			await IdempotencyKey.bind(nil) { IdempotencyKey.current }
+		}
+		#expect(other == "k2")
+		#expect(cleared == nil)
+	}
+
+	@Test("a nested bind of the same key enters withValue once, not twice")
+	func bindsOnce() async {
+		let key = "bind-once-\(UUID().uuidString)"
+		let seen = KeyLog()
+		IdempotencyKey.rebindObserver = { if $0 == key { seen.add() } }
+		defer { IdempotencyKey.rebindObserver = nil }
+		await IdempotencyKey.bind(key) {
+			await IdempotencyKey.bind(key) {}
+		}
+		#expect(seen.count == 1)
+	}
+
+	@Test("rethrows the operation's error")
+	func propagatesErrors() async {
+		struct Boom: Error {}
+		await #expect(throws: Boom.self) {
+			try await IdempotencyKey.bind("k1") { throw Boom() }
+		}
+	}
+}
+
+private final class KeyLog: @unchecked Sendable {
+	private let lock = NSLock()
+	private var n = 0
+	var count: Int { lock.withLock { n } }
+	func add() { lock.withLock { n += 1 } }
+}
+
 private final class Box: @unchecked Sendable { var value: String? }

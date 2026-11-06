@@ -148,16 +148,41 @@ struct AppRuntimeDeepLinkTests {
 @MainActor
 @Suite("AppRuntime badge")
 struct AppRuntimeBadgeTests {
-	@Test("the app icon carries no badge")
-	func badge() async {
-		let system = FakeSystem()
-		let devices = FakeDevices { true }
-		let push = PushRegistrar(
-			system: system, devices: devices, environment: .sandbox, platform: .ios,
+	private struct FakeCenter: DeliveredNotificationCenter {
+		func delivered() async -> [DeliveredPush] { [] }
+		func remove(identifiers: [String]) async {}
+	}
+
+	private struct FakePending: PendingNotificationSource {
+		var ids: Set<String>
+		func pendingNotificationIds(workspaceId: String) async -> Set<String>? { ids }
+	}
+
+	private func makePush(_ system: FakeSystem) -> PushRegistrar {
+		PushRegistrar(
+			system: system, devices: FakeDevices { true }, environment: .sandbox, platform: .ios,
 			registrationStore: InMemoryDeviceRegistrationStore(),
 			pendingStore: InMemoryDeviceRegistrationStore())
-		let (runtime, _) = await makeRuntime(push: push)
-		runtime.updateBadge()
+	}
+
+	@Test("the app icon shows the pending count when signed in")
+	func badge() async {
+		let system = FakeSystem()
+		let push = makePush(system)
+		let environment = AppEnvironment.preview(signedIn: true)
+		let sync = DeliveredNotificationSync(
+			center: FakeCenter(), pending: FakePending(ids: ["a", "b", "c"]),
+			workspaceId: { environment.workspaceId }, setBadge: { push.setBadge($0) })
+		let runtime = AppRuntime(environment: environment, push: push, deliveredSync: sync)
+		await runtime.updateBadge()
+		#expect(system.badges.last == 3)
+	}
+
+	@Test("the app icon is cleared when signed out")
+	func signedOutBadge() async {
+		let system = FakeSystem()
+		let (runtime, _) = await makeRuntime(signedIn: false, push: makePush(system))
+		await runtime.updateBadge()
 		#expect(system.badges.last == 0)
 	}
 }
@@ -548,9 +573,10 @@ struct AppRuntimeSearchRoutingTests {
 		#expect(runtime.presentation == nil)
 	}
 
-	@Test("the tab bar has four tabs and search, no More")
+	@Test("the tab bar has four tabs and the new-chat button, no More; search is a sheet")
 	func tabs() {
-		#expect(ShellTab.allCases == [.forYou, .chats, .loops, .objects, .search])
+		#expect(ShellTab.allCases == [.forYou, .chats, .loops, .objects, .search, .newChat])
+		#expect(ShellTab.primary == [.forYou, .chats, .loops, .objects])
 	}
 }
 
@@ -668,10 +694,10 @@ struct AppRuntimePresentationTests {
 		#expect(recents.load(workspaceId: "ws-1").isEmpty)
 	}
 
-	@Test("Search is the last tab, and the first is For you")
+	@Test("the new-chat button is last, and the first tab is For you")
 	func tabOrder() {
 		#expect(ShellTab.allCases.first == .forYou)
-		#expect(ShellTab.allCases.last == .search)
+		#expect(ShellTab.allCases.last == .newChat)
 	}
 }
 

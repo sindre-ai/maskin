@@ -1292,6 +1292,41 @@ describe('Workspaces Integration', () => {
 			expect(triggerRows).toHaveLength(16)
 		})
 
+		it('gives the Researcher the cited deep research mode and the deep-research-subagents skill', async () => {
+			const app = createApp()
+
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Researcher Deep Research' }),
+			)
+			const ws = await createRes.json()
+
+			const [researcher] = await db
+				.select({ id: actors.id, systemPrompt: actors.systemPrompt })
+				.from(workspaceMembers)
+				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+				.where(and(eq(workspaceMembers.workspaceId, ws.id), eq(actors.name, 'Researcher')))
+				.limit(1)
+			expect(researcher).toBeDefined()
+			expect(researcher?.systemPrompt).toContain('# Cited deep research mode')
+
+			const [skill] = await db
+				.select({ id: workspaceSkills.id })
+				.from(workspaceSkills)
+				.where(
+					and(
+						eq(workspaceSkills.workspaceId, ws.id),
+						eq(workspaceSkills.name, 'deep-research-subagents'),
+					),
+				)
+				.limit(1)
+			if (!skill) throw new Error('deep-research-subagents skill not seeded')
+			const attachRows = await db
+				.select({ actorId: agentSkills.actorId })
+				.from(agentSkills)
+				.where(eq(agentSkills.workspaceSkillId, skill.id))
+			expect(attachRows.map((r) => r.actorId)).toEqual([researcher?.id])
+		})
+
 		it('seeds the Bet discovery loop, Workspace improvements, and Knowledge Wiki loops wired to their triggers', async () => {
 			const app = createApp()
 
@@ -1496,8 +1531,13 @@ describe('Workspaces Integration', () => {
 			expect(res.status).toBe(201)
 			const ws = await res.json()
 
-			expect(capturePosthogEventMock).toHaveBeenCalledOnce()
-			const [event, distinctId, properties] = capturePosthogEventMock.mock.calls[0] as [
+			// Workspace setup also sends first_agent_created, so look at the
+			// workspace_created calls only.
+			const created = capturePosthogEventMock.mock.calls.filter(
+				([name]) => name === 'workspace_created',
+			)
+			expect(created).toHaveLength(1)
+			const [event, distinctId, properties] = created[0] as [
 				string,
 				string,
 				Record<string, unknown>,

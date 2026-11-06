@@ -3,31 +3,6 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// The two suggestions above the follow-up composer.
-struct BriefFollowUpChips: View {
-	let ask: (String) -> Void
-
-	var body: some View {
-		ScrollView(.horizontal, showsIndicators: false) {
-			HStack(spacing: MaskinSpace.s4) {
-				ForEach(BriefFollowUp.chips, id: \.self) { chip in
-					Button { ask(chip) } label: {
-						Text(chip)
-							.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: MaskinFontWeight.w650))
-							.foregroundStyle(BriefViewerPalette.ink)
-							.padding(.horizontal, MaskinSpace.s9)
-							.frame(minHeight: MaskinSpace.touchMin)
-							.background(BriefViewerPalette.fill, in: Capsule())
-							.contentShape(Capsule())
-					}
-					.buttonStyle(.maskinPressed(.shrink))
-				}
-			}
-		}
-		.scrollClipDisabled()
-	}
-}
-
 /// The exchange above the composer: the reader's question, the agent's answer as it arrives, and
 /// "Continue in chat". The slide text and buttons fold away while it is open.
 struct BriefFollowUpPanel: View {

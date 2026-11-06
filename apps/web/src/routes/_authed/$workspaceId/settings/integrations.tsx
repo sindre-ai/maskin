@@ -19,7 +19,6 @@ import {
 	DialogTitle,
 } from '@/components/ui/dialog'
 import { useCanWrite } from '@/hooks/use-can-write'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import {
 	useGithubPendingSelection,
 	useIntegrations,
@@ -63,15 +62,10 @@ function IntegrationsPage() {
 	const { workspaceId } = useWorkspace()
 	const { data: integrations, isLoading: integrationsLoading } = useIntegrations(workspaceId)
 	const { data: providers, isLoading: providersLoading } = useProviders()
-	// The backend registers google-drive unconditionally; only the connect entry
-	// point is hidden until `google-drive-integration-ui` is on.
-	const googleDriveVisible = useFeatureFlag('google-drive-integration-ui')
 	// Telnyx credentials come from server env, not a UI connect. Its api_key card would open
 	// the PostHog-worded key dialog, so it stays hidden until a real connect flow exists.
 	const visibleProviders = sortBy(
-		(providers ?? []).filter(
-			(p) => p.name !== 'telnyx' && (p.name !== 'google-drive' || googleDriveVisible),
-		),
+		(providers ?? []).filter((p) => p.name !== 'telnyx'),
 		(p) => p.displayName,
 		(p) => p.name,
 	)

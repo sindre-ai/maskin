@@ -9,6 +9,7 @@ import {
 	trackBetArchived,
 	trackBetCreated,
 	trackBetStatusChanged,
+	trackBriefingViewed,
 	trackChatImageUpload,
 	trackChatSessionStarted,
 	trackCommentPosted,
@@ -20,6 +21,7 @@ import {
 	trackFileViewerZoomUsed,
 	trackForyouCardAction,
 	trackForyouCardShown,
+	trackKnowledgePageViewed,
 	trackMiniAppFileViewed,
 	trackNavItemClicked,
 	trackObjectAttachedFile,
@@ -538,6 +540,33 @@ describe('v1 taxonomy helpers', () => {
 				parent_entity_type: 'bet',
 			}),
 		)
+	})
+
+	it('knowledge_page_viewed carries ids only', () => {
+		const capture = captureSpy()
+
+		trackKnowledgePageViewed({ entity_id: 'k-1', entity_type: 'knowledge' })
+
+		expect(capture).toHaveBeenCalledWith('knowledge_page_viewed', {
+			entity_id: 'k-1',
+			entity_type: 'knowledge',
+			source: 'web',
+			flow_id: null,
+		})
+	})
+
+	it('briefing_viewed says which kind of briefing was opened', () => {
+		const capture = captureSpy()
+
+		trackBriefingViewed({ entity_id: 'file-9', entity_type: 'file', kind: 'story' })
+
+		expect(capture).toHaveBeenCalledWith('briefing_viewed', {
+			entity_id: 'file-9',
+			entity_type: 'file',
+			source: 'web',
+			flow_id: null,
+			kind: 'story',
+		})
 	})
 
 	it('mini_app_file_viewed carries the fixed property contract for a file open', () => {

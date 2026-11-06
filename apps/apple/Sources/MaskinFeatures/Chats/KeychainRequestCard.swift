@@ -26,6 +26,8 @@ struct KeychainRequestCard: View {
 	@State private var error: String?
 	@State private var savedName: String?
 	@State private var stillRunning = false
+	@State private var dismissed = false
+	@State private var changingAgents = false
 
 	init(
 		request: KeychainCredentialRequest, messageCreatedAt: Date?, agents: [ChatParticipant],
@@ -53,6 +55,9 @@ struct KeychainRequestCard: View {
 							: "The agent is still running without it. Stop it from the chat, then send a message to start it again with the credential.")
 						.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
 				}
+			} else if dismissed {
+				RequestCardDeclined(
+					symbol: "lock", text: "\(displayName) not saved.", onAskAgain: { dismissed = false })
 			} else {
 				form
 			}
@@ -86,22 +91,18 @@ struct KeychainRequestCard: View {
 
 	@ViewBuilder
 	private var form: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-			Text(title)
-				.maskinText(.headline).foregroundStyle(MaskinColor.ink)
-			Text(
-				(request.hint.map { $0 + " " } ?? "")
-					+ (agents.count == 1
-						? "Stored in your Keychain. Only this agent can read it. "
-						: "")
-					+ "You type it here and it goes straight to your encrypted vault. The agent never sees it in the chat."
-			)
-			.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
-			.fixedSize(horizontal: false, vertical: true)
-		}
-		field("Name") {
-			TextField("e.g. e-conomic", text: $name)
-				.plainInput()
+		RequestCardTitle(
+			title: title,
+			subtitle: (request.hint.map { $0 + " " } ?? "")
+				+ (agents.count == 1 ? "Stored in your Keychain. Only this agent can read it. " : "")
+				+ "Goes to your encrypted vault. The agent never sees it in the chat.",
+			symbol: "lock")
+		// The name stands in the title when the agent suggested a valid one; otherwise it is a field.
+		if !suggestedNameIsValid {
+			field("Name") {
+				TextField("e.g. e-conomic", text: $name)
+					.plainInput()
+			}
 		}
 		if isLogin {
 			field("Username") {
@@ -116,31 +117,59 @@ struct KeychainRequestCard: View {
 				SecureField("Paste the key", text: $secret)
 			}
 		}
-		if agents.count > 1 {
-			VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-				Text("Who can use it").maskinText(.microLabel).foregroundStyle(MaskinColor.ink4)
+		if !agents.isEmpty { sharedRow }
+		if let message = error ?? nameProblem {
+			Text(message).maskinText(.caption).foregroundStyle(MaskinColor.ink3)
+		}
+		VStack(spacing: MaskinSpace.s4) {
+			RequestCardButton(title: busy ? "Saving…" : "Save to Keychain", primary: true, disabled: !canSave) {
+				Task { await save() }
+			}
+			RequestCardButton(title: "Not now", disabled: busy) { dismissed = true }
+		}
+	}
+
+	/// The agents that may use it, as one summary line; Change opens the per-agent toggles.
+	private var sharedRow: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s2) {
+			HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s4) {
+				Text("Shared").maskinText(.microLabel).foregroundStyle(MaskinColor.ink4)
+				Text(Self.summary(of: agents.filter { !unselected.contains($0.id) }.map(\.name)))
+					.maskinText(.subhead).foregroundStyle(MaskinColor.ink2)
+					.lineLimit(1)
+				Spacer(minLength: MaskinSpace.s3)
+				if agents.count > 1 {
+					Button(changingAgents ? "Done" : "Change") {
+						withAnimation(MaskinMotion.quick) { changingAgents.toggle() }
+					}
+					.maskinText(.subhead).fontWeight(.semibold)
+					.foregroundStyle(MaskinColor.sigInk)
+					.buttonStyle(.maskinPressed)
+				}
+			}
+			if changingAgents {
 				ForEach(agents) { agent in
 					Toggle(agent.name, isOn: binding(for: agent.id))
 						.maskinText(.subhead).foregroundStyle(MaskinColor.ink2)
 				}
 			}
 		}
-		if let message = error ?? nameProblem {
-			Text(message).maskinText(.caption).foregroundStyle(MaskinColor.ink3)
-		}
-		Button {
-			MaskinHaptics.play(.light)
-			Task { await save() }
-		} label: {
-			Text(busy ? "Saving…" : "Save to Keychain")
-				.maskinText(.subhead).fontWeight(.semibold)
-				.foregroundStyle(MaskinSurface.onInverse)
-				.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin)
-				.background(MaskinSurface.inverse, in: Capsule())
-				.opacity(canSave ? 1 : 0.35)
-		}
-		.buttonStyle(.maskinPressed(.shrink))
-		.disabled(!canSave)
+	}
+
+	/// "Developer, Code Reviewer, +1": the first two names and how many more.
+	static func summary(of names: [String]) -> String {
+		guard !names.isEmpty else { return "No one" }
+		let shown = names.prefix(2).joined(separator: ", ")
+		return names.count > 2 ? "\(shown), +\(names.count - 2)" : shown
+	}
+
+	private var suggestedNameIsValid: Bool {
+		guard let suggested = request.suggestedName?.trimmingCharacters(in: .whitespaces), !suggested.isEmpty else { return false }
+		return KeychainCredentialName.problem(suggested) == nil
+	}
+
+	private var displayName: String {
+		suggestedNameIsValid ? name.trimmingCharacters(in: .whitespaces) : (isLogin ? "The login" : "The key")
 	}
 
 	private func field<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {

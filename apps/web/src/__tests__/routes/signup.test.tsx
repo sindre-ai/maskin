@@ -13,6 +13,7 @@ vi.mock('@/lib/api', () => ({
 		landingEvents: { emit: vi.fn() },
 		publicBetStrategist: { claim: vi.fn() },
 		objects: { create: vi.fn() },
+		conversations: { list: vi.fn().mockResolvedValue({ conversations: [], has_more: false }) },
 	},
 }))
 
@@ -38,8 +39,6 @@ import { identifyForWorkspace } from '@/lib/posthog'
 import { Route } from '@/routes/signup'
 
 const SignupPage = (Route as unknown as { component: React.FC }).component
-
-const ASSIGN_PATH = '/'
 
 async function fillAndSubmit(user: ReturnType<typeof userEvent.setup>) {
 	await user.type(screen.getByPlaceholderText('Your name'), 'Test User')
@@ -206,6 +205,46 @@ describe('SignupPage', () => {
 		expect(meta.name).toBe('Test User')
 		expect(meta.organization).toBe('Test Co')
 		expect(meta.role).toBe('Founder')
+		expect(meta.welcome_in_chat).toBe(true)
+	})
+
+	it('lands in the welcome chat the Chief of Staff opened in the new workspace', async () => {
+		mockSignup.mockResolvedValue({ id: 'actor-1', workspace_id: 'ws-1' })
+		vi.mocked(api.objects.create).mockResolvedValue({} as never)
+		vi.mocked(api.conversations.list).mockResolvedValue({
+			conversations: [{ id: 'conv-welcome' }],
+			has_more: false,
+		} as never)
+
+		const user = userEvent.setup()
+		render(<SignupPage />)
+		await fillAndSubmit(user)
+
+		await waitFor(() =>
+			expect(window.location.assign).toHaveBeenCalledWith('/ws-1/chats/conv-welcome'),
+		)
+	})
+
+	it('falls back to New Chat when the welcome chat cannot be found', async () => {
+		mockSignup.mockResolvedValue({ id: 'actor-1', workspace_id: 'ws-1' })
+		vi.mocked(api.objects.create).mockResolvedValue({} as never)
+		vi.mocked(api.conversations.list).mockRejectedValue(new Error('boom'))
+
+		const user = userEvent.setup()
+		render(<SignupPage />)
+		await fillAndSubmit(user)
+
+		await waitFor(() => expect(window.location.assign).toHaveBeenCalledWith('/ws-1/chats/new'))
+	})
+
+	it('falls back to the index when signup returns no workspace id', async () => {
+		mockSignup.mockResolvedValue({ id: 'actor-1' })
+
+		const user = userEvent.setup()
+		render(<SignupPage />)
+		await fillAndSubmit(user)
+
+		await waitFor(() => expect(window.location.assign).toHaveBeenCalledWith('/'))
 	})
 
 	it('emits signup_form_submitted with user_id + completed:true on success', async () => {

@@ -1,11 +1,19 @@
 import { Skeleton } from '@/components/shared/loading-skeleton'
+import { Button } from '@/components/ui/button'
 import { useFile } from '@/hooks/use-files'
 import { api } from '@/lib/api'
 import { handleBridgeMessage, sourcesAffectedBy } from '@/lib/loop-view-bridge'
+import {
+	dropCachedResult,
+	formatUpdatedAt,
+	readCachedResult,
+	writeCachedResult,
+} from '@/lib/loop-view-cache'
 import { ISOLATION_LOAD_MESSAGE, prepareIsolatedViewHtml, readViewSources } from '@/lib/mini-app'
 import { subscribeToSSE } from '@/lib/sse-invalidation'
-import type { DataQuerySpec } from '@maskin/shared'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import type { DataQueryResult, DataQuerySpec } from '@maskin/shared'
+import { RefreshCw } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 /** Quiet time after a relevant event before the sources are re-checked, so a burst of writes is one check. */
 const SETTLE_MS = 2_000
@@ -68,6 +76,11 @@ function ViewFrame({
 }) {
 	const iframeRef = useRef<HTMLIFrameElement>(null)
 	const [height, setHeight] = useState(MIN_HEIGHT)
+	// Width the view needs when it is wider than the box it sits in. The frame takes that width
+	// and the box scrolls sideways; null means "fit the box". Reset whenever the box changes
+	// width or the frame is replaced, so a view that fits again goes back to fitting.
+	const [contentWidth, setContentWidth] = useState<number | null>(null)
+	const boxRef = useRef<HTMLDivElement>(null)
 	// Shown by the host, outside the frame, so a view cannot hide it: an answer that hit the
 	// server's row/group cap is partial, and a view whose live refresh keeps failing is stale.
 	const [partial, setPartial] = useState(false)
@@ -78,6 +91,8 @@ function ViewFrame({
 	// A query the view asked for failed. The view stays up and gets the error itself; the host
 	// adds this note so the failure shows even if the view draws no error state.
 	const [queryFailed, setQueryFailed] = useState(false)
+	// The last attempt to bring the view up to date failed; the header says so and offers Refresh.
+	const [refreshFailed, setRefreshFailed] = useState(false)
 	const [frameKey, setFrameKey] = useState(0)
 	const loadsRef = useRef(0)
 	const resetsRef = useRef(0)
@@ -92,6 +107,62 @@ function ViewFrame({
 	sourcesRef.current = sources
 	const onFailureRef = useRef(onFailure)
 	onFailureRef.current = onFailure
+
+	// The view draws from the last saved answers when it has them, then the host asks the
+	// server again behind it. `updatedAt` is the age of the oldest answer on screen; `refreshing`
+	// is true while any query is in flight.
+	const [updatedAt, setUpdatedAt] = useState<number | null>(null)
+	const [refreshing, setRefreshing] = useState(false)
+	const pendingRef = useRef(0)
+	// When each source's answer on screen was fetched, by query key.
+	const answeredAtRef = useRef(new Map<string, number>())
+	// A fresh answer the next frame should be given as it is, by query key (used once).
+	const freshRef = useRef(new Map<string, DataQueryResult>())
+
+	const syncUpdatedAt = useCallback(() => {
+		const times = [...answeredAtRef.current.values()]
+		setUpdatedAt(times.length > 0 ? Math.min(...times) : null)
+	}, [])
+
+	/** Runs one query on the server, saves the answer for next time, and stamps it as fetched now. */
+	const queryAndStore = useCallback(
+		async (spec: DataQuerySpec) => {
+			const key = JSON.stringify(spec)
+			pendingRef.current += 1
+			setRefreshing(true)
+			try {
+				const result = await api.data.query(workspaceId, spec)
+				if (result.rows_truncated || result.groups_truncated) setPartial(true)
+				answeredAtRef.current.set(key, writeCachedResult(workspaceId, key, result))
+				syncUpdatedAt()
+				return result
+			} finally {
+				pendingRef.current -= 1
+				if (pendingRef.current === 0) setRefreshing(false)
+			}
+		},
+		[workspaceId, syncUpdatedAt],
+	)
+
+	/** The Refresh button: asks the server for every source again and redraws if anything differs from what the view has. */
+	const refreshAll = useCallback(async () => {
+		setRefreshFailed(false)
+		const specs = [...sourcesRef.current.values()]
+		const settled = await Promise.allSettled(specs.map((spec) => queryAndStore(spec)))
+		let changed = false
+		settled.forEach((outcome, i) => {
+			const key = JSON.stringify(specs[i])
+			if (outcome.status === 'rejected') {
+				console.error('[loop-custom-view] manual refresh failed', outcome.reason)
+				setRefreshFailed(true)
+			} else if (JSON.stringify(outcome.value) !== lastResultsRef.current.get(key)) {
+				// Also true for a source the view never got an answer to (its query had failed).
+				freshRef.current.set(key, outcome.value)
+				changed = true
+			}
+		})
+		if (changed) setFrameKey((k) => k + 1)
+	}, [queryAndStore])
 
 	useEffect(() => {
 		// The view runs one frame inside the iframe we render (see prepareIsolatedViewHtml), so
@@ -129,10 +200,45 @@ function ViewFrame({
 					isBlocked: () => blockedRef.current,
 					sources: () => sourcesRef.current,
 					run: async (spec) => {
-						const result = await api.data.query(workspaceId, spec)
-						lastResultsRef.current.set(JSON.stringify(spec), JSON.stringify(result))
-						if (result.rows_truncated || result.groups_truncated) setPartial(true)
-						return result
+						const key = JSON.stringify(spec)
+						const given = (result: DataQueryResult) => {
+							lastResultsRef.current.set(key, JSON.stringify(result))
+							return result
+						}
+
+						// A refresh just found a different answer; the new frame gets that one.
+						const fresh = freshRef.current.get(key)
+						if (fresh) {
+							freshRef.current.delete(key)
+							return given(fresh)
+						}
+
+						// A saved answer is drawn at once and checked against the server behind it.
+						// The frame is replaced only if the server disagrees.
+						const cached = readCachedResult(workspaceId, key)
+						if (cached) {
+							answeredAtRef.current.set(key, cached.at)
+							syncUpdatedAt()
+							if (cached.result.rows_truncated || cached.result.groups_truncated) setPartial(true)
+							const shown = given(cached.result)
+							queryAndStore(spec).then(
+								(latest) => {
+									setRefreshFailed(false)
+									const onScreen = lastResultsRef.current.get(key)
+									if (onScreen !== undefined && onScreen !== JSON.stringify(latest)) {
+										freshRef.current.set(key, latest)
+										setFrameKey((k) => k + 1)
+									}
+								},
+								(err) => {
+									console.error('[loop-custom-view] refresh of the saved answer failed', err)
+									setRefreshFailed(true)
+								},
+							)
+							return shown
+						}
+
+						return given(await queryAndStore(spec))
 					},
 					post: (message) => viewWindow()?.postMessage(message, '*'),
 					onDocHeight: (h) => setHeight(Math.max(MIN_HEIGHT, Math.ceil(h))),
@@ -143,7 +249,7 @@ function ViewFrame({
 		}
 		window.addEventListener('message', onMessage)
 		return () => window.removeEventListener('message', onMessage)
-	}, [workspaceId])
+	}, [workspaceId, queryAndStore, syncUpdatedAt])
 
 	// Keeps the view live without it having to cooperate, and only while it is open (this
 	// component is mounted). A page cannot be told to re-render from outside, so when an
@@ -177,11 +283,12 @@ function ViewFrame({
 					const key = JSON.stringify(spec)
 					const before = lastResultsRef.current.get(key)
 					if (!keys.has(key) || before === undefined) continue
-					const after = JSON.stringify(await api.data.query(workspaceId, spec))
+					const latest = await queryAndStore(spec)
 					failures = 0
 					setStale(false)
-					if (after !== before) {
+					if (JSON.stringify(latest) !== before) {
 						lastResultsRef.current.delete(key)
+						freshRef.current.set(key, latest)
 						setFrameKey((k) => k + 1)
 						return
 					}
@@ -217,7 +324,7 @@ function ViewFrame({
 			document.removeEventListener('visibilitychange', onVisible)
 			if (timer !== undefined) clearTimeout(timer)
 		}
-	}, [workspaceId])
+	}, [queryAndStore])
 
 	// Some answers change with no write at all: an object ages out of "last 7 days", a
 	// day-by-day chart rolls over at midnight. No event announces that, so on each load of
@@ -257,7 +364,15 @@ function ViewFrame({
 			// Out of retries with a source unread: its time-based changes will not be seen, say so.
 			setTimerStale(failed)
 			if (wait !== Number.POSITIVE_INFINITY) {
-				timer = setTimeout(() => setFrameKey((k) => k + 1), wait)
+				// The answer changed by time alone, so a saved one is wrong by definition: the new frame must ask the server.
+				timer = setTimeout(() => {
+					for (const spec of sourcesRef.current.values()) {
+						const key = JSON.stringify(spec)
+						dropCachedResult(workspaceId, key)
+						freshRef.current.delete(key)
+					}
+					setFrameKey((k) => k + 1)
+				}, wait)
 			}
 		}
 		arm(0).catch((err) => console.error('[loop-custom-view] next-change setup failed', err))
@@ -267,16 +382,54 @@ function ViewFrame({
 		}
 	}, [workspaceId, srcDoc, frameKey])
 
+	useEffect(() => {
+		const box = boxRef.current
+		if (!box || !window.ResizeObserver) return
+		let width = box.clientWidth
+		const observer = new ResizeObserver(() => {
+			if (box.clientWidth === width) return
+			width = box.clientWidth
+			setContentWidth(null)
+		})
+		observer.observe(box)
+		return () => observer.disconnect()
+	}, [])
+
 	// A fresh frame (first mount, new document, or a reset) starts with no loads.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: srcDoc and frameKey are the triggers
 	useEffect(() => {
 		loadsRef.current = 0
 		blockedRef.current = false
 		setQueryFailed(false)
+		setContentWidth(null)
 	}, [srcDoc, frameKey])
 
 	return (
 		<>
+			{(refreshing || updatedAt !== null || refreshFailed || queryFailed) && (
+				<div
+					className="mb-2 flex items-center justify-end gap-1.5 text-xs text-muted-foreground"
+					aria-live="polite"
+				>
+					{refreshing && <RefreshCw className="size-3 animate-spin" aria-hidden="true" />}
+					<span>
+						{updatedAt !== null
+							? `Updated ${formatUpdatedAt(updatedAt)}`
+							: refreshing
+								? 'Refreshing…'
+								: ''}
+					</span>
+					{(refreshFailed || queryFailed) && !refreshing && (
+						<>
+							<span className="text-error">Refresh failed</span>
+							<Button type="button" variant="ghost" size="sm" onClick={() => void refreshAll()}>
+								<RefreshCw className="size-3" aria-hidden="true" />
+								Refresh
+							</Button>
+						</>
+					)}
+				</div>
+			)}
 			{(partial || stale || timerStale || queryFailed) && (
 				<p className="mb-2 text-xs text-muted-foreground">
 					{partial &&
@@ -285,15 +438,17 @@ function ViewFrame({
 					{(stale || timerStale) && 'Live updates are failing, so this view may be out of date.'}
 				</p>
 			)}
-			<iframe
-				key={frameKey}
-				ref={iframeRef}
-				title="Custom loop view"
-				srcDoc={srcDoc}
-				sandbox="allow-scripts"
-				style={{ height }}
-				className="block w-full rounded-md border border-border bg-background"
-			/>
+			<div ref={boxRef} className="overflow-x-auto">
+				<iframe
+					key={frameKey}
+					ref={iframeRef}
+					title="Custom loop view"
+					srcDoc={srcDoc}
+					sandbox="allow-scripts"
+					style={{ height, width: contentWidth ?? '100%' }}
+					className="block max-w-none rounded-md border border-border bg-background"
+				/>
+			</div>
 		</>
 	)
 }

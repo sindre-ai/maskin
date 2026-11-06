@@ -129,28 +129,34 @@ struct LoopStatsSection: View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 			FlowSectionHeader("Stats")
 			HStack(alignment: .top, spacing: MaskinSpace.s4) {
-				ForEach(stats) { stat in
-					VStack(alignment: .leading, spacing: MaskinSpace.s3) {
-						Text(stat.value)
-							.font(MaskinTypeface.sans(MaskinFontSize.t20, weight: MaskinFontWeight.w750, relativeTo: .title3))
-							.tracking(-0.02 * MaskinFontSize.t20)
-							.foregroundStyle(MaskinColor.ink)
-							.lineLimit(1)
-							.minimumScaleFactor(0.7)
-						Text(stat.label)
-							.font(MaskinTypeface.sans(MaskinFontSize.t12, weight: MaskinFontWeight.w650, relativeTo: .caption))
-							.foregroundStyle(MaskinColor.ink)
-					}
-					.frame(maxWidth: .infinity, alignment: .leading)
-					.padding(.vertical, MaskinSpace.s7)
-					.padding(.horizontal, MaskinSpace.s7)
-					.background(
-						MaskinSurface.card,
-						in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous)
-					)
-					.accessibilityElement(children: .combine)
-				}
+				ForEach(stats) { FlowStatTile(stat: $0) }
 			}
 		}
+	}
+}
+
+/// One number and its label on a small card: the flow's Performance tiles and the Flows overview strip.
+struct FlowStatTile: View {
+	let stat: LoopQuality.Stat
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+			Text(stat.value)
+				.font(MaskinTypeface.sans(MaskinFontSize.t20, weight: MaskinFontWeight.w750, relativeTo: .title3))
+				.tracking(-0.02 * MaskinFontSize.t20)
+				.foregroundStyle(MaskinColor.ink)
+				.lineLimit(1)
+				.minimumScaleFactor(0.7)
+			Text(stat.label)
+				.font(MaskinTypeface.sans(MaskinFontSize.t12, weight: MaskinFontWeight.w650, relativeTo: .caption))
+				.foregroundStyle(MaskinColor.ink)
+				.lineLimit(1)
+				.minimumScaleFactor(0.8)
+		}
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.padding(.vertical, MaskinSpace.s7)
+		.padding(.horizontal, MaskinSpace.s7)
+		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
+		.accessibilityElement(children: .combine)
 	}
 }

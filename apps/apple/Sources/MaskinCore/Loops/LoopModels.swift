@@ -283,11 +283,14 @@ public struct LoopPost: Identifiable, Equatable, Sendable {
 	public var replyCount: Int
 	/// The post asks the viewer to choose; it also surfaces in For You.
 	public var isDecision: Bool
+	/// The decision's own title (its ask), when the post carries one.
+	public var decisionTitle: String?
 
 	public init(
 		id: Int, actorID: String?, text: String, date: Date? = nil, replyCount: Int = 0,
-		isDecision: Bool = false
+		isDecision: Bool = false, decisionTitle: String? = nil
 	) {
+		self.decisionTitle = decisionTitle
 		self.id = id
 		self.actorID = actorID
 		self.text = text

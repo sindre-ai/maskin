@@ -236,3 +236,25 @@ export async function isWorkspaceHumanAdminOrOwner(
 	if (row.type === 'agent') return false
 	return row.role === 'owner' || row.role === 'admin'
 }
+
+/**
+ * A human member who is not a viewer. For actions that need a person's
+ * judgment, like accepting an agent's proposed change: viewers cannot write,
+ * and agents with the member role must not decide on their own work. Not
+ * isWorkspaceHumanAdminOrOwner, which would lock out regular members.
+ * Reads the role through getWorkspaceRole, so a role change applies at once.
+ */
+export async function isWorkspaceHumanNonViewer(
+	db: Database,
+	actorId: string,
+	workspaceId: string,
+): Promise<boolean> {
+	const role = await getWorkspaceRole(db, actorId, workspaceId)
+	if (role === null || role === 'viewer') return false
+	const [actor] = await db
+		.select({ type: actors.type })
+		.from(actors)
+		.where(eq(actors.id, actorId))
+		.limit(1)
+	return actor?.type === 'human'
+}

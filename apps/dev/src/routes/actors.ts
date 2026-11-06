@@ -79,6 +79,10 @@ import { stopSessionsForActors } from '../services/session-cleanup'
 import { startSession } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
 import { SeedAgentError, provisionWorkspace } from '../services/workspace-bootstrap'
+import {
+	createWorkspaceDesktopService,
+	removeDesktopsForActors,
+} from '../services/workspace-desktop'
 
 type Env = {
 	Variables: {
@@ -409,6 +413,7 @@ app.openapi(createActorRoute, async (c) => {
 			agent_id: actor.id,
 			workspace_id: memberWorkspaceId,
 			creator_actor_type: creatorType,
+			source: creatorType === 'human' ? 'person' : 'agent',
 			client_source: clientSource,
 			membership_added: !!memberWorkspaceId,
 		})
@@ -1766,6 +1771,9 @@ app.openapi(deleteActorRoute, (async (c) => {
 		await tx.delete(actors).where(eq(actors.id, id))
 	})
 	evictActor(id)
+
+	// The agent's computer lives on an agent-server, outside the DB. Best-effort.
+	await removeDesktopsForActors(workspaceId, [id], createWorkspaceDesktopService(db))
 
 	await recordEvent(db, {
 		workspaceId,

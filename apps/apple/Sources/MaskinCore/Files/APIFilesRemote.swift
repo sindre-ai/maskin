@@ -81,7 +81,7 @@ public struct APIFilesRemote: FilesRemote {
 			let body = try Self.convert(
 				PatchDTO(annotations: annotations.map(AnnotationDTO.init)),
 				as: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Input.Body.jsonPayload.self)
-			let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+			let output = try await IdempotencyKey.bind(idempotencyKey) {
 				try await client.patch_sol_api_sol_files_sol__lcub_id_rcub_(
 					.init(path: .init(id: fileId), body: .json(body)))
 			}

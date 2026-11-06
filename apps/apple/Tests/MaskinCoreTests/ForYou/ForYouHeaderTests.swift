@@ -44,6 +44,31 @@ struct ForYouHeaderTests {
 		#expect(ForYouHeader.summary(blocking: [], loaded: true) == "Nothing is blocked on you.")
 	}
 
+	@Test func theProseAddsWhatTheReaderAnsweredAndWhoCarriesOn() {
+		let one = [FeedEntry(card: card("a"), bucket: .needs)]
+		#expect(
+			ForYouHeader.summary(blocking: one, answered: 3, carryingOn: ["Developer"], loaded: true)
+				== "1 decision is waiting on you. You\u{2019}ve answered 3 so far, and Developer is carrying on.")
+		#expect(
+			ForYouHeader.summary(blocking: [], answered: 2, carryingOn: ["Developer", "SEO Researcher"], loaded: true)
+				== "Nothing is blocked on you. You\u{2019}ve answered 2 so far, and Developer and SEO Researcher are carrying on.")
+	}
+
+	@Test func aPartWithNoSourceIsLeftOut() {
+		let one = [FeedEntry(card: card("a"), bucket: .needs)]
+		#expect(
+			ForYouHeader.summary(blocking: one, answered: 1, carryingOn: [], loaded: true)
+				== "1 decision is waiting on you. You\u{2019}ve answered 1 so far.")
+		#expect(
+			ForYouHeader.summary(blocking: one, answered: 0, carryingOn: ["Forge"], loaded: true)
+				== "1 decision is waiting on you. Forge is carrying on.")
+	}
+
+	@Test func namesReadAsAnEnglishList() {
+		#expect(ForYouHeader.naturalList([]) == nil)
+		#expect(ForYouHeader.naturalList(["A", "B", "C"]) == "A, B and C")
+	}
+
 	@Test func nothingIsClaimedBeforeTheFeedHasLoaded() {
 		#expect(ForYouHeader.summary(blocking: [], loaded: false) == nil)
 	}

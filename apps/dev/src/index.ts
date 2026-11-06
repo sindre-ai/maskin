@@ -47,6 +47,8 @@ import { BlockedToolCallsCleaner } from './services/blocked-tool-calls-cleaner'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
 import { BriefingPushScheduler } from './services/briefing-push-scheduler'
 import { CapabilityScanner } from './services/capability-scanner'
+import { DailyBudgetCardScheduler } from './services/daily-budget-card-scheduler'
+import { DailyBudgetSummaryScheduler } from './services/daily-budget-events'
 import { handleDesktopStreamUpgrade, isDesktopStreamRequest } from './services/desktop-relay'
 import { DriveWatchRenewer } from './services/drive-watch-renewer'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
@@ -296,6 +298,13 @@ const briefingPushScheduler = new BriefingPushScheduler(db)
 briefingPushScheduler.start()
 const lifecyclePushScheduler = new LifecyclePushScheduler(db)
 lifecyclePushScheduler.start()
+// Daily budget 1a: one summary event per workspace per day, no model call.
+const dailyBudgetSummaryScheduler = new DailyBudgetSummaryScheduler(db)
+dailyBudgetSummaryScheduler.start()
+// Daily token budget: one For You card per owner at the workspace day start. Only runs for a
+// workspace that has set a daily target (off by default).
+const dailyBudgetCardScheduler = new DailyBudgetCardScheduler(db)
+dailyBudgetCardScheduler.start()
 
 // §9.4 — self-heal: back-fills the session_* events row for terminal sessions
 // that never got one. Ticks every 60s; idempotent, so safe on every restart.
@@ -529,6 +538,8 @@ const shutdown = async (signal: string) => {
 	notificationPush.stop()
 	briefingPushScheduler.stop()
 	lifecyclePushScheduler.stop()
+	dailyBudgetSummaryScheduler.stop()
+	dailyBudgetCardScheduler.stop()
 	liveActivityPush.stop()
 	voiceSessionTimeoutSweeper.stop()
 	// Rows would otherwise stay live until the sweeper finds them after restart.

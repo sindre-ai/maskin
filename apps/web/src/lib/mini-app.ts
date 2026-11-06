@@ -164,6 +164,16 @@ export function stripMetaRefresh(html: string): string {
 	return html.replace(META_REFRESH_RE, '')
 }
 
+// Switches DNS prefetch off for a document. Chromium honours this meta and the host lookups it
+// stops are another way to carry data in a hostname. An agent-authored copy is removed first,
+// so a later "on" cannot undo ours.
+const DNS_PREFETCH_OFF_META = '<meta http-equiv="x-dns-prefetch-control" content="off">'
+const DNS_PREFETCH_META_RE =
+	/<meta\b[^>]*\bhttp-equiv\s*=\s*["']?x-dns-prefetch-control["']?[^>]*>/gi
+export function stripDnsPrefetchControl(html: string): string {
+	return html.replace(DNS_PREFETCH_META_RE, '')
+}
+
 // Platform footer for a mini-app document: platform CSP meta + data-slot
 // bootstrap. Scoped to the HTML render paths in the viewer — non-HTML file
 // types never touch this. Agent CSP metas are stripped first, then refresh
@@ -307,15 +317,15 @@ const BRIDGE_SCRIPT = `<script>(function(){var n=0,p={};window.maskin={query:fun
 // Reports the document's content height (not scrollHeight, which can never
 // shrink below the frame's own height) on load, resize and every layout change,
 // so an inline view can size its iframe to fit as data arrives.
-const VIEW_SIZE_REPORTER = `<script>(function(){function s(){try{var d=document.documentElement;parent.parent.postMessage({type:'${VIEWER_DOC_SIZE_MESSAGE}',w:d.scrollWidth,h:Math.ceil(d.getBoundingClientRect().height)},'*')}catch(e){}}if(document.readyState==='complete')s();else window.addEventListener('load',s);window.addEventListener('resize',s);if(window.ResizeObserver)new ResizeObserver(s).observe(document.documentElement)})();</script>`
+const VIEW_SIZE_REPORTER = `<script>(function(){function s(){try{var d=document.documentElement;parent.parent.postMessage({type:'${VIEWER_DOC_SIZE_MESSAGE}',w:d.scrollWidth,cw:d.clientWidth,h:Math.ceil(Math.max(d.getBoundingClientRect().height,d.scrollHeight>window.innerHeight?d.scrollHeight:0))},'*')}catch(e){}}if(document.readyState==='complete')s();else window.addEventListener('load',s);window.addEventListener('resize',s);if(window.ResizeObserver)new ResizeObserver(s).observe(document.documentElement)})();</script>`
 
 // Inline-view variant of `prepareMiniAppHtml`: same CSP + data-slot bootstrap,
 // plus the size reporter and the bridge. One `injectIntoHtml` call, as above.
 export function prepareBridgedViewHtml(html: string): string {
-	const scrubbed = stripMetaRefresh(stripAgentCsp(html))
+	const scrubbed = stripDnsPrefetchControl(stripMetaRefresh(stripAgentCsp(html)))
 	return injectIntoHtml(
 		scrubbed,
-		CSP_META + DATA_SLOT_BOOTSTRAP + VIEW_SIZE_REPORTER + BRIDGE_SCRIPT,
+		DNS_PREFETCH_OFF_META + CSP_META + DATA_SLOT_BOOTSTRAP + VIEW_SIZE_REPORTER + BRIDGE_SCRIPT,
 	)
 }
 
@@ -328,8 +338,18 @@ export function prepareBridgedViewHtml(html: string): string {
 // its embedder's policy, and `img-src data:` etc. must stay the view's own.
 //
 // This is one layer, not a seal. Verified in Chrome only; other browsers are
-// untested. It does not stop resource hints: `<link rel=prerender href=...>` still
-// makes Chrome fetch an address of the view's choosing.
+// untested. What stays open (see loop-custom-view.spec.ts for what was measured):
+//   - WebRTC: `new RTCPeerConnection({iceServers:[{urls:'turn:host:port'}]})` opens a
+//     connection to a host of the view's choosing. No header, CSP rule, Permissions-Policy
+//     or sandbox flag closes it today, and deleting the constructor does not hold because a
+//     script can take a fresh one from an empty child frame. Safari and Firefox are open too.
+//   - prerender and preconnect: Chrome skips `default-src 'none'` for prerender (Broken
+//     Browser, 9 May 2026). Neither fires in headless Chrome, even from a top-level page, so
+//     we could not prove them closed from the null-origin frame.
+//   - Link and speculation-rules prefetch from the view never reached the test server in
+//     Chrome (static and script-created tags), so those have regression tests and no code.
+// The real close for all of these is to stop trusting the view's script (static HTML and
+// CSS, or a bridge that gates what the frame can read), which is a bet, not a patch.
 /** Isolation frame -> host: the view frame finished a load. A second one means it navigated. */
 export const ISOLATION_LOAD_MESSAGE = 'maskin:view:load'
 export const ISOLATION_FRAME_CSP = "frame-src 'none'"
@@ -339,7 +359,7 @@ const escapeAttr = (s: string) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;
 /** The document the host puts in its iframe: it holds the view (from `prepareBridgedViewHtml`) in a frame of its own. */
 export function prepareIsolatedViewHtml(html: string): string {
 	// The load relay is an attribute, not a script, so it is bound before the first load can fire.
-	return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${ISOLATION_FRAME_CSP}"><style>html,body{margin:0;height:100%}iframe{display:block;border:0;width:100%;height:100%}</style></head><body><iframe sandbox="allow-scripts" onload="parent.postMessage({type:'${ISOLATION_LOAD_MESSAGE}'},'*')" srcdoc="${escapeAttr(prepareBridgedViewHtml(html))}"></iframe></body></html>`
+	return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${ISOLATION_FRAME_CSP}"><style>html,body{margin:0;height:100%;overflow:hidden}iframe{display:block;border:0;width:100%;height:100%}</style></head><body><iframe scrolling="no" sandbox="allow-scripts" onload="parent.postMessage({type:'${ISOLATION_LOAD_MESSAGE}'},'*')" srcdoc="${escapeAttr(prepareBridgedViewHtml(html))}"></iframe></body></html>`
 }
 
 export type ViewSourcesResult =

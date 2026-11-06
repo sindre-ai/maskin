@@ -114,7 +114,7 @@ public struct APIObjectsRemote: ObjectsRemote {
 		let title = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
 		let content = draft.content.trimmingCharacters(in: .whitespacesAndNewlines)
 		do {
-			let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+			let output = try await IdempotencyKey.bind(idempotencyKey) {
 				try await client.post_sol_api_sol_objects(
 					.init(
 						headers: .init(x_hyphen_workspace_hyphen_id: workspace),
@@ -134,7 +134,7 @@ public struct APIObjectsRemote: ObjectsRemote {
 		objectId: String, patch: ObjectPatch, idempotencyKey: String
 	) async throws -> WorkObject {
 		do {
-			let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+			let output = try await IdempotencyKey.bind(idempotencyKey) {
 				try await client.patch_sol_api_sol_objects_sol__lcub_id_rcub_(
 					.init(
 						path: .init(id: objectId),
@@ -172,7 +172,7 @@ public struct APIObjectsRemote: ObjectsRemote {
 	) async throws -> ObjectLink {
 		let workspace = await workspaceHeader()
 		do {
-			let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+			let output = try await IdempotencyKey.bind(idempotencyKey) {
 				try await client.post_sol_api_sol_relationships(
 					.init(
 						headers: .init(x_hyphen_workspace_hyphen_id: workspace),
@@ -237,7 +237,7 @@ public struct APIObjectsRemote: ObjectsRemote {
 	) async throws -> ObjectEvent {
 		let workspace = await workspaceHeader()
 		do {
-			let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+			let output = try await IdempotencyKey.bind(idempotencyKey) {
 				try await client.post_sol_api_sol_events(
 					.init(
 						headers: .init(x_hyphen_workspace_hyphen_id: workspace),
@@ -501,6 +501,11 @@ extension APIObjectsRemote: ObjectDraftsRemote {
 		} catch {
 			throw Self.wrap(error)
 		}
+	}
+
+	public func save(objectId: String, content: String?, subject: String?, idempotencyKey: String) async throws {
+		let patch = ObjectPatch(content: content, metadata: subject.map { ["subject": $0] })
+		_ = try await update(objectId: objectId, patch: patch, idempotencyKey: idempotencyKey)
 	}
 
 	public func approve(objectId: String, contentHash: String, idempotencyKey: String) async throws -> ObjectPreview {

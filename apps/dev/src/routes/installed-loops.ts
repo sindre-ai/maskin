@@ -36,10 +36,12 @@ import {
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
+import { shouldSkipOnboardingKickoff } from '../lib/onboarding/chief-of-staff-kickoff'
 import { errorSchema, idParamSchema, jsonbField } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
 import { isWorkspaceMember, isWorkspaceWriter } from '../lib/workspace-auth'
 import { type AgentStorageManager, workspaceSkillKey } from '../services/agent-storage'
+import { startLoopPersonalizationChat } from '../services/loop-personalization-chat'
 import {
 	type MarketplaceItemType,
 	buildActorInsert,
@@ -62,6 +64,10 @@ import {
 } from '../services/session-cleanup'
 import type { SessionManager } from '../services/session-manager'
 import { autoSubscribe } from '../services/subscriptions'
+import {
+	createWorkspaceDesktopService,
+	removeDesktopsForActors,
+} from '../services/workspace-desktop'
 
 type Env = {
 	Variables: {
@@ -616,6 +622,26 @@ app.openapi(installLoopRoute, async (c) => {
 		source,
 	})
 
+	// Ask the Chief of Staff how to tailor the new loop to this workspace. Suggest-only
+	// and best effort: the install is done, so a failure here is logged, never returned.
+	// Skipped in E2E stacks, which have no LLM credentials for the session to run on.
+	if (!shouldSkipOnboardingKickoff()) {
+		startLoopPersonalizationChat({
+			db,
+			sessionManager: c.get('sessionManager'),
+			workspaceId,
+			installerId: actorId,
+			installedLoopId: installed.id,
+			loop: { name: loop.name, description: loop.description },
+		}).catch((err: unknown) =>
+			logger.error('Failed to start loop personalization chat', {
+				installedLoopId: installed.id,
+				workspaceId,
+				error: String(err),
+			}),
+		)
+	}
+
 	return c.json(
 		{
 			...serialize(installed),
@@ -931,6 +957,8 @@ app.openapi(uninstallLoopRoute, async (c) => {
 	// sandboxes keep running as agents the user just uninstalled, holding
 	// agent-server capacity until the 2h timeout.
 	let strandedSessions: CapturedLiveSession[] = []
+	// Ids of the agents this uninstall deleted, for removing their computers after commit.
+	let deletedActorIds: string[] = []
 
 	await db.transaction(async (tx) => {
 		if (keepProvisionedItems) {
@@ -1059,6 +1087,7 @@ app.openapi(uninstallLoopRoute, async (c) => {
 
 			if (actorIds.length > 0) {
 				strandedSessions = await captureLiveSessions(tx, actorIds)
+				deletedActorIds = actorIds
 
 				// Delete triggers that target or were created by provisioned actors.
 				// The metadata-based delete above only removed marketplace-managed triggers;
@@ -1205,6 +1234,11 @@ app.openapi(uninstallLoopRoute, async (c) => {
 	})
 
 	await stopCapturedSandboxes(db, strandedSessions)
+	await removeDesktopsForActors(
+		install.workspaceId,
+		deletedActorIds,
+		createWorkspaceDesktopService(db),
+	)
 
 	for (const skillId of removedSkillIds) {
 		try {

@@ -1,16 +1,9 @@
 import Foundation
 import Observation
 
-/// The three calls the draft cards make on the object that holds a message.
-public protocol DraftReviewRemote: Sendable {
-	/// `GET /api/objects/{id}`: the text as it reads now, with its preview and fingerprint.
-	func detail(objectId: String) async throws -> ObjectDetail
-	/// `PATCH /api/objects/{id}`: saves an edit. `content` is the whole description, `subject` goes
-	/// to the object's subject field. Nil leaves that part alone.
-	func save(objectId: String, content: String?, subject: String?, idempotencyKey: String) async throws
-	/// `POST /api/objects/{id}/approval`: a person's yes to the text with this fingerprint.
-	func approve(objectId: String, contentHash: String, idempotencyKey: String) async throws -> ObjectPreview
-}
+/// The three calls the For you draft cards make on the object that holds a message: read it,
+/// save an edit, approve it (see `ObjectDraftsRemote`).
+public protocol DraftReviewRemote: ObjectDraftsRemote {}
 
 /// Production remote: the objects client behind the three calls.
 public struct APIDraftReviewRemote: DraftReviewRemote {
@@ -68,17 +61,13 @@ public final class DraftReviewStore {
 	/// after the card they came from is gone.
 	public private(set) var receipts: [ReviewDraft] = []
 
-	@ObservationIgnored private let remote: any DraftReviewRemote
+	@ObservationIgnored private let saver: DraftSaveAndApprove
 	/// Tells the agent to send: queues the same "Send: …" reply a stacked card sends. False when it
 	/// could not be queued.
 	@ObservationIgnored private let announce: @MainActor (ReviewDraft) -> Bool
 	/// Called once a draft is approved and the agent told.
 	@ObservationIgnored public var didSend: @MainActor (ReviewDraft) -> Void = { _ in }
 	@ObservationIgnored private var timers: [String: Task<Void, Never>] = [:]
-	@ObservationIgnored private var approvalKeys: [String: String] = [:]
-	/// The fingerprint of a text this session already saved, so a retry does not mistake its own
-	/// saved edit for someone else's change.
-	@ObservationIgnored private var savedHashes: [String: String] = [:]
 	@ObservationIgnored private let now: @Sendable () -> Date
 
 	public init(
@@ -86,7 +75,7 @@ public final class DraftReviewStore {
 		now: @escaping @Sendable () -> Date = { Date() },
 		announce: @escaping @MainActor (ReviewDraft) -> Bool
 	) {
-		self.remote = remote
+		self.saver = DraftSaveAndApprove(remote: remote)
 		self.undoWindow = undoWindow
 		self.now = now
 		self.announce = announce
@@ -213,8 +202,7 @@ public final class DraftReviewStore {
 		phases = [:]
 		edits = [:]
 		receipts = []
-		approvalKeys = [:]
-		savedHashes = [:]
+		saver.reset()
 	}
 
 	private func remember(_ draft: ReviewDraft) {
@@ -242,68 +230,11 @@ public final class DraftReviewStore {
 	/// saved, then tell the agent. Nothing is approved that the reader has not seen: a draft that
 	/// changed under them stops here.
 	private func perform(_ draft: ReviewDraft) async throws {
-		let id = draft.id
-		let detail = try await remote.detail(objectId: id)
-		guard let current = detail.preview else {
-			throw DraftReviewError("This message isn't a draft any more.")
-		}
-		if current.delivery == .sent { return }
-		if current.delivery != .approved {
-			guard current.contentHash == draft.contentHash || current.contentHash == savedHashes[id] else {
-				throw DraftReviewError(ObjectApprovalError.changed.message)
-			}
-			var hash = current.contentHash
-			if let edit = edits[id], edit.differs(from: draft) {
-				hash = try await save(edit, draft: draft, detail: detail, current: current)
-			}
-			let keyName = "\(id)|\(hash)"
-			let key = approvalKeys[keyName] ?? UUID().uuidString
-			approvalKeys[keyName] = key
-			_ = try await remote.approve(objectId: id, contentHash: hash, idempotencyKey: key)
-			approvalKeys[keyName] = nil
-			savedHashes[id] = nil
-		}
+		let outcome = try await saver.run(DraftShown(draft), edit: edit(for: draft))
+		if outcome == .alreadySent { return }
 		guard announce(draft) else {
 			throw DraftReviewError("Approved, but couldn't tell the agent. Try again.")
 		}
-	}
-
-	/// Saves the edit and returns the fingerprint of the text as saved. A text already saved by an
-	/// earlier try is not saved twice.
-	private func save(
-		_ edit: DraftEdit, draft: ReviewDraft, detail: ObjectDetail, current: ObjectPreview
-	) async throws -> String {
-		if current.contentHash == savedHashes[draft.id], Self.matches(edit, current, draft: draft) {
-			return current.contentHash
-		}
-		let original = detail.object.content ?? ""
-		guard var content = DraftBodySplice.replacing(current.body, with: edit.body, in: original) else {
-			throw DraftReviewError("Couldn't save your edit. Open the draft to change it.")
-		}
-		var subject: String?
-		if draft.isEmail, let wanted = edit.subject?.trimmed, wanted != (current.subject ?? "").trimmed {
-			subject = wanted
-			// An older email keeps its subject as the first line of the text: that line must go once
-			// the subject has a field of its own, or it would be sent twice.
-			if (detail.object.metadata["subject"] ?? "").trimmed.isEmpty {
-				content = DraftBodySplice.removingSubjectLine(from: content)
-			}
-		}
-		try await remote.save(
-			objectId: draft.id, content: content == original ? nil : content, subject: subject,
-			idempotencyKey: UUID().uuidString)
-		let after = try await remote.detail(objectId: draft.id)
-		guard let saved = after.preview, Self.matches(edit, saved, draft: draft) else {
-			throw DraftReviewError("Couldn't save your edit. Try again.")
-		}
-		savedHashes[draft.id] = saved.contentHash
-		return saved.contentHash
-	}
-
-	/// The saved preview reads as the edit does (spaces at the ends aside).
-	private static func matches(_ edit: DraftEdit, _ preview: ObjectPreview, draft: ReviewDraft) -> Bool {
-		guard preview.body.trimmed == edit.body.trimmed else { return false }
-		return !draft.isEmail || (preview.subject ?? "").trimmed == (edit.subject ?? "").trimmed
 	}
 
 	static func message(for error: any Error) -> String {

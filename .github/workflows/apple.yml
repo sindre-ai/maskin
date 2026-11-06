@@ -7,36 +7,32 @@ name: Apple
 # the paths below will never report it and will block — keep it non-required, or
 # add a path-aware aggregator job first.
 #
-# Triggers only on changes under apps/apple (plus this file). Consequence: token drift
-# does NOT run when only the design-system CSS changes — it surfaces on the next apps/apple
-# change instead. OpenAPI snapshot drift from backend changes is caught by the
-# apple-openapi-snapshot job in ci.yml, so it fails the PR that moved the spec.
+# Triggers only on changes under apps/apple (plus this file).
 #
 # Pull requests into feat/** run too: stacked slices are based on a task branch, not
 # main, and without this they were never compiled until the whole stack reached main.
 #
-# What each step guards against, cheapest first so a drift failure costs seconds,
-# not a 20-minute Xcode build:
-#   1. Token drift      — Tokens.swift is generated from the design-system CSS
-#                         (.claude/skills/maskin-design/tokens, apps/web app.css).
-#                         Changing a token without regenerating ships a native app
-#                         that no longer matches the web.
-#   2. OpenAPI drift    — apps/apple/openapi.json is a snapshot of the backend spec
-#                         that the Swift client is generated from. A route/schema
-#                         change in apps/dev or packages/shared without a refreshed
-#                         snapshot leaves the apps calling an API that has moved.
-#   3. swift test       — MaskinKit unit tests (stores, outbox, SSE, tokens).
-#   4. Platform builds  — iOS, macOS, watchOS, tvOS each compile the app shells
-#                         against MaskinKit. A change that is fine on iOS but uses
-#                         an unavailable API on watchOS/tvOS only shows up here.
+# The drift checks (design tokens, OpenAPI snapshot, generated Swift client) are NOT here.
+# They need no Mac, so they run on Linux as the apple-drift job in ci.yml, where a stale file
+# goes red in a few minutes instead of after a Mac queue wait. That job runs when the backend,
+# the Apple app or the design tokens change; see scripts/ci/changed-areas.sh.
 #
-# Two jobs, because one job was too long: checks + swift test run in `apple`, and the
-# four platform builds run in parallel in `apple-build`. Run in one job, the steps
-# added up to 35-47 minutes against the 45 minute job limit (swift test 6-22 min,
-# setup 7-20 min, builds 19-30 min depending on the runner), and the job was
-# cancelled while the last platform was still compiling. The builds need only Xcode
-# and xcodegen: Tokens.swift and Sources/MaskinAPI/Generated are checked in and
-# verified by `apple`, so the build jobs skip node, pnpm and the OpenAPI steps.
+# What each job guards against:
+#   1. swift test      — MaskinKit unit tests (stores, outbox, SSE, tokens).
+#   2. Platform builds — iOS, macOS, watchOS, tvOS each compile the app shells
+#                        against MaskinKit. A change that is fine on iOS but uses
+#                        an unavailable API on watchOS/tvOS only shows up here.
+#                        Pull requests build iOS only; pushes to main build all four,
+#                        so a watchOS, tvOS or macOS break is caught right after the
+#                        merge, on main, instead of before it.
+#
+# Two jobs, because one job was too long: `swift test` runs in `apple`, and the four platform
+# builds run in parallel in `apple-build`. Run in one job, the steps added up to 35-47 minutes
+# against the 45 minute job limit (swift test 6-22 min, setup 7-20 min, builds 19-30 min
+# depending on the runner), and the job was cancelled while the last platform was still
+# compiling. The builds need only Xcode and xcodegen: Tokens.swift and
+# Sources/MaskinAPI/Generated are checked in and verified by apple-drift in ci.yml, so neither
+# Mac job needs node, pnpm or the OpenAPI steps.
 #
 # Job limits (60 for `apple`, 50 for `apple-build`) are a hang guard, not a budget.
 # After the split, healthy runs took 14-16 min for `apple` and up to 27 min for the
@@ -86,47 +82,7 @@ jobs:
           xcodebuild -version
           swift --version
 
-      - uses: pnpm/action-setup@v5
-        with:
-          version: 9.15.0
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 20
-          cache: pnpm
-
-      # --- 1. Token drift (no deps, runs in a second) ---
-      - name: Design tokens are up to date
-        run: |
-          if ! node apps/apple/scripts/gen-tokens.mjs --check; then
-            echo "::error::Tokens.swift is stale. Run 'node apps/apple/scripts/gen-tokens.mjs' and commit the result."
-            exit 1
-          fi
-
-      # --- 2. OpenAPI snapshot drift ---
-      - run: pnpm install --frozen-lockfile
-
-      - name: Build workspace deps of @maskin/dev
-        run: pnpm --filter "@maskin/dev^..." build
-
-      - name: OpenAPI snapshot is up to date
-        run: |
-          pnpm --filter @maskin/dev exec tsx scripts/dump-openapi.ts
-          if ! git diff --exit-code -- apps/apple/openapi.json; then
-            echo "::error::apps/apple/openapi.json is stale. Run 'pnpm --filter @maskin/dev exec tsx scripts/dump-openapi.ts' and commit the result (then run apps/apple/scripts/gen-api.sh and commit Sources/MaskinAPI/Generated)."
-            exit 1
-          fi
-
-      - name: Generated API client is up to date
-        working-directory: apps/apple
-        run: |
-          ./scripts/gen-api.sh
-          if ! git diff --exit-code -- Sources/MaskinAPI/Generated; then
-            echo "::error::Sources/MaskinAPI/Generated is stale. Run 'apps/apple/scripts/gen-api.sh' and commit the result."
-            exit 1
-          fi
-
-      # --- 3. Package tests ---
+      # --- Package tests ---
       - name: Cache SwiftPM and the generated-client build
         uses: actions/cache@v4
         with:
@@ -174,7 +130,7 @@ jobs:
           overwrite: true  # a re-run of the job replaces the images of the first try
           retention-days: 14
 
-  # --- 4. Platform builds, one runner per platform ---
+  # --- Platform builds, one runner per platform ---
   apple-build:
     name: apple-build (${{ matrix.platform }})
     runs-on: macos-26
@@ -182,20 +138,12 @@ jobs:
     strategy:
       # Let the other platforms finish: one failing platform should not hide a second one.
       fail-fast: false
+      # Pull requests build iOS only; pushes to main build all four platforms. Each platform is a
+      # separate Mac runner, and the Mac queue was the slow part of a pull request (56 min wait on
+      # one run). iOS is the platform most changes can break; watchOS, tvOS and macOS-only API
+      # misuse is caught on main right after the merge instead of before it.
       matrix:
-        include:
-          - platform: iOS
-            scheme: Maskin
-            destination: 'generic/platform=iOS Simulator'
-          - platform: macOS
-            scheme: Maskin
-            destination: 'generic/platform=macOS'
-          - platform: watchOS
-            scheme: MaskinWatch
-            destination: 'generic/platform=watchOS Simulator'
-          - platform: tvOS
-            scheme: MaskinTV
-            destination: 'generic/platform=tvOS Simulator'
+        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"platform":"iOS","scheme":"Maskin","destination":"generic/platform=iOS Simulator"}]' || '[{"platform":"iOS","scheme":"Maskin","destination":"generic/platform=iOS Simulator"},{"platform":"macOS","scheme":"Maskin","destination":"generic/platform=macOS"},{"platform":"watchOS","scheme":"MaskinWatch","destination":"generic/platform=watchOS Simulator"},{"platform":"tvOS","scheme":"MaskinTV","destination":"generic/platform=tvOS Simulator"}]') }}
     steps:
       - uses: actions/checkout@v6
 

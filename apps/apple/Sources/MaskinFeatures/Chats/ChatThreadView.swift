@@ -78,6 +78,7 @@ struct ChatThreadView: View {
 	/// The thread opened on its NEW divider, so new arrivals leave the reader where they are.
 	@State private var openedOnUnread = false
 	@State private var renaming = false
+	@State private var exporting = false
 	/// A secret caught in the message box before sending; the sheet offers the Keychain.
 	@State private var caughtSecret: CaughtSecret?
 	@State private var secretStore: KeychainStore?
@@ -85,6 +86,7 @@ struct ChatThreadView: View {
 	/// The thread open on top of this chat (a pushed screen).
 	@State private var threadRoute: ThreadRoute?
 	@State private var showingLinked = false
+	@State private var selectingText: ChatMessage?
 	@State private var searching = false
 	@State private var searchText = ""
 	@State private var matchIndex: Int?
@@ -130,12 +132,6 @@ struct ChatThreadView: View {
 		return others.count == 1 ? others.first : nil
 	}
 
-	/// The agent in the chat, else the other person, else the title: who the composer addresses.
-	private var leadName: String {
-		let others = store.participants.filter { $0.id != store.currentActorID }
-		return others.first { $0.kind == .agent }?.name ?? others.first?.name ?? store.title
-	}
-
 	/// A one-to-one chat with its own topic is titled by the topic, with the person under it.
 	private var topic: String? {
 		ThreadNav.topic(
@@ -159,14 +155,14 @@ struct ChatThreadView: View {
 		return .quiet(name)
 	}
 
-	/// "Type your answer…" while a flow ask waits on the user; "Message {name}" otherwise.
+	/// "Type your answer…" while a flow ask waits on the user; plain "Message" otherwise.
 	private var placeholder: String {
 		if let last = store.messages.last, last.author == .agent, !last.questions.isEmpty,
 			last.serverID.map({ !store.answeredQuestionIDs.contains($0) }) ?? false
 		{
 			return "Type your answer…"
 		}
-		return "Message \(leadName)"
+		return "Message"
 	}
 
 	private var quickReplies: [String] {
@@ -200,6 +196,7 @@ struct ChatThreadView: View {
 				// Arrow-only back button (user decision). The thread pushes the flow and the agent page.
 				.backChevronOnly()
 				.task { await runtime?.mentionRoster()?.load() }
+				.task { runtime?.chatOpened(store.conversationID) }
 				.onAppear { liveCalls?.visibleConversationID = store.conversationID }
 				.task {
 					// Drafts are per conversation: restored here, saved on every keystroke.
@@ -252,6 +249,9 @@ struct ChatThreadView: View {
 							onRemove: { composer.text = $0 }, onVaulted: { composer.text = $0 })
 					}
 				}
+				.sheet(item: $selectingText) { message in
+					SelectTextSheet(text: ChatPreviewText.selectable(message.content))
+				}
 				.sheet(isPresented: $showingLinked) {
 					LinkedSheet(
 						entries: linkedEntries,
@@ -260,6 +260,11 @@ struct ChatThreadView: View {
 							store.tellAgentOfApproval(title: title, body: body, linkedBy: entry.actorID, author: entry.author)
 						})
 						.linkedItems(runtime)
+				}
+				.sheet(isPresented: $exporting) {
+					ChatExportSheet(
+						title: store.title, messages: store.allMessages, markdown: exportItem, link: chatLink)
+						.presentationDetents([.medium])
 				}
 				.alert("Rename conversation", isPresented: $renaming) {
 					TextField("Title", text: $newTitle)
@@ -281,13 +286,27 @@ struct ChatThreadView: View {
 	@ToolbarContentBuilder
 	private var toolbarContent: some ToolbarContent {
 		ToolbarItem(placement: .principal) {
-			ThreadNavTitle(
-				title: navTitle, status: navStatus,
-				onTap: titleAction ?? {
-					newTitle = store.title
-					renaming = true
-				},
-				hint: titleAction == nil ? "Renames the chat" : nil)
+			// The people's pictures sit beside the name, not in the button capsule on the right.
+			HStack(spacing: MaskinSpace.s5) {
+				if !memberStack.isEmpty {
+					if ThreadNav.showsMemberStack(participants: store.participants, flow: flow) {
+						Button(action: onShowParticipants) {
+							ThreadNavAvatars(participants: memberStack, leadID: flow?.leadID, limit: flow == nil ? 4 : 3)
+						}
+						.buttonStyle(.maskinPressed)
+						.accessibilityHint("Opens People")
+					} else {
+						ThreadNavAvatars(participants: Array(memberStack.prefix(1)), leadID: nil, limit: 1)
+					}
+				}
+				ThreadNavTitle(
+					title: navTitle, status: navStatus,
+					onTap: titleAction ?? {
+						newTitle = store.title
+						renaming = true
+					},
+					hint: titleAction == nil ? "Renames the chat" : nil)
+			}
 		}
 		// One group so iOS keeps everything in the bar instead of folding into a "More" overflow.
 		ToolbarItemGroup(placement: .primaryAction) {
@@ -303,13 +322,6 @@ struct ChatThreadView: View {
 				.accessibilityLabel("Linked")
 				.accessibilityValue("\(linkedEntries.count)")
 				.accessibilityHint("Shows the drafts, pages and objects this chat links to")
-			}
-			if ThreadNav.showsMemberStack(participants: store.participants, flow: flow) {
-				Button(action: onShowParticipants) {
-					ThreadNavAvatars(participants: memberStack, leadID: flow?.leadID, limit: flow == nil ? 4 : 3)
-				}
-				.buttonStyle(.maskinPressed)
-				.accessibilityHint("Opens People")
 			}
 			if flow != nil, let conversations, let row = conversations.conversation(id: store.conversationID) {
 				Button {
@@ -342,8 +354,10 @@ struct ChatThreadView: View {
 						Label("Copy link", systemImage: "link")
 					}
 				}
-				if let item = exportItem {
-					ShareLink(item: item, preview: SharePreview(item.fileName)) { Label("Export chat", systemImage: "square.and.arrow.up") }
+				if !store.allMessages.isEmpty {
+					Button { exporting = true } label: {
+						Label("Export chat", systemImage: "square.and.arrow.up")
+					}
 				}
 				if let conversations, let row = conversations.conversation(id: store.conversationID), row.unreadCount == 0 {
 					Button {
@@ -380,13 +394,22 @@ struct ChatThreadView: View {
 				Label("Chat options", systemImage: "ellipsis")
 					.foregroundStyle(MaskinColor.ink)
 			}
+			// The iOS prototype keeps Live in the header; the composer keeps the mic for dictation.
 			if let lead = liveLead, !isRoom, call == nil {
 				Button {
 					liveMeeting.present(.thread(chat: store, lead: lead))
 				} label: {
-					ShellInkCircle(symbol: "waveform", label: "Live")
+					// The primary action of the bar: a filled inverse disc, like the profile avatar.
+					Image(systemName: "waveform")
+						.maskinSymbol(16, weight: .semibold)
+						.foregroundStyle(MaskinSurface.onNavInk)
+						.frame(width: MaskinSpace.s14 + MaskinSpace.s2, height: MaskinSpace.s14 + MaskinSpace.s2)
+						.background(Circle().fill(MaskinSurface.navInk))
+						.frame(minWidth: MaskinSpace.touchMin, minHeight: MaskinSpace.touchMin)
+						.contentShape(Circle())
+						.accessibilityLabel("Live")
 				}
-				.buttonStyle(.maskinPressed)
+				.buttonStyle(.plain)
 			}
 		}
 	}
@@ -548,7 +571,7 @@ struct ChatThreadView: View {
 				.padding(.bottom, MaskinSpace.s9)
 		}
 		if store.messages.isEmpty, call?.lines.isEmpty ?? true {
-			if let call { LiveCallEmptyState(session: call) } else { emptyHint }
+			if let call { LiveCallEmptyState(session: call) }
 		}
 		ThreadTranscript(
 			store: store, lazy: lazy, onEdit: beginEdit(_:), onReply: reply(to:), onFillStep: { composer.fill($0) },
@@ -556,6 +579,7 @@ struct ChatThreadView: View {
 			onOpenThread: { message in
 				if let route = ThreadRoute.opening(message) { threadRoute = route }
 			},
+			onSelectText: { selectingText = $0 },
 			matchIDs: matchSet,
 			currentMatchID: currentMatchID, call: call)
 		Color.clear.frame(height: 1).id(Self.bottomID)
@@ -723,16 +747,6 @@ struct ChatThreadView: View {
 			.accessibilityAddTraits(.isHeader)
 	}
 
-	private var emptyHint: some View {
-		Text("Ask \(leadName) anything. Type @ to bring someone else in, or + to attach a file.")
-			.font(MaskinTypeface.sans(MaskinFontSize.t15, relativeTo: .subheadline))
-			.foregroundStyle(MaskinColor.ink4)
-			.multilineTextAlignment(.center)
-			.frame(maxWidth: .infinity)
-			.padding(.vertical, MaskinSpace.s14 + MaskinSpace.s2)
-			.padding(.horizontal, MaskinSpace.s10)
-	}
-
 	// MARK: Composer stack
 
 	/// Quick replies, jump-to-latest, then the composer (or the search bar), stacked so the button
@@ -803,11 +817,18 @@ struct ChatThreadView: View {
 				},
 				inConversation: Set(store.participants.map(\.id)),
 				roster: runtime?.mentionRoster()?.roster,
-				onFocusChange: { focused in if focused { quickRepliesHidden = false } }),
+				onFocusChange: { focused in if focused { quickRepliesHidden = false } },
+				slash: slashSource),
 			busy: busy,
 			onStop: { Task { await store.stopLiveSessions() } },
 			onSend: send
 		)
+	}
+
+	/// The `/` picker's items for this workspace.
+	private var slashSource: SlashSource? {
+		guard let env = runtime?.environment, let workspaceID = env.workspaceId else { return nil }
+		return SlashSources.source(for: env, workspaceID: workspaceID)
 	}
 
 	/// Send, or — while the composer holds an edit — save the new text over the original message.
@@ -1016,6 +1037,8 @@ struct ThreadTranscript: View {
 	var onJumpToMessage: (String) -> Void = { _ in }
 	/// Opens the thread under a message (the pill, or Reply in thread).
 	var onOpenThread: (ChatMessage) -> Void = { _ in }
+	/// Opens the message's text in the select-words sheet.
+	var onSelectText: (ChatMessage) -> Void = { _ in }
 	var matchIDs: Set<String> = []
 	var currentMatchID: String?
 	/// The call running in this thread: its card shows what you are saying as you say it.
@@ -1154,6 +1177,7 @@ struct ThreadTranscript: View {
 				Clipboard.copy(message.content)
 				MaskinHaptics.play(.selection)
 			}
+			actions.onSelectText = { onSelectText(message) }
 		}
 		if message.serverID != nil, message.kind == "message", !message.isFailed {
 			actions.reacted = Set(message.reactions.filter(\.reactedByMe).map(\.emoji))

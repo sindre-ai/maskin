@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import posthog from 'posthog-js'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockNavigate = vi.fn()
@@ -25,6 +26,7 @@ vi.mock('@/hooks/use-briefings', () => ({
 }))
 
 import { BriefingRow } from '@/components/foryou/briefing-row'
+import { __setInitializedForTesting } from '@/lib/posthog'
 import { TestWrapper } from '../../setup'
 
 const cards = [
@@ -86,6 +88,25 @@ describe('BriefingRow', () => {
 		// No allow-same-origin: agent-written HTML must stay off our origin.
 		expect(frame.getAttribute('sandbox')).toBe('allow-scripts')
 		expect(screen.getByText(/1 of 2/)).toBeInTheDocument()
+	})
+
+	it('sends briefing_viewed with the page id for each briefing opened', async () => {
+		__setInitializedForTesting(true)
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+		const user = userEvent.setup()
+		renderRow()
+
+		await user.click(screen.getByRole('button', { name: /Two bets stalled/ }))
+		await user.click(screen.getByRole('button', { name: /next/i }))
+
+		const viewed = capture.mock.calls.filter(([name]) => name === 'briefing_viewed')
+		expect(viewed.map(([, props]) => (props as { entity_id: string }).entity_id)).toEqual([
+			'a',
+			'b',
+		])
+		expect(viewed[0]?.[1]).toMatchObject({ kind: 'story', entity_type: 'file' })
+		__setInitializedForTesting(false)
+		vi.restoreAllMocks()
 	})
 
 	it('pages to the next briefing', async () => {

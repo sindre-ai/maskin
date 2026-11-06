@@ -8,6 +8,7 @@ import type {
 	DataQuerySpec,
 	DisplaySettingsBody,
 	FileCommentDto,
+	FileProposalDto,
 	FileUploadSession,
 	FromSuggestedStep,
 	ListLoopsResponse,
@@ -32,6 +33,7 @@ export type {
 	CreateFileCommentInput,
 	DisplaySettingsBody,
 	FileCommentDto,
+	FileProposalDto,
 	ListLoopsResponse,
 	LoopSummary,
 	SendRoundInput,
@@ -44,7 +46,14 @@ import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 import { reportApiFailure } from './faro'
 
-import type { ObjectPreview, SessionStatsRow, TeachRequest, TeachResponse } from '@maskin/shared'
+import type {
+	DailyBudget,
+	DailyBudgetResponse,
+	ObjectPreview,
+	SessionStatsRow,
+	TeachRequest,
+	TeachResponse,
+} from '@maskin/shared'
 
 export interface DesktopConnectResponse {
 	ticket: string
@@ -72,6 +81,8 @@ export class ApiError extends Error {
 	retryAfterMs?: number
 	/** Seconds from the response's `Retry-After` header, when the server sent one (429s). */
 	retryAfter?: number
+	/** On a 409 from accepting proposed changes: the changes that no longer match the file. */
+	staleChangeIds?: string[]
 
 	constructor(
 		public status: number,
@@ -216,6 +227,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 			err.retryAfterSeconds = data.retry_after_seconds
 		}
 		err.retryAfterMs = retryAfterMs
+		if (Array.isArray(data.staleChangeIds)) err.staleChangeIds = data.staleChangeIds
 		const retryAfter = Number(res.headers.get('Retry-After'))
 		if (Number.isFinite(retryAfter) && retryAfter > 0) err.retryAfter = retryAfter
 		// This is the single chokepoint for every /api call the UI makes, so a
@@ -1178,6 +1190,14 @@ export const api = {
 			request<BillingUsageResponse>('/billing/usage', { workspaceId }),
 		cancel: (workspaceId: string) =>
 			request<{ ok: true }>('/billing/cancel', { method: 'POST', workspaceId }),
+		dailyBudget: (workspaceId: string) =>
+			request<DailyBudgetResponse>('/billing/daily-budget', { workspaceId }),
+		setDailyBudget: (workspaceId: string, daily_budget: DailyBudget | null) =>
+			request<DailyBudgetResponse>('/billing/daily-budget', {
+				method: 'PUT',
+				body: { daily_budget },
+				workspaceId,
+			}),
 	},
 
 	marketplaceLoops: {
@@ -1702,6 +1722,43 @@ export const api = {
 			request<FileDetail>(`/files/${id}`, { method: 'PATCH', body: data, workspaceId }),
 		delete: (workspaceId: string, id: string) =>
 			request<{ deleted: boolean }>(`/files/${id}`, { method: 'DELETE', workspaceId }),
+	},
+
+	fileProposals: {
+		listOpen: (workspaceId: string, fileId: string) =>
+			request<{ proposals: FileProposalDto[] }>(`/files/${fileId}/proposals?status=open`, {
+				workspaceId,
+			}),
+		accept: (
+			workspaceId: string,
+			fileId: string,
+			proposalId: string,
+			changeId: string,
+			appliedText?: string,
+		) =>
+			request<unknown>(`/files/${fileId}/proposals/${proposalId}/changes/${changeId}/accept`, {
+				method: 'POST',
+				body: appliedText === undefined ? {} : { applied_text: appliedText },
+				workspaceId,
+			}),
+		reject: (workspaceId: string, fileId: string, proposalId: string, changeId: string) =>
+			request<unknown>(`/files/${fileId}/proposals/${proposalId}/changes/${changeId}/reject`, {
+				method: 'POST',
+				workspaceId,
+			}),
+		// All or nothing on the server: a stale change refuses the whole accept with a 409.
+		acceptAll: (workspaceId: string, fileId: string, proposalId: string, changeIds: string[]) =>
+			request<unknown>(`/files/${fileId}/proposals/${proposalId}/changes/accept`, {
+				method: 'POST',
+				body: { change_ids: changeIds },
+				workspaceId,
+			}),
+		rejectAll: (workspaceId: string, fileId: string, proposalId: string, changeIds: string[]) =>
+			request<unknown>(`/files/${fileId}/proposals/${proposalId}/changes/reject`, {
+				method: 'POST',
+				body: { change_ids: changeIds },
+				workspaceId,
+			}),
 	},
 
 	fileComments: {
@@ -2680,6 +2737,8 @@ export interface ConversationListItemResponse {
 	snippet_actor_id: string | null
 	snippet_actor_name: string | null
 	participants: ConversationParticipantResponse[]
+	/** Agents with an open turn in this chat right now — a chat session stays running between turns. */
+	working_actor_ids: string[]
 }
 
 export interface ConversationListResponse {
@@ -3136,6 +3195,8 @@ export interface SessionResponse {
 	createdAt: string | null
 	updatedAt: string | null
 	currentActivity: string | null
+	/** The agent server the session runs on; null or absent for a session on the local host. Those on a server cannot be paused. */
+	agentServerId?: string | null
 	/** The thread (its root message id) a chat session answers in; null or absent for the main chat. */
 	threadRootId?: number | null
 	// Postgres `numeric` — serialized as a string; null until the session reports a cost.

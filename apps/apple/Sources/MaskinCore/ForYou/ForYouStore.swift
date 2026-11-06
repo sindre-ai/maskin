@@ -1,58 +1,43 @@
 import Foundation
 import Observation
 
-/// How the feed is laid out and ordered (the web's view menu).
+/// The For you Display settings (the web's view menu): how the cards open and the filter bar.
+/// The feed's order is always the Chief of Staff's ranking, then attention, then latest; there is
+/// no sort setting, and the Handled today list is always shown.
 public struct ForYouDisplayOptions: Sendable, Equatable, Codable {
-	public enum Mode: String, Sendable, Codable, CaseIterable { case cards, list }
-	public enum Sort: String, Sendable, Codable, CaseIterable {
-		/// The sender's attention score first, then latest activity.
-		case attention
-		/// Latest activity first.
-		case latest
-	}
+	/// How the decision rows start: collapsed to a line (tap opens one in place) or already open,
+	/// showing their options. A saved setting: it changes the default state, never a card's own choice.
+	public enum Opening: String, Sendable, Codable, CaseIterable { case compact, expanded }
 
-	public var mode: Mode = .cards
-	public var sort: Sort = .attention
+	public var opening: Opening = .compact
 	/// Show only this kind of ask. Nil is "All".
 	public var intent: ForYouIntent?
 	/// The intent pills under the briefs row are showing (the menu's Filter).
 	public var filterBarOn = false
-	/// The HANDLED TODAY list at the bottom (the menu's Show handled).
-	public var showsHandled = true
 
-	public init(
-		mode: Mode = .cards, sort: Sort = .attention, intent: ForYouIntent? = nil,
-		filterBarOn: Bool = false, showsHandled: Bool = true
-	) {
-		self.mode = mode
-		self.sort = sort
+	public init(opening: Opening = .compact, intent: ForYouIntent? = nil, filterBarOn: Bool = false) {
+		self.opening = opening
 		self.intent = intent
 		self.filterBarOn = filterBarOn
-		self.showsHandled = showsHandled
 	}
 
-	/// Layout, sort, filter bar and Handled today are all at their defaults (the intent pill is a
-	/// filter, not a display option, so it does not count). Drives the Display button tint and Reset.
-	public var isDefaultDisplay: Bool {
-		mode == .cards && sort == .attention && !filterBarOn && showsHandled
-	}
+	/// Card opening and the filter bar are at their defaults (the intent pill is a filter, not a
+	/// display option, so it does not count). Drives the Display button tint and Reset.
+	public var isDefaultDisplay: Bool { opening == .compact && !filterBarOn }
 
-	/// Puts the four Display settings back; the chosen intent stays.
+	/// Puts the Display settings back; the chosen intent stays.
 	public mutating func resetDisplay() {
-		mode = .cards
-		sort = .attention
+		opening = .compact
 		filterBarOn = false
-		showsHandled = true
 	}
 
-	// Hand-written so options saved before these existed (with a `typeFilter`) still decode.
+	// Hand-written so options saved earlier (with `sort`, `showsHandled`, `mode` or a `typeFilter`)
+	// still decode: the keys that no longer exist are ignored.
 	public init(from decoder: any Decoder) throws {
 		let c = try decoder.container(keyedBy: CodingKeys.self)
-		mode = try c.decodeIfPresent(Mode.self, forKey: .mode) ?? .cards
-		sort = try c.decodeIfPresent(Sort.self, forKey: .sort) ?? .attention
+		opening = try c.decodeIfPresent(Opening.self, forKey: .opening) ?? .compact
 		intent = try c.decodeIfPresent(ForYouIntent.self, forKey: .intent)
 		filterBarOn = try c.decodeIfPresent(Bool.self, forKey: .filterBarOn) ?? false
-		showsHandled = try c.decodeIfPresent(Bool.self, forKey: .showsHandled) ?? true
 	}
 }
 
@@ -182,6 +167,9 @@ public final class ForYouStore {
 	/// Tells the home/lock-screen widgets the feed or a decision changed. No-op unless the runtime
 	/// installs the real (debounced) one.
 	@ObservationIgnored public var widgetReloader: any WidgetReloader = NoopWidgetReloader()
+	/// Told the object id of a card the person just answered or dismissed, so its push can leave the
+	/// lock screen. Unset where there is no push to clear.
+	@ObservationIgnored public var onCardHandled: (@MainActor (String) -> Void)?
 	private static let optionsKey = "foryou.displayOptions.v1"
 
 	public init(
@@ -401,6 +389,7 @@ public final class ForYouStore {
 		later.clear(card.id)
 		decisions.choose(option.label, note: note, on: DecisionTarget(card))
 		widgetReloader.reload()
+		onCardHandled?(card.id)
 	}
 
 	/// Send or skip one message of a card that carries several. The card stays on screen: it
@@ -414,7 +403,10 @@ public final class ForYouStore {
 		later.clear(card.id)
 		let queued = decisions.actOnDraft(
 			action, label: draft.label, to: draft.to, id: draft.id, on: DecisionTarget(card))
-		if queued { widgetReloader.reload() }
+		if queued {
+			widgetReloader.reload()
+			onCardHandled?(card.id)
+		}
 		return queued
 	}
 
@@ -423,6 +415,7 @@ public final class ForYouStore {
 		later.clear(card.id)
 		decisions.reply(text, on: DecisionTarget(card))
 		widgetReloader.reload()
+		onCardHandled?(card.id)
 	}
 
 	public func dismiss(_ card: ForYouCard) {
@@ -430,6 +423,7 @@ public final class ForYouStore {
 		later.clear(card.id)
 		decisions.markRead(DecisionTarget(card))
 		widgetReloader.reload()
+		onCardHandled?(card.id)
 	}
 
 	/// Take back the last action on a card (inside the Undo window, or a sent dismissal).
@@ -440,22 +434,8 @@ public final class ForYouStore {
 		return undone
 	}
 
-	/// Defer a card to a preset time. Returns what to hand `undoLater` to take it back.
-	@discardableResult
-	public func deferCard(_ card: ForYouCard, to preset: LaterPreset) -> LaterEntry? {
-		let previous = later.entry(for: card.id)
-		later.defer(card.id, preset: preset)
-		widgetReloader.reload()
-		return previous
-	}
-
-	/// Take a deferral back (the toast's Undo): the card returns to the open list.
-	public func undoLater(_ card: ForYouCard, restoring previous: LaterEntry?) {
-		later.restore(card.id, to: previous)
-		widgetReloader.reload()
-	}
-
-	/// "Bring back" on a LATER row.
+	/// "Bring back" on a LATER row. (Deferring itself now only comes from the notification's Later
+	/// action: the For you rows have no Later.)
 	public func bringBack(_ card: ForYouCard) {
 		later.clear(card.id)
 		widgetReloader.reload()
@@ -576,22 +556,18 @@ public final class ForYouStore {
 	}
 
 	private func sorted(_ list: [ForYouCard]) -> [ForYouCard] {
-		// The Chief of Staff's ranking wins over the reader's sort setting; cards without a rank
-		// (none come from the server today, but a cached card might) follow it.
+		// The Chief of Staff's ranking wins; cards without a rank (none come from the server today,
+		// but a cached card might) follow it, by attention and then latest activity.
 		if list.contains(where: { $0.rank != nil }) {
 			return list.sorted { ($0.rank ?? .max) < ($1.rank ?? .max) }
 		}
 		let latest: (ForYouCard, ForYouCard) -> Bool = {
 			($0.latestActivityAt ?? .distantPast) > ($1.latestActivityAt ?? .distantPast)
 		}
-		switch options.sort {
-		case .latest: return list.sorted(by: latest)
-		case .attention:
-			return list.sorted {
-				let a = $0.maxAttention ?? -1
-				let b = $1.maxAttention ?? -1
-				return a != b ? a > b : latest($0, $1)
-			}
+		return list.sorted {
+			let a = $0.maxAttention ?? -1
+			let b = $1.maxAttention ?? -1
+			return a != b ? a > b : latest($0, $1)
 		}
 	}
 
@@ -600,8 +576,20 @@ public final class ForYouStore {
 	/// The first sentence under the title: how many decisions are blocked on the reader. It looks past the intent
 	/// filter, which only narrows the list below.
 	public var blockedSummary: String? {
-		let blocking = build(deferred: false, ignoringIntent: true).filter { $0.bucket == .needs }
-		return ForYouHeader.summary(blocking: blocking, loaded: phase == .loaded)
+		let all = build(deferred: false, ignoringIntent: true)
+		let blocking = all.filter { $0.bucket == .needs }
+		// The reader's own calls this sitting, and the agents carrying them on (or working on a reply).
+		let answered = all.filter { entry in
+			guard entry.bucket == .done, case .option = entry.record?.kind else { return false }
+			return true
+		}
+		var carryingOn: [String] = []
+		for entry in all where entry.bucket == .waiting || (entry.bucket == .done && entry.record != nil) {
+			if case .dismissed = entry.record?.kind { continue }
+			if let name = senderName(of: entry.card), !carryingOn.contains(name) { carryingOn.append(name) }
+		}
+		return ForYouHeader.summary(
+			blocking: blocking, answered: answered.count, carryingOn: carryingOn, loaded: phase == .loaded)
 	}
 
 	// MARK: Groups
@@ -744,8 +732,9 @@ public final class ForYouStore {
 		}.count
 	}
 
-	/// The caught-up line: who is now carrying on because of the reader's calls.
-	public var caughtUpDetail: String {
+	/// The caught-up line: who is now carrying on because of the reader's calls. Nil when nobody is:
+	/// the empty state carries no generic helper sentence.
+	public var caughtUpDetail: String? {
 		var names: [String] = []
 		for entry in entries where entry.bucket == .done {
 			guard case .option = entry.record?.kind, let name = senderName(of: entry.card),
@@ -753,9 +742,7 @@ public final class ForYouStore {
 			else { continue }
 			names.append(name)
 		}
-		guard !names.isEmpty else {
-			return "Nothing needs you right now. The flows keep running \u{2014} you\u{2019}ll hear when one does."
-		}
+		guard !names.isEmpty else { return nil }
 		return "Your calls are in motion with \(names.joined(separator: ", ")). You\u{2019}ll hear when one needs you again."
 	}
 

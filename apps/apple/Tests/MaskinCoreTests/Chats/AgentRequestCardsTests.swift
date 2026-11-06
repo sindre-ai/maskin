@@ -80,6 +80,17 @@ struct AgentRequestCardsTests {
 		#expect(message(.object(["integration_connect": .object([:])])).asksForAnswer == false)
 		#expect(message(nil).asksForAnswer == false)
 	}
+
+	@Test func askingAgainNamesWhatWasDeclined() {
+		let m = message(
+			.object([
+				"integration_access_request": .object([
+					"session_id": .string("s"), "integration_id": .string("i"), "display_name": .string("Gmail"),
+					"level": .string("read"),
+				])
+			]))
+		#expect(IntegrationAccessRequest(message: m)?.askAgainText.contains("Gmail") == true)
+	}
 }
 
 @Suite("Integration access card copy")
