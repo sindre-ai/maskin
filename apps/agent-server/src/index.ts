@@ -127,15 +127,15 @@ const EXPOSE_PORT_REQUEST_SCHEMA = z.object({
 	guest_port: z.number().int().min(1).max(65535),
 })
 
+// How long POST /sessions waits for the previous run of the same session id to finish
+// removing its folder and sandbox. Deleting a large workspace can take a while.
+const PREVIOUS_RUN_WAIT_MS = 60_000
+
 // POST /sessions/:id/stop body — the settle-side reason/source pair so the
 // stop handler can log a legible provenance next to the FORCED_STOP_EXIT_CODE
 // seed. Mirrors `StopSessionRequest` in @maskin/shared; kept as a Zod schema
 // here so a malformed request is rejected at the boundary rather than
 // silently taking a poisoned string into the log line.
-// How long POST /sessions waits for the previous run of the same session id to finish
-// removing its folder and sandbox. Deleting a large workspace can take a while.
-const PREVIOUS_RUN_WAIT_MS = 60_000
-
 const STOP_SESSION_REQUEST_SCHEMA = z.object({
 	reason: z.enum(['complete', 'fail', 'timeout', 'stop', 'pause']),
 	source: z.enum([
