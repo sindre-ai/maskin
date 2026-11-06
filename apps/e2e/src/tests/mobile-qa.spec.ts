@@ -86,6 +86,8 @@ async function assertNoHorizontalOverflow(page: Page, surface: string, viewport:
 						// Tailwind `line-clamp-1`, `line-clamp-2`, … all set
 						// `overflow: hidden` for multi-line ellipsis.
 						if (cls.startsWith('line-clamp-')) return true
+						// A breakpoint variant such as `max-md:sr-only` is the same a11y hide while it applies.
+						if (cls.endsWith(':sr-only')) return true
 					}
 				}
 				return false
