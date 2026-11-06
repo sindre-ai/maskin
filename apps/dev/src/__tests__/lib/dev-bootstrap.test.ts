@@ -108,7 +108,7 @@ describe('maybeBootstrapDev', () => {
 		mockResults.selectQueue = [[]] // findExistingCredentials returns no rows
 		// Unqueued selects fall through to [] — that's how seedDefaultAgentActors'
 		// per-agent "already a member?" check reads as "not present" here, so each
-		// of the seven default agents takes the insert branch below.
+		// of the six default agents takes the insert branch below.
 		mockResults.insertQueue = [
 			[{ id: 'actor-1', name: 'You', email: 'dev@local' }],
 			[], // api_keys insert for the human's primary key
@@ -122,8 +122,6 @@ describe('maybeBootstrapDev', () => {
 			[{ workspaceId: 'ws-1', actorId: 'chief-1', role: 'member' }],
 			[{ id: 'driver-1', name: 'Driver' }],
 			[{ workspaceId: 'ws-1', actorId: 'driver-1', role: 'member' }],
-			[{ id: 'strategist-1', name: 'Strategist' }],
-			[{ workspaceId: 'ws-1', actorId: 'strategist-1', role: 'member' }],
 			[{ id: 'signal-1', name: 'Signal Analyst' }],
 			[{ workspaceId: 'ws-1', actorId: 'signal-1', role: 'member' }],
 			[{ id: 'researcher-1', name: 'Researcher' }],
@@ -165,7 +163,6 @@ describe('maybeBootstrapDev', () => {
 			'Workspace Coach',
 			'Chief of Staff',
 			'Driver',
-			'Strategist',
 			'Signal Analyst',
 			'Researcher',
 			'Knowledge Curator',
