@@ -119,6 +119,9 @@ function ChatsLayout() {
 			scrollLocked
 			// Desktop draws its own title in the list column (v3); the nav row keeps New chat.
 			hideTitle={listTitleInColumn}
+			// From md the Chats screens carry their own top edge (list title and buttons, the thread's
+			// own header), so the shared bar and its New button step aside, as in the design.
+			hideBar={listTitleInColumn || (!isMobile && isDraft)}
 		/>
 	)
 	const listColumn = (
@@ -171,7 +174,7 @@ function ChatsLayout() {
 			{header}
 			{hasThread ? null : <ChatsListTitle />}
 			<div className={cn('flex min-h-0 flex-1', SHELL_BLEED)}>
-				{wide || listAside ? null : (
+				{wide || listAside || isDraft ? null : (
 					// Below lg (iPad portrait) the list and the thread take turns: the list fills the
 					// width until a chat is open, then the thread replaces it. From lg they sit side by side.
 					<div

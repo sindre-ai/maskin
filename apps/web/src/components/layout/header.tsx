@@ -184,9 +184,9 @@ function useHeaderModel() {
  * scrolls off with it (design). Hidden below `md:`, where the header row draws it.
  */
 export function ScrollingPageTitle() {
-	const { subtitle, hideTitle } = usePageHeader()
+	const { subtitle, hideTitle, hideBar } = usePageHeader()
 	const { headingText, scrollsAway } = useHeaderModel()
-	if (!scrollsAway) return null
+	if (!scrollsAway || hideBar) return null
 	return (
 		// -mt-3 undoes 12px of the scroll area's 32px top padding so the row lines up with the
 		// floating buttons at 20px; min-h keeps the row when the page draws its own title.
@@ -214,6 +214,7 @@ export function Header() {
 		newMenuPrimaryOverride,
 		newMenuDisabled,
 		hideTitle,
+		hideBar,
 		gutter,
 	} = usePageHeader()
 	const { workspaceId } = useWorkspace()
@@ -293,6 +294,8 @@ export function Header() {
 				// Standard screens (design): from md the title scrolls away with the page, so the header
 				// takes no height and keeps only the buttons, floating over the content with no
 				// background. Only the buttons take clicks; the rest of the strip lets them through.
+				// hideBar: the page owns its whole top edge from md, so nothing draws here.
+				hideBar && 'md:hidden',
 				scrollsAway &&
 					'md:pointer-events-none md:absolute md:inset-x-0 md:top-0 md:mb-0 md:justify-end md:bg-transparent md:pt-6 md:pb-0',
 				gutter === 'wide' ? 'lg:px-12' : 'lg:px-7',

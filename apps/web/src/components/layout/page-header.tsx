@@ -15,6 +15,7 @@ export function PageHeader({
 	newMenuPrimaryOverride,
 	newMenuDisabled,
 	hideTitle,
+	hideBar,
 	gutter,
 }: {
 	// Rendered by the shared top nav as the screen's <h1>, not inline here —
@@ -51,6 +52,9 @@ export function PageHeader({
 	// that draws its own title. `title` is still published, so the crumb chain
 	// and document title keep working.
 	hideTitle?: boolean
+	// From md the shared bar draws nothing (no title, no New button) — for a page that owns
+	// its whole top edge, as Chats does. Below md the bar still renders.
+	hideBar?: boolean
 	// 'wide' widens the side padding from 28px to 48px from `lg:` (For you).
 	gutter?: PageGutter
 }) {
@@ -67,6 +71,7 @@ export function PageHeader({
 		setNewMenuPrimaryOverride,
 		setNewMenuDisabled,
 		setHideTitle,
+		setHideBar,
 		setGutter,
 	} = usePageHeader()
 
@@ -129,6 +134,11 @@ export function PageHeader({
 		setHideTitle(hideTitle)
 		return () => setHideTitle(undefined)
 	}, [hideTitle, setHideTitle])
+
+	useEffect(() => {
+		setHideBar(hideBar)
+		return () => setHideBar(undefined)
+	}, [hideBar, setHideBar])
 
 	useEffect(() => {
 		setGutter(gutter)

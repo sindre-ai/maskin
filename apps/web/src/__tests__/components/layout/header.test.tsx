@@ -192,6 +192,7 @@ describe('Header', () => {
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
 			setHideTitle: vi.fn(),
+			setHideBar: vi.fn(),
 			setGutter: vi.fn(),
 		})
 
@@ -216,6 +217,7 @@ describe('Header', () => {
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
 			setHideTitle: vi.fn(),
+			setHideBar: vi.fn(),
 			setGutter: vi.fn(),
 		}
 		vi.mocked(useMatches).mockReturnValue([
@@ -235,6 +237,39 @@ describe('Header', () => {
 		expect(screen.queryByRole('heading', { name: 'Things' })).not.toBeInTheDocument()
 	})
 
+	it('hides the whole bar from md when the page sets hideBar', () => {
+		vi.mocked(usePageHeader).mockReturnValue({
+			actions: null,
+			stickyIdentity: null,
+			title: 'Things',
+			hideBar: true,
+			setTitle: vi.fn(),
+			setSubtitle: vi.fn(),
+			setActions: vi.fn(),
+			setLeadingActions: vi.fn(),
+			setTitleTabs: vi.fn(),
+			setStickyIdentity: vi.fn(),
+			setCrumb: vi.fn(),
+			setContentPush: vi.fn(),
+			setScrollLocked: vi.fn(),
+			setNewMenuPrimaryOverride: vi.fn(),
+			setNewMenuDisabled: vi.fn(),
+			setHideTitle: vi.fn(),
+			setHideBar: vi.fn(),
+			setGutter: vi.fn(),
+		})
+		vi.mocked(useMatches).mockReturnValue([
+			{
+				routeId: '/_authed/$workspaceId/objects/',
+				pathname: '/ws-1/objects',
+				params: { workspaceId: 'ws-1' },
+			},
+		] as ReturnType<typeof useMatches>)
+
+		render(<Header />)
+		expect(screen.getByRole('banner')).toHaveClass('md:hidden')
+	})
+
 	it('puts titleTabs beside the heading, ahead of the New cluster', () => {
 		vi.mocked(usePageHeader).mockReturnValue({
 			actions: null,
@@ -252,6 +287,7 @@ describe('Header', () => {
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
 			setHideTitle: vi.fn(),
+			setHideBar: vi.fn(),
 			setGutter: vi.fn(),
 		})
 
@@ -281,6 +317,7 @@ describe('Header', () => {
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
 			setHideTitle: vi.fn(),
+			setHideBar: vi.fn(),
 			setGutter: vi.fn(),
 		})
 		render(<Header />)
@@ -316,6 +353,7 @@ describe('Header', () => {
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
 			setHideTitle: vi.fn(),
+			setHideBar: vi.fn(),
 			setGutter: vi.fn(),
 		})
 
@@ -353,6 +391,7 @@ describe('Header', () => {
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
 			setHideTitle: vi.fn(),
+			setHideBar: vi.fn(),
 			setGutter: vi.fn(),
 		})
 
@@ -392,6 +431,7 @@ describe('Header', () => {
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
 			setHideTitle: vi.fn(),
+			setHideBar: vi.fn(),
 			setGutter: vi.fn(),
 		})
 
@@ -441,6 +481,7 @@ describe('Header', () => {
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
 			setHideTitle: vi.fn(),
+			setHideBar: vi.fn(),
 			setGutter: vi.fn(),
 		})
 		vi.mocked(useMatches).mockReturnValue([
@@ -473,6 +514,7 @@ describe('Header leadingActions', () => {
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
 			setHideTitle: vi.fn(),
+			setHideBar: vi.fn(),
 			setGutter: vi.fn(),
 		})
 		render(<Header />)

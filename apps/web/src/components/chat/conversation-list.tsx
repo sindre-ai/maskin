@@ -69,7 +69,7 @@ export function ConversationListHeader({
 	}
 	const Heading = pageTitle ? 'h1' : 'h2'
 	return (
-		<div className="flex flex-none items-center gap-2 pt-5 pr-5 pb-4 pl-7">
+		<div className="flex flex-none items-center gap-2 pr-5 pb-4 pl-7">
 			{/* Always in the DOM so the page keeps its heading; while the search is open it is only
 			    visually hidden. */}
 			<Heading

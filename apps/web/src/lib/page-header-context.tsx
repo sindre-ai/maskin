@@ -55,6 +55,9 @@ interface PageHeaderState {
 	newMenuDisabled?: boolean
 	// Render flag for the shared nav: skip the <h1> (the page draws its own).
 	hideTitle?: boolean
+	// From md the shared bar and the scrolling title draw nothing at all (no New button
+	// either): the page owns its whole top edge. Below md the bar still renders.
+	hideBar?: boolean
 	// Side padding from `lg:`. Default is 28px; 'wide' is 48px (For you).
 	gutter?: PageGutter
 }
@@ -74,6 +77,7 @@ interface PageHeaderContextValue extends PageHeaderState {
 	setNewMenuPrimaryOverride: (override: NewMenuPrimaryOverride | undefined) => void
 	setNewMenuDisabled: (disabled: boolean | undefined) => void
 	setHideTitle: (hideTitle: boolean | undefined) => void
+	setHideBar: (hideBar: boolean | undefined) => void
 	setGutter: (gutter: PageGutter | undefined) => void
 }
 
@@ -90,6 +94,7 @@ const PageHeaderContext = createContext<PageHeaderContextValue>({
 	setNewMenuPrimaryOverride: () => {},
 	setNewMenuDisabled: () => {},
 	setHideTitle: () => {},
+	setHideBar: () => {},
 	setGutter: () => {},
 })
 
@@ -144,6 +149,10 @@ export function PageHeaderProvider({ children }: { children: ReactNode }) {
 		setState((prev) => ({ ...prev, hideTitle }))
 	}, [])
 
+	const setHideBar = useCallback((hideBar: boolean | undefined) => {
+		setState((prev) => ({ ...prev, hideBar }))
+	}, [])
+
 	const setGutter = useCallback((gutter: PageGutter | undefined) => {
 		setState((prev) => ({ ...prev, gutter }))
 	}, [])
@@ -164,6 +173,7 @@ export function PageHeaderProvider({ children }: { children: ReactNode }) {
 				setNewMenuPrimaryOverride,
 				setNewMenuDisabled,
 				setHideTitle,
+				setHideBar,
 				setGutter,
 			}}
 		>
