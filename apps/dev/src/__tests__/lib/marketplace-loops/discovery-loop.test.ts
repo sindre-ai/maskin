@@ -126,7 +126,7 @@ describe('Product Discovery Loop definition', () => {
 			/\bCTO\b|\bCCO\b|chief of staff/i,
 			/assum/i,
 			// Agents that do not ship in this bundle are named by role in plain words
-			/\b(Customer Success|Content Lead|Product Marketing|Head of Growth|Prospector|Events Lead|Fundraiser|Skjald PM|Product Designer|Workspace Coach|Design Studio|Product Validator|Code Reviewer|Developer|Planner|Architect|Product Insights Analyst|Signal Analyst|Bet Revalidator|Product Lead|Bet Shaper|Workspace Driver|Researcher|Product Manager)\b/,
+			/\b(Customer Success|Content Lead|Product Marketing|Head of Growth|Prospector|Events Lead|Fundraiser|Skjald PM|Product Designer|Workspace Coach|Design Studio|Product Validator|Code Reviewer|Developer|Planner|Architect|Product Insights Analyst|Signal Analyst|Bet Revalidator|Product Lead|Bet Shaper|Workspace Driver|Researcher|Product Manager|Linker)\b/,
 			// Dates and years, whether written out or numeric
 			/\b20\d\d\b/,
 			/\b\d{1,2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\b/,
