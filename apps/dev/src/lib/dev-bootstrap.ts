@@ -80,6 +80,12 @@ import {
 } from './marketplace-loops/loop-data'
 import { actorSnapshot, skillSnapshot, triggerSnapshot } from './marketplace-loops/loop-snapshot'
 import {
+	MARKET_WATCH_ACTOR_IDS,
+	MARKET_WATCH_LOOP,
+	MARKET_WATCH_SKILL_IDS,
+	MARKET_WATCH_TRIGGER_IDS,
+} from './marketplace-loops/market-watch-loop'
+import {
 	STRATEGY_GROWTH_ACTOR_IDS,
 	STRATEGY_GROWTH_LOOP,
 	STRATEGY_GROWTH_SKILL_IDS,
@@ -164,6 +170,12 @@ const MARKETPLACE_SEED_CONFIGS: readonly MarketplaceLoopSeedConfig[] = [
 		actorIds: GROWTH_MEETING_ACTOR_IDS,
 		triggerIds: GROWTH_MEETING_TRIGGER_IDS,
 		skillIds: GROWTH_MEETING_SKILL_IDS,
+	},
+	{
+		loop: MARKET_WATCH_LOOP,
+		actorIds: MARKET_WATCH_ACTOR_IDS,
+		triggerIds: MARKET_WATCH_TRIGGER_IDS,
+		skillIds: MARKET_WATCH_SKILL_IDS,
 	},
 ]
 

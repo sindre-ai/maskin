@@ -25,6 +25,9 @@ import devTriggersData from './data/dev-triggers.json'
 import growthActorsData from './data/growth-actors.json'
 import growthSkillsData from './data/growth-skills.json'
 import growthTriggersData from './data/growth-triggers.json'
+import marketWatchActorsData from './data/market-watch-actors.json'
+import marketWatchSkillsData from './data/market-watch-skills.json'
+import marketWatchTriggersData from './data/market-watch-triggers.json'
 import type {
 	ActorSnapshotSource,
 	SkillSnapshotSource,
@@ -68,16 +71,19 @@ export interface MarketplaceLoopSeedConfig {
 const actorsById: Record<string, ActorData> = {
 	...(devActorsData as Record<string, ActorData>),
 	...(growthActorsData as Record<string, ActorData>),
+	...(marketWatchActorsData as Record<string, ActorData>),
 }
 
 const triggersById: Record<string, TriggerData> = {
 	...(devTriggersData as Record<string, TriggerData>),
 	...(growthTriggersData as Record<string, TriggerData>),
+	...(marketWatchTriggersData as Record<string, TriggerData>),
 }
 
 const skillsById: Record<string, SkillData> = {
 	...(devSkillsData as Record<string, SkillData>),
 	...(growthSkillsData as Record<string, SkillData>),
+	...(marketWatchSkillsData as Record<string, SkillData>),
 }
 
 export function getActorData(id: string): ActorData {
