@@ -2,11 +2,11 @@
 // and runtime state (apiKey, memory, agentState, createdBy, timestamps, ids)
 // from actor/trigger source records before they're written into a
 // marketplace_loop_items.item_snapshot, keeping the exact same shape across
-// every publish-*.ts script and their tests.
+// every marketplace loop and their tests.
 //
 // The input types are intentionally structural (a subset of the columns), so
 // both a live Drizzle `actors`/`triggers` row and a plain record loaded from
-// the checked-in `data/dev-actors.json` / `data/dev-triggers.json` snapshots
+// the checked-in `data/*-actors.json` / `data/*-triggers.json` snapshots
 // satisfy them.
 
 export interface ActorSnapshotSource {
