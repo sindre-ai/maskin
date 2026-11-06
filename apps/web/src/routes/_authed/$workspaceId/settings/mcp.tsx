@@ -1,4 +1,5 @@
 import { McpConnectionSection } from '@/components/settings/mcp-connection'
+import { SettingsPageTitle } from '@/components/settings/settings-page-title'
 import { RouteError } from '@/components/shared/route-error'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
@@ -11,5 +12,12 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings/mcp')({
 function McpPage() {
 	const { workspaceId } = useWorkspace()
 
-	return <McpConnectionSection workspaceId={workspaceId} />
+	return (
+		<div className="max-w-[760px]">
+			<SettingsPageTitle title="Keys and MCP" />
+			<div className="px-2">
+				<McpConnectionSection workspaceId={workspaceId} />
+			</div>
+		</div>
+	)
 }

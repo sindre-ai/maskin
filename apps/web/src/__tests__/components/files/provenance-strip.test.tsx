@@ -105,8 +105,8 @@ describe('ProvenanceStrip — 6 variants + agent-driver special', () => {
 		const attachers = ['A', 'B', 'C'].map((n) => makeAttacher({ id: n, title: n }))
 		renderStrip({ attachers })
 		expect(
-			screen.getByRole('button', { name: /pick target object for the review round/i }),
-		).toHaveTextContent(/3 objects/)
+			screen.getByRole('button', { name: /pick target item for the review round/i }),
+		).toHaveTextContent(/3 items/)
 	})
 
 	it('variant 5 (archived) — warning-tinted, labels the attacher as archived, no send', () => {

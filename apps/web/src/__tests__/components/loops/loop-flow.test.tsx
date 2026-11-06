@@ -81,7 +81,7 @@ describe('LoopFlow', () => {
 
 		// One note line: primitives · triggers on · agents (mockup 1891).
 		expect(
-			await screen.findByText(/3 object types · 2 of 2 triggers on · 2 agents/),
+			await screen.findByText(/3 item types · 2 of 2 triggers on · 2 agents/),
 		).toBeInTheDocument()
 	})
 
@@ -387,7 +387,7 @@ describe('LoopFlow', () => {
 			wrapper: wrapper(),
 		})
 
-		expect(await screen.findByText(/3 object types/)).toBeInTheDocument()
+		expect(await screen.findByText(/3 item types/)).toBeInTheDocument()
 	})
 
 	it('renders a cycles note from the loop summary', async () => {

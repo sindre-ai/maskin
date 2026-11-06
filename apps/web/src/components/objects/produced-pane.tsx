@@ -99,9 +99,9 @@ export function ProducedObjectsGroup({
 }: { workspaceId: string; items: ProducedObjectItem[] }) {
 	if (items.length === 0) return null
 	return (
-		<section aria-label={`Objects · ${items.length}`}>
+		<section aria-label={`Items · ${items.length}`}>
 			<h4 className="mb-1.5 text-[10.5px] font-mono uppercase tracking-[0.09em] text-muted-foreground">
-				Objects · {items.length}
+				Items · {items.length}
 			</h4>
 			<ul className="flex flex-col gap-1">
 				{items.map((obj) => (
@@ -174,7 +174,7 @@ function ProducedEmpty() {
 		<div className="rounded-lg border border-dashed border-border bg-background px-4 py-6 text-center">
 			<p className="text-[13px] font-semibold text-foreground">Nothing produced yet</p>
 			<p className="mt-1.5 text-[12px] leading-[1.5] text-muted-foreground">
-				When an agent creates an object or file from a message here, it'll appear in this list.
+				When an agent creates an item or file from a message here, it'll appear in this list.
 			</p>
 		</div>
 	)

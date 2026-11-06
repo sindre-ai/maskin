@@ -149,7 +149,7 @@ function messagesPages(messages: MessageResponse[]): { pages: MessagesListRespon
 // Only `id` and `name` are read by ThreadHeader; the rest of LoopSummary is
 // irrelevant to these assertions, so cast the light-weight shape.
 function buildLoop(overrides: { id?: string; name?: string } = {}) {
-	return { id: overrides.id ?? 'loop-1', name: overrides.name ?? 'Growth loop' }
+	return { id: overrides.id ?? 'loop-1', name: overrides.name ?? 'Growth flow' }
 }
 
 function TestWrapper({ children }: { children: ReactNode }) {
@@ -192,18 +192,18 @@ describe('ThreadHeader — v4 actions', () => {
 		it('renders no chip when the conversation has no loop_id', () => {
 			mockUseConversation.mockReturnValue({ data: buildConversation() })
 			renderHeader()
-			expect(screen.queryByRole('button', { name: /^Loop:/ })).not.toBeInTheDocument()
+			expect(screen.queryByRole('button', { name: /^Flow:/ })).not.toBeInTheDocument()
 		})
 
 		it('renders and links to the loop when loop_id is set', async () => {
 			mockUseConversation.mockReturnValue({
 				data: buildConversation({ loop_id: 'loop-1' }),
 			})
-			mockUseLoop.mockReturnValue({ data: buildLoop({ id: 'loop-1', name: 'Growth loop' }) })
+			mockUseLoop.mockReturnValue({ data: buildLoop({ id: 'loop-1', name: 'Growth flow' }) })
 			renderHeader()
 
-			const chip = screen.getByRole('button', { name: 'Loop: Growth loop' })
-			expect(chip).toHaveTextContent('Growth loop')
+			const chip = screen.getByRole('button', { name: 'Flow: Growth flow' })
+			expect(chip).toHaveTextContent('Growth flow')
 
 			await userEvent.click(chip)
 			expect(mockTrackNav).toHaveBeenCalledWith({ item_key: 'loop_chip', source: 'top-nav' })
@@ -219,11 +219,11 @@ describe('ThreadHeader — v4 actions', () => {
 			mockUseConversation.mockReturnValue({
 				data: buildConversation({ loop_id: 'loop-1' }),
 			})
-			const longName = 'A very long loop name that exceeds twenty four chars'
+			const longName = 'A very long flow name that exceeds twenty four chars'
 			mockUseLoop.mockReturnValue({ data: buildLoop({ id: 'loop-1', name: longName }) })
 			renderHeader()
 
-			const chip = screen.getByRole('button', { name: `Loop: ${longName}` })
+			const chip = screen.getByRole('button', { name: `Flow: ${longName}` })
 			expect((chip.textContent ?? '').length).toBeLessThanOrEqual(24)
 			expect(chip.textContent).toMatch(/…$/)
 		})
@@ -252,7 +252,10 @@ describe('ThreadHeader — v4 actions', () => {
 			})
 			renderHeader()
 
-			await userEvent.click(screen.getByRole('button', { name: 'Copy whole conversation' }))
+			await userEvent.click(screen.getByRole('button', { name: 'More actions' }))
+			await userEvent.click(
+				await screen.findByRole('menuitem', { name: 'Copy whole conversation' }),
+			)
 
 			await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1))
 			const copied = writeText.mock.calls[0][0] as string
@@ -273,7 +276,8 @@ describe('ThreadHeader — v4 actions', () => {
 			mockUseConversation.mockReturnValue({ data: buildConversation() })
 			renderHeader()
 
-			await userEvent.click(screen.getByRole('button', { name: 'Mark as unread' }))
+			await userEvent.click(screen.getByRole('button', { name: 'More actions' }))
+			await userEvent.click(await screen.findByRole('menuitem', { name: 'Mark as unread' }))
 
 			expect(mockUpdateMe).toHaveBeenCalledWith(
 				{ id: 'conv-1', data: { mark_unread: true } },

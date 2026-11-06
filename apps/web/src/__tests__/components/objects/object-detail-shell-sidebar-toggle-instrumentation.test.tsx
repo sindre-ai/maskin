@@ -84,6 +84,7 @@ vi.mock('@/hooks/use-events', () => ({
 
 vi.mock('@/hooks/use-actors', () => ({
 	useActors: () => ({ data: [] }),
+	useActor: () => ({ data: undefined }),
 }))
 
 vi.mock('@/hooks/use-notifications', () => ({

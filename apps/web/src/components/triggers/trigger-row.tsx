@@ -82,11 +82,11 @@ export function TriggerRow({
 		// anchor is invalid and would navigate on toggle, so the link is a full-row
 		// overlay underneath pointer-transparent content, and only the switch opts
 		// pointer events back in.
-		<div className="group relative flex items-center gap-3.5 rounded-xl border border-border px-4 py-3.5 transition-colors duration-150 hover:border-border-strong">
+		<div className="group relative flex items-center gap-3.5 border-b border-border px-3.5 py-4 transition-colors duration-150 hover:bg-muted">
 			<Link
 				to="/$workspaceId/triggers/$triggerId"
 				params={{ workspaceId, triggerId: trigger.id }}
-				className="absolute inset-0 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+				className="absolute inset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 			>
 				<span className="sr-only">Open {trigger.name}</span>
 			</Link>

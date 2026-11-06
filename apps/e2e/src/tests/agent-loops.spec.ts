@@ -1,11 +1,11 @@
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
-// "Loops it runs" (mockup 2469–2478) is the agent's only outbound link to its
+// "Works in" (v11) is the agent's only outbound link to its
 // work. A loop's agents are derived from its `metadata.trigger_ids` → each
 // trigger's target actor, so the seed below has to build both halves.
 
-test.describe('Agent detail — Loops it runs', () => {
+test.describe('Agent detail — Works in', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
 		test(`lists the loops the agent runs and links through @ ${vp.label}`, async ({
 			page,
@@ -34,12 +34,12 @@ test.describe('Agent detail — Loops it runs', () => {
 
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
 
-			const section = page.getByRole('region', { name: 'Loops it runs' })
-			await expect(section).toBeVisible({ timeout: 10_000 })
-			const row = section.getByRole('link', { name: /Customer feedback loop/ })
+			// "Works in" is a row of flow chips in the hero, above the tabs.
+			await expect(page.getByText('Works in', { exact: true })).toBeVisible({ timeout: 10_000 })
+			const row = page.getByRole('link', { name: /Customer feedback loop/ })
 			await expect(row).toBeVisible()
 
-			// The section inherits LoopRow's pill colours — legible in both schemes.
+			// The chip is legible in both schemes.
 			for (const scheme of ['light', 'dark'] as const) {
 				await page.emulateMedia({ colorScheme: scheme })
 				await expect(row).toBeVisible()
@@ -50,10 +50,7 @@ test.describe('Agent detail — Loops it runs', () => {
 			await expect(page).toHaveURL(new RegExp(`/loops/${loop.id}$`))
 		})
 
-		test(`shows the empty state for an agent with no loops @ ${vp.label}`, async ({
-			page,
-			account,
-		}) => {
+		test(`draws no section for an agent with no loops @ ${vp.label}`, async ({ page, account }) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 
 			const agent = await account.api.createAgentActor('Solo Sam')
@@ -61,9 +58,9 @@ test.describe('Agent detail — Loops it runs', () => {
 
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
 
-			const section = page.getByRole('region', { name: 'Loops it runs' })
-			await expect(section).toBeVisible({ timeout: 10_000 })
-			await expect(section.getByText('Not tied to a loop yet')).toBeVisible()
+			// Nothing is drawn for an agent that works in no loop.
+			await expect(page.getByRole('tab', { name: /^Setup/ })).toBeVisible({ timeout: 10_000 })
+			await expect(page.getByText('Works in', { exact: true })).toHaveCount(0)
 		})
 	}
 })

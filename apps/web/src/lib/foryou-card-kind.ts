@@ -46,6 +46,21 @@ export function classifyCardKind(item: UnreadItem): CardKind {
 }
 
 /**
+ * A card that asks nothing of the person: an agent's note or a finished-work notice.
+ * Anything that might be an open question stays out of this, because it is dismissed
+ * in bulk: a decision, an item with no source comment (a curated headline names what is
+ * needed), a mention that is scored high or that contains a question mark. When the data cannot tell, it is
+ * treated as a question (the safe side).
+ */
+export function isInformational(item: UnreadItem): boolean {
+	if (decisionOf(item)) return false
+	const mention = item.latest_mention
+	if (!mention) return false
+	if (mention.attention !== null && mention.attention >= 4) return false
+	return !mention.content.includes('?')
+}
+
+/**
  * The card's options, in render order. The recommended one sits last, where the
  * layout puts the filled bar.
  */

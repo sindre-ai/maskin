@@ -7,6 +7,7 @@ import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { useActor, useAgent, useCreateActor, useUpdateActor } from '@/hooks/use-actors'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { type AgentTab, DEFAULT_AGENT_TAB, parseAgentTab } from '@/lib/agent-detail'
 import { ApiError } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
@@ -15,11 +16,19 @@ import { toast } from 'sonner'
 
 export const Route = createFileRoute('/_authed/$workspaceId/agents/$agentId')({
 	component: AgentDetailPage,
+	// `?tab=sessions` opens a tab directly; anything else (the retired `overview` too) is Setup.
+	validateSearch: (search: Record<string, unknown>): { tab?: AgentTab } => ({
+		tab: parseAgentTab(search.tab),
+	}),
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
 function AgentDetailPage() {
 	const { agentId } = Route.useParams()
+	const { tab } = Route.useSearch()
+	const navigate = Route.useNavigate()
+	const onTabChange = (next: AgentTab) =>
+		navigate({ search: { tab: next === DEFAULT_AGENT_TAB ? undefined : next }, replace: true })
 	const { workspaceId } = useWorkspace()
 	// Use list-derived hook to check existence (returns undefined for new IDs, no 404)
 	const { data: agentListItem, isLoading } = useAgent(agentId, workspaceId)
@@ -36,7 +45,7 @@ function AgentDetailPage() {
 
 	if (isLoading && !isCreated) {
 		return (
-			<div className="max-w-3xl mx-auto space-y-4">
+			<div className="mx-auto w-full max-w-280 space-y-4">
 				<Skeleton className="h-8 w-64" />
 				<Skeleton className="h-4 w-full max-w-96" />
 				<Skeleton className="h-32 w-full" />
@@ -72,7 +81,7 @@ function AgentDetailPage() {
 
 	// Once created, render the full document editor (fetches full detail)
 	if (isCreated) {
-		return <AgentDetailLoaded agentId={agentId} />
+		return <AgentDetailLoaded agentId={agentId} tab={tab} onTabChange={onTabChange} />
 	}
 
 	// Create mode — show form with all sections
@@ -91,12 +100,20 @@ function AgentDetailPage() {
 }
 
 /** Fetches the full agent detail and renders the document editor. */
-function AgentDetailLoaded({ agentId }: { agentId: string }) {
+function AgentDetailLoaded({
+	agentId,
+	tab,
+	onTabChange,
+}: {
+	agentId: string
+	tab?: AgentTab
+	onTabChange: (tab: AgentTab) => void
+}) {
 	const { data: agent, isLoading, isError, error, refetch } = useActor(agentId)
 
 	if (isLoading) {
 		return (
-			<div className="max-w-3xl mx-auto space-y-4">
+			<div className="mx-auto w-full max-w-280 space-y-4">
 				<Skeleton className="h-8 w-64" />
 				<Skeleton className="h-4 w-full max-w-96" />
 				<Skeleton className="h-32 w-full" />
@@ -107,7 +124,7 @@ function AgentDetailLoaded({ agentId }: { agentId: string }) {
 	if (isError && !agent) {
 		const is404 = error instanceof ApiError && error.status === 404
 		return (
-			<div className="max-w-3xl mx-auto">
+			<div className="mx-auto w-full max-w-280">
 				<QueryStateError
 					title={is404 ? 'Agent not found' : "Couldn't load this agent"}
 					error={error ?? new Error('Something went wrong.')}
@@ -119,7 +136,7 @@ function AgentDetailLoaded({ agentId }: { agentId: string }) {
 
 	if (!agent) {
 		return (
-			<div className="max-w-3xl mx-auto space-y-4">
+			<div className="mx-auto w-full max-w-280 space-y-4">
 				<Skeleton className="h-8 w-64" />
 				<Skeleton className="h-4 w-full max-w-96" />
 				<Skeleton className="h-32 w-full" />
@@ -127,5 +144,5 @@ function AgentDetailLoaded({ agentId }: { agentId: string }) {
 		)
 	}
 
-	return <AgentDetailView agent={agent} />
+	return <AgentDetailView agent={agent} tab={tab ?? DEFAULT_AGENT_TAB} onTabChange={onTabChange} />
 }

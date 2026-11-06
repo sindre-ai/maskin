@@ -83,7 +83,7 @@ function Harness({
 						retainOnlyFailed(data)
 						reportBulkResult(data, ids.length, 'updated')
 					},
-					onError: () => toast.error('Failed to update objects'),
+					onError: () => toast.error('Failed to update items'),
 				},
 			)
 		},
@@ -165,7 +165,7 @@ describe('bulk-update round-trip', () => {
 			}),
 		)
 		expect(api.objects.bulkUpdate).toHaveBeenCalledTimes(1)
-		await waitFor(() => expect(toast.success).toHaveBeenCalledWith('3 objects updated'))
+		await waitFor(() => expect(toast.success).toHaveBeenCalledWith('3 items updated'))
 		await waitFor(() => expect(screen.getByTestId('selection-ids').textContent).toBe(''))
 
 		const rows = queryClient.getQueryData<{ pages: ObjectResponse[][] }>(key)?.pages[0] ?? []
@@ -195,7 +195,7 @@ describe('bulk-update round-trip', () => {
 
 		pickStatus('Done')
 
-		await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to update objects'))
+		await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to update items'))
 		const rows = queryClient.getQueryData<{ pages: ObjectResponse[][] }>(key)?.pages[0] ?? []
 		expect(rows.every((r) => r.status === 'todo')).toBe(true)
 		expect(screen.getByTestId('selection-ids').textContent).toBe('obj-1,obj-2')

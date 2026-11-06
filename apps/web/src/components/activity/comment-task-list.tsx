@@ -1,7 +1,9 @@
 import { useActor } from '@/hooks/use-actors'
 import { useObject } from '@/hooks/use-objects'
-import type { EventResponse } from '@/lib/api'
+import { type EventResponse, api } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { queryKeys } from '@/lib/query-keys'
+import { useQueries } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { Skeleton } from '../shared/loading-skeleton'
@@ -42,17 +44,48 @@ export function CommentTaskList({ event, workspaceId, className }: CommentTaskLi
 	const taskIds = extractTasks(event)
 	if (taskIds.length === 0) return null
 	return (
-		<ul
-			className={cn(
-				'mt-1.5 space-y-1 rounded-md border border-border/70 bg-card/40 p-2',
-				className,
-			)}
+		<section
+			className={cn('mt-1.5 rounded-lg border border-border bg-card', className)}
 			aria-label="Tasks referenced by this comment"
 		>
-			{taskIds.map((taskId) => (
-				<TaskRow key={taskId} taskId={taskId} workspaceId={workspaceId} />
-			))}
-		</ul>
+			<TaskProgress taskIds={taskIds} />
+			<ul className="divide-y divide-border">
+				{taskIds.map((taskId) => (
+					<TaskRow key={taskId} taskId={taskId} workspaceId={workspaceId} />
+				))}
+			</ul>
+		</section>
+	)
+}
+
+/** "2 of 4 done" with one segment per task. Reads the same cache entries the
+ *  rows do, so it costs no extra requests; hidden until a task has loaded. */
+function TaskProgress({ taskIds }: { taskIds: string[] }) {
+	const results = useQueries({
+		queries: taskIds.map((id) => ({
+			queryKey: queryKeys.objects.detail(id),
+			queryFn: () => api.objects.get(id),
+		})),
+	})
+	const loaded = results.flatMap((r) => (r.data ? [r.data] : []))
+	if (loaded.length === 0) return null
+	const doneFlags = results.map((r) => (r.data ? DONE_STATUSES.has(r.data.status) : false))
+	const done = doneFlags.filter(Boolean).length
+	return (
+		<div className="flex items-center gap-2.5 border-b border-border px-3 py-2">
+			<span className="text-xs font-semibold text-foreground">
+				{done} of {taskIds.length} done
+			</span>
+			<div aria-hidden="true" className="flex h-1 min-w-0 flex-1 gap-0.5">
+				{doneFlags.map((isDone, i) => (
+					<div
+						// biome-ignore lint/suspicious/noArrayIndexKey: segments are positional
+						key={i}
+						className={cn('h-full min-w-0 flex-1 rounded-full', isDone ? 'bg-success' : 'bg-muted')}
+					/>
+				))}
+			</div>
+		</div>
 	)
 }
 
@@ -61,7 +94,7 @@ function TaskRow({ taskId, workspaceId }: { taskId: string; workspaceId: string 
 
 	if (isLoading) {
 		return (
-			<li className="flex items-center gap-2 py-0.5">
+			<li className="flex items-center gap-2 px-3 py-2">
 				<Skeleton className="h-4 w-4 rounded-sm" />
 				<Skeleton className="h-4 flex-1" />
 			</li>
@@ -71,7 +104,7 @@ function TaskRow({ taskId, workspaceId }: { taskId: string; workspaceId: string 
 	if (!task) {
 		return (
 			<li
-				className="flex items-center gap-2 py-0.5 text-xs text-muted-foreground italic opacity-60"
+				className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground italic opacity-60"
 				title="This task was deleted or is unavailable"
 			>
 				<Checkbox checked={false} disabled aria-label="Deleted task" />
@@ -84,7 +117,7 @@ function TaskRow({ taskId, workspaceId }: { taskId: string; workspaceId: string 
 	const isMuted = MUTED_STATUSES.has(task.status)
 
 	return (
-		<li className="flex items-center gap-2 py-0.5 text-xs">
+		<li className="flex items-center gap-2 px-3 py-2 text-xs max-md:min-h-11">
 			<Checkbox checked={isDone} disabled aria-label={`Task ${task.title} is ${task.status}`} />
 			<Link
 				to="/$workspaceId/objects/$objectId"

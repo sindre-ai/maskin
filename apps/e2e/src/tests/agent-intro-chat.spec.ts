@@ -16,7 +16,8 @@ test.describe('Agent intro chat', () => {
 		page,
 		account,
 	}) => {
-		await page.goto(`/${account.workspaceId}/chats`)
+		// The Chats screens carry their own top edge from md, so start from Agents, which keeps the bar.
+		await page.goto(`/${account.workspaceId}/agents`)
 
 		const name = `Intro Agent ${Date.now()}`
 		await page.locator('header').getByRole('button', { name: 'More ways to start' }).click()

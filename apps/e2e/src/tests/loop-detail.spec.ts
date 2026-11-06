@@ -54,15 +54,21 @@ test.describe('Loop detail page', () => {
 			).toBeVisible()
 			// Scoped to the stat block — the labels also read in prose elsewhere on
 			// the page, which otherwise makes these ambiguous.
+			await page.getByRole('tab', { name: 'Setup' }).click()
 			const stats = page.getByTestId('loop-stats')
 			await expect(stats.getByText('Cycles running')).toBeVisible()
 			await expect(stats.getByText('Closed this month')).toBeVisible()
 			await expect(stats.getByText('Median cycle time')).toBeVisible()
 			await expect(stats.getByText('Asks waiting')).toBeVisible()
 			await expect(stats.getByText('Next fire')).toBeVisible()
-			await expect(page.getByText('The loop, right now')).toBeVisible()
+			await page.getByRole('tab', { name: 'Overview' }).click()
+			await expect(page.getByText('The flow, right now')).toBeVisible()
 			// AC5 — the utterance input is present on loop detail.
-			await expect(page.getByPlaceholder('Listening — speak in plain words')).toBeVisible()
+			await expect(
+				page.getByPlaceholder(
+					/^(Say what should change about this flow|Message .+, who drives .+)$/,
+				),
+			).toBeVisible()
 			// Step rows show the trigger's title, not its action prompt (#2777).
 			await expect(page.getByText('Triage feedback', { exact: true })).toBeVisible()
 			// The right-now note reads as one line: primitives · triggers on ·
@@ -70,21 +76,31 @@ test.describe('Loop detail page', () => {
 			await expect(page.getByText(/of \d+ trigger(s)? on/)).toBeVisible()
 			// The shared object timeline replaces the old loop-specific activity
 			// and changes sections — same Activity rule the object page carries.
-			await expect(page.getByText('Activity', { exact: true })).toBeVisible()
+			// It lives on the Activity tab; Overview carries the story and stats.
+			await page.getByRole('tab', { name: 'Activity' }).click()
 			// The filter chips carry their count in the label — `All (3)`.
 			await expect(page.getByRole('button', { name: /^All \(\d+\)$/ })).toBeVisible()
+			await page.getByRole('tab', { name: 'Overview' }).click()
+			// The tab strip never scrolls the page sideways.
+			const overflow = await page.evaluate(() => ({
+				scroll: document.documentElement.scrollWidth,
+				client: document.documentElement.clientWidth,
+			}))
+			expect(overflow.scroll).toBeLessThanOrEqual(overflow.client)
 
 			// The composer is the last thing in the reader column — it sits below
 			// the timeline, not above the story. Compare document order rather
 			// than bounding boxes: the composer is `sticky bottom-0`, so while the
 			// timeline is below the fold its pinned y is the smaller number at
 			// every viewport where the page scrolls.
-			const composer = page.getByPlaceholder('Listening — speak in plain words')
+			const composer = page.getByPlaceholder(
+				/^(Say what should change about this flow|Message .+, who drives .+)$/,
+			)
 			const composerFollowsActivity = await composer.evaluate((node) => {
-				const activity = [...document.querySelectorAll('span')].find(
+				const activity = [...document.querySelectorAll('[role="tab"]')].find(
 					(el) => el.textContent?.trim() === 'Activity',
 				)
-				if (!activity) throw new Error('missing Activity label')
+				if (!activity) throw new Error('missing Activity tab')
 				// DOCUMENT_POSITION_FOLLOWING — the composer comes after it.
 				return Boolean(activity.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING)
 			})
@@ -153,7 +169,7 @@ test.describe('Loop detail page', () => {
 			const heading = page.getByRole('heading', { name: 'Renewals loop' })
 			await expect(heading).toBeVisible({ timeout: 10000 })
 			await heading.click()
-			const titleField = page.getByLabel('Loop title')
+			const titleField = page.getByLabel('Flow title')
 			await titleField.fill('Renewals loop v2')
 			await titleField.press('Enter')
 			await expect(page.getByRole('heading', { name: 'Renewals loop v2' })).toBeVisible()
@@ -173,7 +189,7 @@ test.describe('Loop detail page', () => {
 			await expect(page.getByText('two weeks')).toBeVisible()
 
 			// The pre-v2 edit affordance is gone — the page itself is the editor.
-			await expect(page.getByRole('button', { name: 'Edit this loop' })).toHaveCount(0)
+			await expect(page.getByRole('button', { name: 'Edit this flow' })).toHaveCount(0)
 			await expect(page.getByText('say what should change — no builder')).toHaveCount(0)
 		})
 	}
@@ -191,7 +207,9 @@ test.describe('Loop detail page', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
-		const input = page.getByPlaceholder('Listening — speak in plain words')
+		const input = page.getByPlaceholder(
+			/^(Say what should change about this flow|Message .+, who drives .+)$/,
+		)
 		await expect(input).toBeVisible({ timeout: 10000 })
 
 		await input.fill('Tighten the close timeline')
@@ -223,7 +241,7 @@ test.describe('Loop detail page', () => {
 		// Exact — the v2 header's split New button adds a "More ways to start"
 		// control, which a substring match would also pick up.
 		await page.getByRole('button', { name: 'More', exact: true }).click()
-		await page.getByRole('menuitem', { name: 'Pause loop' }).click()
+		await page.getByRole('menuitem', { name: 'Pause flow' }).click()
 
 		await expect(page.getByTestId('loop-pill')).toHaveText('Paused', { timeout: 10000 })
 	})
@@ -268,18 +286,18 @@ test.describe('Loop detail page', () => {
 			// Pause/Resume. Exact — the app-shell also renders a "More ways to
 			// start" control that a substring match would also pick up.
 			await page.getByRole('button', { name: 'More', exact: true }).click()
-			await page.getByRole('menuitem', { name: 'Delete loop' }).click()
+			await page.getByRole('menuitem', { name: 'Delete flow' }).click()
 
 			// Inline confirm mirrors PR #1667 — Cancel is a real escape hatch, the
 			// pill and dropdown come back afterwards.
-			await expect(page.getByText('Delete this loop?')).toBeVisible()
+			await expect(page.getByText('Delete this flow?')).toBeVisible()
 			await page.getByRole('button', { name: 'Cancel' }).click()
 			await expect(page.getByTestId('loop-pill')).toBeVisible()
 
 			// Confirming actually removes the loop and lands back on the /loops
 			// index without it in the list.
 			await page.getByRole('button', { name: 'More', exact: true }).click()
-			await page.getByRole('menuitem', { name: 'Delete loop' }).click()
+			await page.getByRole('menuitem', { name: 'Delete flow' }).click()
 			await page.getByRole('button', { name: 'Confirm' }).click()
 
 			await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/loops/?$`), {

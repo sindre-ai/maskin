@@ -1,3 +1,4 @@
+import { TrialCard } from '@/components/billing/trial-card'
 import { UnreadBadge } from '@/components/shared/unread-badge'
 import {
 	Sidebar,
@@ -25,6 +26,7 @@ import { useMemo } from 'react'
 import { NavUser } from './nav-user'
 import { SidebarActivity } from './sidebar-activity'
 import { SidebarNavItem } from './sidebar-nav-item'
+import { WhatsNewCard } from './whats-new-card'
 import { WorkspaceSwitcher } from './workspace-switcher'
 
 // `navSecondaryDefs` (Marketplace) from the mockup. Agents and Triggers are
@@ -54,7 +56,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 
 	return (
 		<Sidebar collapsible="icon" {...props}>
-			<SidebarHeader className="h-11 justify-center">
+			<SidebarHeader className="p-2.5 pb-0 group-data-[collapsible=icon]:p-2">
 				{/* v2 pairs the workspace name with an explicit collapse control
 				    (mockup line 62). SidebarRail still handles the drag edge; this
 				    is the discoverable affordance. It has no place on the rail
@@ -70,13 +72,13 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 					<SidebarTrigger
 						aria-label="Collapse sidebar"
 						title="Collapse sidebar"
-						className="size-7 shrink-0 text-muted-foreground hover:text-foreground group-data-[collapsible=icon]:hidden"
+						className="size-[30px] shrink-0 rounded-lg text-muted-foreground hover:text-foreground group-data-[collapsible=icon]:hidden"
 					/>
 				</div>
 			</SidebarHeader>
 			<SidebarContent>
-				<SidebarGroup>
-					<SidebarMenu>
+				<SidebarGroup className="px-2.5 py-2">
+					<SidebarMenu className="gap-0">
 						{navItems.map((item) => (
 							<SidebarNavItem key={item.to} item={item} source="top-nav">
 								{item.to === FOR_YOU_ROUTE && (
@@ -90,20 +92,25 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 									</>
 								)}
 								{item.to === CHATS_ROUTE && (
-									<UnreadBadge
-										count={chatUnread.count}
-										overflow={chatUnread.hasMore}
-										variant="plain"
-										className="ml-auto group-data-[collapsible=icon]:hidden"
-									/>
+									<>
+										<UnreadBadge
+											count={chatUnread.count}
+											overflow={chatUnread.hasMore}
+											variant="plain"
+											className="ml-auto group-data-[collapsible=icon]:hidden"
+										/>
+										<CollapsedUnreadDot count={chatUnread.count} />
+									</>
 								)}
 							</SidebarNavItem>
 						))}
 					</SidebarMenu>
 				</SidebarGroup>
 			</SidebarContent>
-			<SidebarFooter>
-				<SidebarMenu>
+			<SidebarFooter className="gap-1.5 px-2.5 pt-2.5 pb-5">
+				<WhatsNewCard />
+				<TrialCard workspaceId={workspaceId} />
+				<SidebarMenu className="gap-0">
 					<SidebarNavItem item={marketplaceItem} source="footer" />
 				</SidebarMenu>
 				<SidebarActivity workspaceId={workspaceId} />
@@ -115,10 +122,9 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 }
 
 // The icon rail has no room for a numeral, so unread collapses to a 6px brand
-// dot on the tile (mockup line 125's `i.dot`). Scoped to For you: the mockup
-// gives the rail exactly one attention signal, and putting it on Chats too
-// makes neither mean anything. Hidden when the sidebar is expanded, where the
-// numeral carries the same signal with more precision.
+// dot on the tile (v3 rail `rd`), on every entry that carries a count (For you
+// and Chats). Hidden when the sidebar is expanded, where the numeral carries
+// the same signal with more precision.
 function CollapsedUnreadDot({ count }: { count: number }) {
 	if (count <= 0) return null
 	return (

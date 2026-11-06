@@ -218,7 +218,7 @@ describe('RelatedObjectsTable', () => {
 			render(<RelatedObjectsTable {...baseProps} rows={rows} />)
 
 			expect(screen.queryByRole('table')).not.toBeInTheDocument()
-			const list = screen.getByRole('list', { name: /related objects/i })
+			const list = screen.getByRole('list', { name: /related items/i })
 			expect(within(list).getAllByRole('listitem')).toHaveLength(2)
 			expect(screen.getByText('Alpha')).toBeInTheDocument()
 			expect(screen.getByText('Beta')).toBeInTheDocument()

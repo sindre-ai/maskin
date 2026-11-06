@@ -3,13 +3,11 @@ import { LoopGrid } from '@/components/marketplace/loop-grid'
 import { MarketplaceHeaderIdentity } from '@/components/marketplace/marketplace-header'
 import { EmptyState } from '@/components/shared/empty-state'
 import { FilterTabs } from '@/components/shared/filter-tabs'
-import { CardSkeleton } from '@/components/shared/loading-skeleton'
+import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import { useFindShortcut } from '@/hooks/use-find-shortcut'
 import { useInstalledLoops } from '@/hooks/use-installed-loops'
 import { useInstalledMarketplaceItems, useMarketplaceLoops } from '@/hooks/use-marketplace-loops'
 import type {
@@ -21,10 +19,12 @@ import type {
 	MarketplaceLoopSummary,
 } from '@/lib/api'
 import { api } from '@/lib/api'
+import { focusField, usePageSearchShortcut } from '@/lib/page-search-shortcut'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useQueries } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
+import { Search } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/marketplace/')({
@@ -43,11 +43,11 @@ interface FilterItem {
 const TYPE_VALUES = new Set<FilterValue>(['loops', 'actor', 'trigger', 'skill', 'integration'])
 
 const TYPE_ITEMS: FilterItem[] = [
-	{ value: 'loops', label: 'Loops' },
 	{ value: 'actor', label: 'Agents' },
-	{ value: 'trigger', label: 'Triggers' },
-	{ value: 'skill', label: 'Skills' },
 	{ value: 'integration', label: 'Integrations' },
+	{ value: 'loops', label: 'Flows' },
+	{ value: 'skill', label: 'Skills' },
+	{ value: 'trigger', label: 'Triggers' },
 ]
 
 function buildUseCaseItems(counts: MarketplaceLoopCounts | undefined): FilterItem[] {
@@ -63,7 +63,7 @@ function MarketplaceRoute() {
 	const [activeFilter, setActiveFilter] = useState<FilterValue>('all')
 	const [query, setQuery] = useState('')
 	const filterInputRef = useRef<HTMLInputElement>(null)
-	useFindShortcut(filterInputRef)
+	usePageSearchShortcut(() => focusField(filterInputRef.current))
 	const trimmedQuery = query.trim()
 
 	const { data, isLoading, isError, error, refetch } = useMarketplaceLoops()
@@ -185,7 +185,7 @@ function MarketplaceRoute() {
 
 			<nav
 				aria-label="Marketplace filters"
-				className="mb-4 flex flex-col gap-2 md:flex-row md:items-center"
+				className="mb-3 flex flex-col gap-2 lg:flex-row lg:items-start"
 			>
 				<div className="min-w-0 flex-1" data-testid="marketplace-filter-chips">
 					<ChipStrip
@@ -196,15 +196,18 @@ function MarketplaceRoute() {
 						itemCounts={itemCountsByType}
 					/>
 				</div>
-				<Input
-					ref={filterInputRef}
-					type="search"
-					value={query}
-					onChange={(e) => setQuery(e.target.value)}
-					placeholder="Filter the catalog…"
-					aria-label="Filter marketplace"
-					className="w-full shrink-0 md:w-80"
-				/>
+				<label className="flex h-8 w-full shrink-0 items-center gap-2 rounded-full bg-secondary px-3 text-muted-foreground md:w-72">
+					<Search size={14} aria-hidden className="shrink-0" />
+					<input
+						ref={filterInputRef}
+						type="search"
+						value={query}
+						onChange={(e) => setQuery(e.target.value)}
+						placeholder="Filter the catalog…"
+						aria-label="Filter marketplace"
+						className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
+					/>
+				</label>
 			</nav>
 
 			<div className="flex-1 min-w-0">
@@ -222,17 +225,10 @@ function MarketplaceRoute() {
 						onRetry={refetch ? () => refetch() : undefined}
 					/>
 				) : isLoading ? (
-					<div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-						<CardSkeleton />
-						<CardSkeleton />
-						<CardSkeleton />
-						<CardSkeleton />
-						<CardSkeleton />
-						<CardSkeleton />
-					</div>
+					<ListSkeleton rows={8} />
 				) : isMarketplaceEmpty ? (
 					<EmptyState
-						title="No loops yet"
+						title="No flows yet"
 						description="Check back once Maskin publishes the first one."
 					/>
 				) : isFilterEmpty ? (
@@ -288,11 +284,13 @@ function ChipStrip({
 	return (
 		<FilterTabs
 			aria-label="Catalog filters"
-			variant="pill"
+			variant="chip"
 			tabs={tabs}
 			value={active}
 			onChange={(value) => onSelect(value)}
-			className="px-1 pb-1 max-sm:[&>button]:min-h-11"
+			// v16 wraps the chips onto further lines; below md they stay one
+			// scrollable strip so the list is not pushed down the phone screen.
+			className="pb-1 md:flex-wrap md:overflow-x-visible md:pb-0 max-md:[&>button]:min-h-11"
 		/>
 	)
 }

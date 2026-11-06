@@ -9,13 +9,19 @@ export interface SettingsPage {
 	label: string
 	/** Path below the workspace, e.g. "settings/keychain". */
 	path: string
+	/** Extra words that find this page, e.g. its pre-rename name. */
+	keywords?: string[]
 	/** Only shown in settings.tsx for enterprise workspaces, so only offered there. */
 	enterpriseOnly?: boolean
 }
 
 export const SETTINGS_PAGES: SettingsPage[] = [
 	{ label: 'General', path: 'settings' },
-	{ label: 'Objects', path: 'settings/objects' },
+	{
+		label: 'Item types',
+		path: 'settings/objects',
+		keywords: ['objects', 'object', 'items'],
+	},
 	{ label: 'Members', path: 'settings/members' },
 	{ label: 'Integrations', path: 'settings/integrations' },
 	{ label: 'Extensions', path: 'settings/extensions' },
@@ -44,7 +50,8 @@ export function matchSettingsPages(
 ): GoToEntry[] {
 	if (!query.trim()) return []
 	return SETTINGS_PAGES.filter(
-		(page) => (enterprise || !page.enterpriseOnly) && matches(query, page.label),
+		(page) =>
+			(enterprise || !page.enterpriseOnly) && matches(query, page.label, ...(page.keywords ?? [])),
 	)
 		.slice(0, SETTINGS_ROWS_MAX)
 		.map((page) => ({ title: settingsTitle(page), path: page.path }))

@@ -20,3 +20,13 @@ export function formatDurationBetween(
 	const end = completedAt ? new Date(completedAt).getTime() : Date.now()
 	return formatDurationMs(end - start)
 }
+
+/** A duration in whole minutes ("under a min", "12 min", "1 h 19 min"), the v3 rows' wording. */
+export function formatDurationCoarse(ms: number): string {
+	const minutes = Math.floor(ms / 60000)
+	if (minutes < 1) return 'under a min'
+	if (minutes < 60) return `${minutes} min`
+	const hours = Math.floor(minutes / 60)
+	const rest = minutes % 60
+	return rest === 0 ? `${hours} h` : `${hours} h ${rest} min`
+}

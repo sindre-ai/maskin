@@ -1,5 +1,5 @@
 import type { NewMenuPrimaryOverride } from '@/components/shared/new-menu'
-import { type PageHeaderCrumb, usePageHeader } from '@/lib/page-header-context'
+import { type PageGutter, type PageHeaderCrumb, usePageHeader } from '@/lib/page-header-context'
 import { useEffect } from 'react'
 
 export function PageHeader({
@@ -14,6 +14,9 @@ export function PageHeader({
 	scrollLocked,
 	newMenuPrimaryOverride,
 	newMenuDisabled,
+	hideTitle,
+	hideBar,
+	gutter,
 }: {
 	// Rendered by the shared top nav as the screen's <h1>, not inline here —
 	// v2 has exactly one title per screen and it lives in the nav row.
@@ -45,6 +48,15 @@ export function PageHeader({
 	// Dims both halves of the shared New split-button at 60% opacity while the
 	// page is mounted (D4 read-only rule).
 	newMenuDisabled?: boolean
+	// Hides only the rendered <h1> in the shared nav row, for a two-pane page
+	// that draws its own title. `title` is still published, so the crumb chain
+	// and document title keep working.
+	hideTitle?: boolean
+	// From md the shared bar draws nothing (no title, no New button) — for a page that owns
+	// its whole top edge, as Chats does. Below md the bar still renders.
+	hideBar?: boolean
+	// 'wide' widens the side padding from 28px to 48px from `lg:` (For you).
+	gutter?: PageGutter
 }) {
 	const {
 		setTitle,
@@ -58,6 +70,9 @@ export function PageHeader({
 		setScrollLocked,
 		setNewMenuPrimaryOverride,
 		setNewMenuDisabled,
+		setHideTitle,
+		setHideBar,
+		setGutter,
 	} = usePageHeader()
 
 	useEffect(() => {
@@ -114,6 +129,21 @@ export function PageHeader({
 		setNewMenuDisabled(newMenuDisabled)
 		return () => setNewMenuDisabled(undefined)
 	}, [newMenuDisabled, setNewMenuDisabled])
+
+	useEffect(() => {
+		setHideTitle(hideTitle)
+		return () => setHideTitle(undefined)
+	}, [hideTitle, setHideTitle])
+
+	useEffect(() => {
+		setHideBar(hideBar)
+		return () => setHideBar(undefined)
+	}, [hideBar, setHideBar])
+
+	useEffect(() => {
+		setGutter(gutter)
+		return () => setGutter(undefined)
+	}, [gutter, setGutter])
 
 	// The title is published to the nav row above; nothing renders in the page body.
 	return null

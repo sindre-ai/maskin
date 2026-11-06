@@ -66,7 +66,7 @@ function AboveTitleHeaderPrototype() {
 					data-testid="prototype-title"
 					className="w-full text-2xl font-semibold tracking-[-0.022em] text-foreground"
 				>
-					Object detail — move type, statuses, and driver above the title
+					Item detail — move type, statuses, and driver above the title
 				</h1>
 			</div>
 		</div>

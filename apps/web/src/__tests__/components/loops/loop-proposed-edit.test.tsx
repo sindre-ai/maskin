@@ -33,7 +33,7 @@ describe('readStoredPlan', () => {
 		['a json null', 'null'],
 		['an array', '[]'],
 		['objectTypes only', '{"objectTypes":[]}'],
-		['an object type with no state chain', '{"objectTypes":[{}],"triggers":[],"agents":[]}'],
+		['an item type with no state chain', '{"objectTypes":[{}],"triggers":[],"agents":[]}'],
 		['triggers of the wrong type', '{"objectTypes":[],"triggers":"nope","agents":[]}'],
 	])('returns null for %s', (_label, raw) => {
 		expect(readStoredPlan({ plan: raw })).toBeNull()
@@ -59,7 +59,7 @@ describe('diffLoopPlans', () => {
 			before: 'never',
 			after: 'before publishing',
 		})
-		expect(labels).not.toContain('OBJECT TYPE')
+		expect(labels).not.toContain('ITEM TYPE')
 	})
 
 	it('returns nothing when the utterance restates the same loop', () => {
@@ -85,7 +85,9 @@ describe('LoopProposedEdit', () => {
 		expect(screen.getByText('PROPOSED EDIT')).toBeInTheDocument()
 		expect(screen.getByText('never').className).toMatch(/line-through/)
 		expect(screen.getByText('before publishing').className).toMatch(/font-semibold/)
-		expect(screen.getByText('nothing moves until you say so')).toBeInTheDocument()
+		expect(
+			screen.getByText('Nothing moves until you say so. Undo stays for 30 seconds.'),
+		).toBeInTheDocument()
 	})
 
 	it('writes nothing on render — the change only lands on Make the change', async () => {

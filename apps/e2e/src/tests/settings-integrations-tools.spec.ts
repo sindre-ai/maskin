@@ -23,7 +23,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 		await account.api.createCustomMcpServer(account.workspaceId, 'Docs search', SERVER)
 
 		await page.goto(`/${account.workspaceId}/settings/integrations`)
-		const tools = page.getByRole('region', { name: 'Custom tools' })
+		const tools = page.getByRole('region', { name: 'Tool servers' })
 		await expect(tools).toBeVisible({ timeout: 15_000 })
 
 		// Maskin: on for every agent, read & write, nothing to switch.
@@ -48,7 +48,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 		await page.reload()
 		await tools.getByRole('button', { name: /Agents/ }).click()
 		await expect(
-			page.getByRole('region', { name: 'Custom tools' }).getByRole('switch', {
+			page.getByRole('region', { name: 'Tool servers' }).getByRole('switch', {
 				name: 'Docs search for Docs Reader',
 			}),
 		).toBeChecked()
@@ -67,7 +67,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 		).not.toBeChecked()
 		await page.goto(`/${account.workspaceId}/settings/integrations`)
 		await expect(
-			page.getByRole('region', { name: 'Custom tools' }).getByRole('button', { name: /Agents/ }),
+			page.getByRole('region', { name: 'Tool servers' }).getByRole('button', { name: /Agents/ }),
 		).toContainText('No agents use it yet')
 
 		// Nothing spills out sideways.
@@ -85,7 +85,7 @@ test('an HTTP server has Read, Read & write and No access like a built-in integr
 	const agent = await account.api.createAgentActor('Docs Reader', account.workspaceId)
 	await account.api.createCustomMcpServer(account.workspaceId, 'Docs API', GATED)
 	await page.goto(`/${account.workspaceId}/settings/integrations`)
-	const tools = page.getByRole('region', { name: 'Custom tools' })
+	const tools = page.getByRole('region', { name: 'Tool servers' })
 	await expect(tools).toBeVisible({ timeout: 15_000 })
 	await tools.getByRole('button', { name: /Agent access/ }).click()
 	await tools.getByRole('combobox', { name: 'Add an agent' }).click()
@@ -111,10 +111,10 @@ test('an HTTP server has Read, Read & write and No access like a built-in integr
 
 test('add a server from the form, then remove it', async ({ page, account }) => {
 	await page.goto(`/${account.workspaceId}/settings/integrations`)
-	const tools = page.getByRole('region', { name: 'Custom tools' })
+	const tools = page.getByRole('region', { name: 'Tool servers' })
 	await expect(tools).toBeVisible({ timeout: 15_000 })
 
-	await tools.getByRole('button', { name: /Add server/ }).click()
+	await tools.getByRole('button', { name: /Add tool server/ }).click()
 	await tools.getByLabel('Name').fill('Filesystem')
 	await tools.getByLabel('Command').fill('npx')
 	await tools
@@ -127,7 +127,7 @@ test('add a server from the form, then remove it', async ({ page, account }) => 
 	).toBeVisible()
 
 	// A second server under the same name is refused, in the form.
-	await tools.getByRole('button', { name: /Add server/ }).click()
+	await tools.getByRole('button', { name: /Add tool server/ }).click()
 	await tools.getByLabel('Name').fill('filesystem')
 	await tools.getByLabel('Command').fill('npx')
 	await tools.getByRole('button', { name: 'Save' }).click()
@@ -144,10 +144,10 @@ test('the Tools section reads in light and dark', async ({ page, account }) => {
 	await page.goto(`/${account.workspaceId}/settings/integrations`)
 	for (const scheme of ['light', 'dark'] as const) {
 		await page.emulateMedia({ colorScheme: scheme })
-		const tools = page.getByRole('region', { name: 'Custom tools' })
+		const tools = page.getByRole('region', { name: 'Tool servers' })
 		await expect(tools.getByText('Maskin', { exact: true })).toBeVisible()
 		await expect(tools.getByText('Docs search', { exact: true })).toBeVisible()
-		await expect(tools.getByRole('button', { name: /Add server/ })).toBeVisible()
+		await expect(tools.getByRole('button', { name: /Add tool server/ })).toBeVisible()
 	}
 })
 
@@ -167,9 +167,9 @@ test('a header can use a saved Keychain credential instead of a pasted secret', 
 	expect(res.ok).toBe(true)
 
 	await page.goto(`/${account.workspaceId}/settings/integrations`)
-	const tools = page.getByRole('region', { name: 'Custom tools' })
+	const tools = page.getByRole('region', { name: 'Tool servers' })
 	await expect(tools).toBeVisible({ timeout: 15_000 })
-	await tools.getByRole('button', { name: /Add server/ }).click()
+	await tools.getByRole('button', { name: /Add tool server/ }).click()
 	await tools.getByLabel('Name').fill('Billing')
 	await tools.getByRole('combobox', { name: 'Transport' }).click()
 	await page.getByRole('option', { name: 'HTTP' }).click()

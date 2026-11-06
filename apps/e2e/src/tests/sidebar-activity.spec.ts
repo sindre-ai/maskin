@@ -120,11 +120,11 @@ test.describe('Sidebar Activity card', () => {
 		)
 		await page.goto(`/${account.workspaceId}`)
 		const card = page.getByTestId('sidebar-activity')
-		await expect(card.getByText('Agents working')).toBeVisible()
-		await expect(card.getByText('2 sessions running')).toBeVisible()
+		await expect(card.getByText(/agents? working/i)).toBeVisible()
+		await expect(card.getByText('2 session', { exact: false })).toBeVisible()
 		// The tile counts distinct agents. v2 dropped the avatar stack, so the
 		// agents' names are no longer on this row at all.
-		await expect(card.getByText('2', { exact: true })).toBeVisible()
+		await expect(card.getByText('2 agents working')).toBeVisible()
 	})
 
 	test('counts agents in the tile and sessions in the sub-line (AC-U5)', async ({
@@ -147,8 +147,8 @@ test.describe('Sidebar Activity card', () => {
 		// The two halves must not agree: the tile dedupes by actor, the sub-line
 		// does not. Three sessions held by two agents is the case that catches a
 		// row counting the same thing twice.
-		await expect(card.getByText('2', { exact: true })).toBeVisible()
-		await expect(card.getByText('3 sessions running')).toBeVisible()
+		await expect(card.getByText('2 agents working')).toBeVisible()
+		await expect(card.getByText('3 session', { exact: false })).toBeVisible()
 	})
 
 	test('renders idle / "nothing running" when nothing is active (AC-U6)', async ({
@@ -267,8 +267,8 @@ test.describe('Sidebar Activity card', () => {
 
 		// The `session` entity SSE event broad-invalidates the sessions query;
 		// the running agent appears without a page.reload().
-		await expect(card.getByText('Agents working')).toBeVisible()
-		await expect(card.getByText('1 session running')).toBeVisible()
+		await expect(card.getByText(/agents? working/i)).toBeVisible()
+		await expect(card.getByText('1 session', { exact: false })).toBeVisible()
 		expect(sessionCalls).toBeGreaterThanOrEqual(2)
 	})
 
@@ -332,7 +332,7 @@ test.describe('Sidebar Activity card', () => {
 
 		await page.goto(`/${account.workspaceId}`)
 		const card = page.getByTestId('sidebar-activity')
-		await expect(card.getByText('Agents working')).toBeVisible()
+		await expect(card.getByText(/agents? working/i)).toBeVisible()
 		releaseSseEvent()
 
 		// The `session` entity SSE event broad-invalidates the sessions query;
@@ -382,4 +382,41 @@ test.describe('Sidebar Activity card', () => {
 			await expect(page.getByTestId('sidebar-activity')).toBeVisible()
 		})
 	}
+
+	// What's new card: static entries in the repo, dismissal kept in this browser.
+	test.describe("What's new card", () => {
+		for (const width of [1024, 1280]) {
+			for (const scheme of ['light', 'dark'] as const) {
+				test(`shows at ${width} in ${scheme} mode`, async ({ page, account }) => {
+					await page.setViewportSize({ width, height: 800 })
+					await page.emulateMedia({ colorScheme: scheme })
+					await page.goto(`/${account.workspaceId}`)
+					const card = page.getByRole('region', { name: "What's new" })
+					await expect(card).toBeVisible()
+					await expect(card.getByText('Filters on Chats and Items')).toBeVisible()
+					await expect(card.getByRole('button', { name: 'Dismiss' })).toBeVisible()
+				})
+			}
+		}
+
+		test('dismissed state persists after reload', async ({ page, account }) => {
+			await page.setViewportSize({ width: 1280, height: 800 })
+			await page.goto(`/${account.workspaceId}`)
+			const card = page.getByRole('region', { name: "What's new" })
+			await card.getByRole('button', { name: 'Dismiss' }).click()
+			await expect(card).toBeHidden()
+			await page.reload()
+			await expect(page.getByTestId('sidebar-activity')).toBeVisible()
+			await expect(page.getByRole('region', { name: "What's new" })).toHaveCount(0)
+		})
+
+		test('is hidden on the collapsed rail', async ({ page, account }) => {
+			await page.setViewportSize({ width: 1280, height: 800 })
+			await page.goto(`/${account.workspaceId}`)
+			const card = page.getByRole('region', { name: "What's new" })
+			await expect(card).toBeVisible()
+			await page.getByRole('button', { name: 'Toggle Sidebar' }).first().click()
+			await expect(card).not.toBeVisible()
+		})
+	})
 })

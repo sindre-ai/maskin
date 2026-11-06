@@ -23,7 +23,7 @@ describe('ActionButton', () => {
 		expect(onRun).not.toHaveBeenCalled()
 		const dialog = await screen.findByRole('dialog')
 		expect(dialog).toBeInTheDocument()
-		expect(screen.getByText(/Delete this object/i)).toBeInTheDocument()
+		expect(screen.getByText(/Delete this item/i)).toBeInTheDocument()
 
 		await act(async () => {
 			fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))

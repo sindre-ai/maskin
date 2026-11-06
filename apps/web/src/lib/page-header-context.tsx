@@ -11,6 +11,9 @@ export interface PageHeaderCrumb {
 	parentLabel: string
 	parentTo: string
 	parentParams?: Record<string, string>
+	// Optional level between the parent and the label (`Items › Flow › Name`).
+	// A link when `to` is set, plain muted text otherwise.
+	middle?: { label: string; to?: string; params?: Record<string, string> }
 	label: string
 }
 
@@ -50,7 +53,16 @@ interface PageHeaderState {
 	// (D4 read-only rule). Independent from `newMenuPrimaryOverride` so a
 	// read-only object with no pending ask still disables its default button.
 	newMenuDisabled?: boolean
+	// Render flag for the shared nav: skip the <h1> (the page draws its own).
+	hideTitle?: boolean
+	// From md the shared bar and the scrolling title draw nothing at all (no New button
+	// either): the page owns its whole top edge. Below md the bar still renders.
+	hideBar?: boolean
+	// Side padding from `lg:`. Default is 28px; 'wide' is 48px (For you).
+	gutter?: PageGutter
 }
+
+export type PageGutter = 'wide'
 
 interface PageHeaderContextValue extends PageHeaderState {
 	setTitle: (title: string | undefined) => void
@@ -64,6 +76,9 @@ interface PageHeaderContextValue extends PageHeaderState {
 	setScrollLocked: (scrollLocked: boolean) => void
 	setNewMenuPrimaryOverride: (override: NewMenuPrimaryOverride | undefined) => void
 	setNewMenuDisabled: (disabled: boolean | undefined) => void
+	setHideTitle: (hideTitle: boolean | undefined) => void
+	setHideBar: (hideBar: boolean | undefined) => void
+	setGutter: (gutter: PageGutter | undefined) => void
 }
 
 const PageHeaderContext = createContext<PageHeaderContextValue>({
@@ -78,6 +93,9 @@ const PageHeaderContext = createContext<PageHeaderContextValue>({
 	setScrollLocked: () => {},
 	setNewMenuPrimaryOverride: () => {},
 	setNewMenuDisabled: () => {},
+	setHideTitle: () => {},
+	setHideBar: () => {},
+	setGutter: () => {},
 })
 
 export function PageHeaderProvider({ children }: { children: ReactNode }) {
@@ -127,6 +145,18 @@ export function PageHeaderProvider({ children }: { children: ReactNode }) {
 		setState((prev) => ({ ...prev, newMenuDisabled }))
 	}, [])
 
+	const setHideTitle = useCallback((hideTitle: boolean | undefined) => {
+		setState((prev) => ({ ...prev, hideTitle }))
+	}, [])
+
+	const setHideBar = useCallback((hideBar: boolean | undefined) => {
+		setState((prev) => ({ ...prev, hideBar }))
+	}, [])
+
+	const setGutter = useCallback((gutter: PageGutter | undefined) => {
+		setState((prev) => ({ ...prev, gutter }))
+	}, [])
+
 	return (
 		<PageHeaderContext.Provider
 			value={{
@@ -142,6 +172,9 @@ export function PageHeaderProvider({ children }: { children: ReactNode }) {
 				setScrollLocked,
 				setNewMenuPrimaryOverride,
 				setNewMenuDisabled,
+				setHideTitle,
+				setHideBar,
+				setGutter,
 			}}
 		>
 			{children}

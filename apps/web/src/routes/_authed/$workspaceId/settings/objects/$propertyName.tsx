@@ -113,7 +113,7 @@ function PropertyDetailPage() {
 					navigate({
 						to: '/$workspaceId/settings/objects',
 						params: { workspaceId },
-						search: { create: false },
+						search: { type: objectType },
 					})
 				},
 			},

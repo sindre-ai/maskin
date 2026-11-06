@@ -43,10 +43,10 @@ export function HandedOffStrip({ workspaceId, messageId, spawnedSessions }: Hand
 
 	return (
 		<section
-			className="mt-1.5 rounded-lg border border-border bg-card/40 px-2 py-1.5"
+			className="mt-2 max-w-md rounded-lg border border-border bg-muted px-2 py-1.5"
 			aria-label="Handed off to sub-agents"
 		>
-			<div className="eyebrow mb-1 flex items-center gap-1 px-1">
+			<div className="mb-1 flex items-center gap-1 px-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
 				<span>Handed off · {visible.length}</span>
 			</div>
 			<ul className="flex flex-col gap-0.5">

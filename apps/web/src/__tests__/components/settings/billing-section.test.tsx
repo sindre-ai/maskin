@@ -86,6 +86,57 @@ describe('BillingSection', () => {
 		).not.toBeInTheDocument()
 	})
 
+	it('shows the trial banner with the days left and a Choose a plan action', async () => {
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			period_resets_in_ms: 4.2 * 24 * 60 * 60 * 1000,
+		})
+
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" enterprise />
+			</TestWrapper>,
+		)
+
+		expect(await screen.findByText('Trial ends in 5 days')).toBeInTheDocument()
+		expect(screen.getByText('Choose a plan to keep agents running.')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Choose a plan' })).toBeInTheDocument()
+	})
+
+	it('opens the plan comparison from Choose a plan when it was collapsed', async () => {
+		const user = userEvent.setup()
+		vi.mocked(api.billing.usage).mockResolvedValue(baseUsage)
+
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" enterprise />
+			</TestWrapper>,
+		)
+
+		await screen.findByText('Trial ends in 30 days')
+		await user.click(screen.getByRole('button', { name: 'Hide plans' }))
+		expect(screen.queryByRole('button', { name: 'Upgrade to Pro' })).not.toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: 'Choose a plan' }))
+		expect(screen.getByRole('button', { name: 'Upgrade to Pro' })).toBeInTheDocument()
+	})
+
+	it('shows no trial banner on a paid plan', async () => {
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'pro',
+			hard_cap_usd_cents: 4_900,
+		})
+
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" enterprise />
+			</TestWrapper>,
+		)
+
+		await screen.findByText('Pro — $49/mo')
+		expect(screen.queryByTestId('trial-banner')).not.toBeInTheDocument()
+	})
+
 	it('renders Pro plan with Team upgrade + Switch-to-BYO + Manage in Stripe', async () => {
 		const user = userEvent.setup()
 		vi.mocked(api.billing.usage).mockResolvedValue({

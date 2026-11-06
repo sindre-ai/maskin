@@ -55,10 +55,12 @@ import { reportApiFailure } from './faro'
 import type {
 	DailyBudget,
 	DailyBudgetResponse,
+	NotificationPreferencesResponse,
 	ObjectPreview,
 	SessionStatsRow,
 	TeachRequest,
 	TeachResponse,
+	UpdateNotificationPreferencesInput,
 } from '@maskin/shared'
 
 export interface DesktopConnectResponse {
@@ -1018,6 +1020,16 @@ export const api = {
 			}),
 		delete: (id: string) =>
 			request<{ deleted: boolean }>(`/notifications/${id}`, { method: 'DELETE' }),
+	},
+
+	/** The caller's own push preferences — per actor, not per workspace. */
+	notificationPreferences: {
+		get: () => request<NotificationPreferencesResponse>('/notification-preferences'),
+		update: (data: UpdateNotificationPreferencesInput) =>
+			request<NotificationPreferencesResponse>('/notification-preferences', {
+				method: 'PUT',
+				body: data,
+			}),
 	},
 
 	skills: {

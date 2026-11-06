@@ -2,7 +2,7 @@
 // last, then recent chats, then recent loops. Pure, so the redesigned launcher
 // can build the same list.
 
-export const RECENTS_MAX = 4
+export const RECENTS_MAX = 5
 
 export interface RecentItem {
 	kind: 'object' | 'chat' | 'loop'
@@ -52,7 +52,7 @@ export function buildRecents({
 		items.push({ kind: 'chat', id: chat.id, title: chat.title || 'Untitled chat' })
 	}
 	for (const loop of newestFirst(loops, (l) => l.updatedAt)) {
-		items.push({ kind: 'loop', id: loop.id, title: loop.name ?? 'Untitled loop' })
+		items.push({ kind: 'loop', id: loop.id, title: loop.name ?? 'Untitled flow' })
 	}
 
 	return items.slice(0, limit)

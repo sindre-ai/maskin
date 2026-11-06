@@ -21,6 +21,7 @@ const sendMutate = vi.fn()
 let integrations: IntegrationResponse[] = []
 let cardAnswer: 'declined' | 'done' | null = null
 vi.mock('@/hooks/use-conversation', () => ({
+	useConversation: () => ({ data: { participants: [] } }),
 	useSendMessage: () => ({ mutate: sendMutate }),
 	useCardAnswer: () => cardAnswer,
 }))
@@ -94,14 +95,29 @@ beforeEach(() => {
 describe('IntegrationAccessRequestCard', () => {
 	it('names the integration, the level and the reason, with Allow and Not now', () => {
 		renderCard()
-		expect(
-			screen.getByRole('heading', {
-				name: 'Let this agent have read and write access to Slack?',
-			}),
-		).toBeInTheDocument()
+		expect(screen.getByRole('heading', { name: 'Allow Slack for this agent' })).toBeInTheDocument()
+		expect(screen.getByRole('radio', { name: 'Read and write' })).toBeChecked()
 		expect(screen.getByText(/To post the summary\./)).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Allow' })).toBeEnabled()
 		expect(screen.getByRole('button', { name: 'Not now' })).toBeEnabled()
+	})
+
+	it('lets the level be lowered to Read before Allow, and grants only that', async () => {
+		const user = userEvent.setup()
+		renderCard()
+		await user.click(screen.getByRole('radio', { name: 'Read' }))
+		await user.click(screen.getByRole('button', { name: 'Allow' }))
+
+		await waitFor(() =>
+			expect(mockAllow).toHaveBeenCalledWith(INTEGRATION_ID, 'ws-1', SESSION_ID, 'read'),
+		)
+		const { content } = sendMutate.mock.calls[0][0] as { content: string }
+		expect(content).toContain('allowed you read access to Slack')
+	})
+
+	it('offers no level choice when only read was asked for', () => {
+		renderCard({ ...request, level: 'read' })
+		expect(screen.queryByRole('radio')).not.toBeInTheDocument()
 	})
 
 	it('Allow: sets the access through the session, then tells the agent', async () => {
@@ -194,10 +210,12 @@ describe('IntegrationAccessRequestCard', () => {
 	it('only lets the person who connected it, or an admin, allow', () => {
 		integrations = [slack({ createdBy: 'someone-else' })]
 		const first = renderCard()
-		expect(screen.getByRole('button', { name: 'Allow' })).toBeDisabled()
+		// Not a form with a disabled button: a line saying who can, and an action.
+		expect(screen.queryByRole('button', { name: 'Allow' })).not.toBeInTheDocument()
 		expect(
 			screen.getByText(/Only the person who connected this or a workspace admin/),
 		).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Ask an admin' })).toBeEnabled()
 		first.unmount()
 
 		role = 'admin'

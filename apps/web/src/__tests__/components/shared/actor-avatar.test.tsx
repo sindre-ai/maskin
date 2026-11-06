@@ -77,8 +77,51 @@ describe('getActorAvatarPaletteClass', () => {
 
 describe('ActorAvatar', () => {
 	it('renders 2-letter initials for multi-word names', () => {
-		render(<ActorAvatar name="Product Marketer" type="agent" />)
+		render(<ActorAvatar name="Product Marketer" type="human" />)
 		expect(screen.getByText('PM')).toBeInTheDocument()
+	})
+
+	it('draws an agent as a pictogram tile and keeps its name', () => {
+		const { container } = render(<ActorAvatar name="Product Marketer" type="agent" />)
+		expect(container.querySelector('svg[data-pictogram]')).not.toBeNull()
+		expect(screen.queryByText('PM')).toBeNull()
+		expect(screen.getByTitle('Product Marketer')).toBeInTheDocument()
+	})
+
+	it('draws a status dot on an agent tile only when a status is given', () => {
+		const { container, rerender } = render(
+			<ActorAvatar name="Dev" type="agent" size="md" status="failed" />,
+		)
+		expect(container.querySelector('[data-avatar-status="failed"]')).not.toBeNull()
+		rerender(<ActorAvatar name="Dev" type="agent" size="md" />)
+		expect(container.querySelector('[data-avatar-status]')).toBeNull()
+		rerender(<ActorAvatar name="Dev" type="human" size="md" status="working" />)
+		expect(container.querySelector('[data-avatar-status]')).toBeNull()
+	})
+
+	it('pulses the working dot only when motion is allowed, and keeps failed still', () => {
+		const { container, rerender } = render(
+			<ActorAvatar name="Dev" type="agent" size="md" status="working" />,
+		)
+		const working = container.querySelector('[data-avatar-status="working"]')
+		expect(working?.className).toContain('motion-safe:animate-pulse')
+		expect(working?.className).toContain('bg-success')
+		// The animation class is behind motion-safe, so reduced-motion users get a still dot.
+		expect(working?.className.split(' ')).not.toContain('animate-pulse')
+		rerender(<ActorAvatar name="Dev" type="agent" size="md" status="failed" />)
+		const failed = container.querySelector('[data-avatar-status="failed"]')
+		expect(failed?.className).toContain('bg-error')
+		expect(failed?.className).not.toContain('animate-pulse')
+	})
+
+	it('draws no status dot at the 20px size', () => {
+		const { container } = render(<ActorAvatar name="Dev" type="agent" size="sm" status="failed" />)
+		expect(container.querySelector('[data-avatar-status]')).toBeNull()
+	})
+
+	it('draws a human as initials, never a pictogram', () => {
+		const { container } = render(<ActorAvatar name="Ada Lovelace" type="human" />)
+		expect(container.querySelector('svg[data-pictogram]')).toBeNull()
 	})
 
 	it('renders 2-letter initials for single-word names', () => {
@@ -185,7 +228,7 @@ describe('ActorAvatar', () => {
 			// The avatar itself keeps its own name; only the wrapper announces
 			// the working state — the SPEC's split between "avatar keeps its
 			// existing name" and container "aria-label='Agent working…'".
-			expect(ring?.getAttribute('aria-label')).toBe('Agent working on this object')
+			expect(ring?.getAttribute('aria-label')).toBe('Agent working on this item')
 			expect(screen.getByTitle('Alice')).toBeInTheDocument()
 		})
 

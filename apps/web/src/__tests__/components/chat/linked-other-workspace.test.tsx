@@ -56,9 +56,9 @@ beforeEach(() => {
 describe('OtherWorkspaceChip', () => {
 	it('names the kind and the workspace you belong to, and opens it', () => {
 		render(<OtherWorkspaceChip kind="loop" otherWorkspaceId={THERE} id={ID} />)
-		const link = screen.getByRole('link', { name: 'Loop in Acme Labs' })
+		const link = screen.getByRole('link', { name: 'Flow in Acme Labs' })
 		expect(link).toHaveAttribute('href', `/${THERE}/loops/${ID}`)
-		expect(link).toHaveTextContent('Loop in Acme Labs')
+		expect(link).toHaveTextContent('Flow in Acme Labs')
 		expect(link.className).toContain('border-dashed')
 		expect(link.className).toContain('italic')
 		expect(link.querySelector('svg.lucide-globe')).not.toBeNull()
@@ -73,7 +73,7 @@ describe('OtherWorkspaceChip', () => {
 		unmount()
 		workspaces = undefined
 		render(<OtherWorkspaceChip kind="object" otherWorkspaceId={THERE} id={ID} />)
-		expect(screen.getByRole('link', { name: 'Object in another workspace' })).toHaveAttribute(
+		expect(screen.getByRole('link', { name: 'Item in another workspace' })).toHaveAttribute(
 			'href',
 			`/${THERE}/objects/${ID}`,
 		)
@@ -90,19 +90,19 @@ describe('OtherWorkspaceChip', () => {
 describe('OtherWorkspaceCard', () => {
 	it('is one dashed, italic link with a globe, counted as a card', () => {
 		render(<OtherWorkspaceCard kind="object" otherWorkspaceId={THERE} id={ID} />)
-		const link = screen.getByRole('link', { name: 'Object in Acme Labs' })
+		const link = screen.getByRole('link', { name: 'Item in Acme Labs' })
 		expect(link).toHaveAttribute('href', `/${THERE}/objects/${ID}`)
 		expect(link).toHaveAttribute('data-linked-card')
 		expect(link.className).toContain('border-dashed')
 		expect(link.className).toContain('italic')
 		expect(link.querySelector('svg.lucide-globe')).not.toBeNull()
-		expect(link).toHaveTextContent('Object in Acme Labs')
+		expect(link).toHaveTextContent('Item in Acme Labs')
 	})
 
 	it('says "another workspace" when you do not belong to it', () => {
 		workspaces = [{ id: HERE, name: 'Maskin' }]
 		render(<OtherWorkspaceCard kind="loop" otherWorkspaceId={THERE} id={ID} />)
-		expect(screen.getByRole('link', { name: 'Loop in another workspace' })).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'Flow in another workspace' })).toBeInTheDocument()
 	})
 })
 
