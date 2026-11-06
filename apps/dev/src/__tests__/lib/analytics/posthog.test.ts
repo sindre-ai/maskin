@@ -78,6 +78,7 @@ describe('capturePosthogEvent', () => {
 			surface: 'backend',
 			actor_type: 'system',
 			is_team: false,
+			feature_area: 'integrations',
 			$process_person_profile: false,
 		})
 		expect(typeof body.timestamp).toBe('string')
@@ -161,6 +162,7 @@ describe('capturePosthogEvent workspace privacy', () => {
 			surface: 'backend',
 			actor_type: 'system',
 			is_team: false,
+			feature_area: 'agents',
 			$process_person_profile: false,
 		})
 	})
@@ -181,6 +183,7 @@ describe('capturePosthogEvent workspace privacy', () => {
 			surface: 'backend',
 			actor_type: 'system',
 			is_team: false,
+			feature_area: 'agents',
 			$process_person_profile: false,
 		})
 	})
