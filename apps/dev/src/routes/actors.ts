@@ -36,6 +36,10 @@ import { maskLlmConfigSecrets, restoreMaskedLlmConfig } from '../lib/actor-llm-c
 import { toActorWithKeyResponse } from '../lib/actor-response'
 import { redactActorToolsForCaller, restoreMaskedToolValues } from '../lib/actor-tools-redaction'
 import { withHumanPauseMarker, withoutHumanPauseMarker } from '../lib/agent-pause'
+import {
+	isFirstAgentInWorkspace,
+	trackFirstAgentCreated,
+} from '../lib/analytics/first-agent-events'
 import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { resolveBearerCaller } from '../lib/bearer-caller'
@@ -416,6 +420,18 @@ app.openapi(createActorRoute, async (c) => {
 			client_source: clientSource,
 			membership_added: !!memberWorkspaceId,
 		})
+		if (memberWorkspaceId && body.type === 'agent') {
+			const workspaceId = memberWorkspaceId
+			const agentId = actor.id
+			const distinctId = creatorId
+			void isFirstAgentInWorkspace(db, workspaceId, agentId)
+				.then((first) =>
+					first
+						? trackFirstAgentCreated({ workspaceId, distinctId, agentId, source: 'person' })
+						: undefined,
+				)
+				.catch((err) => logger.warn('first_agent_created check failed', { err: String(err) }))
+		}
 		if (memberWorkspaceId) {
 			void capturePosthogEvent('agent_membership_added', creatorId, {
 				agent_id: actor.id,

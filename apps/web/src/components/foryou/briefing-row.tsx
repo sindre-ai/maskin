@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/compone
 import { useDefaultChatAgent } from '@/hooks/use-actors'
 import { type BriefingCard, useBriefings } from '@/hooks/use-briefings'
 import { useCreateConversation } from '@/hooks/use-conversations'
+import { trackBriefingViewed } from '@/lib/analytics'
 import {
 	BRIEFING_FORMAT_LABEL,
 	isBriefingSeen,
@@ -289,6 +290,7 @@ export function BriefingRow({ workspaceId }: { workspaceId: string }) {
 			markBriefingSeen(card)
 			setSeen(seenBriefingStamps())
 			setOpenIndex(index)
+			trackBriefingViewed({ entity_id: card.id, entity_type: 'file', kind: 'story' })
 		},
 		[cards],
 	)
