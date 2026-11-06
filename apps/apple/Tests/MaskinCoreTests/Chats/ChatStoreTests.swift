@@ -473,6 +473,37 @@ struct ChatStoreTests {
 		#expect(told == [2, 3])
 	}
 
+	@Test("a read mark that fails is retried until the server confirms it")
+	func failedReadMarkIsRetried() async {
+		let h = ChatHarness(server: [chatMsg(1, by: "relay", agent: true)], detail: chatConvo("c1", lastRead: 0))
+		h.store.readRetryDelay = .milliseconds(10)
+		var told: [Int] = []
+		h.store.onMarkedRead = { _, last in told.append(last) }
+		await h.api.setFailRead(true)
+		await h.store.start()
+		#expect(await h.api.readCalls.isEmpty)
+		#expect(told.isEmpty)
+		await h.api.setFailRead(false)
+		#expect(await eventually { await h.api.readCalls == [1] })
+		#expect(told == [1])
+	}
+
+	@Test("a newest message that arrives while open, with the first mark failing, still reads")
+	func newestArrivesWhileOpenRetries() async {
+		let h = ChatHarness(server: [chatMsg(1), chatMsg(2, by: "relay", agent: true)], detail: chatConvo("c1", lastRead: 0))
+		h.store.readRetryDelay = .milliseconds(10)
+		await h.store.start()
+		#expect(await eventually { await h.api.readCalls == [2] })
+		await h.api.setFailRead(true)
+		await h.api.append(chatMsg(3, by: "relay", agent: true))
+		await h.store.sync()
+		#expect(await h.api.readCalls == [2])
+		await h.api.setFailRead(false)
+		#expect(await eventually { await h.api.readCalls == [2, 3] })
+		#expect(h.store.detail?.lastReadMessageID == 3)
+		#expect(h.store.detail?.unreadCount == 0)
+	}
+
 	@Test("above the bottom, read state follows what the reader has scrolled past")
 	func readFollowsSeen() async {
 		let h = ChatHarness(server: [chatMsg(1, by: "relay", agent: true), chatMsg(2, by: "relay", agent: true), chatMsg(3, by: "relay", agent: true)],
