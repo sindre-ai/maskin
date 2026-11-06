@@ -75256,6 +75256,989 @@
 				}
 			}
 		},
+		"/api/oauth/authorize/preview": {
+			"get": {
+				"tags": [
+					"oauth"
+				],
+				"summary": "Check a Claude authorize request and list the workspaces the person can connect",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string"
+						},
+						"required": false,
+						"name": "response_type",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string"
+						},
+						"required": false,
+						"name": "client_id",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string"
+						},
+						"required": false,
+						"name": "redirect_uri",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string"
+						},
+						"required": false,
+						"name": "code_challenge",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string"
+						},
+						"required": false,
+						"name": "code_challenge_method",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string"
+						},
+						"required": false,
+						"name": "state",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string"
+						},
+						"required": false,
+						"name": "resource",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string"
+						},
+						"required": false,
+						"name": "scope",
+						"in": "query"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "What the consent page shows",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"client": {
+											"type": "object",
+											"properties": {
+												"client_id": {
+													"type": "string"
+												},
+												"client_name": {
+													"type": "string"
+												},
+												"redirect_host": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"client_id",
+												"client_name",
+												"redirect_host"
+											]
+										},
+										"workspaces": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"name": {
+														"type": "string"
+													},
+													"role": {
+														"type": "string"
+													}
+												},
+												"required": [
+													"id",
+													"name",
+													"role"
+												]
+											}
+										},
+										"scope": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"client",
+										"workspaces",
+										"scope"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "The request was refused; error is one of seven fixed codes",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "string"
+										},
+										"error_description": {
+											"type": "string"
+										},
+										"redirect_url": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"error",
+										"error_description"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "access_denied: flag off for this person, or the caller is not a person",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "string"
+										},
+										"error_description": {
+											"type": "string"
+										},
+										"redirect_url": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"error",
+										"error_description"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "The MASKIN_MCP_OAUTH_ENABLED switch is off",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"429": {
+						"description": "Too many tries",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/oauth/authorize/approve": {
+			"post": {
+				"tags": [
+					"oauth"
+				],
+				"summary": "Approve a Claude connection for one workspace and return where to send the browser",
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"response_type": {
+										"type": "string"
+									},
+									"client_id": {
+										"type": "string"
+									},
+									"redirect_uri": {
+										"type": "string"
+									},
+									"code_challenge": {
+										"type": "string"
+									},
+									"code_challenge_method": {
+										"type": "string"
+									},
+									"state": {
+										"type": "string"
+									},
+									"resource": {
+										"type": "string"
+									},
+									"scope": {
+										"type": "string"
+									},
+									"workspace_id": {
+										"type": "string",
+										"format": "uuid"
+									}
+								},
+								"required": [
+									"workspace_id"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "The redirect back to the client, carrying a one-time code",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"redirect_url": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"redirect_url"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "The request was refused; error is one of seven fixed codes",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "string"
+										},
+										"error_description": {
+											"type": "string"
+										},
+										"redirect_url": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"error",
+										"error_description"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "access_denied: flag off for this person, or the caller is not a person",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "string"
+										},
+										"error_description": {
+											"type": "string"
+										},
+										"redirect_url": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"error",
+										"error_description"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "The MASKIN_MCP_OAUTH_ENABLED switch is off",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Two approvals for the same workspace raced; try again",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"429": {
+						"description": "Too many tries",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/oauth/authorize/deny": {
+			"post": {
+				"tags": [
+					"oauth"
+				],
+				"summary": "Deny a Claude connection and return where to send the browser (access_denied)",
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"response_type": {
+										"type": "string"
+									},
+									"client_id": {
+										"type": "string"
+									},
+									"redirect_uri": {
+										"type": "string"
+									},
+									"code_challenge": {
+										"type": "string"
+									},
+									"code_challenge_method": {
+										"type": "string"
+									},
+									"state": {
+										"type": "string"
+									},
+									"resource": {
+										"type": "string"
+									},
+									"scope": {
+										"type": "string"
+									},
+									"workspace_id": {
+										"type": "string",
+										"format": "uuid"
+									}
+								}
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "The access_denied redirect back to the client",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"redirect_url": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"redirect_url"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "The request was refused; error is one of seven fixed codes",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "string"
+										},
+										"error_description": {
+											"type": "string"
+										},
+										"redirect_url": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"error",
+										"error_description"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "access_denied: flag off for this person, or the caller is not a person",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "string"
+										},
+										"error_description": {
+											"type": "string"
+										},
+										"redirect_url": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"error",
+										"error_description"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "The MASKIN_MCP_OAUTH_ENABLED switch is off",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"429": {
+						"description": "Too many tries",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/oauth/grants": {
+			"get": {
+				"tags": [
+					"oauth"
+				],
+				"summary": "The signed-in person's live Claude connections, one per workspace",
+				"responses": {
+					"200": {
+						"description": "Connections that still work",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "array",
+									"items": {
+										"type": "object",
+										"properties": {
+											"id": {
+												"type": "string",
+												"format": "uuid"
+											},
+											"client_id": {
+												"type": "string"
+											},
+											"client_name": {
+												"type": "string"
+											},
+											"workspace_id": {
+												"type": "string",
+												"format": "uuid"
+											},
+											"workspace_name": {
+												"type": "string"
+											},
+											"created_at": {
+												"type": "string"
+											},
+											"last_used_at": {
+												"type": [
+													"string",
+													"null"
+												]
+											}
+										},
+										"required": [
+											"id",
+											"client_id",
+											"client_name",
+											"workspace_id",
+											"workspace_name",
+											"created_at",
+											"last_used_at"
+										]
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/oauth/grants/{id}": {
+			"delete": {
+				"tags": [
+					"oauth"
+				],
+				"summary": "Disconnect: end one of your own Claude connections at once",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "The connection is ended",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"revoked": {
+											"type": "boolean",
+											"enum": [
+												true
+											]
+										}
+									},
+									"required": [
+										"revoked"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "No such connection for this person",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/telemetry/mcp": {
 			"post": {
 				"tags": [

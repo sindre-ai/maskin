@@ -275,6 +275,8 @@ describe('redactSecrets', () => {
 		['x-api-key: sk-abcdefghij0123456789abcdefghij', 'sk-'],
 		['token is github_pat_11ABCDEFG0abcdefghijklmnop', 'github_pat_'],
 		['MASKIN_API_KEY=ank_abcdefghij0123456789', 'ank_'],
+		['connector access token mat_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG', 'mat_'],
+		['connector refresh token mrt_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG', 'mrt_'],
 		['SLACK_TOKEN=xoxb-1234567890-abcdefghijk', 'xoxb-'],
 	])('redacts %s', (input, leak) => {
 		const out = redactSecrets(input)

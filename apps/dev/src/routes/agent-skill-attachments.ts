@@ -1,4 +1,5 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
+import { getOAuthPin } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { actors, agentSkills, workspaceMembers, workspaceSkills } from '@maskin/db/schema'
 import { attachSkillSchema, attachSkillsBatchSchema } from '@maskin/shared'
@@ -30,6 +31,9 @@ type Env = {
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 async function isWorkspaceMember(db: Database, workspaceId: string, actorId: string) {
+	// A Claude connector token is pinned to one workspace for the whole request.
+	const pin = getOAuthPin()
+	if (pin && pin.workspaceId.toLowerCase() !== workspaceId.toLowerCase()) return false
 	const [row] = await db
 		.select({ actorId: workspaceMembers.actorId })
 		.from(workspaceMembers)
@@ -385,8 +389,11 @@ app.openapi(attachSkillsBatchRoute, (async (c) => {
 				])
 	// A viewer in any of the skills' workspaces refuses the whole request, not one skill.
 	if (callerMemberships.some((row) => row.role === 'viewer')) throw new ViewerReadOnlyError()
-	const callerWorkspaceIds = new Set(callerMemberships.map((row) => row.workspaceId))
-	const actorWorkspaceIds = new Set(actorMemberships.map((row) => row.workspaceId))
+	// Under a Claude connector token only the pinned workspace counts as a membership.
+	const pin = getOAuthPin()
+	const inPin = (id: string) => !pin || id.toLowerCase() === pin.workspaceId.toLowerCase()
+	const callerWorkspaceIds = new Set(callerMemberships.map((row) => row.workspaceId).filter(inPin))
+	const actorWorkspaceIds = new Set(actorMemberships.map((row) => row.workspaceId).filter(inPin))
 
 	const errorById = new Map<string, string>()
 	const toAttach: (typeof skills)[number][] = []
