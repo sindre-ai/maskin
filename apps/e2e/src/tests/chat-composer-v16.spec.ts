@@ -1,14 +1,25 @@
 import { expect, test } from '../fixtures/auth.fixture'
+import type { TestAPI } from '../helpers/api.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 /**
  * v16 composer: one white bar (52 px on desktop), + at the left, ONE round action button on the
  * right that is the mic while the draft is empty and the send arrow once there is text. Touch
- * widths (< 768 px) get 44 px targets. Runs on the new-chat composer, the same `Composer` that
- * threads, agent chats, the briefing viewer and the flow chat share.
+ * widths (< 768 px) get 44 px targets. Runs on a thread's composer, the same `Composer` that
+ * the agent chats, the briefing viewer and the flow chat share.
  */
 
 const SHOTS = process.env.P1_SHOTS
+
+// The new-chat page is a plain form now, so the composer is read on a conversation's thread.
+async function openThread(account: { workspaceId: string; api: TestAPI }) {
+	const conversation = await account.api.createConversation(account.workspaceId, {
+		title: `Composer ${Date.now()}`,
+		participant_actor_ids: [],
+		initial_message: 'A conversation to type into',
+	})
+	return conversation.id
+}
 
 for (const viewport of SHIP_GATE_VIEWPORTS) {
 	const touch = viewport.width < 768
@@ -28,7 +39,7 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 				page,
 				account,
 			}) => {
-				await page.goto(`/${account.workspaceId}/chats/new`)
+				await page.goto(`/${account.workspaceId}/chats/${await openThread(account)}`)
 				const textbox = page.getByRole('textbox').last()
 				await expect(textbox).toBeVisible({ timeout: 10_000 })
 				const plus = page.getByRole('button', { name: 'Attach file' })
@@ -86,7 +97,7 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 				page,
 				account,
 			}) => {
-				await page.goto(`/${account.workspaceId}/chats/new`)
+				await page.goto(`/${account.workspaceId}/chats/${await openThread(account)}`)
 				await expect(page.getByRole('textbox').last()).toBeVisible({ timeout: 10_000 })
 				await page.getByRole('button', { name: 'Attach file' }).click()
 				for (const name of ['Photo', 'File', 'Item', 'Person or agent']) {

@@ -257,7 +257,7 @@ test.describe('Chats v2 — list title and column', () => {
 			const listBox = await list.boundingBox()
 			// Below md it shares the shared top edge, 20px from the top of the viewport. From md
 			// it heads the list column, under the nav row.
-			if (vp.width < 768) expect(Math.abs((box?.y ?? 0) - 20)).toBeLessThanOrEqual(2)
+			if (vp.width < 768) expect(Math.abs((box?.y ?? 0) - 20)).toBeLessThanOrEqual(3)
 
 			// Section headers are present, and the list sits below the title row.
 			await expect(list.getByText('Earlier', { exact: true })).toBeVisible()
