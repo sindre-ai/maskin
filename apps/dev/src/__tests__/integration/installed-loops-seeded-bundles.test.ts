@@ -124,6 +124,7 @@ describe('Marketplace install — seeded bundle end-to-end', () => {
 		'ops-knowledge-loop',
 		'meeting-loop',
 		'market-competitor-watch-loop',
+		'product-discovery-loop',
 	] as const
 
 	for (const slug of BUNDLE_SLUGS) {
