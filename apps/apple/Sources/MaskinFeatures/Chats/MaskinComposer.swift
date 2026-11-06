@@ -108,6 +108,8 @@ struct MaskinComposer: View {
 	@State private var trayOpen = false
 	/// Where the bar's top edge sits on screen: the + menu may not be taller than the room above it.
 	@State private var barTop: CGFloat = .infinity
+	/// The + menu card's measured height, so its offset holds at any text size. Nil until it has been laid out.
+	@State private var attachMenuHeight: CGFloat?
 	@State private var dropTargeted = false
 	@State private var showPhotos = false
 	@State private var showFiles = false
@@ -357,9 +359,16 @@ struct MaskinComposer: View {
 	@ViewBuilder
 	private var attachMenu: some View {
 		if isTrayOpen, !isDictating {
-			ComposerAttachMenu(actions: attachActions, maxHeight: attachMenuMaxHeight, onPick: pick)
-				.alignmentGuide(.top) { $0[.bottom] + MaskinSpace.s4 }
-				.transition(.opacity.combined(with: .move(edge: .bottom)))
+			// Placed by an explicit offset, not an alignment guide: on iPhone the guide did not take and the
+			// card opened below the bar, running off the screen. The card's height is known, so the offset
+			// does not depend on how a guide resolves. Fade only: a move transition can park the card off its spot.
+			let rows = attachActions
+			let estimate = min(ComposerAttachMenu.contentHeight(rows: rows.count), attachMenuMaxHeight)
+			ComposerAttachMenu(actions: rows, maxHeight: attachMenuMaxHeight, onPick: pick)
+				.onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { attachMenuHeight = $0 }
+				.offset(y: ComposerAttachMenu.offsetY(height: attachMenuHeight ?? estimate))
+				.transition(.opacity)
+				.onDisappear { attachMenuHeight = nil }
 		}
 	}
 
