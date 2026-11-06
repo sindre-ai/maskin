@@ -141,7 +141,7 @@ export function NewMenu({
 	const primaryIcon = primaryOverride ? (
 		primaryOverride.icon
 	) : (
-		<Plus aria-hidden className="size-[14px]" />
+		<Plus aria-hidden className="size-[14px]" strokeWidth={2.6} />
 	)
 	const primaryOnClick = primaryOverride ? primaryOverride.onClick : runPrimary
 
@@ -179,7 +179,7 @@ export function NewMenu({
 									size="sm"
 									aria-label="New"
 									disabled={isDisabled}
-									className={cn('h-[30px] gap-1.5 rounded-lg px-3 text-[11.5px] font-semibold')}
+									className={cn('h-8 gap-1.5 rounded-full px-3.5 text-[13px] font-semibold')}
 								>
 									<Plus aria-hidden className="size-[13px]" />
 									<span className="hidden sm:inline">New</span>

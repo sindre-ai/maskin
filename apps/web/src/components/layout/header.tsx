@@ -194,7 +194,7 @@ export function Header() {
 		return (
 			<header // v16: no rule under the bar; from md the content sits 22px under the buttons (the shell
 				// pads it 32px, so the bar pulls 10px back).
-				className="flex flex-none flex-wrap items-center gap-2 px-4 pt-[calc(env(safe-area-inset-top)+13px)] pb-[13px] md:-mb-2.5 md:flex-nowrap md:px-8 md:pt-5 md:pb-0 lg:px-7"
+				className="relative z-10 flex flex-none flex-wrap items-center gap-2 bg-background px-4 pt-[calc(env(safe-area-inset-top)+13px)] pb-[13px] md:-mb-2.5 md:flex-nowrap md:px-8 md:pt-5 md:pb-0 lg:px-7"
 			>
 				<SidebarTrigger className="md:hidden -ml-0.5 h-[30px] w-[30px] shrink-0" />
 				<Link
@@ -246,7 +246,9 @@ export function Header() {
 	return (
 		<header
 			className={cn(
-				'flex flex-none flex-wrap items-center gap-2 gap-y-1.5 px-4 pt-[calc(env(safe-area-inset-top)+1.25rem)] pb-1.5 md:px-8',
+				// z-10 + bg: the negative bottom margin below tucks the scroll area 20px under this row, so
+				// without its own layer scrolled content painted over the title and buttons.
+				'relative z-10 flex flex-none flex-wrap items-center gap-2 gap-y-1.5 bg-background px-4 pt-[calc(env(safe-area-inset-top)+1.25rem)] pb-1.5 md:px-8',
 				// v16: the first content row sits 16px under the title (the shell pads it 32px).
 				'md:-mb-5',
 				gutter === 'wide' ? 'lg:px-12' : 'lg:px-7',
@@ -328,7 +330,6 @@ export function Header() {
 			<div className="ml-auto flex shrink-0 items-center gap-2">
 				{leadingActions}
 				{actions}
-				<span aria-hidden="true" className="mx-0.5 h-5 w-px shrink-0 bg-border" />
 				<NewMenu
 					onNewChat={() => navigate({ to: '/$workspaceId/chats/new', params: { workspaceId } })}
 					hideObjectSection={isObjectDetail}

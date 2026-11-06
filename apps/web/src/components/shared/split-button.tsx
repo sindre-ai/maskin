@@ -37,7 +37,7 @@ export const SplitButtonPrimary = forwardRef<
 			aria-label={ariaLabel ?? label}
 			disabled={disabled}
 			className={cn(
-				'h-[30px] gap-1.5 rounded-lg rounded-r-none px-2.5 text-xs font-semibold',
+				'h-8 gap-1.5 rounded-full rounded-r-none pr-2 pl-3.5 text-[13px] font-semibold',
 				className,
 			)}
 			{...rest}
@@ -49,8 +49,9 @@ export const SplitButtonPrimary = forwardRef<
 })
 
 /**
- * The caret half of the New control — a 24px chevron trigger squared into
- * the primary's right edge with a subtle vertical rule between them. Callers
+ * The caret half of the New control — a 28px chevron trigger squared into
+ * the primary's right edge, with no seam: together the two halves read as the
+ * design's single solid pill. Callers
  * wrap it with `DropdownMenuTrigger asChild` when they want the shared new
  * menu, so this stays framework-neutral and spreads the wiring props from
  * Radix's `Slot` straight onto the underlying button.
@@ -71,10 +72,7 @@ export const SplitButtonChevron = forwardRef<
 			aria-label={ariaLabel}
 			title={title}
 			disabled={disabled}
-			className={cn(
-				'h-[30px] w-6 rounded-lg rounded-l-none border-l border-l-muted-foreground px-0',
-				className,
-			)}
+			className={cn('h-8 w-7 rounded-full rounded-l-none px-0 pr-1', className)}
 			{...rest}
 		>
 			<ChevronDown aria-hidden className="size-3 opacity-70" />
@@ -107,7 +105,7 @@ export function SplitButton({
 	return (
 		<div
 			className={cn(
-				'inline-flex h-[30px] shrink-0 items-stretch',
+				'inline-flex h-8 shrink-0 items-stretch',
 				disabled && 'pointer-events-none opacity-60',
 				className,
 			)}
