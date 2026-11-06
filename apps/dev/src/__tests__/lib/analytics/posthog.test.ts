@@ -364,7 +364,7 @@ describe('capturePosthogEvent shared properties', () => {
 
 	it('adds no feature area to an event with no product area', async () => {
 		configurePosthogPrivacy(dbWithActors({ [HUMAN]: 'human' }).db)
-		expect(await send('stripe_dispute_created_x', HUMAN, {})).not.toHaveProperty('feature_area')
+		expect(await send('mcp_handshake', HUMAN, {})).not.toHaveProperty('feature_area')
 		expect(await send('workspace_created', HUMAN, {})).not.toHaveProperty('feature_area')
 	})
 
