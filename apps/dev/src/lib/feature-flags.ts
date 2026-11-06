@@ -55,6 +55,15 @@ export const FLAGS = {
 	 */
 	COMPUTER_CLIPBOARD: 'computer-clipboard',
 	/**
+	 * Voice-outreach autosend: whether the Sales Rep (Voice) dialer actually
+	 * places calls. Off (default) builds the queue and stops short of dialing.
+	 * Gates ONLY the outbound dial action: the Telnyx provider, the voice_*
+	 * contact statuses and the webhook register unconditionally. Per-actor, so
+	 * one tester enables it after the first staging dial-through. Parent bet:
+	 * bet/5b8e-voice-outreach.
+	 */
+	VOICE_OUTREACH_AUTOSEND: 'voice-outreach-autosend',
+	/**
 	 * Gates editing a draft's text in place on the web For You card, with Send saving the
 	 * edit and approving the saved text in one step. Frontend only: read with useFeatureFlag
 	 * in draft-preview. Retire once editing is on for everyone.
