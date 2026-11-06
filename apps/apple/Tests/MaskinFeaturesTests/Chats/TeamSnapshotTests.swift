@@ -100,7 +100,7 @@ struct TeamSnapshotTests {
 			.padding(MaskinSpace.s9)
 	}
 
-	@Test("sections: pinned tiles, UNREAD, FLOWS and a time group render", arguments: [false, true])
+	@Test("sections: pinned rows, UNREAD, FLOWS and a time group render", arguments: [false, true])
 	func sections(dark: Bool) throws {
 		let tiles = [
 			TeamLayout.Tile(id: "c1", kind: .conversation(relayChat), title: "Relay", subtitle: "Importer fix", unreadCount: 2),
@@ -110,10 +110,11 @@ struct TeamSnapshotTests {
 		for width in Self.widths {
 			try render(
 				page {
-					VStack(alignment: .leading, spacing: MaskinSpace.s4 + 1) {
-						MonoLabel("Pinned", color: MaskinColor.ink5).padding(.horizontal, MaskinSpace.s3)
-						LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 9), count: 3), spacing: 9) {
-							ForEach(tiles) { PinnedTile(tile: $0, currentActorID: "me", workingAgentIDs: ["relay"], lifted: $0.id == "c2") }
+					SectionCard(label: "Pinned", count: tiles.count) {
+						ForEach(tiles) { tile in
+							TeamRow(
+								row: tile.row, status: tile.row.statusForSnapshot(workingAgents: tile.id == "c2" ? 1 : 0),
+								currentActorID: "me", now: now, workingAgentIDs: ["relay"])
 						}
 					}
 					SectionCard(label: "Unread", count: 2, countColor: MaskinColor.sig, markAllRead: true) {
@@ -257,4 +258,15 @@ private actor SnapshotListAPI: ConversationsAPI {
 	func updateState(conversationID: String, pinned: Bool?, archived: Bool?, lastReadMessageID: Int?, markUnread: Bool) async throws {}
 	func actors() async throws -> [ChatActor] { actorList }
 	func latestMessageID(conversationID: String) async throws -> Int? { nil }
+}
+
+extension TeamLayout.Row {
+	/// The status a snapshot draws for this row without a store.
+	fileprivate func statusForSnapshot(workingAgents: Int) -> ConversationRowStatus {
+		switch kind {
+		case .conversation(let c): ConversationRowStatus.make(conversation: c, workingAgents: workingAgents)
+		case .flow(let f): ConversationRowStatus.make(flow: f)
+		case .person: ConversationRowStatus.make(conversation: ConversationSummary(id: id, title: ""))
+		}
+	}
 }
