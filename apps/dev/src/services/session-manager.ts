@@ -2018,10 +2018,15 @@ export class SessionManager extends EventEmitter {
 	 * Wait for the agent-server's completion report to settle a remote pause, which
 	 * it does after the workspace is in storage. If the report never comes (the
 	 * agent-server restarted and lost its monitor) the archive itself is the
-	 * signal, and with neither the pause is finalized as lost.
+	 * signal. With neither by the deadline the row is left `snapshotting`: the
+	 * upload may just be slow (a large workspace, throttled storage), and failing
+	 * the session here would make it unresumable even though the archive can still
+	 * land. The report is the authoritative negative signal and settles the row
+	 * either way when it arrives (finalizeRemotePause).
 	 */
 	private async waitForRemotePause(sessionId: string, snapshotKey: string): Promise<void> {
 		const deadline = Date.now() + this.remotePauseWaitMs
+		let archived = false
 		while (Date.now() < deadline) {
 			const [row] = await this.db
 				.select({ status: sessions.status })
@@ -2030,8 +2035,21 @@ export class SessionManager extends EventEmitter {
 				.limit(1)
 			// Settled by the report (paused), or by someone else.
 			if (!row || row.status !== 'snapshotting') return
-			if (await this.storage.exists(snapshotKey).catch(() => false)) break
+			if (await this.storage.exists(snapshotKey).catch(() => false)) {
+				archived = true
+				break
+			}
 			await new Promise((resolve) => setTimeout(resolve, this.remotePausePollMs))
+		}
+		if (!archived) {
+			logger.warn(
+				'Remote pause still waiting for the workspace archive; leaving it to the report',
+				{
+					sessionId,
+					waitedMs: this.remotePauseWaitMs,
+				},
+			)
+			return
 		}
 		await this.finalizeRemotePause(sessionId)
 	}
@@ -6779,10 +6797,14 @@ ${cont.continues_prompt}
 					pausing = true
 					break
 				}
+				// A user's Stop while a pause is in flight wins: the person asked for the
+				// session to end, so it settles as stopped instead of being dropped and
+				// then paused. The archive the pause uploaded is left unused.
+				const stopsPendingPause = existing.status === 'snapshotting' && stoppedByUser
 				// Paused and snapshotting rows are not settle's to flip, so they are
 				// dropped here; the four truly terminal statuses are guarded by
 				// settle's own compare-and-set.
-				if (resolvedStatuses.includes(existing.status)) {
+				if (resolvedStatuses.includes(existing.status) && !stopsPendingPause) {
 					alreadyResolved = true
 					break
 				}

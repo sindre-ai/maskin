@@ -179,14 +179,14 @@ describe('Remote session pause and resume (Integration)', () => {
 		expect(eventRows.filter((e) => e.action === 'session_paused')).toHaveLength(1)
 	})
 
-	it('fails the session when the workspace never reaches storage, since it could not be resumed', async () => {
+	it('leaves a slow pause snapshotting past the wait, and the late report then pauses it', async () => {
 		const server = await insertAgentServer()
 		const session = await insertSession(db, workspaceId, actorId, actorId, {
 			status: 'running',
 			agentServerId: server.id,
-			containerId: 'sandbox-lost-workspace',
+			containerId: 'sandbox-slow-upload',
 		})
-		const { storage } = archiveStorage()
+		const { storage, present } = archiveStorage()
 		const manager = new SessionManager(db, storage)
 		shortenPauseWait(manager, 200)
 
@@ -198,6 +198,44 @@ describe('Remote session pause and resume (Integration)', () => {
 
 		try {
 			await manager.pauseSession(session.id)
+
+			// The wait ran out with no archive and no report: not a failure, the upload
+			// may just be slow.
+			const [waiting] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(waiting?.status).toBe('snapshotting')
+
+			// The upload finishes late and the agent-server reports.
+			present.add(archiveKey(session.id))
+			await expect(manager.markRemoteSessionComplete(session.id, 137)).resolves.toBe(true)
+		} finally {
+			fetchSpy.mockRestore()
+			await manager.stop()
+		}
+
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+		expect(row?.status).toBe('paused')
+		expect(row?.snapshotPath).toBe(archiveKey(session.id))
+	})
+
+	it('fails the session when the report arrives and the workspace never reached storage', async () => {
+		const server = await insertAgentServer()
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'running',
+			agentServerId: server.id,
+			containerId: 'sandbox-lost-workspace',
+		})
+		const { storage } = archiveStorage()
+		const manager = new SessionManager(db, storage)
+		shortenPauseWait(manager, 200)
+
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+			// The agent-server reports after its upload step, which failed: no archive.
+			setTimeout(() => void manager.markRemoteSessionComplete(session.id, 137), 30)
+			return new Response(JSON.stringify({ stopped: 'sandbox-stopped' }), { status: 200 })
+		})
+
+		try {
+			await manager.pauseSession(session.id)
 		} finally {
 			fetchSpy.mockRestore()
 			await manager.stop()
@@ -206,6 +244,34 @@ describe('Remote session pause and resume (Integration)', () => {
 		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
 		expect(row?.status).toBe('failed')
 		expect(row?.snapshotPath).toBeNull()
+		const eventRows = await db.select().from(events).where(eq(events.entityId, session.id))
+		expect(eventRows.some((e) => e.action === 'session_paused')).toBe(false)
+	})
+
+	it('a Stop while the pause is in flight wins: the session ends stopped, not paused', async () => {
+		const server = await insertAgentServer()
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'snapshotting',
+			agentServerId: server.id,
+			containerId: 'sandbox-stop-during-pause',
+		})
+		const { storage, present } = archiveStorage()
+		const manager = new SessionManager(db, storage)
+		// The upload has landed, so a pause would have succeeded.
+		present.add(archiveKey(session.id))
+
+		try {
+			await expect(
+				manager.markRemoteSessionComplete(session.id, null, { stoppedByUser: true }),
+			).resolves.toBe(true)
+			// The pause's report arrives afterwards and must not revive the session.
+			await expect(manager.markRemoteSessionComplete(session.id, 137)).resolves.toBe(true)
+		} finally {
+			await manager.stop()
+		}
+
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+		expect(row?.status).toBe('user_stopped')
 		const eventRows = await db.select().from(events).where(eq(events.entityId, session.id))
 		expect(eventRows.some((e) => e.action === 'session_paused')).toBe(false)
 	})
