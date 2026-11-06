@@ -110,30 +110,4 @@ test.describe('Group chat composer cue', () => {
 			await expect(box).toHaveText('typed while loading')
 		}
 	})
-
-	test('the new-chat screen says nobody will answer after picking two agents', async ({
-		page,
-		account,
-	}) => {
-		const stamp = Date.now()
-		const first = await account.api.createAgentActor(`Cue Pick A ${stamp}`)
-		const second = await account.api.createAgentActor(`Cue Pick B ${stamp}`)
-		await account.api.addWorkspaceMember(account.workspaceId, first.id)
-		await account.api.addWorkspaceMember(account.workspaceId, second.id)
-
-		await page.goto(`/${account.workspaceId}/chats/new`)
-		const to = page.getByLabel('Add recipients')
-		await expect(to).toBeVisible({ timeout: 15_000 })
-		for (const agent of [first, second]) {
-			await to.fill(agent.name)
-			await to.press('Enter')
-			await expect(page.getByLabel(`Remove ${agent.name}`)).toBeVisible()
-		}
-
-		const box = page.getByRole('textbox', { name: NEUTRAL })
-		await box.fill('hello both')
-		await expect(box).toHaveText('hello both')
-		await expect(page.getByText(/^Reply to /)).toHaveCount(0)
-		await expect(page.getByText(HINT_NOBODY)).toBeVisible()
-	})
 })

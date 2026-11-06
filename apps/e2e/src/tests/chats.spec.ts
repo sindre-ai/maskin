@@ -364,9 +364,10 @@ test.describe('Chats — full-screen multi-party chat', () => {
 			await page.goto(
 				`/${account.workspaceId}/chats/new?agentId=${agent.id}&agentName=${encodeURIComponent(agentName)}`,
 			)
-			const composer = page.getByLabel('Message this conversation')
-			await composer.fill('The deploy pipeline keeps failing on the migrate step')
-			await sendFromComposer(page, composer, vp.width)
+			await page
+				.getByLabel('First message')
+				.fill('The deploy pipeline keeps failing on the migrate step')
+			await page.getByRole('button', { name: 'Start chat' }).click()
 
 			await page.waitForURL(/\/chats\/[0-9a-f-]{36}/, { timeout: 15_000 })
 			const heading = page.getByRole('heading').first()

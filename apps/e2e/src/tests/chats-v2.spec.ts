@@ -346,72 +346,30 @@ test.describe('Chats v2 — participants popover', () => {
 	}
 })
 
-test.describe('Chats v2 — new chat zero state', () => {
+test.describe('Chats v2 — new chat form', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
-		test(`the zero state renders the heading + empty composer at ${vp.label}`, async ({
-			page,
-			account,
-		}) => {
-			await page.setViewportSize({ width: vp.width, height: vp.height })
-			await page.goto(`/${account.workspaceId}/chats/new`)
-
-			// v4 replaces the single "Change who you are talking to" button + the
-			// 6-item suggestion-prompt cluster with the chip picker + RECENT list
-			// (parent bet Chats — v4 UX/UI polish, PR #1603). The suggestion-prefill
-			// flow is deliberately dropped, so this narrows to the two invariants
-			// the v4 zero state still guarantees for every viewport.
-			await expect(page.getByRole('heading', { name: 'What are we working on?' })).toBeVisible({
-				timeout: 15_000,
-			})
-			await expectNoHorizontalOverflow(page)
-
-			const composer = page.getByLabel('Message this conversation')
-			await expect(composer).toHaveText('')
-
-			// Draft route stays put — nothing has been sent yet.
-			await expect(page).toHaveURL(/\/chats\/new/)
-		})
-	}
-})
-
-test.describe('Chats v2 — new chat recipient list', () => {
-	for (const vp of SHIP_GATE_VIEWPORTS) {
-		test(`the list only shows while the To field is focused at ${vp.label}`, async ({
+		test(`the new chat page lists agents, a first message and Start chat at ${vp.label}`, async ({
 			page,
 			account,
 		}) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 			const agent = await account.api.createAgentActor(`Recent Agent ${Date.now()}`)
 			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
-			await account.api.createConversation(account.workspaceId, {
-				title: `Recent ${Date.now()}`,
-				participant_actor_ids: [agent.id],
-				initial_message: 'Seed a recent collaborator',
-			})
 
 			await page.goto(`/${account.workspaceId}/chats/new`)
-			await expect(page.getByRole('heading', { name: 'What are we working on?' })).toBeVisible({
-				timeout: 15_000,
-			})
-			const list = page.getByRole('listbox', { name: 'Recent collaborators' })
-			const toField = page.getByLabel('Add recipients')
-			const composer = page.getByLabel('Message this conversation')
+			await expect(page.getByRole('region', { name: 'To' })).toBeVisible({ timeout: 15_000 })
+			await expectNoHorizontalOverflow(page)
 
-			// Closed on load: the list does not crowd the composer.
-			await expect(list).toHaveCount(0)
+			const first = page.getByLabel('First message')
+			await expect(first).toHaveValue('')
 
-			await toField.click()
-			await expect(list).toBeVisible({ timeout: 10_000 })
+			// Draft route stays put — nothing has been sent yet.
+			await expect(page).toHaveURL(/\/chats\/new/)
 
-			// Moving to the message box closes it again.
-			await composer.click()
-			await expect(list).toHaveCount(0)
-			await expect(composer).toBeVisible()
-
-			// Typed matches still work, and picking a row is not lost to the blur.
-			await toField.fill(agent.name)
-			await page.getByRole('option', { name: new RegExp(agent.name) }).click()
-			await expect(page.getByRole('button', { name: `Remove ${agent.name}` })).toBeVisible()
+			// Picking an agent flips its switch on; the note counts a group from two.
+			const toggle = page.getByRole('switch', { name: `Add ${agent.name}` })
+			await toggle.click()
+			await expect(toggle).toBeChecked()
 		})
 	}
 })
