@@ -44,7 +44,7 @@ import { useLoop, useLoopActivity } from '@/hooks/use-loops'
 import { useNotifications } from '@/hooks/use-notifications'
 import { useDeleteObject, useObject, useObjects, useUpdateObject } from '@/hooks/use-objects'
 import { useRelationships } from '@/hooks/use-relationships'
-import { useTriggers } from '@/hooks/use-triggers'
+import { useCreateTrigger, useTriggers } from '@/hooks/use-triggers'
 import { trackAskBannerDecideClicked, trackLoopViewed } from '@/lib/analytics'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
@@ -209,6 +209,38 @@ function LoopDetailRoute() {
 		},
 		[loopId, updateObject],
 	)
+
+	const createTrigger = useCreateTrigger(workspaceId)
+	const loopTriggerIds = loop?.triggerIds
+	// A new trigger starts paused with placeholder settings, tied to this flow, and opens on
+	// its own page to be filled in — the same start the create picker gives a trigger.
+	const handleAddTrigger = useCallback(async () => {
+		const actorId = getStoredActor()?.id
+		if (!actorId) {
+			toast.error('Sign in required to add a trigger')
+			return
+		}
+		try {
+			const created = await createTrigger.mutateAsync({
+				name: 'New trigger',
+				type: 'cron',
+				config: { expression: '0 0 * * *' },
+				action_prompt: 'New trigger',
+				target_actor_id: actorId,
+				enabled: false,
+			})
+			await updateObject.mutateAsync({
+				id: loopId,
+				data: { metadata: { trigger_ids: [...(loopTriggerIds ?? []), created.id] } },
+			})
+			navigate({
+				to: '/$workspaceId/triggers/$triggerId',
+				params: { workspaceId, triggerId: created.id },
+			})
+		} catch {
+			toast.error('Could not add a trigger')
+		}
+	}, [createTrigger, updateObject, loopId, loopTriggerIds, navigate, workspaceId])
 
 	const handleUpdateTags = useCallback(
 		async (tags: string[]) => {
@@ -660,12 +692,12 @@ function LoopDetailRoute() {
 							<>
 								{needsYouRows.length > 0 && (
 									<section
-										aria-label="Needs you"
+										aria-label="Decisions"
 										data-testid="loop-needs-you"
 										className="flex flex-col"
 									>
 										<span className="text-[13px] font-semibold text-muted-foreground">
-											Needs you
+											Decisions
 										</span>
 										<p className="mt-2 text-[14px] font-semibold text-foreground">
 											{needsYouRows.length === 1
@@ -710,8 +742,8 @@ function LoopDetailRoute() {
 											workspaceId={workspaceId}
 											triggers={loopTriggers}
 											actors={actors}
-											childObjects={children ?? []}
 											loop={loop}
+											onAddTrigger={canWrite && object ? handleAddTrigger : undefined}
 										/>
 									)}
 								</div>
