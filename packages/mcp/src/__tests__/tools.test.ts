@@ -93,6 +93,7 @@ const ALL_TOOL_NAMES = [
 	'gmail_send_email',
 	'gmail_save_attachment',
 	'resend_send_email',
+	'approve_draft_from_chat',
 	'approve_object_draft',
 	'create_notification',
 	'list_notifications',

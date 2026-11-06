@@ -3,6 +3,7 @@ import type { Database } from '@maskin/db'
 import { actors, objects } from '@maskin/db/schema'
 import { objectPreviewSchema } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
+import { approveDraftFromChat } from '../lib/chat-approval'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordObjectApproval, withDeliveryState } from '../lib/object-delivery'
 import { buildObjectPreview } from '../lib/object-preview'
@@ -19,6 +20,10 @@ import type { SessionManager } from '../services/session-manager'
  * Only a person can approve. An agent that calls this is refused, so an approval in the
  * log always means a human saw this text. The approval is bound to the preview's
  * `content_hash`; editing the draft changes the hash, which withdraws the approval.
+ *
+ * A person can also say yes in a chat message. The agent then names that message
+ * (`/{id}/chat-approval`) and the server checks who wrote it and where (lib/chat-approval.ts);
+ * the agent's own claim that the person agreed is never enough.
  *
  * Approved from a card in a chat, the request names that chat and the agent behind the card,
  * and the agent is told to send it there. No message is posted in the person's name.
@@ -157,6 +162,94 @@ app.openapi(approveRoute, async (c) => {
 		{
 			approval_id: Number(approval.id),
 			preview: await withDeliveryState(db, object.workspaceId, object.id, preview),
+		},
+		200,
+	)
+})
+
+const chatApproveRoute = createRoute({
+	method: 'post',
+	path: '/{id}/chat-approval',
+	'x-viewer-policy': 'writer',
+	tags: ['Objects'],
+	summary: "Count a person's chat message as the approval of a drafted email",
+	description:
+		"Agents only. Names the chat message where a person said yes. The server records the approval only if a person wrote that message in a chat the agent is in, after the draft's last edit and after the draft was shown in that chat. Email drafts only.",
+	request: {
+		params: z.object({ id: z.string().uuid() }),
+		body: {
+			content: {
+				'application/json': {
+					schema: z.object({ message_id: z.number().int().positive() }).strict(),
+				},
+			},
+			required: true,
+		},
+	},
+	responses: {
+		200: {
+			description: 'Approved',
+			content: {
+				'application/json': {
+					schema: z.object({
+						approval_id: z.number(),
+						already_approved: z.boolean(),
+						preview: objectPreviewSchema,
+					}),
+				},
+			},
+		},
+		400: {
+			description: 'Not approvable',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: { description: 'Refused', content: { 'application/json': { schema: errorSchema } } },
+		404: { description: 'Not found', content: { 'application/json': { schema: errorSchema } } },
+	},
+})
+
+app.openapi(chatApproveRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { message_id: messageId } = c.req.valid('json')
+
+	const [object] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
+	if (!object || !(await isWorkspaceWriter(db, actorId, object.workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
+	}
+
+	// A person has the Approve button; this route is how an agent points at a person's words.
+	const [actor] = await db
+		.select({ type: actors.type })
+		.from(actors)
+		.where(eq(actors.id, actorId))
+		.limit(1)
+	if (actor?.type !== 'agent') {
+		return c.json(
+			createApiError(
+				'FORBIDDEN',
+				'This is for agents. A person approves a draft with the Approve button.',
+			),
+			403,
+		)
+	}
+
+	const result = await approveDraftFromChat(db, {
+		workspaceId: object.workspaceId,
+		callerId: actorId,
+		objectId: object.id,
+		messageId,
+	})
+	if (!result.ok) {
+		const { status, code, message, suggestion } = result.failure
+		return c.json(createApiError(code, message, undefined, suggestion), status)
+	}
+	return c.json(
+		{
+			approval_id: result.approvalId,
+			already_approved: result.alreadyApproved,
+			preview: await withDeliveryState(db, object.workspaceId, object.id, result.preview),
 		},
 		200,
 	)

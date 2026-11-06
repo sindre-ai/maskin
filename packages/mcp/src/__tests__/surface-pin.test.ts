@@ -363,6 +363,7 @@ describe('MCP surface pin', () => {
 				'list_integration_providers',
 				'connect_integration',
 				'disconnect_integration',
+				'approve_draft_from_chat',
 				'approve_object_draft',
 				'gmail_send_email',
 				'gmail_save_attachment',

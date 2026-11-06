@@ -1,5 +1,6 @@
 {
 	"tools": {
+		"approve_draft_from_chat": ["message_id", "object_id", "workspace_id"],
 		"approve_object_draft": ["content_hash", "object_id", "workspace_id"],
 		"ask_user_question": [
 			"questions",
