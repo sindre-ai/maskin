@@ -6,12 +6,13 @@ import { ButtonGroup } from '@/components/ui/button-group'
 import { useAutoSave } from '@/hooks/use-auto-save'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useUpdateFile } from '@/hooks/use-files'
-import { trackMiniAppFileViewed } from '@/lib/analytics'
+import { trackBriefingViewed, trackMiniAppFileViewed } from '@/lib/analytics'
 import { compileAnnotations, hydrateAnnotations } from '@/lib/annotations'
 import type { AnnotationJson } from '@/lib/annotations'
 import type { FileAnnotation, FileDetail } from '@/lib/api'
 import { base64ToBytes, decodeBase64Utf8 } from '@/lib/file-utils'
 import { prepareMiniAppHtml } from '@/lib/mini-app'
+import { resolveViewerVariant } from '@/lib/viewer-detect'
 import { Bot, Check, Clipboard, ExternalLink, Pin } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { type Annotation, AnnotationOverlay } from './annotation-overlay'
@@ -243,6 +244,15 @@ export function FileBody({ file, onReviseWithAnnotations, isRevising = false }: 
 			entity_id: file.id,
 			entity_type: 'file',
 		})
+		// A deck is a briefing too. Same once-per-open guard as above.
+		const variant = resolveViewerVariant({
+			filename: file.name,
+			html: fileText(file),
+			override: null,
+		})
+		if (variant === 'deck') {
+			trackBriefingViewed({ entity_id: file.id, entity_type: 'file', kind: 'deck' })
+		}
 	}, [file])
 
 	// Persist annotations to the file so other humans and agents see them. The

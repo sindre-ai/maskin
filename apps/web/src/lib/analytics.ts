@@ -306,6 +306,25 @@ export function trackMiniAppFileViewed(p: BaseProps & { entity_type: 'file' }): 
 	trackEvent('mini_app_file_viewed', fillBase(p))
 }
 
+// Usage questions the weekly data pack could not answer. Each fires once per
+// open, with `workspace_id` / `actor_id` riding as super-properties, and carries
+// ids only: no titles, names or text.
+//
+// A person opened a knowledge page. `entity_id` is the knowledge object id.
+export function trackKnowledgePageViewed(p: BaseProps & { entity_type: 'knowledge' }): void {
+	trackEvent('knowledge_page_viewed', fillBase(p))
+}
+
+// A person opened a briefing: a For You story card, or a deck in the file
+// viewer. `entity_id` is the file id.
+export type BriefingKind = 'story' | 'deck'
+
+export function trackBriefingViewed(
+	p: BaseProps & { entity_type: 'file'; kind: BriefingKind },
+): void {
+	trackEvent('briefing_viewed', { ...fillBase(p), kind: p.kind })
+}
+
 // Agent change review: fires when the human opens the review view from the
 // proposal banner. The other two review events (change_proposal_submitted,
 // change_reviewed) are sent from the server. Only mounted behind the

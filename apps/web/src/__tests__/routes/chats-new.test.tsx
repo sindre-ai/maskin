@@ -169,18 +169,9 @@ describe('New chat', () => {
 		expect(screen.queryByText('Summarise what the loops did overnight')).not.toBeInTheDocument()
 	})
 
-	describe('welcome after signup', () => {
-		it('shows the Chief of Staff welcome, greeting the person by name, when sent here by signup', () => {
-			mockSearch.mockReturnValue({ welcome: true } as never)
-			render(<NewChatPage />)
-			expect(screen.getByText(/Hi You 👋 Welcome to Maskin/)).toBeInTheDocument()
-			expect(screen.getByText(/Researcher is putting together a first look/)).toBeInTheDocument()
-		})
-
-		it('shows no welcome on an ordinary visit', () => {
-			render(<NewChatPage />)
-			expect(screen.queryByText(/Welcome to Maskin/)).not.toBeInTheDocument()
-		})
+	it('shows no welcome message — that now lives in the Chief of Staff chat opened at signup', () => {
+		render(<NewChatPage />)
+		expect(screen.queryByText(/Welcome to Maskin/)).not.toBeInTheDocument()
 	})
 
 	describe('intro under the heading', () => {

@@ -64,14 +64,11 @@ async function provision(db: Database) {
 }
 
 function workspaceCreatedProps() {
-	expect(capturePosthogEventMock).toHaveBeenCalledOnce()
-	const [event, , properties] = capturePosthogEventMock.mock.calls[0] as [
-		string,
-		string,
-		Record<string, unknown>,
-	]
-	expect(event).toBe('workspace_created')
-	return properties
+	const calls = capturePosthogEventMock.mock.calls.filter(
+		([event]) => event === 'workspace_created',
+	)
+	expect(calls).toHaveLength(1)
+	return calls[0]?.[2] as Record<string, unknown>
 }
 
 // provisionWorkspace also warns about the missing agentStorage in this setup,
@@ -95,6 +92,22 @@ describe('provisionWorkspace — workspace_created owner_email_domain', () => {
 		const props = workspaceCreatedProps()
 		expect(props.owner_email_domain).toBe('acme.co.uk')
 		expect(JSON.stringify(props)).not.toMatch(/jane|doe|@/i)
+	})
+
+	it('also says the default agents are the first agents, made by onboarding', async () => {
+		const { db, ws } = setup({ email: 'jane@acme.co' })
+
+		await provision(db)
+
+		const call = capturePosthogEventMock.mock.calls.find(
+			([event]) => event === 'first_agent_created',
+		)
+		expect(call?.[1]).toBe('owner-actor-id')
+		expect(call?.[2]).toMatchObject({
+			workspace_id: ws.id,
+			actor_id: 'owner-actor-id',
+			source: 'onboarding',
+		})
 	})
 
 	it('sends the event without the property when the owner has no email', async () => {

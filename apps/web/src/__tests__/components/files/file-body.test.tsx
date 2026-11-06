@@ -379,6 +379,21 @@ describe('FileBody', () => {
 			})
 		})
 
+		it('also fires briefing_viewed with kind deck when the HTML file is a deck', () => {
+			const capture = captureSpy()
+			const file = buildFile({
+				mimeType: 'text/html',
+				name: 'launch.deck.html',
+				content: '<h1>Hi</h1>',
+			})
+			renderBody(<FileBody file={file} />)
+
+			expect(capture).toHaveBeenCalledWith(
+				'briefing_viewed',
+				expect.objectContaining({ entity_id: 'file-1', kind: 'deck' }),
+			)
+		})
+
 		it('does not re-fire when the same file is re-rendered with a fresh object (refetch semantics)', () => {
 			const capture = captureSpy()
 			const file = buildFile({

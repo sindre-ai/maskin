@@ -880,6 +880,15 @@ export async function provisionWorkspace(params: {
 		...(ownerEmailDomain ? { owner_email_domain: ownerEmailDomain } : {}),
 	})
 
+	// The default agents are the workspace's first agents, made by onboarding.
+	// Agents a person adds later are counted by `agent_created` (source person).
+	void capturePosthogEvent('first_agent_created', ownerActorId, {
+		workspace_id: workspace.id,
+		actor_id: ownerActorId,
+		agent_id: chiefOfStaffId,
+		source: 'onboarding',
+	})
+
 	// The actor + member rows are already committed above, so this call is a
 	// no-op for actors (its name check hits every one) and only writes
 	// workspace_skills + agent_skills + triggers + the default loop objects.

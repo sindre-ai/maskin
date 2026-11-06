@@ -15,6 +15,7 @@ vi.mock('@/lib/api', () => ({
 		landingEvents: { emit: vi.fn() },
 		publicBetStrategist: { claim: vi.fn() },
 		objects: { create: vi.fn() },
+		conversations: { list: vi.fn().mockResolvedValue({ conversations: [], has_more: false }) },
 	},
 }))
 
@@ -216,17 +217,33 @@ describe('SignupPage', () => {
 		expect(meta.welcome_in_chat).toBe(true)
 	})
 
-	it('lands on New Chat in the new workspace with the welcome flag', async () => {
+	it('lands in the welcome chat the Chief of Staff opened in the new workspace', async () => {
 		mockSignup.mockResolvedValue({ id: 'actor-1', workspace_id: 'ws-1' })
 		vi.mocked(api.objects.create).mockResolvedValue({} as never)
+		vi.mocked(api.conversations.list).mockResolvedValue({
+			conversations: [{ id: 'conv-welcome' }],
+			has_more: false,
+		} as never)
 
 		const user = userEvent.setup()
 		render(<SignupPage />)
 		await fillAndSubmit(user)
 
 		await waitFor(() =>
-			expect(window.location.assign).toHaveBeenCalledWith('/ws-1/chats/new?welcome=1'),
+			expect(window.location.assign).toHaveBeenCalledWith('/ws-1/chats/conv-welcome'),
 		)
+	})
+
+	it('falls back to New Chat when the welcome chat cannot be found', async () => {
+		mockSignup.mockResolvedValue({ id: 'actor-1', workspace_id: 'ws-1' })
+		vi.mocked(api.objects.create).mockResolvedValue({} as never)
+		vi.mocked(api.conversations.list).mockRejectedValue(new Error('boom'))
+
+		const user = userEvent.setup()
+		render(<SignupPage />)
+		await fillAndSubmit(user)
+
+		await waitFor(() => expect(window.location.assign).toHaveBeenCalledWith('/ws-1/chats/new'))
 	})
 
 	it('falls back to the index when signup returns no workspace id', async () => {
