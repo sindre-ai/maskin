@@ -201,6 +201,27 @@ extension ChatMessage {
 		return ids.compactMap(\.stringValue)
 	}
 
+	/// True when the message text is only the markdown copy of its question card, which the backend
+	/// writes as `content` for readers without a card (`formatQuestionsAsMarkdown`). The card shows
+	/// every question and option description itself, so the copy is not drawn above it. Words the
+	/// agent wrote of its own never match, and stay.
+	public var isQuestionTwin: Bool {
+		guard case .array(let items)? = metadata?["question"]?["questions"] else { return false }
+		let twin = items.compactMap { item -> String? in
+			guard let question = item["question"]?.stringValue, case .array(let options)? = item["options"]
+			else { return nil }
+			let lines = options.compactMap { option -> String? in
+				guard let label = option["label"]?.stringValue else { return nil }
+				guard let detail = option["description"]?.stringValue, !detail.isEmpty else {
+					return "- **\(label)**"
+				}
+				return "- **\(label)** — \(detail)"
+			}
+			return ([question] + lines).joined(separator: "\n")
+		}.joined(separator: "\n\n")
+		return !twin.isEmpty && twin == content
+	}
+
 	/// The agent's questions, when this message carries any (backend-owned `metadata.question`).
 	public var questions: [ChatQuestionItem] {
 		guard case .array(let items)? = metadata?["question"]?["questions"] else { return [] }
