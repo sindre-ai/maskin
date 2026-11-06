@@ -944,12 +944,6 @@ export const sessions = pgTable(
 		index('sessions_session_state_state_entered_at_idx')
 			.on(t.sessionState, t.stateEnteredAt)
 			.where(sql`${t.sessionState} IN ('starting','running','waiting_for_machine')`),
-		// Session watchdog's 60s status lookups that carry no workspace_id (archive-paused,
-		// heal-running, drain-queue, queued-for-capacity). Only live and paused rows are indexed.
-		// Built CONCURRENTLY in migration 0134.
-		index('sessions_open_status_idx')
-			.on(t.status, t.updatedAt)
-			.where(sql`${t.status} IN ('pending','queued','running','paused')`),
 		// Retry-scheduler's 30s tick (Commit 7): excludes rows already retried,
 		// so each retry_at is picked at most once.
 		index('sessions_retry_at_idx')
