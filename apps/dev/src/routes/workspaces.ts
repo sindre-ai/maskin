@@ -18,6 +18,7 @@ import {
 import type { StorageProvider } from '@maskin/storage'
 import { and, count, eq, inArray } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
+import { isTeamActor } from '../lib/analytics/team-member'
 import { isEnterprise, isEnterpriseActor } from '../lib/enterprise'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -100,6 +101,9 @@ const workspaceWithRoleSchema = workspaceResponseSchema.extend({
 	memberCount: z.number().int().nonnegative(),
 	// True for the one workspace the caller chose as their default (actors.default_workspace_id).
 	isDefault: z.boolean(),
+	// Whether the caller is on our own team, for marking browser analytics events.
+	// A fact about the caller, so every row carries the same value.
+	isTeam: z.boolean(),
 })
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
@@ -327,10 +331,12 @@ app.openapi(listWorkspacesRoute, async (c) => {
 		.limit(1)
 
 	// The caller is a member of every row here, so 1 is the floor, never 0.
+	const isTeam = await isTeamActor(actorId, callerIsHuman ? 'human' : 'agent')
 	const withCounts = withEntitlement.map((w) => ({
 		...w,
 		memberCount: countByWorkspace.get(w.id) ?? 1,
 		isDefault: w.id === defaultWorkspaceId,
+		isTeam,
 	}))
 
 	return c.json(serializeArray(withCounts) as z.infer<typeof workspaceWithRoleSchema>[])

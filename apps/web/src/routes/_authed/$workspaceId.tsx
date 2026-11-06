@@ -94,6 +94,7 @@ function WorkspaceLayout() {
 			workspace_id: workspaceId,
 			actor_id: actor.id,
 			actor_type: actor.type,
+			is_team: workspace.isTeam,
 		})
 		setCapturingEnabled(shareUsage)
 		setWorkspaceGroup(workspaceId, workspace.createdAt)

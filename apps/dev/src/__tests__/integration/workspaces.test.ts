@@ -15,6 +15,7 @@ import type { PgNotifyBridge } from '@maskin/realtime'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
 import { onTestFinished } from 'vitest'
+import { __resetTeamMemberForTesting, configureTeamMember } from '../../lib/analytics/team-member'
 import { createApiError, formatZodError } from '../../lib/errors'
 import { openSecret } from '../../lib/workspace-secrets'
 import { insertActor, insertWorkspace, setWorkspacePlan } from '../factories'
@@ -305,6 +306,39 @@ describe('Workspaces Integration', () => {
 				(w: { id: string }) => w.id === workspace.id,
 			) as { memberCount: number }
 			expect(pairedRow.memberCount).toBe(2)
+		})
+	})
+
+	describe('team flag for analytics', () => {
+		it('marks the caller as team only when they belong to the workspace named by the setting', async () => {
+			const app = createApp()
+			const created = await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Team WS' }))
+			const workspace = await created.json()
+			onTestFinished(() => {
+				vi.unstubAllEnvs()
+				__resetTeamMemberForTesting()
+			})
+			configureTeamMember(db)
+
+			const flagFor = async (id: string) =>
+				(
+					(await (await app.request(jsonGet('/api/workspaces'))).json()) as Array<{
+						id: string
+						isTeam: boolean
+					}>
+				).find((w) => w.id === id)?.isTeam
+
+			// Unset means nobody is the team.
+			vi.stubEnv('POSTHOG_TEAM_WORKSPACE_ID', '')
+			expect(await flagFor(workspace.id)).toBe(false)
+
+			// A workspace the caller is not in names no team member.
+			vi.stubEnv('POSTHOG_TEAM_WORKSPACE_ID', randomUUID())
+			expect(await flagFor(workspace.id)).toBe(false)
+
+			// The caller belongs to this one, so they are the team.
+			vi.stubEnv('POSTHOG_TEAM_WORKSPACE_ID', workspace.id)
+			expect(await flagFor(workspace.id)).toBe(true)
 		})
 	})
 
