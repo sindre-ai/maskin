@@ -628,7 +628,15 @@ enum MarkdownInline {
 	/// A phone number in plain prose becomes a `tel:` link in the same style as any other link. Text that is
 	/// already a link, and inline code, is left as it is.
 	private static func linkPhoneNumbers(in attr: inout AttributedString, color: Color) {
-		let text = String(attr.characters)
+		// Scan only prose: link text (bare URLs full of ids and digits) and inline code are masked with a
+		// letter, one per character so the ranges still line up. The detector is the cost of a message row.
+		var scan = ""
+		for run in attr.runs {
+			let skip = run.link != nil || (run.inlinePresentationIntent ?? []).contains(.code)
+			let piece = String(attr[run.range].characters)
+			scan += skip ? String(repeating: "x", count: piece.count) : piece
+		}
+		let text = scan
 		let found = PhoneNumberLink.matches(in: text)
 		guard !found.isEmpty else { return }
 		// Back to front, so earlier ranges stay valid.
