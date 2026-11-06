@@ -1531,8 +1531,13 @@ describe('Workspaces Integration', () => {
 			expect(res.status).toBe(201)
 			const ws = await res.json()
 
-			expect(capturePosthogEventMock).toHaveBeenCalledOnce()
-			const [event, distinctId, properties] = capturePosthogEventMock.mock.calls[0] as [
+			// Workspace setup also sends first_agent_created, so look at the
+			// workspace_created calls only.
+			const created = capturePosthogEventMock.mock.calls.filter(
+				([name]) => name === 'workspace_created',
+			)
+			expect(created).toHaveLength(1)
+			const [event, distinctId, properties] = created[0] as [
 				string,
 				string,
 				Record<string, unknown>,
