@@ -212,6 +212,15 @@ public struct TeamLayout: Equatable, Sendable {
 			self.subtitle = subtitle
 			self.unreadCount = unreadCount
 		}
+
+		/// The ordinary list row this pinned item is drawn as: the Pinned group is a list like Unread
+		/// and Earlier, so it uses the row type those sections use (same id as they would give it).
+		public var row: Row {
+			switch kind {
+			case .conversation(let c): Row(id: id, kind: .conversation(c))
+			case .flow(let f): Row(id: id, kind: .flow(f))
+			}
+		}
 	}
 
 	public struct Section: Identifiable, Equatable, Sendable {
