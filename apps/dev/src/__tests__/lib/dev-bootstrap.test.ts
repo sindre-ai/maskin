@@ -7,6 +7,7 @@ import {
 } from '../../lib/dev-bootstrap'
 import { CCD_ACTOR_IDS, CCD_LOOP, CCD_TRIGGER_IDS } from '../../lib/marketplace-loops/ccd-loop'
 import { DEV_PIPELINE_LOOP } from '../../lib/marketplace-loops/dev-pipeline-loop'
+import { DISCOVERY_LOOP } from '../../lib/marketplace-loops/discovery-loop'
 import { GROWTH_BET_LOOP } from '../../lib/marketplace-loops/growth-bet-loop'
 import { GROWTH_BRAND_DEMAND_LOOP } from '../../lib/marketplace-loops/growth-brand-demand-loop'
 import { GROWTH_CONTENT_INSIGHT_LOOP } from '../../lib/marketplace-loops/growth-content-insight-loop'
@@ -34,6 +35,7 @@ const ALL_PACKAGES = [
 	GROWTH_OPS_KNOWLEDGE_LOOP,
 	GROWTH_MEETING_LOOP,
 	MARKET_WATCH_LOOP,
+	DISCOVERY_LOOP,
 ]
 
 function matchingMarketplaceRows() {
@@ -257,7 +259,7 @@ describe('seedMarketplaceIfEmpty', () => {
 		expect(calls.updates).toEqual([])
 	})
 
-	it('inserts all 13 loops when the marketplace is empty', async () => {
+	it('inserts every loop when the marketplace is empty', async () => {
 		process.env.NODE_ENV = 'development'
 		process.env.MASKIN_AUTO_BOOTSTRAP = 'true'
 		const { db, mockResults, calls } = createTestContext()
@@ -275,11 +277,11 @@ describe('seedMarketplaceIfEmpty', () => {
 		)
 		const itemInserts = calls.inserts.filter((v): v is unknown[] => Array.isArray(v))
 
-		expect(packageInserts.length).toBe(13)
-		expect(itemInserts.length).toBe(13)
+		expect(packageInserts.length).toBe(ALL_PACKAGES.length)
+		expect(itemInserts.length).toBe(ALL_PACKAGES.length)
 
 		const slugs = packageInserts.map((p) => p.slug)
-		expect(new Set(slugs).size).toBe(13)
+		expect(new Set(slugs).size).toBe(ALL_PACKAGES.length)
 		expect(slugs).toEqual(expect.arrayContaining(ALL_PACKAGES.map((p) => p.slug)))
 
 		// CCD is seeded first — assert its actor/trigger counts match the live bundle.
@@ -305,7 +307,7 @@ describe('seedMarketplaceLoops', () => {
 
 		const result = await seedMarketplaceLoops(db)
 
-		expect(result.inserted.length).toBe(13)
+		expect(result.inserted.length).toBe(ALL_PACKAGES.length)
 		expect(result.updated).toEqual([])
 		expect(result.unchanged).toEqual([])
 		expect(calls.inserts.length).toBeGreaterThan(0)
@@ -320,7 +322,7 @@ describe('seedMarketplaceLoops', () => {
 
 		expect(result.inserted).toEqual([])
 		expect(result.updated).toEqual([])
-		expect(result.unchanged.length).toBe(13)
+		expect(result.unchanged.length).toBe(ALL_PACKAGES.length)
 		expect(calls.inserts).toEqual([])
 	})
 
@@ -336,7 +338,7 @@ describe('seedMarketplaceLoops', () => {
 
 		expect(result.updated).toEqual([CCD_LOOP.slug])
 		expect(result.inserted).toEqual([])
-		expect(result.unchanged.length).toBe(12)
+		expect(result.unchanged.length).toBe(ALL_PACKAGES.length - 1)
 		expect(calls.updates.length).toBe(1)
 
 		const itemInserts = calls.inserts.filter((v): v is unknown[] => Array.isArray(v))
