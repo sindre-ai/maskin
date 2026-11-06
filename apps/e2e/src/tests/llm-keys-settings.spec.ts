@@ -121,11 +121,14 @@ test.describe('LLM API keys — settings screen', () => {
 		await expect(saved).toContainText('ends in 3333')
 
 		await page.getByPlaceholder('deepseek/deepseek-v4-flash').fill('model-b')
-		const save = page.getByRole('button', { name: 'Save' }).last()
-		await save.click()
-		// Save turns disabled again once the PATCH has landed and the form is clean; reading the
-		// row before that races the request.
-		await expect(save).toBeDisabled({ timeout: 15_000 })
+		// The saved badge is already on screen before the click, so wait for the PATCH itself.
+		const saveResponse = page.waitForResponse(
+			(res) =>
+				res.request().method() === 'PATCH' &&
+				res.url().includes(`/api/workspaces/${account.workspaceId}`),
+		)
+		await page.getByRole('button', { name: 'Save' }).last().click()
+		await saveResponse
 
 		await expect(page.getByTestId('custom-llm-key-saved')).toContainText('ends in 3333')
 		await expect

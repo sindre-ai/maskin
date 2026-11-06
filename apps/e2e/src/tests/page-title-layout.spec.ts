@@ -16,6 +16,9 @@ const SCREENS = [
 	{ path: '/agents', heading: 'Agents' },
 ] as const
 
+// 30px menu button - 4px pulled back + 8px gap, before a header title below md.
+const MENU_BUTTON_LEAD = 34
+
 function expectedTitleSize(width: number) {
 	return width >= 1024 ? '34px' : width >= 768 ? '28px' : '24px'
 }
@@ -54,11 +57,18 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 				expect(size).toBe(expectedTitleSize(vp.width))
 
 				// The scroll root is the content edge: title x = root x + side margin.
+				// Below md the menu button leads the header row, so a header title starts
+				// after it (30px button, 4px pulled back, 8px gap).
+				const inHeader = await h1.evaluate((el) => el.closest('header') !== null)
+				const menuVisible = await page.locator('main > header [data-sidebar="trigger"]').isVisible()
+				const lead = inHeader && menuVisible ? MENU_BUTTON_LEAD : 0
 				const root = await page.locator('[data-scroll-root]').boundingBox()
 				const box = await h1.boundingBox()
 				expect(root).not.toBeNull()
 				expect(
-					Math.abs((box?.x ?? 0) - ((root?.x ?? 0) + expectedEdge(vp.width, screen.path === ''))),
+					Math.abs(
+						(box?.x ?? 0) - ((root?.x ?? 0) + expectedEdge(vp.width, screen.path === '') + lead),
+					),
 				).toBeLessThanOrEqual(1)
 				await expectNoHorizontalScroll(page)
 			})
@@ -71,7 +81,8 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			// The safe-area inset is 0 in Chromium, so the computed value is the
 			// fallback: 1.25rem. Anything lower would mean the inset calc was dropped.
 			await page.goto(`/${account.workspaceId}/loops`)
-			const header = page.getByRole('banner').first()
+			// The header sits inside <main>, so it has no banner role.
+			const header = page.locator('main > header').first()
 			await expect(header).toBeVisible({ timeout: 15_000 })
 			const padTop = await header.evaluate((el) => window.getComputedStyle(el).paddingTop)
 			expect(Number.parseFloat(padTop)).toBeGreaterThanOrEqual(20)
@@ -84,7 +95,8 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 				title: `Edge ${Date.now()}`,
 			})
 			await page.goto(`/${account.workspaceId}/objects/${object.id}`)
-			const header = page.getByRole('banner').first()
+			// The header sits inside <main>, so it has no banner role.
+			const header = page.locator('main > header').first()
 			await expect(header).toBeVisible({ timeout: 15_000 })
 			const padLeft = await header.evaluate((el) => window.getComputedStyle(el).paddingLeft)
 			expect(Number.parseFloat(padLeft)).toBe(expectedEdge(vp.width))
@@ -107,8 +119,11 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			expect((composer?.y ?? 0) + (composer?.height ?? 0)).toBeLessThanOrEqual(vp.height)
 		})
 
-		test('the Chats list column is 280px at 768', async ({ page, account }) => {
-			test.skip(vp.width !== 768, 'The 280px step applies at md only')
+		test('the Chats list column is 280px from 1024 and gives way to the thread at 768', async ({
+			page,
+			account,
+		}) => {
+			test.skip(vp.width === 375, 'Phones use the single-pane layout')
 			// The two-pane split (and its fixed-width column) only exists with a thread open.
 			const chat = await account.api.createConversation(account.workspaceId, {
 				title: `Column chat ${Date.now()}`,
@@ -116,8 +131,14 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 				initial_message: 'hello',
 			})
 			await page.goto(`/${account.workspaceId}/chats/${chat.id}`)
-			const column = page.locator('div.md\\:w-70').first()
-			await expect(column).toBeVisible({ timeout: 15_000 })
+			await expect(page.getByLabel('Message this conversation')).toBeVisible({ timeout: 15_000 })
+			const column = page.locator('div.lg\\:w-70').first()
+			// Below lg the list and the thread take turns: with a chat open the list is hidden.
+			if (vp.width < 1024) {
+				await expect(column).toBeHidden()
+				return
+			}
+			await expect(column).toBeVisible()
 			const box = await column.boundingBox()
 			expect(Math.round(box?.width ?? 0)).toBe(280)
 		})

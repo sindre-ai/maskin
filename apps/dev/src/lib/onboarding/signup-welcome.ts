@@ -29,7 +29,7 @@ export interface PostSignupWelcomeCommentInput {
 	humanActorId: string
 }
 
-async function resolveAgentIdByName(
+export async function resolveAgentIdByName(
 	db: Database,
 	workspaceId: string,
 	name: string,

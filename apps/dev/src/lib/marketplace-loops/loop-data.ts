@@ -1,5 +1,5 @@
-// Static snapshot data for the Development-workspace AND Growth-workspace
-// marketplace loops.
+// Static snapshot data for the Development-workspace, Growth-workspace AND
+// template (workspace-neutral) marketplace loops.
 //
 // The local dev Postgres is empty on a fresh clone, and the real actor/trigger
 // content lives in the remote Development and Growth workspaces — not in any
@@ -22,9 +22,15 @@
 import devActorsData from './data/dev-actors.json'
 import devSkillsData from './data/dev-skills.json'
 import devTriggersData from './data/dev-triggers.json'
+import discoveryActorsData from './data/discovery-actors.json'
+import discoverySkillsData from './data/discovery-skills.json'
+import discoveryTriggersData from './data/discovery-triggers.json'
 import growthActorsData from './data/growth-actors.json'
 import growthSkillsData from './data/growth-skills.json'
 import growthTriggersData from './data/growth-triggers.json'
+import marketWatchActorsData from './data/market-watch-actors.json'
+import marketWatchSkillsData from './data/market-watch-skills.json'
+import marketWatchTriggersData from './data/market-watch-triggers.json'
 import type {
 	ActorSnapshotSource,
 	SkillSnapshotSource,
@@ -68,16 +74,22 @@ export interface MarketplaceLoopSeedConfig {
 const actorsById: Record<string, ActorData> = {
 	...(devActorsData as Record<string, ActorData>),
 	...(growthActorsData as Record<string, ActorData>),
+	...(marketWatchActorsData as Record<string, ActorData>),
+	...(discoveryActorsData as Record<string, ActorData>),
 }
 
 const triggersById: Record<string, TriggerData> = {
 	...(devTriggersData as Record<string, TriggerData>),
 	...(growthTriggersData as Record<string, TriggerData>),
+	...(marketWatchTriggersData as Record<string, TriggerData>),
+	...(discoveryTriggersData as Record<string, TriggerData>),
 }
 
 const skillsById: Record<string, SkillData> = {
 	...(devSkillsData as Record<string, SkillData>),
 	...(growthSkillsData as Record<string, SkillData>),
+	...(marketWatchSkillsData as Record<string, SkillData>),
+	...(discoverySkillsData as Record<string, SkillData>),
 }
 
 export function getActorData(id: string): ActorData {

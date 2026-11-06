@@ -197,10 +197,10 @@ test.describe('Objects list — v2 control row', () => {
 			// View rows first, then the sections.
 			await expect(page.getByRole('button', { name: /View: List/ })).toBeVisible()
 			await expect(page.getByRole('button', { name: /View: Board/ })).toBeVisible()
-			await expect(page.getByText('Filters')).toBeVisible()
-			await expect(page.getByText('Properties')).toBeVisible()
-			await expect(page.getByText('Show archived')).toBeVisible()
-			await expect(page.getByText('Reset all')).toBeVisible()
+			await expect(page.getByText('Filters', { exact: true })).toBeVisible()
+			await expect(page.getByText('Properties', { exact: true })).toBeVisible()
+			await expect(page.getByText('Show archived', { exact: true })).toBeVisible()
+			await expect(page.getByText('Reset all', { exact: true })).toBeVisible()
 		})
 
 		test(`the list rests grouped by status, groups open, at ${vp.label}`, async ({
