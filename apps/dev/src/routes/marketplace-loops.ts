@@ -27,7 +27,7 @@ import {
 	workspaceSkills,
 	workspaces,
 } from '@maskin/db/schema'
-import { and, asc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
+import { type SQL, and, asc, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
@@ -224,6 +224,7 @@ app.openapi(listMarketplaceLoopsRoute, (async (c) => {
 			useCase: marketplaceLoops.useCase,
 		})
 		.from(marketplaceLoops)
+		.where(isNull(marketplaceLoops.retiredAt))
 
 	const allLoopIds = allLoops.map((l) => l.id)
 	const allItemTypes = await loadItemTypesByLoop(db, allLoopIds)
@@ -237,7 +238,9 @@ app.openapi(listMarketplaceLoopsRoute, (async (c) => {
 		byUseCase[useCaseKey] = (byUseCase[useCaseKey] ?? 0) + 1
 	}
 
-	const conditions = []
+	// Retired loops (dropped from the seed list) stay in the table for the
+	// installs that still point at them, but are not offered any more.
+	const conditions: (SQL | undefined)[] = [isNull(marketplaceLoops.retiredAt)]
 	if (use_case) conditions.push(eq(marketplaceLoops.useCase, use_case))
 	if (q) {
 		const pattern = `%${q}%`
@@ -265,7 +268,7 @@ app.openapi(listMarketplaceLoopsRoute, (async (c) => {
 	const filteredRows = await db
 		.select()
 		.from(marketplaceLoops)
-		.where(conditions.length > 0 ? and(...conditions) : undefined)
+		.where(and(...conditions))
 		.orderBy(asc(marketplaceLoops.name))
 
 	const filteredIds = filteredRows.map((r) => r.id)

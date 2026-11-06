@@ -6,6 +6,8 @@
 // it's safe to run on every boot: a loop is inserted if missing, updated in
 // place if its code-defined version has moved on, or left untouched if the
 // version already matches — exactly like migrate.js is safe to run on every boot.
+// A row whose slug has left the seed list is retired (hidden, not deleted) so
+// workspaces that installed it keep working; a slug that returns is restored.
 //
 // Delegates to `seedMarketplaceLoops` in ../src/lib/dev-bootstrap.ts, the same
 // function the dev-server-boot path (`seedMarketplaceIfEmpty`) calls — so this
@@ -29,10 +31,11 @@ async function main(): Promise<void> {
 	const result = await seedMarketplaceLoops(db)
 
 	console.log(
-		`Marketplace sync: ${result.inserted.length} inserted, ${result.updated.length} updated, ${result.unchanged.length} unchanged.`,
+		`Marketplace sync: ${result.inserted.length} inserted, ${result.updated.length} updated, ${result.unchanged.length} unchanged, ${result.retired.length} retired.`,
 	)
 	if (result.inserted.length > 0) console.log(`  Inserted: ${result.inserted.join(', ')}`)
 	if (result.updated.length > 0) console.log(`  Updated: ${result.updated.join(', ')}`)
+	if (result.retired.length > 0) console.log(`  Retired: ${result.retired.join(', ')}`)
 	process.exit(0)
 }
 
