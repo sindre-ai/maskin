@@ -1,6 +1,14 @@
+import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 import { clearSeededAutomations } from '../helpers/seed.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
+
+/** The automations section starts collapsed; open it the way a person does. */
+async function openAutomations(page: Page) {
+	const heading = page.getByRole('button', { name: 'Not tied to a flow' })
+	await expect(heading).toBeVisible({ timeout: 10000 })
+	if ((await heading.getAttribute('aria-expanded')) !== 'true') await heading.click()
+}
 
 test.describe('Loops list page', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
@@ -181,6 +189,7 @@ test.describe('Loops list page', () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/loops`)
+			await openAutomations(page)
 
 			// Ungating this section is the whole reason the fold-in is safe.
 			await expect(page.getByText('Unattached watcher', { exact: true })).toBeVisible({
@@ -281,6 +290,7 @@ test.describe('Loops list page', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/loops`)
+		await openAutomations(page)
 		const toggle = page.getByRole('switch', { name: 'Disable Toggle me' })
 		await expect(toggle).toBeVisible({ timeout: 10000 })
 
@@ -291,30 +301,8 @@ test.describe('Loops list page', () => {
 		await expect(page.getByRole('switch', { name: 'Enable Toggle me' })).toBeVisible()
 
 		await page.reload()
+		await openAutomations(page)
 		await expect(page.getByRole('switch', { name: 'Enable Toggle me' })).toBeVisible({
-			timeout: 10000,
-		})
-	})
-
-	test('an "Assigned in chat" row opens the conversation it came from', async ({
-		page,
-		account,
-	}) => {
-		await page.setViewportSize({ width: 1024, height: 768 })
-
-		const agent = await account.api.createAgentActor('Relay')
-		await account.api.addWorkspaceMember(account.workspaceId, agent.id)
-		const conversation = await account.api.createConversation(account.workspaceId, {
-			title: 'Look into the churn spike',
-			participant_actor_ids: [agent.id],
-		})
-
-		await page.goto(`/${account.workspaceId}/loops`)
-		await expect(page.getByText('Assigned in chat')).toBeVisible({ timeout: 10000 })
-
-		await page.getByText('Look into the churn spike').click()
-
-		await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/chats/${conversation.id}`), {
 			timeout: 10000,
 		})
 	})
@@ -349,7 +337,7 @@ test.describe('Loops list page', () => {
 			await page.emulateMedia({ colorScheme: 'light' })
 		})
 
-		test(`both non-loop groups render with their own empty states at ${viewport.label}`, async ({
+		test(`the automations section is collapsed by default, opens to its empty state, and there is no Assigned in chat section at ${viewport.label}`, async ({
 			page,
 			account,
 		}) => {
@@ -358,43 +346,17 @@ test.describe('Loops list page', () => {
 
 			await page.goto(`/${account.workspaceId}/loops`)
 
-			// /triggers redirects here, so this list is the only way in — the two
-			// sections must announce themselves even with nothing in them.
-			await expect(page.getByText('Not tied to a flow')).toBeVisible({ timeout: 10000 })
+			// /triggers redirects here, so this section is the only way in — it must announce
+			// itself even with nothing in it, folded away until opened.
+			const heading = page.getByRole('button', { name: 'Not tied to a flow' })
+			await expect(heading).toBeVisible({ timeout: 10000 })
+			await expect(heading).toHaveAttribute('aria-expanded', 'false')
+			await expect(page.getByText('No workspace-wide automations yet')).toBeHidden()
+			await heading.click()
 			await expect(page.getByText('No workspace-wide automations yet')).toBeVisible()
-			await expect(page.getByText('Assigned in chat')).toBeVisible()
-			await expect(page.getByText('Nothing handed to an agent in chat')).toBeVisible()
+			await expect(page.getByText('Assigned in chat')).toBeHidden()
 		})
 	}
-
-	test('an assigned-in-chat row names the loop the work feeds', async ({ page, account }) => {
-		await page.setViewportSize({ width: 1280, height: 900 })
-
-		const agent = await account.api.createAgentActor('Relay')
-		await account.api.addWorkspaceMember(account.workspaceId, agent.id)
-		const trigger = await account.api.createTrigger(account.workspaceId, {
-			name: 'Feeds the flow',
-			type: 'event',
-			action_prompt: 'Watch for new insights',
-			target_actor_id: agent.id,
-			config: { entity_type: 'insight', action: 'created' },
-		})
-		await account.api.createObject(account.workspaceId, {
-			type: 'loop',
-			title: 'Churn watch',
-			status: 'learning',
-			metadata: { trigger_ids: [trigger.id] },
-		})
-		await account.api.createConversation(account.workspaceId, {
-			title: 'Look into the churn spike',
-			participant_actor_ids: [agent.id],
-		})
-
-		await page.goto(`/${account.workspaceId}/loops`)
-		await expect(page.getByText('Look into the churn spike')).toBeVisible({ timeout: 10000 })
-		// The agent's own "Meet Relay" intro chat feeds the same loop, so the label shows twice.
-		await expect(page.getByText('feeds Churn watch').first()).toBeVisible()
-	})
 
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
 		test(`Cards are the default view and List stays a choice at ${viewport.label}`, async ({

@@ -1,5 +1,4 @@
 import { PageHeader } from '@/components/layout/page-header'
-import { AssignedInChatRow } from '@/components/loops/assigned-in-chat-row'
 import {
 	type FailedAgent,
 	buildFlowsBrief,
@@ -20,10 +19,10 @@ import { RouteError } from '@/components/shared/route-error'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { TriggerRow } from '@/components/triggers/trigger-row'
 import { Button } from '@/components/ui/button'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { useActors } from '@/hooks/use-actors'
 import { useBillingUsage } from '@/hooks/use-billing'
 import { useCanWrite } from '@/hooks/use-can-write'
-import { useConversationsInfinite } from '@/hooks/use-conversations'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useLoops } from '@/hooks/use-loops'
 import { useIsMobile } from '@/hooks/use-mobile'
@@ -35,15 +34,10 @@ import {
 	useUserDisplaySettings,
 } from '@/hooks/use-user-display-settings'
 import { getActiveAgentSessions } from '@/lib/agent-status'
-import type {
-	ConversationListItemResponse,
-	ConversationParticipantResponse,
-	DisplaySettingsBody,
-	LoopSummary,
-} from '@/lib/api'
+import type { DisplaySettingsBody, LoopSummary } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, createFileRoute } from '@tanstack/react-router'
-import { LayoutList, RefreshCw, Rows3 } from 'lucide-react'
+import { ChevronRight, LayoutList, RefreshCw, Rows3 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 // Display settings are keyed by object type; `loop` is a real object type, so
@@ -119,10 +113,11 @@ function LoopsRoute() {
 	const { data: triggers } = useTriggers(workspaceId)
 	const { data: actors } = useActors(workspaceId)
 	const { data: sessions } = useWorkspaceSessions(workspaceId)
-	const { data: conversationPages } = useConversationsInfinite(workspaceId)
 	const updateTrigger = useUpdateTrigger(workspaceId)
 	const [createPickerOpen, setCreatePickerOpen] = useState(false)
 	const [buyCreditsOpen, setBuyCreditsOpen] = useState(false)
+	// Collapsed by default: the automations are background plumbing, not what the page is for.
+	const [automationsOpen, setAutomationsOpen] = useState(false)
 	const [tab, setTab] = useState<LoopTab>('all')
 	const [areaFilter, setAreaFilter] = useState<string | undefined>(undefined)
 	const [query, setQuery] = useState('')
@@ -185,43 +180,11 @@ function LoopsRoute() {
 		return triggers.filter((t) => !tied.has(t.id))
 	}, [loops, triggers])
 
-	// Agents with a live session right now — colours the loop rows' busy line
-	// and the "Assigned in chat" state dot.
+	// Agents with a live session right now — colours the loop rows' busy line.
 	const workingAgentIds = useMemo(
 		() => new Set(getActiveAgentSessions(sessions ?? []).map((s) => s.actorId)),
 		[sessions],
 	)
-
-	// Work handed an agent directly in a chat thread — outside any cycle. The
-	// first page is enough; these rows are a recent-activity glance, not a log.
-	const assignedInChat = useMemo(() => {
-		const conversations = conversationPages?.pages?.[0]?.conversations ?? []
-		const rows: {
-			conversation: ConversationListItemResponse
-			agent: ConversationParticipantResponse
-		}[] = []
-		for (const conversation of conversations) {
-			if (conversation.archived) continue
-			const agent = conversation.participants.find((p) => p.actorType === 'agent')
-			if (!agent) continue
-			rows.push({ conversation, agent })
-			if (rows.length === 5) break
-		}
-		return rows
-	}, [conversationPages])
-
-	// Which loop a chat-assigned piece of work feeds (mockup 1569 `k.feeds`) —
-	// the loop that runs the agent it was handed to. Loops carry `agentIds`, so
-	// this is a real association rather than an invented conversation↔loop link.
-	const loopNameByAgentId = useMemo(() => {
-		const map = new Map<string, string>()
-		for (const loop of loops ?? []) {
-			for (const agentId of loop.agentIds) {
-				if (!map.has(agentId)) map.set(agentId, loop.name ?? 'Untitled flow')
-			}
-		}
-		return map
-	}, [loops])
 
 	// A flow's newest failed agent, from the sessions already loaded for this page.
 	const failedByLoopId = useMemo(() => {
@@ -445,74 +408,55 @@ function LoopsRoute() {
 						)}
 					</section>
 
-					<section>
-						<header className="flex items-center gap-2.5 px-1">
-							<h2 className="text-sm font-bold text-foreground">Not tied to a flow</h2>
-							<p className="text-[11px] text-muted-foreground">
-								workspace-wide automations that run on their own
-							</p>
-							<span aria-hidden="true" className="h-px flex-1 bg-border" />
-						</header>
-						{standaloneTriggers.length === 0 ? (
-							<EmptyState
-								title="No workspace-wide automations yet"
-								description="Automations that run on their own — outside any flow — show up here."
-							/>
-						) : (
-							<div className="flex flex-col pt-3">
-								{standaloneTriggers.map((trigger) => {
-									const agent = actors?.find((a) => a.id === trigger.targetActorId)
-									return (
-										<TriggerRow
-											key={trigger.id}
-											trigger={trigger}
-											workspaceId={workspaceId}
-											agentId={agent?.id}
-											agentType={agent?.type}
-											agentName={agent?.name ?? 'Unknown'}
-											isToggling={updateTrigger.isPending}
-											onToggleEnabled={(next) => {
-												if (!canWrite) return
-												updateTrigger.mutate({ id: trigger.id, data: { enabled: next } })
-											}}
-											v4Polish
+					<Collapsible asChild open={automationsOpen} onOpenChange={setAutomationsOpen}>
+						<section>
+							<header className="flex items-center gap-2.5 px-1">
+								<h2 className="text-sm font-bold text-foreground">
+									<CollapsibleTrigger className="group flex items-center gap-1.5 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+										<ChevronRight
+											aria-hidden="true"
+											className="size-3.5 text-muted-foreground transition-transform group-data-[state=open]:rotate-90"
 										/>
-									)
-								})}
-							</div>
-						)}
-					</section>
-
-					<section>
-						<header className="flex items-center gap-2.5 px-1">
-							<h2 className="text-sm font-bold text-foreground">Assigned in chat</h2>
-							<p className="text-[11px] text-muted-foreground">
-								work you handed an agent yourself — outside any cycle
-							</p>
-							<span aria-hidden="true" className="h-px flex-1 bg-border" />
-						</header>
-						{assignedInChat.length === 0 ? (
-							<EmptyState
-								title="Nothing handed to an agent in chat"
-								description="Work you hand an agent yourself — outside any cycle — shows up here."
-							/>
-						) : (
-							<div className="flex flex-col gap-2 pt-3">
-								{assignedInChat.map(({ conversation, agent }) => (
-									<AssignedInChatRow
-										key={conversation.id}
-										conversation={conversation}
-										workspaceId={workspaceId}
-										agentId={agent.actorId}
-										agentType={agent.actorType}
-										agentName={agent.actorName}
-										isWorking={workingAgentIds.has(agent.actorId)}
-										feedsLoopName={loopNameByAgentId.get(agent.actorId)}
+										Not tied to a flow
+									</CollapsibleTrigger>
+								</h2>
+								<p className="text-[11px] text-muted-foreground">
+									workspace-wide automations that run on their own
+								</p>
+								<span aria-hidden="true" className="h-px flex-1 bg-border" />
+							</header>
+							<CollapsibleContent>
+								{standaloneTriggers.length === 0 ? (
+									<EmptyState
+										title="No workspace-wide automations yet"
+										description="Automations that run on their own — outside any flow — show up here."
 									/>
-								))}
-							</div>
-						)}
-					</section>
+								) : (
+									<div className="flex flex-col pt-3">
+										{standaloneTriggers.map((trigger) => {
+											const agent = actors?.find((a) => a.id === trigger.targetActorId)
+											return (
+												<TriggerRow
+													key={trigger.id}
+													trigger={trigger}
+													workspaceId={workspaceId}
+													agentId={agent?.id}
+													agentType={agent?.type}
+													agentName={agent?.name ?? 'Unknown'}
+													isToggling={updateTrigger.isPending}
+													onToggleEnabled={(next) => {
+														if (!canWrite) return
+														updateTrigger.mutate({ id: trigger.id, data: { enabled: next } })
+													}}
+													v4Polish
+												/>
+											)
+										})}
+									</div>
+								)}
+							</CollapsibleContent>
+						</section>
+					</Collapsible>
 				</div>
 			)}
 			<CreatePicker open={createPickerOpen} onOpenChange={setCreatePickerOpen} defaultType="loop" />
