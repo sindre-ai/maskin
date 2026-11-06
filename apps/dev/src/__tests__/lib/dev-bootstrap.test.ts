@@ -5,38 +5,15 @@ import {
 	seedMarketplaceIfEmpty,
 	seedMarketplaceLoops,
 } from '../../lib/dev-bootstrap'
-import { CCD_ACTOR_IDS, CCD_LOOP, CCD_TRIGGER_IDS } from '../../lib/marketplace-loops/ccd-loop'
-import { DEV_PIPELINE_LOOP } from '../../lib/marketplace-loops/dev-pipeline-loop'
-import { DISCOVERY_LOOP } from '../../lib/marketplace-loops/discovery-loop'
-import { GROWTH_BET_LOOP } from '../../lib/marketplace-loops/growth-bet-loop'
-import { GROWTH_BRAND_DEMAND_LOOP } from '../../lib/marketplace-loops/growth-brand-demand-loop'
-import { GROWTH_CONTENT_INSIGHT_LOOP } from '../../lib/marketplace-loops/growth-content-insight-loop'
-import { GROWTH_DEAL_RELATIONSHIP_LOOP } from '../../lib/marketplace-loops/growth-deal-relationship-loop'
-import { GROWTH_LEAD_GEN_LOOP } from '../../lib/marketplace-loops/growth-lead-gen-loop'
-import { GROWTH_MEETING_LOOP } from '../../lib/marketplace-loops/growth-meeting-loop'
-import { GROWTH_OPS_KNOWLEDGE_LOOP } from '../../lib/marketplace-loops/growth-ops-knowledge-loop'
-import { GROWTH_SDR_OUTREACH_LOOP } from '../../lib/marketplace-loops/growth-sdr-outreach-loop'
+import {
+	DISCOVERY_ACTOR_IDS,
+	DISCOVERY_LOOP,
+	DISCOVERY_TRIGGER_IDS,
+} from '../../lib/marketplace-loops/discovery-loop'
 import { MARKET_WATCH_LOOP } from '../../lib/marketplace-loops/market-watch-loop'
-import { STRATEGY_GROWTH_LOOP } from '../../lib/marketplace-loops/strategy-growth-loop'
-import { TEAM_OPS_LOOP } from '../../lib/marketplace-loops/team-ops-loop'
 import { createTestContext } from '../setup'
 
-const ALL_PACKAGES = [
-	CCD_LOOP,
-	DEV_PIPELINE_LOOP,
-	STRATEGY_GROWTH_LOOP,
-	TEAM_OPS_LOOP,
-	GROWTH_LEAD_GEN_LOOP,
-	GROWTH_SDR_OUTREACH_LOOP,
-	GROWTH_DEAL_RELATIONSHIP_LOOP,
-	GROWTH_CONTENT_INSIGHT_LOOP,
-	GROWTH_BRAND_DEMAND_LOOP,
-	GROWTH_BET_LOOP,
-	GROWTH_OPS_KNOWLEDGE_LOOP,
-	GROWTH_MEETING_LOOP,
-	MARKET_WATCH_LOOP,
-	DISCOVERY_LOOP,
-]
+const ALL_PACKAGES = [MARKET_WATCH_LOOP, DISCOVERY_LOOP]
 
 function matchingMarketplaceRows() {
 	return ALL_PACKAGES.map((loop, i) => ({
@@ -108,7 +85,7 @@ describe('maybeBootstrapDev', () => {
 		mockResults.selectQueue = [[]] // findExistingCredentials returns no rows
 		// Unqueued selects fall through to [] — that's how seedDefaultAgentActors'
 		// per-agent "already a member?" check reads as "not present" here, so each
-		// of the seven default agents takes the insert branch below.
+		// of the six default agents takes the insert branch below.
 		mockResults.insertQueue = [
 			[{ id: 'actor-1', name: 'You', email: 'dev@local' }],
 			[], // api_keys insert for the human's primary key
@@ -122,8 +99,6 @@ describe('maybeBootstrapDev', () => {
 			[{ workspaceId: 'ws-1', actorId: 'chief-1', role: 'member' }],
 			[{ id: 'driver-1', name: 'Driver' }],
 			[{ workspaceId: 'ws-1', actorId: 'driver-1', role: 'member' }],
-			[{ id: 'strategist-1', name: 'Strategist' }],
-			[{ workspaceId: 'ws-1', actorId: 'strategist-1', role: 'member' }],
 			[{ id: 'signal-1', name: 'Signal Analyst' }],
 			[{ workspaceId: 'ws-1', actorId: 'signal-1', role: 'member' }],
 			[{ id: 'researcher-1', name: 'Researcher' }],
@@ -165,7 +140,6 @@ describe('maybeBootstrapDev', () => {
 			'Workspace Coach',
 			'Chief of Staff',
 			'Driver',
-			'Strategist',
 			'Signal Analyst',
 			'Researcher',
 			'Knowledge Curator',
@@ -284,10 +258,15 @@ describe('seedMarketplaceIfEmpty', () => {
 		expect(new Set(slugs).size).toBe(ALL_PACKAGES.length)
 		expect(slugs).toEqual(expect.arrayContaining(ALL_PACKAGES.map((p) => p.slug)))
 
-		// CCD is seeded first — assert its actor/trigger counts match the live bundle.
-		const ccdItems = itemInserts[0] as Array<{ itemType: string; sourceItemId: string }>
-		expect(ccdItems.filter((i) => i.itemType === 'actor').length).toBe(CCD_ACTOR_IDS.length)
-		expect(ccdItems.filter((i) => i.itemType === 'trigger').length).toBe(CCD_TRIGGER_IDS.length)
+		// Market Watch is seeded first, Product Discovery second — assert the
+		// discovery actor/trigger counts match its bundle.
+		const discoveryItems = itemInserts[1] as Array<{ itemType: string; sourceItemId: string }>
+		expect(discoveryItems.filter((i) => i.itemType === 'actor').length).toBe(
+			DISCOVERY_ACTOR_IDS.length,
+		)
+		expect(discoveryItems.filter((i) => i.itemType === 'trigger').length).toBe(
+			DISCOVERY_TRIGGER_IDS.length,
+		)
 	})
 })
 
@@ -326,24 +305,71 @@ describe('seedMarketplaceLoops', () => {
 		expect(calls.inserts).toEqual([])
 	})
 
-	it('updates a loop and replaces its items when its version has changed', async () => {
+	it('retires a marketplace row whose slug is no longer in the seed list', async () => {
+		process.env.NODE_ENV = 'production'
+		const { db, mockResults, calls } = createTestContext()
+		mockResults.select = [
+			...matchingMarketplaceRows(),
+			{ id: 'loop-old', slug: 'old-loop', version: '1.0.0', retiredAt: null },
+		]
+
+		const result = await seedMarketplaceLoops(db)
+
+		expect(result.retired).toEqual(['old-loop'])
+		expect(result.unchanged.length).toBe(ALL_PACKAGES.length)
+		expect(calls.updates).toEqual([expect.objectContaining({ retiredAt: expect.any(Date) })])
+		expect(calls.inserts).toEqual([])
+	})
+
+	it('leaves an already retired row alone', async () => {
+		process.env.NODE_ENV = 'production'
+		const { db, mockResults, calls } = createTestContext()
+		mockResults.select = [
+			...matchingMarketplaceRows(),
+			{ id: 'loop-old', slug: 'old-loop', version: '1.0.0', retiredAt: new Date() },
+		]
+
+		const result = await seedMarketplaceLoops(db)
+
+		expect(result.retired).toEqual([])
+		expect(calls.updates).toEqual([])
+	})
+
+	it('restores a retired loop that is back in the seed list, even at the same version', async () => {
 		process.env.NODE_ENV = 'production'
 		const { db, mockResults, calls } = createTestContext()
 		mockResults.select = matchingMarketplaceRows().map((row) =>
-			row.slug === CCD_LOOP.slug ? { ...row, version: 'stale-version' } : row,
+			row.slug === DISCOVERY_LOOP.slug ? { ...row, retiredAt: new Date() } : row,
 		)
 		mockResults.insert = [{ id: 'loop-1' }]
 
 		const result = await seedMarketplaceLoops(db)
 
-		expect(result.updated).toEqual([CCD_LOOP.slug])
+		expect(result.updated).toEqual([DISCOVERY_LOOP.slug])
+		expect(result.retired).toEqual([])
+		expect(calls.updates).toEqual([expect.objectContaining({ retiredAt: null })])
+	})
+
+	it('updates a loop and replaces its items when its version has changed', async () => {
+		process.env.NODE_ENV = 'production'
+		const { db, mockResults, calls } = createTestContext()
+		mockResults.select = matchingMarketplaceRows().map((row) =>
+			row.slug === DISCOVERY_LOOP.slug ? { ...row, version: 'stale-version' } : row,
+		)
+		mockResults.insert = [{ id: 'loop-1' }]
+
+		const result = await seedMarketplaceLoops(db)
+
+		expect(result.updated).toEqual([DISCOVERY_LOOP.slug])
 		expect(result.inserted).toEqual([])
 		expect(result.unchanged.length).toBe(ALL_PACKAGES.length - 1)
 		expect(calls.updates.length).toBe(1)
 
 		const itemInserts = calls.inserts.filter((v): v is unknown[] => Array.isArray(v))
 		expect(itemInserts.length).toBe(1)
-		const ccdItems = itemInserts[0] as Array<{ itemType: string }>
-		expect(ccdItems.filter((i) => i.itemType === 'actor').length).toBe(CCD_ACTOR_IDS.length)
+		const discoveryItems = itemInserts[0] as Array<{ itemType: string }>
+		expect(discoveryItems.filter((i) => i.itemType === 'actor').length).toBe(
+			DISCOVERY_ACTOR_IDS.length,
+		)
 	})
 })

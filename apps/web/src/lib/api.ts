@@ -719,9 +719,10 @@ export const api = {
 	},
 
 	data: {
-		query: (workspaceId: string, spec: DataQuerySpec) =>
+		query: (workspaceId: string, spec: DataQuerySpec, opts?: { signal?: AbortSignal }) =>
 			request<DataQueryResult>(`/data/query?spec=${encodeURIComponent(JSON.stringify(spec))}`, {
 				workspaceId,
+				signal: opts?.signal,
 			}),
 		nextChange: (workspaceId: string, spec: DataQuerySpec) =>
 			request<{ in_ms: number | null }>(

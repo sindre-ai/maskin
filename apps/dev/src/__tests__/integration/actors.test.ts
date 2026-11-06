@@ -1122,7 +1122,6 @@ describe('Actors Integration — signup workspace provisioning', () => {
 		'Knowledge Curator',
 		'Researcher',
 		'Signal Analyst',
-		'Strategist',
 		'Workspace Coach',
 	]
 

@@ -48,7 +48,6 @@ export const DEFAULT_AGENT_IDS = [
 	'workspace_coach',
 	'chief_of_staff',
 	'driver',
-	'strategist',
 	'signal_analyst',
 	'researcher',
 	'knowledge_curator',
@@ -554,7 +553,7 @@ export async function bootstrapDefaultAgents(
 		}
 	}
 
-	// Create the default Loop objects (Bet discovery loop, Workspace improvements),
+	// Create the default Loop objects (Workspace improvements, Knowledge Wiki → digest),
 	// wiring metadata.trigger_ids to the triggers seeded above. Idempotent per
 	// workspace via the objects.title check, mirroring the agent/trigger checks
 	// above.

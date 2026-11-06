@@ -2165,6 +2165,10 @@ export const marketplaceLoops = pgTable('marketplace_loops', {
 	description: text('description').notNull(),
 	version: text('version').notNull(),
 	useCase: text('use_case'),
+	// Set by seedMarketplaceLoops when the slug is no longer in the code-defined seed list.
+	// A retired loop is hidden from the marketplace and refused for new installs, but the
+	// row stays so existing installs (installed_loops.source_loop_id) keep updating.
+	retiredAt: timestamp('retired_at', { withTimezone: true }),
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })

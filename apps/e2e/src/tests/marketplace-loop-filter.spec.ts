@@ -2,9 +2,9 @@ import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS, VIEWPORTS } from '../helpers/viewports'
 
 // Covers T2 of the Marketplace polish bet: the free-text marketplace filter
-// input and its empty state. The dev bootstrap seeds four bundle loops
-// (Discover & Research, Build & Ship, Strategy & Growth, Team Ops) so the
-// marketplace loads a real set of loops on every run.
+// input and its empty state. The dev bootstrap seeds two bundle loops
+// (Product Discovery, Market & Competitor Watch) so the marketplace loads a
+// real set of loops on every run.
 
 const FILTER_LABEL = 'Filter marketplace'
 const EMPTY_COPY = 'Nothing in the catalog matches those filters.'
@@ -76,15 +76,18 @@ test.describe('Marketplace loop filter', () => {
 
 		const loopsSection = page.getByRole('region', { name: 'Loops' })
 		await expect(loopsSection).toBeVisible({ timeout: 20000 })
-		await expect(loopsSection.getByRole('heading', { name: /Discover & Research/ })).toBeVisible()
-		await expect(loopsSection.getByRole('heading', { name: /Build & Ship/ })).toBeVisible()
+		await expect(loopsSection.getByRole('heading', { name: /Product Discovery/ })).toBeVisible()
+		await expect(
+			loopsSection.getByRole('heading', { name: /Market & Competitor Watch/ }),
+		).toBeVisible()
 
 		const filter = page.getByRole('searchbox', { name: FILTER_LABEL }).and(page.locator(':visible'))
 		await filter.fill('discover')
 
-		await expect(loopsSection.getByRole('heading', { name: /Discover & Research/ })).toBeVisible()
-		await expect(loopsSection.getByRole('heading', { name: /Build & Ship/ })).toHaveCount(0)
-		await expect(loopsSection.getByRole('heading', { name: /Team Ops/ })).toHaveCount(0)
+		await expect(loopsSection.getByRole('heading', { name: /Product Discovery/ })).toBeVisible()
+		await expect(
+			loopsSection.getByRole('heading', { name: /Market & Competitor Watch/ }),
+		).toHaveCount(0)
 	})
 
 	test('combines text query with a type chip (AND) on mobile', async ({ page, account }) => {
@@ -190,7 +193,7 @@ test.describe('Marketplace loop filter', () => {
 		await expect(
 			page
 				.getByRole('region', { name: 'Loops' })
-				.getByRole('heading', { name: /Discover & Research/ }),
+				.getByRole('heading', { name: /Product Discovery/ }),
 		).toBeVisible()
 		await noHorizontalOverflow(page)
 
