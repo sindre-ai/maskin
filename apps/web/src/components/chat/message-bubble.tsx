@@ -779,7 +779,7 @@ function OwnMessageBody({
 						// biome-ignore lint/suspicious/noArrayIndexKey: runs are positional by construction
 						key={index}
 						ref={textRef}
-						className="whitespace-pre-wrap text-balance break-words"
+						className="whitespace-pre-wrap break-words"
 					>
 						{run.inline.map((part, i) =>
 							part.kind === 'tagged' ? (
