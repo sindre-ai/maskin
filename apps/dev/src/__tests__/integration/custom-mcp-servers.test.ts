@@ -359,6 +359,36 @@ describe('Custom server gateway (Integration)', () => {
 		expect(fetchMock).not.toHaveBeenCalled()
 	})
 
+	it('forwards the message it judged when a key is repeated, so upstream sees one value per key', async () => {
+		const s = await setup()
+		const { body } = await addServer(s)
+		await call(s, 'PUT', `/api/integrations/${body.id}/grants/${s.agentA.id}`, { access: 'read' })
+
+		// First a write, last a read: judged a read, and the write name never goes upstream.
+		const readLast =
+			'{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete_doc","name":"list_docs","arguments":{"q":"a","q":"b"}}}'
+		const res = await appFor(s.agentA.id, 'agent').request(
+			`/api/custom-mcp-servers/${body.id}/gateway`,
+			{
+				method: 'POST',
+				headers: {
+					'X-Workspace-Id': s.ws.id,
+					'content-type': 'application/json',
+					authorization: 'Bearer ank_agent_key',
+				},
+				body: readLast,
+			},
+		)
+		expect(res.status).toBe(200)
+		expect(fetchMock).toHaveBeenCalledOnce()
+		const upstream = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body
+		expect(upstream).toBe(JSON.stringify(JSON.parse(readLast)))
+		expect(upstream).not.toContain('delete_doc')
+		expect(upstream).toBe(
+			'{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_docs","arguments":{"q":"b"}}}',
+		)
+	})
+
 	it('has no gateway for a server it cannot sit in front of', async () => {
 		const s = await setup()
 		const { body } = await addServer(s, 'Local files', { type: 'stdio', command: 'npx' })
