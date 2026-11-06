@@ -93,7 +93,8 @@ describe('useChatOutcomeTracking', () => {
 
 	it('sends chat_left replied when the person wrote and an agent answered during the visit', () => {
 		const first = mine()
-		const hook = mount([first])
+		const hook = mount([])
+		hook.rerender({ messages: [first], isLoaded: true, id: 'c-1' })
 		hook.rerender({ messages: [first, agent()], isLoaded: true, id: 'c-1' })
 
 		hook.unmount()
