@@ -2521,6 +2521,8 @@ public enum Operations {
                 public var status: Swift.String?
                 /// - Remark: Generated from `#/paths/api/objects/search/GET/query/driver`.
                 public var driver: Swift.String?
+                /// - Remark: Generated from `#/paths/api/objects/search/GET/query/updated_before`.
+                public var updated_before: Foundation.Date?
                 /// - Remark: Generated from `#/paths/api/objects/search/GET/query/updated_after`.
                 public var updated_after: Foundation.Date?
                 /// - Remark: Generated from `#/paths/api/objects/search/GET/query/sort`.
@@ -2557,6 +2559,7 @@ public enum Operations {
                 ///   - _type:
                 ///   - status:
                 ///   - driver:
+                ///   - updated_before:
                 ///   - updated_after:
                 ///   - sort:
                 ///   - order:
@@ -2571,6 +2574,7 @@ public enum Operations {
                     _type: Swift.String? = nil,
                     status: Swift.String? = nil,
                     driver: Swift.String? = nil,
+                    updated_before: Foundation.Date? = nil,
                     updated_after: Foundation.Date? = nil,
                     sort: Swift.String? = nil,
                     order: Operations.get_sol_api_sol_objects_sol_search.Input.Query.orderPayload? = nil,
@@ -2585,6 +2589,7 @@ public enum Operations {
                     self._type = _type
                     self.status = status
                     self.driver = driver
+                    self.updated_before = updated_before
                     self.updated_after = updated_after
                     self.sort = sort
                     self.order = order
@@ -17476,6 +17481,8 @@ public enum Operations {
                         public var memberCount: Swift.Int
                         /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/isDefault`.
                         public var isDefault: Swift.Bool
+                        /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/isTeam`.
+                        public var isTeam: Swift.Bool
                         /// Creates a new `jsonPayloadPayload`.
                         ///
                         /// - Parameters:
@@ -17493,6 +17500,7 @@ public enum Operations {
                         ///   - role:
                         ///   - memberCount:
                         ///   - isDefault:
+                        ///   - isTeam:
                         public init(
                             id: Swift.String,
                             name: Swift.String,
@@ -17507,7 +17515,8 @@ public enum Operations {
                             updatedAt: Swift.String? = nil,
                             role: Swift.String,
                             memberCount: Swift.Int,
-                            isDefault: Swift.Bool
+                            isDefault: Swift.Bool,
+                            isTeam: Swift.Bool
                         ) {
                             self.id = id
                             self.name = name
@@ -17523,6 +17532,7 @@ public enum Operations {
                             self.role = role
                             self.memberCount = memberCount
                             self.isDefault = isDefault
+                            self.isTeam = isTeam
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -17539,6 +17549,7 @@ public enum Operations {
                             case role
                             case memberCount
                             case isDefault
+                            case isTeam
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/json`.

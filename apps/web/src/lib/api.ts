@@ -721,9 +721,10 @@ export const api = {
 	},
 
 	data: {
-		query: (workspaceId: string, spec: DataQuerySpec) =>
+		query: (workspaceId: string, spec: DataQuerySpec, opts?: { signal?: AbortSignal }) =>
 			request<DataQueryResult>(`/data/query?spec=${encodeURIComponent(JSON.stringify(spec))}`, {
 				workspaceId,
+				signal: opts?.signal,
 			}),
 		nextChange: (workspaceId: string, spec: DataQuerySpec) =>
 			request<{ in_ms: number | null }>(
@@ -2240,6 +2241,8 @@ export interface WorkspaceWithRole extends WorkspaceResponse {
 	memberCount: number
 	/** True for the workspace the caller chose as their default in Settings. */
 	isDefault: boolean
+	/** Whether the caller is on our own team. Only used to mark analytics events. */
+	isTeam: boolean
 }
 
 export interface UpdateWorkspaceInput {

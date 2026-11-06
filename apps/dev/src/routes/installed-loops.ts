@@ -295,6 +295,11 @@ app.openapi(installLoopRoute, async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Marketplace loop not found'), 404)
 	}
 
+	// A retired loop is no longer offered; existing installs of it keep working.
+	if (loop.retiredAt) {
+		return c.json(createApiError('NOT_FOUND', 'Marketplace loop is no longer available'), 404)
+	}
+
 	const items = await db
 		.select()
 		.from(marketplaceLoopItems)

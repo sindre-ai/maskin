@@ -41,6 +41,7 @@ import {
 } from '@/lib/linked-objects'
 import { type TagSegment, splitTextByTags, tagLabel } from '@/lib/tag-input-model'
 import { useIsEnterpriseWorkspace } from '@/lib/workspace-context'
+import { formatQuestionsAsMarkdown } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
 import {
 	ArrowUpRight,
@@ -188,6 +189,12 @@ export function MessageBubble({
 	// A tapped answer reaches the agent with its question for context; the person's own bubble
 	// shows only what they picked (one question: just the pick, several: header and pick).
 	const answers = message.metadata?.question_answer?.answers
+	// An agent's question is posted with its markdown twin as the message content (for readers that
+	// have no card). Here the card shows every question and option description itself, so the
+	// twin is not drawn above it. Words the agent wrote of its own never match and stay.
+	const question = message.metadata?.question
+	const isQuestionTwin =
+		question !== undefined && message.content === formatQuestionsAsMarkdown(question.questions)
 	const shownContent =
 		isOwn && answers && answers.length > 0 && message.content.startsWith('**')
 			? answers
@@ -509,7 +516,7 @@ export function MessageBubble({
 				</div>
 				{activity ? <div className="mt-0.5">{activity}</div> : null}
 				{liftedAttachments ? <div className="mt-1.5">{liftedAttachments}</div> : null}
-				{message.content.length > 0 ? (
+				{message.content.length > 0 && !isQuestionTwin ? (
 					<div className="mt-0.5 text-base leading-[1.45] [&_li]:text-foreground [&_p]:text-base [&_p]:leading-[1.45] [&_p]:text-foreground">
 						{/* `renderVisuals` turns a ```chart fenced block into the bounded
 						    data-viz card (mockup 660–679). Agents are told how to emit one
@@ -538,10 +545,9 @@ export function MessageBubble({
 						/>
 					</div>
 				) : null}
-				{/* An agent's AskUserQuestion, surfaced as pickable options. The
-				    message's own content already renders the questions as markdown
-				    above, so this adds the affordance rather than the information —
-				    which is why it degrades to plain text everywhere else. */}
+				{/* An agent's AskUserQuestion, surfaced as pickable options. The card carries
+				    the questions and each option's description; the message's markdown twin
+				    (`isQuestionTwin`) is only for readers that have no card. */}
 				{message.metadata?.question ? (
 					<QuestionOptions
 						conversationId={message.conversationId}
@@ -790,7 +796,7 @@ function OwnMessageBody({
 						// biome-ignore lint/suspicious/noArrayIndexKey: runs are positional by construction
 						key={index}
 						ref={textRef}
-						className="whitespace-pre-wrap text-balance break-words"
+						className="whitespace-pre-wrap break-words"
 					>
 						{run.inline.map((part, i) =>
 							part.kind === 'tagged' ? (

@@ -589,6 +589,16 @@ struct ChatStoreTests {
 		#expect(m.questionSessionID == "s1")
 	}
 
+	@Test("a question's markdown copy is not shown above its card, but the agent's own words are")
+	func questionTwin() {
+		let twin = "Which environment?\n- **Staging**\n- **Prod** — Live users"
+		let copy = chatMsg(7, by: "relay", agent: true, twin, metadata: questionMeta)
+		#expect(copy.isQuestionTwin)
+		let own = chatMsg(8, by: "relay", agent: true, "Let me ask.\n\n" + twin, metadata: questionMeta)
+		#expect(!own.isQuestionTwin)
+		#expect(!chatMsg(9, by: "relay", agent: true, twin).isQuestionTwin)
+	}
+
 	@Test("answering posts the web's message shape and marks the question answered")
 	func answersQuestion() async {
 		let q = chatMsg(7, by: "relay", agent: true, "Which environment?", metadata: questionMeta)

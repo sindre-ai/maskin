@@ -143,6 +143,7 @@ export function buildWorkspaceWithRole(
 		role: 'admin',
 		memberCount: 3,
 		isDefault: false,
+		isTeam: false,
 		createdBy: 'actor-1',
 		createdAt: null,
 		updatedAt: null,

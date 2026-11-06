@@ -294,6 +294,8 @@ export const searchObjectsSchema = z.object({
 	type: objectTypeSchema.optional(),
 	status: z.string().optional(),
 	driver: z.string().optional(),
+	/** Half-open: rows satisfy `updated_at < updated_before`. Bound excluded. */
+	updated_before: z.string().datetime({ offset: true }).optional(),
 	/** Half-open: rows satisfy `updated_at > updated_after`. Bound excluded. */
 	updated_after: z.string().datetime({ offset: true }).optional(),
 	sort: sortFieldSchema,

@@ -31,7 +31,12 @@ describe('posthog helper', () => {
 
 		expect(isPosthogReady()).toBe(false)
 		capture('bet_opened', { bet_id: 'b1' })
-		registerWorkspaceProperties({ workspace_id: 'w1', actor_id: 'a1', actor_type: 'human' })
+		registerWorkspaceProperties({
+			workspace_id: 'w1',
+			actor_id: 'a1',
+			actor_type: 'human',
+			is_team: false,
+		})
 
 		// posthog-js is safe to call before init (it buffers), and the module-local
 		// `initialized` flag has historically gone stale across HMR / dev races —
@@ -45,13 +50,19 @@ describe('posthog helper', () => {
 		const regSpy = vi.spyOn(posthog, 'register').mockImplementation((() => {}) as never)
 		__setInitializedForTesting(true)
 
-		registerWorkspaceProperties({ workspace_id: 'w1', actor_id: 'a1', actor_type: 'agent' })
+		registerWorkspaceProperties({
+			workspace_id: 'w1',
+			actor_id: 'a1',
+			actor_type: 'agent',
+			is_team: false,
+		})
 
 		expect(regSpy).toHaveBeenCalledTimes(1)
 		expect(regSpy).toHaveBeenCalledWith({
 			workspace_id: 'w1',
 			actor_id: 'a1',
 			actor_type: 'agent',
+			is_team: false,
 		})
 	})
 

@@ -27,6 +27,8 @@ const MIN_HEIGHT = 160
 /** A failed live-refresh check or next-change lookup is retried this many times, backing off, before the view is flagged as possibly out of date. */
 const MAX_REFRESH_RETRIES = 5
 const REFRESH_RETRY_MS = 5_000
+// A query with no answer by now has hung; give up so the spinner stops and Refresh is offered.
+const QUERY_TIMEOUT_MS = 30_000
 
 interface LoopCustomViewProps {
 	workspaceId: string
@@ -131,7 +133,9 @@ function ViewFrame({
 			pendingRef.current += 1
 			setRefreshing(true)
 			try {
-				const result = await api.data.query(workspaceId, spec)
+				const result = await api.data.query(workspaceId, spec, {
+					signal: AbortSignal.timeout(QUERY_TIMEOUT_MS),
+				})
 				if (result.rows_truncated || result.groups_truncated) setPartial(true)
 				answeredAtRef.current.set(key, writeCachedResult(workspaceId, key, result))
 				syncUpdatedAt()
@@ -409,7 +413,7 @@ function ViewFrame({
 
 	return (
 		<>
-			{(refreshing || updatedAt !== null || refreshFailed || queryFailed) && (
+			{(refreshing || updatedAt !== null || refreshFailed || queryFailed || stale) && (
 				<div
 					className="mb-2 flex items-center justify-end gap-1.5 text-xs text-muted-foreground"
 					aria-live="polite"
@@ -422,9 +426,9 @@ function ViewFrame({
 								? 'Refreshing…'
 								: ''}
 					</span>
-					{(refreshFailed || queryFailed) && !refreshing && (
+					{(refreshFailed || queryFailed || stale) && !refreshing && (
 						<>
-							<span className="text-error">Refresh failed</span>
+							{(refreshFailed || queryFailed) && <span className="text-error">Refresh failed</span>}
 							<Button type="button" variant="ghost" size="sm" onClick={() => void refreshAll()}>
 								<RefreshCw className="size-3" aria-hidden="true" />
 								Refresh

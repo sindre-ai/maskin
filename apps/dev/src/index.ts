@@ -4,7 +4,7 @@ import type { Server } from 'node:http'
 import path from 'node:path'
 import { serve } from '@hono/node-server'
 import type { NodeWebSocket } from '@hono/node-ws'
-import { createDb, syncAgentServersFromEnv } from '@maskin/db'
+import { DEFAULT_POOL_SIZE, createDb, syncAgentServersFromEnv } from '@maskin/db'
 import { actors, sessions } from '@maskin/db/schema'
 import { PgNotifyBridge } from '@maskin/realtime'
 import { S3StorageProvider } from '@maskin/storage'
@@ -79,7 +79,30 @@ const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL
 if (!databaseUrl) {
 	throw new Error('POSTGRES_URL or DATABASE_URL environment variable is required')
 }
-const db = createDb(databaseUrl, { onQuery: recordDbTime })
+// Say when the pool fills up and when a query gets no answer, so a "whole app hangs" incident
+// shows whether queries were queuing behind connections that never came back.
+const POOL_SATURATED_LOG_INTERVAL_MS = 30_000
+let lastPoolSaturatedLogAt = 0
+const db = createDb(databaseUrl, {
+	onQuery: recordDbTime,
+	onQueryTimeout: ({ timeoutMs, inFlight, sql }) => {
+		logger.error('DB query got no response', {
+			timeoutMs,
+			inFlight,
+			poolSize: DEFAULT_POOL_SIZE,
+			sql,
+		})
+	},
+	onSaturated: (inFlight) => {
+		const now = Date.now()
+		if (now - lastPoolSaturatedLogAt < POOL_SATURATED_LOG_INTERVAL_MS) return
+		lastPoolSaturatedLogAt = now
+		logger.warn('DB pool saturated: new queries wait for a connection', {
+			inFlight,
+			poolSize: DEFAULT_POOL_SIZE,
+		})
+	},
+})
 
 // A malformed KEYCHAIN_MASTER_KEY must stop the process here, not surface on the
 // first credential read.
