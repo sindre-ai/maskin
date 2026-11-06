@@ -200,20 +200,35 @@ struct LoopDetailContent: View {
 
 	@ViewBuilder
 	private var performance: some View {
-		LoopStatsSection(loop: store.loop, failedSteps: store.failedSteps())
-		LoopHealthSection(loop: store.loop, activity: store.activity, loaded: store.phase == .loaded)
-		LoopRunChart(activity: store.activity, loaded: store.phase == .loaded)
+		// Unknown is not empty: with the activity unread, the tiles and chart would show zeros.
+		if store.failed(.activity) {
+			blockError(.activity)
+		} else {
+			LoopStatsSection(loop: store.loop, failedSteps: store.failedSteps())
+			LoopHealthSection(loop: store.loop, activity: store.activity, loaded: store.phase == .loaded)
+			LoopRunChart(activity: store.activity, loaded: store.phase == .loaded)
+		}
 	}
 
 	@ViewBuilder
 	private var setup: some View {
 		LoopAboutSection(loop: store.loop)
-		LoopTriggersSection(steps: store.steps, onOpenTrigger: onOpenTrigger)
+		if store.failed(.steps) {
+			blockError(.steps)
+		} else {
+			LoopTriggersSection(steps: store.steps, onOpenTrigger: onOpenTrigger)
+		}
 		LoopStageSection(store: store)
 		LoopAgentsSection(names: store.loop.agentIDs.compactMap { store.directory.name($0) })
 		LoopScheduleSection(store: store)
 		LoopConditionsSection(loop: store.loop)
 		setupFooter
+	}
+
+	private func blockError(_ block: LoopDetailStore.Block) -> some View {
+		LoopBlockError(message: block.message, isRetrying: store.isRetrying) {
+			Task { await store.retry() }
+		}
 	}
 
 	private func emptyNote(_ text: String) -> some View {
@@ -235,6 +250,7 @@ struct LoopDetailContent: View {
 			if let notice = store.notice {
 				FormError(notice).onTapGesture { store.notice = nil }
 			}
+			if store.failed(.description) { blockError(.description) }
 			if let install, install.hasUpdate {
 				Text(
 					install.isForked
@@ -262,7 +278,9 @@ struct LoopDetailContent: View {
 	private var activity: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 			FlowSectionHeader("Recent activity")
-			if store.activity.isEmpty {
+			if store.failed(.activity) {
+				blockError(.activity)
+			} else if store.activity.isEmpty {
 				Text(store.phase == .loaded ? "Nothing has run yet." : "")
 					.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
 			} else {

@@ -4,6 +4,7 @@ import { useDocumentTitle } from '@/hooks/use-document-title'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, Outlet, createFileRoute, useMatchRoute } from '@tanstack/react-router'
+import { useEffect, useRef } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings')({
 	component: SettingsLayout,
@@ -66,6 +67,18 @@ function SettingsLayout() {
 			items: [...ACCESS_NAV, keychainNavItem, ...(workspace?.enterprise ? [keysNavItem] : [])],
 		},
 	]
+	const isItemActive = (item: SettingsNavItem) =>
+		item.exact
+			? !!matchRoute({ to: item.to, params: { workspaceId } })
+			: !!matchRoute({ to: item.to, params: { workspaceId }, fuzzy: true })
+	const activeTo = groups.flatMap((group) => group.items).find(isItemActive)?.to
+	const activeRef = useRef<HTMLAnchorElement>(null)
+
+	// On a narrow screen the nav is a scrolling strip; keep the active item in view.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: re-run when the active item changes
+	useEffect(() => {
+		activeRef.current?.scrollIntoView?.({ inline: 'nearest', block: 'nearest' })
+	}, [activeTo])
 
 	return (
 		<div className="mx-auto w-full max-w-6xl">
@@ -83,9 +96,7 @@ function SettingsLayout() {
 								</div>
 								<ul className="flex gap-0.5 md:flex-col">
 									{group.items.map((item) => {
-										const isActive = item.exact
-											? !!matchRoute({ to: item.to, params: { workspaceId } })
-											: !!matchRoute({ to: item.to, params: { workspaceId }, fuzzy: true })
+										const isActive = item.to === activeTo
 										return (
 											<li key={item.to}>
 												<Link

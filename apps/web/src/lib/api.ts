@@ -14,6 +14,9 @@ import type {
 	ListLoopsResponse,
 	LoopSummary,
 	NeededTool,
+	OauthAuthorizeParams,
+	OauthGrantRow,
+	OauthPreviewResponse,
 	ObjectFacetsResponse,
 	SafeMetadata,
 	SearchResponse,
@@ -36,6 +39,9 @@ export type {
 	FileProposalDto,
 	ListLoopsResponse,
 	LoopSummary,
+	OauthAuthorizeParams,
+	OauthGrantRow,
+	OauthPreviewResponse,
 	SendRoundInput,
 	SendRoundResponse,
 	TriggerResponse,
@@ -83,6 +89,8 @@ export class ApiError extends Error {
 	retryAfterMs?: number
 	/** Seconds from the response's `Retry-After` header, when the server sent one (429s). */
 	retryAfter?: number
+	/** The verified return link on an OAuth authorize refusal, when the server sent one. Never built in the browser. */
+	redirectUrl?: string
 	/** On a 409 from accepting proposed changes: the changes that no longer match the file. */
 	staleChangeIds?: string[]
 
@@ -180,6 +188,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		let code: string | undefined
 		let planCapContext: PlanCapContext | undefined
 		let retryAfterMs: number | undefined
+		let redirectUrl: string | undefined
 
 		if (typeof data.code === 'string' && typeof data.message === 'string') {
 			// Flat format used by the file-comments round route: { code, message, retryAfterMs? }
@@ -206,6 +215,11 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 					period_end: data.error.period_end ?? null,
 				}
 			}
+		} else if (typeof data.error === 'string' && typeof data.error_description === 'string') {
+			// OAuth authorize refusals: { error: <fixed code>, error_description, redirect_url? }
+			message = data.error_description
+			code = data.error
+			if (typeof data.redirect_url === 'string') redirectUrl = data.redirect_url
 		} else if (typeof data.error === 'string') {
 			// TODO: Remove legacy string format fallback once all API responses use structured errors
 			message = data.error
@@ -229,6 +243,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 			err.retryAfterSeconds = data.retry_after_seconds
 		}
 		err.retryAfterMs = retryAfterMs
+		err.redirectUrl = redirectUrl
 		if (Array.isArray(data.staleChangeIds)) err.staleChangeIds = data.staleChangeIds
 		const retryAfter = Number(res.headers.get('Retry-After'))
 		if (Number.isFinite(retryAfter) && retryAfter > 0) err.retryAfter = retryAfter
@@ -1153,6 +1168,22 @@ export const api = {
 			request<ImportResponse>(`/imports/${id}/confirm`, { method: 'POST', workspaceId }),
 	},
 
+	/** The Claude connector: the consent page's check, approve and deny, and the person's own connections. */
+	oauth: {
+		preview: (params: OauthAuthorizeParams) =>
+			request<OauthPreviewResponse>(
+				`/oauth/authorize/preview?${new URLSearchParams(
+					Object.entries(params).filter((entry): entry is [string, string] => !!entry[1]),
+				)}`,
+			),
+		approve: (body: OauthAuthorizeParams & { workspace_id: string }) =>
+			request<{ redirect_url: string }>('/oauth/authorize/approve', { method: 'POST', body }),
+		deny: (body: OauthAuthorizeParams & { workspace_id?: string }) =>
+			request<{ redirect_url: string }>('/oauth/authorize/deny', { method: 'POST', body }),
+		listGrants: () => request<OauthGrantRow[]>('/oauth/grants'),
+		revokeGrant: (id: string) =>
+			request<{ revoked: true }>(`/oauth/grants/${id}`, { method: 'DELETE' }),
+	},
 	claudeOauth: {
 		import: (workspaceId: string, tokens: ClaudeOAuthImportInput) =>
 			request<ClaudeOAuthExchangeResponse>('/claude-oauth/import', {

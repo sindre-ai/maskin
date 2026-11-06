@@ -17,6 +17,7 @@ import {
 	liveActivityTokens,
 	notificationPreferences,
 	notifications,
+	oauthGrants,
 	readState,
 	slackUserLinks,
 	starState,
@@ -235,6 +236,9 @@ app.openapi(deleteRoute, async (c) => {
 		// password and email mean no sign-in and a free email.
 		const revokedKeyHashes = await revokeActorKeys(tx, actorId)
 		await tx.delete(apiKeys).where(eq(apiKeys.actorId, actorId))
+		// A Claude connection is a credential for this person. The actor row stays, so the grant's
+		// cascade never fires: delete it, and its codes and tokens go with it.
+		await tx.delete(oauthGrants).where(eq(oauthGrants.actorId, actorId))
 		await tx
 			.update(actors)
 			.set({

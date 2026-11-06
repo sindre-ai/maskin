@@ -33,6 +33,25 @@ describe('parseFeatureFlagConfig', () => {
 	})
 })
 
+describe('mcp-oauth-consent', () => {
+	it('is registered and off by default, for testers and everyone else', () => {
+		expect(Object.values(FLAGS)).toContain('mcp-oauth-consent')
+		expect(FLAGS.MCP_OAUTH_CONSENT).toBe('mcp-oauth-consent')
+
+		const c = config({})
+		for (const actor of [TESTER, NON_TESTER]) {
+			expect(resolveFlags(actor, c)[FLAGS.MCP_OAUTH_CONSENT]).toBe(false)
+		}
+	})
+
+	it('is on only for a listed tester once it is listed', () => {
+		const c = config({ FF_TESTER_FEATURES: FLAGS.MCP_OAUTH_CONSENT, FF_TESTER_ACTOR_IDS: TESTER })
+
+		expect(resolveFlags(TESTER, c)[FLAGS.MCP_OAUTH_CONSENT]).toBe(true)
+		expect(resolveFlags(NON_TESTER, c)[FLAGS.MCP_OAUTH_CONSENT]).toBe(false)
+	})
+})
+
 describe('resolveFlags', () => {
 	// Asserts the SHAPE of a live-registry resolve, not a fixed flag set: every
 	// registered id resolves to a boolean, and an id absent from

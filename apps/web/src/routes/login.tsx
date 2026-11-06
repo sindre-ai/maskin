@@ -60,7 +60,11 @@ function LoginPage() {
 			<div className="w-full max-w-sm space-y-6">
 				<div className="text-center">
 					<h1 className="text-[26px] font-bold tracking-tight">Welcome back</h1>
-					<p className="mt-1 text-sm text-muted-foreground">Sign in with your email and password</p>
+					<p className="mt-1 text-sm text-muted-foreground">
+						{redirect?.startsWith('/oauth/authorize')
+							? 'Sign in to continue connecting your app to Maskin.'
+							: 'Sign in with your email and password'}
+					</p>
 				</div>
 
 				<form onSubmit={handleSubmit} className="space-y-4">

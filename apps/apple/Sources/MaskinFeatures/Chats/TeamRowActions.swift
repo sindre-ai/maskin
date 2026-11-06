@@ -101,10 +101,10 @@ struct TeamRowMenuItems: View {
 				action: actions.toggleRead)
 		}
 		if let earlier = actions.moveEarlier {
-			Button("Move earlier", systemImage: "arrow.left", action: earlier)
+			Button("Move earlier", systemImage: "arrow.up", action: earlier)
 		}
 		if let later = actions.moveLater {
-			Button("Move later", systemImage: "arrow.right", action: later)
+			Button("Move later", systemImage: "arrow.down", action: later)
 		}
 		if actions.canArchive {
 			Button("Archive", systemImage: "archivebox", action: actions.archive)
