@@ -102,8 +102,12 @@ describe('provisionWorkspace — workspace_created owner_email_domain', () => {
 		const call = capturePosthogEventMock.mock.calls.find(
 			([event]) => event === 'first_agent_created',
 		)
-		expect(call?.[1]).toBe(ws.id)
-		expect(call?.[2]).toMatchObject({ workspace_id: ws.id, source: 'onboarding' })
+		expect(call?.[1]).toBe('owner-actor-id')
+		expect(call?.[2]).toMatchObject({
+			workspace_id: ws.id,
+			actor_id: 'owner-actor-id',
+			source: 'onboarding',
+		})
 	})
 
 	it('sends the event without the property when the owner has no email', async () => {

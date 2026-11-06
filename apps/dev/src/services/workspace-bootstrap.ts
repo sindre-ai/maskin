@@ -884,7 +884,7 @@ export async function provisionWorkspace(params: {
 	// The default agents are the workspace's first agents, made by onboarding.
 	void trackFirstAgentCreated({
 		workspaceId: workspace.id,
-		distinctId: workspace.id,
+		distinctId: ownerActorId,
 		agentId: chiefOfStaffId,
 		source: 'onboarding',
 	})
