@@ -14,6 +14,16 @@ import Testing
 		}
 	}
 
+	@Test func digitsInsideALinkAreNotScanned() {
+		#expect(linked("Check [the file](https://maskin.io/ws/files/12345678901234) now").isEmpty)
+		#expect(linked("Ring +45 12 34 56 78 or see [it](https://maskin.io/files/1234567)").count == 1)
+	}
+
+	@Test func shortDigitRunsSkipTheDetector() {
+		#expect(!PhoneNumberLink.hasPhoneSizedDigitRun("step 12 of 4be7de57 and v2.1"))
+		#expect(PhoneNumberLink.hasPhoneSizedDigitRun("+45 12 34 56 78"))
+	}
+
 	@Test func aDanishNumberWithACountryCodeIsALink() {
 		let result = linked("Ring til Jens på +45 12 34 56 78 i dag")
 		#expect(result.count == 1)

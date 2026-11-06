@@ -4,7 +4,7 @@ import type { Server } from 'node:http'
 import path from 'node:path'
 import { serve } from '@hono/node-server'
 import type { NodeWebSocket } from '@hono/node-ws'
-import { createDb, syncAgentServersFromEnv } from '@maskin/db'
+import { DEFAULT_POOL_SIZE, createDb, syncAgentServersFromEnv } from '@maskin/db'
 import { actors, sessions } from '@maskin/db/schema'
 import { PgNotifyBridge } from '@maskin/realtime'
 import { S3StorageProvider } from '@maskin/storage'
@@ -54,6 +54,7 @@ import { LoopVersionPusher } from './services/loop-version-pusher'
 import { MeetTranscriptReconciler } from './services/meet-transcript-reconciler'
 import { MeetWatchRenewer } from './services/meet-watch-renewer'
 import { NotificationPushFanout } from './services/notification-push'
+import { OAuthSweeper } from './services/oauth-sweeper'
 import { OrphanThreadDetector } from './services/orphan-thread-detector'
 import { PosthogAccountSync } from './services/posthog-account-sync'
 import { ResendDomainVerifier } from './services/resend-domain-verifier'
@@ -80,7 +81,30 @@ const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL
 if (!databaseUrl) {
 	throw new Error('POSTGRES_URL or DATABASE_URL environment variable is required')
 }
-const db = createDb(databaseUrl, { onQuery: recordDbTime })
+// Say when the pool fills up and when a query gets no answer, so a "whole app hangs" incident
+// shows whether queries were queuing behind connections that never came back.
+const POOL_SATURATED_LOG_INTERVAL_MS = 30_000
+let lastPoolSaturatedLogAt = 0
+const db = createDb(databaseUrl, {
+	onQuery: recordDbTime,
+	onQueryTimeout: ({ timeoutMs, inFlight, sql }) => {
+		logger.error('DB query got no response', {
+			timeoutMs,
+			inFlight,
+			poolSize: DEFAULT_POOL_SIZE,
+			sql,
+		})
+	},
+	onSaturated: (inFlight) => {
+		const now = Date.now()
+		if (now - lastPoolSaturatedLogAt < POOL_SATURATED_LOG_INTERVAL_MS) return
+		lastPoolSaturatedLogAt = now
+		logger.warn('DB pool saturated: new queries wait for a connection', {
+			inFlight,
+			poolSize: DEFAULT_POOL_SIZE,
+		})
+	},
+})
 
 // A malformed KEYCHAIN_MASTER_KEY must stop the process here, not surface on the
 // first credential read.
@@ -276,6 +300,9 @@ logger.info('PostHog account sync started')
 const voiceToolCallLogCleaner = new VoiceToolCallLogCleaner(db)
 voiceToolCallLogCleaner.start()
 logger.info('Voice tool call log cleaner started')
+const oauthSweeper = new OAuthSweeper(db)
+oauthSweeper.start()
+logger.info('OAuth sweeper started')
 
 // §7.6 — session-retry scheduler. Ticks every 30s, reads sessions_retry_at_idx
 // for due retry_at rows and fires startSession({retryOf, attemptNumber:N+1,
@@ -499,6 +526,7 @@ const shutdown = async (signal: string) => {
 	sessionDispatchQueue.stop()
 	stopMcpRateLimit()
 	purgeIdempotencyJob.stop()
+	oauthSweeper.stop()
 	keychainUndoSweeperJob.stop()
 	fileUploadReaperJob.stop()
 	upgradeLegacyCredentialsJob.stop()

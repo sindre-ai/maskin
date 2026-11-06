@@ -232,6 +232,73 @@ struct LoopDetailStoreTests {
 		#expect(store.phase == .failed("offline"))
 	}
 
+	@Test("a failing steps read says so for that block only, and Try again brings it back")
+	func stepsFail() async {
+		let (store, api) = await make()
+		await api.setFailSteps(true)
+		await store.start()
+		#expect(store.failedBlocks == [.steps])
+		#expect(store.activity.count == 2)
+		#expect(store.problem() == nil)
+		#expect(store.phase == .failed("offline"))
+
+		await api.setFailSteps(false)
+		await store.retry()
+		#expect(store.failedBlocks.isEmpty)
+		#expect(store.steps.count == 2)
+		#expect(store.phase == .loaded)
+		#expect(!store.isRetrying)
+	}
+
+	@Test("a failing activity read says so for that block only")
+	func activityFails() async {
+		let (store, api) = await make()
+		await api.setFailFeed(true)
+		await store.start()
+		#expect(store.failedBlocks == [.activity])
+		#expect(store.steps.count == 2)
+	}
+
+	@Test("a failing loop read says so for the description")
+	func descriptionFails() async {
+		let (store, api) = await make()
+		await api.setFailLoops(true)
+		await store.start()
+		#expect(store.failedBlocks == [.description])
+		#expect(store.steps.count == 2)
+		#expect(store.activity.count == 2)
+	}
+
+	@Test("a read that gets no answer in time turns into a message, and the others still load")
+	func hangGivesUp() async {
+		let row = loopRow("a")
+		let api = FakeLoopsAPI([row])
+		await api.setHangSteps(true)
+		await api.setFeed([LoopActivityEntry(id: "1", action: "trigger_fired", entityType: "trigger")])
+		let store = LoopDetailStore(loop: row, api: api, events: nil, giveUpAfter: .milliseconds(100))
+		await store.start()
+		#expect(store.failedBlocks == [.steps])
+		#expect(store.activity.count == 1)
+	}
+
+	@Test("a block that fails after it loaded keeps what it showed")
+	func keepsWhatItShowed() async {
+		let (store, api) = await make()
+		await store.start()
+		await api.setFailSteps(true)
+		await store.refresh()
+		#expect(store.failedBlocks == [.steps])
+		#expect(store.steps.count == 2)
+		#expect(store.phase == .loaded)
+	}
+
+	@Test("the messages use the web wording")
+	func wording() {
+		#expect(LoopDetailStore.Block.description.message == "Couldn't load the description and activity. The server may be busy.")
+		#expect(LoopDetailStore.Block.steps.message == "Couldn't load the steps of this loop. The server may be busy.")
+		#expect(LoopDetailStore.Block.activity.message == "Couldn't load the loop's recent activity. The server may be busy.")
+	}
+
 	@Test("step summaries describe the trigger in words")
 	func stepSummary() {
 		let step = LoopStep(

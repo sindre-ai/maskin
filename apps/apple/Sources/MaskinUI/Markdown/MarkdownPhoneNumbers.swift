@@ -59,10 +59,25 @@ public enum PhoneNumberLink {
 			&& !dial.dropFirst().contains("+")
 	}
 
+	/// Whether `text` holds seven or more digits in one stretch that only digits and phone separators
+	/// ("+ - . ( )" and spaces) interrupt. Anything shorter is never a number worth the detector.
+	static func hasPhoneSizedDigitRun(_ text: String) -> Bool {
+		var digits = 0
+		for ch in text.unicodeScalars {
+			if ch.properties.numericType != nil {
+				digits += 1
+				if digits >= 7 { return true }
+			} else if !"+-.() \u{00A0}".unicodeScalars.contains(ch) {
+				digits = 0
+			}
+		}
+		return false
+	}
+
 	/// The phone numbers in `text`, in order.
 	static func matches(in text: String) -> [Match] {
 		// Most text has no digits at all; skip the detector for it.
-		guard text.contains(where: \.isNumber), let detector else { return [] }
+		guard hasPhoneSizedDigitRun(text), let detector else { return [] }
 		let whole = NSRange(text.startIndex..., in: text)
 		var found: [Match] = []
 		detector.enumerateMatches(in: text, options: [], range: whole) { result, _, _ in

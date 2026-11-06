@@ -27,7 +27,8 @@
 //                               different operation)
 //
 // `list_actors` / `list_workspaces` / `list_triggers` are omitted deliberately:
-// their `structuredContent` carries only the `heroCard.objects` array (sized
+// their `structuredContent` carries only the `heroCard.objects` array (plus,
+// on `list_triggers`, the page block and `next_cursor`; sized
 // to whatever the cursor walk returned this page — up to LIST_ENDPOINT_MAX_LIMIT
 // - 1), not a separately-paginated rich row array like the tools above.
 // `list_actors` does fold a bounded amount of extra data onto each row

@@ -5,6 +5,65 @@ const DEFAULT_HOST = 'https://eu.i.posthog.com'
 
 let initialized = false
 
+const AUTHORIZE_PATH = '/oauth/authorize'
+
+function scrubUrl(raw: unknown): unknown {
+	if (typeof raw !== 'string') return raw
+	try {
+		const url = new URL(raw)
+		if (url.pathname === AUTHORIZE_PATH) return `${url.origin}${url.pathname}`
+		// The login detour carries the whole authorize address in its redirect parameter.
+		if (url.searchParams.get('redirect')?.startsWith(AUTHORIZE_PATH)) {
+			url.searchParams.delete('redirect')
+			return url.toString()
+		}
+	} catch {
+		// Not a URL: leave it.
+	}
+	return raw
+}
+
+// Every place posthog-js puts a page address or referrer: the page view itself, the session entry
+// (`$session_entry_*`), and the first-visit and session-entry person properties in `$set` / `$set_once`.
+const URL_KEYS = [
+	'$current_url',
+	'$referrer',
+	'$session_entry_url',
+	'$session_entry_referrer',
+	'$initial_current_url',
+	'$initial_referrer',
+]
+
+function scrubBag(bag: unknown): void {
+	if (!bag || typeof bag !== 'object') return
+	const record = bag as Record<string, unknown>
+	for (const key of URL_KEYS) {
+		if (key in record) record[key] = scrubUrl(record[key])
+	}
+}
+
+/**
+ * The consent page's address holds the sign-in request (state, code challenge, return address), which must
+ * not leave the browser. Drops the query string from every page URL and referrer an event carries when it is
+ * the consent page, or the login detour to it.
+ */
+export function scrubAuthorizeUrls<
+	T extends {
+		properties?: Record<string, unknown>
+		$set?: Record<string, unknown>
+		$set_once?: Record<string, unknown>
+	} | null,
+>(event: T): T {
+	if (!event) return event
+	const props = event.properties
+	scrubBag(props)
+	scrubBag(props?.$set)
+	scrubBag(props?.$set_once)
+	scrubBag(event.$set)
+	scrubBag(event.$set_once)
+	return event
+}
+
 // Every web event says where it came from and who acted. The web is only ever
 // used by a signed-in or signing-up person, so an event with no actor_type yet
 // (pageviews before the workspace mounts, sign-up events) is a human's. The
@@ -30,6 +89,17 @@ export function withSharedProperties<
 	} as T
 }
 
+// What posthog-js runs on every event before it leaves the browser.
+export function beforeSend<
+	T extends {
+		properties?: Record<string, unknown>
+		$set?: Record<string, unknown>
+		$set_once?: Record<string, unknown>
+	},
+>(event: T | null): T | null {
+	return scrubAuthorizeUrls(withSharedProperties(event))
+}
+
 export function initPosthog(): void {
 	if (initialized) return
 	const key = import.meta.env.VITE_POSTHOG_KEY
@@ -44,7 +114,7 @@ export function initPosthog(): void {
 			capture_pageleave: false,
 			capture_performance: false,
 			autocapture: false,
-			before_send: withSharedProperties,
+			before_send: beforeSend,
 		})
 		initialized = true
 	} catch {

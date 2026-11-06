@@ -172,8 +172,8 @@ describe('tool-name alias cap', () => {
 		expect(Object.keys(TOOL_NAME_ALIASES).length).toBeLessThanOrEqual(MAX_LISTED_TOOL_ALIASES)
 	})
 
-	it('has exactly one today: run_agent', () => {
-		expect(Object.keys(TOOL_NAME_ALIASES)).toEqual(['run_agent'])
+	it('has exactly two today: run_agent and search_objects (2 of 10)', () => {
+		expect(Object.keys(TOOL_NAME_ALIASES)).toEqual(['run_agent', 'search_objects'])
 	})
 
 	it('only points at tools that exist', () => {
