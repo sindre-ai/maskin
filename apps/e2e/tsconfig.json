@@ -11,5 +11,5 @@
 		"isolatedModules": true,
 		"noEmit": true
 	},
-	"include": ["src/**/*.ts", "playwright.config.ts"]
+	"include": ["src/**/*.ts", "demo-shots/**/*.ts", "playwright.config.ts"]
 }
