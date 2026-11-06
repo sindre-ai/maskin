@@ -1910,7 +1910,7 @@ function ObjectsRoute() {
 							label="Search items"
 							debounceMs={250}
 						/>
-						<DisplayPanel {...displayPanelProps} iconOnly={isMobile} />
+						<DisplayPanel {...displayPanelProps} />
 					</>
 				}
 				scrollLocked

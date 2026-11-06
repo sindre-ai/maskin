@@ -9,12 +9,13 @@ import { useEffect, useRef, useState } from 'react'
  * The list pages' own search (Items, Flows, Agents), mounted through
  * `PageHeader` `actions` so it sits in the title row beside Display.
  *
- * From `xl` up it is the field itself. Below that there is no room for a field
- * next to the New button (at 768 and 1024 the sidebar leaves the title row about
- * 490 and 710px), so it is a search icon; a tap opens an inline field that takes
- * over the title row (not a popover), with a close control. Cmd/Ctrl+F reaches
- * the same field (it registers with `usePageSearchShortcut`), opening it first
- * where it is collapsed to the icon.
+ * Always a 32px soft circle with a search glyph (the design's collapsed search).
+ * From `xl` up a click or focus grows it in place into the field, and it folds
+ * back when it loses focus empty. Below that there is no room for a field next to
+ * the New button (at 768 and 1024 the sidebar leaves the title row about 490 and
+ * 710px), so a tap opens an inline field that takes over the title row (not a
+ * popover), with a close control. Cmd/Ctrl+F reaches the same field (it registers
+ * with `usePageSearchShortcut`), opening it first where it is collapsed.
  *
  * `debounceMs` holds typing back from `onChange` for pages whose search is a
  * server filter (Items), while the field itself stays responsive. A change of
@@ -36,6 +37,7 @@ export function PageSearchInput({
 }) {
 	const [text, setText] = useState(value)
 	const [open, setOpen] = useState(false)
+	const [wideOpen, setWideOpen] = useState(false)
 	const [row, setRow] = useState<{ left: number; top: number; width: number; height: number }>()
 	const sentRef = useRef(value)
 	const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -110,7 +112,35 @@ export function PageSearchInput({
 
 	return (
 		<>
-			<div className={cn('hidden w-56 shrink-0 xl:flex', className)}>{field(wideInputRef)}</div>
+			{/* The wide field. The input keeps its full width so it stays focusable while
+			    collapsed; the 32px clip box is what animates. */}
+			<div
+				className={cn(
+					'relative hidden h-8 shrink-0 cursor-text overflow-hidden rounded-full bg-muted transition-[width] duration-300 ease-out xl:block',
+					wideOpen || text ? 'w-56' : 'w-8 cursor-pointer',
+					className,
+				)}
+			>
+				<Search
+					size={15}
+					aria-hidden
+					className="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-muted-foreground"
+				/>
+				<Input
+					ref={wideInputRef}
+					type="search"
+					value={text}
+					onChange={(e) => handleChange(e.target.value)}
+					onFocus={() => setWideOpen(true)}
+					onBlur={() => setWideOpen(false)}
+					onKeyDown={(e) => {
+						if (e.key === 'Escape') e.currentTarget.blur()
+					}}
+					placeholder={label}
+					aria-label={label}
+					className="h-8 w-56 rounded-full border-transparent bg-transparent pl-9"
+				/>
+			</div>
 			<Button
 				type="button"
 				variant="ghost"
@@ -120,7 +150,7 @@ export function PageSearchInput({
 				ref={iconRef}
 				onClick={(e) => openCollapsed(e.currentTarget.closest('header'))}
 				className={cn(
-					'relative size-[30px] shrink-0 rounded-lg text-muted-foreground xl:hidden',
+					'relative size-8 shrink-0 rounded-full bg-muted text-muted-foreground hover:bg-muted xl:hidden',
 					text && 'text-foreground',
 				)}
 			>

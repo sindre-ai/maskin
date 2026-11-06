@@ -135,24 +135,17 @@ const OBJECT_DETAIL_ROUTE_ID = '/_authed/$workspaceId/objects/$objectId'
  * the route's own label. Detail routes keep a breadcrumb chain until their
  * screen lands and moves it into the page body, which is where v2 puts it.
  */
-export function Header() {
+/**
+ * What the title row is made of, shared by `Header` and `ScrollingPageTitle` so the two
+ * can never disagree about who draws the title.
+ *
+ * `scrollsAway` is the design's standard screen: just a title (no breadcrumb, sticky
+ * identity or title tabs). From `md:` its <h1> is drawn in the page content and scrolls
+ * away with it, while the header keeps only the buttons, floating over the content.
+ */
+function useHeaderModel() {
 	const matches = useMatches()
-	const {
-		title,
-		subtitle,
-		actions,
-		leadingActions,
-		titleTabs,
-		stickyIdentity,
-		crumb,
-		newMenuPrimaryOverride,
-		newMenuDisabled,
-		hideTitle,
-		gutter,
-	} = usePageHeader()
-	const { workspaceId } = useWorkspace()
-	const navigate = useNavigate()
-	const router = useRouter()
+	const { title, crumb, stickyIdentity, titleTabs } = usePageHeader()
 
 	// Find the leaf (last non-hidden) match
 	const leafMatch = [...matches].reverse().find((m) => !isHiddenRouteId(m.routeId))
@@ -180,12 +173,58 @@ export function Header() {
 		crumbs.push({ label: title ?? leafConfig.label, path: leafMatch.pathname })
 	}
 
+	const isDetail = crumbs.length > 1
+	const headingText = title ?? leafConfig?.label
+	const scrollsAway = !crumb && !stickyIdentity && !titleTabs && !isDetail && !!headingText
+	return { leafMatch, crumbs, isDetail, headingText, scrollsAway }
+}
+
+/**
+ * The screen's <h1> for a `scrollsAway` screen, drawn first in the page content so it
+ * scrolls off with it (design). Hidden below `md:`, where the header row draws it.
+ */
+export function ScrollingPageTitle() {
+	const { subtitle, hideTitle } = usePageHeader()
+	const { headingText, scrollsAway } = useHeaderModel()
+	if (!scrollsAway) return null
+	return (
+		// -mt-3 undoes 12px of the scroll area's 32px top padding so the row lines up with the
+		// floating buttons at 20px; min-h keeps the row when the page draws its own title.
+		<div className="hidden min-h-10 flex-none items-baseline gap-2 md:-mt-3 md:mb-4 md:flex">
+			{!hideTitle && headingText && (
+				<>
+					<h1 className="page-title min-w-0 truncate md:py-0.5">{headingText}</h1>
+					{subtitle && (
+						<span className="min-w-0 truncate text-[11.5px] text-muted-foreground">{subtitle}</span>
+					)}
+				</>
+			)}
+		</div>
+	)
+}
+
+export function Header() {
+	const {
+		subtitle,
+		actions,
+		leadingActions,
+		titleTabs,
+		stickyIdentity,
+		crumb,
+		newMenuPrimaryOverride,
+		newMenuDisabled,
+		hideTitle,
+		gutter,
+	} = usePageHeader()
+	const { workspaceId } = useWorkspace()
+	const navigate = useNavigate()
+	const router = useRouter()
+	const { leafMatch, crumbs, isDetail, headingText, scrollsAway } = useHeaderModel()
+
 	// Object-detail pages drop the "Create an object" section from the New
 	// menu — landing users on the generic object picker is disorienting when
 	// they're mid-edit on a specific object. New chat/loop/agent/search stay.
 	const isObjectDetail = leafMatch?.routeId === OBJECT_DETAIL_ROUTE_ID
-	const isDetail = crumbs.length > 1
-	const headingText = title ?? leafConfig?.label
 
 	// A page that publishes its own crumb gets the mockup's compact detail bar
 	// (1033–1039): `Parent › Name` at 12px and the page's own actions, with no
@@ -251,6 +290,11 @@ export function Header() {
 				'relative z-10 flex flex-none flex-wrap items-center gap-2 gap-y-1.5 bg-background px-4 pt-[calc(env(safe-area-inset-top)+1.25rem)] pb-1.5 md:px-8',
 				// v16: the first content row sits 16px under the title (the shell pads it 32px).
 				'md:-mb-5',
+				// Standard screens (design): from md the title scrolls away with the page, so the header
+				// takes no height and keeps only the buttons, floating over the content with no
+				// background. Only the buttons take clicks; the rest of the strip lets them through.
+				scrollsAway &&
+					'md:pointer-events-none md:absolute md:inset-x-0 md:top-0 md:mb-0 md:justify-end md:bg-transparent md:pt-6 md:pb-0',
 				gutter === 'wide' ? 'lg:px-12' : 'lg:px-7',
 			)}
 		>
@@ -307,6 +351,8 @@ export function Header() {
 						// A page with title tabs/search wants them right beside the title,
 						// so the title block stops growing and the controls take the slack.
 						titleTabs ? 'shrink' : 'flex-1',
+						// From md the scrolling title in the page content draws it instead.
+						scrollsAway && 'md:hidden',
 					)}
 				>
 					{/* hideTitle: a two-pane page draws its own title; the context's
@@ -327,7 +373,12 @@ export function Header() {
 			    absorbs free space before flex-grow does, so a spacer would starve the
 			    zero-basis title above. It still right-aligns the controls when no
 			    heading or breadcrumb renders. */}
-			<div className="ml-auto flex shrink-0 items-center gap-2">
+			<div
+				className={cn(
+					'ml-auto flex shrink-0 items-center gap-2',
+					scrollsAway && 'md:pointer-events-auto',
+				)}
+			>
 				{leadingActions}
 				{actions}
 				<NewMenu

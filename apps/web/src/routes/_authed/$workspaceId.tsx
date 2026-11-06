@@ -1,7 +1,7 @@
 import { LiveCallSurface } from '@/components/agents/live-call-surface'
 import { VoiceCallHost } from '@/components/agents/voice-call-host'
 import { TrialExpiredBanner } from '@/components/billing/trial-expired-banner'
-import { Header } from '@/components/layout/header'
+import { Header, ScrollingPageTitle } from '@/components/layout/header'
 import { MobileNav } from '@/components/layout/mobile-nav'
 import { AppSidebar } from '@/components/layout/sidebar'
 import { CommandPaletteV2 } from '@/components/search/command-palette-v2'
@@ -277,6 +277,7 @@ function MainScrollArea({ children }: { children: ReactNode }) {
 			)}
 			data-scroll-root
 		>
+			<ScrollingPageTitle />
 			{children}
 		</div>
 	)

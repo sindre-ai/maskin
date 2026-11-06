@@ -91,8 +91,6 @@ export interface DisplayPanelProps {
 	// show-in-list/show-archived) to defaults. Only rendered when wired; hidden
 	// on consumers that don't opt in (same convention as the Show section).
 	onResetToDefault?: () => void
-	// Trigger appearance
-	iconOnly?: boolean
 	// Sections — surfaces that don't have a board view can opt out of the View pills.
 	showView?: boolean
 	// Custom View rail (e.g. For you: Cards | List). When set it replaces the
@@ -212,7 +210,6 @@ export function DisplayPanel({
 	onIncludeArchivedChange,
 	archivedCount,
 	onResetToDefault,
-	iconOnly = false,
 	showView = true,
 	viewChoices,
 	viewChoice,
@@ -334,41 +331,24 @@ export function DisplayPanel({
 	const trigger = (
 		<ResponsivePopover open={open} onOpenChange={setOpen}>
 			<ResponsivePopoverTrigger asChild>
-				{iconOnly ? (
-					<Button
-						variant="ghost"
-						size="icon"
-						className="h-8 w-8 relative"
-						title="Display"
-						aria-label="Display"
-					>
-						<SlidersHorizontal size={14} />
-						{hasActiveFilters && (
-							<span className="absolute -top-0.5 -right-0.5 rounded-full bg-primary text-primary-foreground text-[10px] leading-none px-1 py-0.5 min-w-[14px] text-center">
-								{activeFilterCount}
-							</span>
-						)}
-					</Button>
-				) : (
-					/* The title-row Display control (design 12 to 14): a filled muted
-					   pill with a sliders glyph before the word and no caret. The
-					   active-filter count stays — the toolbar's removable pills only
-					   cover the axes it renders, so this is the one place a filter set
-					   from anywhere is always countable. */
-					<Button
-						variant="ghost"
-						size="sm"
-						className="h-8 gap-1.5 rounded-full border border-border bg-background px-3.5 text-sm font-semibold text-foreground hover:bg-accent"
-					>
-						<SlidersHorizontal size={13} aria-hidden="true" />
-						Display
-						{hasActiveFilters && (
-							<span className="rounded-full bg-primary px-1.5 py-0.5 text-xs text-primary-foreground">
-								{activeFilterCount}
-							</span>
-						)}
-					</Button>
-				)}
+				{/* The title-row Display control (design): a 32px ringed circle with a sliders
+				    glyph, at every width. The active-filter count stays as a badge — the
+				    toolbar's removable pills only cover the axes it renders, so this is the
+				    one place a filter set from anywhere is always countable. */}
+				<Button
+					variant="ghost"
+					size="icon"
+					className="relative h-8 w-8 shrink-0 rounded-full border border-border bg-background text-foreground hover:bg-accent"
+					title="Display"
+					aria-label="Display"
+				>
+					<SlidersHorizontal size={14} aria-hidden="true" />
+					{hasActiveFilters && (
+						<span className="absolute -top-0.5 -right-0.5 rounded-full bg-primary text-primary-foreground text-[10px] leading-none px-1 py-0.5 min-w-[14px] text-center">
+							{activeFilterCount}
+						</span>
+					)}
+				</Button>
 			</ResponsivePopoverTrigger>
 			<ResponsivePopoverContent
 				align="end"

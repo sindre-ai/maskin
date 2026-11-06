@@ -460,7 +460,6 @@ export function AgentsIndexView({
 					<>
 						<PageSearchInput value={query} onChange={onQueryChange} label="Search agents" />
 						<DisplayPanel
-							iconOnly={isMobile}
 							// The current DisplayPanel derives both the Ordering and Grouping
 							// pickers from `columns`, so every property is offered as a sort and
 							// group key. Sorting and grouping both fall back to name / a flat list

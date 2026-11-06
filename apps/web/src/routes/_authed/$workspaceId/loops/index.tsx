@@ -320,7 +320,6 @@ function LoopsRoute() {
 					<>
 						<PageSearchInput value={query} onChange={setQuery} label="Search flows" />
 						<DisplayPanel
-							iconOnly={isMobile}
 							viewChoices={[
 								{ id: 'cards', label: 'Cards', icon: <LayoutList size={15} aria-hidden="true" /> },
 								{ id: 'list', label: 'List', icon: <Rows3 size={15} aria-hidden="true" /> },
