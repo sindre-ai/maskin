@@ -178,7 +178,7 @@ test.describe('Loop page — custom view', () => {
 			await expect(toggle).toBeVisible()
 			await toggle.getByRole('button', { name: 'Default' }).click()
 			await expect(frame).toHaveCount(0)
-			await expect(page.getByText('The flow, right now')).toBeVisible()
+			await expect(page.getByRole('heading', { name: 'Pipeline' })).toBeVisible()
 			await expect(page.getByText('Triage feedback', { exact: true })).toBeVisible()
 			expect(await overflow()).toBeLessThanOrEqual(0)
 		})
