@@ -23,7 +23,6 @@ import {
 	workspaceSettingsSchema,
 } from '@maskin/shared'
 import { and, eq, sql } from 'drizzle-orm'
-import { trackFirstAgentCreated } from '../lib/analytics/first-agent-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { isEnterpriseActor } from '../lib/enterprise'
 import { recordEvent } from '../lib/events/record-event'
@@ -882,10 +881,11 @@ export async function provisionWorkspace(params: {
 	})
 
 	// The default agents are the workspace's first agents, made by onboarding.
-	void trackFirstAgentCreated({
-		workspaceId: workspace.id,
-		distinctId: ownerActorId,
-		agentId: chiefOfStaffId,
+	// Agents a person adds later are counted by `agent_created` (source person).
+	void capturePosthogEvent('first_agent_created', ownerActorId, {
+		workspace_id: workspace.id,
+		actor_id: ownerActorId,
+		agent_id: chiefOfStaffId,
 		source: 'onboarding',
 	})
 
