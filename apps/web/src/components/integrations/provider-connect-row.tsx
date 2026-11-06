@@ -27,7 +27,7 @@ import type { IntegrationToolState } from '@/lib/integration-tool-state'
 import { MULTI_INSTALL_PROVIDERS } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
 import { Check, Link2, Plus } from 'lucide-react'
-import { useState } from 'react'
+import { type ReactNode, useState } from 'react'
 
 const SLACK_HISTORY_SCOPES: readonly string[] = [
 	'channels:history',
@@ -56,6 +56,7 @@ export function ProviderRow({
 	variant = 'settings',
 	reconnect = false,
 	introState,
+	introAction,
 }: {
 	provider: ProviderInfo
 	integration?: IntegrationResponse
@@ -79,6 +80,8 @@ export function ProviderRow({
 	reconnect?: boolean
 	/** Draws the quiet row of an agent intro: tighter, an outline Connect and plain state subtitles. */
 	introState?: IntegrationToolState
+	/** Chat only: shown in place of the read-only "Connected" button, e.g. an Add to agent button. */
+	introAction?: ReactNode
 }) {
 	const connect = useConnectIntegration(workspaceId)
 	const disconnect = useDisconnectIntegration(workspaceId)
@@ -210,7 +213,7 @@ export function ProviderRow({
 							// The intro's row already warns and offers Reconnect; a disabled
 							// "Connected" beside it would say the opposite.
 							introState && needsReconnect ? null : (
-								<ConnectedButton />
+								introAction ?? <ConnectedButton />
 							)
 						) : (
 							<ViewerTooltip>
@@ -556,6 +559,7 @@ export function ProviderConnectRow({
 	variant = 'settings',
 	reconnect,
 	introState,
+	introAction,
 }: {
 	provider: ProviderInfo
 	/** This provider's active integrations in the workspace. */
@@ -566,6 +570,7 @@ export function ProviderConnectRow({
 	reconnect?: boolean
 	/** The quiet row of an agent intro; see ProviderRow. */
 	introState?: IntegrationToolState
+	introAction?: ReactNode
 }) {
 	const [apiKeyOpen, setApiKeyOpen] = useState(false)
 	const [apiKey, setApiKey] = useState('')
@@ -616,6 +621,7 @@ export function ProviderConnectRow({
 					variant={variant}
 					reconnect={reconnect}
 					introState={introState}
+					introAction={introAction}
 				/>
 			)}
 			{provider.authType === 'api_key' && (

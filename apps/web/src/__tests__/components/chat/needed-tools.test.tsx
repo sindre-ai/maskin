@@ -16,6 +16,7 @@ vi.mock('@tanstack/react-router', () => ({
 
 let providers: ProviderInfo[] | undefined
 let integrations: IntegrationResponse[] | undefined
+let canGiveAccess = false
 let agentTools: { mcpServers?: Record<string, unknown> } | undefined
 
 vi.mock('@/hooks/use-integrations', () => ({
@@ -23,6 +24,9 @@ vi.mock('@/hooks/use-integrations', () => ({
 	useIntegrations: () => ({ data: integrations }),
 }))
 vi.mock('@/hooks/use-actors', () => ({ useActor: () => ({ data: { tools: agentTools } }) }))
+vi.mock('@/components/chat/add-to-agent-button', () => ({
+	useCanGiveAgentAccess: () => () => canGiveAccess,
+}))
 // The card has its own tests; here it stands in for "a row".
 vi.mock('@/components/chat/integration-connect-card', () => ({
 	IntegrationConnectCard: ({ provider }: { provider: string }) => (
@@ -72,6 +76,7 @@ describe('NeededTools', () => {
 		]
 		integrations = []
 		agentTools = { mcpServers: {} }
+		canGiveAccess = false
 	})
 
 	it('draws nothing until providers and integrations have both loaded', () => {
@@ -108,6 +113,15 @@ describe('NeededTools', () => {
 
 		const link = screen.getByRole('link', { name: "Set up Scout's tools →" })
 		expect(link).toHaveAttribute('href', '/ws-1/agents/agent-1')
+	})
+
+	it('drops the tools-page link when the viewer can add the tool from its row', () => {
+		integrations = [active('linear')]
+		canGiveAccess = true
+		renderTools([{ provider: 'linear' }])
+
+		expect(screen.getByTestId('connect-card')).toBeInTheDocument()
+		expect(screen.queryByRole('link')).not.toBeInTheDocument()
 	})
 
 	it('has no tools-page link while a tool is simply not connected', () => {
