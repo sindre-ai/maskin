@@ -13,8 +13,12 @@
  *      control, and only when it says read-only — destructiveHint or a missing hint
  *      never makes a tool a read;
  *   3. a conservative name heuristic for hosted servers that send no annotations.
+ *
+ * A third kind, `outbound`, is a tool that sends something outside the workspace, or can set
+ * that off. No access level unlocks it: it is held, and the only way out is a Maskin-served
+ * tool that a person's approval gates (today Resend: `resend_send_email`).
  */
-export type ToolKind = 'read' | 'write'
+export type ToolKind = 'read' | 'write' | 'outbound'
 
 export interface ToolAnnotationsLike {
 	readOnlyHint?: boolean
@@ -66,6 +70,108 @@ const READ_TOOLS: Record<string, ReadonlySet<string>> = {
 }
 
 /**
+ * Resend, curated like Slack but the other way round: only what is listed is usable, and
+ * everything else is held as outbound. Resend loads more tools on demand (`get_more_tools`),
+ * so a name that is not listed (a new one included) is never a read or a write, it is held.
+ * A name rule is not enough for a send gate: "update-email" reschedules a send, "send-event"
+ * starts an automation, "create-api-key" hands out a key that skips the gateway.
+ *
+ * Exact names from Resend's own tool list. Read access runs the first set; Read & write also
+ * runs the second, which only changes templates, contacts and domains and cannot send.
+ */
+const RESEND_READ_TOOLS: ReadonlySet<string> = new Set([
+	'get_more_tools',
+	'get-automation',
+	'get-automation-runs',
+	'get-broadcast',
+	'get-contact',
+	'get-contact-import',
+	'get-contact-property',
+	'get-domain',
+	'get-domain-claim',
+	'get-email',
+	'get-email-metrics',
+	'get-file-upload',
+	'get-inbox',
+	'get-inbox-agent',
+	'get-inbox-draft',
+	'get-inbox-thread',
+	'get-inbox-thread-email',
+	'get-log',
+	'get-received-email',
+	'get-received-email-attachment',
+	'get-segment',
+	'get-sent-email-attachment',
+	'get-suppression',
+	'get-template',
+	'get-tiptap-json-content',
+	'get-topic',
+	'get-usage',
+	'get-webhook',
+	'get-webhook-event',
+	'list-api-keys',
+	'list-broadcast-clicked-links',
+	'list-broadcast-recipients',
+	'list-broadcasts',
+	'list-contact-imports',
+	'list-contact-properties',
+	'list-contact-segments',
+	'list-contact-topics',
+	'list-contacts',
+	'list-domains',
+	'list-emails',
+	'list-inbox-drafts',
+	'list-inbox-labels',
+	'list-inbox-thread-emails',
+	'list-inbox-threads',
+	'list-inboxes',
+	'list-logs',
+	'list-oauth-grants',
+	'list-received-email-attachments',
+	'list-received-emails',
+	'list-segments',
+	'list-sent-email-attachments',
+	'list-suppressions',
+	'list-templates',
+	'list-topics',
+	'list-webhook-event-attempts',
+	'list-webhook-events',
+	'list-webhooks',
+	'search-inbox-threads',
+])
+
+const RESEND_SAFE_WRITE_TOOLS: ReadonlySet<string> = new Set([
+	// Templates
+	'create-template',
+	'update-template',
+	'duplicate-template',
+	'publish-template',
+	'remove-template',
+	// Contacts
+	'create-contact',
+	'update-contact',
+	'remove-contact',
+	'update-contact-topics',
+	'create-contact-property',
+	'update-contact-property',
+	'remove-contact-property',
+	// Domains
+	'create-domain',
+	'update-domain',
+	'verify-domain',
+	'remove-domain',
+	'create-domain-claim',
+	'verify-domain-claim',
+])
+
+/** The Resend tool names we know and what each is, for the table in the PR and its test. */
+export function classifyResendTool(toolName: string): ToolKind {
+	if (RESEND_READ_TOOLS.has(toolName)) return 'read'
+	if (RESEND_SAFE_WRITE_TOOLS.has(toolName)) return 'write'
+	return 'outbound'
+}
+
+/**
  * Providers whose every tool only reads. Their servers send no annotations and their tool
  * names are not read verbs (keyword_ideas, domain_overview), so without this a read-only
  * agent could never use them.
@@ -103,6 +209,8 @@ export function classifyTool(
 	toolName: string,
 	annotations?: ToolAnnotationsLike | null,
 ): ToolKind {
+	// Before any hint or name rule: nothing the server says can make a Resend tool usable.
+	if (provider === 'resend') return classifyResendTool(toolName)
 	const curated = READ_TOOLS[provider]
 	if (curated) {
 		// Our own providers are fully curated: a tool outside the set is a write, and

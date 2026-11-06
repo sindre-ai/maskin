@@ -234,7 +234,7 @@ export function annotateToolsList(
 		if (tool.annotations) upstreamAnnotations.set(tool.name, tool.annotations)
 		if (isCommandGated(ctx.provider, tool.name)) return annotateCommandGatedTool(tool, ctx)
 		const kind = classifyTool(ctx.provider, tool.name, tool.annotations)
-		const usable = kind === 'read' ? canRead(ctx.access) : canWrite(ctx.access)
+		const usable = allows(ctx.access, kind)
 		const note = TOOL_DESCRIPTION_NOTES[ctx.provider]?.[tool.name]
 		const upstream = tool.description ?? ''
 		const description = note ? `${upstream} ${note}`.trim() : upstream
