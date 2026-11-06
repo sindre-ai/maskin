@@ -24,6 +24,7 @@ describe('GATEWAY_PROVIDERS', () => {
 			'gmail',
 			'google-calendar',
 			'linear',
+			'miro',
 			'posthog',
 			'resend',
 			'ubersuggest',
