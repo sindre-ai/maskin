@@ -44,6 +44,7 @@ import { useDeleteObject, useObject, useObjects, useUpdateObject } from '@/hooks
 import { useRelationships } from '@/hooks/use-relationships'
 import { useCreateTrigger, useTriggers } from '@/hooks/use-triggers'
 import { trackAskBannerDecideClicked } from '@/lib/analytics'
+import { api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { nextFireAt, nextFireLabel } from '@/lib/loop-next-fire'
@@ -182,23 +183,33 @@ function LoopDetailRoute() {
 
 	const createTrigger = useCreateTrigger(workspaceId)
 	const loopTriggerIds = loop?.triggerIds
+	const loopAgentIds = loop?.agentIds
+	const addingTriggerRef = useRef(false)
+	const [addingTrigger, setAddingTrigger] = useState(false)
 	// A new trigger starts paused with placeholder settings, tied to this flow, and opens on
 	// its own page to be filled in — the same start the create picker gives a trigger.
 	const handleAddTrigger = useCallback(async () => {
+		if (addingTriggerRef.current) return
 		const actorId = getStoredActor()?.id
 		if (!actorId) {
 			toast.error('Sign in required to add a trigger')
 			return
 		}
+		addingTriggerRef.current = true
+		setAddingTrigger(true)
+		let createdId: string | null = null
 		try {
 			const created = await createTrigger.mutateAsync({
 				name: 'New trigger',
 				type: 'cron',
 				config: { expression: '0 0 * * *' },
 				action_prompt: 'New trigger',
-				target_actor_id: actorId,
+				// The flow's own first agent when it has one, so the new step lands in a column
+				// that exists; the person adding it otherwise, as the create picker does.
+				target_actor_id: loopAgentIds?.[0] ?? actorId,
 				enabled: false,
 			})
+			createdId = created.id
 			await updateObject.mutateAsync({
 				id: loopId,
 				data: { metadata: { trigger_ids: [...(loopTriggerIds ?? []), created.id] } },
@@ -208,9 +219,14 @@ function LoopDetailRoute() {
 				params: { workspaceId, triggerId: created.id },
 			})
 		} catch {
+			// A trigger that never got tied to the flow would sit loose in the workspace.
+			if (createdId) api.triggers.delete(createdId, workspaceId).catch(() => {})
 			toast.error('Could not add a trigger')
+		} finally {
+			addingTriggerRef.current = false
+			setAddingTrigger(false)
 		}
-	}, [createTrigger, updateObject, loopId, loopTriggerIds, navigate, workspaceId])
+	}, [createTrigger, updateObject, loopId, loopTriggerIds, loopAgentIds, navigate, workspaceId])
 
 	const handleUpdateTags = useCallback(
 		async (tags: string[]) => {
@@ -708,6 +724,7 @@ function LoopDetailRoute() {
 										actors={actors}
 										loop={loop}
 										onAddTrigger={canWrite && object ? handleAddTrigger : undefined}
+										addingTrigger={addingTrigger}
 									/>
 								</div>
 							</>
