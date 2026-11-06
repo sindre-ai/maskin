@@ -521,7 +521,7 @@ function LoopDetailRoute() {
 				    is — the description IS the summary now. */}
 				{object && (
 					// Pulled up under the title, as the prototype sets the promise close to it.
-					<div className="-mt-4">
+					<div className="-mt-4 [&_p]:text-base [&_p]:leading-[1.45]">
 						<ObjectDetailBody
 							object={object}
 							workspaceId={workspaceId}
@@ -543,7 +543,7 @@ function LoopDetailRoute() {
 				<div className="mt-4 flex flex-wrap items-center gap-2">
 					<span
 						data-testid="loop-pill"
-						className="inline-flex h-8 items-center gap-2 rounded-full border border-border px-3 text-[13px] font-semibold text-foreground"
+						className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-3.5 text-[13.5px] font-semibold text-foreground"
 					>
 						<span
 							aria-hidden="true"
@@ -554,18 +554,23 @@ function LoopDetailRoute() {
 							)}
 						/>
 						{LOOP_PILL_STYLES[loop.status].label}
-						{loop.pill === 'waiting_on_you' && (
-							<span className={LOOP_PILL_STYLES.waiting_on_you.text}>· Needs you</span>
-						)}
 					</span>
 					{driver && (
 						<span
 							data-testid="loop-driver"
-							className="inline-flex h-8 items-center gap-2 rounded-full border border-border px-3 text-[13px]"
+							className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-3.5 text-[13.5px]"
 						>
 							<ActorAvatar id={driver.id} name={driver.name} type={driver.type} />
 							<span className="font-semibold text-foreground">{driver.name}</span>
 							<span className="text-muted-foreground">drives</span>
+						</span>
+					)}
+					{asksWaiting > 0 && (
+						<span
+							data-testid="loop-decisions-chip"
+							className="inline-flex h-9 items-center rounded-full border border-border px-3.5 text-[13.5px] font-semibold text-foreground"
+						>
+							{asksWaiting === 1 ? '1 decision needed' : `${asksWaiting} decisions needed`}
 						</span>
 					)}
 					<LoopTags tags={loop.tags} canWrite={canWrite && !!object} onChange={handleUpdateTags} />
@@ -574,7 +579,7 @@ function LoopDetailRoute() {
 				<div className="mt-6">
 					<LoopDetailTabs
 						tabs={[
-							{ value: 'overview', label: 'Overview' },
+							{ value: 'overview', label: 'Overview', count: asksWaiting },
 							{ value: 'items', label: 'Items', count: childIds.length },
 							{ value: 'activity', label: 'Activity' },
 							{ value: 'setup', label: 'Setup' },
@@ -679,7 +684,7 @@ function LoopDetailRoute() {
 												<p className="text-[26px] font-bold leading-none tracking-tight tabular-nums text-foreground">
 													{c.count}
 												</p>
-												<p className="mt-1.5 text-[13px] text-muted-foreground">{c.label}</p>
+												<p className="mt-1.5 text-[12.5px] text-muted-foreground">{c.label}</p>
 											</div>
 										))}
 									</section>

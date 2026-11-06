@@ -20,14 +20,14 @@ export interface LoopTabItem {
 const TAB_GAP = 24
 
 const TAB_CLASS =
-	'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 pt-2 pb-3 text-[15px] font-semibold transition-colors duration-150'
+	'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 pt-2 pb-3 text-[15px] transition-colors duration-150'
 
 function tabClass(active: boolean) {
 	return cn(
 		TAB_CLASS,
 		active
-			? 'border-foreground text-foreground'
-			: 'border-transparent text-muted-foreground hover:text-foreground',
+			? 'border-foreground font-bold text-foreground'
+			: 'border-transparent font-medium text-muted-foreground hover:text-foreground',
 	)
 }
 
