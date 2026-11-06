@@ -37,6 +37,19 @@ private func makeSandboxedWebView() -> WKWebView {
 /// all refused, matching the web's `sandbox="allow-scripts"` frame (no top navigation).
 final class HTMLWebCoordinator: NSObject, WKNavigationDelegate {
 	var loadedRevision = -1
+	private var preparing: Task<Void, Never>?
+
+	/// Cleans the page off the main thread, then loads it. A newer page replaces one still being
+	/// cleaned, so only the latest is ever loaded.
+	@MainActor
+	func load(_ html: String, into view: WKWebView) {
+		preparing?.cancel()
+		preparing = Task { [weak view] in
+			let page = await MiniAppHTML.prepareInBackground(html)
+			guard !Task.isCancelled, let view else { return }
+			view.loadHTMLString(page, baseURL: nil)
+		}
+	}
 
 	func webView(
 		_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
@@ -70,7 +83,7 @@ struct HTMLWebView: UIViewRepresentable {
 		probe?.webView = view
 		guard context.coordinator.loadedRevision != revision else { return }
 		context.coordinator.loadedRevision = revision
-		view.loadHTMLString(MiniAppHTML.prepare(html), baseURL: nil)
+		context.coordinator.load(html, into: view)
 	}
 }
 #else
@@ -92,7 +105,7 @@ struct HTMLWebView: NSViewRepresentable {
 		probe?.webView = view
 		guard context.coordinator.loadedRevision != revision else { return }
 		context.coordinator.loadedRevision = revision
-		view.loadHTMLString(MiniAppHTML.prepare(html), baseURL: nil)
+		context.coordinator.load(html, into: view)
 	}
 }
 #endif
