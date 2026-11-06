@@ -160,6 +160,7 @@ describe('capturePosthogEvent workspace privacy', () => {
 			...props,
 			surface: 'backend',
 			actor_type: 'system',
+			is_team: false,
 			$process_person_profile: false,
 		})
 	})
@@ -179,6 +180,7 @@ describe('capturePosthogEvent workspace privacy', () => {
 			count: 3,
 			surface: 'backend',
 			actor_type: 'system',
+			is_team: false,
 			$process_person_profile: false,
 		})
 	})
