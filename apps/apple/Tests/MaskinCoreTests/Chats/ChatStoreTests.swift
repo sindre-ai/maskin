@@ -504,6 +504,49 @@ struct ChatStoreTests {
 		#expect(h.store.detail?.unreadCount == 0)
 	}
 
+	@Test("a chat that ends in cards is read at the bottom like any other")
+	func chatEndingInCardsReadsAtBottom() async {
+		let task = "https://maskin.io/w/objects/11111111-1111-1111-1111-111111111111"
+		let insight = "https://maskin.io/w/objects/22222222-2222-2222-2222-222222222222"
+		let h = ChatHarness(
+			server: [
+				chatMsg(1, by: "relay", agent: true, "Here is the plan"),
+				chatMsg(2, by: "relay", agent: true, "Task: \(task)"),
+				chatMsg(3, by: "relay", agent: true, "Insight: \(insight)")
+			],
+			detail: chatConvo("c1", unread: 3, lastRead: 0))
+		var told: [Int] = []
+		h.store.onMarkedRead = { _, last in told.append(last) }
+		// Opened on the NEW divider: parked above the bottom until the reader gets there.
+		h.store.isAtBottom = false
+		await h.store.start()
+		#expect(await h.api.readCalls.isEmpty)
+		#expect(h.store.detail?.unreadCount == 3)
+		h.store.isAtBottom = true
+		await h.store.markReadIfNeeded()
+		#expect(await h.api.readCalls == [3])
+		#expect(h.store.detail?.lastReadMessageID == 3)
+		#expect(h.store.detail?.unreadCount == 0)
+		#expect(told == [3])
+	}
+
+	@Test("a chat that ends in cards reads through the cards when the reader scrolls past the last text")
+	func chatEndingInCardsReadsThroughSeen() async {
+		let task = "https://maskin.io/w/objects/11111111-1111-1111-1111-111111111111"
+		let h = ChatHarness(
+			server: [
+				chatMsg(1, by: "relay", agent: true, "Here is the plan"),
+				chatMsg(2, by: "relay", agent: true, "Task: \(task)")
+			],
+			detail: chatConvo("c1", unread: 2, lastRead: 0))
+		h.store.isAtBottom = false
+		await h.store.start()
+		h.store.countsSeen = true
+		h.store.noteSeen(2)
+		#expect(await eventually { await h.api.readCalls == [2] })
+		#expect(h.store.detail?.lastReadMessageID == 2)
+	}
+
 	@Test("above the bottom, read state follows what the reader has scrolled past")
 	func readFollowsSeen() async {
 		let h = ChatHarness(server: [chatMsg(1, by: "relay", agent: true), chatMsg(2, by: "relay", agent: true), chatMsg(3, by: "relay", agent: true)],
