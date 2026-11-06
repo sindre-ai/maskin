@@ -118,6 +118,15 @@ type ParticipantRow = {
  */
 const visibleInChat = sql`(${messages.metadata}->>'helper_return') IS NULL AND coalesce(${messages.metadata}->>'hidden_from_chat', 'false') <> 'true'`
 
+/** The row preview: the words, or the file name(s) when the message is only attachments. */
+function snippetText(content: string, metadata: { attachments?: Array<{ name?: string }> } | null) {
+	if (content.length > 0) return content
+	const attachments = metadata?.attachments ?? []
+	if (attachments.length === 0) return content
+	const first = attachments[0]?.name?.trim() || 'Attachment'
+	return attachments.length === 1 ? first : `${first} and ${attachments.length - 1} more`
+}
+
 /**
  * Which agents are answering in each chat right now. A chat session stays `running` between turns,
  * so a live status alone would keep the row "working" until the container dies; an interactive
@@ -619,7 +628,7 @@ app.openapi(createConversationRoute, (async (c) => {
 			}
 
 			let initialMessage: typeof messages.$inferSelect | undefined
-			if (body.initial_message) {
+			if (body.initial_message !== undefined) {
 				const [msg] = await tx
 					.insert(messages)
 					.values({
@@ -827,6 +836,7 @@ app.openapi(listConversationsRoute, (async (c) => {
 					const [latest] = await db
 						.select({
 							content: messages.content,
+							metadata: messages.metadata,
 							actorId: messages.actorId,
 							actorName: actors.name,
 						})
@@ -837,7 +847,7 @@ app.openapi(listConversationsRoute, (async (c) => {
 						.limit(1)
 					return {
 						conversationId: r.conversation.id,
-						snippet: latest?.content ?? null,
+						snippet: latest ? snippetText(latest.content, latest.metadata) : null,
 						snippetActorId: latest?.actorId ?? null,
 						snippetActorName: latest?.actorName ?? null,
 					}

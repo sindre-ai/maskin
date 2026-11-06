@@ -1,4 +1,4 @@
-import { Composer, nameClipboardImage } from '@/components/chat/chat'
+import { Composer, canSendMessage, nameClipboardImage } from '@/components/chat/chat'
 import { EMPTY_CHAT_SELECTION } from '@/lib/chat-selection'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -335,5 +335,50 @@ describe('Composer upload state', () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Remove failed upload report.pdf' }))
 		expect(screen.queryByText('Remove the failed upload to send')).not.toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled()
+	})
+})
+
+describe('Composer attachment-only send', () => {
+	const uploaded = {
+		...EMPTY_CHAT_SELECTION,
+		files: [{ fileId: 'file-1', name: 'report.pdf', sizeBytes: 10, mimeType: 'application/pdf' }],
+	}
+
+	it('turns Send on with an uploaded attachment and no text, and sends empty text', async () => {
+		const { props } = renderComposer({ selection: uploaded, allowAttachmentOnly: true })
+		const send = screen.getByRole('button', { name: 'Send message' })
+		expect(send).toBeEnabled()
+		fireEvent.click(send)
+		await waitFor(() => expect(props.onSend).toHaveBeenCalledWith(''))
+	})
+
+	it('keeps Send off with no text and no attachment', () => {
+		renderComposer({ allowAttachmentOnly: true })
+		expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
+	})
+
+	it('keeps Send off for an attachment alone unless the caller opts in', () => {
+		renderComposer({ selection: uploaded })
+		expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
+	})
+
+	it('keeps Send off while another upload is still running', async () => {
+		uploadFileMock.mockReset()
+		uploadFileMock.mockImplementation(() => new Promise(() => {}))
+		const { container } = renderComposer({ selection: uploaded, allowAttachmentOnly: true })
+		const file = new File(['%PDF-1.4 hello'], 'second.pdf', { type: 'application/pdf' })
+		fireEvent.change(getFileInput(container), { target: { files: [file] } })
+		expect(await screen.findByText('Waiting for 1 upload to finish')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
+	})
+})
+
+describe('canSendMessage', () => {
+	it('needs text or an attachment, and no upload in flight', () => {
+		expect(canSendMessage({ text: '  ', attachmentCount: 0, uploadsInFlight: 0 })).toBe(false)
+		expect(canSendMessage({ text: 'hi', attachmentCount: 0, uploadsInFlight: 0 })).toBe(true)
+		expect(canSendMessage({ text: '', attachmentCount: 1, uploadsInFlight: 0 })).toBe(true)
+		expect(canSendMessage({ text: '', attachmentCount: 1, uploadsInFlight: 1 })).toBe(false)
+		expect(canSendMessage({ text: 'hi', attachmentCount: 0, uploadsInFlight: 1 })).toBe(false)
 	})
 })
