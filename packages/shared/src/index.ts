@@ -1,5 +1,6 @@
 export * from './schemas/index'
 export * from './agent-storage-layout'
+export * from './analytics-feature-area'
 export * from './send-permissions'
 export * from './billing-caps'
 export * from './conversation-title'

@@ -1,3 +1,4 @@
+import { featureAreaForEvent } from '@maskin/shared'
 import posthog, { type CaptureOptions } from 'posthog-js'
 
 const DEFAULT_HOST = 'https://eu.i.posthog.com'
@@ -8,14 +9,24 @@ let initialized = false
 // used by a signed-in or signing-up person, so an event with no actor_type yet
 // (pageviews before the workspace mounts, sign-up events) is a human's. The
 // workspace mount registers the real actor_type, which wins.
-export function withSharedProperties<T extends { properties?: Record<string, unknown> }>(
-	event: T | null,
-): T | null {
+//
+// An event that belongs to a product area also carries feature_area (the shared
+// list in @maskin/shared, the same one the server and the iPhone app use). A value
+// the caller set wins.
+export function withSharedProperties<
+	T extends { event?: string; properties?: Record<string, unknown> },
+>(event: T | null): T | null {
 	if (!event) return event
 	const properties = event.properties ?? {}
+	const area = event.event ? featureAreaForEvent(event.event) : undefined
 	return {
 		...event,
-		properties: { actor_type: 'human', ...properties, surface: 'web' },
+		properties: {
+			actor_type: 'human',
+			...(area ? { feature_area: area } : {}),
+			...properties,
+			surface: 'web',
+		},
 	} as T
 }
 
@@ -139,6 +150,29 @@ export async function hashDistinctId(value: string): Promise<string> {
 export interface IdentifiedPerson {
 	name?: string | null
 	email?: string | null
+	// Where the person came from, set once on sign-up. A channel label, not an identifier.
+	signupSource?: string | null
+}
+
+// The channel a sign-up came from: the utm_source on the page, else the site that
+// sent the person, else direct. Lower case, short, and only letters, digits and
+// . _ - so a crafted link cannot put free text on a person.
+export function signupSourceFrom(search: string, referrer: string, ownHost: string): string {
+	const clean = (value: string) =>
+		value
+			.trim()
+			.toLowerCase()
+			.replace(/[^a-z0-9._-]/g, '')
+			.slice(0, 60)
+	const utm = clean(new URLSearchParams(search).get('utm_source') ?? '')
+	if (utm) return utm
+	try {
+		const host = clean(new URL(referrer).hostname.replace(/^www\./, ''))
+		if (host && host !== clean(ownHost.replace(/^www\./, ''))) return host
+	} catch {
+		// No referrer, or one that is not a URL.
+	}
+	return 'direct'
 }
 
 // Identify the actor for analytics, applying the workspace's anonymise pref.
@@ -164,7 +198,9 @@ export async function identifyForWorkspace(
 		}
 		// Only pass the second arg when there is something to set — keeps the
 		// single-arg call shape the existing identify specs assert on.
-		if (Object.keys(properties).length > 0) {
+		if (person?.signupSource) {
+			posthog.identify(distinctId, properties, { signup_source: person.signupSource })
+		} else if (Object.keys(properties).length > 0) {
 			posthog.identify(distinctId, properties)
 		} else {
 			posthog.identify(distinctId)
