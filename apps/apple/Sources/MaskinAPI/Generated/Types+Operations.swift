@@ -2521,6 +2521,8 @@ public enum Operations {
                 public var status: Swift.String?
                 /// - Remark: Generated from `#/paths/api/objects/search/GET/query/driver`.
                 public var driver: Swift.String?
+                /// - Remark: Generated from `#/paths/api/objects/search/GET/query/updated_before`.
+                public var updated_before: Foundation.Date?
                 /// - Remark: Generated from `#/paths/api/objects/search/GET/query/updated_after`.
                 public var updated_after: Foundation.Date?
                 /// - Remark: Generated from `#/paths/api/objects/search/GET/query/sort`.
@@ -2557,6 +2559,7 @@ public enum Operations {
                 ///   - _type:
                 ///   - status:
                 ///   - driver:
+                ///   - updated_before:
                 ///   - updated_after:
                 ///   - sort:
                 ///   - order:
@@ -2571,6 +2574,7 @@ public enum Operations {
                     _type: Swift.String? = nil,
                     status: Swift.String? = nil,
                     driver: Swift.String? = nil,
+                    updated_before: Foundation.Date? = nil,
                     updated_after: Foundation.Date? = nil,
                     sort: Swift.String? = nil,
                     order: Operations.get_sol_api_sol_objects_sol_search.Input.Query.orderPayload? = nil,
@@ -2585,6 +2589,7 @@ public enum Operations {
                     self._type = _type
                     self.status = status
                     self.driver = driver
+                    self.updated_before = updated_before
                     self.updated_after = updated_after
                     self.sort = sort
                     self.order = order

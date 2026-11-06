@@ -94,25 +94,28 @@ export function needsNormalise(tool: string): boolean {
 }
 
 /**
- * Wraps a tool's raw input shape as z.preprocess(normalise, z.object(shape)).
- * The MCP SDK validates arguments against this schema before our handler runs,
- * so the old spellings are gone by the time anything else sees the call.
+ * Wraps a tool's input as z.preprocess(normalise, schema). The input is either a raw shape (wrapped
+ * in z.object) or a schema object, such as list_triggers' strict one, which is wrapped as it is so
+ * its strictness survives. Either way the rename runs first: the MCP SDK validates arguments
+ * against this schema before our handler runs, so the old spellings are gone by the time anything
+ * else, the strict unknown-parameter check included, sees the call.
  *
- * The canonical shape is also set on the wrapper. The SDK builds tools/list
- * from a schema's .shape, and a bare preprocess wrapper has none, which would
- * list every wrapped tool with an empty parameter list.
+ * The canonical shape is also set on the wrapper. The SDK builds tools/list from a schema's .shape,
+ * and a bare preprocess wrapper has none, which would list every wrapped tool with an empty
+ * parameter list.
  *
- * With rejectUnknownKeys, a top-level key outside the shape fails validation
- * (after the old spellings are normalised) instead of being stripped. Opt in
- * per tool: z.object drops unknown keys before the handler runs, so the
- * handler cannot see a misnamed list, and a call mixing one valid list with
- * one misnamed list would otherwise look like a full success.
+ * With rejectUnknownKeys, a top-level key outside the shape fails validation (after the old
+ * spellings are normalised) instead of being stripped. Opt in per tool: z.object drops unknown keys
+ * before the handler runs, so the handler cannot see a misnamed list, and a call mixing one valid
+ * list with one misnamed list would otherwise look like a full success.
  */
 export function wrapInputSchema(
-	shape: z.ZodRawShape,
+	input: z.ZodRawShape | z.ZodObject<z.ZodRawShape>,
 	normalise: (raw: unknown) => unknown,
 	opts: { rejectUnknownKeys?: boolean } = {},
 ): z.ZodTypeAny {
+	const schema = input instanceof z.ZodType ? input : z.object(input)
+	const shape = input instanceof z.ZodType ? input.shape : input
 	const wrapped = z.preprocess((raw, ctx) => {
 		const args = normalise(raw)
 		if (opts.rejectUnknownKeys && isPlainObject(args)) {
@@ -126,6 +129,6 @@ export function wrapInputSchema(
 			}
 		}
 		return args
-	}, z.object(shape))
+	}, schema)
 	return Object.assign(wrapped, { shape })
 }

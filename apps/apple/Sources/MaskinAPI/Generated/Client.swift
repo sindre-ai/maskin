@@ -756,6 +756,13 @@ public struct Client: APIProtocol {
                     in: &request,
                     style: .form,
                     explode: true,
+                    name: "updated_before",
+                    value: input.query.updated_before
+                )
+                try converter.setQueryItemAsURI(
+                    in: &request,
+                    style: .form,
+                    explode: true,
                     name: "updated_after",
                     value: input.query.updated_after
                 )
