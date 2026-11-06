@@ -105,7 +105,7 @@ export function SplitButton({
 	return (
 		<div
 			className={cn(
-				'inline-flex h-8 shrink-0 items-stretch',
+				'relative inline-flex h-8 shrink-0 items-stretch',
 				disabled && 'pointer-events-none opacity-60',
 				className,
 			)}

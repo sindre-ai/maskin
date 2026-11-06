@@ -164,6 +164,7 @@ export function NewMenu({
 							icon={primaryIcon}
 							onClick={primaryOnClick}
 							disabled={isDisabled}
+							className="rounded-r-full pr-3.5"
 						/>
 					)}
 					<DropdownMenu>
@@ -173,6 +174,7 @@ export function NewMenu({
 									ariaLabel="More ways to start"
 									title="More ways to start"
 									disabled={isDisabled}
+									className="absolute right-0 size-px overflow-hidden p-0 opacity-0"
 								/>
 							) : (
 								<Button

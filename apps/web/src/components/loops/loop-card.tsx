@@ -56,7 +56,7 @@ export function LoopCard({
 	return (
 		<div
 			data-testid="loop-card"
-			className="relative flex flex-col gap-3 rounded-2xl border border-border bg-card p-[18px] transition-colors duration-150 hover:border-border-strong"
+			className="relative flex flex-col gap-3 rounded-xl bg-card px-[18px] py-4 shadow-sm ring-1 ring-border transition-shadow duration-150 hover:ring-border-strong"
 		>
 			<div className="flex items-center justify-between gap-3">
 				<div className="flex min-w-0 items-center gap-2">
@@ -71,15 +71,12 @@ export function LoopCard({
 					<Link
 						to="/$workspaceId/loops/$loopId"
 						params={{ workspaceId: loop.workspaceId, loopId: loop.id }}
-						className="truncate text-[13px] font-semibold text-foreground after:absolute after:inset-0 after:rounded-2xl after:content-['']"
+						className="truncate text-[13px] font-semibold text-foreground after:absolute after:inset-0 after:rounded-xl after:content-['']"
 					>
 						{loop.name ?? 'Untitled flow'}
 					</Link>
 				</div>
-				<span
-					data-testid="loop-pill"
-					className={cn('shrink-0 text-[11.5px] font-semibold', status.text)}
-				>
+				<span data-testid="loop-pill" className={cn('shrink-0 text-xs font-semibold', status.text)}>
 					{status.label}
 				</span>
 			</div>
@@ -87,7 +84,7 @@ export function LoopCard({
 			{target && progress && (
 				<div className="flex flex-col gap-2">
 					<div>
-						<p className="text-4xl font-semibold leading-none tracking-tight tabular-nums text-foreground">
+						<p className="text-4xl font-bold leading-[1.1] tracking-tighter tabular-nums text-foreground">
 							{target.actual} of {target.target}
 						</p>
 						<p className="mt-1.5 text-[12.5px] text-muted-foreground">{target.label}</p>

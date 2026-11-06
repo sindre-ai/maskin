@@ -380,12 +380,12 @@ function LoopsRoute() {
 							loopGroups.map((group) => (
 								<div key={group.label || 'untagged'} className="flex flex-col">
 									{hasTaggedLoops && (
-										<h2 className="px-3.5 pt-4 pb-2 text-xs font-bold text-foreground">
+										<h2 className="px-1 pt-4 pb-2.5 text-[13px] font-semibold text-foreground">
 											{group.label || 'No team'}
 										</h2>
 									)}
 									{view === 'cards' ? (
-										<div className="grid grid-cols-1 gap-2.5 pb-4 lg:grid-cols-2 xl:grid-cols-3">
+										<div className="grid grid-cols-1 gap-3 pb-4 md:grid-cols-2">
 											{group.items.map((loop) => {
 												const failed = failedByLoopId.get(loop.id) ?? null
 												return (
