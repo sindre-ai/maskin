@@ -8,9 +8,11 @@ import {
 	workspaceMembers,
 } from '@maskin/db/schema'
 import {
+	type McpConfig,
 	type ToolGrants,
 	createExtensionBodySchema,
 	mcpConfigSchema,
+	mcpRemoteUrl,
 	probeMcpBodySchema,
 	setAgentGrantBodySchema,
 	setToolGrantBodySchema,
@@ -236,6 +238,45 @@ async function respond(
 }
 
 const notFound = createApiError('NOT_FOUND', 'Extension not found')
+
+/** The only mcpLastError this check writes, and the only one it clears. */
+const KEY_REJECTED = 'The server rejected the API key.'
+
+/**
+ * After a save that carried an MCP API key for a hosted MCP, ask the server once
+ * whether it takes the key. A rejection goes in mcpLastError so the connection
+ * shows it; a key that works clears that same sentence and no other error.
+ * Every other outcome (unreachable, invalid, blocked) leaves the row alone, and
+ * nothing here can fail the save: the key is already committed.
+ */
+async function checkSavedMcpKey(
+	db: Database,
+	row: ExtensionRow,
+	apiKey: string | undefined,
+): Promise<ExtensionRow> {
+	const server = (row.mcpConfig as McpConfig | null)?.server
+	const url = apiKey && server ? mcpRemoteUrl(server) : null
+	if (!apiKey || !url) return row
+	try {
+		const probe = await probeMcpTools(url, apiKey)
+		const rejected = !probe.ok && probe.reason === 'rejected'
+		if (!rejected && !(probe.ok && row.mcpLastError === KEY_REJECTED)) return row
+		const [updated] = await db
+			.update(extensions)
+			.set({ mcpLastError: rejected ? KEY_REJECTED : null })
+			.where(
+				and(
+					eq(extensions.id, row.id),
+					eq(extensions.workspaceId, row.workspaceId),
+					rejected ? undefined : eq(extensions.mcpLastError, KEY_REJECTED),
+				),
+			)
+			.returning()
+		return updated ?? row
+	} catch {
+		return row
+	}
+}
 
 // ── GET /api/extensions ─────────────────────────────────────────────────────
 
@@ -502,7 +543,7 @@ app.openapi(createExtensionRoute, async (c) => {
 
 	if (hasConfig(row)) trackExtensionConnected(workspaceId, actorId, row)
 
-	return c.json(await respond(c, db, row), 201)
+	return c.json(await respond(c, db, await checkSavedMcpKey(db, row, body.mcp_api_key)), 201)
 })
 
 // ── GET /api/extensions/:id ─────────────────────────────────────────────────
@@ -645,7 +686,7 @@ app.openapi(updateExtensionRoute, async (c) => {
 	// Only the save that first gives the extension a config counts as connecting it.
 	if (!hasConfig(existing) && hasConfig(row)) trackExtensionConnected(workspaceId, actorId, row)
 
-	return c.json(await respond(c, db, row), 200)
+	return c.json(await respond(c, db, await checkSavedMcpKey(db, row, body.mcp_api_key)), 200)
 })
 
 // ── POST /api/extensions/:id/regenerate-token ───────────────────────────────
