@@ -55,7 +55,6 @@ import {
 	count as countFn,
 	desc,
 	eq,
-	gte,
 	inArray,
 	isNotNull,
 	isNull,
@@ -582,21 +581,12 @@ export class SessionManager extends EventEmitter {
 	private lastLogPruneAt = 0
 	private static readonly LOG_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 	private static readonly LOG_PRUNE_INTERVAL_MS = 60 * 60 * 1000
-	private static readonly LOG_PRUNE_SESSIONS_PER_RUN = 200
-	// How far past the retention cutoff the sweep looks for sessions that still hold
-	// old logs on every run. Steady state only finds sessions that crossed the cutoff
-	// since the last run, so this also covers a multi-week outage.
-	private static readonly LOG_PRUNE_LOOKBACK_MS = 14 * 24 * 60 * 60 * 1000
-	// Sessions older than the window are walked oldest first, in slices, so no single
-	// statement scans the whole table (the old unbounded query ran 11 to 20 s and hit
-	// the statement timeout, which left it unbounded again on the next run).
-	private static readonly LOG_PRUNE_BACKLOG_SLICE = 2000
-	private static readonly LOG_PRUNE_BACKLOG_SLICES_PER_RUN = 5
-	// Where the backlog walk stopped (completed_at of the last session checked). Kept in
-	// memory, so a failed run resumes instead of starting over.
-	private logPruneBacklogCursor: Date | null = null
-	// True once the backlog walk has reached the window.
-	private logPruneBacklogDrained = false
+	// The sweep reads unmarked sessions (sessions.logs_pruned_at IS NULL) oldest first, a slice per
+	// statement, and marks each slice once its old logs are gone. Slices keep every statement short;
+	// the cap keeps one run from working through the whole backlog at once. Before the marker the
+	// sweep re-read every old session on each run (11 to 20 s, 124,646 sessions, 68 with logs).
+	private static readonly LOG_PRUNE_SLICE = 500
+	private static readonly LOG_PRUNE_SLICES_PER_RUN = 20
 	private activeSessions: Map<
 		string,
 		{
@@ -6812,6 +6802,13 @@ ${cont.continues_prompt}
 	 * first means each delete is an index scan on
 	 * `session_logs_session_idx (session_id, created_at)` with a bounded blast
 	 * radius, and interactive sessions never enter the candidate set at all.
+	 *
+	 * Each session is marked (`logs_pruned_at`) once its old logs are gone, and
+	 * the candidate query reads only unmarked sessions, in short slices. Without
+	 * the mark the query re-read every old session on every run: 11 to 20 s on
+	 * production (5 Nov), where about 124,000 old sessions were walked to find
+	 * the 68 that still held logs. A session that completed before the cutoff
+	 * gets no new logs, so a mark does not go stale.
 	 */
 	private async pruneSessionLogs(): Promise<void> {
 		const now = Date.now()
@@ -6819,98 +6816,64 @@ ${cont.continues_prompt}
 		this.lastLogPruneAt = now
 
 		const cutoff = new Date(now - SessionManager.LOG_RETENTION_MS)
-		// Sessions that completed inside [cutoff - lookback, cutoff) are checked on every
-		// run: a range scan on sessions_prune_candidates_idx over the few days that can
-		// still hold logs. The EXISTS probe keeps already-pruned sessions inside the
-		// window from being selected again.
-		const floor = new Date(cutoff.getTime() - SessionManager.LOG_PRUNE_LOOKBACK_MS)
-		const inWindow = await this.db
-			.select({ id: sessions.id })
-			.from(sessions)
-			.where(
-				and(
-					eq(sessions.interactive, false),
-					isNotNull(sessions.completedAt),
-					lt(sessions.completedAt, cutoff),
-					gte(sessions.completedAt, floor),
-					// Interpolate the ISO string, not the Date: inside a raw `sql`
-					// template there is no column to infer the type mapping from,
-					// so a Date object reaches the driver unmapped and throws.
-					sql`EXISTS (SELECT 1 FROM session_logs WHERE session_logs.session_id = sessions.id AND session_logs.created_at < ${cutoff.toISOString()}::timestamptz)`,
-				),
-			)
-			.limit(SessionManager.LOG_PRUNE_SESSIONS_PER_RUN)
-
-		const candidateIds = new Set(inWindow.map((row) => row.id))
-		for (const id of await this.findBacklogSessionsWithOldLogs(cutoff, floor)) candidateIds.add(id)
-		const candidates = [...candidateIds].map((id) => ({ id }))
-
-		if (candidates.length === 0) return
-
+		let checked = 0
+		let pruned = 0
 		let deleted = 0
-		for (const candidate of candidates) {
-			const rows = await this.db
-				.delete(sessionLogs)
-				.where(and(eq(sessionLogs.sessionId, candidate.id), lt(sessionLogs.createdAt, cutoff)))
-				.returning({ id: sessionLogs.id })
-			deleted += rows.length
-		}
-
-		logger.info(
-			`Pruned ${deleted} session log rows across ${candidates.length} completed non-interactive sessions`,
-		)
-	}
-
-	/**
-	 * Walks sessions that completed before the window, oldest first, a slice at a time,
-	 * and returns the ones that still hold logs past the retention cutoff. Each slice is
-	 * a short range scan plus one index lookup for its ids, so the cost of a large
-	 * backlog is spread over runs instead of one statement over every old session.
-	 */
-	private async findBacklogSessionsWithOldLogs(cutoff: Date, floor: Date): Promise<string[]> {
-		const found: string[] = []
-		const sliceSize = SessionManager.LOG_PRUNE_BACKLOG_SLICE
-		for (
-			let slices = 0;
-			!this.logPruneBacklogDrained && slices < SessionManager.LOG_PRUNE_BACKLOG_SLICES_PER_RUN;
-			slices++
-		) {
+		for (let slices = 0; slices < SessionManager.LOG_PRUNE_SLICES_PER_RUN; slices++) {
+			// A range scan on sessions_logs_unpruned_idx, which holds only the sessions this
+			// predicate selects.
 			const slice = await this.db
-				.select({ id: sessions.id, completedAt: sessions.completedAt })
+				.select({ id: sessions.id })
 				.from(sessions)
 				.where(
 					and(
 						eq(sessions.interactive, false),
 						isNotNull(sessions.completedAt),
-						lt(sessions.completedAt, floor),
-						this.logPruneBacklogCursor
-							? gte(sessions.completedAt, this.logPruneBacklogCursor)
-							: undefined,
+						isNull(sessions.logsPrunedAt),
+						lt(sessions.completedAt, cutoff),
 					),
 				)
 				.orderBy(asc(sessions.completedAt))
-				.limit(sliceSize)
+				.limit(SessionManager.LOG_PRUNE_SLICE)
+			if (slice.length === 0) break
+			const sliceIds = slice.map((row) => row.id)
 
-			if (slice.length > 0) {
-				const withLogs = await this.db
-					.selectDistinct({ id: sessionLogs.sessionId })
-					.from(sessionLogs)
-					.where(
-						and(
-							inArray(
-								sessionLogs.sessionId,
-								slice.map((row) => row.id),
-							),
-							lt(sessionLogs.createdAt, cutoff),
-						),
-					)
-				for (const row of withLogs) found.push(row.id)
-				this.logPruneBacklogCursor =
-					slice[slice.length - 1]?.completedAt ?? this.logPruneBacklogCursor
+			// Of this slice, the sessions that still hold logs past the cutoff. Interpolate the ISO
+			// string, not the Date: inside a raw `sql` template there is no column to infer the
+			// type mapping from, so a Date object reaches the driver unmapped and throws.
+			const holding = await this.db
+				.select({ id: sessions.id })
+				.from(sessions)
+				.where(
+					and(
+						inArray(sessions.id, sliceIds),
+						sql`EXISTS (SELECT 1 FROM session_logs WHERE session_logs.session_id = sessions.id AND session_logs.created_at < ${cutoff.toISOString()}::timestamptz)`,
+					),
+				)
+			for (const row of holding) {
+				const rows = await this.db
+					.delete(sessionLogs)
+					.where(and(eq(sessionLogs.sessionId, row.id), lt(sessionLogs.createdAt, cutoff)))
+					.returning({ id: sessionLogs.id })
+				deleted += rows.length
 			}
-			if (slice.length < sliceSize) this.logPruneBacklogDrained = true
+
+			// Mark the whole slice, sessions that had no old logs included: that is what keeps the
+			// next run from reading them again. A session whose delete threw above is not marked
+			// (the error leaves this loop) and is picked up again next run.
+			await this.db
+				.update(sessions)
+				.set({ logsPrunedAt: new Date(now) })
+				.where(inArray(sessions.id, sliceIds))
+			checked += sliceIds.length
+			pruned += holding.length
+			if (slice.length < SessionManager.LOG_PRUNE_SLICE) break
 		}
-		return found
+
+		if (checked === 0) return
+		logger.info(
+			`Pruned ${deleted} session log rows across ${pruned} of ${checked} completed non-interactive sessions checked`,
+		)
 	}
 
 	private async clearActiveSession(sessionId: string): Promise<void> {
