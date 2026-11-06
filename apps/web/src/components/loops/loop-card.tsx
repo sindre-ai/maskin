@@ -8,7 +8,7 @@ import { toastSessionCreateError } from '@/lib/session-errors'
 import { Link, useNavigate } from '@tanstack/react-router'
 import type { FailedAgent } from './loop-brief'
 import { LOOP_PILL_STYLES, isLiveLoopPill } from './loop-pill'
-import { loopProgress } from './loop-row'
+import { loopActivityLine, loopProgress } from './loop-row'
 import { paceVerdict } from './target-card'
 
 /** The word at the card's top right: "Needs you" while the flow waits on the viewer. */
@@ -18,9 +18,9 @@ export function loopStatusWord(loop: Pick<LoopSummary, 'pill' | 'status'>, needs
 }
 
 /**
- * The Cards view of a flow: the same data as a list row, led by the first
- * target as one big number with its progress bar. A flow with no target has no
- * number or bar. The grey banner (and Restart) exists only when an agent of the
+ * The Cards view of a flow: the same data as a list row, led by one big number
+ * with its progress bar: the first target, or for a flow with none, the items it
+ * has completed out of those it has taken on. The grey banner (and Restart) exists only when an agent of the
  * flow failed.
  */
 export function LoopCard({
@@ -40,6 +40,25 @@ export function LoopCard({
 	const target = loop.targets?.[0]
 	const progress = loopProgress(loop)
 	const prompt = failed?.session.actionPrompt?.trim() ?? ''
+	const taken = loop.closedCount + loop.inProgressCount
+	const metric =
+		target && progress
+			? {
+					actual: target.actual,
+					total: target.target,
+					label: target.label,
+					percent: progress.percent,
+					missed: progress.missed,
+					footnote: paceVerdict(target).label as string,
+				}
+			: {
+					actual: loop.closedCount,
+					total: taken,
+					label: 'items completed',
+					percent: taken > 0 ? (loop.closedCount / taken) * 100 : 0,
+					missed: false,
+					footnote: loopActivityLine(loop) ?? 'Nothing in this flow yet',
+				}
 
 	const restart = () => {
 		if (!failed) return
@@ -81,38 +100,37 @@ export function LoopCard({
 				</span>
 			</div>
 
-			{target && progress && (
-				<div className="flex flex-col gap-2">
-					<div>
-						<p className="text-4xl font-bold leading-[1.1] tracking-tighter tabular-nums text-foreground">
-							{target.actual} of {target.target}
-						</p>
-						<p className="mt-1.5 text-[12.5px] text-muted-foreground">{target.label}</p>
-					</div>
-					<div
-						role="progressbar"
-						tabIndex={-1}
-						aria-label={progress.text}
-						aria-valuenow={Math.round(progress.percent)}
-						aria-valuemin={0}
-						aria-valuemax={100}
-						className="h-1.5 overflow-hidden rounded-full bg-muted"
-					>
-						<div
-							className={cn('h-full rounded-full', progress.missed ? 'bg-destructive' : 'bg-brand')}
-							// Data-driven width: the one value a Tailwind class cannot carry.
-							style={{ width: `${progress.percent}%` }}
-						/>
-					</div>
-					{!failed && (
-						<p className="text-[12px] text-muted-foreground">{paceVerdict(target).label}</p>
-					)}
+			{/* Every card leads with a number and a bar, as in the design. A flow with a target shows
+			    that target; one without shows what it has actually processed (items completed out
+			    of items it has taken on), so the card never falls back to a text-only layout. */}
+			<div className="flex flex-col gap-2">
+				<div>
+					<p className="text-4xl font-bold leading-[1.1] tracking-tighter tabular-nums text-foreground">
+						{metric.total > 0 ? `${metric.actual} of ${metric.total}` : '0'}
+					</p>
+					<p className="mt-1.5 text-[12.5px] text-muted-foreground">{metric.label}</p>
 				</div>
-			)}
-
-			{!(target && progress) && loop.content && (
-				<p className="line-clamp-2 text-[12.5px] text-muted-foreground">{loop.content}</p>
-			)}
+				<div
+					{...(target && progress
+						? {
+								role: 'progressbar',
+								tabIndex: -1,
+								'aria-label': progress.text,
+								'aria-valuenow': Math.round(progress.percent),
+								'aria-valuemin': 0,
+								'aria-valuemax': 100,
+							}
+						: { 'aria-hidden': true })}
+					className="h-1.5 overflow-hidden rounded-full bg-muted"
+				>
+					<div
+						className={cn('h-full rounded-full', metric.missed ? 'bg-destructive' : 'bg-brand')}
+						// Data-driven width: the one value a Tailwind class cannot carry.
+						style={{ width: `${metric.percent}%` }}
+					/>
+				</div>
+				{!failed && <p className="text-[12px] text-muted-foreground">{metric.footnote}</p>}
+			</div>
 
 			{failed && (
 				<div
