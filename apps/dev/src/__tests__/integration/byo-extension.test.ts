@@ -854,13 +854,14 @@ describe('Telnyx Ed25519 webhook (integration)', () => {
 
 	it('refuses to save a signing secret that is not an Ed25519 public key', async () => {
 		const app = buildApp()
-		const { res } = await createExtension(
+		const { res, json } = await createExtension(
 			app,
 			workspaceId,
 			telnyxBody({ signing_secret: 'f'.repeat(64) }),
 		)
 		expect(res.status).toBe(400)
-		expect(JSON.stringify(await res.json())).toContain('Ed25519 public key')
+		// createExtension has already read the body, so use the json it returns.
+		expect(JSON.stringify(json)).toContain('Ed25519 public key')
 	})
 
 	it('commits one delivery row and one events row for a signed delivery, then ignores a repeat', async () => {
