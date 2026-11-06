@@ -125,7 +125,7 @@ function ConnectionRow({
 	onDisconnect,
 }: { grant: OauthGrantRow; onDisconnect: (grant: OauthGrantRow) => void }) {
 	return (
-		<li className="flex flex-col gap-3 rounded-lg border border-border bg-surface-sunken p-3.5 sm:flex-row sm:items-center sm:justify-between">
+		<li className="flex flex-col gap-3 rounded-lg border border-border bg-surface-sunken p-3.5 lg:flex-row lg:items-center lg:justify-between">
 			<div className="flex min-w-0 items-center gap-3">
 				<div
 					aria-hidden="true"
@@ -156,7 +156,7 @@ function ConnectionRow({
 			<Button
 				type="button"
 				variant="outline"
-				className="w-full sm:w-auto"
+				className="w-full lg:w-auto"
 				onClick={() => onDisconnect(grant)}
 			>
 				Disconnect

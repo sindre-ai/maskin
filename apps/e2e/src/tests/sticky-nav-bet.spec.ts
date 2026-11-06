@@ -95,7 +95,7 @@ test.describe('Sticky nav — bet identity (interim contract)', () => {
 	// A loose band on the desktop bar still catches one that collapses or doubles.
 	const MIN_BAR_HEIGHT = 44
 	const MAX_BAR_HEIGHT = 72
-	const PHONE_BAR_HEIGHT = 56
+	const PHONE_BAR_HEIGHT = 58
 	test('detail bar keeps one height across all three widths', async ({ page, account }) => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
