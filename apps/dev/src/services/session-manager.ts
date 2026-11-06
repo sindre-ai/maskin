@@ -583,14 +583,19 @@ export class SessionManager extends EventEmitter {
 	private static readonly LOG_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 	private static readonly LOG_PRUNE_INTERVAL_MS = 60 * 60 * 1000
 	private static readonly LOG_PRUNE_SESSIONS_PER_RUN = 200
-	// Once the backlog is drained, how far past the retention cutoff the sweep
-	// looks for sessions that still hold old logs. Steady state only finds
-	// sessions that crossed the cutoff since the last run, so this also covers a
-	// multi-week outage.
+	// How far past the retention cutoff the sweep looks for sessions that still hold
+	// old logs on every run. Steady state only finds sessions that crossed the cutoff
+	// since the last run, so this also covers a multi-week outage.
 	private static readonly LOG_PRUNE_LOOKBACK_MS = 14 * 24 * 60 * 60 * 1000
-	// False until a sweep finds less than a full batch. Until then the scan is
-	// unbounded so any backlog older than the window still drains; afterwards it
-	// is windowed so it stops walking every already-pruned session.
+	// Sessions older than the window are walked oldest first, in slices, so no single
+	// statement scans the whole table (the old unbounded query ran 11 to 20 s and hit
+	// the statement timeout, which left it unbounded again on the next run).
+	private static readonly LOG_PRUNE_BACKLOG_SLICE = 2000
+	private static readonly LOG_PRUNE_BACKLOG_SLICES_PER_RUN = 5
+	// Where the backlog walk stopped (completed_at of the last session checked). Kept in
+	// memory, so a failed run resumes instead of starting over.
+	private logPruneBacklogCursor: Date | null = null
+	// True once the backlog walk has reached the window.
 	private logPruneBacklogDrained = false
 	private activeSessions: Map<
 		string,
@@ -6814,17 +6819,12 @@ ${cont.continues_prompt}
 		this.lastLogPruneAt = now
 
 		const cutoff = new Date(now - SessionManager.LOG_RETENTION_MS)
-		// Once the backlog is drained, only look at sessions that completed inside
-		// [cutoff - lookback, cutoff). Without a lower bound the scan starts at the
-		// oldest completed session and walks every already-pruned one (an EXISTS
-		// probe each) before it reaches any work — the whole table, every hour. The
-		// window keeps the range scan on sessions_prune_candidates_idx to the few
-		// days that can still hold logs. The first sweep after boot is unbounded so
-		// a backlog older than the window is never stranded.
+		// Sessions that completed inside [cutoff - lookback, cutoff) are checked on every
+		// run: a range scan on sessions_prune_candidates_idx over the few days that can
+		// still hold logs. The EXISTS probe keeps already-pruned sessions inside the
+		// window from being selected again.
 		const floor = new Date(cutoff.getTime() - SessionManager.LOG_PRUNE_LOOKBACK_MS)
-		// The EXISTS probe keeps already-pruned sessions inside the window from
-		// being selected again.
-		const candidates = await this.db
+		const inWindow = await this.db
 			.select({ id: sessions.id })
 			.from(sessions)
 			.where(
@@ -6832,7 +6832,7 @@ ${cont.continues_prompt}
 					eq(sessions.interactive, false),
 					isNotNull(sessions.completedAt),
 					lt(sessions.completedAt, cutoff),
-					this.logPruneBacklogDrained ? gte(sessions.completedAt, floor) : undefined,
+					gte(sessions.completedAt, floor),
 					// Interpolate the ISO string, not the Date: inside a raw `sql`
 					// template there is no column to infer the type mapping from,
 					// so a Date object reaches the driver unmapped and throws.
@@ -6841,9 +6841,10 @@ ${cont.continues_prompt}
 			)
 			.limit(SessionManager.LOG_PRUNE_SESSIONS_PER_RUN)
 
-		if (candidates.length < SessionManager.LOG_PRUNE_SESSIONS_PER_RUN) {
-			this.logPruneBacklogDrained = true
-		}
+		const candidateIds = new Set(inWindow.map((row) => row.id))
+		for (const id of await this.findBacklogSessionsWithOldLogs(cutoff, floor)) candidateIds.add(id)
+		const candidates = [...candidateIds].map((id) => ({ id }))
+
 		if (candidates.length === 0) return
 
 		let deleted = 0
@@ -6858,6 +6859,58 @@ ${cont.continues_prompt}
 		logger.info(
 			`Pruned ${deleted} session log rows across ${candidates.length} completed non-interactive sessions`,
 		)
+	}
+
+	/**
+	 * Walks sessions that completed before the window, oldest first, a slice at a time,
+	 * and returns the ones that still hold logs past the retention cutoff. Each slice is
+	 * a short range scan plus one index lookup for its ids, so the cost of a large
+	 * backlog is spread over runs instead of one statement over every old session.
+	 */
+	private async findBacklogSessionsWithOldLogs(cutoff: Date, floor: Date): Promise<string[]> {
+		const found: string[] = []
+		const sliceSize = SessionManager.LOG_PRUNE_BACKLOG_SLICE
+		for (
+			let slices = 0;
+			!this.logPruneBacklogDrained && slices < SessionManager.LOG_PRUNE_BACKLOG_SLICES_PER_RUN;
+			slices++
+		) {
+			const slice = await this.db
+				.select({ id: sessions.id, completedAt: sessions.completedAt })
+				.from(sessions)
+				.where(
+					and(
+						eq(sessions.interactive, false),
+						isNotNull(sessions.completedAt),
+						lt(sessions.completedAt, floor),
+						this.logPruneBacklogCursor
+							? gte(sessions.completedAt, this.logPruneBacklogCursor)
+							: undefined,
+					),
+				)
+				.orderBy(asc(sessions.completedAt))
+				.limit(sliceSize)
+
+			if (slice.length > 0) {
+				const withLogs = await this.db
+					.selectDistinct({ id: sessionLogs.sessionId })
+					.from(sessionLogs)
+					.where(
+						and(
+							inArray(
+								sessionLogs.sessionId,
+								slice.map((row) => row.id),
+							),
+							lt(sessionLogs.createdAt, cutoff),
+						),
+					)
+				for (const row of withLogs) found.push(row.id)
+				this.logPruneBacklogCursor =
+					slice[slice.length - 1]?.completedAt ?? this.logPruneBacklogCursor
+			}
+			if (slice.length < sliceSize) this.logPruneBacklogDrained = true
+		}
+		return found
 	}
 
 	private async clearActiveSession(sessionId: string): Promise<void> {

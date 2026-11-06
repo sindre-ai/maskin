@@ -234,4 +234,34 @@ describe('session log retention window', () => {
 		// is scanned, so a session this old that appeared since is left alone.
 		expect(await logCount(beyondWindow)).toBe(1)
 	})
+
+	it('walks a backlog older than the window oldest first, a slice per statement', async () => {
+		const statics = SessionManager as unknown as Record<string, number>
+		const saved = {
+			slice: statics.LOG_PRUNE_BACKLOG_SLICE,
+			perRun: statics.LOG_PRUNE_BACKLOG_SLICES_PER_RUN,
+		}
+		statics.LOG_PRUNE_BACKLOG_SLICE = 1
+		statics.LOG_PRUNE_BACKLOG_SLICES_PER_RUN = 1
+		try {
+			const oldest = await seed(200 * DAY_MS)
+			const middle = await seed(150 * DAY_MS)
+			const newest = await seed(100 * DAY_MS)
+
+			await prune()
+			expect(await logCount(oldest)).toBe(0)
+			expect(await logCount(middle)).toBe(1)
+			expect(await logCount(newest)).toBe(1)
+
+			await prune()
+			expect(await logCount(middle)).toBe(0)
+			expect(await logCount(newest)).toBe(1)
+
+			await prune()
+			expect(await logCount(newest)).toBe(0)
+		} finally {
+			statics.LOG_PRUNE_BACKLOG_SLICE = saved.slice as number
+			statics.LOG_PRUNE_BACKLOG_SLICES_PER_RUN = saved.perRun as number
+		}
+	})
 })
