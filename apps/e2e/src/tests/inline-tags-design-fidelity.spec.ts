@@ -52,7 +52,7 @@ test.describe('Inline tags — design fidelity fixes', () => {
 		await expect(box).toContainText('please start now @')
 
 		// Second Esc cancels the edit.
-		await page.keyboard.press('Escape')
+		await box.press('Escape')
 		await expect(box).toHaveCount(0)
 		await expect(page.getByText('please start').first()).toBeVisible()
 	})

@@ -68,9 +68,7 @@ test.describe('Marketplace rows (v16)', () => {
 		// One group means no sub-headers; several mean one header per group, with
 		// "Other" (flows without a category) last and the rest A to Z.
 		const names = await groups.evaluateAll((els) =>
-			els.map(
-				(el) => el.querySelector('span.font-bold, span[class*="font-bold"]')?.textContent ?? '',
-			),
+			els.map((el) => el.querySelector(':scope > div.pt-4 > span.font-bold')?.textContent ?? ''),
 		)
 		if (groupCount === 1) {
 			expect(names[0]).toBe('')

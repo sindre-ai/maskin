@@ -100,6 +100,7 @@ function SettingsLayout() {
 										return (
 											<li key={item.to}>
 												<Link
+													ref={isActive ? activeRef : undefined}
 													to={item.to}
 													params={{ workspaceId }}
 													className={cn(

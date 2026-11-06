@@ -77,7 +77,7 @@ test.describe('Loop builder — language-only create flow', () => {
 			// the oldest seeded loop, not the one just created.
 			const knownIds = new Set(loopsBefore.map((o) => o.id))
 			const createdLoop = loopsAfter.find((o) => !knownIds.has(o.id))
-			expect(createdLoop?.title).toMatch(/ loop$/)
+			expect(createdLoop?.title).toMatch(/ flow$/)
 
 			// Start over clears back to a fresh draft.
 			await page.getByRole('button', { name: /^start over$/i }).click()
