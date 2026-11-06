@@ -27,7 +27,7 @@ import {
 	workspaceSkills,
 	workspaces,
 } from '@maskin/db/schema'
-import { and, asc, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm'
+import { type SQL, and, asc, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
@@ -240,7 +240,7 @@ app.openapi(listMarketplaceLoopsRoute, (async (c) => {
 
 	// Retired loops (dropped from the seed list) stay in the table for the
 	// installs that still point at them, but are not offered any more.
-	const conditions = [isNull(marketplaceLoops.retiredAt)]
+	const conditions: (SQL | undefined)[] = [isNull(marketplaceLoops.retiredAt)]
 	if (use_case) conditions.push(eq(marketplaceLoops.useCase, use_case))
 	if (q) {
 		const pattern = `%${q}%`
