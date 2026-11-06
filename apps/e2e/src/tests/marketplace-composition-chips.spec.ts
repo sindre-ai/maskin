@@ -3,10 +3,9 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 // Covers T1 of the Marketplace polish bet: the composition chip row on
 // multi-item bundle loop cards (loops with ≥2 component types).
-// The dev bootstrap seeds four bundle loops (Discover & Research, Build &
-// Ship, Strategy & Growth, Team Ops), each carrying actor + trigger + skill
-// items — so the marketplace loads a real 3+ bundle-card grid without extra
-// setup.
+// The dev bootstrap seeds two bundle loops (Product Discovery, Market &
+// Competitor Watch), each carrying actor + trigger + skill items — so the
+// marketplace loads real bundle cards without extra setup.
 
 const CHIP_ROW = '[data-testid="composition-chip-row"]'
 
