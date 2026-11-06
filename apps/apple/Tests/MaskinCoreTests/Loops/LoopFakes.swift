@@ -23,6 +23,10 @@ actor FakeLoopsAPI: LoopsAPI {
 	private(set) var postCalls: [String] = []
 	var failStatus = false
 	var failLoops = false
+	var failSteps = false
+	var failFeed = false
+	/// The read never answers (until its task is cancelled).
+	var hangSteps = false
 	var statusDelay: Duration?
 	private(set) var statusCalls: [(String, LoopPill)] = []
 	private(set) var loopCalls = 0
@@ -44,6 +48,9 @@ actor FakeLoopsAPI: LoopsAPI {
 	func setFailPosts(_ ids: Set<String>) { failPosts = ids }
 	func setFailStatus(_ value: Bool) { failStatus = value }
 	func setFailLoops(_ value: Bool) { failLoops = value }
+	func setFailSteps(_ value: Bool) { failSteps = value }
+	func setFailFeed(_ value: Bool) { failFeed = value }
+	func setHangSteps(_ value: Bool) { hangSteps = value }
 	func setStatusDelay(_ value: Duration?) { statusDelay = value }
 
 	func loops() async throws -> [LoopSummary] {
@@ -51,8 +58,15 @@ actor FakeLoopsAPI: LoopsAPI {
 		if failLoops { throw AutomationError("offline") }
 		return rows
 	}
-	func steps(loopID: String) async throws -> [LoopStep] { stepRows }
-	func activity(loopID: String) async throws -> [LoopActivityEntry] { feed }
+	func steps(loopID: String) async throws -> [LoopStep] {
+		if hangSteps { try await Task.sleep(for: .seconds(3600)) }
+		if failSteps { throw AutomationError("offline") }
+		return stepRows
+	}
+	func activity(loopID: String) async throws -> [LoopActivityEntry] {
+		if failFeed { throw AutomationError("offline") }
+		return feed
+	}
 	func overview(loopID: String) async throws -> LoopOverview { overviewRow }
 	func latestPost(loopID: String) async throws -> LoopPost? {
 		postCalls.append(loopID)

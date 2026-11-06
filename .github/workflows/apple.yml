@@ -108,6 +108,9 @@ jobs:
           # The For you view tests write a PNG of every new view here (normal and largest text size,
           # light and dark); the step below uploads them for the design check.
           FORYOU_SNAPSHOT_DIR: ${{ runner.temp }}/foryou-snapshots
+          # The loop screen view tests write a PNG of each state, including a block that failed or
+          # got no answer (light and dark, phone and wide); the step below uploads them.
+          LOOPS_SNAPSHOT_DIR: ${{ runner.temp }}/loops-snapshots
 
       # always(): a failing test should not hide the images that did render.
       - name: Upload chat card snapshots
@@ -126,6 +129,16 @@ jobs:
         with:
           name: foryou-snapshots
           path: ${{ runner.temp }}/foryou-snapshots
+          if-no-files-found: warn
+          overwrite: true  # a re-run of the job replaces the images of the first try
+          retention-days: 14
+
+      - name: Upload loop screen snapshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: loops-snapshots
+          path: ${{ runner.temp }}/loops-snapshots
           if-no-files-found: warn
           overwrite: true  # a re-run of the job replaces the images of the first try
           retention-days: 14
