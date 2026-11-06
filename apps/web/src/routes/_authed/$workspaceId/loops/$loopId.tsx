@@ -3,6 +3,7 @@ import { AskBanner } from '@/components/loops/ask-banner'
 import { LoopBlockError } from '@/components/loops/loop-block-error'
 import { itemsNeedingYou } from '@/components/loops/loop-counters'
 import { LoopCustomView } from '@/components/loops/loop-custom-view'
+import { LoopDecisions } from '@/components/loops/loop-decisions'
 import { LoopDetailTabs } from '@/components/loops/loop-detail-tabs'
 import { LoopFirstRunBanner } from '@/components/loops/loop-first-run-banner'
 import { LoopFlow } from '@/components/loops/loop-flow'
@@ -52,9 +53,9 @@ import { cn } from '@/lib/cn'
 import { nextFireAt, nextFireLabel } from '@/lib/loop-next-fire'
 import { type LoopPlan, parseLoopDescription } from '@/lib/loop-plan'
 import { useWorkspace } from '@/lib/workspace-context'
-import { useWaitingOnViewer } from '@maskin/shared'
+import { type LoopStatus, useWaitingOnViewer } from '@maskin/shared'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
-import { MoreHorizontal, Pause, Play, Trash2 } from 'lucide-react'
+import { Check, ChevronDown, MoreHorizontal, Pause, Play, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -79,6 +80,12 @@ interface ProposedEdit {
 	 *  alongside the plan so the next refinement builds on it. */
 	nextSource: string
 }
+
+const LOOP_STAGES = [
+	'learning',
+	'supervised',
+	'fully_autonomous',
+] as const satisfies readonly LoopStatus[]
 
 function SetupBlock({ label, text }: { label: string; text: string | null }) {
 	return (
@@ -257,6 +264,27 @@ function LoopDetailRoute() {
 			setAddingTrigger(false)
 		}
 	}, [createTrigger, updateObject, loopId, loopTriggerIds, loopAgentIds, navigate, workspaceId])
+
+	// "Message" on the Decisions card: bring the flow's own composer into reach and focus it.
+	const handleMessageDriver = useCallback(() => {
+		composerRef.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })
+		const field = composerRef.current?.querySelector<HTMLElement>(
+			'textarea, [contenteditable="true"], input',
+		)
+		field?.focus()
+	}, [])
+
+	// The stage the flow works in. Pausing stays under the "..." menu, so a stage never hides it.
+	const handleChangeStage = useCallback(
+		async (status: LoopStatus) => {
+			try {
+				await updateObject.mutateAsync({ id: loopId, data: { status } })
+			} catch {
+				toast.error('Could not change the stage')
+			}
+		},
+		[loopId, updateObject],
+	)
 
 	const handleUpdateTags = useCallback(
 		async (tags: string[]) => {
@@ -579,20 +607,46 @@ function LoopDetailRoute() {
 				)}
 
 				<div className="mt-4 flex flex-wrap items-center gap-2">
-					<span
-						data-testid="loop-pill"
-						className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-3.5 text-[13.5px] font-semibold text-foreground"
-					>
-						<span
-							aria-hidden="true"
-							className={cn(
-								'size-2 rounded-full',
-								pill.dot,
-								isLiveLoopPill(loop.pill) && 'animate-pulse',
-							)}
-						/>
-						{LOOP_PILL_STYLES[loop.status].label}
-					</span>
+					<DropdownMenu>
+						<ViewerTooltip>
+							<DropdownMenuTrigger asChild>
+								<button
+									type="button"
+									data-testid="loop-pill"
+									disabled={!canWrite || !object}
+									aria-label={`Stage: ${LOOP_PILL_STYLES[loop.status].label}`}
+									className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-3.5 text-[13.5px] font-semibold text-foreground disabled:cursor-default"
+								>
+									<span
+										aria-hidden="true"
+										className={cn(
+											'size-2 rounded-full',
+											pill.dot,
+											isLiveLoopPill(loop.pill) && 'animate-pulse',
+										)}
+									/>
+									{LOOP_PILL_STYLES[loop.status].label}
+									{canWrite && object && (
+										<ChevronDown size={11} aria-hidden="true" className="text-muted-foreground" />
+									)}
+								</button>
+							</DropdownMenuTrigger>
+						</ViewerTooltip>
+						<DropdownMenuContent align="start">
+							{LOOP_STAGES.map((stage) => (
+								<DropdownMenuItem
+									key={stage}
+									onClick={() => handleChangeStage(stage)}
+									className="gap-2"
+								>
+									<span>{LOOP_PILL_STYLES[stage].label}</span>
+									{loop.status === stage && (
+										<Check size={13} className="ml-auto" aria-hidden="true" />
+									)}
+								</DropdownMenuItem>
+							))}
+						</DropdownMenuContent>
+					</DropdownMenu>
 					{driver && (
 						<span
 							data-testid="loop-driver"
@@ -603,12 +657,14 @@ function LoopDetailRoute() {
 							<span className="text-muted-foreground">drives</span>
 						</span>
 					)}
-					{asksWaiting > 0 && (
+					{needsYouRows.length > 0 && (
 						<span
 							data-testid="loop-decisions-chip"
 							className="inline-flex h-9 items-center rounded-full border border-border px-3.5 text-[13.5px] font-semibold text-foreground"
 						>
-							{asksWaiting === 1 ? '1 decision needed' : `${asksWaiting} decisions needed`}
+							{needsYouRows.length === 1
+								? '1 decision needed'
+								: `${needsYouRows.length} decisions needed`}
 						</span>
 					)}
 					<LoopTags tags={loop.tags} canWrite={canWrite && !!object} onChange={handleUpdateTags} />
@@ -617,7 +673,7 @@ function LoopDetailRoute() {
 				<div className="mt-6">
 					<LoopDetailTabs
 						tabs={[
-							{ value: 'overview', label: 'Overview', count: asksWaiting },
+							{ value: 'overview', label: 'Overview', count: needsYouRows.length },
 							{ value: 'items', label: 'Items', count: childIds.length },
 							{ value: 'activity', label: 'Activity' },
 							{ value: 'setup', label: 'Setup' },
@@ -711,37 +767,20 @@ function LoopDetailRoute() {
 
 						{!showCustomView && (
 							<>
-								{needsYouRows.length > 0 && (
-									<section
-										aria-label="Decisions"
-										data-testid="loop-needs-you"
-										className="flex flex-col"
-									>
-										<span className="text-[13px] font-semibold text-muted-foreground">
-											Decisions
-										</span>
-										<p className="mt-2 text-[14px] font-semibold text-foreground">
-											{needsYouRows.length === 1
-												? '1 item is waiting for you'
-												: `${needsYouRows.length} items are waiting for you`}
-										</p>
-										{needsYouRows.map(({ item, ask }) => (
-											<Link
-												key={item.id}
-												to="/$workspaceId/objects/$objectId"
-												params={{ workspaceId, objectId: item.id }}
-												className="mt-2 flex flex-col gap-0.5 rounded-lg border border-border px-3 py-2.5 transition-colors duration-150 hover:bg-muted"
-											>
-												<span className="truncate text-[14px] font-semibold text-foreground">
-													{item.title ?? 'Untitled'}
-												</span>
-												<span className="truncate text-[12.5px] text-muted-foreground">
-													{ask.title}
-												</span>
-											</Link>
-										))}
-									</section>
-								)}
+								<LoopDecisions
+									workspaceId={workspaceId}
+									rows={needsYouRows.map(({ item, ask }) => ({
+										item,
+										ask: {
+											title: ask.title,
+											createdAt: ask.createdAt,
+											sourceActorId: ask.sourceActorId,
+										},
+									}))}
+									actors={actors}
+									messageLabel={driver?.name}
+									onMessage={handleMessageDriver}
+								/>
 
 								<div>
 									{flowFailed ? (
