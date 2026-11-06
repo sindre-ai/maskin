@@ -144,7 +144,7 @@ export function DailyBudgetSection({
 	if (query.isLoading) {
 		return (
 			<div data-testid="daily-budget-loading" aria-busy="true" className="space-y-2">
-				<Label className="text-bold">Daily budget</Label>
+				<Label className="text-[13px] font-semibold text-muted-foreground">Daily budget</Label>
 				<Skeleton className="h-16 w-full rounded-xl" />
 			</div>
 		)
@@ -153,7 +153,7 @@ export function DailyBudgetSection({
 	if (query.isError || !query.data) {
 		return (
 			<div>
-				<Label className="mb-1 text-bold">Daily budget</Label>
+				<Label className="mb-1 text-[13px] font-semibold text-muted-foreground">Daily budget</Label>
 				<p className="text-xs text-error">
 					{query.error?.message ?? 'Could not load the daily budget.'}
 				</p>
@@ -199,7 +199,7 @@ export function DailyBudgetSection({
 
 	return (
 		<div data-testid="daily-budget">
-			<Label className="mb-1 text-bold">Daily budget</Label>
+			<Label className="mb-1 text-[13px] font-semibold text-muted-foreground">Daily budget</Label>
 			<p className="mb-3 text-xs text-muted-foreground">
 				The plan above is your limit for the period. This is a target for each day, so you can see
 				whether you spend evenly.
@@ -208,7 +208,7 @@ export function DailyBudgetSection({
 			<div className="space-y-4 rounded-xl border border-border bg-card p-3">
 				<div className="flex items-start justify-between gap-4">
 					<div className="min-w-0">
-						<span className="block text-[12.5px] font-semibold">Set a daily target</span>
+						<span className="block text-[15px] font-medium leading-tight">Set a daily target</span>
 						<span className="text-xs text-muted-foreground">
 							For now the target only reports. Nothing is held or stopped yet, and work keeps
 							running as before.

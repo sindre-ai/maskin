@@ -80,7 +80,7 @@ test.describe('Chat — a link to an object is a card or a chip with type, statu
 			await expect(
 				thread.getByRole('link', { name: /^Task, Backlog: A fourth card/ }),
 			).toBeVisible()
-			await expect(thread.getByText('Deleted object')).toBeVisible()
+			await expect(thread.getByText('Deleted item')).toBeVisible()
 
 			// Order: sentence, card, sentence.
 			const order = await thread.evaluate((el) => {

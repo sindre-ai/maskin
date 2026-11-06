@@ -81,7 +81,7 @@ describe('useInstallLoop', () => {
 		result.current.mutate({ loopId: 'loop-1' })
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(api.installedLoops.install).toHaveBeenCalledWith(workspaceId, 'loop-1', undefined)
-		expect(toast.success).toHaveBeenCalledWith('Loop installed')
+		expect(toast.success).toHaveBeenCalledWith('Flow installed')
 	})
 
 	it('surfaces an error when install fails', async () => {
@@ -137,7 +137,7 @@ describe('useForkInstalledLoop', () => {
 		result.current.mutate({ installedLoopId: 'inst-1' })
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(api.installedLoops.fork).toHaveBeenCalledWith(workspaceId, 'inst-1')
-		expect(toast.success).toHaveBeenCalledWith('Loop forked')
+		expect(toast.success).toHaveBeenCalledWith('Flow forked')
 	})
 })
 

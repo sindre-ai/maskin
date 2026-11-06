@@ -142,7 +142,7 @@ describe('useObjectLoops', () => {
 		})
 
 		await waitFor(() => expect(result.current.isLoading).toBe(false))
-		expect(result.current.data.get('obj-1')?.name).toBe('Loop')
+		expect(result.current.data.get('obj-1')?.name).toBe('Flow')
 	})
 
 	it('reports isError when the loops list fails', async () => {

@@ -35,7 +35,7 @@ export function ObjectDetailBody({
 		// measure (1105–1122); sections below it sit on the same column.
 		<div className="mt-4 flex flex-col gap-3.5">
 			{/* Editable when the host wires a commit handler — an empty body still
-			    renders the editor so a new object can be written into, which a
+			    renders the editor so a new item can be written into, which a
 			    truthy-content guard alone would make impossible. */}
 			{object.content || onContentChange ? (
 				<MarkdownContent

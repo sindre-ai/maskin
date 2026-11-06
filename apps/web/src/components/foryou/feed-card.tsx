@@ -6,7 +6,8 @@ import { MarkdownContent } from '@/components/shared/markdown-content'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
-import { TypeBadge } from '@/components/shared/type-badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { useActors } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
 import {
@@ -32,8 +33,14 @@ import {
 } from '@/lib/foryou-card-kind'
 import { heldNote, isObjectlessCard } from '@/lib/foryou-feed'
 import { markImpressed } from '@/lib/foryou-impressions'
+import {
+	type LaterOption,
+	laterMinDate,
+	laterOptionFromDate,
+	laterOptions,
+} from '@/lib/foryou-later'
 import { Link } from '@tanstack/react-router'
-import { ArrowUpRight, Check, ChevronDown, ChevronUp } from 'lucide-react'
+import { ArrowUpRight, Check, ChevronDown, ChevronUp, Clock, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DraftPreview } from './draft-preview'
 import { type DraftAction, DraftStack } from './draft-stack'
@@ -60,6 +67,11 @@ interface FeedCardProps {
 	replied: boolean
 	onReplied: () => void
 	onMarkRead: () => void
+	/** Set the card aside on this device until the chosen time. Absent: no Later control. */
+	onLater?: (option: LaterOption) => void
+	/** The card is set aside: it shows as one "Later" row with this label instead of its body. */
+	laterLabel?: string | null
+	onBringBack?: () => void
 }
 
 /**
@@ -83,6 +95,9 @@ export function FeedCard({
 	onMarkRead,
 	onDraftAction,
 	onDraftsDone,
+	onLater,
+	laterLabel,
+	onBringBack,
 }: FeedCardProps) {
 	const objectId = item.entity_id
 	// A card with no object (the morning budget card): nothing to open, no thread to reply in.
@@ -173,6 +188,14 @@ export function FeedCard({
 		)
 	}
 
+	if (laterLabel) {
+		return (
+			<CardShell expanded={false}>
+				<LaterRow title={title} label={laterLabel} onBringBack={onBringBack} />
+			</CardShell>
+		)
+	}
+
 	if (!expanded) {
 		return (
 			<CardShell expanded={false}>
@@ -213,26 +236,25 @@ export function FeedCard({
 	return (
 		<CardShell expanded>
 			<div className="group/card flex flex-col gap-3 px-5 pb-[18px] pt-[17px]">
-				<div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1.5 border-b border-muted pb-[11px]">
-					<span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
-						{object?.type && (
-							<TypeBadge
-								type={object.type}
-								variant="mono"
-								className="text-[8px] font-bold tracking-[0.08em]"
-							/>
-						)}{' '}
+				<div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+					<ActorAvatar
+						id={senderId ?? undefined}
+						name={sender?.name ?? 'Agent'}
+						type={sender?.type ?? 'agent'}
+						size="sm"
+					/>
+					<span className="min-w-0 flex-1 truncate text-[12.5px] text-muted-foreground">
+						{sender?.name ? `${sender.name}${objectless ? '' : ' · '}` : ''}
 						{!objectless && (
 							<Link
 								to="/$workspaceId/objects/$objectId"
 								params={{ workspaceId, objectId }}
-								className="border-b border-border font-bold text-muted-foreground hover:border-foreground hover:text-foreground"
+								className="hover:text-foreground hover:underline"
 							>
 								{objectTitle || 'Open'}
 								<ArrowUpRight size={10} className="ml-0.5 inline" aria-hidden />
 							</Link>
 						)}
-						{sender?.name ? ` · from ${sender.name}` : ''}
 					</span>
 					{!objectless && (
 						<TimelineHistory workspaceId={workspaceId} objectId={objectId} item={item} />
@@ -250,7 +272,12 @@ export function FeedCard({
 						compactDayLimit={7}
 						className="shrink-0 font-mono text-[10px] font-medium uppercase tabular-nums text-muted-foreground"
 					/>
-					<MarkReadButton cardKind={cardKind} cardId={objectId} onMarkRead={onMarkRead} />
+					<MarkReadButton
+						cardKind={cardKind}
+						cardId={objectId}
+						onMarkRead={onMarkRead}
+						alwaysVisible
+					/>
 					{onToggleExpanded && (
 						<button
 							type="button"
@@ -267,7 +294,7 @@ export function FeedCard({
 				    the card back down, the way the mockup's hero does. */}
 				<div
 					className={cn(
-						'text-[18px] font-bold leading-[1.32] tracking-[-0.015em] text-pretty text-foreground',
+						'text-[17px] font-bold leading-[1.32] tracking-[-0.015em] text-pretty text-foreground',
 						onToggleExpanded && 'cursor-pointer',
 					)}
 					onClick={onToggleExpanded}
@@ -329,6 +356,8 @@ export function FeedCard({
 					/>
 				)}
 
+				{onLater && options.length > 0 && <LaterControl onLater={onLater} />}
+
 				{!objectless && (
 					<CommentInput
 						workspaceId={workspaceId}
@@ -336,10 +365,8 @@ export function FeedCard({
 						// The composer answers the comment that put this card in the feed,
 						// so a typed reply threads under it exactly as a taken option does.
 						parentEventId={item.latest_mention?.event_id}
-						// TODO: restore `variant="bar"` and `placeholder` once the
-						// Object detail split lands them on the v2 composer (branch
-						// commit 9c126196). Until then the composer renders in its
-						// stacked form with the default placeholder.
+						variant="bar"
+						placeholder={`Ask ${sender?.name ?? 'the agent'} or give instructions`}
 						onSubmitted={onReplied}
 					/>
 				)}
@@ -356,10 +383,112 @@ function CardShell({ expanded, children }: { expanded: boolean; children: React.
 			data-testid="foryou-feed-card"
 			className={cn(
 				'overflow-hidden rounded-xl border border-border bg-card',
-				expanded ? 'shadow-md' : 'shadow-xs',
+				expanded ? 'shadow-sm' : 'shadow-xs',
 			)}
 		>
 			{children}
+		</div>
+	)
+}
+
+// A card set aside on this device (v16: "Later · back tomorrow, 08:00 · only you are
+// reminded, this browser only" with a Bring back action). The whole row is the button.
+function LaterRow({
+	title,
+	label,
+	onBringBack,
+}: {
+	title: string
+	label: string
+	onBringBack?: () => void
+}) {
+	return (
+		<button
+			type="button"
+			data-testid="foryou-later-row"
+			onClick={onBringBack}
+			className="flex w-full items-center gap-3 px-4 py-[13px] text-left transition-colors duration-150 hover:bg-muted/40"
+		>
+			<span className="flex min-w-0 flex-1 flex-col">
+				<span className="truncate text-[13.5px] font-semibold leading-[1.35] text-foreground">
+					{title}
+				</span>
+				<span className="mt-[3px] text-[11px] text-muted-foreground">
+					Later · back {label.charAt(0).toLowerCase()}
+					{label.slice(1)} · only you are reminded, this browser only
+				</span>
+			</span>
+			<span className="shrink-0 text-xs font-semibold text-brand">Bring back</span>
+		</button>
+	)
+}
+
+// "Later" on an open decision card: a pill that opens the four quick times and a date
+// field (v16 prototype). Panel is inline, not a popover, so it stays reachable on touch.
+function LaterControl({ onLater }: { onLater: (option: LaterOption) => void }) {
+	const [open, setOpen] = useState(false)
+	// Read each time the panel opens: a card left on screen past 18:00 or overnight must
+	// not offer times that have already gone by.
+	const [now, setNow] = useState(() => new Date())
+	const choose = (option: LaterOption) => {
+		setOpen(false)
+		onLater(option)
+	}
+	return (
+		<div className="flex flex-col gap-2">
+			<div className="flex flex-wrap items-center gap-2">
+				<Button
+					type="button"
+					variant="secondary"
+					size="sm"
+					className="rounded-full"
+					aria-expanded={open}
+					onClick={() => {
+						if (!open) setNow(new Date())
+						setOpen((value) => !value)
+					}}
+				>
+					<Clock aria-hidden />
+					Later
+				</Button>
+				{open && (
+					<span className="text-xs text-muted-foreground">
+						Only you are reminded. This browser only.
+					</span>
+				)}
+			</div>
+			{open && (
+				<div
+					role="menu"
+					aria-label="Remind me later"
+					className="flex flex-col rounded-xl bg-secondary p-1.5"
+				>
+					{laterOptions(now).map((option) => (
+						<button
+							key={option.label}
+							type="button"
+							role="menuitem"
+							onClick={() => choose(option)}
+							className="rounded-lg px-2.5 py-2 text-left text-[13px] text-foreground hover:bg-border"
+						>
+							{option.label}
+						</button>
+					))}
+					<div className="flex items-center gap-2.5 px-2.5 py-1.5 text-[13px] text-muted-foreground">
+						Pick a date
+						<Input
+							type="date"
+							aria-label="Pick a date"
+							min={laterMinDate(now)}
+							onChange={(event) => {
+								const picked = laterOptionFromDate(event.target.value, new Date())
+								if (picked) choose(picked)
+							}}
+							className="w-auto"
+						/>
+					</div>
+				</div>
+			)}
 		</div>
 	)
 }
@@ -396,10 +525,13 @@ function MarkReadButton({
 	cardKind,
 	cardId,
 	onMarkRead,
+	alwaysVisible = false,
 }: {
 	cardKind: CardKind
 	cardId: string
 	onMarkRead: () => void
+	/** The open card's header carries it as a plain × (v11); the row keeps it on hover. */
+	alwaysVisible?: boolean
 }) {
 	return (
 		<button
@@ -414,9 +546,13 @@ function MarkReadButton({
 				trackForyouCardMarkedRead({ card_kind: cardKind, card_id: cardId })
 				onMarkRead()
 			}}
-			className="grid size-[22px] shrink-0 place-items-center rounded-sm text-muted-foreground hover:bg-secondary hover:text-foreground can-hover:opacity-0 can-hover:focus-visible:opacity-100 can-hover:group-hover/card:opacity-100"
+			className={cn(
+				'grid size-[22px] shrink-0 place-items-center rounded-sm text-muted-foreground hover:bg-secondary hover:text-foreground',
+				!alwaysVisible &&
+					'can-hover:opacity-0 can-hover:focus-visible:opacity-100 can-hover:group-hover/card:opacity-100',
+			)}
 		>
-			<Check size={12} aria-hidden />
+			{alwaysVisible ? <X size={13} aria-hidden /> : <Check size={12} aria-hidden />}
 		</button>
 	)
 }
@@ -473,7 +609,7 @@ function TimelineHistory({
 		<div className="order-last w-full basis-full">
 			<div className="flex flex-col gap-[9px] rounded-xl border border-muted bg-secondary/40 px-[13px] pb-2.5 pt-[11px]">
 				<div className="flex items-center gap-2.5">
-					<span className="eyebrow shrink-0">On this object</span>
+					<span className="eyebrow shrink-0">On this item</span>
 					<div className="h-px flex-1 bg-muted" />
 					<button
 						type="button"

@@ -131,8 +131,12 @@ test.describe('LLM API keys — settings screen', () => {
 		await saveResponse
 
 		await expect(page.getByTestId('custom-llm-key-saved')).toContainText('ends in 3333')
+		await expect
+			.poll(async () => (await workspaceRow(account.apiKey, account.workspaceId)).settings, {
+				timeout: 15_000,
+			})
+			.toMatchObject({ custom_llm: { model: 'model-b' } })
 		const row = await workspaceRow(account.apiKey, account.workspaceId)
 		expect(row.llm_configured).toMatchObject({ custom_llm: true })
-		expect(row.settings).toMatchObject({ custom_llm: { model: 'model-b' } })
 	})
 })

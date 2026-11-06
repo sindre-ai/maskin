@@ -8,15 +8,15 @@ import { vocab } from '../lib/search/fixtures'
 const reduce = createSearchReducer(vocab)
 
 describe('search state reducer', () => {
-	it('walks the hans loop flow end to end', () => {
-		let s = reduce(INITIAL_SEARCH_STATE, { type: 'text', text: 'hans loop' })
+	it('walks the hans flow flow end to end', () => {
+		let s = reduce(INITIAL_SEARCH_STATE, { type: 'text', text: 'hans flow' })
 		expect(suggest(s.parts, vocab)?.value).toBe('loop')
 		s = reduce(s, { type: 'accept' })
 		expect(pillValues(s.parts, 'type')).toEqual(['loop'])
 		expect(queryText(s.parts)).toBe('hans')
 		s = reduce(s, { type: 'backspace' })
 		expect(s.parts.pills).toEqual([])
-		expect(queryText(s.parts)).toBe('hans loop')
+		expect(queryText(s.parts)).toBe('hans flow')
 	})
 
 	it('chips add and remove pills, and removal brings back no word', () => {
@@ -44,13 +44,13 @@ describe('search state reducer', () => {
 	})
 
 	it('the x on a typed pill gives the word back; Esc dismisses a suggestion', () => {
-		let s = reduce(INITIAL_SEARCH_STATE, { type: 'text', text: 'hans loop' })
+		let s = reduce(INITIAL_SEARCH_STATE, { type: 'text', text: 'hans flow' })
 		s = reduce(s, { type: 'dismiss' })
 		expect(suggest(s.parts, vocab)).toBeNull()
-		s = reduce(INITIAL_SEARCH_STATE, { type: 'text', text: 'hans loop' })
+		s = reduce(INITIAL_SEARCH_STATE, { type: 'text', text: 'hans flow' })
 		s = reduce(s, { type: 'accept' })
 		s = reduce(s, { type: 'removePill', index: 0 })
-		expect(queryText(s.parts)).toBe('hans loop')
+		expect(queryText(s.parts)).toBe('hans flow')
 	})
 
 	it('Clear filters drops pills and Updated but keeps the words and the sort', () => {
@@ -74,14 +74,14 @@ describe('search state reducer', () => {
 		expect(s.sort).toBe('recent')
 
 		// A pill made by typing remembers its word; the URL echo must not wipe that.
-		let typed = reduce(INITIAL_SEARCH_STATE, { type: 'text', text: 'hans loop' })
+		let typed = reduce(INITIAL_SEARCH_STATE, { type: 'text', text: 'hans flow' })
 		typed = reduce(typed, { type: 'accept' })
 		const echo = reduce(typed, {
 			type: 'hydrate',
 			state: { ...EMPTY_URL_STATE, text: 'hans', types: ['loop'] },
 		})
 		expect(echo).toBe(typed)
-		expect(echo.parts.pills[0].word).toBe('loop')
+		expect(echo.parts.pills[0].word).toBe('flow')
 
 		const changed = reduce(typed, { type: 'hydrate', state: { ...EMPTY_URL_STATE, text: 'x' } })
 		expect(changed.parts.pills).toEqual([])

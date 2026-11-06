@@ -1,6 +1,7 @@
 import { Composer, nameClipboardImage } from '@/components/chat/chat'
 import { EMPTY_CHAT_SELECTION } from '@/lib/chat-selection'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createWorkspaceWrapper } from '../../setup'
 
@@ -75,12 +76,29 @@ describe('Composer file-attach input', () => {
 		expect(input.multiple).toBe(true)
 	})
 
-	it('offers the paperclip only, with no + menu', () => {
+	it('offers one + menu with Photo, File, Item and Person or agent', async () => {
+		const user = userEvent.setup()
 		renderComposer()
-		expect(screen.getByRole('button', { name: 'Attach file' })).toBeInTheDocument()
-		expect(
-			screen.queryByRole('button', { name: 'Add an object, file, or mention' }),
-		).not.toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: 'Attach file' }))
+		for (const name of ['Photo', 'File', 'Item', 'Person or agent']) {
+			expect(await screen.findByRole('menuitem', { name })).toBeInTheDocument()
+		}
+	})
+
+	it('starts a mention from the Person or agent row', async () => {
+		const user = userEvent.setup()
+		renderComposer()
+		await user.click(screen.getByRole('button', { name: 'Attach file' }))
+		await user.click(await screen.findByRole('menuitem', { name: 'Person or agent' }))
+		expect(screen.getByRole('textbox')).toHaveValue('@')
+	})
+
+	it('shows one send button once there is text', async () => {
+		const user = userEvent.setup()
+		renderComposer()
+		await user.type(screen.getByRole('textbox'), 'hello')
+		expect(screen.getAllByRole('button', { name: 'Send message' })).toHaveLength(1)
+		expect(screen.queryByRole('button', { name: 'Dictate a message' })).not.toBeInTheDocument()
 	})
 
 	it('uploads a picked PDF via useUploadFile and dispatches add_file on success', async () => {

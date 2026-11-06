@@ -65,7 +65,7 @@ function EmptyTranscript({ starting }: { starting: boolean }) {
 	}
 	return (
 		<div className="flex h-full items-center justify-center text-center text-muted-foreground">
-			Ask the agents about your workspace — notifications, objects, bets, or how to get started.
+			Ask the agents about your workspace — notifications, items, bets, or how to get started.
 		</div>
 	)
 }

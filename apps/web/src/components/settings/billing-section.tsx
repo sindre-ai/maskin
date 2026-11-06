@@ -9,7 +9,6 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from '@/components/ui/dialog'
-import { Label } from '@/components/ui/label'
 import { useBillingCancel, useBillingUsage, useStripeCheckout } from '@/hooks/use-billing'
 import type {
 	BillingPlan,
@@ -19,9 +18,10 @@ import type {
 } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { queryKeys } from '@/lib/query-keys'
+import { trialCardState } from '@/lib/trial'
 import { OWNERSHIP_CAPS, SEAT_CAPS } from '@maskin/shared'
 import { useQueryClient } from '@tanstack/react-query'
-import { Check, ChevronDown, ChevronRight, ExternalLink } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Clock, ExternalLink } from 'lucide-react'
 import { type ReactNode, useEffect, useState } from 'react'
 
 const PLAN_LABEL: Record<BillingPlan, string> = {
@@ -126,7 +126,7 @@ const PLAN_CONFIG: PlanCardConfig[] = [
 		eyebrow: 'TEAM',
 		price: '$200',
 		priceSuffix: '/mo',
-		tagline: 'Heavier loops, volume rates, one invoice.',
+		tagline: 'Heavier flows, volume rates, one invoice.',
 		features: [
 			`${formatCredits(CAP_DEFAULTS.team)} of usage included each month`,
 			formatOwnershipCap(OWNERSHIP_CAPS.team),
@@ -314,8 +314,10 @@ export function BillingSection({
 	if (usageQuery.isLoading) {
 		return (
 			<div>
-				<Label className="mb-1 text-bold">Maskin Subscription</Label>
-				<p className="text-xs text-muted-foreground">Loading…</p>
+				<h2 className="px-2 pb-1 text-[13px] font-semibold text-muted-foreground">
+					Maskin Subscription
+				</h2>
+				<p className="px-2 text-xs text-muted-foreground">Loading…</p>
 			</div>
 		)
 	}
@@ -323,7 +325,9 @@ export function BillingSection({
 	if (usageQuery.isError || !usageQuery.data) {
 		return (
 			<div>
-				<Label className="mb-1 text-bold">Maskin Subscription</Label>
+				<h2 className="px-2 pb-1 text-[13px] font-semibold text-muted-foreground">
+					Maskin Subscription
+				</h2>
 				<p className="text-xs text-error">
 					{usageQuery.error?.message ?? 'Could not load subscription state.'}
 				</p>
@@ -347,12 +351,16 @@ export function BillingSection({
 
 	return (
 		<div>
-			<Label className="mb-1 text-bold">Maskin Subscription</Label>
-			<p className="text-xs text-muted-foreground mb-3">
+			<h2 className="px-2 pb-1 text-[13px] font-semibold text-muted-foreground">
+				Maskin Subscription
+			</h2>
+			<p className="mb-3 px-2 text-xs text-muted-foreground">
 				Hosted LLM — pay Maskin, no API key needed. Included usage per period, billed at actual
 				dollar cost, then buy prepaid usage credits any time to keep going — you choose the amount,
 				nothing is auto-charged.
 			</p>
+
+			<TrialBanner usage={usage} onChoosePlan={() => setPlansOpenOverride(true)} />
 
 			<UsageBanner
 				usage={usage}
@@ -421,6 +429,37 @@ export function BillingSection({
 	)
 }
 
+/**
+ * Amber card above the credits: how long the trial has left and the way to pick
+ * a plan. Only on the trial plan, and only while there is time left (the expiry
+ * banner owns the ended state). "Choose a plan" opens the plan comparison below.
+ */
+function TrialBanner({
+	usage,
+	onChoosePlan,
+}: {
+	usage: BillingUsageResponse
+	onChoosePlan: () => void
+}) {
+	const state = trialCardState(usage)
+	if (!state) return null
+	return (
+		<div
+			data-testid="trial-banner"
+			className="mb-3 flex flex-wrap items-center gap-3 rounded-xl bg-warning/10 p-4"
+		>
+			<Clock size={16} aria-hidden className="shrink-0 text-warning" />
+			<div className="min-w-0 flex-1 basis-48">
+				<p className="text-[13px] font-bold text-warning">{state.title}</p>
+				<p className="text-xs text-warning">Choose a plan to keep agents running.</p>
+			</div>
+			<Button size="sm" onClick={onChoosePlan} className="max-md:h-11">
+				Choose a plan
+			</Button>
+		</div>
+	)
+}
+
 function UsageBanner({
 	usage,
 	badge,
@@ -458,8 +497,8 @@ function UsageBanner({
 		<div
 			data-testid="usage-banner"
 			className={cn(
-				'rounded-lg border p-3 space-y-3',
-				needsAttention ? 'border-warning/30 bg-warning/10' : 'border-border bg-bg-surface',
+				'space-y-3 rounded-xl border p-4',
+				needsAttention ? 'border-warning/30 bg-warning/10' : 'border-border bg-card',
 			)}
 		>
 			<div className="flex items-center justify-between gap-2">
@@ -568,7 +607,7 @@ function PlanCard({
 	cta: PlanCta | null
 }) {
 	return (
-		<div className="flex flex-col rounded-lg border border-border bg-bg-surface p-3 gap-3">
+		<div className="flex flex-col rounded-xl border border-border bg-card p-4 gap-3">
 			<div>
 				<div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
 					{config.eyebrow}

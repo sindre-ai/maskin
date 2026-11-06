@@ -77,7 +77,7 @@ export function UploadProgress({ progress, status, error, className }: UploadPro
 		>
 			<span className="block h-1.5 w-24 overflow-hidden rounded-full bg-muted">
 				<span
-					className="block h-full bg-accent transition-[width] duration-200"
+					className="block h-full bg-primary transition-[width] duration-200"
 					style={{ width: `${pct}%` }}
 				/>
 			</span>

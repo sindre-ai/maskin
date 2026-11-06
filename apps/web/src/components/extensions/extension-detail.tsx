@@ -39,7 +39,7 @@ import {
 import type { ExtensionResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, ArrowRight } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 
@@ -260,28 +260,27 @@ function describePath(v: { literal: string } | { path: string }): string {
 function MappingSummary({ ext }: { ext: ExtensionResponse }) {
 	const map = ext.webhookConfig?.eventMap
 	if (!map) return null
+	const rows = [
+		{ from: map.externalIdPath, to: 'External ID (dedup key)' },
+		{ from: describePath(map.entityType), to: 'Entity type' },
+		{ from: describePath(map.action), to: 'Action' },
+	]
 	return (
-		<section
-			className="rounded-xl border border-border bg-card p-4"
-			aria-labelledby="mapping-summary-heading"
-		>
-			<h2 id="mapping-summary-heading" className="text-[13px] font-bold">
-				Event mapping
+		<section aria-labelledby="mapping-summary-heading">
+			<h2 id="mapping-summary-heading" className="settings-label px-1 pb-1.5">
+				Field mapping
 			</h2>
-			<dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 text-xs sm:grid-cols-3">
-				<div>
-					<dt className="text-muted-foreground">External ID (dedup key)</dt>
-					<dd className="font-mono">{map.externalIdPath}</dd>
-				</div>
-				<div>
-					<dt className="text-muted-foreground">Entity type</dt>
-					<dd className="font-mono">{describePath(map.entityType)}</dd>
-				</div>
-				<div>
-					<dt className="text-muted-foreground">Action</dt>
-					<dd className="font-mono">{describePath(map.action)}</dd>
-				</div>
-			</dl>
+			<ul className="divide-y divide-border-subtle rounded-xl border border-border bg-card">
+				{rows.map((row) => (
+					<li key={row.to} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5">
+						<code className="min-w-0 break-all rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
+							{row.from}
+						</code>
+						<ArrowRight size={13} aria-hidden className="shrink-0 text-muted-foreground" />
+						<span className="text-[13px]">{row.to}</span>
+					</li>
+				))}
+			</ul>
 		</section>
 	)
 }

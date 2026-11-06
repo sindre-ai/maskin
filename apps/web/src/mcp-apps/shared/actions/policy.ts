@@ -35,9 +35,9 @@ const POLICY_TABLE: Record<MutationKind, MutationPolicy> = {
 		kind: 'object_delete',
 		confirm: true,
 		label: 'Delete',
-		confirmTitle: 'Delete this object?',
+		confirmTitle: 'Delete this item?',
 		confirmDescription:
-			'This removes the object and its relationships. You can restore it from the activity feed if you change your mind.',
+			'This removes the item and its relationships. You can restore it from the activity feed if you change your mind.',
 		variant: 'destructive',
 		optimistic: false,
 	},

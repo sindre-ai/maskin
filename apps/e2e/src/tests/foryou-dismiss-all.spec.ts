@@ -79,6 +79,7 @@ test('the ··· menu\u2019s "Dismiss all" really marks every card read', async 
 
 	await page.getByRole('button', { name: 'Feed actions' }).click()
 	await page.getByRole('menuitem', { name: /^Dismiss all( \d+)?$/ }).click()
+	await page.getByRole('button', { name: 'Dismiss all', exact: true }).click()
 
 	await expect(page.getByTestId('foryou-feed-card')).toHaveCount(0)
 	// Dismissing is recorded on the server, so it survives a reload — a card that comes

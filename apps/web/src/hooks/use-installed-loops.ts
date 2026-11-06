@@ -17,7 +17,7 @@ export function useInstallLoop(workspaceId: string) {
 		mutationFn: ({ loopId, source }: { loopId: string; source?: 'detail' }) =>
 			api.installedLoops.install(workspaceId, loopId, source),
 		onSuccess: () => {
-			toast.success('Loop installed')
+			toast.success('Flow installed')
 			queryClient.invalidateQueries({ queryKey: queryKeys.installedLoops.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.triggers.all(workspaceId) })
@@ -35,7 +35,7 @@ export function useForkInstalledLoop(workspaceId: string) {
 		mutationFn: ({ installedLoopId }: { installedLoopId: string }) =>
 			api.installedLoops.fork(workspaceId, installedLoopId),
 		onSuccess: () => {
-			toast.success('Loop forked')
+			toast.success('Flow forked')
 			queryClient.invalidateQueries({ queryKey: queryKeys.installedLoops.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.triggers.all(workspaceId) })
@@ -56,7 +56,7 @@ export function useUninstallLoop(workspaceId: string) {
 			keepProvisionedItems: boolean
 		}) => api.installedLoops.uninstall(workspaceId, installedLoopId, keepProvisionedItems),
 		onSuccess: () => {
-			toast.success('Loop removed')
+			toast.success('Flow removed')
 			queryClient.invalidateQueries({ queryKey: queryKeys.installedLoops.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.triggers.all(workspaceId) })

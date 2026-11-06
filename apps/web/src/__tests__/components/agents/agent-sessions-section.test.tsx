@@ -21,6 +21,7 @@ const sessionsData = vi.fn()
 const createSessionMutate = vi.fn()
 const pauseSessionMutate = vi.fn()
 const resumeSessionMutate = vi.fn()
+const stopSessionMutate = vi.fn()
 
 vi.mock('@/hooks/use-sessions', () => ({
 	useActorSessions: () => ({ data: sessionsData(), isLoading: false }),
@@ -28,6 +29,7 @@ vi.mock('@/hooks/use-sessions', () => ({
 	useCreateSession: () => ({ mutate: createSessionMutate, isPending: false }),
 	usePauseSession: () => ({ mutate: pauseSessionMutate, isPending: false }),
 	useResumeSession: () => ({ mutate: resumeSessionMutate, isPending: false }),
+	useStopSession: () => ({ mutate: stopSessionMutate, isPending: false }),
 }))
 
 const triggersData = vi.fn((): { id: string; name: string }[] => [])
@@ -70,10 +72,54 @@ describe('AgentSessionsSection', () => {
 		createSessionMutate.mockReset()
 		pauseSessionMutate.mockReset()
 		resumeSessionMutate.mockReset()
+		stopSessionMutate.mockReset()
 		vi.mocked(toast.error).mockClear()
 	})
 
-	it('offers Restart on a running session and reruns the same prompt', async () => {
+	it('draws the compact list: newest N rows, a status word, See all, no per-row buttons', async () => {
+		const agent = buildActorResponse({ id: 'agent-c', type: 'agent' })
+		sessionsData.mockReturnValue(
+			['1', '2', '3', '4'].map((n) =>
+				buildSessionResponse({
+					id: `s-${n}`,
+					actorId: 'agent-c',
+					status: n === '4' ? 'failed' : 'completed',
+					actionPrompt: `Task ${n}`,
+					createdAt: `2026-01-0${n}T10:00:00Z`,
+				}),
+			),
+		)
+		const onSeeAll = vi.fn()
+		render(<AgentSessionsSection agent={agent} compact limit={3} onSeeAll={onSeeAll} />, {
+			wrapper: createWorkspaceWrapper(),
+		})
+
+		expect(screen.getByRole('heading', { name: 'Recent sessions' })).toBeInTheDocument()
+		expect(screen.getAllByRole('listitem')).toHaveLength(3)
+		expect(screen.getByText('Failed')).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /retry/i })).toBeNull()
+		await userEvent.click(screen.getByRole('button', { name: 'See all' }))
+		expect(onSeeAll).toHaveBeenCalled()
+	})
+
+	it('opens a run from its compact row', async () => {
+		const agent = buildActorResponse({ id: 'agent-d', type: 'agent' })
+		sessionsData.mockReturnValue([
+			buildSessionResponse({
+				id: 's-one',
+				actorId: 'agent-d',
+				status: 'completed',
+				actionPrompt: 'Look',
+			}),
+		])
+		render(<AgentSessionsSection agent={agent} compact limit={3} />, {
+			wrapper: createWorkspaceWrapper(),
+		})
+		await userEvent.click(screen.getByRole('button', { name: 'Open Look' }))
+		expect(screen.getByText(/Panel for s-one/)).toBeInTheDocument()
+	})
+
+	it('offers Stop, not Restart, on a running session', async () => {
 		const agent = buildActorResponse({ id: 'agent-a', type: 'agent' })
 		sessionsData.mockReturnValue([
 			buildSessionResponse({
@@ -85,11 +131,9 @@ describe('AgentSessionsSection', () => {
 		])
 		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
 
-		await userEvent.click(screen.getAllByRole('button', { name: /restart/i })[0])
-		expect(createSessionMutate).toHaveBeenCalledWith(
-			{ actor_id: 'agent-a', action_prompt: 'Sweep the backlog' },
-			expect.anything(),
-		)
+		expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument()
+		await userEvent.click(screen.getByRole('button', { name: 'Stop' }))
+		expect(stopSessionMutate).toHaveBeenCalledWith('s-run')
 	})
 
 	it('offers Restart on a failed session and reruns it with its trigger', async () => {
@@ -105,7 +149,7 @@ describe('AgentSessionsSection', () => {
 		])
 		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
 
-		await userEvent.click(screen.getByRole('button', { name: /restart/i }))
+		await userEvent.click(screen.getByRole('button', { name: /retry/i }))
 		expect(createSessionMutate).toHaveBeenCalledWith(
 			{ actor_id: 'agent-a', action_prompt: 'Sweep the backlog', trigger_id: 'trg-9' },
 			expect.anything(),
@@ -123,7 +167,7 @@ describe('AgentSessionsSection', () => {
 			}),
 		])
 		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
-		expect(screen.queryByRole('button', { name: /restart/i })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument()
 	})
 
 	it('renders the section header with a running count for active sessions', () => {
@@ -183,13 +227,51 @@ describe('AgentSessionsSection', () => {
 		expect(screen.getByText('Draft the ship notes')).toBeInTheDocument()
 		expect(screen.getByText('Publish the roundup')).toBeInTheDocument()
 
-		// State labels appear (as the pill + inside the expanded body when opened).
-		expect(screen.getByText('Running')).toBeInTheDocument()
-		expect(screen.getByText('Completed')).toBeInTheDocument()
+		// The calm row names the state in plain words: Working, Done, Failed.
+		expect(screen.getByText('Working')).toBeInTheDocument()
+		// "Done" is also a filter chip on the Sessions tab, so it is found twice.
+		expect(screen.getAllByText('Done')).toHaveLength(2)
+	})
+
+	it('filters the Sessions tab by the All / Running / Done / Failed chips', async () => {
+		const agent = buildActorResponse({ id: 'agent-chips', type: 'agent' })
+		sessionsData.mockReturnValue([
+			buildSessionResponse({
+				id: 's-a',
+				actorId: 'agent-chips',
+				status: 'running',
+				actionPrompt: 'Live run',
+			}),
+			buildSessionResponse({
+				id: 's-b',
+				actorId: 'agent-chips',
+				status: 'completed',
+				actionPrompt: 'Finished run',
+			}),
+			buildSessionResponse({
+				id: 's-c',
+				actorId: 'agent-chips',
+				status: 'failed',
+				actionPrompt: 'Broken run',
+			}),
+		])
+		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
+
+		await userEvent.click(screen.getByRole('button', { name: 'Failed' }))
+		expect(screen.getByText('Broken run')).toBeInTheDocument()
+		expect(screen.queryByText('Live run')).not.toBeInTheDocument()
+		expect(screen.queryByText('Finished run')).not.toBeInTheDocument()
+
+		await userEvent.click(screen.getByRole('button', { name: 'Done' }))
+		expect(screen.getByText('Finished run')).toBeInTheDocument()
+		expect(screen.queryByText('Broken run')).not.toBeInTheDocument()
+
+		await userEvent.click(screen.getByRole('button', { name: 'All' }))
+		expect(screen.getAllByRole('listitem')).toHaveLength(3)
 	})
 
 	it('has no dropdown: Open shows the run in the side panel and closing it removes the panel', async () => {
-		triggersData.mockReturnValue([{ id: 'trg-1', name: 'Loop hygiene' }])
+		triggersData.mockReturnValue([{ id: 'trg-1', name: 'Flow hygiene' }])
 		const agent = buildActorResponse({ id: 'agent-exp', type: 'agent' })
 		sessionsData.mockReturnValue([
 			buildSessionResponse({
@@ -205,32 +287,32 @@ describe('AgentSessionsSection', () => {
 		expect(screen.queryByRole('button', { name: /view details|full log/i })).not.toBeInTheDocument()
 		expect(screen.queryByText(/Panel for/)).not.toBeInTheDocument()
 
-		await userEvent.click(screen.getByRole('button', { name: 'Open Loop hygiene' }))
-		expect(screen.getByText('Panel for s-live titled Loop hygiene')).toBeInTheDocument()
+		await userEvent.click(screen.getByRole('button', { name: 'Open Flow hygiene' }))
+		expect(screen.getByText('Panel for s-live titled Flow hygiene')).toBeInTheDocument()
 
 		await userEvent.click(screen.getByRole('button', { name: 'Close panel' }))
 		expect(screen.queryByText(/Panel for/)).not.toBeInTheDocument()
 	})
 
 	it('titles a triggered session with the trigger name and restarts it with the full prompt', async () => {
-		triggersData.mockReturnValue([{ id: 'trg-1', name: 'Loop hygiene' }])
+		triggersData.mockReturnValue([{ id: 'trg-1', name: 'Flow hygiene' }])
 		const agent = buildActorResponse({ id: 'agent-t', type: 'agent' })
 		const prompt = '**Loop hygiene — first step**\nEnsure this task is linked.'
 		sessionsData.mockReturnValue([
 			buildSessionResponse({
 				id: 's-trg',
 				actorId: 'agent-t',
-				status: 'running',
+				status: 'failed',
 				triggerId: 'trg-1',
 				actionPrompt: prompt,
 			}),
 		])
 		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
 
-		expect(screen.getByText('Loop hygiene')).toBeInTheDocument()
+		expect(screen.getByText('Flow hygiene')).toBeInTheDocument()
 		expect(screen.queryByText(/first step/)).not.toBeInTheDocument()
 
-		await userEvent.click(screen.getAllByRole('button', { name: /restart/i })[0])
+		await userEvent.click(screen.getAllByRole('button', { name: /retry/i })[0])
 		expect(createSessionMutate).toHaveBeenCalledWith(
 			{ actor_id: 'agent-t', action_prompt: prompt, trigger_id: 'trg-1' },
 			expect.anything(),
@@ -469,13 +551,13 @@ describe('AgentSessionsSection: viewer and member', () => {
 		triggersData.mockReturnValue([])
 	})
 
-	it('disables Pause and Restart for a viewer', () => {
+	it('disables Pause and Stop for a viewer', () => {
 		running()
 		render(<AgentSessionsSection agent={agent} />, {
 			wrapper: createWorkspaceWrapper({ role: 'viewer' }),
 		})
 		expect(screen.getByRole('button', { name: /pause/i })).toBeDisabled()
-		expect(screen.getByRole('button', { name: /restart/i })).toBeDisabled()
+		expect(screen.getByRole('button', { name: 'Stop' })).toBeDisabled()
 	})
 
 	it('disables Resume for a viewer', () => {
@@ -486,13 +568,13 @@ describe('AgentSessionsSection: viewer and member', () => {
 		expect(screen.getAllByRole('button', { name: /^resume$/i })[0]).toBeDisabled()
 	})
 
-	it('keeps Pause, Resume and Restart enabled for a member', () => {
+	it('keeps Pause, Resume and Stop enabled for a member', () => {
 		running()
 		const first = render(<AgentSessionsSection agent={agent} />, {
 			wrapper: createWorkspaceWrapper({ role: 'member' }),
 		})
 		expect(screen.getByRole('button', { name: /pause/i })).toBeEnabled()
-		expect(screen.getByRole('button', { name: /restart/i })).toBeEnabled()
+		expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled()
 		first.unmount()
 
 		paused()

@@ -1,16 +1,30 @@
+import {
+	REQUEST_CARD_LINK,
+	RequestCardHeader,
+	RequestCardReadOnly,
+	RequestCardRow,
+	RequestCardSummary,
+} from '@/components/chat/request-card-parts'
+import {
+	REQUEST_CARD,
+	REQUEST_CARD_ACTIONS,
+	REQUEST_CARD_DECLINE,
+	REQUEST_CARD_PRIMARY,
+} from '@/components/chat/request-card-styles'
 import { SecretInput } from '@/components/keychain/secret-input'
 import { FormError } from '@/components/shared/form-error'
-import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useCanWrite } from '@/hooks/use-can-write'
-import { useConversation, useSendMessage } from '@/hooks/use-conversation'
+import { useCardAnswer, useConversation, useSendMessage } from '@/hooks/use-conversation'
 import { useIntegrations } from '@/hooks/use-integrations'
-import { useContinueSession } from '@/hooks/use-sessions'
+import { useContinueSession, useSendSessionInput } from '@/hooks/use-sessions'
 import { ApiError, type MessageKeychainRequest, api } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
 import { queryKeys } from '@/lib/query-keys'
+import { useWorkspace } from '@/lib/workspace-context'
 import {
 	CREDENTIAL_NAME_MAX_LENGTH,
 	checkCredentialName,
@@ -25,7 +39,9 @@ import { useMemo, useState } from 'react'
 interface KeychainRequestCardProps {
 	workspaceId: string
 	conversationId: string
-	/** The message the card is on, so a saved credential can be matched back to it. */
+	/** The message the card is on: where Not now is recorded. */
+	messageId: number
+	/** When that message was posted, so a saved credential can be matched back to it. */
 	messageCreatedAt: string | null
 	/** The agent that asked: always among the agents the credential is shared with. */
 	askingAgentId: string
@@ -62,6 +78,7 @@ export function keychainUseHint(kind: 'api_key' | 'login', name: string): string
 export function KeychainRequestCard({
 	workspaceId,
 	conversationId,
+	messageId,
 	messageCreatedAt,
 	askingAgentId,
 	request,
@@ -73,8 +90,10 @@ export function KeychainRequestCard({
 	const sendMessage = useSendMessage(conversationId, workspaceId)
 	// A helper is not in this chat and was stopped to take the key, so its follow-up carries on.
 	const continueSession = useContinueSession(workspaceId, conversationId)
+	const sendInput = useSendSessionInput(workspaceId)
 	// Saving writes to the workspace, which a viewer cannot do.
 	const canWrite = useCanWrite()
+	const { workspace } = useWorkspace()
 	// The Keychain pages only exist behind this flag, so the link and the pointer would dead-end.
 
 	const targetIds = useMemo(
@@ -103,6 +122,12 @@ export function KeychainRequestCard({
 	const [error, setError] = useState<string | null>(null)
 	const [savedName, setSavedName] = useState<string | null>(null)
 	const [agentStillRunning, setAgentStillRunning] = useState(false)
+	const [sharing, setSharing] = useState(false)
+	const [savedId, setSavedId] = useState<string | null>(null)
+	const [removedName, setRemovedName] = useState<string | null>(null)
+	const [declinedNow, setDeclinedNow] = useState(false)
+	const storedAnswer = useCardAnswer(conversationId, workspaceId, messageId)
+	const declined = declinedNow || storedAnswer === 'declined'
 
 	// Everyone in the chat by default. When the asker named who needs it, the chat agents
 	// that are neither named nor the asker start unticked, still tickable.
@@ -154,6 +179,7 @@ export function KeychainRequestCard({
 			setPassword('')
 			setUsername('')
 			setSavedName(displayName)
+			setSavedId(res.integrationId)
 			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
 			if (res.relaunch === 'failed') {
 				// The idle session could not be stopped, so it still has no credential. Say so
@@ -185,51 +211,180 @@ export function KeychainRequestCard({
 		}
 	}
 
-	if (doneName) {
+	const me = getStoredActor()
+	const keyId = savedId ?? savedEarlier?.id ?? null
+	// The server lets only the person who saved a key, or a workspace admin or owner, take it
+	// back out (POST /integrations/:id/remove answers 403 otherwise). A key saved in this card
+	// was saved by the person looking at it; one found afterwards has its creator on the row.
+	const canUndo =
+		canWrite &&
+		me?.type === 'human' &&
+		(!!savedId ||
+			savedEarlier?.createdBy === me.id ||
+			workspace.role === 'owner' ||
+			workspace.role === 'admin')
+
+	// Undo takes the key back out of the vault. The agent was already restarted with it, which
+	// is the same as removing it from the Keychain page: the secret is destroyed at once.
+	const undo = async () => {
+		if (!keyId || !doneName) return
+		setBusy(true)
+		setError(null)
+		try {
+			await api.integrations.remove(keyId, workspaceId)
+			setRemovedName(doneName)
+			setSavedName(null)
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		} catch (err) {
+			setError(
+				err instanceof ApiError ? `Couldn't undo: ${err.message}` : "Couldn't undo. Try again.",
+			)
+		} finally {
+			setBusy(false)
+		}
+	}
+
+	const decline = () => {
+		setDeclinedNow(true)
+		const content = `Not now: please don't ask for ${name.trim() || 'a key'} yet. Carry on without it, or tell me what you need instead.`
+		if (request.reply_to_session) {
+			sendInput.mutate({
+				id: request.session_id,
+				content,
+				card_answer: { message_id: messageId, outcome: 'declined' },
+				conversationId,
+			})
+			return
+		}
+		sendMessage.mutate({
+			content,
+			metadata: {
+				hidden_from_chat: true,
+				card_answer: { message_id: messageId, outcome: 'declined' },
+			},
+		})
+	}
+
+	// Asking again is a plain message the agent answers with a new card.
+	const askAgain = () => {
+		setDeclinedNow(false)
+		const content = `Please ask me for ${name.trim() || 'the key'} again.`
+		if (request.reply_to_session) {
+			sendInput.mutate({ id: request.session_id, content, conversationId })
+			return
+		}
+		sendMessage.mutate({ content })
+	}
+
+	if (removedName) {
 		return (
-			<div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm">
-				<Lock className="size-4 text-muted-foreground" aria-hidden />
-				<span>
-					Saved <strong>{doneName}</strong> to the Keychain.
-				</span>
-				<Link
-					to="/$workspaceId/settings/keychain"
-					params={{ workspaceId }}
-					className="text-xs text-muted-foreground underline"
-				>
-					Manage in Keychain
-				</Link>
-				{agentStillRunning ? (
-					<p className="w-full text-xs text-muted-foreground">
-						The agent is still running without it. Stop it from the chat, then send a message to
-						start it again with the credential.
-					</p>
-				) : null}
-			</div>
+			<RequestCardSummary
+				icon={Lock}
+				actions={
+					<Link
+						to="/$workspaceId/settings/keychain"
+						params={{ workspaceId }}
+						className={REQUEST_CARD_LINK}
+					>
+						Manage
+					</Link>
+				}
+			>
+				Removed <strong>{removedName}</strong> from the Keychain.
+			</RequestCardSummary>
 		)
 	}
 
+	if (doneName) {
+		const sharedWith = savedName
+			? selectedIds.length
+			: (savedEarlier?.agentGrants ?? []).filter((g) => g.access !== 'none').length
+		return (
+			<RequestCardSummary
+				icon={Lock}
+				note={
+					error ??
+					(agentStillRunning
+						? 'The agent is still running without it. Stop it from the chat, then send a message to start it again with the credential.'
+						: null)
+				}
+				actions={
+					<>
+						{keyId && canUndo ? (
+							<button
+								type="button"
+								className={REQUEST_CARD_LINK}
+								disabled={busy}
+								onClick={() => void undo()}
+							>
+								Undo
+							</button>
+						) : null}
+						<Link
+							to="/$workspaceId/settings/keychain"
+							params={{ workspaceId }}
+							className={REQUEST_CARD_LINK}
+						>
+							Manage
+						</Link>
+					</>
+				}
+			>
+				Saved <strong>{doneName}</strong> to the Keychain.
+				{sharedWith > 0
+					? ` Shared with ${sharedWith} ${sharedWith === 1 ? 'agent' : 'agents'}.`
+					: ''}
+			</RequestCardSummary>
+		)
+	}
+
+	if (declined) {
+		return (
+			<RequestCardSummary
+				icon={Lock}
+				actions={
+					canWrite ? (
+						<button type="button" className={REQUEST_CARD_LINK} onClick={askAgain}>
+							Ask again
+						</button>
+					) : null
+				}
+			>
+				Declined <strong>{name.trim() || 'the key'}</strong>.
+			</RequestCardSummary>
+		)
+	}
+
+	if (!canWrite) {
+		return (
+			<RequestCardReadOnly icon={Lock} title="Viewer role">
+				Only a person with edit access can save a key.
+			</RequestCardReadOnly>
+		)
+	}
+
+	const sharedNames = agents.filter((a) => isChecked(a.id)).map((a) => a.name)
+	const sharedSummary =
+		sharedNames.length <= 2
+			? sharedNames.join(', ')
+			: `${sharedNames.slice(0, 2).join(', ')}, ${sharedNames.length - 2} more`
+
 	return (
 		<form
-			className="mt-2 flex flex-col gap-3 rounded-xl border border-border bg-muted/40 p-4"
+			className={REQUEST_CARD}
 			aria-label={isLogin ? 'Add a login to the Keychain' : 'Add an API key to the Keychain'}
 			onSubmit={(e) => {
 				e.preventDefault()
 				void save()
 			}}
 		>
-			<div className="flex items-start gap-2">
-				<Lock className="mt-0.5 size-4 shrink-0" aria-hidden />
-				<div>
-					<h3 className="text-sm font-semibold">
-						{isLogin ? 'Add a login to your Keychain' : 'Add an API key to your Keychain'}
-					</h3>
-					<p className="mt-0.5 text-xs text-muted-foreground">
-						{request.hint ? `${request.hint} ` : ''}It goes straight to your encrypted vault, so the
-						agent never sees it.
-					</p>
-				</div>
-			</div>
+			<RequestCardHeader
+				icon={Lock}
+				title={isLogin ? 'Add a login to your Keychain' : 'Add an API key to your Keychain'}
+			>
+				{request.hint ? `${request.hint} ` : ''}Goes straight to your encrypted vault. The agent
+				never sees it.
+			</RequestCardHeader>
 
 			<div className="space-y-1.5">
 				<Label htmlFor={`kr-name-${request.session_id}`}>Name</Label>
@@ -273,40 +428,70 @@ export function KeychainRequestCard({
 			) : (
 				<div className="space-y-1.5">
 					<Label htmlFor={`kr-secret-${request.session_id}`}>Secret</Label>
-					<SecretInput id={`kr-secret-${request.session_id}`} value={secret} onChange={setSecret} />
+					<SecretInput
+						id={`kr-secret-${request.session_id}`}
+						value={secret}
+						onChange={setSecret}
+						placeholder="Paste the key"
+					/>
 				</div>
 			)}
 
-			<fieldset className="space-y-1.5">
-				<legend className="text-xs font-medium">Shared with</legend>
-				{agents.map((agent) => (
-					<div key={agent.id} className="flex items-center gap-2">
-						<Checkbox
-							id={`kr-agent-${request.session_id}-${agent.id}`}
-							checked={isChecked(agent.id)}
-							onCheckedChange={(checked) =>
-								setChoices((prev) => new Map(prev).set(agent.id, checked === true))
-							}
-						/>
-						<Label htmlFor={`kr-agent-${request.session_id}-${agent.id}`} className="font-normal">
-							{agent.name}
-						</Label>
-					</div>
-				))}
-				<p className="text-xs text-muted-foreground">
-					The agents in this chat, the one that asked and any it named. Saved for the whole
-					workspace; only the ticked agents can use it. You can change that in Settings → Keychain.
-				</p>
-			</fieldset>
+			<RequestCardRow
+				label="Shared with"
+				action={
+					<button
+						type="button"
+						className={REQUEST_CARD_LINK}
+						aria-expanded={sharing}
+						onClick={() => setSharing((v) => !v)}
+					>
+						{sharing ? 'Done' : 'Change'}
+					</button>
+				}
+			>
+				{sharedSummary || 'No one yet'}
+			</RequestCardRow>
+			{sharing ? (
+				<fieldset className="space-y-1.5">
+					<legend className="sr-only">Shared with</legend>
+					{agents.map((agent) => (
+						<div key={agent.id} className="flex items-center gap-2 max-md:min-h-11">
+							<Checkbox
+								id={`kr-agent-${request.session_id}-${agent.id}`}
+								checked={isChecked(agent.id)}
+								onCheckedChange={(checked) =>
+									setChoices((prev) => new Map(prev).set(agent.id, checked === true))
+								}
+							/>
+							<Label htmlFor={`kr-agent-${request.session_id}-${agent.id}`} className="font-normal">
+								{agent.name}
+							</Label>
+						</div>
+					))}
+					<p className="text-xs text-muted-foreground">
+						The agents in this chat, the one that asked and any it named. Saved for the whole
+						workspace; only the ticked agents can use it. You can change that in Settings →
+						Keychain.
+					</p>
+				</fieldset>
+			) : null}
 
 			<FormError error={error ?? undefined} />
-			<ViewerTooltip className="flex justify-end">
-				<div className="flex justify-end">
-					<Button type="submit" disabled={!canSave}>
-						{busy ? 'Saving…' : 'Save to Keychain'}
-					</Button>
-				</div>
-			</ViewerTooltip>
+			<div className={REQUEST_CARD_ACTIONS}>
+				<Button type="submit" className={REQUEST_CARD_PRIMARY} disabled={!canSave}>
+					{busy ? 'Saving…' : 'Save to Keychain'}
+				</Button>
+				<Button
+					type="button"
+					variant="ghost"
+					className={REQUEST_CARD_DECLINE}
+					disabled={busy}
+					onClick={decline}
+				>
+					Not now
+				</Button>
+			</div>
 		</form>
 	)
 }

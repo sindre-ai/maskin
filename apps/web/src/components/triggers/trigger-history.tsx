@@ -57,7 +57,7 @@ export function TriggerHistory({
 					<ul className="mt-3 flex flex-col gap-2">
 						{runs.map((run) => (
 							<li key={run.id} className="flex items-baseline gap-3">
-								<span className="w-[38px] shrink-0 font-mono text-[9.5px] font-semibold tracking-[0.05em] text-muted-foreground">
+								<span className="w-12 shrink-0 text-[11px] font-semibold text-muted-foreground">
 									{run.createdAt ? <RelativeTime date={run.createdAt} /> : '—'}
 								</span>
 								<span className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground">
@@ -78,7 +78,7 @@ export function TriggerHistory({
 							const description = formatEventDescription(event, { actorsById })
 							return (
 								<li key={event.id} className="flex items-baseline gap-3">
-									<span className="w-[38px] shrink-0 font-mono text-[9.5px] font-semibold tracking-[0.05em] text-muted-foreground">
+									<span className="w-12 shrink-0 text-[11px] font-semibold text-muted-foreground">
 										{event.createdAt ? <RelativeTime date={event.createdAt} /> : '—'}
 									</span>
 									<span className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground">

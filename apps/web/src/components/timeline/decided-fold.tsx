@@ -1,7 +1,8 @@
 import { ActivityComment } from '@/components/activity/activity-comment'
+import { RelativeTime } from '@/components/shared/relative-time'
 import type { EventResponse } from '@/lib/api'
 import { decisionOfEvent } from '@/lib/comment-decision'
-import { ChevronDown } from 'lucide-react'
+import { Check, ChevronDown } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
 const FOLD_STORAGE_PREFIX = 'timeline-decided-fold:'
@@ -39,13 +40,6 @@ export function isDecidedFoldEligible(
 	return now - answeredAt >= 60 * 60 * 1000
 }
 
-function firstClauseOf(summary: string): string {
-	const trimmed = summary.trim()
-	if (!trimmed) return ''
-	const match = trimmed.match(/^([^.!?]+[.!?])/)
-	return (match ? match[1] : trimmed).trim()
-}
-
 function readStoredFold(key: string): boolean {
 	if (typeof window === 'undefined') return true
 	try {
@@ -68,8 +62,8 @@ function writeStoredFold(key: string, folded: boolean) {
 }
 
 /**
- * The collapsed row for a resolved decision (mockup 1234–1249, D9). Renders as
- * `DECIDED · {title} — {summary-first-clause}` with an expand caret; clicking
+ * The collapsed row for a resolved decision (mockup 1234–1249, D9). Renders as a grey
+ * `✓ Decided · {title} {answer} · {time}` row with a `Show N comments` control; clicking
  * unfolds the row to the full `ActivityComment` (the same renderer the timeline
  * uses for every other comment). Fold state is persisted in `localStorage`,
  * per-decision, as a display preference — client-only is fine here.
@@ -134,7 +128,8 @@ export function DecidedFold({
 	}
 
 	const answerText = typeof answer.data?.content === 'string' ? answer.data.content.trim() : ''
-	const clause = firstClauseOf(decision.summary)
+	// The decision comment plus every reply under it.
+	const commentCount = 1 + replies.length
 
 	return (
 		<button
@@ -142,34 +137,19 @@ export function DecidedFold({
 			onClick={toggle}
 			aria-expanded="false"
 			aria-label={`Expand decided: ${decision.title}`}
-			className="group relative flex min-h-[40px] w-full items-center gap-2.5 rounded-md py-2 pl-9 pr-2 text-left transition-colors hover:bg-muted/40"
+			className="group flex min-h-10 w-full items-center gap-2 rounded-md bg-muted px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/70"
 		>
-			<span
-				aria-hidden="true"
-				className="absolute left-[11px] top-3.5 size-[7px] rounded-full border-2 border-success bg-background"
-			/>
-			<span className="shrink-0 font-mono text-[9.5px] font-bold uppercase tracking-[0.11em] text-success">
-				DECIDED
+			<Check size={12} aria-hidden="true" className="shrink-0" />
+			<span className="shrink-0 font-semibold text-foreground">Decided</span>
+			<span className="min-w-0 flex-1 truncate">
+				{'· '}
+				{answerText ? `${decision.title} ${answerText}` : decision.title}
+				{' · '}
+				<RelativeTime date={answer.createdAt ?? null} />
 			</span>
-			<span className="min-w-0 flex-1 truncate text-[12.5px] leading-[1.35] text-foreground">
-				<span className="font-semibold">{decision.title}</span>
-				{clause && (
-					<>
-						<span className="text-muted-foreground"> — </span>
-						<span className="text-muted-foreground">{clause}</span>
-					</>
-				)}
+			<span className="shrink-0 font-semibold group-hover:text-foreground">
+				Show {commentCount} {commentCount === 1 ? 'comment' : 'comments'}
 			</span>
-			{answerText && (
-				<span className="hidden shrink-0 rounded-full border border-border bg-background px-2 py-[2px] text-[10.5px] font-semibold text-foreground sm:inline">
-					{answerText}
-				</span>
-			)}
-			<ChevronDown
-				size={12}
-				aria-hidden="true"
-				className="shrink-0 text-muted-foreground transition-transform group-hover:text-foreground"
-			/>
 		</button>
 	)
 }

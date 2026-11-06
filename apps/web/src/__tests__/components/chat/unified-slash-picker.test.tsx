@@ -163,9 +163,9 @@ describe('<UnifiedChatSlashPicker>', () => {
 		expect(await screen.findByText('Recent Bet')).toBeInTheDocument()
 		expect(screen.getByText('Older Task')).toBeInTheDocument()
 		// The three built-in NEWKIND rows always render.
-		expect(screen.getByText('Task')).toBeInTheDocument()
-		expect(screen.getByText('Bet')).toBeInTheDocument()
-		expect(screen.getByText('Insight')).toBeInTheDocument()
+		expect(screen.getAllByText('Task').length).toBeGreaterThan(0)
+		expect(screen.getAllByText('Bet').length).toBeGreaterThan(0)
+		expect(screen.getAllByText('Insight').length).toBeGreaterThan(0)
 		// Section headings are rendered as eyebrow labels.
 		expect(screen.getByText('Reference')).toBeInTheDocument()
 		expect(screen.getByText('Create new')).toBeInTheDocument()

@@ -212,7 +212,7 @@ const TRIGGER_TYPE_INFO: Record<
 		icon: Zap,
 		label: 'Event',
 		description:
-			'Fires when something happens — e.g., an object is created, updated, or changes status.',
+			'Fires when something happens — e.g., an item is created, updated, or changes status.',
 		tagline: 'Something happens',
 	},
 	cron: {
@@ -248,6 +248,10 @@ export function readEventStatusTransition(config: Record<string, unknown> | null
 		}
 	}
 	return { fromStatus, toStatus: '__any__' }
+}
+
+function withArticle(word: string): string {
+	return `${/^[aeiou]/i.test(word) ? 'an' : 'a'} ${word}`
 }
 
 function buildTriggerSummary({
@@ -307,11 +311,11 @@ function buildTriggerSummary({
 			}
 			return `When a comment is posted ${clauses.join(' ')}, ${agent} will be prompted to act.`
 		}
-		let when = `a ${entityType ?? 'object'} is ${action ?? 'modified'}`
+		let when = `${withArticle(entityType ?? 'item')} is ${action ?? 'modified'}`
 		if (action === 'status_changed') {
 			const from = fromStatus && fromStatus !== '__any__' ? fromStatus : 'any status'
 			const to = toStatus && toStatus !== '__any__' ? toStatus : 'any status'
-			when = `a ${entityType ?? 'object'} changes from ${from} to ${to}`
+			when = `${withArticle(entityType ?? 'item')} changes from ${from} to ${to}`
 		}
 		return `When ${when}, ${agent} will be prompted to act.`
 	}
@@ -978,7 +982,7 @@ export function TriggerForm({
 							<RelativeTime date={initialValues.updatedAt} />
 						</>
 					)}
-					{' · not tied to a loop'}
+					{' · not tied to a flow'}
 				</span>
 			</div>
 
@@ -989,7 +993,7 @@ export function TriggerForm({
 					value={type}
 					onValueChange={(v) => setType(v as 'cron' | 'event' | 'reminder')}
 					aria-label="Trigger type"
-					className="mt-2.5 flex flex-wrap gap-2"
+					className="mt-2.5 inline-flex max-w-full flex-wrap overflow-hidden rounded-lg border border-border bg-card"
 				>
 					{(['event', 'cron', 'reminder'] as const).map((t) => {
 						const info = TRIGGER_TYPE_INFO[t]
@@ -1001,10 +1005,10 @@ export function TriggerForm({
 								key={t}
 								htmlFor={id}
 								className={cn(
-									'inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-lg border px-3.5 text-[12.5px] font-semibold transition-colors sm:min-h-8',
+									'inline-flex min-h-11 cursor-pointer items-center gap-1.5 border-r border-border px-3.5 text-[12.5px] font-semibold transition-colors last:border-r-0 sm:min-h-8',
 									selected
-										? 'border-primary bg-primary text-primary-foreground'
-										: 'border-border bg-card text-muted-foreground hover:border-border-strong hover:text-foreground',
+										? 'bg-primary text-primary-foreground'
+										: 'bg-card text-muted-foreground hover:bg-muted hover:text-foreground',
 								)}
 							>
 								<RadioGroupItem id={id} value={t} className="sr-only" />
@@ -1017,6 +1021,24 @@ export function TriggerForm({
 				<p className="mt-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
 					{TRIGGER_TYPE_INFO[type].description}
 				</p>
+			</section>
+
+			{/* Live read-back sentence, directly under the type so each choice below
+			    visibly rewrites it (v3) */}
+			<section
+				aria-live="polite"
+				className="mt-4 flex items-start gap-2.5 rounded-xl border border-border bg-card px-3.5 py-3"
+			>
+				<span
+					aria-hidden="true"
+					className="mt-0.5 grid size-4 shrink-0 place-items-center rounded-full border border-border-strong text-[9.5px] font-bold text-muted-foreground"
+				>
+					i
+				</span>
+				<div>
+					<p className="eyebrow mb-1">What happens</p>
+					<p className="text-[12.5px] leading-relaxed text-foreground">{summary}</p>
+				</div>
 			</section>
 
 			{type === 'cron' && (
@@ -1071,11 +1093,11 @@ export function TriggerForm({
 								{isCommentedAction ? (
 									<div
 										id="trigger-subject"
-										title="Comment triggers fire on any object type; use the on-target-type filter below to narrow."
-										aria-label="Subject pinned to Any object"
+										title="Comment triggers fire on any item type; use the on-target-type filter below to narrow."
+										aria-label="Subject pinned to Any item"
 										className="flex min-h-11 w-full items-center rounded-md border border-border bg-muted px-3 text-[12.5px] font-semibold text-muted-foreground sm:min-h-9"
 									>
-										Any object
+										Any item
 									</div>
 								) : (
 									<Select value={entityType} onValueChange={handleEntityTypeChange}>
@@ -1184,15 +1206,19 @@ export function TriggerForm({
 					<section className="mt-5">
 						<h2 className="eyebrow">ADDITIONAL CONDITIONS</h2>
 						<div className="mt-2.5 flex flex-col gap-2">
-							{conditions.map((condition, index) => (
-								<ConditionEditor
-									key={condition.id}
-									condition={condition}
-									fieldDefs={fieldDefs}
-									onChange={(updates) => updateCondition(index, updates)}
-									onRemove={() => removeCondition(index)}
-								/>
-							))}
+							{conditions.length > 0 && (
+								<div className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">
+									{conditions.map((condition, index) => (
+										<ConditionEditor
+											key={condition.id}
+											condition={condition}
+											fieldDefs={fieldDefs}
+											onChange={(updates) => updateCondition(index, updates)}
+											onRemove={() => removeCondition(index)}
+										/>
+									))}
+								</div>
+							)}
 							<Button
 								variant="ghost"
 								size="sm"
@@ -1322,23 +1348,6 @@ export function TriggerForm({
 					</p>
 				</section>
 			)}
-
-			{/* Plain-language read-back, below the config it summarises */}
-			<section
-				aria-live="polite"
-				className="mt-6 flex items-start gap-2.5 rounded-xl border border-border bg-card px-3.5 py-3"
-			>
-				<span
-					aria-hidden="true"
-					className="mt-0.5 grid size-4 shrink-0 place-items-center rounded-full border border-border-strong text-[9.5px] font-bold text-muted-foreground"
-				>
-					i
-				</span>
-				<div>
-					<p className="eyebrow mb-1">What happens</p>
-					<p className="text-[12.5px] leading-relaxed text-foreground">{summary}</p>
-				</div>
-			</section>
 
 			{isCreated && initialValues && (
 				<TriggerHistory workspaceId={workspaceId} triggerId={initialValues.id} />
@@ -1476,7 +1485,7 @@ function ConditionEditor({
 	}
 
 	return (
-		<div className="flex flex-wrap items-center gap-1.5">
+		<div className="flex flex-wrap items-center gap-1.5 px-3 py-2">
 			{fieldDefs.length === 0 ? (
 				<Input
 					value={condition.field}
@@ -1530,6 +1539,7 @@ function ConditionEditor({
 				size="icon"
 				className="min-h-11 min-w-11 shrink-0 text-muted-foreground hover:text-error sm:min-h-9 sm:min-w-9"
 				onClick={onRemove}
+				aria-label="Remove condition"
 			>
 				<X size={14} />
 			</Button>

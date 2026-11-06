@@ -1,10 +1,18 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { RelativeTime } from '@/components/shared/relative-time'
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { useUpdateConversationMe } from '@/hooks/use-conversations'
 import type { ConversationListItemResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { plainPreview } from '@/lib/linked-objects'
 import { Link } from '@tanstack/react-router'
+import { MoreHorizontal } from 'lucide-react'
 
 interface ConversationListRowProps {
 	workspaceId: string
@@ -14,29 +22,23 @@ interface ConversationListRowProps {
 	threadUnread?: number
 }
 
-/** How many participant plates the row draws before collapsing to a `+N`. */
-const MAX_ROW_AVATARS = 2
-
+/**
+ * One chat in the list (mockup v11): a 32px tile with the counterpart's
+ * initials, the name and time on the first line, a one-line preview on the
+ * second, and a `···` menu. Unread chats carry a bold name, a cobalt tile and
+ * a dot before the preview.
+ */
 export function ConversationListRow({
 	workspaceId,
 	conversation,
 	threadUnread = 0,
 }: ConversationListRowProps) {
-	// Counterparts first, the viewer last (mockup 6106–6108) — a one-to-one
-	// thread should read as "the agent's row", but once several people are in
-	// it, leaving yourself out misrepresents who is in the room. A thread with
-	// nobody else falls back to its own participants so the row is never
-	// plateless.
+	// Counterparts first, the viewer last: a one-to-one thread reads as "the
+	// agent's row". A thread with nobody else falls back to its own participants.
 	const self = getStoredActor()
+	const updateMe = useUpdateConversationMe(workspaceId)
 	const others = conversation.participants.filter((p) => p.actorId !== self?.id)
-	const me = conversation.participants.filter((p) => p.actorId === self?.id)
-	const roster = others.length > 0 ? [...others, ...me] : conversation.participants
-	// One counterpart is drawn as a single large plate; a group shrinks to
-	// overlapping tiles so the extra identities fit the same column width.
-	const isGroup = others.length > 1
-	const counterparts = isGroup ? roster : roster.slice(0, 1)
-	const visible = counterparts.slice(0, MAX_ROW_AVATARS)
-	const overflow = counterparts.length - visible.length
+	const lead = others[0] ?? conversation.participants[0]
 	const isUnread = conversation.unread_count > 0
 	const workingActorIds = new Set(conversation.working_actor_ids)
 	const workingNames = conversation.participants
@@ -62,110 +64,115 @@ export function ConversationListRow({
 		: null
 
 	return (
-		<Link
-			to="/$workspaceId/chats/$conversationId"
-			params={{ workspaceId, conversationId: conversation.id }}
-			// `--row-surface` is what the overlapping avatar ring is cut in, so it
-			// has to track the row's own background through rest / hover / selected
-			// — a ring pinned to the pane colour shows a halo the moment the row
-			// tints (mockup 6109's `ring` switching with the selected state).
-			activeProps={{ className: 'bg-accent [--row-surface:var(--accent)]' }}
-			className="flex items-start gap-2.5 rounded-[10px] px-2.5 py-2 text-left [--row-surface:var(--surface-sunken)] hover:bg-accent hover:[--row-surface:var(--accent)]"
-		>
-			{visible.length > 0 ? (
-				// Decorative: the row's title and snippet already name who is
-				// talking, and initials read aloud as "B A, R E, plus three" are
-				// noise. Labelling them also put every participant's name into the
-				// row link's accessible name, where it collided with lookups
-				// scoped to the row (the unread badge).
-				<span className="mt-px flex shrink-0 items-center" aria-hidden>
-					{visible.map((p, index) => (
-						<ActorAvatar
-							key={p.actorId}
-							id={p.actorId}
-							name={p.actorName}
-							type={p.actorType}
-							size={isGroup ? 'sm' : 'md'}
-							className={cn(
-								'relative',
-								isGroup
-									? // The ring is cut in the row's own colour so overlapping
-										// tiles read as separate plates rather than one blob.
-										'size-[19px] rounded-md text-[8px]'
-									: 'size-[26px] rounded-lg text-[10px]',
-								// The leading plate sits on top of the ones it overlaps, so
-								// the stack reads left-to-right in order of who is talking.
-								index === 0 ? 'z-10' : '-ml-1.5 z-0 ring-[1.5px] ring-[var(--row-surface)]',
-							)}
-						/>
-					))}
-					{overflow > 0 ? (
+		<div className="group/row relative border-t border-border first:border-t-0">
+			<Link
+				to="/$workspaceId/chats/$conversationId"
+				params={{ workspaceId, conversationId: conversation.id }}
+				activeProps={{ className: 'bg-accent' }}
+				className="flex items-start gap-3 rounded-lg px-2 py-[11px] text-left hover:bg-accent"
+			>
+				{lead ? (
+					// The row's title and snippet already name who is talking; agents get their pictogram.
+					<ActorAvatar
+						name={lead.actorName}
+						type={lead.actorType}
+						id={lead.actorId}
+						size="md"
+						className={cn(
+							'mt-px size-8 shrink-0 rounded-[9px] text-[11px] font-bold',
+							isUnread
+								? 'bg-brand-subtle text-brand-subtle-foreground'
+								: 'bg-secondary text-foreground',
+						)}
+					/>
+				) : null}
+				<div className="min-w-0 flex-1">
+					<div className="flex items-center gap-1.5 pr-7">
 						<span
 							className={cn(
-								'relative -ml-1.5 inline-grid shrink-0 place-items-center bg-muted font-bold text-muted-foreground ring-[1.5px] ring-[var(--row-surface)]',
-								isGroup
-									? 'size-[19px] rounded-md text-[8px]'
-									: 'size-[26px] rounded-lg text-[10px]',
+								'min-w-0 flex-1 truncate text-sm text-foreground',
+								isUnread ? 'font-bold' : 'font-semibold',
 							)}
 						>
-							+{overflow}
+							{conversation.title}
+						</span>
+					</div>
+					<div className="mt-0.5 flex items-center gap-1.5 text-[13px] text-muted-foreground">
+						{isUnread ? (
+							<span
+								role="img"
+								aria-label={`${conversation.unread_count} unread`}
+								className="size-1.5 shrink-0 rounded-full bg-brand"
+							/>
+						) : null}
+						<span className="min-w-0 truncate">
+							{/* "Forge: …" / "You: …" — a preview with no attribution reads as
+							    if the viewer wrote every line. */}
+							{workingLabel ? (
+								<span className="font-medium">{workingLabel}</span>
+							) : conversation.snippet ? (
+								<>
+									{snippetAuthor ? <span className="font-medium">{snippetAuthor}: </span> : null}
+									{plainPreview(conversation.snippet).map((part, index) =>
+										part.muted ? (
+											// biome-ignore lint/suspicious/noArrayIndexKey: parts are rebuilt from the text on every render and never reorder
+											<span key={index} className="opacity-80">
+												{part.text}
+											</span>
+										) : (
+											part.text
+										),
+									)}
+								</>
+							) : (
+								'No messages yet'
+							)}
+						</span>
+						<RelativeTime
+							date={conversation.lastMessageAt ?? conversation.createdAt}
+							format="clock"
+							className="ml-auto shrink-0 text-xs"
+						/>
+					</div>
+					{threadUnread > 0 ? (
+						<span className="mt-0.5 block text-[11px] font-medium text-brand">
+							{threadUnread} unread {threadUnread === 1 ? 'reply' : 'replies'} in threads
 						</span>
 					) : null}
-				</span>
-			) : null}
-			<div className="min-w-0 flex-1">
-				<div className="flex items-center gap-1.5">
-					{isUnread ? (
-						<span
-							aria-label={`${conversation.unread_count} unread`}
-							// Indigo, not ink (mockup 283): the row's title is already ink,
-							// so an ink dot beside it reads as punctuation rather than state.
-							className="h-1.5 w-1.5 shrink-0 rounded-full bg-brand"
-						/>
-					) : null}
-					<span
-						className={cn(
-							'min-w-0 flex-1 truncate text-[12.5px] tracking-[-0.01em] text-foreground',
-							isUnread ? 'font-bold' : 'font-medium',
-						)}
-					>
-						{conversation.title}
-					</span>
-					<RelativeTime
-						date={conversation.lastMessageAt ?? conversation.createdAt}
-						format="clock"
-						className="shrink-0 text-[10px] text-muted-foreground"
-					/>
 				</div>
-				<span className="mt-0.5 line-clamp-2 text-[11.5px] leading-[1.4] text-muted-foreground">
-					{/* "Forge: …" / "You: …" — a preview with no attribution reads as
-					    if the viewer wrote every line (mockup 296). */}
-					{workingLabel ? (
-						<span className="font-medium">{workingLabel}</span>
-					) : conversation.snippet ? (
-						<>
-							{snippetAuthor ? <span className="font-medium">{snippetAuthor}: </span> : null}
-							{plainPreview(conversation.snippet).map((part, index) =>
-								part.muted ? (
-									// biome-ignore lint/suspicious/noArrayIndexKey: parts are rebuilt from the text on every render and never reorder
-									<span key={index} className="opacity-80">
-										{part.text}
-									</span>
-								) : (
-									part.text
-								),
-							)}
-						</>
-					) : (
-						'No messages yet'
-					)}
-				</span>
-				{threadUnread > 0 ? (
-					<span className="mt-0.5 block text-[11px] font-medium text-brand">
-						{threadUnread} unread {threadUnread === 1 ? 'reply' : 'replies'} in threads
-					</span>
-				) : null}
-			</div>
-		</Link>
+			</Link>
+			<DropdownMenu>
+				<DropdownMenuTrigger asChild>
+					<button
+						type="button"
+						aria-label={`Actions for ${conversation.title}`}
+						className="absolute top-[9px] right-2 grid h-[22px] w-6 place-items-center rounded-full text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+					>
+						<MoreHorizontal size={14} aria-hidden />
+					</button>
+				</DropdownMenuTrigger>
+				<DropdownMenuContent align="end">
+					<DropdownMenuItem
+						onSelect={() =>
+							updateMe.mutate({ id: conversation.id, data: { pinned: !conversation.pinned } })
+						}
+					>
+						{conversation.pinned ? 'Unpin' : 'Pin'}
+					</DropdownMenuItem>
+					<DropdownMenuItem
+						onSelect={() => updateMe.mutate({ id: conversation.id, data: { mark_unread: true } })}
+					>
+						Mark as unread
+					</DropdownMenuItem>
+					<DropdownMenuItem
+						onSelect={() =>
+							updateMe.mutate({ id: conversation.id, data: { archived: !conversation.archived } })
+						}
+					>
+						{conversation.archived ? 'Unarchive' : 'Archive'}
+					</DropdownMenuItem>
+				</DropdownMenuContent>
+			</DropdownMenu>
+		</div>
 	)
 }

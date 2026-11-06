@@ -33,7 +33,7 @@ test.describe('Objects board drag-persist', () => {
 			// Wait for the List to settle, then switch to Board via the Display menu.
 			await expect(page.getByText('Drag Persist Card')).toBeVisible({ timeout: 10_000 })
 			await page.getByRole('button', { name: /display/i }).click()
-			await page.getByRole('button', { name: 'Board', exact: true }).click()
+			await page.getByRole('button', { name: /View: Board/ }).click()
 
 			// The card starts in the "todo" column.
 			const board = page.getByTestId('board-view')
@@ -120,7 +120,7 @@ test.describe('Objects board drag-persist', () => {
 			await page.reload()
 			await expect(page.getByText('Drag Persist Card')).toBeVisible({ timeout: 10_000 })
 			await page.getByRole('button', { name: /display/i }).click()
-			await page.getByRole('button', { name: 'Board', exact: true }).click()
+			await page.getByRole('button', { name: /View: Board/ }).click()
 			await expect(board).toBeVisible({ timeout: 10_000 })
 
 			await expect(doneColumn.getByText('Drag Persist Card')).toBeVisible({ timeout: 10_000 })

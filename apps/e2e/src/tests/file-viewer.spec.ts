@@ -53,7 +53,7 @@ function stageFor(page: Page, name: string) {
 }
 
 async function readPercent(page: Page): Promise<number> {
-	const text = await page.locator('[aria-live="polite"]').innerText()
+	const text = await page.locator('span[aria-live="polite"]').innerText()
 	return Number.parseInt(text, 10)
 }
 
@@ -95,7 +95,7 @@ test.describe('File viewer stage — shell, controls, and solid surfaces', () =>
 			await expect(zoomIn).toBeVisible()
 			await expect(zoomOut).toBeVisible()
 			await expect(fit).toBeVisible()
-			await expect(page.locator('[aria-live="polite"]')).toHaveText(/^\d+%$/)
+			await expect(page.locator('span[aria-live="polite"]')).toHaveText(/^\d+%$/)
 
 			const before = await readPercent(page)
 			await zoomIn.click()
@@ -155,7 +155,13 @@ test.describe('File viewer stage — shell, controls, and solid surfaces', () =>
 			const review = page.getByRole('button', { name: 'Toggle review panel', exact: true })
 			const pressedBefore = await review.getAttribute('aria-pressed')
 			await review.click()
-			await expect(review).not.toHaveAttribute('aria-pressed', pressedBefore ?? 'false')
+			if (viewport.width < 1024) {
+				// Below lg the panel is a modal sheet, which hides the rest of the page
+				// (the button included) from the accessibility tree while it is open.
+				await expect(page.locator('[data-review-panel-sheet]')).toBeVisible()
+			} else {
+				await expect(review).not.toHaveAttribute('aria-pressed', pressedBefore ?? 'false')
+			}
 		})
 	}
 })

@@ -89,13 +89,13 @@ describe('ThreadMessages — voice call boundaries', () => {
 				actorId: 'me',
 				actorName: 'Me',
 				actorType: 'human',
-				content: 'search for the loops v4 bet',
+				content: 'search for the flows v4 bet',
 				metadata: voice(),
 				createdAt: '2026-09-30T10:05:00.000Z',
 			}),
 			buildMessage({
 				id: 3,
-				content: 'The top hit is Loops v4 polish.',
+				content: 'The top hit is Flows v4 polish.',
 				metadata: voice(),
 				createdAt: '2026-09-30T10:07:14.000Z',
 			}),
@@ -109,8 +109,8 @@ describe('ThreadMessages — voice call boundaries', () => {
 
 		const boundaries = screen.getAllByTestId('voice-call-boundary')
 		expect(boundaries.map((b) => b.getAttribute('data-variant'))).toEqual(['start', 'end'])
-		expect(boundaries[0]?.textContent).toMatch(/^Voice call · 2:14 · /)
-		expect(boundaries[1]?.textContent).toBe('Call ended')
+		expect(boundaries[0]?.textContent).toMatch(/^Live meeting · started /)
+		expect(boundaries[1]?.textContent).toMatch(/^Live meeting · ended /)
 
 		// No receipts for this call, so its spoken lines are drawn as ever, with
 		// the head divider in the first voice message's row and the tail in the last.
@@ -118,12 +118,14 @@ describe('ThreadMessages — voice call boundaries', () => {
 			document.querySelector(`[data-message-id="${id}"]`),
 		) as HTMLElement[]
 		expect(
-			within(rows[1] as HTMLElement).getByText('Voice call', { exact: false }),
+			within(rows[1] as HTMLElement).getByText('Live meeting · started', { exact: false }),
 		).toBeInTheDocument()
-		expect(within(rows[2] as HTMLElement).getByText('Call ended')).toBeInTheDocument()
+		expect(
+			within(rows[2] as HTMLElement).getByText('Live meeting · ended', { exact: false }),
+		).toBeInTheDocument()
 		expect(within(rows[0] as HTMLElement).queryByTestId('voice-call-boundary')).toBeNull()
 		expect(within(rows[3] as HTMLElement).queryByTestId('voice-call-boundary')).toBeNull()
-		expect(screen.getByText('search for the loops v4 bet')).toBeInTheDocument()
+		expect(screen.getByText('search for the flows v4 bet')).toBeInTheDocument()
 	})
 
 	it('tags each spoken line of a call without receipts with the "voice" meta tag, and only those', async () => {

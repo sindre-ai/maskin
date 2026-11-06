@@ -33,10 +33,12 @@ export function ThumbnailRail({ total, activeIndex, onSelect }: ThumbnailRailPro
 						aria-label={`Go to page ${i + 1} of ${total}`}
 						onClick={() => onSelect(i)}
 						className={cn(
-							'group flex aspect-video w-full flex-col items-center justify-center rounded-md border bg-background text-xs font-medium text-muted-foreground transition-colors',
+							'group flex aspect-video w-full flex-col items-center justify-center rounded-md border bg-card text-xs font-medium text-muted-foreground transition-colors',
 							'hover:border-border-strong hover:text-foreground',
 							'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-							isActive ? 'border-brand text-foreground ring-1 ring-brand' : 'border-border',
+							isActive
+								? 'border-foreground text-foreground ring-1 ring-foreground'
+								: 'border-border',
 						)}
 					>
 						{i + 1}

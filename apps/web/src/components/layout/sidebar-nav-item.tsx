@@ -33,7 +33,14 @@ export function SidebarNavItem({ item, source, params = {}, children }: SidebarN
 
 	return (
 		<SidebarMenuItem>
-			<SidebarMenuButton asChild isActive={isActive} tooltip={item.label}>
+			<SidebarMenuButton
+				asChild
+				isActive={isActive}
+				tooltip={item.label}
+				// v11 row: 36px, 13.5px label, 17px icon, 9px radius. Resting rows read
+				// in the secondary ink; the active row is solid ink on the accent fill.
+				className="h-9 gap-2.5 rounded-[9px] px-2.5 text-[13.5px] font-medium text-muted-foreground data-[active=true]:font-semibold data-[active=true]:text-sidebar-accent-foreground [&>svg]:size-[17px]"
+			>
 				<Link
 					to={item.to as never}
 					params={routeParams as never}

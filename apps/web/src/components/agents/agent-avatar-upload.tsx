@@ -92,7 +92,7 @@ export function AgentAvatarUpload({
 		<div
 			className={cn(
 				'mb-4 flex items-start gap-3 rounded-lg border-2 border-dashed p-3 transition-colors',
-				isDragging ? 'border-accent bg-accent/5' : 'border-transparent',
+				isDragging ? 'border-brand bg-brand-subtle' : 'border-transparent',
 			)}
 			onDragOver={(e) => {
 				e.preventDefault()

@@ -109,7 +109,7 @@ test.describe('Delete workspace', () => {
 			localStorage.setItem('maskin-actor', JSON.stringify({ ...actor, id: 'someone-else' }))
 		})
 		await page.goto(`/${account.workspaceId}/settings`)
-		await expect(page.getByRole('heading', { name: 'WORKSPACE NAME' })).toBeVisible({
+		await expect(page.getByRole('heading', { name: 'Workspace', exact: true })).toBeVisible({
 			timeout: 10_000,
 		})
 		await expect(page.getByRole('button', { name: 'Delete workspace' })).toHaveCount(0)

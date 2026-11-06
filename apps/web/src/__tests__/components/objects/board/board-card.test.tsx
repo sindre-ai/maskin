@@ -53,7 +53,7 @@ beforeEach(() => {
 })
 
 describe('BoardCard', () => {
-	it('renders the title, status, type, driver, and updated timestamp', () => {
+	it('renders the title, driver name, and updated timestamp', () => {
 		const actors = [buildActorListItem({ id: 'actor-7', name: 'Magnus' })]
 		const obj = buildObjectResponse({
 			id: 'obj-1',
@@ -65,10 +65,11 @@ describe('BoardCard', () => {
 		})
 		render(<BoardCard object={obj} workspaceId="ws-1" actors={actors} />)
 		expect(screen.getByText('Wire up board')).toBeInTheDocument()
-		expect(screen.getByText('in progress')).toBeInTheDocument()
-		expect(screen.getByText('task')).toBeInTheDocument()
-		// The driver renders as an avatar whose accessible name is the driver's name.
-		expect(screen.getByTitle('Magnus')).toBeInTheDocument()
+		// The column header already names the status and type, so the card does not repeat them.
+		expect(screen.queryByText('in progress')).not.toBeInTheDocument()
+		expect(screen.queryByText('task')).not.toBeInTheDocument()
+		// The driver is named in the card's foot line.
+		expect(screen.getByText('Magnus')).toBeInTheDocument()
 		// Relative time renders as a <time> element.
 		expect(screen.getByRole('time')).toBeInTheDocument()
 	})
@@ -110,7 +111,6 @@ describe('BoardCard', () => {
 			/>,
 		)
 
-		expect(screen.getByText('todo')).toBeInTheDocument()
 		expect(screen.queryByText('Magnus')).not.toBeInTheDocument()
 		expect(screen.getByText(/priority:/)).toBeInTheDocument()
 		expect(screen.getByText(/High/)).toBeInTheDocument()

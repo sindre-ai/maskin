@@ -1,7 +1,8 @@
 import { LiveCallSurface } from '@/components/agents/live-call-surface'
 import { VoiceCallHost } from '@/components/agents/voice-call-host'
 import { TrialExpiredBanner } from '@/components/billing/trial-expired-banner'
-import { Header } from '@/components/layout/header'
+import { Header, ScrollingPageTitle } from '@/components/layout/header'
+import { MobileNav } from '@/components/layout/mobile-nav'
 import { AppSidebar } from '@/components/layout/sidebar'
 import { CommandPaletteV2 } from '@/components/search/command-palette-v2'
 import { RouteError } from '@/components/shared/route-error'
@@ -21,9 +22,10 @@ import { cn } from '@/lib/cn'
 import { CommandPaletteProvider } from '@/lib/command-palette-context'
 import { setFaroUser } from '@/lib/faro'
 import { setLastWorkspaceId } from '@/lib/last-workspace'
-import { isHiddenRouteId, migrateLegacySidebarState, viewKeyFromRouteId } from '@/lib/nav-view-keys'
+import { migrateLegacySidebarState } from '@/lib/nav-view-keys'
 import { NewConversationProvider } from '@/lib/new-conversation-context'
 import { PageHeaderProvider, usePageHeader } from '@/lib/page-header-context'
+import { usePageSearchShortcutListener } from '@/lib/page-search-shortcut'
 import { PendingCommentsProvider } from '@/lib/pending-comments-context'
 import {
 	identifyForWorkspace,
@@ -34,7 +36,7 @@ import {
 import { useVoiceCallLive } from '@/lib/voice-call-view'
 import { WorkspaceContext, useWorkspace } from '@/lib/workspace-context'
 import { deriveConversationTitle } from '@maskin/shared'
-import { Outlet, createFileRoute, useMatches, useNavigate } from '@tanstack/react-router'
+import { Outlet, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { type ReactNode, useEffect, useMemo, useRef } from 'react'
 
 migrateLegacySidebarState()
@@ -47,6 +49,8 @@ export const Route = createFileRoute('/_authed/$workspaceId')({
 function WorkspaceLayout() {
 	const { workspaceId } = Route.useParams()
 	const { data: workspaces } = useWorkspaces()
+	// One Cmd/Ctrl+F listener for every page that owns a search field.
+	usePageSearchShortcutListener()
 
 	// Connect SSE for real-time updates
 	const sseStatus = useSSE(workspaceId)
@@ -64,10 +68,7 @@ function WorkspaceLayout() {
 		if (hasWorkspace) setLastWorkspaceId(workspaceId)
 	}, [hasWorkspace, workspaceId])
 
-	const matches = useMatches()
-	const leafMatch = [...matches].reverse().find((m) => !isHiddenRouteId(m.routeId))
-	const viewKey = leafMatch ? viewKeyFromRouteId(leafMatch.routeId) : null
-	const { open, setOpen } = usePersistedSidebarOpen(viewKey)
+	const { open, setOpen } = usePersistedSidebarOpen()
 	// While a call is open below 1100px the sidebar folds to its icon rail so the
 	// thread keeps room next to the call panel (design: sidebar 230 + chat + panel
 	// at 1100 and up, an icon rail between 700 and 1099). The person's own choice
@@ -143,6 +144,7 @@ function WorkspaceLayout() {
 										<MainScrollArea>
 											<Outlet />
 										</MainScrollArea>
+										<MobileNav />
 									</SidebarInset>
 									<LiveCallSurface />
 								</SidebarProvider>
@@ -262,18 +264,20 @@ function ContentPushShell({ children }: { children: ReactNode }) {
  * own internal scroll region on the active card's thread) — the container
  * then clips instead of scrolling, so only that inner region scrolls.
  *
- * Padding steps up from `px-4 pt-4` on mobile to `p-8` from `md:` up.
+ * Padding steps up from `px-4 pt-4` on mobile to `px-8 py-8` from `md:` and `px-7` from `lg:` — the same side margin the shared header uses, so title and content share one left edge.
  */
 function MainScrollArea({ children }: { children: ReactNode }) {
-	const { scrollLocked } = usePageHeader()
+	const { scrollLocked, gutter } = usePageHeader()
 	return (
 		<div
 			className={cn(
-				'flex flex-col flex-1 min-w-0 px-4 pb-4 pt-4 md:p-8',
+				'flex flex-col flex-1 min-w-0 px-4 pb-4 pt-4 md:px-8 md:py-8',
+				gutter === 'wide' ? 'lg:px-12' : 'lg:px-7',
 				scrollLocked ? 'overflow-hidden' : 'overflow-auto',
 			)}
 			data-scroll-root
 		>
+			<ScrollingPageTitle />
 			{children}
 		</div>
 	)

@@ -171,70 +171,68 @@ export function AgentAccess({
 
 			{open && (
 				<div className="mt-2 space-y-2">
-					<div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-bg-surface p-2.5">
-						<div className="min-w-0 flex-1 basis-40">
-							<p className="text-sm font-medium text-foreground">All other agents</p>
-							<p className="text-xs text-muted-foreground">Agents without their own entry below</p>
+					<div className="divide-y divide-border-subtle overflow-hidden rounded-xl border border-border bg-card">
+						<div className="flex flex-wrap items-center gap-2 px-3 py-2.5">
+							<div className="min-w-0 flex-1 basis-40">
+								<p className="text-[15px] font-semibold text-foreground">All other agents</p>
+								<p className="text-[13px] text-muted-foreground">
+									Agents without their own entry below
+								</p>
+							</div>
+							<ViewerTooltip className="flex">
+								<Select
+									value={defaultAccess}
+									onValueChange={(v) => setDefault.mutate(v as DefaultAgentAccess)}
+									disabled={!canEdit || busy}
+								>
+									<SelectTrigger size="pill" aria-label="Access for all other agents">
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent>
+										{(isKey ? KEY_DEFAULT_ORDER : DEFAULT_ACCESS_ORDER).map((a) => (
+											<SelectItem key={a} value={a}>
+												{isKey && a === 'read' ? 'Full access' : AGENT_ACCESS_LABELS[a]}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+							</ViewerTooltip>
 						</div>
-						<ViewerTooltip className="flex w-full sm:w-36">
-							<Select
-								value={defaultAccess}
-								onValueChange={(v) => setDefault.mutate(v as DefaultAgentAccess)}
-								disabled={!canEdit || busy}
-							>
-								<SelectTrigger aria-label="Access for all other agents" className="w-full sm:w-36">
-									<SelectValue />
-								</SelectTrigger>
-								<SelectContent>
-									{(isKey ? KEY_DEFAULT_ORDER : DEFAULT_ACCESS_ORDER).map((a) => (
-										<SelectItem key={a} value={a}>
-											{isKey && a === 'read' ? 'Full access' : AGENT_ACCESS_LABELS[a]}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
-						</ViewerTooltip>
+
+						{listed.map(({ agent, access }) => (
+							<div key={agent.id} className="flex flex-wrap items-center gap-2 px-3 py-2.5">
+								<div className="flex min-w-0 flex-1 basis-40 items-center gap-2.5">
+									<ActorAvatar name={agent.name} type={agent.type} size="sm" />
+									<p className="truncate text-[15px] font-semibold text-foreground">{agent.name}</p>
+								</div>
+								<div className="flex items-center gap-1">
+									<ViewerTooltip className="flex">
+										<Select
+											value={isKey ? (access === 'none' ? 'none' : 'read_write') : access}
+											onValueChange={(v) => changeAgent(agent.id, v as AgentGrantAccess)}
+											disabled={!canEdit || busy}
+										>
+											<SelectTrigger aria-label={`Access for ${agent.name}`} size="pill">
+												<SelectValue />
+											</SelectTrigger>
+											<SelectContent>
+												{(isKey ? KEY_ACCESS_ORDER : ACCESS_ORDER).map((a) => (
+													<SelectItem key={a} value={a}>
+														{isKey && (a === 'read_write' || a === 'none')
+															? KEY_ACCESS_LABELS[a]
+															: AGENT_ACCESS_LABELS[a]}
+													</SelectItem>
+												))}
+											</SelectContent>
+										</Select>
+									</ViewerTooltip>
+								</div>
+							</div>
+						))}
 					</div>
 
-					{listed.map(({ agent, access }) => (
-						<div
-							key={agent.id}
-							className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-bg-surface p-2.5"
-						>
-							<div className="flex min-w-0 flex-1 basis-40 items-center gap-2">
-								<ActorAvatar name={agent.name} type={agent.type} size="sm" />
-								<p className="truncate text-sm font-medium text-foreground">{agent.name}</p>
-							</div>
-							<div className="flex items-center gap-1">
-								<ViewerTooltip className="flex w-full sm:w-36">
-									<Select
-										value={isKey ? (access === 'none' ? 'none' : 'read_write') : access}
-										onValueChange={(v) => changeAgent(agent.id, v as AgentGrantAccess)}
-										disabled={!canEdit || busy}
-									>
-										<SelectTrigger
-											aria-label={`Access for ${agent.name}`}
-											className="w-full sm:w-36"
-										>
-											<SelectValue />
-										</SelectTrigger>
-										<SelectContent>
-											{(isKey ? KEY_ACCESS_ORDER : ACCESS_ORDER).map((a) => (
-												<SelectItem key={a} value={a}>
-													{isKey && (a === 'read_write' || a === 'none')
-														? KEY_ACCESS_LABELS[a]
-														: AGENT_ACCESS_LABELS[a]}
-												</SelectItem>
-											))}
-										</SelectContent>
-									</Select>
-								</ViewerTooltip>
-							</div>
-						</div>
-					))}
-
 					{(canEdit || !canWrite) && addable.length > 0 && (
-						<ViewerTooltip className="flex w-full sm:w-56">
+						<ViewerTooltip className="flex">
 							<Select
 								value=""
 								onValueChange={(actorId) =>
@@ -249,7 +247,7 @@ export function AgentAccess({
 								}
 								disabled={!canWrite || busy}
 							>
-								<SelectTrigger aria-label="Add an agent" className="w-full sm:w-56">
+								<SelectTrigger size="pill" aria-label="Add an agent">
 									<SelectValue placeholder="Add an agent…" />
 								</SelectTrigger>
 								<SelectContent>

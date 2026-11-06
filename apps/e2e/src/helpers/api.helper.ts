@@ -197,6 +197,23 @@ export class TestAPI {
 		return h
 	}
 
+	/** Saves what the actor chose in a Display menu (`agents`, `loop`, a type key). */
+	async saveDisplaySettings(
+		workspaceId: string,
+		objectType: string,
+		settings: Record<string, unknown>,
+	): Promise<void> {
+		const res = await fetch(
+			`${this.baseURL}/api/user-display-settings/${encodeURIComponent(objectType)}`,
+			{
+				method: 'PUT',
+				headers: this.headers(workspaceId),
+				body: JSON.stringify({ settings }),
+			},
+		)
+		if (!res.ok) throw new Error(`saveDisplaySettings failed: ${res.status}`)
+	}
+
 	async listWorkspaces(): Promise<WorkspaceResponse[]> {
 		const res = await fetch(`${this.baseURL}/api/workspaces`, {
 			headers: this.headers(),
@@ -762,7 +779,9 @@ export class TestAPI {
 }
 
 export async function createTestActor(
-	data: { name: string; email?: string; password?: string } = { name: `E2E Test ${Date.now()}` },
+	data: { name: string; email?: string; password?: string; id?: string } = {
+		name: `E2E Test ${Date.now()}`,
+	},
 ): Promise<CreateActorResponse> {
 	const email = data.email ?? `e2e-${Date.now()}@test.invalid`
 	const password = data.password ?? 'e2e-test-password-123'

@@ -129,6 +129,13 @@ export interface McpConfig {
 	/** How `telemetrySessionId` was obtained. Ignored without it. */
 	telemetrySessionSource?: 'maskin-session' | 'process' | 'unknown'
 	/**
+	 * Per-process secret the HTTP transport (`routes/mcp.ts`) adds to the REST calls this
+	 * server makes back to the API, as `X-Maskin-Mcp-Forward`. The API accepts a Claude
+	 * connector token (mat_) only when it is present, so such a token works through /mcp
+	 * and nowhere else. Never set on stdio, where the bearer is an API key.
+	 */
+	forwardMarker?: string
+	/**
 	 * Protocol era and allowlisted version label for telemetry, next to
 	 * `transport`. Set by `routes/mcp.ts` from `classifyMcpEra` on HTTP; stdio
 	 * sets the fallback (legacy, none) because the SDK does not expose the
@@ -523,6 +530,9 @@ async function apiFetch(
 	}
 	if (config.apiKey) {
 		headers.Authorization = `Bearer ${config.apiKey}`
+	}
+	if (config.forwardMarker) {
+		headers['X-Maskin-Mcp-Forward'] = config.forwardMarker
 	}
 	if (effectiveWorkspaceId) {
 		headers['X-Workspace-Id'] = effectiveWorkspaceId
@@ -3476,6 +3486,7 @@ export function createMcpServer(config: McpConfig) {
 		workspaceId: config.defaultWorkspaceId,
 		sessionId: config.telemetrySessionId,
 		sessionSource: config.telemetrySessionSource,
+		forwardMarker: config.forwardMarker,
 		mcpEra: config.telemetryEra,
 		mcpProtocolVersion: config.telemetryProtocolVersion,
 	}

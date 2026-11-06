@@ -1,4 +1,7 @@
 export const queryKeys = {
+	oauthGrants: {
+		all: () => ['oauthGrants'] as const,
+	},
 	account: {
 		deletionPreview: (deleteSoleWorkspaces: boolean) =>
 			['account', 'deletion-preview', { deleteSoleWorkspaces }] as const,
@@ -109,6 +112,7 @@ export const queryKeys = {
 			['notifications', workspaceId, 'list', filters] as const,
 		detail: (id: string) => ['notifications', 'detail', id] as const,
 	},
+	notificationPreferences: { me: ['notification-preferences'] as const },
 	skills: {
 		all: (actorId: string) => ['skills', actorId] as const,
 		detail: (actorId: string, skillName: string) => ['skills', actorId, skillName] as const,

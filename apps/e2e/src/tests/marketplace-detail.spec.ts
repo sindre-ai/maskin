@@ -16,7 +16,7 @@ test.describe('Marketplace detail pages', () => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 			await page.goto(`/${account.workspaceId}/marketplace`)
 
-			const loopsSection = page.getByRole('region', { name: 'Loops' })
+			const loopsSection = page.getByRole('region', { name: 'Flows' })
 			await expect(loopsSection).toBeVisible({ timeout: 20000 })
 
 			const firstCard = loopsSection.locator('article').first()
@@ -42,11 +42,11 @@ test.describe('Marketplace detail pages', () => {
 			// operator, so only the sections that always render from real data are
 			// asserted here — the "asks you" classifier is covered by unit tests.
 			const detail = page.getByRole('main')
-			await expect(detail.getByText('The loop, once installed')).toBeVisible()
+			await expect(detail.getByText('The flow, once installed')).toBeVisible()
 			await expect(detail.getByText('What it brings')).toBeVisible()
 			await expect(detail.getByText('How it runs')).toBeVisible()
-			await expect(detail.getByText('Version')).toBeVisible()
-			await expect(detail.getByText('Permissions')).toBeVisible()
+			await expect(detail.getByText('Version', { exact: true })).toBeVisible()
+			await expect(detail.getByRole('heading', { name: 'Permissions' })).toBeVisible()
 			await expect(detail.getByText('This workspace only')).toBeVisible()
 
 			// Layout gate — the detail page must not overflow the viewport.
@@ -67,15 +67,15 @@ test.describe('Marketplace detail pages', () => {
 		await page.emulateMedia({ colorScheme: 'dark' })
 		await page.goto(`/${account.workspaceId}/marketplace`)
 
-		const loopsSection = page.getByRole('region', { name: 'Loops' })
+		const loopsSection = page.getByRole('region', { name: 'Flows' })
 		await expect(loopsSection).toBeVisible({ timeout: 20000 })
 		const firstCard = loopsSection.locator('article').first()
 		await firstCard.getByRole('link').click({ position: { x: 10, y: 10 } })
 
 		const detail = page.getByRole('main')
-		await expect(detail.getByText('The loop, once installed')).toBeVisible({ timeout: 20000 })
+		await expect(detail.getByText('The flow, once installed')).toBeVisible({ timeout: 20000 })
 		await expect(detail.getByText('How it runs')).toBeVisible()
-		await expect(detail.getByText('Permissions')).toBeVisible()
+		await expect(detail.getByRole('heading', { name: 'Permissions' })).toBeVisible()
 	})
 
 	test('opens an item detail page from the Agents section and links back to its loop', async ({
@@ -123,7 +123,7 @@ test.describe('Marketplace detail pages', () => {
 
 		const card = agentsSection
 			.locator('article')
-			.filter({ has: page.getByRole('button', { name: /^install$/i }) })
+			.filter({ has: page.getByRole('button', { name: /^add$/i }) })
 			.first()
 		await expect(card).toBeVisible()
 		const itemName = (await card.locator('h3').first().textContent())?.trim()
@@ -139,11 +139,9 @@ test.describe('Marketplace detail pages', () => {
 		// locator.click() — never auto-scrolls, so the first "not yet installed"
 		// card must be scrolled into view first: with enough marketplace items
 		// already installed in this workspace, it can sit below the fold.
-		// `.first()` is the card's kind eyebrow: a single-type loop card now also
-		// carries a kind chip below the description with the same label, so an
-		// unqualified match is ambiguous. Either element proves the point — both
-		// are inert text under the card's full-bleed overlay link.
-		const chip = card.getByText(/^(Agent|Trigger|Skill|Integration)$/).first()
+		// The description is inert text under the row's full-bleed overlay link,
+		// so clicking it must open the detail page.
+		const chip = card.locator('p').first()
 		await chip.scrollIntoViewIfNeeded()
 		const chipBox = await chip.boundingBox()
 		if (!chipBox) throw new Error('missing chip bounding box')
@@ -168,8 +166,8 @@ test.describe('Marketplace detail pages', () => {
 
 		// The Install button is the one part of the card that must NOT
 		// navigate — it installs the item in place instead of opening it.
-		await stableCard.getByRole('button', { name: /^install$/i }).click()
-		await expect(stableCard.getByText('Installed')).toBeVisible()
+		await stableCard.getByRole('button', { name: /^add$/i }).click()
+		await expect(stableCard.getByText('Added')).toBeVisible()
 		await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/marketplace$`))
 	})
 
@@ -190,7 +188,7 @@ test.describe('Marketplace detail pages', () => {
 		await page.setViewportSize({ width: 1024, height: 768 })
 		await page.goto(`/${account.workspaceId}/marketplace`)
 
-		const loopsSection = page.getByRole('region', { name: 'Loops' })
+		const loopsSection = page.getByRole('region', { name: 'Flows' })
 		await expect(loopsSection).toBeVisible({ timeout: 20000 })
 
 		const firstCard = loopsSection.locator('article').first()
@@ -211,7 +209,7 @@ test.describe('Marketplace detail pages', () => {
 		const detail = page.getByRole('main')
 		await detail.getByRole('button', { name: /^install$/i }).click()
 
-		const overflowButton = detail.getByRole('button', { name: 'Loop actions' })
+		const overflowButton = detail.getByRole('button', { name: 'Flow actions' })
 		await expect(overflowButton).toBeVisible({ timeout: 20000 })
 
 		expect(await page.getByRole('dialog').count()).toBe(0)

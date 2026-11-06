@@ -114,7 +114,7 @@ function KnowledgeReferencesChip({
 	return (
 		<span
 			className="text-[11px] text-muted-foreground"
-			title="Unique bets/tasks/insights that cited this knowledge object in the last 7 days (rolling window)"
+			title="Unique bets/tasks/insights that cited this knowledge item in the last 7 days (rolling window)"
 		>
 			Referenced by {count} {count === 1 ? 'context' : 'contexts'}/week
 		</span>

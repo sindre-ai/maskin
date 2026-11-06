@@ -52,7 +52,7 @@ describe('buildVocabulary', () => {
 	})
 
 	it('labels pills from the real types and the five groups', () => {
-		expect(pillLabel(vocab, 'type', 'loop')).toBe('Loops')
+		expect(pillLabel(vocab, 'type', 'loop')).toBe('Flows')
 		expect(pillLabel(vocab, 'type', 'company')).toBe('Companies')
 		expect(pillLabel(vocab, 'type', 'contact')).toBe('People')
 		expect(pillLabel(vocab, 'status', 'needs_you')).toBe('Needs you')

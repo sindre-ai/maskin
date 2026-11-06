@@ -13,7 +13,7 @@ export interface ConversationGroup {
 	items: ConversationListItemResponse[]
 }
 
-export type ConversationGroupMode = 'default' | 'archived' | 'search'
+export type ConversationGroupMode = 'default' | 'archived' | 'search' | 'unread'
 
 interface GroupOptions {
 	/** `archived` collapses everything into one ARCHIVED group, `search` into
@@ -40,6 +40,17 @@ export function groupConversations(
 	if (mode === 'search') {
 		const label = `${conversations.length} ${conversations.length === 1 ? 'result' : 'results'}`
 		return [{ key: 'results', label, items: conversations }]
+	}
+
+	if (mode === 'unread') {
+		// The v11 list: what waits on the viewer first, everything else under Earlier.
+		const pinned = conversations.filter((c) => c.pinned)
+		const rest = conversations.filter((c) => !c.pinned)
+		return [
+			{ key: 'pinned', label: 'Pinned', items: pinned },
+			{ key: 'unread', label: 'Unread', items: rest.filter((c) => c.unread_count > 0) },
+			{ key: 'earlier', label: 'Earlier', items: rest.filter((c) => c.unread_count === 0) },
+		].filter((g) => g.items.length > 0)
 	}
 
 	const today = startOfDay(now)
