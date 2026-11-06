@@ -530,7 +530,7 @@ test.describe('Mobile chat — long content, send button and safe areas @ 375', 
 		await assertComposerAndHeaderFit(page, 'Chat thread (long composer text)')
 	})
 
-	test('new chat: recipient list stays small, long composer text keeps send visible', async ({
+	test('new chat: many agents and a long first message keep the form inside the screen', async ({
 		page,
 		account,
 	}) => {
@@ -539,15 +539,12 @@ test.describe('Mobile chat — long content, send button and safe areas @ 375', 
 			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
 		}
 		await page.goto(`/${account.workspaceId}/chats/new`)
-		await page.getByLabel('Add recipients').click()
-		const list = page.getByRole('listbox')
-		await expect(list).toBeVisible({ timeout: 10000 })
-		const listBox = await list.boundingBox()
-		// A fixed, small share of an 812px screen: at most 4 rows (160px).
-		expect(listBox?.height ?? 0).toBeLessThanOrEqual(160 + 1)
+		await expect(page.getByRole('region', { name: 'To' })).toBeVisible({ timeout: 10000 })
+		await page.getByLabel('First message').fill('A long first message. '.repeat(40))
+		await assertNoHorizontalOverflow(page, 'New chat (long first message)', VIEWPORTS.mobile)
 
-		await page.keyboard.press('Escape')
-		await assertTextareaCapped(page, 'New chat')
-		await assertComposerAndHeaderFit(page, 'New chat (long composer text)')
+		const start = page.getByRole('button', { name: 'Start chat' })
+		await start.scrollIntoViewIfNeeded()
+		await expect(start).toBeInViewport()
 	})
 })

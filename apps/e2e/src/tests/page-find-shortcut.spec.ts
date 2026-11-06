@@ -22,10 +22,12 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 				await page.goto(`/${account.workspaceId}/${path}`)
 				const input = page.getByRole(field.role, { name: field.name })
 				// From md the Chats screens draw their own top edge and the shared bar (and its
-				// New button) steps aside, so the page's own search is the readiness signal there.
+				// New button) steps aside, so the list title is the readiness signal there (its search opens on Ctrl+F).
 				const barless = path === 'chats' && vp.width >= 768
 				await expect(
-					barless ? input.last() : page.getByRole('button', { name: /^New/ }).first(),
+					barless
+						? page.getByRole('heading', { name: 'Chats', exact: true })
+						: page.getByRole('button', { name: /^New/ }).first(),
 				).toBeVisible({ timeout: 20_000 })
 				await expect(page.getByRole('button', { name: 'Search or run a command' })).toHaveCount(0)
 
