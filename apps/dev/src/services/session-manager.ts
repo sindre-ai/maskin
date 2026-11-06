@@ -315,6 +315,17 @@ function normalizeRepoSlug(raw: string): string | null {
 }
 
 /**
+ * Where an agent-server keeps a session's /agent folder once its sandbox ends. The
+ * agent-server writes it (`sessionWorkspaceKey` in
+ * apps/agent-server/src/services/session-workspace.ts) and restores from it when a
+ * sandbox starts under the same session id, which is how a paused remote session
+ * resumes.
+ */
+function remoteWorkspaceKey(sessionId: string): string {
+	return `session-workspaces/${sessionId}.tar.gz`
+}
+
+/**
  * `sessions.startedAt`/`createdAt` are typed `Date | null` by Drizzle but
  * `createdAt` is always populated (DB default). When measuring elapsed runtime
  * for telemetry, prefer `startedAt`, fall back to `createdAt`, and emit zero if
@@ -623,6 +634,10 @@ export class SessionManager extends EventEmitter {
 	 * message. 15 min by default; CHAT_IDLE_CLOSE_MINUTES overrides it.
 	 */
 	private readonly chatIdleCloseMs = resolveChatIdleCloseMs()
+	// How long pauseSession waits for an agent-server to stop a sandbox and get its
+	// workspace into storage. Instance fields so a test can shorten them.
+	private remotePauseWaitMs = 90_000
+	private remotePausePollMs = 1_000
 	/**
 	 * Docker's logs(follow:true) endpoint can drop transient (HTTP keepalive
 	 * timeouts, Docker Desktop hiccups, network blips). Without reattaching,
@@ -1828,9 +1843,11 @@ export class SessionManager extends EventEmitter {
 
 		// A remote session's sandbox lives on the agent-server, so the local Docker
 		// check below would always call it gone and mark a live session failed.
-		// Snapshot and resume are local-only: refuse, and leave the session running.
+		// It has its own pause: the agent-server saves the workspace to storage when
+		// the sandbox ends, and the report that follows settles the row as paused.
 		if (session.agentServerId) {
-			throw new Error(`Session ${sessionId} runs on an agent server and cannot be paused`)
+			await this.pauseRemoteSession(session)
+			return
 		}
 
 		// Self-heal: if the container disappeared (stopped or removed externally),
@@ -1918,6 +1935,298 @@ export class SessionManager extends EventEmitter {
 				.where(eq(sessions.id, sessionId))
 			throw err
 		}
+	}
+
+	/**
+	 * Pause a session whose sandbox lives on an agent-server.
+	 *
+	 * The files are what a pause keeps, as on the local path: the agent restarts
+	 * from its saved /agent folder on resume, a running process is not preserved.
+	 * The agent-server already saves that folder to storage whenever a sandbox
+	 * ends (monitorSession), then reports completion. So pausing is: mark the row
+	 * `snapshotting`, stop the sandbox, and let that report settle the row as
+	 * paused once the folder is in storage (see finalizeRemotePause). Waits for
+	 * that, so callers see the same "paused when this returns" as the local path.
+	 */
+	private async pauseRemoteSession(session: typeof sessions.$inferSelect): Promise<void> {
+		const sessionId = session.id
+		const [serverRow] = await this.db
+			.select({ id: agentServers.id, url: agentServers.url, secret: agentServers.secret })
+			.from(agentServers)
+			.where(eq(agentServers.id, session.agentServerId as string))
+			.limit(1)
+		if (!serverRow) {
+			throw new Error(`Agent server ${session.agentServerId} not found`)
+		}
+
+		// Compare-and-set, so two pause requests (a double click, a pause racing a
+		// stop) cannot both stop the sandbox.
+		const [claimed] = await this.db
+			.update(sessions)
+			.set({ status: 'snapshotting', updatedAt: new Date() })
+			.where(and(eq(sessions.id, sessionId), eq(sessions.status, 'running')))
+			.returning({ id: sessions.id })
+		if (!claimed) {
+			throw new Error(`Session ${sessionId} not in running state`)
+		}
+
+		// An archive left by an earlier pause or completion of this session would
+		// satisfy the existence check below before this pause has uploaded anything.
+		// The archive from before was already restored into the sandbox being
+		// paused, so dropping it loses nothing.
+		const snapshotKey = remoteWorkspaceKey(sessionId)
+		await this.storage.delete(snapshotKey).catch((err) =>
+			logger.warn('Failed to clear the previous workspace archive before a remote pause', {
+				sessionId,
+				error: String(err),
+			}),
+		)
+
+		try {
+			await new AgentServerClient({ server: serverRow }).stopSession(sessionId, {
+				reason: 'pause',
+				source: 'user-stop',
+			})
+		} catch (err) {
+			// The sandbox was not stopped, so the session is still running.
+			await this.db
+				.update(sessions)
+				.set({ status: 'running', updatedAt: new Date() })
+				.where(and(eq(sessions.id, sessionId), eq(sessions.status, 'snapshotting')))
+			// Same sanitizing as stopSession: this message reaches the API caller and
+			// the raw errors embed the agent-server's URL and response body.
+			logger.error('agent-server could not stop the sandbox for a pause', {
+				sessionId,
+				agentServerId: serverRow.id,
+				agentServerUrl: serverRow.url,
+				error: err instanceof AgentServerHttpError ? `${err.status}: ${err.body}` : String(err),
+			})
+			if (err instanceof AgentServerAuthError) {
+				throw new Error(`Failed to pause session ${sessionId}: agent-server rejected bearer token`)
+			}
+			if (err instanceof AgentServerHttpError) {
+				throw new Error(
+					`Failed to pause session ${sessionId}: agent-server returned HTTP ${err.status}`,
+				)
+			}
+			throw new Error(`Failed to pause session ${sessionId}: agent-server request failed`)
+		}
+
+		await this.waitForRemotePause(sessionId, snapshotKey)
+	}
+
+	/**
+	 * Wait for the agent-server's completion report to settle a remote pause, which
+	 * it does after the workspace is in storage. If the report never comes (the
+	 * agent-server restarted and lost its monitor) the archive itself is the
+	 * signal. With neither by the deadline the row is left `snapshotting`: the
+	 * upload may just be slow (a large workspace, throttled storage), and failing
+	 * the session here would make it unresumable even though the archive can still
+	 * land. The report is the authoritative negative signal and settles the row
+	 * either way when it arrives (finalizeRemotePause).
+	 */
+	private async waitForRemotePause(sessionId: string, snapshotKey: string): Promise<void> {
+		const deadline = Date.now() + this.remotePauseWaitMs
+		let archived = false
+		while (Date.now() < deadline) {
+			const [row] = await this.db
+				.select({ status: sessions.status })
+				.from(sessions)
+				.where(eq(sessions.id, sessionId))
+				.limit(1)
+			// Settled by the report (paused), or by someone else.
+			if (!row || row.status !== 'snapshotting') return
+			// A storage error is not "not there yet": say so, and keep waiting.
+			const exists = await this.storage.exists(snapshotKey).catch((err) => {
+				logger.warn('Could not check for the workspace archive of a remote pause', {
+					sessionId,
+					error: String(err),
+				})
+				return false
+			})
+			if (exists) {
+				archived = true
+				break
+			}
+			await new Promise((resolve) => setTimeout(resolve, this.remotePausePollMs))
+		}
+		if (!archived) {
+			logger.warn(
+				'Remote pause still waiting for the workspace archive; leaving it to the report',
+				{
+					sessionId,
+					waitedMs: this.remotePauseWaitMs,
+				},
+			)
+			return
+		}
+		const finalized = await this.finalizeRemotePause(sessionId)
+		if (!finalized) {
+			// The row stays `snapshotting`; the completion report (or the reconciler's
+			// stalled-pause pass) settles it. finalizeRemotePause has logged why.
+			logger.warn('Remote pause not settled by the wait loop; leaving it to the report', {
+				sessionId,
+			})
+		}
+	}
+
+	/** Public entry for the reconciler: settle a pause whose completion report never came. */
+	async recoverStalledRemotePause(sessionId: string): Promise<boolean> {
+		return this.finalizeRemotePause(sessionId)
+	}
+
+	/**
+	 * Settle a remote session that is `snapshotting`: paused if its workspace
+	 * archive reached storage, failed if it did not (it could never be resumed).
+	 * Called by the completion report, by the pause's own wait loop and by the
+	 * reconciler, which can run in different processes, so the decision and the
+	 * settle are serialized on an advisory lock that re-checks the status once held.
+	 *
+	 * Only the settle is inside the lock. The follow-up work (log, usage, credit,
+	 * cleanup, queue) runs after it and is best-effort per step: the row is already
+	 * settled, so a retry of the report could not redo any of it, and one failing
+	 * step must not skip the rest.
+	 *
+	 * Returns false only when the outcome could not be recorded (including a
+	 * storage error while checking for the archive, which is not "archive missing"),
+	 * so the report is retried.
+	 */
+	private async finalizeRemotePause(sessionId: string): Promise<boolean> {
+		let settledPause: { session: typeof sessions.$inferSelect; archived: boolean } | null
+		try {
+			settledPause = await this.db.transaction(async (tx) => {
+				await tx.execute(
+					sql`SELECT pg_advisory_xact_lock(hashtextextended(${`remote_pause:${sessionId}`}::text, 0))`,
+				)
+				const [session] = await tx
+					.select()
+					.from(sessions)
+					.where(eq(sessions.id, sessionId))
+					.limit(1)
+				if (!session || session.status !== 'snapshotting') return null
+
+				// A storage error throws out of here: only a definite "not found" may
+				// fail the session, since the archive may well be there.
+				const snapshotKey = remoteWorkspaceKey(sessionId)
+				const archived = await this.storage.exists(snapshotKey)
+
+				const settleDeps = this.buildSettleDeps({ skipStop: true, skipPush: true })
+				const settled = await settleSession(
+					sessionId,
+					archived
+						? {
+								kind: 'pause',
+								classification: 'idle_timeout',
+								source: 'idle-watcher',
+								snapshotKey,
+							}
+						: {
+								kind: 'fail',
+								classification: 'sandbox_crash',
+								source: 'idle-watcher',
+								reason:
+									'Pause failed: the session workspace did not reach storage, so it cannot be resumed',
+								exitCode: 0,
+							},
+					settleDeps,
+				)
+				// A user Stop (not serialized on this lock) settled the row first: it owns
+				// the outcome, and its own path did the usage, credit and cleanup.
+				if (settled.alreadySettled) return null
+				return { session, archived }
+			})
+		} catch (err) {
+			logger.error('Failed to finalize a remote pause', { sessionId, error: String(err) })
+			return false
+		}
+		if (!settledPause) return true
+
+		const { session, archived } = settledPause
+		const step = async (label: string, fn: () => Promise<unknown>) => {
+			try {
+				await fn()
+			} catch (err) {
+				logger.error(`Remote pause follow-up failed: ${label}`, { sessionId, error: String(err) })
+			}
+		}
+
+		if (!archived) {
+			await step('system log', () =>
+				this.insertSystemLog(
+					sessionId,
+					'Pause failed — the workspace could not be saved, so the session cannot be resumed',
+				),
+			)
+			await step('clear active session', () => this.clearActiveSession(sessionId))
+		} else {
+			await step('system log', () =>
+				this.insertSystemLog(sessionId, 'Session paused and snapshot saved'),
+			)
+			// Same as the local pause: bank this segment's usage and credit debit now,
+			// since a paused session may never reach a terminal status.
+			await step('accumulate usage', () => this.accumulateSessionUsage(sessionId))
+			if ((session.config as Record<string, unknown>)?.llm_route === LLM_ROUTE_MASKIN_PLAN) {
+				await step('debit credit', () =>
+					this.debitCreditIfApplicable(session.workspaceId, session.actorId, sessionId),
+				)
+			}
+			logger.info(`Remote session paused: ${sessionId}`)
+		}
+		await step('cleanup', () => this.cleanupSession(sessionId))
+		await step('drain queue', () => this.drainQueue(session.workspaceId))
+		return true
+	}
+
+	/**
+	 * Resume a paused remote session: put the row back in the dispatch queue.
+	 * The workspace is in storage under the session's own id, and the agent-server
+	 * restores it from there when it starts the sandbox, on any server, so the
+	 * old server pin is dropped. The agent restarts from its saved files, like the
+	 * local resume.
+	 */
+	private async resumeRemoteSession(session: typeof sessions.$inferSelect): Promise<void> {
+		const sessionId = session.id
+		await recordEvent(this.db, {
+			workspaceId: session.workspaceId,
+			actorId: session.actorId,
+			action: 'resume_entered',
+			entityType: 'session',
+			entityId: sessionId,
+			data: {},
+		})
+
+		// Compare-and-set so two resume requests cannot both dispatch a sandbox.
+		const [claimed] = await this.db
+			.update(sessions)
+			.set({
+				status: 'pending',
+				sessionState: 'queued',
+				stateEnteredAt: new Date(),
+				agentServerId: null,
+				containerId: null,
+				snapshotPath: null,
+				updatedAt: new Date(),
+			})
+			.where(and(eq(sessions.id, sessionId), eq(sessions.status, 'paused')))
+			.returning({ id: sessions.id })
+		if (!claimed) {
+			throw new Error(`Session ${sessionId} not in paused state or no snapshot`)
+		}
+
+		await recordEvent(this.db, {
+			workspaceId: session.workspaceId,
+			actorId: session.actorId,
+			action: 'session_resumed',
+			entityType: 'session',
+			entityId: sessionId,
+			data: {},
+		})
+		await this.insertSystemLog(sessionId, SESSION_RESUMED_LOG)
+
+		// From here it is an ordinary dispatch: capacity check, queue, an agent-server
+		// picked, the workspace restored from storage, the sandbox started.
+		await this.startSession(sessionId)
+		logger.info(`Remote session resumed: ${sessionId}`)
 	}
 
 	private async isContainerAlive(containerId: string): Promise<boolean> {
@@ -2022,6 +2331,13 @@ export class SessionManager extends EventEmitter {
 
 		if (!session || session.status !== 'paused' || !session.snapshotPath) {
 			throw new Error(`Session ${sessionId} not in paused state or no snapshot`)
+		}
+
+		// A session paused on an agent-server resumes on one: its workspace is in
+		// storage, not in a local snapshot.
+		if (session.agentServerId) {
+			await this.resumeRemoteSession(session)
+			return
 		}
 
 		// Unconditional resume-entry marker, emitted before the `starting`
@@ -6500,6 +6816,7 @@ ${cont.continues_prompt}
 		let alreadyResolved = false
 		let rowMissing = false
 		let usageApplied = false
+		let pausing = false
 		let settleErr: unknown
 		for (let attempt = 1; attempt <= SessionManager.CAS_UPDATE_RETRIES; attempt++) {
 			try {
@@ -6513,13 +6830,32 @@ ${cont.continues_prompt}
 					rowMissing = true
 					break
 				}
-				// Paused and snapshotting rows are not settle's to flip, so they are
-				// dropped here; the four truly terminal statuses are guarded by
-				// settle's own compare-and-set.
-				if (resolvedStatuses.includes(existing.status)) {
+				// The report that follows a pause. The agent-server sends it after the
+				// workspace is in storage, which is what makes the pause safe to settle.
+				// Its exit code is that of a sandbox stopped on purpose, so it must not
+				// be settled as a completion.
+				// stopSession records the request before its RPC and only passes
+				// stoppedByUser after it returns, so a report in between shows as
+				// stopRequested alone.
+				const stopRequestedByUser = stoppedByUser || this.stopRequested.has(sessionId)
+				if (existing.status === 'snapshotting' && !stopRequestedByUser) {
+					pausing = true
+					break
+				}
+				// A user's Stop while a pause is in flight wins: the person asked for the
+				// session to end, so it settles as stopped instead of being dropped and
+				// then paused. The archive the pause uploaded is left unused.
+				const stopsPendingPause = existing.status === 'snapshotting' && stopRequestedByUser
+				// Paused rows, and snapshotting ones unless a user Stop is ending a pending
+				// pause, are not settle's to flip, so they are dropped here; the four truly
+				// terminal statuses are guarded by settle's own compare-and-set.
+				if (resolvedStatuses.includes(existing.status) && !stopsPendingPause) {
 					alreadyResolved = true
 					break
 				}
+				// A report for a pending pause can carry a clean exit code, so the stop is
+				// not left to the exit code alone.
+				const settleAsStop = userStopped || stopsPendingPause
 				// Additive, so it must not be re-applied if a retry follows a settle failure.
 				if (usageColumns && !usageApplied) {
 					await this.db
@@ -6542,9 +6878,9 @@ ${cont.continues_prompt}
 				settled = await settleSession(
 					sessionId,
 					{
-						kind: userStopped ? 'stop' : status === 'completed' ? 'complete' : 'fail',
-						classification: classifyExit({ userStopped, status, failureReason }),
-						source: userStopped ? 'user-stop' : 'sandbox-exit',
+						kind: settleAsStop ? 'stop' : status === 'completed' ? 'complete' : 'fail',
+						classification: classifyExit({ userStopped: settleAsStop, status, failureReason }),
+						source: settleAsStop ? 'user-stop' : 'sandbox-exit',
 						exitCode: exitCode ?? undefined,
 						failureReason: failureReason ?? undefined,
 						retryAt: scheduledRetryAt ?? undefined,
@@ -6561,6 +6897,7 @@ ${cont.continues_prompt}
 				}
 			}
 		}
+		if (pausing) return this.finalizeRemotePause(sessionId)
 		if (settleErr) {
 			// Best-effort: a DB hiccup here must not surface as a thrown error to
 			// stopSession()'s caller, which would otherwise report a 400 "stop
