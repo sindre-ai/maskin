@@ -95,13 +95,13 @@ test.describe('Marketplace loop filter', () => {
 
 		const loopsSection = page.getByRole('region', { name: 'Flows' })
 		await expect(loopsSection).toBeVisible({ timeout: 20000 })
-		await expect(loopsSection.getByRole('heading', { name: /Discover/ })).toBeVisible()
+		await expect(loopsSection.getByRole('heading', { name: /Discover & Research/ })).toBeVisible()
 		await expect(loopsSection.getByRole('heading', { name: /Build & Ship/ })).toBeVisible()
 
 		const filter = page.getByRole('searchbox', { name: FILTER_LABEL }).and(page.locator(':visible'))
 		await filter.fill('discover')
 
-		await expect(loopsSection.getByRole('heading', { name: /Discover/ })).toBeVisible()
+		await expect(loopsSection.getByRole('heading', { name: /Discover & Research/ })).toBeVisible()
 		await expect(loopsSection.getByRole('heading', { name: /Build & Ship/ })).toHaveCount(0)
 		await expect(loopsSection.getByRole('heading', { name: /Team Ops/ })).toHaveCount(0)
 	})
@@ -207,7 +207,9 @@ test.describe('Marketplace loop filter', () => {
 		const filter = page.getByRole('searchbox', { name: FILTER_LABEL }).and(page.locator(':visible'))
 		await filter.fill('discover')
 		await expect(
-			page.getByRole('region', { name: 'Flows' }).getByRole('heading', { name: /Discover/ }),
+			page
+				.getByRole('region', { name: 'Flows' })
+				.getByRole('heading', { name: /Discover & Research/ }),
 		).toBeVisible()
 		await noHorizontalOverflow(page)
 

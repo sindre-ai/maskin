@@ -59,8 +59,6 @@ interface NewChatSearch {
 	notificationTitle?: string
 	/** Text that fills the message box. Nothing is sent until the viewer sends it. */
 	text?: string
-	/** Set by signup only: shows the Chief of Staff's welcome above the heading. */
-	welcome?: boolean
 }
 
 export const Route = createFileRoute('/_authed/$workspaceId/chats/new')({
@@ -76,7 +74,6 @@ export const Route = createFileRoute('/_authed/$workspaceId/chats/new')({
 		notificationTitle:
 			typeof search.notificationTitle === 'string' ? search.notificationTitle : undefined,
 		text: typeof search.text === 'string' ? search.text : undefined,
-		welcome: search.welcome === 1 || search.welcome === '1' || search.welcome === true || undefined,
 	}),
 })
 
@@ -105,9 +102,6 @@ function NewChatRoute() {
 	const nothingRunning =
 		!activity.isLoading && !activity.isError && activity.activeSessionCount === 0
 	const showRunningIntro = !activity.isLoading && !nothingRunning
-
-	const chiefOfStaff = (actors ?? []).find((a) => a.type === 'agent' && a.name === 'Chief of Staff')
-	const welcomeName = currentActor?.name?.trim() || 'there'
 
 	const [recipients, setRecipients] = useState<Recipient[]>([])
 	const [query, setQuery] = useState('')
@@ -187,9 +181,7 @@ function NewChatRoute() {
 	const seedInitial = useRef(false)
 	useEffect(() => {
 		if (seedInitial.current) return
-		// After signup the welcome is from the Chief of Staff, so a reply goes to it.
-		const targetId =
-			search.agentId ?? (search.welcome ? chiefOfStaff?.id : undefined) ?? defaultAgent?.id ?? null
+		const targetId = search.agentId ?? defaultAgent?.id ?? null
 		if (!targetId) return
 		let found: Recipient | null = candidates.find((c) => c.id === targetId) ?? null
 		if (!found && targetId === search.agentId) {
@@ -201,7 +193,7 @@ function NewChatRoute() {
 		if (!found) return
 		seedInitial.current = true
 		setRecipients([found])
-	}, [search.agentId, search.agentName, search.welcome, chiefOfStaff?.id, defaultAgent, candidates])
+	}, [search.agentId, search.agentName, defaultAgent, candidates])
 
 	const recipientIds = useMemo(() => new Set(recipients.map((r) => r.id)), [recipients])
 
@@ -596,22 +588,6 @@ function NewChatRoute() {
 
 			<div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-[clamp(14px,3vw,28px)] py-6">
 				<div className="m-auto w-full max-w-[660px]">
-					{search.welcome && chiefOfStaff ? (
-						<div className="mb-6 flex items-start gap-2.5">
-							<ActorAvatar
-								id={chiefOfStaff.id}
-								name={chiefOfStaff.name}
-								type={chiefOfStaff.type}
-								size="md"
-							/>
-							<div className="min-w-0">
-								<p className="text-[12.5px] font-semibold text-foreground">{chiefOfStaff.name}</p>
-								<p className="mt-1 max-w-[60ch] rounded-[11px] border border-border bg-card px-3 py-2 text-[13.5px] leading-relaxed text-foreground">
-									{`Hi ${welcomeName} 👋 Welcome to Maskin. I'm Chief of Staff, I make sure the right agent picks up your work. Researcher is putting together a first look at you and your organization so the workspace has real context from day one. If anything looks off, or you'd like to add more, just reply here and I'll make sure it gets folded in.`}
-								</p>
-							</div>
-						</div>
-					) : null}
 					<h2 className="text-[clamp(20px,2.4vw,26px)] font-bold leading-tight tracking-[-0.025em]">
 						What are we working on?
 					</h2>

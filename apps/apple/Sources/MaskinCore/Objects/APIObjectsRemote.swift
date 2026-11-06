@@ -503,6 +503,11 @@ extension APIObjectsRemote: ObjectDraftsRemote {
 		}
 	}
 
+	public func save(objectId: String, content: String?, subject: String?, idempotencyKey: String) async throws {
+		let patch = ObjectPatch(content: content, metadata: subject.map { ["subject": $0] })
+		_ = try await update(objectId: objectId, patch: patch, idempotencyKey: idempotencyKey)
+	}
+
 	public func approve(objectId: String, contentHash: String, idempotencyKey: String) async throws -> ObjectPreview {
 		guard let raw else { throw ObjectApprovalError.other("Approving isn't available here.") }
 		let request = await makeApprovalRequest(
