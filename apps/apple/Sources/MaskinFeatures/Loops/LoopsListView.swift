@@ -36,11 +36,17 @@ struct LoopsListView: View {
 			onReview: { selection = loop.id })
 	}
 
-	/// The overview strip and the tag chips above the cards.
+	/// The one-line summary and the tag chips above the cards.
 	@ViewBuilder
 	private var header: some View {
 		if search.isEmpty {
-			FlowsKPIStrip(stats: FlowsOverview.kpis(store.loops))
+			if let line = FlowsOverview.needsYouLine(store.loops) {
+				Text(line)
+					.font(MaskinTypeface.sans(MaskinFontSize.t24, weight: .semibold, relativeTo: .title2))
+					.tracking(-0.02 * MaskinFontSize.t24)
+					.foregroundStyle(MaskinColor.ink)
+					.frame(maxWidth: .infinity, alignment: .leading)
+			}
 			FlowTagChips(tags: store.tags, selection: Binding(get: { store.tagFilter }, set: { store.tagFilter = $0 }))
 		}
 	}
@@ -146,20 +152,6 @@ struct LoopsListView: View {
 				} else {
 					ContentUnavailableView.search(text: search)
 				}
-			}
-		}
-	}
-}
-
-/// What the flows add up to, above the cards: need you, running, in progress, closed. The same
-/// tiles as a flow's Performance tab.
-struct FlowsKPIStrip: View {
-	let stats: [LoopQuality.Stat]
-
-	var body: some View {
-		if !stats.isEmpty {
-			HStack(alignment: .top, spacing: MaskinSpace.s4) {
-				ForEach(stats) { FlowStatTile(stat: $0) }
 			}
 		}
 	}

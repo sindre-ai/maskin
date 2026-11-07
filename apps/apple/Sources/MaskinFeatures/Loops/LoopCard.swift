@@ -31,13 +31,8 @@ struct LoopCard: View {
 			if let update { latest(update) }
 			if let banner { bannerView(banner) }
 		}
-		.padding(.vertical, MaskinSpace.s9)
-		.padding(.horizontal, MaskinSpace.s9)
+		.padding(MaskinSpace.s11)
 		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.brief, style: .continuous))
-		.overlay(
-			RoundedRectangle(cornerRadius: MaskinRadius.brief, style: .continuous)
-				.strokeBorder(MaskinSurface.line, lineWidth: 1)
-		)
 		.contentShape(Rectangle())
 		.maskinHover(.lift, cornerRadius: MaskinRadius.brief)
 		.accessibilityElement(children: .contain)
