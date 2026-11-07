@@ -20,6 +20,7 @@ public struct SettingsScreen: View {
 	private let environment: AppEnvironment
 	@State private var services: SettingsServices
 	@State private var confirmSignOut = false
+	private var analytics: Analytics { .shared }
 	@State private var path: [SettingsRoute]
 	@State private var counts: SettingsCountsStore?
 	@State private var showInvite = false
@@ -130,6 +131,19 @@ public struct SettingsScreen: View {
 						Text("Security")
 					} footer: {
 						Text(Self.appLockFooter(appLock.availability, delay: appLock.delay))
+					}
+				}
+				// Only in builds that can send. Off until the person agrees (the first-run question).
+				if analytics.isAvailable {
+					Section {
+						Toggle(
+							AnalyticsCopy.settingsTitle,
+							isOn: Binding(
+								get: { analytics.consent == .granted }, set: { analytics.setConsent($0) }))
+					} header: {
+						Text("Privacy")
+					} footer: {
+						Text(AnalyticsCopy.settingsFooter)
 					}
 				}
 				Section("About") {

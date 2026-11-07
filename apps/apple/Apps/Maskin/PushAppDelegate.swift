@@ -88,7 +88,10 @@ extension PushAppDelegate: UNUserNotificationCenterDelegate {
 		}
 		// `userInfo` isn't Sendable; carry only the one string across the actor hop.
 		let link = response.notification.request.content.userInfo["deep_link"] as? String
-		await MainActor.run { receiveTap(deepLink: link) }
+		await MainActor.run {
+			Analytics.shared.track("push_notification_opened")
+			receiveTap(deepLink: link)
+		}
 	}
 }
 

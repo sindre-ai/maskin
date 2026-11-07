@@ -52,6 +52,9 @@ struct MaskinApp: App {
 		// Agent names, thread links and Spotlight entries belong to the account that is leaving.
 		environment.auth.onSessionEnded { _ in Task { await MaskinIntentsContext.wipe() } }
 		_environment = State(initialValue: environment)
+		// Nil without a PostHog token in this build; then every analytics call is a no-op. Nothing is
+		// sent until the person agrees (see Analytics).
+		Analytics.shared.configure(sink: PostHogSink.forThisBuild())
 		let registrar = PushRegistrar(
 			system: SystemPushSystem(), devices: APIDeviceRegistrar(
 				baseURL: environment.baseURL, clientSource: environment.clientSource,
@@ -98,6 +101,7 @@ struct MaskinApp: App {
 				// Hand the sign-in to the paired watch, and again whenever it changes; point the
 				// "Agents working" activity at the signed-in workspace.
 				.onChange(of: environment.auth.session, initial: true) { _, session in
+					Analytics.shared.sessionChanged(actorId: session?.actorId, workspaceId: session?.workspaceId)
 					watchBridge.publish(session)
 					Task { await AgentsActivityRuntime.shared?.sessionChanged(workspaceId: session?.workspaceId) }
 					Task { await CycleActivityController.shared?.workspaceChanged(session?.workspaceId) }
@@ -111,7 +115,10 @@ struct MaskinApp: App {
 			.onChange(of: scenePhase) { _, phase in
 				if phase == .background { BackgroundRefresh.schedule() }
 				// Back in front: the agents card has no push path on this server, so refetch now.
-				if phase == .active { Task { await AgentsActivityRuntime.shared?.refresh() } }
+				if phase == .active {
+					Analytics.shared.appOpened()
+					Task { await AgentsActivityRuntime.shared?.refresh() }
+				}
 			}
 		#endif
 		.commands { ShellCommands() }
