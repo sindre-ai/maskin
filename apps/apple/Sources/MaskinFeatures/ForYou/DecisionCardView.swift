@@ -167,8 +167,7 @@ struct DecisionCardView: View {
 		.animation(MaskinMotion.standard, value: record.map { "\($0.phase)" })
 		.animation(MaskinMotion.standard, value: isExpanded)
 		.padding(.horizontal, MaskinSpace.s10)
-		.padding(.top, MaskinSpace.s9)
-		.padding(.bottom, MaskinSpace.s9)
+		.padding(.vertical, MaskinSpace.s12)
 	}
 
 	/// The first message of this card that is shown under Drafts to review instead of here.
@@ -423,8 +422,8 @@ struct DecisionCardView: View {
 	}
 
 	private func alternateOptions(of decision: DecisionPrompt) -> [DecisionOption] {
-		// For you has no Hold (v3): an agent-written Hold option is not drawn as a pill.
-		decision.options.filter { !$0.recommended && !HoldReason.isHold($0.label) }
+		// For you has no Hold or Later: an agent-written one is not drawn as a pill.
+		decision.options.filter { !$0.recommended && !HoldReason.isHold($0.label) && !HoldReason.isLater($0.label) }
 	}
 
 	private func optionButton(_ option: DecisionOption) -> some View {
@@ -728,7 +727,7 @@ extension DecisionCardView {
 		}
 		.animation(MaskinMotion.standard, value: record.map { "\($0.phase)" })
 		.animation(MaskinMotion.standard, value: isExpanded)
-		.padding(.vertical, MaskinSpace.s8)
+		.padding(.vertical, MaskinSpace.s12)
 		.frame(maxWidth: .infinity, alignment: .leading)
 		.overlay(alignment: .top) { Rectangle().fill(MaskinSurface.separator).frame(height: 1) }
 	}
