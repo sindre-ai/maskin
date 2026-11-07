@@ -213,7 +213,7 @@ export function FeedCard({
 
 	return (
 		<CardShell expanded>
-			<div className="group/card flex flex-col gap-3 px-5 pb-[18px] pt-[17px]">
+			<div className="group/card flex flex-col gap-3 px-[22px] pb-[18px] pt-5">
 				<div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
 					<ActorAvatar
 						id={senderId ?? undefined}
