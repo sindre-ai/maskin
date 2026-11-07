@@ -11,6 +11,7 @@ import {
 import { OnboardingPromptCard } from '@/components/foryou/onboarding-prompt-card'
 import { TakeSuggestedDialog } from '@/components/foryou/take-suggested-dialog'
 import { PageHeader } from '@/components/layout/page-header'
+import { EmptyState } from '@/components/shared/empty-state'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
@@ -66,6 +67,7 @@ import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
+import { CheckCircle2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -902,18 +904,20 @@ function ForYouFeed() {
 					</div>
 
 					{tail && (
-						<div className="flex items-center justify-center gap-2 pb-2.5 pt-[34px] text-[11.5px] text-muted-foreground">
-							<span className="h-px w-10 bg-border" />
-							{tail}
-							<span className="h-px w-10 bg-border" />
-						</div>
-					)}
-					{feedIsEmpty && typeFilter && (
-						<div className="flex justify-center pb-2.5">
-							<Button variant="outline" size="sm" onClick={() => setTypeFilter(undefined)}>
-								Show everything
-							</Button>
-						</div>
+						<EmptyState
+							icon={<CheckCircle2 size={24} aria-hidden="true" />}
+							title={tail}
+							description={
+								typeFilter ? 'Nothing matches this filter.' : 'Nothing needs you right now.'
+							}
+							action={
+								typeFilter ? (
+									<Button variant="outline" size="sm" onClick={() => setTypeFilter(undefined)}>
+										Show everything
+									</Button>
+								) : undefined
+							}
+						/>
 					)}
 				</div>
 			</div>

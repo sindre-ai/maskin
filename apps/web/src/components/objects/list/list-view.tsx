@@ -11,7 +11,7 @@ import { NO_VALUE_GROUP, getObjectGroupLabel, getObjectGroupValue } from '@/lib/
 import { useNavigate } from '@tanstack/react-router'
 import type { GroupingState, RowSelectionState, VisibilityState } from '@tanstack/react-table'
 import type { OnChangeFn } from '@tanstack/react-table'
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight, Layers } from 'lucide-react'
 import {
 	forwardRef,
 	useCallback,
@@ -397,6 +397,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 			<div ref={scrollRef} className={cn('min-h-0 flex-1 overflow-auto', 'touch-pan-y')}>
 				{hasActiveFilters ? (
 					<EmptyState
+						icon={<Layers size={24} aria-hidden="true" />}
 						title={emptyTitle ?? 'No items match these filters.'}
 						action={
 							onClearFilters ? (
@@ -408,8 +409,9 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 					/>
 				) : (
 					<EmptyState
+						icon={<Layers size={24} aria-hidden="true" />}
 						title={emptyTitle ?? 'No items found'}
-						description="Create your first item to get started"
+						description="Create your first item to get started."
 					/>
 				)}
 				<div ref={sentinelRef} className="h-1" />

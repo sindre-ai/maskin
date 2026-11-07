@@ -1,4 +1,5 @@
 import { EmptyState } from '@/components/shared/empty-state'
+import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useReplyThreads } from '@/hooks/use-conversation'
@@ -8,7 +9,7 @@ import { cn } from '@/lib/cn'
 import { groupConversations } from '@/lib/conversation-groups'
 import { focusField, usePageSearchShortcut } from '@/lib/page-search-shortcut'
 import { Link } from '@tanstack/react-router'
-import { ChevronDown, Plus, Search } from 'lucide-react'
+import { ChevronDown, MessageCircle, MessageCircleWarning, Plus, Search } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { type ChatsFilter, ChatsFilterMenu } from './chats-filter-menu'
@@ -303,24 +304,24 @@ function ChatConversationList({
 			<div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3 lg:pr-4 lg:pl-10">
 				<div className={cn('w-full', expanded && 'mx-auto max-w-[900px]')}>
 					{isLoading ? (
-						<div className="flex justify-center py-8">
-							<Spinner />
-						</div>
+						<ListSkeleton rows={8} />
 					) : isError ? (
 						// A failed fetch must not borrow the empty state: "No conversations
 						// here — start a chat" reads as an empty account and invites the
 						// reader to duplicate a thread they already have.
 						<EmptyState
+							icon={<MessageCircleWarning size={24} aria-hidden="true" />}
 							title="Couldn't load your conversations"
-							description="Something went wrong reaching the server. Nothing has been lost — this is only the list."
+							description="Nothing has been lost. Only the list did not load."
 							action={
-								<Button variant="link" size="sm" onClick={() => refetch()}>
-									Try again →
+								<Button variant="outline" size="sm" onClick={() => refetch()}>
+									Try again
 								</Button>
 							}
 						/>
 					) : conversations.length === 0 ? (
 						<EmptyState
+							icon={<MessageCircle size={24} aria-hidden="true" />}
 							title={EMPTY_COPY[filter].title}
 							description={EMPTY_COPY[filter].description}
 							action={

@@ -380,7 +380,7 @@ function LoopsRoute() {
 							<EmptyState
 								icon={<RefreshCw size={22} aria-hidden="true" />}
 								title="No flows running here yet"
-								description="Flows are persistent, multi-agent processes — a named pipeline that continuously ingests work, routes it through several agents, and surfaces decisions to you. Install one from the Marketplace, or start a new one."
+								description="A flow is a named pipeline of agents that brings you the decisions."
 								action={
 									<div className="flex items-center gap-2">
 										{canWrite ? (
