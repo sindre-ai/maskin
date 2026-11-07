@@ -184,6 +184,22 @@ export function detectUnifiedSlashTransition({
 	return { type: 'noop' }
 }
 
+/**
+ * Whether the message has anything to send: words, or an uploaded attachment (the caller passes
+ * 0 when attachment-only sends are off). Any upload still running or failed blocks the send.
+ */
+export function canSendMessage({
+	text,
+	attachmentCount,
+	uploadsInFlight,
+}: {
+	text: string
+	attachmentCount: number
+	uploadsInFlight: number
+}): boolean {
+	return (text.trim().length > 0 || attachmentCount > 0) && uploadsInFlight === 0
+}
+
 export interface ComposerProps {
 	workspaceId: string
 	/**
@@ -197,6 +213,11 @@ export interface ComposerProps {
 	 * being rejected. Only for callers that put `extras.files` on the message.
 	 */
 	longTextAsFile?: boolean
+	/**
+	 * Send is on with no text when at least one attachment has finished uploading. Only for
+	 * callers whose `onSend` puts `selection.files` on the message.
+	 */
+	allowAttachmentOnly?: boolean
 	pending: boolean
 	surface: ChatSurface
 	placeholder: string
@@ -363,6 +384,7 @@ export function Composer({
 	workspaceId,
 	onSend,
 	longTextAsFile,
+	allowAttachmentOnly,
 	disabled: disabledByCaller,
 	pending,
 	placeholder,
@@ -729,7 +751,14 @@ export function Composer({
 	// user must let it resolve or remove it (AC-T3). Mirrors the comment input's
 	// rule that send requires every chip to be in a final, sendable state.
 	const canSend =
-		value.trim().length > 0 && !disabled && !sending && !pending && pendingUploads.length === 0
+		canSendMessage({
+			text: value,
+			attachmentCount: allowAttachmentOnly ? selection.files.length : 0,
+			uploadsInFlight: pendingUploads.length,
+		}) &&
+		!disabled &&
+		!sending &&
+		!pending
 	const showSpinner = sending || pending
 	const actionMode = composerActionMode({
 		hasText: value.trim().length > 0,

@@ -42135,7 +42135,6 @@
 									},
 									"initial_message": {
 										"type": "string",
-										"minLength": 1,
 										"maxLength": 8000
 									},
 									"initial_message_metadata": {
@@ -45204,7 +45203,6 @@
 								"properties": {
 									"content": {
 										"type": "string",
-										"minLength": 1,
 										"maxLength": 8000
 									},
 									"metadata": {

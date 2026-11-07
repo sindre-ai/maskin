@@ -472,22 +472,41 @@ export const conversationSubjectSchema = z.object({
 	id: z.string().uuid(),
 })
 
-export const createConversationSchema = z.object({
-	// With a subject, asking again returns the chat that already exists for it
-	// (and adds any new participants) instead of creating a second one.
-	subject: conversationSubjectSchema.optional(),
-	title: z.string().min(1, 'Title cannot be empty').max(CONVERSATION_TITLE_MAX_LENGTH),
-	participant_actor_ids: z.array(z.string().uuid()).max(MAX_CONVERSATION_PARTICIPANTS),
-	// Open the direct message (DM) with the one other participant instead of a new
-	// topical chat: the pair's existing DM is returned (200), or created once (201,
-	// titled with `title`). Leave it out for a new topical chat, which is always created.
-	direct: z.boolean().optional(),
-	initial_message: z.string().min(1).max(MESSAGE_MAX_LENGTH).optional(),
-	// Structured context (objects/notifications picked via the composer) for the
-	// initial message — mirrors postMessageSchema's metadata so a brand-new
-	// conversation's first turn renders context as chips instead of inline text.
-	initial_message_metadata: messageMetadataSchema.optional(),
-})
+/**
+ * A message needs words or a file. Empty content is allowed only when the metadata carries
+ * at least one attachment, so a message with neither is still refused.
+ */
+function hasAttachments(metadata: { attachments?: unknown[] } | undefined): boolean {
+	return (metadata?.attachments?.length ?? 0) > 0
+}
+
+export const createConversationSchema = z
+	.object({
+		// With a subject, asking again returns the chat that already exists for it
+		// (and adds any new participants) instead of creating a second one.
+		subject: conversationSubjectSchema.optional(),
+		title: z.string().min(1, 'Title cannot be empty').max(CONVERSATION_TITLE_MAX_LENGTH),
+		participant_actor_ids: z.array(z.string().uuid()).max(MAX_CONVERSATION_PARTICIPANTS),
+		// Open the direct message (DM) with the one other participant instead of a new
+		// topical chat: the pair's existing DM is returned (200), or created once (201,
+		// titled with `title`). Leave it out for a new topical chat, which is always created.
+		direct: z.boolean().optional(),
+		initial_message: z.string().max(MESSAGE_MAX_LENGTH).optional(),
+		// Structured context (objects/notifications picked via the composer) for the
+		// initial message — mirrors postMessageSchema's metadata so a brand-new
+		// conversation's first turn renders context as chips instead of inline text.
+		initial_message_metadata: messageMetadataSchema.optional(),
+	})
+	.refine(
+		(v) =>
+			v.initial_message === undefined ||
+			v.initial_message.length > 0 ||
+			hasAttachments(v.initial_message_metadata),
+		{
+			message: 'Message cannot be empty',
+			path: ['initial_message'],
+		},
+	)
 
 export const updateConversationSchema = z.object({
 	title: z.string().min(1, 'Title cannot be empty').max(CONVERSATION_TITLE_MAX_LENGTH),
@@ -516,27 +535,31 @@ export const conversationListQuerySchema = z.object({
 	offset: z.coerce.number().int().min(0).default(0),
 })
 
-export const postMessageSchema = z.object({
-	content: z
-		.string()
-		.min(1, 'Message cannot be empty')
-		.max(MESSAGE_MAX_LENGTH, `Message must be ${MESSAGE_MAX_LENGTH} characters or fewer.`),
-	metadata: messageMetadataSchema.optional(),
-	// Only honored when the caller is an agent actor and the referenced
-	// session belongs to them + carries this conversation in
-	// config.conversation — see conversations route for the ownership check.
-	// Ignored (silently) otherwise, e.g. for human-authored messages.
-	session_id: z.string().uuid().optional(),
-	// Post as a reply in the thread rooted at this message. The root must be a
-	// top-level message of the same conversation (threads do not nest).
-	thread_root_id: z.number().int().positive().optional(),
-	// With thread_root_id: also show the reply in the main timeline.
-	also_in_channel: z.boolean().optional(),
-	// An agent posting mid-turn lands in the thread of the message that started the turn when
-	// no thread_root_id is given. true opts out and posts to the main timeline. Ignored when
-	// thread_root_id is given, and for anyone but an agent in its own session for this chat.
-	top_level: z.boolean().optional(),
-})
+export const postMessageSchema = z
+	.object({
+		content: z
+			.string()
+			.max(MESSAGE_MAX_LENGTH, `Message must be ${MESSAGE_MAX_LENGTH} characters or fewer.`),
+		metadata: messageMetadataSchema.optional(),
+		// Only honored when the caller is an agent actor and the referenced
+		// session belongs to them + carries this conversation in
+		// config.conversation — see conversations route for the ownership check.
+		// Ignored (silently) otherwise, e.g. for human-authored messages.
+		session_id: z.string().uuid().optional(),
+		// Post as a reply in the thread rooted at this message. The root must be a
+		// top-level message of the same conversation (threads do not nest).
+		thread_root_id: z.number().int().positive().optional(),
+		// With thread_root_id: also show the reply in the main timeline.
+		also_in_channel: z.boolean().optional(),
+		// An agent posting mid-turn lands in the thread of the message that started the turn when
+		// no thread_root_id is given. true opts out and posts to the main timeline. Ignored when
+		// thread_root_id is given, and for anyone but an agent in its own session for this chat.
+		top_level: z.boolean().optional(),
+	})
+	.refine((v) => v.content.length > 0 || hasAttachments(v.metadata), {
+		message: 'Message cannot be empty',
+		path: ['content'],
+	})
 
 export const editMessageSchema = z.object({
 	content: z
