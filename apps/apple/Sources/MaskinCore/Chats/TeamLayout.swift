@@ -637,12 +637,6 @@ public enum NewConversationCopy {
 		return "Message \(names.prefix(2).joined(separator: ", ")) +\(names.count - 2)"
 	}
 
-	/// Shown with two or more recipients.
-	public static func groupNote(recipientCount: Int) -> String? {
-		guard recipientCount >= 2 else { return nil }
-		return "\(recipientCount + 1) in this conversation, including you. Everyone sees the whole thread."
-	}
-
 	/// Candidates for the To field, matched on name and role.
 	public static func matches(_ query: String, in actors: [ChatActor], excluding: Set<String>) -> [ChatActor] {
 		let q = query.trimmingCharacters(in: .whitespaces)
