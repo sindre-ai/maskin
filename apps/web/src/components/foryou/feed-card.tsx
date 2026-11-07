@@ -272,7 +272,7 @@ export function FeedCard({
 				    the card back down, the way the mockup's hero does. */}
 				<div
 					className={cn(
-						'text-[17px] font-bold leading-[1.32] tracking-[-0.015em] text-pretty text-foreground',
+						'text-[20px] font-bold leading-[1.28] tracking-[-0.02em] text-pretty text-foreground',
 						onToggleExpanded && 'cursor-pointer',
 					)}
 					onClick={onToggleExpanded}
@@ -358,7 +358,7 @@ function CardShell({ expanded, children }: { expanded: boolean; children: React.
 		<div
 			data-testid="foryou-feed-card"
 			className={cn(
-				'overflow-hidden rounded-xl border border-border bg-card',
+				'overflow-hidden rounded-[20px] border border-border bg-card',
 				expanded ? 'shadow-sm' : 'shadow-xs',
 			)}
 		>

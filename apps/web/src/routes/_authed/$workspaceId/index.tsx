@@ -822,7 +822,7 @@ function ForYouFeed() {
 				<div className="flex w-full max-w-280 flex-col">
 					{isMobile ? <h1 className="page-title pb-2">{greeting}</h1> : null}
 					<p
-						className="pb-4 text-base font-semibold leading-relaxed text-foreground"
+						className="max-w-[520px] pb-6 text-[17px] leading-[1.5] text-muted-foreground"
 						data-testid="foryou-greeting"
 					>
 						{lead}
