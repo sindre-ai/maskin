@@ -23,7 +23,8 @@ import { getWorkspaceRole } from './workspace-auth'
  *  - it is that person's newest message in the chat, so an older "thanks" cannot be cited;
  *  - it was posted after the draft's last edit;
  *  - the draft was shown in that chat: an earlier message there links the object (the chat
- *    draws a live card for the link), and it was posted after the draft's last edit too.
+ *    draws a live card for the link), and it was posted after the draft's last edit too. A
+ *    showing message that was edited after the person's reply does not count.
  *
  * What the server cannot tell is whether the person's words mean yes. It proves who wrote
  * them, where, and that they saw the current text. The approval is recorded under the
@@ -192,7 +193,7 @@ export async function approveDraftFromChat(
 
 	// The draft was shown here, after its last edit and before the person answered.
 	const shown = await db
-		.select({ id: messages.id, content: messages.content })
+		.select({ id: messages.id, content: messages.content, editedAt: messages.editedAt })
 		.from(messages)
 		.where(
 			and(
@@ -202,7 +203,14 @@ export async function approveDraftFromChat(
 			),
 		)
 		.orderBy(desc(messages.id))
-	const previewShown = shown.some((m) => m.id < message.id && linksObject(m.content, objectId))
+	// A showing message edited after the person replied does not count: the link could have been
+	// slipped in once the answer was already in.
+	const previewShown = shown.some(
+		(m) =>
+			m.id < message.id &&
+			(m.editedAt === null || m.editedAt <= message.createdAt) &&
+			linksObject(m.content, objectId),
+	)
 	if (!previewShown) {
 		return refuse(
 			403,

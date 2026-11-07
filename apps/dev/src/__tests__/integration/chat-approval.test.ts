@@ -265,6 +265,38 @@ describe('approve_draft_from_chat: a person said yes in the chat', () => {
 		expect(await approvals(s)).toHaveLength(0)
 	})
 
+	it('ignores a showing message that was edited after the person answered', async () => {
+		const s = await setup()
+		// The agent posts plain text at +1, the person answers at +2, then the link is edited in at +3.
+		const showing = await say(s, s.agent.id, 'One moment.', 1)
+		const yes = await say(s, s.human, 'send it', 2)
+		await db
+			.update(messages)
+			.set({ content: link(s), editedAt: minutes(s.t0, 3) })
+			.where(eq(messages.id, showing.id))
+
+		const res = await approve(s, s.email.id, yes.id)
+
+		expect(res.status).toBe(403)
+		expect(await errorOf(res)).toMatch(/not shown in this chat/)
+		expect(await approvals(s)).toHaveLength(0)
+	})
+
+	it('still counts a showing message that was edited before the person answered', async () => {
+		const s = await setup()
+		const showing = await say(s, s.agent.id, 'One moment.', 1)
+		await db
+			.update(messages)
+			.set({ content: link(s), editedAt: minutes(s.t0, 2) })
+			.where(eq(messages.id, showing.id))
+		const yes = await say(s, s.human, 'send it', 3)
+
+		const res = await approve(s, s.email.id, yes.id)
+
+		expect(res.status).toBe(200)
+		expect(await approvals(s)).toHaveLength(1)
+	})
+
 	it('refuses a yes that was about a different draft', async () => {
 		const s = await setup()
 		const other = await insertObject(db, s.workspace.id, s.agent.id, {
