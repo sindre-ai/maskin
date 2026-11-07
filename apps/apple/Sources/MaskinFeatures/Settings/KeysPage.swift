@@ -3,7 +3,7 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// Keys & MCP (2D, tidied per `7-Chat.md` §10). MCP SERVER: the server URL (tap to copy), how
+/// Keys and secrets (2D, tidied per `7-Chat.md` §10). MCP SERVER: the server URL (tap to copy), how
 /// many tools it exposes, how clients sign in, the ready-made connect commands, and the clients
 /// connected (tap to disconnect). API KEYS: the signed-in person's own key, with a new key behind
 /// it. The API has one key per person and no listing, so that is the one row.
@@ -15,6 +15,7 @@ import SwiftUI
 struct KeysPage: View {
 	@State private var store: APIKeyStore
 	@State private var mcp: MCPStore
+	@State private var keychain: KeychainStore
 	let workspaceId: String
 	let apiKey: @MainActor () -> SecretValue?
 	@State private var confirming = false
@@ -23,15 +24,37 @@ struct KeysPage: View {
 	@State private var pendingDisconnect: MCPClient?
 	@Environment(\.scenePhase) private var scenePhase
 
-	init(store: APIKeyStore, mcp: MCPStore, workspaceId: String, apiKey: @escaping @MainActor () -> SecretValue?) {
+	init(
+		store: APIKeyStore, mcp: MCPStore, keychain: KeychainStore, workspaceId: String,
+		apiKey: @escaping @MainActor () -> SecretValue?
+	) {
 		_store = State(initialValue: store)
 		_mcp = State(initialValue: mcp)
+		_keychain = State(initialValue: keychain)
 		self.workspaceId = workspaceId
 		self.apiKey = apiKey
 	}
 
 	var body: some View {
-		WorkspacePage(title: "Keys & MCP") {
+		WorkspacePage(title: "Keys and secrets") {
+			PageGroupLabel(text: "Secrets agents may use")
+			NavigationLink {
+				KeychainView(store: keychain)
+			} label: {
+				HStack {
+					Label("Keychain", systemImage: "lock").foregroundStyle(MaskinColor.ink)
+					Spacer(minLength: MaskinSpace.s4)
+					Image(systemName: "chevron.right")
+						.maskinSymbol(MaskinSpace.s7, weight: .semibold)
+						.foregroundStyle(MaskinColor.ink5)
+						.accessibilityHidden(true)
+				}
+				.padding(.horizontal, MaskinSpace.s9)
+				.frame(minHeight: MaskinSpace.touchMin)
+				.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.tile, style: .continuous))
+			}
+			.buttonStyle(.maskinPressed)
+			PageFootnote(text: "Keys and logins your agents may use. Each one names who can use it.")
 			PageGroupLabel(text: "MCP server")
 			PageCard(rows: serverRows + clientRows)
 			PageFootnote(text: serverFootnote)
