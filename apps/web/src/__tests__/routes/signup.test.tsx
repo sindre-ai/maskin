@@ -25,6 +25,7 @@ vi.mock('@/lib/analytics', () => ({
 
 vi.mock('@/lib/posthog', () => ({
 	identifyForWorkspace: vi.fn().mockResolvedValue(undefined),
+	signupSourceFrom: vi.fn().mockReturnValue('direct'),
 }))
 
 vi.mock('@tanstack/react-router', async () => {
@@ -289,6 +290,7 @@ describe('SignupPage', () => {
 		expect(identifyForWorkspace).toHaveBeenCalledWith('actor-1', false, {
 			name: 'Test User',
 			email: 'test@example.com',
+			signupSource: 'direct',
 		})
 		const identifyOrder = vi.mocked(identifyForWorkspace).mock.invocationCallOrder[0]
 		const completedOrder = vi
