@@ -7,6 +7,10 @@ import {
 import { queryKeys } from '@/lib/query-keys'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
+// The server answers an unsaved setting with an empty default stamped at the
+// epoch (it used to answer 404). Pages read "no setting" as null.
+const EMPTY_DEFAULT_UPDATED_AT = new Date(0).toISOString()
+
 /**
  * Read the current actor's persisted display settings for a single object
  * type. Returns `null` (not undefined) when the server has no row yet so
@@ -17,7 +21,8 @@ export function useUserDisplaySettings(workspaceId: string, objectType: string) 
 		queryKey: queryKeys.userDisplaySettings.detail(workspaceId, objectType),
 		queryFn: async () => {
 			try {
-				return await api.userDisplaySettings.get(workspaceId, objectType)
+				const row = await api.userDisplaySettings.get(workspaceId, objectType)
+				return row.updated_at === EMPTY_DEFAULT_UPDATED_AT ? null : row
 			} catch (err) {
 				if (err instanceof ApiError && err.status === 404) return null
 				throw err

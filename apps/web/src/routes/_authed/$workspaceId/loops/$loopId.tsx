@@ -1,5 +1,6 @@
 import { PageHeader } from '@/components/layout/page-header'
 import { AskBanner } from '@/components/loops/ask-banner'
+import { LoopBlockError } from '@/components/loops/loop-block-error'
 import { itemsNeedingYou, loopCounters } from '@/components/loops/loop-counters'
 import { LoopCustomView } from '@/components/loops/loop-custom-view'
 import { LoopDetailTabs } from '@/components/loops/loop-detail-tabs'
@@ -38,6 +39,7 @@ import {
 import { useActors } from '@/hooks/use-actors'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useLoadFailed } from '@/hooks/use-load-failed'
 import { useLoop, useLoopActivity } from '@/hooks/use-loops'
 import { useNotifications } from '@/hooks/use-notifications'
 import { useDeleteObject, useObject, useObjects, useUpdateObject } from '@/hooks/use-objects'
@@ -59,6 +61,8 @@ import { toast } from 'sonner'
  * `LOOP_MEMBERSHIP_RELATIONSHIP_TYPE` in `apps/dev/src/routes/loops.ts`.
  * Source is the loop, target is the child object. */
 const LOOP_MEMBERSHIP_RELATIONSHIP_TYPE = 'in_loop'
+
+const SLOW_LOAD_MESSAGE = 'The server may be busy.'
 
 export const Route = createFileRoute('/_authed/$workspaceId/loops/$loopId')({
 	component: LoopDetailRoute,
@@ -99,7 +103,8 @@ function LoopDetailRoute() {
 		error: loopError,
 		refetch: refetchLoop,
 	} = useLoop(loopId, workspaceId)
-	const { data: object } = useObject(loopId)
+	const objectQuery = useObject(loopId)
+	const { data: object } = objectQuery
 	useDocumentTitle(loop?.name)
 	// One event per open of a loop page. Keyed on the id so refetches and
 	// StrictMode's double effect do not repeat it.
@@ -110,20 +115,36 @@ function LoopDetailRoute() {
 		viewedLoopRef.current = viewedLoopId
 		trackLoopViewed({ entity_id: viewedLoopId })
 	}, [viewedLoopId])
-	const { data: triggers } = useTriggers(workspaceId)
-	const { data: actors } = useActors(workspaceId)
-	const { data: membershipEdges } = useRelationships(workspaceId, {
+	const triggersQuery = useTriggers(workspaceId)
+	const { data: triggers } = triggersQuery
+	const actorsQuery = useActors(workspaceId)
+	const { data: actors } = actorsQuery
+	const edgesQuery = useRelationships(workspaceId, {
 		source_id: loopId,
 		type: LOOP_MEMBERSHIP_RELATIONSHIP_TYPE,
 	})
+	const { data: membershipEdges } = edgesQuery
 	const childIds = (membershipEdges ?? []).map((r) => r.targetId)
-	const { data: children } = useObjects(
+	const childrenQuery = useObjects(
 		workspaceId,
 		{ ids: childIds.join(',') },
 		{ enabled: childIds.length > 0 },
 	)
-	const { data: activityEvents } = useLoopActivity(loopId, workspaceId)
+	const { data: children } = childrenQuery
+	const activityQuery = useLoopActivity(loopId, workspaceId)
+	const { data: activityEvents } = activityQuery
 	const { data: needsInputNotifications } = useNotifications(workspaceId, { type: 'needs_input' })
+	// A block whose calls fail, or stay unanswered for 30 s, says so with a retry instead of
+	// rendering empty. Each block judges only its own calls, so one slow call does not blank
+	// the others. Called before the early returns so hook order stays stable.
+	const loopFailed = useLoadFailed({ data: loop, isLoading: loopLoading, isError: isLoopError })
+	const objectFailed = useLoadFailed(objectQuery)
+	const triggersFailed = useLoadFailed(triggersQuery)
+	const actorsFailed = useLoadFailed(actorsQuery)
+	const edgesFailed = useLoadFailed(edgesQuery)
+	const childrenFailed = useLoadFailed(childrenQuery)
+	const activityFailed = useLoadFailed(activityQuery)
+	const flowFailed = triggersFailed || actorsFailed || edgesFailed || childrenFailed
 	const updateObject = useUpdateObject(workspaceId)
 	const deleteObject = useDeleteObject(workspaceId)
 	const navigate = useNavigate()
@@ -308,6 +329,18 @@ function LoopDetailRoute() {
 		)
 	}, [proposedEdit, updateObject, loopId, canWrite, object?.metadata])
 
+	if (loopFailed) {
+		return (
+			<div className="max-w-3xl mx-auto">
+				<QueryStateError
+					title="Couldn't load flow"
+					error={loopError ?? new Error(SLOW_LOAD_MESSAGE)}
+					onRetry={() => refetchLoop()}
+				/>
+			</div>
+		)
+	}
+
 	if (loopLoading && !loop) {
 		return (
 			<div className="max-w-3xl mx-auto space-y-4">
@@ -315,18 +348,6 @@ function LoopDetailRoute() {
 				<Skeleton className="h-4 w-full max-w-96" />
 				<Skeleton className="h-20 w-full" />
 				<Skeleton className="h-32 w-full" />
-			</div>
-		)
-	}
-
-	if (isLoopError && !loop) {
-		return (
-			<div className="max-w-3xl mx-auto">
-				<QueryStateError
-					title="Couldn't load flow"
-					error={loopError ?? new Error('Something went wrong.')}
-					onRetry={() => refetchLoop()}
-				/>
 			</div>
 		)
 	}
@@ -383,7 +404,9 @@ function LoopDetailRoute() {
 	)
 	const isPaused = loop.status === 'paused'
 	// Built but never run: no children have entered it and nothing has happened.
-	const isPreFirstRun = childIds.length === 0 && (activityEvents?.length ?? 0) === 0
+	// Unknown is not empty: when the membership or activity call failed, say nothing.
+	const isPreFirstRun =
+		childIds.length === 0 && (activityEvents?.length ?? 0) === 0 && !edgesFailed && !activityFailed
 
 	// Resuming returns the loop to `learning`, the lowest live rung of the
 	// autonomy ladder, matching every server-side creation path
@@ -489,6 +512,13 @@ function LoopDetailRoute() {
 							onContentChange={handleUpdateContent}
 						/>
 					</div>
+				)}
+				{objectFailed && (
+					<LoopBlockError
+						className="mt-4"
+						message={`Couldn't load the description. ${SLOW_LOAD_MESSAGE}`}
+						onRetry={() => objectQuery.refetch?.()}
+					/>
 				)}
 
 				{isInstalledFromMarketplace && (
@@ -679,13 +709,29 @@ function LoopDetailRoute() {
 								)}
 
 								<div>
-									<LoopFlow
-										workspaceId={workspaceId}
-										triggers={loopTriggers}
-										actors={actors}
-										childObjects={children ?? []}
-										loop={loop}
-									/>
+									{flowFailed ? (
+										<LoopBlockError
+											message={`Couldn't load the steps of this flow. ${SLOW_LOAD_MESSAGE}`}
+											onRetry={() => {
+												for (const [failed, query] of [
+													[triggersFailed, triggersQuery],
+													[actorsFailed, actorsQuery],
+													[edgesFailed, edgesQuery],
+													[childrenFailed, childrenQuery],
+												] as const) {
+													if (failed) query.refetch?.()
+												}
+											}}
+										/>
+									) : (
+										<LoopFlow
+											workspaceId={workspaceId}
+											triggers={loopTriggers}
+											actors={actors}
+											childObjects={children ?? []}
+											loop={loop}
+										/>
+									)}
 								</div>
 							</>
 						)}
@@ -720,6 +766,13 @@ function LoopDetailRoute() {
 
 				{tab === 'activity' && object && (
 					<div role="tabpanel" className="mt-8">
+						{activityFailed && (
+							<LoopBlockError
+								className="mb-3"
+								message={`Couldn't load the flow's recent activity. ${SLOW_LOAD_MESSAGE}`}
+								onRetry={() => activityQuery.refetch?.()}
+							/>
+						)}
 						<TimelineTab
 							object={object}
 							loopUnread={{ loopId }}
