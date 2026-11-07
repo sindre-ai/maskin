@@ -850,7 +850,7 @@ function ForYouFeed() {
 								data-testid={`foryou-section-${bucket}`}
 								className="flex flex-col gap-2"
 							>
-								<div className="flex items-center justify-between gap-2">
+								<div className="flex items-center justify-between gap-2 pb-1.5">
 									<h2
 										id={`foryou-section-${bucket}`}
 										className="whitespace-nowrap text-[20px] font-bold tracking-[-0.03em] text-foreground"
