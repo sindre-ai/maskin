@@ -154,4 +154,31 @@ describe('GET /api/conversations query count', () => {
 			.sort()
 		expect(workingTitles).toEqual(['a0', 'a10', 'a2', 'a4', 'a6', 'a8'])
 	})
+
+	it('previews an attachment-only message with the file name, as the single-row path does', async () => {
+		const file = (name: string) => ({
+			file_id: crypto.randomUUID(),
+			name,
+			mime_type: 'application/pdf',
+			size_bytes: 10,
+		})
+		const one = await seedChat('one', false)
+		const many = await seedChat('many', false)
+		await db.insert(messages).values({
+			conversationId: one.id,
+			actorId: humanId,
+			content: '',
+			metadata: { attachments: [file('report.pdf')] },
+		})
+		await db.insert(messages).values({
+			conversationId: many.id,
+			actorId: humanId,
+			content: '',
+			metadata: { attachments: [file('a.pdf'), file('b.pdf'), file('c.pdf')] },
+		})
+
+		const { rows } = await listWithCount()
+		expect(rows.find((r) => r.id === one.id)?.snippet).toBe('report.pdf')
+		expect(rows.find((r) => r.id === many.id)?.snippet).toBe('a.pdf and 2 more')
+	})
 })
