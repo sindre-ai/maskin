@@ -6,7 +6,7 @@ import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useCreateObject, useObject, useUpdateObject } from '@/hooks/use-objects'
-import { trackKnowledgePageViewed } from '@/lib/analytics'
+import { trackKnowledgePageViewed, trackObjectViewed } from '@/lib/analytics'
 import { ApiError } from '@/lib/api'
 import { type ObjectDetailTab, parseObjectDetailTab } from '@/lib/object-detail-tab'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -47,6 +47,16 @@ function ObjectDetailPage() {
 		statusMap[type]?.[0] ?? getDefaultStatusForType(type) ?? 'new'
 	const { data: object, isLoading, error, refetch } = useObject(objectId)
 	useDocumentTitle(object?.title)
+	// One event per open of an object page. Keyed on the id so refetches and
+	// StrictMode's double effect do not repeat it.
+	const viewedObjectRef = useRef<string | null>(null)
+	const viewedObjectId = object?.id ?? null
+	const viewedObjectType = object?.type ?? null
+	useEffect(() => {
+		if (!viewedObjectId || !viewedObjectType || viewedObjectRef.current === viewedObjectId) return
+		viewedObjectRef.current = viewedObjectId
+		trackObjectViewed({ entity_id: viewedObjectId, object_type: viewedObjectType })
+	}, [viewedObjectId, viewedObjectType])
 	const createObject = useCreateObject(workspaceId)
 	const updateObject = useUpdateObject(workspaceId)
 	const isCreatedRef = useRef(false)

@@ -10,6 +10,7 @@ import {
 	DialogTitle,
 } from '@/components/ui/dialog'
 import { useBillingCancel, useBillingUsage, useStripeCheckout } from '@/hooks/use-billing'
+import { trackUpgradeClicked } from '@/lib/analytics'
 import type {
 	BillingPlan,
 	BillingStatus,
@@ -296,6 +297,11 @@ export function BillingSection({
 	}, [workspaceId])
 
 	const handleUpgrade = (plan: 'pro' | 'team') => {
+		trackUpgradeClicked({
+			source: 'billing_settings',
+			target_plan: plan,
+			current_plan: usageQuery.data?.plan ?? 'unknown',
+		})
 		const base = window.location.href.split('?')[0]
 		checkout.mutate(
 			{

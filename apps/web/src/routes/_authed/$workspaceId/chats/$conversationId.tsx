@@ -15,6 +15,7 @@ import {
 	SheetHeader,
 	SheetTitle,
 } from '@/components/ui/sheet'
+import { useChatOutcomeTracking } from '@/hooks/use-chat-outcome-tracking'
 import {
 	flattenMessagesOldestFirst,
 	useConversation,
@@ -131,6 +132,7 @@ function ConversationThreadPage() {
 		() => flattenMessagesOldestFirst(messagesData),
 		[messagesData],
 	)
+	useChatOutcomeTracking(conversationId, messagesOldestFirst, messagesData !== undefined)
 	const derivedLinked = useConversationLinked(messagesOldestFirst)
 	const { items: linkedItems, count: linkedCount } = useResolvedLinkedItems(
 		derivedLinked,

@@ -65,8 +65,10 @@ vi.mock('@/lib/workspace-context', async (importOriginal) => ({
 }))
 
 const trackAskBannerDecideClicked = vi.fn()
+const trackLoopViewed = vi.fn()
 vi.mock('@/lib/analytics', () => ({
 	trackAskBannerDecideClicked: (payload: unknown) => trackAskBannerDecideClicked(payload),
+	trackLoopViewed: (payload: unknown) => trackLoopViewed(payload),
 }))
 
 // Layout + heavy child components are irrelevant to the AskBanner wiring
@@ -161,6 +163,17 @@ describe('LoopDetailRoute — AskBanner wiring', () => {
 		expect(screen.getByText(/First agent asks/)).toBeInTheDocument()
 		expect(screen.getByText(/is waiting on your input\./)).toBeInTheDocument()
 		expect(screen.getByLabelText('4 pending')).toBeInTheDocument()
+	})
+})
+
+describe('LoopDetailRoute — loop_viewed', () => {
+	it('sends loop_viewed once with the loop id when the page opens', () => {
+		mockUseLoops.mockReturnValue({ data: [buildLoopSummary({ id: 'loop-1' })] })
+		const { rerender } = render(<LoopDetailRoute />)
+		rerender(<LoopDetailRoute />)
+
+		expect(trackLoopViewed).toHaveBeenCalledOnce()
+		expect(trackLoopViewed).toHaveBeenCalledWith({ entity_id: 'loop-1' })
 	})
 })
 

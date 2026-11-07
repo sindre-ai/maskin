@@ -43,7 +43,7 @@ import { useNotifications } from '@/hooks/use-notifications'
 import { useDeleteObject, useObject, useObjects, useUpdateObject } from '@/hooks/use-objects'
 import { useRelationships } from '@/hooks/use-relationships'
 import { useTriggers } from '@/hooks/use-triggers'
-import { trackAskBannerDecideClicked } from '@/lib/analytics'
+import { trackAskBannerDecideClicked, trackLoopViewed } from '@/lib/analytics'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { nextFireAt, nextFireLabel } from '@/lib/loop-next-fire'
@@ -52,7 +52,7 @@ import { useWorkspace } from '@/lib/workspace-context'
 import { useWaitingOnViewer } from '@maskin/shared'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { MoreHorizontal, Pause, Play, Trash2 } from 'lucide-react'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 /** Relationship type marking loop membership — mirrors
@@ -101,6 +101,15 @@ function LoopDetailRoute() {
 	} = useLoop(loopId, workspaceId)
 	const { data: object } = useObject(loopId)
 	useDocumentTitle(loop?.name)
+	// One event per open of a loop page. Keyed on the id so refetches and
+	// StrictMode's double effect do not repeat it.
+	const viewedLoopRef = useRef<string | null>(null)
+	const viewedLoopId = loop?.id ?? null
+	useEffect(() => {
+		if (!viewedLoopId || viewedLoopRef.current === viewedLoopId) return
+		viewedLoopRef.current = viewedLoopId
+		trackLoopViewed({ entity_id: viewedLoopId })
+	}, [viewedLoopId])
 	const { data: triggers } = useTriggers(workspaceId)
 	const { data: actors } = useActors(workspaceId)
 	const { data: membershipEdges } = useRelationships(workspaceId, {
