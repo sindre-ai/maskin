@@ -43,6 +43,7 @@ const UNAVAILABLE_UNDER_OAUTH = [
 	'POST /api/integrations/x/connect', // connect_integration: third-party credentials
 	'POST /api/invites', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/objects/x/approval', // newer MCP tool, route not yet checked for the token's workspace pin
+	'POST /api/objects/x/chat-approval', // approve_draft_from_chat: an approval gate, never through a person's own AI tool
 	'POST /api/sessions/x/ask', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/sessions/x/computer-card', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/sessions/x/connect-card', // newer MCP tool, route not yet checked for the token's workspace pin
