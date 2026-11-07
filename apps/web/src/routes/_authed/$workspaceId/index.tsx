@@ -775,7 +775,7 @@ function ForYouFeed() {
 				typeCounts={typeCounts}
 				filterPills={filterPills}
 				bulkActions={bulkActions}
-				hideMenu={sections.length > 0}
+				hideMenu={sections.length > 0 || feedIsEmpty}
 			/>
 
 			{bulkConfirm && (
@@ -908,7 +908,7 @@ function ForYouFeed() {
 							icon={<CheckCircle2 size={24} aria-hidden="true" />}
 							title={tail}
 							description={
-								typeFilter ? 'Nothing matches this filter.' : 'Nothing needs you right now.'
+								typeFilter ? 'Nothing matches this filter.' : 'New decisions show up here.'
 							}
 							action={
 								typeFilter ? (
