@@ -230,7 +230,7 @@ describe('LoopsPage', () => {
 
 		const brief = screen.getByTestId('flows-brief')
 		expect(brief).toHaveTextContent('1 of 2 flows need you.')
-		expect(brief).toHaveTextContent('Needs a decision: 2 items wait for you.')
+		expect(brief).not.toHaveTextContent('2 items wait for you')
 		expect(brief).not.toHaveTextContent('Calm flow')
 	})
 

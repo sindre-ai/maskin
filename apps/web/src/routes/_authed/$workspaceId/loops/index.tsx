@@ -319,7 +319,6 @@ function LoopsRoute() {
 					className="mb-6 max-w-[64ch] text-base md:-mt-1.5 leading-[1.55] text-muted-foreground"
 				>
 					<strong className="font-bold text-foreground">{brief.lead}</strong>
-					{brief.clauses.length > 0 && ` ${brief.clauses.join(' ')}`}
 				</p>
 			)}
 			{loopsLoading ? (
@@ -343,7 +342,7 @@ function LoopsRoute() {
 							loopGroups.map((group) => (
 								<div key={group.label || 'untagged'} className="flex flex-col">
 									{hasTaggedLoops && (
-										<h2 className="px-1 pt-4 pb-2.5 text-[13px] font-semibold text-foreground">
+										<h2 className="px-1 pt-3.5 pb-3 text-[15px] font-semibold text-foreground">
 											{group.label || 'No team'}
 										</h2>
 									)}
