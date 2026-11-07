@@ -2,9 +2,9 @@ import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS, VIEWPORTS } from '../helpers/viewports'
 
 // Covers T2 of the Marketplace polish bet: the free-text marketplace filter
-// input and its empty state. The dev bootstrap seeds four bundle loops
-// (Discover & Research, Build & Ship, Strategy & Growth, Team Ops) so the
-// marketplace loads a real set of loops on every run.
+// input and its empty state. The dev bootstrap seeds two bundle loops
+// (Product Discovery, Market & Competitor Watch) so the marketplace loads a
+// real set of loops on every run.
 
 const FILTER_LABEL = 'Filter marketplace'
 const EMPTY_COPY = 'Nothing in the catalog matches those filters.'
@@ -26,7 +26,7 @@ test.describe('Marketplace loop filter', () => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 			await page.goto(`/${account.workspaceId}/marketplace`)
 
-			const loopsSection = page.getByRole('region', { name: 'Loops' })
+			const loopsSection = page.getByRole('region', { name: 'Flows' })
 			await expect(loopsSection).toBeVisible({ timeout: 20000 })
 
 			const visibleFilter = page
@@ -38,30 +38,49 @@ test.describe('Marketplace loop filter', () => {
 			const loopsBox = await loopsSection.boundingBox()
 			if (!filterBox || !loopsBox) throw new Error('missing bounding boxes')
 
+			// Shared page edge: the title and the chip strip start on one left edge.
+			const title = page.getByRole('heading', { level: 1, name: 'Marketplace' })
+			const titleBox = await title.boundingBox()
+			if (!titleBox) throw new Error('missing title bounding box')
+			// The shared page title scale: 34px from 1024, 28px at 768, 24px below.
+			await expect(title).toHaveCSS(
+				'font-size',
+				viewport.width >= 1024 ? '34px' : viewport.width >= 768 ? '28px' : '24px',
+			)
+
 			const typeChips = page.getByTestId('marketplace-filter-chips')
 			const chipBox = await typeChips.boundingBox()
 			if (!chipBox) throw new Error('missing chip bounding box')
 
-			if (viewport.width < 768) {
-				// Mobile: the filter chip row sits above the (now full-width, stacked) search input.
-				expect(chipBox.y + chipBox.height).toBeLessThanOrEqual(filterBox.y + 1)
-				expect(filterBox.width).toBeGreaterThan(viewport.width * 0.85)
+			// From 768 the title and the chips start on one left edge (on a phone the
+			// header leads with the sidebar toggle, so the title sits right of it).
+			if (viewport.width >= 768) {
+				expect(Math.abs(chipBox.x - titleBox.x)).toBeLessThanOrEqual(1)
+			}
+
+			// The visible box of the search field is its pill (the label around the input).
+			const pill = await visibleFilter.locator('xpath=ancestor::label').boundingBox()
+			if (!pill) throw new Error('missing filter pill bounding box')
+
+			if (viewport.width < 1024) {
+				// Phone and iPad portrait: the chip row sits above the stacked search field.
+				expect(chipBox.y + chipBox.height).toBeLessThanOrEqual(pill.y + 1)
+				if (viewport.width < 768) expect(pill.width).toBeGreaterThan(viewport.width * 0.85)
 			} else {
-				// Desktop / tablet: filter shares a row with the chip strip (type and
+				// Desktop / iPad landscape: filter shares a row with the chip strip (type and
 				// use-case filters are a single combined list), sits to its right, above
 				// the grid, right-aligned at ~320px. Uses the chip-row wrapper's clipped
 				// bounding box, not an individual chip's, since the wrapper is
 				// overflow-x-auto and a single chip's layout box can exceed the visible
 				// clipped region.
-				expect(
-					Math.abs(filterBox.y + filterBox.height / 2 - (chipBox.y + chipBox.height / 2)),
-				).toBeLessThan(4)
-				expect(filterBox.x).toBeGreaterThan(chipBox.x + chipBox.width)
-				expect(filterBox.y + filterBox.height).toBeLessThanOrEqual(loopsBox.y + 1)
-				expect(Math.round(filterBox.width)).toBeGreaterThanOrEqual(300)
-				expect(Math.round(filterBox.width)).toBeLessThanOrEqual(340)
+				// The chips wrap onto further lines (v16), so the filter lines up with
+				// the first chip line, not the middle of the whole strip.
+				expect(Math.abs(pill.y - chipBox.y)).toBeLessThan(4)
+				expect(pill.x).toBeGreaterThan(chipBox.x + chipBox.width - 1)
+				expect(pill.y + pill.height).toBeLessThanOrEqual(loopsBox.y + 1)
+				expect(Math.round(pill.width)).toBe(288)
 				const loopsRight = loopsBox.x + loopsBox.width
-				const filterRight = filterBox.x + filterBox.width
+				const filterRight = pill.x + pill.width
 				expect(Math.abs(loopsRight - filterRight)).toBeLessThan(24)
 			}
 		})
@@ -74,17 +93,20 @@ test.describe('Marketplace loop filter', () => {
 		})
 		await page.goto(`/${account.workspaceId}/marketplace`)
 
-		const loopsSection = page.getByRole('region', { name: 'Loops' })
+		const loopsSection = page.getByRole('region', { name: 'Flows' })
 		await expect(loopsSection).toBeVisible({ timeout: 20000 })
-		await expect(loopsSection.getByRole('heading', { name: /Discover & Research/ })).toBeVisible()
-		await expect(loopsSection.getByRole('heading', { name: /Build & Ship/ })).toBeVisible()
+		await expect(loopsSection.getByRole('heading', { name: /Product Discovery/ })).toBeVisible()
+		await expect(
+			loopsSection.getByRole('heading', { name: /Market & Competitor Watch/ }),
+		).toBeVisible()
 
 		const filter = page.getByRole('searchbox', { name: FILTER_LABEL }).and(page.locator(':visible'))
-		await filter.fill('discover')
+		await filter.fill('Product Discovery Loop')
 
-		await expect(loopsSection.getByRole('heading', { name: /Discover & Research/ })).toBeVisible()
-		await expect(loopsSection.getByRole('heading', { name: /Build & Ship/ })).toHaveCount(0)
-		await expect(loopsSection.getByRole('heading', { name: /Team Ops/ })).toHaveCount(0)
+		await expect(loopsSection.getByRole('heading', { name: /Product Discovery/ })).toBeVisible()
+		await expect(
+			loopsSection.getByRole('heading', { name: /Market & Competitor Watch/ }),
+		).toHaveCount(0)
 	})
 
 	test('combines text query with a type chip (AND) on mobile', async ({ page, account }) => {
@@ -101,7 +123,7 @@ test.describe('Marketplace loop filter', () => {
 		await chipNav.getByRole('button', { name: /^Triggers\s/ }).click()
 		const triggersSection = page.getByRole('region', { name: 'Triggers' })
 		await expect(triggersSection).toBeVisible()
-		await expect(page.getByRole('region', { name: 'Loops' })).toHaveCount(0)
+		await expect(page.getByRole('region', { name: 'Flows' })).toHaveCount(0)
 
 		// Add a text query that only matches one of the seeded triggers.
 		const filter = page.getByRole('searchbox', { name: FILTER_LABEL }).and(page.locator(':visible'))
@@ -111,7 +133,7 @@ test.describe('Marketplace loop filter', () => {
 		// items whose snapshot matches the query remain.
 		await expect(triggersSection).toBeVisible()
 		await expect(page.getByRole('region', { name: 'Agents' })).toHaveCount(0)
-		await expect(page.getByRole('region', { name: 'Loops' })).toHaveCount(0)
+		await expect(page.getByRole('region', { name: 'Flows' })).toHaveCount(0)
 		const cards = triggersSection.locator('article')
 		const cardCount = await cards.count()
 		expect(cardCount).toBeGreaterThan(0)
@@ -127,16 +149,16 @@ test.describe('Marketplace loop filter', () => {
 		})
 		await page.goto(`/${account.workspaceId}/marketplace`)
 
-		await expect(page.getByRole('region', { name: 'Loops' })).toBeVisible({ timeout: 20000 })
+		await expect(page.getByRole('region', { name: 'Flows' })).toBeVisible({ timeout: 20000 })
 
 		const filter = page.getByRole('searchbox', { name: FILTER_LABEL }).and(page.locator(':visible'))
 		await filter.fill('zzzznomatchxyz')
 
 		await expect(page.getByText(EMPTY_COPY)).toBeVisible()
-		await expect(page.getByRole('region', { name: 'Loops' })).toHaveCount(0)
+		await expect(page.getByRole('region', { name: 'Flows' })).toHaveCount(0)
 		await expect(page.getByRole('region', { name: 'Agents' })).toHaveCount(0)
 		// No stale count line — the old marketplace empty-state copy must not leak.
-		await expect(page.getByText(/No loops yet/i)).toHaveCount(0)
+		await expect(page.getByText(/No flows yet/i)).toHaveCount(0)
 		await expect(page.getByText(/Showing all/i)).toHaveCount(0)
 	})
 
@@ -150,7 +172,7 @@ test.describe('Marketplace loop filter', () => {
 		})
 		await page.goto(`/${account.workspaceId}/marketplace`)
 
-		await expect(page.getByRole('region', { name: 'Loops' })).toBeVisible({ timeout: 20000 })
+		await expect(page.getByRole('region', { name: 'Flows' })).toBeVisible({ timeout: 20000 })
 
 		// Select the Triggers chip (a section with real seeded items), then drive
 		// the query to "No matches" so the clearable empty state is what shows.
@@ -168,7 +190,7 @@ test.describe('Marketplace loop filter', () => {
 		// filters from the empty state ...'s Workspace").
 		await page.getByRole('button', { name: 'Clear filters', exact: true }).click()
 		await expect(filter).toHaveValue('')
-		await expect(page.getByRole('region', { name: 'Loops' })).toBeVisible()
+		await expect(page.getByRole('region', { name: 'Flows' })).toBeVisible()
 		await expect(page.getByRole('region', { name: 'Triggers' })).toBeVisible()
 	})
 
@@ -182,15 +204,15 @@ test.describe('Marketplace loop filter', () => {
 		})
 		await page.goto(`/${account.workspaceId}/marketplace`)
 
-		await expect(page.getByRole('region', { name: 'Loops' })).toBeVisible({ timeout: 20000 })
+		await expect(page.getByRole('region', { name: 'Flows' })).toBeVisible({ timeout: 20000 })
 		await noHorizontalOverflow(page)
 
 		const filter = page.getByRole('searchbox', { name: FILTER_LABEL }).and(page.locator(':visible'))
 		await filter.fill('discover')
 		await expect(
 			page
-				.getByRole('region', { name: 'Loops' })
-				.getByRole('heading', { name: /Discover & Research/ }),
+				.getByRole('region', { name: 'Flows' })
+				.getByRole('heading', { name: /Product Discovery/ }),
 		).toBeVisible()
 		await noHorizontalOverflow(page)
 

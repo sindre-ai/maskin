@@ -18,9 +18,9 @@ describe('findFilterWords', () => {
 	})
 
 	it('finds a type word and a two-word status together, in typed order', () => {
-		const hits = findFilterWords(withText('acme loop needs you'), vocab)
+		const hits = findFilterWords(withText('acme flow needs you'), vocab)
 		expect(hits.map((h) => [h.kind, h.value, h.word])).toEqual([
-			['type', 'loop', 'loop'],
+			['type', 'loop', 'flow'],
 			['status', 'needs_you', 'needs you'],
 		])
 	})
@@ -68,9 +68,9 @@ describe('explainEmpty', () => {
 	})
 
 	it('names a type word too', () => {
-		const e = explainEmpty({ parts: withText('hans loop'), vocab, updated: '', relaxed: noRelaxed })
-		expect(e.wordNotes[0]).toContain('“loop” is a type')
-		expect(e.hits.map((h) => h.label)).toEqual(['Loops'])
+		const e = explainEmpty({ parts: withText('hans flow'), vocab, updated: '', relaxed: noRelaxed })
+		expect(e.wordNotes[0]).toContain('“flow” is a type')
+		expect(e.hits.map((h) => h.label)).toEqual(['Flows'])
 	})
 
 	it('says a filter emptied the list and offers the wider counts', () => {

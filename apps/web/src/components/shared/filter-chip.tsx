@@ -6,6 +6,8 @@ interface FilterChipProps {
 	value: string
 	onRemove: () => void
 	className?: string
+	/** Keep the value's own casing (team and agent names) instead of capitalising it. */
+	preserveCase?: boolean
 }
 
 // Tab-style filter chip for surfacing active toolbar filters. Uses the same
@@ -13,7 +15,13 @@ interface FilterChipProps {
 // one unified pill style for filter state that lives in the page toolbar. The
 // bordered `border-accent` style stays reserved for picker toggles inside
 // popovers (see DisplayPanel PillButton).
-export function FilterChip({ label, value, onRemove, className }: FilterChipProps) {
+export function FilterChip({
+	label,
+	value,
+	onRemove,
+	className,
+	preserveCase = false,
+}: FilterChipProps) {
 	return (
 		<span
 			className={cn(
@@ -22,7 +30,7 @@ export function FilterChip({ label, value, onRemove, className }: FilterChipProp
 			)}
 		>
 			<span className="text-muted-foreground">{label}:</span>
-			<span className="capitalize">{value}</span>
+			<span className={cn(!preserveCase && 'capitalize')}>{value}</span>
 			<button
 				type="button"
 				aria-label={`Remove ${label} filter`}

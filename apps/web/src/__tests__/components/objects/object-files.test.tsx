@@ -5,7 +5,7 @@ import type {
 	RelationshipResponse,
 	UserDisplaySettingsResponse,
 } from '@/lib/api'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
@@ -46,6 +46,13 @@ const useActorsMock = vi.fn()
 vi.mock('@/hooks/use-actors', () => ({
 	useActors: (...args: unknown[]) => useActorsMock(...args),
 }))
+
+// jsdom has no DragEvent, so fireEvent drops relatedTarget; attach it by hand.
+function dragLeaveTo(target: HTMLElement, relatedTarget: EventTarget | null) {
+	const event = createEvent.dragLeave(target)
+	Object.defineProperty(event, 'relatedTarget', { value: relatedTarget })
+	fireEvent(target, event)
+}
 
 function persistedSettings(columnVisibility: Record<string, boolean>): UserDisplaySettingsResponse {
 	return {
@@ -143,8 +150,9 @@ describe('ObjectFiles', () => {
 
 		const row = getFileRow('spec.md')
 		expect(within(row).getByText('2.0 KB')).toBeInTheDocument()
+		expect(within(row).getByText('Markdown')).toBeInTheDocument()
+		expect(within(row).getByText(/^Modified/)).toBeInTheDocument()
 		expect(within(row).queryByText(/^Created/)).not.toBeInTheDocument()
-		expect(within(row).queryByText(/^Modified/)).not.toBeInTheDocument()
 	})
 
 	it('toggling Created in the property menu appends Created to the file row in the same session', async () => {
@@ -168,7 +176,7 @@ describe('ObjectFiles', () => {
 		expect(within(getFileRow('spec.md')).getByText(/^Created/)).toBeInTheDocument()
 	})
 
-	it('toggling Modified off after on hides the Modified metadata again', async () => {
+	it('toggling Modified off after on shows the Modified metadata again', async () => {
 		const user = userEvent.setup()
 		const file = buildFile()
 		useFilesMock.mockReturnValue({ data: [file] })
@@ -182,11 +190,13 @@ describe('ObjectFiles', () => {
 		)
 
 		await user.click(screen.getByRole('button', { name: 'File properties' }))
-		await user.click(screen.getByRole('menuitemcheckbox', { name: /^Modified/ }))
 		expect(within(getFileRow('spec.md')).getByText(/^Modified/)).toBeInTheDocument()
 
 		await user.click(screen.getByRole('menuitemcheckbox', { name: /^Modified/ }))
 		expect(within(getFileRow('spec.md')).queryByText(/^Modified/)).not.toBeInTheDocument()
+
+		await user.click(screen.getByRole('menuitemcheckbox', { name: /^Modified/ }))
+		expect(within(getFileRow('spec.md')).getByText(/^Modified/)).toBeInTheDocument()
 	})
 
 	// Kind, size and uploader are on by default now — the mockup's meta line is
@@ -212,7 +222,7 @@ describe('ObjectFiles', () => {
 		expect(within(getFileRow('brief.pdf')).queryByText('PDF')).not.toBeInTheDocument()
 	})
 
-	it('shows the resolved uploader name from useActors by default', async () => {
+	it('shows the resolved uploader name from useActors once Uploaded by is turned on', async () => {
 		const user = userEvent.setup()
 		const file = buildFile({ createdBy: 'actor-42' })
 		useFilesMock.mockReturnValue({ data: [file] })
@@ -226,12 +236,12 @@ describe('ObjectFiles', () => {
 			{ wrapper: TestWrapper },
 		)
 
-		expect(within(getFileRow('spec.md')).getByText('Magnus')).toBeInTheDocument()
+		expect(within(getFileRow('spec.md')).queryByText('Magnus')).not.toBeInTheDocument()
 
 		await user.click(screen.getByRole('button', { name: 'File properties' }))
 		await user.click(screen.getByRole('menuitemcheckbox', { name: /^Uploaded by/ }))
 
-		expect(within(getFileRow('spec.md')).queryByText('Magnus')).not.toBeInTheDocument()
+		expect(within(getFileRow('spec.md')).getByText('Magnus')).toBeInTheDocument()
 	})
 
 	it('filename is always present and locked in the property menu', async () => {
@@ -332,7 +342,7 @@ describe('ObjectFiles', () => {
 		expect(within(getFileRow('spec.md')).getByText('2.0 KB')).toBeInTheDocument()
 	})
 
-	it('falls back to defaults (Size on, others off) when no persisted settings exist', async () => {
+	it('falls back to defaults (Kind, Size, Modified on) when no persisted settings exist', async () => {
 		const file = buildFile()
 		useFilesMock.mockReturnValue({ data: [file] })
 		useUserDisplaySettingsMock.mockReturnValue(noPersistedSettings())
@@ -347,8 +357,9 @@ describe('ObjectFiles', () => {
 
 		const row = getFileRow('spec.md')
 		expect(within(row).getByText('2.0 KB')).toBeInTheDocument()
+		expect(within(row).getByText('Markdown')).toBeInTheDocument()
+		expect(within(row).getByText(/^Modified/)).toBeInTheDocument()
 		expect(within(row).queryByText(/^Created/)).not.toBeInTheDocument()
-		expect(within(row).queryByText(/^Modified/)).not.toBeInTheDocument()
 	})
 
 	it('debounces a write-through to upsert under object_type "files" when a property is toggled', async () => {
@@ -374,9 +385,9 @@ describe('ObjectFiles', () => {
 					columnVisibility: {
 						size: true,
 						created_at: true,
-						modified_at: false,
+						modified_at: true,
 						kind: true,
-						uploaded_by: true,
+						uploaded_by: false,
 					},
 				},
 			})
@@ -445,11 +456,11 @@ describe('ObjectFiles', () => {
 
 		expect(trackEventMock).toHaveBeenNthCalledWith(1, 'files_display_property_toggled', {
 			property: 'modified_at',
-			enabled: true,
+			enabled: false,
 		})
 		expect(trackEventMock).toHaveBeenNthCalledWith(2, 'files_display_property_toggled', {
 			property: 'modified_at',
-			enabled: false,
+			enabled: true,
 		})
 	})
 
@@ -495,6 +506,96 @@ describe('ObjectFiles', () => {
 			expect(within(getFileRow('spec.md')).getByText(/^Created/)).toBeInTheDocument()
 		})
 		expect(trackEventMock).not.toHaveBeenCalled()
+	})
+
+	describe('columns toggle', () => {
+		it('shows a Columns label and keeps the File properties accessible name', () => {
+			useFilesMock.mockReturnValue({ data: [] })
+			render(<ObjectFiles {...baseProps} relationships={{ asSource: [], asTarget: [] }} />, {
+				wrapper: TestWrapper,
+			})
+			const button = screen.getByRole('button', { name: 'File properties' })
+			expect(within(button).getByText('Columns')).toBeInTheDocument()
+		})
+	})
+
+	describe('drag and drop', () => {
+		beforeEach(() => {
+			createFileMock.mockReset()
+			createRelationshipMock.mockReset()
+			createFileMock.mockResolvedValue({ id: 'file-new' })
+			createRelationshipMock.mockResolvedValue({})
+			useFilesMock.mockReturnValue({ data: [] })
+		})
+
+		it('creates the file and the attached edge when a file is dropped on the Files section', async () => {
+			const { container } = render(
+				<ObjectFiles {...baseProps} relationships={{ asSource: [], asTarget: [] }} />,
+				{ wrapper: TestWrapper },
+			)
+			const dropped = new File(['hello'], 'notes.txt', { type: 'text/plain' })
+
+			fireEvent.drop(container.firstElementChild as HTMLElement, {
+				dataTransfer: { files: [dropped] },
+			})
+
+			await waitFor(() => expect(createFileMock).toHaveBeenCalledTimes(1))
+			expect(createFileMock.mock.calls[0][0]).toMatchObject({ name: 'notes.txt' })
+			await waitFor(() =>
+				expect(createRelationshipMock).toHaveBeenCalledWith(
+					expect.objectContaining({
+						source_id: 'obj-1',
+						target_id: 'file-new',
+						type: 'attached',
+					}),
+				),
+			)
+		})
+
+		it('shows the drop label and ring while dragging over, and clears on leave', () => {
+			const { container } = render(
+				<ObjectFiles {...baseProps} relationships={{ asSource: [], asTarget: [] }} />,
+				{ wrapper: TestWrapper },
+			)
+			const section = container.firstElementChild as HTMLElement
+
+			fireEvent.dragOver(section)
+			expect(screen.getByText('Drop to attach to this item')).toBeInTheDocument()
+			expect(section).toHaveClass('ring-2')
+
+			fireEvent.dragLeave(section)
+			expect(screen.queryByText('Drop to attach to this item')).not.toBeInTheDocument()
+		})
+
+		it('keeps the ring while the pointer moves onto a child, and clears when it leaves', () => {
+			const { container } = render(
+				<ObjectFiles {...baseProps} relationships={{ asSource: [], asTarget: [] }} />,
+				{ wrapper: TestWrapper },
+			)
+			const section = container.firstElementChild as HTMLElement
+
+			fireEvent.dragOver(section)
+			dragLeaveTo(section, section.firstElementChild)
+			expect(screen.getByText('Drop to attach to this item')).toBeInTheDocument()
+
+			dragLeaveTo(section, document.body)
+			expect(screen.queryByText('Drop to attach to this item')).not.toBeInTheDocument()
+		})
+
+		it('shows Uploading while a dropped file is still being created', async () => {
+			createFileMock.mockReturnValue(new Promise(() => {}))
+			const { container } = render(
+				<ObjectFiles {...baseProps} relationships={{ asSource: [], asTarget: [] }} />,
+				{ wrapper: TestWrapper },
+			)
+
+			fireEvent.drop(container.firstElementChild as HTMLElement, {
+				dataTransfer: { files: [new File(['x'], 'a.txt', { type: 'text/plain' })] },
+			})
+
+			expect(await screen.findByText('Uploading…')).toBeInTheDocument()
+			expect(screen.queryByText('Nothing attached.')).not.toBeInTheDocument()
+		})
 	})
 })
 

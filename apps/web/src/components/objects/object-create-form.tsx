@@ -43,8 +43,8 @@ export function ObjectCreateForm({
 		return (
 			<div className="max-w-3xl mx-auto">
 				<EmptyState
-					title="No object types available"
-					description="Enable an extension in workspace settings to create objects."
+					title="No item types available"
+					description="Enable an extension in workspace settings to create items."
 				/>
 			</div>
 		)
@@ -142,7 +142,7 @@ export function ObjectCreateForm({
 
 			{error && (
 				<div className="rounded bg-error/10 px-3 py-2 text-sm text-error">
-					{error.message || 'Failed to create object'}
+					{error.message || 'Failed to create item'}
 				</div>
 			)}
 		</div>

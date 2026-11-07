@@ -33,16 +33,19 @@ export function AgentRunPauseButton({
 }) {
 	// Starting and pausing an agent are writes; a viewer sees the button switched off.
 	const canWrite = useCanWrite()
-	// The nav row is built on a 30px scale (NavSearch's size-[30px], NewMenu's
+	// The nav row is built on a 30px scale (NewMenu's
 	// h-[30px]) rather than shadcn's sm (h-9/36px), so a nav-density button opts
 	// out of the sm height entirely. Everywhere else keeps the 44px touch floor.
 	const className = cn(
-		density === 'nav' ? 'h-[30px] gap-1.5 rounded-lg px-2.5 text-xs font-semibold' : 'min-h-[44px]',
+		density === 'nav'
+			? 'h-8 gap-1.5 rounded-full px-3.5 text-[13px] font-semibold'
+			: 'min-h-[44px]',
 		fullWidth && 'w-full',
 		// One switch, not an action and its undo: `warning` draws both states
 		// identically so the control's appearance reports the agent's state
 		// rather than the severity of the click.
-		tone === 'warning' && 'border-warning/40 bg-warning/10 text-warning hover:bg-warning/20',
+		tone === 'warning' &&
+			'border-border bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground',
 	)
 
 	if (isActive) {
@@ -60,7 +63,7 @@ export function AgentRunPauseButton({
 					}}
 					disabled={isPausePending || !canWrite}
 				>
-					<PauseCircle size={14} aria-hidden="true" />
+					{density !== 'nav' && <PauseCircle size={14} aria-hidden="true" />}
 					{isPausePending ? 'Pausing…' : pauseLabel}
 				</Button>
 			</ViewerTooltip>
@@ -81,7 +84,7 @@ export function AgentRunPauseButton({
 				}}
 				disabled={isRunPending || !canWrite}
 			>
-				<Play size={14} aria-hidden="true" />
+				{density !== 'nav' && <Play size={14} aria-hidden="true" />}
 				{isRunPending ? 'Starting…' : runLabel}
 			</Button>
 		</ViewerTooltip>

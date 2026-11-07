@@ -40,7 +40,8 @@ test.describe('Object timeline — decision options', () => {
 				decision: DECISION,
 			})
 
-			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
+			// The timeline, and so the decision, lives on the Activity tab.
+			await page.goto(`/${account.workspaceId}/objects/${bet.id}?tab=activity`)
 
 			// The ask and both options are on the page, at every viewport. Buttons
 			// rather than text: the reader answers here.
@@ -83,7 +84,7 @@ test.describe('Object timeline — decision options', () => {
 			decision: DECISION,
 		})
 
-		await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
+		await page.goto(`/${account.workspaceId}/objects/${bet.id}?tab=activity`)
 
 		// The recommended option is the filled bar. `bg-primary` is the token that
 		// reads in both schemes; `bg-accent` would vanish on white.

@@ -250,7 +250,15 @@ function ChipPreview({
 	const tapped = useRef<HTMLElement | null>(null)
 	// The card is placed against the first and last line piece of the chip; `shift` moves it to the
 	// bounding box of all of them (nothing for a chip on one line).
-	const [place, setPlace] = useState({ alignEnd: false, shift: 0, width: 0 })
+	const [place, setPlace] = useState<{
+		alignEnd: boolean
+		shift: number
+		width: number
+		/** The viewport x the card's near edge belongs at: its left, or its right when aligned to the end. */
+		anchor: number
+		corrected: boolean
+	}>({ alignEnd: false, shift: 0, width: 0, anchor: 0, corrected: true })
+	const previewRef = useRef<HTMLSpanElement>(null)
 
 	useLayoutEffect(() => {
 		if (shown && root.current) {
@@ -275,9 +283,29 @@ function ChipPreview({
 								: box.left - first.left
 						: 0,
 				width: where.side === 'pinned' ? where.width : 0,
+				anchor: where.side === 'pinned' ? where.left : alignEnd ? box.right : box.left,
+				corrected: false,
 			})
 		}
 	}, [shown])
+
+	// A chip that wraps from the end of one line to the start of the next has no usable
+	// containing block (the browser collapses it to the first piece's left edge), so the
+	// shift above can land the card off the pane. Measure where it really sits and move it
+	// the difference, once.
+	useLayoutEffect(() => {
+		const card = previewRef.current
+		if (!shown || !card || place.corrected) return
+		const rect = card.getBoundingClientRect()
+		// Nothing laid out (a test DOM): there is nothing to measure against.
+		if (rect.width === 0) return
+		const off = (place.alignEnd ? rect.right : rect.left) - place.anchor
+		setPlace((p) =>
+			p === place
+				? { ...p, shift: p.alignEnd ? p.shift + off : p.shift - off, corrected: true }
+				: p,
+		)
+	}, [shown, place])
 
 	useEffect(() => {
 		if (!shown) return
@@ -321,7 +349,8 @@ function ChipPreview({
 					// biome-ignore lint/a11y/useSemanticElements: a non-modal popup anchored under the chip; native <dialog> is against project convention (apps/web/CLAUDE.md) and would need showModal or top-layer positioning
 					<span
 						role="dialog"
-						aria-label="Object preview"
+						ref={previewRef}
+						aria-label="Item preview"
 						data-linked-preview=""
 						style={{
 							...(place.alignEnd ? { right: place.shift } : { left: place.shift }),
@@ -372,7 +401,7 @@ function ChipSheet({
 				side="bottom"
 				hideCloseButton
 				aria-modal="true"
-				aria-label="Object preview"
+				aria-label="Item preview"
 				aria-describedby={undefined}
 				overlayClassName="bg-foreground/40 chip-sheet-fade"
 				className="chip-sheet-rise flex flex-col gap-3 rounded-t-2xl bg-popover p-4 pb-6 motion-reduce:animate-none"
@@ -381,7 +410,7 @@ function ChipSheet({
 					returnFocus()
 				}}
 			>
-				<SheetTitle className="sr-only">Object preview</SheetTitle>
+				<SheetTitle className="sr-only">Item preview</SheetTitle>
 				<span aria-hidden="true" className="mx-auto h-1 w-9 rounded-full bg-border-strong" />
 				{card}
 				<div className="mt-1 flex items-center gap-2">
@@ -1077,14 +1106,14 @@ export function LoopReferenceChip({
 		)
 	}
 
-	const name = loop.name?.trim() || 'Untitled loop'
+	const name = loop.name?.trim() || 'Untitled flow'
 	const state = LOOP_PILL_STYLES[loop.pill].label.toLowerCase()
 	return (
 		<ChipPreview card={card} sheet={sheet} enabled>
 			<Link
 				to="/$workspaceId/loops/$loopId"
 				params={{ workspaceId, loopId: loop.id }}
-				aria-label={`Loop, ${state}: ${name}`}
+				aria-label={`Flow, ${state}: ${name}`}
 				className={CHIP}
 			>
 				<ChipText
@@ -1135,11 +1164,11 @@ export function LoopReferenceCard({
 		...(agentNames ? [{ label: 'Agents', value: agentNames }] : []),
 		...(activity ? [{ label: 'Activity', value: activity }] : []),
 	]
-	const name = loop.name?.trim() || 'Untitled loop'
+	const name = loop.name?.trim() || 'Untitled flow'
 	const head = (
 		<span className={KIND_TAG}>
 			<RefreshCw size={11} aria-hidden />
-			Loop
+			Flow
 		</span>
 	)
 	const state = (
@@ -1158,7 +1187,7 @@ export function LoopReferenceCard({
 			<LinkedCardFace
 				icon={<RefreshCw size={14} aria-hidden />}
 				tile={KIND_TILE}
-				eyebrow="Loop"
+				eyebrow="Flow"
 				state={state}
 				trailing={preview || sheet ? null : <OpenArrow />}
 				title={name}
@@ -1540,8 +1569,8 @@ export function AgentReferenceCard({
 type OtherWorkspaceKind = 'object' | 'loop' | 'trigger' | 'agent' | 'chat'
 
 const OTHER_WORKSPACE_KIND: Record<OtherWorkspaceKind, string> = {
-	object: 'Object',
-	loop: 'Loop',
+	object: 'Item',
+	loop: 'Flow',
 	trigger: 'Trigger',
 	agent: 'Agent',
 	chat: 'Chat',

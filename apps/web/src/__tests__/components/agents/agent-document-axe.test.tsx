@@ -129,7 +129,7 @@ describe('AgentDocumentView accessibility', () => {
 			buildSessionResponse({
 				id: 'session-failed',
 				status: 'failed',
-				actionPrompt: 'Sweep stale objects',
+				actionPrompt: 'Sweep stale items',
 				result: { error: 'boom', exit_code: 1 },
 				completedAt: '2026-01-01T01:00:00Z',
 			}),

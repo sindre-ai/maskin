@@ -30,11 +30,7 @@ vi.mock('@/hooks/use-actors', () => ({
 const mockUseWorkspaceSessions = vi.fn()
 vi.mock('@/hooks/use-sessions', () => ({
 	useWorkspaceSessions: () => mockUseWorkspaceSessions(),
-}))
-
-const mockUseConversations = vi.fn()
-vi.mock('@/hooks/use-conversations', () => ({
-	useConversationsInfinite: () => mockUseConversations(),
+	useCreateSession: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 const mockUpdateTrigger = vi.fn()
@@ -43,8 +39,28 @@ vi.mock('@/hooks/use-user-display-settings', () => ({
 	useUpdateUserDisplaySettings: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
+// The panel is stubbed to its filter rows, so the tests can press them.
 vi.mock('@/components/objects/data-table/display-panel', () => ({
-	DisplayPanel: () => <button type="button">Display</button>,
+	DisplayPanel: ({
+		filterSections,
+	}: {
+		filterSections?: {
+			id: string
+			label: string
+			options: { id: string; label: string; onToggle: () => void }[]
+		}[]
+	}) => (
+		<div>
+			<button type="button">Display</button>
+			{filterSections?.flatMap((section) =>
+				section.options.map((option) => (
+					<button key={`${section.id}-${option.id}`} type="button" onClick={option.onToggle}>
+						{`${section.label}: ${option.label}`}
+					</button>
+				)),
+			)}
+		</div>
+	),
 }))
 
 vi.mock('@/components/shared/create-picker', () => ({
@@ -53,11 +69,18 @@ vi.mock('@/components/shared/create-picker', () => ({
 }))
 
 vi.mock('@/components/layout/page-header', () => ({
-	PageHeader: ({ title, subtitle }: { title: string; subtitle?: string }) => (
-		<h1>
-			{title}
-			{subtitle ? ` ${subtitle}` : ''}
-		</h1>
+	PageHeader: ({
+		title,
+		subtitle,
+		actions,
+	}: { title: string; subtitle?: string; actions?: React.ReactNode }) => (
+		<div>
+			<h1>
+				{title}
+				{subtitle ? ` ${subtitle}` : ''}
+			</h1>
+			{actions}
+		</div>
 	),
 }))
 
@@ -138,32 +161,6 @@ function buildTrigger(overrides: Partial<TriggerResponse> = {}): TriggerResponse
 	} as TriggerResponse
 }
 
-function buildConversation(overrides: Record<string, unknown> = {}) {
-	return {
-		id: 'conv-1',
-		workspaceId: 'ws-1',
-		title: 'Look into the recent churn spike',
-		createdBy: 'human-1',
-		lastMessageAt: '2026-08-04T00:00:00.000Z',
-		createdAt: '2026-08-04T00:00:00.000Z',
-		updatedAt: '2026-08-04T00:00:00.000Z',
-		pinned: false,
-		archived: false,
-		unread_count: 0,
-		snippet: 'Drafting a summary',
-		participants: [
-			{
-				actorId: 'actor-1',
-				actorName: 'Compass',
-				actorType: 'agent' as const,
-				joinedAt: null,
-				addedBy: null,
-			},
-		],
-		...overrides,
-	}
-}
-
 function buildSession(overrides: Partial<SessionResponse> = {}): SessionResponse {
 	return {
 		id: 's-1',
@@ -186,34 +183,150 @@ beforeEach(() => {
 	mockUseTriggers.mockReturnValue({ data: [] })
 	mockUseActors.mockReturnValue({ data: [] })
 	mockUseWorkspaceSessions.mockReturnValue({ data: [] })
-	mockUseConversations.mockReturnValue({
-		data: { pages: [{ conversations: [], has_more: false }] },
-	})
 	mockUseBillingUsage.mockReturnValue({ data: undefined })
 })
+
+/** The automations section is collapsed by default; open it the way a person does. */
+async function openAutomations() {
+	await userEvent.setup().click(screen.getByRole('button', { name: 'Not tied to a flow' }))
+}
 
 describe('LoopsPage', () => {
 	it('renders the empty state when there are no loops', () => {
 		render(<LoopsPage />)
 
-		expect(screen.getByText('No loops running here yet')).toBeInTheDocument()
+		expect(screen.getByText('No flows running here yet')).toBeInTheDocument()
 	})
 
-	it('lists standalone triggers for a workspace that has triggers but no loops', () => {
+	it('lists standalone triggers for a workspace that has triggers but no loops', async () => {
 		// The fold-in's core regression: with /triggers gone, the only way into a
 		// trigger is this list, so it must not be gated on a loop existing.
 		mockUseTriggers.mockReturnValue({ data: [buildTrigger()] })
 		mockUseActors.mockReturnValue({ data: [buildActor()] })
 
 		render(<LoopsPage />)
+		await openAutomations()
 
-		expect(screen.getByText('Not tied to a loop')).toBeInTheDocument()
+		expect(screen.getByText('Not tied to a flow')).toBeInTheDocument()
 		expect(screen.getByText('Nightly sweep')).toBeInTheDocument()
 		// The loops empty state renders inline as a section, not as the whole page.
-		expect(screen.getByText('No loops running here yet')).toBeInTheDocument()
+		expect(screen.getByText('No flows running here yet')).toBeInTheDocument()
 	})
 
-	it('treats a trigger the loop names in triggerIds as tied, not standalone', () => {
+	it('says in plain text how many flows need you, with a clause per flow that says why', () => {
+		mockUseLoops.mockReturnValue({
+			data: [
+				buildLoop({
+					id: 'l-wait',
+					name: 'Needs a decision',
+					pill: 'waiting_on_you',
+					waitingCount: 2,
+				}),
+				buildLoop({ id: 'l-calm', name: 'Calm flow' }),
+			],
+			isLoading: false,
+		})
+		render(<LoopsPage />)
+
+		const brief = screen.getByTestId('flows-brief')
+		expect(brief).toHaveTextContent('1 of 2 flows need you.')
+		expect(brief).toHaveTextContent('Needs a decision: 2 items wait for you.')
+		expect(brief).not.toHaveTextContent('Calm flow')
+	})
+
+	it('groups loops under their first tag, A to Z, untagged last', () => {
+		mockUseLoops.mockReturnValue({
+			data: [
+				buildLoop({ id: 'l1', name: 'Seo flow', tags: ['Marketing'] }),
+				buildLoop({ id: 'l2', name: 'Delivery flow', tags: ['Product'] }),
+				buildLoop({ id: 'l3', name: 'Loose flow', tags: [] }),
+			],
+			isLoading: false,
+		})
+		render(<LoopsPage />)
+
+		const headings = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
+		expect(headings.slice(0, 3)).toEqual(['Marketing', 'Product', 'No team'])
+	})
+
+	describe('search and Display filters', () => {
+		const loops = () => [
+			buildLoop({ id: 'l1', name: 'Seo flow', tags: ['Marketing'], content: 'Ranks pages' }),
+			buildLoop({ id: 'l2', name: 'Delivery flow', tags: ['Product'] }),
+			buildLoop({ id: 'l3', name: 'Loose flow', tags: [] }),
+		]
+
+		it('narrows the list by every typed word, in name, description or tag', async () => {
+			const user = userEvent.setup()
+			mockUseLoops.mockReturnValue({ data: loops(), isLoading: false })
+			render(<LoopsPage />)
+
+			await user.type(
+				screen.getAllByRole('searchbox', { name: 'Search flows' })[0],
+				'ranks marketing',
+			)
+			expect(screen.getByText('Seo flow')).toBeInTheDocument()
+			expect(screen.queryByText('Delivery flow')).not.toBeInTheDocument()
+			expect(screen.queryByText('Loose flow')).not.toBeInTheDocument()
+		})
+
+		it('says so when nothing matches', async () => {
+			const user = userEvent.setup()
+			mockUseLoops.mockReturnValue({ data: loops(), isLoading: false })
+			render(<LoopsPage />)
+
+			await user.type(screen.getAllByRole('searchbox', { name: 'Search flows' })[0], 'zzzz')
+			expect(screen.getByText('No flows match.')).toBeInTheDocument()
+		})
+
+		it('offers an Area row with one option per first tag, A to Z, untagged last', () => {
+			mockUseLoops.mockReturnValue({ data: loops(), isLoading: false })
+			render(<LoopsPage />)
+
+			const areas = screen.getAllByRole('button', { name: /^Area: / }).map((b) => b.textContent)
+			expect(areas).toEqual(['Area: Marketing', 'Area: Product', 'Area: No team'])
+		})
+
+		it('narrows to one area and back again', async () => {
+			const user = userEvent.setup()
+			mockUseLoops.mockReturnValue({ data: loops(), isLoading: false })
+			render(<LoopsPage />)
+
+			await user.click(screen.getByRole('button', { name: 'Area: Product' }))
+			expect(screen.getByText('Delivery flow')).toBeInTheDocument()
+			expect(screen.queryByText('Seo flow')).not.toBeInTheDocument()
+
+			await user.click(screen.getByRole('button', { name: 'Area: Product' }))
+			expect(screen.getByText('Seo flow')).toBeInTheDocument()
+		})
+
+		it('has no Area row while no flow carries a tag', () => {
+			mockUseLoops.mockReturnValue({
+				data: [buildLoop({ id: 'l3', name: 'Loose flow', tags: [] })],
+				isLoading: false,
+			})
+			render(<LoopsPage />)
+			expect(screen.queryByRole('button', { name: /^Area: / })).not.toBeInTheDocument()
+		})
+
+		it('has a Show row that narrows to flows waiting on you', async () => {
+			const user = userEvent.setup()
+			mockUseLoops.mockReturnValue({
+				data: [
+					buildLoop({ id: 'l-wait', name: 'Needs a decision', pill: 'waiting_on_you' }),
+					buildLoop({ id: 'l-calm', name: 'Calm flow' }),
+				],
+				isLoading: false,
+			})
+			render(<LoopsPage />)
+
+			await user.click(screen.getByRole('button', { name: 'Show: Needs you' }))
+			expect(screen.getByText('Needs a decision')).toBeInTheDocument()
+			expect(screen.queryByText('Calm flow')).not.toBeInTheDocument()
+		})
+	})
+
+	it('treats a trigger the loop names in triggerIds as tied, not standalone', async () => {
 		const actors = [buildActor({ id: 'actor-1', name: 'Compass' })]
 		mockUseLoops.mockReturnValue({
 			data: [buildLoop({ agentIds: ['actor-1'], triggerIds: ['t-tied'] })],
@@ -225,15 +338,16 @@ describe('LoopsPage', () => {
 		mockUseActors.mockReturnValue({ data: actors })
 
 		render(<LoopsPage />)
+		await openAutomations()
 
 		expect(screen.getByText('Customer feedback')).toBeInTheDocument()
 		// The section always renders — /triggers redirects here, so it is the only
 		// way in; with nothing standalone it shows its own empty state.
-		expect(screen.getByText('Not tied to a loop')).toBeInTheDocument()
+		expect(screen.getByText('Not tied to a flow')).toBeInTheDocument()
 		expect(screen.getByText('No workspace-wide automations yet')).toBeInTheDocument()
 	})
 
-	it('keeps a trigger standalone even when it shares an agent with a loop', () => {
+	it('keeps a trigger standalone even when it shares an agent with a loop', async () => {
 		// The old heuristic keyed off targetActorId and wrongly hid this row.
 		const actors = [buildActor({ id: 'actor-1', name: 'Compass' })]
 		mockUseLoops.mockReturnValue({
@@ -248,9 +362,34 @@ describe('LoopsPage', () => {
 		mockUseActors.mockReturnValue({ data: actors })
 
 		render(<LoopsPage />)
+		await openAutomations()
 
-		expect(screen.getByText('Not tied to a loop')).toBeInTheDocument()
+		expect(screen.getByText('Not tied to a flow')).toBeInTheDocument()
 		expect(screen.getByText('Shared agent sweep')).toBeInTheDocument()
+	})
+
+	it('keeps the automations collapsed until the heading is opened, and folds them away again', async () => {
+		mockUseTriggers.mockReturnValue({ data: [buildTrigger()] })
+		mockUseActors.mockReturnValue({ data: [buildActor()] })
+
+		render(<LoopsPage />)
+
+		const heading = screen.getByRole('button', { name: 'Not tied to a flow' })
+		expect(heading).toHaveAttribute('aria-expanded', 'false')
+		expect(screen.queryByText('Nightly sweep')).not.toBeInTheDocument()
+
+		await openAutomations()
+		expect(heading).toHaveAttribute('aria-expanded', 'true')
+		expect(screen.getByText('Nightly sweep')).toBeInTheDocument()
+
+		await openAutomations()
+		expect(screen.queryByText('Nightly sweep')).not.toBeInTheDocument()
+	})
+
+	it('has no "Assigned in chat" section', () => {
+		render(<LoopsPage />)
+
+		expect(screen.queryByText('Assigned in chat')).not.toBeInTheDocument()
 	})
 
 	it('flips a standalone trigger through its inline switch without navigating', async () => {
@@ -259,60 +398,18 @@ describe('LoopsPage', () => {
 		mockUseActors.mockReturnValue({ data: [buildActor()] })
 
 		render(<LoopsPage />)
+		await openAutomations()
 
 		await user.click(screen.getByRole('switch', { name: /disable nightly sweep/i }))
 
 		expect(mockUpdateTrigger).toHaveBeenCalledWith({ id: 't-1', data: { enabled: false } })
 	})
 
-	it('renders "Assigned in chat" from conversations that have an agent participant', () => {
-		mockUseActors.mockReturnValue({ data: [buildActor({ id: 'actor-1', name: 'Compass' })] })
-		mockUseConversations.mockReturnValue({
-			data: { pages: [{ conversations: [buildConversation()], has_more: false }] },
-		})
-		mockUseWorkspaceSessions.mockReturnValue({
-			data: [buildSession({ triggerId: null, actorId: 'actor-1', status: 'running' })],
-		})
-
-		render(<LoopsPage />)
-
-		expect(screen.getByText('Assigned in chat')).toBeInTheDocument()
-		expect(screen.getByText('Look into the recent churn spike')).toBeInTheDocument()
-		expect(screen.getByText('Compass')).toBeInTheDocument()
-		expect(screen.getByText('Working')).toBeInTheDocument()
-	})
-
-	it('links an assigned-in-chat row back to its conversation', () => {
-		mockUseActors.mockReturnValue({ data: [buildActor({ id: 'actor-1', name: 'Compass' })] })
-		mockUseConversations.mockReturnValue({
-			data: { pages: [{ conversations: [buildConversation()], has_more: false }] },
-		})
-
-		render(<LoopsPage />)
-
-		const link = screen.getByRole('link', { name: /look into the recent churn spike/i })
-		expect(link).toHaveAttribute('href', '/$workspaceId/chats/$conversationId')
-		expect(link.getAttribute('params')).toBeDefined()
-	})
-
-	it('renders the "Assigned in chat" empty state when no conversation has an agent', () => {
-		mockUseConversations.mockReturnValue({
-			data: {
-				pages: [{ conversations: [buildConversation({ participants: [] })], has_more: false }],
-			},
-		})
-
-		render(<LoopsPage />)
-
-		expect(screen.getByText('Assigned in chat')).toBeInTheDocument()
-		expect(screen.getByText('Nothing handed to an agent in chat')).toBeInTheDocument()
-	})
-
 	it('renders the list skeleton while loops are loading', () => {
 		mockUseLoops.mockReturnValue({ data: undefined, isLoading: true })
 
 		const { container } = render(<LoopsPage />)
-		expect(screen.queryByText('No loops running here yet')).not.toBeInTheDocument()
+		expect(screen.queryByText('No flows running here yet')).not.toBeInTheDocument()
 		expect(container.querySelector('.animate-pulse')).toBeInTheDocument()
 	})
 
@@ -327,22 +424,7 @@ describe('LoopsPage', () => {
 
 		render(<LoopsPage />)
 
-		expect(screen.getByText("Couldn't load loops")).toBeInTheDocument()
-		expect(screen.queryByText('No loops running here yet')).not.toBeInTheDocument()
-	})
-
-	it('names the loop an assigned-in-chat row feeds, via the agent that runs it', () => {
-		mockUseLoops.mockReturnValue({
-			data: [buildLoop({ name: 'Churn watch', agentIds: ['actor-1'] })],
-			isLoading: false,
-		})
-		mockUseActors.mockReturnValue({ data: [buildActor({ id: 'actor-1', name: 'Compass' })] })
-		mockUseConversations.mockReturnValue({
-			data: { pages: [{ conversations: [buildConversation()], has_more: false }] },
-		})
-
-		render(<LoopsPage />)
-
-		expect(screen.getByText('feeds Churn watch')).toBeInTheDocument()
+		expect(screen.getByText("Couldn't load flows")).toBeInTheDocument()
+		expect(screen.queryByText('No flows running here yet')).not.toBeInTheDocument()
 	})
 })

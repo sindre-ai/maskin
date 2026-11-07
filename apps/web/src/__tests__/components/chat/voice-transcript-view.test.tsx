@@ -28,7 +28,7 @@ describe('VoiceTranscriptView', () => {
 		render(
 			<VoiceTranscriptView open onOpenChange={() => {}} lines={lines} durationSeconds={3604} />,
 		)
-		expect(screen.getByText('1:00:04 · 3 lines')).toBeInTheDocument()
+		expect(screen.getByText('Live meeting · 1:00:04')).toBeInTheDocument()
 	})
 
 	it('says plainly when no lines were saved', () => {

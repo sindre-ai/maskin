@@ -61,4 +61,25 @@ describe('TypeBadge', () => {
 		expect(tile.querySelector('svg')).toBeInTheDocument()
 		expect(tile.textContent).toBe('')
 	})
+
+	describe('glyph variant', () => {
+		it('draws the type icon, named by the workspace label', () => {
+			render(<TypeBadge type="bet" label="Bet" variant="glyph" />)
+			const glyph = screen.getByRole('img', { name: 'Bet' })
+			expect(glyph.querySelector('svg')).toBeInTheDocument()
+			expect(glyph).toHaveAttribute('title', 'Bet')
+		})
+
+		it('names the glyph by the raw type when there is no label', () => {
+			render(<TypeBadge type="task" variant="glyph" />)
+			expect(screen.getByRole('img', { name: 'task' })).toBeInTheDocument()
+		})
+
+		it('falls back to a generic icon for a type with no glyph of its own', () => {
+			render(<TypeBadge type="knowledge" label="Knowledge" variant="glyph" />)
+			const glyph = screen.getByRole('img', { name: 'Knowledge' })
+			expect(glyph.querySelector('svg')).toBeInTheDocument()
+			expect(glyph.textContent).toBe('')
+		})
+	})
 })

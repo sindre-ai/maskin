@@ -155,6 +155,7 @@ describe('Integrations Routes', () => {
 				'google-search-console',
 				'linear',
 				'linkedin-unipile',
+				'miro',
 				'posthog',
 				'resend',
 				'slack',

@@ -39,7 +39,7 @@ for (const vp of [...SHIP_GATE_VIEWPORTS, SHORT_VIEWPORT]) {
 				status: 'opportunity',
 			})
 
-			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
+			await page.goto(`/${account.workspaceId}/objects/${bet.id}?tab=activity`)
 
 			const composer = page.getByRole('textbox', { name: 'Comment' })
 			await expect(composer).toBeVisible({ timeout: 10_000 })

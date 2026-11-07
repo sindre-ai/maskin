@@ -90,7 +90,7 @@ export function MetadataPropertiesView({
 	if (metaEntries.length === 0 && unsetFields.length === 0 && !showAddMenu) {
 		return (
 			<div className="space-y-1">
-				<p className="text-xs text-muted-foreground">No custom fields on this object.</p>
+				<p className="text-xs text-muted-foreground">No custom fields on this item.</p>
 				<ViewerTooltip>
 					<Button
 						variant="outline"

@@ -76,9 +76,12 @@ export function DeleteWorkspaceDialog({
 	const handleDelete = (e?: React.FormEvent) => {
 		e?.preventDefault()
 		if (!canWrite || !canDelete || !nameMatches || deleteWorkspace.isPending) return
+		// The delete runs on in the background: hide the dialog now and report through a toast.
+		const toastId = `delete-workspace-${workspaceId}`
+		toast.loading(`Deleting ${workspaceName}...`, { id: toastId })
 		deleteWorkspace.mutate(confirmName, {
 			onSuccess: () => {
-				toast.success(`Deleted ${workspaceName}`)
+				toast.success(`Deleted ${workspaceName}`, { id: toastId })
 				if (isLastWorkspace) {
 					setStep('no-workspaces-left')
 					return
@@ -86,8 +89,14 @@ export function DeleteWorkspaceDialog({
 				// The index route lands on the last-opened remaining workspace.
 				navigate({ to: '/' })
 			},
+			onError: () => {
+				// Bring the dialog back so the error shows next to the confirm field.
+				toast.error(`${workspaceName} was not deleted`, { id: toastId })
+			},
 		})
 	}
+
+	const hidden = deleteWorkspace.isPending
 
 	if (accountOpen) {
 		return (
@@ -124,7 +133,7 @@ export function DeleteWorkspaceDialog({
 	}
 
 	return (
-		<Dialog open={open} onOpenChange={handleOpenChange}>
+		<Dialog open={open && !hidden} onOpenChange={handleOpenChange}>
 			<DialogContent>
 				<form onSubmit={handleDelete} className="contents">
 					<DialogHeader>

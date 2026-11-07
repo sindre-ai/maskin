@@ -15,7 +15,7 @@ export function workingLabel(agentCount: number): string {
 
 export function sessionsLabel(count: number): string {
 	if (count === 0) return 'nothing running'
-	return `${count} ${count === 1 ? 'session' : 'sessions'} running`
+	return `${count} ${count === 1 ? 'session' : 'sessions'}`
 }
 
 /**
@@ -52,12 +52,22 @@ export function SidebarActivity({ workspaceId }: { workspaceId: string }) {
 				to="/$workspaceId/agents"
 				params={{ workspaceId }}
 				title={summary}
-				aria-label="Agents"
+				aria-label={isWorking ? `Agents: ${agentCount} working` : 'Agents: idle'}
 				onClick={() => trackNavItemClicked({ item_key: 'agents', source: 'footer' })}
-				className="relative mx-auto hidden size-8 place-items-center rounded-lg transition-colors duration-150 hover:bg-sidebar-accent group-data-[collapsible=icon]:grid"
+				className="mx-auto hidden size-10 place-items-center rounded-[10px] border border-sidebar-border transition-colors duration-150 hover:bg-sidebar-accent group-data-[collapsible=icon]:grid"
 			>
-				<CountTile count={agentCount} />
-				{isWorking && <LiveDot className="right-0.5 top-0.5" />}
+				{/* v3 rail: the tile is just the liveness dot, no number. Working is a
+				    filled green dot; idle is a hollow ring, so the state does not rest on
+				    colour alone. */}
+				<span
+					aria-hidden="true"
+					className={cn(
+						'size-2 rounded-full',
+						isWorking
+							? 'bg-success motion-safe:animate-pulse'
+							: 'border border-border-strong bg-transparent',
+					)}
+				/>
 			</Link>
 			<Link
 				to="/$workspaceId/agents"
@@ -71,46 +81,28 @@ export function SidebarActivity({ workspaceId }: { workspaceId: string }) {
 					trackNavItemClicked({ item_key: 'agents', source: 'footer' })
 					setOpenMobile(false)
 				}}
-				className="flex items-center gap-[9px] rounded-lg px-2.5 py-2 transition-colors duration-150 hover:bg-sidebar-accent group-data-[collapsible=icon]:hidden"
+				className="flex h-9 items-center gap-2.5 rounded-[10px] border border-sidebar-border px-2.5 transition-colors duration-150 hover:bg-sidebar-accent group-data-[collapsible=icon]:hidden"
 			>
-				<span className="relative flex-none">
-					<CountTile count={agentCount} />
-					{isWorking && <LiveDot className="-right-0.5 -top-0.5" />}
-				</span>
-				<span className="min-w-0 flex-1 leading-[1.25]">
-					<span className="block truncate text-xs font-semibold text-sidebar-foreground">
-						{workingLabel(agentCount)}
+				<span
+					aria-hidden="true"
+					className={cn(
+						'size-2 flex-none rounded-full',
+						isWorking ? 'bg-success' : 'bg-border-strong',
+					)}
+				/>
+				<span className="flex min-w-0 flex-1 items-baseline gap-2">
+					<span className="truncate text-[12.5px] font-semibold text-sidebar-foreground">
+						{isWorking
+							? `${agentCount} ${agentCount === 1 ? 'agent' : 'agents'} working`
+							: 'Agents idle'}
 					</span>
-					<span className="block truncate text-[10.5px] text-muted-foreground">
+					<span className="truncate text-[11.5px] text-muted-foreground">
 						{sessionsLabel(sessionCount)}
 					</span>
 				</span>
-				<ChevronRight aria-hidden="true" className="size-3 flex-none text-border-strong" />
+				<ChevronRight aria-hidden="true" className="size-2.5 flex-none text-muted-foreground" />
 			</Link>
 		</>
-	)
-}
-
-function CountTile({ count }: { count: number }) {
-	return (
-		<span className="grid size-[22px] place-items-center rounded-full border-[1.5px] border-border-strong text-[10px] font-bold text-secondary-foreground tabular-nums">
-			{count}
-		</span>
-	)
-}
-
-// Green, not brand: this reports liveness, and the nav's own brand dot already
-// means "unread". Ringed in the sidebar's own fill so it reads as a badge
-// sitting on the tile rather than a hole punched through it.
-function LiveDot({ className }: { className?: string }) {
-	return (
-		<span
-			aria-hidden="true"
-			className={cn(
-				'absolute size-1.5 rounded-full bg-success ring-[1.5px] ring-sidebar',
-				className,
-			)}
-		/>
 	)
 }
 

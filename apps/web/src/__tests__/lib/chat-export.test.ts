@@ -14,10 +14,10 @@ describe('formatChatMarkdown', () => {
 		const events: ChatEvent[] = [
 			{
 				kind: 'user',
-				text: 'What does this object contain?',
+				text: 'What does this item contain?',
 				attachments: [{ kind: 'object', id: 'obj-1', title: 'Webhook retry backlog', type: 'bet' }],
 			},
-			{ kind: 'text', text: 'The object is a bet and contains text about the backlog.' },
+			{ kind: 'text', text: 'The item is a bet and contains text about the backlog.' },
 		]
 
 		expect(formatChatMarkdown(events, CTX)).toBe(
@@ -28,11 +28,11 @@ describe('formatChatMarkdown', () => {
 				'',
 				'[Webhook retry backlog](https://maskin.io/ws-1/objects/obj-1)',
 				'',
-				'What does this object contain?',
+				'What does this item contain?',
 				'',
 				'## Sindre',
 				'',
-				'The object is a bet and contains text about the backlog.',
+				'The item is a bet and contains text about the backlog.',
 				'',
 			].join('\n'),
 		)

@@ -19,13 +19,8 @@ export function TargetsAndOwners({
 	const actorById = new Map<string, ActorListItem>((actors ?? []).map((a) => [a.id, a] as const))
 
 	return (
-		<section aria-label="Targets and owners" className="mt-9">
-			<div className="flex items-center gap-2.5">
-				<span className="shrink-0 font-mono text-[10px] font-bold uppercase tracking-[0.11em] text-muted-foreground">
-					Targets &amp; owners
-				</span>
-				<div className="h-px flex-1 bg-muted" />
-			</div>
+		<section aria-label="Targets and owners">
+			<span className="text-[13px] font-semibold text-muted-foreground">Targets</span>
 			<div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
 				{loop.targets.map((target, idx) => (
 					<TargetCard

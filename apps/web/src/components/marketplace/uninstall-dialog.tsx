@@ -60,8 +60,8 @@ export function UninstallDialog({
 					<DialogTitle>Remove {loopName}?</DialogTitle>
 					<DialogDescription>
 						{isLocked
-							? 'This loop has provisioned agents, triggers, and skills in your workspace.'
-							: 'This loop has agents, triggers, and skills in your workspace.'}
+							? 'This flow has provisioned agents, triggers, and skills in your workspace.'
+							: 'This flow has agents, triggers, and skills in your workspace.'}
 					</DialogDescription>
 				</DialogHeader>
 
@@ -76,7 +76,7 @@ export function UninstallDialog({
 							<span className="font-medium">Remove everything</span>
 							<br />
 							<span className="text-xs text-muted-foreground">
-								Deletes all agents, triggers, and skills from this loop.
+								Deletes all agents, triggers, and skills from this flow.
 							</span>
 						</Label>
 					</div>

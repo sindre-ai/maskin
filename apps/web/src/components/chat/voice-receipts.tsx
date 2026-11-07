@@ -36,10 +36,6 @@ function dotClass(event: VoiceReceiptEvent): string {
 	}
 }
 
-function typeDotClass(type: string): string {
-	return type === 'bet' ? 'bg-foreground' : type === 'task' ? 'bg-brand/60' : 'bg-muted-foreground'
-}
-
 function ObjectLink({
 	workspaceId,
 	objectId,
@@ -77,7 +73,7 @@ export function VoiceEventRow({
 			objectId={receipt.objectId}
 			className={cn(
 				ROW_OFFSET,
-				'flex max-w-[660px] flex-wrap items-baseline gap-x-2 gap-y-0.5 rounded-xl border border-border bg-card px-3 py-2 text-sm text-foreground',
+				'flex w-fit max-w-full flex-wrap items-baseline gap-x-2 gap-y-0.5 rounded-xl border border-border bg-card px-3 py-2 text-[13.5px] text-foreground',
 			)}
 		>
 			<span data-testid="voice-event-time" className="font-mono text-[10px] text-muted-foreground">
@@ -126,8 +122,8 @@ function CheckList({ items }: { items: string[] }) {
 	return (
 		<ul className="flex flex-col gap-1">
 			{keyed(items).map(({ key, text }) => (
-				<li key={key} className="flex items-start gap-2 text-sm text-foreground">
-					<Check size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-brand" />
+				<li key={key} className="flex items-start gap-2 text-[13.5px] text-foreground">
+					<Check size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-foreground" />
 					<span className="min-w-0">{text}</span>
 				</li>
 			))}
@@ -152,7 +148,7 @@ export function VoiceSummaryCard({
 			aria-label="Live meeting summary"
 			className={cn(
 				ROW_OFFSET,
-				'flex max-w-[660px] flex-col gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm',
+				'flex max-w-115 flex-col gap-3 rounded-2xl border border-border bg-card p-4',
 			)}
 		>
 			<header className="flex items-center justify-between gap-3">
@@ -176,12 +172,8 @@ export function VoiceSummaryCard({
 								<ObjectLink
 									workspaceId={workspaceId}
 									objectId={c.objectId}
-									className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-border bg-background px-2.5 py-1 text-xs font-semibold text-foreground"
+									className="inline-flex max-w-full items-center rounded-full border border-border bg-background px-2.5 py-[3px] text-xs font-semibold text-foreground"
 								>
-									<span
-										aria-hidden="true"
-										className={cn('size-2 shrink-0 rounded-full', typeDotClass(c.type))}
-									/>
 									<span className="min-w-0 truncate">{c.title}</span>
 								</ObjectLink>
 							</li>
@@ -198,7 +190,7 @@ export function VoiceSummaryCard({
 				<SummarySection label={`Not done · ${summary.notDone.length}`}>
 					<ul className="flex flex-col gap-1">
 						{keyed(summary.notDone).map(({ key, text }) => (
-							<li key={key} className="text-sm text-muted-foreground">
+							<li key={key} className="text-[13.5px] text-muted-foreground">
 								{text}
 							</li>
 						))}
@@ -207,7 +199,11 @@ export function VoiceSummaryCard({
 			) : null}
 			{canReadTranscript ? (
 				<footer>
-					<Button type="button" size="sm" onClick={(e) => onReadTranscript(e.currentTarget)}>
+					<Button
+						type="button"
+						className="h-[34px] rounded-full px-4 text-[13px] font-semibold"
+						onClick={(e) => onReadTranscript(e.currentTarget)}
+					>
 						Read transcript
 					</Button>
 				</footer>

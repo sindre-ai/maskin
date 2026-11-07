@@ -182,7 +182,9 @@ function CommentRow({
 					'relative flex items-start scroll-mt-16 rounded-md transition-colors',
 					// Mockup 1281–1284: 24px avatar, 10px gutter, 2px of vertical air —
 					// the timeline is read as a stream, so rows sit close together.
-					isBubble ? 'z-[1] gap-2.5 py-0.5' : '-mx-1 gap-2 px-1 py-1 hover:bg-secondary/50',
+					// No right bleed: a -mx-1 row sticks out 4px past the column and the page
+					// scrolls sideways on a phone.
+					isBubble ? 'z-[1] gap-2.5 py-0.5' : '-ml-1 gap-2 pl-1 py-1 hover:bg-secondary/50',
 					isDecisionPoint && !isBubble && 'pl-3',
 				)}
 			>

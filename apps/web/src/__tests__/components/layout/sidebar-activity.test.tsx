@@ -47,7 +47,7 @@ describe('SidebarActivity', () => {
 		setOpenMobile.mockReset()
 	})
 
-	it('reads idle with a zero tile and no live dot when nothing holds a session', () => {
+	it('reads idle when nothing holds a session', () => {
 		mockUseActiveAgents.mockReturnValue({
 			agents: [],
 			activeSessionCount: 0,
@@ -57,10 +57,9 @@ describe('SidebarActivity', () => {
 		render(<SidebarActivity workspaceId="ws-1" />)
 		expect(row()).toHaveTextContent('Agents idle')
 		expect(row()).toHaveTextContent('nothing running')
-		expect(row()).toHaveTextContent('0')
 	})
 
-	it('counts agents in the tile and sessions in the sub-line', () => {
+	it('counts agents in the headline and sessions beside it', () => {
 		// Two agents, three live sessions — `agents` is already one row per agent,
 		// so the sub-line must read the hook's session count and not this length.
 		mockUseActiveAgents.mockReturnValue({
@@ -73,9 +72,8 @@ describe('SidebarActivity', () => {
 			isError: false,
 		})
 		render(<SidebarActivity workspaceId="ws-1" />)
-		expect(row()).toHaveTextContent('Agents working')
-		expect(row()).toHaveTextContent('2')
-		expect(row()).toHaveTextContent('3 sessions running')
+		expect(row()).toHaveTextContent('2 agents working')
+		expect(row()).toHaveTextContent('3 sessions')
 	})
 
 	it('singularises a lone session', () => {
@@ -86,7 +84,7 @@ describe('SidebarActivity', () => {
 			isError: false,
 		})
 		render(<SidebarActivity workspaceId="ws-1" />)
-		expect(row()).toHaveTextContent('1 session running')
+		expect(row()).toHaveTextContent('1 session')
 	})
 
 	it('summarises both counts on the rail tile title', () => {
@@ -100,9 +98,9 @@ describe('SidebarActivity', () => {
 			isError: false,
 		})
 		render(<SidebarActivity workspaceId="ws-1" />)
-		expect(screen.getByLabelText('Agents')).toHaveAttribute(
+		expect(screen.getByLabelText(/^Agents: /)).toHaveAttribute(
 			'title',
-			'2 agents working · 3 sessions running',
+			'2 agents working · 3 sessions',
 		)
 	})
 
@@ -141,7 +139,7 @@ describe('SidebarActivity', () => {
 		expect(container).toBeEmptyDOMElement()
 	})
 
-	it('hides the row and keeps the count tile in icon-collapsed mode', () => {
+	it('hides the row and keeps the live dot tile in icon-collapsed mode', () => {
 		mockUseActiveAgents.mockReturnValue({
 			agents: [agent()],
 			activeSessionCount: 1,
@@ -150,10 +148,10 @@ describe('SidebarActivity', () => {
 		})
 		render(<SidebarActivity workspaceId="ws-1" />)
 		expect(row().className).toContain('group-data-[collapsible=icon]:hidden')
-		const rail = screen.getByLabelText('Agents')
+		const rail = screen.getByLabelText(/^Agents: /)
 		expect(rail.className).toContain('group-data-[collapsible=icon]:grid')
-		// The rail keeps the number, not just a dot — it is the only agents
-		// signal left once the labels are gone.
-		expect(rail).toHaveTextContent('1')
+		// v3's rail shows the liveness dot only; the counts live in the title.
+		expect(rail).toHaveAttribute('title', expect.stringContaining('1 agent'))
+		expect(rail).toHaveAccessibleName('Agents: 1 working')
 	})
 })

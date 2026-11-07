@@ -118,7 +118,7 @@ describe('DecidedFold row', () => {
 		window.localStorage.clear()
 	})
 
-	it('renders the DECIDED eyebrow, title, and summary first clause folded by default', () => {
+	it('renders Decided, title, answer, time and the comment count folded by default', () => {
 		const event = decisionEvent()
 		const answer = replyEvent('Hold', '2026-01-01T13:00:00Z')
 
@@ -134,9 +134,9 @@ describe('DecidedFold row', () => {
 			{ wrapper: createWorkspaceWrapper() },
 		)
 
-		expect(screen.getByText('DECIDED')).toBeInTheDocument()
-		expect(screen.getByText('Ship the onboarding cut?')).toBeInTheDocument()
-		expect(screen.getByText(/3 of 5 signups stall on step 2\./)).toBeInTheDocument()
+		expect(screen.getByText('Decided')).toBeInTheDocument()
+		expect(screen.getByText(/Ship the onboarding cut\? Hold/)).toBeInTheDocument()
+		expect(screen.getByText('Show 2 comments')).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: /Expand decided/ })).toHaveAttribute(
 			'aria-expanded',
 			'false',
@@ -162,12 +162,12 @@ describe('DecidedFold row', () => {
 
 		await user.click(screen.getByRole('button', { name: /Expand decided/ }))
 
-		expect(screen.queryByText('DECIDED')).toBeNull()
+		expect(screen.queryByText('Decided')).toBeNull()
 		expect(window.localStorage.getItem('timeline-decided-fold:999')).toBe('open')
 
 		// Clicking the fold caret re-folds and drops the key from localStorage.
 		await user.click(screen.getByRole('button', { name: /Fold/ }))
-		expect(screen.getByText('DECIDED')).toBeInTheDocument()
+		expect(screen.getByText('Decided')).toBeInTheDocument()
 		expect(window.localStorage.getItem('timeline-decided-fold:999')).toBeNull()
 	})
 
@@ -188,8 +188,8 @@ describe('DecidedFold row', () => {
 			{ wrapper: createWorkspaceWrapper() },
 		)
 
-		// Row rendered unfolded; DECIDED eyebrow (fold-only) is absent.
-		expect(screen.queryByText('DECIDED')).toBeNull()
+		// Row rendered unfolded; Decided label (fold-only) is absent.
+		expect(screen.queryByText('Decided')).toBeNull()
 		expect(screen.getByRole('button', { name: /Fold/ })).toBeInTheDocument()
 	})
 })

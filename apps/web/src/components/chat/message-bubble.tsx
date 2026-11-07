@@ -41,6 +41,7 @@ import {
 } from '@/lib/linked-objects'
 import { type TagSegment, splitTextByTags, tagLabel } from '@/lib/tag-input-model'
 import { useIsEnterpriseWorkspace } from '@/lib/workspace-context'
+import { formatQuestionsAsMarkdown } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
 import {
 	ArrowUpRight,
@@ -188,6 +189,12 @@ export function MessageBubble({
 	// A tapped answer reaches the agent with its question for context; the person's own bubble
 	// shows only what they picked (one question: just the pick, several: header and pick).
 	const answers = message.metadata?.question_answer?.answers
+	// An agent's question is posted with its markdown twin as the message content (for readers that
+	// have no card). Here the card shows every question and option description itself, so the
+	// twin is not drawn above it. Words the agent wrote of its own never match and stay.
+	const question = message.metadata?.question
+	const isQuestionTwin =
+		question !== undefined && message.content === formatQuestionsAsMarkdown(question.questions)
 	const shownContent =
 		isOwn && answers && answers.length > 0 && message.content.startsWith('**')
 			? answers
@@ -355,7 +362,7 @@ export function MessageBubble({
 											? 'contents'
 											: editing
 												? 'flex flex-col gap-1.5'
-												: 'flex flex-col gap-1.5 rounded-[16px_16px_5px_16px] bg-primary px-[15px] py-[11px] text-[13.5px] leading-[1.55] text-primary-foreground'
+												: 'flex flex-col gap-1.5 rounded-2xl bg-secondary px-3.5 py-[9px] text-[15px] leading-[1.4] text-foreground'
 									}
 								>
 									{editing ? (
@@ -472,13 +479,13 @@ export function MessageBubble({
 	return (
 		<div className="group flex items-start gap-[11px]">
 			<ActorAvatar
-				id={message.actorId}
 				name={message.actorName}
-				type={message.actorType}
+				type={message.actorType ?? 'agent'}
+				id={message.actorId}
 				size="md"
-				className="shrink-0 rounded-lg"
+				className="mt-0.5 size-[30px] shrink-0 rounded-[9px] bg-secondary text-[11px] font-bold text-foreground"
 			/>
-			<div className={cn('relative min-w-0 flex-1 md:max-w-[660px]', spawnInfo && 'pr-2')}>
+			<div className={cn('relative min-w-0 flex-1', spawnInfo && 'pr-2')}>
 				{spawnInfo ? (
 					// S2 · agent-side messages can also spawn sessions (an agent that
 					// hands off work to a spawned session); render the same marker
@@ -486,25 +493,35 @@ export function MessageBubble({
 					// the column reserves, so it stays inside the column's box.
 					<SpawnBar className="absolute right-0 top-0 h-full" />
 				) : null}
-				<div className="flex items-baseline gap-2">
-					<span className="truncate text-[12.5px] font-bold text-foreground">
-						{message.actorName}
-					</span>
+				<div className="flex items-baseline gap-1.5">
+					{message.actorType === 'agent' && message.actorId ? (
+						<Link
+							to="/$workspaceId/agents/$agentId"
+							params={{ workspaceId, agentId: message.actorId }}
+							className="truncate text-[13px] font-semibold text-foreground hover:underline"
+						>
+							{message.actorName}
+						</Link>
+					) : (
+						<span className="truncate text-[13px] font-semibold text-foreground">
+							{message.actorName}
+						</span>
+					)}
 					<RelativeTime
 						date={message.createdAt}
 						format="clock"
-						className="shrink-0 text-[10px] text-muted-foreground"
+						className="shrink-0 text-xs text-muted-foreground"
 					/>
 					{isVoice ? <VoiceMessageMetaTag /> : null}
 				</div>
 				{activity ? <div className="mt-0.5">{activity}</div> : null}
 				{liftedAttachments ? <div className="mt-1.5">{liftedAttachments}</div> : null}
-				{message.content.length > 0 ? (
-					<div className="mt-1 text-[13.5px] leading-[1.6]">
+				{message.content.length > 0 && !isQuestionTwin ? (
+					<div className="mt-0.5 text-base leading-[1.45] [&_li]:text-foreground [&_p]:text-base [&_p]:leading-[1.45] [&_p]:text-foreground">
 						{/* `renderVisuals` turns a ```chart fenced block into the bounded
 						    data-viz card (mockup 660–679). Agents are told how to emit one
 						    in `createCommentSchema`'s content description, and the same
-						    parser backs object comments — no new payload, just the render
+						    parser backs item comments — no new payload, just the render
 						    path the chat surface was missing. `linkedCards` draws a link on its own
 						    line as a card where it stands (a draft can be approved without leaving
 						    the chat) and a link in a sentence as a chip; an id another message holds
@@ -528,10 +545,9 @@ export function MessageBubble({
 						/>
 					</div>
 				) : null}
-				{/* An agent's AskUserQuestion, surfaced as pickable options. The
-				    message's own content already renders the questions as markdown
-				    above, so this adds the affordance rather than the information —
-				    which is why it degrades to plain text everywhere else. */}
+				{/* An agent's AskUserQuestion, surfaced as pickable options. The card carries
+				    the questions and each option's description; the message's markdown twin
+				    (`isQuestionTwin`) is only for readers that have no card. */}
 				{message.metadata?.question ? (
 					<QuestionOptions
 						conversationId={message.conversationId}
@@ -557,6 +573,7 @@ export function MessageBubble({
 					<KeychainRequestCard
 						workspaceId={workspaceId}
 						conversationId={message.conversationId}
+						messageId={message.id}
 						messageCreatedAt={message.createdAt}
 						askingAgentId={message.actorId}
 						request={message.metadata.keychain_request}
@@ -723,7 +740,7 @@ function chipTitle(title: string): string {
 type OwnBodyPart = OwnPlacement | { kind: 'tagged'; parts: TagSegment[] }
 
 const OWN_CHIP_CLASS =
-	'inline-flex max-w-full items-center gap-1 rounded-md bg-primary-foreground/15 px-1.5 py-0.5 align-baseline font-medium text-primary-foreground transition-colors hover:bg-primary-foreground/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+	'inline-flex max-w-full items-center gap-1 rounded-md bg-foreground/10 px-1.5 py-0.5 align-baseline font-medium text-foreground transition-colors hover:bg-foreground/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
 
 /**
  * What you wrote, in order: words, a chip for each link, and a card for an object linked on a
@@ -796,7 +813,7 @@ function OwnMessageBody({
 												workspaceId={workspaceId}
 												id={tagPart.id}
 												label={tagPart.label}
-												surface="plate"
+												surface="card"
 												isSelf={tagPart.id === selfActorId}
 												linkable={isAgent(tagPart.id)}
 											/>
@@ -940,7 +957,7 @@ function OwnOtherWorkspaceChip({
 			id={id}
 			label={label}
 			newTab
-			className={cn(OWN_CHIP_CLASS, 'border border-dashed border-primary-foreground/40 italic')}
+			className={cn(OWN_CHIP_CLASS, 'border border-dashed border-foreground/40 italic')}
 		>
 			<Globe size={12} aria-hidden className="shrink-0" />
 			<span className="truncate">{label}</span>
@@ -961,7 +978,7 @@ function OwnLoopChip({ workspaceId, id }: { workspaceId: string; id: string }) {
 			className={OWN_CHIP_CLASS}
 		>
 			<Link2 size={12} aria-hidden className="shrink-0" />
-			<span className="truncate">{name ? chipTitle(name) : 'Loop'}</span>
+			<span className="truncate">{name ? chipTitle(name) : 'Flow'}</span>
 		</Link>
 	)
 }
@@ -1041,7 +1058,7 @@ function OwnObjectOrFileChip({
 	const { data: object } = useObject(segment.id, { enabled: isObject })
 	const { data: files } = useFiles(workspaceId, { ids: isObject ? [] : [segment.id] })
 	const name = (isObject ? object?.title : files?.[0]?.name)?.trim()
-	const label = name ? chipTitle(name) : isObject ? 'Object' : 'File'
+	const label = name ? chipTitle(name) : isObject ? 'Item' : 'File'
 	const className = OWN_CHIP_CLASS
 	const content = (
 		<>

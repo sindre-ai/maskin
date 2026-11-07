@@ -8,6 +8,7 @@ import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useCreateObject, useObject, useUpdateObject } from '@/hooks/use-objects'
 import { trackKnowledgePageViewed } from '@/lib/analytics'
 import { ApiError } from '@/lib/api'
+import { type ObjectDetailTab, parseObjectDetailTab } from '@/lib/object-detail-tab'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getDefaultStatusForType } from '@maskin/module-sdk'
 import { createFileRoute } from '@tanstack/react-router'
@@ -17,19 +18,27 @@ import { z } from 'zod'
 
 // `?comment=<event id>` deep-links to one comment (or reply) in the timeline.
 // Number-typed so a malformed value is dropped rather than reaching a selector.
+// `?tab=related` opens a tab directly; anything else is the Overview.
 const objectSearchSchema = z.object({
+	tab: z.unknown().transform(parseObjectDetailTab),
 	comment: z.coerce.number().int().positive().optional().catch(undefined),
 })
 
 export const Route = createFileRoute('/_authed/$workspaceId/objects/$objectId')({
 	component: ObjectDetailPage,
-	errorComponent: ({ error }) => <RouteError error={error} />,
 	validateSearch: objectSearchSchema,
+	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
 function ObjectDetailPage() {
 	const { objectId } = Route.useParams()
-	const { comment: focusCommentId } = Route.useSearch()
+	const { tab, comment: focusCommentId } = Route.useSearch()
+	const navigateTab = Route.useNavigate()
+	const onTabChange = (next: ObjectDetailTab) =>
+		navigateTab({
+			search: (prev) => ({ ...prev, tab: next === 'overview' ? undefined : next }),
+			replace: true,
+		})
 	const { workspaceId, workspace } = useWorkspace()
 	// Derive default statuses from workspace settings (first status per type)
 	const settings = workspace.settings as Record<string, unknown>
@@ -71,10 +80,10 @@ function ObjectDetailPage() {
 				title: data.title,
 				status: getDefaultStatus(data.type),
 			})
-			toast.success('Object created')
+			toast.success('Item created')
 		} catch (err) {
 			isCreatedRef.current = false
-			toast.error(err instanceof Error ? err.message : 'Failed to create object')
+			toast.error(err instanceof Error ? err.message : 'Failed to create item')
 		}
 	}
 
@@ -107,7 +116,7 @@ function ObjectDetailPage() {
 		return (
 			<div className="max-w-3xl mx-auto">
 				<QueryStateError
-					title="Couldn't load this object"
+					title="Couldn't load this item"
 					error={nonNotFoundError}
 					onRetry={() => refetch()}
 				/>
@@ -117,7 +126,14 @@ function ObjectDetailPage() {
 
 	// Once fully loaded with object data, render the full document editor
 	if (isCreated && object) {
-		return <ObjectDetailShell object={object} focusCommentId={focusCommentId} />
+		return (
+			<ObjectDetailShell
+				object={object}
+				tab={tab}
+				onTabChange={onTabChange}
+				focusCommentId={focusCommentId}
+			/>
+		)
 	}
 
 	// Create mode — show form with document-like sections

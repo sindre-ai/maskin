@@ -88,7 +88,6 @@ const DEFAULT_AGENT_NAMES = [
 	'Workspace Coach',
 	'Chief of Staff',
 	'Driver',
-	'Strategist',
 	'Signal Analyst',
 	'Researcher',
 	'Knowledge Curator',
@@ -932,12 +931,11 @@ describe('Workspaces Integration', () => {
 			const listRes = await app.request(jsonGet(`/api/workspaces/${ws.id}/members`))
 			expect(listRes.status).toBe(200)
 			const members = await listRes.json()
-			// Creator (owner) + all 7 default agents (seeded atomically inside the
-			// create transaction) + the newly-added member = 9.
-			expect(members).toHaveLength(9)
+			// Creator (owner) + all 6 default agents (seeded atomically inside the
+			// create transaction) + the newly-added member = 8.
+			expect(members).toHaveLength(8)
 			const roles = members.map((m: { role: string }) => m.role).sort()
 			expect(roles).toEqual([
-				'member',
 				'member',
 				'member',
 				'member',
@@ -1295,7 +1293,7 @@ describe('Workspaces Integration', () => {
 
 			// The shared "Maskin way of working" skill is attached to every default
 			// agent (mirrored from the Template workspace) — Coach, Chief of Staff,
-			// Driver, Strategist, Signal Analyst, Researcher, Knowledge Curator.
+			// Driver, Signal Analyst, Researcher, Knowledge Curator.
 			const [wayOfWorkingSkill] = await db
 				.select({ id: workspaceSkills.id })
 				.from(workspaceSkills)
@@ -1312,7 +1310,7 @@ describe('Workspaces Integration', () => {
 				.select({ actorId: agentSkills.actorId })
 				.from(agentSkills)
 				.where(eq(agentSkills.workspaceSkillId, wayOfWorkingSkillId))
-			expect(wayOfWorkingAttachRows).toHaveLength(7)
+			expect(wayOfWorkingAttachRows).toHaveLength(6)
 
 			const triggerRows = await db
 				.select({ name: triggers.name })
@@ -1322,8 +1320,9 @@ describe('Workspaces Integration', () => {
 			// "Deep-research brief validated → Signal Analyst clustering" trigger
 			// in DEFAULT_WORKSPACE_TRIGGERS, to 15 with the Chief of Staff's
 			// "Daily briefing" cron, and to 16 with its hourly "For You — curate
-			// the list" cron.
-			expect(triggerRows).toHaveLength(16)
+			// the list" cron, then down to 12 when the Bet discovery loop's four
+			// triggers were dropped from the seed.
+			expect(triggerRows).toHaveLength(12)
 		})
 
 		it('gives the Researcher the cited deep research mode and the deep-research-subagents skill', async () => {
@@ -1361,7 +1360,7 @@ describe('Workspaces Integration', () => {
 			expect(attachRows.map((r) => r.actorId)).toEqual([researcher?.id])
 		})
 
-		it('seeds the Bet discovery loop, Workspace improvements, and Knowledge Wiki loops wired to their triggers', async () => {
+		it('seeds the Workspace improvements and Knowledge Wiki loops wired to their triggers, and no Bet discovery loop', async () => {
 			const app = createApp()
 
 			const createRes = await app.request(
@@ -1376,7 +1375,6 @@ describe('Workspaces Integration', () => {
 				.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'loop')))
 
 			expect(loopRows.map((r) => r.title).sort()).toEqual([
-				'Bet discovery loop',
 				'Knowledge Wiki → digest',
 				'Workspace improvements',
 			])
@@ -1386,18 +1384,6 @@ describe('Workspaces Integration', () => {
 				.from(triggers)
 				.where(eq(triggers.workspaceId, ws.id))
 			const triggerIdByName = new Map(triggerRows.map((t) => [t.name, t.id]))
-
-			const discoveryBetLoop = loopRows.find((r) => r.title === 'Bet discovery loop')
-			const discoveryBetTriggerIds =
-				(discoveryBetLoop?.metadata as { trigger_ids?: string[] } | null)?.trigger_ids ?? []
-			expect(new Set(discoveryBetTriggerIds)).toEqual(
-				new Set([
-					triggerIdByName.get('Triage new insight'),
-					triggerIdByName.get('Daily signal sweep'),
-					triggerIdByName.get('Weekly deep revalidation'),
-					triggerIdByName.get('Shape the bet'),
-				]),
-			)
 
 			const workspaceImprovementsLoop = loopRows.find((r) => r.title === 'Workspace improvements')
 			const workspaceImprovementsTriggerIds =
@@ -1440,7 +1426,7 @@ describe('Workspaces Integration', () => {
 				.from(objects)
 				.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'loop')))
 
-			expect(loopRows).toHaveLength(3)
+			expect(loopRows).toHaveLength(2)
 		})
 
 		it('leaves three pre-existing workspaces byte-identical when a new workspace is seeded', async () => {
@@ -1494,18 +1480,18 @@ describe('Workspaces Integration', () => {
 
 		it('returns 500 naming the failed agent and rolls back workspace/member/actor rows when seeding fails on the 4th agent', async () => {
 			// Agents seed in DEFAULT_AGENT_IDS order — Workspace Coach, Chief of
-			// Staff, Driver, then Strategist. A trigger that rejects the Strategist
+			// Staff, Driver, then Signal Analyst. A trigger that rejects the Signal Analyst
 			// actor insert fails the 4th agent after agents 1-3 are already written
 			// into the transaction, running the real seed code. Everything —
 			// including those three partial actor inserts — must roll back.
 			onTestFinished(async () => {
-				await sql`drop trigger if exists test_reject_strategist on actors`
-				await sql`drop function if exists test_reject_strategist()`
+				await sql`drop trigger if exists test_reject_signal_analyst on actors`
+				await sql`drop function if exists test_reject_signal_analyst()`
 			})
 			await sql`
-				create function test_reject_strategist() returns trigger as $$
+				create function test_reject_signal_analyst() returns trigger as $$
 				begin
-					if new.name = 'Strategist' then
+					if new.name = 'Signal Analyst' then
 						raise exception 'mock failure on 4th agent';
 					end if;
 					return new;
@@ -1513,8 +1499,8 @@ describe('Workspaces Integration', () => {
 				$$ language plpgsql
 			`
 			await sql`
-				create trigger test_reject_strategist before insert on actors
-				for each row execute function test_reject_strategist()
+				create trigger test_reject_signal_analyst before insert on actors
+				for each row execute function test_reject_signal_analyst()
 			`
 
 			const workspacesBefore = await db.select({ id: workspacesTable.id }).from(workspacesTable)
@@ -1533,9 +1519,9 @@ describe('Workspaces Integration', () => {
 				error: { code: string; message: string; details?: { field: string; message: string }[] }
 			}
 			expect(body.error.code).toBe('INTERNAL_ERROR')
-			expect(body.error.message).toContain('strategist')
+			expect(body.error.message).toContain('signal_analyst')
 			expect(body.error.details).toEqual(
-				expect.arrayContaining([{ field: 'agent_id', message: 'strategist' }]),
+				expect.arrayContaining([{ field: 'agent_id', message: 'signal_analyst' }]),
 			)
 
 			// No workspace row, no member row, no actor row survived the aborted request.

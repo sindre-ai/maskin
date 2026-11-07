@@ -455,7 +455,7 @@ struct MessageRow: View {
 				MessageAttachments(attachments: message.attachments, threadWidth: rowWidth, caption: attachmentCaption)
 				if message.isEmojiOnly {
 					Text(message.content).maskinSymbol(emojiSize)
-				} else if !attachmentsOnly {
+				} else if !attachmentsOnly && !message.isQuestionTwin {
 					VStack(alignment: .leading, spacing: MaskinSpace.s3) {
 						if let quote { QuoteBlock(author: quote.author, text: quote.text, onTap: onQuoteTap) }
 						if !bodyText.isEmpty {

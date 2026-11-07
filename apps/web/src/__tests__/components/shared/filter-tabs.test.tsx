@@ -1,7 +1,7 @@
 import { FilterTabs } from '@/components/shared/filter-tabs'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 describe('FilterTabs', () => {
 	const tabs = [
@@ -113,6 +113,112 @@ describe('FilterTabs', () => {
 				'aria-pressed',
 				'true',
 			)
+		})
+	})
+
+	describe('foldable pill variant', () => {
+		const typeTabs = [
+			{ label: 'All', value: undefined as string | undefined, count: 47 },
+			{ label: 'Bets', value: 'bet' as string | undefined, count: 16 },
+			{ label: 'Tasks', value: 'task' as string | undefined, count: 18 },
+			{ label: 'Content', value: 'content' as string | undefined, count: 4 },
+			{ label: 'Insights', value: 'insight' as string | undefined, count: 3 },
+		]
+
+		// jsdom does no layout: stand in for it. Every chip is 60px wide and the row
+		// is `rowWidth` wide.
+		function stubLayout(rowWidth: number) {
+			class ResizeObserverStub {
+				observe() {}
+				disconnect() {}
+				unobserve() {}
+			}
+			vi.stubGlobal('ResizeObserver', ResizeObserverStub)
+			vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+				width: 60,
+				height: 28,
+				x: 0,
+				y: 0,
+				top: 0,
+				left: 0,
+				right: 60,
+				bottom: 28,
+				toJSON: () => ({}),
+			})
+			vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(rowWidth)
+		}
+
+		afterEach(() => {
+			vi.unstubAllGlobals()
+			vi.restoreAllMocks()
+		})
+
+		it('shows every chip and no More when they fit the row', () => {
+			stubLayout(1000)
+			render(
+				<FilterTabs
+					variant="pill"
+					foldable
+					tabs={typeTabs}
+					value={undefined}
+					onChange={() => {}}
+				/>,
+			)
+			const group = screen.getByRole('group')
+			expect(within(group).getAllByRole('button')).toHaveLength(5)
+			expect(screen.queryByRole('button', { name: /^More/ })).not.toBeInTheDocument()
+		})
+
+		it('folds the chips that do not fit into a More menu with their total', async () => {
+			// 60px chips, 8px gaps, 60px More: 2 chips + More = 196 <= 200.
+			stubLayout(200)
+			const user = userEvent.setup()
+			const onChange = vi.fn()
+			render(
+				<FilterTabs
+					variant="pill"
+					foldable
+					tabs={typeTabs}
+					value={undefined}
+					onChange={onChange}
+				/>,
+			)
+			const group = screen.getByRole('group')
+			// Two chips plus the More trigger.
+			expect(within(group).getAllByRole('button')).toHaveLength(3)
+			expect(within(group).getByRole('button', { name: 'All (47)' })).toBeInTheDocument()
+			const more = within(group).getByRole('button', { name: 'More (3)' })
+			expect(more).toHaveTextContent('More')
+			expect(more).toHaveTextContent('25')
+
+			await user.click(more)
+			await user.click(await screen.findByRole('menuitemradio', { name: /Insights/ }))
+			expect(onChange).toHaveBeenCalledWith('insight')
+		})
+
+		it('draws the More chip as active, named for the type, when the open type is folded', () => {
+			stubLayout(200)
+			render(
+				<FilterTabs variant="pill" foldable tabs={typeTabs} value="insight" onChange={() => {}} />,
+			)
+			const more = screen.getByRole('button', { name: 'More (3)' })
+			expect(more.className).toContain('bg-primary')
+			expect(more).toHaveTextContent('Insights')
+		})
+
+		it('never folds the first chip', () => {
+			stubLayout(10)
+			render(
+				<FilterTabs
+					variant="pill"
+					foldable
+					tabs={typeTabs}
+					value={undefined}
+					onChange={() => {}}
+				/>,
+			)
+			expect(screen.getByRole('button', { name: 'All (47)' })).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'More (4)' })).toBeInTheDocument()
 		})
 	})
 })

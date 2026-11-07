@@ -20,7 +20,7 @@ import { cn } from '@/lib/cn'
 
 const SIDEBAR_COOKIE_NAME = 'sidebar_state'
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
-const SIDEBAR_WIDTH = '13.5rem' // 216px — Direction 1 full sidebar state
+const SIDEBAR_WIDTH = '15.5rem' // 248px — v11 handoff full sidebar state
 const SIDEBAR_WIDTH_MOBILE = '18rem'
 const SIDEBAR_WIDTH_ICON = '3.75rem' // 60px — Direction 1 collapsed icon rail state
 // ⌘\ toggles the nav sidebar and ⌘⇧\ the right drawer — same key, other

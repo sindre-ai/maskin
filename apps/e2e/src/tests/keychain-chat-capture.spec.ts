@@ -149,7 +149,10 @@ test.describe('Keychain chat capture: vault, relaunch, undo', () => {
 			await expect(page.getByText('Resuming with the new credential…')).toBeHidden({
 				timeout: 15_000,
 			})
-			await expect(page.getByText('Live', { exact: true })).toBeVisible()
+			// Scoped to the card: the chat header now carries its own "Live" call button.
+			await expect(
+				page.locator('output', { hasText: 'Vaulted.' }).getByText('Live', { exact: true }),
+			).toBeVisible()
 
 			// Nothing in either web storage holds the key.
 			const leaked = await page.evaluate((secret) => {

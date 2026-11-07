@@ -17,6 +17,7 @@ import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
 import { Route as PrototypesGalleryRouteImport } from './routes/prototypes/gallery'
 import { Route as PrototypesAboveTitleHeaderRouteImport } from './routes/prototypes/above-title-header'
+import { Route as OauthAuthorizeRouteImport } from './routes/oauth.authorize'
 import { Route as ConnectSkjaldRouteImport } from './routes/connect.skjald'
 import { Route as AuthedWorkspacesRouteImport } from './routes/_authed/workspaces'
 import { Route as AuthedWorkspaceIdRouteImport } from './routes/_authed/$workspaceId'
@@ -34,6 +35,7 @@ import { Route as AuthedWorkspaceIdChatsIndexRouteImport } from './routes/_authe
 import { Route as AuthedWorkspaceIdAgentsIndexRouteImport } from './routes/_authed/$workspaceId/agents/index'
 import { Route as AuthedWorkspaceIdTriggersTriggerIdRouteImport } from './routes/_authed/$workspaceId/triggers/$triggerId'
 import { Route as AuthedWorkspaceIdSettingsSkillsRouteImport } from './routes/_authed/$workspaceId/settings/skills'
+import { Route as AuthedWorkspaceIdSettingsNotificationsRouteImport } from './routes/_authed/$workspaceId/settings/notifications'
 import { Route as AuthedWorkspaceIdSettingsMembersRouteImport } from './routes/_authed/$workspaceId/settings/members'
 import { Route as AuthedWorkspaceIdSettingsMcpRouteImport } from './routes/_authed/$workspaceId/settings/mcp'
 import { Route as AuthedWorkspaceIdSettingsKeysRouteImport } from './routes/_authed/$workspaceId/settings/keys'
@@ -98,6 +100,11 @@ const PrototypesAboveTitleHeaderRoute =
     path: '/prototypes/above-title-header',
     getParentRoute: () => rootRouteImport,
   } as any)
+const OauthAuthorizeRoute = OauthAuthorizeRouteImport.update({
+  id: '/oauth/authorize',
+  path: '/oauth/authorize',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ConnectSkjaldRoute = ConnectSkjaldRouteImport.update({
   id: '/connect/skjald',
   path: '/connect/skjald',
@@ -192,6 +199,12 @@ const AuthedWorkspaceIdSettingsSkillsRoute =
   AuthedWorkspaceIdSettingsSkillsRouteImport.update({
     id: '/skills',
     path: '/skills',
+    getParentRoute: () => AuthedWorkspaceIdSettingsRoute,
+  } as any)
+const AuthedWorkspaceIdSettingsNotificationsRoute =
+  AuthedWorkspaceIdSettingsNotificationsRouteImport.update({
+    id: '/notifications',
+    path: '/notifications',
     getParentRoute: () => AuthedWorkspaceIdSettingsRoute,
   } as any)
 const AuthedWorkspaceIdSettingsMembersRoute =
@@ -342,6 +355,7 @@ export interface FileRoutesByFullPath {
   '/$workspaceId': typeof AuthedWorkspaceIdRouteWithChildren
   '/workspaces': typeof AuthedWorkspacesRoute
   '/connect/skjald': typeof ConnectSkjaldRoute
+  '/oauth/authorize': typeof OauthAuthorizeRoute
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
   '/prototypes/gallery': typeof PrototypesGalleryRoute
   '/$workspaceId/chats': typeof AuthedWorkspaceIdChatsRouteWithChildren
@@ -363,6 +377,7 @@ export interface FileRoutesByFullPath {
   '/$workspaceId/settings/keys': typeof AuthedWorkspaceIdSettingsKeysRoute
   '/$workspaceId/settings/mcp': typeof AuthedWorkspaceIdSettingsMcpRoute
   '/$workspaceId/settings/members': typeof AuthedWorkspaceIdSettingsMembersRoute
+  '/$workspaceId/settings/notifications': typeof AuthedWorkspaceIdSettingsNotificationsRoute
   '/$workspaceId/settings/skills': typeof AuthedWorkspaceIdSettingsSkillsRoute
   '/$workspaceId/triggers/$triggerId': typeof AuthedWorkspaceIdTriggersTriggerIdRoute
   '/$workspaceId/agents/': typeof AuthedWorkspaceIdAgentsIndexRoute
@@ -389,6 +404,7 @@ export interface FileRoutesByTo {
   '/tv': typeof TvRoute
   '/workspaces': typeof AuthedWorkspacesRoute
   '/connect/skjald': typeof ConnectSkjaldRoute
+  '/oauth/authorize': typeof OauthAuthorizeRoute
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
   '/prototypes/gallery': typeof PrototypesGalleryRoute
   '/': typeof AuthedIndexRoute
@@ -408,6 +424,7 @@ export interface FileRoutesByTo {
   '/$workspaceId/settings/keys': typeof AuthedWorkspaceIdSettingsKeysRoute
   '/$workspaceId/settings/mcp': typeof AuthedWorkspaceIdSettingsMcpRoute
   '/$workspaceId/settings/members': typeof AuthedWorkspaceIdSettingsMembersRoute
+  '/$workspaceId/settings/notifications': typeof AuthedWorkspaceIdSettingsNotificationsRoute
   '/$workspaceId/settings/skills': typeof AuthedWorkspaceIdSettingsSkillsRoute
   '/$workspaceId/triggers/$triggerId': typeof AuthedWorkspaceIdTriggersTriggerIdRoute
   '/$workspaceId/agents': typeof AuthedWorkspaceIdAgentsIndexRoute
@@ -437,6 +454,7 @@ export interface FileRoutesById {
   '/_authed/$workspaceId': typeof AuthedWorkspaceIdRouteWithChildren
   '/_authed/workspaces': typeof AuthedWorkspacesRoute
   '/connect/skjald': typeof ConnectSkjaldRoute
+  '/oauth/authorize': typeof OauthAuthorizeRoute
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
   '/prototypes/gallery': typeof PrototypesGalleryRoute
   '/_authed/': typeof AuthedIndexRoute
@@ -459,6 +477,7 @@ export interface FileRoutesById {
   '/_authed/$workspaceId/settings/keys': typeof AuthedWorkspaceIdSettingsKeysRoute
   '/_authed/$workspaceId/settings/mcp': typeof AuthedWorkspaceIdSettingsMcpRoute
   '/_authed/$workspaceId/settings/members': typeof AuthedWorkspaceIdSettingsMembersRoute
+  '/_authed/$workspaceId/settings/notifications': typeof AuthedWorkspaceIdSettingsNotificationsRoute
   '/_authed/$workspaceId/settings/skills': typeof AuthedWorkspaceIdSettingsSkillsRoute
   '/_authed/$workspaceId/triggers/$triggerId': typeof AuthedWorkspaceIdTriggersTriggerIdRoute
   '/_authed/$workspaceId/agents/': typeof AuthedWorkspaceIdAgentsIndexRoute
@@ -489,6 +508,7 @@ export interface FileRouteTypes {
     | '/$workspaceId'
     | '/workspaces'
     | '/connect/skjald'
+    | '/oauth/authorize'
     | '/prototypes/above-title-header'
     | '/prototypes/gallery'
     | '/$workspaceId/chats'
@@ -510,6 +530,7 @@ export interface FileRouteTypes {
     | '/$workspaceId/settings/keys'
     | '/$workspaceId/settings/mcp'
     | '/$workspaceId/settings/members'
+    | '/$workspaceId/settings/notifications'
     | '/$workspaceId/settings/skills'
     | '/$workspaceId/triggers/$triggerId'
     | '/$workspaceId/agents/'
@@ -536,6 +557,7 @@ export interface FileRouteTypes {
     | '/tv'
     | '/workspaces'
     | '/connect/skjald'
+    | '/oauth/authorize'
     | '/prototypes/above-title-header'
     | '/prototypes/gallery'
     | '/'
@@ -555,6 +577,7 @@ export interface FileRouteTypes {
     | '/$workspaceId/settings/keys'
     | '/$workspaceId/settings/mcp'
     | '/$workspaceId/settings/members'
+    | '/$workspaceId/settings/notifications'
     | '/$workspaceId/settings/skills'
     | '/$workspaceId/triggers/$triggerId'
     | '/$workspaceId/agents'
@@ -583,6 +606,7 @@ export interface FileRouteTypes {
     | '/_authed/$workspaceId'
     | '/_authed/workspaces'
     | '/connect/skjald'
+    | '/oauth/authorize'
     | '/prototypes/above-title-header'
     | '/prototypes/gallery'
     | '/_authed/'
@@ -605,6 +629,7 @@ export interface FileRouteTypes {
     | '/_authed/$workspaceId/settings/keys'
     | '/_authed/$workspaceId/settings/mcp'
     | '/_authed/$workspaceId/settings/members'
+    | '/_authed/$workspaceId/settings/notifications'
     | '/_authed/$workspaceId/settings/skills'
     | '/_authed/$workspaceId/triggers/$triggerId'
     | '/_authed/$workspaceId/agents/'
@@ -632,6 +657,7 @@ export interface RootRouteChildren {
   SignupRoute: typeof SignupRoute
   TvRoute: typeof TvRoute
   ConnectSkjaldRoute: typeof ConnectSkjaldRoute
+  OauthAuthorizeRoute: typeof OauthAuthorizeRoute
   PrototypesAboveTitleHeaderRoute: typeof PrototypesAboveTitleHeaderRoute
   PrototypesGalleryRoute: typeof PrototypesGalleryRoute
 }
@@ -692,6 +718,13 @@ declare module '@tanstack/react-router' {
       path: '/prototypes/above-title-header'
       fullPath: '/prototypes/above-title-header'
       preLoaderRoute: typeof PrototypesAboveTitleHeaderRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/oauth/authorize': {
+      id: '/oauth/authorize'
+      path: '/oauth/authorize'
+      fullPath: '/oauth/authorize'
+      preLoaderRoute: typeof OauthAuthorizeRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/connect/skjald': {
@@ -811,6 +844,13 @@ declare module '@tanstack/react-router' {
       path: '/skills'
       fullPath: '/$workspaceId/settings/skills'
       preLoaderRoute: typeof AuthedWorkspaceIdSettingsSkillsRouteImport
+      parentRoute: typeof AuthedWorkspaceIdSettingsRoute
+    }
+    '/_authed/$workspaceId/settings/notifications': {
+      id: '/_authed/$workspaceId/settings/notifications'
+      path: '/notifications'
+      fullPath: '/$workspaceId/settings/notifications'
+      preLoaderRoute: typeof AuthedWorkspaceIdSettingsNotificationsRouteImport
       parentRoute: typeof AuthedWorkspaceIdSettingsRoute
     }
     '/_authed/$workspaceId/settings/members': {
@@ -1021,6 +1061,7 @@ interface AuthedWorkspaceIdSettingsRouteChildren {
   AuthedWorkspaceIdSettingsKeysRoute: typeof AuthedWorkspaceIdSettingsKeysRoute
   AuthedWorkspaceIdSettingsMcpRoute: typeof AuthedWorkspaceIdSettingsMcpRoute
   AuthedWorkspaceIdSettingsMembersRoute: typeof AuthedWorkspaceIdSettingsMembersRoute
+  AuthedWorkspaceIdSettingsNotificationsRoute: typeof AuthedWorkspaceIdSettingsNotificationsRoute
   AuthedWorkspaceIdSettingsSkillsRoute: typeof AuthedWorkspaceIdSettingsSkillsRoute
   AuthedWorkspaceIdSettingsIndexRoute: typeof AuthedWorkspaceIdSettingsIndexRoute
   AuthedWorkspaceIdSettingsExtensionsExtIdRoute: typeof AuthedWorkspaceIdSettingsExtensionsExtIdRoute
@@ -1042,6 +1083,8 @@ const AuthedWorkspaceIdSettingsRouteChildren: AuthedWorkspaceIdSettingsRouteChil
     AuthedWorkspaceIdSettingsMcpRoute: AuthedWorkspaceIdSettingsMcpRoute,
     AuthedWorkspaceIdSettingsMembersRoute:
       AuthedWorkspaceIdSettingsMembersRoute,
+    AuthedWorkspaceIdSettingsNotificationsRoute:
+      AuthedWorkspaceIdSettingsNotificationsRoute,
     AuthedWorkspaceIdSettingsSkillsRoute: AuthedWorkspaceIdSettingsSkillsRoute,
     AuthedWorkspaceIdSettingsIndexRoute: AuthedWorkspaceIdSettingsIndexRoute,
     AuthedWorkspaceIdSettingsExtensionsExtIdRoute:
@@ -1135,6 +1178,7 @@ const rootRouteChildren: RootRouteChildren = {
   SignupRoute: SignupRoute,
   TvRoute: TvRoute,
   ConnectSkjaldRoute: ConnectSkjaldRoute,
+  OauthAuthorizeRoute: OauthAuthorizeRoute,
   PrototypesAboveTitleHeaderRoute: PrototypesAboveTitleHeaderRoute,
   PrototypesGalleryRoute: PrototypesGalleryRoute,
 }

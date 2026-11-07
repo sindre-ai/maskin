@@ -118,6 +118,72 @@ test.describe('Loop page — custom view', () => {
 		})
 	}
 
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`a wide view scrolls inside its own box and the default page keeps its triggers @ ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			const agent = await account.api.createAgentActor('Relay')
+			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+			const loop = await account.api.createObject(account.workspaceId, {
+				type: 'loop',
+				title: 'Wide view loop',
+				status: 'learning',
+			})
+			const trigger = await account.api.createTrigger(account.workspaceId, {
+				name: 'Triage feedback',
+				type: 'event',
+				action_prompt: 'Normalises the event into the shared source',
+				target_actor_id: agent.id,
+				config: { entity_type: 'object', action: 'created' },
+			})
+			const file = await account.api.createFile(account.workspaceId, {
+				name: 'wide-view.html',
+				mime_type: 'text/html',
+				content:
+					'<!doctype html><html><body style="margin:0"><h1 id="t">Wide view</h1><div style="width:1600px;height:24px;background:#2545c8"></div><p id="n">Loading</p><script id="maskin-sources" type="application/json">{"all":{"type":"task"}}</script><script>maskin.query("all").then(function (r) { document.getElementById("n").textContent = r.total.count + " tasks" })</script></body></html>',
+			})
+			await account.api.updateObject(loop.id, account.workspaceId, {
+				metadata: { trigger_ids: [trigger.id], view_file_id: file.id },
+			})
+
+			await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
+
+			// The custom view stands in for the default content, inside its own box.
+			const frame = page.locator(FRAME)
+			await expect(frame).toBeVisible({ timeout: 15_000 })
+			await expect
+				.poll(() =>
+					frame.evaluate((el) => {
+						for (let box = el.parentElement; box; box = box.parentElement) {
+							if (
+								getComputedStyle(box).overflowX === 'auto' ||
+								getComputedStyle(box).overflowX === 'scroll'
+							)
+								return box.scrollWidth > box.clientWidth
+						}
+						return false
+					}),
+				)
+				.toBe(true)
+			const overflow = () =>
+				page.evaluate(
+					() => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+				)
+			expect(await overflow()).toBeLessThanOrEqual(0)
+
+			// The toggle is reachable, and Default brings back the triggers section.
+			const toggle = page.getByLabel('Loop view', { exact: true })
+			await expect(toggle).toBeVisible()
+			await toggle.getByRole('button', { name: 'Default' }).click()
+			await expect(frame).toHaveCount(0)
+			await expect(page.getByText('The flow, right now')).toBeVisible()
+			await expect(page.getByText('Triage feedback', { exact: true })).toBeVisible()
+			expect(await overflow()).toBeLessThanOrEqual(0)
+		})
+	}
+
 	test('a view that reads its data and then navigates away cannot reach another site', async ({
 		page,
 		account,

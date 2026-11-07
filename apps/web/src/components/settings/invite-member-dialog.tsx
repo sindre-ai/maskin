@@ -21,6 +21,7 @@ import { useCanWrite } from '@/hooks/use-can-write'
 import { useCreateInvite } from '@/hooks/use-invites'
 import { ApiError } from '@/lib/api'
 import { formatRetryAfter, inviteRoleLabel, isValidInviteEmail } from '@/lib/invite-format'
+import { PILL_BUTTON } from '@/lib/pill-button'
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { toast } from 'sonner'
@@ -118,7 +119,10 @@ export function InviteMemberDialog({
 				</ResponsiveDialogHeader>
 				<form onSubmit={handleSubmit} className="space-y-4" noValidate>
 					<div>
-						<Label htmlFor="invite-email" className="mb-1 text-muted-foreground">
+						<Label
+							htmlFor="invite-email"
+							className="mb-1 text-[13px] font-semibold text-foreground"
+						>
 							Email address
 						</Label>
 						<Input
@@ -144,7 +148,7 @@ export function InviteMemberDialog({
 						)}
 					</div>
 					<div>
-						<Label htmlFor="invite-role" className="mb-1 text-muted-foreground">
+						<Label htmlFor="invite-role" className="mb-1 text-[13px] font-semibold text-foreground">
 							Role
 						</Label>
 						<Select
@@ -192,6 +196,7 @@ export function InviteMemberDialog({
 						<Button
 							type="button"
 							variant="ghost"
+							className={PILL_BUTTON}
 							onClick={() => handleOpenChange(false)}
 							disabled={createInvite.isPending}
 						>
@@ -199,6 +204,7 @@ export function InviteMemberDialog({
 						</Button>
 						<Button
 							type="submit"
+							className={PILL_BUTTON}
 							disabled={!isValidInviteEmail(trimmed) || createInvite.isPending || !canWrite}
 						>
 							{createInvite.isPending ? 'Sending…' : 'Send invite'}

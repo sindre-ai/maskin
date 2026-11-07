@@ -12,8 +12,8 @@ function ExtensionsPage() {
 	return (
 		<div className="max-w-[580px]">
 			<p className="mb-3 text-xs leading-relaxed text-muted-foreground">
-				Extensions add object types and tabs for this workspace. Turning one off hides its objects —
-				it never deletes them.
+				Extensions add item types and tabs for this workspace. Turning one off hides its items — it
+				never deletes them.
 			</p>
 			<ExtensionsManager />
 			<CustomExtensionsSection />

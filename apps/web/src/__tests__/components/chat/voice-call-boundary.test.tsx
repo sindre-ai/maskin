@@ -39,34 +39,26 @@ describe('VoiceCallBoundary — start variant', () => {
 		)
 		const el = screen.getByTestId('voice-call-boundary')
 		expect(el).toHaveAttribute('data-variant', 'start')
-		expect(el.textContent).toMatch(
-			/^Voice call · 2:14 · \d{1,2}[:.]\d{2}\s*(?:[AP]M)?\s*→\s*\d{1,2}[:.]\d{2}/,
-		)
+		expect(el.textContent).toMatch(/^Live meeting · started \d{1,2}[:.]\d{2}/)
 	})
 
-	it('renders "Voice call" alone when no duration or clock is available', () => {
+	it('renders "Live meeting" alone when no start time is available', () => {
 		render(<VoiceCallBoundary variant="start" />)
-		expect(screen.getByTestId('voice-call-boundary').textContent).toBe('Voice call')
-	})
-
-	it('omits the clock range when only one endpoint is supplied', () => {
-		render(
-			<VoiceCallBoundary
-				variant="start"
-				durationMs={30_000}
-				startedAt={new Date('2026-09-29T10:00:00Z')}
-			/>,
-		)
-		expect(screen.getByTestId('voice-call-boundary').textContent).toBe('Voice call · 0:30')
+		expect(screen.getByTestId('voice-call-boundary').textContent).toBe('Live meeting')
 	})
 })
 
 describe('VoiceCallBoundary — end variant', () => {
-	it('renders the verbatim SPEC tail string', () => {
-		render(<VoiceCallBoundary variant="end" />)
+	it('names when the meeting ended', () => {
+		render(<VoiceCallBoundary variant="end" endedAt={new Date('2026-09-29T10:02:14Z')} />)
 		const el = screen.getByTestId('voice-call-boundary')
 		expect(el).toHaveAttribute('data-variant', 'end')
-		expect(el.textContent).toBe('Call ended')
+		expect(el.textContent).toMatch(/^Live meeting · ended \d{1,2}[:.]\d{2}/)
+	})
+
+	it('falls back to "ended" without a time', () => {
+		render(<VoiceCallBoundary variant="end" />)
+		expect(screen.getByTestId('voice-call-boundary').textContent).toBe('Live meeting · ended')
 	})
 })
 

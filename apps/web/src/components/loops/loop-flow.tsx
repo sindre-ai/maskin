@@ -249,7 +249,7 @@ export function LoopFlow({
 	if (median) cycleParts.push(`median close ${median}`)
 	const rightNowNote = [
 		objectTypeCount > 0
-			? `${objectTypeCount} object ${objectTypeCount === 1 ? 'type' : 'types'}`
+			? `${objectTypeCount} item ${objectTypeCount === 1 ? 'type' : 'types'}`
 			: null,
 		`${enabledTriggerCount} of ${triggers.length} ${triggers.length === 1 ? 'trigger' : 'triggers'} on`,
 		`${distinctAgentIds.length} ${distinctAgentIds.length === 1 ? 'agent' : 'agents'}`,
@@ -262,7 +262,7 @@ export function LoopFlow({
 		<div id="loop-flow" data-loop-flow-root>
 			{/* One note line: primitives · triggers on · cycles (mockup 1891). */}
 			<div className="flex items-center gap-2.5 mb-3">
-				<h2 className="shrink-0 text-sm font-semibold text-foreground">The loop, right now</h2>
+				<h2 className="shrink-0 text-sm font-semibold text-foreground">The flow, right now</h2>
 				<span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
 					{rightNowNote}
 				</span>

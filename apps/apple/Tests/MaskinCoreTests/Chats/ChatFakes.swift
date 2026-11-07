@@ -48,6 +48,7 @@ actor FakeChatAPI: ChatAPI {
 	/// Persist the next N sends, then fail as if the response was lost on the way back.
 	var loseResponses = 0
 	var readCalls: [Int] = []
+	var failRead = false
 	var retried: [(Int, String?)] = []
 	var actorList: [ChatActor] = []
 	var messageCalls: [(before: Int?, after: Int?)] = []
@@ -194,7 +195,9 @@ actor FakeChatAPI: ChatAPI {
 		return server[index]
 	}
 
+	func setFailRead(_ v: Bool) { failRead = v }
 	func markRead(conversationID: String, lastMessageID: Int) async throws {
+		if failRead { throw URLError(.notConnectedToInternet) }
 		readCalls.append(lastMessageID)
 	}
 

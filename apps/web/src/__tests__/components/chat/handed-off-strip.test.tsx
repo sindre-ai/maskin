@@ -113,7 +113,7 @@ describe('HandedOffStrip', () => {
 				depends_on_session_ids: ['s1', 's2'],
 			}),
 		])
-		expect(screen.getByText('· behind Sentinel and Forge')).toBeInTheDocument()
+		expect(screen.getByText('· after Sentinel and Forge')).toBeInTheDocument()
 	})
 
 	it('fires handed_off_strip_shown exactly once per bubble on first render', () => {
@@ -162,11 +162,11 @@ describe('HandedOffStrip', () => {
 		expect(screen.getByText('Aegis')).toBeInTheDocument()
 		// jsdom applies no Tailwind, so both dep forms are in the DOM: the
 		// desktop full-names span and the mobile count span. The count form is
-		// the design spec's `· behind 2`, and BOTH spans must carry the full
+		// the design spec's `· after 2`, and BOTH spans must carry the full
 		// names as the hover tooltip so the count is never a dead end.
-		const countSpan = screen.getByText('· behind 2')
+		const countSpan = screen.getByText('· after 2')
 		expect(countSpan).toHaveAttribute('title', 'Sentinel and Forge')
-		expect(screen.getByText('· behind Sentinel and Forge')).toHaveAttribute(
+		expect(screen.getByText('· after Sentinel and Forge')).toHaveAttribute(
 			'title',
 			'Sentinel and Forge',
 		)

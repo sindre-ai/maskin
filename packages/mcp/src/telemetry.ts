@@ -81,6 +81,8 @@ export interface TelemetryConfig {
 	 *  `unknown` marks a per-request throwaway that groups nothing — the host
 	 *  had no client identity to work from. */
 	sessionSource?: 'maskin-session' | 'process' | 'unknown'
+	/** See `McpConfig.forwardMarker`: sent as `X-Maskin-Mcp-Forward` on the telemetry POST too. */
+	forwardMarker?: string
 	/**
 	 * Protocol era and allowlisted version label of the request this server is
 	 * serving, stamped onto `tool_call` and `tool_call_response_size` events.
@@ -260,6 +262,7 @@ async function postEvent(event: TelemetryEvent, target: TelemetryConfig): Promis
 				'Content-Type': 'application/json',
 				Authorization: `Bearer ${target.apiKey}`,
 				'X-Workspace-Id': target.workspaceId ?? '',
+				...(target.forwardMarker ? { 'X-Maskin-Mcp-Forward': target.forwardMarker } : {}),
 			},
 			body: JSON.stringify(event),
 		})

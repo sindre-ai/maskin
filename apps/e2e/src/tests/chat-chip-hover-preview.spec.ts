@@ -147,7 +147,7 @@ test.describe('Chat — a chip opens the object card as a preview', () => {
 		await chip.focus()
 		await expect(preview).toHaveCount(0)
 		await chip.click()
-		await expect(page.getByRole('dialog', { name: 'Object preview' })).toBeVisible()
+		await expect(page.getByRole('dialog', { name: 'Item preview' })).toBeVisible()
 		await expect(page).toHaveURL(chatUrl)
 		await page.getByRole('link', { name: 'Open' }).click()
 		await expect(page).toHaveURL(new RegExp(`/${ws}/objects/${task.id}`))

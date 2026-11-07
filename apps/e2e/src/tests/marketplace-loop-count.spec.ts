@@ -29,6 +29,12 @@ test.describe('Marketplace loop count', () => {
 			const identity = page.locator(`[data-testid="marketplace-header-identity"]:visible`).first()
 			await expect(identity).toBeVisible({ timeout: 20000 })
 
+			// The count sits beside the title from sm (640px) up; a phone shows the title alone.
+			if (viewport.width < 640) {
+				await expect(page.locator(COUNT).first()).toBeHidden()
+				return
+			}
+
 			const count = page.locator(`${COUNT}:visible`).first()
 			await expect(count).toBeVisible({ timeout: 20000 })
 			await expect(count).toHaveText(/^\d+ in the catalog$/)

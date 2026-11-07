@@ -1,6 +1,17 @@
 import { keychainUseHint } from '@/components/chat/keychain-request-card'
+import {
+	REQUEST_CARD_LINK,
+	RequestCardHeader,
+	RequestCardReadOnly,
+	RequestCardSummary,
+} from '@/components/chat/request-card-parts'
+import {
+	REQUEST_CARD,
+	REQUEST_CARD_ACTIONS,
+	REQUEST_CARD_DECLINE,
+	REQUEST_CARD_PRIMARY,
+} from '@/components/chat/request-card-styles'
 import { FormError } from '@/components/shared/form-error'
-import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useCardAnswer, useSendMessage } from '@/hooks/use-conversation'
@@ -144,67 +155,78 @@ export function KeychainAccessRequestCard({
 		})
 	}
 
+	// Asking again is a plain message the agent answers with a new card.
+	const askAgain = () => {
+		setDeclinedNow(false)
+		const content = `Please ask me to use ${request.credential_name} again.`
+		if (helper) {
+			sendInput.mutate({ id: request.session_id, content, conversationId })
+			return
+		}
+		sendMessage.mutate({ content })
+	}
+
 	if (allowed || declined || gone) {
 		return (
-			<div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm">
-				<Lock className="size-4 text-muted-foreground" aria-hidden />
-				<span>
-					{allowed ? (
-						<>
-							Allowed <strong>{request.credential_name}</strong>{' '}
-							{allowedScope === 'chat'
-								? 'for this agent in this chat only.'
-								: 'for this agent. It stays until you remove it.'}
-						</>
-					) : declined ? (
-						<>
-							Declined <strong>{request.credential_name}</strong>.
-						</>
-					) : (
-						<>
-							<strong>{request.credential_name}</strong> is no longer in the Keychain.
-						</>
-					)}
-				</span>
+			<RequestCardSummary
+				icon={Lock}
+				note={
+					agentStillRunning
+						? 'The agent is still running without it. Stop it from the chat, then send a message to start it again with the credential.'
+						: null
+				}
+				actions={
+					allowed ? (
+						<Link
+							to="/$workspaceId/settings/keychain"
+							params={{ workspaceId }}
+							className={REQUEST_CARD_LINK}
+						>
+							Manage
+						</Link>
+					) : declined && canWrite ? (
+						<button type="button" className={REQUEST_CARD_LINK} onClick={askAgain}>
+							Ask again
+						</button>
+					) : null
+				}
+			>
 				{allowed ? (
-					<Link
-						to="/$workspaceId/settings/keychain"
-						params={{ workspaceId }}
-						className="text-xs text-muted-foreground underline"
-					>
-						Manage in Keychain
-					</Link>
-				) : null}
-				{agentStillRunning ? (
-					<p className="w-full text-xs text-muted-foreground">
-						The agent is still running without it. Stop it from the chat, then send a message to
-						start it again with the credential.
-					</p>
-				) : null}
-			</div>
+					<>
+						Allowed <strong>{request.credential_name}</strong>{' '}
+						{allowedScope === 'chat'
+							? 'for this agent in this chat only.'
+							: 'for this agent. It stays until you remove it.'}
+					</>
+				) : declined ? (
+					<>
+						Declined <strong>{request.credential_name}</strong>.
+					</>
+				) : (
+					<>
+						<strong>{request.credential_name}</strong> is no longer in the Keychain.
+					</>
+				)}
+			</RequestCardSummary>
+		)
+	}
+
+	if (!canWrite || !canAllow) {
+		return (
+			<RequestCardReadOnly icon={Lock} title={`Use ${request.credential_name}`}>
+				{canWrite
+					? 'Only the person who saved this or a workspace admin can allow it.'
+					: 'Only a person with edit access can allow it.'}
+			</RequestCardReadOnly>
 		)
 	}
 
 	return (
-		<fieldset
-			aria-label={`Allow ${request.credential_name}`}
-			className="mt-2 flex min-w-0 flex-col gap-3 rounded-xl border border-border bg-muted/40 p-4"
-		>
-			<div className="flex items-start gap-2">
-				<Lock className="mt-0.5 size-4 shrink-0" aria-hidden />
-				<div>
-					<h3 className="text-sm font-semibold">Let this agent use {request.credential_name}?</h3>
-					<p className="mt-0.5 text-xs text-muted-foreground">
-						{request.hint ? `${request.hint} ` : ''}It stays in your encrypted vault and the agent
-						never sees the value in the chat. Choose how long it can use it:
-					</p>
-				</div>
-			</div>
-			{!canAllow ? (
-				<p className="text-xs text-muted-foreground">
-					Only the person who saved this or a workspace admin can allow it.
-				</p>
-			) : null}
+		<fieldset aria-label={`Allow ${request.credential_name}`} className={REQUEST_CARD}>
+			<RequestCardHeader icon={Lock} title={`Let this agent use ${request.credential_name}?`}>
+				{request.hint ? `${request.hint} ` : ''}It stays in your encrypted vault and the agent never
+				sees the value in the chat. Choose how long it can use it:
+			</RequestCardHeader>
 			<FormError error={error ?? undefined} />
 			<ul className="list-disc space-y-0.5 pl-8 text-xs text-muted-foreground">
 				{helper ? null : (
@@ -218,38 +240,36 @@ export function KeychainAccessRequestCard({
 					chat or run, until you remove it in Settings → Keychain.
 				</li>
 			</ul>
-			<ViewerTooltip className="flex">
-				<div className="flex flex-wrap items-center gap-2">
-					{helper ? null : (
-						<Button
-							type="button"
-							size="sm"
-							disabled={busy || !canAllow || !canWrite}
-							onClick={() => void allow('chat')}
-						>
-							Allow in this chat
-						</Button>
-					)}
+			<div className={REQUEST_CARD_ACTIONS}>
+				{helper ? null : (
 					<Button
 						type="button"
-						size="sm"
-						variant={helper ? 'default' : 'outline'}
-						disabled={busy || !canAllow || !canWrite}
-						onClick={() => void allow('always')}
+						className={REQUEST_CARD_PRIMARY}
+						disabled={busy}
+						onClick={() => void allow('chat')}
 					>
-						Always allow
+						Allow in this chat
 					</Button>
-					<Button
-						type="button"
-						size="sm"
-						variant="outline"
-						disabled={busy || !canWrite}
-						onClick={decline}
-					>
-						Not now
-					</Button>
-				</div>
-			</ViewerTooltip>
+				)}
+				<Button
+					type="button"
+					className={REQUEST_CARD_PRIMARY}
+					variant={helper ? 'default' : 'outline'}
+					disabled={busy}
+					onClick={() => void allow('always')}
+				>
+					Always allow
+				</Button>
+				<Button
+					type="button"
+					variant="ghost"
+					className={REQUEST_CARD_DECLINE}
+					disabled={busy}
+					onClick={decline}
+				>
+					Not now
+				</Button>
+			</div>
 		</fieldset>
 	)
 }

@@ -37,7 +37,7 @@ function MarketplaceLoopDetailRoute() {
 		return (
 			<div className="max-w-3xl mx-auto">
 				<QueryStateError
-					title="Couldn't load this loop"
+					title="Couldn't load this flow"
 					error={error ?? new Error('Something went wrong loading the catalog.')}
 					onRetry={() => refetch()}
 				/>

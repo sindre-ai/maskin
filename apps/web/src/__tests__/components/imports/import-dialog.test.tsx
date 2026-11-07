@@ -69,13 +69,13 @@ describe('ImportDialog', () => {
 
 	it('renders upload step when open=true', () => {
 		render(<ImportDialog open={true} onOpenChange={vi.fn()} />, { wrapper: TestWrapper })
-		expect(screen.getByText('Import Objects')).toBeInTheDocument()
+		expect(screen.getByText('Import Items')).toBeInTheDocument()
 		expect(screen.getByText('Drag and drop a file here')).toBeInTheDocument()
 	})
 
 	it('is not visible when open=false', () => {
 		render(<ImportDialog open={false} onOpenChange={vi.fn()} />, { wrapper: TestWrapper })
-		expect(screen.queryByText('Import Objects')).not.toBeInTheDocument()
+		expect(screen.queryByText('Import Items')).not.toBeInTheDocument()
 	})
 
 	it('shows file type hint (CSV/JSON)', () => {
@@ -226,7 +226,7 @@ describe('ImportDialog', () => {
 			expect(screen.getByRole('combobox', { name: 'Match existing on' })).toBeInTheDocument()
 		})
 		expect(
-			screen.queryByRole('combobox', { name: 'If a row matches an existing object' }),
+			screen.queryByRole('combobox', { name: 'If a row matches an existing item' }),
 		).not.toBeInTheDocument()
 	})
 
@@ -334,7 +334,7 @@ describe('ImportDialog', () => {
 
 		await waitFor(() => {
 			expect(
-				screen.getByRole('combobox', { name: 'If a row matches an existing object' }),
+				screen.getByRole('combobox', { name: 'If a row matches an existing item' }),
 			).toBeInTheDocument()
 		})
 		await userEvent.click(screen.getByText(/Import 10 rows/))

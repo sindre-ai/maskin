@@ -27,7 +27,7 @@ const DEFAULT_RELATIONSHIP_TYPES = ['informs', 'breaks_into', 'blocks', 'relates
  * Related tab for the object detail page (mockup 1155–1174): one bordered list
  * per edge type under a mono group label, each row reading
  * `dot · TYPE · name · status · when · ×`, then two dashed CTAs in a
- * responsive 2-column grid — `+ Link an object` / `+ Upload a file`. Empty
+ * responsive 2-column grid — `+ Link an item` / `+ Upload a file`. Empty
  * groups render the CTAs anyway; the point of D11 is that an empty group is
  * actionable, not just labelled. There is no table header and no sort — the
  * tab is a reading of the object's graph, and the Objects list is where
@@ -101,7 +101,7 @@ export function RelatedTab({ object }: { object: ObjectResponse }) {
 			{isGraphLoading ? (
 				<ListSkeleton rows={3} />
 			) : isGraphError ? (
-				<QueryStateError title="Couldn't load related objects" error={graphError} />
+				<QueryStateError title="Couldn't load related items" error={graphError} />
 			) : (
 				groups.map((group) => (
 					<div key={group.type}>
@@ -262,13 +262,13 @@ export function RelatedTab({ object }: { object: ObjectResponse }) {
 						>
 							<ViewerTooltip className="flex">
 								<CTA
-									aria-label={`Link an object as ${group.type.replace(/_/g, ' ')}`}
+									aria-label={`Link an item as ${group.type.replace(/_/g, ' ')}`}
 									disabled={!canWrite}
 									onClick={() =>
 										setPickerOpenForType((prev) => (prev === group.type ? null : group.type))
 									}
 								>
-									+ Link an object
+									+ Link an item
 								</CTA>
 							</ViewerTooltip>
 							<ViewerTooltip className="flex">

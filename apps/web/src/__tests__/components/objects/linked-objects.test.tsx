@@ -215,10 +215,10 @@ describe('LinkedObjectsView', () => {
 		expect(screen.getByText(/text\/markdown/)).toBeInTheDocument()
 	})
 
-	it('shows the empty state with Link to object / Link to file CTAs when no rows', () => {
+	it('shows the empty state with Link to item / Link to file CTAs when no rows', () => {
 		render(<LinkedObjectsView {...baseProps} asSource={[]} asTarget={[]} allObjects={[]} />)
 		expect(screen.getByText('No links yet')).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Link to object' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Link to item' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Link to file' })).toBeInTheDocument()
 	})
 
@@ -267,11 +267,11 @@ describe('AddLinkForm — Objects | Files tab strip', () => {
 		render(<AddLinkForm {...commonProps} />, { wrapper: Wrapper })
 
 		// Objects tab renders active — its aria-pressed reads true.
-		expect(screen.getByRole('button', { name: /Objects/ })).toHaveAttribute('aria-pressed', 'true')
+		expect(screen.getByRole('button', { name: /Items/ })).toHaveAttribute('aria-pressed', 'true')
 		expect(screen.getByRole('button', { name: /Files/ })).toHaveAttribute('aria-pressed', 'false')
 
 		// Alt+F flips to Files; the search-input placeholder switches too.
-		const search = screen.getByPlaceholderText(/Search objects/)
+		const search = screen.getByPlaceholderText(/Search items/)
 		await user.click(search)
 		await user.keyboard('{Alt>}f{/Alt}')
 		await waitFor(() =>
@@ -282,10 +282,7 @@ describe('AddLinkForm — Objects | Files tab strip', () => {
 		// Alt+O jumps back.
 		await user.keyboard('{Alt>}o{/Alt}')
 		await waitFor(() =>
-			expect(screen.getByRole('button', { name: /Objects/ })).toHaveAttribute(
-				'aria-pressed',
-				'true',
-			),
+			expect(screen.getByRole('button', { name: /Items/ })).toHaveAttribute('aria-pressed', 'true'),
 		)
 	})
 
@@ -302,7 +299,7 @@ describe('AddLinkForm — Objects | Files tab strip', () => {
 			{ wrapper: Wrapper },
 		)
 
-		const listbox = screen.getByRole('listbox', { name: 'Objects' })
+		const listbox = screen.getByRole('listbox', { name: 'Items' })
 		expect(listbox).toBeInTheDocument()
 		const options = screen.getAllByRole('option')
 		expect(options.length).toBeGreaterThan(0)
@@ -313,7 +310,7 @@ describe('AddLinkForm — Objects | Files tab strip', () => {
 // File-detail entry point: same LinkedObjectsView component, entered with
 // `objectType='file'` per design spec §10. Task 2 acceptance criteria pin:
 // (1) heading reads `Linked (<n>)` with per-tab counts, (2) `+` menu's primary
-// item is `Link to object`, (3) `openPickerSignal` prop opens the picker on
+// item is `Link to item`, (3) `openPickerSignal` prop opens the picker on
 // the Objects tab so the header button can drive it from outside.
 describe('LinkedObjectsView — file-detail entry point', () => {
 	it('renders the "Linked (N)" heading with per-tab Objects / Files counts', () => {
@@ -342,13 +339,13 @@ describe('LinkedObjectsView — file-detail entry point', () => {
 			/>,
 		)
 		expect(screen.getByText('Linked (2)')).toBeInTheDocument()
-		// Per-tab counts render as inline "Objects (1)" / "Files (1)" pills.
+		// Per-tab counts render as inline "Items (1)" / "Files (1)" pills.
 		const counts = screen.getByLabelText('Type counts')
-		expect(counts).toHaveTextContent('Objects (1)')
+		expect(counts).toHaveTextContent('Items (1)')
 		expect(counts).toHaveTextContent('Files (1)')
 	})
 
-	it('flips the `+` menu primary item to `Link to object` and hides the secondary via menuLabels', async () => {
+	it('flips the `+` menu primary item to `Link to item` and hides the secondary via menuLabels', async () => {
 		const user = userEvent.setup()
 		render(
 			<LinkedObjectsView
@@ -360,14 +357,14 @@ describe('LinkedObjectsView — file-detail entry point', () => {
 				allObjects={[]}
 				heading="Linked"
 				menuLabels={{
-					primary: { label: 'Link to object', kind: 'object' },
+					primary: { label: 'Link to item', kind: 'object' },
 					secondary: null,
 				}}
 			/>,
 		)
 		await user.click(screen.getByRole('button', { name: 'Add link' }))
-		// Primary item leads with `Link to object`.
-		const primary = await screen.findAllByText('Link to object')
+		// Primary item leads with `Link to item`.
+		const primary = await screen.findAllByText('Link to item')
 		expect(primary.length).toBeGreaterThan(0)
 		// Secondary is null on file-detail: no `Link to file` in the menu.
 		expect(screen.queryByRole('menuitem', { name: /Link to file/ })).toBeNull()
@@ -389,7 +386,7 @@ describe('LinkedObjectsView — file-detail entry point', () => {
 			{ wrapper: Wrapper },
 		)
 		// No picker yet — the search input isn't in the DOM.
-		expect(screen.queryByPlaceholderText(/Search objects/)).toBeNull()
+		expect(screen.queryByPlaceholderText(/Search items/)).toBeNull()
 
 		// Bump the signal — the picker should open, defaulting to Objects.
 		rerender(
@@ -404,8 +401,8 @@ describe('LinkedObjectsView — file-detail entry point', () => {
 				openPickerSignal={{ kind: 'object', nonce: 1 }}
 			/>,
 		)
-		await waitFor(() => expect(screen.getByPlaceholderText(/Search objects/)).toBeInTheDocument())
+		await waitFor(() => expect(screen.getByPlaceholderText(/Search items/)).toBeInTheDocument())
 		// The Objects tab pill reads pressed when the picker enters on that tab.
-		expect(screen.getByRole('button', { name: /Objects/ })).toHaveAttribute('aria-pressed', 'true')
+		expect(screen.getByRole('button', { name: /Items/ })).toHaveAttribute('aria-pressed', 'true')
 	})
 })

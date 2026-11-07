@@ -1,5 +1,4 @@
 import { render, renderHook, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { SessionUsageResponse } from '@/lib/api'
@@ -20,6 +19,7 @@ import {
 	BillingUsageDetails,
 	BillingUsageSummary,
 	type WorkspaceModelUsage,
+	billingPeriodLabel,
 	useWorkspaceModelUsage,
 } from '@/components/settings/billing-usage'
 import { api } from '@/lib/api'
@@ -63,8 +63,8 @@ describe('BillingUsageSummary', () => {
 		const { container } = render(<BillingUsageSummary usage={buildUsage()} />)
 
 		expect(screen.getByText('$12.50')).toBeInTheDocument()
-		expect(screen.getByText('model usage this month')).toBeInTheDocument()
-		expect(screen.getByText(/resets/)).toBeInTheDocument()
+		expect(screen.getByText('Model usage this month')).toBeInTheDocument()
+		expect(billingPeriodLabel(buildUsage())).toMatch(/resets/)
 		expect(container.querySelector('[style*="width"]')).toBeNull()
 	})
 
@@ -112,15 +112,11 @@ describe('BillingUsageSummary', () => {
 })
 
 describe('BillingUsageDetails', () => {
-	// Mockup 2841-2858 — per-agent rows and the workspace total behind a disclosure.
-	it('lists each agent with its sessions and cost once opened', async () => {
-		const user = userEvent.setup()
+	// Mockup 2841-2858 / v3 3l — per-agent rows and the workspace total, always shown.
+	it('lists each agent with its sessions and cost', () => {
 		render(<BillingUsageDetails usage={buildUsage()} />)
 
-		expect(screen.queryByText('Research Agent')).not.toBeInTheDocument()
-
-		await user.click(screen.getByRole('button', { name: /Usage details/ }))
-
+		expect(screen.getByText('By agent')).toBeInTheDocument()
 		expect(screen.getByText('Research Agent')).toBeInTheDocument()
 		expect(screen.getByText('$10.00')).toBeInTheDocument()
 		expect(screen.getByText('Ops Agent')).toBeInTheDocument()
@@ -129,21 +125,17 @@ describe('BillingUsageDetails', () => {
 		expect(screen.getByText('$12.50')).toBeInTheDocument()
 	})
 
-	it('explains the empty case instead of rendering an empty table', async () => {
-		const user = userEvent.setup()
+	it('explains the empty case instead of rendering an empty table', () => {
 		render(
 			<BillingUsageDetails
 				usage={buildUsage({ hasUsage: false, totalCostUsd: 0, totalSessions: 0, rows: [] })}
 			/>,
 		)
 
-		await user.click(screen.getByRole('button', { name: /Usage details/ }))
-
 		expect(screen.getByText(/No agent has finished a session this month/)).toBeInTheDocument()
 	})
 
-	it('distinguishes a load failure from an absence of usage', async () => {
-		const user = userEvent.setup()
+	it('distinguishes a load failure from an absence of usage', () => {
 		render(
 			<BillingUsageDetails
 				usage={buildUsage({
@@ -156,8 +148,6 @@ describe('BillingUsageDetails', () => {
 				})}
 			/>,
 		)
-
-		await user.click(screen.getByRole('button', { name: /Usage details/ }))
 
 		expect(
 			screen.getByText(/This is a loading failure, not an absence of usage/),

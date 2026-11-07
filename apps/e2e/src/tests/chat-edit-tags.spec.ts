@@ -45,9 +45,11 @@ test.describe('Chat — editing a message with tags inside the text', () => {
 				await expect(box.locator('[data-tag-id]')).toHaveCount(1)
 				await expect(box).toContainText(`@Tagcto ${stamp} please start on the MCP tool`)
 				await expect(page.getByRole('button', { name: 'Save' })).toBeDisabled()
-				// The key hint needs room: shown from 1024px, hidden on the phone and in the narrow iPad column.
+				// The key hint needs room: shown once the edit card is wide enough, hidden on the phone.
+				// Below 1024px the thread takes the full width (the list and the thread take turns), so
+				// the iPad portrait card has room too.
 				const hint = page.getByText('@ tags · Enter saves')
-				if (vp.width >= 1024) await expect(hint).toBeVisible()
+				if (vp.width >= 768) await expect(hint).toBeVisible()
 				else await expect(hint).toBeHidden()
 				await picture(page, testInfo, `edit-card-${vp.width}-${scheme}`)
 
@@ -75,7 +77,10 @@ test.describe('Chat — editing a message with tags inside the text', () => {
 				// Cancel brings the untouched bubble back.
 				await page.getByRole('button', { name: 'Cancel' }).click()
 				await expect(page.getByRole('textbox', { name: 'Edit message' })).toHaveCount(0)
-				await expect(page.getByText('please start on the MCP tool').first()).toBeVisible()
+				// The thread, not the chat list's preview row: the list is hidden below 1024px.
+				await expect(
+					page.getByTestId('thread-messages').getByText('please start on the MCP tool').first(),
+				).toBeVisible()
 			})
 		}
 	}

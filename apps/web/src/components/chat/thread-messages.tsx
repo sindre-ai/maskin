@@ -487,7 +487,9 @@ export function ThreadMessages({
 								{boundaries.start ? (
 									<VoiceCallBoundary variant="start" {...boundaries.start} />
 								) : null}
-								{boundaries.end ? <VoiceCallBoundary variant="end" /> : null}
+								{boundaries.end ? (
+									<VoiceCallBoundary variant="end" endedAt={message.createdAt ?? undefined} />
+								) : null}
 							</Fragment>
 						)
 					}
@@ -630,7 +632,9 @@ export function ThreadMessages({
 										turn={turn}
 									/>
 								))}
-								{voiceBoundaries.get(message.id)?.end ? <VoiceCallBoundary variant="end" /> : null}
+								{voiceBoundaries.get(message.id)?.end ? (
+									<VoiceCallBoundary variant="end" endedAt={message.createdAt ?? undefined} />
+								) : null}
 							</div>
 						</Fragment>
 					)

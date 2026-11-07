@@ -104,24 +104,25 @@ interface RecoveryEntry {
 	ours: { title: string; sentence: string }
 }
 
-const PAUSED_OUR_SIDE = 'Agents are paused on our side'
-
-const LOGIN_EXPIRED: RecoveryEntry = {
-	title: 'Your Claude login expired',
-	sentence: 'It could not be renewed. Reconnect it, then restart this session.',
-	button: 'Reconnect Claude',
-	section: 'claude-subscriptions',
-	ours: {
-		title: PAUSED_OUR_SIDE,
-		sentence:
-			'The Claude login Maskin uses expired. You do not need to do anything. Restart this session once it is back.',
-	},
+const PAUSED_OUR_SIDE = {
+	title: 'Agents are paused on our side',
+	sentence: 'Nothing for you to do. We are working on it.',
 }
 
-const LIMIT_OURS = {
-	title: 'Agents are paused until the limit resets',
-	sentence:
-		'Maskin hit its Claude usage limit. You do not need to do anything. Restart this session after the reset.',
+const LOGIN_EXPIRED: RecoveryEntry = {
+	title: 'Claude login expired',
+	sentence: 'Agents cannot start sessions until you sign in again.',
+	button: 'Reconnect Claude',
+	section: 'claude-subscriptions',
+	ours: PAUSED_OUR_SIDE,
+}
+
+const LIMIT_REACHED = {
+	title: 'Usage limit reached',
+	sentence: 'Sessions resume when the limit resets, or add a backup subscription now.',
+	button: 'Add a backup subscription',
+	section: 'claude-subscriptions' as const,
+	ours: PAUSED_OUR_SIDE,
 }
 
 // Replaces the stored message for these codes, so sessions that ended before the
@@ -130,55 +131,34 @@ const RECOVERY_BY_CODE: Record<string, RecoveryEntry> = {
 	oauth_expired: LOGIN_EXPIRED,
 	oauth_revoked: LOGIN_EXPIRED,
 	not_logged_in: {
-		title: 'No Claude login is connected',
-		sentence: 'Connect a Claude subscription so agents can run, then restart this session.',
+		title: 'Claude is not connected',
+		sentence: 'Connect an account so agents can work.',
 		button: 'Connect Claude',
 		section: 'claude-subscriptions',
-		ours: {
-			title: PAUSED_OUR_SIDE,
-			sentence:
-				'Maskin could not sign in to Claude for this agent. You do not need to do anything. Restart this session in a few minutes.',
-		},
+		ours: PAUSED_OUR_SIDE,
 	},
 	invalid_api_key: {
-		title: 'Your API key was rejected',
-		sentence:
-			'Anthropic did not accept the key saved for this workspace. Replace it, then restart this session.',
+		title: 'The API key was rejected',
+		sentence: 'Anthropic refused the key. Replace it to continue.',
 		button: 'Replace API key',
 		section: 'llm-api-keys',
-		ours: {
-			title: PAUSED_OUR_SIDE,
-			sentence:
-				'The key Maskin uses was rejected. You do not need to do anything. Restart this session once it is fixed.',
-		},
+		ours: PAUSED_OUR_SIDE,
 	},
-	session_limit: {
-		title: 'Your Claude subscription hit its session limit',
-		sentence: 'Restart after the reset, or add a backup subscription so agents keep running.',
-		button: 'Add a backup subscription',
-		section: 'claude-subscriptions',
-		ours: LIMIT_OURS,
-	},
-	weekly_limit: {
-		title: 'Your Claude subscription hit its weekly limit',
-		sentence: 'Restart after the reset, or add a backup subscription so agents keep running.',
-		button: 'Add a backup subscription',
-		section: 'claude-subscriptions',
-		ours: LIMIT_OURS,
-	},
+	session_limit: LIMIT_REACHED,
+	weekly_limit: LIMIT_REACHED,
 	credit_balance_low: {
-		title: 'Your API key is out of credit',
-		sentence:
-			'Top up the credit on your Anthropic account, or switch to another key. Then restart this session.',
+		title: 'Anthropic credit is low',
+		sentence: 'The key has too little credit to start new sessions.',
 		button: 'Change API key',
 		section: 'llm-api-keys',
 		topUp: true,
-		ours: {
-			title: PAUSED_OUR_SIDE,
-			sentence:
-				'Maskin is out of Claude credit for now. You do not need to do anything. Restart this session in a few minutes.',
-		},
+		ours: PAUSED_OUR_SIDE,
 	},
+}
+
+const PLAN_CAP_COPY = {
+	title: 'Plan cap reached',
+	sentence: 'This workspace used its included sessions for the month.',
 }
 
 // The session was deliberately stopped by the plan-budget watchdog, not a
@@ -204,7 +184,13 @@ export function FailureCard({
 	const isPreflightLogin =
 		failureReason.reason_code === 'not_logged_in' && failureReason.provider === 'maskin'
 	const recovery = isPreflightLogin ? undefined : RECOVERY_BY_CODE[failureReason.reason_code]
-	const copy = recovery ? (hasKeysPage ? recovery : recovery.ours) : undefined
+	const copy = recovery
+		? hasKeysPage
+			? recovery
+			: recovery.ours
+		: isBudget
+			? PLAN_CAP_COPY
+			: undefined
 
 	return (
 		<div className="rounded-md border border-warning/30 bg-warning/5 px-3 py-3 space-y-2">
@@ -641,9 +627,9 @@ export function SessionDetailPanel({
 							) : (
 								<div className="flex flex-col gap-3">
 									{producedObjects.length > 0 ? (
-										<section aria-label={`Objects · ${producedObjects.length}`}>
+										<section aria-label={`Items · ${producedObjects.length}`}>
 											<h5 className="mb-1.5 text-[10.5px] font-mono uppercase tracking-[0.09em] text-muted-foreground">
-												Objects · {producedObjects.length}
+												Items · {producedObjects.length}
 											</h5>
 											<div className="space-y-1">
 												{producedObjects.map((obj) => (

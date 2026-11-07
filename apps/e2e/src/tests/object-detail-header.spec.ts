@@ -1,18 +1,22 @@
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
-// T1 shell gate — verifies the object-detail hero renders above a static
-// <h1> at each ship-gate viewport (375 / 768 / 1024): the nav row's
-// back-to-Objects breadcrumb, identity row (type tag, status trigger, driver
-// picker) above the title, overflow menu, and no horizontal scroll. The
-// identity row still hosts [data-hero-status-trigger] so the sticky-nav
-// chip can smooth-scroll here and focus the picker.
+// T1 shell gate — verifies the object-detail header renders a static <h1>
+// with its identity row below it at each ship-gate viewport (375 / 768 /
+// 1024), as in the v3 mockup: the nav row's back-to-Items breadcrumb, the
+// title, the identity row (type tag, status trigger, driver picker), overflow
+// menu, and no horizontal scroll. The identity row still hosts
+// [data-hero-status-trigger] so the sticky-nav chip can smooth-scroll here
+// and focus the picker.
 
 const HEADER_TITLE = 'T1 static shell header'
 
-test.describe('Object detail — above-title hero (static shell)', () => {
+test.describe('Object detail — title with identity row below (static shell)', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
-		test(`renders hero above static <h1> at ${vp.label}`, async ({ page, account }) => {
+		test(`renders static <h1> with identity row below at ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 
 			const bet = await account.api.createObject(account.workspaceId, {
@@ -34,20 +38,20 @@ test.describe('Object detail — above-title hero (static shell)', () => {
 			const statusTrigger = page.locator('[data-hero-status-trigger]')
 			await expect(statusTrigger).toBeVisible()
 
-			// DOM order: the identity row (via the status trigger) must appear
-			// before the static <h1> title in the DOM.
+			// DOM order (v3): the static <h1> title comes first and the identity
+			// row (via the status trigger) follows it.
 			const order = await page.evaluate(() => {
 				const trigger = document.querySelector('[data-hero-status-trigger]')
 				const heading = document.querySelector('h1')
 				if (!trigger || !heading) return null
-				// DOCUMENT_POSITION_FOLLOWING = 4 — bit set when heading follows
-				// the trigger in source order.
-				const relation = trigger.compareDocumentPosition(heading)
+				// DOCUMENT_POSITION_FOLLOWING = 4 — bit set when the trigger
+				// follows the heading in source order.
+				const relation = heading.compareDocumentPosition(trigger)
 				return {
-					triggerBeforeTitle: (relation & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
+					titleBeforeTrigger: (relation & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
 				}
 			})
-			expect(order?.triggerBeforeTitle).toBe(true)
+			expect(order?.titleBeforeTrigger).toBe(true)
 
 			// Fold check: the <h1> must still be inside the viewport at this
 			// ship-gate viewport (bet exit criterion — the identity row must
@@ -77,7 +81,7 @@ test.describe('Object detail — above-title hero (static shell)', () => {
 			// The detail bar is the content area's own header — the sidebar also
 			// carries an "Objects" link, so the crumb is scoped to the bar.
 			const detailBar = page.locator('main header').first()
-			await expect(detailBar.getByRole('link', { name: 'Objects' })).toBeVisible()
+			await expect(detailBar.getByRole('link', { name: 'Items' })).toBeVisible()
 			await expect(detailBar.getByText(HEADER_TITLE)).toBeVisible()
 			// The bar replaces the search + New cluster on this route.
 			await expect(detailBar.getByRole('button', { name: /^New$/ })).toHaveCount(0)

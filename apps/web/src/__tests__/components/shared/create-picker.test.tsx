@@ -240,7 +240,7 @@ describe('CreatePicker', () => {
 		renderWithWorkspace(<CreatePicker open onOpenChange={() => {}} />)
 		await user.type(screen.getByLabelText(/title/i), '/')
 
-		expect(screen.getByRole('option', { name: /Loop/ })).toBeInTheDocument()
+		expect(screen.getByRole('option', { name: /Flow/ })).toBeInTheDocument()
 		expect(screen.getByRole('option', { name: /Agent/ })).toBeInTheDocument()
 		expect(screen.getByRole('option', { name: /Trigger/ })).toBeInTheDocument()
 	})
@@ -367,7 +367,7 @@ describe('CreatePicker', () => {
 			{ settings: { statuses: { bet: ['active'] } } },
 		)
 		await user.type(screen.getByLabelText(/title/i), 'Support triage')
-		await user.click(screen.getByRole('button', { name: /^create loop$/i }))
+		await user.click(screen.getByRole('button', { name: /^create flow$/i }))
 		await waitFor(() => expect(api.objects.create).toHaveBeenCalled())
 		expect(vi.mocked(api.objects.create).mock.calls[0]?.[1]).toMatchObject({
 			type: 'loop',
@@ -390,7 +390,7 @@ describe('CreatePicker', () => {
 
 	it('leaves the send button disabled until something is typed', async () => {
 		renderWithWorkspace(<CreatePicker open onOpenChange={() => {}} defaultType="loop" />)
-		expect(screen.getByRole('button', { name: /^create loop$/i })).toBeDisabled()
+		expect(screen.getByRole('button', { name: /^create flow$/i })).toBeDisabled()
 	})
 })
 

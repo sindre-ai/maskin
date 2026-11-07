@@ -1,4 +1,6 @@
+import { PropertyTypeGrid } from '@/components/objects/property-type-grid'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import {
 	Select,
 	SelectContent,
@@ -9,6 +11,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useUpdateObject } from '@/hooks/use-objects'
 import type { ObjectResponse } from '@/lib/api'
+import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import type { SafeJsonValue } from '@maskin/shared'
 import { useState } from 'react'
@@ -18,6 +21,42 @@ interface FieldDefinition {
 	type: 'text' | 'number' | 'date' | 'enum' | 'boolean'
 	required?: boolean
 	values?: string[]
+}
+
+/** Split the comma-separated options a Select property is created with. */
+export function parseOptions(raw: string): string[] {
+	const seen = new Set<string>()
+	const out: string[] = []
+	for (const part of raw.split(',')) {
+		const v = part.trim()
+		if (!v || seen.has(v.toLowerCase())) continue
+		seen.add(v.toLowerCase())
+		out.push(v)
+	}
+	return out
+}
+
+/** Turn the form's string value into what metadata stores, or null when it is
+ *  not valid for the type (the form then stays open instead of saving junk). */
+export function coerceValue(
+	field: FieldDefinition,
+	value: string,
+): string | number | boolean | null {
+	switch (field.type) {
+		case 'number': {
+			if (value.trim() === '') return null
+			const num = Number(value)
+			return Number.isFinite(num) ? num : null
+		}
+		case 'boolean':
+			return value === 'true'
+		case 'date':
+			return value ? value : null
+		case 'enum':
+			return field.values && !field.values.includes(value) ? null : value
+		default:
+			return value
+	}
 }
 
 export function MetadataFieldAdd({
@@ -32,6 +71,8 @@ export function MetadataFieldAdd({
 	const [mode, setMode] = useState<'defined' | 'custom'>('defined')
 	const [selectedField, setSelectedField] = useState<FieldDefinition | null>(null)
 	const [customKey, setCustomKey] = useState('')
+	const [customType, setCustomType] = useState<FieldDefinition['type']>('text')
+	const [optionsRaw, setOptionsRaw] = useState('')
 	const [value, setValue] = useState('')
 	const updateObject = useUpdateObject(workspaceId)
 
@@ -45,37 +86,30 @@ export function MetadataFieldAdd({
 	const existingKeys = new Set(Object.keys(object.metadata ?? {}))
 	const availableFields = fieldDefs.filter((f) => !existingKeys.has(f.name))
 
+	// A custom name collides with anything already on the object or already
+	// defined for this type, case-insensitively: two "Priority" rows would read
+	// as one property with two values.
+	const takenNames = new Set([
+		...Object.keys(object.metadata ?? {}).map((k) => k.toLowerCase()),
+		...fieldDefs.map((f) => f.name.toLowerCase()),
+	])
+	const trimmedKey = customKey.trim()
+	const duplicate =
+		mode === 'custom' && trimmedKey !== '' && takenNames.has(trimmedKey.toLowerCase())
+	const customOptions = parseOptions(optionsRaw)
+	const customField: FieldDefinition = {
+		name: trimmedKey,
+		type: customType,
+		values: customType === 'enum' ? customOptions : undefined,
+	}
+
 	const handleAdd = () => {
-		const key = mode === 'defined' && selectedField ? selectedField.name : customKey.trim()
-		if (!key) return
-
-		let parsedValue: unknown = value
-
-		// Validate/coerce based on field type
-		if (mode === 'defined' && selectedField) {
-			switch (selectedField.type) {
-				case 'number': {
-					const num = Number(value)
-					if (Number.isNaN(num)) return
-					parsedValue = num
-					break
-				}
-				case 'boolean':
-					parsedValue = value === 'true'
-					break
-				case 'date':
-					if (!value) return
-					parsedValue = value // stored as ISO string
-					break
-				case 'enum':
-					if (selectedField.values && !selectedField.values.includes(value)) return
-					parsedValue = value
-					break
-				default:
-					parsedValue = value
-					break
-			}
-		}
+		const field = mode === 'defined' ? selectedField : customField
+		const key = field?.name ?? ''
+		if (!field || !key || duplicate) return
+		if (field.type === 'enum' && (field.values?.length ?? 0) === 0) return
+		const parsedValue = coerceValue(field, value)
+		if (parsedValue === null) return
 
 		const metadata = { ...(object.metadata ?? {}), [key]: parsedValue as SafeJsonValue }
 		updateObject.mutate({ id: object.id, data: { metadata } })
@@ -85,6 +119,8 @@ export function MetadataFieldAdd({
 	const resetForm = () => {
 		setSelectedField(null)
 		setCustomKey('')
+		setCustomType('text')
+		setOptionsRaw('')
 		setValue('')
 		setOpen(false)
 		setMode('defined')
@@ -92,14 +128,14 @@ export function MetadataFieldAdd({
 
 	if (!open) {
 		return (
-			<Button variant="ghost" size="sm" onClick={() => setOpen(true)}>
+			<Button variant="ghost" size="sm" className="max-md:min-h-11" onClick={() => setOpen(true)}>
 				+ add field
 			</Button>
 		)
 	}
 
 	return (
-		<div className="inline-flex flex-col gap-1.5 rounded border border-border bg-card p-2 text-[11px]">
+		<div className="flex w-full flex-col gap-2 rounded-xl border border-border bg-card p-3 text-xs sm:max-w-sm">
 			{/* Mode selector: show defined fields or custom */}
 			{availableFields.length > 0 && (
 				<Tabs
@@ -160,29 +196,90 @@ export function MetadataFieldAdd({
 					)}
 				</>
 			) : (
-				<div className="flex items-center gap-1">
-					<input
-						type="text"
-						value={customKey}
-						onChange={(e) => setCustomKey(e.target.value)}
-						placeholder="key"
-						className="w-16 rounded border border-border bg-background px-1.5 py-0.5 text-[11px] text-foreground focus:border-ring outline-none"
-					/>
-					<input
-						type="text"
-						value={value}
-						onChange={(e) => setValue(e.target.value)}
-						placeholder="value"
-						className="w-20 rounded border border-border bg-background px-1.5 py-0.5 text-[11px] text-foreground focus:border-ring outline-none"
-						onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
-					/>
-					<Button variant="ghost" size="sm" onClick={handleAdd}>
-						Add
-					</Button>
+				<div className="flex flex-col gap-2.5">
+					<div className="flex flex-col gap-1">
+						<label htmlFor="property-name" className="eyebrow">
+							NAME
+						</label>
+						<Input
+							id="property-name"
+							type="text"
+							value={customKey}
+							onChange={(e) => setCustomKey(e.target.value)}
+							placeholder="key"
+							aria-invalid={duplicate}
+							aria-describedby={duplicate ? 'property-name-error' : undefined}
+							className="max-md:h-11"
+						/>
+						{duplicate && (
+							<p id="property-name-error" role="alert" className="text-xs text-error">
+								A property called {trimmedKey} already exists here.
+							</p>
+						)}
+					</div>
+					<div className="flex min-w-0 flex-col gap-1">
+						<span className="eyebrow">TYPE</span>
+						<PropertyTypeGrid
+							value={customType}
+							aria-label="Property type"
+							onChange={(t) => {
+								setCustomType(t)
+								setValue(t === 'boolean' ? 'true' : '')
+							}}
+						/>
+					</div>
+					{customType === 'enum' && (
+						<div className="flex flex-col gap-1">
+							<label htmlFor="property-options" className="eyebrow">
+								OPTIONS
+							</label>
+							<Input
+								id="property-options"
+								type="text"
+								value={optionsRaw}
+								onChange={(e) => {
+									setOptionsRaw(e.target.value)
+									setValue('')
+								}}
+								placeholder="Low, Medium, High"
+								className="max-md:h-11"
+							/>
+						</div>
+					)}
+					<div className="flex flex-col gap-1">
+						<span className="eyebrow">VALUE</span>
+						<div className="flex flex-wrap items-center gap-2">
+							{customType === 'text' ? (
+								<Input
+									type="text"
+									value={value}
+									onChange={(e) => setValue(e.target.value)}
+									placeholder="value"
+									className="min-w-0 flex-1 max-md:h-11"
+									onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+								/>
+							) : (
+								<FieldInput
+									field={customField}
+									value={value}
+									onChange={setValue}
+									onSubmit={handleAdd}
+								/>
+							)}
+							<Button
+								size="sm"
+								className="max-md:min-h-11"
+								onClick={handleAdd}
+								disabled={!trimmedKey || duplicate}
+							>
+								Add
+							</Button>
+						</div>
+					</div>
 				</div>
 			)}
 
-			<Button variant="ghost" size="sm" className="self-start" onClick={resetForm}>
+			<Button variant="ghost" size="sm" className="self-start max-md:min-h-11" onClick={resetForm}>
 				Cancel
 			</Button>
 		</div>
@@ -200,9 +297,6 @@ function FieldInput({
 	onChange: (v: string) => void
 	onSubmit: () => void
 }) {
-	const baseClass =
-		'rounded border border-border bg-background px-1.5 py-0.5 text-[11px] text-foreground focus:border-ring outline-none'
-
 	switch (field.type) {
 		case 'enum':
 			return (
@@ -233,30 +327,30 @@ function FieldInput({
 			)
 		case 'number':
 			return (
-				<input
+				<Input
 					type="number"
 					value={value}
 					onChange={(e) => onChange(e.target.value)}
-					className={`${baseClass} w-20`}
+					className="w-28 max-md:h-11"
 					onKeyDown={(e) => e.key === 'Enter' && onSubmit()}
 				/>
 			)
 		case 'date':
 			return (
-				<input
+				<Input
 					type="date"
 					value={value}
 					onChange={(e) => onChange(e.target.value)}
-					className={`${baseClass} w-28`}
+					className="w-40 max-md:h-11"
 				/>
 			)
 		default:
 			return (
-				<input
+				<Input
 					type="text"
 					value={value}
 					onChange={(e) => onChange(e.target.value)}
-					className={`${baseClass} w-24`}
+					className="w-40 max-md:h-11"
 					onKeyDown={(e) => e.key === 'Enter' && onSubmit()}
 				/>
 			)
