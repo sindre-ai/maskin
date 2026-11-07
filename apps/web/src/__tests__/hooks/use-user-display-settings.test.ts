@@ -58,6 +58,22 @@ describe('useUserDisplaySettings', () => {
 		expect(result.current.data).toBeNull()
 	})
 
+	it('returns null when the server answers 200 with its empty default', async () => {
+		vi.mocked(api.userDisplaySettings.get).mockResolvedValue({
+			object_type: 'task',
+			name: 'default',
+			settings: {},
+			updated_at: new Date(0).toISOString(),
+		})
+
+		const { result } = renderHook(() => useUserDisplaySettings('ws-1', 'task'), {
+			wrapper: TestWrapper,
+		})
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(result.current.data).toBeNull()
+	})
+
 	it('fetches the row keyed by the All-tab sentinel', async () => {
 		const row = {
 			object_type: '__all__',
