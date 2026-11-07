@@ -118,7 +118,6 @@ private struct LoopsContainer: View {
 		// Search is a button in the top bar that opens into a field and looks only through the
 		// flows on this page; it folds back into the button when dismissed.
 		.flowsSearch(text: $search, isPresented: $searchPresented)
-		.searchMinimized()
 		// Closing the field can't leave a stale query behind.
 		.onChange(of: searchPresented) { if !searchPresented, !search.isEmpty { search = "" } }
 		// Flows carry no tags, so there is no tag filter bar; Display holds the sort, filter and Summary.
@@ -128,7 +127,7 @@ private struct LoopsContainer: View {
 				new: { buildLoopInChat() }, newLabel: "New flow",
 				displaySymbol: ShellActions.slidersSymbol, displayActive: loops.isDisplayCustomised,
 				displayToggle: { showDisplay = true },
-				marketplace: { showMarketplace = true })
+				search: { searchPresented = true }, marketplace: { showMarketplace = true })
 		)
 		.sheet(isPresented: $showDisplay) { FlowsDisplaySheet(store: loops) }
 	}

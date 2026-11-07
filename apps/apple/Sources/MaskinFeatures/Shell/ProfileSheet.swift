@@ -53,6 +53,11 @@ struct ProfileSheet: View {
 			ScrollView {
 				VStack(alignment: .leading, spacing: 0) {
 					header
+					// Global search: chats, flows, agents, items and automations in one place.
+					sectionHeader(nil, spacing: MaskinSpace.s4)
+					MenuRow(title: "Search", value: "Everything in the workspace") {
+						runtime.presentation = .search
+					}
 					ForEach(ProfileMenuGroup.allCases) { group in
 						let items = ProfileMenu.items(in: group, hasWorkspace: hasWorkspace)
 						if !items.isEmpty {
@@ -149,7 +154,7 @@ struct ProfileSheet: View {
 		return "\(name) \u{00B7} \(role.label)"
 	}
 
-	private func sectionHeader(_ title: String?) -> some View {
+	private func sectionHeader(_ title: String?, spacing: CGFloat = MaskinSpace.s12) -> some View {
 		VStack(alignment: .leading, spacing: 0) {
 			if let title {
 				Text(title)
@@ -159,7 +164,7 @@ struct ProfileSheet: View {
 					.padding(.bottom, MaskinSpace.s4)
 					.accessibilityAddTraits(.isHeader)
 			} else {
-				Spacer().frame(height: MaskinSpace.s12)
+				Spacer().frame(height: spacing)
 			}
 			Rectangle().fill(MaskinSurface.separator).frame(height: 1)
 		}

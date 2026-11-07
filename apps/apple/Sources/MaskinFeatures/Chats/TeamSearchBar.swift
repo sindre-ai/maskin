@@ -4,15 +4,13 @@ import MaskinUI
 import SwiftUI
 
 extension View {
-	/// Team search (spec 7 §6): a field that stays tucked away until the person pulls the list
-	/// down, so the top bar carries no search icon. It filters every section live by name and
-	/// preview. A leftover query is cleared when the field closes.
-	func teamSearch(text: Binding<String>) -> some View {
-		#if os(iOS)
-			searchable(text: text, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search chats")
-		#else
-			searchable(text: text, prompt: "Search chats")
-		#endif
+	/// Chats search: the magnifier in the top bar opens a field that filters this list live by name
+	/// and preview, and nothing else. A leftover query is cleared when the field closes.
+	func teamSearch(text: Binding<String>, isPresented: Binding<Bool>) -> some View {
+		searchable(text: text, isPresented: isPresented, prompt: "Search chats")
+			.onChange(of: isPresented.wrappedValue) { _, open in
+				if !open, !text.wrappedValue.isEmpty { text.wrappedValue = "" }
+			}
 	}
 }
 
