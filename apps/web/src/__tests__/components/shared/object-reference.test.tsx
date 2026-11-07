@@ -80,7 +80,7 @@ describe('ObjectReference', () => {
 		})
 
 		await waitFor(() => {
-			expect(screen.getByText('deleted object')).toBeInTheDocument()
+			expect(screen.getByText('deleted item')).toBeInTheDocument()
 		})
 	})
 

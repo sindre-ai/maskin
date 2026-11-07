@@ -48,6 +48,13 @@ public enum MiniAppHTML {
 		return inject(cspMeta, into: scrubbed)
 	}
 
+	/// `prepare` on a background thread. A page can be megabytes (a deck with its pictures inline) and
+	/// the pattern passes over it take long enough to stall the screen, so a view awaits this rather
+	/// than calling `prepare` itself.
+	public static func prepareInBackground(_ html: String) async -> String {
+		await Task.detached(priority: .userInitiated) { prepare(html) }.value
+	}
+
 	/// After `<head>` when there is one, else after the doctype, else first, so the policy always
 	/// precedes any script in the document.
 	static func inject(_ fragment: String, into html: String) -> String {

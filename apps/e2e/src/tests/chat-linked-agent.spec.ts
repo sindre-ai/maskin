@@ -1,7 +1,8 @@
 import type { Page, TestInfo } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 import { TestAPI } from '../helpers/api.helper'
-import { VIEWPORTS } from '../helpers/viewports'
+import { headerMenuItem } from '../helpers/chat-header'
+import { SHIP_GATE_VIEWPORTS, VIEWPORTS } from '../helpers/viewports'
 
 // The picture goes into the HTML report as an attachment (apps/e2e/playwright-report, uploaded by
 // CI as the playwright-report-N artifact), because test-results/ is not uploaded.
@@ -68,7 +69,7 @@ test.describe('Chat — a linked agent draws like an object and a loop', () => {
 			// The loop card sits next to it, drawn the same way.
 			const loopCard = thread.locator('[data-linked-card]', { hasText: 'Customer feedback' })
 			await expect(loopCard).toBeVisible()
-			await expect(loopCard).toContainText('Loop')
+			await expect(loopCard).toContainText('Flow')
 
 			// The agent linked inside the sentence is a chip, with the state in its name.
 			const chip = thread.getByRole('link', { name: `Agent, Working now: ${agentName}` }).first()
@@ -106,6 +107,57 @@ test.describe('Chat — a linked agent draws like an object and a loop', () => {
 				await page.evaluate(() => document.documentElement.classList.add('dark'))
 				await picture(page, testInfo, `linked-agent-${vp.width}-dark`)
 			}
+		})
+	}
+})
+
+test.describe('Chat — the title and agent names open the agent page', () => {
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`the title of a one-agent chat and the agent's name link to its page @ ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			const ws = account.workspaceId
+			const agentName = `Title Link Agent ${Date.now()}`
+			const agent = await account.api.createAgentActor(agentName)
+			await account.api.addWorkspaceMember(ws, agent.id)
+			const conversation = await account.api.createConversation(ws, {
+				title: 'E2E title link',
+				participant_actor_ids: [agent.id],
+				initial_message: 'Opening the thread',
+			})
+			await new TestAPI(agent.api_key).postConversationMessage(conversation.id, ws, {
+				content: 'Here is my answer.',
+			})
+			await page.goto(`/${ws}/chats/${conversation.id}`)
+
+			const thread = page.getByTestId('thread-messages')
+			// The author's name on the agent's message is a link to the agent.
+			const author = thread.getByRole('link', { name: agentName }).first()
+			await expect(author).toBeVisible({ timeout: 10_000 })
+			await expect(author).toHaveAttribute('href', `/${ws}/agents/${agent.id}`)
+
+			// The title is a link too; renaming is in the header menu.
+			const title = page.getByRole('link', { name: `Open ${agentName} — E2E title link` })
+			await expect(title).toBeVisible()
+			await expect(title).toHaveAttribute('href', `/${ws}/agents/${agent.id}`)
+			const rename = await headerMenuItem(page, 'Rename conversation')
+			await expect(rename).toBeVisible()
+			await rename.click()
+			const input = page.getByRole('textbox', { name: 'Conversation title' })
+			await input.fill('Renamed by pencil')
+			await input.press('Enter')
+			const renamed = page.getByRole('link', { name: `Open ${agentName} — Renamed by pencil` })
+			await expect(renamed).toBeVisible()
+
+			const overflow = await page.evaluate(
+				() => document.documentElement.scrollWidth - window.innerWidth,
+			)
+			expect(overflow).toBeLessThanOrEqual(1)
+
+			await renamed.click()
+			await expect(page).toHaveURL(new RegExp(`/agents/${agent.id}`))
 		})
 	}
 })

@@ -31,6 +31,8 @@ export const LoopUtteranceInput = forwardRef<
 		children?: React.ReactNode
 		/** Offer the suggestion chips (no change history yet). */
 		showSuggestions?: boolean
+		/** Idle prompt in the composer; defaults to the change-by-talking line. */
+		placeholder?: string
 		/** True while a voice capture is running — renders the listening indicator. */
 		listening?: boolean
 		/** Return true to consume the utterance in place (the PROPOSED EDIT card).
@@ -38,7 +40,10 @@ export const LoopUtteranceInput = forwardRef<
 		 *  only path for loops that carry no plan snapshot. */
 		onUtterance?: (utterance: string) => boolean
 	}
->(function LoopUtteranceInput({ loop, children, showSuggestions, listening, onUtterance }, ref) {
+>(function LoopUtteranceInput(
+	{ loop, children, showSuggestions, placeholder, listening, onUtterance },
+	ref,
+) {
 	const { workspaceId } = useWorkspace()
 	const canWrite = useCanWrite()
 	const navigate = useNavigate()
@@ -99,13 +104,17 @@ export const LoopUtteranceInput = forwardRef<
 						disabled={!canWrite}
 						pending={false}
 						surface="pulse-bar"
-						placeholder={canWrite ? 'Listening — speak in plain words' : VIEWER_READ_ONLY_MESSAGE}
+						placeholder={
+							canWrite
+								? (placeholder ?? 'Say what should change about this flow')
+								: VIEWER_READ_ONLY_MESSAGE
+						}
 						selection={EMPTY_CHAT_SELECTION}
 						onRemoveAgent={() => {}}
 						onRemoveObject={() => {}}
 						onRemoveNotification={() => {}}
 						onRemoveFile={() => {}}
-						textareaLabel="Say what should change about this loop"
+						textareaLabel="Say what should change about this flow"
 					/>
 				</ViewerTooltip>
 			</div>

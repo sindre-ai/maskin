@@ -19,10 +19,10 @@ test.describe('Keychain settings', () => {
 				page.getByRole('heading', { name: 'One place for every credential your agents need' }),
 			).toBeVisible({ timeout: 15_000 })
 
-			// Keychain sits right under Integrations in the settings menu.
+			// Keychain closes the Access group of the settings menu, after Keys and MCP.
 			const nav = page.getByRole('navigation', { name: 'Settings sections' })
 			const labels = await nav.getByRole('link').allInnerTexts()
-			expect(labels.indexOf('Keychain')).toBe(labels.indexOf('Integrations') + 1)
+			expect(labels.indexOf('Keychain')).toBe(labels.indexOf('Keys and MCP') + 1)
 
 			await page.getByRole('link', { name: 'Add your first credential' }).click()
 			await expect(page.getByRole('heading', { name: 'Add a credential' })).toBeVisible()

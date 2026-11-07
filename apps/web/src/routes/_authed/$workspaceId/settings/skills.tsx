@@ -2,6 +2,7 @@ import {
 	DisplayPanel,
 	type DisplayPanelColumn,
 } from '@/components/objects/data-table/display-panel'
+import { SettingsPageTitle } from '@/components/settings/settings-page-title'
 import { EmptyState } from '@/components/shared/empty-state'
 import { FormError } from '@/components/shared/form-error'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
@@ -46,6 +47,7 @@ import {
 } from '@/hooks/use-workspace-skills'
 import { ApiError, type WorkspaceSkillListItem, api } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { PILL_BUTTON } from '@/lib/pill-button'
 import { useWorkspace } from '@/lib/workspace-context'
 import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
 import { parseSkillMd, skillNameSchema } from '@maskin/shared'
@@ -288,7 +290,12 @@ function SkillsPage() {
 				disabled={isUploading}
 			/>
 			<ViewerTooltip>
-				<Button size="sm" disabled={!canWrite} onClick={() => setDialog({ kind: 'create' })}>
+				<Button
+					size="sm"
+					className={PILL_BUTTON}
+					disabled={!canWrite}
+					onClick={() => setDialog({ kind: 'create' })}
+				>
 					<Plus size={14} className="mr-1" />
 					Create skill
 				</Button>
@@ -297,11 +304,12 @@ function SkillsPage() {
 	)
 
 	return (
-		<div>
-			<div className="flex flex-col gap-3 mb-4 sm:flex-row sm:items-center sm:justify-between">
-				<p className="text-sm text-muted-foreground min-w-0">
-					Shared skills available to agents in this workspace.
-				</p>
+		<div className="max-w-[760px]">
+			<SettingsPageTitle title="Skills" />
+			<div className="mb-2 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+				<h2 className="min-w-0 px-2 text-[13px] font-semibold text-muted-foreground">
+					Workspace skills
+				</h2>
 				{headerActions}
 			</div>
 
@@ -312,7 +320,7 @@ function SkillsPage() {
 					{...dropHandlers}
 					className={cn(
 						'rounded-lg border-2 border-dashed transition-colors',
-						isDragging ? 'border-accent bg-accent/5' : 'border-border',
+						isDragging ? 'border-brand bg-brand-subtle' : 'border-border',
 						isUploading && 'pointer-events-none opacity-50',
 					)}
 				>
@@ -347,7 +355,7 @@ function SkillsPage() {
 					/>
 				</div>
 			) : (
-				<div className="space-y-2">
+				<div className="divide-y divide-border-subtle border-y border-border-subtle">
 					{list.map((skill) => (
 						<SkillRow
 							key={skill.id}
@@ -428,7 +436,12 @@ function ImportSkillButton({
 		<DropdownMenu>
 			<ViewerTooltip>
 				<DropdownMenuTrigger asChild>
-					<Button variant="outline" size="sm" disabled={disabled || !canWrite}>
+					<Button
+						variant="outline"
+						size="sm"
+						className={PILL_BUTTON}
+						disabled={disabled || !canWrite}
+					>
 						<FileUp size={14} className="mr-1" />
 						Import
 						<ChevronDown size={14} className="ml-1" />
@@ -532,11 +545,11 @@ function SkillRow({
 	}
 
 	return (
-		<div className="rounded-lg border border-border bg-card transition-colors hover:border-border-strong">
+		<div className="transition-colors">
 			{/* biome-ignore lint/a11y/useKeyWithClickEvents: row click supplements the inner kebab button, which keyboard users tab to and activate to reach Edit/Delete */}
 			<div
 				onClick={handleRowClick}
-				className="flex items-center gap-3 p-4 cursor-pointer hover:bg-accent rounded-lg"
+				className="flex cursor-pointer items-center gap-3 px-2 py-3 transition-colors hover:bg-secondary/60"
 			>
 				{skill.isFolder && (
 					<ChevronRight
@@ -559,7 +572,7 @@ function SkillRow({
 								<AlertTriangle size={14} />
 							</span>
 						)}
-						<p className="text-sm font-medium text-foreground truncate">{skill.name}</p>
+						<p className="text-[15px] font-medium text-foreground truncate">{skill.name}</p>
 						{skill.isFolder && (
 							<span
 								className="shrink-0 inline-flex items-center gap-1 rounded-md bg-card px-1.5 py-0.5 text-xs text-muted-foreground"
@@ -571,7 +584,7 @@ function SkillRow({
 						)}
 					</div>
 					{skill.description ? (
-						<p className="text-xs text-muted-foreground truncate">{skill.description}</p>
+						<p className="text-[13px] text-muted-foreground truncate">{skill.description}</p>
 					) : !skill.isValid ? (
 						<p className="text-xs text-warning truncate">
 							{skill.isFolder

@@ -268,7 +268,13 @@ struct ChatSnapshotTests {
 		]
 		for width in Self.widths {
 			let view = VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-				PinnedTiles(conversations: pinned, currentActorID: "me", selection: .constant(nil), onUnpin: { _ in })
+				MonoLabel("Pinned")
+				VStack(spacing: 0) {
+					ForEach(pinned) {
+						ConversationRow(conversation: $0, currentActorID: "me", now: base)
+							.padding(.horizontal, MaskinSpace.s9).padding(.vertical, MaskinSpace.s4)
+					}
+				}
 				ForEach(rows, id: \.0) { label, items in
 					MonoLabel(label)
 					VStack(spacing: 0) {

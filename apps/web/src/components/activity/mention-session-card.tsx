@@ -86,7 +86,7 @@ function ActiveCard({
 		: `${actor?.name ?? 'Agent'} is working`
 
 	return (
-		<div className="rounded-md border border-border bg-secondary/30 animate-in fade-in slide-in-from-bottom-1 duration-200">
+		<div className="rounded-lg border border-border bg-card animate-in fade-in slide-in-from-bottom-1 duration-200">
 			{/* Header — pulsing indicator renders from mount without waiting for logs */}
 			<div className="flex items-center gap-2 px-3 py-2">
 				<span className={cn('shrink-0', idle ? 'text-muted-foreground' : 'text-primary')}>
@@ -253,7 +253,7 @@ function TerminalCard({
 		<button
 			type="button"
 			onClick={onOpen}
-			className="flex items-center gap-2 w-full text-left rounded-md border border-border bg-secondary/30 px-3 py-2 hover:bg-secondary/50 transition-colors cursor-pointer"
+			className="flex items-center gap-2 w-full text-left rounded-lg border border-border bg-card px-3 py-2 hover:bg-muted transition-colors cursor-pointer"
 		>
 			<status.Icon size={14} className={cn('shrink-0', status.iconClass)} />
 			{actor && <ActorAvatar name={actor.name} type={actor.type} size="sm" />}

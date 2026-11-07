@@ -32,5 +32,5 @@ export function loopKind(itemTypes: MarketplaceItemType[]): MarketplaceKind {
 }
 
 export function kindLabel(kind: MarketplaceKind): string {
-	return kind === 'loop' ? 'Loop' : ITEM_TYPE_LABEL[kind]
+	return kind === 'loop' ? 'Flow' : ITEM_TYPE_LABEL[kind]
 }

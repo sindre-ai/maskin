@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
+import { openAgentTab } from '../helpers/agent-tab.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 /**
@@ -115,6 +116,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 
 		// Agent page: the same level, with tools attached.
 		await page.goto(`/${account.workspaceId}/agents/${reviewer.id}`)
+		await openAgentTab(page, 'setup')
 		const access = page.getByRole('combobox', { name: 'Access to Linear' })
 		await expect(access).toContainText('Read & write', { timeout: 15_000 })
 
@@ -131,6 +133,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 
 		// Back to the default from the agent page.
 		await page.goto(`/${account.workspaceId}/agents/${reviewer.id}`)
+		await openAgentTab(page, 'setup')
 		await page.getByRole('combobox', { name: 'Access to Linear' }).click()
 		await page.getByRole('option', { name: 'Default (Read)' }).click()
 		await expect.poll(() => state.grants.length).toBe(0)

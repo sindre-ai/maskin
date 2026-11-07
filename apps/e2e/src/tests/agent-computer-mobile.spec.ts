@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
+import { openAgentTab } from '../helpers/agent-tab.helper'
 import { type FakeVnc, attachFakeVnc } from '../helpers/fake-vnc'
 
 /**
@@ -65,6 +66,8 @@ test.describe("An agent's computer on a phone", () => {
 		vnc = await attachFakeVnc(page)
 
 		await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
+		// The computer is its own tab on the agent page.
+		await openAgentTab(page, 'computer')
 		await page.getByRole('button', { name: 'Open computer in a popup' }).tap()
 
 		const dialog = page.getByRole('dialog')

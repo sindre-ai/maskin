@@ -41,7 +41,7 @@ export function AgentComputerSection({ agent }: { agent: ActorResponse }) {
 			{live ? (
 				<ExpandableDesktop workspaceId={workspaceId} agentId={agent.id} agentName={agent.name} />
 			) : (
-				<div className="flex flex-col items-center gap-3 rounded-lg border bg-card px-4 py-8 text-center">
+				<div className="flex flex-col items-center gap-3 rounded-xl border border-border bg-card px-4 py-8 text-center">
 					<Monitor size={20} className="text-muted-foreground" aria-hidden />
 					<p className="max-w-sm text-sm text-muted-foreground">
 						{status === 'suspended'

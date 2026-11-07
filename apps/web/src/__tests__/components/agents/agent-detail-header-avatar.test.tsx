@@ -12,6 +12,8 @@ vi.mock('@/hooks/use-actors', () => ({
 	useUploadActorAvatar: () => ({ mutate: uploadMutate, isPending: false }),
 }))
 
+vi.mock('@/hooks/use-loops', () => ({ useLoops: () => ({ data: [] }) }))
+
 let membersData: { actorId: string; role?: string }[] | undefined
 
 vi.mock('@/hooks/use-workspaces', () => ({

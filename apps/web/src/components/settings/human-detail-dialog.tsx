@@ -1,3 +1,4 @@
+import { StatusPill } from '@/components/integrations/drive/status-pill'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { FormError } from '@/components/shared/form-error'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
@@ -30,6 +31,8 @@ import {
 } from '@/hooks/use-workspaces'
 import { ApiError } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
+import { cn } from '@/lib/cn'
+import { PILL_BUTTON } from '@/lib/pill-button'
 import { useWorkspace } from '@/lib/workspace-context'
 import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
 import { useEffect, useState } from 'react'
@@ -134,12 +137,18 @@ export function HumanDetailDialog({
 					<DialogFooter className="gap-2">
 						<Button
 							variant="ghost"
+							className={PILL_BUTTON}
 							onClick={() => setConfirmingRemove(false)}
 							disabled={removeMember.isPending}
 						>
 							Cancel
 						</Button>
-						<Button variant="destructive" onClick={handleRemove} disabled={removeMember.isPending}>
+						<Button
+							variant="destructive"
+							className={PILL_BUTTON}
+							onClick={handleRemove}
+							disabled={removeMember.isPending}
+						>
 							{removeMember.isPending ? (
 								<>
 									<Spinner className="h-3 w-3" />
@@ -160,7 +169,7 @@ export function HumanDetailDialog({
 		<Button
 			type="button"
 			variant="ghost"
-			className="text-error hover:text-error"
+			className={cn(PILL_BUTTON, 'text-error hover:text-error')}
 			disabled={isBillingOwner || (!canWrite && !isSelf)}
 			onClick={() => setConfirmingRemove(true)}
 		>
@@ -172,9 +181,14 @@ export function HumanDetailDialog({
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent>
 				<DialogHeader>
-					<DialogTitle className="flex items-center gap-2">
+					<DialogTitle className="flex items-center gap-3 text-[17px] font-semibold">
 						<ActorAvatar name={actor?.name ?? 'Member'} type="human" size="md" />
-						{actor?.name ?? 'Member'}
+						<span className="min-w-0 truncate">{actor?.name ?? 'Member'}</span>
+						{member && (
+							<StatusPill soft tone="ok" className="ml-auto capitalize">
+								{member.role}
+							</StatusPill>
+						)}
 					</DialogTitle>
 					<DialogDescription>
 						{actor?.email ??
@@ -256,12 +270,18 @@ export function HumanDetailDialog({
 				<div className="flex justify-between gap-2">
 					{isSelf ? leaveButton : <ViewerTooltip>{leaveButton}</ViewerTooltip>}
 					<div className="flex gap-2">
-						<Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+						<Button
+							type="button"
+							variant="ghost"
+							className={PILL_BUTTON}
+							onClick={() => onOpenChange(false)}
+						>
 							Cancel
 						</Button>
 						<ViewerTooltip>
 							<Button
 								type="button"
+								className={PILL_BUTTON}
 								onClick={handleSave}
 								disabled={updateActor.isPending || !canWrite}
 							>

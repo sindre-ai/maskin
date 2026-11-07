@@ -26,7 +26,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
 	}
 })
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn() } }))
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), loading: vi.fn(), error: vi.fn() } }))
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')

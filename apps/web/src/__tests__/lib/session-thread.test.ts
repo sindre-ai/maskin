@@ -69,8 +69,8 @@ describe('buildThreadChat()', () => {
 
 describe('backgroundTitle', () => {
 	it('uses the trigger name when there is one', () => {
-		expect(backgroundTitle('Loop hygiene', '**Loop hygiene — first step**\nlong prompt')).toBe(
-			'Loop hygiene',
+		expect(backgroundTitle('Flow hygiene', '**Flow hygiene — first step**\nlong prompt')).toBe(
+			'Flow hygiene',
 		)
 	})
 

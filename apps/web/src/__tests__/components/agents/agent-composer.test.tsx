@@ -55,7 +55,7 @@ vi.mock('@/components/chat/chat', () => ({
 				{error ? <p role="alert">{error}</p> : null}
 				<button
 					type="button"
-					aria-label="Seed object"
+					aria-label="Seed item"
 					onClick={() =>
 						onDispatchSelection?.({
 							type: 'add_object',
@@ -117,7 +117,7 @@ describe('AgentComposer', () => {
 	// conversation-responder reads context_objects off the initial message.
 	it('attaches selection objects as initial-message metadata', async () => {
 		render(<AgentComposer agent={agent} />)
-		await userEvent.click(screen.getByRole('button', { name: 'Seed object' }))
+		await userEvent.click(screen.getByRole('button', { name: 'Seed item' }))
 		await userEvent.type(screen.getByLabelText('Message Cass'), 'Look at this')
 		await userEvent.click(screen.getByRole('button', { name: 'Send message' }))
 

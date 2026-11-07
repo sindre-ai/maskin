@@ -64,34 +64,31 @@ beforeEach(() => {
 })
 
 describe('MarketplaceLoopCard', () => {
-	it('shows the Install CTA and the kind label when not installed', () => {
+	it('shows the Add action and no state pill when not installed', () => {
 		render(<MarketplaceLoopCard workspaceId={workspaceId} loop={loop()} />, {
 			wrapper: TestWrapper,
 		})
-		expect(screen.getByRole('button', { name: /^install$/i })).toBeInTheDocument()
-		// Multi-type loops read as a bundle; the label is colour-coded per kind.
-		expect(screen.getByText('Loop')).toBeInTheDocument()
-		expect(screen.queryByText(/Managed/)).not.toBeInTheDocument()
-		expect(screen.queryByText(/Forked from/)).not.toBeInTheDocument()
-		expect(screen.queryByText('Installed')).not.toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /^add$/i })).toBeInTheDocument()
+		expect(screen.queryByText('Added')).not.toBeInTheDocument()
+		expect(screen.queryByText('Forked')).not.toBeInTheDocument()
+		expect(screen.queryByRole('link', { name: 'Open' })).not.toBeInTheDocument()
 	})
 
-	it('shows the Managed badge, an Installed marker and Manage when locked', () => {
+	it('shows the Added pill and Open when locked', () => {
 		render(<MarketplaceLoopCard workspaceId={workspaceId} loop={loop()} install={install()} />, {
 			wrapper: TestWrapper,
 		})
-		expect(screen.getByText(/Managed · v1.0.0/)).toBeInTheDocument()
-		expect(screen.getByText('Installed')).toBeInTheDocument()
-		expect(screen.getByRole('link', { name: 'Manage' })).toHaveAttribute(
+		expect(screen.getByText('Added')).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'Open' })).toHaveAttribute(
 			'href',
 			'/$workspaceId/loops/$loopId',
 		)
 		// Fork and Remove live in the detail page's overflow menu, not on the card.
 		expect(screen.queryByRole('button', { name: /fork/i })).not.toBeInTheDocument()
-		expect(screen.queryByRole('button', { name: /^install$/i })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /^add$/i })).not.toBeInTheDocument()
 	})
 
-	it('offers Remove instead of Manage when the install has no provisioned loop', () => {
+	it('offers Remove instead of Open when the install has no provisioned loop', () => {
 		render(
 			<MarketplaceLoopCard
 				workspaceId={workspaceId}
@@ -100,11 +97,11 @@ describe('MarketplaceLoopCard', () => {
 			/>,
 			{ wrapper: TestWrapper },
 		)
-		expect(screen.queryByRole('link', { name: 'Manage' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('link', { name: 'Open' })).not.toBeInTheDocument()
 		expect(screen.getByRole('button', { name: /remove/i })).toBeInTheDocument()
 	})
 
-	it('renders the amber update banner when a locked install trails the marketplace version', () => {
+	it('renders the v-available pill when a locked install trails the marketplace version', () => {
 		render(
 			<MarketplaceLoopCard
 				workspaceId={workspaceId}
@@ -113,10 +110,10 @@ describe('MarketplaceLoopCard', () => {
 			/>,
 			{ wrapper: TestWrapper },
 		)
-		expect(screen.getByText(/Update to v1\.1\.0 available/)).toBeInTheDocument()
+		expect(screen.getByText(/v1\.1\.0 available/)).toBeInTheDocument()
 	})
 
-	it('shows Forked-from badge and no Fork button when forked', () => {
+	it('shows the Forked pill and no Fork button when forked', () => {
 		render(
 			<MarketplaceLoopCard
 				workspaceId={workspaceId}
@@ -125,7 +122,7 @@ describe('MarketplaceLoopCard', () => {
 			/>,
 			{ wrapper: TestWrapper },
 		)
-		expect(screen.getByText(/Forked from v1\.0\.0/)).toBeInTheDocument()
+		expect(screen.getByText('Forked')).toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: /fork/i })).not.toBeInTheDocument()
 	})
 

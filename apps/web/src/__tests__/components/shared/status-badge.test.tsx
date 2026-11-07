@@ -94,3 +94,27 @@ describe('StatusBadge', () => {
 		})
 	})
 })
+
+describe('StatusBadge ring', () => {
+	it('names the status for assistive tech and the hover title', () => {
+		render(<StatusBadge status="in_review" variant="ring" />)
+		const ring = screen.getByRole('img', { name: 'Status in review' })
+		expect(ring.querySelector('title')?.textContent).toBe('In review')
+	})
+
+	it('draws a cross for cancelled work and a pause mark for blocked work', () => {
+		const { container, rerender } = render(<StatusBadge status="cancelled" variant="ring" />)
+		expect(container.querySelector('path[d^="M6.5 6.5"]')).not.toBeNull()
+		expect(container.querySelector('circle[stroke-dasharray]')).toBeNull()
+		rerender(<StatusBadge status="blocked" variant="ring" />)
+		expect(container.querySelector('path[d^="M7.4"]')).not.toBeNull()
+		expect(container.querySelector('svg')?.getAttribute('class')).toContain('text-warning')
+	})
+
+	it('keeps the dashed ring for work that has not started only', () => {
+		const { container, rerender } = render(<StatusBadge status="todo" variant="ring" />)
+		expect(container.querySelector('circle[stroke-dasharray="2.2 2.2"]')).not.toBeNull()
+		rerender(<StatusBadge status="waiting_for_legal" variant="ring" />)
+		expect(container.querySelector('circle[stroke-dasharray]')).toBeNull()
+	})
+})

@@ -38,6 +38,9 @@ vi.mock('@/hooks/use-actors', () => ({
 }))
 
 const mockUseTriggers = vi.fn()
+vi.mock('@/hooks/use-notifications', () => ({
+	useNotifications: () => ({ data: [] }),
+}))
 vi.mock('@/hooks/use-triggers', () => ({
 	useTriggers: () => mockUseTriggers(),
 }))
@@ -63,8 +66,10 @@ vi.mock('@/lib/workspace-context', async (importOriginal) => ({
 }))
 
 const trackAskBannerDecideClicked = vi.fn()
+const trackLoopViewed = vi.fn()
 vi.mock('@/lib/analytics', () => ({
 	trackAskBannerDecideClicked: (payload: unknown) => trackAskBannerDecideClicked(payload),
+	trackLoopViewed: (payload: unknown) => trackLoopViewed(payload),
 }))
 
 // Layout + heavy child components are irrelevant to the AskBanner wiring
@@ -83,6 +88,24 @@ vi.mock('@/components/loops/loop-first-run-banner', () => ({
 }))
 vi.mock('@/components/loops/loop-utterance-input', () => ({
 	LoopUtteranceInput: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
+}))
+vi.mock('@/components/loops/loop-detail-tabs', () => ({
+	// The real strip folds tabs under "More" by measured width, which jsdom cannot measure.
+	LoopDetailTabs: ({
+		tabs,
+		onChange,
+	}: {
+		tabs: { value: string; label: string }[]
+		onChange: (value: string) => void
+	}) => (
+		<div>
+			{tabs.map((t) => (
+				<button key={t.value} type="button" onClick={() => onChange(t.value)}>
+					{t.label}
+				</button>
+			))}
+		</div>
+	),
 }))
 vi.mock('@/components/loops/loop-stats', () => ({
 	LoopStats: () => null,
@@ -163,6 +186,17 @@ describe('LoopDetailRoute — AskBanner wiring', () => {
 	})
 })
 
+describe('LoopDetailRoute — loop_viewed', () => {
+	it('sends loop_viewed once with the loop id when the page opens', () => {
+		mockUseLoops.mockReturnValue({ data: [buildLoopSummary({ id: 'loop-1' })] })
+		const { rerender } = render(<LoopDetailRoute />)
+		rerender(<LoopDetailRoute />)
+
+		expect(trackLoopViewed).toHaveBeenCalledOnce()
+		expect(trackLoopViewed).toHaveBeenCalledWith({ entity_id: 'loop-1' })
+	})
+})
+
 describe('LoopDetailRoute — delete affordance', () => {
 	beforeEach(() => {
 		mockUseLoops.mockReturnValue({
@@ -174,14 +208,14 @@ describe('LoopDetailRoute — delete affordance', () => {
 		await user.click(screen.getByRole('button', { name: 'More' }))
 	}
 
-	it('opens an inline confirm when Delete loop is selected', async () => {
+	it('opens an inline confirm when Delete flow is selected', async () => {
 		const user = userEvent.setup()
 		render(<LoopDetailRoute />)
 
 		await openMenu(user)
-		await user.click(screen.getByRole('menuitem', { name: /Delete loop/i }))
+		await user.click(screen.getByRole('menuitem', { name: /Delete flow/i }))
 
-		expect(screen.getByText(/Delete this loop\?/i)).toBeInTheDocument()
+		expect(screen.getByText(/Delete this flow\?/i)).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Confirm' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument()
 		expect(mockDeleteObject).not.toHaveBeenCalled()
@@ -195,7 +229,7 @@ describe('LoopDetailRoute — delete affordance', () => {
 		render(<LoopDetailRoute />)
 
 		await openMenu(user)
-		await user.click(screen.getByRole('menuitem', { name: /Delete loop/i }))
+		await user.click(screen.getByRole('menuitem', { name: /Delete flow/i }))
 		await user.click(screen.getByRole('button', { name: 'Confirm' }))
 
 		expect(mockDeleteObject).toHaveBeenCalledWith('loop-1', expect.any(Object))
@@ -210,10 +244,10 @@ describe('LoopDetailRoute — delete affordance', () => {
 		render(<LoopDetailRoute />)
 
 		await openMenu(user)
-		await user.click(screen.getByRole('menuitem', { name: /Delete loop/i }))
+		await user.click(screen.getByRole('menuitem', { name: /Delete flow/i }))
 		await user.click(screen.getByRole('button', { name: 'Cancel' }))
 
-		expect(screen.queryByText(/Delete this loop\?/i)).not.toBeInTheDocument()
+		expect(screen.queryByText(/Delete this flow\?/i)).not.toBeInTheDocument()
 		expect(mockDeleteObject).not.toHaveBeenCalled()
 		expect(mockNavigate).not.toHaveBeenCalled()
 	})
@@ -245,7 +279,7 @@ describe('LoopDetailRoute — slow or failing calls', () => {
 		render(<LoopDetailRoute />)
 
 		expect(screen.getAllByTestId('loop-block-error')).toHaveLength(1)
-		expect(screen.getByText(/Couldn't load the steps of this loop/)).toBeInTheDocument()
+		expect(screen.getByText(/Couldn't load the steps of this flow/)).toBeInTheDocument()
 		expect(screen.queryByText(/recent activity/)).not.toBeInTheDocument()
 
 		await user.click(screen.getByRole('button', { name: 'Try again' }))
@@ -257,7 +291,8 @@ describe('LoopDetailRoute — slow or failing calls', () => {
 		mockUseLoopActivity.mockReturnValue({ data: undefined, isError: true, refetch })
 		render(<LoopDetailRoute />)
 
-		expect(screen.getByText(/Couldn't load the loop's recent activity/)).toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: 'Activity' }))
+		expect(screen.getByText(/Couldn't load the flow's recent activity/)).toBeInTheDocument()
 		expect(screen.queryByText(/Couldn't load the steps/)).not.toBeInTheDocument()
 
 		await user.click(screen.getByRole('button', { name: 'Try again' }))
@@ -268,7 +303,7 @@ describe('LoopDetailRoute — slow or failing calls', () => {
 		mockUseObject.mockReturnValue({ data: undefined, isError: true, refetch })
 		render(<LoopDetailRoute />)
 
-		expect(screen.getByText(/Couldn't load the description and activity/)).toBeInTheDocument()
+		expect(screen.getByText(/Couldn't load the description/)).toBeInTheDocument()
 	})
 
 	it('gives up on a call that is still waiting after 30 seconds', () => {
@@ -284,7 +319,7 @@ describe('LoopDetailRoute — slow or failing calls', () => {
 		act(() => {
 			vi.advanceTimersByTime(1_000)
 		})
-		expect(screen.getByText(/Couldn't load the steps of this loop/)).toBeInTheDocument()
+		expect(screen.getByText(/Couldn't load the steps of this flow/)).toBeInTheDocument()
 		expect(screen.getByText(/The server may be busy/)).toBeInTheDocument()
 	})
 })

@@ -98,7 +98,7 @@ function CommentChartFallback({ reason }: { reason: string }) {
 	return (
 		<div
 			role="note"
-			className="my-1 rounded-md border border-dashed border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground"
+			className="my-1 rounded-lg border border-dashed border-border bg-muted px-3 py-2 text-xs text-muted-foreground"
 		>
 			Couldn’t render chart — {reason}.
 		</div>
@@ -207,12 +207,19 @@ export function CommentChart({ spec, className }: CommentChartProps) {
 	})()
 
 	return (
-		<figure className={cn('my-2 w-full max-w-full overflow-hidden', className)}>
+		<figure
+			className={cn(
+				'my-2 w-full max-w-full overflow-hidden rounded-lg border border-border bg-card p-3',
+				className,
+			)}
+		>
 			<div className="h-48 w-full">
 				<ResponsiveContainer>{Renderer}</ResponsiveContainer>
 			</div>
 			{spec.caption && (
-				<figcaption className="mt-1 text-xs text-muted-foreground">{spec.caption}</figcaption>
+				<figcaption className="mt-2 border-t border-border pt-2 text-xs text-muted-foreground">
+					{spec.caption}
+				</figcaption>
 			)}
 		</figure>
 	)

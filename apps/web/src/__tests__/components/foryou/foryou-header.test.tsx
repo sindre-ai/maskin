@@ -13,10 +13,7 @@ function renderHeader(overrides: Partial<React.ComponentProps<typeof ForYouHeade
 			['bet', 3],
 			['insight', 2],
 		]),
-		mode: 'cards',
-		onModeChange: vi.fn(),
 		filterPills: false,
-		onFilterPillsChange: vi.fn(),
 		bulkActions: [
 			{ id: 'fyi', label: 'Dismiss all FYIs', count: 2, onSelect: vi.fn() },
 			{ id: 'suggested', label: 'Take every suggested option', count: 0, onSelect: vi.fn() },
@@ -38,52 +35,6 @@ describe('ForYouHeader', () => {
 
 		await user.click(screen.getByRole('button', { name: 'Bets (3)' }))
 		expect(props.onTypeFilterChange).toHaveBeenCalledWith('bet')
-	})
-
-	it('reads the active view and filter back on the menu trigger', () => {
-		renderHeader({ mode: 'list' })
-		expect(screen.getByRole('button', { name: 'View options' })).toHaveTextContent('List')
-
-		renderHeader({ mode: 'cards', typeFilter: 'bet' })
-		expect(screen.getAllByRole('button', { name: 'View options' })[1]).toHaveTextContent(
-			'Cards · Bets',
-		)
-	})
-
-	it('switches the view mode from the menu', async () => {
-		const user = userEvent.setup()
-		const { props } = renderHeader({ mode: 'cards' })
-
-		await user.click(screen.getByRole('button', { name: 'View options' }))
-		await user.click(await screen.findByRole('menuitem', { name: /^List/ }))
-		expect(props.onModeChange).toHaveBeenCalledWith('list')
-	})
-
-	it('offers no sort: the Chief of Staff sets the order', async () => {
-		const user = userEvent.setup()
-		renderHeader()
-
-		await user.click(screen.getByRole('button', { name: 'View options' }))
-		await screen.findByRole('menuitem', { name: /^List/ })
-		expect(screen.queryByRole('menuitem', { name: /Chronological/ })).not.toBeInTheDocument()
-	})
-
-	it('filters by type from the SHOW section', async () => {
-		const user = userEvent.setup()
-		const { props } = renderHeader()
-
-		await user.click(screen.getByRole('button', { name: 'View options' }))
-		await user.click(await screen.findByRole('menuitem', { name: /Insights/ }))
-		expect(props.onTypeFilterChange).toHaveBeenCalledWith('insight')
-	})
-
-	it('toggles the filter bar from the last row of the menu', async () => {
-		const user = userEvent.setup()
-		const { props } = renderHeader()
-
-		await user.click(screen.getByRole('button', { name: 'View options' }))
-		await user.click(await screen.findByRole('menuitem', { name: /Filter bar under the header/ }))
-		expect(props.onFilterPillsChange).toHaveBeenCalledWith(true)
 	})
 
 	it('runs a bulk action from the ··· menu, and disables the empty ones', async () => {

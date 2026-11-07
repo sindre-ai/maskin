@@ -46,6 +46,15 @@ function renderOptions(question: MessageQuestion = QUESTION, answered = false) {
 }
 
 describe('QuestionOptions', () => {
+	it("shows each option's reason inside its button, so the chat needs no text copy", () => {
+		renderOptions()
+
+		expect(screen.getByRole('button', { name: 'API token' })).toHaveAccessibleDescription(
+			'You create a developer app',
+		)
+		expect(screen.getByText('You create a developer app')).toBeInTheDocument()
+	})
+
 	it('sends the pick as a chat message tagged with the question it answers', async () => {
 		sendMutate.mockClear()
 		const user = userEvent.setup()

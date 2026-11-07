@@ -84,12 +84,12 @@ function AddCredentialPage() {
 	return (
 		<div className="max-w-[640px]">
 			<KeychainBreadcrumb workspaceId={workspaceId} current="Add credential" />
-			<h2 className="text-sm font-bold text-foreground">Add a credential</h2>
-			<p className="mt-1 mb-4 text-xs text-muted-foreground">
+			<h2 className="settings-label">Add a credential</h2>
+			<p className="mt-1 mb-4 text-[13px] text-muted-foreground">
 				Save a key or a login. Pick which agents can use it on the Keychain page.
 			</p>
 
-			<form onSubmit={handleSubmit} className="space-y-4 rounded-lg border border-border p-4">
+			<form onSubmit={handleSubmit} className="space-y-4 rounded-xl border border-border p-4">
 				<Tabs value={kind} onValueChange={(v) => setKind(v as 'api_key' | 'login')}>
 					<TabsList variant="segmented" aria-label="Credential type">
 						<TabsTrigger value="api_key">API key</TabsTrigger>

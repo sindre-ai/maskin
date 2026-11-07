@@ -34,6 +34,7 @@ import {
 import { linearEventNormalizer } from './providers/linear/webhooks'
 import { config as linkedinConfig } from './providers/linkedin-unipile/config'
 import { deleteUnipileAccountOnDisconnect } from './providers/linkedin-unipile/disconnect'
+import { config as miroConfig } from './providers/miro/config'
 import { config as posthogConfig } from './providers/posthog/config'
 import { config as resendConfig } from './providers/resend/config'
 import { config as skjaldConfig } from './providers/skjald/config'
@@ -162,6 +163,10 @@ providers.set('google-search-console', {
 
 providers.set('posthog', {
 	config: posthogConfig,
+})
+
+providers.set('miro', {
+	config: miroConfig,
 })
 
 // resend — bring-your-own integration for customer-domain email send+receive

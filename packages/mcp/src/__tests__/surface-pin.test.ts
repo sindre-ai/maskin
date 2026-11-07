@@ -184,7 +184,6 @@ describe('MCP surface pin', () => {
 			skills: [
 				shared.FOR_YOU_FORMAT_SKILL,
 				shared.DRAFT_APPROVAL_TASKS_SKILL,
-				shared.SHAPED_BET_FORMAT_SKILL,
 				shared.MASKIN_WAY_OF_WORKING_SKILL,
 				shared.CONTINUOUS_ONBOARDING_SKILL,
 			],

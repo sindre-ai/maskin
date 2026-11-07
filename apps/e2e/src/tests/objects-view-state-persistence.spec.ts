@@ -94,6 +94,9 @@ test.describe('Objects list retains view state across back-nav', () => {
 				})
 			}
 
+			// This test measures a flat list's scroll anchor; Items rests grouped by
+			// Status when nothing is saved, so the actor saves "None" first.
+			await account.api.saveDisplaySettings(account.workspaceId, 'bet', { groupBy: 'none' })
 			await page.goto(`/${account.workspaceId}/objects?type=bet`)
 			// Sorted by createdAt desc — the highest-numbered title (59) is at
 			// the top. Wait for the first row to render before scrolling.

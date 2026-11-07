@@ -10,6 +10,7 @@ import type {
 	MarketplaceLoopItem,
 } from '@/lib/api'
 import { useState } from 'react'
+import { ROW_ACTION_CLASS, RowPill } from './marketplace-row'
 import { UninstallDialog } from './uninstall-dialog'
 
 interface ItemInstallControlsProps {
@@ -20,6 +21,8 @@ interface ItemInstallControlsProps {
 	install?: InstalledLoopRow
 	/** Set when this specific item was individually installed. */
 	installedEntity?: MarketplaceItemInstalledEntry
+	/** Catalogue row (v16): Add, or the Added pill with Remove, on one line. */
+	row?: boolean
 }
 
 /** Install/Remove action cluster for a single marketplace item — shared by
@@ -30,6 +33,7 @@ export function ItemInstallControls({
 	name,
 	install,
 	installedEntity,
+	row = false,
 }: ItemInstallControlsProps) {
 	const installMutation = useInstallMarketplaceItem(workspaceId)
 	const uninstallMutation = useUninstallMarketplaceItem(workspaceId)
@@ -40,6 +44,54 @@ export function ItemInstallControls({
 		(!!installedEntity || installMutation.isSuccess) && !uninstallMutation.isSuccess
 
 	if (install) return null
+
+	if (row) {
+		return isCurrentlyInstalled ? (
+			<>
+				<RowPill>Added</RowPill>
+				<Button
+					size="sm"
+					variant="outline"
+					className={ROW_ACTION_CLASS}
+					onClick={() => setRemoveOpen(true)}
+				>
+					Remove
+				</Button>
+				<UninstallDialog
+					open={removeOpen}
+					onOpenChange={setRemoveOpen}
+					workspaceId={workspaceId}
+					loopName={name}
+					isLocked={false}
+					onConfirm={(keepItems) => {
+						uninstallMutation.mutate(
+							{ itemId: item.id, keepProvisionedItems: keepItems },
+							{
+								onSuccess: () => {
+									setRemoveOpen(false)
+									installMutation.reset()
+								},
+							},
+						)
+					}}
+					confirmPending={uninstallMutation.isPending}
+				/>
+			</>
+		) : (
+			<Button
+				size="sm"
+				variant="outline"
+				className={ROW_ACTION_CLASS}
+				disabled={installMutation.isPending}
+				onClick={() => {
+					uninstallMutation.reset()
+					installMutation.mutate(item.id)
+				}}
+			>
+				{installMutation.isPending ? 'Adding…' : 'Add'}
+			</Button>
+		)
+	}
 
 	return (
 		// This row is never itself positioned, so its empty space still opens
@@ -84,8 +136,8 @@ export function ItemInstallControls({
 			) : (
 				<Button
 					size="sm"
-					variant="default"
-					className="relative h-7 text-xs"
+					variant="secondary"
+					className="relative h-7 rounded-full text-xs font-semibold"
 					disabled={installMutation.isPending}
 					onClick={() => {
 						// Clear a stale uninstall success flag — otherwise re-installing

@@ -65,12 +65,12 @@ export function ProvenanceStrip({
 			data-viewer-provenance-strip
 			data-variant={resolved.variant}
 			className={cn(
-				'flex items-center gap-2 border-b px-4 py-1.5 text-xs',
+				'flex flex-wrap items-center gap-x-2 gap-y-1 border-b px-4 py-2 text-xs',
 				resolved.variant === 'archived'
 					? 'border-warning/40 bg-warning/10'
 					: resolved.variant === 'orphaned'
 						? 'border-destructive/40 bg-destructive/10'
-						: 'bg-muted/40',
+						: 'bg-muted',
 			)}
 		>
 			{renderStripContent({ workspaceId, resolved, selectedTargetId, onSelectTarget, onReattach })}
@@ -124,7 +124,7 @@ function renderStripContent({
 						type="button"
 						variant="ghost"
 						size="sm"
-						className="h-6 px-2 text-xs"
+						className="h-6 px-2 text-xs max-md:h-11"
 						onClick={() => onSelectTarget(other.id)}
 						aria-label={`Switch context to ${other.title}`}
 					>
@@ -149,10 +149,10 @@ function renderStripContent({
 							type="button"
 							variant="ghost"
 							size="sm"
-							className="h-6 gap-1 px-2 text-xs"
-							aria-label="Pick target object for the review round"
+							className="h-6 gap-1 px-2 text-xs max-md:h-11"
+							aria-label="Pick target item for the review round"
 						>
-							{picked ? picked.title : `${resolved.pickerOptions.length} objects`}
+							{picked ? picked.title : `${resolved.pickerOptions.length} items`}
 							<ChevronDown size={12} />
 						</Button>
 					</DropdownMenuTrigger>
@@ -198,7 +198,7 @@ function renderStripContent({
 						type="button"
 						variant="link"
 						size="sm"
-						className="h-6 px-1 text-xs"
+						className="h-6 px-1 text-xs max-md:h-11"
 						onClick={onReattach}
 					>
 						Re-attach
@@ -225,7 +225,7 @@ function AttacherLink({
 			to="/$workspaceId/objects/$objectId"
 			params={{ workspaceId, objectId: attacher.id }}
 			className={cn(
-				'flex items-center gap-1.5 hover:underline',
+				'flex items-center gap-1.5 hover:underline max-md:min-h-11',
 				muted ? 'text-foreground/70 line-through' : 'text-foreground',
 			)}
 			data-testid="strip-attacher-link"
@@ -249,7 +249,7 @@ function DriverTypeMarker({
 	return (
 		<span
 			data-testid="strip-agent-driver-marker"
-			className="ml-auto rounded-sm bg-secondary px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-secondary-foreground"
+			className="ml-auto rounded-sm bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-secondary-foreground"
 		>
 			Agent driver
 		</span>

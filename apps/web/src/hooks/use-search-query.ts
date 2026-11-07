@@ -72,8 +72,17 @@ export function buildSearchParams(input: SearchQueryInput, now: number = Date.no
 	return params
 }
 
-export function useSearchQuery(workspaceId: string, input: SearchQueryInput, active = true) {
-	const enabled = active && hasSearchInput(input)
+/**
+ * `browse` asks even with nothing typed or chosen: the search page then lists everything,
+ * the way the launcher and the page's own filters never do.
+ */
+export function useSearchQuery(
+	workspaceId: string,
+	input: SearchQueryInput,
+	active = true,
+	browse = false,
+) {
+	const enabled = active && (browse || hasSearchInput(input))
 	return useQuery<SearchResponse>({
 		// The Updated window is kept as its name in the key; the cutoff time is computed
 		// inside queryFn so the key does not change every time the clock does.

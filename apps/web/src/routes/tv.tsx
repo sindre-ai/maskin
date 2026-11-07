@@ -12,18 +12,21 @@ export const Route = createFileRoute('/tv')({
 	validateSearch: (search: Record<string, unknown>) => ({
 		code: typeof search.code === 'string' ? search.code : '',
 	}),
-	head: () => ({ meta: [{ title: 'Sign in your TV — Maskin' }] }),
+	head: () => ({ meta: [{ title: 'Sign in a device — Maskin' }] }),
 	component: TvSignInPage,
 })
 
-// The TV shows a short code (and a QR link that carries it in ?code=). Whoever types or scans it
-// here, signed in as themselves, approves the TV: it then receives their session. So the page says
-// plainly what is being approved and tells the person to check the code is the one on their screen.
+// A device (Apple TV, Mac) shows a short code (and a QR link that carries it in ?code=). Whoever
+// types or scans it here, signed in as themselves, approves the device: it then receives their
+// session. So the page says plainly what is being approved and tells the person to check the code
+// is the one on the device's screen. A spent or unknown code ends in an "expired" state that sends
+// them back to restart on the device.
 
 type Step =
 	| { kind: 'enter' }
 	| { kind: 'confirm'; code: string; device: DeviceAuthPreview }
 	| { kind: 'done'; approved: boolean }
+	| { kind: 'expired' }
 
 /** Group as typed so it reads like the TV: BCDF2345 -> BCDF-2345. */
 function groupCode(raw: string): string {
@@ -53,7 +56,7 @@ function Heading({ title, children }: { title: string; children?: React.ReactNod
 
 function messageFor(err: unknown): string {
 	if (err instanceof ApiError && err.status === 404) {
-		return "That code isn't valid or has expired. Check the code on your TV, or restart sign-in there."
+		return "That code isn't valid or has expired. Check the code on your device, or restart sign-in there."
 	}
 	if (err instanceof ApiError && err.status === 429) {
 		return 'Too many attempts. Wait a minute, then try again.'
@@ -107,7 +110,9 @@ function SignedOut({ onSignedIn }: { onSignedIn: () => void }) {
 
 	return (
 		<Shell>
-			<Heading title="Sign in your TV">Sign in to Maskin here first, then approve your TV.</Heading>
+			<Heading title="Sign in a device">
+				Sign in to Maskin here first, then approve your device.
+			</Heading>
 			<form onSubmit={handleSubmit} className="space-y-4">
 				<div>
 					<Label htmlFor="tv-email" className="mb-1 text-muted-foreground">
@@ -119,6 +124,7 @@ function SignedOut({ onSignedIn }: { onSignedIn: () => void }) {
 						value={email}
 						onChange={(e) => setEmail(e.target.value)}
 						autoComplete="email"
+						className="max-md:h-11"
 						autoFocus
 					/>
 				</div>
@@ -132,10 +138,16 @@ function SignedOut({ onSignedIn }: { onSignedIn: () => void }) {
 						value={password}
 						onChange={(e) => setPassword(e.target.value)}
 						autoComplete="current-password"
+						className="max-md:h-11"
 					/>
 				</div>
 				{error && <FormError error={error} />}
-				<Button type="submit" disabled={loading || !email || !password} className="w-full">
+				<Button
+					type="submit"
+					size="lg"
+					disabled={loading || !email || !password}
+					className="w-full"
+				>
 					{loading ? 'Signing in…' : 'Sign in'}
 				</Button>
 			</form>
@@ -188,6 +200,10 @@ function SignedIn({
 			await (approve ? api.deviceAuth.approve(step.code) : api.deviceAuth.deny(step.code))
 			setStep({ kind: 'done', approved: approve })
 		} catch (err) {
+			if (err instanceof ApiError && err.status === 404) {
+				setStep({ kind: 'expired' })
+				return
+			}
 			setError(messageFor(err))
 		} finally {
 			setLoading(false)
@@ -198,12 +214,37 @@ function SignedIn({
 		return (
 			<Shell>
 				<output className="block">
-					<Heading title={step.approved ? 'Your TV is signing in' : 'Sign-in refused'}>
+					<Heading title={step.approved ? 'Your device is signing in' : 'Sign-in refused'}>
 						{step.approved
-							? 'You can close this page. It takes a few seconds on the TV.'
+							? 'You can close this page. It takes a few seconds on the device.'
 							: 'Nothing was signed in.'}
 					</Heading>
 				</output>
+				<Button asChild size="lg" className="w-full">
+					<a href="/">Done</a>
+				</Button>
+			</Shell>
+		)
+	}
+
+	if (step.kind === 'expired') {
+		return (
+			<Shell>
+				<Heading title="This code has expired">
+					Nothing was signed in. Restart sign-in on your device to get a new code.
+				</Heading>
+				<Button
+					type="button"
+					size="lg"
+					className="w-full"
+					onClick={() => {
+						setCode('')
+						setError('')
+						setStep({ kind: 'enter' })
+					}}
+				>
+					Enter another code
+				</Button>
 			</Shell>
 		)
 	}
@@ -215,18 +256,30 @@ function SignedIn({
 				<Heading title={`Sign in ${name}?`}>
 					It will use your account, <span className="font-medium text-foreground">{who}</span>.
 				</Heading>
-				<p className="rounded-lg border border-border p-4 text-center text-sm">
-					Only approve if the code on your TV is{' '}
-					<span className="font-mono font-semibold tracking-wider">{step.code}</span>.
-				</p>
+				<div className="rounded-lg border border-border bg-card p-4 text-center">
+					<p className="eyebrow">Code on your device</p>
+					<p className="mt-2 font-mono text-2xl font-semibold tracking-widest max-md:h-11">
+						{step.code}
+					</p>
+					<p className="mt-2 text-sm text-muted-foreground">
+						Only approve if the code on your device is {step.code}.
+					</p>
+				</div>
 				{error && <FormError error={error} className="text-center" />}
 				<div className="space-y-2">
-					<Button type="button" className="w-full" onClick={() => decide(true)} disabled={loading}>
+					<Button
+						type="button"
+						size="lg"
+						className="w-full"
+						onClick={() => decide(true)}
+						disabled={loading}
+					>
 						{loading ? 'Approving…' : 'Approve'}
 					</Button>
 					<Button
 						type="button"
 						variant="ghost"
+						size="lg"
 						className="w-full"
 						onClick={() => decide(false)}
 						disabled={loading}
@@ -240,8 +293,8 @@ function SignedIn({
 
 	return (
 		<Shell>
-			<Heading title="Sign in your TV">
-				Type the code shown on your TV. You're signed in as{' '}
+			<Heading title="Sign in a device">
+				Type the code shown on your Apple TV or Mac. You're signed in as{' '}
 				<span className="font-medium text-foreground">{who}</span>.
 			</Heading>
 			<form
@@ -263,7 +316,7 @@ function SignedIn({
 							setError('')
 						}}
 						placeholder="XXXX-XXXX"
-						className="text-center font-mono text-lg tracking-widest"
+						className="text-center font-mono text-lg tracking-widest max-md:h-11"
 						autoCapitalize="characters"
 						autoComplete="off"
 						autoCorrect="off"
@@ -272,7 +325,7 @@ function SignedIn({
 					/>
 				</div>
 				{error && <FormError error={error} />}
-				<Button type="submit" disabled={loading || code.length < 9} className="w-full">
+				<Button type="submit" size="lg" disabled={loading || code.length < 9} className="w-full">
 					{loading ? <Spinner /> : 'Continue'}
 				</Button>
 			</form>

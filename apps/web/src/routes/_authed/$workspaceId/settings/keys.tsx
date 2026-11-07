@@ -36,7 +36,7 @@ function KeysPage() {
 	return (
 		<div className="space-y-6">
 			{enterprise ? (
-				<div className="max-w-lg space-y-6">
+				<div className="max-w-[760px] space-y-6">
 					<div id="claude-subscriptions" className="border-t border-border pt-6">
 						<ClaudeOAuthSection workspaceId={workspaceId} />
 					</div>
@@ -58,7 +58,7 @@ function KeysPage() {
 					title="Bring-your-own-LLM isn't enabled for this workspace"
 					description="Agents run on your Maskin plan. Connecting your own Claude subscription, API keys or a custom endpoint is enabled per workspace by Maskin."
 					action={
-						<Button variant="outline" size="sm" asChild>
+						<Button variant="outline" size="sm" className="rounded-full font-semibold" asChild>
 							<Link to="/$workspaceId/settings/billing" params={{ workspaceId }}>
 								View plan and usage
 							</Link>
@@ -180,15 +180,17 @@ function ClaudeOAuthSection({ workspaceId }: { workspaceId: string }) {
 	return (
 		<div>
 			<div>
-				<Label className="mb-1 text-bold">Default LLM ($5 Free Usage)</Label>
-				<p className="text-xs text-muted-foreground mb-6">
+				<Label className="mb-1 text-[15px] font-semibold text-foreground">
+					Default LLM ($5 Free Usage)
+				</Label>
+				<p className="text-[13px] text-muted-foreground mb-6">
 					Uses Deepseek V4 Flash via OpenRouter as the default model when no API keys are
 					configured. <b>Provides up to $5 USD equivalent of free usage per day, per workspace.</b>
 					Automatically activates for users without Claude subscriptions, API keys or custom llm.
 				</p>
 			</div>
-			<Label className="mb-1 text-bold">Claude Subscriptions</Label>
-			<p className="text-xs text-muted-foreground mb-3">
+			<Label className="mb-1 text-[15px] font-semibold text-foreground">Claude Subscriptions</Label>
+			<p className="text-[13px] text-muted-foreground mb-3">
 				Connect your Claude Pro/Max/Teams subscriptions to use them for agent sessions instead of an
 				API key. Sessions use the first one in this list; if it hits a usage limit or its
 				credentials expire, they fall through to the next, and so on down the list.
@@ -259,7 +261,7 @@ function AddSlotCard({
 	const isFirst = position === 0
 	return (
 		<div
-			className="rounded-lg border border-dashed border-border bg-transparent p-3 space-y-2"
+			className="rounded-xl border border-dashed border-border bg-transparent p-4 space-y-2"
 			data-slot="add"
 			data-testid="slot-add"
 		>
@@ -275,7 +277,13 @@ function AddSlotCard({
 					: 'When every subscription above has hit its usage limit or expired, agents stop until you reconnect one. Another keeps them running.'}
 			</p>
 			<ViewerTooltip>
-				<Button variant="outline" size="sm" disabled={!canWrite} onClick={onConnectClick}>
+				<Button
+					variant="outline"
+					size="sm"
+					className="rounded-full font-semibold"
+					disabled={!canWrite}
+					onClick={onConnectClick}
+				>
 					{isFirst ? 'Import credentials' : 'Import another subscription'}
 				</Button>
 			</ViewerTooltip>
@@ -366,7 +374,7 @@ function SlotCard({
 
 	return (
 		<div
-			className="rounded-lg border border-border bg-card p-3 space-y-2"
+			className="rounded-xl border border-border bg-card p-4 space-y-2"
 			data-slot={slot}
 			data-testid={`slot-${slot}`}
 			data-position={position}
@@ -464,7 +472,13 @@ function SlotCard({
 					</ViewerTooltip>
 				)}
 				<ViewerTooltip>
-					<Button variant="ghost" size="sm" disabled={!canWrite} onClick={onReplaceClick}>
+					<Button
+						variant="ghost"
+						size="sm"
+						className="rounded-full font-semibold"
+						disabled={!canWrite}
+						onClick={onReplaceClick}
+					>
 						Replace
 					</Button>
 				</ViewerTooltip>
@@ -685,12 +699,24 @@ function SavedKey({
 				{hint ? <span className="text-muted-foreground"> · ends in {hint}</span> : null}
 			</span>
 			<ViewerTooltip>
-				<Button variant="outline" size="sm" onClick={onReplace} disabled={disabled || !canWrite}>
+				<Button
+					variant="outline"
+					size="sm"
+					className="rounded-full font-semibold"
+					onClick={onReplace}
+					disabled={disabled || !canWrite}
+				>
 					Replace
 				</Button>
 			</ViewerTooltip>
 			<ViewerTooltip>
-				<Button variant="outline" size="sm" onClick={onClear} disabled={disabled || !canWrite}>
+				<Button
+					variant="outline"
+					size="sm"
+					className="rounded-full font-semibold"
+					onClick={onClear}
+					disabled={disabled || !canWrite}
+				>
 					Clear
 				</Button>
 			</ViewerTooltip>
@@ -740,8 +766,8 @@ function LLMKeysEditor({
 
 	return (
 		<div>
-			<Label className="mb-1 text-bold">LLM API Keys</Label>
-			<p className="text-xs text-muted-foreground mb-3">
+			<Label className="mb-1 text-[15px] font-semibold text-foreground">LLM API Keys</Label>
+			<p className="text-[13px] text-muted-foreground mb-3">
 				Set API keys per provider. All agents in this workspace will use these keys. A saved key
 				cannot be shown again; replace it to change it.
 			</p>
@@ -883,8 +909,10 @@ function CustomLlmEditor({
 
 	return (
 		<div>
-			<Label className="mb-1 text-bold">Custom Model Endpoint (beta)</Label>
-			<p className="text-xs text-muted-foreground mb-3">
+			<Label className="mb-1 text-[15px] font-semibold text-foreground">
+				Custom Model Endpoint (beta)
+			</Label>
+			<p className="text-[13px] text-muted-foreground mb-3">
 				Point Claude Code at any Anthropic-compatible endpoint — OpenRouter, a self-hosted
 				vLLM/Ollama instance, or LM Studio. Takes precedence over the Claude subscription and
 				Anthropic API key above. For OpenRouter, use{' '}
@@ -955,7 +983,12 @@ function CustomLlmEditor({
 							<span className="flex-1 text-sm text-muted-foreground">
 								The key is removed when you save.
 							</span>
-							<Button variant="ghost" size="sm" onClick={() => setKeyMode('keep')}>
+							<Button
+								variant="ghost"
+								size="sm"
+								className="rounded-full font-semibold"
+								onClick={() => setKeyMode('keep')}
+							>
 								Undo
 							</Button>
 						</div>

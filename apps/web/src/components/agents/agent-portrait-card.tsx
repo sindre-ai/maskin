@@ -182,13 +182,26 @@ export function describeFocus(status: PortraitStatus, session?: SessionResponse)
 	return 'Standing by'
 }
 
+/** The initials tile of an agent in the list and the detail hero (v11): tinted while it works, plain otherwise. */
+export function agentTileClass(status: PortraitStatus): string {
+	return status === 'running' ? 'bg-status-in_progress-bg text-success' : 'bg-muted text-foreground'
+}
+
+/** The avatar's status dot for a portrait status: working or failed, nothing otherwise. */
+export function agentAvatarStatus(status: PortraitStatus): 'working' | 'failed' | undefined {
+	return status === 'running' ? 'working' : status === 'failed' ? 'failed' : undefined
+}
+
 /** Pill used by any surface that shows an agent's portrait status as a row/card badge. */
 export function AgentStatusPill({
 	status,
 	pulse = false,
 	variant = 'pill',
+	neutral = false,
 }: {
 	status: PortraitStatus
+	/** Draws a running pill on the neutral plate the other statuses use (the agents list). */
+	neutral?: boolean
 	/** Swaps the leading glyph for a status dot that pulses while the agent is
 	 *  live — the agent-detail header's treatment (mockup 2360). Everywhere else
 	 *  keeps the icon so the pill still reads at row density. */
@@ -219,16 +232,13 @@ export function AgentStatusPill({
 	return (
 		<span
 			className={cn(
-				'inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium',
-				meta.pillBg,
+				'inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 font-semibold',
+				neutral ? 'bg-muted' : meta.pillBg,
 				meta.pillText,
 			)}
 		>
 			{pulse ? (
-				<span
-					aria-hidden="true"
-					className={cn('size-1.5 rounded-full', meta.dot, isRunning && 'animate-pulse')}
-				/>
+				<StatusGlyph status={status} className={cn(meta.glyph, isRunning && 'animate-pulse')} />
 			) : isRunning ? (
 				<Spinner className="size-3" aria-hidden="true" />
 			) : (
@@ -239,6 +249,38 @@ export function AgentStatusPill({
 	)
 }
 
+/**
+ * The v16 status mark: a half-filled ring while working, a filled disc with a cross when
+ * failed, an empty ring otherwise. Drawn so the pill reads by shape as well as colour.
+ */
+function StatusGlyph({ status, className }: { status: PortraitStatus; className?: string }) {
+	return (
+		<svg
+			aria-hidden="true"
+			viewBox="0 0 16 16"
+			className={cn('size-3.5 shrink-0', className)}
+			fill="none"
+		>
+			{status === 'failed' ? (
+				<>
+					<circle cx="8" cy="8" r="7" fill="currentColor" />
+					<path
+						d="M5.5 5.5l5 5m0-5l-5 5"
+						className="stroke-muted"
+						strokeWidth="1.6"
+						strokeLinecap="round"
+					/>
+				</>
+			) : (
+				<>
+					<circle cx="8" cy="8" r="6.25" stroke="currentColor" strokeWidth="1.5" />
+					{status === 'running' && <path d="M8 3.5a4.5 4.5 0 0 1 0 9z" fill="currentColor" />}
+				</>
+			)}
+		</svg>
+	)
+}
+
 interface StatusMeta {
 	label: string
 	Icon: typeof Pause
@@ -246,17 +288,21 @@ interface StatusMeta {
 	pillText: string
 	/** Semantic token class for the dot form of the pill. */
 	dot: string
+	/** Colour of the pill's leading status mark. */
+	glyph: string
 	/** Label colour for the plate-less `inline` variant. */
 	inlineText: string
 }
 
 const STATUS_META: Record<PortraitStatus, StatusMeta> = {
 	running: {
-		label: 'Running',
+		label: 'Working',
 		Icon: Play,
+		// v3: the hero pill carries the Working-now card's cobalt tint; the list passes `neutral`.
 		pillBg: 'bg-status-in_progress-bg',
-		pillText: 'text-status-in_progress-text',
-		dot: 'bg-status-in_progress-text',
+		pillText: 'text-foreground',
+		dot: 'bg-success',
+		glyph: 'text-success',
 		inlineText: 'text-status-in_progress-text',
 	},
 	// `text-muted-foreground` on `bg-muted` is 4.39:1 in light mode — below the
@@ -268,6 +314,7 @@ const STATUS_META: Record<PortraitStatus, StatusMeta> = {
 		pillBg: 'bg-muted',
 		pillText: 'text-foreground',
 		dot: 'bg-muted-foreground',
+		glyph: 'text-muted-foreground',
 		inlineText: 'text-muted-foreground',
 	},
 	idle: {
@@ -276,14 +323,16 @@ const STATUS_META: Record<PortraitStatus, StatusMeta> = {
 		pillBg: 'bg-muted',
 		pillText: 'text-foreground',
 		dot: 'bg-muted-foreground',
+		glyph: 'text-muted-foreground',
 		inlineText: 'text-muted-foreground',
 	},
 	failed: {
 		label: 'Failed',
 		Icon: AlertTriangle,
-		pillBg: 'bg-status-failed-bg',
-		pillText: 'text-status-failed-text',
+		pillBg: 'bg-muted',
+		pillText: 'text-foreground',
 		dot: 'bg-status-failed-text',
+		glyph: 'text-status-failed-text',
 		inlineText: 'text-status-failed-text',
 	},
 }

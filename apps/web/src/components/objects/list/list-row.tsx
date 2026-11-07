@@ -8,6 +8,7 @@ import { useStar } from '@/hooks/use-star'
 import type { ActorListItem, NotificationResponse, ObjectResponse } from '@/lib/api'
 import type { BetStatusResult } from '@/lib/bet-status'
 import { cn } from '@/lib/cn'
+import { statusStage } from '@/lib/constants'
 import { Link } from '@tanstack/react-router'
 import type { VisibilityState } from '@tanstack/react-table'
 
@@ -50,12 +51,6 @@ export interface ListRowProps {
 	 *  Absent for a type the workspace no longer defines, where the raw key is
 	 *  the only honest label left. */
 	typeLabel?: string
-	/** First `in_loop` edge on this object, resolved client-side by
-	 *  `useObjectLoops` in list-view. Renders as the D1 loop chip immediately
-	 *  after the title; absent = no chip (no reserved space, per the D1
-	 *  acceptance criterion). Multi-loop objects show only the first edge in
-	 *  creation-time order — the caller picks that edge, the row renders it. */
-	loop?: { id: string; name: string }
 }
 
 export function ListRow({
@@ -73,7 +68,6 @@ export function ListRow({
 	columnVisibility,
 	anySelected,
 	typeLabel,
-	loop,
 }: ListRowProps) {
 	const { isStarred, isSaving: isStarSaving, toggle: toggleStar } = useStar(object.id)
 	const driver = object.driver ? actors?.find((a) => a.id === object.driver) : null
@@ -84,9 +78,8 @@ export function ListRow({
 	const priorStatusRaw = object.metadata?.previous_status
 	const priorStatus = isArchived && typeof priorStatusRaw === 'string' ? priorStatusRaw : null
 	const hasPendingAsk = ask?.status === 'pending'
-	const askActorName = hasPendingAsk
-		? (actors?.find((a) => a.id === ask.sourceActorId)?.name ?? 'Agent')
-		: null
+	const askActor = hasPendingAsk ? actors?.find((a) => a.id === ask.sourceActorId) : undefined
+	const askActorName = hasPendingAsk ? (askActor?.name ?? 'Agent') : null
 	// Ask-line text: SPEC copy is `{who} asks — "{text}"` where `{text}` is
 	// the notification's title, ellipsis at ~90 chars. `content` is a longer
 	// free-form body only some notifications carry — falls back to `title` so
@@ -143,14 +136,15 @@ export function ListRow({
 				toggleStar()
 			}}
 			className={cn(
-				'group relative flex w-full items-center gap-3 rounded-lg py-2.5 pr-3',
+				// v11 row: 52px tall with a hairline on top.
+				'group relative flex min-h-[52px] w-full items-center gap-3 rounded-lg border-t border-border py-2.5 pr-2',
 				// The extra left padding is the select lane: the checkbox is absolutely
 				// placed in it so revealing it on hover shifts nothing, and reserving
 				// the space keeps it inside the row's own hover highlight instead of
 				// hanging off the list's left edge.
 				// Touch puts the checkbox back in the star's slot, so the lane is dead
 				// space there — hand those pixels back to the title.
-				'pl-8 max-[1024.02px]:pl-3 pointer-coarse:pl-3',
+				'pl-9 max-[1024.02px]:pl-3 pointer-coarse:pl-3',
 				'cursor-pointer transition-colors hover:bg-muted/40',
 				'data-[state=selected]:bg-muted',
 				isArchived && 'opacity-[0.62] hover:opacity-90',
@@ -163,11 +157,11 @@ export function ListRow({
 			    the star's tap area ends inside its own box (an overflowing child is
 			    what the mobile-QA scrollWidth gate flags); the -mr-3 hands those 12px
 			    back out of the row's gap-3, so the title column keeps its width. */}
-			<span className="grid size-5 shrink-0 place-items-center self-center max-[1024.02px]:flex max-[1024.02px]:w-13 max-[1024.02px]:-mr-3 max-[1024.02px]:gap-2 pointer-coarse:flex pointer-coarse:w-13 pointer-coarse:-mr-3 pointer-coarse:gap-2">
+			<span className="grid size-[26px] shrink-0 place-items-center self-center max-[1024.02px]:flex max-[1024.02px]:w-13 max-[1024.02px]:-mr-3 max-[1024.02px]:gap-2 pointer-coarse:flex pointer-coarse:w-13 pointer-coarse:-mr-3 pointer-coarse:gap-2">
 				{showStar && (
 					<button
 						type="button"
-						aria-label={isStarred ? 'Starred (click to remove)' : 'Star this object'}
+						aria-label={isStarred ? 'Starred (click to remove)' : 'Star this item'}
 						aria-pressed={isStarred}
 						onClick={(e) => {
 							e.preventDefault()
@@ -175,7 +169,7 @@ export function ListRow({
 							toggleStar()
 						}}
 						className={cn(
-							'text-[13px] leading-none transition-colors',
+							'text-base leading-none transition-colors',
 							// Touch has no hover, so the checkbox sits in the slot at rest and
 							// the star stays beside it, to its right. The 1024.02px cutoff is
 							// Tailwind's `max-lg` nudged past 1024 (it is exclusive of 1024), so
@@ -187,7 +181,7 @@ export function ListRow({
 							// Amber-filled when on (SPEC §D5 — parity with detail meta row).
 							// `--ink-3` (border-strong) → `--ink-2` (muted-foreground) on hover
 							// when off, per SPEC.
-							isStarred ? 'text-[#f59e0b]' : 'text-border-strong hover:text-muted-foreground',
+							isStarred ? 'text-[#f59e0b]' : 'text-muted-foreground hover:text-foreground',
 							// SPEC: 60% opacity while the server round-trip is in flight.
 							isStarSaving && 'opacity-60',
 						)}
@@ -243,27 +237,9 @@ export function ListRow({
 					/>
 				</span>
 			</span>
-			{showType && (
-				<>
-					{/* Below `sm` the 88px plate would take a quarter of the row from the
-					    title, so the type shrinks to its coloured dot. The wrapper names
-					    it for screen readers and the hover title. */}
-					<span
-						role="img"
-						aria-label={typeLabel ?? object.type}
-						title={typeLabel ?? object.type}
-						className="flex shrink-0 items-center sm:hidden"
-					>
-						<TypeBadge type={object.type} variant="dot" />
-					</span>
-					<TypeBadge
-						type={object.type}
-						label={typeLabel}
-						variant="pill"
-						className="max-sm:hidden"
-					/>
-				</>
-			)}
+			{/* v3: the type is a glyph only, so it never takes a plate's width from the
+			    title (main's phone fix for the same problem, #2958, is therefore not needed). */}
+			{showType && <TypeBadge type={object.type} label={typeLabel} variant="glyph" />}
 			<div className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
 				<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
 					<Link
@@ -293,51 +269,31 @@ export function ListRow({
 						}}
 						// Phones give the title two lines before it cuts; from `sm` it is one. Plain
 						// `truncate` stays on both so the mobile-QA gate sees the clip as intended.
-						className="min-w-0 truncate break-words text-sm font-medium text-foreground hover:underline max-sm:line-clamp-2 max-sm:whitespace-normal"
+						className="min-w-0 truncate break-words text-[15px] font-medium text-foreground hover:underline max-sm:line-clamp-2 max-sm:whitespace-normal"
 					>
 						{object.title || 'Untitled'}
 					</Link>
-					{loop && (
-						// D1 · Loop chip. Position: after the title, before the right-
-						// side status chip. Copy verbatim per SPEC: `↺ Loop · {name}`.
-						// The chip itself never truncates (`shrink-0`) — the title
-						// truncates first, exactly as the D1 spec asks.
-						<Link
-							to="/$workspaceId/loops/$loopId"
-							params={{ workspaceId, loopId: loop.id }}
-							onClick={(e) => e.stopPropagation()}
-							className={cn(
-								'shrink-0 rounded-full border border-border bg-muted/60 px-2 py-0.5',
-								'text-[10px] font-medium leading-none text-muted-foreground',
-								'transition-colors hover:text-foreground hover:underline',
-								'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-							)}
-						>
-							↺ Loop · {loop.name}
-						</Link>
-					)}
-					{hasPendingAsk && (
-						<span className="shrink-0 rounded-full border border-ask-border bg-ask-surface px-2 py-0.5 text-[10px] font-bold leading-none text-warning">
-							Waiting on you
-						</span>
-					)}
-					{betStatus && showBetStatusIndicator && (
+					{betStatus && showBetStatusIndicator && betStatus.state !== 'idle' && (
 						<IndicatorBadgeRow result={betStatus} className="shrink-0" />
 					)}
 				</div>
 				{hasPendingAsk && (
-					// D3 · Ask-line under the title. Copy is verbatim from the SPEC:
-					// `{who} asks — "{text}"` (name bolded, text truncated at ~90
-					// chars). Multi-ask overflow renders `+ N more` as plain text —
-					// not a link, per the D3 spec's explicit "plain text, not a link".
-					// The type label is a sibling column here (not inline with the
-					// title as in the mockup), so the ask line already starts at the
-					// title column — no extra `askIndent` offset is needed.
-					<p className="truncate text-xs leading-snug text-muted-foreground max-sm:line-clamp-2 max-sm:whitespace-normal">
-						<span className="font-bold text-warning">{askActorName}</span> asks —{' '}
-						<span>“{askText}”</span>
+					// Ask line under the title (v16): the asking agent's avatar, then the
+					// question only. The "Ask" tag and "<agent> asks" are gone; the name
+					// stays available to assistive tech. Multi-ask overflow renders
+					// `+ N more` as plain text, never a link.
+					<p className="flex min-w-0 items-center gap-1.5 text-[12.5px] leading-snug text-muted-foreground">
+						<ActorAvatar
+							id={askActor?.id}
+							name={askActorName ?? 'Agent'}
+							type={askActor?.type ?? 'agent'}
+							className="shrink-0"
+							tile
+						/>
+						<span className="sr-only">{askActorName} asks</span>
+						<span className="truncate">{askText}</span>
 						{extraAskCount > 0 && (
-							<span className="text-muted-foreground/80"> + {extraAskCount} more</span>
+							<span className="shrink-0 text-muted-foreground/80">+ {extraAskCount} more</span>
 						)}
 					</p>
 				)}
@@ -347,33 +303,37 @@ export function ListRow({
 					</p>
 				)}
 			</div>
-			{/* The mockup's row status is the bare coloured word — no dot, no pill
-			    (759). A dot beside it doubles the colour signal in 11px of space. */}
+			{/* v3 row status: the ring. The word lives in its hover title and in the
+			    group header when grouped by status. A status the ring has no stage for
+			    (a custom one) keeps its word beside the ring from `sm` up, so it never
+			    reads as a stage it isn't. */}
 			{showTag && (
-				<StatusBadge
-					status={object.status}
-					variant="word"
-					// Hidden below `sm`: at 375px the leading touch checkbox and star plus
-					// five columns leaves the title little room, and the status word is
-					// the one column the reader can already get from the group header
-					// (grouping rests on Status). It returns at 640px.
-					className="hidden text-[11px] font-semibold sm:inline"
-				/>
+				<>
+					{statusStage(object.status) === 'unknown' && (
+						<StatusBadge
+							status={object.status}
+							variant="word"
+							className="hidden text-[11px] font-semibold sm:inline"
+						/>
+					)}
+					<StatusBadge status={object.status} variant="ring" />
+				</>
 			)}
 			{showDriver && driver && (
 				// D2 · Driver avatar gains a violet conic-gradient ring when the
 				// object has an actively-running session on it. Replaces the old
 				// right-side <AgentWorkingBadge> — the ring is the row's only
 				// working indicator now, per the D2 acceptance criteria.
-				// Below `sm` the avatar is hidden like the status word (the title needs
-				// the room), except while the driver is working: the ring is the only
-				// working indicator, so it has to stay visible on phones.
+				// Below `sm` the avatar is hidden (the title needs the room), except while
+				// the driver is working: the ring is the only working indicator, so it has
+				// to stay visible on phones. (Main's phone fix, #2958, on the v3 tile avatar.)
 				<span className={cn('shrink-0 sm:inline-flex', isWorking ? 'inline-flex' : 'hidden')}>
 					<ActorAvatar
 						id={driver.id}
 						name={driver.name}
 						type={driver.type}
 						className="shrink-0"
+						tile
 						working={isWorking}
 					/>
 				</span>

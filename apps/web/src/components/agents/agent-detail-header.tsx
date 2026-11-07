@@ -1,26 +1,25 @@
 import { isCurrentActorAdmin } from '@/components/agents/agent-avatar-upload'
-import { AgentCallButton } from '@/components/agents/agent-call-button'
-import { AgentStatusPill, type PortraitStatus } from '@/components/agents/agent-portrait-card'
+import {
+	AgentStatusPill,
+	type PortraitStatus,
+	agentAvatarStatus,
+	agentTileClass,
+} from '@/components/agents/agent-portrait-card'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Input } from '@/components/ui/input'
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { useUpdateActor, useUploadActorAvatar } from '@/hooks/use-actors'
 import { useCanWrite } from '@/hooks/use-can-write'
+import { useLoops } from '@/hooks/use-loops'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import type { ActorResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { ACTOR_DESCRIPTION_MAX_LENGTH } from '@maskin/shared'
+import { Link } from '@tanstack/react-router'
 import { Camera } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 export function AgentDetailHeader({
@@ -32,16 +31,29 @@ export function AgentDetailHeader({
 	 *  publishes to the nav row (mockup 2351). */
 	portrait: PortraitStatus
 }) {
-	const { workspace, workspaceId } = useWorkspace()
+	const { workspaceId } = useWorkspace()
 	const updateActor = useUpdateActor(workspaceId)
 	const uploadAvatar = useUploadActorAvatar(workspaceId)
 	const { data: members } = useWorkspaceMembers(workspaceId)
+	const { data: loops } = useLoops(workspaceId)
 	const canChangeAvatar = isCurrentActorAdmin(members)
 	const avatarInputRef = useRef<HTMLInputElement>(null)
 	// A loop-managed agent's identity is owned by its loop — fork to edit.
 	const isManaged = !!agent.installedLoopId
 
 	const outcome = agent.description?.trim() || 'No outcome set yet'
+
+	// "Works in": the flows this agent runs, A to Z. A row with none is not drawn.
+	const flows = useMemo(
+		() =>
+			(loops ?? [])
+				.filter((loop) => loop.agentIds.includes(agent.id))
+				.map((loop) => ({ id: loop.id, name: loop.name?.trim() || 'Untitled flow' }))
+				.sort((a, b) =>
+					a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }),
+				),
+		[loops, agent.id],
+	)
 
 	const save = (data: { name?: string; description?: string }, label: string) =>
 		updateActor.mutate(
@@ -50,113 +62,114 @@ export function AgentDetailHeader({
 		)
 
 	return (
-		<header className="flex flex-col gap-3">
-			<div className="flex flex-wrap items-center gap-3">
-				<div className="relative shrink-0">
-					<ActorAvatar
-						name={agent.name}
-						type={agent.type}
-						size="xl"
-						tone="strong"
-						className="size-14 rounded-2xl text-[22px] font-bold [&>img]:rounded-2xl"
-						id={agent.id}
-						imageUrl={agent.avatar_url ?? undefined}
-					/>
-					{canChangeAvatar && (
-						<>
-							{/* Always visible, not a hover reveal: there is no hover on touch. */}
-							<button
-								type="button"
-								onClick={() => avatarInputRef.current?.click()}
-								disabled={uploadAvatar.isPending}
-								aria-label={`Change profile picture for ${agent.name}`}
-								className="absolute inset-0 flex items-end justify-end rounded-2xl focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed"
-							>
-								<span className="-mb-1 -mr-1 flex size-5 items-center justify-center rounded-full border border-border bg-background text-muted-foreground shadow-sm">
-									{uploadAvatar.isPending ? <Spinner className="size-3" /> : <Camera size={12} />}
-								</span>
-							</button>
-							<input
-								ref={avatarInputRef}
-								type="file"
-								accept="image/png,image/jpeg"
-								className="hidden"
-								onChange={(e) => {
-									const file = e.target.files?.[0]
-									e.target.value = ''
-									if (!file) return
-									if (file.type !== 'image/png' && file.type !== 'image/jpeg') {
-										toast.error('Only PNG or JPG images are supported.')
-										return
-									}
-									uploadAvatar.mutate(
-										{ id: agent.id, file },
-										{ onError: (err) => toast.error(err.message || "Couldn't upload the picture") },
-									)
-								}}
-							/>
-						</>
+		<header className="flex items-start gap-4.5 px-1 leading-tight">
+			<div className="relative shrink-0">
+				<ActorAvatar
+					name={agent.name}
+					type={agent.type}
+					size="xl"
+					tone="strong"
+					status={agentAvatarStatus(portrait)}
+					className={cn(
+						'size-17 rounded-2xl text-2xl font-bold [&>img]:rounded-2xl',
+						agentTileClass(portrait),
 					)}
-				</div>
-				<div className="flex min-w-0 flex-1 flex-col gap-1.5">
-					<div className="flex flex-wrap items-center gap-2.5">
-						{/* Named explicitly: the heading's only child is the edit button,
-						    and a control contributes its *accessible name* to the name of
-						    an ancestor computed from content — so without this the page's
-						    one <h1> announces "Edit agent name" instead of the agent's. */}
-						<h1
-							aria-label={agent.name}
-							className="min-w-0 flex-1 truncate text-xl font-semibold tracking-tight text-foreground sm:text-2xl"
+					id={agent.id}
+					imageUrl={agent.avatar_url ?? undefined}
+				/>
+				{canChangeAvatar && (
+					<>
+						{/* Always visible, not a hover reveal: there is no hover on touch. */}
+						<button
+							type="button"
+							onClick={() => avatarInputRef.current?.click()}
+							disabled={uploadAvatar.isPending}
+							aria-label={`Change profile picture for ${agent.name}`}
+							className="absolute inset-0 flex items-start justify-end rounded-2xl focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed"
 						>
-							<EditableField
-								value={agent.name}
-								label="Agent name"
-								readOnly={isManaged}
-								onSave={(next) => {
-									if (next) save({ name: next }, 'the name')
-								}}
-								inputClassName="text-xl font-semibold tracking-tight sm:text-2xl"
-							/>
-						</h1>
-						{/* The bare coloured word — no dot, no plate. v2 dropped both here
-						    because the name already carries the eye and the identity row
-						    should read as one line of text (mockup 2321). */}
-						<span className="text-[11px]">
-							<AgentStatusPill status={portrait} variant="bare" />
-						</span>
-						<Select value={workspace.id} disabled>
-							<SelectTrigger
-								aria-label="Team"
-								className="h-[22px] gap-1.5 rounded-full border-dashed bg-muted/40 px-2.5 py-0 text-[11px] font-semibold text-muted-foreground"
-							>
-								<SelectValue />
-							</SelectTrigger>
-							<SelectContent>
-								<SelectItem value={workspace.id}>{workspace.name}</SelectItem>
-							</SelectContent>
-						</Select>
-					</div>
-					<p className="flex flex-wrap items-center gap-1 text-sm text-muted-foreground">
-						<span className="text-muted-foreground">Owns one outcome: </span>
-						<EditableField
-							value={agent.description ?? ''}
-							displayValue={outcome}
-							label="Outcome"
-							readOnly={isManaged}
-							maxLength={ACTOR_DESCRIPTION_MAX_LENGTH}
-							placeholder="What does this agent own?"
-							onSave={(next) => save({ description: next }, 'the outcome')}
-							className={cn(
-								'text-sm',
-								agent.description?.trim() ? 'text-foreground' : 'text-muted-foreground',
-							)}
-							inputClassName="text-sm"
+							<span className="-mr-1 -mt-1 flex size-5 items-center justify-center rounded-full border border-border bg-background text-muted-foreground shadow-sm">
+								{uploadAvatar.isPending ? <Spinner className="size-3" /> : <Camera size={12} />}
+							</span>
+						</button>
+						<input
+							ref={avatarInputRef}
+							type="file"
+							accept="image/png,image/jpeg"
+							className="hidden"
+							onChange={(e) => {
+								const file = e.target.files?.[0]
+								e.target.value = ''
+								if (!file) return
+								if (file.type !== 'image/png' && file.type !== 'image/jpeg') {
+									toast.error('Only PNG or JPG images are supported.')
+									return
+								}
+								uploadAvatar.mutate(
+									{ id: agent.id, file },
+									{ onError: (err) => toast.error(err.message || "Couldn't upload the picture") },
+								)
+							}}
 						/>
-					</p>
+					</>
+				)}
+			</div>
+			<div className="flex min-w-0 flex-1 flex-col gap-2.5">
+				<div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+					{/* Named explicitly: the heading's only child is the edit button,
+					    and a control contributes its *accessible name* to the name of
+					    an ancestor computed from content — so without this the page's
+					    one <h1> announces "Edit agent name" instead of the agent's. */}
+					<h1
+						aria-label={agent.name}
+						className="min-w-0 max-w-full truncate text-2xl font-bold tracking-tight text-foreground sm:text-3xl"
+					>
+						<EditableField
+							value={agent.name}
+							label="Agent name"
+							readOnly={isManaged}
+							onSave={(next) => {
+								if (next) save({ name: next }, 'the name')
+							}}
+							inputClassName="text-2xl font-bold tracking-tight sm:text-3xl"
+						/>
+					</h1>
+					<span className="text-[13px]">
+						<AgentStatusPill status={portrait} pulse />
+					</span>
 				</div>
-				{/* Voice call entry point. Sits right of the identity block on the same
-				    row. */}
-				<AgentCallButton agent={agent} />
+				<p className="flex items-baseline gap-1.5 text-[15px] text-muted-foreground">
+					<span className="shrink-0 text-muted-foreground">Owns</span>
+					<EditableField
+						value={agent.description ?? ''}
+						displayValue={outcome}
+						label="Outcome"
+						readOnly={isManaged}
+						maxLength={ACTOR_DESCRIPTION_MAX_LENGTH}
+						placeholder="What does this agent own?"
+						onSave={(next) => save({ description: next }, 'the outcome')}
+						fill
+						className={cn(
+							'w-full rounded-none border-b border-dashed border-border text-[15px]',
+							agent.description?.trim() ? 'text-foreground' : 'text-muted-foreground',
+						)}
+						inputClassName="text-[15px]"
+					/>
+				</p>
+				{flows.length > 0 && (
+					<div className="flex flex-wrap items-center gap-2 text-[12.5px] text-muted-foreground">
+						<span>Works in</span>
+						{flows.map((flow) => (
+							<Link
+								key={flow.id}
+								to="/$workspaceId/loops/$loopId"
+								params={{ workspaceId, loopId: flow.id }}
+								className="rounded-full border border-border px-3 py-0.5 text-[13px] font-semibold text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+							>
+								{flow.name}
+							</Link>
+						))}
+					</div>
+				)}
 			</div>
 		</header>
 	)
@@ -176,6 +189,7 @@ function EditableField({
 	onSave,
 	className,
 	inputClassName,
+	fill = false,
 }: {
 	value: string
 	/** What to render when not editing, if it differs from the raw value (e.g. a
@@ -188,6 +202,8 @@ function EditableField({
 	onSave: (next: string) => void
 	className?: string
 	inputClassName?: string
+	/** Takes the rest of the row, so a border on the button runs the full width. */
+	fill?: boolean
 }) {
 	const [editing, setEditing] = useState(false)
 	const [draft, setDraft] = useState(value)
@@ -225,7 +241,7 @@ function EditableField({
 	}
 
 	return (
-		<ViewerTooltip className="inline-flex min-w-0 max-w-full">
+		<ViewerTooltip className={fill ? 'flex min-w-0 flex-1' : 'inline-flex min-w-0 max-w-full'}>
 			<button
 				type="button"
 				aria-label={`Edit ${label.toLowerCase()}`}

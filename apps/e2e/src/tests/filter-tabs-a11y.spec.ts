@@ -48,9 +48,12 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			await expect(page.getByText('Aria Test Insight')).toBeVisible()
 			await expect(page.getByText('Aria Test Bet')).not.toBeVisible()
 
-			await bets.focus()
+			// Narrow rows fold later chips (Bets) into More, so Space goes on the
+			// All chip there and on Bets wherever it fits.
+			const spaceTarget = (await bets.isVisible()) ? bets : all
+			await spaceTarget.focus()
 			await page.keyboard.press(' ')
-			await expect(bets).toHaveAttribute('aria-pressed', 'true')
+			await expect(spaceTarget).toHaveAttribute('aria-pressed', 'true')
 			await expect(page.getByText('Aria Test Bet')).toBeVisible()
 		})
 	})

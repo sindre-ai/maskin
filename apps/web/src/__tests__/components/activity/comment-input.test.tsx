@@ -142,9 +142,9 @@ describe('CommentInput', () => {
 
 		expect(screen.getByText('Enter to send · @ to mention · + to attach')).toBeInTheDocument()
 
-		await user.click(screen.getByRole('button', { name: 'Add a file, object, or mention' }))
+		await user.click(screen.getByRole('button', { name: 'Add a file, item, or mention' }))
 		expect(await screen.findByText('Attach a file')).toBeInTheDocument()
-		expect(screen.getByText('Reference an object')).toBeInTheDocument()
+		expect(screen.getByText('Reference an item')).toBeInTheDocument()
 		expect(screen.getByText('Mention an agent')).toBeInTheDocument()
 		// Options for the reader to pick from are a `decision`, which only an
 		// agent authors. The composer used to offer a second, weaker way here.
@@ -155,8 +155,8 @@ describe('CommentInput', () => {
 		const user = userEvent.setup()
 		renderInput()
 
-		await user.click(screen.getByRole('button', { name: 'Add a file, object, or mention' }))
-		await user.click(await screen.findByText('Reference an object'))
+		await user.click(screen.getByRole('button', { name: 'Add a file, item, or mention' }))
+		await user.click(await screen.findByText('Reference an item'))
 		await user.click(await screen.findByRole('button', { name: 'pick-object' }))
 
 		typeText('See this one')
@@ -177,8 +177,8 @@ describe('CommentInput', () => {
 		const user = userEvent.setup()
 		renderInput()
 
-		await user.click(screen.getByRole('button', { name: 'Add a file, object, or mention' }))
-		await user.click(await screen.findByText('Reference an object'))
+		await user.click(screen.getByRole('button', { name: 'Add a file, item, or mention' }))
+		await user.click(await screen.findByText('Reference an item'))
 		await user.click(await screen.findByRole('button', { name: 'pick-object' }))
 
 		const send = screen.getByRole('button', { name: /send/i })
@@ -459,7 +459,7 @@ describe('CommentInput', () => {
 			const user = userEvent.setup()
 			renderInput()
 
-			await user.click(screen.getByRole('button', { name: 'Add a file, object, or mention' }))
+			await user.click(screen.getByRole('button', { name: 'Add a file, item, or mention' }))
 			await user.click(await screen.findByText('Mention an agent'))
 
 			expect(await screen.findByRole('option', { name: /Bob/ })).toBeInTheDocument()
@@ -470,8 +470,8 @@ describe('CommentInput', () => {
 			const user = userEvent.setup()
 			renderInput()
 
-			await user.click(screen.getByRole('button', { name: 'Add a file, object, or mention' }))
-			await user.click(await screen.findByText('Reference an object'))
+			await user.click(screen.getByRole('button', { name: 'Add a file, item, or mention' }))
+			await user.click(await screen.findByText('Reference an item'))
 			await user.click(await screen.findByRole('button', { name: 'pick-agent' }))
 			typeText('please look')
 			await user.click(screen.getByRole('button', { name: /send/i }))

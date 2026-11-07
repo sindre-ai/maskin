@@ -900,6 +900,12 @@ struct ChatThreadView: View {
 	private func reachedBottom() {
 		distanceFromBottom = 0
 		unseenCount = 0
+		// iOS 17 has no scroll geometry: the sentinel is the only way the store learns the reader got
+		// to the end. Without this a thread opened on its NEW divider was never marked read there.
+		if revealed, !store.isAtBottom {
+			store.isAtBottom = true
+			Task { await store.markReadIfNeeded() }
+		}
 	}
 
 	/// What the thread does when its newest row changes. Opened on the NEW divider and not scrolled

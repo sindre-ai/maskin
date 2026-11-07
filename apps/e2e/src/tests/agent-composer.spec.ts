@@ -118,7 +118,8 @@ test.describe('Agent detail — bottom composer', () => {
 				})
 			})
 
-			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
+			// The composer sits under the runs, on the Sessions tab.
+			await page.goto(`/${account.workspaceId}/agents/${agent.id}?tab=sessions`)
 
 			const composer = page.getByTestId('agent-composer')
 			await expect(composer).toBeVisible({ timeout: 10_000 })

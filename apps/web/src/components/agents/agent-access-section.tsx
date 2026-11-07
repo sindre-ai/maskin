@@ -180,7 +180,7 @@ export function AgentAccessSection({ agent }: { agent: ActorResponse }) {
 
 	return (
 		<section aria-labelledby="agent-access-heading" className="flex flex-col gap-2.5">
-			<AgentSectionHeading id="agent-access-heading" title="Access" />
+			<AgentSectionHeading id="agent-access-heading" title="Access" quiet />
 			<div className="rounded-xl border border-border bg-card px-4 py-2">
 				<p className="settings-label pb-1 pt-1">Tools</p>
 				<ul className="divide-y divide-border" aria-label="Tools">

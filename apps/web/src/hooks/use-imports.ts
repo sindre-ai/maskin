@@ -92,7 +92,7 @@ export function useImportToast(workspaceId: string) {
 			}
 
 			if (status === 'completed') {
-				const parts = [`${successCount} objects created`]
+				const parts = [`${successCount} items created`]
 				if (updatedCount > 0) parts.push(`${updatedCount} existing updated`)
 				if (skippedCount > 0) parts.push(`${skippedCount} already existed`)
 				if (errorCount > 0) parts.push(`${errorCount} failed`)

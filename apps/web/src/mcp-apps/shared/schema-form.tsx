@@ -131,7 +131,7 @@ export function SchemaForm({
 	if (!schema?.types[objectType]) {
 		return (
 			<p className={className ?? 'text-xs text-muted-foreground'}>
-				Unknown object type: {objectType}
+				Unknown item type: {objectType}
 			</p>
 		)
 	}

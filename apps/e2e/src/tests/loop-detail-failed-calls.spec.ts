@@ -33,9 +33,17 @@ test.describe('Loop detail page when its calls fail', () => {
 			await expect(page.getByRole('heading', { name: 'Slow loop' }).first()).toBeVisible({
 				timeout: 15_000,
 			})
-			await expect(page.getByText(/Couldn't load the loop's recent activity/)).toBeVisible()
-			// The other blocks still render.
-			await expect(page.getByTestId('loop-stats')).toBeVisible()
+			// The overview does not wait on the activity call; the message sits on the Activity tab.
+			await expect(page.getByTestId('loop-block-error')).toHaveCount(0)
+			// On a narrow screen the strip may fold Activity under More.
+			const activityTab = page.getByRole('tab', { name: 'Activity' })
+			if (await activityTab.isVisible()) {
+				await activityTab.click()
+			} else {
+				await page.getByRole('button', { name: /^More/ }).click()
+				await page.getByRole('menuitemradio', { name: 'Activity' }).click()
+			}
+			await expect(page.getByText(/Couldn't load the flow's recent activity/)).toBeVisible()
 			await expect(page.getByTestId('loop-block-error')).toHaveCount(1)
 
 			failing = false

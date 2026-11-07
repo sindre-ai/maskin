@@ -1,4 +1,5 @@
 import type { UnreadItem } from '@/lib/api'
+import { isInformational } from '@/lib/foryou-card-kind'
 
 /**
  * Pure helpers behind the For You feed (mockup `Maskin For You - Feed v4`).
@@ -48,10 +49,11 @@ export function heldNote(iso: string | null | undefined, now: number = Date.now(
  * - `waiting` — the ball is with an agent (you answered last)
  * - `fyi`     — nothing to decide, just new activity
  * - `done`    — decided in this sitting; the green receipt strip
+ * - `later`   — set aside on this device until a chosen time (`foryou-later.ts`)
  */
-export type FeedBucket = 'needs' | 'waiting' | 'fyi' | 'done'
+export type FeedBucket = 'needs' | 'waiting' | 'fyi' | 'done' | 'later'
 
-export const BUCKET_ORDER: readonly FeedBucket[] = ['needs', 'waiting', 'fyi', 'done']
+export const BUCKET_ORDER: readonly FeedBucket[] = ['needs', 'waiting', 'fyi', 'done', 'later']
 
 export function bucketRank(bucket: FeedBucket): number {
 	const index = BUCKET_ORDER.indexOf(bucket)
@@ -77,6 +79,58 @@ export function feedItemKey(item: UnreadItem): string {
  * The line that closes an empty column (mockup's `tail`). It only ever renders
  * when there is nothing to read — a feed with cards in it needs no epitaph.
  */
-export function feedTailLabel({ filtered }: { filtered: boolean }): string {
-	return filtered ? 'Nothing of this kind in the feed' : 'Feed cleared'
+export function feedTailLabel({
+	filtered,
+	kindLabel,
+}: { filtered: boolean; kindLabel?: string }): string {
+	if (!filtered) return 'Feed cleared'
+	return kindLabel ? `Nothing in ${kindLabel}` : 'Nothing here'
+}
+
+/**
+ * What kind of card this is, for the Display menu's filters and the pill row:
+ * a message waiting to be sent is a Draft, an agent's ask is a Decision, and a
+ * note that asks nothing is an Update (the prototype's Decisions / Drafts / Updates).
+ */
+export type FeedKind = 'decision' | 'draft' | 'update'
+
+export const FEED_KIND_LABEL: Record<FeedKind, string> = {
+	decision: 'Decisions',
+	draft: 'Drafts',
+	update: 'Updates',
+}
+
+/**
+ * A filter value that is not a card kind (anything left over from the old item-type
+ * filter) means no filter, so a stale value can never hide the whole feed.
+ */
+export function feedKindFilter(value: string | undefined): FeedKind | undefined {
+	return value !== undefined && Object.hasOwn(FEED_KIND_LABEL, value)
+		? (value as FeedKind)
+		: undefined
+}
+
+/**
+ * Decision and draft come from the decision block the agent attached (a draft when it
+ * carries a message to send). Update is exactly the "Updates for you" section's rule,
+ * `isInformational`: no decision, and the comment neither scores high on attention nor
+ * contains a question. The feed has no server-side card kind, so the pill and the section
+ * agree because they call the same function.
+ */
+export function feedKindOf(item: UnreadItem): FeedKind {
+	const decision = item.latest_mention?.decision
+	if (decision && (decision.draft || (decision.drafts?.length ?? 0) > 0)) return 'draft'
+	return isInformational(item) ? 'update' : 'decision'
+}
+
+/**
+ * What a bulk dismiss ("Dismiss all", Alt+U) may touch: never a card that is
+ * waiting on a decision or an answer from the person, and never one they set
+ * aside on purpose with Later (a dismissed card does not come back).
+ */
+export function dismissableItems<T>(items: readonly T[], bucketOf: (item: T) => FeedBucket): T[] {
+	return items.filter((item) => {
+		const bucket = bucketOf(item)
+		return bucket !== 'needs' && bucket !== 'later'
+	})
 }

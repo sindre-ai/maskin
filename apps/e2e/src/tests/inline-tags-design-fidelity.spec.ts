@@ -52,7 +52,7 @@ test.describe('Inline tags — design fidelity fixes', () => {
 		await expect(box).toContainText('please start now @')
 
 		// Second Esc cancels the edit.
-		await page.keyboard.press('Escape')
+		await box.press('Escape')
 		await expect(box).toHaveCount(0)
 		await expect(page.getByText('please start').first()).toBeVisible()
 	})
@@ -74,7 +74,8 @@ test.describe('Inline tags — design fidelity fixes', () => {
 			mentions: [account.actorId],
 		})
 
-		await page.goto(`/${ws}/objects/${bet.id}`)
+		// Comments render in the Activity tab.
+		await page.goto(`/${ws}/objects/${bet.id}?tab=activity`)
 		const chip = page.getByRole('button', { name: `@${me.name}` })
 		await expect(chip).toBeVisible({ timeout: 10_000 })
 		await expect(chip).toHaveClass(/bg-warning\/10/)

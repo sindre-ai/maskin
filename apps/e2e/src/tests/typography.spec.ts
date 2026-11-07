@@ -198,6 +198,8 @@ test.describe('Typography — object detail', () => {
 		await page.setViewportSize(VIEWPORTS.desktopXl)
 		await page.goto(`/${account.workspaceId}/objects/${obj.id}`)
 		await waitForApp(page)
+		// The body renders after the object loads; the fixed settle above is not enough on a cold dev server.
+		await page.locator('div[class*="max-w-[75ch]"]').first().waitFor({ timeout: 15_000 })
 
 		// The rebuilt shell's markdown body carries `max-w-[75ch]` on the
 		// MarkdownContent root. Chromium resolves `ch` units to a pixel value in
@@ -264,6 +266,8 @@ test.describe('Typography — notification feed', () => {
 		await setTheme(page, 'light')
 		await page.goto(`/${account.workspaceId}`)
 		await waitForApp(page)
+
+		await page.locator('time').first().waitFor({ timeout: 15_000 })
 
 		// The "for you" landing page shows queue cards with <RelativeTime>
 		// Look for <time> elements that carry font-mono and tabular-nums
@@ -332,6 +336,7 @@ test.describe('Typography — tabular-nums', () => {
 		await page.goto(`/${account.workspaceId}`)
 		await waitForApp(page)
 
+		await page.locator('.font-mono').first().waitFor({ timeout: 15_000 })
 		const monoElements = await page.evaluate(() => {
 			const els = Array.from(document.querySelectorAll('.font-mono'))
 			return els.slice(0, 5).map((el) => ({
@@ -355,6 +360,7 @@ test.describe('Typography — tabular-nums', () => {
 		await page.goto(`/${account.workspaceId}`)
 		await waitForApp(page)
 
+		await page.locator('[aria-label$="unread"]').first().waitFor({ timeout: 15_000 })
 		const badgeEls = await page.evaluate(() => {
 			// Unread badges have aria-label like "N unread"
 			return Array.from(document.querySelectorAll('[aria-label$="unread"]')).map((el) => ({

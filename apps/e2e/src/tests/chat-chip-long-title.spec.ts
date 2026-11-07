@@ -230,7 +230,9 @@ test.describe('Chat — a chip is a plate of text that wraps with the sentence',
 
 			const last = m.pieces[m.pieces.length - 1]
 			await page.mouse.move((last.left + last.right) / 2, last.bottom + 1)
-			await page.mouse.move((box?.x ?? 0) + 40, (box?.y ?? 0) + 40, { steps: 6 })
+			// Land on the card's top edge: on the last message the card's lower part sits behind the
+			// composer, and a pointer over the composer has left the chip and the card.
+			await page.mouse.move((box?.x ?? 0) + 40, (box?.y ?? 0) + 10, { steps: 6 })
 			await expect(preview).toBeVisible()
 			await page.screenshot({ path: `test-results/chip-plate-preview-${width}.png` })
 		})
@@ -247,7 +249,7 @@ test.describe('Chat — a chip is a plate of text that wraps with the sentence',
 		await chips.short.hover()
 		await expect.poll(async () => (await measure(chips.short)).background).not.toBe(before)
 		await chips.short.click()
-		await expect(page.getByRole('dialog', { name: 'Object preview' })).toBeVisible()
+		await expect(page.getByRole('dialog', { name: 'Item preview' })).toBeVisible()
 		await expect(page).toHaveURL(chatUrl)
 	})
 })

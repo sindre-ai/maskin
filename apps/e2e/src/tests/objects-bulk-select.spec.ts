@@ -65,7 +65,7 @@ test.describe('Bulk-select — grouped list selection', () => {
 
 			await page.goto(`/${account.workspaceId}/objects?groupBy=status`)
 			// Groups rest open, so the header and its leaves render together.
-			await expect(page.getByRole('button', { name: /^define \d+$/ })).toBeVisible({
+			await expect(page.getByRole('button', { name: /define \d+$/i })).toBeVisible({
 				timeout: 10000,
 			})
 			await expect(page.getByText('Group Define Bet A')).toBeVisible()
@@ -81,7 +81,7 @@ test.describe('Bulk-select — grouped list selection', () => {
 			await expect(page.getByLabel('2 selected')).toBeVisible()
 
 			// Selection is keyed by object id and survives collapsing the group.
-			await page.getByRole('button', { name: /^define \d+$/ }).click()
+			await page.getByRole('button', { name: /define \d+$/i }).click()
 			await expect(page.getByText('Group Define Bet A')).not.toBeVisible()
 			await expect(page.getByLabel('2 selected')).toBeVisible()
 		})
@@ -123,6 +123,31 @@ test.describe('Bulk-select — archive action', () => {
 			await expect(page.getByLabel('2 selected')).not.toBeVisible()
 			await expect(page.getByText('Archive Bet A')).not.toBeVisible()
 			await expect(page.getByText('Archive Bet B')).not.toBeVisible()
+		})
+	}
+})
+
+test.describe('Bulk-select — dropdown pills (v16)', () => {
+	for (const viewport of SHIP_GATE_VIEWPORTS) {
+		test(`Status and Driver are pills and open @ ${viewport.label}`, async ({ page, account }) => {
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+			await account.api.createObject(account.workspaceId, {
+				type: 'bet',
+				title: 'Pill Bet',
+				status: 'opportunity',
+			})
+			await page.goto(`/${account.workspaceId}/objects?type=bet`)
+			await expect(page.getByText('Pill Bet')).toBeVisible({ timeout: 10000 })
+			await page.getByRole('checkbox', { name: 'Select row' }).first().click()
+
+			const status = page.getByRole('combobox', { name: 'Set status' })
+			await expect(status).toBeVisible()
+			const box = await status.boundingBox()
+			// 34px on pointer devices, 44px floor below md (touch widths).
+			expect(box?.height).toBe(viewport.width < 768 ? 44 : 34)
+			expect(await status.evaluate((el) => getComputedStyle(el).borderRadius)).not.toBe('0px')
+			await status.click()
+			await expect(page.getByRole('option').first()).toBeVisible()
 		})
 	}
 })
