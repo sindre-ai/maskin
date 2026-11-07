@@ -29,9 +29,9 @@ public enum ShellTab: String, CaseIterable, Hashable, Identifiable, Sendable {
 	public var barItems: [ShellBarItem] {
 		switch self {
 		case .forYou: [.live, .avatar]
-		case .chats: [.display, .new, .avatar]
-		case .loops: [.display, .avatar]
-		case .objects: [.display, .avatar]
+		case .chats: [.search, .display, .new, .avatar]
+		case .loops: [.marketplace, .display, .avatar]
+		case .objects: [.search, .display, .avatar]
 		case .search, .newChat: [.avatar]
 		}
 	}
@@ -45,6 +45,10 @@ public enum ShellBarItem: String, CaseIterable, Hashable, Sendable {
 	case new
 	/// The filter / display menu. Stays while the screen is scrolled.
 	case display
+	/// The magnifier that opens search (Chats and Items; Flows has the system's own collapsing search).
+	case search
+	/// The shop icon that opens the marketplace (Flows only).
+	case marketplace
 	/// The profile avatar, which opens the profile sheet. Stays while the screen is scrolled.
 	case avatar
 

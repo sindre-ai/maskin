@@ -60,7 +60,8 @@ public struct ObjectsScreen: View {
 			displaySymbol: ShellActions.slidersSymbol,
 			displayActive: store.display.isCustomised || store.statusFilter != nil,
 			displayToggle: { showDisplay = true },
-			hidesAvatar: true)
+			hidesAvatar: true,
+			search: { runtime?.presentation = .search })
 	}
 
 	// MARK: Asks

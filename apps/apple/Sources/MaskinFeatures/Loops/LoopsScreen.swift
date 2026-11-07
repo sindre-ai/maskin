@@ -127,7 +127,8 @@ private struct LoopsContainer: View {
 			actions: ShellActions(
 				new: { buildLoopInChat() }, newLabel: "New flow",
 				displaySymbol: ShellActions.slidersSymbol, displayActive: loops.isDisplayCustomised,
-				displayToggle: { showDisplay = true })
+				displayToggle: { showDisplay = true },
+				marketplace: { showMarketplace = true })
 		)
 		.sheet(isPresented: $showDisplay) { FlowsDisplaySheet(store: loops) }
 	}
