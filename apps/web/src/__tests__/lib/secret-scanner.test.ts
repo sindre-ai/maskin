@@ -15,7 +15,10 @@ import {
 // Obviously fake, assembled at runtime.
 const fakeGithub = `ghp_${'a'.repeat(36)}`
 
-afterEach(() => posthogMock.getFeatureFlagPayload.mockReset())
+afterEach(() => {
+	posthogMock.getFeatureFlagPayload.mockReset()
+	vi.restoreAllMocks()
+})
 
 describe('applyScannerPayload', () => {
 	it('keeps the shipped table for a payload it cannot read', () => {
@@ -33,6 +36,30 @@ describe('applyScannerPayload', () => {
 				SECRET_PATTERNS.find((p) => p.id === 'stripe'),
 			)
 		}
+	})
+
+	it('still accepts a good regex when the first timed run is slow', () => {
+		const row = { id: 'github', source: '\\bghp_[A-Za-z0-9]{36,}\\b' }
+		let calls = 0
+		// The first timed run reports 100 ms (cold start or a busy machine); every later run 1 ms.
+		vi.spyOn(performance, 'now').mockImplementation(() => {
+			calls++
+			if (calls === 1) return 0
+			if (calls === 2) return 100
+			return calls
+		})
+		const table = applyScannerPayload([row])
+		expect(table.find((p) => p.id === 'github')?.source).toBe(row.source)
+	})
+
+	it('skips a regex that is slow on every run', () => {
+		let t = 0
+		vi.spyOn(performance, 'now').mockImplementation(() => {
+			t += 100
+			return t
+		})
+		const table = applyScannerPayload([{ id: 'github', source: 'ghp_[A-Za-z0-9]{36,}' }])
+		expect(table).toBe(SECRET_PATTERNS)
 	})
 
 	it('cannot add a provider or change confidence', () => {
