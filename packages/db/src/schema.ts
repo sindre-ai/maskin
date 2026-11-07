@@ -820,6 +820,9 @@ export const sessions = pgTable(
 		dependsOnSessionIds: uuid('depends_on_session_ids').array(),
 		startedAt: timestamp('started_at', { withTimezone: true }),
 		completedAt: timestamp('completed_at', { withTimezone: true }),
+		// Set by the log retention sweep once it has deleted this session's logs past the
+		// retention cutoff (or found none), so the sweep never reads the session again.
+		logsPrunedAt: timestamp('logs_pruned_at', { withTimezone: true }),
 		timeoutAt: timestamp('timeout_at', { withTimezone: true }),
 		totalCostUsd: numeric('total_cost_usd', { precision: 12, scale: 6 }),
 		// OpenRouter model id that actually ran this session (e.g.
@@ -939,6 +942,15 @@ export const sessions = pgTable(
 		index('sessions_prune_candidates_idx')
 			.on(t.completedAt)
 			.where(sql`${t.interactive} = false AND ${t.completedAt} IS NOT NULL`),
+		// The sweep's work list: finished non-interactive sessions whose logs it has not
+		// pruned yet, oldest first. A session leaves the index when the sweep marks it, so
+		// steady state reads only the sessions that crossed the cutoff since the last run
+		// instead of walking every old session. Built CONCURRENTLY in migration 0135.
+		index('sessions_logs_unpruned_idx')
+			.on(t.completedAt)
+			.where(
+				sql`${t.interactive} = false AND ${t.completedAt} IS NOT NULL AND ${t.logsPrunedAt} IS NULL`,
+			),
 		// Reaper's live-session scan (Commit 6): only the states the reaper
 		// cares about, so the index carries a tiny slice of the table.
 		index('sessions_session_state_state_entered_at_idx')
