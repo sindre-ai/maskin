@@ -56,6 +56,7 @@ import { MeetWatchRenewer } from './services/meet-watch-renewer'
 import { NotificationPushFanout } from './services/notification-push'
 import { OAuthSweeper } from './services/oauth-sweeper'
 import { OrphanThreadDetector } from './services/orphan-thread-detector'
+import { PosthogAccountSync } from './services/posthog-account-sync'
 import { ResendDomainVerifier } from './services/resend-domain-verifier'
 import { RuntimeTelemetry } from './services/runtime-telemetry'
 import { SessionDispatchQueue } from './services/session-dispatch-queue'
@@ -291,6 +292,10 @@ logger.info('Blocked tool calls cleaner started')
 const briefCacheCleaner = new BriefCacheCleaner(storageProvider)
 briefCacheCleaner.start()
 logger.info('Brief cache cleaner started')
+
+const posthogAccountSync = new PosthogAccountSync(db)
+posthogAccountSync.start()
+logger.info('PostHog account sync started')
 
 const voiceToolCallLogCleaner = new VoiceToolCallLogCleaner(db)
 voiceToolCallLogCleaner.start()

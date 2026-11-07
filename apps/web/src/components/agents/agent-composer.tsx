@@ -95,6 +95,7 @@ export function AgentComposer({ agent }: { agent: ActorResponse }) {
 			<Composer
 				workspaceId={workspaceId}
 				onSend={onSend}
+				allowAttachmentOnly
 				disabled={false}
 				pending={false}
 				surface="pulse-bar"
