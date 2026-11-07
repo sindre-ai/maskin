@@ -49,11 +49,10 @@ export function heldNote(iso: string | null | undefined, now: number = Date.now(
  * - `waiting` — the ball is with an agent (you answered last)
  * - `fyi`     — nothing to decide, just new activity
  * - `done`    — decided in this sitting; the green receipt strip
- * - `later`   — set aside on this device until a chosen time (`foryou-later.ts`)
  */
-export type FeedBucket = 'needs' | 'waiting' | 'fyi' | 'done' | 'later'
+export type FeedBucket = 'needs' | 'waiting' | 'fyi' | 'done'
 
-export const BUCKET_ORDER: readonly FeedBucket[] = ['needs', 'waiting', 'fyi', 'done', 'later']
+export const BUCKET_ORDER: readonly FeedBucket[] = ['needs', 'waiting', 'fyi', 'done']
 
 export function bucketRank(bucket: FeedBucket): number {
 	const index = BUCKET_ORDER.indexOf(bucket)
@@ -125,12 +124,11 @@ export function feedKindOf(item: UnreadItem): FeedKind {
 
 /**
  * What a bulk dismiss ("Dismiss all", Alt+U) may touch: never a card that is
- * waiting on a decision or an answer from the person, and never one they set
- * aside on purpose with Later (a dismissed card does not come back).
+ * waiting on a decision or an answer from the person.
  */
 export function dismissableItems<T>(items: readonly T[], bucketOf: (item: T) => FeedBucket): T[] {
 	return items.filter((item) => {
 		const bucket = bucketOf(item)
-		return bucket !== 'needs' && bucket !== 'later'
+		return bucket !== 'needs'
 	})
 }
