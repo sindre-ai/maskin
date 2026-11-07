@@ -429,6 +429,12 @@ public final class ForYouStore {
 		onCardHandled?(card.id)
 	}
 
+	/// The same `foryou_card_shown` event the web app sends, when an open card comes on screen.
+	public func trackShown(_ card: ForYouCard) {
+		Analytics.shared.foryouCardShown(
+			cardKind: card.kind == .decision ? "decision" : "thread", cardId: card.id)
+	}
+
 	/// The same `foryou_card_action` event the web app sends. Ids and the option's slug only.
 	private func trackAction(_ actionId: String, on card: ForYouCard) {
 		Analytics.shared.track(

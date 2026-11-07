@@ -627,7 +627,9 @@ struct ForYouFeedView: View {
 			typeLabel: store.typeLabel(for:), draftIsElsewhere: { entry.bucket == .needs && entry.record == nil && store.isInStrip($0) },
 			unsentEditNote: entry.bucket == .needs && entry.record == nil ? store.unsentEditNote(for: entry.card) : nil)
 		// Cards lift under a pointer; flat rows have nothing to lift.
-		return wide ? AnyView(view.maskinHover(.lift, cornerRadius: MaskinRadius.brief)) : AnyView(view)
+		let shown = wide ? AnyView(view.maskinHover(.lift, cornerRadius: MaskinRadius.brief)) : AnyView(view)
+		// Only cards still waiting on the reader count as shown, not the handled ones.
+		return AnyView(shown.onAppear { if entry.record == nil { store.trackShown(entry.card) } })
 	}
 
 	/// The compact card shown inside the iPad Discuss sheet, live from the same store entry.
