@@ -107,9 +107,7 @@ function ObjectsPage() {
 			{activeType ? (
 				<>
 					<SettingsPageTitle title={activeLabel} />
-					<h2 className="px-2 pb-1.5 text-[13px] font-semibold text-muted-foreground">
-						Properties
-					</h2>
+					<h2 className="px-2 pb-1.5 text-[15px] font-semibold text-foreground">Properties</h2>
 					{currentFields.length === 0 ? (
 						<div className="border-y border-border-subtle">
 							<EmptyState
@@ -149,7 +147,7 @@ function ObjectsPage() {
 			) : (
 				<>
 					<SettingsPageTitle title="Item types" subtitle="What your agents can create and track." />
-					<h2 className="px-2 pb-1.5 text-[13px] font-semibold text-muted-foreground">Types</h2>
+					<h2 className="px-2 pb-1.5 text-[15px] font-semibold text-foreground">Types</h2>
 					<ul className="divide-y divide-border-subtle border-y border-border-subtle">
 						{objectTypes.map((t) => {
 							const count = (fieldDefs[t.value] ?? []).length
@@ -176,9 +174,7 @@ function ObjectsPage() {
 
 			{!activeType && (
 				<>
-					<h2 className="px-2 pt-8 pb-1.5 text-[13px] font-semibold text-muted-foreground">
-						Extensions
-					</h2>
+					<h2 className="px-2 pt-8 pb-1.5 text-[15px] font-semibold text-foreground">Extensions</h2>
 					<div className="border-y border-border-subtle">
 						<SettingsLinkRow
 							title="Extensions"
@@ -308,7 +304,7 @@ function RelationshipTypesEditor({
 
 	return (
 		<div>
-			<h2 className="eyebrow mb-3">Relationship types</h2>
+			<h2 className="settings-label mb-3">Relationship types</h2>
 			<div className="flex flex-wrap gap-1.5 mb-2">
 				{relationshipTypes.map((type) => (
 					<span

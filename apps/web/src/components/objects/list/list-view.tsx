@@ -451,7 +451,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 											type="button"
 											onClick={() => toggleGroup(group)}
 											aria-expanded={open}
-											className="flex items-center gap-2 text-left text-[13.5px] font-semibold transition-opacity hover:opacity-75"
+											className="flex items-center gap-2 text-left text-[15px] font-semibold transition-opacity hover:opacity-75"
 										>
 											<ChevronRight
 												size={13}

@@ -774,11 +774,9 @@
 	   near-flat tracking, not `.eyebrow`'s 8px mono — Settings labels sit above
 	   full-width form blocks and need to read as headings, not micro-captions. */
 	.settings-label {
-		font-size: 0.6875rem; /* 11px */
+		font-size: 0.9375rem; /* 15px */
 		font-weight: 600;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
-		color: var(--muted-foreground);
+		color: var(--foreground);
 	}
 
 	/* D2 · Agent-working ring around the driver avatar on Objects list rows.
