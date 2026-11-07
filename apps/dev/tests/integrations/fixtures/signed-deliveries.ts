@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto'
+import { createHmac, generateKeyPairSync, sign } from 'node:crypto'
 import type { WebhookConfig } from '../../../src/lib/integrations/types'
 
 /**
@@ -79,6 +79,49 @@ export function buildCalcomDelivery(opts: {
 		headers: {
 			'content-type': 'application/json',
 			'x-cal-signature-256': hmacSha256Hex(opts.secret, body),
+		},
+	}
+}
+
+/**
+ * Telnyx: Ed25519 over "{timestamp}|{body}", base64 signature in
+ * telnyx-signature-ed25519, unix seconds in telnyx-timestamp. The public key is
+ * what the owner pastes as the signing secret (raw 32 bytes, base64). Docs:
+ * https://developers.telnyx.com/docs/development/api-fundamentals/webhooks/receiving-webhooks
+ */
+export function generateTelnyxKeys() {
+	const { publicKey, privateKey } = generateKeyPairSync('ed25519')
+	const publicKeyBase64 = Buffer.from(
+		publicKey.export({ format: 'jwk' }).x as string,
+		'base64url',
+	).toString('base64')
+	return { publicKeyBase64, privateKey }
+}
+
+export function buildTelnyxDelivery(opts: {
+	privateKey: ReturnType<typeof generateKeyPairSync<'ed25519'>>['privateKey']
+	eventId?: string
+	eventType?: string
+	timestamp?: number
+}): SignedDelivery {
+	const body = JSON.stringify({
+		data: {
+			id: opts.eventId ?? 'evt-0b1c2d',
+			event_type: opts.eventType ?? 'call.hangup',
+			record_type: 'event',
+			payload: { call_control_id: 'v3:abc', call_session_id: 'sess-1' },
+		},
+	})
+	const timestamp = String(opts.timestamp ?? Math.floor(Date.now() / 1000))
+	const signature = sign(null, Buffer.from(`${timestamp}|${body}`), opts.privateKey).toString(
+		'base64',
+	)
+	return {
+		body,
+		headers: {
+			'content-type': 'application/json',
+			'telnyx-timestamp': timestamp,
+			'telnyx-signature-ed25519': signature,
 		},
 	}
 }

@@ -3,6 +3,7 @@ import {
 	type WebhookFormErrors,
 	type WebhookFormState,
 	formFromRecipe,
+	usesTimestamp,
 } from '@/components/extensions/webhook-form'
 import { FormError } from '@/components/shared/form-error'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
@@ -185,7 +186,8 @@ export function WebhookSection({
 					</Select>
 					<p className="text-xs text-muted-foreground">
 						Which family of signature the vendor signs requests with. HMAC-SHA256 raw body is the
-						most common (Fireflies, GitHub). Timestamp + body is the Stripe and Slack style.
+						most common (Fireflies, GitHub). Timestamp + body is the Stripe and Slack style. Ed25519
+						is for vendors that sign with a private key and publish a public key (Telnyx).
 					</p>
 				</div>
 
@@ -213,7 +215,7 @@ export function WebhookSection({
 					</div>
 				</div>
 
-				{form.scheme === 'timestamp' && (
+				{usesTimestamp(form.scheme) && (
 					<div className="grid items-start gap-4 sm:grid-cols-2">
 						<div className="grid gap-1.5">
 							<Label htmlFor="timestamp-header">Timestamp header</Label>
@@ -232,7 +234,9 @@ export function WebhookSection({
 								id="timestamp-template"
 								value={form.timestampBodyTemplate}
 								onChange={(e) => set('timestampBodyTemplate', e.target.value)}
-								placeholder="v0:{timestamp}:{body}"
+								placeholder={
+									form.scheme === 'ed25519' ? '{timestamp}|{body}' : 'v0:{timestamp}:{body}'
+								}
 								aria-invalid={!!errors.timestampBodyTemplate}
 							/>
 							<FormError error={errors.timestampBodyTemplate} />
@@ -241,33 +245,44 @@ export function WebhookSection({
 				)}
 
 				<div className="grid gap-1.5">
-					<Label htmlFor="signing-secret">Signing secret</Label>
+					<Label htmlFor="signing-secret">
+						{form.scheme === 'ed25519' ? 'Vendor public key' : 'Signing secret'}
+					</Label>
 					<div className="flex flex-col gap-2 sm:flex-row">
 						<Input
 							id="signing-secret"
-							type="password"
+							type={form.scheme === 'ed25519' ? 'text' : 'password'}
 							autoComplete="off"
 							value={form.signingSecret}
 							onChange={(e) => set('signingSecret', e.target.value)}
 							placeholder={
-								saved ? 'Leave blank to keep the current secret' : 'Paste or generate a secret'
+								form.scheme === 'ed25519'
+									? saved
+										? 'Leave blank to keep the current key'
+										: 'Paste the public key (base64)'
+									: saved
+										? 'Leave blank to keep the current secret'
+										: 'Paste or generate a secret'
 							}
 							aria-invalid={!!errors.signingSecret}
 							className="sm:flex-1"
 						/>
-						<Button
-							type="button"
-							variant="secondary"
-							onClick={onGenerateSecret}
-							disabled={generatingSecret}
-						>
-							<Wand2 size={14} />
-							Generate one
-						</Button>
+						{form.scheme !== 'ed25519' && (
+							<Button
+								type="button"
+								variant="secondary"
+								onClick={onGenerateSecret}
+								disabled={generatingSecret}
+							>
+								<Wand2 size={14} />
+								Generate one
+							</Button>
+						)}
 					</div>
 					<p className="text-xs text-muted-foreground">
-						Choose your own with Generate, then paste it into the vendor. If the vendor issues its
-						own secret, paste that instead. Stored encrypted.
+						{form.scheme === 'ed25519'
+							? "Copy the public key from the vendor's portal (32 bytes, base64). Stored encrypted."
+							: 'Choose your own with Generate, then paste it into the vendor. If the vendor issues its own secret, paste that instead. Stored encrypted.'}
 					</p>
 					<FormError error={errors.signingSecret} />
 				</div>

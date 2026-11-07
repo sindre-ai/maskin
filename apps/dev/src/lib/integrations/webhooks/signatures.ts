@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto'
+import { type KeyObject, createHmac, createPublicKey, timingSafeEqual, verify } from 'node:crypto'
 
 /** Verify HMAC-SHA256 signature with timing-safe comparison */
 export function verifyHmacSha256(
@@ -69,4 +69,70 @@ export function verifyTimestampSignature(
 	const actual = Buffer.from(signature)
 	if (expected.length !== actual.length) return false
 	return timingSafeEqual(expected, actual)
+}
+
+export interface Ed25519SignatureConfig {
+	/** Header containing the request timestamp */
+	timestampHeader: string
+	/** Header containing the base64 signature */
+	signatureHeader: string
+	/** Template for the signed text. Use `{timestamp}` and `{body}` placeholders (Telnyx: `{timestamp}|{body}`). */
+	bodyTemplate: string
+	/** Max age in seconds before rejecting (default: 300) */
+	maxAgeSeconds?: number
+}
+
+/**
+ * Read a vendor's Ed25519 public key: the raw 32 bytes, base64 encoded (the form
+ * the Telnyx portal shows). Throws a plain message when it is anything else.
+ */
+export function parseEd25519PublicKey(encoded: string): KeyObject {
+	const raw = Buffer.from(encoded.trim(), 'base64')
+	if (raw.length !== 32) {
+		throw new Error('Not an Ed25519 public key. Paste the 32-byte public key as base64.')
+	}
+	return createPublicKey({
+		key: { kty: 'OKP', crv: 'Ed25519', x: raw.toString('base64url') },
+		format: 'jwk',
+	})
+}
+
+/** Plain reason a stored Ed25519 public key cannot be used, or null when it can. */
+export function ed25519PublicKeyError(encoded: string): string | null {
+	try {
+		parseEd25519PublicKey(encoded)
+		return null
+	} catch (err) {
+		return err instanceof Error ? err.message : String(err)
+	}
+}
+
+/**
+ * Verify an Ed25519 signature over the configured signing text. `publicKey` is
+ * the vendor's public key (see parseEd25519PublicKey); a key that cannot be read
+ * throws, so a misconfigured extension is a 500, not a silent 401.
+ */
+export function verifyEd25519Signature(
+	body: string,
+	headers: Record<string, string>,
+	publicKey: string,
+	config: Ed25519SignatureConfig,
+): boolean {
+	const key = parseEd25519PublicKey(publicKey)
+	const timestamp = headers[config.timestampHeader]
+	const signature = headers[config.signatureHeader]
+	if (!timestamp || !signature) return false
+
+	// Reject requests older than maxAgeSeconds to prevent replay attacks
+	const maxAge = config.maxAgeSeconds ?? 300
+	const age = Math.abs(Date.now() / 1000 - Number(timestamp))
+	if (!(age <= maxAge)) return false
+
+	const signed = Buffer.from(
+		config.bodyTemplate.replace('{timestamp}', () => timestamp).replace('{body}', () => body),
+	)
+	const sig = Buffer.from(signature, 'base64')
+	// An Ed25519 signature is always 64 bytes; anything else cannot verify.
+	if (sig.length !== 64) return false
+	return verify(null, signed, key, sig)
 }
