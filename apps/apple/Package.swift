@@ -20,6 +20,9 @@ let package = Package(
 		.package(url: "https://github.com/apple/swift-openapi-urlsession", from: "1.1.0"),
 		// Google's WebRTC build, for the OpenAI Realtime voice call (MaskinFeatures, iOS only).
 		.package(url: "https://github.com/stasel/WebRTC", from: "130.0.0"),
+		// Product analytics on iPhone (MaskinFeatures/Analytics/PostHogSink.swift, the only file that imports it).
+		// Pinned to an exact version: it runs inside the app, so a bump is a reviewed change.
+		.package(url: "https://github.com/PostHog/posthog-ios.git", exact: "3.93.6"),
 	],
 	targets: [
 		// Tokens are generated from the design-system CSS: scripts/gen-tokens.mjs.
@@ -56,6 +59,7 @@ let package = Package(
 			dependencies: [
 				"MaskinCore", "MaskinUI", "MaskinDesign", "MaskinAPI",
 				.product(name: "WebRTC", package: "WebRTC", condition: .when(platforms: [.iOS])),
+				.product(name: "PostHog", package: "posthog-ios", condition: .when(platforms: [.iOS])),
 			],
 			// The Computer screen's page: noVNC bundled with a small bridge (scripts/computer-bridge).
 			resources: [.copy("Computer/Resources")]),
