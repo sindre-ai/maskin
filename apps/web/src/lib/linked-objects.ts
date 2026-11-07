@@ -148,7 +148,7 @@ const GITHUB_PATH = /^\/[\w.-]+\/([\w.-]+)\/(pull|issues)\/(\d+)\/?$/
  */
 export const SETTINGS_SECTIONS = [
 	{ path: '', label: 'General' },
-	{ path: 'objects', label: 'Objects' },
+	{ path: 'objects', label: 'Items' },
 	{ path: 'members', label: 'Members' },
 	{ path: 'integrations', label: 'Integrations' },
 	{ path: 'extensions', label: 'Extensions' },
@@ -992,7 +992,9 @@ export function pickFacts(
 export function unavailableCopy(kind: string): { card: string; chip: string } {
 	// A chat you are not in reads the same as a deleted one, and says nothing about whether it exists.
 	if (kind === 'chat') return { card: 'Chat not available', chip: 'Chat not available' }
-	return { card: `This ${kind} was deleted`, chip: `Deleted ${kind}` }
+	// The ids stay 'object' and 'loop'; the words people read are item and flow.
+	const word = kind === 'object' ? 'item' : kind === 'loop' ? 'flow' : kind
+	return { card: `This ${word} was deleted`, chip: `Deleted ${word}` }
 }
 
 /** What a GitHub chip reads: the repository's name (not its owner) and the number. */

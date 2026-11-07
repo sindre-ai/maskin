@@ -43,7 +43,7 @@ A tool that was removed from the surface can stay callable as a listed alias: a 
 Today there are two:
 
 - **run_agent**, an alias of **create_session** with **wait** on (details below).
-- **search_objects**, an alias of **list_objects**. It maps **query** to **q**, **driver_id** to **driver** and **offset** to the ranked walk's offset, and passes everything else through. Its output is the **list_objects** output, with **page.offset** kept for older callers. Reason: one query tool with one paging style, so agents stop retrying across two tools. Earliest removal: 2027-02-01, and only after a clean stored-prompt sweep (see the ledger entry in **packages/mcp/src/removal-ledger.ts**).
+- **search_objects**, an alias of **list_objects**. It maps **query** to **q**, **driver_id** to **driver** and **offset** to the ranked walk's offset, and passes everything else through, **cursor** included, so a caller can follow **next_cursor** or **page.offset**. Its output is the **list_objects** output, with **page.offset** kept for older callers. Reason: one query tool with one paging style, so agents stop retrying across two tools. Earliest removal: 2027-02-01, and only after a clean stored-prompt sweep (see the ledger entry in **packages/mcp/src/removal-ledger.ts**).
 
 For **run_agent**:
 

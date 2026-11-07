@@ -99,7 +99,7 @@ describe('ThreadComposer — group-chat cue', () => {
 		const user = userEvent.setup()
 		renderComposer()
 
-		shownPlaceholder('Message this conversation')
+		shownPlaceholder('Message · @ to mention')
 		// Nothing is shown on arrival, even though nobody would answer.
 		expect(screen.queryByText('No agent will reply. Tag one with @.')).not.toBeInTheDocument()
 
@@ -142,14 +142,14 @@ describe('ThreadComposer — group-chat cue', () => {
 
 		const region = document.getElementById(box().getAttribute('aria-describedby') ?? '')
 		expect(region).toBeEmptyDOMElement()
-		expect(region).not.toHaveClass('mb-2')
+		expect(region).not.toHaveClass('mt-2')
 
 		await user.click(box())
 		const icon = (await screen.findByText('No agent will reply. Tag one with @.')).querySelector(
 			'svg',
 		)
 		expect(icon).toHaveAttribute('aria-hidden', 'true')
-		expect(region).toHaveClass('mb-2')
+		expect(region).toHaveClass('mt-2')
 	})
 
 	describe('picking a tag from the @ picker', () => {
@@ -209,7 +209,7 @@ describe('ThreadComposer — group-chat cue', () => {
 			const user = userEvent.setup()
 			renderComposer()
 
-			shownPlaceholder('Message this conversation')
+			shownPlaceholder('Message · @ to mention')
 			expect(box()).toBeEnabled()
 			await user.type(box(), 'hello')
 			expect(box()).toHaveTextContent('hello')
@@ -222,7 +222,7 @@ describe('ThreadComposer — group-chat cue', () => {
 			state.messages = undefined
 			renderComposer()
 
-			shownPlaceholder('Message this conversation')
+			shownPlaceholder('Message · @ to mention')
 			expect(box()).toBeEnabled()
 		})
 
@@ -233,7 +233,7 @@ describe('ThreadComposer — group-chat cue', () => {
 			renderComposer()
 
 			await user.click(box())
-			shownPlaceholder('Message this conversation')
+			shownPlaceholder('Message · @ to mention')
 			expect(screen.queryByText(/No agent will reply/)).not.toBeInTheDocument()
 		})
 	})

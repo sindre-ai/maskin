@@ -54,7 +54,9 @@ import { LoopVersionPusher } from './services/loop-version-pusher'
 import { MeetTranscriptReconciler } from './services/meet-transcript-reconciler'
 import { MeetWatchRenewer } from './services/meet-watch-renewer'
 import { NotificationPushFanout } from './services/notification-push'
+import { OAuthSweeper } from './services/oauth-sweeper'
 import { OrphanThreadDetector } from './services/orphan-thread-detector'
+import { PosthogAccountSync } from './services/posthog-account-sync'
 import { ResendDomainVerifier } from './services/resend-domain-verifier'
 import { RuntimeTelemetry } from './services/runtime-telemetry'
 import { SessionDispatchQueue } from './services/session-dispatch-queue'
@@ -291,9 +293,16 @@ const briefCacheCleaner = new BriefCacheCleaner(storageProvider)
 briefCacheCleaner.start()
 logger.info('Brief cache cleaner started')
 
+const posthogAccountSync = new PosthogAccountSync(db)
+posthogAccountSync.start()
+logger.info('PostHog account sync started')
+
 const voiceToolCallLogCleaner = new VoiceToolCallLogCleaner(db)
 voiceToolCallLogCleaner.start()
 logger.info('Voice tool call log cleaner started')
+const oauthSweeper = new OAuthSweeper(db)
+oauthSweeper.start()
+logger.info('OAuth sweeper started')
 
 // §7.6 — session-retry scheduler. Ticks every 30s, reads sessions_retry_at_idx
 // for due retry_at rows and fires startSession({retryOf, attemptNumber:N+1,
@@ -517,6 +526,7 @@ const shutdown = async (signal: string) => {
 	sessionDispatchQueue.stop()
 	stopMcpRateLimit()
 	purgeIdempotencyJob.stop()
+	oauthSweeper.stop()
 	keychainUndoSweeperJob.stop()
 	fileUploadReaperJob.stop()
 	upgradeLegacyCredentialsJob.stop()

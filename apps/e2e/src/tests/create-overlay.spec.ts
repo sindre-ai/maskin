@@ -16,12 +16,12 @@ async function openOverlay(page: Page, workspaceId: string) {
 	await page.goto(`/${workspaceId}/objects`)
 	// The `c` shortcut is bound by the Objects list. With no `?type=` filter it
 	// opens the overlay with no type seeded — the greet state.
-	await expect(page.getByRole('heading', { name: 'Objects' }).first()).toBeVisible({
+	await expect(page.getByRole('heading', { name: 'Items' }).first()).toBeVisible({
 		timeout: 30000,
 	})
 	// Click a non-focusable element so the shortcut lands on the document, not
 	// inside a text field (isCreateShortcut deliberately ignores those).
-	await page.getByRole('heading', { name: 'Objects' }).first().click()
+	await page.getByRole('heading', { name: 'Items' }).first().click()
 	await page.keyboard.press('c')
 	await expect(page.getByRole('dialog')).toBeVisible()
 }
@@ -138,7 +138,7 @@ test.describe('Create overlay', () => {
 		const listbox = page.getByRole('listbox', { name: 'Pick a type' })
 		await expect(listbox).toBeVisible()
 		// Loop / agent / trigger are workspace entities, reachable only here.
-		await expect(listbox.getByRole('option', { name: /Loop/ })).toBeVisible()
+		await expect(listbox.getByRole('option', { name: /Flow/ })).toBeVisible()
 		await expect(listbox.getByRole('option', { name: /Trigger/ })).toBeVisible()
 
 		await input.press('ArrowDown')

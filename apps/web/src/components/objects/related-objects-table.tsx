@@ -262,7 +262,7 @@ export function RelatedObjectsTable({
 
 	if (isMobile) {
 		return (
-			<ul aria-label="Related objects" className="m-0 max-h-[28rem] list-none overflow-auto p-0">
+			<ul aria-label="Related items" className="m-0 max-h-[28rem] list-none overflow-auto p-0">
 				{table.getRowModel().rows.map((row) => (
 					<RelatedRowCard
 						key={row.id}

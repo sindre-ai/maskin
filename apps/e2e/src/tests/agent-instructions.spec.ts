@@ -1,4 +1,5 @@
 import { expect, test } from '../fixtures/auth.fixture'
+import { openAgentTab } from '../helpers/agent-tab.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 test.describe('Agent detail — Instructions section + edit modal', () => {
@@ -15,9 +16,10 @@ test.describe('Agent detail — Instructions section + edit modal', () => {
 
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
 
+			await openAgentTab(page, 'setup')
+
 			const section = page.getByRole('region', { name: 'Instructions' })
 			await expect(section).toBeVisible({ timeout: 10_000 })
-			await expect(section.getByText('system prompt')).toBeVisible()
 			await expect(section.getByText(original)).toBeVisible()
 
 			await section.getByRole('button', { name: 'Edit' }).click()
@@ -84,6 +86,8 @@ test.describe('Agent detail — Instructions section + edit modal', () => {
 			await account.api.updateActor(agent.id, { system_prompt: original })
 
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
+
+			await openAgentTab(page, 'setup')
 			const section = page.getByRole('region', { name: 'Instructions' })
 			await expect(section).toBeVisible({ timeout: 10_000 })
 			await section.getByRole('button', { name: 'Edit' }).click()
@@ -112,6 +116,8 @@ test.describe('Agent detail — Instructions section + edit modal', () => {
 			await account.api.updateActor(agent.id, { system_prompt: paragraphs.join('\n\n') })
 
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
+
+			await openAgentTab(page, 'setup')
 			const section = page.getByRole('region', { name: 'Instructions' })
 			await expect(section).toBeVisible({ timeout: 10_000 })
 

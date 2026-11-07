@@ -61,7 +61,7 @@ function patchRequests(page: Page): string[] {
 }
 
 async function openEditor(page: Page, workspaceId: string, fileId: string) {
-	await page.goto(`/${workspaceId}/files/${fileId}`)
+	await page.goto(`/${workspaceId}/files/${fileId}?view=edit`)
 	const editor = page.locator('.ProseMirror')
 	await expect(editor).toBeVisible({ timeout: 10000 })
 	return editor
@@ -183,7 +183,7 @@ test.describe('Markdown file editor in the file viewer', () => {
 		const file = await seedMarkdown(account.api, account.workspaceId, content)
 		const patches = patchRequests(page)
 
-		await page.goto(`/${account.workspaceId}/files/${file.id}`)
+		await page.goto(`/${account.workspaceId}/files/${file.id}?view=edit`)
 
 		await expect(page.getByText(READ_ONLY_LINE)).toBeVisible({ timeout: 10000 })
 		await expect(page.locator('[contenteditable="true"]')).toHaveCount(0)

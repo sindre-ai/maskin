@@ -63,6 +63,7 @@ import {
 	trackKnowledgeObjectCreated,
 	trackKnowledgeObjectRead,
 } from '../lib/analytics/knowledge-events'
+import { trackObjectCreated } from '../lib/analytics/object-events'
 import { createApiError, createInvalidTypeError, validationFailureHook } from '../lib/errors'
 import { recordEvent, recordEvents } from '../lib/events/record-event'
 import { fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
@@ -788,6 +789,14 @@ app.openapi(createObjectRoute, async (c) => {
 		entityType: 'object',
 		entityId: created.id,
 		source: 'author',
+	})
+
+	void trackObjectCreated({
+		workspaceId,
+		actorId,
+		objectId: created.id,
+		objectType: created.type,
+		createdVia: resolveCreatedVia(c.req.header(CLIENT_SOURCE_HEADER), actorType),
 	})
 
 	if (created.type === 'knowledge') {

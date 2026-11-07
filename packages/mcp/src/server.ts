@@ -129,6 +129,13 @@ export interface McpConfig {
 	/** How `telemetrySessionId` was obtained. Ignored without it. */
 	telemetrySessionSource?: 'maskin-session' | 'process' | 'unknown'
 	/**
+	 * Per-process secret the HTTP transport (`routes/mcp.ts`) adds to the REST calls this
+	 * server makes back to the API, as `X-Maskin-Mcp-Forward`. The API accepts a Claude
+	 * connector token (mat_) only when it is present, so such a token works through /mcp
+	 * and nowhere else. Never set on stdio, where the bearer is an API key.
+	 */
+	forwardMarker?: string
+	/**
 	 * Protocol era and allowlisted version label for telemetry, next to
 	 * `transport`. Set by `routes/mcp.ts` from `classifyMcpEra` on HTTP; stdio
 	 * sets the fallback (legacy, none) because the SDK does not expose the
@@ -523,6 +530,9 @@ async function apiFetch(
 	}
 	if (config.apiKey) {
 		headers.Authorization = `Bearer ${config.apiKey}`
+	}
+	if (config.forwardMarker) {
+		headers['X-Maskin-Mcp-Forward'] = config.forwardMarker
 	}
 	if (effectiveWorkspaceId) {
 		headers['X-Workspace-Id'] = effectiveWorkspaceId
@@ -3476,6 +3486,7 @@ export function createMcpServer(config: McpConfig) {
 		workspaceId: config.defaultWorkspaceId,
 		sessionId: config.telemetrySessionId,
 		sessionSource: config.telemetrySessionSource,
+		forwardMarker: config.forwardMarker,
 		mcpEra: config.telemetryEra,
 		mcpProtocolVersion: config.telemetryProtocolVersion,
 	}
@@ -4514,13 +4525,16 @@ export function createMcpServer(config: McpConfig) {
 			inputSchema: listDefinitions.search_objects.inputSchema.shape,
 			_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 		},
-		async (args) => {
+		// Typed like list_objects above: the two search_objects schemas now differ (the contract's
+		// takes a cursor), so the compiler can no longer infer the arguments from the union.
+		async (contractArgs: z.infer<typeof tools.search_objects.inputSchema>) => {
 			// A listed alias of list_objects: the old argument names map onto the new ones and the
 			// call runs the list_objects path (see TOOL_ALIAS_ARG_RENAMES).
 			if (listContractOn) {
-				const { driver_id, ...rest } = args
+				const { driver_id, ...rest } = contractArgs
 				return listObjectsPage(config, { ...rest, driver: driver_id }, 'search_objects')
 			}
+			const args = contractArgs as z.infer<typeof legacyListTools.search_objects.inputSchema>
 			// Pre-contract handler, kept for the rollback switch.
 			// The `/api/objects/search` route ranks matches by token-hit count
 			// whenever `q` tokenizes to a non-empty set (T2). Under that

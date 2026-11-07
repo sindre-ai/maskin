@@ -8,6 +8,14 @@ const mockUpdateActor = vi.fn()
 const mockStoredActor = vi.fn()
 const mockWorkspace = { current: buildWorkspaceWithRole({ isDefault: false }) }
 
+// General now links to Triggers and device sign-in; the real Link needs a router.
+vi.mock('@tanstack/react-router', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@tanstack/react-router')>()),
+	Link: ({ children, to }: { children: React.ReactNode; to?: string }) => (
+		<a href={to}>{children}</a>
+	),
+}))
+
 vi.mock('@/lib/workspace-context', async (importOriginal) => ({
 	// Keep the real WorkspaceContext: useCanWrite reads it directly.
 	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
@@ -62,7 +70,7 @@ describe('Settings > General > Default workspace', () => {
 	it('shows the switch off when this is not the default workspace', () => {
 		renderPage()
 
-		expect(screen.getByRole('heading', { name: 'DEFAULT WORKSPACE' })).toBeInTheDocument()
+		expect(screen.getByRole('heading', { name: 'Default workspace' })).toBeInTheDocument()
 		expect(screen.getByRole('switch', { name: switchName })).not.toBeChecked()
 	})
 

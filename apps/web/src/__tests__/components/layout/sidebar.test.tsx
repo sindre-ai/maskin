@@ -1,4 +1,5 @@
 import { AppSidebar } from '@/components/layout/sidebar'
+import { useBillingUsage } from '@/hooks/use-billing'
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -8,6 +9,10 @@ vi.mock('@/hooks/use-enabled-modules', () => ({
 
 vi.mock('@/hooks/use-for-you', () => ({
 	useForYou: vi.fn(() => ({ data: { items: [] } })),
+}))
+
+vi.mock('@/hooks/use-billing', () => ({
+	useBillingUsage: vi.fn(() => ({ data: undefined })),
 }))
 
 vi.mock('@/hooks/use-chat-unread', () => ({
@@ -84,8 +89,8 @@ describe('AppSidebar', () => {
 		render(<AppSidebar />)
 		expect(screen.getByText('For you')).toBeInTheDocument()
 		expect(screen.getByText('Chats')).toBeInTheDocument()
-		expect(screen.getByText('Loops')).toBeInTheDocument()
-		expect(screen.getByText('Objects')).toBeInTheDocument()
+		expect(screen.getByText('Flows')).toBeInTheDocument()
+		expect(screen.getByText('Items')).toBeInTheDocument()
 	})
 
 	// v2 reaches Agents through the working-agents card and triggers through the
@@ -108,15 +113,15 @@ describe('AppSidebar', () => {
 		).toBeTruthy()
 	})
 
-	it('shows Objects nav item when object types are enabled', () => {
+	it('shows Items nav item when object types are enabled', () => {
 		render(<AppSidebar />)
-		expect(screen.getByText('Objects')).toBeInTheDocument()
+		expect(screen.getByText('Items')).toBeInTheDocument()
 	})
 
-	it('hides Objects when no object types enabled', () => {
+	it('hides Items when no object types enabled', () => {
 		vi.mocked(useEnabledModules).mockReturnValue([])
 		render(<AppSidebar />)
-		expect(screen.queryByText('Objects')).not.toBeInTheDocument()
+		expect(screen.queryByText('Items')).not.toBeInTheDocument()
 	})
 
 	// The release note is gone from the sidebar (and from For You),
@@ -198,5 +203,34 @@ describe('AppSidebar', () => {
 		} as unknown as ReturnType<typeof useForYou>)
 		render(<AppSidebar />)
 		expect(screen.queryByLabelText(/unread$/)).not.toBeInTheDocument()
+	})
+
+	describe('trial card', () => {
+		const DAY = 24 * 60 * 60 * 1000
+		const usage = (plan: string, ms: number | null) =>
+			({ data: { plan, period_resets_in_ms: ms } }) as unknown as ReturnType<typeof useBillingUsage>
+
+		it('shows the days left and an Upgrade link above Marketplace on a trial', () => {
+			vi.mocked(useBillingUsage).mockReturnValue(usage('trial', 4.2 * DAY))
+			render(<AppSidebar />)
+			const title = screen.getByText('5 days left')
+			expect(screen.getByRole('link', { name: 'Upgrade' })).toBeInTheDocument()
+			expect(
+				title.compareDocumentPosition(screen.getByText('Marketplace')) &
+					Node.DOCUMENT_POSITION_FOLLOWING,
+			).toBeTruthy()
+		})
+
+		it('is hidden on a paid plan', () => {
+			vi.mocked(useBillingUsage).mockReturnValue(usage('pro', 20 * DAY))
+			render(<AppSidebar />)
+			expect(screen.queryByText(/days left/)).not.toBeInTheDocument()
+		})
+
+		it('is hidden once the trial has ended', () => {
+			vi.mocked(useBillingUsage).mockReturnValue(usage('trial', 0))
+			render(<AppSidebar />)
+			expect(screen.queryByText(/days left/)).not.toBeInTheDocument()
+		})
 	})
 })

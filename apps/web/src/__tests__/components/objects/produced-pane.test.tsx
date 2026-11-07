@@ -36,7 +36,7 @@ describe('ProducedPane · states', () => {
 		renderPane()
 		expect(screen.getByText('Nothing produced yet')).toBeInTheDocument()
 		expect(
-			screen.getByText(/When an agent creates an object or file from a message here/i),
+			screen.getByText(/When an agent creates an item or file from a message here/i),
 		).toBeInTheDocument()
 	})
 
@@ -58,7 +58,7 @@ describe('ProducedPane · states', () => {
 				{ fileId: 'f-1', name: 'plan.md', mimeType: 'text/markdown', sizeBytes: 812 },
 			],
 		})
-		expect(screen.getByText('Objects · 2')).toBeInTheDocument()
+		expect(screen.getByText('Items · 2')).toBeInTheDocument()
 		expect(screen.getByText('Files · 1')).toBeInTheDocument()
 		expect(screen.getByText('plan.md')).toBeInTheDocument()
 	})
@@ -68,7 +68,7 @@ describe('ProducedPane · states', () => {
 			producedObjects: [{ entityId: 'obj-a', entityType: 'bet', title: 'Bet A' }],
 			producedFiles: [],
 		})
-		expect(screen.getByText('Objects · 1')).toBeInTheDocument()
+		expect(screen.getByText('Items · 1')).toBeInTheDocument()
 		expect(screen.queryByText(/Files · 0/)).not.toBeInTheDocument()
 	})
 

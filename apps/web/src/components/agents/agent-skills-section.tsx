@@ -19,16 +19,17 @@ export function AgentSkillsSection({ agent }: { agent: ActorResponse }) {
 			<AgentSectionHeading
 				id="agent-skills-heading"
 				title="Skills"
+				quiet
 				note={
 					<span
-						className="shrink-0 text-[11px] tabular-nums text-muted-foreground"
+						className="shrink-0 text-[13px] tabular-nums text-muted-foreground"
 						aria-label={`${total} skill${total === 1 ? '' : 's'} attached`}
 					>
 						· {total}
 					</span>
 				}
 			/>
-			<div className="rounded-xl border border-border bg-card px-4 py-4">
+			<div className="border-t border-border pt-3">
 				<Skills actorId={agent.id} attachedFirst />
 			</div>
 		</section>

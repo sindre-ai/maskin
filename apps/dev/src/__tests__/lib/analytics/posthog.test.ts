@@ -78,6 +78,7 @@ describe('capturePosthogEvent', () => {
 			surface: 'backend',
 			actor_type: 'system',
 			is_team: false,
+			feature_area: 'integrations',
 			$process_person_profile: false,
 		})
 		expect(typeof body.timestamp).toBe('string')
@@ -161,6 +162,7 @@ describe('capturePosthogEvent workspace privacy', () => {
 			surface: 'backend',
 			actor_type: 'system',
 			is_team: false,
+			feature_area: 'agents',
 			$process_person_profile: false,
 		})
 	})
@@ -181,6 +183,7 @@ describe('capturePosthogEvent workspace privacy', () => {
 			surface: 'backend',
 			actor_type: 'system',
 			is_team: false,
+			feature_area: 'agents',
 			$process_person_profile: false,
 		})
 	})
@@ -337,6 +340,42 @@ describe('capturePosthogEvent shared properties', () => {
 		const props = await send('mcp_tool_call', AGENT, { actor_type: 'human' })
 		expect(props).toMatchObject({ actor_type: 'human' })
 		expect(props).not.toHaveProperty('$process_person_profile')
+	})
+
+	it('attaches an event with a workspace to that workspace group', async () => {
+		const WS = '44444444-4444-4444-8444-444444444444'
+		configurePosthogPrivacy(dbWithActors({ [HUMAN]: 'human' }).db)
+		const props = await send('workspace_member_joined', HUMAN, { workspace_id: WS })
+		expect(props.$groups).toEqual({ workspace: WS })
+	})
+
+	it('adds no group to an event with no workspace or a workspace id that is not an id', async () => {
+		configurePosthogPrivacy(dbWithActors({ [HUMAN]: 'human' }).db)
+		expect(await send('workspace_member_joined', HUMAN, {})).not.toHaveProperty('$groups')
+		expect(
+			await send('workspace_member_joined', HUMAN, { workspace_id: 'ws-1' }),
+		).not.toHaveProperty('$groups')
+	})
+
+	it('adds the feature area of the event', async () => {
+		configurePosthogPrivacy(dbWithActors({ [HUMAN]: 'human' }).db)
+		expect(await send('file_saved', HUMAN, {})).toMatchObject({ feature_area: 'files_briefings' })
+	})
+
+	it('adds no feature area to an event with no product area', async () => {
+		configurePosthogPrivacy(dbWithActors({ [HUMAN]: 'human' }).db)
+		expect(await send('mcp_handshake', HUMAN, {})).not.toHaveProperty('feature_area')
+		expect(await send('workspace_created', HUMAN, {})).not.toHaveProperty('feature_area')
+	})
+
+	it('keeps a feature area and a group the caller set', async () => {
+		configurePosthogPrivacy(dbWithActors({ [HUMAN]: 'human' }).db)
+		const props = await send('file_saved', HUMAN, {
+			feature_area: 'search',
+			workspace_id: '44444444-4444-4444-8444-444444444444',
+			$groups: { workspace: 'other' },
+		})
+		expect(props).toMatchObject({ feature_area: 'search', $groups: { workspace: 'other' } })
 	})
 
 	it('reads the actor type once for a burst of events from the same actor', async () => {

@@ -209,7 +209,7 @@ describe('chat chip preview', () => {
 		await user.hover(screen.getByRole('link', { name: 'Chat: Launch plan' }))
 		const preview = document.querySelector('[data-linked-preview]')
 		expect(preview?.textContent).toContain('Forge: Shipped the fix')
-		expect(screen.getByRole('dialog', { name: 'Object preview' })).toBe(preview)
+		expect(screen.getByRole('dialog', { name: 'Item preview' })).toBe(preview)
 		expect(screen.getByRole('button', { name: 'Copy link' })).toBeInTheDocument()
 		expect(screen.getByRole('link', { name: 'Open' })).toBeInTheDocument()
 		await user.keyboard('{Escape}')

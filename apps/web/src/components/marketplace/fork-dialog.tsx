@@ -41,7 +41,7 @@ export function ForkDialog({
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent>
 				<DialogHeader>
-					<DialogTitle>Fork this loop?</DialogTitle>
+					<DialogTitle>Fork this flow?</DialogTitle>
 					<DialogDescription>{body}</DialogDescription>
 				</DialogHeader>
 				<p className="text-sm text-muted-foreground">Forking can't be undone.</p>

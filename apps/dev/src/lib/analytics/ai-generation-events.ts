@@ -159,6 +159,11 @@ function secondsBetween(from: Date | null, to: Date): number | null {
  * time. Interactive sessions can idle while running, so wall-clock is the
  * ceiling and active the floor.
  *
+ * `tokens_recorded` is true when the session saved any output tokens, i.e. a
+ * model call happened. Sessions that fail before the first call (rate limit,
+ * rejected key, lost container) send cost 0 and 0 tokens by nature, so the
+ * zero-cost gate counts only events where this is true.
+ *
  * `$ai_input` / `$ai_output` are deliberately absent — prompts hold customer
  * data. Sessions that never launched (no started_at) used no tokens or hours
  * and are skipped, so per-session averages are not diluted by them.
@@ -187,6 +192,7 @@ export async function trackSessionAiGeneration(p: SessionAiGenerationProps): Pro
 			actor_id: p.actorId,
 			llm_route: route || null,
 			cost_basis: costBasisForRoute(route),
+			tokens_recorded: (p.outputTokens ?? 0) > 0,
 			outcome: p.outcome,
 			failure_code: resolveFailureCode(p.outcome, p.failureReasonCode, p.classification),
 			running_seconds: runningSeconds,

@@ -97,8 +97,8 @@ describe('DisplayPanel', () => {
 		const user = userEvent.setup()
 		renderPanel()
 		await user.click(screen.getByRole('button', { name: /display/i }))
-		expect(screen.getByRole('button', { name: 'List' })).toBeInTheDocument()
-		const board = screen.getByRole('button', { name: 'Board' })
+		expect(screen.getByRole('button', { name: /View: List/ })).toBeInTheDocument()
+		const board = screen.getByRole('button', { name: /View: Board/ })
 		expect(board).toBeInTheDocument()
 		expect(board).not.toBeDisabled()
 	})
@@ -107,7 +107,7 @@ describe('DisplayPanel', () => {
 		const user = userEvent.setup()
 		renderPanel({ boardSupported: false })
 		await user.click(screen.getByRole('button', { name: /display/i }))
-		const board = screen.getByRole('button', { name: 'Board' })
+		const board = screen.getByRole('button', { name: /View: Board/ })
 		expect(board).toBeDisabled()
 		expect(board).toHaveAttribute('title', expect.stringContaining('statuses'))
 	})
@@ -117,7 +117,7 @@ describe('DisplayPanel', () => {
 		const onViewChange = vi.fn()
 		renderPanel({ view: 'list', onViewChange })
 		await user.click(screen.getByRole('button', { name: /display/i }))
-		await user.click(screen.getByRole('button', { name: 'Board' }))
+		await user.click(screen.getByRole('button', { name: /View: Board/ }))
 		expect(onViewChange).toHaveBeenCalledWith('board')
 	})
 
@@ -126,7 +126,7 @@ describe('DisplayPanel', () => {
 		const onViewChange = vi.fn()
 		renderPanel({ view: 'board', onViewChange })
 		await user.click(screen.getByRole('button', { name: /display/i }))
-		await user.click(screen.getByRole('button', { name: 'List' }))
+		await user.click(screen.getByRole('button', { name: /View: List/ }))
 		expect(onViewChange).toHaveBeenCalledWith('list')
 	})
 
@@ -135,7 +135,7 @@ describe('DisplayPanel', () => {
 		const onViewChange = vi.fn()
 		renderPanel({ boardSupported: false, onViewChange })
 		await user.click(screen.getByRole('button', { name: /display/i }))
-		await user.click(screen.getByRole('button', { name: 'Board' }))
+		await user.click(screen.getByRole('button', { name: /View: Board/ }))
 		expect(onViewChange).not.toHaveBeenCalled()
 	})
 
@@ -201,8 +201,8 @@ describe('DisplayPanel', () => {
 		const user = userEvent.setup()
 		renderPanel({ showView: false })
 		await user.click(screen.getByRole('button', { name: /display/i }))
-		expect(screen.queryByRole('button', { name: 'List' })).toBeNull()
-		expect(screen.queryByRole('button', { name: 'Board' })).toBeNull()
+		expect(screen.queryByRole('button', { name: /View: List/ })).toBeNull()
+		expect(screen.queryByRole('button', { name: /View: Board/ })).toBeNull()
 		// Other sections still render.
 		expect(screen.getByText('Ordering')).toBeInTheDocument()
 	})
@@ -519,5 +519,64 @@ describe('DisplayPanel', () => {
 			await user.click(screen.getByRole('button', { name: /reset all/i }))
 			expect(onResetToDefault).toHaveBeenCalledTimes(1)
 		})
+	})
+})
+
+describe('DisplayPanel optional labels and view rail', () => {
+	it('renders custom view choices instead of List and Board', async () => {
+		const user = userEvent.setup()
+		const onViewChoiceChange = vi.fn()
+		renderPanel({
+			viewChoices: [
+				{ id: 'cards', label: 'Cards' },
+				{ id: 'list', label: 'Rows' },
+			],
+			viewChoice: 'cards',
+			onViewChoiceChange,
+		})
+		await user.click(screen.getByRole('button', { name: /Display/ }))
+		expect(screen.queryByRole('button', { name: /View: Board/ })).not.toBeInTheDocument()
+		await user.click(await screen.findByRole('button', { name: /View: Rows/ }))
+		expect(onViewChoiceChange).toHaveBeenCalledWith('list')
+	})
+
+	it('uses the supplied reset and filter labels', async () => {
+		const user = userEvent.setup()
+		renderPanel({
+			filtersLabel: 'Show',
+			resetFiltersLabel: 'Reset filters',
+			resetLabel: 'Reset display',
+			onResetFilters: vi.fn(),
+			onResetToDefault: vi.fn(),
+			activeFilterCount: 2,
+		})
+		await user.click(screen.getByRole('button', { name: /Display/ }))
+		expect(await screen.findByText('Reset filters')).toBeInTheDocument()
+		expect(screen.getByText('Reset display')).toBeInTheDocument()
+		expect(screen.getByText('Show')).toBeInTheDocument()
+	})
+
+	it('explains why Board is unavailable', async () => {
+		const user = userEvent.setup()
+		renderPanel({ boardSupported: false })
+		await user.click(screen.getByRole('button', { name: /Display/ }))
+		expect(await screen.findByText('needs one type with statuses')).toBeInTheDocument()
+	})
+
+	it('opens a section expanded when defaultExpanded is set', async () => {
+		const user = userEvent.setup()
+		renderPanel({
+			filterSections: [
+				{
+					id: 'team',
+					label: 'Team',
+					summary: 'Any',
+					defaultExpanded: true,
+					options: [{ id: 'a', label: 'Alpha', active: false, onToggle: vi.fn() }],
+				},
+			],
+		})
+		await user.click(screen.getByRole('button', { name: /Display/ }))
+		expect(await screen.findByRole('button', { name: 'Alpha' })).toBeInTheDocument()
 	})
 })

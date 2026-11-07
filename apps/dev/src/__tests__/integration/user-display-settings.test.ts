@@ -225,4 +225,24 @@ describe('User Display Settings Integration', () => {
 		)
 		expect(res.status).toBe(400)
 	})
+
+	it('answers an empty default, and stores nothing, for a type with no saved row', async () => {
+		const app = appAs(actorId)
+		const headers = { 'x-workspace-id': workspaceId }
+
+		const res = await app.request(jsonGet('/api/user-display-settings/loop', headers))
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({ object_type: 'loop', name: 'default', settings: {} })
+
+		const rows = await db
+			.select()
+			.from(userDisplaySettings)
+			.where(
+				and(
+					eq(userDisplaySettings.workspaceId, workspaceId),
+					eq(userDisplaySettings.actorId, actorId),
+				),
+			)
+		expect(rows).toHaveLength(0)
+	})
 })

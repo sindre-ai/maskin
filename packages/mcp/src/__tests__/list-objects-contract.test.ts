@@ -518,6 +518,39 @@ describe('search_objects, a listed alias of list_objects', () => {
 				.map((r) => r.id),
 		)
 	})
+
+	it('accepts cursor in its registered input schema', async () => {
+		const tool = (await harness.listTools()).find((t) => t.name === 'search_objects') as {
+			inputSchema: { properties: Record<string, unknown> }
+		}
+		expect(Object.keys(tool.inputSchema.properties)).toContain('cursor')
+	})
+
+	it('a walk that follows next_cursor on search_objects returns every row once', async () => {
+		const pages = await walk(harness, 'search_objects', { workspace_id: WS, q: 'task', limit: 25 })
+		const ids = pages.flat()
+		expect(pages).toHaveLength(3)
+		expect(new Set(ids).size).toBe(60)
+		expect(ids).toEqual(rankOrder(rows).map((r) => r.id))
+	})
+
+	it('a walk that follows page.offset on search_objects returns every row once', async () => {
+		const ids: string[] = []
+		let offset = 0
+		for (let i = 0; i < 10; i++) {
+			const raw = await callRaw(harness, 'search_objects', {
+				workspace_id: WS,
+				q: 'task',
+				limit: 25,
+				offset,
+			})
+			ids.push(...idsOf(raw))
+			if (!pageOf(raw).has_more) break
+			offset += idsOf(raw).length
+		}
+		expect(new Set(ids).size).toBe(60)
+		expect(ids).toEqual(rankOrder(rows).map((r) => r.id))
+	})
 })
 
 describe('alias_use for search_objects', () => {

@@ -2,6 +2,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAuth } from '@/hooks/use-auth'
+import { cn } from '@/lib/cn'
+import { PILL_BUTTON } from '@/lib/pill-button'
 import { safeInternalPath } from '@/lib/safe-redirect'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
@@ -18,7 +20,7 @@ export const Route = createFileRoute('/login')({
 			{
 				name: 'description',
 				content:
-					'Sign in to your Maskin workspace to run bets, loops, and agents that make your company AI-native.',
+					'Sign in to your Maskin workspace to run bets, flows, and agents that make your company AI-native.',
 			},
 		],
 	}),
@@ -57,13 +59,17 @@ function LoginPage() {
 		<div className="flex min-h-screen items-center justify-center">
 			<div className="w-full max-w-sm space-y-6">
 				<div className="text-center">
-					<h1 className="text-2xl font-semibold tracking-tight">Welcome back</h1>
-					<p className="mt-1 text-sm text-muted-foreground">Sign in with your email and password</p>
+					<h1 className="text-[26px] font-bold tracking-tight">Welcome back</h1>
+					<p className="mt-1 text-sm text-muted-foreground">
+						{redirect?.startsWith('/oauth/authorize')
+							? 'Sign in to continue connecting your app to Maskin.'
+							: 'Sign in with your email and password'}
+					</p>
 				</div>
 
 				<form onSubmit={handleSubmit} className="space-y-4">
 					<div>
-						<Label className="mb-1 text-muted-foreground">Email</Label>
+						<Label className="mb-1 text-[13px] font-semibold text-foreground">Email</Label>
 						<Input
 							type="email"
 							value={email}
@@ -77,7 +83,7 @@ function LoginPage() {
 					</div>
 
 					<div>
-						<Label className="mb-1 text-muted-foreground">Password</Label>
+						<Label className="mb-1 text-[13px] font-semibold text-foreground">Password</Label>
 						<Input
 							type="password"
 							value={password}
@@ -91,7 +97,7 @@ function LoginPage() {
 
 					{error && <p className="text-xs text-error">{error}</p>}
 
-					<Button type="submit" disabled={loading} className="w-full">
+					<Button type="submit" disabled={loading} className={cn(PILL_BUTTON, 'w-full')}>
 						{loading ? 'Signing in...' : 'Sign in'}
 					</Button>
 				</form>

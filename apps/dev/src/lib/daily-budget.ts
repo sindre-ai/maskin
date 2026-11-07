@@ -5,7 +5,7 @@ import {
 	DAILY_BUDGET_ZERO_COST_WINDOW_DAYS,
 	type DailyBudgetResponse,
 } from '@maskin/shared'
-import { and, eq, gte, isNotNull, sql } from 'drizzle-orm'
+import { and, eq, gt, gte, isNotNull, sql } from 'drizzle-orm'
 
 type ZeroCostDay = DailyBudgetResponse['dollar_unit']['days'][number]
 
@@ -17,9 +17,11 @@ export const DOLLAR_UNIT_LOCKED_REASON =
  * included), how many sessions ended and how many of those carried no cost.
  * Local means `timezone`, midnight to midnight.
  *
- * This is the same population as the `$ai_generation` events the bet measures:
- * trackSessionAiGeneration fires once per session that reached a terminal
- * state with a started_at, and sends a missing cost as 0.
+ * This is the same population as the `$ai_generation` events the bet measures
+ * with `tokens_recorded` true: sessions that reached a terminal state with a
+ * started_at and saved output tokens. Sessions that failed before any model
+ * call (rate limit, rejected key, lost container) have no tokens and no cost by
+ * nature, so they say nothing about whether cost is written correctly.
  */
 export async function readZeroCostDays(
 	db: Pick<Database, 'select'>,
@@ -41,6 +43,7 @@ export async function readZeroCostDays(
 				eq(sessions.workspaceId, workspaceId),
 				isNotNull(sessions.startedAt),
 				isNotNull(sessions.completedAt),
+				gt(sessions.outputTokens, 0),
 				gte(sessions.completedAt, sql`${windowStart}`),
 			),
 		)

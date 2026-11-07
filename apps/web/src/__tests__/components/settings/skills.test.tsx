@@ -318,7 +318,7 @@ describe('Settings > Skills', () => {
 
 		await user.click(screen.getByRole('button', { name: /display/i }))
 		// Default sort is Name — open the sort dropdown, then pick Updated.
-		await user.click(screen.getByRole('button', { name: 'Name' }))
+		await user.click(screen.getByRole('button', { name: /Sort by/ }))
 		await user.click(screen.getByRole('menuitem', { name: /Updated/ }))
 
 		expect(mockNavigate).toHaveBeenCalled()

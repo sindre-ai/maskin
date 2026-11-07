@@ -38,6 +38,17 @@ function renderToolbar(overrides: Partial<React.ComponentProps<typeof DataTableT
 }
 
 describe('DataTableToolbar', () => {
+	it('renders the leading chips first and keeps Display in the row by default', () => {
+		renderToolbar({ leading: <span>Type chips</span> })
+		expect(screen.getByText('Type chips')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'MockDisplay' })).toBeInTheDocument()
+	})
+
+	it('leaves Display to the title row when hideDisplay is set', () => {
+		renderToolbar({ hideDisplay: true })
+		expect(screen.queryByRole('button', { name: 'MockDisplay' })).not.toBeInTheDocument()
+	})
+
 	// The type-tab strip moved to the shared nav row (mockup 165–170); the
 	// toolbar's own row carries the filters the user pinned out of the Display
 	// panel, plus a pill per active filter.

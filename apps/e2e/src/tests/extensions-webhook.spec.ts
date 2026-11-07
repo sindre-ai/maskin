@@ -91,7 +91,7 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 			// A repeat is a duplicate and adds no row.
 			const repeat = await post()
 			expect(await repeat.json()).toMatchObject({ status: 'duplicate' })
-			await expect(page.getByText('Last 14 days, 1 committed')).toBeVisible()
+			await expect(page.getByText('1 delivered in the last 14 days')).toBeVisible()
 		})
 
 		test('shows field errors instead of saving an empty webhook', async ({ page, account }) => {

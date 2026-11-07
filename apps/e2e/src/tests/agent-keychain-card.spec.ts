@@ -129,7 +129,7 @@ test.describe('Agent Keychain card', () => {
 			fromCard: true,
 		})
 		// The form is gone, replaced by a receipt, and the follow-up carries no value.
-		await expect(page.getByRole('link', { name: 'Manage in Keychain' })).toBeVisible()
+		await expect(page.getByRole('link', { name: 'Manage', exact: true })).toBeVisible()
 		await expect(form).toHaveCount(0)
 		await expect.poll(() => followUps.length).toBe(1)
 		expect(JSON.stringify(followUps[0])).not.toContain(PASSWORD)
@@ -198,6 +198,17 @@ test.describe('Agent Keychain card', () => {
 			await expect(form.getByLabel('Password')).toBeVisible()
 			await expect(form.getByRole('button', { name: 'Show' })).toBeVisible()
 			await expect(form.getByRole('button', { name: 'Save to Keychain' })).toBeVisible()
+			// Shared with is one summary row, and Not now sits beside the primary action.
+			await expect(form.getByText('Shared with')).toBeVisible()
+			await expect(form.getByRole('button', { name: 'Change' })).toBeVisible()
+			const notNow = form.getByRole('button', { name: 'Not now' })
+			await expect(notNow).toBeVisible()
+			if (viewport.width < 768) {
+				// 44px touch targets on phone widths.
+				const save = await form.getByRole('button', { name: 'Save to Keychain' }).boundingBox()
+				expect(save?.height ?? 0).toBeGreaterThanOrEqual(43)
+				expect((await notNow.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(43)
+			}
 
 			const overflow = await page.evaluate(() => {
 				const el = document.scrollingElement

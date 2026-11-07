@@ -201,7 +201,7 @@ export function resolveProvenance(attachers: AttachingObject[]): ProvenanceResol
 		strip: {
 			kind: 'many',
 			objects: live,
-			label: `Attached to ${live.length} objects`,
+			label: `Attached to ${live.length} items`,
 		},
 		send: 'picker-required',
 		pickerOptions: live,

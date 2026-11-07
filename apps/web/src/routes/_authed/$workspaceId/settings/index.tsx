@@ -1,9 +1,10 @@
+import { DeleteAccountDialog } from '@/components/profile/delete-account-dialog'
 import { DeleteWorkspaceDialog } from '@/components/settings/delete-workspace-dialog'
+import { SettingsLinkRow } from '@/components/settings/settings-link-row'
 import { RouteError } from '@/components/shared/route-error'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
 import { useUpdateActor } from '@/hooks/use-actors'
 import { useCanWrite } from '@/hooks/use-can-write'
@@ -14,7 +15,7 @@ import { type Theme, useTheme } from '@/lib/theme'
 import { useWorkspace } from '@/lib/workspace-context'
 import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
 import { createFileRoute } from '@tanstack/react-router'
-import { Monitor, Moon, Sun } from 'lucide-react'
+import { ChevronRight, Monitor, Moon, Sun } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 
@@ -42,77 +43,163 @@ function GeneralPage() {
 	}
 
 	return (
-		<div className="max-w-[580px]">
-			<h2 className="settings-label mb-[7px]">WORKSPACE NAME</h2>
-			<div className="flex gap-2">
-				<ViewerTooltip className="flex flex-1">
-					<Input
-						type="text"
-						value={name}
-						onChange={(e) => setName(e.target.value)}
-						aria-label="Workspace name"
-						placeholder={canWrite ? undefined : VIEWER_READ_ONLY_MESSAGE}
-						disabled={!canWrite}
-						className="flex-1"
-					/>
-				</ViewerTooltip>
-				<ViewerTooltip>
-					<Button
-						onClick={handleSave}
-						disabled={name === workspace.name || updateWorkspace.isPending || !canWrite}
-					>
-						Save
-					</Button>
-				</ViewerTooltip>
-			</div>
+		<div className="max-w-[760px]">
+			<SettingsSection title="Workspace">
+				<SettingsRow title="Workspace name">
+					<ViewerTooltip className="flex">
+						<Input
+							type="text"
+							value={name}
+							onChange={(e) => setName(e.target.value)}
+							aria-label="Workspace name"
+							placeholder={canWrite ? undefined : VIEWER_READ_ONLY_MESSAGE}
+							disabled={!canWrite}
+							className="w-full rounded-full border-0 bg-secondary lg:w-72"
+						/>
+					</ViewerTooltip>
+				</SettingsRow>
+				<SettingsRow title="Save name">
+					<ViewerTooltip>
+						<Button
+							variant="ghost"
+							onClick={handleSave}
+							disabled={name === workspace.name || updateWorkspace.isPending || !canWrite}
+						>
+							Save
+						</Button>
+					</ViewerTooltip>
+				</SettingsRow>
+			</SettingsSection>
 
-			<Separator className="my-6" />
 			<DefaultWorkspaceSection />
-
-			<Separator className="my-6" />
 			<ThemePicker />
-
-			<Separator className="my-6" />
 			<PrivacySection />
+			<WorkspaceToolsSection />
+			{getStoredActor()?.type === 'human' && <DevicesSection />}
 
-			{workspace.billingOwnerId !== null && workspace.billingOwnerId === getStoredActor()?.id && (
-				<>
-					<Separator className="my-6" />
-					<DangerSection />
-				</>
+			{getStoredActor()?.type === 'human' && (
+				<DangerSection
+					canDeleteWorkspace={
+						workspace.billingOwnerId !== null && workspace.billingOwnerId === getStoredActor()?.id
+					}
+				/>
 			)}
 		</div>
 	)
 }
 
-function DangerSection() {
+/** A titled block of hairline-separated rows (mockup v11 Settings). */
+function SettingsSection({
+	title,
+	intro,
+	children,
+}: {
+	title: string
+	intro?: string
+	children: React.ReactNode
+}) {
+	return (
+		<section className="mb-8">
+			<h2 className="px-2 pb-1.5 text-[13px] font-semibold text-muted-foreground">{title}</h2>
+			{intro ? (
+				<p className="mb-2 max-w-prose px-2 text-[13px] text-muted-foreground">{intro}</p>
+			) : null}
+			<div className="divide-y divide-border-subtle border-y border-border-subtle">{children}</div>
+		</section>
+	)
+}
+
+/** One row: title and optional description on the left, the control on the right.
+ *  Below lg the settings nav leaves the content column about 224px wide at 768, so the
+ *  row stacks and the control takes the full width. */
+function SettingsRow({
+	title,
+	description,
+	children,
+}: {
+	title: string
+	description?: string
+	children?: React.ReactNode
+}) {
+	return (
+		<div className="flex flex-col gap-3 px-2 py-3.5 lg:flex-row lg:items-center lg:justify-between lg:gap-4">
+			<div className="min-w-0">
+				<span className="block text-[15px] font-medium leading-tight">{title}</span>
+				{description ? (
+					<span className="block text-[13px] text-muted-foreground">{description}</span>
+				) : null}
+			</div>
+			{children ? <div className="shrink-0">{children}</div> : null}
+		</div>
+	)
+}
+
+function WorkspaceToolsSection() {
+	const { workspaceId } = useWorkspace()
+	return (
+		<SettingsSection title="Workspace tools">
+			<SettingsLinkRow
+				title="Triggers"
+				description="Every trigger, including ones not tied to a flow"
+				to="/$workspaceId/triggers"
+				params={{ workspaceId }}
+			/>
+		</SettingsSection>
+	)
+}
+
+function DevicesSection() {
+	return (
+		<SettingsSection title="Devices">
+			<SettingsLinkRow
+				title="Sign in a device"
+				description="Apple TV, Mac or a maskin://connect link"
+				to="/tv"
+				search={{ code: '' }}
+			/>
+		</SettingsSection>
+	)
+}
+
+function DangerSection({ canDeleteWorkspace }: { canDeleteWorkspace: boolean }) {
 	const { workspace, workspaceId } = useWorkspace()
 	const canWrite = useCanWrite()
 	const [open, setOpen] = useState(false)
+	const [accountOpen, setAccountOpen] = useState(false)
 
 	return (
-		<div>
-			<h2 className="settings-label mb-1.5">DANGER ZONE</h2>
-			<div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-3 sm:flex-row sm:items-center sm:justify-between">
-				<div className="min-w-0">
-					<span className="block text-[12.5px] font-semibold">Delete this workspace</span>
-					<span className="text-xs text-muted-foreground">
-						Permanently deletes the workspace and everything in it.
-					</span>
-				</div>
-				<ViewerTooltip>
-					<Button variant="destructive" disabled={!canWrite} onClick={() => setOpen(true)}>
-						Delete workspace
-					</Button>
-				</ViewerTooltip>
-			</div>
-			<DeleteWorkspaceDialog
-				workspaceId={workspaceId}
-				workspaceName={workspace.name}
-				open={open}
-				onOpenChange={setOpen}
-			/>
-		</div>
+		<SettingsSection title="Danger zone">
+			{canDeleteWorkspace && (
+				<>
+					<ViewerTooltip className="flex w-full">
+						<button
+							type="button"
+							disabled={!canWrite}
+							onClick={() => setOpen(true)}
+							className="flex w-full items-center justify-between px-2 py-3.5 text-left text-[15px] font-medium leading-tight text-destructive disabled:opacity-50"
+						>
+							Delete workspace
+							<ChevronRight size={18} aria-hidden className="text-muted-foreground" />
+						</button>
+					</ViewerTooltip>
+					<DeleteWorkspaceDialog
+						workspaceId={workspaceId}
+						workspaceName={workspace.name}
+						open={open}
+						onOpenChange={setOpen}
+					/>
+				</>
+			)}
+			<button
+				type="button"
+				onClick={() => setAccountOpen(true)}
+				className="flex w-full items-center justify-between px-2 py-3.5 text-left text-[15px] font-medium leading-tight text-destructive"
+			>
+				Delete account
+				<ChevronRight size={18} aria-hidden className="text-muted-foreground" />
+			</button>
+			{accountOpen && <DeleteAccountDialog open={accountOpen} onOpenChange={setAccountOpen} />}
+		</SettingsSection>
 	)
 }
 
@@ -134,24 +221,19 @@ function DefaultWorkspaceSection() {
 	}
 
 	return (
-		<div>
-			<h2 className="settings-label mb-1.5">DEFAULT WORKSPACE</h2>
-			<div className="flex items-start justify-between gap-4 rounded-xl border border-border bg-card p-3">
-				<div className="min-w-0">
-					<span className="block text-[12.5px] font-semibold">Make this my default workspace</span>
-					<span className="text-xs text-muted-foreground">
-						Your agents and connected tools treat it as the workspace to use when you don't name
-						one. Only one workspace can be your default; picking another replaces it.
-					</span>
-				</div>
+		<SettingsSection title="Default workspace">
+			<SettingsRow
+				title="Make this my default workspace"
+				description="Your agents and connected tools treat it as the workspace to use when you don't name one. Only one workspace can be your default; picking another replaces it."
+			>
 				<Switch
 					checked={workspace.isDefault}
 					disabled={!actorId || updateActor.isPending}
 					onCheckedChange={(checked) => handleChange(!!checked)}
 					aria-label="Make this my default workspace"
 				/>
-			</div>
-		</div>
+			</SettingsRow>
+		</SettingsSection>
 	)
 }
 
@@ -184,50 +266,37 @@ function PrivacySection() {
 	}
 
 	return (
-		<div>
-			<h2 className="settings-label mb-1.5">PRIVACY &amp; DATA</h2>
-			<p className="mb-3 max-w-prose text-xs leading-relaxed text-muted-foreground">
-				Helps the Maskin team see how Maskin is used. The content of your work is never included.
-			</p>
-			<div className="space-y-2.5">
-				<div className="flex items-start justify-between gap-4 rounded-xl border border-border bg-card p-3">
-					<div className="min-w-0">
-						<span className="block text-[12.5px] font-semibold">
-							Share product usage with Maskin
-						</span>
-						<span className="text-xs text-muted-foreground">
-							Shares which features you use and how many agent runs happen, with your name and email
-							unless Anonymize is on. The Maskin team sees it. It never includes the content of your
-							work.
-						</span>
-					</div>
-					<ViewerTooltip>
-						<Switch
-							checked={privacy.share_usage}
-							disabled={!canWrite}
-							onCheckedChange={(checked) => persist({ ...privacy, share_usage: !!checked })}
-							aria-label="Share product usage with Maskin"
-						/>
-					</ViewerTooltip>
-				</div>
-				<div className="flex items-start justify-between gap-4 rounded-xl border border-border bg-card p-3">
-					<div className="min-w-0">
-						<span className="block text-[12.5px] font-semibold">Anonymize this workspace</span>
-						<span className="text-xs text-muted-foreground">
-							Leaves your name and email out of usage data.
-						</span>
-					</div>
-					<ViewerTooltip>
-						<Switch
-							checked={privacy.anonymize_workspace}
-							disabled={!canWrite}
-							onCheckedChange={(checked) => persist({ ...privacy, anonymize_workspace: !!checked })}
-							aria-label="Anonymize this workspace"
-						/>
-					</ViewerTooltip>
-				</div>
-			</div>
-		</div>
+		<SettingsSection
+			title="Privacy and data"
+			intro="Helps the Maskin team see how Maskin is used. The content of your work is never included."
+		>
+			<SettingsRow
+				title="Share product usage with Maskin"
+				description="Shares which features you use and how many agent runs happen, with your name and email unless Anonymize is on. The Maskin team sees it. It never includes the content of your work."
+			>
+				<ViewerTooltip>
+					<Switch
+						checked={privacy.share_usage}
+						disabled={!canWrite}
+						onCheckedChange={(checked) => persist({ ...privacy, share_usage: !!checked })}
+						aria-label="Share product usage with Maskin"
+					/>
+				</ViewerTooltip>
+			</SettingsRow>
+			<SettingsRow
+				title="Anonymize this workspace"
+				description="Leaves your name and email out of usage data."
+			>
+				<ViewerTooltip>
+					<Switch
+						checked={privacy.anonymize_workspace}
+						disabled={!canWrite}
+						onCheckedChange={(checked) => persist({ ...privacy, anonymize_workspace: !!checked })}
+						aria-label="Anonymize this workspace"
+					/>
+				</ViewerTooltip>
+			</SettingsRow>
+		</SettingsSection>
 	)
 }
 
@@ -241,30 +310,31 @@ function ThemePicker() {
 	const { theme, setTheme } = useTheme()
 
 	return (
-		<div>
-			<h2 className="settings-label mb-2.5">APPEARANCE</h2>
-			<div className="flex w-full gap-1 rounded-xl border border-border bg-card p-1 sm:inline-flex sm:w-auto">
-				{themeOptions.map((option) => {
-					const Icon = option.icon
-					const isActive = theme === option.value
-					return (
-						<button
-							key={option.value}
-							type="button"
-							onClick={() => setTheme(option.value)}
-							className={cn(
-								'flex flex-1 items-center justify-center gap-1.5 rounded-lg px-4 py-1.5 text-[12.5px] font-semibold transition-colors sm:flex-none',
-								isActive
-									? 'bg-primary text-primary-foreground'
-									: 'text-muted-foreground hover:text-foreground',
-							)}
-						>
-							<Icon size={14} />
-							{option.label}
-						</button>
-					)
-				})}
-			</div>
-		</div>
+		<SettingsSection title="Appearance">
+			<SettingsRow title="Theme" description="Light, Dark, or System (follows your device).">
+				<div className="flex w-full gap-1 rounded-full bg-secondary p-1 lg:inline-flex lg:w-auto">
+					{themeOptions.map((option) => {
+						const Icon = option.icon
+						const isActive = theme === option.value
+						return (
+							<button
+								key={option.value}
+								type="button"
+								onClick={() => setTheme(option.value)}
+								className={cn(
+									'flex flex-1 items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-[12.5px] lg:px-4 font-semibold transition-colors lg:flex-none',
+									isActive
+										? 'bg-primary text-primary-foreground'
+										: 'text-muted-foreground hover:text-foreground',
+								)}
+							>
+								<Icon size={14} className="hidden lg:block" />
+								{option.label}
+							</button>
+						)
+					})}
+				</div>
+			</SettingsRow>
+		</SettingsSection>
 	)
 }

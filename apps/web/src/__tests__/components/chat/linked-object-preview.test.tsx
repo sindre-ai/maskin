@@ -701,7 +701,7 @@ describe('LinkedCardOrLink', () => {
 		]) {
 			useObject.mockReturnValue(result)
 			const { unmount } = renderObject()
-			expect(screen.getByText('This object was deleted')).toBeInTheDocument()
+			expect(screen.getByText('This item was deleted')).toBeInTheDocument()
 			expect(screen.queryByText('the original link')).not.toBeInTheDocument()
 			unmount()
 		}

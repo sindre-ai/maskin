@@ -12,8 +12,8 @@ const chats = [
 	{ id: 'c-archived', title: 'Archived', lastMessageAt: '2026-10-26T10:00:00Z', archived: true },
 ]
 const loops = [
-	{ id: 'l-old', name: 'Old loop', updatedAt: '2026-10-01T10:00:00Z' },
-	{ id: 'l-new', name: 'New loop', updatedAt: '2026-10-24T10:00:00Z' },
+	{ id: 'l-old', name: 'Old flow', updatedAt: '2026-10-01T10:00:00Z' },
+	{ id: 'l-new', name: 'New flow', updatedAt: '2026-10-24T10:00:00Z' },
 ]
 
 describe('buildRecents', () => {
@@ -31,9 +31,9 @@ describe('buildRecents', () => {
 		expect(items[1].type).toBe('bet')
 	})
 
-	it('stops at four by default and never lists an object that was not opened', () => {
+	it('stops at five by default and never lists an object that was not opened', () => {
 		const items = buildRecents({ objectIds: ['o1'], objects, chats, loops })
-		expect(items).toHaveLength(4)
+		expect(items).toHaveLength(5)
 		expect(items.some((i) => i.id === 'o3')).toBe(false)
 	})
 

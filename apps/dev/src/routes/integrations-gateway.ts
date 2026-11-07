@@ -19,7 +19,7 @@ import {
 } from '../lib/integrations/mcp-gateway'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { getProvider } from '../lib/integrations/registry'
-import { type ToolAnnotationsLike, isCommandGated } from '../lib/integrations/tool-kinds'
+import type { ToolAnnotationsLike } from '../lib/integrations/tool-kinds'
 import { logger } from '../lib/logger'
 import type { IntegrationConfig } from '../lib/types'
 import { isWorkspaceWriter } from '../lib/workspace-auth'
@@ -214,10 +214,9 @@ export async function proxyMcp(
 	const rpc = message?.ok ? message.message : undefined
 	const toolName = rpc ? toolsCallName(rpc) : null
 	// A repeated key is read one way here (the last wins) and could be read the other way
-	// upstream. PostHog exec is judged by its command, so what goes upstream is the
-	// re-serialized message that was judged. Everything else is forwarded byte for byte.
-	const forwardBody =
-		rpc && toolName && isCommandGated(provider, toolName) ? JSON.stringify(rpc) : bodyText
+	// upstream. So what goes upstream is the re-serialized message that was judged, for every
+	// provider and custom server.
+	const forwardBody = rpc ? JSON.stringify(rpc) : bodyText
 
 	if (toolName) {
 		const decision = decideToolCall({

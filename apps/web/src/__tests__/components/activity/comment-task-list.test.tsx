@@ -6,9 +6,13 @@ import { TestWrapper } from '../../setup'
 
 const mockUseObject = vi.hoisted(() => vi.fn())
 const mockUseActor = vi.hoisted(() => vi.fn())
+const mockApiGet = vi.hoisted(() => vi.fn())
 
 vi.mock('@/hooks/use-objects', () => ({
 	useObject: (id: string) => mockUseObject(id),
+}))
+vi.mock('@/lib/api', () => ({
+	api: { objects: { get: (id: string) => mockApiGet(id) } },
 }))
 vi.mock('@/hooks/use-actors', () => ({
 	useActor: (id: string) => mockUseActor(id),
@@ -58,7 +62,23 @@ describe('CommentTaskList', () => {
 	beforeEach(() => {
 		mockUseObject.mockReset()
 		mockUseActor.mockReset()
+		mockApiGet.mockReset()
+		mockApiGet.mockResolvedValue(undefined)
 		mockUseActor.mockReturnValue({ data: undefined })
+	})
+
+	it('shows how many referenced tasks are done', async () => {
+		const byId: Record<string, string> = { [TASK_A]: 'done', [TASK_B]: 'in_progress' }
+		mockApiGet.mockImplementation(async (id: string) =>
+			buildObjectResponse({ id, type: 'task', status: byId[id], title: id }),
+		)
+		mockUseObject.mockReturnValue({ data: undefined, isLoading: true })
+		render(
+			<TestWrapper>
+				<CommentTaskList event={eventWithTasks([TASK_A, TASK_B])} workspaceId="ws-1" />
+			</TestWrapper>,
+		)
+		expect(await screen.findByText('1 of 2 done')).toBeInTheDocument()
 	})
 
 	it('renders a checked checkbox for done tasks', () => {

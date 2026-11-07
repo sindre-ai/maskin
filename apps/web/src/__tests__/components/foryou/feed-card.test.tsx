@@ -364,7 +364,7 @@ ${tail}`,
 		await waitFor(() =>
 			expect(mockUseEntityEvents).toHaveBeenLastCalledWith('ws-1', 'task-1', { enabled: true }),
 		)
-		expect(screen.getByText('On this object')).toBeInTheDocument()
+		expect(screen.getByText('On this item')).toBeInTheDocument()
 	})
 })
 
@@ -455,8 +455,8 @@ describe('FeedCard — mention author vs object driver', () => {
 
 	it('attributes the expanded meta line to the mention author, not the object driver', () => {
 		renderCard({ item: magnusDriven })
-		expect(screen.getByText(/from Code Reviewer/)).toBeInTheDocument()
-		expect(screen.queryByText(/from Magnus/)).not.toBeInTheDocument()
+		expect(screen.getByText(/Code Reviewer ·/)).toBeInTheDocument()
+		expect(screen.queryByText(/Magnus ·/)).not.toBeInTheDocument()
 	})
 
 	it('threads the receipt back to the mention author, not the object driver', () => {
@@ -470,5 +470,65 @@ describe('FeedCard — mention author vs object driver', () => {
 		renderCard({ expanded: false, replied: true, item: magnusDriven })
 		expect(screen.getByText('Waiting on Code Reviewer')).toBeInTheDocument()
 		expect(screen.queryByText('Waiting on Magnus')).not.toBeInTheDocument()
+	})
+})
+
+describe('FeedCard — Later', () => {
+	it('offers no Later control unless the route wires it', () => {
+		renderCard()
+		expect(screen.queryByRole('button', { name: 'Later' })).not.toBeInTheDocument()
+	})
+
+	it('opens the times, says it is this browser only, and reports the pick', async () => {
+		const onLater = vi.fn()
+		const user = userEvent.setup()
+		renderCard({ onLater })
+
+		await user.click(screen.getByRole('button', { name: 'Later' }))
+		expect(screen.getByText('Only you are reminded. This browser only.')).toBeInTheDocument()
+		await user.click(screen.getByRole('menuitem', { name: 'Tomorrow, 08:00' }))
+
+		expect(onLater).toHaveBeenCalledTimes(1)
+		expect(onLater.mock.calls[0]?.[0]).toMatchObject({ label: 'Tomorrow, 08:00' })
+		expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+	})
+
+	it('offers the times of the moment the panel opens, not of when the card mounted', async () => {
+		vi.useFakeTimers({ toFake: ['Date'] })
+		try {
+			vi.setSystemTime(new Date(2026, 7, 19, 10, 0, 0))
+			const user = userEvent.setup()
+			renderCard({ onLater: vi.fn() })
+
+			// The card sits on screen past 18:00, then the person opens Later.
+			vi.setSystemTime(new Date(2026, 7, 19, 19, 30, 0))
+			await user.click(screen.getByRole('button', { name: 'Later' }))
+
+			expect(
+				screen.queryByRole('menuitem', { name: 'This evening, 18:00' }),
+			).not.toBeInTheDocument()
+			expect(screen.getByRole('menuitem', { name: 'Tomorrow, 08:00' })).toBeInTheDocument()
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+
+	it('offers no Later on a card with nothing to decide', () => {
+		const item = buildItem({ latest_mention: buildMention({ decision: undefined }) })
+		renderCard({ item, onLater: vi.fn() })
+		expect(screen.queryByRole('button', { name: 'Later' })).not.toBeInTheDocument()
+	})
+
+	it('shows a set-aside card as one row that brings it back', async () => {
+		const onBringBack = vi.fn()
+		const user = userEvent.setup()
+		renderCard({ laterLabel: 'Tomorrow, 08:00', onBringBack })
+
+		expect(
+			screen.getByText('Later · back tomorrow, 08:00 · only you are reminded, this browser only'),
+		).toBeInTheDocument()
+		expect(screen.queryByTestId('comment-input')).not.toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: /bring back/i }))
+		expect(onBringBack).toHaveBeenCalledTimes(1)
 	})
 })

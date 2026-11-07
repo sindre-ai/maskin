@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 const options = [
 	{ key: 'chat', label: 'Chats' },
-	{ key: 'loop', label: 'Loops' },
+	{ key: 'loop', label: 'Flows' },
 	{ key: 'company', label: 'Companies' },
 ]
 const fallbackLabel = (key: string) => `[${key}]`

@@ -1,5 +1,4 @@
 import { getActorAvatarPaletteClass, getActorInitials } from '@/components/shared/actor-avatar'
-import { Badge } from '@/components/ui/badge'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type {
 	InstalledLoopRow,
@@ -9,15 +8,9 @@ import type {
 } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
-import {
-	ITEM_TYPE_LABEL,
-	KIND_LABEL_BASE,
-	KIND_LABEL_CLASS,
-	kindLabel,
-	loopKind,
-} from './item-type-label'
+import { ITEM_TYPE_LABEL } from './item-type-label'
 import { LoopInstallControls } from './loop-install-controls'
-import { UpdateAvailableBanner } from './update-available-banner'
+import { MarketplaceRow } from './marketplace-row'
 
 interface MarketplaceLoopCardProps {
 	workspaceId: string
@@ -37,80 +30,32 @@ export function MarketplaceLoopCard({
 	install,
 	items,
 }: MarketplaceLoopCardProps) {
-	const locked = install?.isLocked ?? false
-	const showUpdateBanner = locked && install?.hasUpdate === true
 	const isBundle = loop.item_types.length >= 2
-	const kind = loopKind(loop.item_types)
 
 	return (
-		<article className="relative flex flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-sm transition-colors hover:border-border-strong hover:shadow-md">
-			<Link
-				to="/$workspaceId/marketplace/$loopId"
-				params={{ workspaceId, loopId: loop.id }}
-				className="absolute inset-0 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-				aria-label={`Open ${loop.name}`}
-			/>
-
-			<div className="flex items-start gap-3">
-				{/* 38px identity tile (mockup 2588) — the same palette treatment the
-				    detail header uses, so a loop looks like itself in both places. */}
-				<span
-					aria-hidden="true"
-					className={cn(
-						'grid size-[38px] shrink-0 place-items-center rounded-xl text-sm font-bold',
-						getActorAvatarPaletteClass(loop.name),
-					)}
-				>
-					{getActorInitials(loop.name)}
-				</span>
-				<div className="min-w-0 flex-1">
-					<h3 className="truncate text-[13.5px] font-bold text-foreground">{loop.name}</h3>
-					<div className={cn(KIND_LABEL_BASE, 'mt-0.5', KIND_LABEL_CLASS[kind])}>
-						{kindLabel(kind)}
-					</div>
-				</div>
-				{install ? (
-					locked ? (
-						<Badge
-							variant="secondary"
-							className="shrink-0 whitespace-nowrap text-[11px] font-medium"
-						>
-							🔒 Managed · v{install.installedVersion}
-						</Badge>
-					) : (
-						<Badge
-							variant="outline"
-							className="shrink-0 whitespace-nowrap text-[11px] font-medium text-foreground"
-						>
-							⑂ Forked from v{install.installedVersion}
-						</Badge>
-					)
-				) : null}
-			</div>
-
-			<p className="text-xs leading-relaxed text-muted-foreground line-clamp-3">
-				{loop.description}
-			</p>
-
-			{/* This row is never itself positioned, so it paints below the overlay
-			    link and any empty space still opens the card. Only the chip buttons
-			    (given `relative`) paint above the link to catch their own clicks
-			    (buttons can't nest in an anchor). */}
-			{isBundle && items && items.length > 0 ? (
-				<CompositionChipRow items={items} />
-			) : (
-				// Single-type cards carry the same chip row (mockup 2593); with no
-				// item detail loaded for them they name what the card installs by
-				// kind rather than dropping to raw `item_type` strings.
-				<KindChipRow itemTypes={loop.item_types} />
-			)}
-
-			{showUpdateBanner ? <UpdateAvailableBanner newVersion={install.availableVersion} /> : null}
-
-			<div className="mt-auto">
-				<LoopInstallControls workspaceId={workspaceId} loop={loop} install={install} />
-			</div>
-		</article>
+		<MarketplaceRow
+			name={loop.name}
+			description={loop.description}
+			overlay={
+				<Link
+					to="/$workspaceId/marketplace/$loopId"
+					params={{ workspaceId, loopId: loop.id }}
+					className="absolute inset-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+					aria-label={`Open ${loop.name}`}
+				/>
+			}
+			// The chip buttons (given `relative`) paint above the overlay link to
+			// catch their own clicks (buttons can't nest in an anchor). Single-type
+			// rows carry the same chip row, naming what they install by kind.
+			extra={
+				isBundle && items && items.length > 0 ? (
+					<CompositionChipRow items={items} />
+				) : (
+					<KindChipRow itemTypes={loop.item_types} />
+				)
+			}
+			action={<LoopInstallControls row workspaceId={workspaceId} loop={loop} install={install} />}
+		/>
 	)
 }
 

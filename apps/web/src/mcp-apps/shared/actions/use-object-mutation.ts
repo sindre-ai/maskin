@@ -60,7 +60,7 @@ function extractObjectResult(tr: ToolResultLike | null, objectId: string): Mutat
 		(p): p is { id?: string; success?: boolean; error?: string } =>
 			typeof p === 'object' && p !== null && (p as { id?: string }).id === objectId,
 	)
-	if (!entry) return { success: false, error: 'No result for this object' }
+	if (!entry) return { success: false, error: 'No result for this item' }
 	if (entry.success === true) return { success: true }
 	return { success: false, error: entry.error ?? 'Mutation failed' }
 }
