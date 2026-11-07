@@ -2433,6 +2433,19 @@ export const tools = {
 				),
 		}),
 	},
+	approve_draft_from_chat: {
+		description:
+			"Count a person's \"send it\" in a chat as the Approve on an email draft. Use it only when a person has just said yes to sending, in a chat you are in, and you have shown them the draft in that chat. Show it by posting a message there that links the draft object (the chat draws its card with the recipients, text and files), then wait for their reply. Pass the draft's object_id and the id of the person's reply (a message id in the chat, from the chat messages you can read). The server checks the message itself and refuses unless a person wrote it (never an agent), in a chat you are in, as their latest message there, after the draft's last edit and after a message in that chat linked the draft. You cannot approve on a person's behalf from your own reading of the chat: if it refuses, post the link again and ask, or ask them to press Approve on the card. Email drafts only for now. When it succeeds, call resend_send_email with the same object_id. Any edit to the recipients, subject, text or files withdraws the approval.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			object_id: z.string().uuid().describe('The email draft object (metadata.kind "email").'),
+			message_id: z
+				.number()
+				.int()
+				.positive()
+				.describe("The id of the person's chat message that says yes."),
+		}),
+	},
 	approve_object_draft: {
 		description:
 			'A person approves a drafted object (an email, a LinkedIn message) exactly as it reads. Called by the Approve button in the preview card, never by an agent: the server refuses any caller that is not a person, and this tool is hidden from the model.',

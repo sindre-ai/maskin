@@ -8405,6 +8405,43 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'approve_draft_from_chat',
+		{
+			description: tools.approve_draft_from_chat.description,
+			inputSchema: tools.approve_draft_from_chat.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const reply = (text: string, isError = false) => ({
+				_meta: meta('approve_draft_from_chat', config, args.workspace_id),
+				content: [{ type: 'text' as const, text }],
+				...(isError ? { isError: true } : {}),
+			})
+			try {
+				await apiCall(
+					config,
+					'POST',
+					`/api/objects/${args.object_id}/chat-approval`,
+					{ message_id: args.message_id },
+					{ workspaceId: args.workspace_id },
+				)
+				return reply(
+					'Approved from the chat message. Call resend_send_email with this object_id now. If the draft is edited again, it needs a new yes.',
+				)
+			} catch (err) {
+				// The server words every refusal for the agent, so pass it on as a result.
+				if (parseApiErrorStatus(err) === null) throw err
+				const detail = (err instanceof Error ? err.message : String(err)).replace(
+					/^API error \d{3}:\s*/,
+					'',
+				)
+				return reply(`Not approved. ${detail}`, true)
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'resend_send_email',
 		{
 			description: tools.resend_send_email.description,
