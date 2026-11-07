@@ -119,9 +119,10 @@ type ParticipantRow = {
 const visibleInChat = sql`(${messages.metadata}->>'helper_return') IS NULL AND coalesce(${messages.metadata}->>'hidden_from_chat', 'false') <> 'true'`
 
 /** The row preview: the words, or the file name(s) when the message is only attachments. */
-function snippetText(content: string, metadata: { attachments?: Array<{ name?: string }> } | null) {
+function snippetText(content: string, metadata: unknown) {
 	if (content.length > 0) return content
-	const attachments = metadata?.attachments ?? []
+	const attachments =
+		(metadata as { attachments?: Array<{ name?: string }> } | null)?.attachments ?? []
 	if (attachments.length === 0) return content
 	const first = attachments[0]?.name?.trim() || 'Attachment'
 	return attachments.length === 1 ? first : `${first} and ${attachments.length - 1} more`
