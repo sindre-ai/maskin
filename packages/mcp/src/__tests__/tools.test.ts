@@ -325,9 +325,9 @@ describe('search_objects schema', () => {
 		expect(result.q).toBe('test')
 	})
 
-	it('does not accept a cursor param — ranked search cannot use the keyset', () => {
+	it('keeps a cursor param so next_cursor can be followed', () => {
 		const result = schema.parse({ q: 'test', cursor: 'anything' })
-		expect((result as Record<string, unknown>).cursor).toBeUndefined()
+		expect(result.cursor).toBe('anything')
 	})
 
 	it('rejects empty q', () => {

@@ -636,6 +636,10 @@ export const tools = {
 				.min(0)
 				.optional()
 				.describe('Rows to skip before the page starts. Defaults to 0.'),
+			cursor: z
+				.string()
+				.optional()
+				.describe('`next_cursor` from the previous response, to fetch the next page.'),
 			metadata_eq: metadataEqSchema,
 			include_archived: z
 				.boolean()
