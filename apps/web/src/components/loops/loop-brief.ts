@@ -38,40 +38,22 @@ export function loopNeedsYou(loop: Pick<LoopSummary, 'pill'>, failed: FailedAgen
 export interface FlowsBrief {
 	total: number
 	needYou: number
-	/** "4 of 5 flows need you." */
+	/** "2 of 4 flows need you." The whole intro: one line, nothing after it. */
 	lead: string
-	/** One clause per flow that has something specific to say; never invented. */
-	clauses: string[]
 }
 
-/**
- * The plain-text brief under the Flows title: how many flows need the viewer,
- * then one clause per flow where the data says why. A flow that needs the
- * viewer but has nothing detectable to say adds no clause.
- */
+/** The one line under the Flows title: how many flows need the viewer. */
 export function buildFlowsBrief(
-	loops: Pick<LoopSummary, 'id' | 'name' | 'pill' | 'waitingCount'>[],
+	loops: Pick<LoopSummary, 'id' | 'pill'>[],
 	failedByLoopId: Map<string, FailedAgent>,
 ): FlowsBrief {
 	const total = loops.length
-	const clauses: string[] = []
-	let needYou = 0
-	for (const loop of loops) {
-		const failed = failedByLoopId.get(loop.id) ?? null
-		if (!loopNeedsYou(loop, failed)) continue
-		needYou += 1
-		const name = loop.name ?? 'Untitled flow'
-		if (failed) {
-			clauses.push(`${name}: ${failed.agent.name} stopped on its last run.`)
-		} else if (loop.waitingCount > 0) {
-			clauses.push(
-				`${name}: ${loop.waitingCount} ${loop.waitingCount === 1 ? 'item waits' : 'items wait'} for you.`,
-			)
-		}
-	}
+	const needYou = loops.filter((loop) =>
+		loopNeedsYou(loop, failedByLoopId.get(loop.id) ?? null),
+	).length
 	const lead =
 		needYou === 0
 			? 'No flows need you.'
 			: `${needYou} of ${total} ${total === 1 ? 'flow needs' : 'flows need'} you.`
-	return { total, needYou, lead, clauses }
+	return { total, needYou, lead }
 }

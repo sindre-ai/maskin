@@ -20,7 +20,7 @@ const session = (over: Partial<SessionResponse>) =>
 	}) as SessionResponse
 
 describe('buildFlowsBrief', () => {
-	it('counts the flows that need you and names why per flow', () => {
+	it('counts the flows that need you in one line', () => {
 		const failed = { agent: { id: 'a1', name: 'Code Reviewer' }, session: session({}) }
 		const brief = buildFlowsBrief(
 			[
@@ -31,16 +31,12 @@ describe('buildFlowsBrief', () => {
 			new Map([['l1', failed]]),
 		)
 		expect(brief.lead).toBe('2 of 3 flows need you.')
-		expect(brief.clauses).toEqual([
-			'Product Delivery: Code Reviewer stopped on its last run.',
-			'Sales: 1 item waits for you.',
-		])
 	})
 
-	it('adds no clause when nothing specific is known', () => {
+	it('has no second line', () => {
 		const brief = buildFlowsBrief([loop({ pill: 'waiting_on_you' })], new Map())
 		expect(brief.lead).toBe('1 of 1 flow needs you.')
-		expect(brief.clauses).toEqual([])
+		expect(Object.keys(brief)).toEqual(['total', 'needYou', 'lead'])
 	})
 
 	it('says no flows need you when none do', () => {
