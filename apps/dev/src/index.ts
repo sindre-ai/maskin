@@ -37,7 +37,8 @@ import { repopulateLinkedInMcpRegistryOnBoot } from './lib/integrations/provider
 import { assertKeychainKeyConfig } from './lib/keychain-kms'
 import { logger } from './lib/logger'
 import { configureVoiceArtifactStorage } from './lib/outreach/voice/recordings-hook'
-import { recordDbTime } from './lib/request-timing'
+import { recordDbTime, setRouteTimingSink } from './lib/request-timing'
+import { createRouteTimingStore } from './lib/route-timing-store'
 import { getStripeClient } from './lib/stripe'
 import { isWorkspaceMember } from './lib/workspace-auth'
 import { initMcpRateLimit, stopMcpRateLimit } from './routes/mcp'
@@ -118,6 +119,9 @@ assertKeychainKeyConfig()
 
 warnIfPosthogKeyUnset()
 configurePosthogPrivacy(db)
+
+// Keep the once-a-minute route timing counts for 30 days. A failed write is logged, never thrown.
+setRouteTimingSink(createRouteTimingStore(db))
 
 // Sync agent-server pool from env on every startup.
 // Set AGENT_SERVERS=url1|secret1,url2|secret2 to register boxes.
