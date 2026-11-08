@@ -2762,6 +2762,160 @@ describe('Conversations Integration', () => {
 		})
 	})
 
+	describe('message deletion', () => {
+		async function chatWithMessage(
+			title: string,
+			values: Partial<typeof messages.$inferInsert> = {},
+		) {
+			const { app } = createConversationsApp(ownerId)
+			const created = await app.request(
+				jsonRequest('POST', '/api/conversations', { title }, { 'x-workspace-id': workspaceId }),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const [msg] = await db
+				.insert(messages)
+				.values({ conversationId: conversation.id, actorId: ownerId, content: 'secret', ...values })
+				.returning()
+			const remove = (messageId: number | undefined = msg?.id) =>
+				app.request(
+					jsonDelete(`/api/conversations/${conversation.id}/messages/${messageId}`, {
+						'x-workspace-id': workspaceId,
+					}),
+				)
+			return { app, conversation, msg, remove }
+		}
+
+		it('lets the author delete: row stays, content and metadata are cleared, event recorded', async () => {
+			const { conversation, msg, remove } = await chatWithMessage('Delete test', {
+				metadata: { mentions: [ownerId] },
+			})
+
+			const res = await remove()
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as {
+				content: string
+				deletedAt: string | null
+				metadata: unknown
+			}
+			expect(body.content).toBe('')
+			expect(body.deletedAt).toBeTruthy()
+			expect(body.metadata).toBeNull()
+
+			const [row] = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.id, msg?.id ?? -1))
+			expect(row?.content).toBe('')
+			expect(row?.metadata).toBeNull()
+			expect(row?.deletedAt).toBeTruthy()
+
+			const auditRows = await db
+				.select()
+				.from(events)
+				.where(and(eq(events.entityId, conversation.id), eq(events.action, 'message_deleted')))
+			expect(auditRows).toHaveLength(1)
+		})
+
+		it('keeps a thread root readable as deleted, with its replies', async () => {
+			const { app, conversation, msg, remove } = await chatWithMessage('Delete root test')
+			await db.insert(messages).values({
+				conversationId: conversation.id,
+				actorId: ownerId,
+				content: 'a reply',
+				threadRootId: msg?.id,
+			})
+
+			expect((await remove()).status).toBe(200)
+
+			const list = await app.request(
+				jsonGet(`/api/conversations/${conversation.id}/messages`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(list.status).toBe(200)
+			const page = (await list.json()) as {
+				messages: { id: number; content: string; deletedAt: string | null }[]
+			}
+			const root = page.messages.find((m) => m.id === msg?.id)
+			expect(root?.deletedAt).toBeTruthy()
+			expect(root?.content).toBe('')
+			const [reply] = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.threadRootId, msg?.id ?? -1))
+			expect(reply?.content).toBe('a reply')
+		})
+
+		it('is a no-op the second time: one event, same deletedAt', async () => {
+			const { conversation, msg, remove } = await chatWithMessage('Delete twice test')
+			const first = (await (await remove()).json()) as { deletedAt: string }
+			const secondRes = await remove()
+			expect(secondRes.status).toBe(200)
+			const second = (await secondRes.json()) as { deletedAt: string }
+			expect(second.deletedAt).toBe(first.deletedAt)
+			const auditRows = await db
+				.select()
+				.from(events)
+				.where(and(eq(events.entityId, conversation.id), eq(events.action, 'message_deleted')))
+			expect(auditRows).toHaveLength(1)
+			expect(msg?.id).toBeDefined()
+		})
+
+		it("rejects deleting someone else's message", async () => {
+			const other = await insertActor(db, { type: 'human' })
+			await addMember(workspaceId, other.id)
+			const { conversation, msg, remove } = await chatWithMessage('Foreign delete test', {
+				actorId: other.id,
+				content: 'not yours',
+			})
+			void conversation
+
+			const res = await remove()
+			expect(res.status).toBe(403)
+			const [row] = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.id, msg?.id ?? -1))
+			expect(row?.content).toBe('not yours')
+			expect(row?.deletedAt).toBeNull()
+		})
+
+		it('rejects deleting auto-posted agent output', async () => {
+			const { msg, remove } = await chatWithMessage('Final output delete test', {
+				content: 'agent turn output',
+				metadata: { source: 'final_output' },
+			})
+
+			const res = await remove()
+			expect(res.status).toBe(403)
+			const [row] = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.id, msg?.id ?? -1))
+			expect(row?.deletedAt).toBeNull()
+		})
+
+		it('returns not found for a message that is not in the conversation', async () => {
+			const { remove } = await chatWithMessage('Missing delete test')
+			expect((await remove(999999999)).status).toBe(404)
+		})
+
+		it('refuses to edit a deleted message', async () => {
+			const { app, conversation, msg, remove } = await chatWithMessage('Edit after delete test')
+			expect((await remove()).status).toBe(200)
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${conversation.id}/messages/${msg?.id}`,
+					{ content: 'back from the dead' },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(404)
+		})
+	})
+
 	describe('message retry', () => {
 		it('re-runs the responder for the message, forcing a reply', async () => {
 			const agent = await insertActor(db, { type: 'agent' })
