@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import type { MiddlewareHandler } from 'hono'
 import { routePath } from 'hono/route'
 import { logger } from './logger'
+import type { RouteTimingSink } from './route-timing-store'
 
 /**
  * Per-route API timing, to rank which endpoints cost the most (total time and database time).
@@ -19,6 +20,9 @@ import { logger } from './logger'
  * connection, so they are recorded when the client disconnects and carry the database reads done
  * while it was open (the Last-Event-ID replay and per-frame reads). Frames sent for events that
  * arrive from the live bridge run outside the request and are not attributed.
+ *
+ * The same numbers can also be handed to a sink on each flush (`setRouteTimingSink`), which keeps
+ * them in the database. The sink never blocks or fails a request.
  */
 
 const FLUSH_INTERVAL_MS = 60_000
@@ -39,11 +43,18 @@ interface Bucket {
 	dbMs: number
 	dbMaxMs: number
 	dbQueries: number
+	slow: number
 }
 
 const requestStore = new AsyncLocalStorage<RequestTiming>()
 const buckets = new Map<string, Bucket & { method: string; route: string; stream: boolean }>()
 let flushTimer: ReturnType<typeof setInterval> | undefined
+let sink: RouteTimingSink | undefined
+
+/** Called once with the flushed buckets of each minute. Pass undefined to stop. */
+export function setRouteTimingSink(next: RouteTimingSink | undefined): void {
+	sink = next
+}
 
 /** Passed to `createDb` as `onQuery`. A no-op for queries outside a request. */
 export function recordDbTime(ms: number): void {
@@ -77,6 +88,7 @@ function record(
 			dbMs: 0,
 			dbMaxMs: 0,
 			dbQueries: 0,
+			slow: 0,
 		}
 		buckets.set(key, bucket)
 	}
@@ -90,6 +102,7 @@ function record(
 
 	// A stream's total is the connection lifetime, so only its database time can make it slow.
 	if ((!stream && totalMs >= SLOW_REQUEST_MS) || timing.dbMs >= SLOW_DB_MS) {
+		bucket.slow++
 		logger.info('api_slow_request', {
 			method,
 			route,
@@ -125,6 +138,27 @@ export function flushRouteTiming(): void {
 			db_ms_max: round(b.dbMaxMs),
 			db_queries: b.dbQueries,
 		})
+	}
+	if (sink && buckets.size > 0) {
+		try {
+			sink(
+				[...buckets.values()].map((b) => ({
+					method: b.method,
+					route: b.route,
+					stream: b.stream,
+					requests: b.requests,
+					slowRequests: b.slow,
+					errors5xx: b.errors5xx,
+					totalMs: b.totalMs,
+					dbMs: b.dbMs,
+					dbQueries: b.dbQueries,
+				})),
+			)
+		} catch (err) {
+			logger.warn('api_route_timing sink failed', {
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
 	}
 	buckets.clear()
 }
