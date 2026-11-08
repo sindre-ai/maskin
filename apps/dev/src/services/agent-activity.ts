@@ -11,7 +11,7 @@ import { LIVE_STATUSES, openInteractiveTurnsByLog } from './live-activity-push'
  */
 const CHANGE_ACTIONS = ['updated', 'status_changed']
 
-export interface AgentObjectRow {
+export type AgentObjectRow = {
 	id: string
 	type: string
 	title: string | null
@@ -58,7 +58,7 @@ export async function listAgentObjects(
 	return { items: rows.slice(0, limit), hasMore: rows.length > limit }
 }
 
-export interface AgentWorkingNow {
+export type AgentWorkingNow = {
 	sessionId: string
 	doing: string
 	startedAt: Date
