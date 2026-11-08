@@ -55,11 +55,19 @@ describe('buildListRequest', () => {
 		expect(JSON.parse(json)).toEqual({ where: { name: text } })
 	})
 
-	it('never lets a "]" be followed by "=" in the decoded request', () => {
+	// The "]=" quirk is about the filter. The search text is a separate, percent-encoded
+	// parameter, so it cannot put a literal "]=" on the wire; that is checked on the raw URL.
+	// Decoding the whole URL would turn the search text back into "x]=y", which says nothing.
+	it('never puts a "]" followed by "=" in the filter, or anywhere on the wire', () => {
 		const r = built('opportunities', { since: '2026-11-01', search: 'x]=y', limit: 3 })
-		expect(decodeURIComponent(r.url)).not.toContain(']=')
-		// The search text travels as its own encoded parameter.
+		const filter = new URL(r.url).searchParams.get('filter') ?? ''
+		expect(filter).not.toContain(']=')
+		expect(r.url).not.toContain(']=')
+		// The search text still arrives intact, as its own parameter.
 		expect(new URL(r.url).searchParams.get('search')).toBe('x]=y')
+
+		const inFilter = built('issues', { since: '2026-11-01' })
+		expect(new URL(inFilter.url).searchParams.get('filter')).not.toContain(']=')
 	})
 
 	it('uses the issues path for issues', () => {
