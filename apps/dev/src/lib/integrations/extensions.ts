@@ -8,7 +8,11 @@ import {
 } from '@maskin/shared'
 import type { WebhookConfig as VerifierConfig } from './types'
 import type { WebhookHandler } from './webhooks/handler'
-import { verifyTimestampSignature } from './webhooks/signatures'
+import {
+	ed25519PublicKeyError,
+	verifyEd25519Signature,
+	verifyTimestampSignature,
+} from './webhooks/signatures'
 
 // The cap itself lives in @maskin/shared so the write schema and the runtime share it.
 export { MAX_EXTENSION_TOOLS }
@@ -24,6 +28,19 @@ export function mcpConfigWriteError(config: McpConfig | null | undefined): strin
 		return 'Only stdio MCP servers are supported for now. HTTP-transport-only vendors cannot be added yet.'
 	}
 	return null
+}
+
+/**
+ * Plain reason a signing secret cannot be saved with this webhook config, or null
+ * when it can. Only ed25519 has a format to check: its secret is the vendor's
+ * public key, and a wrong paste would otherwise fail every delivery.
+ */
+export function webhookSecretWriteError(
+	config: { signatureScheme?: string } | null | undefined,
+	secret: string,
+): string | null {
+	if (config?.signatureScheme !== 'ed25519') return null
+	return ed25519PublicKeyError(secret)
 }
 
 /** integrations.provider value of an extension's MCP API key row. Not the webhook secret row. */
@@ -176,8 +193,8 @@ export function deliveryEntityId(extensionId: string, externalId: string): strin
  * Check a delivery against an extension's webhook_config using the secret the
  * caller already resolved. Header names are matched lowercased, the way the
  * route builds its header map. The timestamp scheme is checked here with the
- * extension's own maxAgeSeconds; the raw-body schemes go through the shared
- * WebhookHandler.
+ * extension's own maxAgeSeconds, and so is ed25519 (where the "secret" is the
+ * vendor's public key); the raw-body schemes go through the shared WebhookHandler.
  */
 export function verifyExtensionSignature(
 	handler: WebhookHandler,
@@ -199,6 +216,19 @@ export function verifyExtensionSignature(
 			// The spec's {ts} and the verifier's {timestamp} mean the same thing.
 			bodyTemplate: config.timestampBodyTemplate.replace('{ts}', '{timestamp}'),
 			signaturePrefix: config.signaturePrefix,
+			maxAgeSeconds: config.maxAgeSeconds,
+		})
+	}
+	if (config.signatureScheme === 'ed25519') {
+		if (!config.timestampHeader || !config.timestampBodyTemplate) {
+			throw new Error(
+				'timestampHeader and timestampBodyTemplate are required for the ed25519 scheme',
+			)
+		}
+		return verifyEd25519Signature(body, headers, secret, {
+			timestampHeader: config.timestampHeader.toLowerCase(),
+			signatureHeader,
+			bodyTemplate: config.timestampBodyTemplate.replace('{ts}', '{timestamp}'),
 			maxAgeSeconds: config.maxAgeSeconds,
 		})
 	}
