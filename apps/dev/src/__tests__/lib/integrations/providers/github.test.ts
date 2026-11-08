@@ -213,8 +213,18 @@ describe('githubAuth', () => {
 			const result = await githubAuth.handleCallback({ code: 'abc' }, 'https://app.test/api/cb')
 			expect(result.pending_installation_selection).toBe(true)
 			expect(result.installation_choices).toEqual([
-				{ installationId: '146523409', ownerLogin: 'sindre-ai' },
-				{ installationId: '154364583', ownerLogin: 'vaerksted-ai' },
+				{
+					installationId: '146523409',
+					ownerLogin: 'sindre-ai',
+					ownerType: null,
+					ownerAvatarUrl: null,
+				},
+				{
+					installationId: '154364583',
+					ownerLogin: 'vaerksted-ai',
+					ownerType: null,
+					ownerAvatarUrl: null,
+				},
 			])
 			// The user token is a means to an end — never persisted.
 			expect(result).not.toHaveProperty('accessToken')

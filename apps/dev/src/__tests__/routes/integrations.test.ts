@@ -1321,6 +1321,8 @@ describe('Integrations Routes', () => {
 			expect(refreshCall?.config).toEqual({
 				system_actor_id: 'system-actor-id',
 				owner_login: 'owner-300',
+				owner_type: 'organization',
+				owner_avatar_url: 'https://avatars.githubusercontent.com/u/300',
 			})
 
 			// No promote-shaped update — the pending row was deleted, not rewritten
