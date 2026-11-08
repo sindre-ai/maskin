@@ -45,7 +45,7 @@ struct ProfileMenuTests {
 		#expect(ProfileMenuGroup.allCases.map(\.title) == ["Account", "Workspace", "Agents and access", "Admin"])
 		#expect(
 			ProfileMenu.items(in: .account, hasWorkspace: true).map(\.title)
-				== ["Account", "Billing", "Notifications", "App lock", "Sign in a device"])
+				== ["Settings", "Account", "Billing", "Notifications", "App lock", "Sign in a device"])
 		#expect(
 			ProfileMenu.items(in: .workspace, hasWorkspace: true).map(\.title)
 				== ["Agents", "Members", "Integrations", "Triggers"])
@@ -56,9 +56,14 @@ struct ProfileMenuTests {
 	}
 
 	@Test func workspaceScopedRowsHideWithoutAWorkspace() {
-		#expect(ProfileMenu.items(in: .account, hasWorkspace: false) == [.account, .notifications, .appLock])
+		#expect(ProfileMenu.items(in: .account, hasWorkspace: false) == [.settings, .account, .notifications, .appLock])
 		#expect(ProfileMenu.items(in: .workspace, hasWorkspace: false).isEmpty)
 		#expect(ProfileMenu.items(in: .admin, hasWorkspace: false) == [.nativeSurfaces, .advanced])
+	}
+
+	@Test func settingsIsTheFirstAccountRow() {
+		#expect(ProfileMenu.items(in: .account, hasWorkspace: true).first == .settings)
+		#expect(ProfileMenu.items(in: .account, hasWorkspace: false).first == .settings)
 	}
 
 	@Test func everyItemIsInExactlyOneSection() {

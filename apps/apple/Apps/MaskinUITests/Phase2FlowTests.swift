@@ -146,8 +146,9 @@ final class Phase2FlowTests: LiveTestCase {
 		let account = app.buttons["Account"].firstMatch
 		XCTAssertTrue(account.waitForExistence(timeout: 10), "account menu")
 		account.tap()
+		// Settings is the first row of the Account section; it pushes onto the account menu's stack.
 		app.buttons["Settings"].firstMatch.tap()
-		XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10), "settings sheet")
+		XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10), "settings page")
 	}
 
 	func test13_SettingsProfileMembersIntegrationsKey() throws {
@@ -202,7 +203,10 @@ final class Phase2FlowTests: LiveTestCase {
 
 	func test14_SignOutFromSettings() throws {
 		try signInIfNeeded()
-		openSettings()
+		// Sign out is the one sign-out path, at the bottom of the account menu (not on the Settings page).
+		let account = app.buttons["Account"].firstMatch
+		XCTAssertTrue(account.waitForExistence(timeout: 10), "account menu")
+		account.tap()
 		let signOut = app.buttons["Sign out"].firstMatch
 		scrollTo(signOut)
 		shot("settings-about")

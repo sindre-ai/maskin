@@ -1,7 +1,8 @@
 import Foundation
 
 /// The section headers of the account menu, in order. The menu is one scrolling list; Appearance
-/// and Sign out follow the last section and are not rows of this model.
+/// and Sign out follow the last section and are not rows of this model. Settings is the first row of
+/// Account: it is the only way into the Settings page (Files, the analytics switch).
 public enum ProfileMenuGroup: String, CaseIterable, Hashable, Identifiable, Sendable {
 	case account, workspace, access, admin
 
@@ -18,7 +19,7 @@ public enum ProfileMenuGroup: String, CaseIterable, Hashable, Identifiable, Send
 }
 
 public enum ProfileMenuItem: String, CaseIterable, Hashable, Identifiable, Sendable {
-	case account, billing, notifications, appLock, deviceSignIn
+	case settings, account, billing, notifications, appLock, deviceSignIn
 	case agents, members, integrations, triggers
 	case skills, objectTypes, keys, marketplace
 	case nativeSurfaces, advanced
@@ -27,6 +28,7 @@ public enum ProfileMenuItem: String, CaseIterable, Hashable, Identifiable, Senda
 
 	public var title: String {
 		switch self {
+		case .settings: "Settings"
 		case .account: "Account"
 		case .billing: "Billing"
 		case .notifications: "Notifications"
@@ -47,7 +49,7 @@ public enum ProfileMenuItem: String, CaseIterable, Hashable, Identifiable, Senda
 
 	public var group: ProfileMenuGroup {
 		switch self {
-		case .account, .billing, .notifications, .appLock, .deviceSignIn: .account
+		case .settings, .account, .billing, .notifications, .appLock, .deviceSignIn: .account
 		case .agents, .members, .integrations, .triggers: .workspace
 		case .skills, .objectTypes, .keys, .marketplace: .access
 		case .nativeSurfaces, .advanced: .admin
@@ -60,7 +62,7 @@ public enum ProfileMenuItem: String, CaseIterable, Hashable, Identifiable, Senda
 		case .billing, .deviceSignIn, .agents, .members, .integrations, .triggers, .skills, .objectTypes, .keys,
 			.marketplace:
 			true
-		case .account, .notifications, .appLock, .nativeSurfaces, .advanced: false
+		case .settings, .account, .notifications, .appLock, .nativeSurfaces, .advanced: false
 		}
 	}
 }
