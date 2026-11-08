@@ -5,7 +5,12 @@ vi.mock('../../lib/logger', () => ({
 	logger: { info: vi.fn(), warn, error: vi.fn(), debug: vi.fn() },
 }))
 
-import { flushRouteTiming, requestTiming, setRouteTimingSink } from '../../lib/request-timing'
+import {
+	flushRouteTiming,
+	requestTiming,
+	resolveClientSourceLabel,
+	setRouteTimingSink,
+} from '../../lib/request-timing'
 import { createRouteTimingStore, currentBuild } from '../../lib/route-timing-store'
 
 function fakeDb(opts: { failInsert?: boolean; deleted?: number[] } = {}) {
@@ -35,6 +40,7 @@ const row = {
 	method: 'GET',
 	route: '/api/objects/:id',
 	stream: false,
+	clientSource: 'ui' as const,
 	requests: 3,
 	slowRequests: 1,
 	errors5xx: 0,
@@ -63,6 +69,7 @@ describe('createRouteTimingStore', () => {
 			method: 'GET',
 			route: '/api/objects/:id',
 			stream: false,
+			clientSource: 'ui',
 			requests: 3,
 			slowRequests: 1,
 			errors5xx: 0,
@@ -81,7 +88,7 @@ describe('createRouteTimingStore', () => {
 			target: unknown[]
 			set: Record<string, unknown>
 		}
-		expect(arg.target).toHaveLength(5)
+		expect(arg.target).toHaveLength(6)
 		expect(Object.keys(arg.set).sort()).toEqual(
 			['dbMsSum', 'dbQueries', 'errors5xx', 'requests', 'slowRequests', 'totalMsSum'].sort(),
 		)
@@ -125,6 +132,22 @@ describe('createRouteTimingStore', () => {
 	})
 })
 
+describe('resolveClientSourceLabel', () => {
+	it('maps the header onto five fixed values', () => {
+		expect(resolveClientSourceLabel('ui')).toBe('ui')
+		expect(resolveClientSourceLabel(' UI ')).toBe('ui')
+		expect(resolveClientSourceLabel('ios')).toBe('ios')
+		expect(resolveClientSourceLabel('mcp')).toBe('mcp')
+		expect(resolveClientSourceLabel('agent')).toBe('other')
+		expect(resolveClientSourceLabel('k6-loadtest')).toBe('other')
+		expect(resolveClientSourceLabel('x'.repeat(500))).toBe('other')
+		expect(resolveClientSourceLabel(undefined)).toBe('none')
+		expect(resolveClientSourceLabel(null)).toBe('none')
+		expect(resolveClientSourceLabel('')).toBe('none')
+		expect(resolveClientSourceLabel('  ')).toBe('none')
+	})
+})
+
 describe('currentBuild', () => {
 	it('uses the commit the web bundle reports, then the deploy commit, then unknown', () => {
 		expect(currentBuild({ VITE_MASKIN_COMMIT_SHA: 'aaa', SOURCE_COMMIT: 'bbb' } as never)).toBe(
@@ -137,6 +160,41 @@ describe('currentBuild', () => {
 
 describe('flushRouteTiming with a sink', () => {
 	beforeEach(() => setRouteTimingSink(undefined))
+
+	it('splits the counts per sender and keeps free text out of the rows', async () => {
+		const { Hono } = await import('hono')
+		const app = new Hono()
+		app.use('*', requestTiming())
+		app.get('/api/objects/:id', (c) => c.json({}))
+		const sink = vi.fn()
+		setRouteTimingSink(sink)
+		const get = (source?: string) =>
+			app.request(
+				'/api/objects/1',
+				source === undefined ? {} : { headers: { 'X-Client-Source': source } },
+			)
+		await get('ui')
+		await get('ui')
+		await get('ios')
+		await get('mcp')
+		await get('k6-loadtest')
+		await get('<script>alert(1)</script>')
+		await get()
+		await get('   ')
+		flushRouteTiming()
+		const rows = sink.mock.calls[0][0] as Array<{ clientSource: string; requests: number }>
+		expect(
+			rows
+				.map((r) => [r.clientSource, r.requests] as const)
+				.sort((a, b) => a[0].localeCompare(b[0])),
+		).toEqual([
+			['ios', 1],
+			['mcp', 1],
+			['none', 2],
+			['other', 2],
+			['ui', 2],
+		])
+	})
 
 	it('hands the flushed buckets, with the slow count, to the sink', async () => {
 		const { Hono } = await import('hono')
