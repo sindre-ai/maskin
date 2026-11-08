@@ -11,6 +11,8 @@ import Foundation
 @MainActor
 public final class WorkingAgentsFeed {
 	public static let sessionWindow = 100
+	/// Events refetch the agents and sessions at most this often.
+	static let refetchInterval: Duration = .seconds(5)
 
 	private let api: any AgentsAPI
 	private let events: EventHub?
@@ -30,7 +32,7 @@ public final class WorkingAgentsFeed {
 		self.events = events
 		self.now = now
 		self.onChange = onChange
-		self.debouncer = RefreshDebouncer()
+		self.debouncer = RefreshDebouncer(minInterval: Self.refetchInterval)
 	}
 
 	/// Test seam: a custom wait between a live event and the refetch it causes.

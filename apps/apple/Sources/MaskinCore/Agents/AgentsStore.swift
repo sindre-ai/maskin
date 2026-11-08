@@ -32,11 +32,20 @@ public final class AgentsStore {
 	@ObservationIgnored private var refreshQueued = false
 
 	@ObservationIgnored private let debouncer: RefreshDebouncer
+	@ObservationIgnored private let now: RefreshDebouncer.Clock
+	/// What the last per-agent latest-session lookup found, so a quiet agent is asked about at most
+	/// once per `quietLookupInterval`, however often the list reloads.
+	@ObservationIgnored private var quietLookups: [String: (at: ContinuousClock.Instant, session: AgentSession?)] = [:]
+
+	/// Events reload the list at most this often.
+	static let refetchInterval: Duration = .seconds(5)
+	static let quietLookupInterval: Duration = .seconds(60)
 
 	public init(api: any AgentsAPI, events: EventHub?, cache: SnapshotCache? = nil) {
 		self.api = api
 		self.events = events
-		self.debouncer = RefreshDebouncer()
+		self.now = { ContinuousClock.now }
+		self.debouncer = RefreshDebouncer(minInterval: Self.refetchInterval)
 		self.cache = cache
 		hydrateIfNeeded()
 	}
@@ -54,12 +63,14 @@ public final class AgentsStore {
 
 	/// Test seam: a custom wait between a live event and the refetch it causes.
 	init(
-		api: any AgentsAPI, events: EventHub?, debounce: Duration,
-		sleep: @escaping RefreshDebouncer.Sleep, cache: SnapshotCache? = nil
+		api: any AgentsAPI, events: EventHub?, debounce: Duration, minInterval: Duration = .zero,
+		sleep: @escaping RefreshDebouncer.Sleep, now: @escaping RefreshDebouncer.Clock = { ContinuousClock.now },
+		cache: SnapshotCache? = nil
 	) {
 		self.api = api
 		self.events = events
-		self.debouncer = RefreshDebouncer(delay: debounce, sleep: sleep)
+		self.now = now
+		self.debouncer = RefreshDebouncer(delay: debounce, minInterval: minInterval, sleep: sleep, now: now)
 		self.cache = cache
 		hydrateIfNeeded()
 	}
@@ -220,9 +231,9 @@ public final class AgentsStore {
 					guard let self else { return }
 					switch signal {
 					case .reconnected:
-						await self.refresh()
+						await self.debouncer.runIfStale { await self.refresh() }
 					case .event(let event) where event.entityType == .actor || event.entityType == .session:
-						await self.scheduleRefresh()
+						self.scheduleRefresh()
 					case .event:
 						break
 					}
@@ -238,8 +249,13 @@ public final class AgentsStore {
 		debouncer.cancel()
 	}
 
-	/// A burst of events becomes one reload.
+	/// A burst of events becomes one reload, at most once per `refetchInterval`, and none while the
+	/// app is in the background (the hub asks for one reload when it returns).
 	private func scheduleRefresh() {
+		if let events, !events.isForeground {
+			events.noteSkippedInBackground()
+			return
+		}
 		debouncer.schedule { [weak self] in await self?.refresh() }
 	}
 
@@ -253,6 +269,7 @@ public final class AgentsStore {
 		defer { refreshing = false }
 		repeat {
 			refreshQueued = false
+			debouncer.noteRan()
 			if agents.isEmpty { phase = .loading }
 			let started = ContinuousClock.now
 			do {
@@ -275,19 +292,33 @@ public final class AgentsStore {
 	}
 
 	/// The workspace-wide window only covers the busiest agents, so a quiet agent would read as
-	/// "never ran" and an old failure as "Idle". Ask for those agents' own latest session.
+	/// "never ran" and an old failure as "Idle". Ask for those agents' own latest session, at most
+	/// once per agent per `quietLookupInterval`; in between, the last answer is reused.
 	/// `sessionCount` stays "runs inside the recent window", with a floor of 1 once a latest
 	/// session is known.
 	private func fillQuietAgents(_ rows: inout [AgentSummary]) async {
 		let missing = rows.filter { $0.latestSession == nil }.map(\.id)
+		quietLookups = quietLookups.filter { id, _ in missing.contains(id) }
 		guard !missing.isEmpty else { return }
+		let asked = now()
+		let stale = missing.filter { id in
+			guard let last = quietLookups[id] else { return true }
+			return asked - last.at >= Self.quietLookupInterval
+		}
 		let api = api
-		let found = await withTaskGroup(of: (String, AgentSession?).self) { group in
-			for id in missing { group.addTask { (id, try? await api.latestSession(agentID: id)) } }
-			var out: [String: AgentSession] = [:]
-			for await (id, session) in group { if let session { out[id] = session } }
+		let looked = await withTaskGroup(of: (String, AgentSession?, Bool).self) { group in
+			for id in stale {
+				group.addTask {
+					do { return (id, try await api.latestSession(agentID: id), true) } catch { return (id, nil, false) }
+				}
+			}
+			var out: [String: AgentSession?] = [:]
+			for await (id, session, ok) in group where ok { out[id] = .some(session) }
 			return out
 		}
+		for (id, session) in looked { quietLookups[id] = (asked, session) }
+		var found: [String: AgentSession] = [:]
+		for id in missing { if let session = quietLookups[id]?.session { found[id] = session } }
 		for index in rows.indices {
 			if let session = found[rows[index].id] {
 				rows[index].latestSession = session
