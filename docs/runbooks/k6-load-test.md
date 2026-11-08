@@ -20,10 +20,11 @@ and event streams are the same in both, so two runs at the same `PROFILE` differ
   - After that, an event is a message in the open chat with probability `MESSAGE_EVENT_SHARE`
     (default 0.3, ASSUMED: the script does not parse the stream). Then only that conversation's
     messages are refetched.
-  - Any other event marks the lists dirty. Actors, chat list, unread chats and For You are then
-    refetched together by a trailing timer, at most once per `COALESCE_MS` (default 5000).
-  - The sessions list, the open chat's sessions, objects and the object graph are not refetched on
-    events, so the full session history is not walked.
+  - Any other event marks the lists dirty. Actors, chat list, unread chats, sessions list and For
+    You are then refetched together by a trailing timer, at most once per `COALESCE_MS` (default
+    5000). A message event never triggers this refetch. The per-agent stats list is not modelled.
+  - The open chat's sessions, objects and the object graph are not refetched on events, so the
+    full session history is not walked.
   - No delta frames: the stream is opened as in the current profile and its body is ignored. Delta
     frames are phase 2 and are not modelled.
 
@@ -97,8 +98,10 @@ workspace: tasks whose title starts with `k6-loadtest`.
 
 ## Limits of the model
 
-- Humans are simulated as bursts of reads every 2 to 6 s, not by a real browser. In both profiles an
-  event reaches a tab every 2 to 6 s whatever the agents write, so the event rate per tab is fixed.
+- Humans are simulated as bursts of reads, not by a real browser. A tab waits 2 to 6 s between
+  iterations and holds the event stream for 30 s on about one iteration in five, so in both
+  profiles an event reaches a tab about every 10 s whatever the agents write, and the event rate
+  per tab is fixed.
   A busier workspace would show a larger gap between the profiles, because the new client caps list
   reads at one per `COALESCE_MS` while the current one does not.
 - The new-client tab models the coalescing and narrowing the spec describes, not the shared server

@@ -275,12 +275,15 @@ function readBatch(calls) {
 	}
 }
 
-// The lists the phase 1 client coalesces: at most one refetch per COALESCE_MS.
+// The lists the phase 1 client coalesces: at most one refetch per COALESCE_MS. The sessions list
+// is in the group (main refetches it at most once per 5 s on session events); the per-agent
+// stats list (once per 30 s) is not modelled.
 function listCalls() {
 	return [
 		['/api/conversations?limit=50', ROUTES.conversations],
 		['/api/conversations?limit=50&unread_only=true', ROUTES.conversationsUnread],
 		['/api/actors?limit=100&offset=0', ROUTES.actors],
+		['/api/sessions?limit=100', ROUTES.sessions],
 		['/api/for-you', ROUTES.forYou],
 	]
 }
@@ -291,11 +294,7 @@ function messagesCall(data) {
 
 // Everything today's client refetches after one event.
 function currentClientCalls(data) {
-	const calls = [
-		...listCalls(),
-		['/api/sessions?limit=100', ROUTES.sessions],
-		['/api/objects?limit=50', ROUTES.objects],
-	]
+	const calls = [...listCalls(), ['/api/objects?limit=50', ROUTES.objects]]
 	if (data.conversationId) {
 		calls.push(messagesCall(data))
 		calls.push([
@@ -314,8 +313,9 @@ const tab = { mounted: false, listsFetchedAt: 0, listsDirty: false }
 
 // New-client tab, phase 1. The first iteration is the page load: it reads everything once,
 // including the sessions list and the object graph. After that, an event either is a message
-// in the open chat (refetch that conversation only) or marks the lists dirty; dirty lists are
-// refetched by a trailing timer, at most once per COALESCE_MS. The sessions list and the full
+// in the open chat (refetch that conversation only) or marks the lists dirty; dirty lists
+// (including the sessions list) are refetched by a trailing timer, at most once per COALESCE_MS.
+// A message event never touches the lists. The open chat's sessions, objects and the full
 // session history are not refetched on events. No delta frames: the stream body is ignored.
 function newClientEvent(data) {
 	group('new-client event', () => {
