@@ -5,6 +5,7 @@ import {
 	NoGithubInstallationsError,
 	UnauthorizedGithubInstallationError,
 	buildAppInstallUrl,
+	fetchInstallationAccount,
 	fetchInstallationOwnerLogin,
 	githubAuth,
 	mintInstallationTokenWithRecovery,
@@ -392,6 +393,65 @@ describe('githubAuth', () => {
 			await expect(fetchInstallationOwnerLogin('42')).rejects.toThrow(
 				'GitHub installation response missing account.login',
 			)
+		})
+	})
+
+	describe('fetchInstallationAccount', () => {
+		const originalFetch = globalThis.fetch
+		const originalAppId = process.env.GITHUB_APP_ID
+		const originalKey = process.env.GITHUB_APP_PRIVATE_KEY
+
+		beforeAll(() => {
+			process.env.GITHUB_APP_ID = '12345'
+			process.env.GITHUB_APP_PRIVATE_KEY = testPrivateKeyPem
+		})
+
+		afterEach(() => {
+			globalThis.fetch = originalFetch
+		})
+
+		afterAll(() => {
+			process.env.GITHUB_APP_ID = originalAppId
+			process.env.GITHUB_APP_PRIVATE_KEY = originalKey
+		})
+
+		function stubAccount(account: Record<string, unknown>) {
+			globalThis.fetch = vi.fn().mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve({ account }),
+			})
+		}
+
+		it('maps an Organization account and keeps its avatar', async () => {
+			stubAccount({
+				login: 'sindre-ai',
+				type: 'Organization',
+				avatar_url: 'https://avatars.githubusercontent.com/u/1',
+			})
+
+			await expect(fetchInstallationAccount('42')).resolves.toEqual({
+				login: 'sindre-ai',
+				type: 'organization',
+				avatarUrl: 'https://avatars.githubusercontent.com/u/1',
+			})
+		})
+
+		it('maps a User account to personal', async () => {
+			stubAccount({ login: 'someone', type: 'User', avatar_url: 'https://x/a.png' })
+
+			const account = await fetchInstallationAccount('42')
+
+			expect(account.type).toBe('personal')
+		})
+
+		it('returns null type and avatar when GitHub sends neither', async () => {
+			stubAccount({ login: 'someone', type: 'Bot' })
+
+			await expect(fetchInstallationAccount('42')).resolves.toEqual({
+				login: 'someone',
+				type: null,
+				avatarUrl: null,
+			})
 		})
 	})
 
