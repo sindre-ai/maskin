@@ -314,7 +314,8 @@ describe('Subscriptions Routes', () => {
 						unread_count: 3,
 						mentioning_unread_count: 0,
 						latest_event_id: 100,
-						latest_activity_at: new Date('2026-01-01T00:00:00Z'),
+						// The raw query returns timestamptz as database text, not a Date.
+						latest_activity_at: '2026-01-01 00:00:00.123456+00',
 					},
 				],
 			]
@@ -330,6 +331,7 @@ describe('Subscriptions Routes', () => {
 			expect(body.items[0].entity_id).toBe(obj.id)
 			expect(body.items[0].unread_count).toBe(3)
 			expect(body.items[0].mentioning_unread_count).toBe(0)
+			expect(body.items[0].latest_activity_at).toBe('2026-01-01T00:00:00.123Z')
 			expect(body.items[0]).not.toHaveProperty('mentions_you')
 			expect(body.items[0].object?.id).toBe(obj.id)
 		})

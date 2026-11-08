@@ -43,6 +43,7 @@ type Aggregate = {
 	mentioning_unread_count: number
 	max_unread_attention: number | null
 	latest_event_id: number
+	latest_activity_at: string
 }
 
 /**
@@ -65,7 +66,8 @@ async function legacyUnreadFeed(
 			coalesce(count(*) FILTER (WHERE e.id > ${lastRead}
 				AND e.data->'mentions' @> jsonb_build_array(${actorId}::text)), 0)::int AS mentioning_unread_count,
 			max((e.data->>'attention')::int) FILTER (WHERE e.id > ${lastRead}) AS max_unread_attention,
-			max(e.id) AS latest_event_id
+			max(e.id) AS latest_event_id,
+			max(e.created_at) AS latest_activity_at
 		FROM subscriptions s
 		LEFT JOIN objects o ON s.entity_type = 'object' AND o.id = s.entity_id
 		LEFT JOIN events e ON e.workspace_id = s.workspace_id
@@ -89,8 +91,14 @@ async function legacyUnreadFeed(
 		mentioning_unread_count: number
 		max_unread_attention: number | null
 		latest_event_id: string | number
+		latest_activity_at: Date | string
 	}>
-	return rows.map((r) => ({ ...r, latest_event_id: Number(r.latest_event_id) }))
+	// The old builder query returned a Date, which the handler serialised to an ISO string.
+	return rows.map((r) => ({
+		...r,
+		latest_event_id: Number(r.latest_event_id),
+		latest_activity_at: new Date(r.latest_activity_at).toISOString(),
+	}))
 }
 
 describe('GET /api/subscriptions/unread matches the pre-rewrite query', () => {
@@ -232,11 +240,14 @@ describe('GET /api/subscriptions/unread matches the pre-rewrite query', () => {
 				mentioning_unread_count: i.mentioning_unread_count,
 				max_unread_attention: i.max_unread_attention,
 				latest_event_id: i.latest_event_id,
+				latest_activity_at: i.latest_activity_at,
 			}))
 
 			// half read, onboarding coach and the old unread one; the fresh read one only when recent counts.
 			expect(expected).toHaveLength(includeRecentlyRead ? 4 : 3)
 			expect(actual).toEqual(expected)
+			// Must be an ISO date, never the raw database text ("2026-01-01 00:00:00+00").
+			for (const i of actual) expect(i.latest_activity_at).toMatch(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/)
 			expect(actual.some((i) => i.entity_id === unfollowed.id)).toBe(false)
 			expect(actual.some((i) => i.entity_id === chatter.id)).toBe(false)
 			expect(actual.some((i) => i.entity_id === own.id)).toBe(false)

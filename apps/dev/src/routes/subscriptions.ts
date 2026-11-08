@@ -630,6 +630,8 @@ app.openapi(listUnreadRoute, (async (c) => {
 		latest_activity_at: Date | string
 	}>
 	// bigint comes back from the driver as a string; the rest of the handler wants numbers.
+	// The raw query also returns max(created_at) as database text ("2026-11-08 09:00:00.123+00"),
+	// not a Date; the old builder query returned a Date. Always hand the app an ISO string.
 	const rows = rawRows.map((r) => ({
 		entityType: r.entity_type,
 		entityId: r.entity_id,
@@ -637,7 +639,7 @@ app.openapi(listUnreadRoute, (async (c) => {
 		mentioningUnreadCount: r.mentioning_unread_count,
 		maxUnreadAttention: r.max_unread_attention,
 		latestEventId: Number(r.latest_event_id),
-		latestActivityAt: r.latest_activity_at,
+		latestActivityAt: new Date(r.latest_activity_at).toISOString(),
 	}))
 
 	// Hydrate object summaries for entity_type='object'. Other entity types just
@@ -698,8 +700,7 @@ app.openapi(listUnreadRoute, (async (c) => {
 			mentioning_unread_count: Number(r.mentioningUnreadCount),
 			max_unread_attention: r.maxUnreadAttention == null ? null : Number(r.maxUnreadAttention),
 			latest_event_id: r.latestEventId,
-			latest_activity_at:
-				r.latestActivityAt instanceof Date ? r.latestActivityAt.toISOString() : r.latestActivityAt,
+			latest_activity_at: r.latestActivityAt,
 			...(obj ? { object: serialize(obj) as z.infer<typeof objectResponseSchema> } : {}),
 			...(mentionEvent ? { latest_mention: mentions.get(Number(mentionEvent.id)) } : {}),
 		}
