@@ -1,4 +1,4 @@
-import { ACTORS_STALE_MS } from '@/hooks/use-actors'
+import { ACTORS_STALE_MS } from '@/lib/actors-stale'
 import { type PictogramShape, getAgentPictogram } from '@/lib/agent-pictogram'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/cn'
