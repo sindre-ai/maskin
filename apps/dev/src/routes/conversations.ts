@@ -52,6 +52,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
+import { serializeMessage } from '../lib/serialize-message'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import { reportChatReply } from '../services/chat-reply-tracking'
 import { shareReplyDigest } from '../services/chat-session-context'
@@ -958,9 +959,9 @@ app.openapi(listThreadsRoute, (async (c) => {
 				{
 					conversationId: root.conversationId,
 					conversationTitle,
-					root: serialize(rootMessage),
+					root: serializeMessage(rootMessage),
 					thread,
-					lastReply: reply ? serialize(reply) : null,
+					lastReply: reply ? serializeMessage(reply) : null,
 				},
 			]
 		}),
@@ -1352,7 +1353,7 @@ app.openapi(listMessagesRoute, (async (c) => {
 		messages: page.map(
 			(m) =>
 				({
-					...serialize(m),
+					...serializeMessage(m),
 					spawned_sessions: spawned.get(m.id) ?? [],
 					reactions: reactions.get(m.id) ?? [],
 					thread: summaries.get(m.id) ?? null,
@@ -1489,7 +1490,7 @@ app.openapi(postMessageRoute, (async (c) => {
 	// end-of-turn output. A client (or an agent via the MCP tool) must not be
 	// able to claim them — the frontend reconciles its optimistic bubble
 	// against `source`, so a forged one would strand that bubble forever.
-	const metadata = stripServerOwnedMetadata(body.metadata) ?? null
+	const metadata = stripServerOwnedMetadata(body.metadata, { callerType }) ?? null
 
 	const created = await insertConversationMessage(db, {
 		conversationId: id,
@@ -1656,7 +1657,7 @@ app.openapi(postMessageRoute, (async (c) => {
 	)
 
 	return c.json(
-		serialize({
+		serializeMessage({
 			...created,
 			actorName: caller?.name ?? 'Unknown',
 			actorType: caller?.type ?? 'human',
@@ -1836,7 +1837,7 @@ app.openapi(editMessageRoute, (async (c) => {
 		.limit(1)
 
 	return c.json(
-		serialize({
+		serializeMessage({
 			...updated,
 			actorName: caller?.name ?? 'Unknown',
 			actorType: caller?.type ?? 'human',
