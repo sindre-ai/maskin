@@ -368,6 +368,38 @@ export const messageCardAnswerSchema = z.object({
 	outcome: z.enum(['declined', 'done']),
 })
 
+/**
+ * The backend-owned blocks that make a message a request card: each one asks the person to
+ * save, allow, add or do something. Only a message holding one of these can be answered.
+ */
+export const REQUEST_CARD_METADATA_KEYS = [
+	'keychain_request',
+	'keychain_access_request',
+	'integration_access_request',
+	'mcp_server_request',
+	'computer_request',
+] as const
+export type RequestCardMetadataKey = (typeof REQUEST_CARD_METADATA_KEYS)[number]
+
+/**
+ * Set by the backend on a request card's own message the moment the person answers it: when,
+ * by whom and how. 'done' covers saved, allowed, added and finished; 'declined' is Not now. The
+ * first answer wins and nothing is written for a card nobody has answered, so a client shows
+ * the time and name only when this is there (an older card has none).
+ *
+ * Read-only for clients and deliberately not a field of messageMetadataSchema: a client never
+ * sends it (stripServerOwnedMetadata drops it), so it stays out of the request schema, the
+ * generated Apple client and the tool schemas. The message read returns the metadata as stored.
+ */
+export const messageCardResolvedSchema = z.object({
+	/** When the answer was saved (ISO 8601). Not the time the card was asked. */
+	at: z.string().datetime({ offset: true }),
+	/** The person (or agent) whose action answered the card. */
+	by_actor_id: z.string().uuid(),
+	outcome: messageCardAnswerSchema.shape.outcome,
+})
+export type MessageCardResolved = z.infer<typeof messageCardResolvedSchema>
+
 export const messageMetadataSchema = z.object({
 	attachments: z.array(messageAttachmentSchema).max(MESSAGE_MAX_ATTACHMENTS).optional(),
 	mentions: z.array(z.string().uuid()).max(MESSAGE_MAX_MENTIONS).optional(),
@@ -461,6 +493,7 @@ export function stripServerOwnedMetadata<T extends Record<string, unknown> | und
 		mcp_server_request: _mcpServerRequest,
 		computer_request: _computerRequest,
 		comment_event_id: _commentEventId,
+		card_resolved: _cardResolved,
 		...rest
 	} = metadata
 	return rest as T
