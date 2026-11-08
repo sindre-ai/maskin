@@ -13,9 +13,12 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 const VAPID_PUBLIC_KEY = `B${'A'.repeat(86)}`
 
-async function installFakePushApi(page: Page, opts: { permission: NotificationPermission }) {
+async function installFakePushApi(
+	page: Page,
+	opts: { permission: NotificationPermission; dismissPrompt?: boolean },
+) {
 	await page.addInitScript(
-		({ initialPermission }) => {
+		({ initialPermission, dismissPrompt }) => {
 			// A browser keeps its permission across a reload, like the subscription below.
 			const PERMISSION_KEY = 'e2e-fake-push-permission'
 			let permission = (sessionStorage.getItem(PERMISSION_KEY) ??
@@ -65,12 +68,13 @@ async function installFakePushApi(page: Page, opts: { permission: NotificationPe
 				get: () => permission,
 			})
 			Notification.requestPermission = async () => {
-				if (permission === 'default') permission = 'granted'
+				// A closed prompt leaves the permission on "default", as real browsers do.
+				if (permission === 'default' && !dismissPrompt) permission = 'granted'
 				sessionStorage.setItem(PERMISSION_KEY, permission)
 				return permission
 			}
 		},
-		{ initialPermission: opts.permission },
+		{ initialPermission: opts.permission, dismissPrompt: opts.dismissPrompt ?? false },
 	)
 	await page.route('**/api/web-push/config', (route) =>
 		route.fulfill({ json: { enabled: true, public_key: VAPID_PUBLIC_KEY } }),
@@ -131,6 +135,29 @@ test.describe('Browser notifications', () => {
 		await page.goto(`/${account.workspaceId}/profile`)
 		await expect(toggle(page)).toBeDisabled({ timeout: 10_000 })
 		await expect(page.getByText('Blocked in site settings')).toBeVisible()
+	})
+
+	test('shows no toast and keeps the switch off when the permission prompt is dismissed', async ({
+		page,
+		account,
+	}) => {
+		await installFakePushApi(page, { permission: 'default', dismissPrompt: true })
+		await page.setViewportSize({ width: 1024, height: 768 })
+		await page.goto(`/${account.workspaceId}/profile`)
+		await expect(toggle(page)).toBeVisible({ timeout: 10_000 })
+
+		let subscribeCalls = 0
+		page.on('request', (r) => {
+			if (r.url().endsWith('/api/web-push/subscriptions') && r.method() === 'POST') subscribeCalls++
+		})
+		await toggle(page).click()
+
+		// Give a toast time to appear; none should, for the blocked case or any other.
+		await page.waitForTimeout(1000)
+		await expect(page.locator('[data-sonner-toast]')).toHaveCount(0)
+		await expect(toggle(page)).not.toBeChecked()
+		await expect(toggle(page)).toBeEnabled()
+		expect(subscribeCalls).toBe(0)
 	})
 
 	test('hides the whole section when the server has no VAPID keys', async ({ page, account }) => {

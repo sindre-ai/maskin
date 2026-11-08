@@ -20,7 +20,7 @@ export function BrowserNotificationsToggle() {
 				onSuccess: (outcome) => {
 					if (outcome === 'denied') {
 						toast.error('Notifications are blocked — allow them in your browser’s site settings')
-					} else {
+					} else if (outcome === 'subscribed') {
 						toast.success('Browser notifications are on')
 					}
 				},
