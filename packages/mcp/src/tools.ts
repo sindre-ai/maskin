@@ -2808,8 +2808,8 @@ export const tools = {
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,
-			x: z.number().int().min(0).max(1279),
-			y: z.number().int().min(0).max(719),
+			x: z.number().int().min(0).max(1919),
+			y: z.number().int().min(0).max(1079),
 			button: z.enum(['left', 'middle', 'right']).optional().describe('Defaults to left.'),
 			double: z.boolean().optional().describe('Double-click. Defaults to false.'),
 		}),
@@ -2819,8 +2819,8 @@ export const tools = {
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,
-			x: z.number().int().min(0).max(1279),
-			y: z.number().int().min(0).max(719),
+			x: z.number().int().min(0).max(1919),
+			y: z.number().int().min(0).max(1079),
 		}),
 	},
 	desktop_drag: {
@@ -2829,10 +2829,10 @@ export const tools = {
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,
-			from_x: z.number().int().min(0).max(1279),
-			from_y: z.number().int().min(0).max(719),
-			to_x: z.number().int().min(0).max(1279),
-			to_y: z.number().int().min(0).max(719),
+			from_x: z.number().int().min(0).max(1919),
+			from_y: z.number().int().min(0).max(1079),
+			to_x: z.number().int().min(0).max(1919),
+			to_y: z.number().int().min(0).max(1079),
 		}),
 	},
 	desktop_scroll: {
@@ -2843,8 +2843,8 @@ export const tools = {
 			agent_id: optionalDesktopAgentId,
 			direction: z.enum(['up', 'down']),
 			amount: z.number().int().min(1).max(20).optional().describe('Wheel clicks. Defaults to 3.'),
-			x: z.number().int().min(0).max(1279).optional(),
-			y: z.number().int().min(0).max(719).optional(),
+			x: z.number().int().min(0).max(1919).optional(),
+			y: z.number().int().min(0).max(1079).optional(),
 		}),
 	},
 	desktop_type: {
