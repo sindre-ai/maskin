@@ -52,7 +52,7 @@ struct NewChatSheet: View {
 				NewConversationForm(
 					store: store, currentActorID: currentActorID, initialRecipient: initialRecipient, error: error,
 					draft: $draft, query: $query, highlightedChip: $highlightedChip,
-					toFocused: $toFocused)
+					toFocused: $toFocused, onRecipientPicked: { composer.requestFocus() })
 			}
 			// Dragging the open list must not drop the keyboard: that would blur To and close the list.
 			.scrollDismissesKeyboard(toFocused ? .never : .interactively)
@@ -74,6 +74,13 @@ struct NewChatSheet: View {
 				if !prefill.isEmpty { composer.text = prefill }
 				composer.bind(conversationID: Self.draftKey)
 				toFocused = draft.recipientIDs.isEmpty
+				// Someone is already in To (Chief of Staff, or a person the sheet was opened for), or a
+				// starter filled the message: the message is next. The request waits for the sheet to
+				// finish appearing, or the system ignores it.
+				if !draft.recipientIDs.isEmpty || !prefill.isEmpty {
+					try? await Task.sleep(for: .milliseconds(450))
+					composer.requestFocus()
+				}
 			}
 		}
 	}
