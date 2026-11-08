@@ -82,7 +82,9 @@ public struct SettingsScreen: View {
 				ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
 			}
 		}
-		.navigationDestination(for: SettingsRoute.self) { SettingsRouteView(route: $0, environment: environment) }
+		.navigationDestination(for: SettingsRoute.self) {
+			SettingsRouteView(route: $0, environment: environment).environment(\.isPushedInHostStack, pushed)
+		}
 	}
 
 	private var showsAppLock: Bool {

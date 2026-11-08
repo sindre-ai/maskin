@@ -200,6 +200,8 @@ struct ProfileSheet: View {
 	private func page(for item: ProfileMenuItem) -> some View {
 		let services = SettingsServices(environment: environment)
 		switch item {
+		case .settings:
+			SettingsScreen(environment: environment)
 		case .agents:
 			AgentsScreen(environment: environment)
 		case .marketplace:
@@ -241,7 +243,7 @@ struct ProfileSheet: View {
 }
 
 extension ProfileMenuItem {
-	/// The Settings page a row opens; Agents, Members and Marketplace have their own pages here.
+	/// The Settings page a row opens; Settings, Agents, Members and Marketplace have their own pages here.
 	fileprivate var settingsRoute: SettingsRoute? {
 		switch self {
 		case .account: .profile
@@ -256,7 +258,7 @@ extension ProfileMenuItem {
 		case .keys: .keys
 		case .nativeSurfaces: .nativeSurfaces
 		case .advanced: .advanced
-		case .agents, .members, .marketplace: nil
+		case .settings, .agents, .members, .marketplace: nil
 		}
 	}
 }
