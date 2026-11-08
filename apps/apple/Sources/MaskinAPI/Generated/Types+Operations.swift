@@ -23993,7 +23993,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// Workspace skills list
+            /// Workspace skills list, each with the agents that have it attached
             ///
             /// - Remark: Generated from `#/paths//api/workspaces/{workspaceId}/skills/get/responses/200`.
             ///
