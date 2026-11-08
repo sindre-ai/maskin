@@ -89,8 +89,18 @@ jobs:
             echo "::error::No iOS simulator runtime available."
             exit 1
           fi
-          devicetype=$(xcrun simctl list -j devicetypes |
-            jq -r '[.devicetypes[] | select(.productFamily == "iPhone")] | last | .identifier')
+          # Take the iPhone model from this runtime's own list. The global device type list also
+          # holds models that need a newer runtime than the image has, and simctl create then fails
+          # with "Incompatible device" (seen on the first dispatch).
+          devicetype=$(xcrun simctl list -j runtimes available |
+            jq -r --arg rt "$runtime" '[.runtimes[] | select(.identifier == $rt) | .supportedDeviceTypes[] | select(.productFamily == "iPhone")] | last | .identifier // empty')
+          echo "runtime: $runtime"
+          echo "device type: ${devicetype:-none}"
+          if [ -z "$devicetype" ]; then
+            echo "::error::The iOS runtime lists no iPhone device type. Runtimes on this image:"
+            xcrun simctl list runtimes available
+            exit 1
+          fi
           udid=$(xcrun simctl create "perf-${{ matrix.run }}" "$devicetype" "$runtime")
           echo "udid=$udid" >> "$GITHUB_OUTPUT"
           echo "runtime=$runtime" >> "$GITHUB_OUTPUT"
