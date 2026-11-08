@@ -59548,6 +59548,248 @@
 				}
 			}
 		},
+		"/api/live-activities/follows": {
+			"post": {
+				"tags": [
+					"Devices"
+				],
+				"summary": "Follow an agent run: register the push token of the card the app just started",
+				"description": "Opt-in \"Following an agent\" Live Activity. The app starts the card itself and sends the card's own push token with the `session_id` of the run being followed (workspace in `X-Workspace-Id`). The server pushes the run's latest step to the card while it works and a finished card when it ends, then forgets the follow. Registering again for the same device and run replaces the token. The device must be one of the caller’s registered devices.",
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"device_id": {
+										"type": "string",
+										"format": "uuid"
+									},
+									"session_id": {
+										"type": "string",
+										"format": "uuid"
+									},
+									"token": {
+										"type": "string",
+										"minLength": 16,
+										"maxLength": 512,
+										"pattern": "^[0-9a-fA-F]+$"
+									}
+								},
+								"required": [
+									"device_id",
+									"session_id",
+									"token"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Follow registered",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"device_id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"session_id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"workspace_id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"updated_at": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"id",
+										"device_id",
+										"session_id",
+										"workspace_id",
+										"updated_at"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid request",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Device, run or workspace not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/live-activities/follows/{session_id}": {
+			"delete": {
+				"tags": [
+					"Devices"
+				],
+				"summary": "Stop following an agent run on one of the caller’s devices",
+				"description": "Forgets the follow so no more updates are pushed. The app ends the card itself. Safe to repeat: `deleted` is false when there was nothing to remove.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+						},
+						"required": true,
+						"name": "session_id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+						},
+						"required": true,
+						"name": "device_id",
+						"in": "query"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Follow removed (or already gone)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"deleted": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"deleted"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/web-push/config": {
 			"get": {
 				"tags": [

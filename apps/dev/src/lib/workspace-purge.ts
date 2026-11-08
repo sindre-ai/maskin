@@ -121,6 +121,7 @@ export const WORKSPACE_PURGE_CASCADE = [
 	'for_you_withdrawals',
 	'google_meet_space_idempotency',
 	'live_activity_cards',
+	'live_activity_follows',
 	'live_activity_tokens',
 	'loop_active_days',
 	'mcp_telemetry',

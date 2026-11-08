@@ -2895,7 +2895,41 @@ export const liveActivityCards = pgTable(
 	],
 )
 
+// The runs a person chose to follow from an agent's working banner (opt-in "Following an agent"
+// Live Activity). The app starts the card itself and registers the card's own push token here, so
+// the backend can push the agent's latest step and its end. One row per device and session; the
+// row goes when the person stops following or the run ends. Rows cascade with the actor, device,
+// workspace and session.
+export const liveActivityFollows = pgTable(
+	'live_activity_follows',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		actorId: uuid('actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		deviceId: uuid('device_id')
+			.notNull()
+			.references(() => deviceTokens.id, { onDelete: 'cascade' }),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		sessionId: uuid('session_id')
+			.notNull()
+			.references(() => sessions.id, { onDelete: 'cascade' }),
+		token: text('token').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex('live_activity_follows_device_session_uniq').on(t.deviceId, t.sessionId),
+		index('live_activity_follows_workspace_idx').on(t.workspaceId),
+		index('live_activity_follows_actor_idx').on(t.actorId),
+		index('live_activity_follows_session_idx').on(t.sessionId),
+	],
+)
+
 export type LiveActivityToken = typeof liveActivityTokens.$inferSelect
+export type LiveActivityFollow = typeof liveActivityFollows.$inferSelect
 export type NewLiveActivityToken = typeof liveActivityTokens.$inferInsert
 
 export type DeviceToken = typeof deviceTokens.$inferSelect
