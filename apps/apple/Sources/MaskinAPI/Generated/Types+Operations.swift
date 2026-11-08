@@ -8582,6 +8582,8 @@ public enum Operations {
                         public var voice_enabled: Swift.Bool?
                         /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/avatar_url`.
                         public var avatar_url: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/tags`.
+                        public var tags: [Swift.String]?
                         /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/workspacesPayload`.
                         public struct workspacesPayloadPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/workspacesPayload/id`.
@@ -8631,6 +8633,7 @@ public enum Operations {
                         ///   - role:
                         ///   - voice_enabled:
                         ///   - avatar_url:
+                        ///   - tags:
                         ///   - workspaces:
                         ///   - skills:
                         public init(
@@ -8645,6 +8648,7 @@ public enum Operations {
                             role: Swift.String? = nil,
                             voice_enabled: Swift.Bool? = nil,
                             avatar_url: Swift.String? = nil,
+                            tags: [Swift.String]? = nil,
                             workspaces: Operations.get_sol_api_sol_actors.Output.Ok.Body.jsonPayloadPayload.workspacesPayload? = nil,
                             skills: [Swift.String]? = nil
                         ) {
@@ -8659,6 +8663,7 @@ public enum Operations {
                             self.role = role
                             self.voice_enabled = voice_enabled
                             self.avatar_url = avatar_url
+                            self.tags = tags
                             self.workspaces = workspaces
                             self.skills = skills
                         }
@@ -8674,6 +8679,7 @@ public enum Operations {
                             case role
                             case voice_enabled
                             case avatar_url
+                            case tags
                             case workspaces
                             case skills
                         }
@@ -11217,6 +11223,8 @@ public enum Operations {
                     public var mailbox: Swift.String?
                     /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/json/default_workspace_id`.
                     public var default_workspace_id: Swift.String?
+                    /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/json/tags`.
+                    public var tags: [Swift.String]?
                     /// Creates a new `jsonPayload`.
                     ///
                     /// - Parameters:
@@ -11230,6 +11238,7 @@ public enum Operations {
                     ///   - llm_config:
                     ///   - mailbox:
                     ///   - default_workspace_id:
+                    ///   - tags:
                     public init(
                         name: Swift.String? = nil,
                         email: Swift.String? = nil,
@@ -11240,7 +11249,8 @@ public enum Operations {
                         llm_provider: Swift.String? = nil,
                         llm_config: Operations.patch_sol_api_sol_actors_sol__lcub_id_rcub_.Input.Body.jsonPayload.llm_configPayload? = nil,
                         mailbox: Swift.String? = nil,
-                        default_workspace_id: Swift.String? = nil
+                        default_workspace_id: Swift.String? = nil,
+                        tags: [Swift.String]? = nil
                     ) {
                         self.name = name
                         self.email = email
@@ -11252,6 +11262,7 @@ public enum Operations {
                         self.llm_config = llm_config
                         self.mailbox = mailbox
                         self.default_workspace_id = default_workspace_id
+                        self.tags = tags
                     }
                     public enum CodingKeys: String, CodingKey {
                         case name
@@ -11264,6 +11275,7 @@ public enum Operations {
                         case llm_config
                         case mailbox
                         case default_workspace_id
+                        case tags
                     }
                 }
                 /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/content/application\/json`.
@@ -47702,6 +47714,8 @@ public enum Operations {
                             public var subjectId: Swift.String?
                             /// - Remark: Generated from `#/paths/api/conversations/GET/responses/200/content/json/conversationsPayload/createdBy`.
                             public var createdBy: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/GET/responses/200/content/json/conversationsPayload/tags`.
+                            public var tags: [Swift.String]
                             /// - Remark: Generated from `#/paths/api/conversations/GET/responses/200/content/json/conversationsPayload/lastMessageAt`.
                             public var lastMessageAt: Swift.String?
                             /// - Remark: Generated from `#/paths/api/conversations/GET/responses/200/content/json/conversationsPayload/createdAt`.
@@ -47778,6 +47792,7 @@ public enum Operations {
                             ///   - subjectType:
                             ///   - subjectId:
                             ///   - createdBy:
+                            ///   - tags:
                             ///   - lastMessageAt:
                             ///   - createdAt:
                             ///   - updatedAt:
@@ -47797,6 +47812,7 @@ public enum Operations {
                                 subjectType: Operations.get_sol_api_sol_conversations.Output.Ok.Body.jsonPayload.conversationsPayloadPayload.subjectTypePayload? = nil,
                                 subjectId: Swift.String? = nil,
                                 createdBy: Swift.String,
+                                tags: [Swift.String],
                                 lastMessageAt: Swift.String? = nil,
                                 createdAt: Swift.String? = nil,
                                 updatedAt: Swift.String? = nil,
@@ -47816,6 +47832,7 @@ public enum Operations {
                                 self.subjectType = subjectType
                                 self.subjectId = subjectId
                                 self.createdBy = createdBy
+                                self.tags = tags
                                 self.lastMessageAt = lastMessageAt
                                 self.createdAt = createdAt
                                 self.updatedAt = updatedAt
@@ -47836,6 +47853,7 @@ public enum Operations {
                                 case subjectType
                                 case subjectId
                                 case createdBy
+                                case tags
                                 case lastMessageAt
                                 case createdAt
                                 case updatedAt
@@ -49177,6 +49195,8 @@ public enum Operations {
                         public var subjectId: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/POST/responses/200/content/json/createdBy`.
                         public var createdBy: Swift.String
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/responses/200/content/json/tags`.
+                        public var tags: [Swift.String]
                         /// - Remark: Generated from `#/paths/api/conversations/POST/responses/200/content/json/lastMessageAt`.
                         public var lastMessageAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/POST/responses/200/content/json/createdAt`.
@@ -49245,6 +49265,7 @@ public enum Operations {
                         ///   - subjectType:
                         ///   - subjectId:
                         ///   - createdBy:
+                        ///   - tags:
                         ///   - lastMessageAt:
                         ///   - createdAt:
                         ///   - updatedAt:
@@ -49260,6 +49281,7 @@ public enum Operations {
                             subjectType: Operations.post_sol_api_sol_conversations.Output.Ok.Body.jsonPayload.subjectTypePayload? = nil,
                             subjectId: Swift.String? = nil,
                             createdBy: Swift.String,
+                            tags: [Swift.String],
                             lastMessageAt: Swift.String? = nil,
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
@@ -49275,6 +49297,7 @@ public enum Operations {
                             self.subjectType = subjectType
                             self.subjectId = subjectId
                             self.createdBy = createdBy
+                            self.tags = tags
                             self.lastMessageAt = lastMessageAt
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
@@ -49291,6 +49314,7 @@ public enum Operations {
                             case subjectType
                             case subjectId
                             case createdBy
+                            case tags
                             case lastMessageAt
                             case createdAt
                             case updatedAt
@@ -49371,6 +49395,8 @@ public enum Operations {
                         public var subjectId: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/POST/responses/201/content/json/createdBy`.
                         public var createdBy: Swift.String
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/responses/201/content/json/tags`.
+                        public var tags: [Swift.String]
                         /// - Remark: Generated from `#/paths/api/conversations/POST/responses/201/content/json/lastMessageAt`.
                         public var lastMessageAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/POST/responses/201/content/json/createdAt`.
@@ -49439,6 +49465,7 @@ public enum Operations {
                         ///   - subjectType:
                         ///   - subjectId:
                         ///   - createdBy:
+                        ///   - tags:
                         ///   - lastMessageAt:
                         ///   - createdAt:
                         ///   - updatedAt:
@@ -49454,6 +49481,7 @@ public enum Operations {
                             subjectType: Operations.post_sol_api_sol_conversations.Output.Created.Body.jsonPayload.subjectTypePayload? = nil,
                             subjectId: Swift.String? = nil,
                             createdBy: Swift.String,
+                            tags: [Swift.String],
                             lastMessageAt: Swift.String? = nil,
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
@@ -49469,6 +49497,7 @@ public enum Operations {
                             self.subjectType = subjectType
                             self.subjectId = subjectId
                             self.createdBy = createdBy
+                            self.tags = tags
                             self.lastMessageAt = lastMessageAt
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
@@ -49485,6 +49514,7 @@ public enum Operations {
                             case subjectType
                             case subjectId
                             case createdBy
+                            case tags
                             case lastMessageAt
                             case createdAt
                             case updatedAt
@@ -50585,6 +50615,8 @@ public enum Operations {
                         public var subjectId: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/GET/responses/200/content/json/createdBy`.
                         public var createdBy: Swift.String
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/GET/responses/200/content/json/tags`.
+                        public var tags: [Swift.String]
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/GET/responses/200/content/json/lastMessageAt`.
                         public var lastMessageAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/GET/responses/200/content/json/createdAt`.
@@ -50653,6 +50685,7 @@ public enum Operations {
                         ///   - subjectType:
                         ///   - subjectId:
                         ///   - createdBy:
+                        ///   - tags:
                         ///   - lastMessageAt:
                         ///   - createdAt:
                         ///   - updatedAt:
@@ -50668,6 +50701,7 @@ public enum Operations {
                             subjectType: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.subjectTypePayload? = nil,
                             subjectId: Swift.String? = nil,
                             createdBy: Swift.String,
+                            tags: [Swift.String],
                             lastMessageAt: Swift.String? = nil,
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
@@ -50683,6 +50717,7 @@ public enum Operations {
                             self.subjectType = subjectType
                             self.subjectId = subjectId
                             self.createdBy = createdBy
+                            self.tags = tags
                             self.lastMessageAt = lastMessageAt
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
@@ -50699,6 +50734,7 @@ public enum Operations {
                             case subjectType
                             case subjectId
                             case createdBy
+                            case tags
                             case lastMessageAt
                             case createdAt
                             case updatedAt
@@ -50926,7 +50962,7 @@ public enum Operations {
             }
         }
     }
-    /// Rename a conversation
+    /// Rename a conversation or change its tags
     ///
     /// - Remark: HTTP `PATCH /api/conversations/{id}`.
     /// - Remark: Generated from `#/paths//api/conversations/{id}/patch`.
@@ -50970,16 +51006,24 @@ public enum Operations {
                 /// - Remark: Generated from `#/paths/api/conversations/{id}/PATCH/requestBody/json`.
                 public struct jsonPayload: Codable, Hashable, Sendable {
                     /// - Remark: Generated from `#/paths/api/conversations/{id}/PATCH/requestBody/json/title`.
-                    public var title: Swift.String
+                    public var title: Swift.String?
+                    /// - Remark: Generated from `#/paths/api/conversations/{id}/PATCH/requestBody/json/tags`.
+                    public var tags: [Swift.String]?
                     /// Creates a new `jsonPayload`.
                     ///
                     /// - Parameters:
                     ///   - title:
-                    public init(title: Swift.String) {
+                    ///   - tags:
+                    public init(
+                        title: Swift.String? = nil,
+                        tags: [Swift.String]? = nil
+                    ) {
                         self.title = title
+                        self.tags = tags
                     }
                     public enum CodingKeys: String, CodingKey {
                         case title
+                        case tags
                     }
                 }
                 /// - Remark: Generated from `#/paths/api/conversations/{id}/PATCH/requestBody/content/application\/json`.
@@ -51025,6 +51069,8 @@ public enum Operations {
                         public var subjectId: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/PATCH/responses/200/content/json/createdBy`.
                         public var createdBy: Swift.String
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/PATCH/responses/200/content/json/tags`.
+                        public var tags: [Swift.String]
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/PATCH/responses/200/content/json/lastMessageAt`.
                         public var lastMessageAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/PATCH/responses/200/content/json/createdAt`.
@@ -51093,6 +51139,7 @@ public enum Operations {
                         ///   - subjectType:
                         ///   - subjectId:
                         ///   - createdBy:
+                        ///   - tags:
                         ///   - lastMessageAt:
                         ///   - createdAt:
                         ///   - updatedAt:
@@ -51108,6 +51155,7 @@ public enum Operations {
                             subjectType: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.subjectTypePayload? = nil,
                             subjectId: Swift.String? = nil,
                             createdBy: Swift.String,
+                            tags: [Swift.String],
                             lastMessageAt: Swift.String? = nil,
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
@@ -51123,6 +51171,7 @@ public enum Operations {
                             self.subjectType = subjectType
                             self.subjectId = subjectId
                             self.createdBy = createdBy
+                            self.tags = tags
                             self.lastMessageAt = lastMessageAt
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
@@ -51139,6 +51188,7 @@ public enum Operations {
                             case subjectType
                             case subjectId
                             case createdBy
+                            case tags
                             case lastMessageAt
                             case createdAt
                             case updatedAt

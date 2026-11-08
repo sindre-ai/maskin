@@ -445,7 +445,7 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `GET /api/conversations/{id}`.
     /// - Remark: Generated from `#/paths//api/conversations/{id}/get`.
     func get_sol_api_sol_conversations_sol__lcub_id_rcub_(_ input: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub_.Input) async throws -> Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub_.Output
-    /// Rename a conversation
+    /// Rename a conversation or change its tags
     ///
     /// - Remark: HTTP `PATCH /api/conversations/{id}`.
     /// - Remark: Generated from `#/paths//api/conversations/{id}/patch`.
@@ -1823,7 +1823,7 @@ extension APIProtocol {
             headers: headers
         ))
     }
-    /// Rename a conversation
+    /// Rename a conversation or change its tags
     ///
     /// - Remark: HTTP `PATCH /api/conversations/{id}`.
     /// - Remark: Generated from `#/paths//api/conversations/{id}/patch`.
