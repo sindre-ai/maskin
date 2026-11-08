@@ -19,7 +19,9 @@ private struct PageSearchModifier: ViewModifier {
 	@FocusState private var focused: Bool
 
 	/// How far past the top the list must be pulled before letting go opens search.
-	static let pullThreshold: CGFloat = 56
+	static let pullThreshold: CGFloat = 70
+	/// The pill and the close button are both 52 pt tall.
+	static let fieldHeight: CGFloat = 52
 	/// How far the content is pulled past its top right now; 0 while at rest or scrolled.
 	@State private var overscroll: CGFloat = 0
 
@@ -32,13 +34,15 @@ private struct PageSearchModifier: ViewModifier {
 			}
 			.safeAreaInset(edge: .top, spacing: 0) {
 				if isPresented {
+					// iOS glass: a 52 pt pill field and a separate 52 pt round close button, 10 pt apart.
 					HStack(spacing: MaskinSpace.s5) {
-						HStack(spacing: MaskinSpace.s4) {
+						HStack(spacing: MaskinSpace.s5) {
 							Image(systemName: "magnifyingglass")
 								.foregroundStyle(MaskinColor.ink4)
 								.accessibilityHidden(true)
 							TextField(prompt, text: $text)
 								.focused($focused)
+								.font(MaskinTypeface.sans(MaskinFontSize.t17, relativeTo: .body))
 								.submitLabel(.search)
 								.autocorrectionDisabled()
 								#if os(iOS)
@@ -54,15 +58,22 @@ private struct PageSearchModifier: ViewModifier {
 								.accessibilityLabel("Clear")
 							}
 						}
-						.padding(.horizontal, MaskinSpace.s7)
-						.frame(minHeight: MaskinSpace.touchMin)
-						.background(MaskinSurface.fill, in: Capsule())
-						Button("Cancel") {
+						.padding(.horizontal, MaskinSpace.s9)
+						.frame(height: Self.fieldHeight)
+						.maskinGlassCapsule(interactive: true)
+						Button {
 							text = ""
 							isPresented = false
+						} label: {
+							Image(systemName: "xmark")
+								.maskinSymbol(MaskinFontSize.t17, weight: .semibold)
+								.foregroundStyle(MaskinColor.ink)
+								.frame(width: Self.fieldHeight, height: Self.fieldHeight)
+								.maskinGlass(in: Circle(), interactive: true)
+								.contentShape(Circle())
 						}
-						.foregroundStyle(MaskinColor.ink)
-						.frame(minHeight: MaskinSpace.touchMin)
+						.buttonStyle(.plain)
+						.accessibilityLabel("Cancel")
 					}
 					.padding(.horizontal, MaskinSpace.s9)
 					.padding(.vertical, MaskinSpace.s3)

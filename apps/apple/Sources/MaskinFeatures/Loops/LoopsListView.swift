@@ -30,9 +30,7 @@ struct LoopsListView: View {
 		LoopCard(
 			loop: loop, needsYou: store.needsYou(loop),
 			hasUpdate: store.installs[loop.id]?.hasUpdate == true,
-			update: store.display.showsSummary ? store.latestUpdate(for: loop) : nil,
-			decisionTitle: store.decisionTitle(for: loop),
-			onReview: { selection = loop.id })
+			update: store.display.showsSummary ? store.latestUpdate(for: loop) : nil)
 	}
 
 	/// The one-line summary and the tag chips above the cards.
