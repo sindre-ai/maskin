@@ -385,6 +385,11 @@ export const events = pgTable(
 		index('events_session_entity_action_idx')
 			.on(t.entityId, t.action, t.workspaceId)
 			.where(sql`${t.entityType} = 'session'`),
+		// The agent page's Objects tab: which objects an actor changed. Partial, so it holds only
+		// updates and status changes. Built CONCURRENTLY in migration 0139.
+		index('events_actor_changed_idx')
+			.on(t.actorId, t.entityId)
+			.where(sql`${t.action} IN ('updated', 'status_changed')`),
 		// For You unread feed: comments only. Built CONCURRENTLY in migration 0084.
 		index('events_ws_entity_commented_idx')
 			.on(t.workspaceId, t.entityId, t.id)

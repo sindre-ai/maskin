@@ -10161,6 +10161,306 @@
 				}
 			}
 		},
+		"/api/actors/{id}/objects": {
+			"get": {
+				"tags": [
+					"Actors"
+				],
+				"summary": "Objects an actor has created, changed or drives in the workspace, newest first",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"minimum": 1,
+							"maximum": 100,
+							"default": 25
+						},
+						"required": false,
+						"name": "limit",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": [
+								"integer",
+								"null"
+							],
+							"minimum": 0,
+							"default": 0
+						},
+						"required": false,
+						"name": "offset",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "One page of objects",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"items": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"type": {
+														"type": "string"
+													},
+													"title": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"status": {
+														"type": "string"
+													},
+													"updatedAt": {
+														"type": [
+															"string",
+															"null"
+														]
+													}
+												},
+												"required": [
+													"id",
+													"type",
+													"title",
+													"status",
+													"updatedAt"
+												]
+											}
+										},
+										"hasMore": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"items",
+										"hasMore"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Actor not found in this workspace",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/actors/{id}/working-now": {
+			"get": {
+				"tags": [
+					"Actors"
+				],
+				"summary": "What an agent is doing right now, or null when it is not working",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "The live line, or null",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"workingNow": {
+											"type": [
+												"object",
+												"null"
+											],
+											"properties": {
+												"sessionId": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"doing": {
+													"type": "string"
+												},
+												"startedAt": {
+													"type": "string"
+												},
+												"conversationId": {
+													"type": [
+														"string",
+														"null"
+													],
+													"format": "uuid"
+												}
+											},
+											"required": [
+												"sessionId",
+												"doing",
+												"startedAt",
+												"conversationId"
+											]
+										}
+									},
+									"required": [
+										"workingNow"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Actor not found in this workspace",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/actors/{id}/api-keys": {
 			"post": {
 				"x-viewer-policy": "writer",
@@ -18031,6 +18331,12 @@
 											},
 											"type": {
 												"type": "string"
+											},
+											"lastActiveAt": {
+												"type": [
+													"string",
+													"null"
+												]
 											}
 										},
 										"required": [
@@ -18565,6 +18871,12 @@
 										},
 										"type": {
 											"type": "string"
+										},
+										"lastActiveAt": {
+											"type": [
+												"string",
+												"null"
+											]
 										}
 									},
 									"required": [
@@ -19476,7 +19788,7 @@
 				],
 				"responses": {
 					"200": {
-						"description": "Workspace skills list",
+						"description": "Workspace skills list, each with the agents that have it attached",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -19533,6 +19845,13 @@
 											},
 											"updatedAt": {
 												"type": "string"
+											},
+											"agentIds": {
+												"type": "array",
+												"items": {
+													"type": "string",
+													"format": "uuid"
+												}
 											}
 										},
 										"required": [
@@ -19547,7 +19866,8 @@
 											"fileCount",
 											"createdBy",
 											"createdAt",
-											"updatedAt"
+											"updatedAt",
+											"agentIds"
 										]
 									}
 								}

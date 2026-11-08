@@ -71,6 +71,7 @@ import {
 	isWorkspaceMember,
 } from '../lib/workspace-auth'
 import { OwnershipCapExceededError } from '../lib/workspace-capacity'
+import { listAgentObjects, loadAgentWorkingNow } from '../services/agent-activity'
 import { introduceAgentToRecipient } from '../services/agent-intro'
 import { createIntroScanRunner } from '../services/agent-intro-scan'
 import type { AgentStorageManager } from '../services/agent-storage'
@@ -1155,6 +1156,109 @@ app.openapi(actorAccessRoute, (async (c) => {
 	}
 	return c.json(await describeAgentAccess(db, workspaceId, id), 200)
 }) as RouteHandler<typeof actorAccessRoute, Env>)
+
+// GET /:id/objects - Objects an actor created, changed or drives (agent page, Objects tab)
+const actorObjectsQuerySchema = z.object({
+	limit: z.coerce.number().int().min(1).max(100).default(25),
+	offset: z.coerce.number().int().min(0).default(0),
+})
+
+const actorObjectsRoute = createRoute({
+	method: 'get',
+	path: '/{id}/objects',
+	tags: ['Actors'],
+	summary: 'Objects an actor has created, changed or drives in the workspace, newest first',
+	request: {
+		params: idParamSchema,
+		query: actorObjectsQuerySchema,
+		headers: z.object({ 'x-workspace-id': z.string().uuid() }),
+	},
+	responses: {
+		200: {
+			content: {
+				'application/json': {
+					schema: z.object({
+						items: z.array(
+							z.object({
+								id: z.string().uuid(),
+								type: z.string(),
+								title: z.string().nullable(),
+								status: z.string(),
+								updatedAt: z.string().nullable(),
+							}),
+						),
+						hasMore: z.boolean(),
+					}),
+				},
+			},
+			description: 'One page of objects',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Actor not found in this workspace',
+		},
+	},
+})
+
+app.openapi(actorObjectsRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { limit, offset } = c.req.valid('query')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	if (!(await actorsShareWorkspace(db, callerId, id, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+	const page = await listAgentObjects(db, { workspaceId, actorId: id, limit, offset })
+	return c.json({ items: serializeArray(page.items), hasMore: page.hasMore }, 200)
+}) as RouteHandler<typeof actorObjectsRoute, Env>)
+
+// GET /:id/working-now - The one-line "working now" for an agent, from its live session
+const actorWorkingNowRoute = createRoute({
+	method: 'get',
+	path: '/{id}/working-now',
+	tags: ['Actors'],
+	summary: 'What an agent is doing right now, or null when it is not working',
+	request: {
+		params: idParamSchema,
+		headers: z.object({ 'x-workspace-id': z.string().uuid() }),
+	},
+	responses: {
+		200: {
+			content: {
+				'application/json': {
+					schema: z.object({
+						workingNow: z
+							.object({
+								sessionId: z.string().uuid(),
+								doing: z.string(),
+								startedAt: z.string(),
+								conversationId: z.string().uuid().nullable(),
+							})
+							.nullable(),
+					}),
+				},
+			},
+			description: 'The live line, or null',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Actor not found in this workspace',
+		},
+	},
+})
+
+app.openapi(actorWorkingNowRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	if (!(await actorsShareWorkspace(db, callerId, id, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+	const workingNow = await loadAgentWorkingNow(db, { workspaceId, actorId: id, nowMs: Date.now() })
+	return c.json({ workingNow: workingNow ? serialize(workingNow) : null }, 200)
+}) as RouteHandler<typeof actorWorkingNowRoute, Env>)
 
 // PATCH /:id - Update actor
 const updateActorRoute = createRoute({

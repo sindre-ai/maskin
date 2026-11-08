@@ -21742,6 +21742,8 @@ public enum Operations {
                         public var name: Swift.String
                         /// - Remark: Generated from `#/paths/api/workspaces/{id}/members/GET/responses/200/content/jsonPayload/type`.
                         public var _type: Swift.String
+                        /// - Remark: Generated from `#/paths/api/workspaces/{id}/members/GET/responses/200/content/jsonPayload/lastActiveAt`.
+                        public var lastActiveAt: Swift.String?
                         /// Creates a new `jsonPayloadPayload`.
                         ///
                         /// - Parameters:
@@ -21750,18 +21752,21 @@ public enum Operations {
                         ///   - joinedAt:
                         ///   - name:
                         ///   - _type:
+                        ///   - lastActiveAt:
                         public init(
                             actorId: Swift.String,
                             role: Swift.String,
                             joinedAt: Swift.String? = nil,
                             name: Swift.String,
-                            _type: Swift.String
+                            _type: Swift.String,
+                            lastActiveAt: Swift.String? = nil
                         ) {
                             self.actorId = actorId
                             self.role = role
                             self.joinedAt = joinedAt
                             self.name = name
                             self._type = _type
+                            self.lastActiveAt = lastActiveAt
                         }
                         public enum CodingKeys: String, CodingKey {
                             case actorId
@@ -21769,6 +21774,7 @@ public enum Operations {
                             case joinedAt
                             case name
                             case _type = "type"
+                            case lastActiveAt
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/workspaces/{id}/members/GET/responses/200/content/json`.
@@ -22682,6 +22688,8 @@ public enum Operations {
                         public var name: Swift.String
                         /// - Remark: Generated from `#/paths/api/workspaces/{id}/members/{actorId}/PATCH/responses/200/content/json/type`.
                         public var _type: Swift.String
+                        /// - Remark: Generated from `#/paths/api/workspaces/{id}/members/{actorId}/PATCH/responses/200/content/json/lastActiveAt`.
+                        public var lastActiveAt: Swift.String?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -22690,18 +22698,21 @@ public enum Operations {
                         ///   - joinedAt:
                         ///   - name:
                         ///   - _type:
+                        ///   - lastActiveAt:
                         public init(
                             actorId: Swift.String,
                             role: Swift.String,
                             joinedAt: Swift.String? = nil,
                             name: Swift.String,
-                            _type: Swift.String
+                            _type: Swift.String,
+                            lastActiveAt: Swift.String? = nil
                         ) {
                             self.actorId = actorId
                             self.role = role
                             self.joinedAt = joinedAt
                             self.name = name
                             self._type = _type
+                            self.lastActiveAt = lastActiveAt
                         }
                         public enum CodingKeys: String, CodingKey {
                             case actorId
@@ -22709,6 +22720,7 @@ public enum Operations {
                             case joinedAt
                             case name
                             case _type = "type"
+                            case lastActiveAt
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/workspaces/{id}/members/{actorId}/PATCH/responses/200/content/application\/json`.
@@ -23891,6 +23903,8 @@ public enum Operations {
                         public var createdAt: Swift.String
                         /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/GET/responses/200/content/jsonPayload/updatedAt`.
                         public var updatedAt: Swift.String
+                        /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/GET/responses/200/content/jsonPayload/agentIds`.
+                        public var agentIds: [Swift.String]
                         /// Creates a new `jsonPayloadPayload`.
                         ///
                         /// - Parameters:
@@ -23906,6 +23920,7 @@ public enum Operations {
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
+                        ///   - agentIds:
                         public init(
                             id: Swift.String,
                             workspaceId: Swift.String,
@@ -23918,7 +23933,8 @@ public enum Operations {
                             fileCount: Swift.Int? = nil,
                             createdBy: Swift.String? = nil,
                             createdAt: Swift.String,
-                            updatedAt: Swift.String
+                            updatedAt: Swift.String,
+                            agentIds: [Swift.String]
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -23932,6 +23948,7 @@ public enum Operations {
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
+                            self.agentIds = agentIds
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -23946,6 +23963,7 @@ public enum Operations {
                             case createdBy
                             case createdAt
                             case updatedAt
+                            case agentIds
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/GET/responses/200/content/json`.
