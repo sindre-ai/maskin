@@ -8,7 +8,12 @@ const INTEGRATION_ID = '33333333-3333-4333-8333-333333333333'
 const PASSWORD = 'p4ssw0rd-do-not-store-in-clear'
 
 const originalFetch = globalThis.fetch
-const ENV_KEYS = ['FF_TESTER_ACTOR_IDS', 'FF_TESTER_FEATURES', 'POSTHOG_API_KEY'] as const
+const ENV_KEYS = [
+	'FF_TESTER_ACTOR_IDS',
+	'FF_TESTER_FEATURES',
+	'POSTHOG_API_KEY',
+	'INTEGRATION_ENCRYPTION_KEY',
+] as const
 const originalEnv: Record<string, string | undefined> = {}
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -24,6 +29,7 @@ beforeEach(() => {
 	for (const key of ENV_KEYS) originalEnv[key] = process.env[key]
 	process.env.FF_TESTER_ACTOR_IDS = ACTOR_ID
 	process.env.FF_TESTER_FEATURES = 'deepdots-connect'
+	process.env.INTEGRATION_ENCRYPTION_KEY = '0123456789abcdef'.repeat(4)
 	// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
 	delete process.env.POSTHOG_API_KEY
 	_resetFeatureFlagConfig()
