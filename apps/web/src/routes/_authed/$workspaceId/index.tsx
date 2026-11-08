@@ -740,7 +740,7 @@ function ForYouFeed() {
 	}
 
 	// A failed unread fetch must never fall through to the empty-feed tail —
-	// "Feed cleared" would tell the reader nothing is waiting when the feed
+	// "You're caught up" would tell the reader nothing is waiting when the feed
 	// simply didn't load.
 	if (isError) {
 		return (
@@ -908,7 +908,7 @@ function ForYouFeed() {
 							icon={<CheckCircle2 size={24} aria-hidden="true" />}
 							title={tail}
 							description={
-								typeFilter ? 'Nothing matches this filter.' : 'New decisions show up here.'
+								typeFilter ? 'Nothing matches this filter.' : 'Nothing needs you right now.'
 							}
 							action={
 								typeFilter ? (

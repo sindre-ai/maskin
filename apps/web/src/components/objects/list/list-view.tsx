@@ -410,8 +410,8 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 				) : (
 					<EmptyState
 						icon={<Layers size={24} aria-hidden="true" />}
-						title={emptyTitle ?? 'No items found'}
-						description="Create your first item to get started."
+						title={emptyTitle ?? 'No items yet'}
+						description="Ask an agent to create one."
 					/>
 				)}
 				<div ref={sentinelRef} className="h-1" />

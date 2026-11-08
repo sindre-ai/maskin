@@ -131,8 +131,8 @@ interface ConversationListProps {
 
 const EMPTY_COPY: Record<ChatsFilter, { title: string; description: string }> = {
 	all: {
-		title: 'No conversations here',
-		description: 'Start a chat with a teammate or an agent.',
+		title: 'No chats yet',
+		description: 'Start one with the Chief of Staff.',
 	},
 	unread: {
 		title: 'No conversations here',
@@ -311,8 +311,8 @@ function ChatConversationList({
 						// reader to duplicate a thread they already have.
 						<EmptyState
 							icon={<MessageCircleWarning size={24} aria-hidden="true" />}
-							title="Couldn't load your conversations"
-							description="Nothing has been lost. Only the list did not load."
+							title="Couldn't load chats"
+							description="Check your connection and try again."
 							action={
 								<Button variant="outline" size="sm" onClick={() => refetch()}>
 									Try again

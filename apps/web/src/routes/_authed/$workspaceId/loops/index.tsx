@@ -379,8 +379,8 @@ function LoopsRoute() {
 						) : (
 							<EmptyState
 								icon={<RefreshCw size={22} aria-hidden="true" />}
-								title="No flows running here yet"
-								description="A flow is a named pipeline of agents that brings you the decisions."
+								title="No flows yet"
+								description="Ask the Chief of Staff to set one up."
 								action={
 									<div className="flex items-center gap-2">
 										{canWrite ? (

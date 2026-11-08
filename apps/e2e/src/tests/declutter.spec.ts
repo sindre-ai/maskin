@@ -131,7 +131,7 @@ test.describe('Declutter — For you', () => {
 				: route.fallback(),
 		)
 		await page.goto(`/${account.workspaceId}`)
-		await expect(page.getByText('New decisions show up here.')).toBeVisible()
+		await expect(page.getByText('Nothing needs you right now.')).toBeVisible()
 	})
 })
 

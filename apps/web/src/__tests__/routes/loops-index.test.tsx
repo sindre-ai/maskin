@@ -195,7 +195,7 @@ describe('LoopsPage', () => {
 	it('renders the empty state when there are no loops', () => {
 		render(<LoopsPage />)
 
-		expect(screen.getByText('No flows running here yet')).toBeInTheDocument()
+		expect(screen.getByText('No flows yet')).toBeInTheDocument()
 	})
 
 	it('lists standalone triggers for a workspace that has triggers but no loops', async () => {
@@ -210,7 +210,7 @@ describe('LoopsPage', () => {
 		expect(screen.getByText('Not tied to a flow')).toBeInTheDocument()
 		expect(screen.getByText('Nightly sweep')).toBeInTheDocument()
 		// The loops empty state renders inline as a section, not as the whole page.
-		expect(screen.getByText('No flows running here yet')).toBeInTheDocument()
+		expect(screen.getByText('No flows yet')).toBeInTheDocument()
 	})
 
 	it('says in plain text how many flows need you, with a clause per flow that says why', () => {
@@ -409,7 +409,7 @@ describe('LoopsPage', () => {
 		mockUseLoops.mockReturnValue({ data: undefined, isLoading: true })
 
 		const { container } = render(<LoopsPage />)
-		expect(screen.queryByText('No flows running here yet')).not.toBeInTheDocument()
+		expect(screen.queryByText('No flows yet')).not.toBeInTheDocument()
 		expect(container.querySelector('.animate-pulse')).toBeInTheDocument()
 	})
 
@@ -425,6 +425,6 @@ describe('LoopsPage', () => {
 		render(<LoopsPage />)
 
 		expect(screen.getByText("Couldn't load flows")).toBeInTheDocument()
-		expect(screen.queryByText('No flows running here yet')).not.toBeInTheDocument()
+		expect(screen.queryByText('No flows yet')).not.toBeInTheDocument()
 	})
 })

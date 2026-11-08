@@ -82,7 +82,7 @@ export function feedTailLabel({
 	filtered,
 	kindLabel,
 }: { filtered: boolean; kindLabel?: string }): string {
-	if (!filtered) return 'Feed cleared'
+	if (!filtered) return "You're caught up"
 	return kindLabel ? `Nothing in ${kindLabel}` : 'Nothing here'
 }
 

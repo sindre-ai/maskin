@@ -452,7 +452,7 @@ test.describe('For You v4 — cards, options and the receipt', () => {
 		await page.keyboard.press('Escape')
 
 		await page.getByRole('button', { name: 'Show everything' }).click()
-		await expect(page.getByText('Feed cleared')).toBeVisible()
+		await expect(page.getByText("You're caught up")).toBeVisible()
 	})
 })
 
