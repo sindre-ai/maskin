@@ -3,17 +3,6 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-extension View {
-	/// Chats search: the magnifier in the top bar opens a field that filters this list live by name
-	/// and preview, and nothing else. A leftover query is cleared when the field closes.
-	func teamSearch(text: Binding<String>, isPresented: Binding<Bool>) -> some View {
-		searchable(text: text, isPresented: isPresented, prompt: "Search chats")
-			.onChange(of: isPresented.wrappedValue) { _, open in
-				if !open, !text.wrappedValue.isEmpty { text.wrappedValue = "" }
-			}
-	}
-}
-
 /// The filter chips row: All · Unread n · Threads n · Pinned · People · Agents · Groups. 34pt, `inverse` when
 /// on. Shown only when the Display menu turns chips on. On the bottom pill the row is cut to
 /// All · Unread n · Threads n · Pinned; People, Agents and Groups are not drawn there.

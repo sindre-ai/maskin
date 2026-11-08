@@ -94,7 +94,7 @@ struct LoopsListView: View {
 					.onTapGesture { store.notice = nil }
 			}
 			header
-				.listRowInsets(EdgeInsets(top: 0, leading: MaskinSpace.s7, bottom: MaskinSpace.s4, trailing: MaskinSpace.s7))
+				.listRowInsets(EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
 				.listRowSeparator(.hidden)
 				.listRowBackground(Color.clear)
 			ForEach(loops) { loop in
@@ -105,8 +105,8 @@ struct LoopsListView: View {
 				.listRowBackground(Color.clear)
 				.listRowInsets(
 					EdgeInsets(
-						top: MaskinSpace.s3, leading: MaskinSpace.s7, bottom: MaskinSpace.s3,
-						trailing: MaskinSpace.s7))
+						top: MaskinSpace.s3, leading: MaskinSpace.s9, bottom: MaskinSpace.s3,
+						trailing: MaskinSpace.s9))
 				.swipeActions(edge: .trailing, allowsFullSwipe: true) {
 					if loop.status != .draft {
 						Button {

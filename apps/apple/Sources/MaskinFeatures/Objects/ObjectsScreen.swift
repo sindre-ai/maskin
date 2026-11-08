@@ -107,7 +107,7 @@ public struct ObjectsScreen: View {
 				store: store, board: board, selection: nil, zoomNamespace: zoom, picking: picking, intents: intents,
 				askActions: askActions, onOpen: { path.append(ObjectRoute(id: $0)) })
 				.shellToolbar(environment: environment, title: nil, actions: shellActions)
-				.searchable(text: $searchText, isPresented: $searchPresented, prompt: "Search items")
+				.pageSearch(text: $searchText, isPresented: $searchPresented, prompt: "Search items")
 				// Filters this page only; closing the field clears the filter.
 				.onChange(of: searchText) { _, text in Task { await store.setSearch(text) } }
 				.onChange(of: searchPresented) { _, open in if !open, !searchText.isEmpty { searchText = "" } }

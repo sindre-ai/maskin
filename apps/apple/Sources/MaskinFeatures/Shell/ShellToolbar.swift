@@ -124,6 +124,18 @@ private struct ShellToolbarModifier: ViewModifier {
 				ToolbarItemGroup(placement: .primaryAction) {
 					Group {
 					// Display, then the avatar; Live is its own primary button after this capsule.
+					if let search = actions.search {
+						Button(action: search) {
+							ShellInkCircle(symbol: "magnifyingglass", label: "Search")
+						}
+						.buttonStyle(.plain)
+					}
+					if let marketplace = actions.marketplace {
+						Button(action: marketplace) {
+							ShellInkCircle(symbol: "storefront", label: "Marketplace")
+						}
+						.buttonStyle(.plain)
+					}
 					if let display = actions.display {
 						Menu {
 							display.content
