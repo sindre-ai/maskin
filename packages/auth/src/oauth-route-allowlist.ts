@@ -269,6 +269,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'GET /api/billing/daily-budget',
 	'GET /api/billing/usage/breakdown',
 	'GET /api/conversations/threads',
+	'GET /api/custom-mcp-servers',
 	'GET /api/custom-mcp-servers/:id',
 	'GET /api/custom-mcp-servers/:id/gateway',
 	'GET /api/data/next-change',

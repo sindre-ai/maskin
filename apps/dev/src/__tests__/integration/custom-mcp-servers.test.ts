@@ -17,7 +17,7 @@ vi.mock('node:dns/promises', async (orig) => ({
 }))
 vi.mock('../../lib/analytics/posthog', () => ({ capturePosthogEvent: vi.fn(async () => {}) }))
 
-import { decrypt } from '../../lib/crypto'
+import { decrypt, encrypt } from '../../lib/crypto'
 import { createApiError } from '../../lib/errors'
 import { describeAgentAccess } from '../../lib/integrations/agent-access-view'
 import { MASKED_VALUE, isPublicHost, readCustomServer } from '../../lib/integrations/custom-mcp'
@@ -134,6 +134,55 @@ describe('Custom MCP servers (Integration)', () => {
 			.from(events)
 			.where(and(eq(events.entityId, body.id), eq(events.action, 'created')))
 		expect(event).toBeDefined()
+	})
+
+	it("lists the workspace's servers with no secret value or keychain reference in the response", async () => {
+		const s = await setup()
+		// A saved credential the server can point at, which is not itself a tool server.
+		await db.insert(integrations).values({
+			workspaceId: s.ws.id,
+			provider: 'stripe',
+			providerMode: 'byo_apikey',
+			displayName: 'Stripe',
+			status: 'active',
+			credentials: encrypt('sk-stripe-secret-value'),
+			defaultAgentAccess: 'none',
+			createdBy: s.human,
+		})
+		expect((await addServer(s)).res.status).toBe(201)
+		const local = await addServer(s, 'Local files', {
+			type: 'stdio',
+			command: 'npx',
+			args: ['-y', 'x'],
+			env: { API_KEY: 'sk-env-secret-value', TOKEN: '${KEYCHAIN_BYO_APIKEY_STRIPE}' },
+		})
+		expect(local.res.status).toBe(201)
+		const other = await setup()
+		expect((await addServer(other, 'Other workspace')).res.status).toBe(201)
+
+		const res = await call(s, 'GET', '/api/custom-mcp-servers')
+		expect(res.status).toBe(200)
+		const text = await res.text()
+		expect(text).not.toContain('sk-live-secret-value')
+		expect(text).not.toContain('sk-env-secret-value')
+		expect(text).not.toContain('sk-stripe-secret-value')
+		expect(text).not.toContain('KEYCHAIN')
+		expect(JSON.parse(text)).toEqual([
+			{
+				id: expect.any(String),
+				name: 'Docs search',
+				url: 'https://tools.example.com/mcp',
+				status: 'active',
+			},
+			{ id: expect.any(String), name: 'Local files', url: null, status: 'active' },
+		])
+
+		// An agent in the workspace may read it, like the by-id read.
+		const asAgent = appFor(s.agentA.id, 'agent')
+		const agentRes = await asAgent.request('/api/custom-mcp-servers', {
+			headers: { 'X-Workspace-Id': s.ws.id },
+		})
+		expect(agentRes.status).toBe(200)
 	})
 
 	it('rejects a duplicate name, a bad URL, and an agent as the caller', async () => {
