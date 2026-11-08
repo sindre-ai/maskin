@@ -49,6 +49,8 @@ const KEPT: Record<string, string> = {
 	for_you_withdrawals:
 		'withdrawn_by is who retired a dead card (ON DELETE SET NULL); the row must stay, or the card comes back',
 	send_permissions: 'updated_by on a workspace setting; the setting stays when the person leaves',
+	saved_views:
+		'created_by on a shared workspace view (ON DELETE SET NULL); the view stays when its author leaves',
 	workspace_skills: 'created_by on workspace content',
 	workspaces: 'created_by / billing_owner_id; deletion is blocked until billing is handed over',
 	triggers: 'created_by / target agent on workspace automation',

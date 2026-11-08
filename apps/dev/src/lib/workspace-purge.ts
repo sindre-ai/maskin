@@ -130,6 +130,7 @@ export const WORKSPACE_PURGE_CASCADE = [
 	'oauth_authorization_codes',
 	'oauth_grants',
 	'oauth_tokens',
+	'saved_views',
 	'send_permissions',
 	'session_dispatch_attempts',
 	'slack_user_links',
