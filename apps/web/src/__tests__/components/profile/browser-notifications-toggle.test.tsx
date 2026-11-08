@@ -51,6 +51,19 @@ describe('BrowserNotificationsToggle', () => {
 		expect(toast.success).not.toHaveBeenCalled()
 	})
 
+	it('shows no toast when the prompt is dismissed, and the switch stays off and enabled', async () => {
+		setHook('off')
+		enable.mutate.mockImplementation((_v, opts) => opts.onSuccess('dismissed'))
+		render(<BrowserNotificationsToggle />)
+		const toggle = screen.getByRole('switch', { name: 'Browser notifications' })
+		fireEvent.click(toggle)
+		await waitFor(() => expect(enable.mutate).toHaveBeenCalledTimes(1))
+		expect(toast.error).not.toHaveBeenCalled()
+		expect(toast.success).not.toHaveBeenCalled()
+		expect(toggle).not.toBeChecked()
+		expect(toggle).toBeEnabled()
+	})
+
 	it('turning it off calls disable', async () => {
 		setHook('on')
 		disable.mutate.mockImplementation((_v, opts) => opts.onSuccess())

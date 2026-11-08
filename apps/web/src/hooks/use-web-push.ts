@@ -49,6 +49,7 @@ export function useWebPush() {
 			if (!publicKey) throw new Error('Browser notifications are not configured')
 			const outcome = await subscribeBrowser(publicKey)
 			if (outcome.status === 'denied') return 'denied' as const
+			if (outcome.status === 'dismissed') return 'dismissed' as const
 			const saved = await api.webPush.subscribe(toSubscribeBody(outcome.subscription))
 			storeSubscriptionId(saved.id)
 			return 'subscribed' as const
