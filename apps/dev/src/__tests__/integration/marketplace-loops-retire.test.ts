@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { installedLoops, marketplaceLoops } from '@maskin/db/schema'
+import { installedLoops, marketplaceLoopItems, marketplaceLoops } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
@@ -184,6 +184,40 @@ describe('Marketplace loop retirement', () => {
 		const { res } = await installInFreshWorkspace(legacy.id)
 
 		expect(res.status).toBe(404)
+	})
+
+	it('refuses to install a single item by id once its loop is retired', async () => {
+		const legacy = await insertLegacyLoop()
+		const [item] = await db
+			.insert(marketplaceLoopItems)
+			.values({
+				loopId: legacy.id,
+				itemType: 'skill',
+				sourceItemId: randomUUID(),
+				itemSnapshot: { name: 'legacy-skill', content: '# Legacy skill' },
+			})
+			.returning()
+		if (!item) throw new Error('marketplace_loop_items insert returned no row')
+		const ws = await insertWorkspace(db, getTestActorId())
+		if (!ws) throw new Error('workspace insert returned no row')
+
+		// While the loop is listed, the item installs.
+		const before = await app.request(
+			jsonRequest('POST', `/api/marketplace/items/${item.id}/install`, { workspaceId: ws.id }),
+		)
+		expect(before.status).toBe(201)
+
+		await seedMarketplaceLoops(db)
+
+		// A fresh workspace, so a 409 "already installed" cannot mask the result.
+		const otherWs = await insertWorkspace(db, getTestActorId())
+		if (!otherWs) throw new Error('workspace insert returned no row')
+		const after = await app.request(
+			jsonRequest('POST', `/api/marketplace/items/${item.id}/install`, {
+				workspaceId: otherWs.id,
+			}),
+		)
+		expect(after.status).toBe(404)
 	})
 
 	it('keeps an existing install listed, updating and removable after its loop is retired', async () => {
