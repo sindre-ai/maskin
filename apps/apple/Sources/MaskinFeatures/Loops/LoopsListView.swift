@@ -24,7 +24,6 @@ struct LoopsListView: View {
 		}
 		.ambientBackground()
 		.overlay { overlay(isEmpty: loops.isEmpty) }
-		.refreshable { await store.refresh() }
 	}
 
 	private func card(_ loop: LoopSummary) -> LoopCard {
