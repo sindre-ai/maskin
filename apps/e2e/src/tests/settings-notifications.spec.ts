@@ -37,6 +37,29 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 	})
 }
 
+for (const vp of SHIP_GATE_VIEWPORTS) {
+	test(`The email switch on the Digests row is on for a new sign-up, saves, and survives a reload @ ${vp.label}`, async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize({ width: vp.width, height: vp.height })
+		await page.goto(`/${account.workspaceId}/settings/notifications`)
+
+		const email = page.getByRole('switch', { name: 'Digests by email', exact: true })
+		await expect(email).toBeVisible({ timeout: 15_000 })
+		await expect(email).toBeChecked()
+		await email.click()
+		await expect(email).not.toBeChecked()
+
+		await page.reload()
+		await expect(
+			page.getByRole('switch', { name: 'Digests by email', exact: true }),
+		).not.toBeChecked({ timeout: 15_000 })
+		// The push switch on the same row is a separate setting.
+		await expect(page.getByRole('switch', { name: 'Digests', exact: true })).toBeChecked()
+	})
+}
+
 test('Notifications reads in light and dark', async ({ page, account }) => {
 	for (const scheme of ['light', 'dark'] as const) {
 		await page.emulateMedia({ colorScheme: scheme })
