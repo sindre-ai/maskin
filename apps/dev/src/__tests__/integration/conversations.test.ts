@@ -2769,7 +2769,12 @@ describe('Conversations Integration', () => {
 		) {
 			const { app } = createConversationsApp(ownerId)
 			const created = await app.request(
-				jsonRequest('POST', '/api/conversations', { title }, { 'x-workspace-id': workspaceId }),
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title, participant_actor_ids: [] },
+					{ 'x-workspace-id': workspaceId },
+				),
 			)
 			const conversation = (await created.json()) as { id: string }
 			const [msg] = await db
