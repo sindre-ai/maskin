@@ -96,6 +96,7 @@ describe('subscribeToSessionLogs', () => {
 		expect(callOptions().headers).toMatchObject({
 			Authorization: 'Bearer test-api-key',
 			'X-Workspace-Id': workspaceId,
+			'X-Client-Source': 'ui',
 			'Last-Event-ID': '412',
 		})
 
