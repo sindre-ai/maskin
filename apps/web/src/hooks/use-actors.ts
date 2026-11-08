@@ -13,7 +13,7 @@ import { useWorkspace } from '../lib/workspace-context'
 
 // The stream keeps the list fresh (actor events refetch it, one per window), so a page that
 // mounts it again shortly after the last load reads the cache instead of asking again.
-const ACTORS_STALE_MS = 5 * 60_000
+export const ACTORS_STALE_MS = 5 * 60_000
 
 export function useActors(workspaceId?: string, options?: { enabled?: boolean }) {
 	return useQuery({
