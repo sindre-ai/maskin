@@ -864,6 +864,40 @@ describe('Telnyx Ed25519 webhook (integration)', () => {
 		expect(JSON.stringify(json)).toContain('Ed25519 public key')
 	})
 
+	it('refuses to switch an Ed25519 webhook to an HMAC scheme without a new secret', async () => {
+		const app = buildApp()
+		const { json: created } = await createExtension(app, workspaceId, telnyxBody())
+		const hmacConfig = {
+			...telnyxBody().webhook_config,
+			signatureScheme: 'hmac-sha256',
+			signatureHeader: 'x-signature',
+		}
+		const headers = { 'x-workspace-id': workspaceId }
+
+		for (const scheme of ['hmac-sha256', 'hmac-sha1', 'timestamp']) {
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/extensions/${created.id}`,
+					{ webhook_config: { ...hmacConfig, signatureScheme: scheme } },
+					headers,
+				),
+			)
+			expect(res.status).toBe(400)
+			expect(JSON.stringify(await res.json())).toContain('new signing secret')
+		}
+
+		const withSecret = await app.request(
+			jsonRequest(
+				'PATCH',
+				`/api/extensions/${created.id}`,
+				{ webhook_config: hmacConfig, signing_secret: SECRET },
+				headers,
+			),
+		)
+		expect(withSecret.status).toBe(200)
+	})
+
 	it('commits one delivery row and one events row for a signed delivery, then ignores a repeat', async () => {
 		const { app, token } = await setup()
 		const delivery = buildTelnyxDelivery({ privateKey: keys.privateKey })

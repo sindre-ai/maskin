@@ -645,12 +645,18 @@ app.openapi(updateExtensionRoute, async (c) => {
 
 	// An ed25519 secret is the vendor's public key. Check a new one now, and refuse to
 	// switch an existing webhook to ed25519 on the old random secret, which can never verify.
+	// The reverse also needs a new secret: the stored public key is not private and must not
+	// become an HMAC secret.
 	const schemeOf = (cfg: unknown) => (cfg as { signatureScheme?: string } | null)?.signatureScheme
+	const fromScheme = schemeOf(existing.webhookConfig)
+	const toScheme = schemeOf(nextWebhook)
 	const keyError = body.signing_secret
-		? webhookSecretWriteError({ signatureScheme: schemeOf(nextWebhook) }, body.signing_secret)
-		: schemeOf(nextWebhook) === 'ed25519' && schemeOf(existing.webhookConfig) !== 'ed25519'
+		? webhookSecretWriteError({ signatureScheme: toScheme }, body.signing_secret)
+		: toScheme === 'ed25519' && fromScheme !== 'ed25519'
 			? 'Paste the vendor public key as the signing secret'
-			: null
+			: nextWebhook && fromScheme === 'ed25519' && toScheme !== 'ed25519'
+				? 'Enter a new signing secret to move off Ed25519'
+				: null
 	if (keyError) {
 		return c.json(
 			createApiError('BAD_REQUEST', keyError, [{ field: 'signing_secret', message: keyError }]),
