@@ -8,6 +8,13 @@ public enum LiveMeetingMetrics {
 	/// Regular width keeps the controls as a compact cluster at bottom centre instead of
 	/// stretching them across the whole screen.
 	public static func controlsMaxWidth(regularWidth: Bool) -> CGFloat? { regularWidth ? 520 : nil }
+	/// The caption under the call card runs wider than the controls, up to 620 pt in regular width.
+	public static func captionsMaxWidth(regularWidth: Bool) -> CGFloat? { regularWidth ? 620 : nil }
+}
+
+public enum ReadingColumn {
+	/// Item detail and thread messages stay in a 720 pt column in regular width and are centred.
+	public static let maxWidth: CGFloat = 720
 }
 
 public enum WindowMetrics {

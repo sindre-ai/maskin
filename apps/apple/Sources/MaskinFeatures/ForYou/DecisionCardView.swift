@@ -411,7 +411,16 @@ struct DecisionCardView: View {
 				Text(line).font(MaskinTypeface.sans(MaskinFontSize.t13)).foregroundStyle(MaskinColor.ink5)
 					.frame(maxWidth: .infinity, alignment: .leading)
 			}
+			// A keyboard is attached and this card has focus: Return takes the suggested option.
+			if acceptsReturnKey, cardFocused, let option = decision.recommended {
+				Label("Return to accept \u{201C}\(option.label)\u{201D}", systemImage: "return")
+					.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold))
+					.foregroundStyle(MaskinColor.ink4)
+					.frame(maxWidth: .infinity, alignment: .leading)
+					.transition(.opacity)
+			}
 		}
+		.animation(MaskinMotion.quick, value: cardFocused)
 		.sheet(item: $pendingDestructive) { option in
 			ConfirmOptionSheet(option: option) { actions.choose(option) }
 		}

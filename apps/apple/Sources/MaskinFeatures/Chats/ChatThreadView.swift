@@ -105,7 +105,7 @@ struct ChatThreadView: View {
 
 	private static let bottomID = "thread-bottom"
 	private static let unreadDividerID = "unread-divider"
-	private static let maxReadableWidth: CGFloat = 760
+	private static let maxReadableWidth: CGFloat = ReadingColumn.maxWidth
 	/// Where the NEW divider and the current search match land, measured from the top.
 	private static let unreadOpenOffset: CGFloat = 150
 	private static let matchOffset: CGFloat = 170
