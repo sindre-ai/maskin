@@ -304,21 +304,21 @@ describe('Subscriptions Routes', () => {
 			const obj = buildObject({ workspaceId: wsId })
 			const sub = buildSubscription({ workspaceId: wsId, entityType: 'object', entityId: obj.id })
 			const { app, mockResults } = createTestApp(subscriptionsRoutes, '/api/subscriptions')
-			// First select = aggregate join query → returns the grouped row.
-			// Second select = inArray fetch for object summaries.
-			mockResults.selectQueue = [
+			// The unread aggregate is one raw query (execute) → returns the grouped row.
+			// The first select is the inArray fetch for object summaries.
+			mockResults.executeQueue = [
 				[
 					{
-						entityType: 'object',
-						entityId: obj.id,
-						unreadCount: 3,
-						mentioningUnreadCount: 0,
-						latestEventId: 100,
-						latestActivityAt: new Date('2026-01-01T00:00:00Z'),
+						entity_type: 'object',
+						entity_id: obj.id,
+						unread_count: 3,
+						mentioning_unread_count: 0,
+						latest_event_id: 100,
+						latest_activity_at: new Date('2026-01-01T00:00:00Z'),
 					},
 				],
-				[obj],
 			]
+			mockResults.selectQueue = [[obj]]
 			// Suppress unused-var lint by referencing the sub factory
 			void sub
 
@@ -337,20 +337,20 @@ describe('Subscriptions Routes', () => {
 		it('surfaces the per-event mentioning count when at least one unread event mentions the actor', async () => {
 			const obj = buildObject({ workspaceId: wsId })
 			const { app, mockResults } = createTestApp(subscriptionsRoutes, '/api/subscriptions')
-			mockResults.selectQueue = [
+			mockResults.executeQueue = [
 				[
 					{
-						entityType: 'object',
-						entityId: obj.id,
-						unreadCount: 10,
-						mentioningUnreadCount: 1,
-						maxUnreadAttention: 4,
-						latestEventId: 200,
-						latestActivityAt: new Date('2026-01-02T00:00:00Z'),
+						entity_type: 'object',
+						entity_id: obj.id,
+						unread_count: 10,
+						mentioning_unread_count: 1,
+						max_unread_attention: 4,
+						latest_event_id: 200,
+						latest_activity_at: new Date('2026-01-02T00:00:00Z'),
 					},
 				],
-				[obj],
 			]
+			mockResults.selectQueue = [[obj]]
 
 			const res = await app.request(jsonGet('/api/subscriptions/unread', headers))
 
@@ -367,20 +367,20 @@ describe('Subscriptions Routes', () => {
 		it('returns null max_unread_attention when no unread comment carries a score', async () => {
 			const obj = buildObject({ workspaceId: wsId })
 			const { app, mockResults } = createTestApp(subscriptionsRoutes, '/api/subscriptions')
-			mockResults.selectQueue = [
+			mockResults.executeQueue = [
 				[
 					{
-						entityType: 'object',
-						entityId: obj.id,
-						unreadCount: 1,
-						mentioningUnreadCount: 1,
-						maxUnreadAttention: null,
-						latestEventId: 100,
-						latestActivityAt: new Date('2026-01-01T00:00:00Z'),
+						entity_type: 'object',
+						entity_id: obj.id,
+						unread_count: 1,
+						mentioning_unread_count: 1,
+						max_unread_attention: null,
+						latest_event_id: 100,
+						latest_activity_at: new Date('2026-01-01T00:00:00Z'),
 					},
 				],
-				[obj],
 			]
+			mockResults.selectQueue = [[obj]]
 
 			const res = await app.request(jsonGet('/api/subscriptions/unread', headers))
 
@@ -404,19 +404,19 @@ describe('Subscriptions Routes', () => {
 			const { app, mockResults } = createTestApp(subscriptionsRoutes, '/api/subscriptions')
 			// A recently-read card comes back with unread_count = 0 but is still
 			// present in the feed with a non-null latest_activity_at.
-			mockResults.selectQueue = [
+			mockResults.executeQueue = [
 				[
 					{
-						entityType: 'object',
-						entityId: obj.id,
-						unreadCount: 0,
-						mentioningUnreadCount: 0,
-						latestEventId: 100,
-						latestActivityAt: new Date('2026-01-01T00:00:00Z'),
+						entity_type: 'object',
+						entity_id: obj.id,
+						unread_count: 0,
+						mentioning_unread_count: 0,
+						latest_event_id: 100,
+						latest_activity_at: new Date('2026-01-01T00:00:00Z'),
 					},
 				],
-				[obj],
 			]
+			mockResults.selectQueue = [[obj]]
 
 			const res = await app.request(
 				jsonGet('/api/subscriptions/unread?include_recently_read=true', headers),
