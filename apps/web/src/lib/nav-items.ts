@@ -9,6 +9,8 @@ export interface NavItemDef {
 	to: string
 	icon: LucideIcon
 	exact?: boolean
+	/** An outside address the entry opens in a new tab instead of an app route. */
+	href?: string
 }
 
 export const FOR_YOU_ROUTE = '/$workspaceId' as const

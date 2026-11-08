@@ -104,7 +104,11 @@ function LoginPage() {
 
 				<p className="text-center text-xs text-muted-foreground">
 					Don't have an account?{' '}
-					<Link to="/signup" className="text-primary hover:text-primary-hover">
+					<Link
+						to="/signup"
+						search={{ redirect }}
+						className="text-primary hover:text-primary-hover"
+					>
 						Sign up
 					</Link>
 				</p>

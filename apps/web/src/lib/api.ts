@@ -1285,7 +1285,7 @@ export const api = {
 				`/installed-loops?workspaceId=${encodeURIComponent(workspaceId)}`,
 				{ workspaceId },
 			),
-		install: (workspaceId: string, loopId: string, source?: 'detail') =>
+		install: (workspaceId: string, loopId: string, source?: InstallSource) =>
 			request<InstalledLoopInstallResponse>('/installed-loops', {
 				method: 'POST',
 				body: { loopId, workspaceId, ...(source ? { source } : {}) },
@@ -3402,6 +3402,9 @@ export interface ImportMappingInput {
 	/** What happens to a row that matches an existing object. Absent means `skip`. */
 	onMatch?: 'skip' | 'update'
 }
+
+/** Which surface started an install; absent means the catalogue card. */
+export type InstallSource = 'detail' | 'public_site'
 
 export type MarketplaceItemType = 'actor' | 'trigger' | 'skill' | 'integration'
 

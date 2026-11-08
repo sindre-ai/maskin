@@ -18,6 +18,7 @@ import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
 import { Route as PrototypesGalleryRouteImport } from './routes/prototypes/gallery'
 import { Route as PrototypesAboveTitleHeaderRouteImport } from './routes/prototypes/above-title-header'
 import { Route as OauthAuthorizeRouteImport } from './routes/oauth.authorize'
+import { Route as InstallSlugRouteImport } from './routes/install.$slug'
 import { Route as ConnectSkjaldRouteImport } from './routes/connect.skjald'
 import { Route as AuthedWorkspacesRouteImport } from './routes/_authed/workspaces'
 import { Route as AuthedWorkspaceIdRouteImport } from './routes/_authed/$workspaceId'
@@ -103,6 +104,11 @@ const PrototypesAboveTitleHeaderRoute =
 const OauthAuthorizeRoute = OauthAuthorizeRouteImport.update({
   id: '/oauth/authorize',
   path: '/oauth/authorize',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const InstallSlugRoute = InstallSlugRouteImport.update({
+  id: '/install/$slug',
+  path: '/install/$slug',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ConnectSkjaldRoute = ConnectSkjaldRouteImport.update({
@@ -355,6 +361,7 @@ export interface FileRoutesByFullPath {
   '/$workspaceId': typeof AuthedWorkspaceIdRouteWithChildren
   '/workspaces': typeof AuthedWorkspacesRoute
   '/connect/skjald': typeof ConnectSkjaldRoute
+  '/install/$slug': typeof InstallSlugRoute
   '/oauth/authorize': typeof OauthAuthorizeRoute
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
   '/prototypes/gallery': typeof PrototypesGalleryRoute
@@ -404,6 +411,7 @@ export interface FileRoutesByTo {
   '/tv': typeof TvRoute
   '/workspaces': typeof AuthedWorkspacesRoute
   '/connect/skjald': typeof ConnectSkjaldRoute
+  '/install/$slug': typeof InstallSlugRoute
   '/oauth/authorize': typeof OauthAuthorizeRoute
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
   '/prototypes/gallery': typeof PrototypesGalleryRoute
@@ -454,6 +462,7 @@ export interface FileRoutesById {
   '/_authed/$workspaceId': typeof AuthedWorkspaceIdRouteWithChildren
   '/_authed/workspaces': typeof AuthedWorkspacesRoute
   '/connect/skjald': typeof ConnectSkjaldRoute
+  '/install/$slug': typeof InstallSlugRoute
   '/oauth/authorize': typeof OauthAuthorizeRoute
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
   '/prototypes/gallery': typeof PrototypesGalleryRoute
@@ -508,6 +517,7 @@ export interface FileRouteTypes {
     | '/$workspaceId'
     | '/workspaces'
     | '/connect/skjald'
+    | '/install/$slug'
     | '/oauth/authorize'
     | '/prototypes/above-title-header'
     | '/prototypes/gallery'
@@ -557,6 +567,7 @@ export interface FileRouteTypes {
     | '/tv'
     | '/workspaces'
     | '/connect/skjald'
+    | '/install/$slug'
     | '/oauth/authorize'
     | '/prototypes/above-title-header'
     | '/prototypes/gallery'
@@ -606,6 +617,7 @@ export interface FileRouteTypes {
     | '/_authed/$workspaceId'
     | '/_authed/workspaces'
     | '/connect/skjald'
+    | '/install/$slug'
     | '/oauth/authorize'
     | '/prototypes/above-title-header'
     | '/prototypes/gallery'
@@ -657,6 +669,7 @@ export interface RootRouteChildren {
   SignupRoute: typeof SignupRoute
   TvRoute: typeof TvRoute
   ConnectSkjaldRoute: typeof ConnectSkjaldRoute
+  InstallSlugRoute: typeof InstallSlugRoute
   OauthAuthorizeRoute: typeof OauthAuthorizeRoute
   PrototypesAboveTitleHeaderRoute: typeof PrototypesAboveTitleHeaderRoute
   PrototypesGalleryRoute: typeof PrototypesGalleryRoute
@@ -725,6 +738,13 @@ declare module '@tanstack/react-router' {
       path: '/oauth/authorize'
       fullPath: '/oauth/authorize'
       preLoaderRoute: typeof OauthAuthorizeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/install/$slug': {
+      id: '/install/$slug'
+      path: '/install/$slug'
+      fullPath: '/install/$slug'
+      preLoaderRoute: typeof InstallSlugRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/connect/skjald': {
@@ -1178,6 +1198,7 @@ const rootRouteChildren: RootRouteChildren = {
   SignupRoute: SignupRoute,
   TvRoute: TvRoute,
   ConnectSkjaldRoute: ConnectSkjaldRoute,
+  InstallSlugRoute: InstallSlugRoute,
   OauthAuthorizeRoute: OauthAuthorizeRoute,
   PrototypesAboveTitleHeaderRoute: PrototypesAboveTitleHeaderRoute,
   PrototypesGalleryRoute: PrototypesGalleryRoute,

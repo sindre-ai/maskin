@@ -20,6 +20,7 @@ import {
 	OBJECTS_NAV_ITEM,
 	useHasObjectsNavItem,
 } from '@/lib/nav-items'
+import { PUBLIC_MARKETPLACE_URL } from '@/lib/public-site'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Store } from 'lucide-react'
 import { useMemo } from 'react'
@@ -38,6 +39,8 @@ const marketplaceItem: NavItemDef = {
 	label: 'Marketplace',
 	to: '/$workspaceId/marketplace',
 	icon: Store,
+	// The public marketplace on the website is the one catalogue; the in-app page stays mounted for now.
+	href: PUBLIC_MARKETPLACE_URL,
 }
 
 export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
