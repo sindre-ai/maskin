@@ -1,89 +1,139 @@
 import Foundation
 
-/// The rows of the profile sheet below the profile and workspace cards, in two groups. Agents is
-/// the first row of the Workspace group, with how many are working (v3 profile sheet); Members
-/// still lists them next to the people.
+/// The section headers of the account menu, in order. The menu is one scrolling list; Appearance
+/// and Sign out follow the last section and are not rows of this model.
 public enum ProfileMenuGroup: String, CaseIterable, Hashable, Identifiable, Sendable {
-	case workspace, you
+	case account, workspace, access, admin
 
 	public var id: String { rawValue }
 
 	public var title: String {
 		switch self {
+		case .account: "Account"
 		case .workspace: "Workspace"
-		case .you: "You"
+		case .access: "Agents and access"
+		case .admin: "Admin"
 		}
 	}
 }
 
 public enum ProfileMenuItem: String, CaseIterable, Hashable, Identifiable, Sendable {
-	case agents, marketplace, artefacts, members, integrations, keychain, triggers, billing, keys
-	case settings, autonomy
+	case account, billing, notifications, appLock, deviceSignIn
+	case agents, members, integrations, triggers
+	case skills, objectTypes, keys, marketplace
+	case nativeSurfaces, advanced
 
 	public var id: String { rawValue }
 
 	public var title: String {
 		switch self {
+		case .account: "Account"
+		case .billing: "Billing"
+		case .notifications: "Notifications"
+		case .appLock: "App lock"
+		case .deviceSignIn: "Sign in a device"
 		case .agents: "Agents"
-		case .marketplace: "Marketplace"
-		case .artefacts: "Artefacts"
 		case .members: "Members"
 		case .integrations: "Integrations"
-		case .keychain: "Keychain"
 		case .triggers: "Triggers"
-		case .billing: "Billing"
-		case .keys: "Keys & MCP"
-		case .settings: "Settings"
-		case .autonomy: "Autonomy"
-		}
-	}
-
-	/// The one-line description under the title, from the prototype.
-	public var subtitle: String {
-		switch self {
-		case .agents: "The agents that work for you"
-		case .marketplace: "Hire an agent or install a flow"
-		case .artefacts: "Pages, PDFs and files your agents made"
-		case .members: "People and agents in this workspace"
-		case .integrations: "Accounts your flows can use"
-		case .keychain: "Keys and logins your agents use"
-		case .triggers: "What starts a flow on its own"
-		case .billing: "Plan, seats, invoices"
-		case .keys: "API keys and the MCP server for outside tools"
-		case .settings: "Appearance, notifications, workspace, account"
-		case .autonomy: "How far the Chief of Staff goes before asking"
+		case .skills: "Skills"
+		case .objectTypes: "Item types"
+		case .keys: "Keys and secrets"
+		case .marketplace: "Marketplace"
+		case .nativeSurfaces: "Native surfaces"
+		case .advanced: "Advanced"
 		}
 	}
 
 	public var group: ProfileMenuGroup {
 		switch self {
-		case .agents, .marketplace, .artefacts, .members, .integrations, .keychain, .triggers, .billing, .keys:
-			.workspace
-		case .settings, .autonomy: .you
+		case .account, .billing, .notifications, .appLock, .deviceSignIn: .account
+		case .agents, .members, .integrations, .triggers: .workspace
+		case .skills, .objectTypes, .keys, .marketplace: .access
+		case .nativeSurfaces, .advanced: .admin
 		}
 	}
 
 	/// These belong to a workspace; without one there is nothing to open.
 	var needsWorkspace: Bool {
 		switch self {
-		case .agents, .marketplace, .members, .integrations, .keychain, .triggers, .billing, .keys, .autonomy: true
-		default: false
+		case .billing, .deviceSignIn, .agents, .members, .integrations, .triggers, .skills, .objectTypes, .keys,
+			.marketplace:
+			true
+		case .account, .notifications, .appLock, .nativeSurfaces, .advanced: false
 		}
 	}
-
-	/// Rows only a manager may see. Keys & MCP is for everyone: the page shows the person's own key
-	/// and how to connect their own tools; what a manager can additionally do is gated on the page.
-	var needsManager: Bool { false }
 }
 
 public enum ProfileMenu {
-	/// The rows of one group, in order.
-	public static func items(
-		in group: ProfileMenuGroup, hasWorkspace: Bool, role: MemberRole = .member
-	) -> [ProfileMenuItem] {
-		ProfileMenuItem.allCases.filter {
-			$0.group == group && (hasWorkspace || !$0.needsWorkspace)
-				&& (role.canManage || !$0.needsManager)
+	/// The rows of one section, in order.
+	public static func items(in group: ProfileMenuGroup, hasWorkspace: Bool) -> [ProfileMenuItem] {
+		ProfileMenuItem.allCases.filter { $0.group == group && (hasWorkspace || !$0.needsWorkspace) }
+	}
+}
+
+/// What the Settings page lists, in five sections. Marketplace, Agents and Native surfaces live in
+/// the account menu only; Files lives here only.
+public enum SettingsPageRow: String, CaseIterable, Hashable, Sendable {
+	case account, billing
+	case notifications, appLock, deviceSignIn
+	case members, integrations, triggers, files
+	case skills, objectTypes, keys
+	case advanced
+
+	public enum Section: String, CaseIterable, Hashable, Identifiable, Sendable {
+		case account, preferences, workspace, access, advanced
+
+		public var id: String { rawValue }
+
+		/// The advanced section is one row with no header.
+		public var title: String? {
+			switch self {
+			case .account: "Account"
+			case .preferences: "Preferences"
+			case .workspace: "Workspace"
+			case .access: "Agents and access"
+			case .advanced: nil
+			}
 		}
+	}
+
+	public var section: Section {
+		switch self {
+		case .account, .billing: .account
+		case .notifications, .appLock, .deviceSignIn: .preferences
+		case .members, .integrations, .triggers, .files: .workspace
+		case .skills, .objectTypes, .keys: .access
+		case .advanced: .advanced
+		}
+	}
+
+	public var title: String {
+		switch self {
+		case .account: "Account"
+		case .billing: "Billing"
+		case .notifications: "Notifications"
+		case .appLock: "App lock"
+		case .deviceSignIn: "Sign in a device"
+		case .members: "Members"
+		case .integrations: "Integrations"
+		case .triggers: "Triggers"
+		case .files: "Files"
+		case .skills: "Skills"
+		case .objectTypes: "Item types"
+		case .keys: "Keys and secrets"
+		case .advanced: "Advanced"
+		}
+	}
+
+	var needsWorkspace: Bool {
+		switch self {
+		case .account, .notifications, .appLock, .advanced: false
+		default: true
+		}
+	}
+
+	public static func rows(in section: Section, hasWorkspace: Bool) -> [SettingsPageRow] {
+		allCases.filter { $0.section == section && (hasWorkspace || !$0.needsWorkspace) }
 	}
 }

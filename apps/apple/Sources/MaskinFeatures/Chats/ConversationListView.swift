@@ -77,6 +77,8 @@ struct ConversationListView: View {
 		.listStyle(.inset)
 		#endif
 		.scrollContentBackground(.hidden)
+		// 16 pt of air between the title and the first group.
+		.contentMargins(.top, MaskinSpace.s9, for: .scrollContent)
 		// Groups sit close: the plain list's header minimum and section gap are what made them drift apart.
 		.environment(\.defaultMinListHeaderHeight, MaskinSpace.s1)
 		#if os(iOS)

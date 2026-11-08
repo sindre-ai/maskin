@@ -21,6 +21,8 @@ public struct MainShell: View {
 	@State private var pictures = ActorPicturesStore()
 	/// The offline banner's View: what is waiting to send.
 	@State private var showQueue = false
+	/// Settings > Advanced > Preview > Show offline banner: draws the banner without losing the connection.
+	@AppStorage(StatePreview.offlineKey) private var previewOffline = false
 	@Environment(\.scenePhase) private var scenePhase
 
 	public init(environment: AppEnvironment, runtime: AppRuntime) {
@@ -108,7 +110,7 @@ public struct MainShell: View {
 		.sheet(isPresented: $showQueue) { OutboxQueueSheet(queue: queue) }
 		.safeAreaInset(edge: .top, spacing: 0) {
 			OfflineBanner(
-				isVisible: !runtime.isOnline, message: offlineMessage, symbol: "icloud.slash",
+				isVisible: !runtime.isOnline || previewOffline, message: offlineMessage, symbol: "icloud.slash",
 				actionTitle: queuedCount > 0 ? "View" : "Retry"
 			) {
 				if queuedCount > 0 {
@@ -121,7 +123,7 @@ public struct MainShell: View {
 				}
 			}
 				.padding(.horizontal, MaskinSpace.s8)
-				.animation(MaskinMotion.standard, value: runtime.isOnline)
+				.animation(MaskinMotion.standard, value: runtime.isOnline || previewOffline)
 		}
 		// A decision is on screen: the moment to explain notifications (never at first launch).
 		.onChange(of: runtime.forYou.store.needsCount, initial: true) { _, count in
@@ -335,6 +337,10 @@ private struct ShellTabContent: View {
 	@Bindable var runtime: AppRuntime
 
 	var body: some View {
+		screen.tabStateOverride(tab)
+	}
+
+	@ViewBuilder private var screen: some View {
 		switch tab {
 		case .forYou:
 			ForYouScreen(environment: environment) { runtime.openObject($0) }

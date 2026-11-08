@@ -229,6 +229,9 @@ public final class ChatComposerModel {
 		focusRequest += 1
 	}
 
+	/// Asks the field to take focus, so the keyboard stays up after something else was picked.
+	public func requestFocus() { focusRequest += 1 }
+
 	public func beginReply(author: String, content: String, serverID: Int? = nil) {
 		let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard !trimmed.isEmpty else { return }
