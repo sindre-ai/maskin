@@ -1228,6 +1228,9 @@ export const messages = pgTable(
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		// Set when the author edits the message; null for never-edited messages.
 		editedAt: timestamp('edited_at', { withTimezone: true }),
+		// Set when the author deletes the message. The row stays (threads and read markers keep
+		// pointing at it) but its content is cleared and its metadata nulled. Null while live.
+		deletedAt: timestamp('deleted_at', { withTimezone: true }),
 		// Set on a reply inside a thread: the id of the thread's root message in the
 		// same conversation. Roots are never replies themselves (one level only), so
 		// this never chains. Cascades with the root.

@@ -418,6 +418,7 @@ const messageColumns = {
 	sessionId: messages.sessionId,
 	createdAt: messages.createdAt,
 	editedAt: messages.editedAt,
+	deletedAt: messages.deletedAt,
 	threadRootId: messages.threadRootId,
 	threadAlsoInChannel: messages.threadAlsoInChannel,
 }
@@ -1712,7 +1713,7 @@ app.openapi(editMessageRoute, (async (c) => {
 		.from(messages)
 		.where(and(eq(messages.id, messageId), eq(messages.conversationId, id)))
 		.limit(1)
-	if (!message || message.kind !== 'message') {
+	if (!message || message.kind !== 'message' || message.deletedAt) {
 		return c.json(createApiError('NOT_FOUND', 'Message not found'), 404)
 	}
 	if (message.actorId !== callerId) {
@@ -1844,6 +1845,92 @@ app.openapi(editMessageRoute, (async (c) => {
 		200,
 	)
 }) as RouteHandler<typeof editMessageRoute, Env>)
+
+// DELETE /:id/messages/:messageId - Delete an own message (soft: the row stays, emptied)
+const deleteMessageRoute = createRoute({
+	method: 'delete',
+	path: '/{id}/messages/{messageId}',
+	'x-viewer-policy': 'writer',
+	tags: ['Conversations'],
+	summary: 'Delete a message you authored',
+	request: {
+		headers: workspaceIdHeader,
+		params: z.object({ id: z.string().uuid(), messageId: z.coerce.number().int().positive() }),
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: messageResponseSchema } },
+			description: 'Message deleted; content is empty and deletedAt is set',
+		},
+		403: { content: { 'application/json': { schema: errorSchema } }, description: 'Not author' },
+		404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
+	},
+})
+
+app.openapi(deleteMessageRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id, messageId } = c.req.valid('param')
+
+	const row = await loadConversationWithAuth(db, id, callerId)
+	if (!row || row.conversation.workspaceId !== workspaceId) {
+		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
+	}
+
+	const [message] = await db
+		.select()
+		.from(messages)
+		.where(and(eq(messages.id, messageId), eq(messages.conversationId, id)))
+		.limit(1)
+	if (!message || message.kind !== 'message') {
+		return c.json(createApiError('NOT_FOUND', 'Message not found'), 404)
+	}
+	if (message.actorId !== callerId) {
+		return c.json(createApiError('FORBIDDEN', 'Only the author can delete a message'), 403)
+	}
+	// Same rule as edit: an agent's auto-posted end-of-turn reply is a session artifact.
+	if ((message.metadata as { source?: string } | null)?.source === 'final_output') {
+		return c.json(createApiError('FORBIDDEN', 'Auto-posted agent output cannot be deleted'), 403)
+	}
+
+	// Deleting twice is a no-op: the first deletedAt and its audit event stand.
+	let deleted = message
+	if (!message.deletedAt) {
+		const [updated] = await db
+			.update(messages)
+			.set({ content: '', metadata: null, deletedAt: new Date() })
+			.where(eq(messages.id, messageId))
+			.returning()
+		if (!updated) throw new Error('Failed to delete message')
+		deleted = updated
+
+		await recordEvent(db, {
+			workspaceId,
+			actorId: callerId,
+			action: 'message_deleted',
+			entityType: 'conversation',
+			entityId: id,
+			data: { message_id: messageId },
+		})
+	}
+
+	const [caller] = await db
+		.select({ name: actors.name, type: actors.type })
+		.from(actors)
+		.where(eq(actors.id, callerId))
+		.limit(1)
+
+	return c.json(
+		serialize({
+			...deleted,
+			actorName: caller?.name ?? 'Unknown',
+			actorType: caller?.type ?? 'human',
+		}) as z.infer<typeof messageResponseSchema>,
+		200,
+	)
+}) as RouteHandler<typeof deleteMessageRoute, Env>)
 
 // PUT /:id/messages/:messageId/reactions - React with an emoji (idempotent)
 const addReactionRoute = createRoute({

@@ -448,6 +448,8 @@ export const messageResponseSchema = z.object({
 	sessionId: z.string().uuid().nullable(),
 	createdAt: z.string().nullable(),
 	editedAt: z.string().nullable(),
+	/** Set when the author deleted the message; its content is then empty. */
+	deletedAt: z.string().nullable(),
 	/** Root message id when this is a thread reply; null for top-level messages. */
 	threadRootId: z.number().nullable(),
 	/** A thread reply also shown in the main timeline. */

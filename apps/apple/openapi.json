@@ -44386,6 +44386,12 @@
 																	"null"
 																]
 															},
+															"deletedAt": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
 															"threadRootId": {
 																"type": [
 																	"number",
@@ -44408,6 +44414,7 @@
 															"sessionId",
 															"createdAt",
 															"editedAt",
+															"deletedAt",
 															"threadRootId",
 															"threadAlsoInChannel"
 														]
@@ -44517,6 +44524,12 @@
 																	"null"
 																]
 															},
+															"deletedAt": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
 															"threadRootId": {
 																"type": [
 																	"number",
@@ -44539,6 +44552,7 @@
 															"sessionId",
 															"createdAt",
 															"editedAt",
+															"deletedAt",
 															"threadRootId",
 															"threadAlsoInChannel"
 														]
@@ -45576,6 +45590,12 @@
 															"null"
 														]
 													},
+													"deletedAt": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
 													"threadRootId": {
 														"type": [
 															"number",
@@ -45792,6 +45812,7 @@
 													"sessionId",
 													"createdAt",
 													"editedAt",
+													"deletedAt",
 													"threadRootId",
 													"threadAlsoInChannel",
 													"spawned_sessions",
@@ -46809,6 +46830,12 @@
 												"null"
 											]
 										},
+										"deletedAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
 										"threadRootId": {
 											"type": [
 												"number",
@@ -46908,6 +46935,7 @@
 										"sessionId",
 										"createdAt",
 										"editedAt",
+										"deletedAt",
 										"threadRootId",
 										"threadAlsoInChannel"
 									]
@@ -47157,6 +47185,12 @@
 												"null"
 											]
 										},
+										"deletedAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
 										"threadRootId": {
 											"type": [
 												"number",
@@ -47179,6 +47213,7 @@
 										"sessionId",
 										"createdAt",
 										"editedAt",
+										"deletedAt",
 										"threadRootId",
 										"threadAlsoInChannel"
 									]
@@ -47238,6 +47273,250 @@
 									},
 									"required": [
 										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not author",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"delete": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Conversations"
+				],
+				"summary": "Delete a message you authored",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"exclusiveMinimum": 0
+						},
+						"required": true,
+						"name": "messageId",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Message deleted; content is empty and deletedAt is set",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "number"
+										},
+										"conversationId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"actorId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"actorName": {
+											"type": "string"
+										},
+										"actorType": {
+											"type": "string"
+										},
+										"kind": {
+											"type": "string"
+										},
+										"content": {
+											"type": "string"
+										},
+										"metadata": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"sessionId": {
+											"type": [
+												"string",
+												"null"
+											],
+											"format": "uuid"
+										},
+										"createdAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"editedAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"deletedAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"threadRootId": {
+											"type": [
+												"number",
+												"null"
+											]
+										},
+										"threadAlsoInChannel": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"id",
+										"conversationId",
+										"actorId",
+										"actorName",
+										"actorType",
+										"kind",
+										"content",
+										"metadata",
+										"sessionId",
+										"createdAt",
+										"editedAt",
+										"deletedAt",
+										"threadRootId",
+										"threadAlsoInChannel"
 									]
 								}
 							}
