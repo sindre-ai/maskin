@@ -259,6 +259,10 @@ const invoicesRoute = createRoute({
 			description: 'Workspace not found',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		500: {
+			description: 'Stripe is not configured or the invoice list failed',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
