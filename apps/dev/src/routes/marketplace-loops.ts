@@ -880,6 +880,16 @@ app.openapi(installItemRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Marketplace item not found'), 404)
 	}
 
+	// A retired loop is no longer offered, so neither are its items. Mirrors the loop install route.
+	const [loop] = await db
+		.select({ retiredAt: marketplaceLoops.retiredAt })
+		.from(marketplaceLoops)
+		.where(eq(marketplaceLoops.id, item.loopId))
+		.limit(1)
+	if (loop?.retiredAt) {
+		return c.json(createApiError('NOT_FOUND', 'Marketplace item is no longer available'), 404)
+	}
+
 	const type = item.itemType as MarketplaceItemType
 	const snapshot = (item.itemSnapshot as Record<string, unknown>) ?? {}
 	// Individual-item installs are tracked by marketplace_item_id in metadata.
