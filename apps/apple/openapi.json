@@ -16508,6 +16508,54 @@
 				}
 			}
 		},
+		"/api/workspaces/counts": {
+			"get": {
+				"tags": [
+					"workspaces"
+				],
+				"summary": "What waits on the caller in each of their workspaces (the iPhone workspace switcher's counts)",
+				"description": "One row per workspace the caller belongs to. Kept off the workspace list so that hot read stays cheap.",
+				"responses": {
+					"200": {
+						"description": "Per-workspace counts for the caller",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "array",
+									"items": {
+										"type": "object",
+										"properties": {
+											"workspaceId": {
+												"type": "string",
+												"format": "uuid"
+											},
+											"unreadChats": {
+												"type": "integer",
+												"minimum": 0
+											},
+											"forYou": {
+												"type": "integer",
+												"minimum": 0
+											},
+											"needYou": {
+												"type": "integer",
+												"minimum": 0
+											}
+										},
+										"required": [
+											"workspaceId",
+											"unreadChats",
+											"forYou",
+											"needYou"
+										]
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/workspaces/{id}": {
 			"patch": {
 				"x-viewer-policy": "writer",
