@@ -19,6 +19,12 @@ import { CreatePicker } from '@/components/shared/create-picker'
 import { UploadProgress } from '@/components/shared/upload-progress'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
@@ -37,7 +43,7 @@ import { hasHighConfidenceSecret, scanComposerText } from '@/lib/secret-scanner'
 import { type TagValue, splitTextByTags, tagLabel } from '@/lib/tag-input-model'
 import { VIEWER_READ_ONLY_MESSAGE, isViewerRefusal } from '@/lib/workspace-role'
 import { type SecretMatch, withoutSecrets } from '@maskin/shared'
-import { ArrowUp, Hash, Info, Mic, Paperclip, X } from 'lucide-react'
+import { ArrowUp, AtSign, FileText, Hash, Image, Info, Mic, Plus, X } from 'lucide-react'
 import {
 	type ChangeEvent,
 	type ClipboardEvent,
@@ -178,6 +184,22 @@ export function detectUnifiedSlashTransition({
 	return { type: 'noop' }
 }
 
+/**
+ * Whether the message has anything to send: words, or an uploaded attachment (the caller passes
+ * 0 when attachment-only sends are off). Any upload still running or failed blocks the send.
+ */
+export function canSendMessage({
+	text,
+	attachmentCount,
+	uploadsInFlight,
+}: {
+	text: string
+	attachmentCount: number
+	uploadsInFlight: number
+}): boolean {
+	return (text.trim().length > 0 || attachmentCount > 0) && uploadsInFlight === 0
+}
+
 export interface ComposerProps {
 	workspaceId: string
 	/**
@@ -191,6 +213,11 @@ export interface ComposerProps {
 	 * being rejected. Only for callers that put `extras.files` on the message.
 	 */
 	longTextAsFile?: boolean
+	/**
+	 * Send is on with no text when at least one attachment has finished uploading. Only for
+	 * callers whose `onSend` puts `selection.files` on the message.
+	 */
+	allowAttachmentOnly?: boolean
 	pending: boolean
 	surface: ChatSurface
 	placeholder: string
@@ -313,6 +340,33 @@ function writeDraft(key: string, value: string): void {
 }
 
 /**
+ * What the composer's one round action button is. It swaps between the mic (empty draft),
+ * the send arrow (typed), the listening bars (dictating) and a spinner (transcribing).
+ * Without dictation support an empty draft shows a disabled send arrow.
+ */
+export type ComposerActionMode = 'mic' | 'send' | 'listening' | 'transcribing'
+
+export function composerActionMode({
+	hasText,
+	busy,
+	dictationSupported,
+	recording,
+	transcribing,
+}: {
+	hasText: boolean
+	/** A send is in flight, so the arrow (as a spinner) stays put. */
+	busy: boolean
+	dictationSupported: boolean
+	recording: boolean
+	transcribing: boolean
+}): ComposerActionMode {
+	if (recording) return 'listening'
+	if (transcribing) return 'transcribing'
+	if (hasText || busy || !dictationSupported) return 'send'
+	return 'mic'
+}
+
+/**
  * Chat composer. Enter sends, Shift+Enter inserts a newline, IME
  * composition swallows Enter. The textarea auto-resizes up to `max-h-40` and
  * scrolls beyond that. The send button shows a Spinner (and stays disabled)
@@ -324,12 +378,13 @@ function writeDraft(key: string, value: string): void {
  *  - `@` typed at a word boundary opens the mention picker (agents + humans)
  *    inline at the caret; ↑↓ navigate, ↵ inserts, Escape closes. Textarea
  *    keeps DOM focus while the picker is open.
- *  - The paperclip attaches a file; `/` and `@` cover the rest.
+ *  - The + menu attaches a photo or file, or starts a `/` item or `@` mention.
  */
 export function Composer({
 	workspaceId,
 	onSend,
 	longTextAsFile,
+	allowAttachmentOnly,
 	disabled: disabledByCaller,
 	pending,
 	placeholder,
@@ -586,6 +641,7 @@ export function Composer({
 	)
 	const [mentionHighlightIndex, setMentionHighlightIndex] = useState(0)
 	const fileInputRef = useRef<HTMLInputElement | null>(null)
+	const photoInputRef = useRef<HTMLInputElement | null>(null)
 	const textareaRef = useRef<HTMLTextAreaElement | null>(null)
 	const focusInput = useCallback(() => {
 		if (inlineTags) tagRef.current?.focus()
@@ -695,8 +751,22 @@ export function Composer({
 	// user must let it resolve or remove it (AC-T3). Mirrors the comment input's
 	// rule that send requires every chip to be in a final, sendable state.
 	const canSend =
-		value.trim().length > 0 && !disabled && !sending && !pending && pendingUploads.length === 0
+		canSendMessage({
+			text: value,
+			attachmentCount: allowAttachmentOnly ? selection.files.length : 0,
+			uploadsInFlight: pendingUploads.length,
+		}) &&
+		!disabled &&
+		!sending &&
+		!pending
 	const showSpinner = sending || pending
+	const actionMode = composerActionMode({
+		hasText: value.trim().length > 0,
+		busy: sending || pending,
+		dictationSupported: dictation.supported,
+		recording: dictation.recording,
+		transcribing: dictation.transcribing,
+	})
 	// Say why Send is off when an upload is the only thing in the way (a failed
 	// one has to be removed, a running one has to finish).
 	const failedUploads = pendingUploads.filter((p) => p.status === 'failed').length
@@ -1204,6 +1274,24 @@ export function Composer({
 		[vaultFlow?.blocking, enterVault, attachFiles],
 	)
 
+	// The + menu's Item and Person-or-agent rows type the trigger character for the person
+	// and open the same picker typing it would, so there is one path to each picker.
+	const startTrigger = useCallback(
+		(char: '/' | '@') => {
+			const current = valueRef.current
+			const base = current === '' || /\s$/.test(current) ? current : `${current} `
+			setValue(`${base}${char}`)
+			if (char === '/') {
+				setSlashStart(base.length)
+				setUnifiedOpen(true)
+			} else {
+				setMentionTrigger({ atPos: base.length, query: '' })
+			}
+			requestAnimationFrame(() => textareaRef.current?.focus())
+		},
+		[setValue],
+	)
+
 	const handleRemovePending = useCallback((tempId: string) => {
 		// Abort first so the in-flight XHR is cancelled before the request can
 		// finish on the server. uploadPickedFile's catch branch sees
@@ -1227,7 +1315,10 @@ export function Composer({
 	return (
 		<div
 			className={cn(
-				'relative mx-auto flex w-full max-w-[860px] flex-col gap-1 rounded-2xl border border-input bg-card px-3 py-2.5 shadow-sm',
+				'relative mx-auto flex w-full max-w-[860px] flex-col gap-2',
+				// The secret and vault cards keep a box of their own; the bar is the box otherwise.
+				(secretFlow || vaultFlow) &&
+					'rounded-2xl border border-input bg-card px-3 py-2.5 shadow-sm',
 				vaultFlow?.blocking && 'border-brand bg-brand-subtle ring-2 ring-brand/30',
 			)}
 		>
@@ -1338,6 +1429,16 @@ export function Composer({
 				aria-hidden
 				tabIndex={-1}
 			/>
+			<input
+				ref={photoInputRef}
+				type="file"
+				accept="image/*"
+				multiple
+				className="hidden"
+				onChange={handleFileSelection}
+				aria-hidden
+				tabIndex={-1}
+			/>
 			{secretFlow ? (
 				<SecretCaptureFlow
 					workspaceId={workspaceId}
@@ -1392,63 +1493,166 @@ export function Composer({
 			    state is untouched when the user comes back to it. */}
 			<ViewerTooltip className="block">
 				<form onSubmit={handleSubmit} hidden={vaultFlow?.blocking === true}>
-					{inlineTags ? (
-						// Focus and paste are caught on the wrapper: the tag input has no hooks for them.
-						<div
-							ref={tagWrapRef}
-							className="p-1"
-							onFocus={() => setTextareaFocused(true)}
-							onBlur={() => setTextareaFocused(false)}
-							onPasteCapture={handlePaste}
-						>
-							<TagInput
-								handleRef={tagRef}
-								workspaceId={workspaceId}
-								conversationParticipantIds={conversationParticipantIds}
-								selfActorId={selfActorId}
-								initialSegments={initialTagContent.segments}
-								surface="card"
-								ariaLabel={textareaLabel ?? placeholder}
-								ariaDescribedBy={hint === undefined ? undefined : hintId}
-								// The `/` picker's active row, announced while focus stays in the input.
-								ariaActiveDescendant={
+					<div className="flex items-end gap-1.5 rounded-3xl bg-card p-1.5 inset-ring inset-ring-input max-md:p-1">
+						{/* + opens the attach menu. It keeps a 44 px target on touch widths. */}
+						<DropdownMenu>
+							<DropdownMenuTrigger asChild>
+								<Button
+									type="button"
+									size="icon"
+									variant="ghost"
+									className="shrink-0 rounded-full text-muted-foreground max-md:size-11"
+									disabled={disabled}
+									aria-label="Attach file"
+								>
+									<Plus size={20} aria-hidden />
+								</Button>
+							</DropdownMenuTrigger>
+							<DropdownMenuContent
+								align="start"
+								side="top"
+								onCloseAutoFocus={(e) => {
+									e.preventDefault()
+									focusInput()
+								}}
+							>
+								<DropdownMenuItem onSelect={() => photoInputRef.current?.click()}>
+									<Image aria-hidden /> Photo
+								</DropdownMenuItem>
+								<DropdownMenuItem onSelect={() => fileInputRef.current?.click()}>
+									<FileText aria-hidden /> File
+								</DropdownMenuItem>
+								<DropdownMenuItem onSelect={() => startTrigger('/')}>
+									<Hash aria-hidden /> Item
+								</DropdownMenuItem>
+								<DropdownMenuItem onSelect={() => startTrigger('@')}>
+									<AtSign aria-hidden /> Person or agent
+								</DropdownMenuItem>
+							</DropdownMenuContent>
+						</DropdownMenu>
+						{inlineTags ? (
+							// Focus and paste are caught on the wrapper: the tag input has no hooks for them.
+							<div
+								ref={tagWrapRef}
+								className="min-w-0 flex-1 px-1 py-1.5 max-md:py-2"
+								onFocus={() => setTextareaFocused(true)}
+								onBlur={() => setTextareaFocused(false)}
+								onPasteCapture={handlePaste}
+							>
+								<TagInput
+									handleRef={tagRef}
+									workspaceId={workspaceId}
+									conversationParticipantIds={conversationParticipantIds}
+									selfActorId={selfActorId}
+									initialSegments={initialTagContent.segments}
+									surface="card"
+									ariaLabel={textareaLabel ?? placeholder}
+									ariaDescribedBy={hint === undefined ? undefined : hintId}
+									// The `/` picker's active row, announced while focus stays in the input.
+									ariaActiveDescendant={
+										unifiedOpen ? (unifiedActiveDescendant ?? undefined) : undefined
+									}
+									placeholder={
+										canWrite
+											? dictation.recording
+												? 'Listening'
+												: placeholder
+											: VIEWER_READ_ONLY_MESSAGE
+									}
+									disabled={
+										disabled || secretFlow?.blocking === true || vaultFlow?.blocking === true
+									}
+									className="max-h-40 min-h-[28px] text-base"
+									onChange={handleTagChange}
+									onKeyDown={handleKeyDown}
+								/>
+							</div>
+						) : (
+							<Textarea
+								autoResize
+								ref={textareaRef}
+								value={value}
+								onChange={handleChange}
+								onPaste={handlePaste}
+								onKeyDown={handleKeyDown}
+								placeholder={
+									canWrite
+										? dictation.recording
+											? 'Listening'
+											: placeholder
+										: VIEWER_READ_ONLY_MESSAGE
+								}
+								className="max-h-40 min-h-10 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1 py-2 text-base focus-visible:ring-0 focus-visible:ring-offset-0 max-md:min-h-11 max-md:py-2.5 md:text-base"
+								disabled={disabled || secretFlow?.blocking === true || vaultFlow?.blocking === true}
+								rows={1}
+								aria-label={textareaLabel}
+								aria-describedby={hint === undefined ? undefined : hintId}
+								onFocus={() => setTextareaFocused(true)}
+								onBlur={() => setTextareaFocused(false)}
+								// Screen readers announce the picker's active row while focus
+								// stays on the textarea (spec §Accessibility). The picker
+								// keeps this in sync via `onActiveDescendantChange`.
+								aria-activedescendant={
 									unifiedOpen ? (unifiedActiveDescendant ?? undefined) : undefined
 								}
-								placeholder={canWrite ? placeholder : VIEWER_READ_ONLY_MESSAGE}
-								disabled={disabled || secretFlow?.blocking === true || vaultFlow?.blocking === true}
-								className="max-h-40 min-h-[28px] text-sm"
-								onChange={handleTagChange}
-								onKeyDown={handleKeyDown}
+								aria-controls={mentionTrigger !== null ? 'mention-picker-listbox' : undefined}
+								aria-expanded={mentionTrigger !== null || undefined}
 							/>
-						</div>
-					) : (
-						<Textarea
-							autoResize
-							ref={textareaRef}
-							value={value}
-							onChange={handleChange}
-							onPaste={handlePaste}
-							onKeyDown={handleKeyDown}
-							placeholder={canWrite ? placeholder : VIEWER_READ_ONLY_MESSAGE}
-							className="max-h-40 min-h-[36px] w-full resize-none overflow-y-auto border-0 bg-transparent p-1 text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
-							disabled={disabled || secretFlow?.blocking === true || vaultFlow?.blocking === true}
-							rows={1}
-							aria-label={textareaLabel}
-							aria-describedby={hint === undefined ? undefined : hintId}
-							onFocus={() => setTextareaFocused(true)}
-							onBlur={() => setTextareaFocused(false)}
-							// Screen readers announce the picker's active row while focus
-							// stays on the textarea (spec §Accessibility). The picker
-							// keeps this in sync via `onActiveDescendantChange`.
-							aria-activedescendant={
-								unifiedOpen ? (unifiedActiveDescendant ?? undefined) : undefined
-							}
-							aria-controls={mentionTrigger !== null ? 'mention-picker-listbox' : undefined}
-							aria-expanded={mentionTrigger !== null || undefined}
-						/>
-					)}
+						)}
+						{callAgent ? (
+							<span className="inline-flex shrink-0 self-center">
+								<AgentCallButton agent={callAgent} variant="composer" shortcut={false} />
+							</span>
+						) : null}
+						{/* One round action button: mic when empty, send when typed, bars while dictating. */}
+						{actionMode === 'send' ? (
+							<Button
+								key="send"
+								type="submit"
+								size="icon"
+								className={cn(
+									'shrink-0 rounded-full max-md:size-11',
+									canSend ? '' : 'bg-muted text-muted-foreground hover:bg-muted',
+								)}
+								disabled={!canSend}
+								aria-label="Send message"
+							>
+								{showSpinner ? <Spinner /> : <ArrowUp size={18} aria-hidden />}
+							</Button>
+						) : (
+							<Button
+								key={actionMode}
+								type="button"
+								size="icon"
+								className="shrink-0 rounded-full max-md:size-11"
+								onClick={dictation.toggle}
+								disabled={disabled || dictation.transcribing}
+								aria-pressed={dictation.recording}
+								aria-busy={dictation.transcribing}
+								aria-label={
+									actionMode === 'transcribing'
+										? 'Transcribing'
+										: actionMode === 'listening'
+											? 'Stop dictating'
+											: 'Dictate a message'
+								}
+							>
+								{actionMode === 'transcribing' ? (
+									<Spinner />
+								) : actionMode === 'listening' ? (
+									<span aria-hidden className="flex items-center gap-0.5">
+										<span className="h-2 w-0.5 animate-pulse rounded-full bg-primary-foreground" />
+										<span className="h-4 w-0.5 animate-pulse rounded-full bg-primary-foreground [animation-delay:150ms]" />
+										<span className="h-3 w-0.5 animate-pulse rounded-full bg-primary-foreground [animation-delay:300ms]" />
+									</span>
+								) : (
+									<Mic size={18} aria-hidden />
+								)}
+							</Button>
+						)}
+					</div>
 					{sendError || externalError ? (
-						<p role="alert" className="px-1 text-error text-xs" aria-live="polite">
+						<p role="alert" className="mt-2 px-4 text-error text-xs" aria-live="polite">
 							{sendError ?? externalError} — your message is preserved; try again.
 						</p>
 					) : null}
@@ -1457,77 +1661,16 @@ export function Composer({
 							id={hintId}
 							aria-live="polite"
 							className={cn(
-								'px-1 text-muted-foreground text-xs',
-								// The icon and the 8 px gap above the control row exist only while there is text,
-								// so the empty live region adds no height.
-								hintText ? 'mb-2 flex items-start gap-1.5' : 'block',
+								'px-4 text-muted-foreground text-xs',
+								// The icon and the 8 px gap above exist only while there is text, so the empty live
+								// region adds no height.
+								hintText ? 'mt-2 flex items-start gap-1.5' : 'block',
 							)}
 						>
 							{hintText ? <Info aria-hidden className="mt-px size-3.5 shrink-0" /> : null}
 							{hintText}
 						</output>
 					)}
-					<div className="flex items-center gap-2">
-						{/* Attach carries a pinned 44 px touch target (`ios-chat-attach-tap-area.spec.ts`). */}
-						<Button
-							type="button"
-							size="icon"
-							variant="ghost"
-							className="relative h-7 w-7 shrink-0 rounded-full text-muted-foreground before:absolute before:right-0 before:top-1/2 before:h-11 before:w-11 before:-translate-y-1/2 before:content-['']"
-							onClick={() => fileInputRef.current?.click()}
-							disabled={disabled}
-							aria-label="Attach file"
-						>
-							<Paperclip size={14} aria-hidden />
-						</Button>
-						{dictation.supported ? (
-							<Button
-								type="button"
-								size="icon"
-								variant={dictation.recording ? 'destructive' : 'outline'}
-								className={cn(
-									'ml-auto h-7 w-7 shrink-0 rounded-full',
-									dictation.recording ? 'animate-pulse' : 'text-muted-foreground',
-								)}
-								onClick={dictation.toggle}
-								disabled={disabled || dictation.transcribing}
-								aria-pressed={dictation.recording}
-								aria-busy={dictation.transcribing}
-								aria-label={
-									dictation.transcribing
-										? 'Transcribing'
-										: dictation.recording
-											? 'Stop dictating'
-											: 'Dictate a message'
-								}
-							>
-								{dictation.transcribing ? <Spinner /> : <Mic size={14} aria-hidden />}
-							</Button>
-						) : null}
-						{callAgent ? (
-							// `ml-auto` here only when the mic didn't already claim the gap.
-							<span className={cn('inline-flex', dictation.supported ? '' : 'ml-auto')}>
-								<AgentCallButton agent={callAgent} variant="composer" shortcut={false} />
-							</span>
-						) : null}
-						<Button
-							type="submit"
-							size="icon"
-							className={cn(
-								'h-7 w-7 shrink-0 rounded-full',
-								dictation.supported || callAgent ? '' : 'ml-auto',
-								canSend
-									? 'bg-primary text-primary-foreground'
-									: 'bg-muted text-muted-foreground hover:bg-muted',
-							)}
-							disabled={!canSend}
-							aria-label="Send message"
-						>
-							{/* An up-arrow, not a paper plane — v2's send glyph across every
-						    composer (mockup 543). */}
-							{showSpinner ? <Spinner /> : <ArrowUp size={15} />}
-						</Button>
-					</div>
 				</form>
 			</ViewerTooltip>
 			<CreatePicker

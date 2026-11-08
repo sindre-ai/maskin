@@ -191,6 +191,63 @@ describe('Conversations Integration', () => {
 			])
 		})
 
+		it('accepts an empty message when it carries an attachment, and refuses it without one', async () => {
+			const other = await insertActor(db, { type: 'human' })
+			await addMember(workspaceId, other.id)
+			const { app } = createConversationsApp(ownerId)
+			const headers = { 'x-workspace-id': workspaceId }
+			const attachment = {
+				file_id: crypto.randomUUID(),
+				name: 'report.pdf',
+				mime_type: 'application/pdf',
+				size_bytes: 10,
+			}
+
+			const bare = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Nothing', participant_actor_ids: [other.id], initial_message: '' },
+					headers,
+				),
+			)
+			expect(bare.status).toBe(400)
+
+			const created = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{
+						title: 'Just a file',
+						participant_actor_ids: [other.id],
+						initial_message: '',
+						initial_message_metadata: { attachments: [attachment] },
+					},
+					headers,
+				),
+			)
+			expect(created.status).toBe(201)
+			const { id } = (await created.json()) as { id: string }
+			const [first] = await db.select().from(messages).where(eq(messages.conversationId, id))
+			expect(first?.content).toBe('')
+			expect(first?.metadata?.attachments).toHaveLength(1)
+
+			const emptyReply = await app.request(
+				jsonRequest('POST', `/api/conversations/${id}/messages`, { content: '' }, headers),
+			)
+			expect(emptyReply.status).toBe(400)
+
+			const fileReply = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${id}/messages`,
+					{ content: '', metadata: { attachments: [attachment] } },
+					headers,
+				),
+			)
+			expect(fileReply.status).toBe(201)
+		})
+
 		it('rejects a participant who is not a workspace member', async () => {
 			const outsider = await insertActor(db, { type: 'human' })
 			const { app } = createConversationsApp(ownerId)

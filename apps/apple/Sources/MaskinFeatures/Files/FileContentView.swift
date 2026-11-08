@@ -5,7 +5,7 @@ import PDFKit
 import SwiftUI
 
 /// A loaded file's body, routed by content kind: markdown reads like a document, text and source
-/// are monospaced, images and PDFs use the system viewers, anything else shows its metadata.
+/// are monospaced, images and PDFs use the system viewers, audio plays, anything else shows its metadata.
 struct FileContentView: View {
 	let file: FileDetail
 	var showsSource = false
@@ -29,6 +29,8 @@ struct FileContentView: View {
 		case .pdf:
 			FilePDFView(data: file.data, revision: revision)
 				.frame(minHeight: 480)
+		case .audio:
+			FileAudioView(data: file.data, name: file.name, mimeType: file.mimeType, revision: revision)
 		case .other:
 			EmptyState(
 				symbol: "doc", title: "No preview for this file",

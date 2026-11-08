@@ -63,6 +63,7 @@ import {
 	trackKnowledgeObjectCreated,
 	trackKnowledgeObjectRead,
 } from '../lib/analytics/knowledge-events'
+import { trackObjectCreated } from '../lib/analytics/object-events'
 import { createApiError, createInvalidTypeError, validationFailureHook } from '../lib/errors'
 import { recordEvent, recordEvents } from '../lib/events/record-event'
 import { fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
@@ -99,6 +100,7 @@ import {
 import { movedInstruction, wakeAgentFromCard } from '../services/chat-card-wake'
 import { loadObjectLastSession } from '../services/object-last-session'
 import type { SessionManager } from '../services/session-manager'
+import { startSignupWelcomeChat } from '../services/signup-welcome-chat'
 import {
 	getStarredObjectIds,
 	isObjectStarredByActor,
@@ -789,6 +791,14 @@ app.openapi(createObjectRoute, async (c) => {
 		source: 'author',
 	})
 
+	void trackObjectCreated({
+		workspaceId,
+		actorId,
+		objectId: created.id,
+		objectType: created.type,
+		createdVia: resolveCreatedVia(c.req.header(CLIENT_SOURCE_HEADER), actorType),
+	})
+
 	if (created.type === 'knowledge') {
 		void trackKnowledgeObjectCreated({
 			workspaceId,
@@ -798,6 +808,29 @@ app.openapi(createObjectRoute, async (c) => {
 		})
 
 		if ((created.metadata as Record<string, unknown> | null)?.source === SIGNUP_CAPTURE_SOURCE) {
+			const signupMeta = created.metadata as {
+				name?: string
+				organization?: string
+				role?: string
+				welcome_in_chat?: boolean
+			}
+			// Awaited, unlike the comment below: the web sign-up opens this chat as
+			// soon as this response lands, so it has to exist by then.
+			if (signupMeta.welcome_in_chat) {
+				await startSignupWelcomeChat({
+					db,
+					workspaceId,
+					humanActorId: actorId,
+					knowledgeObjectId: created.id,
+					metadata: signupMeta,
+				}).catch((err) =>
+					logger.error('Failed to open signup welcome chat', {
+						workspaceId,
+						knowledgeObjectId: created.id,
+						error: String(err),
+					}),
+				)
+			}
 			postSignupWelcomeComment({
 				db,
 				sessionManager,

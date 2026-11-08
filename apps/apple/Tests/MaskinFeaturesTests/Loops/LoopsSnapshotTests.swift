@@ -78,6 +78,31 @@ private let fixtureActivity = [
 	LoopActivityEntry(id: "1", action: "trigger_fired", entityType: "trigger", createdAt: base.addingTimeInterval(-7200)),
 ]
 
+/// A loop API whose loop, steps and activity reads fail, or never answer.
+private actor BrokenLoopsAPI: LoopsAPI {
+	enum Mode { case failing, hanging }
+	let mode: Mode
+	init(_ mode: Mode) { self.mode = mode }
+
+	private func answer<T: Sendable>(_ value: T) async throws -> T {
+		switch mode {
+		case .failing: throw AutomationError("offline")
+		case .hanging:
+			try await Task.sleep(for: .seconds(3600))
+			return value
+		}
+	}
+	func loops() async throws -> [LoopSummary] { try await answer([fixtureLoop]) }
+	func steps(loopID: String) async throws -> [LoopStep] { try await answer(fixtureSteps) }
+	func activity(loopID: String) async throws -> [LoopActivityEntry] { try await answer(fixtureActivity) }
+	func actors() async throws -> [AutomationActor] { [relay, forge, scout] }
+	func installs() async throws -> [LoopInstall] { [] }
+	func setStatus(loopID: String, status: LoopPill, idempotencyKey: String) async throws {}
+	func createLoop(name: String, content: String, idempotencyKey: String) async throws -> String { "new" }
+	func updateLoop(loopID: String, name: String?, content: String?, idempotencyKey: String) async throws {}
+	func deleteLoop(loopID: String) async throws {}
+}
+
 @MainActor
 private func render<V: View>(_ view: V, width: CGFloat, dark: Bool, name: String) throws {
 	let framed = view
@@ -140,6 +165,27 @@ struct LoopsSnapshotTests {
 			try render(
 				LoopDetailContent(store: store, initialTab: .setup).padding(MaskinSpace.s9),
 				width: width, dark: dark, name: "loop-detail-hood")
+		}
+	}
+
+	@Test("loop detail says what failed with Try again when its reads fail or hang", arguments: [false, true])
+	func detailWhenReadsFail(dark: Bool) async throws {
+		let modes: [(BrokenLoopsAPI.Mode, String)] = [(.failing, "failing"), (.hanging, "hanging")]
+		let tabs: [(LoopDetailTab, String)] = [
+			(.overview, "overview"), (.performance, "performance"), (.activity, "activity"), (.setup, "setup"),
+		]
+		for (mode, name) in modes {
+			let store = LoopDetailStore(
+				loop: fixtureLoop, api: BrokenLoopsAPI(mode), events: nil, giveUpAfter: .milliseconds(100))
+			await store.start()
+			#expect(store.failedBlocks == [.description, .steps, .activity])
+			for width in Self.widths {
+				for (tab, label) in tabs {
+					try render(
+						LoopDetailContent(store: store, initialTab: tab).padding(MaskinSpace.s9),
+						width: width, dark: dark, name: "loop-detail-\(name)-\(label)")
+				}
+			}
 		}
 	}
 

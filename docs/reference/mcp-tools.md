@@ -2,7 +2,7 @@
 title: MCP tools
 slug: mcp-tools
 description: The MCP tool surface — which tools exist, what they return, and when to reach for each.
-last_updated: 2026-10-21
+last_updated: 2026-11-02
 ---
 
 # MCP tools
@@ -21,17 +21,41 @@ Stub — content pending. See parent bet.
 
 The lookup lives in the API route (`apps/dev/src/routes/workspace-skills.ts`) on top of `resolveByIdOrName` (`apps/dev/src/lib/resolve-by-id-or-name.ts`), so the web app and direct API callers get the same rule. `attach_skill_ids` and `detach_skill_ids` stay id-only.
 
+## list_objects: list and search in one call
+
+**list_objects** is the one tool for listing and searching objects. It takes everything it took before, plus these parameters (wave 2 of the list contract):
+
+- **q**: search text, matched against title and content. When set, the walk is ranked by match quality and **sort** defaults to **relevance**. Ranked walks page with the same **cursor** as plain ones.
+- **status**: one status, or a list meaning "any of these", for example ["todo", "in_progress"].
+- **sort**: **created_at_desc** (default without **q**), **created_at_asc**, **updated_at_desc**, **updated_at_asc**, or **relevance** (default with **q**; an error without **q**). With **q** the ranking decides the order and the column only fixes what the walk's snapshot freezes.
+- **detail**: **full** (default, today's rows exactly) or **concise** (id, type, title, status, driver, updatedAt and url, no content).
+- **updated_before**: now also works together with **q**.
+- **workspace_id**: optional. Left out, the call runs in the caller's default workspace.
+
+Unchanged: **type**, **driver**, **updated_after**, **limit** (default 25, max 100), **cursor**, **metadata_eq** and **include_archived**. The page block carries **limit**, **returned**, **has_more** and **total**; **total** is null when **q** is set, because the search route sends no count. Keep the same filters and **q** while following **next_cursor**.
+
+**search_objects** is now a listed alias of **list_objects** (see below). New calls should use **list_objects** with **q**.
+
 ## Deprecated tool names
 
 A tool that was removed from the surface can stay callable as a listed alias: a real entry in the tool list whose one line description says "Deprecated, use X", and whose handler maps its arguments onto the tool it points to. Listed, not hidden, because a model can only call tools it sees. Each one costs roughly 60 to 100 tokens in every tool list, so at most 10 are kept (see **packages/mcp/src/tool-aliases.ts**).
 
-Today there is one: **run_agent**, an alias of **create_session** with **wait** on.
+Today there are two:
+
+- **run_agent**, an alias of **create_session** with **wait** on (details below).
+- **search_objects**, an alias of **list_objects**. It maps **query** to **q**, **driver_id** to **driver** and **offset** to the ranked walk's offset, and passes everything else through, **cursor** included, so a caller can follow **next_cursor** or **page.offset**. Its output is the **list_objects** output, with **page.offset** kept for older callers. Reason: one query tool with one paging style, so agents stop retrying across two tools. Earliest removal: 2027-02-01, and only after a clean stored-prompt sweep (see the ledger entry in **packages/mcp/src/removal-ledger.ts**).
+
+For **run_agent**:
 
 - **actor_id**, **action_prompt** and **spawned_by_message_id** carry over unchanged. **workspace_id** is filled from the connection default when it is missing.
 - **notify_on_complete** is accepted and ignored: **create_session** no longer takes it and registers the same fallback itself when the wait times out.
 - **config**, **poll_interval_seconds**, **timeout_seconds** and **depends_on_session_ids** have no equivalent and are dropped. Their names are recorded in the **alias_use** event.
 
 Removal is a decision with a sweep date, never a zero count alone. Earliest for **run_agent**: late January 2027.
+
+### Rollback for the list contract
+
+**MASKIN_MCP_LIST_CONTRACT** is an environment variable read when the server starts. Setting it to **off** (also **0**, **false**, **no**, **disabled**) brings back the old **list_objects** and **search_objects**, tool list included. Infra & DevOps changes it and restarts the server; it is not an instant flip. It is set in Coolify on the application "Zero-Downtime Maskin" (the API process serves **/mcp**), as a runtime-only variable, then the application is restarted. Allow up to 10 minutes from the request to the old tools being live: the last 50 production deploys of that application took 81 seconds at the shortest, 263 at the median and 490 at the slowest, and a restart does not rebuild the image. To undo the rollback, delete the variable and restart again.
 
 ## Old-name telemetry (alias_use)
 

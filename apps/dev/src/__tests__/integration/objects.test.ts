@@ -1009,6 +1009,36 @@ describe('Objects Integration', () => {
 			expect(ids).not.toContain(oldHit.id)
 		})
 
+		it('excludes rows at or after updated_before (half-open bound)', async () => {
+			const app = createApp()
+			const T = new Date('2026-06-20T12:00:00.000Z')
+			const before = new Date(T.getTime() - 60_000)
+			const after = new Date(T.getTime() + 60_000)
+
+			const oldHit = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				title: 'onboarding flow',
+				updatedAt: before,
+			})
+			const freshHit = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'task',
+				title: 'onboarding flow',
+				updatedAt: after,
+			})
+
+			const cutoff = T.toISOString()
+			const res = await app.request(
+				jsonGet(`/api/objects/search?q=onboarding&updated_before=${encodeURIComponent(cutoff)}`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as Array<{ id: string }>
+			const ids = body.map((r) => r.id)
+			expect(ids).toContain(oldHit.id)
+			expect(ids).not.toContain(freshHit.id)
+		})
+
 		it('composes driver and updated_after additively with q and type', async () => {
 			const app = createApp()
 			const alice = await insertActor(db)

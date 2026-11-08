@@ -128,6 +128,8 @@ struct ForYouFeedView: View {
 	/// Opens the agent behind "with {agent}". Nil in snapshots.
 	var openAgent: ((String) -> Void)?
 	@State private var openStory: StoryCard?
+	/// The draft a card's pointer line asked to scroll to; cleared once the list has moved.
+	@State private var draftToShow: String?
 	/// Which cards the reader opened with Discuss; the rest stay compact.
 	/// Width of the feed, to pick the briefing card size with or without the sidebar open.
 	@State private var feedWidth: CGFloat = 0
@@ -149,6 +151,8 @@ struct ForYouFeedView: View {
 	private let sidebarFeedWidth: CGFloat = 780
 
 	private static let topId = "forYou.top"
+	/// The scroll id of a draft's row under Drafts to review.
+	static func draftRowId(_ objectId: String) -> String { "forYou.draft.\(objectId)" }
 	private static let intents: [ForYouIntent?] = [nil] + ForYouIntent.allCases
 
 	var body: some View {
@@ -191,6 +195,13 @@ struct ForYouFeedView: View {
 					_ = await (feed, rail)
 				}
 				.overlay(alignment: .top) { newAsksPill(proxy: proxy) }
+				.onChange(of: draftToShow) { _, objectId in
+					guard let objectId else { return }
+					withAnimation(MaskinMotion.standard) {
+						proxy.scrollTo(Self.draftRowId(objectId), anchor: .top)
+					}
+					draftToShow = nil
+				}
 			}
 			.animation(store.isFetching ? nil : MaskinMotion.standard, value: layoutKey)
 			.onChange(of: cardIds) { _, ids in expansion.prune(keeping: Set(ids)) }
@@ -469,6 +480,7 @@ struct ForYouFeedView: View {
 				ForEach(drafts) { draft in
 					EditableDraftCard(draft: draft, store: reviews)
 						.modifier(ReadableRow(width: rowWidth, inset: rowInset))
+						.id(Self.draftRowId(draft.objectId))
 				}
 			}
 			ForEach(receipts) { draft in
@@ -597,6 +609,7 @@ struct ForYouFeedView: View {
 		var actions = liveActions(entry)
 		let id = entry.card.id
 		let agent = store.agent(of: entry.card)
+		actions.showDraft = { draftToShow = $0 }
 		if wide {
 			// The Chief of Staff thread opens in a form sheet; the card stays compact behind it.
 			actions.expand = { Task { await chief?.openThread(card: entry.card, agent: agent) } }

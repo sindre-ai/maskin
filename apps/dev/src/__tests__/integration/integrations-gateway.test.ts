@@ -474,26 +474,26 @@ describe('PostHog exec through the gateway (Integration)', () => {
 		expect(upstream).not.toContain('dashboard-create')
 	})
 
-	it('does not give the exec rule to another name, and leaves other messages byte for byte', async () => {
+	it('does not give the exec rule to another name, and forwards other messages as judged', async () => {
 		const s = await setupPosthog()
 		const body = execCall('call query-trends {}')
 		body.params.name = 'exec2'
 		expect(await isError(await postPosthog(appFor(s.reader.id), s.ws.id, body))).toBe(true)
 		expect(fetchMock).not.toHaveBeenCalled()
 
-		// Odd spacing and a repeated key: any re-serialization would change this text.
+		// Odd spacing and a repeated key: what goes upstream is the judged message, one value per key.
 		const odd =
 			'{ "jsonrpc" : "2.0",  "id": 1, "method":"tools/call", "params":{"name":"list_things","name":"list_things","arguments":{}} }'
 		await postPosthog(appFor(s.writer.id), s.ws.id, odd)
-		expect(sentBody()).toBe(odd)
+		expect(sentBody()).toBe(JSON.stringify(JSON.parse(odd)))
 	})
 
-	it('sends the original text byte for byte on Linear, even for a tool called exec', async () => {
+	it('does not give the exec rule to a tool called exec on Linear, and forwards the judged message', async () => {
 		const s = await setup()
 		const odd =
 			'{ "jsonrpc":"2.0",  "id":1,"method":"tools/call","params":{"name":"exec","arguments":{"command":"a"}} }'
 		await post(appFor(s.writer.id), s.ws.id, odd)
-		expect(sentBody()).toBe(odd)
+		expect(sentBody()).toBe(JSON.stringify(JSON.parse(odd)))
 
 		fetchMock.mockClear()
 		expect(await isError(await post(appFor(s.reader.id), s.ws.id, odd))).toBe(true)
@@ -539,5 +539,82 @@ describe('PostHog exec through the gateway (Integration)', () => {
 		expect(out.result.tools[0].description).not.toContain('Unavailable')
 		expect(out.result.tools[0].description).toContain('Read access: query and lookup commands run')
 		expect(out.result.tools[0].annotations.readOnlyHint).toBe(false)
+	})
+})
+
+describe('The gateway forwards the message it judged (Integration)', () => {
+	const judged = (raw: string) => JSON.stringify(JSON.parse(raw))
+
+	it('sends one value per repeated key on Linear, equal to the judged one', async () => {
+		const s = await setup()
+		const app = appFor(s.reader.id)
+		const raw =
+			'{"jsonrpc":"2.0","id":1,"method":"tools/call","method":"tools/call","params":{"name":"create_issue","name":"list_issues","arguments":{"a":1},"arguments":{"a":2}}}'
+		expect(await isError(await post(app, s.ws.id, raw))).toBe(false)
+		expect(fetchMock).toHaveBeenCalledOnce()
+		expect(sentBody()).toBe(judged(raw))
+		expect(sentBody()).not.toContain('create_issue')
+		expect(sentBody()).toBe(
+			'{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_issues","arguments":{"a":2}}}',
+		)
+	})
+
+	it('sends one value per repeated key on Gmail, equal to the judged one', async () => {
+		const s = await setup()
+		await db.insert(integrations).values({
+			workspaceId: s.ws.id,
+			provider: 'gmail',
+			status: 'active',
+			credentials: encrypt(JSON.stringify({ accessToken: 'fake-gmail-token-0123456789' })),
+			createdBy: s.human,
+		})
+		const raw =
+			'{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"send_email","name":"search_threads","arguments":{"q":"a"},"arguments":{"q":"b"}}}'
+		const res = await post(appFor(s.reader.id), s.ws.id, raw, 'gmail')
+		expect(await isError(res)).toBe(false)
+		expect(fetchMock).toHaveBeenCalledOnce()
+		expect(sentBody()).toBe(judged(raw))
+		expect(sentBody()).not.toContain('send_email')
+	})
+
+	it('sends one value per repeated key on PostHog, equal to the judged one', async () => {
+		const s = await setupPosthog()
+		const raw =
+			'{"jsonrpc":"2.0","id":1,"method":"tools/call","method":"tools/call","params":{"name":"exec","arguments":{"command":"call dashboard-create {}","command":"call query-trends {}"},"arguments":{"command":"call query-trends {}"}}}'
+		const res = await postPosthog(appFor(s.reader.id), s.ws.id, raw)
+		expect(await isError(res)).toBe(false)
+		expect(fetchMock).toHaveBeenCalledOnce()
+		expect(sentBody()).toBe(judged(raw))
+		expect(sentBody()).not.toContain('dashboard-create')
+	})
+
+	it('re-serializes messages that are not tool calls, too', async () => {
+		const s = await setup()
+		const raw = '{ "jsonrpc" : "2.0", "id": 1,  "method":"initialize", "params": {} }'
+		await post(appFor(s.reader.id), s.ws.id, raw)
+		expect(sentBody()).toBe(judged(raw))
+	})
+
+	it('keeps the fields of a normal message', async () => {
+		const s = await setup()
+		const message = call('list_issues', 5)
+		await post(appFor(s.reader.id), s.ws.id, message)
+		expect(JSON.parse(sentBody())).toEqual(message)
+	})
+
+	it('round-trips small integer and string ids', async () => {
+		const s = await setup()
+		for (const id of [0, 7, 123456, 'req-42', '7']) {
+			fetchMock.mockClear()
+			await post(appFor(s.reader.id), s.ws.id, call('list_issues', id as number))
+			expect(JSON.parse(sentBody()).id).toBe(id)
+		}
+	})
+
+	it('still refuses batches and malformed bodies without forwarding anything', async () => {
+		const s = await setup()
+		expect((await post(appFor(s.reader.id), s.ws.id, [call('list_issues')])).status).toBe(400)
+		expect((await post(appFor(s.reader.id), s.ws.id, '{"a":1')).status).toBe(400)
+		expect(fetchMock).not.toHaveBeenCalled()
 	})
 })

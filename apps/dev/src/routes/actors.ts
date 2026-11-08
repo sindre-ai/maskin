@@ -413,6 +413,7 @@ app.openapi(createActorRoute, async (c) => {
 			agent_id: actor.id,
 			workspace_id: memberWorkspaceId,
 			creator_actor_type: creatorType,
+			source: creatorType === 'human' ? 'person' : 'agent',
 			client_source: clientSource,
 			membership_added: !!memberWorkspaceId,
 		})

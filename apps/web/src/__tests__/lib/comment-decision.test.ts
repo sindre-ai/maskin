@@ -50,7 +50,7 @@ describe('decisionOfEvent', () => {
 	// which parsed properly, showed a plain thread card.
 	it.each([
 		['null', null],
-		['an empty object', {}],
+		['an empty item', {}],
 		['an array', []],
 		['a string', 'ship it'],
 		['a partial block missing options', { title: 'Pick one', summary: 'x', ask: 'y' }],

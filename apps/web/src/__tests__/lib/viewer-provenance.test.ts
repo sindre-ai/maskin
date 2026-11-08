@@ -76,7 +76,7 @@ describe('resolveProvenance — 6 variants + agent-attached-human-driver', () =>
 		} else {
 			throw new Error('expected collapsed crumb')
 		}
-		expect(r.strip.label).toBe('Attached to 4 objects')
+		expect(r.strip.label).toBe('Attached to 4 items')
 		expect(r.send).toBe('picker-required')
 		expect(r.defaultTarget).toBeNull()
 		expect(r.targetDriverType).toBeNull()

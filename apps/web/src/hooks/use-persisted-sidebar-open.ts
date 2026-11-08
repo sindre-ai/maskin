@@ -1,31 +1,23 @@
 import { getStoredSidebarOpen, persistSidebarOpen } from '@/lib/nav-view-keys'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 
-/**
- * Owns the sidebar open/collapsed state for one view (identified by a
- * `viewKey` from `nav-view-keys`). State is read from localStorage on first
- * mount, reset when the view changes, and written back on every change so
- * each view remembers its own collapse state across navigation and reload.
- */
-export function usePersistedSidebarOpen(viewKey: string | null) {
-	const effectiveKey = viewKey ?? 'home'
-	const [open, setOpenState] = useState<boolean>(() => getStoredSidebarOpen(effectiveKey))
+// One flag for the whole app: the sidebar is the same width on every page
+// unless the person collapsed it, and then it stays collapsed everywhere. It
+// used to be remembered per view, which left Agents and Marketplace as a 60px
+// rail after a single collapse there while every other page was expanded. The
+// key is the old For you key, so a person's existing choice there carries over.
+const SIDEBAR_KEY = 'home'
 
-	// Reset when the view changes so each view starts from its own collapsed state.
-	useEffect(() => {
-		setOpenState(getStoredSidebarOpen(viewKey ?? 'home'))
-	}, [viewKey])
+export function usePersistedSidebarOpen() {
+	const [open, setOpenState] = useState<boolean>(() => getStoredSidebarOpen(SIDEBAR_KEY))
 
-	const setOpen = useCallback(
-		(value: boolean | ((prev: boolean) => boolean)) => {
-			setOpenState((prev) => {
-				const next = typeof value === 'function' ? value(prev) : value
-				persistSidebarOpen(viewKey ?? 'home', next)
-				return next
-			})
-		},
-		[viewKey],
-	)
+	const setOpen = useCallback((value: boolean | ((prev: boolean) => boolean)) => {
+		setOpenState((prev) => {
+			const next = typeof value === 'function' ? value(prev) : value
+			persistSidebarOpen(SIDEBAR_KEY, next)
+			return next
+		})
+	}, [])
 
 	return { open, setOpen }
 }

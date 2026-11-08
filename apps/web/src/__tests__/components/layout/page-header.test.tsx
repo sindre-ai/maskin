@@ -26,6 +26,9 @@ vi.mock('@/lib/page-header-context', () => ({
 		setScrollLocked: mockSetScrollLocked,
 		setNewMenuPrimaryOverride: mockSetNewMenuPrimaryOverride,
 		setNewMenuDisabled: mockSetNewMenuDisabled,
+		setHideTitle: vi.fn(),
+		setHideBar: vi.fn(),
+		setGutter: vi.fn(),
 	}),
 }))
 
@@ -136,14 +139,14 @@ describe('PageHeader', () => {
 	})
 
 	it('publishes the title and subtitle to the nav row instead of rendering them', () => {
-		const { container } = render(<PageHeader title="Loops" subtitle="4 running" />)
-		expect(mockSetTitle).toHaveBeenCalledWith('Loops')
+		const { container } = render(<PageHeader title="Flows" subtitle="4 running" />)
+		expect(mockSetTitle).toHaveBeenCalledWith('Flows')
 		expect(mockSetSubtitle).toHaveBeenCalledWith('4 running')
 		expect(container).toBeEmptyDOMElement()
 	})
 
 	it('clears the title and subtitle on unmount', () => {
-		const { unmount } = render(<PageHeader title="Loops" subtitle="4 running" />)
+		const { unmount } = render(<PageHeader title="Flows" subtitle="4 running" />)
 		mockSetTitle.mockClear()
 		mockSetSubtitle.mockClear()
 		unmount()

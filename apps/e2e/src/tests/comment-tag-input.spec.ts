@@ -21,6 +21,8 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			})
 
 			await page.goto(`/${ws}/objects/${bet.id}`)
+			// The comment box lives on the Activity tab of the item.
+			await page.getByRole('tab', { name: /^Activity/ }).click()
 			const box = page.getByRole('textbox', { name: 'Comment' })
 			await expect(box).toBeVisible({ timeout: 10_000 })
 			const send = page.getByRole('button', { name: 'Send comment' })

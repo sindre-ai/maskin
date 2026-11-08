@@ -7,10 +7,12 @@ import { useConnectDesktop } from '@/hooks/use-desktop'
 import { type TeachingStatus, useDesktopTeaching } from '@/hooks/use-desktop-teaching'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { cn } from '@/lib/cn'
+import { attachClipboardShortcuts, createCopyArming, takeRemoteCopy } from '@/lib/desktop-clipboard'
 import { KEYBOARD_SENTINEL, SPECIAL_KEYS, diffTyped, keysymForChar } from '@/lib/desktop-keyboard'
 import type RfbClient from '@novnc/novnc/lib/rfb'
 import { Eye, Keyboard, Maximize2, MousePointer2, RefreshCw, Square } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { toast } from 'sonner'
 
 type Phase = 'starting' | 'connecting' | 'connected' | 'disconnected' | 'error'
 
@@ -128,6 +130,10 @@ export function DesktopViewer({
 	const [attempt, setAttempt] = useState(0)
 	// What the computer last copied, for the Copy button.
 	const [remoteText, setRemoteText] = useState('')
+	// Set by Ctrl/Cmd+C: until then, the computer's clipboard is not the person's to take.
+	const [copyArming] = useState(() => createCopyArming())
+	// The browser refused to take what the computer copied (Safari): the Copy button steps in.
+	const [copyBlocked, setCopyBlocked] = useState(false)
 	const clipboardEnabled = useFeatureFlag('computer-clipboard')
 	const [keyboardUp, setKeyboardUp] = useState(false)
 	const keyboardRef = useRef<HTMLTextAreaElement>(null)
@@ -172,7 +178,14 @@ export function DesktopViewer({
 					if (!cancelled) setPhase('connected')
 				})
 				rfb.addEventListener('clipboard', (event) => {
-					if (!cancelled) setRemoteText(event.detail?.text ?? '')
+					if (cancelled) return
+					const text = event.detail?.text ?? ''
+					setRemoteText(text)
+					void takeRemoteCopy(copyArming, text).then((result) => {
+						if (cancelled || !result) return
+						setCopyBlocked(!result.ok)
+						if (result.ok) toast.success('Copied to your clipboard')
+					})
 				})
 				rfb.addEventListener('disconnect', () => {
 					if (cancelled) return
@@ -197,7 +210,7 @@ export function DesktopViewer({
 			rfbRef.current?.disconnect()
 			rfbRef.current = null
 		}
-	}, [workspaceId, agentId, attempt, connectDesktop])
+	}, [workspaceId, agentId, attempt, connectDesktop, copyArming])
 
 	useEffect(() => {
 		const rfb = rfbRef.current
@@ -206,9 +219,24 @@ export function DesktopViewer({
 		if (controlling) rfb.focus()
 		else {
 			setRemoteText('')
+			setCopyBlocked(false)
+			copyArming.disarm()
 			keyboardHidden.current = false
 		}
-	}, [controlling])
+	}, [controlling, copyArming])
+
+	// Ctrl/Cmd+V and Ctrl/Cmd+C on the picture, while the person is in control.
+	const shortcutsOn = controlling && clipboardEnabled && phase === 'connected'
+	useEffect(() => {
+		const target = targetRef.current
+		if (!shortcutsOn || !target) return
+		return attachClipboardShortcuts(target, () => rfbRef.current, {
+			onPasteFailed: (message) => toast.error(message),
+			onCopyPressed: () => {
+				copyArming.arm()
+			},
+		})
+	}, [shortcutsOn, copyArming])
 
 	const busy = phase === 'starting' || phase === 'connecting'
 	const failed = phase === 'disconnected' || phase === 'error'
@@ -223,6 +251,9 @@ export function DesktopViewer({
 	const sending = teaching.status === 'sending'
 	// The hidden textarea that raises the phone keyboard exists only while the person is in control.
 	const typing = touch && controlling && phase === 'connected'
+	// A phone has no Ctrl/Cmd keys, so it keeps both buttons. Elsewhere the keys do the job and
+	// Copy appears only when the browser refused to take what the computer copied.
+	const clipboardButtons = controlling && clipboardEnabled && (touch || copyBlocked)
 
 	const typeIntoComputer = (e: React.FormEvent<HTMLTextAreaElement>) => {
 		const area = e.currentTarget
@@ -288,8 +319,8 @@ export function DesktopViewer({
 						<span className="hidden sm:inline">Teach a task</span>
 					</Button>
 					*/}
-					{controlling && clipboardEnabled && (
-						<DesktopClipboardButtons rfbRef={rfbRef} remoteText={remoteText} />
+					{clipboardButtons && (
+						<DesktopClipboardButtons rfbRef={rfbRef} remoteText={remoteText} copyOnly={!touch} />
 					)}
 					{keyboardButton}
 					<Button
@@ -318,12 +349,17 @@ export function DesktopViewer({
 			<span className="flex items-center gap-1.5 px-2 text-sm text-muted-foreground">
 				{controlling ? <MousePointer2 size={15} /> : <Eye size={15} />}
 				{/* With the copy and paste buttons in the pill, a phone has no room for the words. */}
-				<span className={controlling && clipboardEnabled ? 'max-sm:hidden' : undefined}>
+				<span className={clipboardButtons ? 'max-sm:hidden' : undefined}>
 					{controlling ? "You're in control" : 'Watching'}
 				</span>
 			</span>
-			{controlling && clipboardEnabled && (
-				<DesktopClipboardButtons rfbRef={rfbRef} remoteText={remoteText} rounded />
+			{clipboardButtons && (
+				<DesktopClipboardButtons
+					rfbRef={rfbRef}
+					remoteText={remoteText}
+					copyOnly={!touch}
+					rounded
+				/>
 			)}
 			{keyboardButton}
 			<Button

@@ -73,7 +73,7 @@ describe('SchemaForm', () => {
 
 	it('shows unknown-type message when objectType is missing from schema', () => {
 		render(<Harness objectType="alien" />)
-		expect(screen.getByText(/unknown object type: alien/i)).toBeInTheDocument()
+		expect(screen.getByText(/unknown item type: alien/i)).toBeInTheDocument()
 	})
 
 	it('emits onChange with text edits', () => {

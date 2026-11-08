@@ -246,7 +246,7 @@ describe('describeLoopPlan / summariseLoopPlan', () => {
 	it('counts what would be created and says nothing exists yet', () => {
 		const plan = parseLoopDescription(AC_EXAMPLE)
 		expect(summariseLoopPlan(plan)).toBe(
-			'1 object type · 1 trigger · 1 agent — nothing exists in your workspace yet.',
+			'1 item type · 1 trigger · 1 agent — nothing exists in your workspace yet.',
 		)
 	})
 
@@ -278,7 +278,7 @@ describe('parseLoopDescription — live reading and read-only types', () => {
 		)
 		const readOnly = reporting.objectTypes.find((t) => t.readOnly)
 		expect(readOnly?.type).toBe('customer')
-		expect(readOnly?.note).toBe('linked, never changed by this loop')
+		expect(readOnly?.note).toBe('linked, never changed by this flow')
 		expect(readOnly?.stateChain).toEqual([])
 
 		// A passing mention ("customer feedback") must not invent a type.

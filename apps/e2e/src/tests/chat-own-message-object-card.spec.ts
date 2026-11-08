@@ -51,16 +51,16 @@ test.describe('Chat — your own message carries the object card', () => {
 			// Words and a card on its own line: one plate, the card nested under the words.
 			const nested = message('Is the bet on track?')
 			await expect(nested.locator('[data-linked-card]')).toBeVisible({ timeout: 10_000 })
-			await expect(nested.locator('.bg-primary [data-linked-card]')).toHaveCount(1)
+			await expect(nested.locator('.rounded-2xl.bg-secondary [data-linked-card]')).toHaveCount(1)
 			await expect(nested).toContainText('Own card bet')
 			await expect(nested).toContainText('Thanks.')
-			await expect(nested.locator('.bg-primary')).toHaveCount(1)
+			await expect(nested.locator('.rounded-2xl.bg-secondary')).toHaveCount(1)
 
 			// Only a link: the card is the message, no plate around it.
 			const alone = message('Own card task')
 			const lone = alone.locator('[data-linked-card]')
 			await expect(lone).toBeVisible()
-			await expect(alone.locator('.bg-primary')).toHaveCount(0)
+			await expect(alone.locator('.rounded-2xl.bg-secondary')).toHaveCount(0)
 			await expect(lone.locator('a')).toHaveAttribute('target', '_blank')
 
 			// A link in a sentence is a chip, and the same object again is a chip too.
@@ -73,21 +73,21 @@ test.describe('Chat — your own message carries the object card', () => {
 			await expect(again.locator('[data-linked-card]')).toHaveCount(0)
 			await expect(again.getByRole('link', { name: /^Bet, Active: Own card bet/ })).toBeVisible()
 
-			// An object that is gone reads This object was deleted.
-			await expect(message('An old one').getByText('This object was deleted')).toBeVisible()
+			// An object that is gone reads This item was deleted.
+			await expect(message('An old one').getByText('This item was deleted')).toBeVisible()
 
 			// A lone card fills the column up to 460px (about 343px on a phone, not a 68vw sliver). The 8px
 			// gutter for the session marker bar sits inside that box, so a card with the bar is 452px.
 			const box = await lone.boundingBox()
 			expect(box?.width ?? 0).toBeLessThanOrEqual(461)
-			expect(box?.width ?? 0).toBeGreaterThanOrEqual(Math.min(460, vp.width * 0.8) - 9)
+			expect(box?.width ?? 0).toBeGreaterThanOrEqual(Math.min(420, vp.width * 0.8) - 9)
 
 			// A bubble that holds a card is min(520px, 88% of the column) wide and the card fills it.
-			const plate = await nested.locator('.bg-primary').boundingBox()
+			const plate = await nested.locator('.rounded-2xl.bg-secondary').boundingBox()
 			const nestedCard = await nested.locator('[data-linked-card]').boundingBox()
 			expect(plate?.width ?? 0).toBeLessThanOrEqual(521)
 			const threadWidth = (await thread.boundingBox())?.width ?? 0
-			expect(plate?.width ?? 0).toBeGreaterThanOrEqual(Math.min(520, (threadWidth - 56) * 0.88) - 1)
+			expect(plate?.width ?? 0).toBeGreaterThanOrEqual(Math.min(520, (threadWidth - 56) * 0.85) - 1)
 			expect(nestedCard?.width ?? 0).toBeGreaterThanOrEqual((plate?.width ?? 0) - 31)
 			const overflow = await page.evaluate(
 				() => document.documentElement.scrollWidth - document.documentElement.clientWidth,

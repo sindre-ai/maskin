@@ -306,6 +306,113 @@ export function trackMiniAppFileViewed(p: BaseProps & { entity_type: 'file' }): 
 	trackEvent('mini_app_file_viewed', fillBase(p))
 }
 
+// Usage questions the weekly data pack could not answer. Each fires once per
+// open, with `workspace_id` / `actor_id` riding as super-properties, and carries
+// ids only: no titles, names or text.
+//
+// A person opened a knowledge page. `entity_id` is the knowledge object id.
+export function trackKnowledgePageViewed(p: BaseProps & { entity_type: 'knowledge' }): void {
+	trackEvent('knowledge_page_viewed', fillBase(p))
+}
+
+// A person opened a briefing: a For You story card, or a deck in the file
+// viewer. `entity_id` is the file id.
+export type BriefingKind = 'story' | 'deck'
+
+export function trackBriefingViewed(
+	p: BaseProps & { entity_type: 'file'; kind: BriefingKind },
+): void {
+	trackEvent('briefing_viewed', { ...fillBase(p), kind: p.kind })
+}
+
+// Feature usage events. Each carries `feature_area` so a dashboard can read use
+// per area, and ids only: no titles, names or text. `workspace_id`, `actor_id` and
+// `actor_type` ride as super-properties.
+export type FeatureArea = 'objects' | 'loops' | 'agents' | 'chats' | 'billing'
+
+// A person opened an object page. `object_type` is the object's `type` column
+// (bet, task, insight, knowledge and so on), so knowledge pages are covered.
+export function trackObjectViewed(p: { entity_id: string; object_type: string }): void {
+	trackEvent('object_viewed', {
+		...fillBase({ entity_id: p.entity_id, entity_type: 'object' }),
+		object_type: p.object_type,
+		feature_area: 'objects',
+	})
+}
+
+export function trackLoopViewed(p: { entity_id: string }): void {
+	trackEvent('loop_viewed', {
+		...fillBase({ entity_id: p.entity_id, entity_type: 'loop' }),
+		feature_area: 'loops',
+	})
+}
+
+export function trackAgentOpened(p: { entity_id: string }): void {
+	trackEvent('agent_opened', {
+		...fillBase({ entity_id: p.entity_id, entity_type: 'agent' }),
+		feature_area: 'agents',
+	})
+}
+
+// The first agent reply landed in a chat the person had open. `latency_ms` runs
+// from the person's last message before it.
+export function trackChatFirstReplyReceived(p: {
+	entity_id: string
+	latency_ms: number | null
+}): void {
+	trackEvent('chat_first_reply_received', {
+		...fillBase({ entity_id: p.entity_id, entity_type: 'conversation' }),
+		latency_ms: p.latency_ms,
+		feature_area: 'chats',
+	})
+}
+
+// The person left a chat they wrote in. `replied` means an agent had answered by
+// then, `abandoned` means they left with no answer. A chat they only read sends
+// nothing.
+export type ChatLeftOutcome = 'replied' | 'abandoned'
+
+export function trackChatLeft(p: { entity_id: string; outcome: ChatLeftOutcome }): void {
+	trackEvent('chat_left', {
+		...fillBase({ entity_id: p.entity_id, entity_type: 'conversation' }),
+		outcome: p.outcome,
+		feature_area: 'chats',
+	})
+}
+
+const creditLowShown = new Set<string>()
+
+// The no-credits notice was put in front of the person. `placement` says which
+// one (`surface` is taken: it names web, iPhone or server).
+export function trackCreditLowShown(p: {
+	placement: 'banner' | 'object_chip'
+	plan: string
+}): void {
+	// Once per notice per page load: the chip remounts on every object page.
+	const key = `${p.placement}:${p.plan}`
+	if (creditLowShown.has(key)) return
+	creditLowShown.add(key)
+	trackEvent('credit_low_shown', {
+		placement: p.placement,
+		plan: p.plan,
+		feature_area: 'billing',
+	})
+}
+
+// The person clicked an upgrade or renew button. `source` is where the button is.
+export function trackUpgradeClicked(p: {
+	source: 'billing_settings' | 'expired_dialog'
+	target_plan: 'pro' | 'team'
+	current_plan: string
+}): void {
+	trackEvent('upgrade_clicked', {
+		source: p.source,
+		target_plan: p.target_plan,
+		current_plan: p.current_plan,
+		feature_area: 'billing',
+	})
+}
+
 // Agent change review: fires when the human opens the review view from the
 // proposal banner. The other two review events (change_proposal_submitted,
 // change_reviewed) are sent from the server. Only mounted behind the

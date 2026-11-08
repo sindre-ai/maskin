@@ -37,10 +37,36 @@ public enum ChiefOfStaffThreads {
 		"About: \(card.objectTitle?.trimmed.nonEmpty ?? card.headline)"
 	}
 
-	/// The first message of a new thread names the object, since the agent reads only the text.
-	public static func firstMessage(_ text: String, about card: ForYouCard) -> String {
+	/// The first message of a new thread carries the card itself (headline, summary, question and
+	/// each option's label) and a link to its object, since the agent reads only the text. The link
+	/// is left out when the workspace is unknown.
+	public static func firstMessage(_ text: String, about card: ForYouCard, workspaceID: String? = nil) -> String {
 		let subject = card.objectTitle?.trimmed.nonEmpty ?? card.headline
-		return "Re: \(subject)\n\n\(text)"
+		var parts = ["Re: \(subject)", cardText(card)]
+		if let workspaceID {
+			let name = subject.replacingOccurrences(of: "[", with: "(").replacingOccurrences(of: "]", with: ")")
+			parts.append("[\(name)](\(DeepLink.object(workspaceId: workspaceID, id: card.id).universalURL().absoluteString))")
+		}
+		parts.append(text)
+		return parts.joined(separator: "\n\n")
+	}
+
+	/// The card as plain text: a decision gives its title, summary, ask and option labels; a plain
+	/// mention gives its headline and body.
+	static func cardText(_ card: ForYouCard) -> String {
+		var lines = ["Card: \(card.headline)"]
+		if let decision = card.decision {
+			for line in [decision.summary, decision.ask] {
+				if let line = line.trimmed.nonEmpty { lines.append(line) }
+			}
+			if !decision.options.isEmpty {
+				lines.append("Options:")
+				lines += decision.options.map { "- \($0.label)\($0.recommended ? " (recommended)" : "")" }
+			}
+		} else if let body = card.body.nonEmpty {
+			lines.append(body)
+		}
+		return lines.joined(separator: "\n")
 	}
 
 	/// The thread to send into. A new one is created empty: the caller sends the first message
@@ -235,7 +261,7 @@ public final class ChiefOfStaffDesk {
 			let (outcome, recipient) = try await resolveThread(
 				card: card, agent: agent, alsoInvite: metadata?.mentions ?? [])
 			let body: String
-			if case .created = outcome { body = ChiefOfStaffThreads.firstMessage(text, about: card) } else { body = text }
+			if case .created = outcome { body = ChiefOfStaffThreads.firstMessage(text, about: card, workspaceID: workspaceId()) } else { body = text }
 			// A specific agent is tagged, so it is woken whatever the chat's size becomes.
 			let sent = recipient.id.map { AgentThreads.tagging($0, in: metadata) } ?? metadata
 			presented = Presented(

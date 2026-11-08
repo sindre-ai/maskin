@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
-import { evictMembership } from '@maskin/auth'
+import { evictMembership, evictOAuthTokens, getOAuthPin } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { actors, workspaceMembers, workspaceOnboardingPrompts, workspaces } from '@maskin/db/schema'
 import {
@@ -18,6 +18,7 @@ import {
 import type { StorageProvider } from '@maskin/storage'
 import { and, count, eq, inArray } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
+import { isTeamActor } from '../lib/analytics/team-member'
 import { isEnterprise, isEnterpriseActor } from '../lib/enterprise'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -30,6 +31,7 @@ import {
 } from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
 import { loadMembershipFacts } from '../lib/membership-facts'
+import { revokeMemberGrants } from '../lib/oauth-server/grants'
 import { shouldSkipOnboardingKickoff } from '../lib/onboarding/chief-of-staff-kickoff'
 import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
@@ -100,6 +102,9 @@ const workspaceWithRoleSchema = workspaceResponseSchema.extend({
 	memberCount: z.number().int().nonnegative(),
 	// True for the one workspace the caller chose as their default (actors.default_workspace_id).
 	isDefault: z.boolean(),
+	// Whether the caller is on our own team, for marking browser analytics events.
+	// A fact about the caller, so every row carries the same value.
+	isTeam: z.boolean(),
 })
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
@@ -263,6 +268,7 @@ const listWorkspacesRoute = createRoute({
 app.openapi(listWorkspacesRoute, async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
+	const pin = getOAuthPin()
 
 	const results = await db
 		.select({
@@ -284,7 +290,13 @@ app.openapi(listWorkspacesRoute, async (c) => {
 		})
 		.from(workspaceMembers)
 		.innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
-		.where(eq(workspaceMembers.actorId, actorId))
+		.where(
+			and(
+				eq(workspaceMembers.actorId, actorId),
+				// A Claude connector token sees only the workspace it was approved for.
+				...(pin ? [eq(workspaceMembers.workspaceId, pin.workspaceId)] : []),
+			),
+		)
 
 	// Report the *effective* entitlement, not the raw column — an enterprise
 	// billing owner is entitled on every workspace they own without a
@@ -327,10 +339,12 @@ app.openapi(listWorkspacesRoute, async (c) => {
 		.limit(1)
 
 	// The caller is a member of every row here, so 1 is the floor, never 0.
+	const isTeam = await isTeamActor(actorId, callerIsHuman ? 'human' : 'agent')
 	const withCounts = withEntitlement.map((w) => ({
 		...w,
 		memberCount: countByWorkspace.get(w.id) ?? 1,
 		isDefault: w.id === defaultWorkspaceId,
+		isTeam,
 	}))
 
 	return c.json(serializeArray(withCounts) as z.infer<typeof workspaceWithRoleSchema>[])
@@ -1413,7 +1427,10 @@ app.openapi(removeMemberRoute, (async (c) => {
 			data: { removed_actor_id: targetActorId, self_removal: isSelfRemoval },
 		})
 
-		return { kind: 'removed' as const }
+		// Their Claude connections to this workspace end with their membership.
+		const revokedGrants = await revokeMemberGrants(tx, targetActorId, workspaceId)
+
+		return { kind: 'removed' as const, revokedGrants }
 	})
 
 	switch (outcome.kind) {
@@ -1433,6 +1450,7 @@ app.openapi(removeMemberRoute, (async (c) => {
 			// Takes effect on the member's next request, not when its cached auth
 			// lookup expires.
 			evictMembership(targetActorId, workspaceId)
+			if (outcome.revokedGrants > 0) evictOAuthTokens()
 			return c.json({ removed: true as const }, 200)
 	}
 }) as RouteHandler<typeof removeMemberRoute, Env>)

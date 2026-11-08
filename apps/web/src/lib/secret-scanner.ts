@@ -16,6 +16,10 @@ const MAX_SOURCE_LENGTH = 400
 // A remotely supplied regex runs on every send. Reject one that is slow on the
 // inputs that hurt most before it can ever freeze the composer.
 const SMOKE_BUDGET_MS = 5
+// A cold first run or a busy machine can blow the budget once for a good pattern.
+// A catastrophic one is slow on every run, so accept an input if any of a few
+// tries fits the budget.
+const SMOKE_TRIES = 3
 // The short run of a's ending in a non-match is the classic nested-quantifier trap;
 // 24 keeps the cost of detecting it to a few hundred ms instead of a hang.
 const SMOKE_INPUTS = [
@@ -32,12 +36,16 @@ function compilesFast(source: string): boolean {
 	} catch {
 		return false
 	}
-	for (const input of SMOKE_INPUTS) {
+	return SMOKE_INPUTS.every((input) => matchesWithinBudget(re, input))
+}
+
+function matchesWithinBudget(re: RegExp, input: string): boolean {
+	for (let i = 0; i < SMOKE_TRIES; i++) {
 		const t0 = performance.now()
 		input.match(re)
-		if (performance.now() - t0 > SMOKE_BUDGET_MS) return false
+		if (performance.now() - t0 <= SMOKE_BUDGET_MS) return true
 	}
-	return true
+	return false
 }
 
 /**

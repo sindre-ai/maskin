@@ -36,10 +36,12 @@ import {
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
+import { shouldSkipOnboardingKickoff } from '../lib/onboarding/chief-of-staff-kickoff'
 import { errorSchema, idParamSchema, jsonbField } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
 import { isWorkspaceMember, isWorkspaceWriter } from '../lib/workspace-auth'
 import { type AgentStorageManager, workspaceSkillKey } from '../services/agent-storage'
+import { startLoopPersonalizationChat } from '../services/loop-personalization-chat'
 import {
 	type MarketplaceItemType,
 	buildActorInsert,
@@ -96,9 +98,10 @@ const installLoopBodySchema = z.object({
 	loopId: z.string().uuid(),
 	workspaceId: z.string().uuid(),
 	// Which marketplace surface the install was started from. Absent means the
-	// catalogue card; the loop detail page sends `'detail'`. Analytics only —
+	// catalogue card; the loop detail page sends `'detail'` and the install page
+	// reached from a public loop page sends `'public_site'`. Analytics only —
 	// it changes nothing about what gets provisioned.
-	source: z.enum(['detail']).optional(),
+	source: z.enum(['detail', 'public_site']).optional(),
 })
 
 const listInstalledLoopsQuerySchema = z.object({
@@ -291,6 +294,11 @@ app.openapi(installLoopRoute, async (c) => {
 
 	if (!loop) {
 		return c.json(createApiError('NOT_FOUND', 'Marketplace loop not found'), 404)
+	}
+
+	// A retired loop is no longer offered; existing installs of it keep working.
+	if (loop.retiredAt) {
+		return c.json(createApiError('NOT_FOUND', 'Marketplace loop is no longer available'), 404)
 	}
 
 	const items = await db
@@ -619,6 +627,26 @@ app.openapi(installLoopRoute, async (c) => {
 		provisioned,
 		source,
 	})
+
+	// Ask the Chief of Staff how to tailor the new loop to this workspace. Suggest-only
+	// and best effort: the install is done, so a failure here is logged, never returned.
+	// Skipped in E2E stacks, which have no LLM credentials for the session to run on.
+	if (!shouldSkipOnboardingKickoff()) {
+		startLoopPersonalizationChat({
+			db,
+			sessionManager: c.get('sessionManager'),
+			workspaceId,
+			installerId: actorId,
+			installedLoopId: installed.id,
+			loop: { name: loop.name, description: loop.description },
+		}).catch((err: unknown) =>
+			logger.error('Failed to start loop personalization chat', {
+				installedLoopId: installed.id,
+				workspaceId,
+				error: String(err),
+			}),
+		)
+	}
 
 	return c.json(
 		{

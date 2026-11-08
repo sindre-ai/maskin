@@ -1,5 +1,6 @@
 {
 	"tools": {
+		"approve_draft_from_chat": ["message_id", "object_id", "workspace_id"],
 		"approve_object_draft": ["content_hash", "object_id", "workspace_id"],
 		"ask_user_question": [
 			"questions",
@@ -245,10 +246,12 @@
 		"list_notifications": ["kind", "limit", "offset", "status", "type", "workspace_id"],
 		"list_objects": [
 			"cursor",
+			"detail",
 			"driver",
 			"include_archived",
 			"limit",
 			"metadata_eq",
+			"q",
 			"sort",
 			"status",
 			"type",

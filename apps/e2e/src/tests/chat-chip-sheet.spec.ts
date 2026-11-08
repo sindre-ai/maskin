@@ -42,7 +42,7 @@ test.describe('Chat — a tap on a chip on a phone opens a bottom sheet', () => 
 
 		await expect(page.getByRole('dialog')).toHaveCount(0)
 		await chip.tap()
-		const sheet = page.getByRole('dialog', { name: 'Object preview' })
+		const sheet = page.getByRole('dialog', { name: 'Item preview' })
 		await expect(sheet).toBeVisible()
 		await expect(sheet).toHaveAttribute('aria-modal', 'true')
 		await expect(page).toHaveURL(chatUrl)
@@ -99,7 +99,7 @@ test.describe('Chat — a tap on a chip on a phone opens a bottom sheet', () => 
 	}) => {
 		await page.setViewportSize({ width: 375, height: 812 })
 		const { chip, chatUrl } = await openChatWithChip(account, page)
-		const sheet = page.getByRole('dialog', { name: 'Object preview' })
+		const sheet = page.getByRole('dialog', { name: 'Item preview' })
 
 		await chip.tap()
 		await expect(sheet).toBeVisible()
@@ -124,7 +124,7 @@ test.describe('Chat — a tap on a chip on a phone opens a bottom sheet', () => 
 	test('375: focus moves into the sheet and Tab stays inside it', async ({ page, account }) => {
 		await page.setViewportSize({ width: 375, height: 812 })
 		const { chip } = await openChatWithChip(account, page)
-		const sheet = page.getByRole('dialog', { name: 'Object preview' })
+		const sheet = page.getByRole('dialog', { name: 'Item preview' })
 
 		await chip.tap()
 		await expect(sheet).toBeVisible()
@@ -149,7 +149,7 @@ test.describe('Chat — the sheet and the preview split at 640px', () => {
 	}) => {
 		await page.setViewportSize({ width: 639, height: 900 })
 		const { chip, ws, task, chatUrl } = await openChatWithChip(account, page)
-		const sheet = page.getByRole('dialog', { name: 'Object preview' })
+		const sheet = page.getByRole('dialog', { name: 'Item preview' })
 		const preview = page.locator('[data-linked-preview]')
 
 		await chip.hover()
@@ -182,7 +182,7 @@ test.describe('Chat — the sheet and the preview split at 640px', () => {
 		// It fades in and rises over 180ms.
 		await expect(preview).toHaveCSS('animation-duration', '0.18s')
 		await chip.click()
-		await expect(page.getByRole('dialog', { name: 'Object preview' })).toHaveCount(0)
+		await expect(page.getByRole('dialog', { name: 'Item preview' })).toHaveCount(0)
 		await expect(page).toHaveURL(new RegExp(`/${ws}/objects/${task.id}`))
 	})
 })

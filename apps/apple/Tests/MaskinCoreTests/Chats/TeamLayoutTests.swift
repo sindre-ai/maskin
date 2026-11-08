@@ -42,7 +42,7 @@ private extension TeamLayout {
 
 @Suite("TeamLayout")
 struct TeamLayoutTests {
-	@Test("pinned rows live only in the tiles, unread rows only in UNREAD, the rest by time")
+	@Test("pinned rows live only in the Pinned group, unread rows only in UNREAD, the rest by time")
 	func sections() {
 		let layout = build([
 			chatConvo("pin", last: ago(hours: 1), pinned: true, unread: 2),
@@ -151,6 +151,16 @@ struct TeamLayoutTests {
 		#expect(layout.tiles[1].title == "Flow f")
 		#expect(layout.tiles[1].subtitle == "Flow")
 		#expect(layout.tiles[2].title == "Relay", "a 1:1 tile is named after the other person")
+	}
+
+	@Test("a pinned item is drawn as the ordinary row of its kind, keeping its pin key as id")
+	func pinnedItemsAreOrdinaryRows() {
+		let layout = build(
+			[chatConvo("a", last: ago(hours: 1), pinned: true)], flows: [flow("f")], pinnedFlows: ["f"])
+		let rows = layout.tiles.map(\.row)
+		#expect(rows.map(\.id) == ["a", "flow:f"])
+		if case .conversation(let c) = rows[0].kind { #expect(c.id == "a") } else { Issue.record("not a conversation row") }
+		if case .flow(let f) = rows[1].kind { #expect(f.id == "f") } else { Issue.record("not a flow row") }
 	}
 
 	@Test("the Unread chip keeps only unread rows and says caught up when there are none")

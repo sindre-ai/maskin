@@ -55,7 +55,7 @@ test.describe('Agent change review in the file viewer', () => {
 			})
 			await account.api.createFileProposal(account.workspaceId, file.id, CHANGES)
 
-			await page.goto(`/${account.workspaceId}/files/${file.id}`)
+			await page.goto(`/${account.workspaceId}/files/${file.id}?view=edit`)
 			await expect(page.getByText(/proposed 2 changes to this text\./)).toBeVisible({
 				timeout: 10000,
 			})
@@ -89,7 +89,7 @@ test.describe('Agent change review in the file viewer', () => {
 		const agent = await account.api.createAgentActor('Ada Atom', account.workspaceId)
 		await new TestAPI(agent.api_key).createFileProposal(account.workspaceId, file.id, CHANGES)
 
-		await page.goto(`/${account.workspaceId}/files/${file.id}`)
+		await page.goto(`/${account.workspaceId}/files/${file.id}?view=edit`)
 		await page.getByRole('button', { name: 'Review changes' }).click({ timeout: 10000 })
 		const card = page.getByRole('region', { name: 'Change 1' })
 		await expect(card).toBeVisible()
@@ -117,7 +117,7 @@ test.describe('Agent change review in the file viewer', () => {
 		await new TestAPI(agent.api_key).createFileProposal(account.workspaceId, file.id, CHANGES)
 		const before = await account.api.getFile(account.workspaceId, file.id)
 
-		await page.goto(`/${account.workspaceId}/files/${file.id}`)
+		await page.goto(`/${account.workspaceId}/files/${file.id}?view=edit`)
 		await page.getByRole('button', { name: 'Review changes' }).click({ timeout: 10000 })
 		const card = page.getByRole('region', { name: 'Change 1' })
 		await expect(card).toBeVisible()
@@ -147,7 +147,7 @@ test.describe('Agent change review in the file viewer', () => {
 		const agent = await account.api.createAgentActor('Ada Atom', account.workspaceId)
 		await new TestAPI(agent.api_key).createFileProposal(account.workspaceId, file.id, CHANGES)
 
-		await page.goto(`/${account.workspaceId}/files/${file.id}`)
+		await page.goto(`/${account.workspaceId}/files/${file.id}?view=edit`)
 		await expect(page.getByText(/Ada Atom proposed 2 changes to this text\./)).toBeVisible({
 			timeout: 10000,
 		})
@@ -205,7 +205,7 @@ test.describe('Agent change review in the file viewer', () => {
 			CHANGES,
 		)
 
-		await page.goto(`/${account.workspaceId}/files/${file.id}`)
+		await page.goto(`/${account.workspaceId}/files/${file.id}?view=edit`)
 		await expect(page.locator('.ProseMirror')).toBeVisible({ timeout: 10000 })
 		const saves: number[] = []
 		page.on('response', (res) => {
@@ -244,7 +244,7 @@ test.describe('Agent change review in the file viewer', () => {
 		})
 		await account.api.createFileProposal(account.workspaceId, file.id, CHANGES)
 
-		await page.goto(`/${account.workspaceId}/files/${file.id}`)
+		await page.goto(`/${account.workspaceId}/files/${file.id}?view=edit`)
 		await expect(page.locator('.ProseMirror')).toBeVisible({ timeout: 10000 })
 		await expect(page.getByRole('button', { name: 'Review changes' })).toHaveCount(0)
 	})

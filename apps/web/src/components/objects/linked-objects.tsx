@@ -100,7 +100,7 @@ export function LinkedObjectsView({
 	 *  keeps its existing `DataTableControls` filter behaviour. */
 	showTabCounts?: boolean
 	/** Optional override for the `+` menu labels. File-detail flips the
-	 *  primary CTA to `Link to object` (defaulting the picker to Objects); the
+	 *  primary CTA to `Link to item` (defaulting the picker to Objects); the
 	 *  secondary label is omitted when null — file→file linking is an agent
 	 *  affordance, not a UI one. */
 	menuLabels?: {
@@ -111,7 +111,7 @@ export function LinkedObjectsView({
 	 * Parent-driven trigger to open the picker from outside the header `+`
 	 * menu. The value is a `{ kind, nonce }` tuple; every time `nonce` changes
 	 * the view opens the picker with `kind` pre-selected. Used by the
-	 * file-detail page's `Link to object` button.
+	 * file-detail page's `Link to item` button.
 	 */
 	openPickerSignal?: { kind: 'object' | 'file'; nonce: number } | null
 }) {
@@ -119,7 +119,7 @@ export function LinkedObjectsView({
 	const [addLinkKind, setAddLinkKind] = useState<'object' | 'file' | null>(null)
 	const canWrite = useCanWrite()
 
-	// External open trigger (file-detail's `Link to object` button). Watching
+	// External open trigger (file-detail's `Link to item` button). Watching
 	// the nonce (not the kind) so the same-kind click retriggers.
 	const signalNonce = openPickerSignal?.nonce
 	useEffect(() => {
@@ -213,7 +213,7 @@ export function LinkedObjectsView({
 						aria-label="Type counts"
 					>
 						<span>
-							Objects ({typeCounts.file ? totalCount - (typeCounts.file ?? 0) : totalCount})
+							Items ({typeCounts.file ? totalCount - (typeCounts.file ?? 0) : totalCount})
 						</span>
 						<span aria-hidden="true">·</span>
 						<span>Files ({typeCounts.file ?? 0})</span>
@@ -246,10 +246,10 @@ export function LinkedObjectsView({
 					<DropdownMenuContent align="end" className="min-w-[180px]">
 						{/* Keyboard hints "O" / "F" match Designer §7 — the picker
 						  itself also intercepts O/F to jump between tabs. On
-						  file-detail the primary CTA is `Link to object`, so the
+						  file-detail the primary CTA is `Link to item`, so the
 						  menu's leading item flips accordingly. */}
 						<DropdownMenuItem onSelect={() => openLinkTo(menuLabels?.primary.kind ?? 'object')}>
-							<span className="flex-1">{menuLabels?.primary.label ?? 'Link to object'}</span>
+							<span className="flex-1">{menuLabels?.primary.label ?? 'Link to item'}</span>
 							<span className="ml-3 font-mono text-[10px] text-muted-foreground">
 								{(menuLabels?.primary.kind ?? 'object') === 'object' ? 'O' : 'F'}
 							</span>
@@ -365,7 +365,7 @@ export function LinkedObjectsForFile({
 	fileId: string
 	/**
 	 * `{ kind, nonce }` — bumping `nonce` opens the picker with `kind`
-	 * pre-selected. Used by the file-detail header's `Link to object` button
+	 * pre-selected. Used by the file-detail header's `Link to item` button
 	 * to trigger the picker (Objects tab default, per design spec §3.1 step 6).
 	 */
 	openPickerSignal?: { kind: 'object' | 'file'; nonce: number } | null
@@ -452,13 +452,13 @@ export function LinkedObjectsForFile({
 			onRetry={() => relQuery.refetch()}
 			heading="Linked"
 			showTabCounts
-			// File-detail's primary link CTA is `Link to object`, defaulting the
+			// File-detail's primary link CTA is `Link to item`, defaulting the
 			// picker to the Objects tab — inverse of object-detail's `Link to
 			// file` primary (design spec §3.1 step 6, §4 File detail — Actions
 			// row). File→file linking stays available via the MCP tool, so the
 			// UI keeps a single CTA.
 			menuLabels={{
-				primary: { label: 'Link to object', kind: 'object' },
+				primary: { label: 'Link to item', kind: 'object' },
 				secondary: null,
 			}}
 			openPickerSignal={openPickerSignal}
@@ -533,12 +533,12 @@ function RelatedEmptyState({
 		<div className="rounded-xl border border-dashed border-border bg-muted/40 px-4 py-6 text-center">
 			<div className="text-sm font-medium text-foreground">No links yet</div>
 			<p className="mt-1 text-xs text-muted-foreground">
-				Attach a file, link to another object, or drag a file here.
+				Attach a file, link to another item, or drag a file here.
 			</p>
 			<div className="mt-3 flex flex-wrap items-center justify-center gap-2">
 				<ViewerTooltip>
 					<Button variant="outline" size="sm" disabled={!canWrite} onClick={onLinkObject}>
-						Link to object
+						Link to item
 					</Button>
 				</ViewerTooltip>
 				<ViewerTooltip>
@@ -740,7 +740,7 @@ export function AddLinkForm({
 					active={tab === 'objects'}
 					onClick={() => setTab('objects')}
 					shortcut="O"
-					label="Objects"
+					label="Items"
 				/>
 				<TabPill
 					active={tab === 'files'}
@@ -775,8 +775,8 @@ export function AddLinkForm({
 				value={search}
 				onChange={(e) => setSearch(e.target.value)}
 				onKeyDown={onKeyDown}
-				placeholder={tab === 'files' ? 'Search files by name…' : 'Search objects…'}
-				aria-label={tab === 'files' ? 'Search files' : 'Search objects'}
+				placeholder={tab === 'files' ? 'Search files by name…' : 'Search items…'}
+				aria-label={tab === 'files' ? 'Search files' : 'Search items'}
 				aria-controls={listboxId}
 				aria-activedescendant={rows.length > 0 ? `${listboxId}-opt-${activeIndex}` : undefined}
 				className="w-full rounded border border-border bg-background px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground focus:border-ring outline-none"
@@ -792,7 +792,7 @@ export function AddLinkForm({
 				// biome-ignore lint/a11y/useSemanticElements: focus lives on the search input via aria-activedescendant; a native <select> can't hold rich content
 				role="listbox"
 				tabIndex={-1}
-				aria-label={tab === 'files' ? 'Files' : 'Objects'}
+				aria-label={tab === 'files' ? 'Files' : 'Items'}
 				className="max-h-32 overflow-auto space-y-0.5"
 			>
 				{tab === 'objects' &&
@@ -841,7 +841,7 @@ export function AddLinkForm({
 					))}
 				{rows.length === 0 && (
 					<p className="text-xs text-muted-foreground py-1 px-2">
-						{tab === 'files' ? 'No files match' : 'No objects found'}
+						{tab === 'files' ? 'No files match' : 'No items found'}
 					</p>
 				)}
 			</div>

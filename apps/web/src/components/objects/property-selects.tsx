@@ -46,14 +46,11 @@ export function StatusSelect({
 		<ViewerTooltip>
 			<Select value={current} onValueChange={onChange} disabled={!canWrite}>
 				<SelectTrigger
-					size={isChip || isRow ? 'chip' : 'default'}
+					size={isChip ? 'pill' : isRow ? 'chip' : 'default'}
 					// The status pill mirrors the driver pill beside it (mockup
 					// 1060–1066): a dot in the status's colour, the word "Status", then
 					// the value — so the meta line reads as one row of like controls.
-					className={cn(
-						isChip && 'gap-1.5 rounded-[7px] px-2 py-[3px]',
-						isRow && 'w-full justify-between rounded-lg px-[7px] py-1 text-[12.5px]',
-					)}
+					className={cn(isRow && 'w-full justify-between rounded-lg px-[7px] py-1 text-[12.5px]')}
 					data-hero-status-trigger={heroAnchor ? '' : undefined}
 					title={isChip ? 'Change status' : undefined}
 				>
@@ -66,7 +63,7 @@ export function StatusSelect({
 							<span className={cn('shrink-0', dot.text)}>
 								<span aria-hidden="true" className="block size-[7px] rounded-full bg-current" />
 							</span>
-							<span className="text-muted-foreground">Status</span>
+							<span className="sr-only">Status</span>
 							<span className="font-semibold capitalize text-secondary-foreground">
 								{current.replace(/_/g, ' ')}
 							</span>
@@ -130,9 +127,9 @@ export function OwnerSelect({
 				disabled={!canWrite}
 			>
 				<SelectTrigger
-					size={isChip || isRow ? 'chip' : 'default'}
+					size={isChip ? 'pill' : isRow ? 'chip' : 'default'}
 					className={cn(
-						isChip && 'gap-1.5 pl-1.5 pr-2',
+						isChip && 'pl-2',
 						isRow && 'w-full justify-between rounded-lg px-[7px] py-1 text-[12.5px]',
 					)}
 					title={isChip ? 'Change who drives this' : undefined}
@@ -153,7 +150,9 @@ export function OwnerSelect({
 									)}
 								/>
 								{!compact && (
-									<span className="text-muted-foreground">{isChip ? 'Driver' : 'Driver:'}</span>
+									<span className={isChip ? 'sr-only' : 'text-muted-foreground'}>
+										{isChip ? 'Driver' : 'Driver:'}
+									</span>
 								)}
 								<span
 									className={cn(
@@ -169,7 +168,7 @@ export function OwnerSelect({
 							</span>
 						) : isChip ? (
 							<span className="inline-flex items-center gap-1.5">
-								<span className="text-muted-foreground">Driver</span>
+								<span className="sr-only">Driver</span>
 								<span className="font-semibold text-secondary-foreground">Unassigned</span>
 							</span>
 						) : (

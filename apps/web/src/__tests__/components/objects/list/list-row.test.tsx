@@ -58,7 +58,7 @@ describe('ListRow select affordance', () => {
 	// Mockup 756–758: a star at rest, a checkbox once anything is selected.
 	it('shows the resting star alongside a hover-revealed checkbox when nothing is selected', () => {
 		renderRow({ anySelected: false, isSelected: false })
-		expect(screen.getByRole('button', { name: 'Star this object' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Star this item' })).toBeInTheDocument()
 		const checkbox = screen.getByRole('checkbox', { name: 'Select row' })
 		expect(checkbox).toHaveAttribute('data-state', 'unchecked')
 		expect(checkbox.className).toContain('opacity-0')
@@ -76,7 +76,7 @@ describe('ListRow select affordance', () => {
 		const wrapper = checkbox.parentElement
 		expect(wrapper?.className).toContain('max-[1024.02px]:p-3.5')
 		expect(wrapper?.className).toContain('max-[1024.02px]:-m-3.5')
-		const star = screen.getByRole('button', { name: 'Star this object' })
+		const star = screen.getByRole('button', { name: 'Star this item' })
 		expect(star.className).not.toContain('max-[1024.02px]:hidden')
 		expect(star.className).not.toContain('pointer-coarse:hidden')
 		expect(star.className).not.toContain('after:')
@@ -111,7 +111,7 @@ describe('ListRow select affordance', () => {
 	it('drops opacity to 60% while the server round-trip is in flight', () => {
 		mockStarState = { isStarred: false, isSaving: true }
 		renderRow({ anySelected: false, isSelected: false })
-		const star = screen.getByRole('button', { name: 'Star this object' })
+		const star = screen.getByRole('button', { name: 'Star this item' })
 		expect(star.className).toContain('opacity-60')
 	})
 
@@ -163,25 +163,13 @@ describe('ListRow pending ask', () => {
 	})
 	const actors = [buildActorListItem({ id: 'actor-1', name: 'Scout', type: 'agent' })]
 
-	it('renders the amber "Waiting on you" pill on the shipped ask tokens', () => {
+	it('renders the ask line as the asking agent and the question only', () => {
 		renderRow({ ask, actors })
-		const pill = screen.getByText('Waiting on you')
-		// `--ask-surface` / `--ask-border` / `--warning` invert across themes; a
-		// neutral `bg-accent` here would be near-invisible in light mode.
-		expect(pill.className).toContain('bg-ask-surface')
-		expect(pill.className).toContain('border-ask-border')
-		expect(pill.className).toContain('text-warning')
-	})
-
-	it('renders the D3 ask-line copy verbatim (name bold, text in quotes)', () => {
-		renderRow({ ask, actors })
-		// Asker name is a bold span, the ` asks — ` glue is the parent line's
-		// text, and the text lives inside a quotes-wrapped span. Query by
-		// element so the assertion pins the exact structure the SPEC calls for.
-		const name = screen.getByText('Scout')
-		expect(name.className).toContain('font-bold')
-		expect(name.className).toContain('text-warning')
-		expect(name.parentElement?.textContent).toBe('Scout asks — “Ship on Friday or Monday?”')
+		const question = screen.getByText('Ship on Friday or Monday?')
+		// No visible "Ask" tag; the "<agent> asks" wording is screen-reader only.
+		expect(screen.queryByText('Ask')).toBeNull()
+		expect(screen.getByText('Scout asks').className).toContain('sr-only')
+		expect(question.parentElement?.textContent).toBe('Scout asksShip on Friday or Monday?')
 	})
 
 	it('truncates ask text at ~90 chars with a trailing ellipsis', () => {
@@ -192,7 +180,7 @@ describe('ListRow pending ask', () => {
 			content: 'A'.repeat(120),
 		})
 		renderRow({ ask: longAsk, actors })
-		const line = screen.getByText('Scout').parentElement
+		const line = screen.getByText('Scout asks').parentElement
 		expect(line?.textContent).toContain(`${'A'.repeat(90)}…`)
 		expect(line?.textContent).not.toContain('A'.repeat(91))
 	})
@@ -206,85 +194,21 @@ describe('ListRow pending ask', () => {
 
 	it('hides the pill and ask line when the ask is resolved', () => {
 		renderRow({ ask: { ...ask, status: 'resolved' }, actors })
-		expect(screen.queryByText('Waiting on you')).toBeNull()
-		expect(screen.queryByText('Scout')).toBeNull()
-	})
-})
-
-describe('ListRow D1 · loop chip', () => {
-	it('renders a "↺ Loop · {name}" chip after the title when the row is in a loop', () => {
-		renderRow({ loop: { id: 'loop-1', name: 'signal-triage' } })
-		expect(screen.getByText(/↺ Loop · signal-triage/)).toBeInTheDocument()
-	})
-
-	it('renders no chip (and reserves no space) when the row is in no loop', () => {
-		renderRow({ loop: undefined })
-		expect(screen.queryByText(/↺ Loop/)).toBeNull()
-	})
-})
-
-describe('ListRow D2 · driver working ring', () => {
-	const driver = buildActorListItem({ id: 'agent-1', name: 'Scout', type: 'agent' })
-
-	it('wraps the driver avatar in a working ring when active_session_state is running', () => {
-		const { container } = render(
-			<ListRow
-				{...baseProps}
-				object={buildObjectResponse({
-					id: 'obj-1',
-					driver: driver.id,
-					activeSessionId: 'sess-1',
-					active_session_state: 'running',
-				})}
-				isSelected={false}
-				actors={[driver]}
-			/>,
-		)
-		expect(container.querySelector('.actor-avatar-working-ring')).not.toBeNull()
-	})
-
-	it('renders no ring when a session is tied but not running (paused, pending, etc.)', () => {
-		const { container } = render(
-			<ListRow
-				{...baseProps}
-				object={buildObjectResponse({
-					id: 'obj-1',
-					driver: driver.id,
-					activeSessionId: 'sess-1',
-					active_session_state: 'paused',
-				})}
-				isSelected={false}
-				actors={[driver]}
-			/>,
-		)
-		expect(container.querySelector('.actor-avatar-working-ring')).toBeNull()
-	})
-
-	it("renders no <AgentWorkingBadge> alongside the ring — the ring is the row's only working indicator", () => {
-		render(
-			<ListRow
-				{...baseProps}
-				object={buildObjectResponse({
-					id: 'obj-1',
-					activeSessionId: 'sess-1',
-					active_session_state: 'running',
-				})}
-				isSelected={false}
-			/>,
-		)
-		// The old right-side badge rendered a "Scout working" / spinner pill.
-		// Under D2 that badge is gone entirely — the ring is the row's only
-		// working indicator.
-		expect(screen.queryByText(/working/i)).toBeNull()
+		expect(screen.queryByText('Ask')).toBeNull()
+		expect(screen.queryByText('Scout asks')).toBeNull()
 	})
 })
 
 describe('ListRow narrow layout', () => {
-	it('shows the full type name on the plate and a named dot for phones', () => {
+	it('shows the type as a glyph named with its full type name, at every width (v3)', () => {
+		// v3 mockup: no plate and no word in the row, so the title keeps the room
+		// on phones. The full name stays as the glyph's accessible name and tooltip.
 		renderRow({ typeLabel: 'Knowledge' })
-		expect(screen.getByText('Knowledge').className).toContain('max-sm:hidden')
-		const dot = screen.getByRole('img', { name: 'Knowledge' })
-		expect(dot.className).toContain('sm:hidden')
+		expect(screen.queryByText('Knowledge')).toBeNull()
+		const glyph = screen.getByRole('img', { name: 'Knowledge' })
+		expect(glyph.getAttribute('title')).toBe('Knowledge')
+		expect(glyph.className).not.toContain('sm:hidden')
+		expect(glyph.className).not.toContain('max-sm:hidden')
 	})
 
 	it('lets the title run to two lines on phones and one line from sm', () => {

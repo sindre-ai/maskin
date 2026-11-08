@@ -28,6 +28,7 @@ export function AgentExtensionsSection({ agent }: { agent: ActorResponse }) {
 			<AgentSectionHeading
 				id="agent-extensions-heading"
 				title={`Extensions ${agent.name} can call`}
+				quiet
 				note={callable.length > 0 ? String(callable.length) : undefined}
 			/>
 			<p className="text-[11px] text-muted-foreground">
@@ -36,13 +37,13 @@ export function AgentExtensionsSection({ agent }: { agent: ActorResponse }) {
 			{callable.length === 0 ? (
 				<EmptyState compact title="No extension grants yet" className="py-6" />
 			) : (
-				<ul className="flex flex-col gap-2">
+				<ul className="flex flex-col border-t border-border">
 					{callable.map(({ ext, allowed, total }) => (
 						<li key={ext.id}>
 							<Link
 								to="/$workspaceId/settings/extensions/$extId"
 								params={{ workspaceId, extId: ext.id }}
-								className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card p-3 hover:bg-muted"
+								className="flex items-center justify-between gap-3 border-b border-border py-2.5 hover:bg-muted"
 							>
 								<div className="min-w-0">
 									<div className="truncate text-[13px] font-semibold">{ext.name}</div>

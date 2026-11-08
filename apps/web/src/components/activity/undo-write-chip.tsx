@@ -80,7 +80,7 @@ export function UndoWriteChip({ event, objectId, workspaceId, actor, now }: Undo
 	const label = 'Undo'
 	const chipClass = cn(
 		'gap-1 px-1.5 py-0 text-[10px] font-medium',
-		'bg-transparent text-muted-foreground hover:bg-secondary/60',
+		'bg-transparent text-muted-foreground hover:bg-muted max-md:min-h-8 max-md:px-2.5',
 		!canUndo && 'cursor-default hover:bg-transparent',
 	)
 

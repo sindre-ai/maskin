@@ -1,3 +1,9 @@
+import {
+	REQUEST_CARD,
+	REQUEST_CARD_BODY,
+	REQUEST_CARD_BUTTON,
+	REQUEST_CARD_TITLE,
+} from '@/components/chat/request-card-styles'
 import { ExpandableDesktop } from '@/components/desktop/expandable-desktop'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
@@ -82,15 +88,12 @@ export function ComputerRequestCard({
 	}
 
 	return (
-		<section
-			aria-label={`${agentName}'s computer`}
-			className="mt-2 flex min-w-0 flex-col gap-3 rounded-xl border border-border bg-muted/40 p-4"
-		>
+		<section aria-label={`${agentName}'s computer`} className={REQUEST_CARD}>
 			<div className="flex items-start gap-2">
 				<Monitor className="mt-0.5 size-4 shrink-0" aria-hidden />
 				<div className="min-w-0">
-					<h3 className="text-sm font-semibold">{agentName} needs your help on its computer</h3>
-					<p className="mt-0.5 break-words text-xs text-muted-foreground">{request.task}</p>
+					<h3 className={REQUEST_CARD_TITLE}>{agentName} needs your help on its computer</h3>
+					<p className={REQUEST_CARD_BODY}>{request.task}</p>
 				</div>
 			</div>
 
@@ -101,12 +104,23 @@ export function ComputerRequestCard({
 			<div className="flex flex-wrap items-center gap-2">
 				{phase === 'open' ? (
 					<ViewerTooltip>
-						<Button type="button" size="sm" onClick={done} disabled={!canWrite}>
+						<Button
+							type="button"
+							size="sm"
+							className={REQUEST_CARD_BUTTON}
+							onClick={done}
+							disabled={!canWrite}
+						>
 							Done
 						</Button>
 					</ViewerTooltip>
 				) : (
-					<Button type="button" size="sm" onClick={() => setPhase('open')}>
+					<Button
+						type="button"
+						size="sm"
+						className={REQUEST_CARD_BUTTON}
+						onClick={() => setPhase('open')}
+					>
 						Open computer
 					</Button>
 				)}

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { Database } from '@maskin/db'
-import { actors } from '@maskin/db/schema'
+import { actors, workspaceMembers } from '@maskin/db/schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { __resetPosthogEventBudgetForTesting } from '../../../lib/analytics/event-budget'
 import {
@@ -9,6 +9,7 @@ import {
 	configurePosthogPrivacy,
 	warnIfPosthogKeyUnset,
 } from '../../../lib/analytics/posthog'
+import { isTeamActor } from '../../../lib/analytics/team-member'
 import { logger } from '../../../lib/logger'
 
 // A db whose only query is the workspace privacy read; `settings` is what the row holds,
@@ -76,6 +77,8 @@ describe('capturePosthogEvent', () => {
 			agent_actor_id: 'actor-1',
 			surface: 'backend',
 			actor_type: 'system',
+			is_team: false,
+			feature_area: 'integrations',
 			$process_person_profile: false,
 		})
 		expect(typeof body.timestamp).toBe('string')
@@ -158,6 +161,8 @@ describe('capturePosthogEvent workspace privacy', () => {
 			...props,
 			surface: 'backend',
 			actor_type: 'system',
+			is_team: false,
+			feature_area: 'agents',
 			$process_person_profile: false,
 		})
 	})
@@ -177,6 +182,8 @@ describe('capturePosthogEvent workspace privacy', () => {
 			count: 3,
 			surface: 'backend',
 			actor_type: 'system',
+			is_team: false,
+			feature_area: 'agents',
 			$process_person_profile: false,
 		})
 	})
@@ -335,12 +342,169 @@ describe('capturePosthogEvent shared properties', () => {
 		expect(props).not.toHaveProperty('$process_person_profile')
 	})
 
+	it('attaches an event with a workspace to that workspace group', async () => {
+		const WS = '44444444-4444-4444-8444-444444444444'
+		configurePosthogPrivacy(dbWithActors({ [HUMAN]: 'human' }).db)
+		const props = await send('workspace_member_joined', HUMAN, { workspace_id: WS })
+		expect(props.$groups).toEqual({ workspace: WS })
+	})
+
+	it('adds no group to an event with no workspace or a workspace id that is not an id', async () => {
+		configurePosthogPrivacy(dbWithActors({ [HUMAN]: 'human' }).db)
+		expect(await send('workspace_member_joined', HUMAN, {})).not.toHaveProperty('$groups')
+		expect(
+			await send('workspace_member_joined', HUMAN, { workspace_id: 'ws-1' }),
+		).not.toHaveProperty('$groups')
+	})
+
+	it('adds the feature area of the event', async () => {
+		configurePosthogPrivacy(dbWithActors({ [HUMAN]: 'human' }).db)
+		expect(await send('file_saved', HUMAN, {})).toMatchObject({ feature_area: 'files_briefings' })
+	})
+
+	it('adds no feature area to an event with no product area', async () => {
+		configurePosthogPrivacy(dbWithActors({ [HUMAN]: 'human' }).db)
+		expect(await send('mcp_handshake', HUMAN, {})).not.toHaveProperty('feature_area')
+		expect(await send('workspace_created', HUMAN, {})).not.toHaveProperty('feature_area')
+	})
+
+	it('keeps a feature area and a group the caller set', async () => {
+		configurePosthogPrivacy(dbWithActors({ [HUMAN]: 'human' }).db)
+		const props = await send('file_saved', HUMAN, {
+			feature_area: 'search',
+			workspace_id: '44444444-4444-4444-8444-444444444444',
+			$groups: { workspace: 'other' },
+		})
+		expect(props).toMatchObject({ feature_area: 'search', $groups: { workspace: 'other' } })
+	})
+
 	it('reads the actor type once for a burst of events from the same actor', async () => {
 		const { db, select } = dbWithActors({ [AGENT]: 'agent' })
 		configurePosthogPrivacy(db)
 		await send('a', AGENT, {})
 		await send('b', AGENT, {})
 		expect(select).toHaveBeenCalledTimes(1)
+	})
+})
+
+describe('capturePosthogEvent is_team', () => {
+	let fetchMock: ReturnType<typeof vi.fn>
+	const HUMAN = '11111111-1111-4111-8111-111111111111'
+	const AGENT = '22222222-2222-4222-8222-222222222222'
+	const TEAM_WORKSPACE = '33333333-3333-4333-8333-333333333333'
+
+	// Answers the privacy read, the actor type read and the team membership read.
+	// `members` are the actor ids that belong to the team workspace.
+	function dbWithTeam(types: Record<string, string>, members: string[], failMembership = false) {
+		let lastActorId = ''
+		const membershipReads = { count: 0 }
+		const select = vi.fn(() => ({
+			from: (table: unknown) => ({
+				where: () => ({
+					limit: async () => {
+						if (table === workspaceMembers) {
+							membershipReads.count++
+							if (failMembership) throw new Error('db down')
+							return members.includes(lastActorId) ? [{ actorId: lastActorId }] : []
+						}
+						if (table === actors) return [{ type: types[lastActorId] ?? 'system' }]
+						return [{ settings: {} }]
+					},
+				}),
+			}),
+		}))
+		return {
+			db: { select } as unknown as Database,
+			select,
+			membershipReads,
+			asActor: (id: string) => {
+				lastActorId = id
+			},
+		}
+	}
+
+	async function send(
+		harness: ReturnType<typeof dbWithTeam>,
+		actorId: string,
+		props: Record<string, unknown> = {},
+	) {
+		harness.asActor(actorId)
+		await capturePosthogEvent('workspace_member_joined', actorId, props as never)
+		const call = fetchMock.mock.calls.at(-1) as [string, RequestInit]
+		return JSON.parse(call[1].body as string).properties as Record<string, unknown>
+	}
+
+	beforeEach(() => {
+		fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 } as Response)
+		vi.stubGlobal('fetch', fetchMock)
+		vi.stubEnv('POSTHOG_API_KEY', 'phc_test')
+		vi.stubEnv('POSTHOG_TEAM_WORKSPACE_ID', TEAM_WORKSPACE)
+		vi.spyOn(Math, 'random').mockReturnValue(0)
+	})
+
+	afterEach(() => {
+		__resetPosthogPrivacyForTesting()
+		vi.unstubAllGlobals()
+		vi.unstubAllEnvs()
+		vi.restoreAllMocks()
+	})
+
+	it('marks a human member of the team workspace as the team', async () => {
+		const h = dbWithTeam({ [HUMAN]: 'human' }, [HUMAN])
+		configurePosthogPrivacy(h.db)
+		expect(await send(h, HUMAN, { workspace_id: 'ws-1' })).toMatchObject({ is_team: true })
+	})
+
+	it('marks a human who is not in the team workspace as outside', async () => {
+		const h = dbWithTeam({ [HUMAN]: 'human' }, [])
+		configurePosthogPrivacy(h.db)
+		expect(await send(h, HUMAN, { workspace_id: 'ws-1' })).toMatchObject({ is_team: false })
+	})
+
+	it('never marks an agent as the team, even a member of the team workspace', async () => {
+		const h = dbWithTeam({ [AGENT]: 'agent' }, [AGENT])
+		configurePosthogPrivacy(h.db)
+		expect(await send(h, AGENT, { workspace_id: 'ws-1' })).toMatchObject({
+			actor_type: 'agent',
+			is_team: false,
+		})
+	})
+
+	it('is false for everyone and reads no membership when the setting is unset', async () => {
+		vi.stubEnv('POSTHOG_TEAM_WORKSPACE_ID', '')
+		const h = dbWithTeam({ [HUMAN]: 'human' }, [HUMAN])
+		configurePosthogPrivacy(h.db)
+		expect(await send(h, HUMAN, {})).toMatchObject({ is_team: false })
+		expect(h.membershipReads.count).toBe(0)
+	})
+
+	it('is false when the setting is not a workspace id', async () => {
+		vi.stubEnv('POSTHOG_TEAM_WORKSPACE_ID', 'not-a-uuid')
+		const h = dbWithTeam({ [HUMAN]: 'human' }, [HUMAN])
+		configurePosthogPrivacy(h.db)
+		expect(await send(h, HUMAN, {})).toMatchObject({ is_team: false })
+	})
+
+	it('fails closed to outside when the membership cannot be read', async () => {
+		const h = dbWithTeam({ [HUMAN]: 'human' }, [HUMAN], true)
+		configurePosthogPrivacy(h.db)
+		expect(await send(h, HUMAN, {})).toMatchObject({ is_team: false })
+	})
+
+	it('reads membership once for a burst of events from the same person', async () => {
+		const h = dbWithTeam({ [HUMAN]: 'human' }, [HUMAN])
+		configurePosthogPrivacy(h.db)
+		await send(h, HUMAN, {})
+		await send(h, HUMAN, {})
+		expect(h.membershipReads.count).toBe(1)
+	})
+
+	it('exposes the same answer for the workspace list', async () => {
+		const h = dbWithTeam({ [HUMAN]: 'human' }, [HUMAN])
+		configurePosthogPrivacy(h.db)
+		h.asActor(HUMAN)
+		expect(await isTeamActor(HUMAN, 'human')).toBe(true)
+		expect(await isTeamActor(HUMAN, 'agent')).toBe(false)
 	})
 })
 

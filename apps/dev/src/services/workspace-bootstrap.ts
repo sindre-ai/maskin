@@ -48,7 +48,6 @@ export const DEFAULT_AGENT_IDS = [
 	'workspace_coach',
 	'chief_of_staff',
 	'driver',
-	'strategist',
 	'signal_analyst',
 	'researcher',
 	'knowledge_curator',
@@ -554,7 +553,7 @@ export async function bootstrapDefaultAgents(
 		}
 	}
 
-	// Create the default Loop objects (Bet discovery loop, Workspace improvements),
+	// Create the default Loop objects (Workspace improvements, Knowledge Wiki → digest),
 	// wiring metadata.trigger_ids to the triggers seeded above. Idempotent per
 	// workspace via the objects.title check, mirroring the agent/trigger checks
 	// above.
@@ -878,6 +877,15 @@ export async function provisionWorkspace(params: {
 		workspace_name: workspace.name,
 		created_by: ownerActorId,
 		...(ownerEmailDomain ? { owner_email_domain: ownerEmailDomain } : {}),
+	})
+
+	// The default agents are the workspace's first agents, made by onboarding.
+	// Agents a person adds later are counted by `agent_created` (source person).
+	void capturePosthogEvent('first_agent_created', ownerActorId, {
+		workspace_id: workspace.id,
+		actor_id: ownerActorId,
+		agent_id: chiefOfStaffId,
+		source: 'onboarding',
 	})
 
 	// The actor + member rows are already committed above, so this call is a

@@ -40,7 +40,7 @@ const REFINE_CHIPS = [
 
 const PRIMER = [
 	{
-		label: 'OBJECT TYPE',
+		label: 'ITEM TYPE',
 		body: 'the thing that moves, and the states it moves through',
 	},
 	{
@@ -64,7 +64,7 @@ interface ThreadItem {
 }
 
 function LoopBuilderPage() {
-	useDocumentTitle('New loop')
+	useDocumentTitle('New flow')
 	const { workspaceId, workspace } = useWorkspace()
 	const canWrite = useCanWrite()
 	const createObject = useCreateObject(workspaceId)
@@ -96,7 +96,7 @@ function LoopBuilderPage() {
 	const handleSend = useCallback(
 		async (content: string) => {
 			applyDescription(content)
-			setThread((prev) => [...prev, { role: 'plan', content: 'I drafted a loop from that.' }])
+			setThread((prev) => [...prev, { role: 'plan', content: 'I drafted a flow from that.' }])
 		},
 		[applyDescription],
 	)
@@ -127,7 +127,7 @@ function LoopBuilderPage() {
 			const created = await createObject.mutateAsync({
 				type: 'loop',
 				title,
-				// New loops start on the lowest live rung of the autonomy ladder, the
+				// New flows start on the lowest live rung of the autonomy ladder, the
 				// same as marketplace installs and bootstrap-seeded loops. The
 				// pre-#1396 'running' status no longer exists and POST /api/objects
 				// rejects it with a 400.
@@ -147,7 +147,7 @@ function LoopBuilderPage() {
 			// the success metric (distinct accepting workspaces) is measurable.
 			trackLoopCreatedViaLanguage({ workspace_id: workspaceId, loop_id: created.id })
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to create loop')
+			toast.error(err instanceof Error ? err.message : 'Failed to create flow')
 		} finally {
 			setCreating(false)
 		}
@@ -189,10 +189,10 @@ function LoopBuilderPage() {
 
 	return (
 		<>
-			{/* The breadcrumb (Loops › New loop) comes from the shared nav's routeConfig;
+			{/* The breadcrumb (Loops › New flow) comes from the shared nav's routeConfig;
 			    the mockup's right-aligned caption rides in the same row via `actions`. */}
 			<PageHeader
-				title="New loop"
+				title="New flow"
 				actions={
 					<span className="hidden whitespace-nowrap text-[11px] text-muted-foreground lg:inline">
 						no builder, no canvas — you describe it
@@ -202,18 +202,18 @@ function LoopBuilderPage() {
 			<div className="mx-auto flex w-full max-w-[1300px] flex-col gap-6 md:flex-row md:items-start md:gap-8 xl:gap-11">
 				{/* Left — conversation */}
 				<section
-					aria-label="Describe your loop"
+					aria-label="Describe your flow"
 					className="flex min-w-0 flex-1 flex-col md:sticky md:top-0 md:basis-[340px] md:self-start"
 				>
 					{asking ? (
 						<>
 							<h1 className="text-2xl font-bold tracking-tight text-foreground md:text-[1.6875rem]">
-								What should the loop do?
+								What should the flow do?
 							</h1>
 							<p className="mt-3 max-w-prose text-sm leading-relaxed text-muted-foreground">
-								Say it the way you'd say it to a colleague. Maskin picks the object types, writes
-								the triggers on their states, and assigns agents from your crew. You read it back
-								before anything exists.
+								Say it the way you'd say it to a colleague. Maskin picks the item types, writes the
+								triggers on their states, and assigns agents from your crew. You read it back before
+								anything exists.
 							</p>
 
 							<div className="mt-5 flex flex-col overflow-hidden rounded-xl border border-border">
@@ -342,7 +342,7 @@ function LoopBuilderPage() {
 					)}
 
 					{showBlueprint && !createdId && (
-						<div className="mt-4 flex flex-wrap gap-2" aria-label="Refine this loop">
+						<div className="mt-4 flex flex-wrap gap-2" aria-label="Refine this flow">
 							{REFINE_CHIPS.map((chip) => (
 								<Button
 									key={chip.clause}
@@ -370,7 +370,7 @@ function LoopBuilderPage() {
 							onRemoveObject={() => {}}
 							onRemoveNotification={() => {}}
 							onRemoveFile={() => {}}
-							textareaLabel="Describe your loop"
+							textareaLabel="Describe your flow"
 						/>
 						<p className="mt-2 text-[11px] text-muted-foreground">
 							Maskin only builds from language.
@@ -380,7 +380,7 @@ function LoopBuilderPage() {
 
 				{/* Right — proposed loop / empty state */}
 				<section
-					aria-label="Proposed loop"
+					aria-label="Proposed flow"
 					className="flex min-w-0 flex-1 flex-col md:basis-[430px] md:grow-[1.1]"
 				>
 					{showBlueprint && plan ? (
@@ -398,16 +398,16 @@ function LoopBuilderPage() {
 							aria-label="Nothing to draw yet"
 							className="max-w-[46ch] rounded-2xl border border-dashed border-border bg-muted px-5 py-6 text-xs leading-relaxed text-muted-foreground"
 						>
-							Nothing to draw yet. A loop needs a source it listens to and an end it reports to —
+							Nothing to draw yet. A flow needs a source it listens to and an end it reports to —
 							name both and the blueprint fills in.
 						</div>
 					) : (
 						<div
-							aria-label="No loop drafted yet"
+							aria-label="No flow drafted yet"
 							className="flex flex-col gap-3.5 rounded-2xl border border-dashed border-border bg-muted p-6"
 						>
 							<p className="max-w-prose text-xs leading-relaxed text-muted-foreground">
-								The loop appears here as Maskin reads your sentence — object types first, then the
+								The flow appears here as Maskin reads your sentence — item types first, then the
 								triggers, then who answers them. Nothing is created until you say so.
 							</p>
 							<div className="flex flex-col gap-2" aria-hidden>

@@ -3,6 +3,7 @@ import {
 	type WebhookFormErrors,
 	type WebhookFormState,
 	formFromRecipe,
+	usesTimestamp,
 } from '@/components/extensions/webhook-form'
 import { FormError } from '@/components/shared/form-error'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
@@ -57,69 +58,72 @@ export function WebhookSection({
 		const cfg = ext.webhookConfig
 		const scheme = SIGNATURE_SCHEMES.find((s) => s.value === cfg?.signatureScheme)
 		return (
-			<section
-				className="rounded-xl border border-border bg-card p-4"
-				aria-labelledby="webhook-heading"
-			>
-				<div className="flex items-start justify-between gap-3">
-					<div>
-						<h2 id="webhook-heading" className="text-[13px] font-bold">
-							Incoming webhook
-						</h2>
-						<p className="text-xs text-muted-foreground">
-							The vendor pushes events into this workspace.
-						</p>
-					</div>
+			<section aria-labelledby="webhook-heading">
+				<div className="flex items-center justify-between gap-3 px-1 pb-1.5">
+					<h2 id="webhook-heading" className="settings-label">
+						Webhook
+					</h2>
 					<ViewerTooltip>
-						<Button variant="secondary" size="sm" disabled={!canWrite} onClick={onEdit}>
+						<Button
+							variant="secondary"
+							size="sm"
+							disabled={!canWrite}
+							onClick={onEdit}
+							className="max-md:h-11"
+						>
 							Edit
 						</Button>
 					</ViewerTooltip>
 				</div>
 
-				<div className="mt-4 grid gap-4">
-					<div className="grid gap-1.5">
-						<Label>Webhook URL</Label>
-						<div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-							<code className="block min-w-0 flex-1 break-all rounded-md border border-border bg-muted px-3 py-2 font-mono text-xs">
+				<dl className="divide-y divide-border-subtle rounded-xl border border-border bg-card">
+					<div className="flex flex-col gap-1.5 px-4 py-3 sm:flex-row sm:items-center sm:gap-4">
+						<dt className="text-[13px] text-muted-foreground sm:w-28 sm:shrink-0">Endpoint</dt>
+						<dd className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center">
+							<code className="block min-w-0 flex-1 break-all rounded-md bg-muted px-2 py-1 font-mono text-xs">
 								{ext.webhookUrl}
 							</code>
 							{ext.webhookUrl && (
 								<CopyButton text={ext.webhookUrl} label ariaLabel="Copy webhook URL" />
 							)}
-						</div>
-						<div>
-							<ViewerTooltip>
-								<Button
-									variant="ghost"
-									size="sm"
-									disabled={!canWrite}
-									onClick={onRegenerateToken}
-									className="-ml-3 text-muted-foreground"
-								>
-									<RefreshCw size={14} />
-									Regenerate token
-								</Button>
-							</ViewerTooltip>
-						</div>
+						</dd>
 					</div>
-
-					<div className="grid gap-1.5">
-						<Label>Signing secret</Label>
-						<MaskedSecret aria-label="Signing secret (hidden)" />
+					<div className="flex flex-col gap-1.5 px-4 py-3 sm:flex-row sm:items-center sm:gap-4">
+						<dt className="text-[13px] text-muted-foreground sm:w-28 sm:shrink-0">Secret</dt>
+						<dd className="min-w-0 flex-1">
+							<MaskedSecret aria-label="Signing secret (hidden)" />
+							<p className="mt-1 text-xs text-muted-foreground">
+								Shown once, when you save it. Edit the webhook to set a new one.
+							</p>
+						</dd>
 					</div>
-
-					<dl className="grid grid-cols-1 gap-x-6 gap-y-2 text-xs sm:grid-cols-2">
-						<div>
-							<dt className="text-muted-foreground">Signature scheme</dt>
-							<dd className="font-medium">{scheme?.label}</dd>
-						</div>
-						<div>
-							<dt className="text-muted-foreground">Signature header</dt>
-							<dd className="font-mono">{cfg?.signatureHeader}</dd>
-						</div>
-					</dl>
-				</div>
+					<div className="flex flex-col gap-1.5 px-4 py-3 sm:flex-row sm:items-center sm:gap-4">
+						<dt className="text-[13px] text-muted-foreground sm:w-28 sm:shrink-0">Signature</dt>
+						<dd className="min-w-0 flex-1 text-[13px]">
+							{scheme?.label}
+							{cfg?.signatureHeader ? (
+								<>
+									{' · '}
+									<span className="font-mono text-xs">{cfg.signatureHeader}</span>
+								</>
+							) : null}
+						</dd>
+					</div>
+					<div className="px-4 py-2">
+						<ViewerTooltip>
+							<Button
+								variant="ghost"
+								size="sm"
+								disabled={!canWrite}
+								onClick={onRegenerateToken}
+								className="-ml-3 text-muted-foreground max-md:h-11"
+							>
+								<RefreshCw size={14} />
+								Regenerate token
+							</Button>
+						</ViewerTooltip>
+					</div>
+				</dl>
 			</section>
 		)
 	}
@@ -182,7 +186,8 @@ export function WebhookSection({
 					</Select>
 					<p className="text-xs text-muted-foreground">
 						Which family of signature the vendor signs requests with. HMAC-SHA256 raw body is the
-						most common (Fireflies, GitHub). Timestamp + body is the Stripe and Slack style.
+						most common (Fireflies, GitHub). Timestamp + body is the Stripe and Slack style. Ed25519
+						is for vendors that sign with a private key and publish a public key (Telnyx).
 					</p>
 				</div>
 
@@ -210,7 +215,7 @@ export function WebhookSection({
 					</div>
 				</div>
 
-				{form.scheme === 'timestamp' && (
+				{usesTimestamp(form.scheme) && (
 					<div className="grid items-start gap-4 sm:grid-cols-2">
 						<div className="grid gap-1.5">
 							<Label htmlFor="timestamp-header">Timestamp header</Label>
@@ -229,7 +234,9 @@ export function WebhookSection({
 								id="timestamp-template"
 								value={form.timestampBodyTemplate}
 								onChange={(e) => set('timestampBodyTemplate', e.target.value)}
-								placeholder="v0:{timestamp}:{body}"
+								placeholder={
+									form.scheme === 'ed25519' ? '{timestamp}|{body}' : 'v0:{timestamp}:{body}'
+								}
 								aria-invalid={!!errors.timestampBodyTemplate}
 							/>
 							<FormError error={errors.timestampBodyTemplate} />
@@ -238,33 +245,44 @@ export function WebhookSection({
 				)}
 
 				<div className="grid gap-1.5">
-					<Label htmlFor="signing-secret">Signing secret</Label>
+					<Label htmlFor="signing-secret">
+						{form.scheme === 'ed25519' ? 'Vendor public key' : 'Signing secret'}
+					</Label>
 					<div className="flex flex-col gap-2 sm:flex-row">
 						<Input
 							id="signing-secret"
-							type="password"
+							type={form.scheme === 'ed25519' ? 'text' : 'password'}
 							autoComplete="off"
 							value={form.signingSecret}
 							onChange={(e) => set('signingSecret', e.target.value)}
 							placeholder={
-								saved ? 'Leave blank to keep the current secret' : 'Paste or generate a secret'
+								form.scheme === 'ed25519'
+									? saved
+										? 'Leave blank to keep the current key'
+										: 'Paste the public key (base64)'
+									: saved
+										? 'Leave blank to keep the current secret'
+										: 'Paste or generate a secret'
 							}
 							aria-invalid={!!errors.signingSecret}
 							className="sm:flex-1"
 						/>
-						<Button
-							type="button"
-							variant="secondary"
-							onClick={onGenerateSecret}
-							disabled={generatingSecret}
-						>
-							<Wand2 size={14} />
-							Generate one
-						</Button>
+						{form.scheme !== 'ed25519' && (
+							<Button
+								type="button"
+								variant="secondary"
+								onClick={onGenerateSecret}
+								disabled={generatingSecret}
+							>
+								<Wand2 size={14} />
+								Generate one
+							</Button>
+						)}
 					</div>
 					<p className="text-xs text-muted-foreground">
-						Choose your own with Generate, then paste it into the vendor. If the vendor issues its
-						own secret, paste that instead. Stored encrypted.
+						{form.scheme === 'ed25519'
+							? "Copy the public key from the vendor's portal (32 bytes, base64). Stored encrypted."
+							: 'Choose your own with Generate, then paste it into the vendor. If the vendor issues its own secret, paste that instead. Stored encrypted.'}
 					</p>
 					<FormError error={errors.signingSecret} />
 				</div>

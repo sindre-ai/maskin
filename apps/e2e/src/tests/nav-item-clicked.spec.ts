@@ -43,9 +43,9 @@ test('nav_item_clicked fires with the stable item_key + top-nav source when a to
 	// Wait for the sidebar to mount before clicking a nav entry. Agents left the
 	// top nav in the v2 shell (it is reached from the footer activity card, which
 	// the footer-source test below covers) — Loops is a top-nav entry there.
-	await expect(page.getByRole('link', { name: 'Loops' }).first()).toBeVisible({ timeout: 10_000 })
+	await expect(page.getByRole('link', { name: 'Flows' }).first()).toBeVisible({ timeout: 10_000 })
 
-	await page.getByRole('link', { name: 'Loops' }).first().click()
+	await page.getByRole('link', { name: 'Flows' }).first().click()
 
 	// Allow the console-fallback microtask to settle.
 	await page.waitForTimeout(200)

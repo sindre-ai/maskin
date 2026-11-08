@@ -59,6 +59,9 @@ jobs:
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
       ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+      # The PostHog project token (public by design, same as the web build's VITE_POSTHOG_KEY). Unset =
+      # the app ships without analytics: it sends nothing and never asks.
+      POSTHOG_PROJECT_KEY: ${{ vars.POSTHOG_PROJECT_KEY }}
     steps:
       - name: Check signing secrets
         id: gate
@@ -133,6 +136,7 @@ jobs:
             -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
             DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
             CURRENT_PROJECT_VERSION="$build_number" \
+            MASKIN_POSTHOG_KEY="$POSTHOG_PROJECT_KEY" \
             2>&1 | tee "$RUNNER_TEMP/archive.log" | tail -n 25
           test "${PIPESTATUS[0]}" -eq 0
 

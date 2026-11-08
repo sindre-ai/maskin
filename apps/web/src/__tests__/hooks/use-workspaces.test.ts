@@ -37,6 +37,7 @@ function buildWorkspace(
 		role: 'owner',
 		memberCount: 1,
 		isDefault: false,
+		isTeam: false,
 		settings: {},
 		enterprise: false,
 		billingOwnerId: null,

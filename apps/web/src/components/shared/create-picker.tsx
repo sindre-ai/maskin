@@ -81,7 +81,7 @@ const ENTITY_KINDS: { value: EntityKind; label: string; description: string; ico
 	[
 		{
 			value: 'loop',
-			label: 'Loop',
+			label: 'Flow',
 			description: 'A new outcome for agents to own',
 			icon: RefreshCw,
 		},
@@ -234,7 +234,7 @@ export function CreatePicker({
 
 	interface CommandRow {
 		key: string
-		group: 'OBJECTS' | 'WORKSPACE'
+		group: 'ITEMS' | 'WORKSPACE'
 		label: string
 		description: string
 		select: () => void
@@ -243,7 +243,7 @@ export function CreatePicker({
 	const allCommandRows: CommandRow[] = [
 		...objectTypes.map((t) => ({
 			key: `object:${t.value}`,
-			group: 'OBJECTS' as const,
+			group: 'ITEMS' as const,
 			label: objectTypeLabel(t.value),
 			description: OBJECT_TYPE_DESCRIPTION[t.value] ?? `Create ${article(t.value)} ${t.value}`,
 			select: () => selectObjectType(t.value),
@@ -677,7 +677,7 @@ export function CreatePicker({
 								<p className="px-0.5 text-xs leading-relaxed text-muted-foreground">
 									Sending this opens it as a chat in{' '}
 									<span className="font-semibold text-foreground">Chats</span> — kept in full,
-									searchable later, and it can still become an object any time. Press{' '}
+									searchable later, and it can still become an item any time. Press{' '}
 									<kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">/</kbd> to
 									pick a type instead.
 								</p>

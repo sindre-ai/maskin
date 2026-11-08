@@ -107,3 +107,55 @@ export function orderBriefingRow<T extends { id: string; updatedAt: string }>(
 		...cards.filter((card) => isBriefingSeen(card, seen)),
 	]
 }
+
+// -- talking about a page ------------------------------------------------------
+
+export interface BriefingChatAgent {
+	id: string
+	name: string
+}
+
+/** Who the viewer's conversation goes to: the agent that wrote the page, else the workspace's default one. */
+export function pickBriefingChatAgent(
+	author: { id: string | null; name: string; type: string },
+	fallback: BriefingChatAgent | null | undefined,
+): BriefingChatAgent | null {
+	if (author.id && author.type === 'agent') return { id: author.id, name: author.name }
+	return fallback ?? null
+}
+
+/** What the "Tell me more" chip sends. */
+export function tellMeMoreMessage(headline: string): string {
+	return `Tell me more about this briefing: "${headline}"`
+}
+
+/**
+ * What "Ask about this slide" puts in the conversation box: the slide named, so the question
+ * after it has its subject. The reader finishes the sentence; nothing is sent.
+ */
+export function askAboutSlideDraft(headline: string, position: number, total: number): string {
+	const where = total > 1 ? ` (briefing ${position} of ${total})` : ''
+	return `About "${headline}"${where}: `
+}
+
+/**
+ * The attachments of the chat a reader's question starts: the page goes along as a real
+ * attachment (a file chip in the chat, and the agent is handed its file id), followed by any
+ * files the reader attached in the composer.
+ */
+export function briefingChatAttachments(
+	card: { id: string; name: string },
+	extra: Array<{ fileId: string; name: string; mimeType?: string; sizeBytes?: number }> = [],
+) {
+	return [
+		{ file_id: card.id, name: card.name, mime_type: 'text/html' },
+		...extra
+			.filter((file) => file.fileId !== card.id)
+			.map((file) => ({
+				file_id: file.fileId,
+				name: file.name,
+				mime_type: file.mimeType ?? 'application/octet-stream',
+				...(file.sizeBytes !== undefined ? { size_bytes: file.sizeBytes } : {}),
+			})),
+	]
+}

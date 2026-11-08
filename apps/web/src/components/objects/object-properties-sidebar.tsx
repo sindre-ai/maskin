@@ -1,5 +1,4 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
-import { AgentWorkingBadge } from '@/components/shared/agent-working-badge'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
 
@@ -7,10 +6,13 @@ import { Button } from '@/components/ui/button'
 import { Sidebar, SidebarContent, SidebarHeader, useSidebar } from '@/components/ui/sidebar'
 import { useActors } from '@/hooks/use-actors'
 import { useNotifications } from '@/hooks/use-notifications'
+import { useObjectFlow } from '@/hooks/use-object-flow'
 import { useObjectGraph } from '@/hooks/use-objects'
 import { useSubscribe, useSubscribers, useUnsubscribe } from '@/hooks/use-subscriptions'
 import type { ActorListItem, MemberResponse, ObjectResponse, RelationshipResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
+import { readDue } from '@/lib/object-detail-meta'
+import { Link } from '@tanstack/react-router'
 import { X } from 'lucide-react'
 import { useMemo } from 'react'
 import { MetadataProperties } from './metadata-properties'
@@ -40,12 +42,16 @@ export function ObjectPropertiesSidebar({
 		asSource: RelationshipResponse[]
 		asTarget: RelationshipResponse[]
 	}
-	statuses: string[]
+	/** Only the legacy ObjectDocument host passes these: its page has no status pill, so the
+	 *  drawer keeps a status row. The item page (v16) omits them. */
+	statuses?: string[]
 	members?: MemberResponse[]
-	onUpdateStatus: (status: string) => void
+	onUpdateStatus?: (status: string) => void
 	onUpdateDriver: (driver: string | null) => void
 }) {
 	const { data: actors } = useActors(workspaceId)
+	const flow = useObjectFlow(workspaceId, object.id)
+	const due = readDue(object)
 	const creatorName = actors?.find((a) => a.id === object.createdBy)?.name
 	const { data: pendingAsks } = useNotifications(workspaceId, { type: 'needs_input' })
 	const currentActorId = getStoredActor()?.id
@@ -72,8 +78,16 @@ export function ObjectPropertiesSidebar({
 			</SidebarHeader>
 			<SidebarContent className="min-h-0 flex-1 overflow-y-auto px-3 py-3.5">
 				<div className="flex flex-col">
+					{/* v16 rows: type, owner, flow, due, created, updated. Status is the
+					    pill on the page, and a working agent is the banner above the tabs,
+					    so neither repeats here. A row whose data is missing is not drawn. */}
+					<CorePropertyRow label="type">
+						<span className="text-[12.5px] font-semibold text-secondary-foreground">
+							{object.type}
+						</span>
+					</CorePropertyRow>
 					{members && (
-						<CorePropertyRow label="driver">
+						<CorePropertyRow label="owner">
 							<OwnerSelect
 								members={members}
 								currentOwnerId={object.driver ?? null}
@@ -83,34 +97,42 @@ export function ObjectPropertiesSidebar({
 							/>
 						</CorePropertyRow>
 					)}
-					<CorePropertyRow label="status">
-						{statuses.length > 0 ? (
-							<StatusSelect
-								current={object.status}
-								options={statuses}
-								onChange={onUpdateStatus}
-								variant="row"
-							/>
-						) : (
-							<StatusBadge status={object.status} />
-						)}
-					</CorePropertyRow>
-					{/* `attention` says who the object is waiting on (mockup `odCore`):
-					    amber when it needs the reader, green while an agent has it. */}
-					{needsYou ? (
+					{onUpdateStatus && statuses && (
+						<CorePropertyRow label="status">
+							{statuses.length > 0 ? (
+								<StatusSelect
+									current={object.status}
+									options={statuses}
+									onChange={onUpdateStatus}
+									variant="row"
+								/>
+							) : (
+								<StatusBadge status={object.status} />
+							)}
+						</CorePropertyRow>
+					)}
+					{/* `attention` says who the object is waiting on (mockup `odCore`). */}
+					{needsYou && (
 						<CorePropertyRow label="attention">
 							<span className="text-[12.5px] font-semibold text-warning">Needs you</span>
 						</CorePropertyRow>
-					) : object.activeSessionId ? (
-						<CorePropertyRow label="attention">
-							<AgentWorkingBadge sessionId={object.activeSessionId} workspaceId={workspaceId} />
+					)}
+					{flow && (
+						<CorePropertyRow label="flow">
+							<Link
+								to="/$workspaceId/loops/$loopId"
+								params={{ workspaceId, loopId: flow.id }}
+								className="block truncate text-[12.5px] font-semibold text-secondary-foreground hover:underline"
+							>
+								{flow.name}
+							</Link>
 						</CorePropertyRow>
-					) : null}
-					<CorePropertyRow label="type">
-						<span className="text-[12.5px] font-semibold text-secondary-foreground">
-							{object.type}
-						</span>
-					</CorePropertyRow>
+					)}
+					{due && (
+						<CorePropertyRow label="due">
+							<span className="text-[12.5px] font-semibold text-secondary-foreground">{due}</span>
+						</CorePropertyRow>
+					)}
 					<CorePropertyRow label="created">
 						{/* `<when> · <who>` — the mockup pairs the date with its author. */}
 						<span className="flex min-w-0 items-center gap-1.5 text-[12.5px] font-semibold text-muted-foreground">
@@ -257,7 +279,7 @@ function subscriberReason(
 	currentActorId: string | undefined,
 ): string {
 	if (actorId === currentActorId) return 'you own the outcome'
-	if (actorId === object.driver) return 'drives this object'
+	if (actorId === object.driver) return 'drives this item'
 	if (actorId === object.createdBy) return 'created it'
 	return 'posts to this timeline'
 }

@@ -3,10 +3,9 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 // Covers T1 of the Marketplace polish bet: the composition chip row on
 // multi-item bundle loop cards (loops with ≥2 component types).
-// The dev bootstrap seeds four bundle loops (Discover & Research, Build &
-// Ship, Strategy & Growth, Team Ops), each carrying actor + trigger + skill
-// items — so the marketplace loads a real 3+ bundle-card grid without extra
-// setup.
+// The dev bootstrap seeds two bundle loops (Product Discovery, Market &
+// Competitor Watch), each carrying actor + trigger + skill items — so the
+// marketplace loads real bundle cards without extra setup.
 
 const CHIP_ROW = '[data-testid="composition-chip-row"]'
 
@@ -20,7 +19,7 @@ test.describe('Marketplace composition chip row', () => {
 			await page.goto(`/${account.workspaceId}/marketplace`)
 
 			// Wait for the Loops section (bundle-card container) to render.
-			const loopsSection = page.getByRole('region', { name: 'Loops' })
+			const loopsSection = page.getByRole('region', { name: 'Flows' })
 			await expect(loopsSection).toBeVisible({ timeout: 20000 })
 
 			// AC: every bundle card shows the composition chip row. The Loops
@@ -75,7 +74,7 @@ test.describe('Marketplace composition chip row', () => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 			await page.goto(`/${account.workspaceId}/marketplace`)
 
-			const loopsSection = page.getByRole('region', { name: 'Loops' })
+			const loopsSection = page.getByRole('region', { name: 'Flows' })
 			await expect(loopsSection).toBeVisible({ timeout: 20000 })
 
 			// Mockup 2593: a loop card that has no bundle composition to show
@@ -122,7 +121,7 @@ test.describe('Marketplace composition chip row', () => {
 		await page.setViewportSize({ width: 1024, height: 768 })
 		await page.goto(`/${account.workspaceId}/marketplace`)
 
-		const loopsSection = page.getByRole('region', { name: 'Loops' })
+		const loopsSection = page.getByRole('region', { name: 'Flows' })
 		await expect(loopsSection).toBeVisible({ timeout: 20000 })
 
 		const firstChip = loopsSection.locator(CHIP_ROW).first().locator('> *').first()

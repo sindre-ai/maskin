@@ -388,6 +388,7 @@ public final class ForYouStore {
 		retain(card)
 		later.clear(card.id)
 		decisions.choose(option.label, note: note, on: DecisionTarget(card))
+		trackAction(Analytics.slug(option.label), on: card)
 		widgetReloader.reload()
 		onCardHandled?(card.id)
 	}
@@ -414,6 +415,7 @@ public final class ForYouStore {
 		retain(card)
 		later.clear(card.id)
 		decisions.reply(text, on: DecisionTarget(card))
+		trackAction("reply", on: card)
 		widgetReloader.reload()
 		onCardHandled?(card.id)
 	}
@@ -422,8 +424,19 @@ public final class ForYouStore {
 		retain(card)
 		later.clear(card.id)
 		decisions.markRead(DecisionTarget(card))
+		trackAction("dismiss", on: card)
 		widgetReloader.reload()
 		onCardHandled?(card.id)
+	}
+
+	/// The same `foryou_card_action` event the web app sends. Ids and the option's slug only.
+	private func trackAction(_ actionId: String, on card: ForYouCard) {
+		Analytics.shared.track(
+			"foryou_card_action",
+			[
+				"card_kind": card.kind == .decision ? "decision" : "thread", "card_id": .string(card.id),
+				"action_id": .string(actionId),
+			])
 	}
 
 	/// Take back the last action on a card (inside the Undo window, or a sent dismissal).

@@ -21,11 +21,11 @@ export function DeliveryHistory({
 			className="rounded-xl border border-border bg-card p-4"
 			aria-labelledby="deliveries-heading"
 		>
-			<h2 id="deliveries-heading" className="text-[13px] font-bold">
-				Recent deliveries
+			<h2 id="deliveries-heading" className="settings-label">
+				Delivery history
 			</h2>
-			<p className="text-xs text-muted-foreground">
-				Last {data?.windowDays ?? 14} days, {data?.committed ?? 0} committed
+			<p className="mt-1 text-[13px]">
+				{data?.committed ?? 0} delivered in the last {data?.windowDays ?? 14} days
 			</p>
 
 			<div className="mt-3">

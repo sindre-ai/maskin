@@ -275,6 +275,7 @@ const RISKY_TOOLS: ReadonlySet<string> = new Set([
 	'gmail_send_email',
 	'resend_send_email',
 	'approve_object_draft',
+	'approve_draft_from_chat',
 	'post_conversation_message',
 	'create_notification',
 	// Starts work

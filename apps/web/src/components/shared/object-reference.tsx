@@ -55,9 +55,9 @@ export function ObjectReference({
 					'items-center gap-1.5 align-middle text-muted-foreground italic opacity-60',
 					className,
 				)}
-				title="This object was deleted or is unavailable"
+				title="This item was deleted or is unavailable"
 			>
-				deleted object
+				deleted item
 			</span>
 		)
 	}

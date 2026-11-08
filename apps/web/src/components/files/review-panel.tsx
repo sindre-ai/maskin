@@ -10,6 +10,7 @@ import type { ActorListItem, FileCommentDto } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import type { FileCommentDraft } from '@/lib/file-comments-context'
+import { summarizeOpenComments } from '@/lib/file-review-summary'
 import { textCommentCardId } from '@/lib/text-comments-context'
 import type { AttachingObject, ProvenanceResolution } from '@/lib/viewer-provenance'
 import { Check } from 'lucide-react'
@@ -209,6 +210,7 @@ export function ReviewPanel(props: ReviewPanelProps) {
 				open={open}
 				resolved={resolved}
 				total={comments.length}
+				summary={summarizeOpenComments(comments)}
 				roundFilter={roundFilter}
 				onClearRoundFilter={onClearRoundFilter}
 			/>
@@ -265,6 +267,7 @@ function PanelHeader({
 	open,
 	resolved,
 	total,
+	summary,
 	roundFilter,
 	onClearRoundFilter,
 }: {
@@ -273,12 +276,19 @@ function PanelHeader({
 	open: number
 	resolved: number
 	total: number
+	summary: string
 	roundFilter: string | null
 	onClearRoundFilter: () => void
 }) {
 	const counts: Record<ReviewFilter, number> = { open, resolved, all: total }
 	return (
 		<div className="flex flex-col gap-2 border-b p-3">
+			<div className="flex flex-col gap-0.5">
+				<span className="eyebrow">Review</span>
+				<span className="text-sm font-semibold text-foreground" data-testid="panel-summary">
+					{summary}
+				</span>
+			</div>
 			<div className="flex items-center gap-1" role="tablist" aria-label="Review filter">
 				{(Object.keys(FILTER_LABELS) as ReviewFilter[]).map((key) => (
 					<button
@@ -305,7 +315,7 @@ function PanelHeader({
 						type="button"
 						variant="ghost"
 						size="sm"
-						className="ml-auto h-6 px-2 text-xs"
+						className="ml-auto h-6 px-2 text-xs max-md:h-11"
 						onClick={onClearRoundFilter}
 					>
 						Clear
@@ -527,7 +537,7 @@ function CommentCard({
 								type="button"
 								variant="ghost"
 								size="sm"
-								className="ml-auto h-6 px-2 text-[11px]"
+								className="ml-auto h-6 px-2 text-[11px] max-md:h-11"
 								disabled={!canWrite}
 								onClick={() => onReopen(comment)}
 							>
@@ -541,7 +551,7 @@ function CommentCard({
 							type="button"
 							variant="ghost"
 							size="sm"
-							className="ml-auto h-6 px-2 text-[11px]"
+							className="ml-auto h-6 px-2 text-[11px] max-md:h-11"
 							disabled={!canWrite}
 							onClick={() => onResolve(comment)}
 						>
@@ -717,7 +727,7 @@ function DraftCard({
 					type="button"
 					variant="ghost"
 					size="sm"
-					className="h-7 px-2 text-xs"
+					className="h-7 px-2 text-xs max-md:h-11"
 					onClick={() => onRemoveDraft(draft.tempId)}
 				>
 					Discard
@@ -727,7 +737,7 @@ function DraftCard({
 						type="button"
 						variant="secondary"
 						size="sm"
-						className="ml-auto h-7 px-2 text-xs"
+						className="ml-auto h-7 px-2 text-xs max-md:h-11"
 						disabled={localBody.trim().length === 0 || !canWrite}
 						onClick={() => onPostDraft({ ...draft, body: localBody })}
 					>
@@ -789,21 +799,33 @@ function PanelFoot({
 					? 'Add comments on the stage, then send the round.'
 					: `${unsentCount} comment${unsentCount === 1 ? '' : 's'} ready to send.`}
 			</div>
-			<ViewerTooltip className="flex flex-col">
-				<Button
-					type="button"
-					size="sm"
-					className="h-8 text-xs"
-					disabled={
-						disabledReason !== null || unsentCount === 0 || !target || isSending || !canWrite
-					}
-					onClick={() => target && onSendRound(target.id)}
-					title={disabledReason ?? undefined}
-					data-testid="panel-send-round"
-				>
-					{isSending ? 'Sending…' : `Send round${target ? ` · ${target.title}` : ''}`}
-				</Button>
-			</ViewerTooltip>
+			<div className="flex items-center gap-2">
+				<div className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+					{target ? (
+						<>
+							Send round to <b className="font-semibold text-foreground">{target.title}</b>
+						</>
+					) : (
+						'Send round'
+					)}
+				</div>
+				<ViewerTooltip className="flex flex-col">
+					<Button
+						type="button"
+						size="sm"
+						className="text-xs max-md:h-11"
+						disabled={
+							disabledReason !== null || unsentCount === 0 || !target || isSending || !canWrite
+						}
+						onClick={() => target && onSendRound(target.id)}
+						title={disabledReason ?? undefined}
+						aria-label={target ? `Send round to ${target.title}` : 'Send round'}
+						data-testid="panel-send-round"
+					>
+						{isSending ? 'Sending…' : 'Send'}
+					</Button>
+				</ViewerTooltip>
+			</div>
 		</div>
 	)
 }
@@ -872,12 +894,12 @@ function deriveDisabledReason(
 	target: AttachingObject | null,
 	unsentCount: number,
 ): string | null {
-	if (provenance.variant === 'zero') return "This file isn't attached to any object"
-	if (provenance.variant === 'archived') return 'The attached object is archived'
-	if (provenance.variant === 'orphaned') return 'The attached object was archived mid-review'
-	if (provenance.send === 'picker-required') return 'Pick a target object first'
+	if (provenance.variant === 'zero') return "This file isn't attached to any item"
+	if (provenance.variant === 'archived') return 'The attached item is archived'
+	if (provenance.variant === 'orphaned') return 'The attached item was archived mid-review'
+	if (provenance.send === 'picker-required') return 'Pick a target item first'
 	if (unsentCount === 0) return 'Nothing to send yet'
-	if (!target) return 'No target object'
+	if (!target) return 'No target item'
 	return null
 }
 

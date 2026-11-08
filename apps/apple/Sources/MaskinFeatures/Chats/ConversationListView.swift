@@ -127,8 +127,8 @@ struct ConversationListView: View {
 	// MARK: Rows
 
 	@ViewBuilder
-	private func rowView(_ row: TeamLayout.Row, now: Date) -> some View {
-		let rowActions = actions(for: row)
+	private func rowView(_ row: TeamLayout.Row, now: Date, pinned: [String]? = nil) -> some View {
+		let rowActions = pinned.map { actions(for: row, among: $0) } ?? actions(for: row)
 		let isOpen = expandedPeople.contains(row.id)
 		let base = HStack(spacing: MaskinSpace.s5) {
 			if picking.isActive, let id = selectionID(of: row) {
@@ -147,6 +147,9 @@ struct ConversationListView: View {
 		.selectionRowAccessibility(isActive: picking.isActive, isPicked: selectionID(of: row).map(picking.contains) ?? false)
 		.rowChrome()
 		.teamRowActions(rowActions, enabled: !picking.isActive)
+		.pinReorder(id: row.id, enabled: pinned != nil && !picking.isActive) { dragged, target in
+			store.movePin(dragged, before: target, tiles: pinned ?? [])
+		}
 		.onAppear { loadMoreIfLast(row) }
 		switch row.kind {
 		case .conversation(let c):
@@ -226,15 +229,12 @@ struct ConversationListView: View {
 		}
 	}
 
-	private func actions(for tile: TeamLayout.Tile, among ids: [String]) -> TeamRowActions {
-		var base: TeamRowActions
-		switch tile.kind {
-		case .conversation(let c): base = actions(for: c)
-		case .flow(let f): base = actions(for: f)
-		}
-		if let i = ids.firstIndex(of: tile.id) {
-			if i > 0 { base.moveEarlier = { store.movePin(tile.id, before: ids[i - 1], tiles: ids) } }
-			if i < ids.count - 1 { base.moveLater = { store.movePin(tile.id, before: ids[i + 1], tiles: ids) } }
+	/// A pinned row's actions: the ordinary ones plus Move earlier / later within the pinned order.
+	private func actions(for row: TeamLayout.Row, among ids: [String]) -> TeamRowActions {
+		var base = actions(for: row)
+		if let i = ids.firstIndex(of: row.id) {
+			if i > 0 { base.moveEarlier = { store.movePin(row.id, before: ids[i - 1], tiles: ids) } }
+			if i < ids.count - 1 { base.moveLater = { store.movePin(row.id, before: ids[i + 1], tiles: ids) } }
 		}
 		return base
 	}
@@ -281,13 +281,6 @@ struct ConversationListView: View {
 			if result.succeeded > 0 {
 				undoOffer = UndoOffer(message: "Archived \(result.succeeded). Undo.") { _ = await store.setArchived(ids, false) }
 			}
-		}
-	}
-
-	private func open(tile: TeamLayout.Tile) {
-		switch tile.kind {
-		case .conversation(let c): selection = c.id
-		case .flow(let f): selection = f.pinKey
 		}
 	}
 
@@ -357,7 +350,7 @@ struct ConversationListView: View {
 		}
 	}
 
-	/// The active chats: filter chips, pinned tiles, then the day or person sections.
+	/// The active chats: filter chips, the Pinned rows, then the day or person sections.
 	@ViewBuilder
 	private func activeContent(layout: TeamLayout, now: Date) -> some View {
 			if store.displayOptions.showsFilterChips, pillPlacement == .top, !picking.isActive {
@@ -372,21 +365,9 @@ struct ConversationListView: View {
 			}
 			if !layout.tiles.isEmpty {
 				Section {
-					PinnedTiles(
-						tiles: layout.tiles, currentActorID: currentActorID, workingAgentIDs: store.workingAgentIDs,
-						picking: picking.isActive ? picking : nil,
-						onOpen: { tile in
-							if picking.isActive {
-								if case .conversation(let c) = tile.kind { picking.toggle(c.id) }
-							} else {
-								open(tile: tile)
-							}
-						},
-						onMove: { id, before in store.movePin(id, before: before, tiles: layout.tiles.map(\.id)) }
-					) { tile in
-						TeamRowMenuItems(actions: actions(for: tile, among: layout.tiles.map(\.id)))
+					ForEach(layout.tiles) { tile in
+						rowView(tile.row, now: now, pinned: layout.tiles.map(\.id))
 					}
-					.plainRow(insets: EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
 				} header: {
 					TeamSectionHeader(label: "Pinned", count: layout.tiles.count)
 				}

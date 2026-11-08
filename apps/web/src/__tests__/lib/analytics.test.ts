@@ -3,15 +3,20 @@ import {
 	deriveEntryAgentRole,
 	deriveSidebarViewport,
 	trackAgentCreated,
+	trackAgentOpened,
 	trackAgentSessionStarted,
 	trackAppActive,
 	trackAskBannerDecideClicked,
 	trackBetArchived,
 	trackBetCreated,
 	trackBetStatusChanged,
+	trackBriefingViewed,
+	trackChatFirstReplyReceived,
 	trackChatImageUpload,
+	trackChatLeft,
 	trackChatSessionStarted,
 	trackCommentPosted,
+	trackCreditLowShown,
 	trackEvent,
 	trackFileViewerCommentResolved,
 	trackFileViewerPageNavigated,
@@ -20,11 +25,14 @@ import {
 	trackFileViewerZoomUsed,
 	trackForyouCardAction,
 	trackForyouCardShown,
+	trackKnowledgePageViewed,
+	trackLoopViewed,
 	trackMiniAppFileViewed,
 	trackNavItemClicked,
 	trackObjectAttachedFile,
 	trackObjectCreated,
 	trackObjectUpdated,
+	trackObjectViewed,
 	trackObjectsListArrived,
 	trackObjectsListGroupToggled,
 	trackRelationshipCreated,
@@ -39,6 +47,7 @@ import {
 	trackSpecialistSummonedManually,
 	trackTriggerCreated,
 	trackTriggerUpdated,
+	trackUpgradeClicked,
 } from '@/lib/analytics'
 import { setStoredActor } from '@/lib/auth'
 import { __setInitializedForTesting } from '@/lib/posthog'
@@ -538,6 +547,122 @@ describe('v1 taxonomy helpers', () => {
 				parent_entity_type: 'bet',
 			}),
 		)
+	})
+
+	it('knowledge_page_viewed carries ids only', () => {
+		const capture = captureSpy()
+
+		trackKnowledgePageViewed({ entity_id: 'k-1', entity_type: 'knowledge' })
+
+		expect(capture).toHaveBeenCalledWith('knowledge_page_viewed', {
+			entity_id: 'k-1',
+			entity_type: 'knowledge',
+			source: 'web',
+			flow_id: null,
+		})
+	})
+
+	it('briefing_viewed says which kind of briefing was opened', () => {
+		const capture = captureSpy()
+
+		trackBriefingViewed({ entity_id: 'file-9', entity_type: 'file', kind: 'story' })
+
+		expect(capture).toHaveBeenCalledWith('briefing_viewed', {
+			entity_id: 'file-9',
+			entity_type: 'file',
+			source: 'web',
+			flow_id: null,
+			kind: 'story',
+		})
+	})
+
+	it('object_viewed carries the object type and the objects feature area, ids only', () => {
+		const capture = captureSpy()
+
+		trackObjectViewed({ entity_id: 'k-1', object_type: 'knowledge' })
+
+		expect(capture).toHaveBeenCalledWith('object_viewed', {
+			entity_id: 'k-1',
+			entity_type: 'object',
+			source: 'web',
+			flow_id: null,
+			object_type: 'knowledge',
+			feature_area: 'objects',
+		})
+	})
+
+	it('loop_viewed and agent_opened carry their feature area', () => {
+		const capture = captureSpy()
+
+		trackLoopViewed({ entity_id: 'l-1' })
+		trackAgentOpened({ entity_id: 'a-1' })
+
+		expect(capture).toHaveBeenNthCalledWith(1, 'loop_viewed', {
+			entity_id: 'l-1',
+			entity_type: 'loop',
+			source: 'web',
+			flow_id: null,
+			feature_area: 'loops',
+		})
+		expect(capture).toHaveBeenNthCalledWith(2, 'agent_opened', {
+			entity_id: 'a-1',
+			entity_type: 'agent',
+			source: 'web',
+			flow_id: null,
+			feature_area: 'agents',
+		})
+	})
+
+	it('chat_first_reply_received and chat_left carry the conversation id and the chats feature area', () => {
+		const capture = captureSpy()
+
+		trackChatFirstReplyReceived({ entity_id: 'c-1', latency_ms: 1200 })
+		trackChatLeft({ entity_id: 'c-1', outcome: 'abandoned' })
+
+		expect(capture).toHaveBeenNthCalledWith(1, 'chat_first_reply_received', {
+			entity_id: 'c-1',
+			entity_type: 'conversation',
+			source: 'web',
+			flow_id: null,
+			latency_ms: 1200,
+			feature_area: 'chats',
+		})
+		expect(capture).toHaveBeenNthCalledWith(2, 'chat_left', {
+			entity_id: 'c-1',
+			entity_type: 'conversation',
+			source: 'web',
+			flow_id: null,
+			outcome: 'abandoned',
+			feature_area: 'chats',
+		})
+	})
+
+	it('credit_low_shown fires once per notice and plan per page load', () => {
+		const capture = captureSpy()
+
+		trackCreditLowShown({ placement: 'banner', plan: 'trial' })
+		trackCreditLowShown({ placement: 'banner', plan: 'trial' })
+		trackCreditLowShown({ placement: 'object_chip', plan: 'trial' })
+
+		expect(capture).toHaveBeenCalledTimes(2)
+		expect(capture).toHaveBeenCalledWith('credit_low_shown', {
+			placement: 'object_chip',
+			plan: 'trial',
+			feature_area: 'billing',
+		})
+	})
+
+	it('upgrade_clicked says where the button was and which plan it asked for', () => {
+		const capture = captureSpy()
+
+		trackUpgradeClicked({ source: 'billing_settings', target_plan: 'pro', current_plan: 'trial' })
+
+		expect(capture).toHaveBeenCalledWith('upgrade_clicked', {
+			source: 'billing_settings',
+			target_plan: 'pro',
+			current_plan: 'trial',
+			feature_area: 'billing',
+		})
 	})
 
 	it('mini_app_file_viewed carries the fixed property contract for a file open', () => {

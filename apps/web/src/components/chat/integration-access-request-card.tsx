@@ -1,6 +1,22 @@
+import {
+	REQUEST_CARD_LINK,
+	RequestCardHeader,
+	RequestCardReadOnly,
+	RequestCardRow,
+	RequestCardSummary,
+	capFirst,
+	useAskingAgentName,
+} from '@/components/chat/request-card-parts'
+import {
+	REQUEST_CARD,
+	REQUEST_CARD_ACTIONS,
+	REQUEST_CARD_DECLINE,
+	REQUEST_CARD_PRIMARY,
+} from '@/components/chat/request-card-styles'
 import { FormError } from '@/components/shared/form-error'
-import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useCardAnswer, useSendMessage } from '@/hooks/use-conversation'
 import { useIntegrations } from '@/hooks/use-integrations'
@@ -56,12 +72,15 @@ export function IntegrationAccessRequestCard({
 	const sendInput = useSendSessionInput(workspaceId)
 	// Allowing access and declining both answer the agent, which a viewer cannot do.
 	const canWrite = useCanWrite()
+	const agentName = useAskingAgentName(conversationId, workspaceId, askingAgentId)
 
 	const [busy, setBusy] = useState(false)
 	const [error, setError] = useState<string | null>(null)
 	const [declinedNow, setDeclinedNow] = useState(false)
 	const [allowedNow, setAllowedNow] = useState(false)
 	const [agentStillRunning, setAgentStillRunning] = useState(false)
+	// The level can be lowered before Allow, never raised above what the agent asked for.
+	const [chosen, setChosen] = useState<'read' | 'read_write'>(request.level)
 	const storedAnswer = useCardAnswer(conversationId, workspaceId, messageId)
 	const declined = declinedNow || storedAnswer === 'declined'
 
@@ -86,7 +105,7 @@ export function IntegrationAccessRequestCard({
 				request.integration_id,
 				workspaceId,
 				request.session_id,
-				request.level,
+				chosen,
 			)
 			setAllowedNow(true)
 			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
@@ -96,8 +115,8 @@ export function IntegrationAccessRequestCard({
 				return
 			}
 			const content = res.changed
-				? `I've allowed you ${levelText(request.level)} to ${request.display_name}. Carry on with the work.`
-				: `You already have ${levelText(request.level)} to ${request.display_name}. Carry on with the work.`
+				? `I've allowed you ${levelText(chosen)} to ${request.display_name}. Carry on with the work.`
+				: `You already have ${levelText(chosen)} to ${request.display_name}. Carry on with the work.`
 			if (helper) {
 				// Stopped to take the new access, so its follow-up carries on; not stopped, so write into it.
 				if (res.changed) continueSession.mutate({ id: request.session_id, content })
@@ -139,92 +158,123 @@ export function IntegrationAccessRequestCard({
 		})
 	}
 
+	// Asking again is a plain message the agent answers with a new card.
+	const askAgain = () => {
+		setDeclinedNow(false)
+		const content = `Please ask me for ${request.display_name} access again.`
+		if (helper) {
+			sendInput.mutate({ id: request.session_id, content, conversationId })
+			return
+		}
+		sendMessage.mutate({ content })
+	}
+
 	if (allowed || declined || gone) {
 		return (
-			<div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm">
-				<KeyRound className="size-4 text-muted-foreground" aria-hidden />
-				<span>
-					{allowed ? (
-						<>
-							Allowed <strong>{request.display_name}</strong> for this agent. It stays until you
-							remove it.
-						</>
-					) : declined ? (
-						<>
-							Declined <strong>{request.display_name}</strong>.
-						</>
-					) : (
-						<>
-							<strong>{request.display_name}</strong> is no longer connected.
-						</>
-					)}
-				</span>
+			<RequestCardSummary
+				icon={KeyRound}
+				note={
+					agentStillRunning
+						? 'The agent is still running with its old access. Stop it from the chat, then send a message to start it again.'
+						: null
+				}
+				actions={
+					allowed ? (
+						<Link
+							to="/$workspaceId/settings/integrations"
+							params={{ workspaceId }}
+							search={{ select_github: undefined, error: undefined, return_to: undefined }}
+							className={REQUEST_CARD_LINK}
+						>
+							Manage
+						</Link>
+					) : declined && canWrite ? (
+						<button type="button" className={REQUEST_CARD_LINK} onClick={askAgain}>
+							Ask again
+						</button>
+					) : null
+				}
+			>
 				{allowed ? (
-					<Link
-						to="/$workspaceId/settings/integrations"
-						params={{ workspaceId }}
-						search={{ select_github: undefined, error: undefined, return_to: undefined }}
-						className="text-xs text-muted-foreground underline"
-					>
-						Manage in Integrations
-					</Link>
-				) : null}
-				{agentStillRunning ? (
-					<p className="w-full text-xs text-muted-foreground">
-						The agent is still running with its old access. Stop it from the chat, then send a
-						message to start it again.
-					</p>
-				) : null}
-			</div>
+					<>
+						Allowed <strong>{request.display_name}</strong> for {agentName}. It stays until you
+						remove it.
+					</>
+				) : declined ? (
+					<>
+						Declined <strong>{request.display_name}</strong> for {agentName}.
+					</>
+				) : (
+					<>
+						<strong>{request.display_name}</strong> is no longer connected.
+					</>
+				)}
+			</RequestCardSummary>
+		)
+	}
+
+	if (!canWrite || !canAllow) {
+		return (
+			<RequestCardReadOnly icon={KeyRound} title={`Allow ${request.display_name} for ${agentName}`}>
+				{canWrite
+					? 'Only the person who connected this or a workspace admin can allow it.'
+					: 'Only a person with edit access can allow it.'}
+			</RequestCardReadOnly>
 		)
 	}
 
 	return (
-		<fieldset
-			aria-label={`Allow ${request.display_name}`}
-			className="mt-2 flex min-w-0 flex-col gap-3 rounded-xl border border-border bg-muted/40 p-4"
-		>
-			<div className="flex items-start gap-2">
-				<KeyRound className="mt-0.5 size-4 shrink-0" aria-hidden />
-				<div>
-					<h3 className="text-sm font-semibold">
-						Let this agent have {levelText(request.level)} to {request.display_name}?
-					</h3>
-					<p className="mt-0.5 text-xs text-muted-foreground">
-						{request.reason ? `${request.reason} ` : ''}
-						{request.level === 'read_write'
-							? 'It can look things up and make changes there, in any chat or run, until you remove it in Settings → Integrations.'
-							: 'It can look things up there, in any chat or run, until you remove it in Settings → Integrations.'}
-					</p>
-				</div>
-			</div>
-			{!canAllow ? (
-				<p className="text-xs text-muted-foreground">
-					Only the person who connected this or a workspace admin can allow it.
-				</p>
-			) : null}
+		<fieldset aria-label={`Allow ${request.display_name}`} className={REQUEST_CARD}>
+			<RequestCardHeader icon={KeyRound} title={`Allow ${request.display_name} for ${agentName}`}>
+				{request.reason ? `${request.reason}` : `${capFirst(agentName)} needs it to carry on.`}
+			</RequestCardHeader>
+			<RequestCardRow label="Integration">{request.display_name}</RequestCardRow>
+			<RequestCardRow label="Access">
+				{request.level === 'read_write' ? (
+					<RadioGroup
+						value={chosen}
+						onValueChange={(v) => setChosen(v === 'read' ? 'read' : 'read_write')}
+						aria-label="Access level"
+						className="flex flex-wrap gap-x-4 gap-y-1"
+					>
+						<div className="flex items-center gap-2 max-md:min-h-11">
+							<RadioGroupItem value="read" id={`ia-read-${messageId}`} />
+							<Label htmlFor={`ia-read-${messageId}`} className="font-normal">
+								Read
+							</Label>
+						</div>
+						<div className="flex items-center gap-2 max-md:min-h-11">
+							<RadioGroupItem value="read_write" id={`ia-rw-${messageId}`} />
+							<Label htmlFor={`ia-rw-${messageId}`} className="font-normal">
+								Read and write
+							</Label>
+						</div>
+					</RadioGroup>
+				) : (
+					'Read'
+				)}
+			</RequestCardRow>
+			<RequestCardRow label="Lasts">Until you remove it in Integrations</RequestCardRow>
 			<FormError error={error ?? undefined} />
-			<ViewerTooltip className="flex">
-				<div className="flex flex-wrap items-center gap-2">
-					<Button
-						type="button"
-						size="sm"
-						disabled={busy || !canAllow || !canWrite}
-						onClick={() => void allow()}
-					>
-						Allow
-					</Button>
-					<Button
-						type="button"
-						size="sm"
-						variant="outline"
-						disabled={busy || !canWrite}
-						onClick={decline}
-					>
-						Not now
-					</Button>
-				</div>
-			</ViewerTooltip>
+			<div className={REQUEST_CARD_ACTIONS}>
+				<Button
+					type="button"
+					className={REQUEST_CARD_PRIMARY}
+					disabled={busy}
+					onClick={() => void allow()}
+				>
+					Allow
+				</Button>
+				<Button
+					type="button"
+					variant="ghost"
+					className={REQUEST_CARD_DECLINE}
+					disabled={busy}
+					onClick={decline}
+				>
+					Not now
+				</Button>
+			</div>
 		</fieldset>
 	)
 }

@@ -21,8 +21,6 @@ struct EditableDraftCard: View {
 		return nil
 	}
 
-	private var bodyFont: Font { MaskinTypeface.sans(MaskinFontSize.t15) }
-
 	var body: some View {
 		VStack(alignment: .leading, spacing: 0) {
 			head
@@ -113,25 +111,9 @@ struct EditableDraftCard: View {
 		let text = Binding(
 			get: { store.edit(for: draft).body },
 			set: { store.setBody($0, for: draft) })
-		return ZStack(alignment: .topLeading) {
-			// An invisible copy of the text gives the editor its height: it grows with what is typed.
-			Text(text.wrappedValue + "\n")
-				.font(bodyFont).lineSpacing(MaskinSpace.s2)
-				.opacity(0)
-				.padding(.horizontal, MaskinSpace.s2 + MaskinSpace.s1)
-				.padding(.vertical, MaskinSpace.s4)
-				.frame(maxWidth: .infinity, alignment: .leading)
-				.accessibilityHidden(true)
-			TextEditor(text: text)
-				.font(bodyFont).lineSpacing(MaskinSpace.s2)
-				.foregroundStyle(MaskinColor.ink)
-				.scrollContentBackground(.hidden)
-				.scrollDisabled(true)
-				.disabled(!store.isEditable(draft))
-				.accessibilityLabel(draft.isPost ? "Post text" : "Message text")
-				.accessibilityHint("Double tap to edit")
-		}
-		.frame(minHeight: MaskinSpace.touchMin * 3)
+		return DraftBodyEditor(
+			text: text, isEnabled: store.isEditable(draft), accessibilityLabel: draft.isPost ? "Post text" : "Message text"
+		)
 		.padding(.horizontal, MaskinSpace.s8 - (MaskinSpace.s2 + MaskinSpace.s1))
 		.padding(.top, MaskinSpace.s5)
 	}

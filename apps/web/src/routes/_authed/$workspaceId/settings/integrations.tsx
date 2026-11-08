@@ -1,3 +1,4 @@
+import { StatusPill } from '@/components/integrations/drive/status-pill'
 import { ProviderConnectRow } from '@/components/integrations/provider-connect-row'
 import { InstallGithubOrgSection } from '@/components/integrations/provider-dialogs'
 import {
@@ -5,6 +6,7 @@ import {
 	type ResendConnectPrefill,
 } from '@/components/integrations/resend/resend-connect-dialog'
 import { ToolsSection } from '@/components/integrations/tools-section'
+import { SettingsPageTitle } from '@/components/settings/settings-page-title'
 import { EditorBanner } from '@/components/shared/editor-banner'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
@@ -26,6 +28,7 @@ import {
 	useSelectGithubInstallation,
 } from '@/hooks/use-integrations'
 import type { IntegrationResponse, ResendDnsRecord } from '@/lib/api'
+import { PILL_BUTTON } from '@/lib/pill-button'
 import { safeReturnPath } from '@/lib/return-path'
 import { sortBy } from '@/lib/sort'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -132,7 +135,8 @@ function IntegrationsPage() {
 	const resendAwaitingSecret = awaitingSecretByProvider.get('resend') ?? []
 
 	return (
-		<div>
+		<div className="max-w-[760px]">
+			<SettingsPageTitle title="Integrations" />
 			{connectError && (
 				<EditorBanner
 					tone="danger"
@@ -154,22 +158,27 @@ function IntegrationsPage() {
 					description="No integration providers are configured on the server"
 				/>
 			) : (
-				<div className="space-y-2">
-					{visibleProviders.map((provider) => (
-						<ProviderConnectRow
-							key={provider.name}
-							provider={provider}
-							installations={activeByProvider.get(provider.name) ?? []}
-							workspaceId={workspaceId}
-						/>
-					))}
-					{resendAwaitingSecret.length > 0 && (
-						<ResendResumeSection
-							rows={resendAwaitingSecret}
-							onResume={(prefill) => setResendDialog({ open: true, prefill })}
-						/>
-					)}
-				</div>
+				<section>
+					<h2 className="px-2 pb-1.5 text-[13px] font-semibold text-muted-foreground">
+						Connected tools
+					</h2>
+					<div className="border-t border-border-subtle">
+						{visibleProviders.map((provider) => (
+							<ProviderConnectRow
+								key={provider.name}
+								provider={provider}
+								installations={activeByProvider.get(provider.name) ?? []}
+								workspaceId={workspaceId}
+							/>
+						))}
+						{resendAwaitingSecret.length > 0 && (
+							<ResendResumeSection
+								rows={resendAwaitingSecret}
+								onResume={(prefill) => setResendDialog({ open: true, prefill })}
+							/>
+						)}
+					</div>
+				</section>
 			)}
 			<ToolsSection workspaceId={workspaceId} />
 			<SelectGithubInstallationDialog
@@ -203,28 +212,33 @@ function ResendResumeSection({
 	const canWrite = useCanWrite()
 	return (
 		<div className="space-y-2">
-			<p className="text-[8px] font-bold tracking-[0.11em] uppercase text-muted-foreground font-mono pt-2">
-				CONNECTIONS AWAITING A SECRET
-			</p>
+			<p className="settings-label pt-2">Connections awaiting a secret</p>
 			{rows.map((row) => {
 				const prefill = extractResendPrefill(row)
 				if (!prefill) return null
 				return (
 					<div
 						key={row.id}
-						className="flex items-center gap-3 rounded-lg border border-warning/40 bg-warning/5 p-4"
+						className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card px-4 py-3.5"
 					>
-						<div className="h-3 w-3 shrink-0 rounded-full bg-warning" aria-hidden="true" />
-						<div className="flex-1 min-w-0">
-							<p className="text-sm font-medium text-foreground truncate">
+						<div className="flex-1 min-w-0 basis-40">
+							<p className="text-[15px] font-medium text-foreground truncate">
 								Resend — {prefill.receiveSubdomain}
 							</p>
-							<p className="text-xs text-muted-foreground truncate">
+							<p className="text-[13px] text-muted-foreground truncate">
 								Awaiting the whsec_… secret. Pick up where you left off in Step 3.
 							</p>
 						</div>
+						<StatusPill soft tone="warn">
+							Awaiting secret
+						</StatusPill>
 						<ViewerTooltip>
-							<Button size="sm" disabled={!canWrite} onClick={() => onResume(prefill)}>
+							<Button
+								size="sm"
+								className={PILL_BUTTON}
+								disabled={!canWrite}
+								onClick={() => onResume(prefill)}
+							>
 								Finish setup
 							</Button>
 						</ViewerTooltip>

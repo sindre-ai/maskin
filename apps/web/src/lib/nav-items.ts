@@ -9,29 +9,31 @@ export interface NavItemDef {
 	to: string
 	icon: LucideIcon
 	exact?: boolean
+	/** An outside address the entry opens in a new tab instead of an app route. */
+	href?: string
 }
 
 export const FOR_YOU_ROUTE = '/$workspaceId' as const
 export const CHATS_ROUTE = '/$workspaceId/chats' as const
 
 // v2 nav inventory shared by the sidebar and the mobile bottom bar — mockup
-// `navDefs` (For you, Chats, Loops, Objects). `key` is the stable analytics
+// `navDefs` (For you, Chats, Flows, Items). `key` is the stable analytics
 // identifier for `nav_item_clicked` — never rename after ship without
 // coordinating with the PostHog query in the parent bet (`metadata.posthog_query`).
 export const CORE_NAV_ITEMS: NavItemDef[] = [
 	{ key: 'for-you', label: 'For you', to: FOR_YOU_ROUTE, exact: true, icon: Zap },
 	{ key: 'chats', label: 'Chats', to: CHATS_ROUTE, icon: MessageSquare },
-	{ key: 'loops', label: 'Loops', to: '/$workspaceId/loops', icon: RefreshCw },
+	{ key: 'loops', label: 'Flows', to: '/$workspaceId/loops', icon: RefreshCw },
 ]
 
 export const OBJECTS_NAV_ITEM: NavItemDef = {
 	key: 'objects',
-	label: 'Objects',
+	label: 'Items',
 	to: '/$workspaceId/objects',
 	icon: Layers,
 }
 
-// Objects only earns a nav slot once the workspace has object types to show.
+// Items only earns a nav slot once the workspace has object types to show.
 export function useHasObjectsNavItem(): boolean {
 	const enabledModules = useEnabledModules()
 	return useMemo(() => getEnabledObjectTypeTabs(enabledModules).length > 0, [enabledModules])
