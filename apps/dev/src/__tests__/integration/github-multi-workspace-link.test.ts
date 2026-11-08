@@ -45,7 +45,12 @@ async function seedInstallation(
 	workspaceId: string,
 	actorId: string,
 	installationId: string,
-	overrides: { status?: string; ownerLogin?: string; credentialInstallationId?: string } = {},
+	overrides: {
+		status?: string
+		ownerLogin?: string
+		ownerType?: 'organization' | 'personal'
+		credentialInstallationId?: string
+	} = {},
 ) {
 	const [row] = await db
 		.insert(integrations)
@@ -65,6 +70,7 @@ async function seedInstallation(
 			config: {
 				system_actor_id: actorId,
 				...(overrides.ownerLogin ? { owner_login: overrides.ownerLogin } : {}),
+				...(overrides.ownerType ? { owner_type: overrides.ownerType } : {}),
 			},
 			createdBy: actorId,
 		})
@@ -184,6 +190,29 @@ describe('GitHub App installation shared across workspaces', () => {
 			.where(and(eq(events.entityType, 'integration'), eq(events.entityId, linked.id)))
 		expect(audit).toHaveLength(1)
 		expect(audit[0].action).toBe('created')
+	})
+
+	it('carries the account type over from the source row, and leaves it unset for an older source', async () => {
+		const actorId = getTestActorId()
+		const withType = newInstallationId()
+		const withoutType = newInstallationId()
+		const wsA = await insertWorkspace(db, actorId)
+		const wsB = await insertWorkspace(db, actorId)
+		await seedInstallation(wsA.id, actorId, withType, {
+			ownerLogin: 'acme-org',
+			ownerType: 'organization',
+		})
+		await seedInstallation(wsA.id, actorId, withoutType, { ownerLogin: 'old-org' })
+
+		const app = await buildApp()
+		expect((await app.request(linkRequest(wsB.id, withType))).status).toBe(200)
+		expect((await app.request(linkRequest(wsB.id, withoutType))).status).toBe(200)
+
+		const rows = await db.select().from(integrations).where(eq(integrations.workspaceId, wsB.id))
+		const configOf = (id: string) =>
+			rows.find((r) => r.externalId === id)?.config as Record<string, unknown>
+		expect(configOf(withType).owner_type).toBe('organization')
+		expect(configOf(withoutType)).not.toHaveProperty('owner_type')
 	})
 
 	it('delivers one webhook event per bound workspace', async () => {

@@ -27483,6 +27483,62 @@
 						}
 					}
 				}
+			},
+			"get": {
+				"tags": [
+					"integrations"
+				],
+				"summary": "List the workspace's custom MCP servers (no secret values)",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "The active servers, by name. A stdio server has no URL",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "array",
+									"items": {
+										"type": "object",
+										"properties": {
+											"id": {
+												"type": "string",
+												"format": "uuid"
+											},
+											"name": {
+												"type": "string"
+											},
+											"url": {
+												"type": [
+													"string",
+													"null"
+												]
+											},
+											"status": {
+												"type": "string"
+											}
+										},
+										"required": [
+											"id",
+											"name",
+											"url",
+											"status"
+										]
+									}
+								}
+							}
+						}
+					}
+				}
 			}
 		},
 		"/api/custom-mcp-servers/{id}": {
