@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo } from 'react'
 import { toast } from 'sonner'
+import { ACTORS_STALE_MS } from '../lib/actors-stale'
 import {
 	type ActorListItem,
 	type CreateActorInput,
@@ -10,10 +11,6 @@ import {
 } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 import { useWorkspace } from '../lib/workspace-context'
-
-// The stream keeps the list fresh (actor events refetch it, one per window), so a page that
-// mounts it again shortly after the last load reads the cache instead of asking again.
-export const ACTORS_STALE_MS = 5 * 60_000
 
 export function useActors(workspaceId?: string, options?: { enabled?: boolean }) {
 	return useQuery({
