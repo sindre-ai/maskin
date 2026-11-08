@@ -1133,6 +1133,10 @@ export const conversations = pgTable(
 		// lowest first, joined with ':' (directPairKey in services/direct-chat.ts).
 		// NULL for every topical chat, however many people are in it.
 		directPairKey: text('direct_pair_key'),
+		// Labels for grouping chats, for example a team name. A JSON array of short strings,
+		// written only through PATCH /api/conversations/:id (strict) and read through
+		// normalizeTags. Same shape as a flow's metadata.tags and an agent's metadata.tags.
+		tags: jsonb('tags').notNull().default(sql`'[]'::jsonb`),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	},
@@ -2223,6 +2227,43 @@ export const userDisplaySettings = pgTable(
 
 export type UserDisplaySettings = typeof userDisplaySettings.$inferSelect
 export type NewUserDisplaySettings = typeof userDisplaySettings.$inferInsert
+
+// ── Saved Views ─────────────────────────────────────────────────────────────
+//
+// A named, shared way to look at a list: which tags (and, for flows, which driver) to keep and
+// what to group by. One per workspace and kind, shared by every member. Unlike
+// user_display_settings these are not per person. `filter` holds { tags?, driverId? } and is
+// checked at the route (savedViewFilterSchema), `group_by` is null, 'tag' or 'driver'.
+
+export const savedViews = pgTable(
+	'saved_views',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		kind: text('kind').notNull(),
+		name: text('name').notNull(),
+		filter: jsonb('filter').notNull().default({}),
+		groupBy: text('group_by'),
+		// Kept when the author is deleted, so a shared view outlives the person who made it.
+		createdBy: uuid('created_by').references(() => actors.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		// One name per kind in a workspace, whatever the capitalisation.
+		uniqueIndex('saved_views_ws_kind_name_uniq').on(t.workspaceId, t.kind, sql`lower(${t.name})`),
+		check('saved_views_kind_check', sql`${t.kind} IN ('flow', 'agent', 'chat')`),
+		check(
+			'saved_views_group_by_check',
+			sql`${t.groupBy} IS NULL OR ${t.groupBy} IN ('tag', 'driver')`,
+		),
+	],
+)
+
+export type SavedView = typeof savedViews.$inferSelect
+export type NewSavedView = typeof savedViews.$inferInsert
 
 // ── Workspace Onboarding Prompts ──────────────────────────────────────────────
 //

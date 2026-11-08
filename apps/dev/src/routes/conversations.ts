@@ -20,6 +20,7 @@ import {
 	editMessageSchema,
 	markThreadReadSchema,
 	messageQuerySchema,
+	normalizeTags,
 	postMessageSchema,
 	removeReactionQuerySchema,
 	stripServerOwnedMetadata,
@@ -1073,7 +1074,7 @@ const updateConversationRoute = createRoute({
 	path: '/{id}',
 	'x-viewer-policy': 'writer',
 	tags: ['Conversations'],
-	summary: 'Rename a conversation',
+	summary: 'Rename a conversation or change its tags',
 	request: {
 		headers: workspaceIdHeader,
 		params: idParamSchema,
@@ -1101,12 +1102,17 @@ app.openapi(updateConversationRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
 	}
 
+	const tags = body.tags === undefined ? undefined : normalizeTags(body.tags)
 	const [updated] = await db
 		.update(conversations)
-		// A human rename permanently opts the conversation out of auto-titling
-		// (conversation-titler.ts) — otherwise the refinement pass would
-		// overwrite whatever they just typed.
-		.set({ title: body.title, titleAutoState: 'manual', updatedAt: new Date() })
+		.set({
+			// A human rename permanently opts the conversation out of auto-titling
+			// (conversation-titler.ts) — otherwise the refinement pass would
+			// overwrite whatever they just typed. A tags-only change leaves the title alone.
+			...(body.title !== undefined && { title: body.title, titleAutoState: 'manual' }),
+			...(tags !== undefined && { tags }),
+			updatedAt: new Date(),
+		})
 		.where(eq(conversations.id, id))
 		.returning()
 	if (!updated) return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
@@ -1117,7 +1123,10 @@ app.openapi(updateConversationRoute, (async (c) => {
 		action: 'conversation_updated',
 		entityType: 'conversation',
 		entityId: id,
-		data: { title: body.title },
+		data: {
+			...(body.title !== undefined && { title: body.title }),
+			...(tags !== undefined && { tags }),
+		},
 	})
 
 	const [participantsByConversation, unreadByConversation] = await Promise.all([

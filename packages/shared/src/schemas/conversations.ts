@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { firstStepSchema } from './first-steps'
 import { booleanQueryParam } from './primitives'
+import { tagListSchema } from './tags'
 
 export const CONVERSATION_TITLE_MAX_LENGTH = 200
 // Chat turns are capped separately from object comments (COMMENT_MAX_LENGTH in events.ts).
@@ -541,9 +542,15 @@ export const createConversationSchema = z
 		},
 	)
 
-export const updateConversationSchema = z.object({
-	title: z.string().min(1, 'Title cannot be empty').max(CONVERSATION_TITLE_MAX_LENGTH),
-})
+export const updateConversationSchema = z
+	.object({
+		title: z.string().min(1, 'Title cannot be empty').max(CONVERSATION_TITLE_MAX_LENGTH).optional(),
+		// Labels for grouping chats, for example a team name. Replaces the whole list.
+		tags: tagListSchema.optional(),
+	})
+	.refine((v) => v.title !== undefined || v.tags !== undefined, {
+		message: 'Send a title, tags, or both',
+	})
 
 export const addConversationParticipantsSchema = z.object({
 	actor_ids: z.array(z.string().uuid()).min(1).max(MAX_CONVERSATION_PARTICIPANTS),

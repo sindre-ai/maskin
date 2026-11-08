@@ -395,6 +395,8 @@ export const conversationListItemResponseSchema = z.object({
 	subjectType: z.enum(['object', 'loop']).nullable(),
 	subjectId: z.string().uuid().nullable(),
 	createdBy: z.string().uuid(),
+	// Labels for grouping chats, for example a team name. Shared by every participant.
+	tags: z.array(z.string()),
 	lastMessageAt: z.string().nullable(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
