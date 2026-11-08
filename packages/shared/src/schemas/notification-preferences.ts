@@ -49,6 +49,12 @@ export const notificationPreferencesResponseSchema = z.object({
 	categories: notificationCategoriesSchema,
 	briefing_enabled: z.boolean(),
 	briefing_time: minuteOfDay,
+	/**
+	 * Whether the summary email is on for this person. A saved choice is returned as saved; when
+	 * there is none, it is what the sending rule would give them (on if they did something real in
+	 * the last 30 days, otherwise off).
+	 */
+	email_digest_enabled: z.boolean(),
 	muted_workspace_ids: z.array(z.string().uuid()),
 	/** Null when the actor has never saved preferences (defaults are returned). */
 	updated_at: z.string().nullable(),
@@ -67,6 +73,7 @@ export const updateNotificationPreferencesSchema = z
 		categories: notificationCategoriesSchema.partial(),
 		briefing_enabled: z.boolean(),
 		briefing_time: minuteOfDay,
+		email_digest_enabled: z.boolean(),
 		muted_workspace_ids: z.array(z.string().uuid()).max(200),
 	})
 	.partial()

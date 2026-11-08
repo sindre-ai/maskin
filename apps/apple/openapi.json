@@ -58932,6 +58932,9 @@
 											"minimum": 0,
 											"maximum": 1439
 										},
+										"email_digest_enabled": {
+											"type": "boolean"
+										},
 										"muted_workspace_ids": {
 											"type": "array",
 											"items": {
@@ -58953,6 +58956,7 @@
 										"categories",
 										"briefing_enabled",
 										"briefing_time",
+										"email_digest_enabled",
 										"muted_workspace_ids",
 										"updated_at"
 									]
@@ -59022,6 +59026,9 @@
 										"type": "integer",
 										"minimum": 0,
 										"maximum": 1439
+									},
+									"email_digest_enabled": {
+										"type": "boolean"
 									},
 									"muted_workspace_ids": {
 										"type": "array",
@@ -59099,6 +59106,9 @@
 											"minimum": 0,
 											"maximum": 1439
 										},
+										"email_digest_enabled": {
+											"type": "boolean"
+										},
 										"muted_workspace_ids": {
 											"type": "array",
 											"items": {
@@ -59120,6 +59130,7 @@
 										"categories",
 										"briefing_enabled",
 										"briefing_time",
+										"email_digest_enabled",
 										"muted_workspace_ids",
 										"updated_at"
 									]

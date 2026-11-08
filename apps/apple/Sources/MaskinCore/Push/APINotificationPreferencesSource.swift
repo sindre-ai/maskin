@@ -41,7 +41,7 @@ public struct APINotificationPreferencesSource: NotificationPreferencesAPI {
 				needsYou: body.categories.needs_you, conversation: body.categories.conversation,
 				digest: body.categories.digest, tips: body.categories.tips),
 			briefingEnabled: body.briefing_enabled, briefingTime: body.briefing_time,
-			mutedWorkspaceIds: body.muted_workspace_ids)
+			emailDigestEnabled: body.email_digest_enabled, mutedWorkspaceIds: body.muted_workspace_ids)
 	}
 
 	public func save(_ patch: NotificationPreferencesPatch, idempotencyKey: String) async throws
@@ -98,6 +98,8 @@ public struct APINotificationPreferencesSource: NotificationPreferencesAPI {
 		var categories: Categories
 		var briefing_enabled: Bool
 		var briefing_time: Int
+		/// Absent from a server that predates the email switch.
+		var email_digest_enabled: Bool?
 		var muted_workspace_ids: [String]
 
 		var model: NotificationPreferences {
@@ -108,7 +110,7 @@ public struct APINotificationPreferencesSource: NotificationPreferencesAPI {
 					needsYou: categories.needs_you, conversation: categories.conversation,
 					digest: categories.digest, tips: categories.tips),
 				briefingEnabled: briefing_enabled, briefingTime: briefing_time,
-				mutedWorkspaceIds: muted_workspace_ids)
+				emailDigestEnabled: email_digest_enabled ?? false, mutedWorkspaceIds: muted_workspace_ids)
 		}
 	}
 }

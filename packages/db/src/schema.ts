@@ -2807,6 +2807,13 @@ export const notificationPreferences = pgTable(
 			.$type<Record<string, string>>()
 			.notNull()
 			.default(sql`'{}'::jsonb`),
+		// The summary email choice. null means no choice yet (every row that existed before
+		// migration 0138); true/false is a saved choice and always wins. Migration 0138.
+		emailDigestEnabled: boolean('email_digest_enabled'),
+		// Summary email series: 0 = none sent, 1 to 3 = onboarding mails sent. Migration 0138.
+		emailOnboardingStep: smallint('email_onboarding_step').notNull().default(0),
+		// Date of the last summary email, set by the email sender. Migration 0138.
+		emailLastSentOn: date('email_last_sent_on', { mode: 'string' }),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	},
@@ -2822,6 +2829,10 @@ export const notificationPreferences = pgTable(
 		check(
 			'notification_preferences_briefing_time_chk',
 			sql`${t.briefingTime} >= 0 AND ${t.briefingTime} <= 1439`,
+		),
+		check(
+			'notification_preferences_email_step_chk',
+			sql`${t.emailOnboardingStep} >= 0 AND ${t.emailOnboardingStep} <= 3`,
 		),
 	],
 )

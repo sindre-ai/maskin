@@ -50,6 +50,7 @@ function PreferenceRow({
 	checked,
 	onChange,
 	locked = false,
+	email,
 }: {
 	title: string
 	description: string
@@ -57,6 +58,8 @@ function PreferenceRow({
 	onChange: (next: boolean) => void
 	/** Shown but not changeable here, e.g. "Needs you", which ignores quiet hours. */
 	locked?: boolean
+	/** A second switch for the same row, sent by email instead of push. */
+	email?: { checked: boolean; onChange: (next: boolean) => void }
 }) {
 	return (
 		<div className="flex items-center justify-between gap-4 px-2 py-3.5">
@@ -64,21 +67,37 @@ function PreferenceRow({
 				<span className="block text-[15px] font-medium leading-tight">{title}</span>
 				<span className="block text-[13px] text-muted-foreground">{description}</span>
 			</div>
-			<Switch
-				checked={checked}
-				onCheckedChange={(next) => onChange(!!next)}
-				aria-label={title}
-				disabled={locked}
-				className={SWITCH_CLASS}
-			/>
+			<div className="flex shrink-0 items-center gap-4">
+				{email && (
+					<div className="flex items-center gap-2">
+						<span className="text-[13px] text-muted-foreground">Email</span>
+						<Switch
+							checked={email.checked}
+							onCheckedChange={(next) => email.onChange(!!next)}
+							aria-label={`${title} by email`}
+							className={SWITCH_CLASS}
+						/>
+					</div>
+				)}
+				<div className="flex items-center gap-2">
+					{email && <span className="text-[13px] text-muted-foreground">Push</span>}
+					<Switch
+						checked={checked}
+						onCheckedChange={(next) => onChange(!!next)}
+						aria-label={title}
+						disabled={locked}
+						className={SWITCH_CLASS}
+					/>
+				</div>
+			</div>
 		</div>
 	)
 }
 
 /**
  * Settings → Notifications. The API stores one switch per category and one for the daily
- * briefing, all for push; there is no per-channel (email, browser) setting, so this page has
- * the single Push column.
+ * briefing, all for push, plus one email switch, which sits on the Digests row. There is no
+ * other per-channel (browser) setting, so every other row has the single Push switch.
  */
 function NotificationsPage() {
 	useDocumentTitle('Notifications')
@@ -133,6 +152,10 @@ function NotificationsPage() {
 					description="Summaries of what your agents got done."
 					checked={prefs.categories.digest}
 					onChange={(next) => save({ categories: { digest: next } })}
+					email={{
+						checked: prefs.email_digest_enabled,
+						onChange: (next) => save({ email_digest_enabled: next }),
+					}}
 				/>
 				<PreferenceRow
 					title="Tips and updates"
