@@ -408,6 +408,7 @@ extension ProfileMenuItem {
 	/// The row's SF Symbol, in its 40 pt tile.
 	fileprivate var symbol: String {
 		switch self {
+		case .settings: "gearshape"
 		case .account: "person.crop.circle"
 		case .billing: "creditcard"
 		case .notifications: "bell"
