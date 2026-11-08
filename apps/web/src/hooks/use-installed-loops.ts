@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { api } from '../lib/api'
+import { type InstallSource, api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
 export function useInstalledLoops(workspaceId: string) {
@@ -14,7 +14,7 @@ export function useInstalledLoops(workspaceId: string) {
 export function useInstallLoop(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
-		mutationFn: ({ loopId, source }: { loopId: string; source?: 'detail' }) =>
+		mutationFn: ({ loopId, source }: { loopId: string; source?: InstallSource }) =>
 			api.installedLoops.install(workspaceId, loopId, source),
 		onSuccess: () => {
 			toast.success('Flow installed')

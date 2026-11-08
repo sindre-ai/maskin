@@ -41,19 +41,32 @@ export function SidebarNavItem({ item, source, params = {}, children }: SidebarN
 				// in the secondary ink; the active row is solid ink on the accent fill.
 				className="h-9 gap-2.5 rounded-[9px] px-2.5 text-[13.5px] font-medium text-muted-foreground data-[active=true]:font-semibold data-[active=true]:text-sidebar-accent-foreground [&>svg]:size-[17px]"
 			>
-				<Link
-					to={item.to as never}
-					params={routeParams as never}
-					search={{} as never}
-					onClick={() => {
-						trackNavItemClicked({ item_key: item.key, source })
-						setOpenMobile(false)
-					}}
-				>
-					<Icon />
-					<span>{item.label}</span>
-					{children}
-				</Link>
+				{item.href ? (
+					<a
+						href={item.href}
+						target="_blank"
+						rel="noopener noreferrer"
+						onClick={() => trackNavItemClicked({ item_key: item.key, source })}
+					>
+						<Icon />
+						<span>{item.label}</span>
+						{children}
+					</a>
+				) : (
+					<Link
+						to={item.to as never}
+						params={routeParams as never}
+						search={{} as never}
+						onClick={() => {
+							trackNavItemClicked({ item_key: item.key, source })
+							setOpenMobile(false)
+						}}
+					>
+						<Icon />
+						<span>{item.label}</span>
+						{children}
+					</Link>
+				)}
 			</SidebarMenuButton>
 		</SidebarMenuItem>
 	)

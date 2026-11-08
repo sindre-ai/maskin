@@ -73530,6 +73530,7 @@ public enum Operations {
                     /// - Remark: Generated from `#/paths/api/installed-loops/POST/requestBody/json/source`.
                     @frozen public enum sourcePayload: String, Codable, Hashable, Sendable, CaseIterable {
                         case detail = "detail"
+                        case public_site = "public_site"
                     }
                     /// - Remark: Generated from `#/paths/api/installed-loops/POST/requestBody/json/source`.
                     public var source: Operations.post_sol_api_sol_installed_hyphen_loops.Input.Body.jsonPayload.sourcePayload?

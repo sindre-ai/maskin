@@ -96,4 +96,28 @@ describe('SidebarNavItem', () => {
 
 		expect(setOpenMobile).toHaveBeenCalledWith(false)
 	})
+
+	it('opens an entry with an outside address in a new tab and still counts the click', () => {
+		trackNavItemClicked.mockClear()
+		render(
+			<SidebarNavItem
+				item={{
+					key: 'marketplace',
+					label: 'Marketplace',
+					to: '/$workspaceId/marketplace',
+					icon: Zap,
+					href: 'https://maskin.io/marketplace/',
+				}}
+				source="footer"
+			/>,
+		)
+
+		const link = screen.getByRole('link', { name: 'Marketplace' })
+		expect(link).toHaveAttribute('href', 'https://maskin.io/marketplace/')
+		expect(link).toHaveAttribute('target', '_blank')
+		expect(link).toHaveAttribute('rel', expect.stringContaining('noopener'))
+
+		fireEvent.click(link)
+		expect(trackNavItemClicked).toHaveBeenCalledWith({ item_key: 'marketplace', source: 'footer' })
+	})
 })

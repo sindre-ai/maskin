@@ -98,9 +98,10 @@ const installLoopBodySchema = z.object({
 	loopId: z.string().uuid(),
 	workspaceId: z.string().uuid(),
 	// Which marketplace surface the install was started from. Absent means the
-	// catalogue card; the loop detail page sends `'detail'`. Analytics only —
+	// catalogue card; the loop detail page sends `'detail'` and the install page
+	// reached from a public loop page sends `'public_site'`. Analytics only —
 	// it changes nothing about what gets provisioned.
-	source: z.enum(['detail']).optional(),
+	source: z.enum(['detail', 'public_site']).optional(),
 })
 
 const listInstalledLoopsQuerySchema = z.object({
