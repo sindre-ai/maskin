@@ -16,7 +16,11 @@ type Answer = {
 	outcome: MessageCardResolved['outcome']
 }
 
-const NOT_ANSWERED = sql`(${messages.metadata} -> 'card_resolved') IS NULL`
+// A function, not a constant: it reads the messages table, and a module that touches it on
+// import breaks every test that stubs the schema without it.
+function notAnswered() {
+	return sql`(${messages.metadata} -> 'card_resolved') IS NULL`
+}
 
 // Parenthesised: it sits inside an AND, and a bare OR would swallow the conditions before it.
 function isRequestCard() {
@@ -54,7 +58,7 @@ export async function resolveCardFromAnswerMessage(
 				and(
 					eq(messages.id, args.cardMessageId),
 					eq(messages.conversationId, args.conversationId),
-					NOT_ANSWERED,
+					notAnswered(),
 					isRequestCard(),
 				),
 			)
@@ -94,7 +98,7 @@ export async function resolveCardFromAction(
 				and(
 					eq(messages.sessionId, args.sessionId),
 					sql`(${messages.metadata} -> ${args.key}::text) IS NOT NULL`,
-					NOT_ANSWERED,
+					notAnswered(),
 					args.integrationId
 						? sql`${messages.metadata} -> ${args.key}::text ->> 'integration_id' = ${args.integrationId}`
 						: undefined,
@@ -106,7 +110,7 @@ export async function resolveCardFromAction(
 		await db
 			.update(messages)
 			.set({ metadata: stamp(args) })
-			.where(and(eq(messages.id, card.id), NOT_ANSWERED))
+			.where(and(eq(messages.id, card.id), notAnswered()))
 	} catch (err) {
 		logger.warn('Failed to record the answer on a request card', {
 			sessionId: args.sessionId,

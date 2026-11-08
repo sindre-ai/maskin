@@ -41,7 +41,7 @@ async function setup() {
 	}
 	const resolved = async (id: number) => {
 		const [row] = await db.select().from(messages).where(eq(messages.id, id))
-		return (row.metadata as { card_resolved?: Record<string, string> }).card_resolved
+		return (row.metadata as { card_resolved?: Record<string, string> } | null)?.card_resolved
 	}
 	return { human, ws, agent, conversation, post, card, resolved }
 }

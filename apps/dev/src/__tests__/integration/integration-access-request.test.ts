@@ -274,7 +274,7 @@ describe('POST /integrations/:id/allow-access (Integration)', () => {
 	it('records when and by whom on the card for that integration, and leaves other cards alone', async () => {
 		const s = await setup()
 		const slack = await s.integration()
-		const other = await s.integration()
+		const other = await s.integration({ provider: 'linear' })
 		await card(s, { integration_id: slack.id, level: 'read_write' })
 		await card(s, { integration_id: other.id, level: 'read' })
 		const before = Date.now()
