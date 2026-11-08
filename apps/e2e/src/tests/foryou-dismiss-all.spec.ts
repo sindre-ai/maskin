@@ -85,7 +85,7 @@ test('the ··· menu\u2019s "Dismiss all" really marks every card read', async 
 	// Dismissing is recorded on the server, so it survives a reload — a card that comes
 	// back is the mutation having failed behind an optimistic hide.
 	await page.reload()
-	await expect(page.getByText('Feed cleared')).toBeVisible()
+	await expect(page.getByText("You're caught up")).toBeVisible()
 	await expect(page.getByTestId('foryou-feed-card')).toHaveCount(0)
 	expect(readFailures, `dismiss calls failed: ${readFailures.join(' | ')}`).toEqual([])
 })

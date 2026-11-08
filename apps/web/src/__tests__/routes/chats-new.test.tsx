@@ -118,17 +118,13 @@ describe('New chat', () => {
 		expect(mockCreateConversation).not.toHaveBeenCalled()
 	})
 
-	it('explains direct versus group chats, and counts the picks', async () => {
+	it('shows no note about direct versus group chats', async () => {
 		const user = userEvent.setup()
 		render(<NewChatPage />)
-		expect(
-			screen.getByText('Pick one agent for a direct chat, or several for a group.'),
-		).toBeInTheDocument()
 		await waitForDefaultPick()
+		expect(screen.queryByText(/Pick one agent for a direct chat/)).not.toBeInTheDocument()
 		await user.click(screen.getByRole('switch', { name: 'Add Forge' }))
-		expect(
-			screen.getByText(/This starts a group chat with 2 people and agents/),
-		).toBeInTheDocument()
+		expect(screen.queryByText(/This starts a group chat/)).not.toBeInTheDocument()
 	})
 
 	it('asks for at least one pick and creates nothing when none is on', async () => {

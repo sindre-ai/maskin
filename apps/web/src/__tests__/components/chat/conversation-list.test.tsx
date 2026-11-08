@@ -113,7 +113,7 @@ describe('ConversationList', () => {
 		unmount()
 
 		render(<ConversationList workspaceId="ws-1" hideStartLink />, { wrapper: TestWrapper })
-		expect(await screen.findByText('No conversations here')).toBeInTheDocument()
+		expect(await screen.findByText('No chats yet')).toBeInTheDocument()
 		expect(screen.queryByRole('link', { name: 'Start a new one →' })).not.toBeInTheDocument()
 	})
 
@@ -258,7 +258,7 @@ describe('ConversationList', () => {
 		vi.mocked(api.conversations.list).mockRejectedValue(new Error('network down'))
 		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
 
-		expect(await screen.findByText("Couldn't load your conversations")).toBeInTheDocument()
+		expect(await screen.findByText("Couldn't load chats")).toBeInTheDocument()
 		expect(screen.queryByText('No conversations here')).not.toBeInTheDocument()
 
 		vi.mocked(api.conversations.list).mockResolvedValue({

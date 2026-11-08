@@ -319,7 +319,6 @@ function LoopsRoute() {
 					className="mb-6 max-w-[64ch] text-base md:-mt-1.5 leading-[1.55] text-muted-foreground"
 				>
 					<strong className="font-bold text-foreground">{brief.lead}</strong>
-					{brief.clauses.length > 0 && ` ${brief.clauses.join(' ')}`}
 				</p>
 			)}
 			{loopsLoading ? (
@@ -343,12 +342,12 @@ function LoopsRoute() {
 							loopGroups.map((group) => (
 								<div key={group.label || 'untagged'} className="flex flex-col">
 									{hasTaggedLoops && (
-										<h2 className="px-1 pt-4 pb-2.5 text-[13px] font-semibold text-foreground">
+										<h2 className="px-1 pt-3.5 pb-3 text-[15px] font-semibold text-foreground">
 											{group.label || 'No team'}
 										</h2>
 									)}
 									{view === 'cards' ? (
-										<div className="grid grid-cols-1 gap-3 pb-4 md:grid-cols-2">
+										<div className="grid grid-cols-1 gap-3 pb-6.5 md:grid-cols-2">
 											{group.items.map((loop) => {
 												const failed = failedByLoopId.get(loop.id) ?? null
 												return (
@@ -380,8 +379,8 @@ function LoopsRoute() {
 						) : (
 							<EmptyState
 								icon={<RefreshCw size={22} aria-hidden="true" />}
-								title="No flows running here yet"
-								description="Flows are persistent, multi-agent processes — a named pipeline that continuously ingests work, routes it through several agents, and surfaces decisions to you. Install one from the Marketplace, or start a new one."
+								title="No flows yet"
+								description="Ask the Chief of Staff to set one up."
 								action={
 									<div className="flex items-center gap-2">
 										{canWrite ? (

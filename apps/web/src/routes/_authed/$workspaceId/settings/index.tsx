@@ -100,7 +100,7 @@ function SettingsSection({
 }) {
 	return (
 		<section className="mb-8">
-			<h2 className="px-2 pb-1.5 text-[13px] font-semibold text-muted-foreground">{title}</h2>
+			<h2 className="px-2 pb-1.5 text-[15px] font-semibold text-foreground">{title}</h2>
 			{intro ? (
 				<p className="mb-2 max-w-prose px-2 text-[13px] text-muted-foreground">{intro}</p>
 			) : null}

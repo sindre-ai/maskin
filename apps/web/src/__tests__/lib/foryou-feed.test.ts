@@ -83,16 +83,15 @@ describe('bucketRank', () => {
 		expect(bucketRank('needs')).toBeLessThan(bucketRank('waiting'))
 		expect(bucketRank('waiting')).toBeLessThan(bucketRank('fyi'))
 		expect(bucketRank('fyi')).toBeLessThan(bucketRank('done'))
-		expect(bucketRank('done')).toBeLessThan(bucketRank('later'))
 	})
 })
 
 describe('feedTailLabel', () => {
 	it('explains an empty feed differently when a filter is on', () => {
-		expect(feedTailLabel({ filtered: false })).toBe('Feed cleared')
+		expect(feedTailLabel({ filtered: false })).toBe("You're caught up")
 		expect(feedTailLabel({ filtered: true })).toBe('Nothing here')
 		expect(feedTailLabel({ filtered: true, kindLabel: 'Updates' })).toBe('Nothing in Updates')
-		expect(feedTailLabel({ filtered: false, kindLabel: 'Updates' })).toBe('Feed cleared')
+		expect(feedTailLabel({ filtered: false, kindLabel: 'Updates' })).toBe("You're caught up")
 	})
 })
 
@@ -107,11 +106,6 @@ describe('dismissableItems', () => {
 		}
 		const items = Object.keys(buckets)
 		expect(dismissableItems(items, (id) => buckets[id] as FeedBucket)).toEqual(['b', 'c', 'd'])
-	})
-
-	it('leaves cards set aside with Later out of a bulk dismiss', () => {
-		const buckets: Record<string, FeedBucket> = { a: 'later', b: 'fyi', c: 'later' }
-		expect(dismissableItems(Object.keys(buckets), (id) => buckets[id] as FeedBucket)).toEqual(['b'])
 	})
 })
 

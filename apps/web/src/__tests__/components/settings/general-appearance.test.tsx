@@ -59,8 +59,8 @@ describe('Settings > General > section labels', () => {
 
 		for (const name of ['Workspace', 'Appearance', 'Privacy and data']) {
 			const heading = screen.getByRole('heading', { name })
-			expect(heading).toHaveClass('text-[13px]', 'font-semibold')
-			expect(heading).not.toHaveClass('eyebrow')
+			expect(heading).toHaveClass('text-[15px]', 'font-semibold', 'text-foreground')
+			expect(heading).not.toHaveClass('eyebrow', 'uppercase')
 		}
 	})
 })

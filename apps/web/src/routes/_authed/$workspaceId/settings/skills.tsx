@@ -307,9 +307,7 @@ function SkillsPage() {
 		<div className="max-w-[760px]">
 			<SettingsPageTitle title="Skills" />
 			<div className="mb-2 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-				<h2 className="min-w-0 px-2 text-[13px] font-semibold text-muted-foreground">
-					Workspace skills
-				</h2>
+				<h2 className="min-w-0 px-2 text-[15px] font-semibold text-foreground">Workspace skills</h2>
 				{headerActions}
 			</div>
 
