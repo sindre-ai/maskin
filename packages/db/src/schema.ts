@@ -379,6 +379,9 @@ export const events = pgTable(
 	(t) => [
 		index('events_ws_created_at_idx').on(t.workspaceId, t.createdAt),
 		index('events_ws_entity_id_idx').on(t.workspaceId, t.entityId, t.id),
+		// Event stream reconnect replay: "this workspace's events after id N, oldest first, 100 rows".
+		// Built CONCURRENTLY in migration 0137.
+		index('events_ws_id_idx').on(t.workspaceId, t.id),
 		// Session self-heal's "does this session already have its completion event?" probe,
 		// answered from the index alone. Built CONCURRENTLY in migration 0114.
 		index('events_session_entity_action_idx')
@@ -387,6 +390,11 @@ export const events = pgTable(
 		// For You unread feed: comments only. Built CONCURRENTLY in migration 0084.
 		index('events_ws_entity_commented_idx')
 			.on(t.workspaceId, t.entityId, t.id)
+			.where(sql`${t.action} = 'commented'`),
+		// For You unread feed: which comments @-mention a given actor, from the index instead of a
+		// per-comment test. Comments only. Built CONCURRENTLY in migration 0136.
+		index('events_comment_mentions_gin_idx')
+			.using('gin', sql`((${t.data} -> 'mentions')) jsonb_path_ops`)
 			.where(sql`${t.action} = 'commented'`),
 	],
 )
