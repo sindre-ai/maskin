@@ -225,19 +225,25 @@ const CYRILLIC = /[Ѐ-ӿ]/g
 const words = (t) => t.toLowerCase().match(/[a-zæøåäöü]+/g) ?? []
 const share = (ws, set) => (ws.length ? ws.filter((w) => set.has(w)).length / ws.length : 0)
 const EN = new Set('the and is of to in that it for with on are as this be you can'.split(' '))
-const NO = new Set('og er det som på av for med ikke til en et har den kan de hovedstaden'.split(' '))
+const NO = new Set(
+	'og er det som på av for med ikke til en et har den kan de hovedstaden'.split(' '),
+)
 const NO_ONLY = new Set('og det som på av ikke til har kan hovedstaden jeg deg ble'.split(' '))
 
 const LANG_CHECKS = [
 	{
 		name: 'lang-en',
 		prompt: 'What is the capital of Norway? Name two sights there. Answer in two sentences.',
-		ok: (t) => !CJK.test(t) && share(words(t), EN) > share(words(t), NO_ONLY) && share(words(t), EN) > 0.1,
+		ok: (t) =>
+			!CJK.test(t) && share(words(t), EN) > share(words(t), NO_ONLY) && share(words(t), EN) > 0.1,
 	},
 	{
 		name: 'lang-no',
 		prompt: 'Hva er hovedstaden i Norge? Nevn to severdigheter der. Svar med to setninger.',
-		ok: (t) => !CJK.test(t) && share(words(t), NO_ONLY) > 0.05 && share(words(t), NO_ONLY) > share(words(t), EN),
+		ok: (t) =>
+			!CJK.test(t) &&
+			share(words(t), NO_ONLY) > 0.05 &&
+			share(words(t), NO_ONLY) > share(words(t), EN),
 	},
 	{
 		name: 'lang-ru',
@@ -264,7 +270,11 @@ async function runModel(model, description) {
 			(s.usage.cache_read_input_tokens ?? 0) +
 			(s.usage.cache_creation_input_tokens ?? 0)
 		outTok += s.usage.output_tokens ?? 0
-		checks.push({ name, pass: pass && !s.cliError, detail: s.cliError ? `cli error: ${s.stderr}` : detail })
+		checks.push({
+			name,
+			pass: pass && !s.cliError,
+			detail: s.cliError ? `cli error: ${s.stderr}` : detail,
+		})
 	}
 
 	// 1. ten chained tool calls: each query comes from the previous result.
@@ -274,7 +284,13 @@ async function runModel(model, description) {
 		const s = summarise(run)
 		const calls = s.toolUses.filter((t) => t.name.endsWith('search_objects')).length
 		const errors = s.toolResults.filter((r) => r.error).length
-		record('tool-loop-10', run, s, calls >= 10 && errors === 0 && /DONE/.test(s.finalText), `${calls} calls, ${errors} errored`)
+		record(
+			'tool-loop-10',
+			run,
+			s,
+			calls >= 10 && errors === 0 && /DONE/.test(s.finalText),
+			`${calls} calls, ${errors} errored`,
+		)
 	}
 
 	// 2. get_actor then update_actor with the same description.
@@ -301,7 +317,13 @@ async function runModel(model, description) {
 	for (const lc of LANG_CHECKS) {
 		const run = await runClaude(model, lc.prompt)
 		const s = summarise(run)
-		record(lc.name, run, s, lc.ok(s.finalText), `reply: ${s.finalText.replace(/\s+/g, ' ').slice(0, 120)}`)
+		record(
+			lc.name,
+			run,
+			s,
+			lc.ok(s.finalText),
+			`reply: ${s.finalText.replace(/\s+/g, ' ').slice(0, 120)}`,
+		)
 	}
 
 	const estCost = inTok * p.prompt + outTok * p.completion
