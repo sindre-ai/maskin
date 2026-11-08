@@ -30,6 +30,7 @@ import {
 	patchAddsByoSource,
 } from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
+import { loadMembersLastActive } from '../lib/member-last-active'
 import { loadMembershipFacts } from '../lib/membership-facts'
 import { revokeMemberGrants } from '../lib/oauth-server/grants'
 import { shouldSkipOnboardingKickoff } from '../lib/onboarding/chief-of-staff-kickoff'
@@ -85,6 +86,8 @@ const memberResponseSchema = z.object({
 	joinedAt: z.string().nullable(),
 	name: z.string(),
 	type: z.string(),
+	// Only in the list, and only for an owner or admin: it can show activity in other workspaces.
+	lastActiveAt: z.string().nullable().optional(),
 })
 
 const addMemberBodySchema = z.object({
@@ -1067,7 +1070,17 @@ app.openapi(listMembersRoute, (async (c) => {
 		.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
 		.where(eq(workspaceMembers.workspaceId, workspaceId))
 
-	return c.json(serializeArray(members) as z.infer<typeof memberResponseSchema>[])
+	// A person's last-active time is account-wide (it also reflects other workspaces), so only a
+	// human owner or admin gets it; everyone else gets the list as before.
+	if (!(await isWorkspaceHumanAdminOrOwner(db, actorId, workspaceId))) {
+		return c.json(serializeArray(members) as z.infer<typeof memberResponseSchema>[])
+	}
+	const lastActive = await loadMembersLastActive(db, workspaceId, members)
+	return c.json(
+		serializeArray(
+			members.map((m) => ({ ...m, lastActiveAt: lastActive.get(m.actorId) ?? null })),
+		) as z.infer<typeof memberResponseSchema>[],
+	)
 }) as RouteHandler<typeof listMembersRoute, Env>)
 
 // POST /api/workspaces/:id/transfer-ownership

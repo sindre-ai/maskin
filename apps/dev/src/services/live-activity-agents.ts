@@ -55,7 +55,7 @@ export interface EncodedAgentsState {
 }
 
 /** Same rule as Swift's `clamp`: trim, fall back when blank, cut with an ellipsis. */
-function clamp(text: string | null | undefined, max: number, fallback: string): string {
+export function clamp(text: string | null | undefined, max: number, fallback: string): string {
 	const trimmed = (text ?? '').trim()
 	if (!trimmed) return fallback
 	return trimmed.length > max ? `${trimmed.slice(0, max - 1)}…` : trimmed
