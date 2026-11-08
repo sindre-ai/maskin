@@ -106,6 +106,15 @@ export async function upsertExtensionSecret(
 	})
 }
 
+/** Remove an extension's stored signing secret. A no-op when none is stored. */
+export async function deleteExtensionSecret(
+	db: Database | Transaction,
+	workspaceId: string,
+	slug: string,
+): Promise<void> {
+	await db.delete(integrations).where(secretRowWhere(workspaceId, slug))
+}
+
 export async function hasExtensionSecret(
 	db: Database | Transaction,
 	workspaceId: string,
