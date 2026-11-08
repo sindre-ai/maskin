@@ -266,6 +266,8 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'GET /api/account/deletion-preview',
 	'GET /api/actors/:id/access',
 	'GET /api/actors/:id/avatar',
+	'GET /api/actors/:id/objects',
+	'GET /api/actors/:id/working-now',
 	'GET /api/billing/daily-budget',
 	'GET /api/billing/usage/breakdown',
 	'GET /api/conversations/threads',
