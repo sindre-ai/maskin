@@ -1,3 +1,4 @@
+import { ACTORS_STALE_MS } from '@/lib/actors-stale'
 import { type PictogramShape, getAgentPictogram } from '@/lib/agent-pictogram'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -132,11 +133,13 @@ export function ActorAvatar(props: ActorAvatarProps) {
 	return <ActorAvatarView {...props} />
 }
 
-// Same key and fetcher as useActors, so this shares the list every other surface loads.
+// Same key, fetcher and staleTime as useActors, so this shares the list every other surface
+// loads and a mounting avatar does not refetch a list that is still fresh.
 function useActorAvatarUrl(id: string, workspaceId: string) {
 	return useQuery({
 		queryKey: queryKeys.actors.all(workspaceId),
 		queryFn: () => api.actors.list(workspaceId),
+		staleTime: ACTORS_STALE_MS,
 		select: (actors) => actors.find((actor) => actor.id === id)?.avatar_url ?? undefined,
 	})
 }
