@@ -93,6 +93,24 @@ const GITHUB_ACCESS_TOKEN_URL = 'https://github.com/login/oauth/access_token'
 export interface UserInstallation {
 	installationId: string
 	ownerLogin: string | null
+	/** From GitHub's answer, never from the request. Absent on choices parked
+	 *  before these fields existed. */
+	ownerType?: GithubAccountType | null
+	ownerAvatarUrl?: string | null
+}
+
+/** GitHub's `account.type` folded to the two labels the app shows. A `Bot` or an
+ *  unknown type is null so the app hides the label instead of guessing. */
+export type GithubAccountType = 'organization' | 'personal'
+
+export function toGithubAccountType(type: unknown): GithubAccountType | null {
+	if (type === 'Organization') return 'organization'
+	if (type === 'User') return 'personal'
+	return null
+}
+
+function toAvatarUrl(url: unknown): string | null {
+	return typeof url === 'string' && url ? url : null
 }
 
 /** Thrown when the authenticated user can reach no installation of this App.
@@ -186,13 +204,25 @@ export async function listUserInstallations(userToken: string): Promise<UserInst
 	}
 
 	const data = (await response.json()) as {
-		installations?: Array<{ id?: number; account?: { login?: string } }>
+		installations?: Array<{
+			id?: number
+			account?: { login?: string; type?: string; avatar_url?: string }
+		}>
 	}
 	return (data.installations ?? [])
-		.filter((i): i is { id: number; account?: { login?: string } } => typeof i.id === 'number')
+		.filter(
+			(
+				i,
+			): i is {
+				id: number
+				account?: { login?: string; type?: string; avatar_url?: string }
+			} => typeof i.id === 'number',
+		)
 		.map((i) => ({
 			installationId: String(i.id),
 			ownerLogin: i.account?.login ?? null,
+			ownerType: toGithubAccountType(i.account?.type),
+			ownerAvatarUrl: toAvatarUrl(i.account?.avatar_url),
 		}))
 }
 
@@ -413,10 +443,15 @@ export async function mintInstallationTokenWithRecovery(
 }
 
 /**
- * Fetch the `account.login` (org or user) for a GitHub App installation.
- * Used to disambiguate multiple installations on the same workspace by owner.
+ * Fetch the account (org or user) that owns a GitHub App installation: login,
+ * type and avatar, all from GitHub's response. The login disambiguates multiple
+ * installations on the same workspace; type and avatar feed the installations page.
  */
-export async function fetchInstallationOwnerLogin(installationId: string): Promise<string> {
+export async function fetchInstallationAccount(installationId: string): Promise<{
+	login: string
+	type: GithubAccountType | null
+	avatarUrl: string | null
+}> {
 	const jwt = mintAppJwt()
 
 	const response = await fetch(`https://api.github.com/app/installations/${installationId}`, {
@@ -432,10 +467,21 @@ export async function fetchInstallationOwnerLogin(installationId: string): Promi
 		throw new Error(`Failed to fetch installation owner: ${response.status} ${text}`)
 	}
 
-	const data = (await response.json()) as { account?: { login?: string } }
+	const data = (await response.json()) as {
+		account?: { login?: string; type?: string; avatar_url?: string }
+	}
 	const login = data.account?.login
 	if (!login || typeof login !== 'string') {
 		throw new Error('GitHub installation response missing account.login')
 	}
-	return login
+	return {
+		login,
+		type: toGithubAccountType(data.account?.type),
+		avatarUrl: toAvatarUrl(data.account?.avatar_url),
+	}
+}
+
+/** `account.login` (org or user) for a GitHub App installation. */
+export async function fetchInstallationOwnerLogin(installationId: string): Promise<string> {
+	return (await fetchInstallationAccount(installationId)).login
 }
