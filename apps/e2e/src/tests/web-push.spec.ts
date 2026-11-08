@@ -67,6 +67,13 @@ async function installFakePushApi(
 				configurable: true,
 				get: () => permission,
 			})
+			// Lets a test play the user changing the permission in the browser's site settings.
+			;(window as unknown as { __e2eSetPermission: unknown }).__e2eSetPermission = (
+				next: NotificationPermission,
+			) => {
+				permission = next
+				sessionStorage.setItem(PERMISSION_KEY, next)
+			}
 			Notification.requestPermission = async () => {
 				// A closed prompt leaves the permission on "default", as real browsers do.
 				if (permission === 'default' && !dismissPrompt) permission = 'granted'
@@ -158,6 +165,43 @@ test.describe('Browser notifications', () => {
 		await expect(toggle(page)).not.toBeChecked()
 		await expect(toggle(page)).toBeEnabled()
 		expect(subscribeCalls).toBe(0)
+	})
+
+	test('explains the blocked state on one line at 375px and links it to the switch', async ({
+		page,
+		account,
+	}) => {
+		await installFakePushApi(page, { permission: 'denied' })
+		await page.setViewportSize({ width: 375, height: 812 })
+		await page.goto(`/${account.workspaceId}/profile`)
+		await expect(toggle(page)).toBeDisabled({ timeout: 10_000 })
+
+		const hint = page.getByText('Blocked in site settings')
+		await expect(hint).toBeVisible()
+		await expect(toggle(page)).toHaveAccessibleDescription('Blocked in site settings')
+		// One line: the box is no taller than a single 11px text line.
+		const box = await hint.boundingBox()
+		expect(box?.height).toBeLessThan(20)
+	})
+
+	test('clears the blocked state when the tab regains focus after allowing notifications', async ({
+		page,
+		account,
+	}) => {
+		await installFakePushApi(page, { permission: 'denied' })
+		await page.setViewportSize({ width: 1024, height: 768 })
+		await page.goto(`/${account.workspaceId}/profile`)
+		await expect(toggle(page)).toBeDisabled({ timeout: 10_000 })
+
+		await page.evaluate(() =>
+			(
+				window as unknown as { __e2eSetPermission: (p: NotificationPermission) => void }
+			).__e2eSetPermission('default'),
+		)
+		await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+
+		await expect(toggle(page)).toBeEnabled()
+		await expect(page.getByText('Blocked in site settings')).toHaveCount(0)
 	})
 
 	test('hides the whole section when the server has no VAPID keys', async ({ page, account }) => {

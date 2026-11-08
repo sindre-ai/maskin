@@ -2,6 +2,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
 import { useWebPush } from '@/hooks/use-web-push'
 import { ApiError } from '@/lib/api'
+import { useId } from 'react'
 import { toast } from 'sonner'
 
 /**
@@ -13,24 +14,27 @@ import { toast } from 'sonner'
 export function BrowserNotificationsToggle() {
 	const { state, isLoading, enable, disable } = useWebPush()
 	const pending = isLoading || enable.isPending || disable.isPending
+	const blockedHintId = useId()
 
 	function toggle(next: boolean) {
 		if (next) {
 			enable.mutate(undefined, {
 				onSuccess: (outcome) => {
 					if (outcome === 'denied') {
-						toast.error('Notifications are blocked — allow them in your browser’s site settings')
+						toast.error(
+							"Notifications are blocked. Allow them for Maskin in your browser's site settings.",
+						)
 					} else if (outcome === 'subscribed') {
 						toast.success('Browser notifications are on')
 					}
 				},
 				onError: (err) =>
-					toast.error(err instanceof ApiError ? err.message : 'Couldn’t turn on notifications'),
+					toast.error(err instanceof ApiError ? err.message : "Couldn't turn on notifications"),
 			})
 		} else {
 			disable.mutate(undefined, {
 				onSuccess: () => toast.success('Browser notifications are off'),
-				onError: () => toast.error('Couldn’t turn off notifications'),
+				onError: () => toast.error("Couldn't turn off notifications"),
 			})
 		}
 	}
@@ -38,7 +42,12 @@ export function BrowserNotificationsToggle() {
 	return (
 		<>
 			{state === 'blocked' && (
-				<span className="text-[11px] text-muted-foreground">Blocked in site settings</span>
+				<span
+					id={blockedHintId}
+					className="shrink-0 whitespace-nowrap text-[11px] text-muted-foreground"
+				>
+					Blocked in site settings
+				</span>
 			)}
 			{pending && <Spinner className="size-3.5" />}
 			<Switch
@@ -46,6 +55,7 @@ export function BrowserNotificationsToggle() {
 				disabled={pending || state === 'blocked'}
 				onCheckedChange={toggle}
 				aria-label="Browser notifications"
+				aria-describedby={state === 'blocked' ? blockedHintId : undefined}
 			/>
 		</>
 	)
