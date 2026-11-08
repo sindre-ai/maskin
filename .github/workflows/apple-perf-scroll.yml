@@ -44,7 +44,8 @@ jobs:
         run: [1, 2, 3]
     env:
       OUT: ${{ github.workspace }}/perf-out
-      DERIVED: ${{ runner.temp }}/maskin-perf-dd
+      # Job-level env has no `runner` or `steps` context, so this cannot use runner.temp.
+      DERIVED: ${{ github.workspace }}/maskin-perf-dd
       PERF_ITERATIONS: ${{ inputs.iterations }}
     steps:
       - uses: actions/checkout@v6
