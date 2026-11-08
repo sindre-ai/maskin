@@ -3,6 +3,7 @@ import Testing
 
 @testable import MaskinFeatures
 
+@MainActor
 @Suite("For you draft pointer")
 struct DraftPointerTests {
 	private func draft(_ objectId: String?) -> DecisionDraft {
