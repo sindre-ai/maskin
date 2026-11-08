@@ -41,6 +41,7 @@ import { AgentStorageManager } from './services/agent-storage'
 import { ApnsSender } from './services/apns'
 import { BlockedToolCallsCleaner } from './services/blocked-tool-calls-cleaner'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
+import { BriefingEmailScheduler } from './services/briefing-email-scheduler'
 import { BriefingPushScheduler } from './services/briefing-push-scheduler'
 import { CapabilityScanner } from './services/capability-scanner'
 import { DailyBudgetCardScheduler } from './services/daily-budget-card-scheduler'
@@ -323,6 +324,10 @@ const briefingPushScheduler = new BriefingPushScheduler(db)
 briefingPushScheduler.start()
 const lifecyclePushScheduler = new LifecyclePushScheduler(db)
 lifecyclePushScheduler.start()
+// Summary email (day 1, 3, 7, then weekly). Own query, own claim; killswitch
+// FEATURE_BRIEFING_EMAIL=0 stops the emails and leaves the push alone.
+const briefingEmailScheduler = new BriefingEmailScheduler(db)
+briefingEmailScheduler.start()
 // Daily budget 1a: one summary event per workspace per day, no model call.
 const dailyBudgetSummaryScheduler = new DailyBudgetSummaryScheduler(db)
 dailyBudgetSummaryScheduler.start()
@@ -538,6 +543,7 @@ const shutdown = async (signal: string) => {
 	chainSnapshotJob.stop()
 	notificationPush.stop()
 	briefingPushScheduler.stop()
+	briefingEmailScheduler.stop()
 	lifecyclePushScheduler.stop()
 	dailyBudgetSummaryScheduler.stop()
 	dailyBudgetCardScheduler.stop()

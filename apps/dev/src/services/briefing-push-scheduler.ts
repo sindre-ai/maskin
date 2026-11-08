@@ -64,6 +64,8 @@ export interface BriefingWorkspaceFacts {
 	waiting: number
 	/** Headline of the first (top-ranked) waiting card. */
 	topHeadline: string | null
+	/** Object the first waiting card is about, for a deep link. Null when it names none. */
+	topObjectId?: string | null
 	finished: number
 	/** Set when exactly one run finished: the agent and (if known) the object it worked on. */
 	finishedAgentName: string | null
@@ -76,6 +78,8 @@ export interface BriefingText {
 	body: string
 	waiting: number
 	finished: number
+	/** The anchor workspace's top waiting card object, when it has one. */
+	topObjectId: string | null
 }
 
 function plural(n: number, one: string, many: string): string {
@@ -133,6 +137,7 @@ export function buildBriefingText(workspaces: BriefingWorkspaceFacts[]): Briefin
 		body: parts.join(' · '),
 		waiting: anchor.waiting,
 		finished: anchor.finished,
+		topObjectId: anchor.topObjectId ?? null,
 	}
 }
 
@@ -293,61 +298,78 @@ export class BriefingPushScheduler {
 
 	/** Facts for every non-muted workspace the actor belongs to, then the pure text builder. */
 	private async summarize(row: PrefsRow, now: Date): Promise<BriefingText | null> {
-		const memberships = await this.db
-			.select({ id: workspaces.id, name: workspaces.name })
-			.from(workspaceMembers)
-			.innerJoin(workspaces, eq(workspaces.id, workspaceMembers.workspaceId))
-			.where(eq(workspaceMembers.actorId, row.actorId))
-			.orderBy(asc(workspaces.createdAt), asc(workspaces.id))
-			.limit(MAX_WORKSPACES_PER_ACTOR)
-		const muted = new Set(row.mutedWorkspaceIds)
-		const mine = memberships.filter((w) => !muted.has(w.id))
-		if (mine.length === 0) return null
-
-		const since = new Date(now.getTime() - FINISHED_LOOKBACK_MS)
-		const finishedRows = await this.db
-			.select({
-				workspaceId: sessions.workspaceId,
-				agentName: actors.name,
-				objectTitle: objects.title,
-				completedAt: sessions.completedAt,
-			})
-			.from(sessions)
-			.innerJoin(actors, eq(actors.id, sessions.actorId))
-			.leftJoin(objects, eq(objects.id, sessions.initiatedFromObjectId))
-			.where(
-				and(
-					inArray(
-						sessions.workspaceId,
-						mine.map((w) => w.id),
-					),
-					eq(sessions.status, 'completed'),
-					// Chat turns are conversation, not finished work.
-					eq(sessions.interactive, false),
-					// Only an agent's own run; a person's session is not "an agent finished".
-					eq(actors.type, 'agent'),
-					gt(sessions.completedAt, since),
-					lte(sessions.completedAt, now),
-				),
-			)
-			.orderBy(asc(sessions.completedAt))
-			.limit(500)
-
-		const facts: BriefingWorkspaceFacts[] = []
-		for (const w of mine) {
-			const visible = await loadVisibleForYou(this.db, w.id, row.actorId)
-			const finished = finishedRows.filter((f) => f.workspaceId === w.id)
-			const only = finished.length === 1 ? finished[0] : undefined
-			facts.push({
-				workspaceId: w.id,
-				workspaceName: w.name,
-				waiting: visible.cards.length,
-				topHeadline: visible.cards[0]?.meta.headline ?? null,
-				finished: finished.length,
-				finishedAgentName: only?.agentName ?? null,
-				finishedObjectTitle: only?.objectTitle ?? null,
-			})
-		}
-		return buildBriefingText(facts)
+		return buildBriefingText(
+			await loadBriefingFacts(this.db, row.actorId, row.mutedWorkspaceIds, now),
+		)
 	}
+}
+
+/**
+ * Per-workspace facts for one actor across the workspaces they belong to (muted ones left out):
+ * things waiting, counted with the For You rules, and agent runs finished in the last 24 h.
+ * Shared by the briefing push and the summary email so both say the same numbers.
+ */
+export async function loadBriefingFacts(
+	db: Database,
+	actorId: string,
+	mutedWorkspaceIds: string[],
+	now: Date,
+): Promise<BriefingWorkspaceFacts[]> {
+	const memberships = await db
+		.select({ id: workspaces.id, name: workspaces.name })
+		.from(workspaceMembers)
+		.innerJoin(workspaces, eq(workspaces.id, workspaceMembers.workspaceId))
+		.where(eq(workspaceMembers.actorId, actorId))
+		.orderBy(asc(workspaces.createdAt), asc(workspaces.id))
+		.limit(MAX_WORKSPACES_PER_ACTOR)
+	const muted = new Set(mutedWorkspaceIds)
+	const mine = memberships.filter((w) => !muted.has(w.id))
+	if (mine.length === 0) return []
+
+	const since = new Date(now.getTime() - FINISHED_LOOKBACK_MS)
+	const finishedRows = await db
+		.select({
+			workspaceId: sessions.workspaceId,
+			agentName: actors.name,
+			objectTitle: objects.title,
+			completedAt: sessions.completedAt,
+		})
+		.from(sessions)
+		.innerJoin(actors, eq(actors.id, sessions.actorId))
+		.leftJoin(objects, eq(objects.id, sessions.initiatedFromObjectId))
+		.where(
+			and(
+				inArray(
+					sessions.workspaceId,
+					mine.map((w) => w.id),
+				),
+				eq(sessions.status, 'completed'),
+				// Chat turns are conversation, not finished work.
+				eq(sessions.interactive, false),
+				// Only an agent's own run; a person's session is not "an agent finished".
+				eq(actors.type, 'agent'),
+				gt(sessions.completedAt, since),
+				lte(sessions.completedAt, now),
+			),
+		)
+		.orderBy(asc(sessions.completedAt))
+		.limit(500)
+
+	const facts: BriefingWorkspaceFacts[] = []
+	for (const w of mine) {
+		const visible = await loadVisibleForYou(db, w.id, actorId)
+		const finished = finishedRows.filter((f) => f.workspaceId === w.id)
+		const only = finished.length === 1 ? finished[0] : undefined
+		facts.push({
+			workspaceId: w.id,
+			workspaceName: w.name,
+			waiting: visible.cards.length,
+			topHeadline: visible.cards[0]?.meta.headline ?? null,
+			topObjectId: visible.cards[0]?.row.objectId ?? null,
+			finished: finished.length,
+			finishedAgentName: only?.agentName ?? null,
+			finishedObjectTitle: only?.objectTitle ?? null,
+		})
+	}
+	return facts
 }
