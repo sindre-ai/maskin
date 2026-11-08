@@ -88,6 +88,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'POST /api/actors',
 
 	// Not called by any MCP tool, so not offered to a mat_ token in v1.
+	'POST /api/installed-loops/:id/update',
 	'GET /api/actors/:actorId/skills',
 	'DELETE /api/actors/:actorId/skills/:skillName',
 	'GET /api/actors/:actorId/skills/:skillName',
