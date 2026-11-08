@@ -301,6 +301,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'GET /api/voice-sessions/:id/tool-calls',
 	'GET /api/web-push/config',
 	'GET /api/workspaces/:id/deletion-preview',
+	'GET /api/workspaces/counts',
 	'PATCH /api/extensions/:id',
 	'POST /api/account/delete',
 	'POST /api/actors/:id/avatar',
