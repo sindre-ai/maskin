@@ -150,6 +150,72 @@ describe('requestTiming', () => {
 		expect(line.db_queries).toBe(1)
 	})
 
+	it('counts open event streams on connect and disconnect and keeps the peak per minute', async () => {
+		const app = buildApp()
+		const first = new AbortController()
+		const second = new AbortController()
+		for (const controller of [first, second]) {
+			const res = await app.request(
+				new Request('http://localhost/api/events', { signal: controller.signal }),
+			)
+			await res.text().catch(() => {})
+		}
+		first.abort()
+
+		expect(linesFor('api_open_streams').map((l) => [l.event, l.open])).toEqual([
+			['connect', 1],
+			['connect', 2],
+			['disconnect', 1],
+		])
+
+		// One stream is still open; the peak was two.
+		info.mockClear()
+		flushRouteTiming()
+		const [window] = linesFor('api_open_streams')
+		expect(window).toMatchObject({
+			method: 'GET',
+			route: '/api/events',
+			event: 'window',
+			open: 1,
+			peak: 2,
+			connects: 2,
+			disconnects: 1,
+		})
+		// Counts only: no person, workspace or URL.
+		expect(Object.keys(window).sort()).toEqual(
+			['connects', 'disconnects', 'event', 'method', 'open', 'peak', 'route', 'window_s'].sort(),
+		)
+
+		// The next minute starts from what is still open.
+		info.mockClear()
+		flushRouteTiming()
+		expect(linesFor('api_open_streams')[0]).toMatchObject({
+			open: 1,
+			peak: 1,
+			connects: 0,
+			disconnects: 0,
+		})
+
+		// Once the last stream closes, its disconnect shows in one more window and then the route drops out.
+		second.abort()
+		info.mockClear()
+		flushRouteTiming()
+		expect(linesFor('api_open_streams').filter((l) => l.event === 'window')[0]).toMatchObject({
+			open: 0,
+			peak: 1,
+			disconnects: 1,
+		})
+		info.mockClear()
+		flushRouteTiming()
+		expect(linesFor('api_open_streams')).toHaveLength(0)
+	})
+
+	it('does not count ordinary requests as open streams', async () => {
+		await buildApp().request('/api/objects/abc')
+		flushRouteTiming()
+		expect(linesFor('api_open_streams')).toHaveLength(0)
+	})
+
 	it('names the handler that answered even when catch-all routes are registered after it', async () => {
 		const app = buildAppWithCatchAlls()
 		await app.request('/api/objects/abc')
