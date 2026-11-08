@@ -5,7 +5,12 @@ vi.mock('../../lib/logger', () => ({
 	logger: { info: vi.fn(), warn, error: vi.fn(), debug: vi.fn() },
 }))
 
-import { flushRouteTiming, requestTiming, setRouteTimingSink } from '../../lib/request-timing'
+import {
+	flushRouteTiming,
+	parseClientBuild,
+	requestTiming,
+	setRouteTimingSink,
+} from '../../lib/request-timing'
 import { createRouteTimingStore, currentBuild } from '../../lib/route-timing-store'
 
 function fakeDb(opts: { failInsert?: boolean; deleted?: number[] } = {}) {
@@ -35,6 +40,7 @@ const row = {
 	method: 'GET',
 	route: '/api/objects/:id',
 	stream: false,
+	clientBuild: '',
 	requests: 3,
 	slowRequests: 1,
 	errors5xx: 0,
@@ -63,6 +69,7 @@ describe('createRouteTimingStore', () => {
 			method: 'GET',
 			route: '/api/objects/:id',
 			stream: false,
+			clientBuild: '',
 			requests: 3,
 			slowRequests: 1,
 			errors5xx: 0,
@@ -70,6 +77,14 @@ describe('createRouteTimingStore', () => {
 			dbMsSum: 80,
 			dbQueries: 6,
 		})
+	})
+
+	it('writes the app build next to the server build', async () => {
+		const { db, values } = fakeDb()
+		createRouteTimingStore(db, 'abc123')([{ ...row, clientBuild: '2611081015' }])
+		await settle()
+		const [written] = values.mock.calls[0][0]
+		expect(written).toMatchObject({ build: 'abc123', clientBuild: '2611081015' })
 	})
 
 	it('adds into an existing row when the same minute is written twice', async () => {
@@ -81,7 +96,7 @@ describe('createRouteTimingStore', () => {
 			target: unknown[]
 			set: Record<string, unknown>
 		}
-		expect(arg.target).toHaveLength(5)
+		expect(arg.target).toHaveLength(6)
 		expect(Object.keys(arg.set).sort()).toEqual(
 			['dbMsSum', 'dbQueries', 'errors5xx', 'requests', 'slowRequests', 'totalMsSum'].sort(),
 		)
@@ -160,6 +175,37 @@ describe('flushRouteTiming with a sink', () => {
 		)
 	})
 
+	it('splits the counts per app build and counts a missing or bad header as none', async () => {
+		const { Hono } = await import('hono')
+		const app = new Hono()
+		app.use('*', requestTiming())
+		app.get('/api/objects/:id', (c) => c.json({}))
+		const sink = vi.fn()
+		setRouteTimingSink(sink)
+		const get = (build?: string) =>
+			app.request(
+				'/api/objects/1',
+				build === undefined ? {} : { headers: { 'X-Client-Build': build } },
+			)
+		await get('2611081015')
+		await get('2611081015')
+		await get('2611071200')
+		await get()
+		await get('1.2.3')
+		await get('<script>alert(1)</script>')
+		flushRouteTiming()
+		const rows = sink.mock.calls[0][0] as Array<{ clientBuild: string; requests: number }>
+		expect(
+			rows
+				.map((r) => [r.clientBuild, r.requests])
+				.sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+		).toEqual([
+			['', 3],
+			['2611071200', 1],
+			['2611081015', 2],
+		])
+	})
+
 	it('a sink that throws does not break the flush', async () => {
 		const { Hono } = await import('hono')
 		const app = new Hono()
@@ -175,5 +221,21 @@ describe('flushRouteTiming with a sink', () => {
 		setRouteTimingSink(sink)
 		flushRouteTiming()
 		expect(sink).not.toHaveBeenCalled()
+	})
+})
+
+describe('parseClientBuild', () => {
+	it('keeps 1 to 12 digits and nothing else', () => {
+		expect(parseClientBuild('2611081015')).toBe('2611081015')
+		expect(parseClientBuild('123456789012')).toBe('123456789012')
+		expect(parseClientBuild('1')).toBe('1')
+		expect(parseClientBuild('1234567890123')).toBe('')
+		expect(parseClientBuild('')).toBe('')
+		expect(parseClientBuild(undefined)).toBe('')
+		expect(parseClientBuild(null)).toBe('')
+		expect(parseClientBuild('12 34')).toBe('')
+		expect(parseClientBuild('1234\n')).toBe('')
+		expect(parseClientBuild('-1')).toBe('')
+		expect(parseClientBuild('abc')).toBe('')
 	})
 })
