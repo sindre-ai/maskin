@@ -58,6 +58,10 @@ const connectRoute = createRoute({
 			description: 'Deepdots is not switched on for this person',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		500: {
+			description: 'Signed in, but the connection could not be saved',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		502: {
 			description: 'Deepdots could not be reached. Nothing is stored.',
 			content: { 'application/json': { schema: errorSchema } },
