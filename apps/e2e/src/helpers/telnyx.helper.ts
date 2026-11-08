@@ -1,4 +1,5 @@
 import { createPrivateKey, createPublicKey, sign } from 'node:crypto'
+import { E2E_OAUTH_CAPTURE_PORT } from './oauth-consent.helper'
 
 /**
  * Throwaway Ed25519 key for the Telnyx webhook specs, built from a fixed seed.
@@ -84,6 +85,8 @@ export const E2E_TELNYX_STUB_URL = `http://127.0.0.1:${E2E_TELNYX_STUB_PORT}`
  * runs. playwright.config.ts points the dev webServer's POSTHOG_HOST at it (with
  * a throwaway POSTHOG_API_KEY, which the server needs before it captures at all),
  * so the voice events the call path emits land somewhere a spec can read them.
+ * It is the same port the Claude connector spec's stub uses: the server has one
+ * POSTHOG_HOST, and the two specs never run at the same time (one worker).
  */
-export const E2E_POSTHOG_STUB_PORT = 4598
+export const E2E_POSTHOG_STUB_PORT = E2E_OAUTH_CAPTURE_PORT
 export const E2E_POSTHOG_STUB_URL = `http://127.0.0.1:${E2E_POSTHOG_STUB_PORT}`

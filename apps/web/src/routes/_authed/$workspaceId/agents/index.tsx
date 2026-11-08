@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useLoops } from '@/hooks/use-loops'
 import { useWorkspaceSessionStats, useWorkspaceSessions } from '@/hooks/use-sessions'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
@@ -29,8 +30,10 @@ function AgentsRoute() {
 	// neither grows with the size of the session history.
 	const { data: sessions, isLoading: recentLoading } = useWorkspaceSessions(workspaceId)
 	const { data: stats } = useWorkspaceSessionStats(workspaceId)
+	const { data: loops } = useLoops(workspaceId)
 	const [createPickerOpen, setCreatePickerOpen] = useState(false)
 	const canWrite = useCanWrite()
+	const [query, setQuery] = useState('')
 
 	useEffect(() => {
 		function onKeydown(event: KeyboardEvent) {
@@ -43,12 +46,6 @@ function AgentsRoute() {
 	}, [])
 
 	const agents = useMemo(() => (actors ?? []).filter((a) => a.type === 'agent'), [actors])
-
-	// The nav row draws the title and this muted count — PageHeader renders
-	// nothing inline (mockup's `agentsHeadSub`).
-	const subtitle = agents.length
-		? `${agents.length} agent${agents.length === 1 ? '' : 's'} · each owns one outcome`
-		: undefined
 
 	if (isLoading || recentLoading) {
 		return (
@@ -66,7 +63,9 @@ function AgentsRoute() {
 
 	return (
 		<div>
-			<PageHeader title="Agents" subtitle={subtitle} />
+			{/* The list owns its header (search + Display need its state); the empty
+			    state publishes the bare title. */}
+			{agents.length === 0 && <PageHeader title="Agents" />}
 			{agents.length === 0 ? (
 				<EmptyState
 					emphasis="page"
@@ -87,6 +86,9 @@ function AgentsRoute() {
 					agents={agents}
 					sessions={sessions ?? []}
 					stats={stats}
+					loops={loops}
+					query={query}
+					onQueryChange={setQuery}
 				/>
 			)}
 			<CreatePicker

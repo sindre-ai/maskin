@@ -8,7 +8,7 @@ import {
 	userDisplaySettingsResponseSchema,
 } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
-import { createApiError, validationFailureHook } from '../lib/errors'
+import { validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 
@@ -76,8 +76,9 @@ app.openapi(listRoute, async (c) => {
 })
 
 // GET /api/user-display-settings/:object_type — fetch the actor's default
-// settings row for one object type. 404 when no row exists yet so callers
-// can fall back to client defaults without persisting an empty row.
+// settings row for one object type. When no row exists yet the answer is an
+// empty default (not persisted), so a page that has never saved a setting
+// does not log a failed request on every visit.
 const getRoute = createRoute({
 	method: 'get',
 	path: '/{object_type}',
@@ -119,7 +120,15 @@ app.openapi(getRoute, async (c) => {
 		.limit(1)
 
 	if (!row) {
-		return c.json(createApiError('NOT_FOUND', 'No display settings for this object type'), 404)
+		return c.json(
+			{
+				object_type,
+				name: DEFAULT_NAME,
+				settings: {},
+				updated_at: new Date(0).toISOString(),
+			},
+			200,
+		)
 	}
 
 	return c.json(serializeRow(row), 200)

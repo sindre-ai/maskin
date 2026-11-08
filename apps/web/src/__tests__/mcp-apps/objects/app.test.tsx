@@ -67,7 +67,7 @@ describe('MCP-Apps ObjectDocument', () => {
 	// wraps with TestWrapper (also QueryClientProvider-backed) to prove the
 	// component itself no longer assumes one is supplied elsewhere.
 	it('renders without throwing when a QueryClientProvider ancestor is present', () => {
-		const obj = buildObjectResponse({ title: 'MCP object', workspaceId: 'ws-1' })
+		const obj = buildObjectResponse({ title: 'MCP item', workspaceId: 'ws-1' })
 		expect(() =>
 			render(
 				<TestWrapper>
@@ -75,12 +75,12 @@ describe('MCP-Apps ObjectDocument', () => {
 				</TestWrapper>,
 			),
 		).not.toThrow()
-		expect(screen.getByDisplayValue('MCP object')).toBeInTheDocument()
+		expect(screen.getByDisplayValue('MCP item')).toBeInTheDocument()
 	})
 
 	it('opens the Properties drawer showing Properties + Files when the toggle is clicked', async () => {
 		const user = userEvent.setup()
-		const obj = buildObjectResponse({ title: 'MCP object', workspaceId: 'ws-1' })
+		const obj = buildObjectResponse({ title: 'MCP item', workspaceId: 'ws-1' })
 		render(
 			<TestWrapper>
 				<ObjectDocument obj={obj} handlers={handlers} />

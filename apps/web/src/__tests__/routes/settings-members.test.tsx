@@ -123,7 +123,7 @@ describe('MembersPage', () => {
 		expect(screen.getByRole('combobox', { name: /Role for Bot One/i })).toHaveTextContent('member')
 	})
 
-	it('renders the member count line beside the inline Members header', () => {
+	it('renders the People section header', () => {
 		mockUseWorkspaceMembers.mockReturnValue({
 			data: [
 				{ actorId: 'a1', name: 'Alice', type: 'human', role: 'admin', joinedAt: null },
@@ -132,11 +132,10 @@ describe('MembersPage', () => {
 			isLoading: false,
 		})
 		render(<MembersPage />)
-		expect(screen.getByRole('heading', { name: 'Members' })).toBeInTheDocument()
-		expect(screen.getByText('2 people & agents')).toBeInTheDocument()
+		expect(screen.getByRole('heading', { name: 'People' })).toBeInTheDocument()
 	})
 
-	it('hides connected integrations (system members) from the list and the count', () => {
+	it('hides connected integrations (system members) from the list', () => {
 		mockUseWorkspaceMembers.mockReturnValue({
 			data: [
 				{ actorId: 'a1', name: 'Alice', type: 'human', role: 'admin', joinedAt: null },
@@ -147,7 +146,7 @@ describe('MembersPage', () => {
 		})
 		render(<MembersPage />)
 		expect(screen.queryByText('GitHub')).not.toBeInTheDocument()
-		expect(screen.getByText('2 people & agents')).toBeInTheDocument()
+		expect(screen.getAllByText('Bot One').length).toBeGreaterThan(0)
 	})
 
 	it('navigates to agent detail when an agent row is clicked', () => {

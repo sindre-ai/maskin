@@ -51,7 +51,7 @@ test.describe('Chat — a linked loop and trigger draw like an object', () => {
 			// The loop link alone on its line is a card with the loop's own name, not the link text.
 			const loopCard = thread.locator('[data-linked-card]', { hasText: 'Customer feedback' })
 			await expect(loopCard).toBeVisible({ timeout: 10_000 })
-			await expect(loopCard).toContainText('Loop')
+			await expect(loopCard).toContainText('Flow')
 			await expect(loopCard).toContainText('Learning')
 			await expect(thread.getByText('the loop', { exact: true })).toHaveCount(0)
 
@@ -65,7 +65,7 @@ test.describe('Chat — a linked loop and trigger draw like an object', () => {
 			await expect(thread).not.toContainText('0 9 * * 1-5')
 
 			// The loop linked inside the sentence is a chip; it is already drawn as a card below.
-			const chip = thread.getByRole('link', { name: /^Loop, learning: Customer feedback/ }).first()
+			const chip = thread.getByRole('link', { name: /^Flow, learning: Customer feedback/ }).first()
 			await expect(chip).toBeVisible()
 
 			for (const card of [loopCard, triggerCard]) {

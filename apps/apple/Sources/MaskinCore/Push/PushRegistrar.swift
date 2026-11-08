@@ -113,6 +113,7 @@ public final class PushRegistrar {
 		permission = await system.currentPermission()
 		if permission == .notDetermined {
 			permission = await system.requestPermission() ? .authorized : .denied
+			Analytics.shared.track(permission == .authorized ? "push_permission_granted" : "push_permission_denied")
 		}
 		if permission == .authorized, actorId != nil { system.registerForRemoteNotifications() }
 		await sync()

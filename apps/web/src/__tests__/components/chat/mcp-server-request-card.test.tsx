@@ -21,10 +21,14 @@ vi.mock('@tanstack/react-router', async () => {
 	return mockTanStackRouter()
 })
 
+let canWrite = true
+vi.mock('@/hooks/use-can-write', () => ({ useCanWrite: () => canWrite }))
+
 const sendMutate = vi.fn()
 let integrations: IntegrationResponse[] = []
 let cardAnswer: 'declined' | 'done' | null = null
 vi.mock('@/hooks/use-conversation', () => ({
+	useConversation: () => ({ data: { participants: [] } }),
 	useSendMessage: () => ({ mutate: sendMutate }),
 	useCardAnswer: () => cardAnswer,
 }))
@@ -74,6 +78,7 @@ beforeEach(() => {
 	vi.clearAllMocks()
 	integrations = []
 	cardAnswer = null
+	canWrite = true
 	actor = { id: 'human-1', type: 'human' }
 	mockCreate.mockResolvedValue({ id: SERVER_ID, name: 'Linear', server: {} })
 	mockAllow.mockResolvedValue({ actorId: 'agent-1', changed: true, relaunch: 'stopped' })
@@ -243,7 +248,7 @@ describe('McpServerRequestCard', () => {
 
 	it('says the access it gives is read and write', () => {
 		renderCard()
-		expect(screen.getByText(/with read and write access/)).toBeInTheDocument()
+		expect(screen.getByText('Read and write, this agent only')).toBeInTheDocument()
 	})
 
 	it('cannot be added by an agent', () => {
@@ -251,5 +256,29 @@ describe('McpServerRequestCard', () => {
 		renderCard({ ...request, secret_env: undefined })
 		expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled()
 		expect(screen.getByText('Only a person can add a tool server.')).toBeInTheDocument()
+	})
+
+	it('gives a viewer an action instead of a disabled form', () => {
+		canWrite = false
+		renderCard()
+		expect(
+			screen.getByText('Only a person with edit access can add a tool server.'),
+		).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Ask an admin' })).toBeEnabled()
+		expect(screen.queryByRole('button', { name: 'Add' })).not.toBeInTheDocument()
+	})
+
+	it('Ask again after declining sends a plain message the agent answers with a new card', async () => {
+		const user = userEvent.setup()
+		renderCard()
+		await user.click(screen.getByRole('button', { name: 'Not now' }))
+		sendMutate.mockClear()
+
+		await user.click(screen.getByRole('button', { name: 'Ask again' }))
+
+		expect(sendMutate).toHaveBeenCalledWith({
+			content: 'Please ask me to add the Linear tool server again.',
+		})
+		expect(screen.getByRole('button', { name: 'Add' })).toBeInTheDocument()
 	})
 })

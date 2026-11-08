@@ -158,6 +158,8 @@ export async function mirrorAsObjectComment(
 		messageId: number
 	},
 ): Promise<void> {
+	// A message of only attachments has no words to mirror as a comment.
+	if (msg.content.length === 0) return
 	try {
 		const [conversation] = await db
 			.select({ subjectType: conversations.subjectType, subjectId: conversations.subjectId })

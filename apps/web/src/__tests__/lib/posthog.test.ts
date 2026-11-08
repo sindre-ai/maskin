@@ -1,5 +1,6 @@
 import {
 	__setInitializedForTesting,
+	beforeSend,
 	capture,
 	hashDistinctId,
 	identifyForWorkspace,
@@ -9,6 +10,7 @@ import {
 	resetPosthogIdentity,
 	setCapturingEnabled,
 	setWorkspaceGroup,
+	signupSourceFrom,
 	withSharedProperties,
 } from '@/lib/posthog'
 import posthog from 'posthog-js'
@@ -31,7 +33,12 @@ describe('posthog helper', () => {
 
 		expect(isPosthogReady()).toBe(false)
 		capture('bet_opened', { bet_id: 'b1' })
-		registerWorkspaceProperties({ workspace_id: 'w1', actor_id: 'a1', actor_type: 'human' })
+		registerWorkspaceProperties({
+			workspace_id: 'w1',
+			actor_id: 'a1',
+			actor_type: 'human',
+			is_team: false,
+		})
 
 		// posthog-js is safe to call before init (it buffers), and the module-local
 		// `initialized` flag has historically gone stale across HMR / dev races —
@@ -45,13 +52,19 @@ describe('posthog helper', () => {
 		const regSpy = vi.spyOn(posthog, 'register').mockImplementation((() => {}) as never)
 		__setInitializedForTesting(true)
 
-		registerWorkspaceProperties({ workspace_id: 'w1', actor_id: 'a1', actor_type: 'agent' })
+		registerWorkspaceProperties({
+			workspace_id: 'w1',
+			actor_id: 'a1',
+			actor_type: 'agent',
+			is_team: false,
+		})
 
 		expect(regSpy).toHaveBeenCalledTimes(1)
 		expect(regSpy).toHaveBeenCalledWith({
 			workspace_id: 'w1',
 			actor_id: 'a1',
 			actor_type: 'agent',
+			is_team: false,
 		})
 	})
 
@@ -161,6 +174,15 @@ describe('posthog helper', () => {
 		expect(idSpy).toHaveBeenCalledWith('actor-1', { name: 'Magnus Hansen', email: 'm@example.com' })
 	})
 
+	it('identifyForWorkspace sets the sign-up source once', async () => {
+		const idSpy = vi.spyOn(posthog, 'identify').mockImplementation((() => {}) as never)
+		__setInitializedForTesting(true)
+
+		await identifyForWorkspace('actor-1', false, { name: 'Magnus', signupSource: 'linkedin' })
+
+		expect(idSpy).toHaveBeenCalledWith('actor-1', { name: 'Magnus' }, { signup_source: 'linkedin' })
+	})
+
 	it('identifyForWorkspace skips missing person fields', async () => {
 		const idSpy = vi.spyOn(posthog, 'identify').mockImplementation((() => {}) as never)
 		__setInitializedForTesting(true)
@@ -256,7 +278,7 @@ describe('posthog helper', () => {
 				capture_pageleave: false,
 				capture_performance: false,
 				autocapture: false,
-				before_send: withSharedProperties,
+				before_send: beforeSend,
 			})
 			expect(isPosthogReady()).toBe(true)
 		})
@@ -295,12 +317,57 @@ describe('posthog helper', () => {
 	})
 })
 
+describe('signupSourceFrom', () => {
+	it('prefers utm_source over the referrer', () => {
+		expect(
+			signupSourceFrom('?utm_source=LinkedIn', 'https://news.ycombinator.com/', 'app.maskin.io'),
+		).toBe('linkedin')
+	})
+
+	it('falls back to the site that sent the person', () => {
+		expect(signupSourceFrom('', 'https://www.google.com/search?q=x', 'app.maskin.io')).toBe(
+			'google.com',
+		)
+	})
+
+	it('is direct without a utm_source or an outside referrer', () => {
+		expect(signupSourceFrom('', '', 'app.maskin.io')).toBe('direct')
+		expect(signupSourceFrom('', 'https://app.maskin.io/login', 'app.maskin.io')).toBe('direct')
+		expect(signupSourceFrom('', 'not a url', 'app.maskin.io')).toBe('direct')
+	})
+
+	it('keeps free text off the person', () => {
+		expect(signupSourceFrom('?utm_source=a%20b%3Cscript%3E', '', 'app.maskin.io')).toBe('abscript')
+		expect(signupSourceFrom(`?utm_source=${'x'.repeat(200)}`, '', 'app.maskin.io')).toHaveLength(60)
+	})
+})
+
 describe('withSharedProperties', () => {
 	it('adds surface web and defaults actor_type to human', () => {
 		expect(withSharedProperties({ event: 'x', properties: { a: 1 } })).toEqual({
 			event: 'x',
 			properties: { a: 1, actor_type: 'human', surface: 'web' },
 		})
+	})
+
+	it('adds feature_area for an event that belongs to a product area', () => {
+		expect(
+			withSharedProperties({ event: 'chat_session_started', properties: {} })?.properties,
+		).toMatchObject({ feature_area: 'chats' })
+	})
+
+	it('adds no feature_area to an event with no product area', () => {
+		expect(
+			withSharedProperties({ event: '$pageview', properties: {} })?.properties,
+		).not.toHaveProperty('feature_area')
+	})
+
+	it('keeps a feature_area the caller set', () => {
+		const out = withSharedProperties({
+			event: 'chat_session_started',
+			properties: { feature_area: 'voice' },
+		})
+		expect(out?.properties).toMatchObject({ feature_area: 'voice' })
 	})
 
 	it('keeps an actor_type that is already registered', () => {

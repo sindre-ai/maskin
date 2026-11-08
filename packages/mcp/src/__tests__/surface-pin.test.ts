@@ -184,7 +184,6 @@ describe('MCP surface pin', () => {
 			skills: [
 				shared.FOR_YOU_FORMAT_SKILL,
 				shared.DRAFT_APPROVAL_TASKS_SKILL,
-				shared.SHAPED_BET_FORMAT_SKILL,
 				shared.MASKIN_WAY_OF_WORKING_SKILL,
 				shared.CONTINUOUS_ONBOARDING_SKILL,
 			],
@@ -364,6 +363,7 @@ describe('MCP surface pin', () => {
 				'list_integration_providers',
 				'connect_integration',
 				'disconnect_integration',
+				'approve_draft_from_chat',
 				'approve_object_draft',
 				'gmail_send_email',
 				'gmail_save_attachment',

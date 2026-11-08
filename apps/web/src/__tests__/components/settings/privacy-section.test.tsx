@@ -7,6 +7,14 @@ import { TestWrapper } from '../../setup'
 const mockUpdateMutate = vi.fn()
 const mockWorkspace = { current: buildWorkspaceWithRole({ settings: {} }) }
 
+// General now links to Triggers and device sign-in; the real Link needs a router.
+vi.mock('@tanstack/react-router', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@tanstack/react-router')>()),
+	Link: ({ children, to }: { children: React.ReactNode; to?: string }) => (
+		<a href={to}>{children}</a>
+	),
+}))
+
 vi.mock('@/lib/workspace-context', async (importOriginal) => ({
 	// Keep the real WorkspaceContext: useCanWrite reads it directly.
 	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
@@ -46,7 +54,7 @@ describe('Settings > General > Privacy & data', () => {
 	it('renders the privacy heading, both switches, and the disclosure copy', () => {
 		renderPage()
 
-		expect(screen.getByRole('heading', { name: 'PRIVACY & DATA' })).toBeInTheDocument()
+		expect(screen.getByRole('heading', { name: 'Privacy and data' })).toBeInTheDocument()
 		expect(screen.getByText(/Helps the Maskin team see how Maskin is used/)).toBeInTheDocument()
 		expect(
 			screen.getByRole('switch', { name: 'Share product usage with Maskin' }),

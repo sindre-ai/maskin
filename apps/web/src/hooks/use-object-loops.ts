@@ -9,7 +9,7 @@ import { useLoops } from './use-loops'
  *
  * Shape returned to the caller:
  *  - `data`  — `Map<objectId, { id: string; name: string }>` where `id` is the
- *    loop id and `name` is the loop's stored `name` (or `'Loop'` when the row
+ *    loop id and `name` is the loop's stored `name` (or `'Flow'` when the row
  *    has none — the underlying object title is nullable per `loopSummarySchema`).
  *  - `isLoading` — true while workspace loops are still loading OR any
  *    membership query is still in flight; rows can render without the chip in
@@ -84,7 +84,7 @@ export function useObjectLoops(workspaceId: string, objectIds: string[]): UseObj
 			if (byObjectId.has(edge.targetId)) continue
 			byObjectId.set(edge.targetId, {
 				id: loop.id,
-				name: loop.name ?? 'Loop',
+				name: loop.name ?? 'Flow',
 			})
 		}
 	})

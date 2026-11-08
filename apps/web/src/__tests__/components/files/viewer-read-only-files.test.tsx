@@ -4,7 +4,7 @@ import { ObjectFiles } from '@/components/objects/object-files'
 import type { FileCommentDto, FileDetail, FileListItem } from '@/lib/api'
 import { resolveProvenance } from '@/lib/viewer-provenance'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { createWorkspaceWrapper } from '../../setup'
 
 vi.mock('@tanstack/react-router', async () => {
@@ -57,6 +57,12 @@ function buildFile(overrides: Partial<FileDetail> = {}): FileDetail {
 		...overrides,
 	} as FileDetail
 }
+
+// The editor is a lazy chunk (Tiptap + extensions); the first import is slow under a
+// parallel full-suite run and would outlast findBy/waitFor's default 1000ms. Warm it.
+beforeAll(async () => {
+	await import('@/components/shared/document-markdown-editor')
+}, 60_000)
 
 describe('viewer fixture: file controls are disabled, not hidden', () => {
 	it('disables the attach button and ignores a dropped file', () => {

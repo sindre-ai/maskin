@@ -5,9 +5,9 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 // v2 Object detail gate (mockup 1029–1502). The page bar carries a Properties
 // toggle and the overflow menu — the shared nav row owns the breadcrumb chain
 // for detail routes; the drawer the toggle opens
-// holds driver / status / custom fields / subscribed / files. Below the
-// document, one Activity heading with a Timeline | Related segmented control,
-// and a composer pinned to the bottom of the scroll region.
+// holds type / owner / flow / created / custom fields / subscribed / files.
+// The page body is one column with Overview / Related / Activity tabs (v16),
+// and the Activity tab pins a composer to the bottom of the scroll region.
 
 // Below 768 the drawer is a modal Radix Sheet, which puts the rest of the page
 // behind `aria-hidden` — the Properties toggle leaves the accessibility tree
@@ -70,9 +70,10 @@ test.describe('Object detail — properties drawer', () => {
 			}
 
 			// The drawer's own sections (mockup 1381–1499).
-			// The drawer's lowercase row label — distinct from the identity row's
-			// "Driver" chip above the title.
-			await expect(page.getByText('driver', { exact: true })).toBeVisible()
+			// The drawer's lowercase row labels — distinct from the owner pill
+			// above the tabs.
+			await expect(page.getByText('owner', { exact: true })).toBeVisible()
+			await expect(page.getByText('type', { exact: true })).toBeVisible()
 			await expect(page.getByText('Custom fields')).toBeVisible()
 			await expect(page.getByText('Subscribed')).toBeVisible()
 			// SUBSCRIBED carries the header note that says where the viewer stands
@@ -142,10 +143,7 @@ test.describe('Object detail — properties drawer', () => {
 			}
 		})
 
-		test(`segmented control switches Timeline ⇄ Related at ${vp.label}`, async ({
-			page,
-			account,
-		}) => {
+		test(`tabs switch Overview / Related / Activity at ${vp.label}`, async ({ page, account }) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 
 			const bet = await account.api.createObject(account.workspaceId, {
@@ -159,16 +157,20 @@ test.describe('Object detail — properties drawer', () => {
 				timeout: 15000,
 			})
 
-			// One Activity heading, and exactly two tabs — the third "Activity"
-			// tab folded into the merged stream (mockup 1138–1143).
-			await expect(page.getByText('Activity', { exact: true })).toBeVisible()
-			const tabs = page.getByRole('tab')
-			await expect(tabs).toHaveCount(2)
+			// v16: three tabs in one column, Overview first. Link / Upload are not
+			// on the Overview any more.
+			const tabs = page.getByRole('tablist', { name: 'Item sections' }).getByRole('tab')
+			await expect(tabs).toHaveCount(3)
+			const overview = page.getByRole('tab', { name: /^Overview$/ })
+			await expect(overview).toHaveAttribute('aria-selected', 'true')
+			await expect(page.getByRole('button', { name: /^Link an item as / })).toHaveCount(0)
 
-			const timeline = page.getByRole('tab', { name: /^Timeline$/ })
-			await expect(timeline).toHaveAttribute('aria-selected', 'true')
+			const activity = page.getByRole('tab', { name: /^Activity/ })
+			await activity.click()
+			await expect(activity).toHaveAttribute('aria-selected', 'true')
 			// The stream's own filter chips carry per-kind counts.
 			await expect(page.getByRole('button', { name: /^All \(\d+\)$/ })).toBeVisible()
+			await expect(page.getByRole('textbox', { name: 'Comment' })).toBeVisible()
 
 			await page.getByRole('tab', { name: /^Related/ }).click()
 			await expect(page.getByRole('tab', { name: /^Related/ })).toHaveAttribute(
@@ -178,10 +180,44 @@ test.describe('Object detail — properties drawer', () => {
 			// D11: with nothing linked the tab renders its per-type CTA groups,
 			// the actionable empty state that replaced the single sentence, so the
 			// add affordance is what proves the tab rendered.
-			await expect(page.getByRole('button', { name: /^Link an object as / }).first()).toBeVisible()
+			await expect(page.getByRole('button', { name: /^Link an item as / }).first()).toBeVisible()
 
-			await timeline.click()
-			await expect(timeline).toHaveAttribute('aria-selected', 'true')
+			await overview.click()
+			await expect(overview).toHaveAttribute('aria-selected', 'true')
+		})
+
+		test(`dragging over the Files section shows the drop label and clears on leave at ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+
+			const bet = await account.api.createObject(account.workspaceId, {
+				type: 'bet',
+				title: 'Drop bet',
+				status: 'active',
+			})
+
+			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
+			await expect(page.getByRole('heading', { level: 1, name: 'Drop bet' })).toBeVisible({
+				timeout: 15000,
+			})
+			await page
+				.locator('main header')
+				.first()
+				.getByRole('button', { name: 'Properties', exact: true })
+				.click()
+
+			const section = page.getByRole('heading', { name: 'Files' }).locator('xpath=../..')
+			await expect(section).toBeVisible()
+			await section.dispatchEvent('dragover')
+
+			// Visible text, not a hover-only reveal.
+			await expect(page.getByText('Drop to attach to this item')).toBeVisible()
+			await expect(section).toHaveClass(/ring-2/)
+
+			await section.dispatchEvent('dragleave')
+			await expect(page.getByText('Drop to attach to this item')).toHaveCount(0)
 		})
 
 		test(`composer stays pinned to the bottom while the document scrolls at ${vp.label}`, async ({
@@ -199,7 +235,7 @@ test.describe('Object detail — properties drawer', () => {
 				),
 			})
 
-			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
+			await page.goto(`/${account.workspaceId}/objects/${bet.id}?tab=activity`)
 			const composer = page.getByRole('textbox', { name: 'Comment' })
 			await expect(composer).toBeVisible({ timeout: 15000 })
 

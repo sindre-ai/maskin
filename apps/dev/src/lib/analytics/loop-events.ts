@@ -28,9 +28,10 @@ interface LoopInstalledProps {
 	}
 	// Which marketplace surface the install was started from. Absent means the
 	// catalogue card, which is the overwhelming majority; the loop detail page
-	// sends `'detail'`. Emitted as `'catalogue'` when absent so downstream
+	// sends `'detail'` and the install page a public maskin.io loop page links to
+	// sends `'public_site'`. Emitted as `'catalogue'` when absent so downstream
 	// queries can group on the property without a null branch.
-	source?: 'detail'
+	source?: 'detail' | 'public_site'
 }
 
 // Ordering here is the wire ordering downstream queries will see in

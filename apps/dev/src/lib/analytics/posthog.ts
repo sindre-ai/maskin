@@ -1,16 +1,21 @@
 import { createHash } from 'node:crypto'
 import type { Database } from '@maskin/db'
 import { actors, workspaces } from '@maskin/db/schema'
+import { featureAreaForEvent } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import { logger } from '../logger'
 import { admitPosthogEvent } from './event-budget'
+import { __resetTeamMemberForTesting, configureTeamMember, isTeamActor } from './team-member'
 
 const DEFAULT_POSTHOG_HOST = 'https://eu.i.posthog.com'
 const CAPTURE_TIMEOUT_MS = 2_000
 
+// One level of plain values is allowed as an object, for PostHog's own `$set` and
+// `$group_set` property bags.
+type PosthogScalar = string | number | boolean | null
 export type PosthogEventProps = Record<
 	string,
-	string | number | boolean | null | undefined | string[] | number[]
+	PosthogScalar | undefined | string[] | number[] | Record<string, PosthogScalar>
 >
 
 export interface WorkspacePrivacy {
@@ -80,6 +85,7 @@ export function configurePosthogPrivacy(db: Database): void {
 		if (row?.type === 'human' || row?.type === 'agent') return row.type
 		return 'system'
 	}
+	configureTeamMember(db)
 }
 
 /** Test-only: drops the lookups and their caches. */
@@ -88,6 +94,7 @@ export function __resetPosthogPrivacyForTesting(): void {
 	privacyCache.clear()
 	readActorType = null
 	actorTypeCache.clear()
+	__resetTeamMemberForTesting()
 }
 
 /**
@@ -170,6 +177,26 @@ function hashDistinctId(value: string): string {
 	return createHash('sha256').update(value).digest('hex')
 }
 
+const WORKSPACE_GROUP_TYPE = 'workspace'
+
+/**
+ * The properties that tie an event to its account and its product area: the
+ * `workspace` group when the event names a workspace, and `feature_area` when the
+ * event belongs to one. A value the caller set wins.
+ */
+function sharedAccountProperties(event: string, properties: PosthogEventProps): PosthogEventProps {
+	const out: PosthogEventProps = {}
+	const workspaceId = properties.workspace_id
+	if (typeof workspaceId === 'string' && UUID_RE.test(workspaceId) && !properties.$groups) {
+		out.$groups = { [WORKSPACE_GROUP_TYPE]: workspaceId }
+	}
+	if (properties.feature_area === undefined) {
+		const area = featureAreaForEvent(event)
+		if (area) out.feature_area = area
+	}
+	return out
+}
+
 /**
  * One warn-level line at startup when production has no PostHog key.
  * `capturePosthogEvent` returns silently without it (debug log only), so a
@@ -200,9 +227,13 @@ export function warnIfPosthogKeyUnset(): void {
  * Volume: each event name is sampled or capped per UTC day, see
  * `event-budget.ts`; tier 1 events are never touched.
  *
- * Shared properties: every event carries `surface: 'backend'` and an `actor_type`
- * (human, agent, trigger or system). Events whose actor is not a human are sent
- * with the person-profile flag off, so only people get a profile.
+ * Shared properties: every event carries `surface: 'backend'`, an `actor_type`
+ * (human, agent, trigger or system) and `is_team` (a plain boolean, true only for
+ * a human member of our own workspace, see `team-member.ts`). Events whose actor
+ * is not a human are sent with the person-profile flag off, so only people get a
+ * profile. An event with a `workspace_id` is attached to that workspace's `workspace`
+ * group, and one that belongs to a product area (see `featureAreaForEvent`) carries
+ * `feature_area`; a caller that sets either itself keeps its value.
  *
  * Contract: never throws, never blocks the caller. If `POSTHOG_API_KEY` is
  * unset (local dev, CI without analytics), we log once at debug and return.
@@ -265,6 +296,8 @@ export async function capturePosthogEvent(
 		...outProps,
 		surface: 'backend',
 		actor_type: actorType,
+		is_team: await isTeamActor(distinctId, actorType),
+		...sharedAccountProperties(event, properties),
 		...(actorType === 'human' ? {} : { $process_person_profile: false }),
 	}
 

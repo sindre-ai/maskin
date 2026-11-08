@@ -17,7 +17,16 @@ const SelectValue = SelectPrimitive.Value
  * while open, with a small caret. Both are trigger sizes on the primitive —
  * screens pick one, they never restyle the trigger themselves.
  */
-type SelectTriggerSize = 'default' | 'chip'
+type SelectTriggerSize = 'default' | 'chip' | 'pill'
+
+/**
+ * v16 "dropdown pill": 34px, 1px line, 13.5px, caret sitting in the label
+ * (not pushed to the far edge), full radius. 44px on touch. The `pill` size
+ * uses it; the Chats filter and the Items "More" chip are menus rather than
+ * Selects, so they take the same string and stay identical to it.
+ */
+export const PILL_TRIGGER_CLASS =
+	'h-[34px] w-fit shrink-0 items-center justify-start gap-1.5 whitespace-nowrap rounded-full border border-border bg-background px-3.5 text-[13.5px] font-semibold text-foreground transition-colors hover:border-border-hover data-[state=open]:border-border-strong max-md:min-h-11 pointer-coarse:min-h-11'
 
 const SelectTrigger = React.forwardRef<
 	React.ElementRef<typeof SelectPrimitive.Trigger>,
@@ -30,9 +39,12 @@ const SelectTrigger = React.forwardRef<
 			// a long picked value truncate. It sets `display:-webkit-box`, which
 			// would flatten a chip's inline-flex label, so the chip opts out.
 			'flex w-fit items-center justify-between rounded-md ring-offset-background data-[placeholder]:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
+			size === 'pill' && PILL_TRIGGER_CLASS,
 			size === 'chip'
 				? 'gap-1.5 rounded-[7px] border border-transparent px-1.5 py-[3px] text-[11.5px] transition-colors hover:border-border hover:bg-muted/50 data-[state=open]:border-border-strong data-[state=open]:bg-muted/50'
-				: 'h-8 gap-2 border border-input bg-background px-3 py-1.5 text-xs [&>span]:line-clamp-1',
+				: size === 'pill'
+					? ''
+					: 'h-8 gap-2 border border-input bg-background px-3 py-1.5 text-xs [&>span]:line-clamp-1',
 			className,
 		)}
 		{...props}
@@ -42,7 +54,9 @@ const SelectTrigger = React.forwardRef<
 			<ChevronDown
 				className={cn(
 					'opacity-50',
-					size === 'chip' ? 'size-3 shrink-0 text-border-strong opacity-100' : 'h-4 w-4',
+					size === 'chip' && 'size-3 shrink-0 text-border-strong opacity-100',
+					size === 'pill' && 'size-3.5 shrink-0 text-muted-foreground opacity-100',
+					size === 'default' && 'h-4 w-4',
 				)}
 			/>
 		</SelectPrimitive.Icon>

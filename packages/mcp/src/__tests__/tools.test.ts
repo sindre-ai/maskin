@@ -93,6 +93,7 @@ const ALL_TOOL_NAMES = [
 	'gmail_send_email',
 	'gmail_save_attachment',
 	'resend_send_email',
+	'approve_draft_from_chat',
 	'approve_object_draft',
 	'create_notification',
 	'list_notifications',
@@ -218,8 +219,9 @@ describe('create_objects schema', () => {
 describe('list_objects schema', () => {
 	const schema = tools.list_objects.inputSchema
 
-	it('requires workspace_id', () => {
-		expect(() => schema.parse({})).toThrow()
+	it('does not require workspace_id', () => {
+		const result = schema.parse({})
+		expect(result.workspace_id).toBeUndefined()
 	})
 
 	// Limit is optional at the tool-schema layer so the server can pick the
@@ -289,7 +291,7 @@ describe('list_objects schema', () => {
 	})
 
 	it('rejects unknown sort values', () => {
-		expect(() => schema.parse({ workspace_id: uuid, sort: 'created_at_asc' })).toThrow()
+		expect(() => schema.parse({ workspace_id: uuid, sort: 'name_asc' })).toThrow()
 	})
 
 	it('accepts metadata_eq as a field->value record', () => {
@@ -324,9 +326,9 @@ describe('search_objects schema', () => {
 		expect(result.q).toBe('test')
 	})
 
-	it('does not accept a cursor param — ranked search cannot use the keyset', () => {
+	it('keeps a cursor param so next_cursor can be followed', () => {
 		const result = schema.parse({ q: 'test', cursor: 'anything' })
-		expect((result as Record<string, unknown>).cursor).toBeUndefined()
+		expect(result.cursor).toBe('anything')
 	})
 
 	it('rejects empty q', () => {
@@ -1595,14 +1597,9 @@ describe('empty input schema tools', () => {
 	})
 })
 
-describe('workspace_id required on create_objects and list_objects', () => {
+describe('workspace_id required on create_objects', () => {
 	it('create_objects requires workspace_id', () => {
 		const shape = tools.create_objects.inputSchema.shape
-		expect(shape.workspace_id.isOptional()).toBe(false)
-	})
-
-	it('list_objects requires workspace_id', () => {
-		const shape = tools.list_objects.inputSchema.shape
 		expect(shape.workspace_id.isOptional()).toBe(false)
 	})
 })
@@ -1612,6 +1609,7 @@ describe('workspace_id optional on most tools', () => {
 		'get_objects',
 		'update_objects',
 		'delete_object',
+		'list_objects',
 		'search_objects',
 		'list_relationships',
 		'delete_relationship',

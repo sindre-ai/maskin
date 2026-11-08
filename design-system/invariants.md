@@ -136,9 +136,9 @@ Specs are in `apps/e2e/src/tests/`. Viewports are the ship-gate three from `apps
 - **Status:** gap (script not written)
 
 ### DP-10 Object detail is one document shell
-- **Rule:** An object opens as a document: a hero row above a static `h1` title at weight 600 or heavier, and no legacy properties rail.
+- **Rule:** An object opens as a document: a static `h1` title at weight 600 or heavier with the identity row (type, status, driver) directly below it, and no legacy properties rail.
 - **Why:** Every object type uses the same page. A one-off layout per type is how the app drifted before v2.
-- **Check:** `object-detail-header.spec.ts` ("renders hero above static <h1>"), `object-detail-sidebar.spec.ts` ("shell renders with no properties-sidebar chrome") at 375, 768 and 1024, and `typography.spec.ts` ("object title renders at a bold weight").
+- **Check:** `object-detail-header.spec.ts` ("renders static <h1> with identity row below"), `object-detail-sidebar.spec.ts` ("shell renders with no properties-sidebar chrome") at 375, 768 and 1024, and `typography.spec.ts` ("object title renders at a bold weight").
 - **Status:** live
 
 ## Gaps and their follow-up tasks

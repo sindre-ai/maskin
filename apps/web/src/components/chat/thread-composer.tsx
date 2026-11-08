@@ -235,6 +235,7 @@ export function ThreadComposer({
 		<Composer
 			workspaceId={workspaceId}
 			onSend={handleSend}
+			allowAttachmentOnly
 			longTextAsFile
 			disabled={false}
 			pending={sendMessage.isPending}

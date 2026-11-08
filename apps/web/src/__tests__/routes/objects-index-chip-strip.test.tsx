@@ -118,24 +118,21 @@ vi.mock('@/components/objects/bulk-action-bar', () => ({
 	},
 }))
 vi.mock('@/components/layout/page-header', () => ({
-	// The type tabs go out as `titleTabs` (the nav row's left cluster, beside
-	// the <h1>), not as `actions` — the stand-in renders both so a regression
-	// back to the right-hand cluster shows up here.
+	// The type chips now lead the toolbar's chip row (`leading`) and Display is
+	// published as `actions`, so the stand-in renders `actions` and no tabs slot:
+	// a regression back to the nav row shows up as tabs inside the header.
 	PageHeader: ({
 		title,
 		subtitle,
 		actions,
-		titleTabs,
 	}: {
 		title?: string
 		subtitle?: string
 		actions?: React.ReactNode
-		titleTabs?: React.ReactNode
 	}) => (
 		<div data-testid="page-header">
 			<h1>{title}</h1>
 			<span data-testid="page-subtitle">{subtitle}</span>
-			<span data-testid="page-title-tabs">{titleTabs}</span>
 			{actions}
 		</div>
 	),
@@ -162,7 +159,11 @@ vi.mock('@/components/objects/data-table/data-table-toolbar', () => ({
 		filterSections,
 		pinnedFilters,
 		onTogglePinnedFilter,
+		leading,
+		hideDisplay,
 	}: {
+		leading?: React.ReactNode
+		hideDisplay?: boolean
 		filterPills?: Array<{ id: string; label: string; value: string; onRemove: () => void }>
 		onClearAllFilters?: () => void
 		quickChips?: Array<{ id: string; label: string; active: boolean; onToggle: () => void }>
@@ -181,7 +182,12 @@ vi.mock('@/components/objects/data-table/data-table-toolbar', () => ({
 		pinnedFilters?: string[]
 		onTogglePinnedFilter?: (token: string) => void
 	}) => (
-		<div data-testid="toolbar" data-pinned={(pinnedFilters ?? []).join(',')}>
+		<div
+			data-testid="toolbar"
+			data-pinned={(pinnedFilters ?? []).join(',')}
+			data-hide-display={String(!!hideDisplay)}
+		>
+			<div data-testid="toolbar-leading">{leading}</div>
 			{(quickChips ?? []).map((chip) => (
 				<button
 					key={chip.id}
@@ -391,14 +397,14 @@ describe('ObjectsPage chip strip — Include: archived', () => {
 // Mockup 658–673: the control row carries the filters the user pinned out of
 // the Display panel; the panel itself holds one collapsible section per axis.
 describe('ObjectsPage — pinned filter chips', () => {
-	it('pins New last 7 days and Starred out of the box', () => {
+	it('pins To decide, Starred and New last 7 days out of the box', () => {
 		render(<ObjectsPage />)
 		expect(screen.getByTestId('toolbar')).toHaveAttribute(
 			'data-pinned',
-			'quick:fresh,quick:starred',
+			'quick:waiting,quick:starred,quick:fresh',
 		)
 		const labels = screen.getAllByTestId('quick-chip').map((el) => el.textContent)
-		expect(labels).toEqual(['New last 7 days', '★ Starred'])
+		expect(labels).toEqual(['To decide', '★ Starred', 'New last 7 days'])
 	})
 
 	it('builds one filter section per axis, each summarising its current value', () => {
@@ -444,7 +450,7 @@ describe('ObjectsPage — pinned filter chips', () => {
 		await waitFor(() =>
 			expect(screen.getByTestId('toolbar')).toHaveAttribute(
 				'data-pinned',
-				'quick:fresh,quick:starred,status:active',
+				'quick:waiting,quick:starred,quick:fresh,status:active',
 			),
 		)
 		expect(screen.getAllByTestId('quick-chip').map((el) => el.textContent)).toContain(
@@ -465,10 +471,10 @@ describe('ObjectsPage — pinned filter chips', () => {
 })
 
 describe('ObjectsPage — published screen identity', () => {
-	it('publishes the Objects title and the type-tab strip, with no separate count', () => {
+	it('publishes the Items title and the type-tab strip, with no separate count', () => {
 		facetsState.data = buildFacets()
 		render(<ObjectsPage />)
-		expect(screen.getByRole('heading', { name: 'Objects' })).toBeInTheDocument()
+		expect(screen.getByRole('heading', { name: 'Items' })).toBeInTheDocument()
 		// No count beside the <h1> — the active type tab carries it instead.
 		expect(screen.getByTestId('page-subtitle')).toBeEmptyDOMElement()
 		expect(screen.getByRole('group', { name: 'Type filter' })).toBeInTheDocument()
@@ -517,7 +523,7 @@ describe('ObjectsPage — board single-card advance', () => {
 	it('toasts when the response omits the advanced id entirely', () => {
 		const [, opts] = advance()
 		opts.onSuccess?.({ results: [{ id: 'other', ok: true }] })
-		expect(toastCapture.error).toHaveBeenCalledWith('Failed to move object')
+		expect(toastCapture.error).toHaveBeenCalledWith('Failed to move item')
 	})
 
 	it('stays silent when the server confirms the move', () => {
@@ -529,16 +535,20 @@ describe('ObjectsPage — board single-card advance', () => {
 	it('toasts when the mutation itself rejects', () => {
 		const [, opts] = advance()
 		opts.onError?.(new Error('Network blew up'))
-		expect(toastCapture.error).toHaveBeenCalledWith('Failed to move object')
+		expect(toastCapture.error).toHaveBeenCalledWith('Failed to move item')
 	})
 })
 
 describe('ObjectsPage bulk edit', () => {
-	it("publishes the type tabs into the nav row's left cluster, not its actions slot", () => {
+	it('puts the type tabs on the chip row under the title and Display in the title row', () => {
 		render(<ObjectsPage />)
 
-		// `titleTabs` lands beside the <h1>; `actions` lands past the search
-		// field. The tabs belong in the first (mockup 146-153).
-		expect(screen.getByTestId('page-title-tabs').textContent).not.toBe('')
+		// Tabs lead the toolbar row, not the page header; the toolbar hands
+		// Display over to the header's actions slot.
+		expect(screen.getByTestId('toolbar-leading').textContent).not.toBe('')
+		expect(screen.getByTestId('page-header')).not.toContainElement(
+			screen.getByRole('group', { name: 'Type filter' }),
+		)
+		expect(screen.getByTestId('toolbar')).toHaveAttribute('data-hide-display', 'true')
 	})
 })

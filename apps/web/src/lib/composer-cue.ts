@@ -6,7 +6,7 @@ import { MESSAGE_MAX_MENTIONS, decideWakes } from '@maskin/shared'
 // woken comes from the same decideWakes the server runs, so the two cannot drift.
 
 /** Placeholder while nothing can be said yet, and when nobody will answer. */
-export const NEUTRAL_PLACEHOLDER = 'Message this conversation'
+export const NEUTRAL_PLACEHOLDER = 'Message · @ to mention'
 export const HINT_PEOPLE_ONLY = 'Only people are tagged, so no agent will reply.'
 export const HINT_NOBODY = 'No agent will reply. Tag one with @.'
 

@@ -349,6 +349,13 @@ public struct ObjectDetailScreen<Decision: View>: View {
 		}
 		.onChange(of: store.didDelete) { _, deleted in if deleted { close() } }
 		.task { await store.load() }
+		// Once per object opened, when it first resolves (a refresh or a live update is not a view).
+		.task(id: store.object?.id) {
+			guard let object = store.object else { return }
+			Analytics.shared.track(
+				"object_viewed",
+				["entity_id": .string(object.id), "entity_type": "object", "object_type": .string(object.type)])
+		}
 		.task { await appRuntime?.mentionRoster()?.load() }
 		.task { await store.observe(environment.events.subscribe()) }
 	}

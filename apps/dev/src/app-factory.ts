@@ -8,6 +8,7 @@ import type { Database } from '@maskin/db'
 import { getAllModules } from '@maskin/module-sdk'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import type { StorageProvider } from '@maskin/storage'
+import type { MiddlewareHandler } from 'hono'
 import { cors } from 'hono/cors'
 import { logger as honoLogger } from 'hono/logger'
 import { CLIENT_SOURCE_HEADER } from './lib/analytics/knowledge-events'
@@ -84,6 +85,9 @@ import methodRoutes from './routes/method'
 import miniAppRegenRoutes from './routes/mini-app-regen'
 import notificationPreferencesRoutes from './routes/notification-preferences'
 import notificationsRoutes from './routes/notifications'
+import oauthRoutes from './routes/oauth'
+import oauthDiscoveryRoutes from './routes/oauth-discovery'
+import oauthTokenRoutes from './routes/oauth-token'
 import objectApprovalsRoutes from './routes/object-approvals'
 import objectsRoutes from './routes/objects'
 import publicBetStrategistRoutes from './routes/public-bet-strategist'
@@ -290,7 +294,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// webviews vary by origin. Do NOT add `credentials: true` to the /mcp
 	// policy — browsers reject wildcard + credentials together. /api/* uses
 	// the configured-origin policy with credentials for the web app.
-	app.use('/mcp', cors())
+	app.use('/mcp', cors({ origin: '*', exposeHeaders: ['WWW-Authenticate'] }))
 	app.use('/api/*', cors({ origin: allowedOrigins, credentials: true }))
 	app.use(
 		'*',
@@ -543,6 +547,9 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/files', fileProposalsRoutes)
 	app.route('/api/extensions', extensionsRoutes)
 	app.route('/api/claude-oauth', claudeOauthRoutes)
+	// The consent and connections API for the Claude connector. Behind authMiddleware like the rest
+	// of /api, and refused for Claude's own (mat_) tokens.
+	app.route('/api/oauth', oauthRoutes)
 	app.route('/api/telemetry', telemetryRoutes)
 	app.route('/api/user-display-settings', userDisplaySettingsRoutes)
 	app.route('/api/feature-flags', featureFlagsRoutes)
@@ -569,6 +576,25 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	}
 
 	app.route('/mcp', mcpRoutes)
+
+	// Claude sign-in discovery documents. Mounted before the SPA fallthrough below, which would
+	// otherwise answer these paths with index.html.
+	app.route('/', oauthDiscoveryRoutes)
+
+	// The consent page is a web route (apps/web/src/routes/oauth.authorize.tsx), served by the SPA
+	// fallthrough below. A page with an Allow button is a clickjacking target, so it refuses to be
+	// framed. Registered here, ahead of serveStatic and the SPA fallback, so both answers carry it.
+	const refuseFraming: MiddlewareHandler = async (c, next) => {
+		c.header('Content-Security-Policy', "frame-ancestors 'none'")
+		c.header('X-Frame-Options', 'DENY')
+		await next()
+	}
+	app.use('/oauth/authorize', refuseFraming)
+	app.use('/oauth/authorize/*', refuseFraming)
+
+	// POST /oauth/token (public: the one-time code or refresh token is the credential). Same reason
+	// for the position: the SPA fallthrough below would otherwise swallow the path.
+	app.route('/', oauthTokenRoutes)
 
 	// Public method-site routes — mounted BEFORE the SPA static fallthrough
 	// below so `/method/*` never falls through to `index.html`. The editorial

@@ -571,12 +571,12 @@ describe('MarkdownContent linkedCards', () => {
 				LOOP,
 				TRIGGER,
 			])
-			expect(screen.queryByText('the nightly loop')).not.toBeInTheDocument()
+			expect(screen.queryByText('the nightly flow')).not.toBeInTheDocument()
 		})
 
 		it('draws a loop or trigger in a sentence as a chip where it stands', () => {
 			renderMessage(
-				`Check [this loop](${loopUrl(LOOP)}) and [that trigger](${triggerUrl(TRIGGER)}) today.`,
+				`Check [this flow](${loopUrl(LOOP)}) and [that trigger](${triggerUrl(TRIGGER)}) today.`,
 			)
 			expect(screen.getAllByTestId('chip').map((el) => el.getAttribute('data-id'))).toEqual([
 				LOOP,

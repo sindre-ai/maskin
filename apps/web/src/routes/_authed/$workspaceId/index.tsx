@@ -1,9 +1,11 @@
 import { BriefingRow } from '@/components/foryou/briefing-row'
 import type { DraftAction } from '@/components/foryou/draft-stack'
 import { type DecidedOption, FeedCard } from '@/components/foryou/feed-card'
+import { ForYouDisplay, ForYouLive } from '@/components/foryou/foryou-display'
 import {
 	type FeedMode,
 	type ForYouBulkAction,
+	ForYouBulkMenu,
 	ForYouHeader,
 } from '@/components/foryou/foryou-header'
 import { OnboardingPromptCard } from '@/components/foryou/onboarding-prompt-card'
@@ -12,8 +14,18 @@ import { PageHeader } from '@/components/layout/page-header'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
+import { Button } from '@/components/ui/button'
+import {
+	ResponsiveDialog,
+	ResponsiveDialogContent,
+	ResponsiveDialogDescription,
+	ResponsiveDialogFooter,
+	ResponsiveDialogHeader,
+	ResponsiveDialogTitle,
+} from '@/components/ui/responsive-dialog'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { dismissBodyFor, useDismissForYou, useForYou } from '@/hooks/use-for-you'
+import { useMediaQuery } from '@/hooks/use-media-query'
 import { useMarkRead } from '@/hooks/use-subscriptions'
 import {
 	useUpdateUserDisplaySettings,
@@ -28,21 +40,40 @@ import {
 	type UnreadItem,
 	api,
 } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { DraftChangedError, approveDraftText } from '@/lib/draft-edits'
 import {
 	cardHeadline,
 	classifyCardKind,
+	isInformational,
 	isSendingOption,
 	recommendedAction,
 } from '@/lib/foryou-card-kind'
 import {
+	FEED_KIND_LABEL,
 	type FeedBucket,
 	bucketRank,
+	dismissableItems,
 	feedItemKey,
+	feedKindFilter,
+	feedKindOf,
 	feedTailLabel,
 	isObjectlessCard,
 } from '@/lib/foryou-feed'
+import {
+	type LaterOption,
+	addLater,
+	isSetAside,
+	laterForWorkspace,
+	laterKey,
+	laterToast,
+	nextLaterDue,
+	pruneLaterStore,
+	readLaterStore,
+	removeLater,
+	writeLaterStore,
+} from '@/lib/foryou-later'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
@@ -89,7 +120,8 @@ function ForYouFeed() {
 	const markRead = useMarkRead(workspaceId)
 	const dismiss = useDismissForYou(workspaceId)
 
-	const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined)
+	const [filterValue, setTypeFilter] = useState<string | undefined>(undefined)
+	const typeFilter = feedKindFilter(filterValue)
 	const [filterPills, setFilterPills] = useState(false)
 	// Cards opened by hand in List view, threads answered in this sitting, and
 	// options taken in this sitting.
@@ -112,6 +144,9 @@ function ForYouFeed() {
 	const decidingRef = useRef<Set<string>>(new Set())
 	const draftCallsRef = useRef<Map<string, Promise<unknown>>>(new Map())
 	const [bulkConfirm, setBulkConfirm] = useState<UnreadItem[] | null>(null)
+	// The `···` menu's "Dismiss all" asks first (prototype: "Dismiss everything in For you?");
+	// the Alt+U shortcut stays direct, and the Undo toast follows either way.
+	const [dismissAllConfirm, setDismissAllConfirm] = useState(false)
 	const [pendingKeys, setPendingKeys] = useState<Set<string>>(() => new Set())
 	// Cards hidden because the reader typed an answer, keyed to the
 	// `latest_event_id` they answered. Unlike `pendingKeys`, this hide ends on
@@ -195,32 +230,103 @@ function ForYouFeed() {
 	const typeCounts = useMemo(() => {
 		const counts = new Map<string, number>()
 		for (const item of unreadRegular) {
-			const type = item.object?.type
-			if (!type) continue
-			counts.set(type, (counts.get(type) ?? 0) + 1)
+			const kind = feedKindOf(item)
+			counts.set(kind, (counts.get(kind) ?? 0) + 1)
 		}
 		return counts
 	}, [unreadRegular])
 
 	const filteredRegular = useMemo(
 		() =>
-			typeFilter ? unreadRegular.filter((item) => item.object?.type === typeFilter) : unreadRegular,
+			typeFilter ? unreadRegular.filter((item) => feedKindOf(item) === typeFilter) : unreadRegular,
 		[unreadRegular, typeFilter],
+	)
+
+	// "Later": cards set aside in this browser only (localStorage, never the server). The
+	// clock moves when the nearest one is due so it falls back into Decisions by itself.
+	const [laterStore, setLaterStore] = useState(() => readLaterStore())
+	const [laterClock, setLaterClock] = useState(() => Date.now())
+	const laterEntries = useMemo(
+		() => laterForWorkspace(laterStore, workspaceId),
+		[laterStore, workspaceId],
+	)
+	useEffect(() => {
+		const refresh = () => {
+			const now = Date.now()
+			setLaterClock(now)
+			setLaterStore((prev) => pruneLaterStore(prev, now))
+		}
+		const due = nextLaterDue(laterStore, Date.now())
+		// setTimeout overflows past ~24.8 days; the visibility refresh below catches the rest.
+		const timer =
+			due === null ? null : setTimeout(refresh, Math.min(due - Date.now() + 50, 2 ** 31 - 1))
+		const onVisible = () => document.visibilityState === 'visible' && refresh()
+		const onStorage = (event: StorageEvent) => {
+			if (event.key === null || event.key.startsWith('maskin:foryou-later:')) {
+				setLaterStore(readLaterStore())
+			}
+		}
+		document.addEventListener('visibilitychange', onVisible)
+		window.addEventListener('storage', onStorage)
+		return () => {
+			if (timer) clearTimeout(timer)
+			document.removeEventListener('visibilitychange', onVisible)
+			window.removeEventListener('storage', onStorage)
+		}
+	}, [laterStore])
+
+	const updateLater = useCallback((change: (store: typeof laterStore) => typeof laterStore) => {
+		setLaterStore((prev) => {
+			const next = change(prev)
+			if (next !== prev) writeLaterStore(next)
+			return next
+		})
+	}, [])
+
+	const bringBack = useCallback(
+		(item: UnreadItem) =>
+			updateLater((store) => removeLater(store, laterKey(workspaceId, feedItemKey(item)))),
+		[updateLater, workspaceId],
+	)
+
+	const setAside = useCallback(
+		(item: UnreadItem, option: LaterOption) => {
+			const storeKey = laterKey(workspaceId, feedItemKey(item))
+			updateLater((store) =>
+				addLater(
+					store,
+					storeKey,
+					{ until: option.until, label: option.label, eventId: item.latest_event_id ?? 0 },
+					Date.now(),
+				),
+			)
+			toast(laterToast(option.label), {
+				duration: UNDO_WINDOW_MS,
+				action: {
+					label: 'Undo',
+					onClick: () => updateLater((store) => removeLater(store, storeKey)),
+				},
+			})
+		},
+		[updateLater, workspaceId],
 	)
 
 	const bucketOf = useCallback(
 		(item: UnreadItem): FeedBucket => {
 			const key = feedItemKey(item)
 			if (decided.has(key)) return 'done'
+			if (isSetAside(laterEntries[key], item.latest_event_id, laterClock)) return 'later'
 			if (repliedKeys.has(key)) return 'waiting'
-			return 'needs'
+			// A mention that may be a question stays under the decisions; only a card that
+			// asks nothing of the person is an update.
+			return isInformational(item) ? 'fyi' : 'needs'
 		},
-		[decided, repliedKeys],
+		[decided, repliedKeys, laterEntries, laterClock],
 	)
 
 	// The feed is one flat column ordered by bucket — decisions first, then
-	// what is waiting on an agent, then FYIs, then what has been handled. The
-	// mockup renders those buckets without headings; the order is the grouping.
+	// what is waiting on an agent, then FYIs, then what has been handled. Each
+	// non-empty bucket gets a heading with its count (see `sections`).
 	// Cards decided in this sitting are folded back in, since the unread query
 	// has already dropped them.
 	const orderedCards = useMemo(() => {
@@ -229,7 +335,7 @@ function ForYouFeed() {
 		const handled = [...decided.values()]
 			.map((entry) => entry.item)
 			.filter((item) => !seen.has(feedItemKey(item)))
-			.filter((item) => !typeFilter || item.object?.type === typeFilter)
+			.filter((item) => !typeFilter || feedKindOf(item) === typeFilter)
 		return [...live, ...handled]
 			.map((item, index) => ({ item, index }))
 			.sort(
@@ -237,6 +343,25 @@ function ForYouFeed() {
 			)
 			.map((entry) => entry.item)
 	}, [filteredRegular, decided, typeFilter, bucketOf])
+
+	// The ordered column cut into its buckets, so each non-empty one can be headed.
+	const sections = useMemo(() => {
+		const out: Array<{ bucket: FeedBucket; items: UnreadItem[] }> = []
+		for (const item of orderedCards) {
+			const bucket = bucketOf(item)
+			const last = out[out.length - 1]
+			if (last && last.bucket === bucket) last.items.push(item)
+			else out.push({ bucket, items: [item] })
+		}
+		return out
+	}, [orderedCards, bucketOf])
+
+	const countOf = (bucket: FeedBucket) =>
+		sections.find((section) => section.bucket === bucket)?.items.length ?? 0
+	// Below 1024px the nav row is too short for the greeting beside Live, Display and New.
+	const isMobile = useMediaQuery('(max-width: 1023px)')
+	const greeting = greetingFor(getStoredActor()?.name, new Date())
+	const lead = leadLine(countOf('needs'), countOf('fyi'))
 
 	// Posting the reply a taken option stands for. It goes out the moment the
 	// option is taken — there is no delete-comment endpoint, so a deferred
@@ -621,6 +746,12 @@ function ForYouFeed() {
 		}
 	}, [bulkConfirm, bucketOf, handleDecide])
 
+	// A bulk dismiss never takes a card that is waiting on the person.
+	const dismissable = useMemo(
+		() => dismissableItems(orderedCards, bucketOf),
+		[orderedCards, bucketOf],
+	)
+
 	const bulkActions: ForYouBulkAction[] = [
 		{
 			id: 'suggested',
@@ -633,8 +764,9 @@ function ForYouFeed() {
 		{
 			id: 'all',
 			label: 'Dismiss all',
-			count: orderedCards.length,
-			onSelect: () => dismissAll(orderedCards, 'All caught up'),
+			count: dismissable.length,
+			destructive: true,
+			onSelect: () => setDismissAllConfirm(true),
 		},
 	]
 
@@ -644,15 +776,43 @@ function ForYouFeed() {
 		function onKeydown(event: KeyboardEvent) {
 			if (!isMarkAllReadShortcut(event)) return
 			event.preventDefault()
-			dismissAll(orderedCards, 'All caught up')
+			dismissAll(dismissable, 'All caught up')
 		}
 		window.addEventListener('keydown', onKeydown)
 		return () => window.removeEventListener('keydown', onKeydown)
-	}, [dismissAll, orderedCards])
+	}, [dismissAll, dismissable])
+
+	// One header for the loading skeleton and the loaded feed: the shell reads its gutter and
+	// actions from it, so a header that arrives late shifts the whole page sideways.
+	const pageHeader = (
+		<PageHeader
+			gutter="wide"
+			title={greeting}
+			// On a phone or tablet the Live and Display buttons take the nav row, so the greeting moves into the page.
+			hideTitle={isMobile}
+			scrollLocked
+			actions={
+				<>
+					<ForYouLive />
+					<ForYouDisplay
+						mode={mode}
+						onModeChange={handleModeChange}
+						typeFilter={typeFilter}
+						onTypeFilterChange={setTypeFilter}
+						unreadCount={unreadRegular.length}
+						typeCounts={typeCounts}
+						filterPills={filterPills}
+						onFilterPillsChange={setFilterPills}
+					/>
+				</>
+			}
+		/>
+	)
 
 	if (isLoading) {
 		return (
 			<div className="flex flex-1 min-w-0 flex-col space-y-4" data-testid="foryou-feed-root">
+				{pageHeader}
 				<CardSkeleton />
 				<CardSkeleton />
 				<CardSkeleton />
@@ -678,30 +838,25 @@ function ForYouFeed() {
 	// The tail rule closes an *empty* column — it says why there is nothing to
 	// read. With cards on the page it is noise, so it isn't drawn at all.
 	const feedIsEmpty = orderedCards.length === 0 && onboardingItems.length === 0
-	const tail = feedIsEmpty ? feedTailLabel({ filtered: Boolean(typeFilter) }) : null
+	const tail = feedIsEmpty
+		? feedTailLabel({
+				filtered: Boolean(typeFilter),
+				kindLabel: typeFilter ? FEED_KIND_LABEL[typeFilter] : undefined,
+			})
+		: null
 
 	return (
 		<div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2" data-testid="foryou-feed-root">
-			<PageHeader
-				title="For you"
-				subtitle={
-					unreadRegular.length === 0
-						? 'All caught up'
-						: `${unreadRegular.length} ${unreadRegular.length === 1 ? 'needs' : 'need'} you`
-				}
-				scrollLocked
-			/>
+			{pageHeader}
 
 			<ForYouHeader
 				unreadCount={unreadRegular.length}
 				typeFilter={typeFilter}
 				onTypeFilterChange={setTypeFilter}
 				typeCounts={typeCounts}
-				mode={mode}
-				onModeChange={handleModeChange}
 				filterPills={filterPills}
-				onFilterPillsChange={setFilterPills}
 				bulkActions={bulkActions}
+				hideMenu={sections.length > 0}
 			/>
 
 			{bulkConfirm && (
@@ -718,8 +873,42 @@ function ForYouFeed() {
 				/>
 			)}
 
+			{dismissAllConfirm && (
+				<ResponsiveDialog open onOpenChange={(open) => !open && setDismissAllConfirm(false)}>
+					<ResponsiveDialogContent>
+						<ResponsiveDialogHeader>
+							<ResponsiveDialogTitle>Dismiss everything in For you?</ResponsiveDialogTitle>
+							<ResponsiveDialogDescription>
+								Every open card leaves the feed. You can undo from the toast that follows.
+							</ResponsiveDialogDescription>
+						</ResponsiveDialogHeader>
+						<ResponsiveDialogFooter>
+							<Button variant="outline" onClick={() => setDismissAllConfirm(false)}>
+								Cancel
+							</Button>
+							<Button
+								onClick={() => {
+									setDismissAllConfirm(false)
+									dismissAll(dismissable, 'All caught up')
+								}}
+							>
+								Dismiss all
+							</Button>
+						</ResponsiveDialogFooter>
+					</ResponsiveDialogContent>
+				</ResponsiveDialog>
+			)}
+
 			<div className="-ml-1 min-h-0 w-[calc(100%+0.25rem)] flex-1 overflow-y-auto px-1 pb-14">
-				<div className="mx-auto flex w-full max-w-[700px] flex-col">
+				<div className="flex w-full max-w-280 flex-col">
+					{isMobile ? <h1 className="page-title pb-2">{greeting}</h1> : null}
+					<p
+						className="pb-4 text-base font-semibold leading-relaxed text-foreground"
+						data-testid="foryou-greeting"
+					>
+						{lead}
+					</p>
+
 					<BriefingRow workspaceId={workspaceId} />
 
 					{onboardingItems.length > 0 && (
@@ -734,37 +923,74 @@ function ForYouFeed() {
 						</div>
 					)}
 
-					<div className={cn('flex flex-col', mode === 'cards' ? 'gap-3' : 'gap-[7px]')}>
-						<div className="h-1.5" />
-						{orderedCards.map((item) => {
-							const key = feedItemKey(item)
-							return (
-								<FeedCard
-									key={key}
-									workspaceId={workspaceId}
-									item={item}
-									expanded={mode === 'cards' || openKeys.has(key)}
-									onToggleExpanded={
-										mode === 'cards'
-											? undefined
-											: () =>
-													setOpenKeys((prev) => {
-														const next = new Set(prev)
-														if (next.has(key)) next.delete(key)
-														else next.add(key)
-														return next
-													})
-									}
-									decided={decided.get(key)?.option ?? null}
-									onDecide={(option) => handleDecide(item, option)}
-									onDraftAction={(draft, action) => handleDraftAction(item, draft, action)}
-									onDraftsDone={() => handleDraftsDone(item)}
-									replied={repliedKeys.has(key)}
-									onReplied={() => handleReplied(item)}
-									onMarkRead={() => dismissAll([item], 'Marked as read')}
-								/>
-							)
-						})}
+					<div className="flex flex-col gap-8 pt-1.5">
+						{sections.map(({ bucket, items: sectionItems }, sectionIndex) => (
+							<section
+								key={bucket}
+								aria-labelledby={`foryou-section-${bucket}`}
+								data-testid={`foryou-section-${bucket}`}
+								className="flex flex-col gap-2"
+							>
+								<div className="flex items-center justify-between gap-2">
+									<h2
+										id={`foryou-section-${bucket}`}
+										className="flex items-baseline gap-1.5 text-[13px] font-bold text-foreground"
+									>
+										{SECTION_LABEL[bucket]}
+										<span
+											className="font-normal tabular-nums text-muted-foreground"
+											data-testid="foryou-section-count"
+										>
+											{sectionItems.length}
+										</span>
+									</h2>
+									{sectionIndex === 0 && <ForYouBulkMenu bulkActions={bulkActions} />}
+									{bucket === 'fyi' && (
+										<Button
+											variant="ghost"
+											size="sm"
+											onClick={() => dismissAll(sectionItems, 'Marked as read')}
+										>
+											Mark all read
+										</Button>
+									)}
+								</div>
+								<div className={cn('flex flex-col', mode === 'cards' ? 'gap-4' : 'gap-[7px]')}>
+									{sectionItems.map((item) => {
+										const key = feedItemKey(item)
+										return (
+											<FeedCard
+												key={key}
+												workspaceId={workspaceId}
+												item={item}
+												expanded={mode === 'cards' || openKeys.has(key)}
+												onToggleExpanded={
+													mode === 'cards'
+														? undefined
+														: () =>
+																setOpenKeys((prev) => {
+																	const next = new Set(prev)
+																	if (next.has(key)) next.delete(key)
+																	else next.add(key)
+																	return next
+																})
+												}
+												decided={decided.get(key)?.option ?? null}
+												onDecide={(option) => handleDecide(item, option)}
+												onDraftAction={(draft, action) => handleDraftAction(item, draft, action)}
+												onDraftsDone={() => handleDraftsDone(item)}
+												replied={repliedKeys.has(key)}
+												onReplied={() => handleReplied(item)}
+												onMarkRead={() => dismissAll([item], 'Marked as read')}
+												onLater={(option) => setAside(item, option)}
+												laterLabel={bucket === 'later' ? laterEntries[key]?.label : null}
+												onBringBack={() => bringBack(item)}
+											/>
+										)
+									})}
+								</div>
+							</section>
+						))}
 					</div>
 
 					{tail && (
@@ -774,10 +1000,47 @@ function ForYouFeed() {
 							<span className="h-px w-10 bg-border" />
 						</div>
 					)}
+					{feedIsEmpty && typeFilter && (
+						<div className="flex justify-center pb-2.5">
+							<Button variant="outline" size="sm" onClick={() => setTypeFilter(undefined)}>
+								Show everything
+							</Button>
+						</div>
+					)}
 				</div>
 			</div>
 		</div>
 	)
+}
+
+const SECTION_LABEL: Record<FeedBucket, string> = {
+	needs: 'Decisions',
+	waiting: 'Waiting on an agent',
+	fyi: 'Updates for you',
+	done: 'Handled today',
+	later: 'Later',
+}
+
+export function greetingFor(name: string | undefined, now: Date): string {
+	const hour = now.getHours()
+	const part =
+		hour < 5
+			? 'Good night'
+			: hour < 12
+				? 'Good morning'
+				: hour < 18
+					? 'Good afternoon'
+					: 'Good evening'
+	const first = name?.trim().split(/\s+/)[0]
+	return first ? `${part}, ${first}` : part
+}
+
+export function leadLine(decisions: number, updates: number): string {
+	if (decisions === 1) return 'One decision is waiting on you'
+	if (decisions > 1) return `${decisions} decisions are waiting on you`
+	if (updates > 0)
+		return `Nothing to decide, ${updates} ${updates === 1 ? 'update' : 'updates'} for you`
+	return 'You are clear'
 }
 
 // One message of a stacked card, per ask: the key the stack and the card's own bar share.

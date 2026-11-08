@@ -1,15 +1,15 @@
 import { FormError } from '@/components/shared/form-error'
 import { Button } from '@/components/ui/button'
-import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+	ResponsiveDialog,
+	ResponsiveDialogContent,
+	ResponsiveDialogDescription,
+	ResponsiveDialogFooter,
+	ResponsiveDialogHeader,
+	ResponsiveDialogTitle,
+} from '@/components/ui/responsive-dialog'
 import { useCreateWorkspace } from '@/hooks/use-workspaces'
 import { ApiError } from '@/lib/api'
 import { useNavigate } from '@tanstack/react-router'
@@ -72,36 +72,49 @@ export function NewWorkspaceDialog({
 	}
 
 	return (
-		<Dialog open={open} onOpenChange={handleOpenChange}>
-			<DialogContent className="sm:max-w-md">
+		<ResponsiveDialog open={open} onOpenChange={handleOpenChange}>
+			<ResponsiveDialogContent className="sm:max-w-md">
 				<form onSubmit={handleSubmit}>
-					<DialogHeader>
-						<DialogTitle>New workspace</DialogTitle>
-						<DialogDescription>
-							Name it and invite people. Your default agent crew comes with it.
-						</DialogDescription>
-					</DialogHeader>
+					<ResponsiveDialogHeader>
+						<ResponsiveDialogTitle>New workspace</ResponsiveDialogTitle>
+						<ResponsiveDialogDescription>
+							A workspace has its own people, agents, flows and items. Your default agent crew comes
+							with it.
+						</ResponsiveDialogDescription>
+					</ResponsiveDialogHeader>
 					<div className="mt-4 grid gap-2">
 						<Label htmlFor="new-workspace-name">Name</Label>
 						<Input
 							id="new-workspace-name"
 							value={name}
 							onChange={(e) => setName(e.target.value)}
-							placeholder="Nordic Labs"
+							placeholder="e.g. Acme"
+							className="max-md:h-11"
 							autoFocus
 						/>
 						<FormError error={createErrorMessage(error)} />
 					</div>
-					<DialogFooter className="mt-5">
-						<Button type="button" variant="ghost" onClick={() => handleOpenChange(false)}>
+					<ResponsiveDialogFooter className="mt-5">
+						<Button
+							type="button"
+							variant="ghost"
+							size="lg"
+							className="md:h-10 md:px-4"
+							onClick={() => handleOpenChange(false)}
+						>
 							Cancel
 						</Button>
-						<Button type="submit" disabled={!trimmed || createMutation.isPending}>
+						<Button
+							type="submit"
+							size="lg"
+							className="md:h-10 md:px-4"
+							disabled={!trimmed || createMutation.isPending}
+						>
 							{createMutation.isPending ? 'Creating…' : 'Create workspace'}
 						</Button>
-					</DialogFooter>
+					</ResponsiveDialogFooter>
 				</form>
-			</DialogContent>
-		</Dialog>
+			</ResponsiveDialogContent>
+		</ResponsiveDialog>
 	)
 }

@@ -8,5 +8,5 @@ export const vocab = buildVocabulary([
 	{ key: 'company', label: 'Company' },
 	{ key: 'contact', label: 'Person', plural: 'People' },
 	{ key: 'knowledge', label: 'Knowledge' },
-	{ key: 'loop', label: 'Loop' },
+	{ key: 'loop', label: 'Flow' },
 ])

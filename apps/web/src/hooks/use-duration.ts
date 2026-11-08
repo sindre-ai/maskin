@@ -1,7 +1,10 @@
 import { formatDurationMs } from '@/lib/format-duration'
 import { useEffect, useReducer } from 'react'
 
-export function useDuration(startedAt: string | null | undefined): string | null {
+export function useDuration(
+	startedAt: string | null | undefined,
+	format: (ms: number) => string = formatDurationMs,
+): string | null {
 	const [, tick] = useReducer((n: number) => n + 1, 0)
 
 	useEffect(() => {
@@ -12,5 +15,5 @@ export function useDuration(startedAt: string | null | undefined): string | null
 
 	if (!startedAt) return null
 	const ms = Date.now() - new Date(startedAt).getTime()
-	return formatDurationMs(ms)
+	return format(ms)
 }

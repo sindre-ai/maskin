@@ -57,7 +57,7 @@ test.describe('Chat: a link into another workspace draws as a globe placeholder'
 			const thread = page.getByTestId('thread-messages')
 
 			// Two cards, one per link alone on its line: a member workspace and a stranger's.
-			const loopCard = thread.locator('[data-linked-card]', { hasText: 'Loop in Acme Labs' })
+			const loopCard = thread.locator('[data-linked-card]', { hasText: 'Flow in Acme Labs' })
 			await expect(loopCard).toBeVisible({ timeout: 10_000 })
 			await expect(loopCard).toHaveAttribute('href', `/${member.id}/loops/${loopId}`)
 			const triggerCard = thread.locator('[data-linked-card]', {
@@ -75,20 +75,20 @@ test.describe('Chat: a link into another workspace draws as a globe placeholder'
 			await expect(thread.getByText('the loop', { exact: true })).toHaveCount(0)
 
 			// Two chips in the sentence; the same words, the same dashed look, no preview.
-			const objectChip = thread.getByRole('link', { name: 'Object in Acme Labs' }).first()
+			const objectChip = thread.getByRole('link', { name: 'Item in Acme Labs' }).first()
 			await expect(objectChip).toBeVisible()
 			await expect(objectChip).toHaveAttribute('href', `/${member.id}/objects/${elsewhere.id}`)
-			const strangerChip = thread.getByRole('link', { name: 'Object in another workspace' })
+			const strangerChip = thread.getByRole('link', { name: 'Item in another workspace' })
 			await expect(strangerChip).toBeVisible()
 			await expect(objectChip).toHaveCSS('border-top-style', 'dashed')
 			await expect(objectChip).toHaveCSS('font-style', 'italic')
 			await objectChip.hover()
 			await expect(page.locator('[data-linked-preview]')).toHaveCount(0)
-			await expect(thread).not.toContainText('Deleted object')
+			await expect(thread).not.toContainText('Deleted item')
 			await expect(thread).not.toContainText('Secret roadmap of the other team')
 
 			// Your own message: the same chip, opening in a new tab.
-			const ownChip = thread.getByRole('link', { name: 'Object in Acme Labs' }).last()
+			const ownChip = thread.getByRole('link', { name: 'Item in Acme Labs' }).last()
 			await expect(ownChip).toHaveAttribute('target', '_blank')
 			await expect(ownChip).toHaveCSS('border-top-style', 'dashed')
 

@@ -56,6 +56,62 @@ describe('timeQueries deadline', () => {
 	})
 })
 
+describe('timeQueries pool diagnostics', () => {
+	it('reports the in-flight count and a short SQL preview when a query times out', async () => {
+		const seen: { timeoutMs: number; inFlight: number; sql: string }[] = []
+		const client = timeQueries({ unsafe: (_text: string) => fakeQuery(5_000) }, undefined, {
+			queryTimeoutMs: 30,
+			onQueryTimeout: (info) => seen.push(info),
+		})
+		const longSql = `select ${'x'.repeat(200)}`
+		const results = await Promise.allSettled([client.unsafe(longSql), client.unsafe('select 1')])
+		expect(results.every((r) => r.status === 'rejected')).toBe(true)
+		expect(seen).toHaveLength(2)
+		expect(seen[0]).toMatchObject({ timeoutMs: 30, inFlight: 2 })
+		expect(seen[0]?.sql).toHaveLength(80)
+		expect(seen[1]?.sql).toBe('select 1')
+	})
+
+	it('calls onSaturated when the in-flight count reaches saturationAt', async () => {
+		const saturated: number[] = []
+		const client = timeQueries({ unsafe: () => fakeQuery(20) }, undefined, {
+			saturationAt: 3,
+			onSaturated: (n) => saturated.push(n),
+		})
+		await Promise.all([client.unsafe(), client.unsafe()])
+		expect(saturated).toEqual([])
+		await Promise.all([client.unsafe(), client.unsafe(), client.unsafe()])
+		expect(saturated).toEqual([3])
+	})
+
+	it('counts queries inside a transaction with the rest of the client', async () => {
+		const saturated: number[] = []
+		const client = timeQueries(
+			{
+				unsafe: () => fakeQuery(30),
+				begin: async (fn: (tx: unknown) => unknown) => fn({ unsafe: () => fakeQuery(30) }),
+			},
+			undefined,
+			{ saturationAt: 2, onSaturated: (n) => saturated.push(n) },
+		)
+		await Promise.all([
+			client.unsafe(),
+			client.begin(async (tx) => (tx as { unsafe: () => PromiseLike<unknown> }).unsafe()),
+		])
+		expect(saturated).toEqual([2])
+	})
+
+	it('stops counting a query once it has finished or timed out', async () => {
+		const saturated: number[] = []
+		const client = timeQueries({ unsafe: () => fakeQuery(5) }, undefined, {
+			saturationAt: 2,
+			onSaturated: (n) => saturated.push(n),
+		})
+		for (let i = 0; i < 5; i++) await client.unsafe()
+		expect(saturated).toEqual([])
+	})
+})
+
 describe('createDb against a peer that accepts the connection and never replies', () => {
 	let server: Server | undefined
 	const sockets: Socket[] = []

@@ -11,6 +11,8 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import {
 	buildCalcomDelivery,
 	buildFirefliesDelivery,
+	buildTelnyxDelivery,
+	generateTelnyxKeys,
 } from '../../../../tests/integrations/fixtures/signed-deliveries'
 import {
 	allowWebhookRequest,
@@ -24,6 +26,7 @@ import {
 	mcpConfigWriteError,
 	resetWebhookRateLimits,
 	verifyExtensionSignature,
+	webhookSecretWriteError,
 } from '../../../lib/integrations/extensions'
 import { VENDOR_RECIPES } from '../../../lib/integrations/vendor-recipes'
 import { WebhookHandler } from '../../../lib/integrations/webhooks/handler'
@@ -279,6 +282,97 @@ describe('verifyExtensionSignature', () => {
 		})
 		expect(verifyExtensionSignature(handler, cfg, body, headersFor(fresh), secret)).toBe(true)
 		expect(verifyExtensionSignature(handler, cfg, body, headersFor(old), secret)).toBe(false)
+	})
+})
+
+describe('verifyExtensionSignature (ed25519, Telnyx)', () => {
+	const handler = new WebhookHandler()
+	const cfg = webhookConfigSchema.parse({
+		signatureScheme: 'ed25519',
+		signatureHeader: 'telnyx-signature-ed25519',
+		timestampHeader: 'telnyx-timestamp',
+		timestampBodyTemplate: '{timestamp}|{body}',
+		eventMap: {
+			externalIdPath: '$.data.id',
+			entityType: { literal: 'telnyx.event' },
+			action: { path: '$.data.event_type' },
+		},
+	})
+	const keys = generateTelnyxKeys()
+	const check = (
+		d: { body: string; headers: Record<string, string> },
+		key = keys.publicKeyBase64,
+	) => verifyExtensionSignature(handler, cfg, d.body, d.headers, key)
+
+	it('accepts a delivery signed with the matching private key', () => {
+		expect(check(buildTelnyxDelivery({ privateKey: keys.privateKey }))).toBe(true)
+	})
+
+	it('rejects a delivery verified against another key', () => {
+		const d = buildTelnyxDelivery({ privateKey: keys.privateKey })
+		expect(check(d, generateTelnyxKeys().publicKeyBase64)).toBe(false)
+	})
+
+	it('rejects a tampered body', () => {
+		const d = buildTelnyxDelivery({ privateKey: keys.privateKey })
+		expect(check({ ...d, body: d.body.replace('call.hangup', 'call.answered') })).toBe(false)
+	})
+
+	it('rejects a missing signature or timestamp header', () => {
+		const d = buildTelnyxDelivery({ privateKey: keys.privateKey })
+		const { 'telnyx-signature-ed25519': _s, ...noSignature } = d.headers
+		const { 'telnyx-timestamp': _t, ...noTimestamp } = d.headers
+		expect(check({ ...d, headers: noSignature })).toBe(false)
+		expect(check({ ...d, headers: noTimestamp })).toBe(false)
+	})
+
+	it('rejects a malformed signature without throwing', () => {
+		const d = buildTelnyxDelivery({ privateKey: keys.privateKey })
+		expect(
+			check({ ...d, headers: { ...d.headers, 'telnyx-signature-ed25519': 'not-base64!' } }),
+		).toBe(false)
+	})
+
+	it('rejects a timestamp older than maxAgeSeconds even when the signature is valid', () => {
+		const now = Math.floor(Date.now() / 1000)
+		expect(check(buildTelnyxDelivery({ privateKey: keys.privateKey, timestamp: now - 301 }))).toBe(
+			false,
+		)
+		expect(check(buildTelnyxDelivery({ privateKey: keys.privateKey, timestamp: now - 200 }))).toBe(
+			true,
+		)
+	})
+
+	it('throws, so the route answers 500, when the stored key is not an Ed25519 public key', () => {
+		const d = buildTelnyxDelivery({ privateKey: keys.privateKey })
+		expect(() => check(d, 'a'.repeat(64))).toThrow(/Ed25519 public key/)
+	})
+
+	it('requires the timestamp header and signed text in the config', () => {
+		const { timestampHeader: _h, timestampBodyTemplate: _t, ...rest } = cfg
+		expect(webhookConfigSchema.safeParse(rest).success).toBe(false)
+	})
+})
+
+describe('webhookSecretWriteError', () => {
+	it('accepts a raw 32-byte base64 public key for ed25519', () => {
+		expect(
+			webhookSecretWriteError({ signatureScheme: 'ed25519' }, generateTelnyxKeys().publicKeyBase64),
+		).toBeNull()
+	})
+
+	it('refuses anything else for ed25519 with a plain message', () => {
+		expect(webhookSecretWriteError({ signatureScheme: 'ed25519' }, 'a'.repeat(64))).toMatch(
+			/Ed25519 public key/,
+		)
+		expect(webhookSecretWriteError({ signatureScheme: 'ed25519' }, 'short')).toMatch(
+			/Ed25519 public key/,
+		)
+	})
+
+	it('leaves the other schemes alone', () => {
+		expect(webhookSecretWriteError({ signatureScheme: 'hmac-sha256' }, 'whatever')).toBeNull()
+		expect(webhookSecretWriteError(null, 'whatever')).toBeNull()
 	})
 })
 

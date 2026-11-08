@@ -37,16 +37,14 @@ test.describe('Settings — Extensions page', () => {
 		}) => {
 			await setTheme(page, 'light')
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
-			await openExtensionsPage(page, account.workspaceId)
-
-			// Settings nav (vertical rail on md+, horizontal chip strip on mobile) exposes Extensions.
-			await expect(page.getByRole('link', { name: 'Extensions' }).first()).toBeVisible({
-				timeout: 10000,
-			})
+			// Extensions is reached from Item types (mockup), not from the settings nav.
+			await page.goto(`/${account.workspaceId}/settings/objects`)
+			await page.getByRole('link', { name: /^Extensions/ }).click({ timeout: 15000 })
+			await expect(page).toHaveURL(/\/settings\/extensions$/)
 
 			// The section and its helper text render.
 			await expect(
-				page.getByText('Extensions add object types and tabs for this workspace').first(),
+				page.getByText('Extensions add item types and tabs for this workspace').first(),
 			).toBeVisible()
 
 			// The registered modules are listed with their names.
@@ -87,7 +85,7 @@ test.describe('Settings — Extensions page', () => {
 			// …and survives a full page reload.
 			await page.reload()
 			await expect(
-				page.getByText('Extensions add object types and tabs for this workspace').first(),
+				page.getByText('Extensions add item types and tabs for this workspace').first(),
 			).toBeVisible({ timeout: 10000 })
 			await expect(moduleSwitch(page, 'CRM')).not.toBeChecked()
 
@@ -115,7 +113,7 @@ test.describe('Settings — Extensions page', () => {
 			}
 
 			await expect(
-				page.getByText('Extensions add object types and tabs for this workspace').first(),
+				page.getByText('Extensions add item types and tabs for this workspace').first(),
 			).toBeVisible()
 			await expect(moduleSwitch(page, 'Work')).toBeChecked()
 			await expect(moduleSwitch(page, 'CRM')).toBeChecked()

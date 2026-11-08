@@ -172,7 +172,7 @@ describe('PulseCard', () => {
 			/>,
 			{ wrapper },
 		)
-		expect(screen.getByRole('button', { name: /View objects/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /View items/ })).toBeInTheDocument()
 	})
 
 	it('shows Review tasks for alert type', () => {
@@ -253,7 +253,7 @@ describe('PulseCard', () => {
 		const notification = buildNotificationWithActions({
 			objectId: '00000000-0000-0000-0000-000000000001',
 			metadata: {
-				actions: [{ label: 'Go to object', navigate: { to: 'object' } }],
+				actions: [{ label: 'Go to item', navigate: { to: 'object' } }],
 			},
 		})
 		render(
@@ -266,7 +266,7 @@ describe('PulseCard', () => {
 			{ wrapper },
 		)
 
-		await user.click(screen.getByRole('button', { name: /Go to object/ }))
+		await user.click(screen.getByRole('button', { name: /Go to item/ }))
 		expect(onAction).not.toHaveBeenCalled()
 		expect(mockNavigate).toHaveBeenCalled()
 	})
@@ -304,7 +304,7 @@ describe('PulseCard', () => {
 			{ wrapper },
 		)
 		expect(screen.queryByRole('button', { name: 'Dismiss' })).not.toBeInTheDocument()
-		expect(screen.queryByRole('button', { name: /View objects/ })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /View items/ })).not.toBeInTheDocument()
 	})
 
 	it('shows Chat with agents button', () => {
@@ -357,7 +357,7 @@ describe('resolveActions', () => {
 			actions: [
 				{ label: 'Valid', response: 'ok' },
 				{ label: 'No response or navigate' },
-				'not an object',
+				'not an item',
 			],
 		} as Record<string, unknown>
 		const result = resolveActions(notification, metadata)
@@ -379,18 +379,18 @@ describe('resolveActions', () => {
 		})
 		const result = resolveActions(notification, {})
 		expect(result).toHaveLength(1)
-		expect(result[0].label).toBe('View object')
+		expect(result[0].label).toBe('View item')
 		expect(result[0].navigate?.to).toBe('object')
 	})
 
-	it('returns View objects for recommendation without objectId', () => {
+	it('returns View items for recommendation without objectId', () => {
 		const notification = buildNotificationResponse({
 			type: 'recommendation',
 			objectId: null,
 		})
 		const result = resolveActions(notification, {})
 		expect(result).toHaveLength(1)
-		expect(result[0].label).toBe('View objects')
+		expect(result[0].label).toBe('View items')
 		expect(result[0].navigate?.to).toBe('objects')
 	})
 

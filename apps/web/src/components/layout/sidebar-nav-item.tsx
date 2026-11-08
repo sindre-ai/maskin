@@ -33,20 +33,40 @@ export function SidebarNavItem({ item, source, params = {}, children }: SidebarN
 
 	return (
 		<SidebarMenuItem>
-			<SidebarMenuButton asChild isActive={isActive} tooltip={item.label}>
-				<Link
-					to={item.to as never}
-					params={routeParams as never}
-					search={{} as never}
-					onClick={() => {
-						trackNavItemClicked({ item_key: item.key, source })
-						setOpenMobile(false)
-					}}
-				>
-					<Icon />
-					<span>{item.label}</span>
-					{children}
-				</Link>
+			<SidebarMenuButton
+				asChild
+				isActive={isActive}
+				tooltip={item.label}
+				// v11 row: 36px, 13.5px label, 17px icon, 9px radius. Resting rows read
+				// in the secondary ink; the active row is solid ink on the accent fill.
+				className="h-9 gap-2.5 rounded-[9px] px-2.5 text-[13.5px] font-medium text-muted-foreground data-[active=true]:font-semibold data-[active=true]:text-sidebar-accent-foreground [&>svg]:size-[17px]"
+			>
+				{item.href ? (
+					<a
+						href={item.href}
+						target="_blank"
+						rel="noopener noreferrer"
+						onClick={() => trackNavItemClicked({ item_key: item.key, source })}
+					>
+						<Icon />
+						<span>{item.label}</span>
+						{children}
+					</a>
+				) : (
+					<Link
+						to={item.to as never}
+						params={routeParams as never}
+						search={{} as never}
+						onClick={() => {
+							trackNavItemClicked({ item_key: item.key, source })
+							setOpenMobile(false)
+						}}
+					>
+						<Icon />
+						<span>{item.label}</span>
+						{children}
+					</Link>
+				)}
 			</SidebarMenuButton>
 		</SidebarMenuItem>
 	)

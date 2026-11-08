@@ -47,12 +47,13 @@ export interface McpToolCallTrace {
 	transport: 'http' | 'stdio'
 	agentActorId: string | null
 	/**
-	 * How the caller authenticated. `api_key` only when a key actually resolved
-	 * to an actor; null when the caller is unknown or the credential is invalid.
+	 * How the caller authenticated: `api_key` when a key resolved to an actor,
+	 * `oauth` when a Claude connector token did; null when the caller is unknown
+	 * or the credential is invalid.
 	 * Never inferred from the shape of the header: an unresolved caller must not
 	 * read as an authenticated one.
 	 */
-	authMethod: 'api_key' | null
+	authMethod: 'api_key' | 'oauth' | null
 	/** MCP client family. A hint from the User-Agent, never the raw header. */
 	client: McpClient
 	/** Whether the resolved caller is a person or an agent; null when unresolved. */
@@ -155,7 +156,7 @@ export interface McpHandshakeTrace {
 	mcpProtocolVersion?: McpProtocolVersionLabel
 	client: McpClient
 	transport: 'http'
-	authMethod: 'api_key' | null
+	authMethod: 'api_key' | 'oauth' | null
 	agentActorId: string | null
 }
 

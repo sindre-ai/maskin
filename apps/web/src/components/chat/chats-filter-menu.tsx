@@ -6,8 +6,9 @@ import {
 	DropdownMenuRadioItem,
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { PILL_TRIGGER_CLASS } from '@/components/ui/select'
 import { cn } from '@/lib/cn'
-import { Ellipsis } from 'lucide-react'
+import { ChevronDown, ListFilter } from 'lucide-react'
 
 export type ChatsFilter = 'all' | 'unread' | 'pinned' | 'archived' | 'threads'
 
@@ -33,27 +34,49 @@ export function chatsFilterLabel(filter: ChatsFilter): string {
 export function ChatsFilterMenu({
 	value,
 	onChange,
+	iconOnly,
 }: {
 	value: ChatsFilter
 	onChange: (value: ChatsFilter) => void
+	/** The v3 list head: a 32px round filter icon instead of the labelled pill. */
+	iconOnly?: boolean
 }) {
 	const isFiltered = value !== 'all'
 	return (
 		<DropdownMenu>
 			<DropdownMenuTrigger asChild>
-				<Button
-					type="button"
-					variant="outline"
-					size="sm"
-					className={cn(
-						'h-[30px] gap-1.5 px-2.5 text-[11.5px] font-semibold',
-						isFiltered && 'border-border-strong text-foreground',
-					)}
-					aria-label={`Filter conversations — ${chatsFilterLabel(value)}`}
-				>
-					{isFiltered ? <span className="whitespace-nowrap">{chatsFilterLabel(value)}</span> : null}
-					<Ellipsis size={15} aria-hidden />
-				</Button>
+				{iconOnly ? (
+					<Button
+						type="button"
+						variant="ghost"
+						size="icon"
+						title={`Filter — ${chatsFilterLabel(value)}`}
+						className={cn(
+							'size-8 rounded-full bg-background shadow-[inset_0_0_0_1px_var(--border)] hover:bg-secondary',
+							isFiltered && 'bg-secondary shadow-[inset_0_0_0_1px_var(--border-strong)]',
+						)}
+						aria-label={`Filter conversations — ${chatsFilterLabel(value)}`}
+					>
+						<ListFilter className="size-3.5" aria-hidden />
+					</Button>
+				) : (
+					<Button
+						type="button"
+						variant="ghost"
+						size="sm"
+						className={cn(
+							PILL_TRIGGER_CLASS,
+							'inline-flex hover:bg-background',
+							isFiltered && 'border-border-strong',
+						)}
+						aria-label={`Filter conversations — ${chatsFilterLabel(value)}`}
+					>
+						<span className="whitespace-nowrap">
+							{isFiltered ? chatsFilterLabel(value) : 'All chats'}
+						</span>
+						<ChevronDown className="size-3.5 text-muted-foreground" aria-hidden />
+					</Button>
+				)}
 			</DropdownMenuTrigger>
 			<DropdownMenuContent align="end" className="w-44">
 				<DropdownMenuRadioGroup

@@ -37,10 +37,10 @@ describe('resolveActions', () => {
 	})
 
 	describe('recommendation type', () => {
-		it('returns "View objects" without objectId', () => {
+		it('returns "View items" without objectId', () => {
 			const result = resolveActions(buildNotification({ type: 'recommendation' }), {})
 			expect(result).toEqual([
-				{ label: 'View objects', response: 'view_object', navigate: { to: 'objects' } },
+				{ label: 'View items', response: 'view_object', navigate: { to: 'objects' } },
 			])
 		})
 
@@ -50,7 +50,7 @@ describe('resolveActions', () => {
 				{},
 			)
 			expect(result).toEqual([
-				{ label: 'View object', response: 'view_object', navigate: { to: 'object' } },
+				{ label: 'View item', response: 'view_object', navigate: { to: 'object' } },
 			])
 		})
 	})

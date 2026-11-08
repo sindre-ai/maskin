@@ -41,7 +41,7 @@ test.describe('Loop detail — post-ship small defects', () => {
 			// The leaf crumb must name the loop itself.
 			await expect(breadcrumb.getByText('Renewal risk loop')).toBeVisible()
 			// The defect: the leaf fell back to the route's static label.
-			await expect(page.getByText('Loop Details')).toHaveCount(0)
+			await expect(page.getByText('Flow Details')).toHaveCount(0)
 		}
 	})
 
@@ -66,6 +66,8 @@ test.describe('Loop detail — post-ship small defects', () => {
 			await expect(page.getByRole('heading', { name: 'Chart fallback loop' })).toBeVisible({
 				timeout: 20000,
 			})
+			// Comments live on the Activity tab.
+			await page.getByRole('tab', { name: 'Activity' }).click()
 
 			// AC: a real error state replaces the raw parser message. The rendered
 			// copy uses a typographic apostrophe ("Couldn’t"), so the assertion
@@ -100,6 +102,8 @@ test.describe('Loop detail — post-ship small defects', () => {
 			await expect(page.getByRole('heading', { name: 'Empty chart loop' })).toBeVisible({
 				timeout: 20000,
 			})
+			// Comments live on the Activity tab.
+			await page.getByRole('tab', { name: 'Activity' }).click()
 
 			// The comment is present…
 			await expect(page.getByText('Nothing to chart yet:')).toBeVisible({ timeout: 10000 })
@@ -131,6 +135,8 @@ test.describe('Loop detail — post-ship small defects', () => {
 			await expect(page.getByRole('heading', { name: 'Folding loop' })).toBeVisible({
 				timeout: 20000,
 			})
+			// Comments live on the Activity tab.
+			await page.getByRole('tab', { name: 'Activity' }).click()
 
 			// AC: the three consecutive updates collapse behind a single pill.
 			const foldToggle = page.getByRole('button', { name: /\d+ agent updates/ })

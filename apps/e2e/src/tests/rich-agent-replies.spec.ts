@@ -44,7 +44,8 @@ test.describe('Rich agent replies — chart + live task checklist', () => {
 				metadata: { tasks: [childTask.id] },
 			})
 
-			await page.goto(`/${account.workspaceId}/objects/${parentBet.id}`)
+			// Comments render in the Activity tab.
+			await page.goto(`/${account.workspaceId}/objects/${parentBet.id}?tab=activity`)
 			await expect(
 				page.getByRole('heading', { level: 1, name: 'Bet for rich reply renderer' }),
 			).toBeVisible({ timeout: 10000 })

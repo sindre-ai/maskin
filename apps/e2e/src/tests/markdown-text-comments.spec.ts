@@ -55,7 +55,7 @@ async function select(page: Page, text: string, nth = 0) {
 }
 
 async function openFile(page: Page, workspaceId: string, fileId: string) {
-	await page.goto(`/${workspaceId}/files/${fileId}`)
+	await page.goto(`/${workspaceId}/files/${fileId}?view=edit`)
 	await expect(page.locator('.ProseMirror')).toBeVisible({ timeout: 10000 })
 }
 

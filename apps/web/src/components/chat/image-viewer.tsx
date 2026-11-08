@@ -63,7 +63,7 @@ export function ImageViewer({
 	return (
 		<Dialog open={open} onOpenChange={(next) => !next && onClose()}>
 			<DialogPortal>
-				<DialogOverlay className="bg-background/95" />
+				<DialogOverlay className="bg-background" />
 				<DialogPrimitive.Content
 					aria-describedby={undefined}
 					onCloseAutoFocus={(e) => {
@@ -126,7 +126,7 @@ export function ImageViewer({
 						) : isError ? (
 							<div className="flex flex-col items-center gap-1 text-muted-foreground">
 								<ImageOff size={20} aria-hidden />
-								<span className="text-[11.5px]">Can't load this image</span>
+								<span className="text-[13px]">Can't load this image</span>
 							</div>
 						) : (
 							<div className="aspect-[4/3] w-80 max-w-full animate-pulse rounded-xl bg-muted" />

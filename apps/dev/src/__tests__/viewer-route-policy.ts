@@ -90,6 +90,11 @@ export const OPEN_ROUTES: OpenRoute[] = [
 		'/api/integrations/telnyx/tools/:toolName',
 		'called by the Telnyx assistant, authenticated by a shared bearer secret',
 	],
+	// The Claude connector. A token a viewer approves carries the viewer role, so writes through it are refused.
+	['POST', '/api/oauth/authorize/approve', 'approves a Claude connection for the caller only'],
+	['POST', '/api/oauth/authorize/deny', 'declines a Claude connection for the caller only'],
+	['DELETE', '/api/oauth/grants/:id', 'ends a Claude connection of the caller only'],
+	['POST', '/oauth/token', 'public, the one-time code or refresh token is the credential'],
 	// Group B leftovers: no handler logic or no workspace data.
 	['DELETE', '/api/integrations/google-drive/mcp', 'always answers 405, no handler'],
 	['DELETE', '/api/integrations/google-meet/mcp', 'always answers 405, no handler'],

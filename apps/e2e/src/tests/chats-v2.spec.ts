@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 import { TestAPI } from '../helpers/api.helper'
+import { headerMenuItem } from '../helpers/chat-header'
 import { SHIP_GATE_VIEWPORTS, VIEWPORTS } from '../helpers/viewports'
 
 /**
@@ -67,8 +68,9 @@ test.describe('Chats v2 — filter menu', () => {
 		await expect(page).toHaveURL(/[?&]filter=pinned/)
 		await expect(list.getByText(chats.pinned)).toBeVisible()
 		await expect(list.getByText(chats.plain)).toBeHidden()
-		await expect(page.getByRole('button', { name: /^Filter conversations/ })).toContainText(
-			'Pinned',
+		// The desktop list head draws the filter as an icon, so the active filter is in its name.
+		await expect(page.getByRole('button', { name: /^Filter conversations/ })).toHaveAccessibleName(
+			/Pinned/,
 		)
 
 		await page.reload()
@@ -105,9 +107,9 @@ test.describe('Chats v2 — grouped list', () => {
 
 		await page.goto(`/${account.workspaceId}/chats`)
 		await expect(list.getByText(chats.plain)).toBeVisible({ timeout: 15_000 })
-		// Pinned sorts above the dated groups.
+		// Pinned sorts above Unread and Earlier; a chat the viewer wrote last is read.
 		await expect(list.getByText('Pinned', { exact: true })).toBeVisible()
-		await expect(list.getByText('Today', { exact: true })).toBeVisible()
+		await expect(list.getByText('Earlier', { exact: true })).toBeVisible()
 	})
 })
 
@@ -122,26 +124,20 @@ test.describe('Chats v2 — layout', () => {
 			await expect(list.getByText(chats.plain)).toBeVisible({ timeout: 15_000 })
 			await expectNoHorizontalOverflow(page)
 
-			// With nothing selected the list owns the whole content width.
-			const listBox = await list.boundingBox()
-			expect(listBox).not.toBeNull()
-
 			await list.getByText(chats.plain).click()
 			await expect(page.getByRole('heading', { name: chats.plain })).toBeVisible({
 				timeout: 15_000,
 			})
 			await expectNoHorizontalOverflow(page)
 
-			if (vp.width < 768) {
-				// Mobile stacks: the list is replaced by the thread.
+			if (vp.width < 1024) {
+				// Below lg the list and the thread take turns: the thread replaces the list.
 				await expect(list).toBeHidden()
 				await page.getByRole('button', { name: 'Back to conversations' }).click()
 			} else {
-				// Both panes are visible side by side, and the list has narrowed.
+				// Both panes are visible side by side.
 				await expect(list).toBeVisible()
-				const narrowed = await list.boundingBox()
-				expect(narrowed?.width ?? 0).toBeLessThan(listBox?.width ?? 0)
-				await page.getByRole('button', { name: 'Close conversation' }).click()
+				await (await headerMenuItem(page, 'Close conversation')).click()
 			}
 
 			await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/chats/?(\\?.*)?$`))
@@ -157,30 +153,31 @@ test.describe('Chats v2 — layout', () => {
 		await page.goto(`/${account.workspaceId}/chats`)
 		await expect(page.getByTestId('conversation-list')).toBeVisible({ timeout: 15_000 })
 
-		// The title and the New button share a row: wrapping drops New to a
-		// second line, which is what this asserts against.
-		const heading = await page.getByRole('heading', { name: 'Chats' }).boundingBox()
+		// The title and New share the nav row: wrapping drops New to a second line,
+		// which is what this asserts against. The header has no search button.
+		await expect(page.getByRole('button', { name: 'Search or run a command' })).toHaveCount(0)
+		const title = await page.getByRole('heading', { name: 'Chats', exact: true }).boundingBox()
 		const newButton = await page.getByRole('button', { name: 'New chat' }).first().boundingBox()
-		expect(heading).not.toBeNull()
+		expect(title).not.toBeNull()
 		expect(newButton).not.toBeNull()
-		expect(Math.abs((newButton?.y ?? 0) - (heading?.y ?? 0))).toBeLessThan(16)
+		expect(Math.abs((newButton?.y ?? 0) - (title?.y ?? 0))).toBeLessThan(24)
 
-		// Icon-only at this width, but still named for assistive tech.
+		// The list's filter pill stays named for assistive tech and inside the viewport.
 		const filter = page.getByRole('button', { name: /^Filter conversations/ })
 		await expect(filter).toBeVisible()
-		expect((await filter.boundingBox())?.width ?? 999).toBeLessThan(56)
+		const box = await filter.boundingBox()
+		expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(VIEWPORTS.mobile.width)
 	})
 
-	test('the nav controls are all the same height', async ({ page, account }) => {
+	test('the search and filter pills are the same height', async ({ page, account }) => {
 		await seedChats(account.api, account.workspaceId)
 		await page.goto(`/${account.workspaceId}/chats`)
 		await expect(page.getByTestId('conversation-list')).toBeVisible({ timeout: 15_000 })
 
 		const heights = await Promise.all(
 			[
-				page.getByRole('button', { name: 'Search or run a command' }),
+				page.getByRole('searchbox', { name: 'Search chats' }).locator('xpath=..'),
 				page.getByRole('button', { name: /^Filter conversations/ }),
-				page.getByRole('button', { name: 'New chat' }).first(),
 			].map(async (l) => (await l.boundingBox())?.height ?? 0),
 		)
 		expect(heights.every((h) => h > 0)).toBe(true)
@@ -197,14 +194,120 @@ test.describe('Chats v2 — layout', () => {
 		await expect(page.getByRole('heading', { name: chats.plain })).toBeVisible({ timeout: 15_000 })
 		await expect(list).toBeVisible()
 
-		await page.getByRole('button', { name: 'Hide conversation list' }).click()
+		await (await headerMenuItem(page, 'Hide conversation list')).click()
 		await expect(page).toHaveURL(/[?&]wide=true/)
 		await expect(list).toBeHidden()
 
-		await page.getByRole('button', { name: 'Show conversation list' }).click()
+		await (await headerMenuItem(page, 'Show conversation list')).click()
 		await expect(list).toBeVisible()
 		await expect(page).not.toHaveURL(/wide=true/)
 	})
+})
+
+test.describe('Chats v2 — filter pill (v16)', () => {
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`the filter pill sits under the search field and opens at ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			const chats = await seedChats(account.api, account.workspaceId)
+			await page.goto(`/${account.workspaceId}/chats`)
+			await expect(page.getByTestId('conversation-list').getByText(chats.plain)).toBeVisible({
+				timeout: 15_000,
+			})
+			const pill = page.getByRole('button', { name: /^Filter conversations/ })
+			const search = page.getByRole('searchbox', { name: 'Search chats' })
+			const pillBox = await pill.boundingBox()
+			const searchBox = await search.boundingBox()
+			if (vp.width < 768) {
+				expect(pillBox?.height).toBe(44)
+				expect((pillBox?.y ?? 0) >= (searchBox?.y ?? 0) + (searchBox?.height ?? 0)).toBe(true)
+			} else {
+				// v3 list head: the search is a round icon and the filter a 32px round icon beside it.
+				expect(pillBox?.height).toBe(32)
+				expect(pillBox?.width).toBe(32)
+			}
+			await pill.click()
+			await expect(page.getByRole('menuitemradio', { name: 'Pinned' })).toBeVisible()
+		})
+	}
+})
+
+test.describe('Chats v2 — list title and column', () => {
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`the Chats title sits at the shared top-left of the page at ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			const chats = await seedChats(account.api, account.workspaceId)
+			const list = page.getByTestId('conversation-list')
+
+			await page.goto(`/${account.workspaceId}/chats`)
+			await expect(list.getByText(chats.plain)).toBeVisible({ timeout: 15_000 })
+
+			// Exactly one "Chats" heading: the nav row's below md, the list column's from md (v3).
+			const title = page.getByRole('heading', { name: 'Chats', exact: true })
+			await expect(title).toHaveCount(1)
+			await expect(title).toBeVisible()
+			const size = await title.evaluate((el) => window.getComputedStyle(el).fontSize)
+			expect(size).toBe(vp.width >= 1024 ? '34px' : vp.width >= 768 ? '28px' : '24px')
+			const box = await title.boundingBox()
+			const listBox = await list.boundingBox()
+			// Below md it shares the shared top edge, 20px from the top of the viewport. From md
+			// it heads the list column, under the nav row.
+			if (vp.width < 768) expect(Math.abs((box?.y ?? 0) - 20)).toBeLessThanOrEqual(3)
+
+			// Section headers are present, and the list sits below the title row.
+			await expect(list.getByText('Earlier', { exact: true })).toBeVisible()
+			expect((listBox?.y ?? 0) >= (box?.y ?? 0) + (box?.height ?? 0) - 1).toBe(true)
+			await expectNoHorizontalOverflow(page)
+
+			// Selecting a chat opens the pane. With the thread open the title stays in
+			// the column from lg up; below lg the thread replaces the list.
+			await list.getByText(chats.plain).click()
+			await expect(page.getByRole('heading', { name: chats.plain })).toBeVisible({
+				timeout: 15_000,
+			})
+			await expectNoHorizontalOverflow(page)
+			if (vp.width >= 1024) {
+				await expect(page.getByRole('heading', { name: 'Chats', exact: true })).toBeVisible()
+				const column = await list.boundingBox()
+				// The column is 280px from lg and 400px from xl (1280), minus its 1px divider.
+				expect(Math.round(column?.width ?? 0)).toBe(vp.width >= 1280 ? 399 : 279)
+				// The composer stays reachable beside the wider column.
+				await expect(page.getByLabel('Message this conversation')).toBeVisible()
+			} else {
+				await expect(list).toBeHidden()
+				await expect(page.getByLabel('Message this conversation')).toBeVisible()
+			}
+		})
+	}
+
+	for (const scheme of ['light', 'dark'] as const) {
+		test(`the Chats title and section headers are legible in ${scheme} mode`, async ({
+			page,
+			account,
+		}) => {
+			await page.emulateMedia({ colorScheme: scheme })
+			const chats = await seedChats(account.api, account.workspaceId)
+			await page.goto(`/${account.workspaceId}/chats`)
+			await expect(page.getByTestId('conversation-list').getByText(chats.plain)).toBeVisible({
+				timeout: 15_000,
+			})
+			const title = page.getByRole('heading', { name: 'Chats', exact: true })
+			await expect(title).toBeVisible()
+			const colors = await title.evaluate((el) => {
+				const style = window.getComputedStyle(el)
+				return {
+					color: style.color,
+					background: window.getComputedStyle(document.body).backgroundColor,
+				}
+			})
+			expect(colors.color).not.toBe(colors.background)
+		})
+	}
 })
 
 test.describe('Chats v2 — participants popover', () => {
@@ -222,8 +325,9 @@ test.describe('Chats v2 — participants popover', () => {
 			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 			await page.getByRole('button', { name: /participants — manage/ }).click()
 
-			await expect(page.getByText('In this chat')).toBeVisible({ timeout: 10_000 })
-			await expect(page.getByText('Add someone — person or agent')).toBeVisible()
+			await expect(page.getByText('People · 1')).toBeVisible({ timeout: 10_000 })
+			await expect(page.getByPlaceholder('Add a person or an agent')).toBeVisible()
+			await expect(page.getByRole('button', { name: 'Leave chat' })).toBeVisible()
 			await expect(page.getByRole('button', { name: 'Copy link to this chat' })).toBeVisible()
 			// Deliberately absent — see participants-popover.tsx: a mailto link
 			// promises access to someone who is not in the workspace.
@@ -234,80 +338,38 @@ test.describe('Chats v2 — participants popover', () => {
 			// The owner's sub-line names their relationship to the chat.
 			await expect(page.getByText('You · owner of this chat')).toBeVisible()
 
-			await page.getByPlaceholder('Search people and agents…').fill(agent.name)
+			await page.getByPlaceholder('Add a person or an agent').fill(agent.name)
 			await page.getByRole('option', { name: new RegExp(agent.name) }).click()
-			// The added agent moves up into the "In this chat" list.
+			// The added agent moves up into the Agents group.
 			await expect(page.getByText(agent.name).first()).toBeVisible({ timeout: 10_000 })
 		})
 	}
 })
 
-test.describe('Chats v2 — new chat zero state', () => {
+test.describe('Chats v2 — new chat form', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
-		test(`the zero state renders the heading + empty composer at ${vp.label}`, async ({
-			page,
-			account,
-		}) => {
-			await page.setViewportSize({ width: vp.width, height: vp.height })
-			await page.goto(`/${account.workspaceId}/chats/new`)
-
-			// v4 replaces the single "Change who you are talking to" button + the
-			// 6-item suggestion-prompt cluster with the chip picker + RECENT list
-			// (parent bet Chats — v4 UX/UI polish, PR #1603). The suggestion-prefill
-			// flow is deliberately dropped, so this narrows to the two invariants
-			// the v4 zero state still guarantees for every viewport.
-			await expect(page.getByRole('heading', { name: 'What are we working on?' })).toBeVisible({
-				timeout: 15_000,
-			})
-			await expectNoHorizontalOverflow(page)
-
-			const composer = page.getByLabel('Message this conversation')
-			await expect(composer).toHaveText('')
-
-			// Draft route stays put — nothing has been sent yet.
-			await expect(page).toHaveURL(/\/chats\/new/)
-		})
-	}
-})
-
-test.describe('Chats v2 — new chat recipient list', () => {
-	for (const vp of SHIP_GATE_VIEWPORTS) {
-		test(`the list only shows while the To field is focused at ${vp.label}`, async ({
+		test(`the new chat page lists agents, a first message and Start chat at ${vp.label}`, async ({
 			page,
 			account,
 		}) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 			const agent = await account.api.createAgentActor(`Recent Agent ${Date.now()}`)
 			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
-			await account.api.createConversation(account.workspaceId, {
-				title: `Recent ${Date.now()}`,
-				participant_actor_ids: [agent.id],
-				initial_message: 'Seed a recent collaborator',
-			})
 
 			await page.goto(`/${account.workspaceId}/chats/new`)
-			await expect(page.getByRole('heading', { name: 'What are we working on?' })).toBeVisible({
-				timeout: 15_000,
-			})
-			const list = page.getByRole('listbox', { name: 'Recent collaborators' })
-			const toField = page.getByLabel('Add recipients')
-			const composer = page.getByLabel('Message this conversation')
+			await expect(page.getByRole('region', { name: 'To' })).toBeVisible({ timeout: 15_000 })
+			await expectNoHorizontalOverflow(page)
 
-			// Closed on load: the list does not crowd the composer.
-			await expect(list).toHaveCount(0)
+			const first = page.getByLabel('First message')
+			await expect(first).toHaveValue('')
 
-			await toField.click()
-			await expect(list).toBeVisible({ timeout: 10_000 })
+			// Draft route stays put — nothing has been sent yet.
+			await expect(page).toHaveURL(/\/chats\/new/)
 
-			// Moving to the message box closes it again.
-			await composer.click()
-			await expect(list).toHaveCount(0)
-			await expect(composer).toBeVisible()
-
-			// Typed matches still work, and picking a row is not lost to the blur.
-			await toField.fill(agent.name)
-			await page.getByRole('option', { name: new RegExp(agent.name) }).click()
-			await expect(page.getByRole('button', { name: `Remove ${agent.name}` })).toBeVisible()
+			// Picking an agent flips its switch on; the note counts a group from two.
+			const toggle = page.getByRole('switch', { name: `Add ${agent.name}` })
+			await toggle.click()
+			await expect(toggle).toBeChecked()
 		})
 	}
 })
@@ -346,11 +408,18 @@ test.describe('Chats v2 — light and dark', () => {
 					return { background: style.backgroundColor, color: style.color }
 				})
 			// The optimistic bubble is swapped for the saved one; a read taken mid-swap sees a
-			// detached element with no computed style, so wait for a real colour.
-			await expect.poll(async () => (await readPlate()).background).not.toBe('')
-			const plate = await readPlate()
-			expect(plate.background).not.toBe('rgba(0, 0, 0, 0)')
-			expect(plate.background).not.toBe(plate.color)
+			// detached element with no computed style. Poll the whole assertion, so one stale read
+			// cannot fail it and a real missing plate still does.
+			await expect
+				.poll(async () => {
+					const plate = await readPlate().catch(() => ({ background: '', color: '' }))
+					return (
+						plate.background !== '' &&
+						plate.background !== 'rgba(0, 0, 0, 0)' &&
+						plate.background !== plate.color
+					)
+				})
+				.toBe(true)
 		})
 	}
 })

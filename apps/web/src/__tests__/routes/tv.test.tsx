@@ -69,12 +69,12 @@ beforeEach(() => {
 })
 
 describe('TvSignInPage', () => {
-	it('asks a signed-out visitor to sign in before anything about the TV', () => {
+	it('asks a signed-out visitor to sign in before anything about the device', () => {
 		mockGetApiKey.mockReturnValue(null)
 		mockGetStoredActor.mockReturnValue(null)
 		renderPage()
 
-		expect(screen.getByText('Sign in your TV')).toBeInTheDocument()
+		expect(screen.getByText('Sign in a device')).toBeInTheDocument()
 		expect(screen.getByLabelText('Email')).toBeInTheDocument()
 		expect(mockPreview).not.toHaveBeenCalled()
 	})
@@ -100,13 +100,25 @@ describe('TvSignInPage', () => {
 		expect(mockPreview).toHaveBeenCalledWith('BCDF-2345')
 	})
 
-	it('approves only when asked, and says the TV is signing in', async () => {
+	it('approves only when asked, and says the device is signing in', async () => {
 		searchCode = 'BCDF-2345'
 		renderPage()
 		fireEvent.click(await screen.findByRole('button', { name: 'Approve' }))
 
 		await waitFor(() => expect(mockApprove).toHaveBeenCalledWith('BCDF-2345'))
-		expect(await screen.findByText('Your TV is signing in')).toBeInTheDocument()
+		expect(await screen.findByText('Your device is signing in')).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'Done' })).toBeInTheDocument()
+	})
+
+	it('shows the expired state when the code is spent before it is answered', async () => {
+		searchCode = 'BCDF-2345'
+		mockApprove.mockRejectedValue(new ApiError(404, 'not found'))
+		renderPage()
+		fireEvent.click(await screen.findByRole('button', { name: 'Approve' }))
+
+		expect(await screen.findByText('This code has expired')).toBeInTheDocument()
+		fireEvent.click(screen.getByRole('button', { name: 'Enter another code' }))
+		expect(screen.getByLabelText('Code')).toHaveValue('')
 	})
 
 	it('refuses a sign-in without approving it', async () => {

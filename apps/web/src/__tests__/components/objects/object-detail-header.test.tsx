@@ -77,7 +77,7 @@ describe('ObjectDetailBarActions', () => {
 	it('renders no breadcrumb of its own', () => {
 		const object = buildObjectResponse({ title: 'My Bet' })
 		render(<ObjectDetailBarActions {...baseProps} object={object} />, { wrapper: makeWrapper() })
-		expect(screen.queryByRole('link', { name: 'Objects' })).toBeNull()
+		expect(screen.queryByRole('link', { name: 'Items' })).toBeNull()
 		expect(screen.queryByText('My Bet')).toBeNull()
 	})
 
@@ -148,7 +148,7 @@ describe('ObjectDetailIdentity', () => {
 
 		// Click-to-edit: the heading is a real <h1> until you ask to rename.
 		await user.click(screen.getByRole('heading', { level: 1, name: 'Old Title' }))
-		const input = screen.getByRole('textbox', { name: 'Object title' })
+		const input = screen.getByRole('textbox', { name: 'Item title' })
 		await user.clear(input)
 		await user.type(input, 'New Title')
 		await user.tab()
@@ -166,7 +166,7 @@ describe('ObjectDetailIdentity', () => {
 		)
 
 		await user.click(screen.getByRole('heading', { level: 1, name: 'Unchanged' }))
-		await user.click(screen.getByRole('textbox', { name: 'Object title' }))
+		await user.click(screen.getByRole('textbox', { name: 'Item title' }))
 		await user.tab()
 
 		expect(onTitleChange).not.toHaveBeenCalled()
@@ -183,7 +183,7 @@ describe('ObjectDetailIdentity', () => {
 		)
 
 		await user.click(screen.getByRole('heading', { level: 1, name: 'First' }))
-		const input = screen.getByRole('textbox', { name: 'Object title' })
+		const input = screen.getByRole('textbox', { name: 'Item title' })
 		await user.clear(input)
 		await user.type(input, 'Edited but never blurred')
 
@@ -195,7 +195,7 @@ describe('ObjectDetailIdentity', () => {
 		// abandoned draft must not follow it across, or blur would rename obj-b to
 		// what was typed for obj-a.
 		expect(screen.getByRole('heading', { level: 1, name: 'Second' })).toBeInTheDocument()
-		expect(screen.queryByRole('textbox', { name: 'Object title' })).toBeNull()
+		expect(screen.queryByRole('textbox', { name: 'Item title' })).toBeNull()
 		expect(onTitleChange).not.toHaveBeenCalled()
 	})
 

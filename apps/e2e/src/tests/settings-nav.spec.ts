@@ -18,26 +18,26 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 const SETTINGS_SECTIONS = [
 	'General',
-	'Objects',
 	'Members',
 	'Integrations',
-	'Keychain',
-	'Extensions',
-	'Skills',
-	'MCP',
 	'Billing',
+	'Notifications',
+	'Skills',
+	'Item types',
+	'Keys and MCP',
+	'Keychain',
 ]
 const RETIRED_LABELS = ['LLM']
 
 const DEEP_LINKS: Array<{ label: string; path: string }> = [
 	{ label: 'General', path: '' },
-	{ label: 'Objects', path: '/objects' },
+	{ label: 'Item types', path: '/objects' },
 	{ label: 'Members', path: '/members' },
 	{ label: 'Integrations', path: '/integrations' },
 	{ label: 'Keychain', path: '/keychain' },
-	{ label: 'Extensions', path: '/extensions' },
+	{ label: 'Notifications', path: '/notifications' },
 	{ label: 'Skills', path: '/skills' },
-	{ label: 'MCP', path: '/mcp' },
+	{ label: 'Keys and MCP', path: '/mcp' },
 	{ label: 'Billing', path: '/billing' },
 ]
 
@@ -79,10 +79,10 @@ test.describe('Settings — left rail', () => {
 			const nav = page.getByRole('navigation', { name: 'Settings sections' })
 			const link = nav.getByRole('link', { name: label, exact: true })
 			await expect(link).toBeVisible({ timeout: 10000 })
-			// Active item styles carry `bg-muted` + `font-bold` (mockup 2721 puts the
+			// Active item styles carry `bg-secondary` + `font-bold` (mockup 2721 puts the
 			// active rail item at weight 700) — a proxy for the SettingsLayout's
 			// matchRoute-driven active state.
-			await expect(link).toHaveClass(/bg-muted/)
+			await expect(link).toHaveClass(/bg-secondary/)
 			await expect(link).toHaveClass(/font-bold/)
 		})
 	}

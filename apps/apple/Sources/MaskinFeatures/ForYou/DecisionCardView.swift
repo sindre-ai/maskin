@@ -22,6 +22,8 @@ struct DecisionCardView: View {
 		var dismiss: () -> Void = {}
 		var retry: () -> Void = {}
 		var open: (() -> Void)?
+		/// Scrolls the feed to a draft under Drafts to review, by the id of the object that holds it.
+		var showDraft: ((String) -> Void)?
 		var expand: (() -> Void)?
 		var collapse: (() -> Void)?
 		/// Opens the agent that did the work ("with Forge").
@@ -139,12 +141,7 @@ struct DecisionCardView: View {
 			if let drafts = card.decision?.drafts.filter({ !draftIsElsewhere($0) }), !drafts.isEmpty {
 				DraftStackView(drafts: drafts, act: actions.actOnDraft, allDone: actions.dismiss)
 			}
-			if hasDraftElsewhere {
-				Text("Read and edit the message under Drafts to review.")
-					.font(MaskinTypeface.sans(MaskinFontSize.t13))
-					.foregroundStyle(MaskinColor.ink5)
-					.frame(maxWidth: .infinity, alignment: .leading)
-			}
+			draftPointer
 
 			if let record, !isFailed(record) {
 				receipt(record).transition(.opacity)
@@ -174,9 +171,44 @@ struct DecisionCardView: View {
 		.padding(.bottom, MaskinSpace.s9)
 	}
 
-	private var hasDraftElsewhere: Bool {
-		guard let decision = card.decision else { return false }
-		return ((decision.draft.map { [$0] } ?? []) + decision.drafts).contains(where: draftIsElsewhere)
+	/// The first message of this card that is shown under Drafts to review instead of here.
+	static func firstDraftElsewhere(
+		in decision: DecisionPrompt?, isElsewhere: (DecisionDraft) -> Bool
+	) -> DecisionDraft? {
+		guard let decision else { return nil }
+		return ((decision.draft.map { [$0] } ?? []) + decision.drafts).first(where: isElsewhere)
+	}
+
+	/// Points at the message under Drafts to review. Where the feed can scroll there, the line is a
+	/// button that takes the reader to the draft.
+	@ViewBuilder private var draftPointer: some View {
+		if let draft = Self.firstDraftElsewhere(in: card.decision, isElsewhere: draftIsElsewhere) {
+			let text = "Read and edit the message under Drafts to review."
+			if let objectId = draft.objectId, let show = actions.showDraft {
+				Button {
+					show(objectId)
+				} label: {
+					HStack(spacing: MaskinSpace.s3) {
+						Text(text)
+							.multilineTextAlignment(.leading)
+						Image(systemName: "arrow.down")
+							.maskinSymbol(MaskinFontSize.t12, weight: .semibold)
+							.accessibilityHidden(true)
+					}
+					.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold))
+					.foregroundStyle(MaskinColor.ink3)
+					.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin, alignment: .leading)
+					.contentShape(Rectangle())
+				}
+				.buttonStyle(.maskinPressed)
+				.accessibilityHint("Scrolls to the draft")
+			} else {
+				Text(text)
+					.font(MaskinTypeface.sans(MaskinFontSize.t13))
+					.foregroundStyle(MaskinColor.ink5)
+					.frame(maxWidth: .infinity, alignment: .leading)
+			}
+		}
 	}
 
 	/// Who is speaking: the agent that did the work, else the Chief of Staff.
@@ -793,12 +825,7 @@ extension DecisionCardView {
 			if let drafts = card.decision?.drafts.filter({ !draftIsElsewhere($0) }), !drafts.isEmpty {
 				DraftStackView(drafts: drafts, act: actions.actOnDraft, allDone: actions.dismiss)
 			}
-			if hasDraftElsewhere {
-				Text("Read and edit the message under Drafts to review.")
-					.font(MaskinTypeface.sans(MaskinFontSize.t13))
-					.foregroundStyle(MaskinColor.ink5)
-					.frame(maxWidth: .infinity, alignment: .leading)
-			}
+			draftPointer
 			if let decision = card.decision { ask(decision) } else { noDecisionRow }
 			replyArea
 		}

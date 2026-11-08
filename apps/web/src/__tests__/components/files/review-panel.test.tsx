@@ -223,6 +223,19 @@ describe('ReviewPanel — legacy display, filter, resolve, post-send lock', () =
 		fireEvent.click(btn)
 		expect(onSendRound).toHaveBeenCalledWith('obj-1')
 	})
+
+	it('heads the panel with a Review label and a one-line summary of the open comments', () => {
+		renderPanel({ filter: 'all' })
+		expect(screen.getByText('Review')).toBeInTheDocument()
+		expect(screen.getByTestId('panel-summary')).toHaveTextContent(/^\d+ comments?/)
+	})
+
+	it('names the target item above the Send button', () => {
+		renderPanel({ drafts: [draft] })
+		const send = screen.getByTestId('panel-send-round')
+		expect(send).toHaveTextContent('Send')
+		expect(send).toHaveAccessibleName(/^Send round to /)
+	})
 })
 
 describe('ReviewPanel — saved-but-unsent comments', () => {
@@ -326,7 +339,7 @@ describe('ReviewPanel — Slice 4 viewer states', () => {
 		expect(container.querySelector('[data-viewer-state="archived-parent"]')).not.toBeNull()
 		const send = screen.getByTestId('panel-send-round')
 		expect(send).toBeDisabled()
-		expect(send).toHaveAttribute('title', 'The attached object is archived')
+		expect(send).toHaveAttribute('title', 'The attached item is archived')
 	})
 
 	// State: post-send with an agent driver — the sent lock reads

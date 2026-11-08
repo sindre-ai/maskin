@@ -32,7 +32,7 @@ export interface VocabularyType {
 /** Scopes that exist in every workspace. Loops are objects server-side but a scope here. */
 const SCOPE_TYPES: VocabularyType[] = [
 	{ key: 'chat', label: 'Chat' },
-	{ key: 'loop', label: 'Loop' },
+	{ key: 'loop', label: 'Flow' },
 	{ key: 'agent', label: 'Agent' },
 	{ key: 'person', label: 'Person', plural: 'People' },
 	{ key: 'automation', label: 'Automation' },

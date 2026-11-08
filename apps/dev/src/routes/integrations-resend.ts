@@ -263,7 +263,7 @@ app.openapi(sendRoute, async (c) => {
 		const f = fail(
 			403,
 			'FORBIDDEN',
-			'Not sent. A person has to approve this email first. The draft shows an Approve button in For You and in chat. End your turn; when they have approved it, call this tool again with the same object_id.',
+			'Not sent. A person has to approve this email first. The draft shows an Approve button in For You and in chat. If the person has just said yes in a chat you are in, after you showed them this draft there, call approve_draft_from_chat with this object_id and the id of their message, then call this tool again. Otherwise end your turn; when they have approved it, call this tool again with the same object_id.',
 		)
 		return c.json(f.body, f.status)
 	}

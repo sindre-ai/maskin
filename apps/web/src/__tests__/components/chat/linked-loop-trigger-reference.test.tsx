@@ -90,7 +90,7 @@ describe('LoopReferenceCard', () => {
 	it('shows tile, eyebrow, state, name, description, facts and the footer', () => {
 		useLoop.mockReturnValue(found(loopRow()))
 		renderCard()
-		const eyebrow = screen.getByText('Loop')
+		const eyebrow = screen.getByText('Flow')
 		expect(eyebrow).toHaveClass('eyebrow')
 		expect(eyebrow.previousElementSibling?.className).toContain('bg-secondary')
 		expect(screen.getByText('Supervised')).toBeInTheDocument()
@@ -153,7 +153,7 @@ describe('LoopReferenceCard', () => {
 	it('says the loop was deleted, in the dashed look', () => {
 		useLoop.mockReturnValue(found(undefined))
 		renderCard()
-		const card = screen.getByText('This loop was deleted')
+		const card = screen.getByText('This flow was deleted')
 		expect(card).toHaveClass('italic', 'border-dashed')
 		expect(card.querySelector('svg')?.getAttribute('class')).toContain('lucide-trash')
 	})
@@ -235,7 +235,7 @@ describe('LoopReferenceChip', () => {
 	it('reads kind, state and name as one link, with only the icon and name on the plate', () => {
 		useLoop.mockReturnValue(found(loopRow({ pill: 'fully_autonomous' })))
 		renderChip()
-		const link = screen.getByRole('link', { name: 'Loop, fully autonomous: Nightly triage' })
+		const link = screen.getByRole('link', { name: 'Flow, fully autonomous: Nightly triage' })
 		expect(link).toHaveTextContent(/^\u2060?Nightly triage$/)
 		expect(link.className).toContain('bg-muted')
 		expect(link.querySelector('svg')).not.toBeNull()
@@ -243,10 +243,10 @@ describe('LoopReferenceChip', () => {
 		expect(screen.queryByText('the original link')).not.toBeInTheDocument()
 	})
 
-	it('says Deleted loop when the loop is not in the list', () => {
+	it('says Deleted flow when the loop is not in the list', () => {
 		useLoop.mockReturnValue(found(undefined))
 		renderChip()
-		expect(screen.getByText('Deleted loop')).toBeInTheDocument()
+		expect(screen.getByText('Deleted flow')).toBeInTheDocument()
 	})
 })
 
@@ -305,9 +305,9 @@ describe('loop and trigger chip preview', () => {
 	it('opens the loop card on hover and closes it on Escape', async () => {
 		const user = userEvent.setup()
 		render(<LoopReferenceChip workspaceId={WS} loopId={LOOP_ID} fallback={fallback} />)
-		await user.hover(screen.getByRole('link', { name: /^Loop, supervised/ }))
+		await user.hover(screen.getByRole('link', { name: /^Flow, supervised/ }))
 		expect(preview()?.textContent).toContain('Sorts new insights into bets.')
-		expect(screen.getByRole('dialog', { name: 'Object preview' })).toBe(preview())
+		expect(screen.getByRole('dialog', { name: 'Item preview' })).toBe(preview())
 		expect(screen.getByRole('button', { name: 'Copy link' })).toBeInTheDocument()
 		expect(screen.getByRole('link', { name: 'Open' })).toBeInTheDocument()
 		await user.keyboard('{Escape}')
@@ -330,7 +330,7 @@ describe('loop and trigger chip preview', () => {
 		useLoop.mockReturnValue(found(undefined))
 		render(<LoopReferenceChip workspaceId={WS} loopId={LOOP_ID} fallback={fallback} />)
 		act(() => {
-			fireEvent.mouseEnter(screen.getByText('Deleted loop'))
+			fireEvent.mouseEnter(screen.getByText('Deleted flow'))
 		})
 		expect(preview()).toBeNull()
 	})
@@ -341,12 +341,12 @@ describe('loop and trigger chip sheet', () => {
 		useLoop.mockReturnValue(found(loopRow()))
 		useTrigger.mockReturnValue(found(triggerRow()))
 	})
-	const sheet = () => screen.queryByRole('dialog', { name: 'Object preview' })
+	const sheet = () => screen.queryByRole('dialog', { name: 'Item preview' })
 
 	it('opens the loop card in the sheet on a tap, as plain content', async () => {
 		const user = userEvent.setup()
 		render(<LoopReferenceChip workspaceId={WS} loopId={LOOP_ID} fallback={fallback} />)
-		await user.click(screen.getByRole('link', { name: /^Loop, supervised/ }))
+		await user.click(screen.getByRole('link', { name: /^Flow, supervised/ }))
 		expect(sheet()?.textContent).toContain('Sorts new insights into bets.')
 		expect(sheet()?.querySelectorAll('a')).toHaveLength(1)
 		expect(screen.getByRole('link', { name: 'Open' })).toBeInTheDocument()
@@ -364,7 +364,7 @@ describe('loop and trigger chip sheet', () => {
 		const user = userEvent.setup()
 		useLoop.mockReturnValue(found(undefined))
 		render(<LoopReferenceChip workspaceId={WS} loopId={LOOP_ID} fallback={fallback} />)
-		await user.click(screen.getByText('Deleted loop'))
+		await user.click(screen.getByText('Deleted flow'))
 		expect(sheet()).toBeNull()
 	})
 })

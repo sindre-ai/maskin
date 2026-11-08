@@ -977,7 +977,7 @@ function StepFourDone({ domain, workspaceId }: { domain: string; workspaceId: st
 				>
 					<p className="text-sm font-medium text-foreground">Wire an email trigger</p>
 					<p className="mt-1 text-xs text-muted-foreground">
-						Point a loop or a trigger at email.received — for example, the outbound-sales loop can
+						Point a flow or a trigger at email.received — for example, the outbound-sales flow can
 						now wake within seconds of a reply.
 					</p>
 					<p className="mt-2 text-xs text-brand">New trigger →</p>

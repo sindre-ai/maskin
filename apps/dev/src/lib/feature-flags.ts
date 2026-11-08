@@ -64,6 +64,16 @@ export const FLAGS = {
 	 */
 	VOICE_OUTREACH_AUTOSEND: 'voice-outreach-autosend',
 	/**
+	 * Claude connector sign-in. Gates only what a person sees and does: the consent preview
+	 * and approve routes under /api/oauth/authorize answer 403 access_denied for non-testers,
+	 * and the Claude tab and consent page read the same id. Default off (FF_TESTER_FEATURES
+	 * empty). Listing and disconnecting connections is NOT behind this flag: a flag that hides
+	 * the only revoke button is a trap. Discovery, the token endpoint and token acceptance act
+	 * before any person is known and sit behind the MASKIN_MCP_OAUTH_ENABLED switch instead.
+	 * See docs/reference/mcp-oauth.md. Retire when the connector ships to everyone.
+	 */
+	MCP_OAUTH_CONSENT: 'mcp-oauth-consent',
+	/**
 	 * Gates editing a draft's text in place on the web For You card, with Send saving the
 	 * edit and approving the saved text in one step. Frontend only: read with useFeatureFlag
 	 * in draft-preview. Retire once editing is on for everyone.

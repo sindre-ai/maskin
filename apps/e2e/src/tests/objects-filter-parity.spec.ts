@@ -57,7 +57,7 @@ test.describe('Objects filter parity (List -> Board)', () => {
 
 			// Switch to Board — the Board pill only renders for supported types.
 			await page.getByRole('button', { name: /display/i }).click()
-			await page.getByRole('button', { name: 'Board', exact: true }).click()
+			await page.getByRole('button', { name: /View: Board/ }).click()
 
 			// The board query carries the same filter (parity): only the EMEA
 			// card renders, the APAC card never appears. The URL still encodes

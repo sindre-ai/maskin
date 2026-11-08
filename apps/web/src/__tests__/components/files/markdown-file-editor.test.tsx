@@ -6,7 +6,7 @@ import {
 import type { FileSaveClient } from '@/hooks/use-markdown-file-save'
 import { capture } from '@/lib/posthog'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
 vi.mock('@/lib/posthog', async (importOriginal) => ({
@@ -32,6 +32,12 @@ function mount(text: string, { canEdit = true, client = buildClient() } = {}) {
 beforeEach(() => {
 	vi.mocked(capture).mockClear()
 })
+
+// The editor is a lazy chunk (Tiptap + extensions); the first import is slow under a
+// parallel full-suite run and would outlast findBy/waitFor's default 1000ms. Warm it.
+beforeAll(async () => {
+	await import('@/components/shared/document-markdown-editor')
+}, 60_000)
 
 describe('MarkdownFileEditor', () => {
 	it('opens the document as an editor with the helper line and the Rendered and Source toggle', async () => {

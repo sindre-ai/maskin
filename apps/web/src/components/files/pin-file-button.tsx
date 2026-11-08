@@ -20,6 +20,7 @@ export function PinFileButton({ file, isPinned, onToggle }: PinFileButtonProps) 
 			type="button"
 			variant={isPinned ? 'secondary' : 'outline'}
 			size="sm"
+			className="max-md:h-11"
 			aria-pressed={isPinned}
 			onClick={() => onToggle(file.id)}
 		>

@@ -29,6 +29,23 @@ public struct MainShell: View {
 		TabBarBadgeStyle.applyOnce()
 	}
 
+	private var analytics: Analytics { .shared }
+
+	private static func trackScreen(_ tab: ShellTab) {
+		let area: AnalyticsFeatureArea? =
+			switch tab {
+			case .forYou: .forYou
+			case .chats: .chats
+			case .loops: .loopsTriggers
+			case .objects: .objects
+			case .search: .search
+			case .newChat: nil
+			}
+		// "+" and Search never stay selected; they open a chat and a sheet, counted where they land.
+		guard tab != .newChat, tab != .search else { return }
+		Analytics.shared.screen(tab.title, area: area)
+	}
+
 	public var body: some View {
 		Group {
 			if #available(iOS 18, macOS 15, *) {
@@ -121,6 +138,29 @@ public struct MainShell: View {
 					NotificationPromptSheet(
 						onTurnOn: { Task { await prompt.accept() } }, onNotNow: { prompt.notNow() })
 				}
+			}
+		}
+		// The one-time usage question. Waits its turn behind any other sheet. Swiping it away counts as no.
+		.background {
+			Color.clear.sheet(
+				isPresented: Binding(
+					get: {
+						analytics.needsConsentPrompt && runtime.presentation == nil
+							&& runtime.notificationPrompt?.isPresented != true
+					},
+					set: { if !$0, analytics.consent == .undecided { analytics.setConsent(false) } })
+			) {
+				AnalyticsConsentSheet(
+					onShare: { analytics.setConsent(true) }, onNoThanks: { analytics.setConsent(false) })
+			}
+		}
+		// Screen views: the tab on show, and the two sheets that are screens of their own.
+		.onChange(of: runtime.selectedTab, initial: true) { _, tab in Self.trackScreen(tab) }
+		.onChange(of: runtime.presentation) { _, presentation in
+			switch presentation {
+			case .search: analytics.screen("Search", area: .search)
+			case .settings: analytics.screen("Settings", area: .settings)
+			default: break
 			}
 		}
 		.sheet(item: $runtime.presentation, onDismiss: { runtime.deviceCode = nil }) { presentation in
