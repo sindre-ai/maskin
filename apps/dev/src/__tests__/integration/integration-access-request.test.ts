@@ -271,6 +271,29 @@ describe('POST /integrations/:id/allow-access (Integration)', () => {
 			jsonRequest('POST', `/api/integrations/${integrationId}/allow-access`, body, H(s.ws.id)),
 		)
 
+	it('records when and by whom on the card for that integration, and leaves other cards alone', async () => {
+		const s = await setup()
+		const slack = await s.integration()
+		const other = await s.integration()
+		await card(s, { integration_id: slack.id, level: 'read_write' })
+		await card(s, { integration_id: other.id, level: 'read' })
+		const before = Date.now()
+
+		expect((await allow(s, slack.id)).status).toBe(200)
+
+		const rows = await db
+			.select()
+			.from(messages)
+			.where(eq(messages.conversationId, s.conversation.id))
+			.orderBy(messages.id)
+		const resolved = rows.map(
+			(r) => (r.metadata as { card_resolved?: Record<string, string> }).card_resolved,
+		)
+		expect(resolved[0]).toMatchObject({ by_actor_id: s.human, outcome: 'done' })
+		expect(new Date(resolved[0]?.at ?? 0).getTime()).toBeGreaterThanOrEqual(before - 1000)
+		expect(resolved[1]).toBeUndefined()
+	})
+
 	it('gives the agent whose session asked that level, audits it, and restarts that session', async () => {
 		const s = await setup()
 		const slack = await s.integration()
