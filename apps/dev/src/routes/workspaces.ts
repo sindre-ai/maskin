@@ -52,6 +52,7 @@ import {
 	ownershipCapForTier,
 	resolvePlanTier,
 } from '../lib/workspace-capacity'
+import { loadForYouCounts, loadUnreadChatCounts } from '../lib/workspace-counts'
 import { workspaceDeletionPreview } from '../lib/workspace-deletion'
 import {
 	evictPurgedWorkspace,
@@ -348,6 +349,64 @@ app.openapi(listWorkspacesRoute, async (c) => {
 	}))
 
 	return c.json(serializeArray(withCounts) as z.infer<typeof workspaceWithRoleSchema>[])
+})
+
+// GET /api/workspaces/counts
+const workspaceCountsSchema = z.object({
+	workspaceId: z.string().uuid(),
+	// Chats with a message from someone else the caller has not read (archived chats left out).
+	unreadChats: z.number().int().nonnegative(),
+	// Items waiting on the caller on that workspace's For You page.
+	forYou: z.number().int().nonnegative(),
+	// unreadChats + forYou: the "N need you" number the iPhone workspace switcher shows.
+	needYou: z.number().int().nonnegative(),
+})
+
+const workspaceCountsRoute = createRoute({
+	method: 'get',
+	path: '/counts',
+	tags: ['workspaces'],
+	summary:
+		"What waits on the caller in each of their workspaces (the iPhone workspace switcher's counts)",
+	description:
+		'One row per workspace the caller belongs to. Kept off the workspace list so that hot read stays cheap.',
+	responses: {
+		200: {
+			description: 'Per-workspace counts for the caller',
+			content: { 'application/json': { schema: z.array(workspaceCountsSchema) } },
+		},
+	},
+})
+
+app.openapi(workspaceCountsRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const pin = getOAuthPin()
+
+	const memberships = await db
+		.select({ workspaceId: workspaceMembers.workspaceId })
+		.from(workspaceMembers)
+		.where(
+			and(
+				eq(workspaceMembers.actorId, actorId),
+				// A Claude connector token sees only the workspace it was approved for.
+				...(pin ? [eq(workspaceMembers.workspaceId, pin.workspaceId)] : []),
+			),
+		)
+	const ids = memberships.map((m) => m.workspaceId)
+
+	const [unreadByWorkspace, forYouByWorkspace] = await Promise.all([
+		loadUnreadChatCounts(db, actorId, ids),
+		loadForYouCounts(db, actorId, ids),
+	])
+
+	return c.json(
+		ids.map((workspaceId) => {
+			const unreadChats = unreadByWorkspace.get(workspaceId) ?? 0
+			const forYou = forYouByWorkspace.get(workspaceId) ?? 0
+			return { workspaceId, unreadChats, forYou, needYou: unreadChats + forYou }
+		}),
+	)
 })
 
 /** Top-level keys whose value differs between two settings objects. Names only, never values. */
