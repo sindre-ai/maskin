@@ -2,7 +2,6 @@ import { PageHeader } from '@/components/layout/page-header'
 import { AskBanner } from '@/components/loops/ask-banner'
 import { LoopBlockError } from '@/components/loops/loop-block-error'
 import { itemsNeedingYou } from '@/components/loops/loop-counters'
-import { LoopCustomView } from '@/components/loops/loop-custom-view'
 import { LoopDecisions } from '@/components/loops/loop-decisions'
 import { LoopDetailTabs } from '@/components/loops/loop-detail-tabs'
 import { LoopFirstRunBanner } from '@/components/loops/loop-first-run-banner'
@@ -17,6 +16,7 @@ import {
 import { LoopStats } from '@/components/loops/loop-stats'
 import { LoopTags } from '@/components/loops/loop-tags'
 import { LoopUtteranceInput } from '@/components/loops/loop-utterance-input'
+import { LoopViewTab } from '@/components/loops/loop-view-tab'
 import { TargetsAndOwners } from '@/components/loops/targets-and-owners'
 import { ObjectDetailBody } from '@/components/objects/object-detail-body'
 import { TimelineTab } from '@/components/objects/timeline-tab'
@@ -30,7 +30,6 @@ import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
-import { ButtonGroup } from '@/components/ui/button-group'
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -53,7 +52,7 @@ import { cn } from '@/lib/cn'
 import { nextFireAt, nextFireLabel } from '@/lib/loop-next-fire'
 import { type LoopPlan, parseLoopDescription } from '@/lib/loop-plan'
 import { useWorkspace } from '@/lib/workspace-context'
-import { type LoopStatus, useWaitingOnViewer } from '@maskin/shared'
+import { type LoopStatus, readLoopViews, useWaitingOnViewer } from '@maskin/shared'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { Check, ChevronDown, MoreHorizontal, Pause, Play, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -162,17 +161,16 @@ function LoopDetailRoute() {
 	const [confirmDelete, setConfirmDelete] = useState(false)
 	const [tab, setTab] = useState('overview')
 
-	// Custom view: an agent pins an HTML file with set_loop_view
-	// (metadata.view_file_id); it replaces the stats and flow, and the toggle
-	// switches back. A view that cannot be shown sets customFailure and the
-	// default page renders with a note; choosing "Custom view" again clears it
-	// and retries.
-	const viewFileId =
-		typeof object?.metadata?.view_file_id === 'string' ? object.metadata.view_file_id : null
-	const hasCustomView = viewFileId !== null
-	const [viewMode, setViewMode] = useState<'default' | 'custom'>('custom')
-	const [customFailure, setCustomFailure] = useState<string | null>(null)
-	const showCustomView = hasCustomView && viewMode === 'custom' && customFailure === null
+	// Custom views: an agent pins HTML files with set_loop_view
+	// (metadata.views). Each is its own tab between Overview and Items. A tab
+	// that is no longer there falls back to Overview.
+	const views = useMemo(() => readLoopViews(object?.metadata), [object?.metadata])
+	const viewTabs = useMemo(() => views.map((view, i) => ({ ...view, value: `view-${i}` })), [views])
+	const activeView = viewTabs.find((v) => v.value === tab)
+	const activeTab =
+		tab === 'overview' || ['items', 'activity', 'setup'].includes(tab) || activeView
+			? tab
+			: 'overview'
 
 	// D3 AskBanner wiring — the shared `useWaitingOnViewer` (T1) takes a getter
 	// so `packages/shared` stays React-free. The loop-level `waitingOnViewer` bit
@@ -674,16 +672,17 @@ function LoopDetailRoute() {
 					<LoopDetailTabs
 						tabs={[
 							{ value: 'overview', label: 'Overview', count: needsYouRows.length },
+							...viewTabs.map((v) => ({ value: v.value, label: v.name })),
 							{ value: 'items', label: 'Items', count: childIds.length },
 							{ value: 'activity', label: 'Activity' },
 							{ value: 'setup', label: 'Setup' },
 						]}
-						value={tab}
+						value={activeTab}
 						onChange={setTab}
 					/>
 				</div>
 
-				{tab === 'overview' && (
+				{activeTab === 'overview' && (
 					<div role="tabpanel" className="mt-8 flex flex-col gap-8">
 						{/* Stable aria-live wrapper for the D3 AskBanner. The wrapper element
 				    is permanent so screen readers announce the banner appearance
@@ -717,103 +716,61 @@ function LoopDetailRoute() {
 
 						<TargetsAndOwners loop={loop} actors={actors} />
 
-						{hasCustomView && (
-							<div
-								className={cn(
-									'flex flex-wrap items-center justify-between gap-2',
-									// The view sits right under its switch, not a whole section away.
-									showCustomView && '-mb-4',
-								)}
-							>
-								<p className="text-xs text-muted-foreground">
-									{viewMode === 'custom' && customFailure
-										? `Custom view unavailable: ${customFailure} Showing the default page.`
-										: ''}
-								</p>
-								<ButtonGroup aria-label="Loop view">
-									<Button
-										type="button"
-										variant={viewMode === 'default' ? 'secondary' : 'ghost'}
-										size="sm"
-										onClick={() => setViewMode('default')}
-									>
-										Default
-									</Button>
-									<Button
-										type="button"
-										variant={viewMode === 'custom' ? 'secondary' : 'ghost'}
-										size="sm"
-										onClick={() => {
-											setCustomFailure(null)
-											setViewMode('custom')
-										}}
-									>
-										Custom view
-									</Button>
-								</ButtonGroup>
-							</div>
-						)}
+						<LoopDecisions
+							workspaceId={workspaceId}
+							rows={needsYouRows.map(({ item, ask }) => ({
+								item,
+								ask: {
+									title: ask.title,
+									createdAt: ask.createdAt,
+									sourceActorId: ask.sourceActorId,
+								},
+							}))}
+							actors={actors}
+							messageLabel={driver?.name}
+							onMessage={handleMessageDriver}
+						/>
 
-						{showCustomView && viewFileId && (
-							// One block, so the "Updated" line and the view are not spaced as sections.
-							<div className="min-w-0">
-								<LoopCustomView
-									workspaceId={workspaceId}
-									fileId={viewFileId}
-									onFailure={setCustomFailure}
+						<div>
+							{flowFailed ? (
+								<LoopBlockError
+									message={`Couldn't load the steps of this flow. ${SLOW_LOAD_MESSAGE}`}
+									onRetry={() => {
+										for (const [failed, query] of [
+											[triggersFailed, triggersQuery],
+											[actorsFailed, actorsQuery],
+											[edgesFailed, edgesQuery],
+											[childrenFailed, childrenQuery],
+										] as const) {
+											if (failed) query.refetch?.()
+										}
+									}}
 								/>
-							</div>
-						)}
-
-						{!showCustomView && (
-							<>
-								<LoopDecisions
+							) : (
+								<LoopFlow
 									workspaceId={workspaceId}
-									rows={needsYouRows.map(({ item, ask }) => ({
-										item,
-										ask: {
-											title: ask.title,
-											createdAt: ask.createdAt,
-											sourceActorId: ask.sourceActorId,
-										},
-									}))}
+									triggers={loopTriggers}
 									actors={actors}
-									messageLabel={driver?.name}
-									onMessage={handleMessageDriver}
+									loop={loop}
+									onAddTrigger={canWrite && object ? handleAddTrigger : undefined}
+									addingTrigger={addingTrigger}
 								/>
-
-								<div>
-									{flowFailed ? (
-										<LoopBlockError
-											message={`Couldn't load the steps of this flow. ${SLOW_LOAD_MESSAGE}`}
-											onRetry={() => {
-												for (const [failed, query] of [
-													[triggersFailed, triggersQuery],
-													[actorsFailed, actorsQuery],
-													[edgesFailed, edgesQuery],
-													[childrenFailed, childrenQuery],
-												] as const) {
-													if (failed) query.refetch?.()
-												}
-											}}
-										/>
-									) : (
-										<LoopFlow
-											workspaceId={workspaceId}
-											triggers={loopTriggers}
-											actors={actors}
-											loop={loop}
-											onAddTrigger={canWrite && object ? handleAddTrigger : undefined}
-											addingTrigger={addingTrigger}
-										/>
-									)}
-								</div>
-							</>
-						)}
+							)}
+						</div>
 					</div>
 				)}
 
-				{tab === 'items' && (
+				{activeView && (
+					<div role="tabpanel" className="mt-8 min-w-0">
+						<LoopViewTab
+							key={activeView.value}
+							workspaceId={workspaceId}
+							fileId={activeView.fileId}
+						/>
+					</div>
+				)}
+
+				{activeTab === 'items' && (
 					<div role="tabpanel" className="mt-8 flex flex-col">
 						{sortedChildren.length === 0 ? (
 							<EmptyState
@@ -839,7 +796,7 @@ function LoopDetailRoute() {
 					</div>
 				)}
 
-				{tab === 'activity' && object && (
+				{activeTab === 'activity' && object && (
 					<div role="tabpanel" className="mt-8">
 						{activityFailed && (
 							<LoopBlockError
@@ -856,7 +813,7 @@ function LoopDetailRoute() {
 					</div>
 				)}
 
-				{tab === 'setup' && (
+				{activeTab === 'setup' && (
 					<div role="tabpanel" className="mt-8 flex flex-col gap-8">
 						<LoopStats
 							loop={loop}
