@@ -1839,7 +1839,7 @@ export const tools = {
 
 	set_loop_view: {
 		description: [
-			'Pin an HTML file to a loop as its custom view, or clear it with file_id null. The loop page shows it in place of the default stats and flow. Sets metadata.view_file_id. Fails if the id is not a loop or the file is not text/html.',
+			'Pin an HTML file to a loop as a custom view, or clear it with file_id null. Each view is its own tab on the loop page, between Overview and Items, and a loop can have several. Give `name` (1 to 30 characters) to set the tab: the same name replaces that tab\'s file, a new name adds a tab, file_id null with a name removes it. Without `name` it writes the single "Custom view" tab. Fails if the id is not a loop or the file is not text/html.',
 			'A view answers one question: are we reaching the outcome? Open with the outcome in one plain sentence and the headline number vs its target, then the three to five metrics that matter most (name, value with unit, comparison, source), then what needs a person now.',
 			'Build: one self-contained HTML file (create_file, mime_type text/html), no network calls, an empty and an error state for every number (show the error message), readable in light and dark. Test each query with query_data first. Results with rows_truncated or groups_truncated true are partial: narrow the query.',
 			'Data: declare sources in <script id="maskin-sources" type="application/json">{ "<name>": <query_data input without workspace_id> }</script> and read them with window.maskin.query("<name>") (a promise). The page reloads itself when its numbers change, so query once and never poll. Use moving date bounds ("now-7d", "today-30d"), never fixed dates.',
@@ -1855,6 +1855,12 @@ export const tools = {
 				.uuid()
 				.nullable()
 				.describe('Id of a text/html file to render as the loop view, or null to clear it.'),
+			name: z
+				.string()
+				.optional()
+				.describe(
+					'Tab name, 1 to 30 characters. Same name replaces that tab, a new name adds one, file_id null removes it. Omit for the single "Custom view" tab.',
+				),
 		}),
 	},
 	query_data: {

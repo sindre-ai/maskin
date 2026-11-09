@@ -24,6 +24,20 @@ async function setTheme(page: Page, theme: 'light' | 'dark') {
 	await page.addInitScript((t) => localStorage.setItem('maskin-theme', t), theme)
 }
 
+/** Opens a tab by name; at narrow widths it may be folded under "More". */
+async function openTab(page: Page, name: string) {
+	await expect(page.getByRole('tablist', { name: 'Flow sections' })).toBeVisible({
+		timeout: 15_000,
+	})
+	const tab = page.getByRole('tab', { name, exact: true })
+	if ((await tab.count()) > 0) {
+		await tab.click()
+		return
+	}
+	await page.getByRole('button', { name: /^More/ }).click()
+	await page.getByRole('menuitemradio', { name, exact: true }).click()
+}
+
 function viewHtml(loopId: string) {
 	return `<!doctype html><html><body>
 <h1 id="outcome">Close the feedback backlog</h1>
@@ -80,18 +94,27 @@ async function seedLoopWithView(account: {
 	return { loop, file }
 }
 
-test.describe('Loop page — custom view', () => {
+test.describe('Loop page — custom view tabs', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
-		test(`the pinned view renders live numbers and the toggle works @ ${vp.label}`, async ({
+		test(`the pinned view is its own tab with live numbers @ ${vp.label}`, async ({
 			page,
 			account,
 		}) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
+			// seedLoopWithView pins through the legacy view_file_id: one tab named Custom view.
 			const { loop } = await seedLoopWithView(account)
 
 			await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
 
+			// Overview is the default page and carries no view or switch.
 			const frame = page.locator(FRAME)
+			await expect(page.getByRole('heading', { name: 'Pipeline' })).toBeVisible({
+				timeout: 15_000,
+			})
+			await expect(frame).toHaveCount(0)
+			await expect(page.getByLabel('Loop view', { exact: true })).toHaveCount(0)
+
+			await openTab(page, 'Custom view')
 			await expect(frame).toBeVisible({ timeout: 15_000 })
 			// Scripts only: no same-origin access to the app's session or storage.
 			await expect(frame).toHaveAttribute('sandbox', 'allow-scripts')
@@ -99,12 +122,10 @@ test.describe('Loop page — custom view', () => {
 			await expect(inner.getByText('Close the feedback backlog')).toBeVisible()
 			await expect(inner.getByText('2 tasks done')).toBeVisible({ timeout: 15_000 })
 
-			// The toggle is reachable on touch and switches both ways.
-			const toggle = page.getByLabel('Loop view', { exact: true })
-			await expect(toggle).toBeVisible()
-			await toggle.getByRole('button', { name: 'Default' }).click()
+			// Back to Overview and into the view again.
+			await openTab(page, 'Overview')
 			await expect(frame).toHaveCount(0)
-			await toggle.getByRole('button', { name: 'Custom view' }).click()
+			await openTab(page, 'Custom view')
 			await expect(frame).toBeVisible()
 			await expect(viewFrame(page).getByText('2 tasks done')).toBeVisible({
 				timeout: 15_000,
@@ -118,8 +139,55 @@ test.describe('Loop page — custom view', () => {
 		})
 	}
 
+	test('two views give two tabs between Overview and Items, in order', async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize({ width: 1280, height: 800 })
+		const { loop } = await seedLoopWithView(account)
+		const second = await account.api.createFile(account.workspaceId, {
+			name: 'second-view.html',
+			mime_type: 'text/html',
+			content: viewHtml(loop.id).replace('Close the feedback backlog', 'Second view heading'),
+		})
+		const first = await account.api.createFile(account.workspaceId, {
+			name: 'first-view.html',
+			mime_type: 'text/html',
+			content: viewHtml(loop.id),
+		})
+		await account.api.updateObject(loop.id, account.workspaceId, {
+			metadata: {
+				views: [
+					{ name: 'Results', file_id: first.id },
+					{ name: 'Pipeline view', file_id: second.id },
+				],
+			},
+		})
+
+		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
+
+		await expect(page.getByRole('tab', { name: 'Setup' })).toBeVisible({ timeout: 15_000 })
+		expect(await page.getByRole('tab').allTextContents()).toEqual([
+			'Overview',
+			'Results',
+			'Pipeline view',
+			'Items',
+			'Activity',
+			'Setup',
+		])
+
+		await openTab(page, 'Pipeline view')
+		await expect(viewFrame(page).getByText('Second view heading')).toBeVisible({
+			timeout: 15_000,
+		})
+		await openTab(page, 'Results')
+		await expect(viewFrame(page).getByText('Close the feedback backlog')).toBeVisible({
+			timeout: 15_000,
+		})
+	})
+
 	for (const vp of SHIP_GATE_VIEWPORTS) {
-		test(`a wide view scrolls inside its own box and the default page keeps its triggers @ ${vp.label}`, async ({
+		test(`a wide view scrolls inside its own box and Overview keeps its triggers @ ${vp.label}`, async ({
 			page,
 			account,
 		}) => {
@@ -150,8 +218,13 @@ test.describe('Loop page — custom view', () => {
 
 			await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
 
-			// The custom view stands in for the default content, inside its own box.
+			// Overview keeps the triggers; the view sits in its own tab, inside its own box.
 			const frame = page.locator(FRAME)
+			await expect(page.getByText('Triage feedback', { exact: true })).toBeVisible({
+				timeout: 15_000,
+			})
+			await expect(frame).toHaveCount(0)
+			await openTab(page, 'Custom view')
 			await expect(frame).toBeVisible({ timeout: 15_000 })
 			await expect
 				.poll(() =>
@@ -173,10 +246,8 @@ test.describe('Loop page — custom view', () => {
 				)
 			expect(await overflow()).toBeLessThanOrEqual(0)
 
-			// The toggle is reachable, and Default brings back the triggers section.
-			const toggle = page.getByLabel('Loop view', { exact: true })
-			await expect(toggle).toBeVisible()
-			await toggle.getByRole('button', { name: 'Default' }).click()
+			// Overview brings back the triggers section.
+			await openTab(page, 'Overview')
 			await expect(frame).toHaveCount(0)
 			await expect(page.getByRole('heading', { name: 'Pipeline' })).toBeVisible()
 			await expect(page.getByText('Triage feedback', { exact: true })).toBeVisible()
@@ -205,11 +276,10 @@ test.describe('Loop page — custom view', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
+		await openTab(page, 'Custom view')
 
-		// A view that keeps navigating is reset a few times, then dropped for the default page.
-		await expect(page.getByRole('heading', { name: 'Feedback loop' })).toBeVisible({
-			timeout: 30_000,
-		})
+		// A view that keeps navigating is reset a few times, then dropped with a note in its tab.
+		await expect(page.getByText(/This view can't be shown/)).toBeVisible({ timeout: 30_000 })
 		await expect(page.locator(FRAME)).toHaveCount(0)
 		expect(requested).toEqual([])
 	})
@@ -220,6 +290,7 @@ test.describe('Loop page — custom view', () => {
 			const { loop } = await seedLoopWithView(account)
 
 			await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
+			await openTab(page, 'Custom view')
 
 			await expect(page.locator(FRAME)).toBeVisible({ timeout: 15_000 })
 			await expect(viewFrame(page).getByText('2 tasks done')).toBeVisible({
@@ -228,7 +299,8 @@ test.describe('Loop page — custom view', () => {
 		})
 	}
 
-	test('no view pinned: no toggle and no frame', async ({ page, account }) => {
+	test('no view pinned: no extra tab and no frame', async ({ page, account }) => {
+		await page.setViewportSize({ width: 1280, height: 800 })
 		const loop = await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Plain loop',
@@ -240,11 +312,16 @@ test.describe('Loop page — custom view', () => {
 		await expect(page.getByRole('heading', { name: 'Plain loop' })).toBeVisible({
 			timeout: 15_000,
 		})
-		await expect(page.getByLabel('Loop view', { exact: true })).toHaveCount(0)
+		expect(await page.getByRole('tab').allTextContents()).toEqual([
+			'Overview',
+			'Items',
+			'Activity',
+			'Setup',
+		])
 		await expect(page.locator(FRAME)).toHaveCount(0)
 	})
 
-	test('view file is not HTML: falls back to the default page with a note', async ({
+	test('view file is not HTML: its tab says so and Overview is untouched', async ({
 		page,
 		account,
 	}) => {
@@ -264,8 +341,11 @@ test.describe('Loop page — custom view', () => {
 
 		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
 
-		await expect(page.getByText(/Custom view unavailable/)).toBeVisible({ timeout: 15_000 })
+		await openTab(page, 'Custom view')
+		await expect(page.getByText(/This view can't be shown/)).toBeVisible({ timeout: 15_000 })
 		await expect(page.locator(FRAME)).toHaveCount(0)
+		await openTab(page, 'Overview')
+		await expect(page.getByRole('heading', { name: 'Pipeline' })).toBeVisible()
 	})
 })
 
@@ -366,6 +446,7 @@ test.describe('Loop page — custom view side channels', () => {
 					})
 
 					await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
+					await openTab(page, 'Custom view')
 					await expect(viewFrame(page).locator('#ready')).toBeVisible({ timeout: 15_000 })
 
 					// Control: the same hint, made by the host page, must be seen by the control server.
@@ -422,6 +503,7 @@ test.describe('Loop page — custom view side channels', () => {
 					),
 				})
 				await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
+				await openTab(page, 'Custom view')
 				await expect(viewFrame(page).locator('#ready')).toBeVisible({ timeout: 15_000 })
 				await page.waitForTimeout(3_000)
 				expect(leak.connections).toBe(0)

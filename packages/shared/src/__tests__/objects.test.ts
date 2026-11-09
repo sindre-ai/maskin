@@ -342,3 +342,28 @@ describe('updateObjectSchema: loop targets', () => {
 		).toBe(false)
 	})
 })
+
+describe('updateObjectSchema: loop views', () => {
+	const row = { name: 'Results', file_id: '11111111-1111-1111-1111-111111111111' }
+
+	it('accepts metadata.views as a list of { name, file_id } rows, or an empty list', () => {
+		expect(updateObjectSchema.safeParse({ metadata: { views: [row, row] } }).success).toBe(true)
+		expect(updateObjectSchema.safeParse({ metadata: { views: [] } }).success).toBe(true)
+	})
+
+	it('rejects a bad row: empty or long name, non-uuid file id, or not a list', () => {
+		for (const bad of [
+			{ ...row, name: '' },
+			{ ...row, name: 'a'.repeat(31) },
+			{ ...row, file_id: 'nope' },
+			{ name: 'Results' },
+		]) {
+			expect(updateObjectSchema.safeParse({ metadata: { views: [bad] } }).success).toBe(false)
+		}
+		expect(updateObjectSchema.safeParse({ metadata: { views: 'Results' } }).success).toBe(false)
+	})
+
+	it('still rejects a list of objects under any other key', () => {
+		expect(updateObjectSchema.safeParse({ metadata: { tabs: [row] } }).success).toBe(false)
+	})
+})

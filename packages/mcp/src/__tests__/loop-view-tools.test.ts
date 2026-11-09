@@ -173,11 +173,198 @@ describe('loop view MCP tools', () => {
 			).rejects.toThrow(/not found/)
 		})
 
+		describe('with a tab name', () => {
+			const otherId = '33333333-3333-3333-3333-333333333333'
+			const patchBody = () => calls().find((c) => c.method === 'PATCH')?.body
+
+			it('adds a new tab at the end and retires the legacy id', async () => {
+				responses[`/api/objects/${loopId}`] = {
+					id: loopId,
+					type: 'loop',
+					metadata: { views: [{ name: 'Results', file_id: otherId }] },
+				}
+				const result = await handlers.set_loop_view({
+					workspace_id: wsId,
+					loop_id: loopId,
+					file_id: fileId,
+					name: 'Pipeline',
+				})
+
+				expect(patchBody()).toEqual({
+					metadata: {
+						views: [
+							{ name: 'Results', file_id: otherId },
+							{ name: 'Pipeline', file_id: fileId },
+						],
+						view_file_id: null,
+					},
+				})
+				expect(JSON.parse(result.content[0].text ?? '{}')).toMatchObject({
+					view_name: 'Pipeline',
+					changed: true,
+				})
+			})
+
+			it('keeps a legacy view as the Custom view tab when a named tab is added', async () => {
+				responses[`/api/objects/${loopId}`] = {
+					id: loopId,
+					type: 'loop',
+					metadata: { view_file_id: otherId },
+				}
+				await handlers.set_loop_view({
+					workspace_id: wsId,
+					loop_id: loopId,
+					file_id: fileId,
+					name: 'Pipeline',
+				})
+
+				expect(patchBody()).toEqual({
+					metadata: {
+						views: [
+							{ name: 'Custom view', file_id: otherId },
+							{ name: 'Pipeline', file_id: fileId },
+						],
+						view_file_id: null,
+					},
+				})
+			})
+
+			it('replaces the file of an existing tab in place', async () => {
+				responses[`/api/objects/${loopId}`] = {
+					id: loopId,
+					type: 'loop',
+					metadata: {
+						views: [
+							{ name: 'Results', file_id: otherId },
+							{ name: 'Pipeline', file_id: otherId },
+						],
+					},
+				}
+				await handlers.set_loop_view({
+					workspace_id: wsId,
+					loop_id: loopId,
+					file_id: fileId,
+					name: 'Results',
+				})
+
+				expect(patchBody()).toEqual({
+					metadata: {
+						views: [
+							{ name: 'Results', file_id: fileId },
+							{ name: 'Pipeline', file_id: otherId },
+						],
+						view_file_id: null,
+					},
+				})
+			})
+
+			it('removes a tab with a null file id without looking up a file', async () => {
+				responses[`/api/objects/${loopId}`] = {
+					id: loopId,
+					type: 'loop',
+					metadata: {
+						views: [
+							{ name: 'Results', file_id: otherId },
+							{ name: 'Pipeline', file_id: fileId },
+						],
+					},
+				}
+				await handlers.set_loop_view({
+					workspace_id: wsId,
+					loop_id: loopId,
+					file_id: null,
+					name: 'Results',
+				})
+
+				expect(calls().some((c) => c.path.startsWith('/api/files'))).toBe(false)
+				expect(patchBody()).toEqual({
+					metadata: { views: [{ name: 'Pipeline', file_id: fileId }], view_file_id: null },
+				})
+			})
+
+			it('is a no-op when the tab already holds the file', async () => {
+				responses[`/api/objects/${loopId}`] = {
+					id: loopId,
+					type: 'loop',
+					metadata: { views: [{ name: 'Results', file_id: fileId }] },
+				}
+				const result = await handlers.set_loop_view({
+					workspace_id: wsId,
+					loop_id: loopId,
+					file_id: fileId,
+					name: 'Results',
+				})
+
+				expect(calls().some((c) => c.method === 'PATCH')).toBe(false)
+				expect(JSON.parse(result.content[0].text ?? '{}').changed).toBe(false)
+			})
+
+			it('without a name, edits the Custom view tab once the loop has tabs', async () => {
+				responses[`/api/objects/${loopId}`] = {
+					id: loopId,
+					type: 'loop',
+					metadata: { views: [{ name: 'Results', file_id: otherId }] },
+				}
+				await handlers.set_loop_view({ workspace_id: wsId, loop_id: loopId, file_id: fileId })
+
+				expect(patchBody()).toEqual({
+					metadata: {
+						views: [
+							{ name: 'Results', file_id: otherId },
+							{ name: 'Custom view', file_id: fileId },
+						],
+						view_file_id: null,
+					},
+				})
+			})
+
+			it('rejects an empty or over-long name before touching the loop', async () => {
+				for (const name of ['  ', 'a'.repeat(31)]) {
+					await expect(
+						handlers.set_loop_view({
+							workspace_id: wsId,
+							loop_id: loopId,
+							file_id: fileId,
+							name,
+						}),
+					).rejects.toThrow(/1 to 30 characters/)
+				}
+				expect(calls()).toHaveLength(0)
+			})
+
+			it('still rejects a non-loop and a non-html file', async () => {
+				responses[`/api/objects/${loopId}`] = { id: loopId, type: 'task', metadata: {} }
+				await expect(
+					handlers.set_loop_view({
+						workspace_id: wsId,
+						loop_id: loopId,
+						file_id: fileId,
+						name: 'Results',
+					}),
+				).rejects.toThrow(/not 'loop'/)
+
+				responses[`/api/objects/${loopId}`] = { id: loopId, type: 'loop', metadata: {} }
+				responses[`/api/files?ids=${fileId}`] = [{ id: fileId, mimeType: 'text/markdown' }]
+				await expect(
+					handlers.set_loop_view({
+						workspace_id: wsId,
+						loop_id: loopId,
+						file_id: fileId,
+						name: 'Results',
+					}),
+				).rejects.toThrow(/not text\/html/)
+				expect(calls().some((c) => c.method === 'PATCH')).toBe(false)
+			})
+		})
+
 		it('validates its input', () => {
 			const schema = tools.set_loop_view.inputSchema
 			expect(schema.safeParse({ loop_id: loopId, file_id: fileId }).success).toBe(true)
 			expect(schema.safeParse({ loop_id: loopId, file_id: null }).success).toBe(true)
 			expect(schema.safeParse({ loop_id: loopId }).success).toBe(false)
+			expect(schema.safeParse({ loop_id: loopId, file_id: fileId, name: 'Results' }).success).toBe(
+				true,
+			)
 			expect(schema.safeParse({ loop_id: 'nope', file_id: null }).success).toBe(false)
 			expect(schema.safeParse({ loop_id: loopId, file_id: 'nope' }).success).toBe(false)
 		})
