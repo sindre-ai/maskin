@@ -2,6 +2,7 @@ import type { Database } from '@maskin/db'
 import { integrations } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
+import { trackIntegrationToolCalled } from '../lib/analytics/integration-events'
 import { createApiError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { type AgentAccess, resolveAgentAccess } from '../lib/integrations/agent-access'
@@ -217,6 +218,7 @@ export async function proxyMcp(
 	// upstream. So what goes upstream is the re-serialized message that was judged, for every
 	// provider and custom server.
 	const forwardBody = rpc ? JSON.stringify(rpc) : bodyText
+	let allowedKind: 'read' | 'write' | undefined
 
 	if (toolName) {
 		const decision = decideToolCall({
@@ -259,6 +261,20 @@ export async function proxyMcp(
 				},
 			)
 		}
+		allowedKind = decision.kind
+	}
+	// One count per call let through, with the vendor's answer. Never the arguments or result.
+	const countToolCall = (ok: boolean) => {
+		if (!toolName || !allowedKind) return
+		void trackIntegrationToolCalled({
+			provider,
+			workspaceId,
+			actorId,
+			integrationId: integration.id,
+			toolName,
+			kind: allowedKind,
+			ok,
+		})
 	}
 
 	let upstreamHeaders: Record<string, string>
@@ -295,8 +311,10 @@ export async function proxyMcp(
 			provider,
 			error: err instanceof Error ? err.name : 'unknown',
 		})
+		countToolCall(false)
 		return jsonRpcError(502, -32002, `${label} could not be reached. Try again shortly.`)
 	}
+	countToolCall(upstream.ok)
 
 	const responseHeaders = new Headers()
 	for (const name of FORWARDED_RESPONSE_HEADERS) {

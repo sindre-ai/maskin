@@ -9,6 +9,8 @@ import { capturePosthogEvent } from './posthog'
 // weekly checks can't drift out of sync with the emit sites.
 export const INTEGRATION_CONNECTED = 'integration_connected'
 export const INTEGRATION_SYNC_COMPLETED = 'integration_sync_completed'
+export const INTEGRATION_CONNECT_STARTED = 'integration_connect_started'
+export const INTEGRATION_TOOL_CALLED = 'integration_tool_called'
 
 // Auth path that produced the connect event. `oauth` covers both standard
 // oauth2 providers (the callback route) and `oauth2_custom` (GitHub App),
@@ -77,5 +79,57 @@ export async function trackIntegrationSyncCompleted(
 		records_written: p.recordsWritten,
 		sync_status: p.syncStatus,
 		is_backfill: p.isBackfill,
+	})
+}
+
+interface IntegrationConnectStartedProps {
+	provider: string
+	workspaceId: string
+	actorId: string
+}
+
+/**
+ * Fire `integration_connect_started` when the connect route hands back the vendor's sign-in
+ * address. Paired with `integration_connected` (the token landing), so finished over started
+ * is the sign-in completion rate for every provider. Not sampled (see event-budget).
+ */
+export async function trackIntegrationConnectStarted(
+	p: IntegrationConnectStartedProps,
+): Promise<void> {
+	await capturePosthogEvent(INTEGRATION_CONNECT_STARTED, p.actorId, {
+		provider: p.provider,
+		workspace_id: p.workspaceId,
+		actor_id: p.actorId,
+		auth_type: 'oauth',
+	})
+}
+
+interface IntegrationToolCalledProps {
+	provider: string
+	workspaceId: string
+	/** The agent (or person) whose Maskin key made the call. */
+	actorId: string
+	integrationId: string
+	toolName: string
+	kind: 'read' | 'write'
+	/** Whether the vendor's server answered the call with a success status. */
+	ok: boolean
+}
+
+/**
+ * Fire `integration_tool_called` for each tool call the MCP gateway lets through to a vendor.
+ * Counts, ids and categories only: the tool name and read or write, never an argument or a
+ * result. Not sampled (see event-budget), so a count by provider is exact. Calls the gateway
+ * refuses are already recorded as `agent_access_denied` events.
+ */
+export async function trackIntegrationToolCalled(p: IntegrationToolCalledProps): Promise<void> {
+	await capturePosthogEvent(INTEGRATION_TOOL_CALLED, p.actorId, {
+		provider: p.provider,
+		workspace_id: p.workspaceId,
+		actor_id: p.actorId,
+		integration_id: p.integrationId,
+		tool_name: p.toolName,
+		kind: p.kind,
+		ok: p.ok,
 	})
 }

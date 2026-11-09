@@ -3,6 +3,12 @@ import { and, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+const { toolCalledMock } = vi.hoisted(() => ({ toolCalledMock: vi.fn() }))
+vi.mock('../../lib/analytics/integration-events', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../lib/analytics/integration-events')>()),
+	trackIntegrationToolCalled: toolCalledMock,
+}))
+
 import { encrypt } from '../../lib/crypto'
 import { createApiError } from '../../lib/errors'
 import integrationsGatewayRoutes, {
@@ -85,6 +91,7 @@ const call = (name: string, id = 1) => ({
 
 let fetchMock: ReturnType<typeof vi.fn>
 beforeEach(() => {
+	toolCalledMock.mockClear()
 	clearGatewayAnnotationCache()
 	fetchMock = vi.fn(
 		async (_url: string, _init?: RequestInit) =>
@@ -116,6 +123,23 @@ describe('POST /api/integrations/:provider/gateway (Integration)', () => {
 		expect(sent.get('authorization')).toBe(`Bearer ${PROVIDER_TOKEN}`)
 		expect(JSON.stringify([...sent.entries()])).not.toContain(AGENT_KEY)
 		expect(init.redirect).toBe('manual')
+	})
+
+	it('counts a call let through, with the tool and kind but no arguments, and not a refused one', async () => {
+		const s = await setup()
+		await post(appFor(s.reader.id), s.ws.id, call('list_issues'))
+		await post(appFor(s.reader.id), s.ws.id, call('create_issue'))
+
+		expect(toolCalledMock).toHaveBeenCalledOnce()
+		expect(toolCalledMock).toHaveBeenCalledWith({
+			provider: 'linear',
+			workspaceId: s.ws.id,
+			actorId: s.reader.id,
+			integrationId: s.linear.id,
+			toolName: 'list_issues',
+			kind: 'read',
+			ok: true,
+		})
 	})
 
 	it('refuses a write for a read-only agent as a failed tool result, without calling the provider', async () => {

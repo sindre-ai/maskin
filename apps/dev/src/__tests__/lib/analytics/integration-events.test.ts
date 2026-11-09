@@ -9,9 +9,13 @@ vi.mock('../../../lib/analytics/posthog', () => ({
 
 import {
 	INTEGRATION_CONNECTED,
+	INTEGRATION_CONNECT_STARTED,
 	INTEGRATION_SYNC_COMPLETED,
+	INTEGRATION_TOOL_CALLED,
+	trackIntegrationConnectStarted,
 	trackIntegrationConnected,
 	trackIntegrationSyncCompleted,
+	trackIntegrationToolCalled,
 } from '../../../lib/analytics/integration-events'
 
 beforeEach(() => {
@@ -144,5 +148,48 @@ describe('trackIntegrationSyncCompleted', () => {
 
 	it('exports the canonical event-name constant', () => {
 		expect(INTEGRATION_SYNC_COMPLETED).toBe('integration_sync_completed')
+	})
+})
+
+describe('trackIntegrationConnectStarted', () => {
+	it('captures the start of a sign-in with ids and provider only', async () => {
+		await trackIntegrationConnectStarted({
+			provider: 'notion',
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+		})
+
+		expect(capturePosthogEventMock).toHaveBeenCalledWith(INTEGRATION_CONNECT_STARTED, 'actor-1', {
+			provider: 'notion',
+			workspace_id: 'ws-1',
+			actor_id: 'actor-1',
+			auth_type: 'oauth',
+		})
+		expect(INTEGRATION_CONNECT_STARTED).toBe('integration_connect_started')
+	})
+})
+
+describe('trackIntegrationToolCalled', () => {
+	it('captures one call with the tool name, kind and outcome, and nothing from the arguments', async () => {
+		await trackIntegrationToolCalled({
+			provider: 'notion',
+			workspaceId: 'ws-1',
+			actorId: 'agent-1',
+			integrationId: 'int-1',
+			toolName: 'notion-search',
+			kind: 'read',
+			ok: true,
+		})
+
+		expect(capturePosthogEventMock).toHaveBeenCalledWith(INTEGRATION_TOOL_CALLED, 'agent-1', {
+			provider: 'notion',
+			workspace_id: 'ws-1',
+			actor_id: 'agent-1',
+			integration_id: 'int-1',
+			tool_name: 'notion-search',
+			kind: 'read',
+			ok: true,
+		})
+		expect(INTEGRATION_TOOL_CALLED).toBe('integration_tool_called')
 	})
 })
