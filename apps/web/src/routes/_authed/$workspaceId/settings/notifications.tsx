@@ -53,19 +53,21 @@ interface ChannelSwitch {
 	locked?: boolean
 }
 
-/** One labelled switch in a fixed-width column. The label shows on a phone, where there is no header. */
+/** One labelled switch in a fixed-width column. The label shows wherever there is no header above the columns. */
 function SwitchCell({
 	label,
 	ariaLabel,
 	channel,
+	labelClass,
 }: {
 	label: string
 	ariaLabel: string
 	channel: ChannelSwitch
+	labelClass: string
 }) {
 	return (
 		<div className="flex w-16 flex-col items-center gap-1">
-			<span className="text-[11px] text-muted-foreground sm:hidden">{label}</span>
+			<span className={`text-[11px] text-muted-foreground ${labelClass}`}>{label}</span>
 			<Switch
 				checked={channel.checked}
 				onCheckedChange={(next) => channel.onChange(!!next)}
@@ -101,22 +103,48 @@ function PreferenceRow({
 	/** Part of the Email, Push, Browser table: keeps the switches in line when a row has fewer. */
 	columns?: boolean
 }) {
-	const empty = <div className="hidden w-16 sm:block" />
+	// Three fixed-width columns leave the text too little room at tablet width, so the table
+	// layout starts at lg. A row without columns has one switch and can go side by side sooner.
+	const labelClass = columns ? 'lg:hidden' : 'sm:hidden'
+	const empty = <div className="hidden w-16 lg:block" />
 	return (
-		<div className="flex flex-col gap-3 px-2 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+		<div
+			className={`flex flex-col gap-3 px-2 py-3.5 ${
+				columns
+					? 'lg:flex-row lg:items-center lg:justify-between lg:gap-4'
+					: 'sm:flex-row sm:items-center sm:justify-between sm:gap-4'
+			}`}
+		>
 			<div className="min-w-0">
 				<span className="block text-[15px] font-medium leading-tight">{title}</span>
 				<span className="block text-[13px] text-muted-foreground">{description}</span>
 			</div>
-			<div className="flex shrink-0 items-start gap-1 sm:items-center">
+			<div
+				className={`flex shrink-0 items-start gap-1 ${columns ? 'lg:items-center' : 'sm:items-center'}`}
+			>
 				{email ? (
-					<SwitchCell label="Email" ariaLabel={`${title} by email`} channel={email} />
+					<SwitchCell
+						label="Email"
+						ariaLabel={`${title} by email`}
+						channel={email}
+						labelClass={labelClass}
+					/>
 				) : (
 					columns && empty
 				)}
-				<SwitchCell label="Push" ariaLabel={title} channel={{ checked, onChange, locked }} />
+				<SwitchCell
+					label="Push"
+					ariaLabel={title}
+					channel={{ checked, onChange, locked }}
+					labelClass={labelClass}
+				/>
 				{browser ? (
-					<SwitchCell label="Browser" ariaLabel={`${title} in the browser`} channel={browser} />
+					<SwitchCell
+						label="Browser"
+						ariaLabel={`${title} in the browser`}
+						channel={browser}
+						labelClass={labelClass}
+					/>
 				) : (
 					columns && empty
 				)}
@@ -163,7 +191,7 @@ function NotificationsPage() {
 			<SettingsPageTitle title="Notifications" subtitle="Choose what reaches you, and where." />
 			<div className="flex items-center justify-between px-2 pb-1.5 text-[15px] font-semibold text-foreground">
 				<span>Notify me about</span>
-				<div className="hidden items-center gap-1 sm:flex">
+				<div className="hidden items-center gap-1 lg:flex">
 					<span className="w-16 text-center">Email</span>
 					<span className="w-16 text-center">Push</span>
 					<span className="w-16 text-center">Browser</span>
