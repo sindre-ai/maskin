@@ -50,6 +50,15 @@ describe('ReactButton', () => {
 		)
 	})
 
+	it('tells its row when the picker opens and closes', () => {
+		const onOpenChange = vi.fn()
+		render(<ReactButton reactions={[]} onToggle={vi.fn()} onOpenChange={onOpenChange} />)
+		fireEvent.click(screen.getByRole('button', { name: 'Add reaction' }))
+		expect(onOpenChange).toHaveBeenLastCalledWith(true)
+		fireEvent.click(screen.getByRole('button', { name: 'React with 👍' }))
+		expect(onOpenChange).toHaveBeenLastCalledWith(false)
+	})
+
 	it('is switched off for a viewer', () => {
 		render(<ReactButton reactions={[]} onToggle={vi.fn()} disabled />)
 		expect(screen.getByRole('button', { name: 'Add reaction' })).toBeDisabled()

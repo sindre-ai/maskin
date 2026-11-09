@@ -28,6 +28,7 @@ import { useTrigger } from '@/hooks/use-triggers'
 import type { MessageContextNotification, MessageContextObject, MessageResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
+import { isFailedReply } from '@/lib/failed-turns'
 import {
 	type GithubTarget,
 	type OwnCard,
@@ -40,7 +41,6 @@ import {
 	settingsChipText,
 	splitOwnLinks,
 } from '@/lib/linked-objects'
-import { hasReacted } from '@/lib/message-reactions'
 import { type TagSegment, splitTextByTags, tagLabel } from '@/lib/tag-input-model'
 import { useIsEnterpriseWorkspace } from '@/lib/workspace-context'
 import { formatQuestionsAsMarkdown } from '@maskin/shared'
@@ -172,11 +172,16 @@ export function MessageBubble({
 	const retryMessage = useRetryMessage(message.conversationId, workspaceId)
 	// Reacting is a write; a viewer keeps the button and the chips, switched off. Only a real,
 	// persisted message can be reacted to (not an optimistic bubble, not a system row).
-	const toggleReaction = useToggleReaction(message.conversationId, workspaceId)
-	const canReact = message.id > 0 && message.kind === 'message'
-	const reactions = message.reactions
-	const onToggleReaction = (emoji: string) =>
-		toggleReaction.mutate({ messageId: message.id, emoji, adding: !hasReacted(reactions, emoji) })
+	const { toggle: toggleReaction } = useToggleReaction(message.conversationId, workspaceId)
+	// Not an optimistic bubble, a system row, a deleted message or an agent's failed-turn notice.
+	const canReact =
+		message.id > 0 && message.kind === 'message' && !message.deletedAt && !isFailedReply(message)
+	// A deleted message keeps no chips.
+	const reactions = message.deletedAt ? undefined : message.reactions
+	const onToggleReaction = (emoji: string) => toggleReaction(message.id, emoji)
+	// The picker is portaled out of the action row, so the row cannot count on focus-within or
+	// hover to stay visible while it is open.
+	const [reactionPickerOpen, setReactionPickerOpen] = useState(false)
 	const attachments = message.metadata?.attachments ?? []
 	// Resolve the file record for each attachment so the bubble renders the real
 	// filename — the metadata `name` is best-effort and older / MCP-posted
@@ -455,7 +460,12 @@ export function MessageBubble({
 					) : null}
 					{canReact && !editing ? (
 						<ViewerTooltip>
-							<ReactButton reactions={reactions} onToggle={onToggleReaction} disabled={!canWrite} />
+							<ReactButton
+								reactions={reactions}
+								onToggle={onToggleReaction}
+								disabled={!canWrite}
+								onOpenChange={setReactionPickerOpen}
+							/>
 						</ViewerTooltip>
 					) : null}
 					{canAct && !editing ? (
@@ -708,7 +718,10 @@ export function MessageBubble({
 				/>
 				{canCopy || canReply || canReact ? (
 					<div
-						className="mt-1.5 flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100 any-pointer-coarse:opacity-100"
+						className={cn(
+							'mt-1.5 flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100 any-pointer-coarse:opacity-100',
+							reactionPickerOpen && 'opacity-100',
+						)}
 						aria-label="Message actions"
 					>
 						{canCopy ? (
@@ -737,6 +750,7 @@ export function MessageBubble({
 									reactions={reactions}
 									onToggle={onToggleReaction}
 									disabled={!canWrite}
+									onOpenChange={setReactionPickerOpen}
 								/>
 							</ViewerTooltip>
 						) : null}

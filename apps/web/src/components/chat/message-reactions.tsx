@@ -21,12 +21,19 @@ export function ReactButton({
 	reactions,
 	onToggle,
 	disabled = false,
+	onOpenChange,
 }: {
 	reactions: MessageReaction[] | undefined
 	onToggle: (emoji: string) => void
 	disabled?: boolean
+	/** Told when the picker opens or closes, so the action row can stay visible while it is open. */
+	onOpenChange?: (open: boolean) => void
 }) {
-	const [open, setOpen] = useState(false)
+	const [open, setOpenState] = useState(false)
+	const setOpen = (next: boolean) => {
+		setOpenState(next)
+		onOpenChange?.(next)
+	}
 	return (
 		<Popover open={open} onOpenChange={setOpen}>
 			<PopoverTrigger asChild>

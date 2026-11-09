@@ -68,9 +68,9 @@ vi.mock('@/hooks/use-objects', () => ({
 	useApproveObject: () => ({ mutate: vi.fn(), isPending: false, error: null }),
 }))
 
-const reactMutate = vi.fn()
+const reactToggle = vi.fn()
 vi.mock('@/hooks/use-message-reactions', () => ({
-	useToggleReaction: () => ({ mutate: reactMutate, isPending: false }),
+	useToggleReaction: () => ({ toggle: reactToggle }),
 }))
 
 const retryMutate = vi.fn()
@@ -148,7 +148,7 @@ const CHART_MESSAGE = [
 ].join('\n')
 
 describe('MessageBubble reactions', () => {
-	beforeEach(() => reactMutate.mockClear())
+	beforeEach(() => reactToggle.mockClear())
 
 	it("offers an Add reaction button on another author's message", () => {
 		renderBubble(buildMessage())
@@ -164,7 +164,7 @@ describe('MessageBubble reactions', () => {
 		renderBubble(buildMessage({ id: 7 }))
 		fireEvent.click(screen.getByRole('button', { name: 'Add reaction' }))
 		fireEvent.click(screen.getByRole('button', { name: 'React with 👀' }))
-		expect(reactMutate).toHaveBeenCalledWith({ messageId: 7, emoji: '👀', adding: true })
+		expect(reactToggle).toHaveBeenCalledWith(7, '👀')
 	})
 
 	it('shows the reactions under the message and takes yours back when pressed', () => {
@@ -185,7 +185,7 @@ describe('MessageBubble reactions', () => {
 			}),
 		)
 		fireEvent.click(screen.getByRole('button', { name: /You and Magnus reacted with 👍/ }))
-		expect(reactMutate).toHaveBeenCalledWith({ messageId: 7, emoji: '👍', adding: false })
+		expect(reactToggle).toHaveBeenCalledWith(7, '👍')
 	})
 
 	it('offers no reaction on a message that is not saved yet', () => {
@@ -196,6 +196,43 @@ describe('MessageBubble reactions', () => {
 	it('offers no reaction on a system row', () => {
 		renderBubble(buildMessage({ kind: 'system' }))
 		expect(screen.queryByRole('button', { name: 'Add reaction' })).not.toBeInTheDocument()
+	})
+
+	it('offers no reaction on a deleted message, and shows no chips on it', () => {
+		renderBubble(
+			buildMessage({
+				content: '',
+				deletedAt: new Date().toISOString(),
+				reactions: [{ emoji: '👍', count: 1, reactedByMe: false, actors: [] }],
+			}),
+		)
+		expect(screen.queryByRole('button', { name: 'Add reaction' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /reacted with/ })).not.toBeInTheDocument()
+	})
+
+	it("offers no reaction on an agent's failed-turn notice", () => {
+		renderBubble(
+			buildMessage({
+				metadata: {
+					final_output: { dedupe_key: 'k1', is_error: true, message_id: 3 },
+				} as MessageResponse['metadata'],
+			}),
+		)
+		expect(screen.queryByRole('button', { name: 'Add reaction' })).not.toBeInTheDocument()
+	})
+
+	it('keeps the action row visible while the picker is open', () => {
+		renderBubble(buildMessage())
+		const row = screen.getByLabelText('Message actions')
+		// Hover or focus-within is what shows the row on a pointer device; the portaled picker
+		// has neither, so the row must say so itself.
+		// A bare token: `group-hover:opacity-100` and friends are separate, variant-prefixed classes.
+		const bare = (token: string) => new RegExp(`(^|\\s)${token}(\\s|$)`)
+		expect(row.className).toMatch(bare('opacity-0'))
+		fireEvent.click(screen.getByRole('button', { name: 'Add reaction' }))
+		expect(row.className).toMatch(bare('opacity-100'))
+		fireEvent.click(screen.getByRole('button', { name: 'React with 👍' }))
+		expect(row.className).toMatch(bare('opacity-0'))
 	})
 })
 

@@ -3104,6 +3104,8 @@ export interface MessageResponse {
 	thread?: ReplyThreadSummary | null
 	/** Emoji reactions grouped by emoji, in the order each was first used. Present on list responses. */
 	reactions?: MessageReaction[]
+	/** Set when the author deleted the message; its content is then empty. */
+	deletedAt?: string | null
 }
 
 export interface MessageReaction {

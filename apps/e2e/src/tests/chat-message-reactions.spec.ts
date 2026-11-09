@@ -5,10 +5,11 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 // The picture goes into the HTML report as an attachment (apps/e2e/playwright-report, uploaded by
 // CI as the playwright-report-N artifact), because test-results/ is not uploaded.
 async function picture(page: Page, testInfo: TestInfo, name: string) {
-	// Borders and the picker ease in; let them settle before the picture.
-	await page.waitForTimeout(400)
+	// Borders, the picker and the chip ease in: wait for every running animation to finish
+	// instead of a fixed pause.
+	await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished)))
 	await testInfo.attach(name, {
-		body: await page.screenshot({ path: `test-results/${name}.png` }),
+		body: await page.screenshot(),
 		contentType: 'image/png',
 	})
 }
@@ -88,4 +89,37 @@ test.describe('Chat — reacting to a message', () => {
 			})
 		}
 	}
+	test('fast taps on the picker end with the server holding the last choice', async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize({ width: 375, height: 812 })
+		const ws = account.workspaceId
+		const agent = await account.api.createAgentActor(`Reactor ${Date.now()}`)
+		const conv = await account.api.createConversation(ws, {
+			title: 'Fast reactions',
+			participant_actor_ids: [agent.id],
+		})
+		const posted = await account.api.postConversationMessage(conv.id, ws, {
+			content: 'Shipping the fix today.',
+		})
+		await page.goto(`/${ws}/chats/${conv.id}`)
+
+		// 👍 three times in a row through the picker, with no pause: add, take back, add. Taking
+		// back the only reaction removes the chip, so the picker is the control that is always there.
+		// The calls reach the server in the order tapped, so what it ends up holding is what the
+		// last tap chose, and what the chip shows.
+		for (let tap = 0; tap < 3; tap++) {
+			await page.getByRole('button', { name: 'Add reaction' }).first().click()
+			await page.getByRole('button', { name: /^(React with|Take back) 👍$/ }).click()
+		}
+
+		await expect(page.getByRole('button', { name: /You reacted with 👍/ })).toBeVisible()
+		await expect
+			.poll(async () => {
+				const list = await account.api.listConversationMessages(conv.id, ws)
+				return list.messages.find((m) => m.id === posted.id)?.reactions ?? []
+			})
+			.toMatchObject([{ emoji: '👍', count: 1, reactedByMe: true }])
+	})
 })
