@@ -4,7 +4,7 @@ import { serveStatic } from '@hono/node-server/serve-static'
 import { type NodeWebSocket, createNodeWebSocket } from '@hono/node-ws'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { authMiddleware } from '@maskin/auth'
-import type { Database } from '@maskin/db'
+import type { Database, InFlight } from '@maskin/db'
 import { getAllModules } from '@maskin/module-sdk'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import type { StorageProvider } from '@maskin/storage'
@@ -26,6 +26,7 @@ import {
 	ownershipCapErrorBody,
 	seatCapErrorBody,
 } from './lib/workspace-capacity'
+import { dbLoadShed } from './middleware/db-load-shed'
 import { createIdempotencyMiddleware } from './middleware/idempotency'
 import accountRoutes from './routes/account'
 import actorAvatarRoutes from './routes/actor-avatar'
@@ -136,6 +137,9 @@ export interface AppDeps {
 	sessionManager: SessionManager
 	agentStorage: AgentStorageManager
 	storageProvider: StorageProvider
+	/** Queries waiting on the database. With `dbShedAt`, turns on refusing reads while it is backed up. */
+	dbLoad?: InFlight
+	dbShedAt?: number
 }
 
 export interface CreateAppOptions {
@@ -300,6 +304,27 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	)
 
 	app.use('/api/*', requestTiming())
+
+	// Ahead of auth, so a refused read does not cost the database lookup auth would have made.
+	if (deps.dbLoad && deps.dbShedAt) {
+		let shedSinceLog = 0
+		let lastShedLogAt = 0
+		app.use(
+			'/api/*',
+			dbLoadShed(deps.dbLoad, deps.dbShedAt, () => {
+				shedSinceLog += 1
+				const now = Date.now()
+				if (now - lastShedLogAt < 10_000) return
+				logger.warn('Database backed up: refusing reads until it clears', {
+					inFlight: deps.dbLoad?.count,
+					limit: deps.dbShedAt,
+					refusedSinceLastLog: shedSinceLog,
+				})
+				lastShedLogAt = now
+				shedSinceLog = 0
+			}),
+		)
+	}
 
 	app.use('*', async (c, next) => {
 		c.set('db', db)

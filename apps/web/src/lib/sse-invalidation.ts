@@ -33,6 +33,10 @@ const SESSIONS_REFETCH_MS = 5_000
 // window. They only feed counts and cost; live status comes from the 100-row list.
 const SESSIONS_STATS_REFETCH_MS = 30_000
 const BILLING_REFETCH_MS = 15_000
+// A relationship event marks every open object graph stale, and each graph is a dozen database
+// queries on the server. A burst of relationship events (an agent wiring up a loop) used to
+// refetch every open graph once per event, so one trailing refetch per window is enough.
+const GRAPH_REFETCH_MS = 5_000
 const trailingRefetchTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 const isTabHidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden'
@@ -192,7 +196,12 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			break
 		case 'relationship':
 			invalidate(queryClient, { queryKey: queryKeys.relationships.all(workspaceId) })
-			invalidate(queryClient, { queryKey: ['objects', 'graph'] })
+			scheduleTrailingRefetch(
+				queryClient,
+				`graphs:${workspaceId}`,
+				{ queryKey: ['objects', 'graph'] },
+				GRAPH_REFETCH_MS,
+			)
 			break
 		case 'trigger':
 			invalidate(queryClient, { queryKey: queryKeys.triggers.all(workspaceId) })

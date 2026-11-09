@@ -29,7 +29,7 @@ export type QueryTimeoutInfo = {
 }
 
 /** Queries sent and not yet answered, shared by a client and the transactions opened on it. */
-type InFlight = { count: number }
+export type InFlight = { count: number }
 
 type QueryGuards = {
 	onQuery?: QueryTimer
@@ -150,17 +150,24 @@ export const DEFAULT_POOL_SIZE = 10
 
 export function createDb(
 	url: string,
-	options: Omit<TimeQueriesOptions, 'inFlight' | 'saturationAt'> & { onQuery?: QueryTimer } = {},
+	options: Omit<TimeQueriesOptions, 'saturationAt'> & {
+		onQuery?: QueryTimer
+		/** Connections to open at most. Defaults to DEFAULT_POOL_SIZE. */
+		poolSize?: number
+	} = {},
 ) {
+	const poolSize = options.poolSize ?? DEFAULT_POOL_SIZE
 	// connect_timeout, keep_alive and max_lifetime keep postgres.js's defaults (30s, 60s, 30-60min).
 	// idle_timeout retires connections the pooler may have dropped silently.
-	const client = postgres(url, { prepare: false, idle_timeout: 20, max: DEFAULT_POOL_SIZE })
+	const client = postgres(url, { prepare: false, idle_timeout: 20, max: poolSize })
 	return drizzle(
 		timeQueries(client, options.onQuery, {
 			queryTimeoutMs: options.queryTimeoutMs ?? DEFAULT_QUERY_TIMEOUT_MS,
 			onQueryTimeout: options.onQueryTimeout,
 			onSaturated: options.onSaturated,
-			saturationAt: DEFAULT_POOL_SIZE,
+			saturationAt: poolSize,
+			// A caller that passes its own counter can read the backlog (to shed load).
+			inFlight: options.inFlight,
 		}),
 		{ schema },
 	)
