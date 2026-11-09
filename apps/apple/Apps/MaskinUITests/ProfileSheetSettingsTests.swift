@@ -34,8 +34,6 @@ final class ProfileSheetSettingsTests: XCTestCase {
 		// The page lists Files under Workspace; the row's label may carry its count.
 		let files = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH 'Files'")).firstMatch
 		for _ in 0..<4 where !files.exists { app.swipeUp() }
-		let shot = XCUIScreen.main.screenshot().pngRepresentation
-		try? shot.write(to: URL(fileURLWithPath: "/tmp/settings-page.png"))
 		XCTAssertTrue(files.waitForExistence(timeout: 8), "Settings opens and lists Files")
 	}
 }

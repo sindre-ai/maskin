@@ -579,7 +579,8 @@ export function overrides({ method, path, params, query, body, base, item }) {
 		}
 	}
 	// The feed the app reads now; the old unread list stays for older builds.
-	if (method === 'get' && (path === '/api/for-you' || path === '/api/subscriptions/unread')) return { body: unreadFeed(item) }
+	if (method === 'get' && (path === '/api/for-you' || path === '/api/subscriptions/unread'))
+		return { body: unreadFeed(item) }
 	if (method === 'get' && path === '/api/briefing') {
 		return {
 			body: { workspace_id: WORKSPACE_ID, markdown: '## Good morning\n\nTwo things need you.' },
