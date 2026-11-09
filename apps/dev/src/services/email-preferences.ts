@@ -1,6 +1,6 @@
 import type { Database, Transaction } from '@maskin/db'
 import { events, notificationPreferences, workspaceMembers } from '@maskin/db/schema'
-import { and, eq, gt, inArray, not } from 'drizzle-orm'
+import { and, eq, gt, inArray, ne, or } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 
 // The summary email choice (notification_preferences.email_digest_enabled, migration 0138).
@@ -36,8 +36,8 @@ export async function hasRecentRealActivity(
 						.from(workspaceMembers)
 						.where(eq(workspaceMembers.actorId, actorId)),
 				),
-				not(and(eq(events.entityType, 'integration'), eq(events.action, 'created'))),
-				not(and(eq(events.entityType, 'notification_preferences'), eq(events.action, 'created'))),
+				or(ne(events.entityType, 'integration'), ne(events.action, 'created')),
+				or(ne(events.entityType, 'notification_preferences'), ne(events.action, 'created')),
 			),
 		)
 		.limit(1)
