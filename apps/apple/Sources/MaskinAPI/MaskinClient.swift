@@ -20,13 +20,15 @@ public struct MaskinCredentials: Sendable, Equatable {
 /// effect on the very next call without rebuilding the client.
 public typealias MaskinCredentialsProvider = @Sendable () async -> MaskinCredentials?
 
-/// Adds `Authorization`, `X-Workspace-Id` and `X-Client-Source` to every request.
+/// Adds `Authorization`, `X-Workspace-Id`, `X-Client-Source` and `X-Client-Build` to every request.
 struct MaskinAuthMiddleware: ClientMiddleware {
 	let credentials: MaskinCredentialsProvider
 	let clientSource: String
 	/// Called with the API key that was sent when the server answers 401, so the app can end a
 	/// revoked or rotated session in one place instead of every store noticing separately.
 	var onUnauthorized: (@Sendable (_ apiKey: String) async -> Void)?
+	/// The app build, so the API can count requests per build. `nil` sends no header.
+	var clientBuild: String? = ClientBuild.current
 
 	func intercept(
 		_ request: HTTPRequest,
@@ -37,6 +39,7 @@ struct MaskinAuthMiddleware: ClientMiddleware {
 	) async throws -> (HTTPResponse, HTTPBody?) {
 		var request = request
 		request.headerFields[.xClientSource] = clientSource
+		if let clientBuild { request.headerFields[.xClientBuild] = clientBuild }
 		var sentKey: String?
 		if let creds = await credentials() {
 			sentKey = creds.apiKey
@@ -54,6 +57,7 @@ struct MaskinAuthMiddleware: ClientMiddleware {
 
 extension HTTPField.Name {
 	static let xClientSource = HTTPField.Name("X-Client-Source")!
+	static let xClientBuild = HTTPField.Name(ClientBuild.headerName)!
 	static let xWorkspaceId = HTTPField.Name("X-Workspace-Id")!
 }
 
