@@ -1,5 +1,6 @@
 import type { ResolvedProvider } from './types'
 
+import { config as atlassianConfig } from './providers/atlassian/config'
 import { config as attioConfig } from './providers/attio/config'
 import { config as customMcpConfig } from './providers/custom-mcp/config'
 import { githubAuth } from './providers/github/auth'
@@ -173,6 +174,10 @@ providers.set('miro', {
 
 providers.set('notion', {
 	config: notionConfig,
+})
+
+providers.set('atlassian', {
+	config: atlassianConfig,
 })
 
 providers.set('attio', {
