@@ -312,6 +312,77 @@ describe('LoopVersionPusher', () => {
 		expect(eventInsert.data).toMatchObject({ items: { adds: 2, updates: 0, removes: 0 } })
 	})
 
+	it('does not update an installed agent whose stored snapshot differs from the catalog one only in key order', async () => {
+		const { db, mockResults, calls } = createTestContext()
+		const sourceItemId = 'cccccccc-cccc-4ccc-accc-cccccccccccc'
+		mockResults.selectQueue = [
+			// tick(): pending installs join — one locked install at v1 vs marketplace v2
+			[
+				{
+					install: {
+						id: 'install-3',
+						workspaceId: 'ws-1',
+						sourceLoopId: 'loop-1',
+						objectId: null,
+						installedVersion: '1.0.0',
+						isLocked: true,
+						forkedAt: null,
+						installedAt: new Date('2026-05-01'),
+						updatedAt: new Date('2026-05-01'),
+					},
+					targetVersion: '2.0.0',
+				},
+			],
+			// pushLockedInstall(): the catalog item, llmConfig in provider-then-model order
+			// and carrying an old extra key that the stored copy has already dropped.
+			[
+				{
+					id: 'item-actor',
+					sourceItemId,
+					itemType: 'actor',
+					itemSnapshot: {
+						name: 'Researcher',
+						type: 'agent',
+						llmConfig: { provider: 'anthropic', model: 'model-a', temperature: 0.2 },
+					},
+				},
+			],
+			// loadInstalledRows(): the installed actor, snapshot as Postgres jsonb returns it
+			// (shorter key first: model before provider).
+			[
+				{
+					id: 'actor-1',
+					metadata: {
+						installed_loop_id: 'install-3',
+						source_item_id: sourceItemId,
+						snapshot: {
+							name: 'Researcher',
+							type: 'agent',
+							llmConfig: { model: 'model-a', provider: 'anthropic' },
+						},
+					},
+				},
+			],
+			[],
+			[],
+			[],
+			// resolveWorkspaceActor()
+			[{ id: 'system-actor' }],
+			// transaction start: the install row, locked and re-read for its version
+			[{ installedVersion: '1.0.0' }],
+		]
+
+		const pusher = new LoopVersionPusher(db, createMockAgentStorage(), 60_000)
+		await pusher.tick()
+
+		// Only the installed_loops version bump: the agent row was left alone, so the
+		// installer's own provider and model are not overwritten by the catalog's.
+		expect(calls.updates).toHaveLength(1)
+		expect(calls.updates[0]).toMatchObject({ installedVersion: '2.0.0' })
+		const eventInsert = calls.inserts[0] as Record<string, unknown>
+		expect(eventInsert.data).toMatchObject({ items: { adds: 0, updates: 0, removes: 0 } })
+	})
+
 	it('start() does not blow up and stop() clears timers', async () => {
 		const { db } = createTestContext()
 		const pusher = new LoopVersionPusher(db, createMockAgentStorage(), 60_000)

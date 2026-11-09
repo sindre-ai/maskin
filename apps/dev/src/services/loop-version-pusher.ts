@@ -355,7 +355,7 @@ export class LoopVersionPusher {
 					}
 				}
 				if (existing) {
-					if (snapshotsEqual(existing.snapshot, rewritten)) continue
+					if (snapshotsEqual(existing.snapshot, metadata.snapshot)) continue
 					switch (item.itemType) {
 						case 'actor':
 							await tx
@@ -973,8 +973,18 @@ function toInstalledRow(id: string, type: ItemType, metadata: unknown): Installe
 	}
 }
 
-function snapshotsEqual(a: unknown, b: unknown): boolean {
-	return JSON.stringify(a) === JSON.stringify(b)
+// Key order must not matter: the stored snapshot comes back from a jsonb column
+// (keys reordered, shorter first), while the catalog copy is rebuilt in code.
+function canonicalJson(value: unknown): string {
+	return JSON.stringify(value, (_key, v) =>
+		v && typeof v === 'object' && !Array.isArray(v)
+			? Object.fromEntries(Object.entries(v).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0)))
+			: v,
+	)
+}
+
+export function snapshotsEqual(a: unknown, b: unknown): boolean {
+	return canonicalJson(a) === canonicalJson(b)
 }
 
 function buildActorUpdate(snapshot: Record<string, unknown>): Partial<typeof actors.$inferInsert> {
