@@ -9,6 +9,7 @@ import { ToolsSection } from '@/components/integrations/tools-section'
 import { SettingsPageTitle } from '@/components/settings/settings-page-title'
 import { EditorBanner } from '@/components/shared/editor-banner'
 import { EmptyState } from '@/components/shared/empty-state'
+import { FilterTabs } from '@/components/shared/filter-tabs'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
@@ -20,6 +21,7 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
 import { useCanWrite } from '@/hooks/use-can-write'
 import {
 	useGithubPendingSelection,
@@ -28,11 +30,17 @@ import {
 	useSelectGithubInstallation,
 } from '@/hooks/use-integrations'
 import type { IntegrationResponse, ResendDnsRecord } from '@/lib/api'
+import {
+	INTEGRATION_CATEGORIES,
+	type IntegrationCategory,
+	categoryFor,
+} from '@/lib/integration-catalog'
 import { PILL_BUTTON } from '@/lib/pill-button'
 import { safeReturnPath } from '@/lib/return-path'
 import { sortBy } from '@/lib/sort'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { Search } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/integrations')({
@@ -134,6 +142,24 @@ function IntegrationsPage() {
 	}
 	const resendAwaitingSecret = awaitingSecretByProvider.get('resend') ?? []
 
+	const [tab, setTab] = useState<'connected' | 'discover'>('connected')
+	const [query, setQuery] = useState('')
+	const [category, setCategory] = useState<IntegrationCategory | 'all'>('all')
+	const needle = query.trim().toLowerCase()
+	const shown = visibleProviders.filter(
+		(p) =>
+			p.name !== 'custom-mcp' &&
+			(category === 'all' || categoryFor(p.name) === category) &&
+			(!needle || p.displayName.toLowerCase().includes(needle)),
+	)
+	const connectedProviders = shown.filter((p) => activeByProvider.has(p.name))
+	const discoverProviders = shown.filter((p) => !activeByProvider.has(p.name))
+	const allExceptCustom = visibleProviders.filter((p) => p.name !== 'custom-mcp')
+	const connectedCount =
+		allExceptCustom.filter((p) => activeByProvider.has(p.name)).length +
+		(integrations ?? []).filter((i) => i.provider === 'custom-mcp' && i.status === 'active').length
+	const discoverCount = allExceptCustom.filter((p) => !activeByProvider.has(p.name)).length
+
 	return (
 		<div className="max-w-[760px]">
 			<SettingsPageTitle title="Integrations" />
@@ -158,27 +184,86 @@ function IntegrationsPage() {
 					description="No integration providers are configured on the server"
 				/>
 			) : (
-				<section>
-					<h2 className="px-2 pb-1.5 text-[15px] font-semibold text-foreground">Connected tools</h2>
-					<div className="border-t border-border-subtle">
-						{visibleProviders.map((provider) => (
-							<ProviderConnectRow
-								key={provider.name}
-								provider={provider}
-								installations={activeByProvider.get(provider.name) ?? []}
-								workspaceId={workspaceId}
-							/>
-						))}
-						{resendAwaitingSecret.length > 0 && (
-							<ResendResumeSection
-								rows={resendAwaitingSecret}
-								onResume={(prefill) => setResendDialog({ open: true, prefill })}
-							/>
-						)}
+				<>
+					<FilterTabs
+						variant="chip"
+						aria-label="Integrations"
+						value={tab}
+						onChange={setTab}
+						tabs={[
+							{ label: 'Connected', value: 'connected' as const, count: connectedCount },
+							{ label: 'Discover', value: 'discover' as const, count: discoverCount },
+						]}
+						className="mb-4 px-2"
+					/>
+					<div className="relative mb-4 px-2">
+						<Search
+							aria-hidden="true"
+							className="pointer-events-none absolute top-1/2 left-5 size-4 -translate-y-1/2 text-muted-foreground"
+						/>
+						<Input
+							type="search"
+							value={query}
+							onChange={(e) => setQuery(e.target.value)}
+							placeholder="Search integrations and tools"
+							aria-label="Search integrations and tools"
+							className="h-11 rounded-xl border-transparent bg-muted pl-10"
+						/>
 					</div>
-				</section>
+					<FilterTabs
+						variant="chip-outline"
+						aria-label="Category"
+						value={category}
+						onChange={setCategory}
+						tabs={[
+							{ label: 'All', value: 'all' as const },
+							...INTEGRATION_CATEGORIES.map((c) => ({ label: c, value: c })),
+						]}
+						className="mb-6 flex-wrap px-2"
+					/>
+					{tab === 'connected' ? (
+						<section className="space-y-3 px-2">
+							{connectedProviders.map((provider) => (
+								<ProviderConnectRow
+									key={provider.name}
+									provider={provider}
+									installations={activeByProvider.get(provider.name) ?? []}
+									workspaceId={workspaceId}
+								/>
+							))}
+							{resendAwaitingSecret.length > 0 && (
+								<ResendResumeSection
+									rows={resendAwaitingSecret}
+									onResume={(prefill) => setResendDialog({ open: true, prefill })}
+								/>
+							)}
+							<ToolsSection
+								workspaceId={workspaceId}
+								query={query}
+								showServers={category === 'all' || category === 'Custom'}
+							/>
+						</section>
+					) : discoverProviders.length === 0 ? (
+						<EmptyState
+							title="Nothing to discover"
+							description={
+								needle ? 'No integration matches that search' : 'Everything is connected'
+							}
+						/>
+					) : (
+						<section className="space-y-3 px-2">
+							{discoverProviders.map((provider) => (
+								<ProviderConnectRow
+									key={provider.name}
+									provider={provider}
+									installations={[]}
+									workspaceId={workspaceId}
+								/>
+							))}
+						</section>
+					)}
+				</>
 			)}
-			<ToolsSection workspaceId={workspaceId} />
 			<SelectGithubInstallationDialog
 				workspaceId={workspaceId}
 				integrationId={selectGithubId ?? null}
