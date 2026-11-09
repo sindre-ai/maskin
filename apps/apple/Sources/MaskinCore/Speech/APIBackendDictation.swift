@@ -32,6 +32,7 @@ public struct APIBackendDictation: SpeechTranscribing {
 		case .internalServerError: throw BackendDictationError(status: 500)
 		case .badGateway: throw BackendDictationError(status: 502)
 		case .serviceUnavailable: throw BackendDictationError(status: 503)
+		case .gatewayTimeout: throw BackendDictationError(status: 504)
 		case .undocumented(let status, _): throw BackendDictationError(status: status)
 		}
 	}
