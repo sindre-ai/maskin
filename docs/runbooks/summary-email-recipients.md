@@ -1,6 +1,6 @@
 # Summary email: who the recipient rule reaches (read-only)
 
-The summary email (day 1, 3, 7 after sign-up, then weekly) picks people with one query. Run it on
+The summary email (one grouped mail a day; the first three carry a short how-to) picks people with one query. Run it on
 production **before** the first real send and compare with the count Infra & DevOps took on
 8 Nov 2026 (16 people, 10 outside the team). Anything above about 20 means a third kind of
 automatic activity row is being counted: hold the first send, find the kind, leave it out in

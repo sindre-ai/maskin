@@ -56,6 +56,7 @@ export const CATCH_UP_WINDOW_MINUTES = 180
 const EMPTY_RECHECK_MS = 10 * 60_000
 const FINISHED_LOOKBACK_MS = 24 * 60 * 60_000
 const BATCH = 500
+export const MAX_FINISHED_RUNS = 5
 const MAX_WORKSPACES_PER_ACTOR = 25
 
 export interface BriefingWorkspaceFacts {
@@ -70,6 +71,13 @@ export interface BriefingWorkspaceFacts {
 	/** Set when exactly one run finished: the agent and (if known) the object it worked on. */
 	finishedAgentName: string | null
 	finishedObjectTitle: string | null
+	/** The finished runs, newest first, up to MAX_FINISHED_RUNS. The summary email lists them. */
+	finishedRuns?: FinishedRun[]
+}
+
+export interface FinishedRun {
+	agentName: string
+	objectTitle: string | null
 }
 
 export interface BriefingText {
@@ -80,13 +88,20 @@ export interface BriefingText {
 	finished: number
 	/** The anchor workspace's top waiting card object, when it has one. */
 	topObjectId: string | null
+	/** Extra facts the summary email lays out in parts; the push does not read them. */
+	workspaceName?: string
+	topHeadline?: string | null
+	finishedRuns?: FinishedRun[]
+	/** Waiting in the person's other workspaces. */
+	waitingElsewhere?: number
+	multiWorkspace?: boolean
 }
 
 function plural(n: number, one: string, many: string): string {
 	return `${n} ${n === 1 ? one : many}`
 }
 
-function clip(text: string, max: number): string {
+export function clip(text: string, max: number): string {
 	const t = text.replace(/\s+/g, ' ').trim()
 	return t.length > max ? `${t.slice(0, max - 1).trimEnd()}…` : t
 }
@@ -138,6 +153,11 @@ export function buildBriefingText(workspaces: BriefingWorkspaceFacts[]): Briefin
 		waiting: anchor.waiting,
 		finished: anchor.finished,
 		topObjectId: anchor.topObjectId ?? null,
+		workspaceName: anchor.workspaceName,
+		topHeadline: anchor.topHeadline,
+		finishedRuns: anchor.finishedRuns ?? [],
+		waitingElsewhere: elsewhere,
+		multiWorkspace: multi,
 	}
 }
 
@@ -314,6 +334,7 @@ export async function loadBriefingFacts(
 	actorId: string,
 	mutedWorkspaceIds: string[],
 	now: Date,
+	lookbackMs = FINISHED_LOOKBACK_MS,
 ): Promise<BriefingWorkspaceFacts[]> {
 	const memberships = await db
 		.select({ id: workspaces.id, name: workspaces.name })
@@ -326,7 +347,7 @@ export async function loadBriefingFacts(
 	const mine = memberships.filter((w) => !muted.has(w.id))
 	if (mine.length === 0) return []
 
-	const since = new Date(now.getTime() - FINISHED_LOOKBACK_MS)
+	const since = new Date(now.getTime() - lookbackMs)
 	const finishedRows = await db
 		.select({
 			workspaceId: sessions.workspaceId,
@@ -369,6 +390,10 @@ export async function loadBriefingFacts(
 			finished: finished.length,
 			finishedAgentName: only?.agentName ?? null,
 			finishedObjectTitle: only?.objectTitle ?? null,
+			finishedRuns: [...finished]
+				.reverse()
+				.slice(0, MAX_FINISHED_RUNS)
+				.map((f) => ({ agentName: f.agentName, objectTitle: f.objectTitle })),
 		})
 	}
 	return facts

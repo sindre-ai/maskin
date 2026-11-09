@@ -324,7 +324,7 @@ const briefingPushScheduler = new BriefingPushScheduler(db)
 briefingPushScheduler.start()
 const lifecyclePushScheduler = new LifecyclePushScheduler(db)
 lifecyclePushScheduler.start()
-// Summary email (day 1, 3, 7, then weekly). Own query, own claim; killswitch
+// Summary email (one grouped mail a day). Own query, own claim; killswitch
 // FEATURE_BRIEFING_EMAIL=0 stops the emails and leaves the push alone.
 const briefingEmailScheduler = new BriefingEmailScheduler(db)
 briefingEmailScheduler.start()

@@ -25,7 +25,13 @@ import {
 	emailRecipientRuleSql,
 	selectEmailRecipients,
 } from '../../services/briefing-email-scheduler'
-import { insertActor, insertNotification, insertWorkspace } from '../factories'
+import {
+	insertActor,
+	insertNotification,
+	insertObject,
+	insertSession,
+	insertWorkspace,
+} from '../factories'
 import { db } from './global-setup'
 
 const DAY = 24 * 3600_000
@@ -130,7 +136,7 @@ describe('summary email: who gets it', () => {
 		})
 	})
 
-	it('an empty choice (row or no row) with a real action in 30 days gets the weekly summary and a row', async () => {
+	it('an empty choice (row or no row) with a real action in 30 days starts at step 1 and gets a row', async () => {
 		const noRow = await person({ daysOld: 90 })
 		await activity(noRow.workspaceId, noRow.actorId, 'object', 'created')
 		const emptyRow = await person({ daysOld: 90 })
@@ -141,17 +147,94 @@ describe('summary email: who gets it', () => {
 
 		for (const p of [noRow, emptyRow]) {
 			expect(sentTo(p.email)).toHaveLength(1)
+			expect(sentTo(p.email)[0]?.[0].text).toContain('A card is one thing waiting on you.')
 			expect(await prefsRow(p.actorId)).toMatchObject({
 				emailDigestEnabled: true,
-				emailOnboardingStep: 3,
+				emailOnboardingStep: 1,
 				emailLastSentOn: '2026-03-10',
 			})
 		}
-		// Next week, not before.
-		await new BriefingEmailScheduler(db, ENV).tick(new Date(NOW.getTime() + 6 * DAY))
-		expect(sentTo(noRow.email)).toHaveLength(1)
-		await new BriefingEmailScheduler(db, ENV).tick(new Date(NOW.getTime() + 7 * DAY))
-		expect(sentTo(noRow.email)).toHaveLength(2)
+		// Same spacing as a new sign-up: step 2 two days later, step 3 four days after that.
+		const sends = async (days: number) => {
+			await new BriefingEmailScheduler(db, ENV).tick(new Date(NOW.getTime() + days * DAY))
+			return sentTo(noRow.email).length
+		}
+		expect(await sends(1)).toBe(1)
+		expect(await sends(2)).toBe(2)
+		expect(sentTo(noRow.email)[1]?.[0].text).toContain('A loop is a routine')
+		expect(await sends(5)).toBe(2)
+		expect(await sends(6)).toBe(3)
+		expect(sentTo(noRow.email)[2]?.[0].text).toContain('What you can do next')
+	})
+
+	it('after step 3 it is one mail every day, and none on a day with nothing to say', async () => {
+		const p = await person({ daysOld: 30 })
+		await db.insert(notificationPreferences).values({
+			actorId: p.actorId,
+			emailDigestEnabled: true,
+			emailOnboardingStep: 3,
+			emailLastSentOn: '2026-03-09',
+		})
+
+		await new BriefingEmailScheduler(db, ENV).tick(NOW)
+		await new BriefingEmailScheduler(db, ENV).tick(new Date(NOW.getTime() + 60_000))
+		expect(sentTo(p.email)).toHaveLength(1)
+		const text = sentTo(p.email)[0]?.[0].text as string
+		expect(text).not.toContain('A card is one thing')
+		expect(text).toContain('Waiting on you')
+		expect(text).toContain('Next step')
+
+		await new BriefingEmailScheduler(db, ENV).tick(new Date(NOW.getTime() + DAY))
+		expect(sentTo(p.email)).toHaveLength(2)
+
+		// Card answered: nothing waits, nothing finished, so nothing goes out and the day stays free.
+		await db.execute(
+			sql`UPDATE notifications SET status = 'resolved' WHERE target_actor_id = ${p.actorId}`,
+		)
+		await new BriefingEmailScheduler(db, ENV).tick(new Date(NOW.getTime() + 2 * DAY))
+		expect(sentTo(p.email)).toHaveLength(2)
+		expect(await prefsRow(p.actorId)).toMatchObject({ emailLastSentOn: '2026-03-11' })
+	})
+
+	it('shows the finished runs since the last mail and a first-loop step when nothing waits', async () => {
+		const p = await person({ daysOld: 30, card: false })
+		await db.insert(notificationPreferences).values({
+			actorId: p.actorId,
+			emailDigestEnabled: true,
+			emailOnboardingStep: 3,
+			emailLastSentOn: '2026-03-08',
+		})
+		const agent = await insertActor(db, { type: 'agent', name: 'Researcher' })
+		const finish = async (title: string, hoursAgo: number) => {
+			const o = await insertObject(db, p.workspaceId, p.actorId, { title })
+			await insertSession(db, p.workspaceId, agent.id as string, p.actorId, {
+				status: 'completed',
+				interactive: false,
+				initiatedFromObjectId: o?.id,
+				completedAt: new Date(NOW.getTime() - hoursAgo * 3600_000),
+			})
+		}
+		// Two days since the last mail, so runs from the last 48 hours count; one from 3 days ago does not.
+		for (let i = 1; i <= 6; i++) await finish(`Report ${i}`, i * 2)
+		await finish('Too old', 72)
+
+		await new BriefingEmailScheduler(db, ENV).tick(NOW)
+
+		const text = sentTo(p.email)[0]?.[0].text as string
+		expect(text).toContain("Researcher finished 'Report 1'")
+		expect(text).toContain("Researcher finished 'Report 5'")
+		expect(text).not.toContain('Report 6')
+		expect(text).not.toContain('Too old')
+		expect(text).toContain('and 1 more')
+		expect(text).not.toContain('Waiting on you')
+		expect(text).toContain('Create your first loop')
+
+		// Same person once a loop exists and something new finished: no next-step line.
+		await insertObject(db, p.workspaceId, p.actorId, { type: 'loop', title: 'Weekly review' })
+		await finish('Fresh', -20)
+		await new BriefingEmailScheduler(db, ENV).tick(new Date(NOW.getTime() + DAY))
+		expect(sentTo(p.email)).toHaveLength(2)
+		expect(sentTo(p.email)[1]?.[0].text).not.toContain('Next step')
 	})
 
 	it('gets nothing: no action, only left-out rows, action older than 30 days, or switched off', async () => {

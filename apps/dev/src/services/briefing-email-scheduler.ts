@@ -1,5 +1,6 @@
 /**
- * briefing-email-scheduler.ts — the summary email: day 1, 3 and 7 after sign-up, then weekly.
+ * briefing-email-scheduler.ts — the summary email: one grouped mail a day, with a teaching block
+ * on the first three.
  *
  * Sits beside the daily briefing push and reuses its facts (`loadBriefingFacts`,
  * `buildBriefingText`), so the email says the same numbers as the push and the For You screen.
@@ -12,28 +13,35 @@
  * of activity rows are not a person's own doing and do not count: the bulk 'integration created'
  * rows and the 'notification settings created' rows.
  *
- * When: at 08:00 UTC, or the briefing time in the person's stored timezone. Step 1 on or after
- * account day 1, step 2 on or after day 3, step 3 on or after day 7, then one every 7 days counted
- * from the last send. Steps are never skipped, one mail per day at most. With nothing to say
- * nothing is sent and the step is not used up.
+ * When: at 08:00 UTC, or the briefing time in the person's stored timezone. A new sign-up gets
+ * step 1 on or after account day 1, step 2 on or after day 3, step 3 on or after day 7. An
+ * existing member with no saved choice starts at step 1 on the first tick, then gets step 2 two
+ * days and step 3 four days later (the same spacing). After step 3 the mail is the plain daily
+ * summary. Steps are never skipped, one mail per day at most. With nothing to say nothing is sent
+ * and the step is not used up.
+ *
+ * Each mail has three parts (see briefing-email-text.ts): runs finished since the last mail, what
+ * waits, and one next-step line. "Since the last mail" is the days since the last send, at least
+ * 24 hours, at most MAX_LOOKBACK_DAYS.
  *
  * Exactly once: the step is claimed with one conditional UPDATE on the step counter and
  * `email_last_sent_on` (or an INSERT for someone with no row yet) before the mail goes out; a
  * failed send releases the claim. For a person with no saved choice the claim creates or fills the
- * row (email on, step 3) so the stop link has something to switch off.
+ * row (email on, step 1) so the stop link has something to switch off.
  *
  * Production without a Resend key, APP_URL or stop-link secret: log and skip, nothing is claimed.
  * Killswitch env FEATURE_BRIEFING_EMAIL=0 skips the tick. The push is not affected.
  */
 import type { Database } from '@maskin/db'
+import { objects } from '@maskin/db/schema'
 import { EmailSendError, isEmailConfigured, sendEmail } from '@maskin/email'
-import { sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { buildEmailStopUrl } from '../lib/email-stop-link'
 import { isEmailStopConfigured } from '../lib/email-stop-token'
 import { localClock, localTimeReached } from '../lib/local-time'
 import { logger } from '../lib/logger'
-import { buildSummaryEmail } from './briefing-email-text'
+import { buildSummaryEmail, pickNextStep } from './briefing-email-text'
 import type { EmailStep } from './briefing-email-text'
 import { buildBriefingText, loadBriefingFacts } from './briefing-push-scheduler'
 
@@ -46,9 +54,12 @@ const DEFAULT_SEND_MINUTE = 480
 /** A person with nothing to say is re-checked at most this often within the window. */
 const EMPTY_RECHECK_MS = 10 * 60_000
 export const ACTIVE_WINDOW_DAYS = 30
-const WEEK_DAYS = 7
+const DAY_MS = 86_400_000
+const MAX_LOOKBACK_DAYS = 7
 /** Account age (in days) at which onboarding steps 1, 2 and 3 are due. */
 export const STEP_DUE_DAYS = [1, 3, 7] as const
+/** Days that must pass after the previous mail before step 2 and step 3 (index = counter). */
+const STEP_GAP_DAYS = [0, 2, 4] as const
 const BATCH = 500
 
 /**
@@ -158,7 +169,8 @@ function dayNumber(isoDate: string): number {
 
 /**
  * Pure: which mail is due for this person on this local date, or null. `ageDays` counts local
- * calendar days since sign-up.
+ * calendar days since sign-up. A person with no saved choice (an existing member) skips the
+ * age wait for step 1 only; steps 2 and 3 keep their spacing from the previous send.
  */
 export function dueEmailStep(
 	row: Pick<EmailRecipientRow, 'emailDigestEnabled' | 'emailOnboardingStep' | 'emailLastSentOn'>,
@@ -166,18 +178,16 @@ export function dueEmailStep(
 	ageDays: number,
 ): { step: EmailStep; nextCounter: number } | null {
 	if (row.emailLastSentOn && row.emailLastSentOn >= localDate) return null
-	const weeklyDue = () =>
-		!row.emailLastSentOn || dayNumber(localDate) - dayNumber(row.emailLastSentOn) >= WEEK_DAYS
-	// No saved choice: an active existing member starts at the weekly summary.
-	if (row.emailDigestEnabled === null) {
-		return weeklyDue() ? { step: 'weekly', nextCounter: 3 } : null
-	}
 	const counter = Math.min(Math.max(row.emailOnboardingStep, 0), 3)
-	if (counter < 3) {
-		const next = (counter + 1) as 1 | 2 | 3
-		return ageDays >= (STEP_DUE_DAYS[counter] as number) ? { step: next, nextCounter: next } : null
+	if (counter === 3) return { step: 'daily', nextCounter: 3 }
+	const existingMemberStart = counter === 0 && row.emailDigestEnabled === null
+	if (ageDays < (STEP_DUE_DAYS[counter] as number) && !existingMemberStart) return null
+	if (counter > 0 && row.emailLastSentOn) {
+		const gap = dayNumber(localDate) - dayNumber(row.emailLastSentOn)
+		if (gap < (STEP_GAP_DAYS[counter] as number)) return null
 	}
-	return weeklyDue() ? { step: 'weekly', nextCounter: 3 } : null
+	const next = (counter + 1) as 1 | 2 | 3
+	return { step: next, nextCounter: next }
 }
 
 export class BriefingEmailScheduler {
@@ -278,7 +288,21 @@ export class BriefingEmailScheduler {
 		const due = dueEmailStep(row, clock.date, ageDays)
 		if (!due) return false
 
-		const facts = await loadBriefingFacts(this.db, row.actorId, row.mutedWorkspaceIds, now)
+		// Runs finished since the last mail: the days since it (at least 24 h), so a quiet day does
+		// not drop work and a busy one is not repeated.
+		const sinceDays = row.emailLastSentOn
+			? Math.min(
+					Math.max(dayNumber(clock.date) - dayNumber(row.emailLastSentOn), 1),
+					MAX_LOOKBACK_DAYS,
+				)
+			: 1
+		const facts = await loadBriefingFacts(
+			this.db,
+			row.actorId,
+			row.mutedWorkspaceIds,
+			now,
+			sinceDays * DAY_MS,
+		)
 		const summary = buildBriefingText(facts)
 		if (!summary) {
 			this.emptyUntil.set(row.actorId, now.getTime() + EMPTY_RECHECK_MS)
@@ -290,9 +314,12 @@ export class BriefingEmailScheduler {
 		const buttonPath = topObjectId
 			? `/${summary.workspaceId}/objects/${topObjectId}`
 			: `/${summary.workspaceId}`
+		// Only look for a loop when nothing waits: a waiting card comes first in the next-step order.
+		const hasLoop = summary.waiting > 0 || (await this.workspaceHasLoop(summary.workspaceId))
 		const mail = buildSummaryEmail({
 			summary,
 			step: due.step,
+			nextStep: pickNextStep({ waiting: summary.waiting, hasLoop }),
 			buttonUrl: `${appUrl}${buttonPath}?surface=email`,
 			stopUrl: buildEmailStopUrl(row.actorId, this.env),
 		})
@@ -318,6 +345,15 @@ export class BriefingEmailScheduler {
 			account_age_days: Math.max(ageDays, 0),
 		})
 		return true
+	}
+
+	private async workspaceHasLoop(workspaceId: string): Promise<boolean> {
+		const rows = await this.db
+			.select({ id: objects.id })
+			.from(objects)
+			.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, 'loop')))
+			.limit(1)
+		return rows.length > 0
 	}
 
 	/**

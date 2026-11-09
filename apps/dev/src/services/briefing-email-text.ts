@@ -1,22 +1,38 @@
 /**
  * briefing-email-text.ts — the summary email, as pure functions.
  *
- * The facts (what waits, what finished) and their wording come from the daily briefing push
- * (`buildBriefingText`), so an email never says a different number than the push or the For You
- * screen. No AI call, no message bodies: only the card headline the push already shows.
+ * Every mail has three parts: what finished for the person since the last mail (up to 5 runs,
+ * newest first, then "and N more"), what waits on them, and one next-step line. The facts and
+ * their wording come from the daily briefing push (`buildBriefingText`), so an email never says a
+ * different number than the push or the For You screen. No AI call, no message bodies: only the
+ * titles the push already shows.
  *
- * Steps 1 to 3 (day 1, 3 and 7 after sign-up) carry one line of how-to and no offers. After that
- * the weekly summary has none.
+ * Steps 1 to 3 (the first three mails anyone gets, new or existing) also carry a short teaching
+ * block of plain how-to and no offers. After that the mail is the plain daily summary.
  */
+import { MAX_FINISHED_RUNS, clip } from './briefing-push-scheduler'
 import type { BriefingText } from './briefing-push-scheduler'
 
-export type EmailStep = 1 | 2 | 3 | 'weekly'
+export type EmailStep = 1 | 2 | 3 | 'daily'
 
-/** The how-to line per onboarding step. Plain help; nothing here may promise an unbuilt feature. */
+/** The teaching block per onboarding step. Plain help; nothing here may promise an unbuilt feature. */
 export const STEP_INTRO: Record<1 | 2 | 3, string> = {
-	1: 'Your agents work in the background. When one needs you, it shows up on your For You screen.',
-	2: 'A card is one thing waiting on you. Pick an option and the agent carries on.',
-	3: 'A loop is a routine your agents repeat on their own. You only see what needs you.',
+	1: 'A card is one thing waiting on you. Open it, pick an option, and the agent carries on.',
+	2: 'A loop is a routine your agents repeat on their own. You only see what needs you.',
+	3: 'What you can do next: open a card and pick an option, or start a chat with an agent and ask it for something.',
+}
+
+/**
+ * Pure: the one next-step line, or null. In order: a card waits on you, then open it; else you have
+ * no loop yet, then create your first one; else nothing. (A rule for "a finished run you have not
+ * opened" is left out: the app does not store whether a run was opened.)
+ */
+export function pickNextStep(facts: { waiting: number; hasLoop: boolean }): string | null {
+	if (facts.waiting > 0) {
+		return facts.waiting === 1 ? 'Open the card that needs you.' : 'Open the card at the top first.'
+	}
+	if (!facts.hasLoop) return 'Create your first loop, a routine your agents repeat for you.'
+	return null
 }
 
 export interface SummaryEmailInput {
@@ -26,6 +42,8 @@ export interface SummaryEmailInput {
 	buttonUrl: string
 	/** Signed stop link; the one-click header points at the same URL. */
 	stopUrl: string
+	/** From pickNextStep; null leaves the part out. */
+	nextStep: string | null
 }
 
 export interface SummaryEmail {
@@ -48,14 +66,57 @@ export function buttonLabel(summary: BriefingText): string {
 	return summary.waiting > 0 ? 'Open it' : 'Open Maskin'
 }
 
+export interface Section {
+	heading: string
+	lines: string[]
+}
+
+function runLine(run: { agentName: string; objectTitle: string | null }): string {
+	return run.objectTitle
+		? `${run.agentName} finished '${clip(run.objectTitle, 60)}'`
+		: `${run.agentName} finished a task`
+}
+
+/** The parts that hold content; a part with nothing to say is left out. */
+export function summarySections(summary: BriefingText, nextStep: string | null): Section[] {
+	const sections: Section[] = []
+	const where =
+		summary.multiWorkspace && summary.workspaceName ? ` in ${summary.workspaceName}` : ''
+
+	const runs = summary.finishedRuns ?? []
+	if (summary.finished > 0) {
+		const lines = runs.slice(0, MAX_FINISHED_RUNS).map(runLine)
+		const more = summary.finished - lines.length
+		if (lines.length === 0) {
+			lines.push(`${summary.finished} agent ${summary.finished === 1 ? 'run' : 'runs'} finished`)
+		} else if (more > 0) {
+			lines.push(`and ${more} more`)
+		}
+		sections.push({ heading: `Done for you${where}`, lines })
+	}
+
+	if (summary.waiting > 0) {
+		const lines = [
+			summary.waiting === 1 ? '1 thing needs you' : `${summary.waiting} things need you`,
+		]
+		if (summary.topHeadline) lines.push(`Starting with: ${clip(summary.topHeadline, 90)}`)
+		if (summary.waitingElsewhere) lines.push(`${summary.waitingElsewhere} more in other workspaces`)
+		sections.push({ heading: `Waiting on you${where}`, lines })
+	}
+
+	if (nextStep) sections.push({ heading: 'Next step', lines: [nextStep] })
+	return sections
+}
+
 export function buildSummaryEmail(input: SummaryEmailInput): SummaryEmail {
-	const { summary, step, buttonUrl, stopUrl } = input
-	const intro = step === 'weekly' ? null : STEP_INTRO[step]
+	const { summary, step, buttonUrl, stopUrl, nextStep } = input
+	const intro = step === 'daily' ? null : STEP_INTRO[step]
 	const label = buttonLabel(summary)
+	const sections = summarySections(summary, nextStep)
 
 	const text = [
 		summary.title,
-		...(summary.body ? ['', summary.body] : []),
+		...sections.flatMap((s) => ['', s.heading, ...s.lines.map((l) => `- ${l}`)]),
 		...(intro ? ['', intro] : []),
 		'',
 		`${label}: ${buttonUrl}`,
@@ -68,8 +129,11 @@ export function buildSummaryEmail(input: SummaryEmailInput): SummaryEmail {
 		'<html>',
 		'<body style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, sans-serif; color: #111; max-width: 560px; margin: 0 auto; padding: 24px;">',
 		`<p style="font-size: 18px; font-weight: 600; margin: 0 0 8px;">${escapeHtml(summary.title)}</p>`,
-		...(summary.body ? [`<p style="margin: 0 0 16px;">${escapeHtml(summary.body)}</p>`] : []),
-		...(intro ? [`<p style="color: #444; margin: 0 0 16px;">${escapeHtml(intro)}</p>`] : []),
+		...sections.map(
+			(s) =>
+				`<p style="margin: 16px 0 4px; font-weight: 600;">${escapeHtml(s.heading)}</p><ul style="margin: 0; padding-left: 20px;">${s.lines.map((l) => `<li>${escapeHtml(l)}</li>`).join('')}</ul>`,
+		),
+		...(intro ? [`<p style="color: #444; margin: 16px 0;">${escapeHtml(intro)}</p>`] : []),
 		`<p><a href="${escapeHtml(buttonUrl)}" style="display: inline-block; background: #111; color: #fff; padding: 12px 20px; border-radius: 6px; text-decoration: none;">${escapeHtml(label)}</a></p>`,
 		`<p style="color: #666; font-size: 13px;"><a href="${escapeHtml(stopUrl)}" style="color: #666;">Stop these emails</a></p>`,
 		'</body>',

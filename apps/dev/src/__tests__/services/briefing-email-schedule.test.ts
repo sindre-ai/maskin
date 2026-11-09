@@ -37,39 +37,34 @@ describe('dueEmailStep', () => {
 
 	it('never skips a step for a late first tick and sends one a day at most', () => {
 		expect(dueEmailStep(row(), '2026-12-25', 47)).toEqual({ step: 1, nextCounter: 1 })
-		expect(
-			dueEmailStep(
-				row({ emailOnboardingStep: 1, emailLastSentOn: '2026-12-25' }),
-				'2026-12-25',
-				47,
-			),
-		).toBeNull()
-		expect(
-			dueEmailStep(
-				row({ emailOnboardingStep: 1, emailLastSentOn: '2026-12-25' }),
-				'2026-12-26',
-				48,
-			),
-		).toEqual({
-			step: 2,
-			nextCounter: 2,
-		})
+		const afterFirst = row({ emailOnboardingStep: 1, emailLastSentOn: '2026-12-25' })
+		expect(dueEmailStep(afterFirst, '2026-12-25', 47)).toBeNull()
+		// Step 2 keeps its spacing from the previous send, however old the account is.
+		expect(dueEmailStep(afterFirst, '2026-12-26', 48)).toBeNull()
+		expect(dueEmailStep(afterFirst, '2026-12-27', 49)).toEqual({ step: 2, nextCounter: 2 })
 	})
 
-	it('goes weekly after step 3, counting 7 days from the last send', () => {
+	it('goes daily after step 3: one a day, no wait', () => {
 		const done = row({ emailOnboardingStep: 3, emailLastSentOn: '2026-11-15' })
-		expect(dueEmailStep(done, '2026-11-21', 13)).toBeNull()
-		expect(dueEmailStep(done, '2026-11-22', 14)).toEqual({ step: 'weekly', nextCounter: 3 })
+		expect(dueEmailStep(done, '2026-11-15', 13)).toBeNull()
+		expect(dueEmailStep(done, '2026-11-16', 14)).toEqual({ step: 'daily', nextCounter: 3 })
+		expect(dueEmailStep(done, '2026-11-22', 20)).toEqual({ step: 'daily', nextCounter: 3 })
 	})
 
-	it('starts an active member with no saved choice at the weekly summary', () => {
-		expect(dueEmailStep(row({ emailDigestEnabled: null }), '2026-11-08', 400)).toEqual({
-			step: 'weekly',
-			nextCounter: 3,
-		})
+	it('starts an existing member with no saved choice at step 1, then the same spacing', () => {
+		const existing = row({ emailDigestEnabled: null })
+		expect(dueEmailStep(existing, '2026-11-08', 400)).toEqual({ step: 1, nextCounter: 1 })
+		// Once claimed the row has email on and step 1: step 2 two days later, step 3 four after that.
+		const afterFirst = row({ emailOnboardingStep: 1, emailLastSentOn: '2026-11-08' })
+		expect(dueEmailStep(afterFirst, '2026-11-09', 401)).toBeNull()
+		expect(dueEmailStep(afterFirst, '2026-11-10', 402)).toEqual({ step: 2, nextCounter: 2 })
+		const afterSecond = row({ emailOnboardingStep: 2, emailLastSentOn: '2026-11-10' })
+		expect(dueEmailStep(afterSecond, '2026-11-13', 405)).toBeNull()
+		expect(dueEmailStep(afterSecond, '2026-11-14', 406)).toEqual({ step: 3, nextCounter: 3 })
+		// Not twice on the same day.
 		expect(
 			dueEmailStep(
-				row({ emailDigestEnabled: null, emailLastSentOn: '2026-11-04' }),
+				row({ emailDigestEnabled: null, emailLastSentOn: '2026-11-08' }),
 				'2026-11-08',
 				400,
 			),
