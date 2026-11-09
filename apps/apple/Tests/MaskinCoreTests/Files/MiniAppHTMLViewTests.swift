@@ -29,15 +29,17 @@ struct MiniAppHTMLViewTests {
 		let html =
 			#"<!doctype html><!-- <head> --><script>var s = "<head>";</script><pre><head></pre><head lang="en"><title>x</title></head><body></body>"#
 		let page = MiniAppHTML.prepareView(html)
-		let policyAt = page.range(of: policy)!.lowerBound
-		#expect(page.range(of: #"<head lang="en">"#)!.upperBound == policyAt)
+		// Our two metas are the first thing after the real head tag.
+		#expect(page.range(of: #"<head lang="en">"#)!.upperBound == page.range(of: dnsOff)!.lowerBound)
+		#expect(page.range(of: dnsOff)!.upperBound == page.range(of: policy)!.lowerBound)
 	}
 
 	@Test("a > inside a quoted attribute does not end the tag")
 	func quotedAttribute() {
 		let page = MiniAppHTML.prepareView(#"<head data-x="a>b"><title>x</title></head>"#)
 		#expect(page.hasPrefix(#"<head data-x="a>b">"#))
-		#expect(page.range(of: policy)!.lowerBound == page.range(of: #"<head data-x="a>b">"#)!.upperBound)
+		#expect(page.range(of: dnsOff)!.lowerBound == page.range(of: #"<head data-x="a>b">"#)!.upperBound)
+		#expect(page.range(of: policy) != nil)
 	}
 
 	@Test("without a head the policy follows the doctype, else comes before body, else first")
