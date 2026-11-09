@@ -79134,7 +79134,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// File detail. With format=text on a text file: content_text, extracted, title, meta_description, json_ld and source_object_id instead of content and encoding.
+            /// File detail. With format=text on a text file: content_text, extracted, title, meta_description, note (when the page is drawn by script), json_ld and source_object_id instead of content and encoding.
             ///
             /// - Remark: Generated from `#/paths//api/files/{id}/get/responses/200`.
             ///

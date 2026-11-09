@@ -67694,7 +67694,7 @@
 				],
 				"responses": {
 					"200": {
-						"description": "File detail. With format=text on a text file: content_text, extracted, title, meta_description, json_ld and source_object_id instead of content and encoding.",
+						"description": "File detail. With format=text on a text file: content_text, extracted, title, meta_description, note (when the page is drawn by script), json_ld and source_object_id instead of content and encoding.",
 						"content": {
 							"application/json": {
 								"schema": {
