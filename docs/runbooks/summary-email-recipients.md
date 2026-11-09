@@ -14,6 +14,9 @@ Rule in words: a saved email choice always wins (on = receives, off = never). Wi
 created" rows. Everyone else is off. The query does not know about team accounts: remove them from
 the result by address when comparing (list in the spec).
 
+Existing members with no saved choice start at step 1, so on the first send day this count is also
+the most step 1 mails that can go out (fewer if someone has nothing to report).
+
 ## Count
 
 ```sql
