@@ -60,7 +60,10 @@ export function ConversationListRow({
 	const snippetAuthor = conversation.snippet_actor_id
 		? conversation.snippet_actor_id === self?.id
 			? 'You'
-			: conversation.snippet_actor_name
+			: // Named only where the title doesn't already: with three or more people in the chat.
+				conversation.participants.length > 2
+				? conversation.snippet_actor_name
+				: null
 		: null
 
 	return (

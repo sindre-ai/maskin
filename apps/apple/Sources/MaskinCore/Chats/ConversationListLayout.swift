@@ -38,6 +38,11 @@ extension ConversationGrouping {
 }
 
 extension ConversationSummary {
+	/// A preview names its author only where the title doesn't already: with three or more people
+	/// in the chat. In a 1:1 the other person is the title, so "Bookkeeper: …" just repeats it.
+	/// Your own lines still read "You: …" (a tick or "You:", handled by the row).
+	public var namesSnippetAuthor: Bool { participants.count > 2 }
+
 	/// The people and agents other than the signed-in person; everyone when that leaves no one.
 	public func others(excluding actorID: String?) -> [ChatParticipant] {
 		let rest = participants.filter { $0.id != actorID }

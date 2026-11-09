@@ -264,14 +264,23 @@ struct TeamLayoutTests {
 struct ConversationRowStatusTests {
 	private let convo = chatConvo("c", snippet: "Done. PR is **up**", participants: [chatMe, chatRelay])
 
-	@Test("the plain preview is led by who wrote it")
+	@Test("a group preview is led by who wrote it")
 	func plain() {
-		var c = convo
+		var c = chatConvo("c", snippet: "Done. PR is **up**", participants: [chatMe, chatRelay, chatSam])
 		c.snippetActorName = "Relay"
 		let status = ConversationRowStatus.make(conversation: c)
 		#expect(status.prefix == nil)
 		#expect(status.preview == "Relay: Done. PR is up")
 		#expect(!status.isDraft)
+	}
+
+	@Test("a one-to-one preview does not repeat the title's name")
+	func oneToOneHasNoLead() {
+		var c = convo
+		c.snippetActorName = "Relay"
+		let status = ConversationRowStatus.make(conversation: c)
+		#expect(status.preview == "Done. PR is up")
+		#expect(status.previewPieces == nil)
 	}
 
 	@Test("typing replaces everything, a draft beats working, working beats the tick")
@@ -446,7 +455,8 @@ struct WorkingTextTests {
 
 @Suite("ConversationRowStatus links") struct ConversationRowStatusLinkTests {
 	private func convo(_ snippet: String, who: String? = "Developer") -> ConversationSummary {
-		ConversationSummary(id: "c", title: "t", snippet: snippet, snippetActorName: who)
+		ConversationSummary(
+			id: "c", title: "t", snippet: snippet, snippetActorName: who, participants: [chatMe, chatRelay, chatSam])
 	}
 
 	@Test("the author lead is unchanged and a bare address reads link in a muted run")

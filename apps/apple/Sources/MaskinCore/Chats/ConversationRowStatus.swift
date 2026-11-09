@@ -92,7 +92,7 @@ public struct ConversationRowStatus: Equatable, Sendable {
 			lead = "You: "
 		} else if let tick {
 			prefix = .tick(tick)
-		} else if !text.isEmpty, let who = conversation.snippetActorName, !who.isEmpty {
+		} else if !text.isEmpty, conversation.namesSnippetAuthor, let who = conversation.snippetActorName, !who.isEmpty {
 			lead = "\(who): "
 		}
 		var previewPieces: [ChatPreviewText.Piece]?

@@ -580,7 +580,8 @@ struct TeamConversationRow: View {
 		if let draft, !draft.isEmpty { return Text(verbatim: "Draft: \(draft)") }
 		let pieces = conversation.snippet.map(ChatPreviewText.linePieces) ?? []
 		guard !pieces.isEmpty else { return Text(ConversationRowStatus.noMessages) }
-		let lead = conversation.snippetActorName.flatMap { who in who.isEmpty ? nil : "\(who): " }
+		let lead = conversation.namesSnippetAuthor
+			? conversation.snippetActorName.flatMap { who in who.isEmpty ? nil : "\(who): " } : nil
 		return ChatPreviewLine.text("", pieces: (lead.map { [ChatPreviewText.Piece($0)] } ?? []) + pieces)
 	}
 }
