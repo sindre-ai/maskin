@@ -40,12 +40,21 @@ test("refuses a registration address that is not https or not the vendor's own",
 	assert.throws(() =>
 		checkMetadata(URL_, { ...META, registration_endpoint: 'https://evil.test/register' }),
 	)
-	assert.throws(() => checkMetadata(URL_, { ...META, issuer: 'https://other.example.com' }))
+	assert.throws(() => checkMetadata(URL_, { ...META, issuer: 'https://other.test' }))
+	// The issuer may be the vendor's main host (Airtable: mcp.airtable.com publishes airtable.com).
+	assert.equal(
+		checkMetadata(URL_, { ...META, issuer: 'https://example.com/oauth2/v1' }),
+		'https://mcp.example.com/register',
+	)
 	assert.throws(() => checkMetadata('http://mcp.example.com/x', META))
 })
 
 test('needs a vendor that gives a client a secret', () => {
 	assert.equal(chooseAuthMethod(META), 'client_secret_post')
+	assert.equal(
+		chooseAuthMethod({ token_endpoint_auth_methods_supported: ['client_secret_basic', 'none'] }),
+		'client_secret_basic',
+	)
 	assert.throws(() => chooseAuthMethod({ token_endpoint_auth_methods_supported: ['none'] }))
 })
 

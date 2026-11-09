@@ -1,5 +1,6 @@
 import type { ResolvedProvider } from './types'
 
+import { config as airtableConfig } from './providers/airtable/config'
 import { config as customMcpConfig } from './providers/custom-mcp/config'
 import { githubAuth } from './providers/github/auth'
 // Import provider configs
@@ -172,6 +173,10 @@ providers.set('miro', {
 
 providers.set('notion', {
 	config: notionConfig,
+})
+
+providers.set('airtable', {
+	config: airtableConfig,
 })
 
 // resend — bring-your-own integration for customer-domain email send+receive

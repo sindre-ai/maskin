@@ -151,6 +151,7 @@ describe('Integrations Routes', () => {
 					.map((p) => p.name)
 					.sort(),
 			).toEqual([
+				'airtable',
 				'github',
 				'gmail',
 				'google-calendar',
