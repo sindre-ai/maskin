@@ -1,4 +1,4 @@
-import type { Database } from '@maskin/db'
+import type { Database, Transaction } from '@maskin/db'
 import { awaitingVies, workspaceCreditLedger, workspaces } from '@maskin/db/schema'
 import {
 	type AUTO_TOP_UP_FAILURE_REASONS,
@@ -260,7 +260,13 @@ async function charge(p: {
 				automatic_tax: { enabled: true },
 				default_payment_method: paymentMethod,
 				pending_invoice_items_behavior: 'exclude',
-				metadata: { workspace_id: workspaceId, kind: AUTO_TOP_UP_INVOICE_KIND, claim: token },
+				metadata: {
+					workspace_id: workspaceId,
+					kind: AUTO_TOP_UP_INVOICE_KIND,
+					claim: token,
+					// The paid-invoice webhook credits exactly this, even if the rule is edited later.
+					amount_cents: String(p.amountCents),
+				},
 			},
 			{ idempotencyKey: key('invoice') },
 		)
@@ -394,59 +400,85 @@ async function creditCharged(
 		nowMs: number
 	},
 ) {
-	await db.transaction(async (tx) => {
-		const [row] = await tx
-			.select({ settings: workspaces.settings })
-			.from(workspaces)
-			.where(eq(workspaces.id, p.workspaceId))
-			.for('update')
-			.limit(1)
-		if (!row) return
-		const current = Number(
-			(row.settings as { billing?: { credit_balance_cents?: number } } | null)?.billing
-				?.credit_balance_cents ?? 0,
-		)
-		const balanceAfter = Math.max(0, Math.floor(current)) + p.amountCents
-
-		// The invoice id goes in the checkout-session column: it is the existing
-		// idempotency key for top-up rows and an invoice id never collides with a
-		// checkout session id.
-		const claimed = await tx
-			.insert(workspaceCreditLedger)
-			.values({
-				workspaceId: p.workspaceId,
-				type: 'topup',
-				amountCents: p.amountCents,
-				balanceAfterCents: balanceAfter,
-				stripeCheckoutSessionId: p.invoiceId,
-			})
-			.onConflictDoNothing({
-				target: [workspaceCreditLedger.stripeCheckoutSessionId],
-				where: sql`${workspaceCreditLedger.type} = 'topup' AND ${workspaceCreditLedger.stripeCheckoutSessionId} IS NOT NULL`,
-			})
-			.returning({ id: workspaceCreditLedger.id })
-		if (!claimed[0]?.id) return
-
-		await tx
-			.update(workspaces)
-			.set({
-				settings: sql`jsonb_set(jsonb_set(${workspaces.settings}, '{billing,credit_balance_cents}', to_jsonb(${balanceAfter}::bigint), true), '{auto_top_up}', ((${workspaces.settings}->'auto_top_up') - 'in_flight') || jsonb_build_object('last_charged_at', ${p.nowMs}::bigint), true)`,
-				updatedAt: new Date(),
-			})
-			.where(eq(workspaces.id, p.workspaceId))
-
-		await recordEvent(tx, {
-			workspaceId: p.workspaceId,
-			actorId: p.actorId,
-			action: AUTO_TOP_UP_EVENT.charged,
-			entityType: 'workspace',
-			entityId: p.workspaceId,
-			data: {
-				amount_cents: p.amountCents,
-				balance_after_cents: balanceAfter,
-				stripe_invoice_id: p.invoiceId,
-			},
-		})
-	})
+	await db.transaction((tx) => creditPaidAutoTopUp(tx, p))
 	evictBillingUsage(p.workspaceId)
+}
+
+/**
+ * Credits one paid auto top-up invoice, once. Called by the charge path right
+ * after the card is charged and by the paid-invoice webhook, so a process that
+ * died between the two still ends with the credit. Whichever runs second finds
+ * the ledger row and does nothing. Returns whether this call credited.
+ *
+ * The webhook calls it inside its own transaction, which already holds the
+ * workspace row lock; the lock below is then a no-op re-take.
+ */
+export async function creditPaidAutoTopUp(
+	tx: Transaction,
+	p: {
+		workspaceId: string
+		actorId: string
+		/** The claim that started this charge. The in-flight marker is cleared only if it is still this one. */
+		token: string | null
+		invoiceId: string
+		amountCents: number
+		nowMs: number
+	},
+): Promise<boolean> {
+	const [row] = await tx
+		.select({ settings: workspaces.settings })
+		.from(workspaces)
+		.where(eq(workspaces.id, p.workspaceId))
+		.for('update')
+		.limit(1)
+	if (!row) return false
+	const current = Number(
+		(row.settings as { billing?: { credit_balance_cents?: number } } | null)?.billing
+			?.credit_balance_cents ?? 0,
+	)
+	const balanceAfter = Math.max(0, Math.floor(current)) + p.amountCents
+
+	// The invoice id goes in the checkout-session column: it is the existing
+	// idempotency key for top-up rows and an invoice id never collides with a
+	// checkout session id.
+	const claimed = await tx
+		.insert(workspaceCreditLedger)
+		.values({
+			workspaceId: p.workspaceId,
+			type: 'topup',
+			amountCents: p.amountCents,
+			balanceAfterCents: balanceAfter,
+			stripeCheckoutSessionId: p.invoiceId,
+		})
+		.onConflictDoNothing({
+			target: [workspaceCreditLedger.stripeCheckoutSessionId],
+			where: sql`${workspaceCreditLedger.type} = 'topup' AND ${workspaceCreditLedger.stripeCheckoutSessionId} IS NOT NULL`,
+		})
+		.returning({ id: workspaceCreditLedger.id })
+	if (!claimed[0]?.id) return false
+
+	// coalesce: the rule may have been removed since the charge; a null here
+	// would turn the whole settings blob into NULL.
+	const rule = sql`coalesce(${workspaces.settings}->'auto_top_up', '{}'::jsonb)`
+	await tx
+		.update(workspaces)
+		.set({
+			settings: sql`jsonb_set(jsonb_set(${workspaces.settings}, '{billing,credit_balance_cents}', to_jsonb(${balanceAfter}::bigint), true), '{auto_top_up}', (case when ${p.token}::text is not null and (${rule}->'in_flight'->>'token') = ${p.token}::text then ${rule} - 'in_flight' else ${rule} end) || jsonb_build_object('last_charged_at', ${p.nowMs}::bigint), true)`,
+			updatedAt: new Date(),
+		})
+		.where(eq(workspaces.id, p.workspaceId))
+
+	await recordEvent(tx, {
+		workspaceId: p.workspaceId,
+		actorId: p.actorId,
+		action: AUTO_TOP_UP_EVENT.charged,
+		entityType: 'workspace',
+		entityId: p.workspaceId,
+		data: {
+			amount_cents: p.amountCents,
+			balance_after_cents: balanceAfter,
+			stripe_invoice_id: p.invoiceId,
+		},
+	})
+	return true
 }

@@ -44,6 +44,12 @@ const fakeStripe = {
 		create: async (params: Record<string, unknown>) => {
 			calls.push('invoices.create')
 			expect(params.automatic_tax).toEqual({ enabled: true })
+			// The paid-invoice webhook needs these to credit a charge the process never credited.
+			expect(params.metadata).toMatchObject({
+				workspace_id: currentWorkspaceId,
+				kind: 'auto_top_up',
+				amount_cents: '5000',
+			})
 			return { id: 'in_test_1' }
 		},
 		finalizeInvoice: async () => {
@@ -89,10 +95,14 @@ const fakeStripe = {
 vi.mock('../../lib/stripe', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../lib/stripe')>()),
 	getStripeClient: () => fakeStripe,
+	// Signature checking is Stripe's code, not what the webhook tests are about:
+	// the raw body is the event.
+	verifyStripeWebhook: (_stripe: unknown, raw: string) => JSON.parse(raw),
 }))
 
 const { maybeAutoTopUp } = await import('../../lib/auto-top-up')
 const { default: billingRoutes } = await import('../../routes/billing')
+const { default: stripeWebhookRoutes } = await import('../../routes/stripe-webhook')
 
 const PERIOD_START_SEC = 1_700_000_000
 const CAP_CENTS = 1_000
@@ -355,6 +365,123 @@ describe('auto top-up (Integration)', () => {
 		// The largest amount the rule accepts earns no volume bonus.
 		expect(creditedAmountUsdMinor(24_900, 'usd')).toBe(24_900)
 		expect(creditedAmountUsdMinor(86_900, 'dkk')).toBeLessThan(25_000)
+	})
+
+	describe('paid-invoice webhook (charged, but the process died before the credit)', () => {
+		type Env = { Variables: { db: Database } }
+		let eventSeq = 0
+		function webhookApp() {
+			const app = new OpenAPIHono<Env>()
+			app.use('*', async (c, next) => {
+				c.set('db', db)
+				await next()
+			})
+			app.route('/api/webhooks/stripe', stripeWebhookRoutes as never)
+			return app
+		}
+		async function deliverPaidInvoice(
+			metadata: Record<string, string>,
+			invoiceId = 'in_crashed_1',
+		) {
+			eventSeq += 1
+			const body = JSON.stringify({
+				id: `evt_paid_${workspaceId}_${eventSeq}`,
+				type: 'invoice.paid',
+				data: {
+					object: {
+						id: invoiceId,
+						customer: 'cus_test',
+						period_start: 111,
+						period_end: 222,
+						metadata: { workspace_id: workspaceId, kind: 'auto_top_up', ...metadata },
+					},
+				},
+			})
+			return webhookApp().request('/api/webhooks/stripe', {
+				method: 'POST',
+				headers: { 'stripe-signature': 't=1,v1=x', 'content-type': 'application/json' },
+				body,
+			})
+		}
+		// The state a crash leaves behind: card charged, claim still held, balance not credited.
+		const crashed = { token: 'claim-1', at: Date.now() }
+
+		it('credits the balance once, clears the claim, and leaves the plan alone', async () => {
+			await seed(400, { ...RULE, in_flight: crashed })
+			const res = await deliverPaidInvoice({ claim: 'claim-1', amount_cents: '5000' })
+			expect(res.status).toBe(200)
+
+			const settings = await readSettings()
+			expect(settings.billing.credit_balance_cents).toBe(5_400)
+			expect(settings.auto_top_up.in_flight).toBeUndefined()
+			expect(settings.auto_top_up.last_charged_at).toBeTypeOf('number')
+			expect(settings.auto_top_up.status ?? 'ok').toBe('ok')
+			// A top-up invoice is not a plan invoice: period and status stay as they were.
+			expect(settings.billing).toMatchObject({
+				plan: 'pro',
+				status: 'active',
+				period_start: PERIOD_START_SEC,
+			})
+			expect(settings.an_unmodelled_future_key).toEqual({ keep: 'me' })
+
+			const rows = await topUpRows()
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.stripeCheckoutSessionId).toBe('in_crashed_1')
+			expect(await eventActions()).toContain('workspace_auto_top_up_charged')
+
+			// The next debit does not charge the card again: the balance is back over the threshold.
+			await maybeAutoTopUp({ db, workspaceId, actorId, now: Date.now() + 11 * 60_000 })
+			expect(calls).toEqual([])
+		})
+
+		it('credits once when Stripe delivers the same paid invoice in a second event', async () => {
+			await seed(400, { ...RULE, in_flight: crashed })
+			await deliverPaidInvoice({ claim: 'claim-1', amount_cents: '5000' })
+			await deliverPaidInvoice({ claim: 'claim-1', amount_cents: '5000' })
+
+			expect((await readSettings()).billing.credit_balance_cents).toBe(5_400)
+			expect(await topUpRows()).toHaveLength(1)
+		})
+
+		it('does nothing when the charge path already credited the invoice', async () => {
+			await seed(400)
+			await maybeAutoTopUp({ db, workspaceId, actorId })
+			expect((await readSettings()).billing.credit_balance_cents).toBe(5_400)
+
+			await deliverPaidInvoice({ claim: 'whatever', amount_cents: '5000' }, 'in_test_1')
+
+			expect((await readSettings()).billing.credit_balance_cents).toBe(5_400)
+			expect(await topUpRows()).toHaveLength(1)
+		})
+
+		it('leaves a newer claim in place when the paid invoice belongs to an older one', async () => {
+			await seed(400, { ...RULE, in_flight: { token: 'claim-2', at: Date.now() } })
+			await deliverPaidInvoice({ claim: 'claim-1', amount_cents: '5000' })
+
+			const settings = await readSettings()
+			expect(settings.billing.credit_balance_cents).toBe(5_400)
+			expect(settings.auto_top_up.in_flight).toMatchObject({ token: 'claim-2' })
+		})
+
+		it('credits a workspace whose rule has since been removed without wiping its settings', async () => {
+			await seed(400, null)
+			await deliverPaidInvoice({ claim: 'claim-1', amount_cents: '5000' })
+
+			const settings = await readSettings()
+			expect(settings.billing.credit_balance_cents).toBe(5_400)
+			expect(settings.an_unmodelled_future_key).toEqual({ keep: 'me' })
+		})
+
+		it('credits nothing, and does not touch the plan period, when the amount is missing', async () => {
+			await seed(400, { ...RULE, in_flight: crashed })
+			const res = await deliverPaidInvoice({ claim: 'claim-1' })
+			expect(res.status).toBe(200)
+
+			const settings = await readSettings()
+			expect(settings.billing.credit_balance_cents).toBe(400)
+			expect(settings.billing).toMatchObject({ period_start: PERIOD_START_SEC })
+			expect(await topUpRows()).toHaveLength(0)
+		})
 	})
 
 	describe('routes', () => {

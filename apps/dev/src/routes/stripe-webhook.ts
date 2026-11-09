@@ -1,5 +1,5 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
-import type { Database } from '@maskin/db'
+import type { Database, Transaction } from '@maskin/db'
 import {
 	actors,
 	webhookDeliveries,
@@ -10,6 +10,8 @@ import {
 import { workspaceSettingsSchema } from '@maskin/shared'
 import { and, eq, sql } from 'drizzle-orm'
 import type Stripe from 'stripe'
+import { AUTO_TOP_UP_INVOICE_KIND, creditPaidAutoTopUp } from '../lib/auto-top-up'
+import { evictBillingUsage } from '../lib/billing-usage-cache'
 import { isEnterprise } from '../lib/enterprise'
 import { createApiError } from '../lib/errors'
 
@@ -287,6 +289,7 @@ async function applyEvent(
 	// only the earlier writer touched. A row lock inside a transaction
 	// serializes them on the workspace row; a single delivery still completes
 	// in one round-trip per query so the lock window stays bounded.
+	let autoTopUpCredited = false
 	await db.transaction(async (tx) => {
 		const [workspace] = await tx
 			.select({
@@ -562,6 +565,15 @@ async function applyEvent(
 			}
 			case 'invoice.paid': {
 				const invoice = event.data.object as Stripe.Invoice
+				if (invoice.metadata?.kind === AUTO_TOP_UP_INVOICE_KIND) {
+					// An auto top-up charge, not a plan invoice: it must never touch
+					// status or period_*. The charge path credits it right after paying;
+					// this is the safety net for a process that died in between. The
+					// credit is written with key writes inside this transaction, so the
+					// whole-settings save below must not run after it.
+					autoTopUpCredited = await creditPaidAutoTopUpInvoice(tx, workspaceId, invoice)
+					return
+				}
 				const periodStart = invoice.period_start ?? invoice.lines?.data?.[0]?.period?.start
 				const periodEnd = invoice.period_end ?? invoice.lines?.data?.[0]?.period?.end
 				planMutated = true
@@ -618,6 +630,44 @@ async function applyEvent(
 			})
 		}
 	})
+	// After the commit, so a usage read in between cannot re-cache the old balance.
+	if (autoTopUpCredited) evictBillingUsage(workspaceId)
+}
+
+async function creditPaidAutoTopUpInvoice(
+	tx: Transaction,
+	workspaceId: string,
+	invoice: Stripe.Invoice,
+): Promise<boolean> {
+	const amountCents = Number(invoice.metadata?.amount_cents)
+	if (
+		invoice.metadata?.workspace_id !== workspaceId ||
+		!Number.isSafeInteger(amountCents) ||
+		amountCents <= 0
+	) {
+		// Nothing safe to credit. Acknowledge: a retry would read the same invoice.
+		logger.error('Auto top-up invoice paid without a usable workspace or amount', {
+			invoiceId: invoice.id,
+			workspaceId,
+		})
+		return false
+	}
+	const credited = await creditPaidAutoTopUp(tx, {
+		workspaceId,
+		actorId: await getOrCreateStripeSystemActor(tx, workspaceId),
+		token: invoice.metadata?.claim ?? null,
+		invoiceId: invoice.id as string,
+		amountCents,
+		nowMs: Date.now(),
+	})
+	if (credited) {
+		logger.warn('Auto top-up credited from the paid-invoice event', {
+			invoiceId: invoice.id,
+			workspaceId,
+			amountCents,
+		})
+	}
+	return credited
 }
 
 /**
