@@ -199,3 +199,25 @@ struct PhraseTranscriptionQueueTests {
 		#expect(sink.texts.isEmpty)
 	}
 }
+
+@Suite("DictationFallback")
+struct DictationFallbackTests {
+	@Test func aServerStatusIsNamedInThePlainNote() {
+		let note = DictationFallback.failed(BackendDictationError(status: 503)).note
+		#expect(note == "Server dictation unavailable (the speech service isn't answering, 503), using the phone.")
+		#expect(DictationFallback.failed(BackendDictationError(status: 429)).note.contains("busy"))
+		#expect(DictationFallback.failed(BackendDictationError(status: 418)).note.contains("418"))
+	}
+
+	@Test func aFailureWithoutAnAnswerSaysSo() {
+		let offline = DictationFallback.failed(URLError(.notConnectedToInternet))
+		#expect(offline.note.contains("no answer from the server"))
+		#expect(offline.detail.contains("NSURLErrorDomain"))
+	}
+
+	@Test func theLogDetailKeepsTheStatusAndNoText() {
+		#expect(DictationFallback.failed(BackendDictationError(status: 402)).detail == "request failed: HTTP 402")
+		#expect(DictationFallback.engineChanged.detail == "audio engine configuration changed")
+		#expect(DictationFallback.microphoneStart("no input").note.contains("microphone"))
+	}
+}
