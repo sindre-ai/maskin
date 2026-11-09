@@ -4,6 +4,7 @@ import {
 	countStalledQueries,
 	createDb,
 	createInFlight,
+	describeInFlight,
 	timeQueries,
 } from '@maskin/db'
 import { sql } from 'drizzle-orm'
@@ -115,6 +116,49 @@ describe('timeQueries pool diagnostics', () => {
 		})
 		for (let i = 0; i < 5; i++) await client.unsafe()
 		expect(saturated).toEqual([])
+	})
+})
+
+describe('timeQueries queued-query deadline', () => {
+	it('gives a query sent into a full pool the shorter deadline', async () => {
+		const client = timeQueries({ unsafe: () => fakeQuery(5_000) }, undefined, {
+			queryTimeoutMs: 5_000,
+			queuedQueryTimeoutMs: 30,
+			saturationAt: 2,
+		})
+		const first = client.unsafe('select 1')
+		const second = client.unsafe('select 2')
+		const third = client.unsafe('select 3')
+		await expect(third).rejects.toBeInstanceOf(QueryTimeoutError)
+		// The two that fit in the pool keep the full deadline and are still waiting.
+		const raced = await Promise.race([first, second, Promise.resolve('pending')])
+		expect(raced).toBe('pending')
+	})
+
+	it('never raises a deadline above the one for the pool as a whole', async () => {
+		const client = timeQueries({ unsafe: () => fakeQuery(5_000) }, undefined, {
+			queryTimeoutMs: 30,
+			queuedQueryTimeoutMs: 5_000,
+			saturationAt: 1,
+		})
+		void client.unsafe('select 1').then(undefined, () => {})
+		await expect(client.unsafe('select 2')).rejects.toBeInstanceOf(QueryTimeoutError)
+	})
+})
+
+describe('describeInFlight', () => {
+	it('groups unanswered queries by SQL, most common first, with the oldest wait', async () => {
+		const inFlight = createInFlight()
+		const client = timeQueries({ unsafe: () => fakeQuery(5_000) }, undefined, { inFlight })
+		for (const text of ['select a', 'select b', 'select a']) {
+			void client.unsafe(text).then(undefined, () => {})
+		}
+		const described = describeInFlight(inFlight)
+		expect(described.map((d) => [d.sql, d.count])).toEqual([
+			['select a', 2],
+			['select b', 1],
+		])
+		expect(described[0]?.oldestMs).toBeGreaterThanOrEqual(0)
 	})
 })
 
