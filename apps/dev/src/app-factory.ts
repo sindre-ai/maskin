@@ -26,6 +26,7 @@ import {
 	seatCapErrorBody,
 } from './lib/workspace-capacity'
 import { createIdempotencyMiddleware } from './middleware/idempotency'
+import { listReadCache } from './middleware/list-read-cache'
 import accountRoutes from './routes/account'
 import actorAvatarRoutes from './routes/actor-avatar'
 import actorsRoutes from './routes/actors'
@@ -89,6 +90,7 @@ import objectsRoutes from './routes/objects'
 import publicBetStrategistRoutes from './routes/public-bet-strategist'
 import publicLandingEventsRoutes from './routes/public-landing-events'
 import relationshipsRoutes from './routes/relationships'
+import savedViewsRoutes from './routes/saved-views'
 import searchRoutes from './routes/search'
 import sendPermissionsRoutes from './routes/send-permissions'
 import sessionsRoutes from './routes/sessions'
@@ -436,6 +438,9 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 
 	app.use('/api/*', createIdempotencyMiddleware(db))
 
+	// After auth, so the cache is only read for a proven member. Per-person, a few seconds long.
+	app.use('/api/*', listReadCache())
+
 	app.route('/api/objects', objectApprovalsRoutes)
 	app.route('/api/objects', objectsRoutes)
 	app.route('/api/briefing', briefingRoutes)
@@ -537,6 +542,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/oauth', oauthRoutes)
 	app.route('/api/telemetry', telemetryRoutes)
 	app.route('/api/user-display-settings', userDisplaySettingsRoutes)
+	app.route('/api/saved-views', savedViewsRoutes)
 	app.route('/api/feature-flags', featureFlagsRoutes)
 	app.route('/api/desktop', desktopRoutes)
 	// app.route('/api/desktop/teach', desktopTeachRoutes)

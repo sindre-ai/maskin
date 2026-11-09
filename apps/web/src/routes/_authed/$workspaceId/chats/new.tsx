@@ -59,12 +59,6 @@ interface Recipient {
 	type: string
 }
 
-function footNote(count: number) {
-	if (count > 1)
-		return `This starts a group chat with ${count} people and agents. Everyone sees everything.`
-	return 'Pick one agent for a direct chat, or several for a group.'
-}
-
 function GroupLabel({ children }: { children: string }) {
 	return <h2 className="px-1.5 pb-2 text-[13px] font-medium text-muted-foreground">{children}</h2>
 }
@@ -360,7 +354,6 @@ function NewChatRoute() {
 				</div>
 			</section>
 
-			<p className="mt-3 px-1.5 text-[13px] text-muted-foreground">{footNote(picked.length)}</p>
 			<FormError error={error ?? undefined} className="px-1.5" />
 
 			<div className="mt-6">

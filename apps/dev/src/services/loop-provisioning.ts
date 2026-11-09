@@ -9,7 +9,7 @@ import {
 	workspaceSkills,
 } from '@maskin/db/schema'
 import { and, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm'
-import { dropLegacyBrowserFlag } from '../lib/marketplace-loops/loop-snapshot'
+import { LLM_CONFIG_ALLOWLIST, dropLegacyBrowserFlag } from '../lib/marketplace-loops/loop-snapshot'
 
 /**
  * Shared provisioning helpers for the marketplace. Both the install endpoint
@@ -394,7 +394,7 @@ export function installMetadata(
 	return {
 		installed_loop_id: installId,
 		source_item_id: sourceItemId,
-		snapshot,
+		snapshot: sanitizeSnapshotLlmConfig(snapshot),
 	}
 }
 
@@ -438,6 +438,38 @@ function walk(value: unknown, sourceToLocal: Map<string, string>): unknown {
 	return value
 }
 
+// Snapshots published before the llmConfig allowlist may still hold the
+// publisher's apiKey or endpoint overrides. Keep only the allowlisted keys, so
+// an install never copies them into the installer's workspace.
+function pickLlmConfig(llmConfig: unknown): Record<string, unknown> | null {
+	if (llmConfig === null || typeof llmConfig !== 'object' || Array.isArray(llmConfig)) return null
+	const source = llmConfig as Record<string, unknown>
+	const picked: Record<string, unknown> = {}
+	for (const key of LLM_CONFIG_ALLOWLIST) {
+		if (key in source) picked[key] = source[key]
+	}
+	return picked
+}
+
+/**
+ * Copy of a snapshot with its llmConfig (either spelling) cut down to the
+ * allowlisted keys, so the snapshot stored on an installed row never holds a
+ * publisher's key either. Returns the snapshot itself when it has no llmConfig.
+ */
+export function sanitizeSnapshotLlmConfig(
+	snapshot: Record<string, unknown>,
+): Record<string, unknown> {
+	const out = { ...snapshot }
+	let changed = false
+	for (const key of ['llmConfig', 'llm_config']) {
+		if (key in out) {
+			out[key] = pickLlmConfig(out[key])
+			changed = true
+		}
+	}
+	return changed ? out : snapshot
+}
+
 /**
  * Inserts (used by the install endpoint and the cron's "add" branch when
  * re-provisioning a locked install picks up a marketplace item that isn't yet
@@ -461,10 +493,7 @@ export function buildActorInsert(
 		description: (snapshot.description as string) ?? null,
 		systemPrompt: (snapshot.systemPrompt as string) ?? (snapshot.system_prompt as string) ?? null,
 		llmProvider: (snapshot.llmProvider as string) ?? (snapshot.llm_provider as string) ?? null,
-		llmConfig:
-			(snapshot.llmConfig as Record<string, unknown>) ??
-			(snapshot.llm_config as Record<string, unknown>) ??
-			null,
+		llmConfig: pickLlmConfig(snapshot.llmConfig ?? snapshot.llm_config),
 		// Old snapshots may carry a `tools.browser` flag from the browser-sidecar
 		// era; it is meaningless now, so it does not reach the installed actor.
 		tools: (dropLegacyBrowserFlag(snapshot.tools) as Record<string, unknown>) ?? null,

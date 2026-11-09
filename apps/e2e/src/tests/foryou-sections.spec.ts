@@ -102,16 +102,20 @@ async function assertNoHorizontalOverflow(page: Page, label: string) {
 test.describe('For You sections', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
 		for (const scheme of ['light', 'dark'] as const) {
-			test(`headings with counts, in order @ ${vp.label} ${scheme}`, async ({ page, account }) => {
+			test(`headings with no count, in order @ ${vp.label} ${scheme}`, async ({
+				page,
+				account,
+			}) => {
 				await page.setViewportSize({ width: vp.width, height: vp.height })
 				await page.emulateMedia({ colorScheme: scheme })
 				await mockFeed(page, account.workspaceId)
 				await page.goto(`/${account.workspaceId}`)
 
-				const decide = page.getByRole('heading', { name: /^Decisions\s*2$/ })
-				const updates = page.getByRole('heading', { name: /^Updates for you\s*3$/ })
+				const decide = page.getByRole('heading', { name: 'Decisions', exact: true })
+				const updates = page.getByRole('heading', { name: 'Updates for you', exact: true })
 				await expect(decide).toBeVisible()
 				await expect(updates).toBeVisible()
+				await expect(page.getByTestId('foryou-section-count')).toHaveCount(0)
 				const decideBox = await decide.boundingBox()
 				const updatesBox = await updates.boundingBox()
 				expect(decideBox?.y ?? 0).toBeLessThan(updatesBox?.y ?? 0)
@@ -136,13 +140,13 @@ test.describe('For You sections', () => {
 		await mockFeed(page, account.workspaceId)
 		await page.goto(`/${account.workspaceId}`)
 
-		await expect(page.getByRole('heading', { name: /^Updates for you\s*3$/ })).toBeVisible()
+		await expect(page.getByRole('heading', { name: 'Updates for you', exact: true })).toBeVisible()
 		await page.getByRole('button', { name: 'Mark all read' }).click()
 		await expect(page.getByRole('heading', { name: /Updates for you/ })).toHaveCount(0)
-		await expect(page.getByRole('heading', { name: /^Decisions\s*2$/ })).toBeVisible()
+		await expect(page.getByRole('heading', { name: 'Decisions', exact: true })).toBeVisible()
 
 		await page.reload()
-		await expect(page.getByRole('heading', { name: /^Decisions\s*2$/ })).toBeVisible()
+		await expect(page.getByRole('heading', { name: 'Decisions', exact: true })).toBeVisible()
 		await expect(page.getByRole('heading', { name: /Updates for you/ })).toHaveCount(0)
 	})
 
@@ -156,18 +160,18 @@ test.describe('For You sections', () => {
 		])
 		await page.goto(`/${account.workspaceId}`)
 
-		await expect(page.getByRole('heading', { name: /^Decisions\s*1$/ })).toBeVisible()
-		await expect(page.getByRole('heading', { name: /^Updates for you\s*1$/ })).toBeVisible()
+		await expect(page.getByRole('heading', { name: 'Decisions', exact: true })).toBeVisible()
+		await expect(page.getByRole('heading', { name: 'Updates for you', exact: true })).toBeVisible()
 		await expect(page.getByTestId('foryou-greeting')).toContainText(
 			'One decision is waiting on you',
 		)
 
 		await page.getByRole('button', { name: 'Mark all read' }).click()
 		await expect(page.getByRole('heading', { name: /Updates for you/ })).toHaveCount(0)
-		await expect(page.getByRole('heading', { name: /^Decisions\s*1$/ })).toBeVisible()
+		await expect(page.getByRole('heading', { name: 'Decisions', exact: true })).toBeVisible()
 
 		// Alt+U never takes the open question either.
 		await page.keyboard.press('Alt+u')
-		await expect(page.getByRole('heading', { name: /^Decisions\s*1$/ })).toBeVisible()
+		await expect(page.getByRole('heading', { name: 'Decisions', exact: true })).toBeVisible()
 	})
 })

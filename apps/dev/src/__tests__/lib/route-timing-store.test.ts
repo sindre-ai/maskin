@@ -5,7 +5,13 @@ vi.mock('../../lib/logger', () => ({
 	logger: { info: vi.fn(), warn, error: vi.fn(), debug: vi.fn() },
 }))
 
-import { flushRouteTiming, requestTiming, setRouteTimingSink } from '../../lib/request-timing'
+import {
+	flushRouteTiming,
+	parseClientBuild,
+	requestTiming,
+	resolveClientSourceLabel,
+	setRouteTimingSink,
+} from '../../lib/request-timing'
 import { createRouteTimingStore, currentBuild } from '../../lib/route-timing-store'
 
 function fakeDb(opts: { failInsert?: boolean; deleted?: number[] } = {}) {
@@ -35,6 +41,8 @@ const row = {
 	method: 'GET',
 	route: '/api/objects/:id',
 	stream: false,
+	clientSource: 'ui' as const,
+	clientBuild: '',
 	requests: 3,
 	slowRequests: 1,
 	errors5xx: 0,
@@ -63,6 +71,8 @@ describe('createRouteTimingStore', () => {
 			method: 'GET',
 			route: '/api/objects/:id',
 			stream: false,
+			clientSource: 'ui',
+			clientBuild: '',
 			requests: 3,
 			slowRequests: 1,
 			errors5xx: 0,
@@ -70,6 +80,14 @@ describe('createRouteTimingStore', () => {
 			dbMsSum: 80,
 			dbQueries: 6,
 		})
+	})
+
+	it('writes the app build next to the server build', async () => {
+		const { db, values } = fakeDb()
+		createRouteTimingStore(db, 'abc123')([{ ...row, clientBuild: '2611081015' }])
+		await settle()
+		const [written] = values.mock.calls[0][0]
+		expect(written).toMatchObject({ build: 'abc123', clientBuild: '2611081015' })
 	})
 
 	it('adds into an existing row when the same minute is written twice', async () => {
@@ -81,7 +99,7 @@ describe('createRouteTimingStore', () => {
 			target: unknown[]
 			set: Record<string, unknown>
 		}
-		expect(arg.target).toHaveLength(5)
+		expect(arg.target).toHaveLength(7)
 		expect(Object.keys(arg.set).sort()).toEqual(
 			['dbMsSum', 'dbQueries', 'errors5xx', 'requests', 'slowRequests', 'totalMsSum'].sort(),
 		)
@@ -125,6 +143,22 @@ describe('createRouteTimingStore', () => {
 	})
 })
 
+describe('resolveClientSourceLabel', () => {
+	it('maps the header onto five fixed values', () => {
+		expect(resolveClientSourceLabel('ui')).toBe('ui')
+		expect(resolveClientSourceLabel(' UI ')).toBe('ui')
+		expect(resolveClientSourceLabel('ios')).toBe('ios')
+		expect(resolveClientSourceLabel('mcp')).toBe('mcp')
+		expect(resolveClientSourceLabel('agent')).toBe('other')
+		expect(resolveClientSourceLabel('k6-loadtest')).toBe('other')
+		expect(resolveClientSourceLabel('x'.repeat(500))).toBe('other')
+		expect(resolveClientSourceLabel(undefined)).toBe('none')
+		expect(resolveClientSourceLabel(null)).toBe('none')
+		expect(resolveClientSourceLabel('')).toBe('none')
+		expect(resolveClientSourceLabel('  ')).toBe('none')
+	})
+})
+
 describe('currentBuild', () => {
 	it('uses the commit the web bundle reports, then the deploy commit, then unknown', () => {
 		expect(currentBuild({ VITE_MASKIN_COMMIT_SHA: 'aaa', SOURCE_COMMIT: 'bbb' } as never)).toBe(
@@ -137,6 +171,41 @@ describe('currentBuild', () => {
 
 describe('flushRouteTiming with a sink', () => {
 	beforeEach(() => setRouteTimingSink(undefined))
+
+	it('splits the counts per sender and keeps free text out of the rows', async () => {
+		const { Hono } = await import('hono')
+		const app = new Hono()
+		app.use('*', requestTiming())
+		app.get('/api/objects/:id', (c) => c.json({}))
+		const sink = vi.fn()
+		setRouteTimingSink(sink)
+		const get = (source?: string) =>
+			app.request(
+				'/api/objects/1',
+				source === undefined ? {} : { headers: { 'X-Client-Source': source } },
+			)
+		await get('ui')
+		await get('ui')
+		await get('ios')
+		await get('mcp')
+		await get('k6-loadtest')
+		await get('<script>alert(1)</script>')
+		await get()
+		await get('   ')
+		flushRouteTiming()
+		const rows = sink.mock.calls[0][0] as Array<{ clientSource: string; requests: number }>
+		expect(
+			rows
+				.map((r) => [r.clientSource, r.requests] as const)
+				.sort((a, b) => a[0].localeCompare(b[0])),
+		).toEqual([
+			['ios', 1],
+			['mcp', 1],
+			['none', 2],
+			['other', 2],
+			['ui', 2],
+		])
+	})
 
 	it('hands the flushed buckets, with the slow count, to the sink', async () => {
 		const { Hono } = await import('hono')
@@ -160,6 +229,62 @@ describe('flushRouteTiming with a sink', () => {
 		)
 	})
 
+	it('splits the counts per app build and counts a missing or bad header as none', async () => {
+		const { Hono } = await import('hono')
+		const app = new Hono()
+		app.use('*', requestTiming())
+		app.get('/api/objects/:id', (c) => c.json({}))
+		const sink = vi.fn()
+		setRouteTimingSink(sink)
+		const get = (build?: string) =>
+			app.request(
+				'/api/objects/1',
+				build === undefined ? {} : { headers: { 'X-Client-Build': build } },
+			)
+		await get('2611081015')
+		await get('2611081015')
+		await get('2611071200')
+		await get()
+		await get('1.2.3')
+		await get('<script>alert(1)</script>')
+		flushRouteTiming()
+		const rows = sink.mock.calls[0][0] as Array<{ clientBuild: string; requests: number }>
+		expect(
+			rows
+				.map((r) => [r.clientBuild, r.requests])
+				.sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+		).toEqual([
+			['', 3],
+			['2611071200', 1],
+			['2611081015', 2],
+		])
+	})
+
+	it('keeps the sender and the app build together on the same row', async () => {
+		const { Hono } = await import('hono')
+		const app = new Hono()
+		app.use('*', requestTiming())
+		app.get('/api/objects/:id', (c) => c.json({}))
+		const sink = vi.fn()
+		setRouteTimingSink(sink)
+		const get = (headers: Record<string, string>) => app.request('/api/objects/1', { headers })
+		await get({ 'X-Client-Source': 'ios', 'X-Client-Build': '2611081015' })
+		await get({ 'X-Client-Source': 'ios', 'X-Client-Build': '2611081015' })
+		await get({ 'X-Client-Source': 'ios' })
+		await get({ 'X-Client-Source': 'ui' })
+		flushRouteTiming()
+		const rows = sink.mock.calls[0][0] as Array<{
+			clientSource: string
+			clientBuild: string
+			requests: number
+		}>
+		expect(rows.map((r) => `${r.clientSource}/${r.clientBuild}/${r.requests}`).sort()).toEqual([
+			'ios//1',
+			'ios/2611081015/2',
+			'ui//1',
+		])
+	})
+
 	it('a sink that throws does not break the flush', async () => {
 		const { Hono } = await import('hono')
 		const app = new Hono()
@@ -175,5 +300,21 @@ describe('flushRouteTiming with a sink', () => {
 		setRouteTimingSink(sink)
 		flushRouteTiming()
 		expect(sink).not.toHaveBeenCalled()
+	})
+})
+
+describe('parseClientBuild', () => {
+	it('keeps 1 to 12 digits and nothing else', () => {
+		expect(parseClientBuild('2611081015')).toBe('2611081015')
+		expect(parseClientBuild('123456789012')).toBe('123456789012')
+		expect(parseClientBuild('1')).toBe('1')
+		expect(parseClientBuild('1234567890123')).toBe('')
+		expect(parseClientBuild('')).toBe('')
+		expect(parseClientBuild(undefined)).toBe('')
+		expect(parseClientBuild(null)).toBe('')
+		expect(parseClientBuild('12 34')).toBe('')
+		expect(parseClientBuild('1234\n')).toBe('')
+		expect(parseClientBuild('-1')).toBe('')
+		expect(parseClientBuild('abc')).toBe('')
 	})
 })

@@ -34,15 +34,15 @@ struct FlowsOverviewTests {
 		#expect(FlowsOverview.decisionTitle(from: nil) == nil)
 	}
 
-	@Test("the overview strip counts only what the list carries")
-	func kpis() {
+	@Test("the sentence under the title counts the flows that wait on the viewer")
+	func needsYouLine() {
 		let busy = loopRow("a", waiting: 1, inProgress: 2, closed: 5)
 		let idle = loopRow("b", inProgress: 1, closed: 0)
 		let paused = loopRow("c", status: .paused, waiting: 4, inProgress: 0, closed: 0)
-		let stats = FlowsOverview.kpis([busy, idle, paused])
-		#expect(stats.map(\.label) == ["Need you", "Running", "In progress", "Closed"])
-		#expect(stats.map(\.value) == ["1", "2 of 3", "3", "5"])
-		#expect(FlowsOverview.kpis([]).isEmpty)
+		#expect(FlowsOverview.needsYouLine([busy, idle, paused]) == "1 of 3 flows need you.")
+		#expect(FlowsOverview.needsYouLine([idle, paused]) == "Nothing needs you.")
+		#expect(FlowsOverview.needsYouLine([busy]) == "1 of 1 flow needs you.")
+		#expect(FlowsOverview.needsYouLine([]) == nil)
 	}
 
 	@Test("the work line leaves out what is zero")

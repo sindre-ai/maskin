@@ -159,9 +159,7 @@ function IntegrationsPage() {
 				/>
 			) : (
 				<section>
-					<h2 className="px-2 pb-1.5 text-[13px] font-semibold text-muted-foreground">
-						Connected tools
-					</h2>
+					<h2 className="px-2 pb-1.5 text-[15px] font-semibold text-foreground">Connected tools</h2>
 					<div className="border-t border-border-subtle">
 						{visibleProviders.map((provider) => (
 							<ProviderConnectRow

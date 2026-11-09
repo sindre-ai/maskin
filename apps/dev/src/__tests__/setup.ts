@@ -73,7 +73,8 @@ export function createTestContext() {
 				prop === 'selectDistinct' ||
 				prop === 'insert' ||
 				prop === 'update' ||
-				prop === 'delete'
+				prop === 'delete' ||
+				prop === 'execute'
 			) {
 				// Map selectDistinct to the same bucket as select
 				const key = prop === 'selectDistinct' ? 'select' : (prop as string)

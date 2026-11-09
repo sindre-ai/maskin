@@ -68,7 +68,7 @@ export function dropLegacyBrowserFlag(tools: unknown): unknown {
 // publishing workspace, so llmConfig is deny-by-default: only these keys
 // survive and every other key (including ones added later) is dropped.
 // Installers supply their own apiKey after install.
-const LLM_CONFIG_ALLOWLIST = ['provider', 'model'] as const
+export const LLM_CONFIG_ALLOWLIST = ['provider', 'model'] as const
 
 function allowlistLlmConfig(llmConfig: unknown): Record<string, unknown> | null {
 	if (llmConfig === null || typeof llmConfig !== 'object' || Array.isArray(llmConfig)) {

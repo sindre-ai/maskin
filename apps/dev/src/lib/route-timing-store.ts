@@ -2,12 +2,14 @@ import type { Database } from '@maskin/db'
 import { apiRouteTimingMinutes } from '@maskin/db/schema'
 import { lt, sql } from 'drizzle-orm'
 import { logger } from './logger'
+import type { ClientSourceLabel } from './request-timing'
 
 /**
  * Keeps the once-a-minute route timing numbers (see request-timing.ts) for 30 days, so the load per
  * route can be read over a week instead of only from the log tail.
  *
- * One row per minute, per route, per app build: counts and sums, no actor, workspace or URL. The
+ * One row per minute, per route, per server build, per sender (web, iOS, MCP, other, none) and per
+ * app build (X-Client-Build): counts and sums, no actor, workspace or URL. The
  * write is fire-and-forget from the timing flush. If it fails it is logged and dropped; a request
  * never waits for it and never fails because of it.
  */
@@ -22,6 +24,10 @@ export interface RouteTimingRow {
 	method: string
 	route: string
 	stream: boolean
+	/** Who sent the requests, from X-Client-Source. Rows written before this column keep ''. */
+	clientSource: ClientSourceLabel
+	/** iOS build number from X-Client-Build; '' for web, agents and anything not 1 to 12 digits. */
+	clientBuild: string
 	requests: number
 	slowRequests: number
 	errors5xx: number
@@ -59,6 +65,8 @@ export function createRouteTimingStore(
 					method: r.method,
 					route: r.route,
 					stream: r.stream,
+					clientSource: r.clientSource,
+					clientBuild: r.clientBuild,
 					requests: r.requests,
 					slowRequests: r.slowRequests,
 					errors5xx: r.errors5xx,
@@ -68,7 +76,7 @@ export function createRouteTimingStore(
 				})),
 			)
 			.onConflictDoUpdate({
-				target: [t.minute, t.build, t.method, t.route, t.stream],
+				target: [t.minute, t.build, t.method, t.route, t.stream, t.clientSource, t.clientBuild],
 				set: {
 					requests: sql`${t.requests} + excluded.requests`,
 					slowRequests: sql`${t.slowRequests} + excluded.slow_requests`,
@@ -88,8 +96,8 @@ export function createRouteTimingStore(
 			const deleted = await db
 				.delete(t)
 				.where(
-					sql`(${t.minute}, ${t.build}, ${t.method}, ${t.route}, ${t.stream}) in (
-						select ${t.minute}, ${t.build}, ${t.method}, ${t.route}, ${t.stream}
+					sql`(${t.minute}, ${t.build}, ${t.method}, ${t.route}, ${t.stream}, ${t.clientSource}, ${t.clientBuild}) in (
+						select ${t.minute}, ${t.build}, ${t.method}, ${t.route}, ${t.stream}, ${t.clientSource}, ${t.clientBuild}
 						from ${t} where ${lt(t.minute, cutoff)} limit ${CLEANUP_BATCH}
 					)`,
 				)
