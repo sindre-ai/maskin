@@ -4,7 +4,12 @@ import type { Server } from 'node:http'
 import path from 'node:path'
 import { serve } from '@hono/node-server'
 import type { NodeWebSocket } from '@hono/node-ws'
-import { DEFAULT_POOL_SIZE, createDb, syncAgentServersFromEnv } from '@maskin/db'
+import {
+	type InFlight,
+	captureConnectionSnapshot,
+	createDb,
+	syncAgentServersFromEnv,
+} from '@maskin/db'
 import { actors, sessions } from '@maskin/db/schema'
 import { PgNotifyBridge } from '@maskin/realtime'
 import { S3StorageProvider } from '@maskin/storage'
@@ -20,6 +25,7 @@ import { ViesSchedulerJob } from './jobs/vies-scheduler'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
 import { configurePosthogPrivacy, warnIfPosthogKeyUnset } from './lib/analytics/posthog'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
+import { resolveDbPoolConfig } from './lib/db-pool-config'
 import { runDefaultHeartbeatBackfillOnBoot } from './lib/default-heartbeat-boot'
 import { canAccessDesktop } from './lib/desktop-access'
 import {
@@ -86,15 +92,35 @@ if (!databaseUrl) {
 // shows whether queries were queuing behind connections that never came back.
 const POOL_SATURATED_LOG_INTERVAL_MS = 30_000
 let lastPoolSaturatedLogAt = 0
+// At most one connection snapshot a minute, however many queries time out.
+const STALL_SNAPSHOT_INTERVAL_MS = 60_000
+let lastStallSnapshotAt = 0
+const { poolSize: dbPoolSize, shedAt: dbShedAt } = resolveDbPoolConfig(process.env)
+/** Queries sent and not yet answered; the load-shedding middleware reads it. */
+const dbLoad: InFlight = { count: 0 }
 const db = createDb(databaseUrl, {
+	poolSize: dbPoolSize,
+	inFlight: dbLoad,
 	onQuery: recordDbTime,
 	onQueryTimeout: ({ timeoutMs, inFlight, sql }) => {
 		logger.error('DB query got no response', {
 			timeoutMs,
 			inFlight,
-			poolSize: DEFAULT_POOL_SIZE,
+			poolSize: dbPoolSize,
 			sql,
 		})
+		// Ask the database itself what its connections are doing, from a connection of our own,
+		// so the next stall leaves that evidence in the logs before anyone redeploys.
+		const now = Date.now()
+		if (now - lastStallSnapshotAt < STALL_SNAPSHOT_INTERVAL_MS) return
+		lastStallSnapshotAt = now
+		captureConnectionSnapshot(databaseUrl).then(
+			(rows) => logger.warn('DB connection snapshot after a stalled query', { rows }),
+			(err) =>
+				logger.warn('DB connection snapshot failed', {
+					error: err instanceof Error ? err.message : String(err),
+				}),
+		)
 	},
 	onSaturated: (inFlight) => {
 		const now = Date.now()
@@ -102,7 +128,7 @@ const db = createDb(databaseUrl, {
 		lastPoolSaturatedLogAt = now
 		logger.warn('DB pool saturated: new queries wait for a connection', {
 			inFlight,
-			poolSize: DEFAULT_POOL_SIZE,
+			poolSize: dbPoolSize,
 		})
 	},
 })
@@ -220,7 +246,7 @@ const port = Number(process.env.PORT) || 3000
 // attach it to the server once serve() returns it, below.
 let nodeWebSocket: NodeWebSocket | undefined
 const app = createApp(
-	{ db, notifyBridge, sessionManager, agentStorage, storageProvider },
+	{ db, notifyBridge, sessionManager, agentStorage, storageProvider, dbLoad, dbShedAt },
 	{
 		port,
 		onNodeWebSocket: (ws) => {

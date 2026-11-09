@@ -157,6 +157,24 @@ describe('invalidateFromSSE', () => {
 		})
 	})
 
+	it('refetches the object graphs once for a burst of relationship events', () => {
+		const qc = createMockQueryClient()
+		const graphCalls = () =>
+			qc.invalidateQueries.mock.calls.filter(
+				([filters]) => JSON.stringify(filters.queryKey) === JSON.stringify(['objects', 'graph']),
+			)
+		for (let i = 0; i < 5; i++) {
+			invalidateFromSSE(qc as never, workspaceId, {
+				entity_type: 'relationship',
+				entity_id: `rel-${i}`,
+				action: 'created',
+			} as never)
+		}
+		expect(graphCalls()).toHaveLength(0)
+		vi.advanceTimersByTime(5_000)
+		expect(graphCalls()).toHaveLength(1)
+	})
+
 	it('invalidates triggers for trigger entity', () => {
 		const qc = createMockQueryClient()
 		invalidateFromSSE(qc as never, workspaceId, {
