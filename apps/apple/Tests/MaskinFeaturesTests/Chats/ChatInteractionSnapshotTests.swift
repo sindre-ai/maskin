@@ -252,4 +252,38 @@ struct ChatInteractionSnapshotTests {
 		#expect(SwipeToReply.offset(for: 200) == SwipeToReply.cap)
 		#expect(SwipeToReply.offset(for: -30) == 0)
 	}
+
+	@Test("an agent's words are plain text, named only where several agents speak", arguments: [false, true])
+	func plainAgentRows(dark: Bool) throws {
+		let text = "Three things moved since Friday. The importer is green and the dedup fix is on main."
+		let agent = agentMessage(text)
+		let person = ChatMessage.confirmed(
+			serverID: 8, conversationID: "c1", actorID: "sam", actorName: "Sam Berg", author: .human, content: text,
+			createdAt: Date(), metadata: nil)
+		func height<V: View>(_ view: V) -> Int {
+			let renderer = ImageRenderer(
+				content: view.frame(width: 402).environment(\.colorScheme, dark ? .dark : .light))
+			renderer.scale = 2
+			return renderer.cgImage?.height ?? 0
+		}
+		let direct = height(MessageRow(message: agent, isOwn: false, showsAuthor: true))
+		let group = height(MessageRow(message: agent, isOwn: false, showsAuthor: true, namesAgent: true))
+		let grouped = height(MessageRow(message: agent, isOwn: false, showsAuthor: false, namesAgent: true))
+		let bubble = height(MessageRow(message: person, isOwn: false, showsAuthor: false))
+		#expect(direct > 0)
+		// The name label adds a line in a group, only on the first message of a run.
+		#expect(group > direct)
+		#expect(grouped == direct)
+		// No bubble padding: the same words take less room than in a person's bubble.
+		#expect(direct < bubble)
+		for width in Self.widths {
+			let view = VStack(alignment: .leading, spacing: MaskinSpace.s9) {
+				MessageRow(message: agent, isOwn: false, showsAuthor: true)
+				MessageRow(message: agent, isOwn: false, showsAuthor: true, namesAgent: true)
+				MessageRow(message: person, isOwn: false, showsAuthor: true)
+				StreamingReplyBubble(agent: forge, text: "Streaming reply stays plain", namesAgent: true)
+			}
+			try render(view, width: width, dark: dark, name: "plain-agent-rows")
+		}
+	}
 }

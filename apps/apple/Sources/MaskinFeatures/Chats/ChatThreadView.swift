@@ -1050,6 +1050,11 @@ struct ThreadTranscript: View {
 	/// The call running in this thread: its card shows what you are saying as you say it.
 	var call: LiveMeetingSession?
 
+	/// Agents carry their name above their words only where more than one can speak.
+	private var namesAgents: Bool {
+		AgentRowStyle.namesAgents(participants: store.participants, currentActorID: store.currentActorID)
+	}
+
 	/// Each tagged person under your message with where they stand (Working, Replied, Waiting for X).
 	private func mentionChips(for message: ChatMessage) -> [MentionStateChip] {
 		message.mentionIDs.compactMap { id -> MentionStateChip? in
@@ -1129,7 +1134,7 @@ struct ThreadTranscript: View {
 			Group {
 				let session = sessions.first { $0.actorID == row.agent.id }
 				if let draft = store.liveReplyDraft(for: row.agent.id) {
-					StreamingReplyBubble(agent: row.agent, text: draft)
+					StreamingReplyBubble(agent: row.agent, text: draft, namesAgent: namesAgents)
 				} else {
 					LiveActivityView(
 						agent: row.agent, fallbackActivity: session?.currentActivity,
@@ -1144,7 +1149,9 @@ struct ThreadTranscript: View {
 		}
 		let liveIDs = Set(live.map(\.id))
 		ForEach(store.stoppedAgentIDs.sorted().filter { !liveIDs.contains($0) }, id: \.self) { agentID in
-			StreamingReplyBubble(agent: store.participant(for: agentID), text: store.liveReplyDraft(for: agentID), stopped: true)
+			StreamingReplyBubble(
+				agent: store.participant(for: agentID), text: store.liveReplyDraft(for: agentID), stopped: true,
+				namesAgent: namesAgents)
 				.padding(.top, Self.listGap)
 		}
 		if live.isEmpty, let stalled = store.stalledSession() {
@@ -1263,7 +1270,7 @@ struct ThreadTranscript: View {
 				FinishedTraceView(turn: turn).padding(.bottom, MaskinSpace.s3)
 			}
 			MessageRow(
-				message: message, isOwn: isOwn, showsAuthor: showsAuthor,
+				message: message, isOwn: isOwn, showsAuthor: showsAuthor, namesAgent: namesAgents,
 				mentionNames: message.mentionIDs.compactMap { store.displayName(for: $0) },
 				mentionChips: isOwn ? mentionChips(for: message) : [],
 				mentions: message.mentionIDs.compactMap { id in

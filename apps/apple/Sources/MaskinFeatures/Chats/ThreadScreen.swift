@@ -132,6 +132,7 @@ struct ThreadScreen: View {
 		}
 		return MessageRow(
 			message: message, isOwn: message.actorID == store.currentActorID, showsAuthor: showsAuthor,
+			namesAgent: AgentRowStyle.namesAgents(participants: store.participants, currentActorID: store.currentActorID),
 			mentions: message.mentionIDs.compactMap { id in
 				store.displayName(for: id).map { (id: id, name: $0) }
 			},

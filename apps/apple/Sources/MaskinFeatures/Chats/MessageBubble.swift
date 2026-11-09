@@ -73,6 +73,33 @@ struct MessageHeader: View {
 	}
 }
 
+/// An agent's name above its plain words in a chat with several agents: 13pt semibold `ink4`, no
+/// avatar and no time. Opens the agent's page when the app can.
+struct AgentNameLabel: View {
+	let name: String
+	var onOpen: (() -> Void)?
+
+	var body: some View {
+		Group {
+			if let onOpen {
+				Button(action: onOpen) { label.contentShape(Rectangle()) }
+					.buttonStyle(.maskinPressed)
+					.accessibilityLabel("\(name), open agent")
+			} else {
+				label
+			}
+		}
+		.padding(.bottom, MaskinSpace.s1)
+	}
+
+	private var label: some View {
+		Text(name)
+			.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold, relativeTo: .footnote))
+			.foregroundStyle(MaskinColor.ink4)
+			.lineLimit(1)
+	}
+}
+
 /// The quote at the top of a reply: a 3pt `sigHi` rule, the name in bold 14pt, the quoted text in full.
 struct QuoteBlock: View {
 	let author: String
@@ -234,35 +261,40 @@ struct StoppedLabel: View {
 	}
 }
 
-/// A reply still on its way: the agent header, then the partial text with a blinking caret in an
-/// agent bubble, or — when nothing has streamed yet — the typing dots. Keeps at least the typing
-/// bubble's height so the row doesn't jump when text arrives.
+/// A reply still on its way: the partial text with a blinking caret as plain text on the page,
+/// like the finished message it becomes (so it does not change shape when it lands), or — when
+/// nothing has streamed yet — the typing dots in a small bubble. The agent's name sits above it
+/// only in a chat with several agents (`namesAgent`).
 struct StreamingReplyBubble: View {
 	let agent: ChatParticipant
 	var text: String?
 	var stopped = false
+	var namesAgent = false
+
+	private var hasText: Bool { !(text ?? "").isEmpty }
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
-			MessageHeader(name: agent.name, kind: agent.kind, seed: agent.id, time: nil, working: !stopped)
+			if namesAgent { AgentNameLabel(name: agent.name) }
 			Group {
-				if let text, !text.isEmpty {
+				if hasText, let text {
 					HStack(alignment: .lastTextBaseline, spacing: MaskinSpace.s1) {
 						Text(text).font(MaskinTypeface.sans(MaskinFontSize.t16, relativeTo: .body))
 							.lineSpacing(BubbleShape.lineSpacing).foregroundStyle(MaskinColor.ink2)
 						if !stopped { BlinkingCaret() }
 					}
+					.frame(maxWidth: .infinity, alignment: .leading)
 				} else if stopped {
 					Text("—").font(MaskinTypeface.sans(MaskinFontSize.t16, relativeTo: .body)).foregroundStyle(MaskinColor.ink5)
 						.accessibilityHidden(true)
 				} else {
 					TypingDots()
+						.padding(.vertical, BubbleShape.theirVertical)
+						.padding(.horizontal, BubbleShape.horizontal)
+						.frame(minHeight: MaskinSpace.touchMin + MaskinSpace.s2, alignment: .leading)
+						.background(MaskinSurface.card, in: BubbleShape.agent)
 				}
 			}
-			.padding(.vertical, BubbleShape.theirVertical)
-			.padding(.horizontal, BubbleShape.horizontal)
-			.frame(minHeight: MaskinSpace.touchMin + MaskinSpace.s2, alignment: .leading)
-			.background(MaskinSurface.card, in: BubbleShape.agent)
 			if stopped { StoppedLabel() }
 		}
 		.frame(maxWidth: .infinity, alignment: .leading)

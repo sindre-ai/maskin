@@ -115,8 +115,10 @@ struct MentionLine: View {
 	}
 }
 
-/// One message as a spec 7 bubble. Theirs: a `card` bubble with the tail top-left, full width,
-/// with the 24pt avatar + name + time header on the first of a run (an agent's opens its page);
+/// One message as a spec 7 bubble. An agent's: plain text on the page (v3), no bubble, avatar or
+/// time, with its name above the first of a run only in a chat with several agents (it opens the
+/// agent's page). Another person's: a `card` bubble with the tail top-left, full width, with the 24pt
+/// avatar + name + time header on the first of a run;
 /// yours: an ink bubble with the tail bottom-right, at most 82% wide, with the status line under
 /// your newest one. A quote sits at the top of the bubble and `edited` inside it; pictures and
 /// files sit outside it, above, and a message with no words has no bubble. Long-press opens the actions with a preview; swiping right starts a reply. An agent's
@@ -125,6 +127,9 @@ struct MessageRow: View {
 	let message: ChatMessage
 	let isOwn: Bool
 	let showsAuthor: Bool
+	/// More than one agent can speak here (`AgentRowStyle.namesAgents`): an agent's first message
+	/// of a run carries its name. In a one-to-one chat the title already says who it is.
+	var namesAgent = false
 	var mentionNames: [String] = []
 	/// Where each tagged person stands; shown under your own message in place of the caption.
 	var mentionChips: [MentionStateChip] = []
@@ -212,6 +217,9 @@ struct MessageRow: View {
 		default: actions.onReadAloud?()
 		}
 	}
+
+	/// An agent's message is plain text on the page; a person's other than yours keeps the bubble.
+	private var plainAgent: Bool { message.author == .agent }
 
 	private var shownText: String { messageOverride.text(original: message.contentWithoutIntroTail) }
 	private var quote: QuotedReply? { QuotedReply.parse(shownText) }
@@ -446,10 +454,20 @@ struct MessageRow: View {
 		let layout = linkedLayout(for: targets)
 		return VStack(alignment: .leading, spacing: MaskinSpace.s2) {
 			if showsAuthor {
-				MessageHeader(
-					name: message.actorName, kind: message.author, seed: message.actorID, time: message.createdAt,
-					working: working,
-					onOpen: message.author == .agent && runtime != nil ? { runtime?.openAgent(message.actorID) } : nil)
+				if plainAgent {
+					// v3: an agent's words are plain text. Its name is only needed where more than one
+					// agent can speak, so it is shown there and nowhere else.
+					if namesAgent {
+						AgentNameLabel(
+							name: message.actorName,
+							onOpen: runtime != nil ? { runtime?.openAgent(message.actorID) } : nil)
+					}
+				} else {
+					MessageHeader(
+						name: message.actorName, kind: message.author, seed: message.actorID, time: message.createdAt,
+						working: working,
+						onOpen: message.author == .agent && runtime != nil ? { runtime?.openAgent(message.actorID) } : nil)
+				}
 			}
 			VStack(alignment: .leading, spacing: AttachmentLayout.gap) {
 				MessageAttachments(attachments: message.attachments, threadWidth: rowWidth, caption: attachmentCaption)
@@ -475,10 +493,12 @@ struct MessageRow: View {
 						}
 					}
 					.foregroundStyle(MaskinColor.ink2)
-					.padding(.vertical, BubbleShape.theirVertical)
-					.padding(.horizontal, BubbleShape.horizontal)
+					.padding(.vertical, plainAgent ? 0 : BubbleShape.theirVertical)
+					.padding(.horizontal, plainAgent ? 0 : BubbleShape.horizontal)
 					.frame(maxWidth: .infinity, alignment: .leading)
-					.background(MaskinSurface.card, in: BubbleShape.agent)
+					.background {
+						if !plainAgent { BubbleShape.agent.fill(MaskinSurface.card) }
+					}
 				}
 			}
 			.swipeToReply(onReply)
