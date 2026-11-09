@@ -749,8 +749,8 @@ struct ChatThreadView: View {
 
 	// MARK: Composer stack
 
-	/// Quick replies, jump-to-latest, then the composer (or the search bar), stacked so the button
-	/// and chips ride up as the composer grows.
+	/// Quick replies, then the composer (or the search bar). The jump-to-latest button floats above
+	/// this stack as an overlay, so it rides up with the chips and the composer without adding height.
 	private func composerStack(_ proxy: ScrollViewProxy) -> some View {
 		VStack(alignment: .trailing, spacing: MaskinSpace.s4) {
 			let replies = call == nil && !quickRepliesHidden ? quickReplies : []
@@ -782,6 +782,8 @@ struct ChatThreadView: View {
 			if !isNearBottom && store.phase == .loaded {
 				JumpToLatest(unseen: unseenCount) { scrollToBottom(proxy) }
 					.offset(y: -(MaskinSpace.touchMin + MaskinSpace.s4 + MaskinSpace.s1))
+					// Read first, as it was when it sat at the top of this stack.
+					.accessibilitySortPriority(1)
 					.transition(.opacity.combined(with: .scale(scale: 0.9)))
 			}
 		}

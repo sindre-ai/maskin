@@ -791,12 +791,6 @@ export function overrides({ method, path, params, query, body, base, item }) {
 						m(1, first, 'Seven follow-ups to Northwind are ready.', 30),
 						m(2, ME, 'Why not all 47 contacts?', 20),
 						m(3, first, 'Only 7 have Sales approval. The other 40 still need review.', 10),
-						m(
-							4,
-							first,
-							`Not sent yet. Here is the draft:\n\nhttps://maskin.io/${WORKSPACE_ID}/objects/${uuid(7001)}\n\nReply "send" and it goes out.`,
-							5,
-						),
 					],
 					has_more: false,
 				},
@@ -883,6 +877,14 @@ export function overrides({ method, path, params, query, body, base, item }) {
 								m(2, first, r.snippet, r.at),
 								root,
 								...replies,
+								// MK-05: a long email draft linked in the chat. This chat, not an agent chat: the Live
+								// tests leave a call record in those, which folds later messages into a call card.
+								m(
+									6,
+									first,
+									`Not sent yet. Here is the draft:\n\nhttps://maskin.io/${WORKSPACE_ID}/objects/${uuid(7001)}\n\nReply "send" and it goes out.`,
+									1,
+								),
 							],
 					has_more: false,
 				},
