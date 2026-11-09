@@ -82,6 +82,7 @@ WHERE a.type = 'human'
       AND EXISTS (
         SELECT 1 FROM events e
         WHERE e.actor_id = a.id
+          AND e.workspace_id IN (SELECT wm.workspace_id FROM workspace_members wm WHERE wm.actor_id = a.id)
           AND e.created_at > ${sinceExpr}
           AND NOT (e.entity_type = 'integration' AND e.action = 'created')
           AND NOT (e.entity_type = 'notification_preferences' AND e.action = 'created')
