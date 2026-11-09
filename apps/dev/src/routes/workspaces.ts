@@ -30,6 +30,7 @@ import {
 	patchAddsByoSource,
 } from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
+import { loadMembersLastActive } from '../lib/member-last-active'
 import { loadMembershipFacts } from '../lib/membership-facts'
 import { revokeMemberGrants } from '../lib/oauth-server/grants'
 import { shouldSkipOnboardingKickoff } from '../lib/onboarding/chief-of-staff-kickoff'
@@ -52,6 +53,7 @@ import {
 	ownershipCapForTier,
 	resolvePlanTier,
 } from '../lib/workspace-capacity'
+import { loadForYouCounts, loadUnreadChatCounts } from '../lib/workspace-counts'
 import { workspaceDeletionPreview } from '../lib/workspace-deletion'
 import {
 	evictPurgedWorkspace,
@@ -84,6 +86,8 @@ const memberResponseSchema = z.object({
 	joinedAt: z.string().nullable(),
 	name: z.string(),
 	type: z.string(),
+	// Only in the list, and only for an owner or admin: it can show activity in other workspaces.
+	lastActiveAt: z.string().nullable().optional(),
 })
 
 const addMemberBodySchema = z.object({
@@ -348,6 +352,64 @@ app.openapi(listWorkspacesRoute, async (c) => {
 	}))
 
 	return c.json(serializeArray(withCounts) as z.infer<typeof workspaceWithRoleSchema>[])
+})
+
+// GET /api/workspaces/counts
+const workspaceCountsSchema = z.object({
+	workspaceId: z.string().uuid(),
+	// Chats with a message from someone else the caller has not read (archived chats left out).
+	unreadChats: z.number().int().nonnegative(),
+	// Items waiting on the caller on that workspace's For You page.
+	forYou: z.number().int().nonnegative(),
+	// unreadChats + forYou: the "N need you" number the iPhone workspace switcher shows.
+	needYou: z.number().int().nonnegative(),
+})
+
+const workspaceCountsRoute = createRoute({
+	method: 'get',
+	path: '/counts',
+	tags: ['workspaces'],
+	summary:
+		"What waits on the caller in each of their workspaces (the iPhone workspace switcher's counts)",
+	description:
+		'One row per workspace the caller belongs to. Kept off the workspace list so that hot read stays cheap.',
+	responses: {
+		200: {
+			description: 'Per-workspace counts for the caller',
+			content: { 'application/json': { schema: z.array(workspaceCountsSchema) } },
+		},
+	},
+})
+
+app.openapi(workspaceCountsRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const pin = getOAuthPin()
+
+	const memberships = await db
+		.select({ workspaceId: workspaceMembers.workspaceId })
+		.from(workspaceMembers)
+		.where(
+			and(
+				eq(workspaceMembers.actorId, actorId),
+				// A Claude connector token sees only the workspace it was approved for.
+				...(pin ? [eq(workspaceMembers.workspaceId, pin.workspaceId)] : []),
+			),
+		)
+	const ids = memberships.map((m) => m.workspaceId)
+
+	const [unreadByWorkspace, forYouByWorkspace] = await Promise.all([
+		loadUnreadChatCounts(db, actorId, ids),
+		loadForYouCounts(db, actorId, ids),
+	])
+
+	return c.json(
+		ids.map((workspaceId) => {
+			const unreadChats = unreadByWorkspace.get(workspaceId) ?? 0
+			const forYou = forYouByWorkspace.get(workspaceId) ?? 0
+			return { workspaceId, unreadChats, forYou, needYou: unreadChats + forYou }
+		}),
+	)
 })
 
 /** Top-level keys whose value differs between two settings objects. Names only, never values. */
@@ -1008,7 +1070,17 @@ app.openapi(listMembersRoute, (async (c) => {
 		.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
 		.where(eq(workspaceMembers.workspaceId, workspaceId))
 
-	return c.json(serializeArray(members) as z.infer<typeof memberResponseSchema>[])
+	// A person's last-active time is account-wide (it also reflects other workspaces), so only a
+	// human owner or admin gets it; everyone else gets the list as before.
+	if (!(await isWorkspaceHumanAdminOrOwner(db, actorId, workspaceId))) {
+		return c.json(serializeArray(members) as z.infer<typeof memberResponseSchema>[])
+	}
+	const lastActive = await loadMembersLastActive(db, workspaceId, members)
+	return c.json(
+		serializeArray(
+			members.map((m) => ({ ...m, lastActiveAt: lastActive.get(m.actorId) ?? null })),
+		) as z.infer<typeof memberResponseSchema>[],
+	)
 }) as RouteHandler<typeof listMembersRoute, Env>)
 
 // POST /api/workspaces/:id/transfer-ownership

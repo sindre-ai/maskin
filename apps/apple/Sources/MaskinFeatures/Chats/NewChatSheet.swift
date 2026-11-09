@@ -138,6 +138,7 @@ struct NewChatSheet: View {
 				title: ThreadLayout.newChatTitle(for: people.map(\.name), startsLiveCall: live),
 				participantIDs: people.map(\.id), firstMessage: message,
 				firstMessageMetadata: taken?.metadata)
+			Analytics.shared.chatSessionStarted(conversationId: created.id, participants: people)
 			MaskinHaptics.play(.success)
 			onCreated(created, live)
 			dismiss()

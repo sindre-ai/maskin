@@ -8897,6 +8897,12 @@
 													"null"
 												]
 											},
+											"tags": {
+												"type": "array",
+												"items": {
+													"type": "string"
+												}
+											},
 											"workspaces": {
 												"type": "array",
 												"items": {
@@ -9393,6 +9399,15 @@
 											"null"
 										],
 										"format": "uuid"
+									},
+									"tags": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 40
+										},
+										"maxItems": 10
 									}
 								}
 							}
@@ -10103,6 +10118,306 @@
 					},
 					"404": {
 						"description": "Actor not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/actors/{id}/objects": {
+			"get": {
+				"tags": [
+					"Actors"
+				],
+				"summary": "Objects an actor has created, changed or drives in the workspace, newest first",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"minimum": 1,
+							"maximum": 100,
+							"default": 25
+						},
+						"required": false,
+						"name": "limit",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": [
+								"integer",
+								"null"
+							],
+							"minimum": 0,
+							"default": 0
+						},
+						"required": false,
+						"name": "offset",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "One page of objects",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"items": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"type": {
+														"type": "string"
+													},
+													"title": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"status": {
+														"type": "string"
+													},
+													"updatedAt": {
+														"type": [
+															"string",
+															"null"
+														]
+													}
+												},
+												"required": [
+													"id",
+													"type",
+													"title",
+													"status",
+													"updatedAt"
+												]
+											}
+										},
+										"hasMore": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"items",
+										"hasMore"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Actor not found in this workspace",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/actors/{id}/working-now": {
+			"get": {
+				"tags": [
+					"Actors"
+				],
+				"summary": "What an agent is doing right now, or null when it is not working",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "The live line, or null",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"workingNow": {
+											"type": [
+												"object",
+												"null"
+											],
+											"properties": {
+												"sessionId": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"doing": {
+													"type": "string"
+												},
+												"startedAt": {
+													"type": "string"
+												},
+												"conversationId": {
+													"type": [
+														"string",
+														"null"
+													],
+													"format": "uuid"
+												}
+											},
+											"required": [
+												"sessionId",
+												"doing",
+												"startedAt",
+												"conversationId"
+											]
+										}
+									},
+									"required": [
+										"workingNow"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Actor not found in this workspace",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -16508,6 +16823,54 @@
 				}
 			}
 		},
+		"/api/workspaces/counts": {
+			"get": {
+				"tags": [
+					"workspaces"
+				],
+				"summary": "What waits on the caller in each of their workspaces (the iPhone workspace switcher's counts)",
+				"description": "One row per workspace the caller belongs to. Kept off the workspace list so that hot read stays cheap.",
+				"responses": {
+					"200": {
+						"description": "Per-workspace counts for the caller",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "array",
+									"items": {
+										"type": "object",
+										"properties": {
+											"workspaceId": {
+												"type": "string",
+												"format": "uuid"
+											},
+											"unreadChats": {
+												"type": "integer",
+												"minimum": 0
+											},
+											"forYou": {
+												"type": "integer",
+												"minimum": 0
+											},
+											"needYou": {
+												"type": "integer",
+												"minimum": 0
+											}
+										},
+										"required": [
+											"workspaceId",
+											"unreadChats",
+											"forYou",
+											"needYou"
+										]
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/workspaces/{id}": {
 			"patch": {
 				"x-viewer-policy": "writer",
@@ -18031,6 +18394,12 @@
 											},
 											"type": {
 												"type": "string"
+											},
+											"lastActiveAt": {
+												"type": [
+													"string",
+													"null"
+												]
 											}
 										},
 										"required": [
@@ -18565,6 +18934,12 @@
 										},
 										"type": {
 											"type": "string"
+										},
+										"lastActiveAt": {
+											"type": [
+												"string",
+												"null"
+											]
 										}
 									},
 									"required": [
@@ -19476,7 +19851,7 @@
 				],
 				"responses": {
 					"200": {
-						"description": "Workspace skills list",
+						"description": "Workspace skills list, each with the agents that have it attached",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -19533,6 +19908,13 @@
 											},
 											"updatedAt": {
 												"type": "string"
+											},
+											"agentIds": {
+												"type": "array",
+												"items": {
+													"type": "string",
+													"format": "uuid"
+												}
 											}
 										},
 										"required": [
@@ -19547,7 +19929,8 @@
 											"fileCount",
 											"createdBy",
 											"createdAt",
-											"updatedAt"
+											"updatedAt",
+											"agentIds"
 										]
 									}
 								}
@@ -27478,6 +27861,62 @@
 									"required": [
 										"error"
 									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"get": {
+				"tags": [
+					"integrations"
+				],
+				"summary": "List the workspace's custom MCP servers (no secret values)",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "The active servers, by name. A stdio server has no URL",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "array",
+									"items": {
+										"type": "object",
+										"properties": {
+											"id": {
+												"type": "string",
+												"format": "uuid"
+											},
+											"name": {
+												"type": "string"
+											},
+											"url": {
+												"type": [
+													"string",
+													"null"
+												]
+											},
+											"status": {
+												"type": "string"
+											}
+										},
+										"required": [
+											"id",
+											"name",
+											"url",
+											"status"
+										]
+									}
 								}
 							}
 						}
@@ -39183,6 +39622,273 @@
 				}
 			}
 		},
+		"/api/billing/invoices": {
+			"get": {
+				"tags": [
+					"billing"
+				],
+				"summary": "List the workspace's own Stripe invoices",
+				"description": "Read-only list of the workspace's invoices, newest first, from the Stripe customer stored in the workspace's own billing settings (never taken from the request). Each invoice is shown in the currency it was charged in. Draft invoices are not listed. A workspace with no Stripe customer gets an empty list. Only human workspace owners and admins can read it.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Invoices, newest first",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"invoices": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string"
+													},
+													"number": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"created": {
+														"type": "integer",
+														"minimum": 0
+													},
+													"amount_cents": {
+														"type": "integer"
+													},
+													"currency": {
+														"type": "string"
+													},
+													"status": {
+														"type": "string",
+														"enum": [
+															"open",
+															"paid",
+															"uncollectible",
+															"void"
+														]
+													},
+													"hosted_invoice_url": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"invoice_pdf": {
+														"type": [
+															"string",
+															"null"
+														]
+													}
+												},
+												"required": [
+													"id",
+													"number",
+													"created",
+													"amount_cents",
+													"currency",
+													"status",
+													"hosted_invoice_url",
+													"invoice_pdf"
+												]
+											},
+											"maxItems": 100
+										}
+									},
+									"required": [
+										"invoices"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Caller is not a human workspace admin or owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Workspace not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Stripe is not configured or the invoice list failed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/billing/checkout": {
 			"post": {
 				"x-viewer-policy": "writer",
@@ -43096,6 +43802,78 @@
 													"task"
 												]
 											},
+											"plan": {
+												"type": "object",
+												"properties": {
+													"version": {
+														"type": "number",
+														"enum": [
+															1
+														]
+													},
+													"steps": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"title": {
+																	"type": "string",
+																	"minLength": 1,
+																	"maxLength": 300
+																},
+																"status": {
+																	"type": "string",
+																	"enum": [
+																		"pending",
+																		"in_progress",
+																		"done",
+																		"skipped"
+																	]
+																}
+															},
+															"required": [
+																"title"
+															]
+														},
+														"minItems": 1,
+														"maxItems": 20
+													}
+												},
+												"required": [
+													"version",
+													"steps"
+												],
+												"description": "Steps you plan, shown as a plan card. Also write the steps in the message text. Set version to 1."
+											},
+											"proposed_edit": {
+												"type": "object",
+												"properties": {
+													"version": {
+														"type": "number",
+														"enum": [
+															1
+														]
+													},
+													"object_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"field": {
+														"type": "string",
+														"pattern": "^(title|content|status|metadata\\.[A-Za-z0-9_]{1,64})$"
+													},
+													"before": {},
+													"after": {}
+												},
+												"required": [
+													"version",
+													"object_id",
+													"field",
+													"before",
+													"after"
+												],
+												"description": "A change you propose to one field of one object, shown with Apply and Dismiss. Also describe it in the message text. Set version to 1."
+											},
 											"card_answer": {
 												"type": "object",
 												"properties": {
@@ -43287,6 +44065,12 @@
 											"type": "string",
 											"format": "uuid"
 										},
+										"tags": {
+											"type": "array",
+											"items": {
+												"type": "string"
+											}
+										},
 										"lastMessageAt": {
 											"type": [
 												"string",
@@ -43366,6 +44150,7 @@
 										"subjectType",
 										"subjectId",
 										"createdBy",
+										"tags",
 										"lastMessageAt",
 										"createdAt",
 										"updatedAt",
@@ -43418,6 +44203,12 @@
 											"type": "string",
 											"format": "uuid"
 										},
+										"tags": {
+											"type": "array",
+											"items": {
+												"type": "string"
+											}
+										},
 										"lastMessageAt": {
 											"type": [
 												"string",
@@ -43497,6 +44288,7 @@
 										"subjectType",
 										"subjectId",
 										"createdBy",
+										"tags",
 										"lastMessageAt",
 										"createdAt",
 										"updatedAt",
@@ -43730,6 +44522,12 @@
 														"type": "string",
 														"format": "uuid"
 													},
+													"tags": {
+														"type": "array",
+														"items": {
+															"type": "string"
+														}
+													},
 													"lastMessageAt": {
 														"type": [
 															"string",
@@ -43832,6 +44630,7 @@
 													"subjectType",
 													"subjectId",
 													"createdBy",
+													"tags",
 													"lastMessageAt",
 													"createdAt",
 													"updatedAt",
@@ -43943,6 +44742,76 @@
 																],
 																"additionalProperties": {}
 															},
+															"plan": {
+																"type": "object",
+																"properties": {
+																	"version": {
+																		"type": "number",
+																		"enum": [
+																			1
+																		]
+																	},
+																	"steps": {
+																		"type": "array",
+																		"items": {
+																			"type": "object",
+																			"properties": {
+																				"title": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 300
+																				},
+																				"status": {
+																					"type": "string",
+																					"enum": [
+																						"pending",
+																						"in_progress",
+																						"done",
+																						"skipped"
+																					]
+																				}
+																			},
+																			"required": [
+																				"title"
+																			]
+																		},
+																		"minItems": 1,
+																		"maxItems": 20
+																	}
+																},
+																"required": [
+																	"version",
+																	"steps"
+																]
+															},
+															"proposed_edit": {
+																"type": "object",
+																"properties": {
+																	"version": {
+																		"type": "number",
+																		"enum": [
+																			1
+																		]
+																	},
+																	"object_id": {
+																		"type": "string",
+																		"format": "uuid"
+																	},
+																	"field": {
+																		"type": "string",
+																		"pattern": "^(title|content|status|metadata\\.[A-Za-z0-9_]{1,64})$"
+																	},
+																	"before": {},
+																	"after": {}
+																},
+																"required": [
+																	"version",
+																	"object_id",
+																	"field",
+																	"before",
+																	"after"
+																]
+															},
 															"sessionId": {
 																"type": [
 																	"string",
@@ -43957,6 +44826,12 @@
 																]
 															},
 															"editedAt": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"deletedAt": {
 																"type": [
 																	"string",
 																	"null"
@@ -43984,6 +44859,7 @@
 															"sessionId",
 															"createdAt",
 															"editedAt",
+															"deletedAt",
 															"threadRootId",
 															"threadAlsoInChannel"
 														]
@@ -44074,6 +44950,76 @@
 																],
 																"additionalProperties": {}
 															},
+															"plan": {
+																"type": "object",
+																"properties": {
+																	"version": {
+																		"type": "number",
+																		"enum": [
+																			1
+																		]
+																	},
+																	"steps": {
+																		"type": "array",
+																		"items": {
+																			"type": "object",
+																			"properties": {
+																				"title": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 300
+																				},
+																				"status": {
+																					"type": "string",
+																					"enum": [
+																						"pending",
+																						"in_progress",
+																						"done",
+																						"skipped"
+																					]
+																				}
+																			},
+																			"required": [
+																				"title"
+																			]
+																		},
+																		"minItems": 1,
+																		"maxItems": 20
+																	}
+																},
+																"required": [
+																	"version",
+																	"steps"
+																]
+															},
+															"proposed_edit": {
+																"type": "object",
+																"properties": {
+																	"version": {
+																		"type": "number",
+																		"enum": [
+																			1
+																		]
+																	},
+																	"object_id": {
+																		"type": "string",
+																		"format": "uuid"
+																	},
+																	"field": {
+																		"type": "string",
+																		"pattern": "^(title|content|status|metadata\\.[A-Za-z0-9_]{1,64})$"
+																	},
+																	"before": {},
+																	"after": {}
+																},
+																"required": [
+																	"version",
+																	"object_id",
+																	"field",
+																	"before",
+																	"after"
+																]
+															},
 															"sessionId": {
 																"type": [
 																	"string",
@@ -44088,6 +45034,12 @@
 																]
 															},
 															"editedAt": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"deletedAt": {
 																"type": [
 																	"string",
 																	"null"
@@ -44115,6 +45067,7 @@
 															"sessionId",
 															"createdAt",
 															"editedAt",
+															"deletedAt",
 															"threadRootId",
 															"threadAlsoInChannel"
 														]
@@ -44338,6 +45291,12 @@
 											"type": "string",
 											"format": "uuid"
 										},
+										"tags": {
+											"type": "array",
+											"items": {
+												"type": "string"
+											}
+										},
 										"lastMessageAt": {
 											"type": [
 												"string",
@@ -44417,6 +45376,7 @@
 										"subjectType",
 										"subjectId",
 										"createdBy",
+										"tags",
 										"lastMessageAt",
 										"createdAt",
 										"updatedAt",
@@ -44494,7 +45454,7 @@
 				"tags": [
 					"Conversations"
 				],
-				"summary": "Rename a conversation",
+				"summary": "Rename a conversation or change its tags",
 				"parameters": [
 					{
 						"schema": {
@@ -44525,11 +45485,17 @@
 										"type": "string",
 										"minLength": 1,
 										"maxLength": 200
+									},
+									"tags": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 40
+										},
+										"maxItems": 10
 									}
-								},
-								"required": [
-									"title"
-								]
+								}
 							}
 						}
 					}
@@ -44573,6 +45539,12 @@
 										"createdBy": {
 											"type": "string",
 											"format": "uuid"
+										},
+										"tags": {
+											"type": "array",
+											"items": {
+												"type": "string"
+											}
 										},
 										"lastMessageAt": {
 											"type": [
@@ -44653,6 +45625,7 @@
 										"subjectType",
 										"subjectId",
 										"createdBy",
+										"tags",
 										"lastMessageAt",
 										"createdAt",
 										"updatedAt",
@@ -45133,6 +46106,76 @@
 														],
 														"additionalProperties": {}
 													},
+													"plan": {
+														"type": "object",
+														"properties": {
+															"version": {
+																"type": "number",
+																"enum": [
+																	1
+																]
+															},
+															"steps": {
+																"type": "array",
+																"items": {
+																	"type": "object",
+																	"properties": {
+																		"title": {
+																			"type": "string",
+																			"minLength": 1,
+																			"maxLength": 300
+																		},
+																		"status": {
+																			"type": "string",
+																			"enum": [
+																				"pending",
+																				"in_progress",
+																				"done",
+																				"skipped"
+																			]
+																		}
+																	},
+																	"required": [
+																		"title"
+																	]
+																},
+																"minItems": 1,
+																"maxItems": 20
+															}
+														},
+														"required": [
+															"version",
+															"steps"
+														]
+													},
+													"proposed_edit": {
+														"type": "object",
+														"properties": {
+															"version": {
+																"type": "number",
+																"enum": [
+																	1
+																]
+															},
+															"object_id": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"field": {
+																"type": "string",
+																"pattern": "^(title|content|status|metadata\\.[A-Za-z0-9_]{1,64})$"
+															},
+															"before": {},
+															"after": {}
+														},
+														"required": [
+															"version",
+															"object_id",
+															"field",
+															"before",
+															"after"
+														]
+													},
 													"sessionId": {
 														"type": [
 															"string",
@@ -45147,6 +46190,12 @@
 														]
 													},
 													"editedAt": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"deletedAt": {
 														"type": [
 															"string",
 															"null"
@@ -45368,6 +46417,7 @@
 													"sessionId",
 													"createdAt",
 													"editedAt",
+													"deletedAt",
 													"threadRootId",
 													"threadAlsoInChannel",
 													"spawned_sessions",
@@ -46164,6 +47214,78 @@
 													"task"
 												]
 											},
+											"plan": {
+												"type": "object",
+												"properties": {
+													"version": {
+														"type": "number",
+														"enum": [
+															1
+														]
+													},
+													"steps": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"title": {
+																	"type": "string",
+																	"minLength": 1,
+																	"maxLength": 300
+																},
+																"status": {
+																	"type": "string",
+																	"enum": [
+																		"pending",
+																		"in_progress",
+																		"done",
+																		"skipped"
+																	]
+																}
+															},
+															"required": [
+																"title"
+															]
+														},
+														"minItems": 1,
+														"maxItems": 20
+													}
+												},
+												"required": [
+													"version",
+													"steps"
+												],
+												"description": "Steps you plan, shown as a plan card. Also write the steps in the message text. Set version to 1."
+											},
+											"proposed_edit": {
+												"type": "object",
+												"properties": {
+													"version": {
+														"type": "number",
+														"enum": [
+															1
+														]
+													},
+													"object_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"field": {
+														"type": "string",
+														"pattern": "^(title|content|status|metadata\\.[A-Za-z0-9_]{1,64})$"
+													},
+													"before": {},
+													"after": {}
+												},
+												"required": [
+													"version",
+													"object_id",
+													"field",
+													"before",
+													"after"
+												],
+												"description": "A change you propose to one field of one object, shown with Apply and Dismiss. Also describe it in the message text. Set version to 1."
+											},
 											"card_answer": {
 												"type": "object",
 												"properties": {
@@ -46366,6 +47488,76 @@
 											],
 											"additionalProperties": {}
 										},
+										"plan": {
+											"type": "object",
+											"properties": {
+												"version": {
+													"type": "number",
+													"enum": [
+														1
+													]
+												},
+												"steps": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"title": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 300
+															},
+															"status": {
+																"type": "string",
+																"enum": [
+																	"pending",
+																	"in_progress",
+																	"done",
+																	"skipped"
+																]
+															}
+														},
+														"required": [
+															"title"
+														]
+													},
+													"minItems": 1,
+													"maxItems": 20
+												}
+											},
+											"required": [
+												"version",
+												"steps"
+											]
+										},
+										"proposed_edit": {
+											"type": "object",
+											"properties": {
+												"version": {
+													"type": "number",
+													"enum": [
+														1
+													]
+												},
+												"object_id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"field": {
+													"type": "string",
+													"pattern": "^(title|content|status|metadata\\.[A-Za-z0-9_]{1,64})$"
+												},
+												"before": {},
+												"after": {}
+											},
+											"required": [
+												"version",
+												"object_id",
+												"field",
+												"before",
+												"after"
+											]
+										},
 										"sessionId": {
 											"type": [
 												"string",
@@ -46380,6 +47572,12 @@
 											]
 										},
 										"editedAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"deletedAt": {
 											"type": [
 												"string",
 												"null"
@@ -46484,6 +47682,7 @@
 										"sessionId",
 										"createdAt",
 										"editedAt",
+										"deletedAt",
 										"threadRootId",
 										"threadAlsoInChannel"
 									]
@@ -46714,6 +47913,76 @@
 											],
 											"additionalProperties": {}
 										},
+										"plan": {
+											"type": "object",
+											"properties": {
+												"version": {
+													"type": "number",
+													"enum": [
+														1
+													]
+												},
+												"steps": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"title": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 300
+															},
+															"status": {
+																"type": "string",
+																"enum": [
+																	"pending",
+																	"in_progress",
+																	"done",
+																	"skipped"
+																]
+															}
+														},
+														"required": [
+															"title"
+														]
+													},
+													"minItems": 1,
+													"maxItems": 20
+												}
+											},
+											"required": [
+												"version",
+												"steps"
+											]
+										},
+										"proposed_edit": {
+											"type": "object",
+											"properties": {
+												"version": {
+													"type": "number",
+													"enum": [
+														1
+													]
+												},
+												"object_id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"field": {
+													"type": "string",
+													"pattern": "^(title|content|status|metadata\\.[A-Za-z0-9_]{1,64})$"
+												},
+												"before": {},
+												"after": {}
+											},
+											"required": [
+												"version",
+												"object_id",
+												"field",
+												"before",
+												"after"
+											]
+										},
 										"sessionId": {
 											"type": [
 												"string",
@@ -46728,6 +47997,12 @@
 											]
 										},
 										"editedAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"deletedAt": {
 											"type": [
 												"string",
 												"null"
@@ -46755,6 +48030,7 @@
 										"sessionId",
 										"createdAt",
 										"editedAt",
+										"deletedAt",
 										"threadRootId",
 										"threadAlsoInChannel"
 									]
@@ -46814,6 +48090,320 @@
 									},
 									"required": [
 										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not author",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"delete": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Conversations"
+				],
+				"summary": "Delete a message you authored",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"exclusiveMinimum": 0
+						},
+						"required": true,
+						"name": "messageId",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Message deleted; content is empty and deletedAt is set",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "number"
+										},
+										"conversationId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"actorId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"actorName": {
+											"type": "string"
+										},
+										"actorType": {
+											"type": "string"
+										},
+										"kind": {
+											"type": "string"
+										},
+										"content": {
+											"type": "string"
+										},
+										"metadata": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"plan": {
+											"type": "object",
+											"properties": {
+												"version": {
+													"type": "number",
+													"enum": [
+														1
+													]
+												},
+												"steps": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"title": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 300
+															},
+															"status": {
+																"type": "string",
+																"enum": [
+																	"pending",
+																	"in_progress",
+																	"done",
+																	"skipped"
+																]
+															}
+														},
+														"required": [
+															"title"
+														]
+													},
+													"minItems": 1,
+													"maxItems": 20
+												}
+											},
+											"required": [
+												"version",
+												"steps"
+											]
+										},
+										"proposed_edit": {
+											"type": "object",
+											"properties": {
+												"version": {
+													"type": "number",
+													"enum": [
+														1
+													]
+												},
+												"object_id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"field": {
+													"type": "string",
+													"pattern": "^(title|content|status|metadata\\.[A-Za-z0-9_]{1,64})$"
+												},
+												"before": {},
+												"after": {}
+											},
+											"required": [
+												"version",
+												"object_id",
+												"field",
+												"before",
+												"after"
+											]
+										},
+										"sessionId": {
+											"type": [
+												"string",
+												"null"
+											],
+											"format": "uuid"
+										},
+										"createdAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"editedAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"deletedAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"threadRootId": {
+											"type": [
+												"number",
+												"null"
+											]
+										},
+										"threadAlsoInChannel": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"id",
+										"conversationId",
+										"actorId",
+										"actorName",
+										"actorType",
+										"kind",
+										"content",
+										"metadata",
+										"sessionId",
+										"createdAt",
+										"editedAt",
+										"deletedAt",
+										"threadRootId",
+										"threadAlsoInChannel"
 									]
 								}
 							}
@@ -59492,6 +61082,248 @@
 				}
 			}
 		},
+		"/api/live-activities/follows": {
+			"post": {
+				"tags": [
+					"Devices"
+				],
+				"summary": "Follow an agent run: register the push token of the card the app just started",
+				"description": "Opt-in \"Following an agent\" Live Activity. The app starts the card itself and sends the card's own push token with the `session_id` of the run being followed (workspace in `X-Workspace-Id`). The server pushes the run's latest step to the card while it works and a finished card when it ends, then forgets the follow. Registering again for the same device and run replaces the token. The device must be one of the caller’s registered devices.",
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"device_id": {
+										"type": "string",
+										"format": "uuid"
+									},
+									"session_id": {
+										"type": "string",
+										"format": "uuid"
+									},
+									"token": {
+										"type": "string",
+										"minLength": 16,
+										"maxLength": 512,
+										"pattern": "^[0-9a-fA-F]+$"
+									}
+								},
+								"required": [
+									"device_id",
+									"session_id",
+									"token"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Follow registered",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"device_id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"session_id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"workspace_id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"updated_at": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"id",
+										"device_id",
+										"session_id",
+										"workspace_id",
+										"updated_at"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid request",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Device, run or workspace not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/live-activities/follows/{session_id}": {
+			"delete": {
+				"tags": [
+					"Devices"
+				],
+				"summary": "Stop following an agent run on one of the caller’s devices",
+				"description": "Forgets the follow so no more updates are pushed. The app ends the card itself. Safe to repeat: `deleted` is false when there was nothing to remove.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+						},
+						"required": true,
+						"name": "session_id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+						},
+						"required": true,
+						"name": "device_id",
+						"in": "query"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Follow removed (or already gone)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"deleted": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"deleted"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/web-push/config": {
 			"get": {
 				"tags": [
@@ -64464,6 +66296,401 @@
 					},
 					"500": {
 						"description": "Internal server error",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/installed-loops/{id}/update": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"installed-loops"
+				],
+				"summary": "Update a locked installed loop to the current catalog version now",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Install is at the catalog version (updated: false when it already was)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"workspaceId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"sourceLoopId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"objectId": {
+											"type": [
+												"string",
+												"null"
+											],
+											"format": "uuid"
+										},
+										"installedVersion": {
+											"type": "string"
+										},
+										"isLocked": {
+											"type": "boolean"
+										},
+										"updated": {
+											"type": "boolean"
+										},
+										"fromVersion": {
+											"type": "string"
+										},
+										"toVersion": {
+											"type": "string"
+										},
+										"message": {
+											"type": "string"
+										},
+										"items": {
+											"type": [
+												"object",
+												"null"
+											],
+											"properties": {
+												"adds": {
+													"type": "number"
+												},
+												"updates": {
+													"type": "number"
+												},
+												"removes": {
+													"type": "number"
+												},
+												"reuses": {
+													"type": "number"
+												}
+											},
+											"required": [
+												"adds",
+												"updates",
+												"removes",
+												"reuses"
+											]
+										}
+									},
+									"required": [
+										"id",
+										"workspaceId",
+										"sourceLoopId",
+										"objectId",
+										"installedVersion",
+										"isLocked",
+										"updated",
+										"fromVersion",
+										"toVersion",
+										"message",
+										"items"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Validation error",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not allowed to edit loops in the install workspace",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Installed loop not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Install is forked, so the workspace owns it and it cannot be updated",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Update failed",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -78280,6 +80507,670 @@
 										"name",
 										"settings",
 										"updated_at"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/saved-views": {
+			"get": {
+				"tags": [
+					"Saved Views"
+				],
+				"summary": "List the workspace’s saved views",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"enum": [
+								"flow",
+								"agent",
+								"chat"
+							]
+						},
+						"required": false,
+						"name": "kind",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Saved views, by name",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"views": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"workspaceId": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"name": {
+														"type": "string"
+													},
+													"kind": {
+														"type": "string",
+														"enum": [
+															"flow",
+															"agent",
+															"chat"
+														]
+													},
+													"filter": {
+														"type": "object",
+														"properties": {
+															"tags": {
+																"type": "array",
+																"items": {
+																	"type": "string",
+																	"minLength": 1,
+																	"maxLength": 40
+																},
+																"maxItems": 10
+															},
+															"driverId": {
+																"type": "string",
+																"format": "uuid"
+															}
+														},
+														"additionalProperties": false
+													},
+													"groupBy": {
+														"type": [
+															"string",
+															"null"
+														],
+														"enum": [
+															"tag",
+															"driver"
+														]
+													},
+													"createdBy": {
+														"type": [
+															"string",
+															"null"
+														],
+														"format": "uuid"
+													},
+													"createdAt": {
+														"type": "string"
+													},
+													"updatedAt": {
+														"type": "string"
+													}
+												},
+												"required": [
+													"id",
+													"workspaceId",
+													"name",
+													"kind",
+													"filter",
+													"groupBy",
+													"createdBy",
+													"createdAt",
+													"updatedAt"
+												]
+											}
+										}
+									},
+									"required": [
+										"views"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Saved Views"
+				],
+				"summary": "Create a saved view for flows, agents or chats",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"name": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 60
+									},
+									"kind": {
+										"type": "string",
+										"enum": [
+											"flow",
+											"agent",
+											"chat"
+										]
+									},
+									"filter": {
+										"type": "object",
+										"properties": {
+											"tags": {
+												"type": "array",
+												"items": {
+													"type": "string",
+													"minLength": 1,
+													"maxLength": 40
+												},
+												"maxItems": 10
+											},
+											"driverId": {
+												"type": "string",
+												"format": "uuid"
+											}
+										},
+										"default": {},
+										"additionalProperties": false
+									},
+									"groupBy": {
+										"type": [
+											"string",
+											"null"
+										],
+										"enum": [
+											"tag",
+											"driver"
+										],
+										"default": null
+									}
+								},
+								"required": [
+									"name",
+									"kind"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "Saved view created",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"workspaceId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"name": {
+											"type": "string"
+										},
+										"kind": {
+											"type": "string",
+											"enum": [
+												"flow",
+												"agent",
+												"chat"
+											]
+										},
+										"filter": {
+											"type": "object",
+											"properties": {
+												"tags": {
+													"type": "array",
+													"items": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 40
+													},
+													"maxItems": 10
+												},
+												"driverId": {
+													"type": "string",
+													"format": "uuid"
+												}
+											},
+											"additionalProperties": false
+										},
+										"groupBy": {
+											"type": [
+												"string",
+												"null"
+											],
+											"enum": [
+												"tag",
+												"driver"
+											]
+										},
+										"createdBy": {
+											"type": [
+												"string",
+												"null"
+											],
+											"format": "uuid"
+										},
+										"createdAt": {
+											"type": "string"
+										},
+										"updatedAt": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"id",
+										"workspaceId",
+										"name",
+										"kind",
+										"filter",
+										"groupBy",
+										"createdBy",
+										"createdAt",
+										"updatedAt"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "A view of this kind already has this name, or the workspace is full",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/saved-views/{id}/apply": {
+			"get": {
+				"tags": [
+					"Saved Views"
+				],
+				"summary": "Apply a saved view: the matching ids, split into its groups",
+				"description": "Flows are every flow in the workspace and agents are every agent in it. Chats are only the caller’s own chats that are not archived, so a view never shows a chat the caller is not in.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "The view and its groups",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"view": {
+											"type": "object",
+											"properties": {
+												"id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"workspaceId": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"name": {
+													"type": "string"
+												},
+												"kind": {
+													"type": "string",
+													"enum": [
+														"flow",
+														"agent",
+														"chat"
+													]
+												},
+												"filter": {
+													"type": "object",
+													"properties": {
+														"tags": {
+															"type": "array",
+															"items": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 40
+															},
+															"maxItems": 10
+														},
+														"driverId": {
+															"type": "string",
+															"format": "uuid"
+														}
+													},
+													"additionalProperties": false
+												},
+												"groupBy": {
+													"type": [
+														"string",
+														"null"
+													],
+													"enum": [
+														"tag",
+														"driver"
+													]
+												},
+												"createdBy": {
+													"type": [
+														"string",
+														"null"
+													],
+													"format": "uuid"
+												},
+												"createdAt": {
+													"type": "string"
+												},
+												"updatedAt": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"id",
+												"workspaceId",
+												"name",
+												"kind",
+												"filter",
+												"groupBy",
+												"createdBy",
+												"createdAt",
+												"updatedAt"
+											]
+										},
+										"groups": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"key": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"ids": {
+														"type": "array",
+														"items": {
+															"type": "string",
+															"format": "uuid"
+														}
+													}
+												},
+												"required": [
+													"key",
+													"ids"
+												]
+											}
+										}
+									},
+									"required": [
+										"view",
+										"groups"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/saved-views/{id}": {
+			"delete": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Saved Views"
+				],
+				"summary": "Delete a saved view",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Saved view deleted",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"deleted": {
+											"type": "boolean",
+											"enum": [
+												true
+											]
+										}
+									},
+									"required": [
+										"deleted"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
 									]
 								}
 							}

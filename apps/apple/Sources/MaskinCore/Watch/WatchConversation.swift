@@ -35,19 +35,6 @@ public enum WatchConversation {
 		if muted { return "MUTED" }
 		return speaking ? "SPEAKING" : "DONE"
 	}
-
-	/// One line on what an agent behind the scenes is doing: the session's own words when it has
-	/// them, else a plain word for its state.
-	public static func statusLine(activity: String?, presence: ChatAgentPresence) -> String {
-		if let activity = activity?.trimmingCharacters(in: .whitespacesAndNewlines), !activity.isEmpty {
-			return activity
-		}
-		switch presence {
-		case .working: return "Working"
-		case .typing: return "Writing the answer"
-		case .replying: return "Reading your message"
-		}
-	}
 }
 
 /// One open thread with the Chief of Staff.

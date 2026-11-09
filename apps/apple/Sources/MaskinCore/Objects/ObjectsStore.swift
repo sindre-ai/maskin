@@ -862,6 +862,7 @@ public final class ObjectsStore {
 				objects.insert(created, at: 0)
 			}
 			if !inventory.contains(where: { $0.id == created.id }) { inventory.insert(created, at: 0) }
+			Analytics.shared.objectCreated(id: created.id, type: created.type)
 			return created
 		} catch {
 			actionError = Self.message(error)

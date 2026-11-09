@@ -8582,6 +8582,8 @@ public enum Operations {
                         public var voice_enabled: Swift.Bool?
                         /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/avatar_url`.
                         public var avatar_url: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/tags`.
+                        public var tags: [Swift.String]?
                         /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/workspacesPayload`.
                         public struct workspacesPayloadPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/workspacesPayload/id`.
@@ -8631,6 +8633,7 @@ public enum Operations {
                         ///   - role:
                         ///   - voice_enabled:
                         ///   - avatar_url:
+                        ///   - tags:
                         ///   - workspaces:
                         ///   - skills:
                         public init(
@@ -8645,6 +8648,7 @@ public enum Operations {
                             role: Swift.String? = nil,
                             voice_enabled: Swift.Bool? = nil,
                             avatar_url: Swift.String? = nil,
+                            tags: [Swift.String]? = nil,
                             workspaces: Operations.get_sol_api_sol_actors.Output.Ok.Body.jsonPayloadPayload.workspacesPayload? = nil,
                             skills: [Swift.String]? = nil
                         ) {
@@ -8659,6 +8663,7 @@ public enum Operations {
                             self.role = role
                             self.voice_enabled = voice_enabled
                             self.avatar_url = avatar_url
+                            self.tags = tags
                             self.workspaces = workspaces
                             self.skills = skills
                         }
@@ -8674,6 +8679,7 @@ public enum Operations {
                             case role
                             case voice_enabled
                             case avatar_url
+                            case tags
                             case workspaces
                             case skills
                         }
@@ -11217,6 +11223,8 @@ public enum Operations {
                     public var mailbox: Swift.String?
                     /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/json/default_workspace_id`.
                     public var default_workspace_id: Swift.String?
+                    /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/json/tags`.
+                    public var tags: [Swift.String]?
                     /// Creates a new `jsonPayload`.
                     ///
                     /// - Parameters:
@@ -11230,6 +11238,7 @@ public enum Operations {
                     ///   - llm_config:
                     ///   - mailbox:
                     ///   - default_workspace_id:
+                    ///   - tags:
                     public init(
                         name: Swift.String? = nil,
                         email: Swift.String? = nil,
@@ -11240,7 +11249,8 @@ public enum Operations {
                         llm_provider: Swift.String? = nil,
                         llm_config: Operations.patch_sol_api_sol_actors_sol__lcub_id_rcub_.Input.Body.jsonPayload.llm_configPayload? = nil,
                         mailbox: Swift.String? = nil,
-                        default_workspace_id: Swift.String? = nil
+                        default_workspace_id: Swift.String? = nil,
+                        tags: [Swift.String]? = nil
                     ) {
                         self.name = name
                         self.email = email
@@ -11252,6 +11262,7 @@ public enum Operations {
                         self.llm_config = llm_config
                         self.mailbox = mailbox
                         self.default_workspace_id = default_workspace_id
+                        self.tags = tags
                     }
                     public enum CodingKeys: String, CodingKey {
                         case name
@@ -11264,6 +11275,7 @@ public enum Operations {
                         case llm_config
                         case mailbox
                         case default_workspace_id
+                        case tags
                     }
                 }
                 /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/content/application\/json`.
@@ -21742,6 +21754,8 @@ public enum Operations {
                         public var name: Swift.String
                         /// - Remark: Generated from `#/paths/api/workspaces/{id}/members/GET/responses/200/content/jsonPayload/type`.
                         public var _type: Swift.String
+                        /// - Remark: Generated from `#/paths/api/workspaces/{id}/members/GET/responses/200/content/jsonPayload/lastActiveAt`.
+                        public var lastActiveAt: Swift.String?
                         /// Creates a new `jsonPayloadPayload`.
                         ///
                         /// - Parameters:
@@ -21750,18 +21764,21 @@ public enum Operations {
                         ///   - joinedAt:
                         ///   - name:
                         ///   - _type:
+                        ///   - lastActiveAt:
                         public init(
                             actorId: Swift.String,
                             role: Swift.String,
                             joinedAt: Swift.String? = nil,
                             name: Swift.String,
-                            _type: Swift.String
+                            _type: Swift.String,
+                            lastActiveAt: Swift.String? = nil
                         ) {
                             self.actorId = actorId
                             self.role = role
                             self.joinedAt = joinedAt
                             self.name = name
                             self._type = _type
+                            self.lastActiveAt = lastActiveAt
                         }
                         public enum CodingKeys: String, CodingKey {
                             case actorId
@@ -21769,6 +21786,7 @@ public enum Operations {
                             case joinedAt
                             case name
                             case _type = "type"
+                            case lastActiveAt
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/workspaces/{id}/members/GET/responses/200/content/json`.
@@ -22682,6 +22700,8 @@ public enum Operations {
                         public var name: Swift.String
                         /// - Remark: Generated from `#/paths/api/workspaces/{id}/members/{actorId}/PATCH/responses/200/content/json/type`.
                         public var _type: Swift.String
+                        /// - Remark: Generated from `#/paths/api/workspaces/{id}/members/{actorId}/PATCH/responses/200/content/json/lastActiveAt`.
+                        public var lastActiveAt: Swift.String?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -22690,18 +22710,21 @@ public enum Operations {
                         ///   - joinedAt:
                         ///   - name:
                         ///   - _type:
+                        ///   - lastActiveAt:
                         public init(
                             actorId: Swift.String,
                             role: Swift.String,
                             joinedAt: Swift.String? = nil,
                             name: Swift.String,
-                            _type: Swift.String
+                            _type: Swift.String,
+                            lastActiveAt: Swift.String? = nil
                         ) {
                             self.actorId = actorId
                             self.role = role
                             self.joinedAt = joinedAt
                             self.name = name
                             self._type = _type
+                            self.lastActiveAt = lastActiveAt
                         }
                         public enum CodingKeys: String, CodingKey {
                             case actorId
@@ -22709,6 +22732,7 @@ public enum Operations {
                             case joinedAt
                             case name
                             case _type = "type"
+                            case lastActiveAt
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/workspaces/{id}/members/{actorId}/PATCH/responses/200/content/application\/json`.
@@ -23891,6 +23915,8 @@ public enum Operations {
                         public var createdAt: Swift.String
                         /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/GET/responses/200/content/jsonPayload/updatedAt`.
                         public var updatedAt: Swift.String
+                        /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/GET/responses/200/content/jsonPayload/agentIds`.
+                        public var agentIds: [Swift.String]
                         /// Creates a new `jsonPayloadPayload`.
                         ///
                         /// - Parameters:
@@ -23906,6 +23932,7 @@ public enum Operations {
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
+                        ///   - agentIds:
                         public init(
                             id: Swift.String,
                             workspaceId: Swift.String,
@@ -23918,7 +23945,8 @@ public enum Operations {
                             fileCount: Swift.Int? = nil,
                             createdBy: Swift.String? = nil,
                             createdAt: Swift.String,
-                            updatedAt: Swift.String
+                            updatedAt: Swift.String,
+                            agentIds: [Swift.String]
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -23932,6 +23960,7 @@ public enum Operations {
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
+                            self.agentIds = agentIds
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -23946,6 +23975,7 @@ public enum Operations {
                             case createdBy
                             case createdAt
                             case updatedAt
+                            case agentIds
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/GET/responses/200/content/json`.
@@ -23975,7 +24005,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// Workspace skills list
+            /// Workspace skills list, each with the agents that have it attached
             ///
             /// - Remark: Generated from `#/paths//api/workspaces/{workspaceId}/skills/get/responses/200`.
             ///
@@ -47684,6 +47714,8 @@ public enum Operations {
                             public var subjectId: Swift.String?
                             /// - Remark: Generated from `#/paths/api/conversations/GET/responses/200/content/json/conversationsPayload/createdBy`.
                             public var createdBy: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/GET/responses/200/content/json/conversationsPayload/tags`.
+                            public var tags: [Swift.String]
                             /// - Remark: Generated from `#/paths/api/conversations/GET/responses/200/content/json/conversationsPayload/lastMessageAt`.
                             public var lastMessageAt: Swift.String?
                             /// - Remark: Generated from `#/paths/api/conversations/GET/responses/200/content/json/conversationsPayload/createdAt`.
@@ -47760,6 +47792,7 @@ public enum Operations {
                             ///   - subjectType:
                             ///   - subjectId:
                             ///   - createdBy:
+                            ///   - tags:
                             ///   - lastMessageAt:
                             ///   - createdAt:
                             ///   - updatedAt:
@@ -47779,6 +47812,7 @@ public enum Operations {
                                 subjectType: Operations.get_sol_api_sol_conversations.Output.Ok.Body.jsonPayload.conversationsPayloadPayload.subjectTypePayload? = nil,
                                 subjectId: Swift.String? = nil,
                                 createdBy: Swift.String,
+                                tags: [Swift.String],
                                 lastMessageAt: Swift.String? = nil,
                                 createdAt: Swift.String? = nil,
                                 updatedAt: Swift.String? = nil,
@@ -47798,6 +47832,7 @@ public enum Operations {
                                 self.subjectType = subjectType
                                 self.subjectId = subjectId
                                 self.createdBy = createdBy
+                                self.tags = tags
                                 self.lastMessageAt = lastMessageAt
                                 self.createdAt = createdAt
                                 self.updatedAt = updatedAt
@@ -47818,6 +47853,7 @@ public enum Operations {
                                 case subjectType
                                 case subjectId
                                 case createdBy
+                                case tags
                                 case lastMessageAt
                                 case createdAt
                                 case updatedAt
@@ -48806,6 +48842,114 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/computer_request`.
                         public var computer_request: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.computer_requestPayload?
+                        /// Steps you plan, shown as a plan card. Also write the steps in the message text. Set version to 1.
+                        ///
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/plan`.
+                        public struct planPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/plan/version`.
+                            public var version: Swift.Double
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/plan/stepsPayload`.
+                            public struct stepsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/plan/stepsPayload/title`.
+                                public var title: Swift.String
+                                /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/plan/stepsPayload/status`.
+                                @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                    case pending = "pending"
+                                    case in_progress = "in_progress"
+                                    case done = "done"
+                                    case skipped = "skipped"
+                                }
+                                /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/plan/stepsPayload/status`.
+                                public var status: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.planPayload.stepsPayloadPayload.statusPayload?
+                                /// Creates a new `stepsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - title:
+                                ///   - status:
+                                public init(
+                                    title: Swift.String,
+                                    status: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.planPayload.stepsPayloadPayload.statusPayload? = nil
+                                ) {
+                                    self.title = title
+                                    self.status = status
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case title
+                                    case status
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/plan/steps`.
+                            public typealias stepsPayload = [Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.planPayload.stepsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/plan/steps`.
+                            public var steps: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.planPayload.stepsPayload
+                            /// Creates a new `planPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - version:
+                            ///   - steps:
+                            public init(
+                                version: Swift.Double,
+                                steps: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.planPayload.stepsPayload
+                            ) {
+                                self.version = version
+                                self.steps = steps
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case version
+                                case steps
+                            }
+                        }
+                        /// Steps you plan, shown as a plan card. Also write the steps in the message text. Set version to 1.
+                        ///
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/plan`.
+                        public var plan: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.planPayload?
+                        /// A change you propose to one field of one object, shown with Apply and Dismiss. Also describe it in the message text. Set version to 1.
+                        ///
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/proposed_edit`.
+                        public struct proposed_editPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/proposed_edit/version`.
+                            public var version: Swift.Double
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/proposed_edit/object_id`.
+                            public var object_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/proposed_edit/field`.
+                            public var field: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/proposed_edit/before`.
+                            public var before: OpenAPIRuntime.OpenAPIValueContainer
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/proposed_edit/after`.
+                            public var after: OpenAPIRuntime.OpenAPIValueContainer
+                            /// Creates a new `proposed_editPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - version:
+                            ///   - object_id:
+                            ///   - field:
+                            ///   - before:
+                            ///   - after:
+                            public init(
+                                version: Swift.Double,
+                                object_id: Swift.String,
+                                field: Swift.String,
+                                before: OpenAPIRuntime.OpenAPIValueContainer,
+                                after: OpenAPIRuntime.OpenAPIValueContainer
+                            ) {
+                                self.version = version
+                                self.object_id = object_id
+                                self.field = field
+                                self.before = before
+                                self.after = after
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case version
+                                case object_id
+                                case field
+                                case before
+                                case after
+                            }
+                        }
+                        /// A change you propose to one field of one object, shown with Apply and Dismiss. Also describe it in the message text. Set version to 1.
+                        ///
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/proposed_edit`.
+                        public var proposed_edit: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.proposed_editPayload?
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/card_answer`.
                         public struct card_answerPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/card_answer/message_id`.
@@ -48994,6 +49138,8 @@ public enum Operations {
                         ///   - integration_access_request:
                         ///   - mcp_server_request:
                         ///   - computer_request:
+                        ///   - plan: Steps you plan, shown as a plan card. Also write the steps in the message text. Set version to 1.
+                        ///   - proposed_edit: A change you propose to one field of one object, shown with Apply and Dismiss. Also describe it in the message text. Set version to 1.
                         ///   - card_answer:
                         ///   - helper_return:
                         ///   - hidden_from_chat:
@@ -49020,6 +49166,8 @@ public enum Operations {
                             integration_access_request: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.integration_access_requestPayload? = nil,
                             mcp_server_request: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.mcp_server_requestPayload? = nil,
                             computer_request: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.computer_requestPayload? = nil,
+                            plan: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.planPayload? = nil,
+                            proposed_edit: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.proposed_editPayload? = nil,
                             card_answer: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.card_answerPayload? = nil,
                             helper_return: Swift.String? = nil,
                             hidden_from_chat: Swift.Bool? = nil,
@@ -49046,6 +49194,8 @@ public enum Operations {
                             self.integration_access_request = integration_access_request
                             self.mcp_server_request = mcp_server_request
                             self.computer_request = computer_request
+                            self.plan = plan
+                            self.proposed_edit = proposed_edit
                             self.card_answer = card_answer
                             self.helper_return = helper_return
                             self.hidden_from_chat = hidden_from_chat
@@ -49073,6 +49223,8 @@ public enum Operations {
                             case integration_access_request
                             case mcp_server_request
                             case computer_request
+                            case plan
+                            case proposed_edit
                             case card_answer
                             case helper_return
                             case hidden_from_chat
@@ -49159,6 +49311,8 @@ public enum Operations {
                         public var subjectId: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/POST/responses/200/content/json/createdBy`.
                         public var createdBy: Swift.String
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/responses/200/content/json/tags`.
+                        public var tags: [Swift.String]
                         /// - Remark: Generated from `#/paths/api/conversations/POST/responses/200/content/json/lastMessageAt`.
                         public var lastMessageAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/POST/responses/200/content/json/createdAt`.
@@ -49227,6 +49381,7 @@ public enum Operations {
                         ///   - subjectType:
                         ///   - subjectId:
                         ///   - createdBy:
+                        ///   - tags:
                         ///   - lastMessageAt:
                         ///   - createdAt:
                         ///   - updatedAt:
@@ -49242,6 +49397,7 @@ public enum Operations {
                             subjectType: Operations.post_sol_api_sol_conversations.Output.Ok.Body.jsonPayload.subjectTypePayload? = nil,
                             subjectId: Swift.String? = nil,
                             createdBy: Swift.String,
+                            tags: [Swift.String],
                             lastMessageAt: Swift.String? = nil,
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
@@ -49257,6 +49413,7 @@ public enum Operations {
                             self.subjectType = subjectType
                             self.subjectId = subjectId
                             self.createdBy = createdBy
+                            self.tags = tags
                             self.lastMessageAt = lastMessageAt
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
@@ -49273,6 +49430,7 @@ public enum Operations {
                             case subjectType
                             case subjectId
                             case createdBy
+                            case tags
                             case lastMessageAt
                             case createdAt
                             case updatedAt
@@ -49353,6 +49511,8 @@ public enum Operations {
                         public var subjectId: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/POST/responses/201/content/json/createdBy`.
                         public var createdBy: Swift.String
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/responses/201/content/json/tags`.
+                        public var tags: [Swift.String]
                         /// - Remark: Generated from `#/paths/api/conversations/POST/responses/201/content/json/lastMessageAt`.
                         public var lastMessageAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/POST/responses/201/content/json/createdAt`.
@@ -49421,6 +49581,7 @@ public enum Operations {
                         ///   - subjectType:
                         ///   - subjectId:
                         ///   - createdBy:
+                        ///   - tags:
                         ///   - lastMessageAt:
                         ///   - createdAt:
                         ///   - updatedAt:
@@ -49436,6 +49597,7 @@ public enum Operations {
                             subjectType: Operations.post_sol_api_sol_conversations.Output.Created.Body.jsonPayload.subjectTypePayload? = nil,
                             subjectId: Swift.String? = nil,
                             createdBy: Swift.String,
+                            tags: [Swift.String],
                             lastMessageAt: Swift.String? = nil,
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
@@ -49451,6 +49613,7 @@ public enum Operations {
                             self.subjectType = subjectType
                             self.subjectId = subjectId
                             self.createdBy = createdBy
+                            self.tags = tags
                             self.lastMessageAt = lastMessageAt
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
@@ -49467,6 +49630,7 @@ public enum Operations {
                             case subjectType
                             case subjectId
                             case createdBy
+                            case tags
                             case lastMessageAt
                             case createdAt
                             case updatedAt
@@ -49794,12 +49958,114 @@ public enum Operations {
                                 }
                                 /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/root/metadata`.
                                 public var metadata: Operations.get_sol_api_sol_conversations_sol_threads.Output.Ok.Body.jsonPayload.threadsPayloadPayload.rootPayload.metadataPayload?
+                                /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/root/plan`.
+                                public struct planPayload: Codable, Hashable, Sendable {
+                                    /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/root/plan/version`.
+                                    public var version: Swift.Double
+                                    /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/root/plan/stepsPayload`.
+                                    public struct stepsPayloadPayload: Codable, Hashable, Sendable {
+                                        /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/root/plan/stepsPayload/title`.
+                                        public var title: Swift.String
+                                        /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/root/plan/stepsPayload/status`.
+                                        @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                            case pending = "pending"
+                                            case in_progress = "in_progress"
+                                            case done = "done"
+                                            case skipped = "skipped"
+                                        }
+                                        /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/root/plan/stepsPayload/status`.
+                                        public var status: Operations.get_sol_api_sol_conversations_sol_threads.Output.Ok.Body.jsonPayload.threadsPayloadPayload.rootPayload.planPayload.stepsPayloadPayload.statusPayload?
+                                        /// Creates a new `stepsPayloadPayload`.
+                                        ///
+                                        /// - Parameters:
+                                        ///   - title:
+                                        ///   - status:
+                                        public init(
+                                            title: Swift.String,
+                                            status: Operations.get_sol_api_sol_conversations_sol_threads.Output.Ok.Body.jsonPayload.threadsPayloadPayload.rootPayload.planPayload.stepsPayloadPayload.statusPayload? = nil
+                                        ) {
+                                            self.title = title
+                                            self.status = status
+                                        }
+                                        public enum CodingKeys: String, CodingKey {
+                                            case title
+                                            case status
+                                        }
+                                    }
+                                    /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/root/plan/steps`.
+                                    public typealias stepsPayload = [Operations.get_sol_api_sol_conversations_sol_threads.Output.Ok.Body.jsonPayload.threadsPayloadPayload.rootPayload.planPayload.stepsPayloadPayload]
+                                    /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/root/plan/steps`.
+                                    public var steps: Operations.get_sol_api_sol_conversations_sol_threads.Output.Ok.Body.jsonPayload.threadsPayloadPayload.rootPayload.planPayload.stepsPayload
+                                    /// Creates a new `planPayload`.
+                                    ///
+                                    /// - Parameters:
+                                    ///   - version:
+                                    ///   - steps:
+                                    public init(
+                                        version: Swift.Double,
+                                        steps: Operations.get_sol_api_sol_conversations_sol_threads.Output.Ok.Body.jsonPayload.threadsPayloadPayload.rootPayload.planPayload.stepsPayload
+                                    ) {
+                                        self.version = version
+                                        self.steps = steps
+                                    }
+                                    public enum CodingKeys: String, CodingKey {
+                                        case version
+                                        case steps
+                                    }
+                                }
+                                /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/root/plan`.
+                                public var plan: Operations.get_sol_api_sol_conversations_sol_threads.Output.Ok.Body.jsonPayload.threadsPayloadPayload.rootPayload.planPayload?
+                                /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/root/proposed_edit`.
+                                public struct proposed_editPayload: Codable, Hashable, Sendable {
+                                    /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/root/proposed_edit/version`.
+                                    public var version: Swift.Double
+                                    /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/root/proposed_edit/object_id`.
+                                    public var object_id: Swift.String
+                                    /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/root/proposed_edit/field`.
+                                    public var field: Swift.String
+                                    /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/root/proposed_edit/before`.
+                                    public var before: OpenAPIRuntime.OpenAPIValueContainer
+                                    /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/root/proposed_edit/after`.
+                                    public var after: OpenAPIRuntime.OpenAPIValueContainer
+                                    /// Creates a new `proposed_editPayload`.
+                                    ///
+                                    /// - Parameters:
+                                    ///   - version:
+                                    ///   - object_id:
+                                    ///   - field:
+                                    ///   - before:
+                                    ///   - after:
+                                    public init(
+                                        version: Swift.Double,
+                                        object_id: Swift.String,
+                                        field: Swift.String,
+                                        before: OpenAPIRuntime.OpenAPIValueContainer,
+                                        after: OpenAPIRuntime.OpenAPIValueContainer
+                                    ) {
+                                        self.version = version
+                                        self.object_id = object_id
+                                        self.field = field
+                                        self.before = before
+                                        self.after = after
+                                    }
+                                    public enum CodingKeys: String, CodingKey {
+                                        case version
+                                        case object_id
+                                        case field
+                                        case before
+                                        case after
+                                    }
+                                }
+                                /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/root/proposed_edit`.
+                                public var proposed_edit: Operations.get_sol_api_sol_conversations_sol_threads.Output.Ok.Body.jsonPayload.threadsPayloadPayload.rootPayload.proposed_editPayload?
                                 /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/root/sessionId`.
                                 public var sessionId: Swift.String?
                                 /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/root/createdAt`.
                                 public var createdAt: Swift.String?
                                 /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/root/editedAt`.
                                 public var editedAt: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/root/deletedAt`.
+                                public var deletedAt: Swift.String?
                                 /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/root/threadRootId`.
                                 public var threadRootId: Swift.Double?
                                 /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/root/threadAlsoInChannel`.
@@ -49815,9 +50081,12 @@ public enum Operations {
                                 ///   - kind:
                                 ///   - content:
                                 ///   - metadata:
+                                ///   - plan:
+                                ///   - proposed_edit:
                                 ///   - sessionId:
                                 ///   - createdAt:
                                 ///   - editedAt:
+                                ///   - deletedAt:
                                 ///   - threadRootId:
                                 ///   - threadAlsoInChannel:
                                 public init(
@@ -49829,9 +50098,12 @@ public enum Operations {
                                     kind: Swift.String,
                                     content: Swift.String,
                                     metadata: Operations.get_sol_api_sol_conversations_sol_threads.Output.Ok.Body.jsonPayload.threadsPayloadPayload.rootPayload.metadataPayload? = nil,
+                                    plan: Operations.get_sol_api_sol_conversations_sol_threads.Output.Ok.Body.jsonPayload.threadsPayloadPayload.rootPayload.planPayload? = nil,
+                                    proposed_edit: Operations.get_sol_api_sol_conversations_sol_threads.Output.Ok.Body.jsonPayload.threadsPayloadPayload.rootPayload.proposed_editPayload? = nil,
                                     sessionId: Swift.String? = nil,
                                     createdAt: Swift.String? = nil,
                                     editedAt: Swift.String? = nil,
+                                    deletedAt: Swift.String? = nil,
                                     threadRootId: Swift.Double? = nil,
                                     threadAlsoInChannel: Swift.Bool
                                 ) {
@@ -49843,9 +50115,12 @@ public enum Operations {
                                     self.kind = kind
                                     self.content = content
                                     self.metadata = metadata
+                                    self.plan = plan
+                                    self.proposed_edit = proposed_edit
                                     self.sessionId = sessionId
                                     self.createdAt = createdAt
                                     self.editedAt = editedAt
+                                    self.deletedAt = deletedAt
                                     self.threadRootId = threadRootId
                                     self.threadAlsoInChannel = threadAlsoInChannel
                                 }
@@ -49858,9 +50133,12 @@ public enum Operations {
                                     case kind
                                     case content
                                     case metadata
+                                    case plan
+                                    case proposed_edit
                                     case sessionId
                                     case createdAt
                                     case editedAt
+                                    case deletedAt
                                     case threadRootId
                                     case threadAlsoInChannel
                                 }
@@ -49977,12 +50255,114 @@ public enum Operations {
                                 }
                                 /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/lastReply/metadata`.
                                 public var metadata: Operations.get_sol_api_sol_conversations_sol_threads.Output.Ok.Body.jsonPayload.threadsPayloadPayload.lastReplyPayload.metadataPayload?
+                                /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/lastReply/plan`.
+                                public struct planPayload: Codable, Hashable, Sendable {
+                                    /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/lastReply/plan/version`.
+                                    public var version: Swift.Double
+                                    /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/lastReply/plan/stepsPayload`.
+                                    public struct stepsPayloadPayload: Codable, Hashable, Sendable {
+                                        /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/lastReply/plan/stepsPayload/title`.
+                                        public var title: Swift.String
+                                        /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/lastReply/plan/stepsPayload/status`.
+                                        @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                            case pending = "pending"
+                                            case in_progress = "in_progress"
+                                            case done = "done"
+                                            case skipped = "skipped"
+                                        }
+                                        /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/lastReply/plan/stepsPayload/status`.
+                                        public var status: Operations.get_sol_api_sol_conversations_sol_threads.Output.Ok.Body.jsonPayload.threadsPayloadPayload.lastReplyPayload.planPayload.stepsPayloadPayload.statusPayload?
+                                        /// Creates a new `stepsPayloadPayload`.
+                                        ///
+                                        /// - Parameters:
+                                        ///   - title:
+                                        ///   - status:
+                                        public init(
+                                            title: Swift.String,
+                                            status: Operations.get_sol_api_sol_conversations_sol_threads.Output.Ok.Body.jsonPayload.threadsPayloadPayload.lastReplyPayload.planPayload.stepsPayloadPayload.statusPayload? = nil
+                                        ) {
+                                            self.title = title
+                                            self.status = status
+                                        }
+                                        public enum CodingKeys: String, CodingKey {
+                                            case title
+                                            case status
+                                        }
+                                    }
+                                    /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/lastReply/plan/steps`.
+                                    public typealias stepsPayload = [Operations.get_sol_api_sol_conversations_sol_threads.Output.Ok.Body.jsonPayload.threadsPayloadPayload.lastReplyPayload.planPayload.stepsPayloadPayload]
+                                    /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/lastReply/plan/steps`.
+                                    public var steps: Operations.get_sol_api_sol_conversations_sol_threads.Output.Ok.Body.jsonPayload.threadsPayloadPayload.lastReplyPayload.planPayload.stepsPayload
+                                    /// Creates a new `planPayload`.
+                                    ///
+                                    /// - Parameters:
+                                    ///   - version:
+                                    ///   - steps:
+                                    public init(
+                                        version: Swift.Double,
+                                        steps: Operations.get_sol_api_sol_conversations_sol_threads.Output.Ok.Body.jsonPayload.threadsPayloadPayload.lastReplyPayload.planPayload.stepsPayload
+                                    ) {
+                                        self.version = version
+                                        self.steps = steps
+                                    }
+                                    public enum CodingKeys: String, CodingKey {
+                                        case version
+                                        case steps
+                                    }
+                                }
+                                /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/lastReply/plan`.
+                                public var plan: Operations.get_sol_api_sol_conversations_sol_threads.Output.Ok.Body.jsonPayload.threadsPayloadPayload.lastReplyPayload.planPayload?
+                                /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/lastReply/proposed_edit`.
+                                public struct proposed_editPayload: Codable, Hashable, Sendable {
+                                    /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/lastReply/proposed_edit/version`.
+                                    public var version: Swift.Double
+                                    /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/lastReply/proposed_edit/object_id`.
+                                    public var object_id: Swift.String
+                                    /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/lastReply/proposed_edit/field`.
+                                    public var field: Swift.String
+                                    /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/lastReply/proposed_edit/before`.
+                                    public var before: OpenAPIRuntime.OpenAPIValueContainer
+                                    /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/lastReply/proposed_edit/after`.
+                                    public var after: OpenAPIRuntime.OpenAPIValueContainer
+                                    /// Creates a new `proposed_editPayload`.
+                                    ///
+                                    /// - Parameters:
+                                    ///   - version:
+                                    ///   - object_id:
+                                    ///   - field:
+                                    ///   - before:
+                                    ///   - after:
+                                    public init(
+                                        version: Swift.Double,
+                                        object_id: Swift.String,
+                                        field: Swift.String,
+                                        before: OpenAPIRuntime.OpenAPIValueContainer,
+                                        after: OpenAPIRuntime.OpenAPIValueContainer
+                                    ) {
+                                        self.version = version
+                                        self.object_id = object_id
+                                        self.field = field
+                                        self.before = before
+                                        self.after = after
+                                    }
+                                    public enum CodingKeys: String, CodingKey {
+                                        case version
+                                        case object_id
+                                        case field
+                                        case before
+                                        case after
+                                    }
+                                }
+                                /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/lastReply/proposed_edit`.
+                                public var proposed_edit: Operations.get_sol_api_sol_conversations_sol_threads.Output.Ok.Body.jsonPayload.threadsPayloadPayload.lastReplyPayload.proposed_editPayload?
                                 /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/lastReply/sessionId`.
                                 public var sessionId: Swift.String?
                                 /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/lastReply/createdAt`.
                                 public var createdAt: Swift.String?
                                 /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/lastReply/editedAt`.
                                 public var editedAt: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/lastReply/deletedAt`.
+                                public var deletedAt: Swift.String?
                                 /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/lastReply/threadRootId`.
                                 public var threadRootId: Swift.Double?
                                 /// - Remark: Generated from `#/paths/api/conversations/threads/GET/responses/200/content/json/threadsPayload/lastReply/threadAlsoInChannel`.
@@ -49998,9 +50378,12 @@ public enum Operations {
                                 ///   - kind:
                                 ///   - content:
                                 ///   - metadata:
+                                ///   - plan:
+                                ///   - proposed_edit:
                                 ///   - sessionId:
                                 ///   - createdAt:
                                 ///   - editedAt:
+                                ///   - deletedAt:
                                 ///   - threadRootId:
                                 ///   - threadAlsoInChannel:
                                 public init(
@@ -50012,9 +50395,12 @@ public enum Operations {
                                     kind: Swift.String,
                                     content: Swift.String,
                                     metadata: Operations.get_sol_api_sol_conversations_sol_threads.Output.Ok.Body.jsonPayload.threadsPayloadPayload.lastReplyPayload.metadataPayload? = nil,
+                                    plan: Operations.get_sol_api_sol_conversations_sol_threads.Output.Ok.Body.jsonPayload.threadsPayloadPayload.lastReplyPayload.planPayload? = nil,
+                                    proposed_edit: Operations.get_sol_api_sol_conversations_sol_threads.Output.Ok.Body.jsonPayload.threadsPayloadPayload.lastReplyPayload.proposed_editPayload? = nil,
                                     sessionId: Swift.String? = nil,
                                     createdAt: Swift.String? = nil,
                                     editedAt: Swift.String? = nil,
+                                    deletedAt: Swift.String? = nil,
                                     threadRootId: Swift.Double? = nil,
                                     threadAlsoInChannel: Swift.Bool
                                 ) {
@@ -50026,9 +50412,12 @@ public enum Operations {
                                     self.kind = kind
                                     self.content = content
                                     self.metadata = metadata
+                                    self.plan = plan
+                                    self.proposed_edit = proposed_edit
                                     self.sessionId = sessionId
                                     self.createdAt = createdAt
                                     self.editedAt = editedAt
+                                    self.deletedAt = deletedAt
                                     self.threadRootId = threadRootId
                                     self.threadAlsoInChannel = threadAlsoInChannel
                                 }
@@ -50041,9 +50430,12 @@ public enum Operations {
                                     case kind
                                     case content
                                     case metadata
+                                    case plan
+                                    case proposed_edit
                                     case sessionId
                                     case createdAt
                                     case editedAt
+                                    case deletedAt
                                     case threadRootId
                                     case threadAlsoInChannel
                                 }
@@ -50567,6 +50959,8 @@ public enum Operations {
                         public var subjectId: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/GET/responses/200/content/json/createdBy`.
                         public var createdBy: Swift.String
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/GET/responses/200/content/json/tags`.
+                        public var tags: [Swift.String]
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/GET/responses/200/content/json/lastMessageAt`.
                         public var lastMessageAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/GET/responses/200/content/json/createdAt`.
@@ -50635,6 +51029,7 @@ public enum Operations {
                         ///   - subjectType:
                         ///   - subjectId:
                         ///   - createdBy:
+                        ///   - tags:
                         ///   - lastMessageAt:
                         ///   - createdAt:
                         ///   - updatedAt:
@@ -50650,6 +51045,7 @@ public enum Operations {
                             subjectType: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.subjectTypePayload? = nil,
                             subjectId: Swift.String? = nil,
                             createdBy: Swift.String,
+                            tags: [Swift.String],
                             lastMessageAt: Swift.String? = nil,
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
@@ -50665,6 +51061,7 @@ public enum Operations {
                             self.subjectType = subjectType
                             self.subjectId = subjectId
                             self.createdBy = createdBy
+                            self.tags = tags
                             self.lastMessageAt = lastMessageAt
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
@@ -50681,6 +51078,7 @@ public enum Operations {
                             case subjectType
                             case subjectId
                             case createdBy
+                            case tags
                             case lastMessageAt
                             case createdAt
                             case updatedAt
@@ -50908,7 +51306,7 @@ public enum Operations {
             }
         }
     }
-    /// Rename a conversation
+    /// Rename a conversation or change its tags
     ///
     /// - Remark: HTTP `PATCH /api/conversations/{id}`.
     /// - Remark: Generated from `#/paths//api/conversations/{id}/patch`.
@@ -50952,16 +51350,24 @@ public enum Operations {
                 /// - Remark: Generated from `#/paths/api/conversations/{id}/PATCH/requestBody/json`.
                 public struct jsonPayload: Codable, Hashable, Sendable {
                     /// - Remark: Generated from `#/paths/api/conversations/{id}/PATCH/requestBody/json/title`.
-                    public var title: Swift.String
+                    public var title: Swift.String?
+                    /// - Remark: Generated from `#/paths/api/conversations/{id}/PATCH/requestBody/json/tags`.
+                    public var tags: [Swift.String]?
                     /// Creates a new `jsonPayload`.
                     ///
                     /// - Parameters:
                     ///   - title:
-                    public init(title: Swift.String) {
+                    ///   - tags:
+                    public init(
+                        title: Swift.String? = nil,
+                        tags: [Swift.String]? = nil
+                    ) {
                         self.title = title
+                        self.tags = tags
                     }
                     public enum CodingKeys: String, CodingKey {
                         case title
+                        case tags
                     }
                 }
                 /// - Remark: Generated from `#/paths/api/conversations/{id}/PATCH/requestBody/content/application\/json`.
@@ -51007,6 +51413,8 @@ public enum Operations {
                         public var subjectId: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/PATCH/responses/200/content/json/createdBy`.
                         public var createdBy: Swift.String
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/PATCH/responses/200/content/json/tags`.
+                        public var tags: [Swift.String]
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/PATCH/responses/200/content/json/lastMessageAt`.
                         public var lastMessageAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/PATCH/responses/200/content/json/createdAt`.
@@ -51075,6 +51483,7 @@ public enum Operations {
                         ///   - subjectType:
                         ///   - subjectId:
                         ///   - createdBy:
+                        ///   - tags:
                         ///   - lastMessageAt:
                         ///   - createdAt:
                         ///   - updatedAt:
@@ -51090,6 +51499,7 @@ public enum Operations {
                             subjectType: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.subjectTypePayload? = nil,
                             subjectId: Swift.String? = nil,
                             createdBy: Swift.String,
+                            tags: [Swift.String],
                             lastMessageAt: Swift.String? = nil,
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
@@ -51105,6 +51515,7 @@ public enum Operations {
                             self.subjectType = subjectType
                             self.subjectId = subjectId
                             self.createdBy = createdBy
+                            self.tags = tags
                             self.lastMessageAt = lastMessageAt
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
@@ -51121,6 +51532,7 @@ public enum Operations {
                             case subjectType
                             case subjectId
                             case createdBy
+                            case tags
                             case lastMessageAt
                             case createdAt
                             case updatedAt
@@ -52205,12 +52617,114 @@ public enum Operations {
                             }
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/metadata`.
                             public var metadata: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Ok.Body.jsonPayload.messagesPayloadPayload.metadataPayload?
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/plan`.
+                            public struct planPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/plan/version`.
+                                public var version: Swift.Double
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/plan/stepsPayload`.
+                                public struct stepsPayloadPayload: Codable, Hashable, Sendable {
+                                    /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/plan/stepsPayload/title`.
+                                    public var title: Swift.String
+                                    /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/plan/stepsPayload/status`.
+                                    @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                        case pending = "pending"
+                                        case in_progress = "in_progress"
+                                        case done = "done"
+                                        case skipped = "skipped"
+                                    }
+                                    /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/plan/stepsPayload/status`.
+                                    public var status: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Ok.Body.jsonPayload.messagesPayloadPayload.planPayload.stepsPayloadPayload.statusPayload?
+                                    /// Creates a new `stepsPayloadPayload`.
+                                    ///
+                                    /// - Parameters:
+                                    ///   - title:
+                                    ///   - status:
+                                    public init(
+                                        title: Swift.String,
+                                        status: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Ok.Body.jsonPayload.messagesPayloadPayload.planPayload.stepsPayloadPayload.statusPayload? = nil
+                                    ) {
+                                        self.title = title
+                                        self.status = status
+                                    }
+                                    public enum CodingKeys: String, CodingKey {
+                                        case title
+                                        case status
+                                    }
+                                }
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/plan/steps`.
+                                public typealias stepsPayload = [Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Ok.Body.jsonPayload.messagesPayloadPayload.planPayload.stepsPayloadPayload]
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/plan/steps`.
+                                public var steps: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Ok.Body.jsonPayload.messagesPayloadPayload.planPayload.stepsPayload
+                                /// Creates a new `planPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - version:
+                                ///   - steps:
+                                public init(
+                                    version: Swift.Double,
+                                    steps: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Ok.Body.jsonPayload.messagesPayloadPayload.planPayload.stepsPayload
+                                ) {
+                                    self.version = version
+                                    self.steps = steps
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case version
+                                    case steps
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/plan`.
+                            public var plan: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Ok.Body.jsonPayload.messagesPayloadPayload.planPayload?
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/proposed_edit`.
+                            public struct proposed_editPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/proposed_edit/version`.
+                                public var version: Swift.Double
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/proposed_edit/object_id`.
+                                public var object_id: Swift.String
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/proposed_edit/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/proposed_edit/before`.
+                                public var before: OpenAPIRuntime.OpenAPIValueContainer
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/proposed_edit/after`.
+                                public var after: OpenAPIRuntime.OpenAPIValueContainer
+                                /// Creates a new `proposed_editPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - version:
+                                ///   - object_id:
+                                ///   - field:
+                                ///   - before:
+                                ///   - after:
+                                public init(
+                                    version: Swift.Double,
+                                    object_id: Swift.String,
+                                    field: Swift.String,
+                                    before: OpenAPIRuntime.OpenAPIValueContainer,
+                                    after: OpenAPIRuntime.OpenAPIValueContainer
+                                ) {
+                                    self.version = version
+                                    self.object_id = object_id
+                                    self.field = field
+                                    self.before = before
+                                    self.after = after
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case version
+                                    case object_id
+                                    case field
+                                    case before
+                                    case after
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/proposed_edit`.
+                            public var proposed_edit: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Ok.Body.jsonPayload.messagesPayloadPayload.proposed_editPayload?
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/sessionId`.
                             public var sessionId: Swift.String?
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/createdAt`.
                             public var createdAt: Swift.String?
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/editedAt`.
                             public var editedAt: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/deletedAt`.
+                            public var deletedAt: Swift.String?
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/threadRootId`.
                             public var threadRootId: Swift.Double?
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/threadAlsoInChannel`.
@@ -52498,9 +53012,12 @@ public enum Operations {
                             ///   - kind:
                             ///   - content:
                             ///   - metadata:
+                            ///   - plan:
+                            ///   - proposed_edit:
                             ///   - sessionId:
                             ///   - createdAt:
                             ///   - editedAt:
+                            ///   - deletedAt:
                             ///   - threadRootId:
                             ///   - threadAlsoInChannel:
                             ///   - spawned_sessions:
@@ -52515,9 +53032,12 @@ public enum Operations {
                                 kind: Swift.String,
                                 content: Swift.String,
                                 metadata: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Ok.Body.jsonPayload.messagesPayloadPayload.metadataPayload? = nil,
+                                plan: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Ok.Body.jsonPayload.messagesPayloadPayload.planPayload? = nil,
+                                proposed_edit: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Ok.Body.jsonPayload.messagesPayloadPayload.proposed_editPayload? = nil,
                                 sessionId: Swift.String? = nil,
                                 createdAt: Swift.String? = nil,
                                 editedAt: Swift.String? = nil,
+                                deletedAt: Swift.String? = nil,
                                 threadRootId: Swift.Double? = nil,
                                 threadAlsoInChannel: Swift.Bool,
                                 spawned_sessions: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Ok.Body.jsonPayload.messagesPayloadPayload.spawned_sessionsPayload,
@@ -52532,9 +53052,12 @@ public enum Operations {
                                 self.kind = kind
                                 self.content = content
                                 self.metadata = metadata
+                                self.plan = plan
+                                self.proposed_edit = proposed_edit
                                 self.sessionId = sessionId
                                 self.createdAt = createdAt
                                 self.editedAt = editedAt
+                                self.deletedAt = deletedAt
                                 self.threadRootId = threadRootId
                                 self.threadAlsoInChannel = threadAlsoInChannel
                                 self.spawned_sessions = spawned_sessions
@@ -52550,9 +53073,12 @@ public enum Operations {
                                 case kind
                                 case content
                                 case metadata
+                                case plan
+                                case proposed_edit
                                 case sessionId
                                 case createdAt
                                 case editedAt
+                                case deletedAt
                                 case threadRootId
                                 case threadAlsoInChannel
                                 case spawned_sessions
@@ -53787,6 +54313,114 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/computer_request`.
                         public var computer_request: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.computer_requestPayload?
+                        /// Steps you plan, shown as a plan card. Also write the steps in the message text. Set version to 1.
+                        ///
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/plan`.
+                        public struct planPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/plan/version`.
+                            public var version: Swift.Double
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/plan/stepsPayload`.
+                            public struct stepsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/plan/stepsPayload/title`.
+                                public var title: Swift.String
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/plan/stepsPayload/status`.
+                                @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                    case pending = "pending"
+                                    case in_progress = "in_progress"
+                                    case done = "done"
+                                    case skipped = "skipped"
+                                }
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/plan/stepsPayload/status`.
+                                public var status: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.planPayload.stepsPayloadPayload.statusPayload?
+                                /// Creates a new `stepsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - title:
+                                ///   - status:
+                                public init(
+                                    title: Swift.String,
+                                    status: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.planPayload.stepsPayloadPayload.statusPayload? = nil
+                                ) {
+                                    self.title = title
+                                    self.status = status
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case title
+                                    case status
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/plan/steps`.
+                            public typealias stepsPayload = [Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.planPayload.stepsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/plan/steps`.
+                            public var steps: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.planPayload.stepsPayload
+                            /// Creates a new `planPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - version:
+                            ///   - steps:
+                            public init(
+                                version: Swift.Double,
+                                steps: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.planPayload.stepsPayload
+                            ) {
+                                self.version = version
+                                self.steps = steps
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case version
+                                case steps
+                            }
+                        }
+                        /// Steps you plan, shown as a plan card. Also write the steps in the message text. Set version to 1.
+                        ///
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/plan`.
+                        public var plan: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.planPayload?
+                        /// A change you propose to one field of one object, shown with Apply and Dismiss. Also describe it in the message text. Set version to 1.
+                        ///
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/proposed_edit`.
+                        public struct proposed_editPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/proposed_edit/version`.
+                            public var version: Swift.Double
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/proposed_edit/object_id`.
+                            public var object_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/proposed_edit/field`.
+                            public var field: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/proposed_edit/before`.
+                            public var before: OpenAPIRuntime.OpenAPIValueContainer
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/proposed_edit/after`.
+                            public var after: OpenAPIRuntime.OpenAPIValueContainer
+                            /// Creates a new `proposed_editPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - version:
+                            ///   - object_id:
+                            ///   - field:
+                            ///   - before:
+                            ///   - after:
+                            public init(
+                                version: Swift.Double,
+                                object_id: Swift.String,
+                                field: Swift.String,
+                                before: OpenAPIRuntime.OpenAPIValueContainer,
+                                after: OpenAPIRuntime.OpenAPIValueContainer
+                            ) {
+                                self.version = version
+                                self.object_id = object_id
+                                self.field = field
+                                self.before = before
+                                self.after = after
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case version
+                                case object_id
+                                case field
+                                case before
+                                case after
+                            }
+                        }
+                        /// A change you propose to one field of one object, shown with Apply and Dismiss. Also describe it in the message text. Set version to 1.
+                        ///
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/proposed_edit`.
+                        public var proposed_edit: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.proposed_editPayload?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/card_answer`.
                         public struct card_answerPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/card_answer/message_id`.
@@ -53975,6 +54609,8 @@ public enum Operations {
                         ///   - integration_access_request:
                         ///   - mcp_server_request:
                         ///   - computer_request:
+                        ///   - plan: Steps you plan, shown as a plan card. Also write the steps in the message text. Set version to 1.
+                        ///   - proposed_edit: A change you propose to one field of one object, shown with Apply and Dismiss. Also describe it in the message text. Set version to 1.
                         ///   - card_answer:
                         ///   - helper_return:
                         ///   - hidden_from_chat:
@@ -54001,6 +54637,8 @@ public enum Operations {
                             integration_access_request: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.integration_access_requestPayload? = nil,
                             mcp_server_request: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.mcp_server_requestPayload? = nil,
                             computer_request: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.computer_requestPayload? = nil,
+                            plan: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.planPayload? = nil,
+                            proposed_edit: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.proposed_editPayload? = nil,
                             card_answer: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.card_answerPayload? = nil,
                             helper_return: Swift.String? = nil,
                             hidden_from_chat: Swift.Bool? = nil,
@@ -54027,6 +54665,8 @@ public enum Operations {
                             self.integration_access_request = integration_access_request
                             self.mcp_server_request = mcp_server_request
                             self.computer_request = computer_request
+                            self.plan = plan
+                            self.proposed_edit = proposed_edit
                             self.card_answer = card_answer
                             self.helper_return = helper_return
                             self.hidden_from_chat = hidden_from_chat
@@ -54054,6 +54694,8 @@ public enum Operations {
                             case integration_access_request
                             case mcp_server_request
                             case computer_request
+                            case plan
+                            case proposed_edit
                             case card_answer
                             case helper_return
                             case hidden_from_chat
@@ -54168,12 +54810,114 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/metadata`.
                         public var metadata: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.metadataPayload?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/plan`.
+                        public struct planPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/plan/version`.
+                            public var version: Swift.Double
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/plan/stepsPayload`.
+                            public struct stepsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/plan/stepsPayload/title`.
+                                public var title: Swift.String
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/plan/stepsPayload/status`.
+                                @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                    case pending = "pending"
+                                    case in_progress = "in_progress"
+                                    case done = "done"
+                                    case skipped = "skipped"
+                                }
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/plan/stepsPayload/status`.
+                                public var status: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.planPayload.stepsPayloadPayload.statusPayload?
+                                /// Creates a new `stepsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - title:
+                                ///   - status:
+                                public init(
+                                    title: Swift.String,
+                                    status: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.planPayload.stepsPayloadPayload.statusPayload? = nil
+                                ) {
+                                    self.title = title
+                                    self.status = status
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case title
+                                    case status
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/plan/steps`.
+                            public typealias stepsPayload = [Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.planPayload.stepsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/plan/steps`.
+                            public var steps: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.planPayload.stepsPayload
+                            /// Creates a new `planPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - version:
+                            ///   - steps:
+                            public init(
+                                version: Swift.Double,
+                                steps: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.planPayload.stepsPayload
+                            ) {
+                                self.version = version
+                                self.steps = steps
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case version
+                                case steps
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/plan`.
+                        public var plan: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.planPayload?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/proposed_edit`.
+                        public struct proposed_editPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/proposed_edit/version`.
+                            public var version: Swift.Double
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/proposed_edit/object_id`.
+                            public var object_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/proposed_edit/field`.
+                            public var field: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/proposed_edit/before`.
+                            public var before: OpenAPIRuntime.OpenAPIValueContainer
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/proposed_edit/after`.
+                            public var after: OpenAPIRuntime.OpenAPIValueContainer
+                            /// Creates a new `proposed_editPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - version:
+                            ///   - object_id:
+                            ///   - field:
+                            ///   - before:
+                            ///   - after:
+                            public init(
+                                version: Swift.Double,
+                                object_id: Swift.String,
+                                field: Swift.String,
+                                before: OpenAPIRuntime.OpenAPIValueContainer,
+                                after: OpenAPIRuntime.OpenAPIValueContainer
+                            ) {
+                                self.version = version
+                                self.object_id = object_id
+                                self.field = field
+                                self.before = before
+                                self.after = after
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case version
+                                case object_id
+                                case field
+                                case before
+                                case after
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/proposed_edit`.
+                        public var proposed_edit: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.proposed_editPayload?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/sessionId`.
                         public var sessionId: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/createdAt`.
                         public var createdAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/editedAt`.
                         public var editedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/deletedAt`.
+                        public var deletedAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/threadRootId`.
                         public var threadRootId: Swift.Double?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/responses/201/content/json/threadAlsoInChannel`.
@@ -54331,9 +55075,12 @@ public enum Operations {
                         ///   - kind:
                         ///   - content:
                         ///   - metadata:
+                        ///   - plan:
+                        ///   - proposed_edit:
                         ///   - sessionId:
                         ///   - createdAt:
                         ///   - editedAt:
+                        ///   - deletedAt:
                         ///   - threadRootId:
                         ///   - threadAlsoInChannel:
                         ///   - unresolved_mentions:
@@ -54347,9 +55094,12 @@ public enum Operations {
                             kind: Swift.String,
                             content: Swift.String,
                             metadata: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.metadataPayload? = nil,
+                            plan: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.planPayload? = nil,
+                            proposed_edit: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Created.Body.jsonPayload.proposed_editPayload? = nil,
                             sessionId: Swift.String? = nil,
                             createdAt: Swift.String? = nil,
                             editedAt: Swift.String? = nil,
+                            deletedAt: Swift.String? = nil,
                             threadRootId: Swift.Double? = nil,
                             threadAlsoInChannel: Swift.Bool,
                             unresolved_mentions: [Swift.String]? = nil,
@@ -54363,9 +55113,12 @@ public enum Operations {
                             self.kind = kind
                             self.content = content
                             self.metadata = metadata
+                            self.plan = plan
+                            self.proposed_edit = proposed_edit
                             self.sessionId = sessionId
                             self.createdAt = createdAt
                             self.editedAt = editedAt
+                            self.deletedAt = deletedAt
                             self.threadRootId = threadRootId
                             self.threadAlsoInChannel = threadAlsoInChannel
                             self.unresolved_mentions = unresolved_mentions
@@ -54380,9 +55133,12 @@ public enum Operations {
                             case kind
                             case content
                             case metadata
+                            case plan
+                            case proposed_edit
                             case sessionId
                             case createdAt
                             case editedAt
+                            case deletedAt
                             case threadRootId
                             case threadAlsoInChannel
                             case unresolved_mentions
@@ -54890,12 +55646,114 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/responses/200/content/json/metadata`.
                         public var metadata: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Ok.Body.jsonPayload.metadataPayload?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/responses/200/content/json/plan`.
+                        public struct planPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/responses/200/content/json/plan/version`.
+                            public var version: Swift.Double
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/responses/200/content/json/plan/stepsPayload`.
+                            public struct stepsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/responses/200/content/json/plan/stepsPayload/title`.
+                                public var title: Swift.String
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/responses/200/content/json/plan/stepsPayload/status`.
+                                @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                    case pending = "pending"
+                                    case in_progress = "in_progress"
+                                    case done = "done"
+                                    case skipped = "skipped"
+                                }
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/responses/200/content/json/plan/stepsPayload/status`.
+                                public var status: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Ok.Body.jsonPayload.planPayload.stepsPayloadPayload.statusPayload?
+                                /// Creates a new `stepsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - title:
+                                ///   - status:
+                                public init(
+                                    title: Swift.String,
+                                    status: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Ok.Body.jsonPayload.planPayload.stepsPayloadPayload.statusPayload? = nil
+                                ) {
+                                    self.title = title
+                                    self.status = status
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case title
+                                    case status
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/responses/200/content/json/plan/steps`.
+                            public typealias stepsPayload = [Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Ok.Body.jsonPayload.planPayload.stepsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/responses/200/content/json/plan/steps`.
+                            public var steps: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Ok.Body.jsonPayload.planPayload.stepsPayload
+                            /// Creates a new `planPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - version:
+                            ///   - steps:
+                            public init(
+                                version: Swift.Double,
+                                steps: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Ok.Body.jsonPayload.planPayload.stepsPayload
+                            ) {
+                                self.version = version
+                                self.steps = steps
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case version
+                                case steps
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/responses/200/content/json/plan`.
+                        public var plan: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Ok.Body.jsonPayload.planPayload?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/responses/200/content/json/proposed_edit`.
+                        public struct proposed_editPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/responses/200/content/json/proposed_edit/version`.
+                            public var version: Swift.Double
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/responses/200/content/json/proposed_edit/object_id`.
+                            public var object_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/responses/200/content/json/proposed_edit/field`.
+                            public var field: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/responses/200/content/json/proposed_edit/before`.
+                            public var before: OpenAPIRuntime.OpenAPIValueContainer
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/responses/200/content/json/proposed_edit/after`.
+                            public var after: OpenAPIRuntime.OpenAPIValueContainer
+                            /// Creates a new `proposed_editPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - version:
+                            ///   - object_id:
+                            ///   - field:
+                            ///   - before:
+                            ///   - after:
+                            public init(
+                                version: Swift.Double,
+                                object_id: Swift.String,
+                                field: Swift.String,
+                                before: OpenAPIRuntime.OpenAPIValueContainer,
+                                after: OpenAPIRuntime.OpenAPIValueContainer
+                            ) {
+                                self.version = version
+                                self.object_id = object_id
+                                self.field = field
+                                self.before = before
+                                self.after = after
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case version
+                                case object_id
+                                case field
+                                case before
+                                case after
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/responses/200/content/json/proposed_edit`.
+                        public var proposed_edit: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Ok.Body.jsonPayload.proposed_editPayload?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/responses/200/content/json/sessionId`.
                         public var sessionId: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/responses/200/content/json/createdAt`.
                         public var createdAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/responses/200/content/json/editedAt`.
                         public var editedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/responses/200/content/json/deletedAt`.
+                        public var deletedAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/responses/200/content/json/threadRootId`.
                         public var threadRootId: Swift.Double?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/responses/200/content/json/threadAlsoInChannel`.
@@ -54911,9 +55769,12 @@ public enum Operations {
                         ///   - kind:
                         ///   - content:
                         ///   - metadata:
+                        ///   - plan:
+                        ///   - proposed_edit:
                         ///   - sessionId:
                         ///   - createdAt:
                         ///   - editedAt:
+                        ///   - deletedAt:
                         ///   - threadRootId:
                         ///   - threadAlsoInChannel:
                         public init(
@@ -54925,9 +55786,12 @@ public enum Operations {
                             kind: Swift.String,
                             content: Swift.String,
                             metadata: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Ok.Body.jsonPayload.metadataPayload? = nil,
+                            plan: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Ok.Body.jsonPayload.planPayload? = nil,
+                            proposed_edit: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Ok.Body.jsonPayload.proposed_editPayload? = nil,
                             sessionId: Swift.String? = nil,
                             createdAt: Swift.String? = nil,
                             editedAt: Swift.String? = nil,
+                            deletedAt: Swift.String? = nil,
                             threadRootId: Swift.Double? = nil,
                             threadAlsoInChannel: Swift.Bool
                         ) {
@@ -54939,9 +55803,12 @@ public enum Operations {
                             self.kind = kind
                             self.content = content
                             self.metadata = metadata
+                            self.plan = plan
+                            self.proposed_edit = proposed_edit
                             self.sessionId = sessionId
                             self.createdAt = createdAt
                             self.editedAt = editedAt
+                            self.deletedAt = deletedAt
                             self.threadRootId = threadRootId
                             self.threadAlsoInChannel = threadAlsoInChannel
                         }
@@ -54954,9 +55821,12 @@ public enum Operations {
                             case kind
                             case content
                             case metadata
+                            case plan
+                            case proposed_edit
                             case sessionId
                             case createdAt
                             case editedAt
+                            case deletedAt
                             case threadRootId
                             case threadAlsoInChannel
                         }
@@ -55411,6 +56281,645 @@ public enum Operations {
             /// - Throws: An error if `self` is not `.notFound`.
             /// - SeeAlso: `.notFound`.
             public var notFound: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.NotFound {
+                get throws {
+                    switch self {
+                    case let .notFound(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Undocumented response.
+            ///
+            /// A response with a code that is not documented in the OpenAPI document.
+            case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
+        }
+        @frozen public enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            public init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            public var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            public static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
+    /// Delete a message you authored
+    ///
+    /// - Remark: HTTP `DELETE /api/conversations/{id}/messages/{messageId}`.
+    /// - Remark: Generated from `#/paths//api/conversations/{id}/messages/{messageId}/delete`.
+    public enum delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_ {
+        public static let id: Swift.String = "delete/api/conversations/{id}/messages/{messageId}"
+        public struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/path`.
+            public struct Path: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/path/id`.
+                public var id: Swift.String
+                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/path/messageId`.
+                public var messageId: Swift.Int
+                /// Creates a new `Path`.
+                ///
+                /// - Parameters:
+                ///   - id:
+                ///   - messageId:
+                public init(
+                    id: Swift.String,
+                    messageId: Swift.Int
+                ) {
+                    self.id = id
+                    self.messageId = messageId
+                }
+            }
+            public var path: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Input.Path
+            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/header`.
+            public struct Headers: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/header/x-workspace-id`.
+                public var x_hyphen_workspace_hyphen_id: Swift.String
+                public var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - x_hyphen_workspace_hyphen_id:
+                ///   - accept:
+                public init(
+                    x_hyphen_workspace_hyphen_id: Swift.String,
+                    accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.AcceptableContentType>] = .defaultValues()
+                ) {
+                    self.x_hyphen_workspace_hyphen_id = x_hyphen_workspace_hyphen_id
+                    self.accept = accept
+                }
+            }
+            public var headers: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Input.Headers
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - path:
+            ///   - headers:
+            public init(
+                path: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Input.Path,
+                headers: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Input.Headers
+            ) {
+                self.path = path
+                self.headers = headers
+            }
+        }
+        @frozen public enum Output: Sendable, Hashable {
+            public struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json/id`.
+                        public var id: Swift.Double
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json/conversationId`.
+                        public var conversationId: Swift.String
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json/actorId`.
+                        public var actorId: Swift.String
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json/actorName`.
+                        public var actorName: Swift.String
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json/actorType`.
+                        public var actorType: Swift.String
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json/kind`.
+                        public var kind: Swift.String
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json/content`.
+                        public var content: Swift.String
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json/metadata`.
+                        public struct metadataPayload: Codable, Hashable, Sendable {
+                            /// A container of undocumented properties.
+                            public var additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer]
+                            /// Creates a new `metadataPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - additionalProperties: A container of undocumented properties.
+                            public init(additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer] = .init()) {
+                                self.additionalProperties = additionalProperties
+                            }
+                            public init(from decoder: any Swift.Decoder) throws {
+                                additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                            }
+                            public func encode(to encoder: any Swift.Encoder) throws {
+                                try encoder.encodeAdditionalProperties(additionalProperties)
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json/metadata`.
+                        public var metadata: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Ok.Body.jsonPayload.metadataPayload?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json/plan`.
+                        public struct planPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json/plan/version`.
+                            public var version: Swift.Double
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json/plan/stepsPayload`.
+                            public struct stepsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json/plan/stepsPayload/title`.
+                                public var title: Swift.String
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json/plan/stepsPayload/status`.
+                                @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                    case pending = "pending"
+                                    case in_progress = "in_progress"
+                                    case done = "done"
+                                    case skipped = "skipped"
+                                }
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json/plan/stepsPayload/status`.
+                                public var status: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Ok.Body.jsonPayload.planPayload.stepsPayloadPayload.statusPayload?
+                                /// Creates a new `stepsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - title:
+                                ///   - status:
+                                public init(
+                                    title: Swift.String,
+                                    status: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Ok.Body.jsonPayload.planPayload.stepsPayloadPayload.statusPayload? = nil
+                                ) {
+                                    self.title = title
+                                    self.status = status
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case title
+                                    case status
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json/plan/steps`.
+                            public typealias stepsPayload = [Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Ok.Body.jsonPayload.planPayload.stepsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json/plan/steps`.
+                            public var steps: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Ok.Body.jsonPayload.planPayload.stepsPayload
+                            /// Creates a new `planPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - version:
+                            ///   - steps:
+                            public init(
+                                version: Swift.Double,
+                                steps: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Ok.Body.jsonPayload.planPayload.stepsPayload
+                            ) {
+                                self.version = version
+                                self.steps = steps
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case version
+                                case steps
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json/plan`.
+                        public var plan: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Ok.Body.jsonPayload.planPayload?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json/proposed_edit`.
+                        public struct proposed_editPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json/proposed_edit/version`.
+                            public var version: Swift.Double
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json/proposed_edit/object_id`.
+                            public var object_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json/proposed_edit/field`.
+                            public var field: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json/proposed_edit/before`.
+                            public var before: OpenAPIRuntime.OpenAPIValueContainer
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json/proposed_edit/after`.
+                            public var after: OpenAPIRuntime.OpenAPIValueContainer
+                            /// Creates a new `proposed_editPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - version:
+                            ///   - object_id:
+                            ///   - field:
+                            ///   - before:
+                            ///   - after:
+                            public init(
+                                version: Swift.Double,
+                                object_id: Swift.String,
+                                field: Swift.String,
+                                before: OpenAPIRuntime.OpenAPIValueContainer,
+                                after: OpenAPIRuntime.OpenAPIValueContainer
+                            ) {
+                                self.version = version
+                                self.object_id = object_id
+                                self.field = field
+                                self.before = before
+                                self.after = after
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case version
+                                case object_id
+                                case field
+                                case before
+                                case after
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json/proposed_edit`.
+                        public var proposed_edit: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Ok.Body.jsonPayload.proposed_editPayload?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json/sessionId`.
+                        public var sessionId: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json/createdAt`.
+                        public var createdAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json/editedAt`.
+                        public var editedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json/deletedAt`.
+                        public var deletedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json/threadRootId`.
+                        public var threadRootId: Swift.Double?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/json/threadAlsoInChannel`.
+                        public var threadAlsoInChannel: Swift.Bool
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - id:
+                        ///   - conversationId:
+                        ///   - actorId:
+                        ///   - actorName:
+                        ///   - actorType:
+                        ///   - kind:
+                        ///   - content:
+                        ///   - metadata:
+                        ///   - plan:
+                        ///   - proposed_edit:
+                        ///   - sessionId:
+                        ///   - createdAt:
+                        ///   - editedAt:
+                        ///   - deletedAt:
+                        ///   - threadRootId:
+                        ///   - threadAlsoInChannel:
+                        public init(
+                            id: Swift.Double,
+                            conversationId: Swift.String,
+                            actorId: Swift.String,
+                            actorName: Swift.String,
+                            actorType: Swift.String,
+                            kind: Swift.String,
+                            content: Swift.String,
+                            metadata: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Ok.Body.jsonPayload.metadataPayload? = nil,
+                            plan: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Ok.Body.jsonPayload.planPayload? = nil,
+                            proposed_edit: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Ok.Body.jsonPayload.proposed_editPayload? = nil,
+                            sessionId: Swift.String? = nil,
+                            createdAt: Swift.String? = nil,
+                            editedAt: Swift.String? = nil,
+                            deletedAt: Swift.String? = nil,
+                            threadRootId: Swift.Double? = nil,
+                            threadAlsoInChannel: Swift.Bool
+                        ) {
+                            self.id = id
+                            self.conversationId = conversationId
+                            self.actorId = actorId
+                            self.actorName = actorName
+                            self.actorType = actorType
+                            self.kind = kind
+                            self.content = content
+                            self.metadata = metadata
+                            self.plan = plan
+                            self.proposed_edit = proposed_edit
+                            self.sessionId = sessionId
+                            self.createdAt = createdAt
+                            self.editedAt = editedAt
+                            self.deletedAt = deletedAt
+                            self.threadRootId = threadRootId
+                            self.threadAlsoInChannel = threadAlsoInChannel
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case id
+                            case conversationId
+                            case actorId
+                            case actorName
+                            case actorType
+                            case kind
+                            case content
+                            case metadata
+                            case plan
+                            case proposed_edit
+                            case sessionId
+                            case createdAt
+                            case editedAt
+                            case deletedAt
+                            case threadRootId
+                            case threadAlsoInChannel
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/200/content/application\/json`.
+                    case json(Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Ok.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Ok.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// Message deleted; content is empty and deletedAt is set
+            ///
+            /// - Remark: Generated from `#/paths//api/conversations/{id}/messages/{messageId}/delete/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            public var ok: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct Forbidden: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/403/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/403/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/403/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/403/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/403/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/403/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/403/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/403/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/403/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/403/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/403/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Forbidden.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/403/content/json/error/details`.
+                            public var details: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Forbidden.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/403/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Forbidden.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/403/content/json/error`.
+                        public var error: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Forbidden.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Forbidden.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/403/content/application\/json`.
+                    case json(Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Forbidden.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Forbidden.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Forbidden.Body
+                /// Creates a new `Forbidden`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Forbidden.Body) {
+                    self.body = body
+                }
+            }
+            /// Not author
+            ///
+            /// - Remark: Generated from `#/paths//api/conversations/{id}/messages/{messageId}/delete/responses/403`.
+            ///
+            /// HTTP response code: `403 forbidden`.
+            case forbidden(Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Forbidden)
+            /// The associated value of the enum case if `self` is `.forbidden`.
+            ///
+            /// - Throws: An error if `self` is not `.forbidden`.
+            /// - SeeAlso: `.forbidden`.
+            public var forbidden: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.Forbidden {
+                get throws {
+                    switch self {
+                    case let .forbidden(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "forbidden",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct NotFound: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/404/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/404/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/404/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/404/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/404/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/404/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/404/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/404/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/404/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/404/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/404/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/404/content/json/error/details`.
+                            public var details: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/404/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/404/content/json/error`.
+                        public var error: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.NotFound.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.NotFound.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/DELETE/responses/404/content/application\/json`.
+                    case json(Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.NotFound.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.NotFound.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.NotFound.Body
+                /// Creates a new `NotFound`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.NotFound.Body) {
+                    self.body = body
+                }
+            }
+            /// Not found
+            ///
+            /// - Remark: Generated from `#/paths//api/conversations/{id}/messages/{messageId}/delete/responses/404`.
+            ///
+            /// HTTP response code: `404 notFound`.
+            case notFound(Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.NotFound)
+            /// The associated value of the enum case if `self` is `.notFound`.
+            ///
+            /// - Throws: An error if `self` is not `.notFound`.
+            /// - SeeAlso: `.notFound`.
+            public var notFound: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output.NotFound {
                 get throws {
                     switch self {
                     case let .notFound(response):

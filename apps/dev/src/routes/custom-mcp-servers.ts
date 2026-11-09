@@ -247,6 +247,56 @@ app.openapi(addServerRoute, (async (c) => {
 	return c.json({ id: created.id, name, server: maskServer(server) }, 201)
 }) as RouteHandler<typeof addServerRoute, Env>)
 
+// ── GET /api/custom-mcp-servers ──────────────────────────────────────────
+
+// Only what a list row needs. Env and header values, and the keychain references inside them,
+// are left out entirely rather than masked: open one by id to see those.
+const listItemSchema = z.object({
+	id: z.string().uuid(),
+	name: z.string(),
+	url: z.string().nullable(),
+	status: z.string(),
+})
+
+const listServersRoute = createRoute({
+	method: 'get',
+	path: '/',
+	tags: ['integrations'],
+	summary: "List the workspace's custom MCP servers (no secret values)",
+	request: { headers: workspaceIdHeader },
+	responses: {
+		200: {
+			description: 'The active servers, by name. A stdio server has no URL',
+			content: { 'application/json': { schema: z.array(listItemSchema) } },
+		},
+	},
+})
+
+app.openapi(listServersRoute, (async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const rows = await db
+		.select()
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.workspaceId, workspaceId),
+				eq(integrations.provider, CUSTOM_MCP_PROVIDER),
+				eq(integrations.status, 'active'),
+			),
+		)
+		.orderBy(sql`lower(${integrations.displayName})`)
+	// A row whose definition cannot be read is skipped, as the by-id read answers 404 for it.
+	const items = rows.flatMap((row) => {
+		const server = readCustomServer(row)
+		if (!server) return []
+		return [
+			{ id: row.id, name: row.displayName ?? '', url: server.url ?? null, status: row.status },
+		]
+	})
+	return c.json(items, 200)
+}) as RouteHandler<typeof listServersRoute, Env>)
+
 // ── GET /api/custom-mcp-servers/:id ──────────────────────────────────────
 
 const getServerRoute = createRoute({

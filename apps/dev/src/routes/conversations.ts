@@ -20,6 +20,7 @@ import {
 	editMessageSchema,
 	markThreadReadSchema,
 	messageQuerySchema,
+	normalizeTags,
 	postMessageSchema,
 	removeReactionQuerySchema,
 	stripServerOwnedMetadata,
@@ -52,6 +53,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
+import { serializeMessage } from '../lib/serialize-message'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import { reportChatReply } from '../services/chat-reply-tracking'
 import { shareReplyDigest } from '../services/chat-session-context'
@@ -418,6 +420,7 @@ const messageColumns = {
 	sessionId: messages.sessionId,
 	createdAt: messages.createdAt,
 	editedAt: messages.editedAt,
+	deletedAt: messages.deletedAt,
 	threadRootId: messages.threadRootId,
 	threadAlsoInChannel: messages.threadAlsoInChannel,
 }
@@ -958,9 +961,9 @@ app.openapi(listThreadsRoute, (async (c) => {
 				{
 					conversationId: root.conversationId,
 					conversationTitle,
-					root: serialize(rootMessage),
+					root: serializeMessage(rootMessage),
 					thread,
-					lastReply: reply ? serialize(reply) : null,
+					lastReply: reply ? serializeMessage(reply) : null,
 				},
 			]
 		}),
@@ -1072,7 +1075,7 @@ const updateConversationRoute = createRoute({
 	path: '/{id}',
 	'x-viewer-policy': 'writer',
 	tags: ['Conversations'],
-	summary: 'Rename a conversation',
+	summary: 'Rename a conversation or change its tags',
 	request: {
 		headers: workspaceIdHeader,
 		params: idParamSchema,
@@ -1100,12 +1103,17 @@ app.openapi(updateConversationRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
 	}
 
+	const tags = body.tags === undefined ? undefined : normalizeTags(body.tags)
 	const [updated] = await db
 		.update(conversations)
-		// A human rename permanently opts the conversation out of auto-titling
-		// (conversation-titler.ts) — otherwise the refinement pass would
-		// overwrite whatever they just typed.
-		.set({ title: body.title, titleAutoState: 'manual', updatedAt: new Date() })
+		.set({
+			// A human rename permanently opts the conversation out of auto-titling
+			// (conversation-titler.ts) — otherwise the refinement pass would
+			// overwrite whatever they just typed. A tags-only change leaves the title alone.
+			...(body.title !== undefined && { title: body.title, titleAutoState: 'manual' }),
+			...(tags !== undefined && { tags }),
+			updatedAt: new Date(),
+		})
 		.where(eq(conversations.id, id))
 		.returning()
 	if (!updated) return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
@@ -1116,7 +1124,10 @@ app.openapi(updateConversationRoute, (async (c) => {
 		action: 'conversation_updated',
 		entityType: 'conversation',
 		entityId: id,
-		data: { title: body.title },
+		data: {
+			...(body.title !== undefined && { title: body.title }),
+			...(tags !== undefined && { tags }),
+		},
 	})
 
 	const [participantsByConversation, unreadByConversation] = await Promise.all([
@@ -1352,7 +1363,7 @@ app.openapi(listMessagesRoute, (async (c) => {
 		messages: page.map(
 			(m) =>
 				({
-					...serialize(m),
+					...serializeMessage(m),
 					spawned_sessions: spawned.get(m.id) ?? [],
 					reactions: reactions.get(m.id) ?? [],
 					thread: summaries.get(m.id) ?? null,
@@ -1489,7 +1500,7 @@ app.openapi(postMessageRoute, (async (c) => {
 	// end-of-turn output. A client (or an agent via the MCP tool) must not be
 	// able to claim them — the frontend reconciles its optimistic bubble
 	// against `source`, so a forged one would strand that bubble forever.
-	const metadata = stripServerOwnedMetadata(body.metadata) ?? null
+	const metadata = stripServerOwnedMetadata(body.metadata, { callerType }) ?? null
 
 	const created = await insertConversationMessage(db, {
 		conversationId: id,
@@ -1656,7 +1667,7 @@ app.openapi(postMessageRoute, (async (c) => {
 	)
 
 	return c.json(
-		serialize({
+		serializeMessage({
 			...created,
 			actorName: caller?.name ?? 'Unknown',
 			actorType: caller?.type ?? 'human',
@@ -1712,7 +1723,7 @@ app.openapi(editMessageRoute, (async (c) => {
 		.from(messages)
 		.where(and(eq(messages.id, messageId), eq(messages.conversationId, id)))
 		.limit(1)
-	if (!message || message.kind !== 'message') {
+	if (!message || message.kind !== 'message' || message.deletedAt) {
 		return c.json(createApiError('NOT_FOUND', 'Message not found'), 404)
 	}
 	if (message.actorId !== callerId) {
@@ -1836,7 +1847,7 @@ app.openapi(editMessageRoute, (async (c) => {
 		.limit(1)
 
 	return c.json(
-		serialize({
+		serializeMessage({
 			...updated,
 			actorName: caller?.name ?? 'Unknown',
 			actorType: caller?.type ?? 'human',
@@ -1844,6 +1855,92 @@ app.openapi(editMessageRoute, (async (c) => {
 		200,
 	)
 }) as RouteHandler<typeof editMessageRoute, Env>)
+
+// DELETE /:id/messages/:messageId - Delete an own message (soft: the row stays, emptied)
+const deleteMessageRoute = createRoute({
+	method: 'delete',
+	path: '/{id}/messages/{messageId}',
+	'x-viewer-policy': 'writer',
+	tags: ['Conversations'],
+	summary: 'Delete a message you authored',
+	request: {
+		headers: workspaceIdHeader,
+		params: z.object({ id: z.string().uuid(), messageId: z.coerce.number().int().positive() }),
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: messageResponseSchema } },
+			description: 'Message deleted; content is empty and deletedAt is set',
+		},
+		403: { content: { 'application/json': { schema: errorSchema } }, description: 'Not author' },
+		404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
+	},
+})
+
+app.openapi(deleteMessageRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id, messageId } = c.req.valid('param')
+
+	const row = await loadConversationWithAuth(db, id, callerId)
+	if (!row || row.conversation.workspaceId !== workspaceId) {
+		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
+	}
+
+	const [message] = await db
+		.select()
+		.from(messages)
+		.where(and(eq(messages.id, messageId), eq(messages.conversationId, id)))
+		.limit(1)
+	if (!message || message.kind !== 'message') {
+		return c.json(createApiError('NOT_FOUND', 'Message not found'), 404)
+	}
+	if (message.actorId !== callerId) {
+		return c.json(createApiError('FORBIDDEN', 'Only the author can delete a message'), 403)
+	}
+	// Same rule as edit: an agent's auto-posted end-of-turn reply is a session artifact.
+	if ((message.metadata as { source?: string } | null)?.source === 'final_output') {
+		return c.json(createApiError('FORBIDDEN', 'Auto-posted agent output cannot be deleted'), 403)
+	}
+
+	// Deleting twice is a no-op: the first deletedAt and its audit event stand.
+	let deleted = message
+	if (!message.deletedAt) {
+		const [updated] = await db
+			.update(messages)
+			.set({ content: '', metadata: null, deletedAt: new Date() })
+			.where(eq(messages.id, messageId))
+			.returning()
+		if (!updated) throw new Error('Failed to delete message')
+		deleted = updated
+
+		await recordEvent(db, {
+			workspaceId,
+			actorId: callerId,
+			action: 'message_deleted',
+			entityType: 'conversation',
+			entityId: id,
+			data: { message_id: messageId },
+		})
+	}
+
+	const [caller] = await db
+		.select({ name: actors.name, type: actors.type })
+		.from(actors)
+		.where(eq(actors.id, callerId))
+		.limit(1)
+
+	return c.json(
+		serialize({
+			...deleted,
+			actorName: caller?.name ?? 'Unknown',
+			actorType: caller?.type ?? 'human',
+		}) as z.infer<typeof messageResponseSchema>,
+		200,
+	)
+}) as RouteHandler<typeof deleteMessageRoute, Env>)
 
 // PUT /:id/messages/:messageId/reactions - React with an emoji (idempotent)
 const addReactionRoute = createRoute({

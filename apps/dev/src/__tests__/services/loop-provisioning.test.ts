@@ -16,6 +16,37 @@ describe('installMetadata', () => {
 			snapshot: { name: 'X' },
 		})
 	})
+
+	it('keeps only provider and model from the stored snapshot llmConfig', () => {
+		for (const key of ['llmConfig', 'llm_config']) {
+			const out = installMetadata('inst-1', 'src-1', {
+				name: 'A',
+				[key]: {
+					provider: 'anthropic',
+					model: 'fake-model',
+					apiKey: 'fake-publisher-key',
+					baseUrl: 'https://fake.example.test',
+				},
+			})
+			expect(out.snapshot).toEqual({
+				name: 'A',
+				[key]: { provider: 'anthropic', model: 'fake-model' },
+			})
+			expect(JSON.stringify(out)).not.toContain('fake-publisher-key')
+		}
+	})
+
+	it('leaves the input snapshot untouched and is stable when applied twice', () => {
+		const input = { name: 'A', llmConfig: { provider: 'anthropic', apiKey: 'fake-publisher-key' } }
+		const once = installMetadata('i', 's', input).snapshot
+		expect(input.llmConfig.apiKey).toBe('fake-publisher-key')
+		expect(installMetadata('i', 's', once).snapshot).toEqual(once)
+	})
+
+	it('keeps a null llmConfig as null', () => {
+		const out = installMetadata('i', 's', { name: 'A', llmConfig: null })
+		expect(out.snapshot).toEqual({ name: 'A', llmConfig: null })
+	})
 })
 
 // UUID-format IDs used across rewriteWiring tests.
@@ -99,6 +130,34 @@ describe('buildActorInsert', () => {
 		)
 		expect(fromPublisherKey).not.toHaveProperty('apiKey')
 		expect(JSON.stringify(fromPublisherKey)).not.toContain('ank_publisherleak')
+	})
+
+	it('keeps only provider and model from the snapshot llmConfig', () => {
+		for (const key of ['llmConfig', 'llm_config']) {
+			const out = buildActorInsert(
+				{
+					name: 'A',
+					[key]: {
+						provider: 'anthropic',
+						model: 'fake-model',
+						apiKey: 'fake-publisher-key',
+						baseUrl: 'https://fake.example.test',
+						headers: { 'x-fake': 'fake-header' },
+					},
+				},
+				{ installed_loop_id: 'i' },
+				null,
+			)
+			expect(out.llmConfig).toEqual({ provider: 'anthropic', model: 'fake-model' })
+			expect(JSON.stringify(out)).not.toContain('fake-publisher-key')
+		}
+	})
+
+	it('installs with a missing or null llmConfig', () => {
+		expect(buildActorInsert({ name: 'A' }, { installed_loop_id: 'i' }, null).llmConfig).toBeNull()
+		expect(
+			buildActorInsert({ name: 'A', llmConfig: null }, { installed_loop_id: 'i' }, null).llmConfig,
+		).toBeNull()
 	})
 
 	it('drops the legacy tools.browser flag from an old snapshot', () => {

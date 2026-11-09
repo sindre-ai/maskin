@@ -62,7 +62,7 @@ test.describe('Loop detail page', () => {
 			await expect(stats.getByText('Asks waiting')).toBeVisible()
 			await expect(stats.getByText('Next fire')).toBeVisible()
 			await page.getByRole('tab', { name: 'Overview' }).click()
-			await expect(page.getByText('The flow, right now')).toBeVisible()
+			await expect(page.getByRole('heading', { name: 'Pipeline' })).toBeVisible()
 			// AC5 — the utterance input is present on loop detail.
 			await expect(
 				page.getByPlaceholder(
@@ -71,9 +71,21 @@ test.describe('Loop detail page', () => {
 			).toBeVisible()
 			// Step rows show the trigger's title, not its action prompt (#2777).
 			await expect(page.getByText('Triage feedback', { exact: true })).toBeVisible()
-			// The right-now note reads as one line: primitives · triggers on ·
-			// cycles (mockup 1891).
-			await expect(page.getByText(/of \d+ trigger(s)? on/)).toBeVisible()
+			// The pipeline is one card with a column per agent; the trigger sits under
+			// its agent and has its own on/off switch. The card scrolls inside itself,
+			// never the page.
+			const pipeline = page.getByTestId('loop-pipeline')
+			await expect(pipeline.getByRole('link', { name: 'Relay' })).toBeVisible()
+			await expect(pipeline.getByText('Event', { exact: true })).toBeVisible()
+			await expect(page.getByText(/of \d+ trigger(s)? on/)).toHaveCount(0)
+			const triggerSwitch = pipeline.getByRole('switch', { name: /Triage feedback/ })
+			await expect(triggerSwitch).toBeVisible()
+			await expect(triggerSwitch).toBeChecked()
+			await triggerSwitch.click()
+			await expect(triggerSwitch).not.toBeChecked()
+			await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/loops/${loop.id}`))
+			await triggerSwitch.click()
+			await expect(triggerSwitch).toBeChecked()
 			// The shared object timeline replaces the old loop-specific activity
 			// and changes sections — same Activity rule the object page carries.
 			// It lives on the Activity tab; Overview carries the story and stats.
@@ -108,7 +120,7 @@ test.describe('Loop detail page', () => {
 
 			// A step row is the only route into a loop-owned trigger now that
 			// /triggers redirects.
-			await page.getByText('Triage feedback', { exact: true }).click()
+			await page.getByRole('link', { name: /Triage feedback/ }).click()
 			await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/triggers/${trigger.id}`), {
 				timeout: 10000,
 			})

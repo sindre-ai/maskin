@@ -55,7 +55,7 @@ export interface EncodedAgentsState {
 }
 
 /** Same rule as Swift's `clamp`: trim, fall back when blank, cut with an ellipsis. */
-function clamp(text: string | null | undefined, max: number, fallback: string): string {
+export function clamp(text: string | null | undefined, max: number, fallback: string): string {
 	const trimmed = (text ?? '').trim()
 	if (!trimmed) return fallback
 	return trimmed.length > max ? `${trimmed.slice(0, max - 1)}…` : trimmed
@@ -97,6 +97,31 @@ function encodeAgent(a: WorkingAgent): EncodedWorkingAgent {
 		...(a.objectId ? { objectId: a.objectId } : {}),
 		...(a.conversationId ? { conversationId: a.conversationId } : {}),
 		...(topic ? { topic: clamp(topic, WORKING_AGENT_TOPIC_MAX, '') } : {}),
+	}
+}
+
+/** The `FollowActivityState` the opt-in follow card decodes (apps/apple FollowActivityState.swift). */
+export interface EncodedFollowState {
+	agentName: string
+	topic?: string
+	/** The agent's latest step, one line. */
+	doing: string
+	startedAt: number
+	phase: 'following' | 'finished'
+}
+
+/** The follow card for one agent, clamped like the Swift initialiser. */
+export function encodeFollowState(
+	a: Pick<WorkingAgent, 'name' | 'doing' | 'startedAt' | 'topic'>,
+	phase: EncodedFollowState['phase'],
+): EncodedFollowState {
+	const topic = a.topic?.trim()
+	return {
+		agentName: clamp(a.name, WORKING_AGENT_NAME_MAX, 'Agent'),
+		...(topic ? { topic: clamp(topic, WORKING_AGENT_TOPIC_MAX, '') } : {}),
+		doing: clamp(a.doing, WORKING_AGENT_DOING_MAX, 'working'),
+		startedAt: toSwiftReferenceSeconds(a.startedAt),
+		phase,
 	}
 }
 
