@@ -572,7 +572,7 @@ struct ChatThreadView: View {
 			} else if store.serverConfirmed {
 				// The server says the thread is empty: offer the one agent's own openers. A tap
 				// fills the composer; nothing is sent until the person sends it.
-				StarterPromptsView(prompts: store.starterPrompts) { composer.fill($0) }
+				StarterPromptsView(prompts: store.starterPrompts) { composer.addStarter($0) }
 					.padding(.top, MaskinSpace.s9)
 			}
 		}

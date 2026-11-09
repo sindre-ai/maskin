@@ -19,7 +19,7 @@ import {
 } from '@/lib/chat-selection'
 import { starterPromptsForAgents } from '@/lib/starter-prompts'
 import { useWorkspace } from '@/lib/workspace-context'
-import { deriveConversationTitle } from '@maskin/shared'
+import { deriveConversationTitle, withStarterPrompt } from '@maskin/shared'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { ChevronLeft } from 'lucide-react'
 import { type FormEvent, useEffect, useMemo, useReducer, useRef, useState } from 'react'
@@ -208,7 +208,8 @@ function NewChatRoute() {
 	)
 	const messageInputRef = useRef<HTMLInputElement>(null)
 	const pickStarter = (prompt: string) => {
-		setDraft(prompt)
+		// Never erase what the person already typed: the starter goes after it.
+		setDraft((prev) => withStarterPrompt(prev, prompt))
 		// Keep the keyboard open: the message box takes focus after a starter is chosen.
 		messageInputRef.current?.focus()
 	}

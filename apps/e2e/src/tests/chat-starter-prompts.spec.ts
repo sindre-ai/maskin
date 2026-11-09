@@ -2,8 +2,9 @@ import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 // An agent's own one-tap openers (actors.metadata.starter_prompts) show as chips above the
-// message box in a new chat with it, and in an empty thread with it. A tap fills the box and
-// focuses it; nothing is sent until the person sends. An agent with none shows no chips.
+// message box in a new chat with it, and in an empty thread with it. A tap puts the prompt in the
+// box (after anything already typed, never replacing it) and focuses it; nothing is sent until the
+// person sends. An agent with none shows no chips.
 
 const FIRST = 'What needs me today?'
 const SECOND = 'Summarise the open decisions'
@@ -42,14 +43,20 @@ test.describe('Chat — agent starter prompts', () => {
 				await expect(input).toHaveValue(FIRST)
 				await expect(input).toBeFocused()
 				await expect(page).toHaveURL(/\/chats\/new/)
-				// Picking another replaces the text, it does not append.
+				// Picking another goes after the text, it never erases it.
 				await second.click()
-				await expect(input).toHaveValue(SECOND)
+				await expect(input).toHaveValue(`${FIRST} ${SECOND}`)
+				// What the person typed first is kept too.
+				await input.fill('Quick one:')
+				await first.click()
+				await expect(input).toHaveValue(`Quick one: ${FIRST}`)
 
 				// The person sends it, and it arrives as written.
 				await page.getByRole('button', { name: 'Start chat' }).click()
 				await expect(page).toHaveURL(/\/chats\/[0-9a-f-]{36}$/, { timeout: 15_000 })
-				await expect(page.getByText(SECOND).first()).toBeVisible({ timeout: 15_000 })
+				await expect(page.getByText(`Quick one: ${FIRST}`).first()).toBeVisible({
+					timeout: 15_000,
+				})
 
 				// An agent with no starters shows none, and no stand-in list.
 				await page.goto(`/${ws}/chats/new?agentId=${silent.id}`)
@@ -76,8 +83,12 @@ test.describe('Chat — agent starter prompts', () => {
 				await expect(page.getByText('No messages yet')).toBeVisible({ timeout: 10_000 })
 				const chip = page.getByRole('button', { name: FIRST })
 				await expect(chip).toBeVisible()
+				const box = page.getByRole('textbox').last()
+				await box.click()
+				await page.keyboard.type('Quick one:')
 				await chip.click()
-				await expect(page.getByRole('textbox').last()).toContainText(FIRST)
+				// The typed text is kept and the prompt goes after it.
+				await expect(box).toContainText(`Quick one: ${FIRST}`)
 				// Still empty: a tap sent nothing.
 				await expect(page.getByText('No messages yet')).toBeVisible()
 			})

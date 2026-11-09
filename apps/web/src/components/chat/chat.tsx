@@ -42,7 +42,7 @@ import { splitLongMessage } from '@/lib/long-message'
 import { hasHighConfidenceSecret, scanComposerText } from '@/lib/secret-scanner'
 import { type TagValue, splitTextByTags, tagLabel } from '@/lib/tag-input-model'
 import { VIEWER_READ_ONLY_MESSAGE, isViewerRefusal } from '@/lib/workspace-role'
-import { type SecretMatch, withoutSecrets } from '@maskin/shared'
+import { type SecretMatch, withStarterPrompt, withoutSecrets } from '@maskin/shared'
 import { ArrowUp, AtSign, FileText, Hash, Image, Info, Mic, Plus, X } from 'lucide-react'
 import {
 	type ChangeEvent,
@@ -282,11 +282,12 @@ export interface ComposerProps {
 	callAgent?: VoiceCallAgent | null
 	/**
 	 * Asks the composer to replace its draft with `text` (when given), then focus
-	 * with the caret at the end. Without `text` it only focuses and leaves the draft
-	 * alone. One request per nonce: a request that was already there when the
+	 * with the caret at the end. With `append` the text goes after the draft instead
+	 * (a starter prompt never erases what was typed). Without `text` it only focuses
+	 * and leaves the draft alone. One request per nonce: a request that was already there when the
 	 * composer mounted never fires, so a stale one cannot overwrite a draft.
 	 */
-	fillRequest?: { text?: string; nonce: number } | null
+	fillRequest?: { text?: string; append?: boolean; nonce: number } | null
 	/**
 	 * Writes in the shared tag input instead of a textarea: an `@` tag stays in the sentence as
 	 * a chip and the tagged ids reach the selection (`add_agent` / `remove_agent`) from the chips
@@ -656,7 +657,11 @@ export function Composer({
 	useEffect(() => {
 		if (!fillRequest || fillRequest.nonce === handledFillNonceRef.current) return
 		handledFillNonceRef.current = fillRequest.nonce
-		if (fillRequest.text !== undefined) setValue(fillRequest.text)
+		if (fillRequest.text !== undefined) {
+			const text = fillRequest.text
+			if (fillRequest.append) setValue((prev) => withStarterPrompt(prev, text))
+			else setValue(text)
+		}
 		requestAnimationFrame(() => {
 			if (inlineTags) return tagRef.current?.focus()
 			const el = textareaRef.current

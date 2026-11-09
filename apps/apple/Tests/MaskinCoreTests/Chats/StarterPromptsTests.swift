@@ -17,6 +17,37 @@ struct StarterPromptsTests {
 		#expect(StarterPrompts.normalize(["a", "b", "c", "d", "e"]) == ["a", "b", "c", "d"])
 	}
 
+	// The vectors below mirror packages/shared/src/__tests__/starter-prompts.test.ts. Swift's own
+	// trim and case folding differ from JavaScript's, so each is pinned to the JavaScript result.
+
+	@Test("trims what JavaScript trims: U+FEFF, no-break space, line separators")
+	func trimsLikeJavaScript() {
+		#expect(StarterPrompts.normalize(["\u{FEFF}Hi\u{FEFF}"]) == ["Hi"])
+		#expect(StarterPrompts.normalize(["\u{00A0}Hi\u{00A0}"]) == ["Hi"])
+		#expect(StarterPrompts.normalize(["\u{2028}Hi\u{2029}"]) == ["Hi"])
+		#expect(StarterPrompts.normalize(["\u{3000}Hi\u{3000}"]) == ["Hi"])
+	}
+
+	@Test("U+0085 is a control character: not trimmed, the entry is dropped")
+	func nextLineIsDropped() {
+		#expect(StarterPrompts.normalize(["\u{0085}Hi", "Ok"]) == ["Ok"])
+		#expect(StarterPrompts.normalize(["one\u{2028}two", "fine"]) == ["fine"])
+	}
+
+	@Test("a repeat is found the way JavaScript finds it, final sigma and dotted capital I included")
+	func foldsLikeJavaScript() {
+		#expect(StarterPrompts.normalize(["ΑΣ", "ας", "Other"]) == ["ΑΣ", "Other"])
+		#expect(StarterPrompts.normalize(["İstanbul", "i\u{307}stanbul"]) == ["İstanbul"])
+		#expect(StarterPrompts.normalize(["Straße", "STRASSE"]) == ["Straße", "STRASSE"])
+	}
+
+	@Test("length is in UTF-16 units, so an emoji counts as two")
+	func lengthInUTF16() {
+		let thirty = String(repeating: "😀", count: 30)
+		#expect(StarterPrompts.normalize([thirty]) == [thirty])
+		#expect(StarterPrompts.normalize([String(repeating: "😀", count: 31)]).isEmpty)
+	}
+
 	@Test("drops what could not be sent as written")
 	func dropsUnsendable() {
 		let tooLong = String(repeating: "x", count: StarterPrompts.maxLength + 1)
@@ -58,6 +89,37 @@ struct StarterPromptsTests {
 		await h.store.start()
 		await h.store.refreshAgentStates()
 		#expect(h.store.starterPrompts == ["What needs me today?", "Summarise the open decisions"])
+	}
+
+	@Test("a starter goes after what is typed, one space between, and an empty box takes it")
+	func insertingKeepsTheDraft() {
+		#expect(StarterPrompts.inserting("What needs me today?", into: "") == "What needs me today?")
+		#expect(StarterPrompts.inserting("What needs me today?", into: "   ") == "What needs me today?")
+		#expect(
+			StarterPrompts.inserting("What needs me today?", into: "Quick one:")
+				== "Quick one: What needs me today?")
+		#expect(
+			StarterPrompts.inserting("What needs me today?", into: "Quick one:   \n")
+				== "Quick one: What needs me today?")
+	}
+
+	@Test("tapping a starter in the composer keeps the typed text and asks for focus")
+	func composerKeepsTheDraft() {
+		let model = ChatComposerModel(uploader: nil, selfActorID: "me")
+		model.text = "Quick one:"
+		let before = model.focusRequest
+		model.addStarter("What needs me today?")
+		#expect(model.text == "Quick one: What needs me today?")
+		#expect(model.focusRequest == before + 1)
+	}
+
+	@Test("tapping a starter in an empty composer fills it and asks for focus")
+	func composerTakesTheStarter() {
+		let model = ChatComposerModel(uploader: nil, selfActorID: "me")
+		let before = model.focusRequest
+		model.addStarter("What needs me today?")
+		#expect(model.text == "What needs me today?")
+		#expect(model.focusRequest == before + 1)
 	}
 
 	@Test("an open group thread offers none")

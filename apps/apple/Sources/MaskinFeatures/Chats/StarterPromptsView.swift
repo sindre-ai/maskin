@@ -4,8 +4,9 @@ import MaskinUI
 import SwiftUI
 
 /// The agent's own one-tap openers (the web's `StarterPrompts`), as chips above the message box. A
-/// tap fills the box and focuses it, so the person can still change the words before sending;
-/// nothing is sent until they send. Renders nothing for an agent with none.
+/// tap puts the prompt in the box after anything already typed, never replacing it, and focuses the
+/// box, so the person can still change the words before sending; nothing is sent until they send.
+/// Renders nothing for an agent with none.
 struct StarterPromptsView: View {
 	let prompts: [String]
 	let onPick: (String) -> Void
@@ -28,7 +29,7 @@ struct StarterPromptsView: View {
 							.contentShape(Capsule())
 					}
 					.buttonStyle(.maskinPressed(.shrink))
-					.accessibilityHint("Fills the message box")
+					.accessibilityHint("Adds it to the message box")
 				}
 			}
 			.frame(maxWidth: .infinity, alignment: .leading)

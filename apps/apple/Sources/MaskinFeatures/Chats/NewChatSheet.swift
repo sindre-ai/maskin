@@ -90,7 +90,7 @@ struct NewChatSheet: View {
 
 	private var bottomBar: some View {
 		VStack(alignment: .trailing, spacing: MaskinSpace.s5) {
-			StarterPromptsView(prompts: starters) { composer.fill($0) }
+			StarterPromptsView(prompts: starters) { composer.addStarter($0) }
 			if !composer.trimmedText.isEmpty, restoredDraft {
 				Text("Draft saved · ⌘↩ to send")
 					.font(MaskinTypeface.sans(MaskinFontSize.t12, relativeTo: .caption))

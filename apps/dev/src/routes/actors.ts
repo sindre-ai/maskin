@@ -1482,12 +1482,8 @@ app.openapi(updateActorRoute, (async (c) => {
 		if (existing.type !== 'agent') {
 			return c.json(createApiError('BAD_REQUEST', 'Only an agent carries starter prompts'), 400)
 		}
-		if (!workspaceId) {
-			return c.json(
-				createApiError('BAD_REQUEST', 'Starter prompts need the X-Workspace-Id header'),
-				400,
-			)
-		}
+		// No workspace header is fine: the write is the agent's own metadata, like the mailbox. Only
+		// the audit event below is per workspace, so it is recorded when the header is there.
 		starterPrompts = normalizeStarterPrompts(body.starter_prompts)
 	}
 
@@ -1745,6 +1741,10 @@ app.openapi(resetActorRoute, (async (c) => {
 			llmConfig: WORKSPACE_COACH_DEFAULT.llmConfig,
 			tools: WORKSPACE_COACH_DEFAULT.tools,
 			memory: null,
+			// Starter prompts are part of how the agent presents itself, like its description, so
+			// "factory defaults" has none. Tags are grouping labels the workspace put on it, not
+			// behaviour, so they stay. Every other metadata key (picture, voice, mailbox) stays too.
+			metadata: sql`coalesce(${actors.metadata}, '{}'::jsonb) - 'starter_prompts'`,
 			updatedAt: new Date(),
 		})
 		.where(eq(actors.id, id))

@@ -73,6 +73,11 @@ interface ThreadMessagesProps {
 	className?: string
 	/** Fills the composer with a fill step's prompt. */
 	onPickStep?: (prompt: string) => void
+	/**
+	 * Puts an agent's starter prompt in the composer after whatever the person already typed. Without
+	 * it an empty thread shows no starter chips: there is no composer to fill.
+	 */
+	onPickStarter?: (prompt: string) => void
 	/** Sends a send step's label as the person's message, with the intro step marker. */
 	onSendStep?: (content: string, metadata: MessageMetadata) => void
 	/** A step send is in flight. */
@@ -86,13 +91,17 @@ export function ThreadMessages({
 	conversationId,
 	className,
 	onPickStep,
+	onPickStarter,
 	onSendStep,
 	sendingStep = false,
 	onOpenReplies,
 }: ThreadMessagesProps) {
 	const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
 		useConversationMessages(conversationId, workspaceId)
-	const { data: conversation } = useConversation(conversationId, workspaceId)
+	const { data: conversation, isPending: conversationPending } = useConversation(
+		conversationId,
+		workspaceId,
+	)
 	const threadsPane = useThreadsPane()
 	// `messages` is everything the pages hold, replies included: activity pairing, answered
 	// questions and failed-turn logic need the full list. `timeline` is what the main chat draws.
@@ -386,6 +395,19 @@ export function ThreadMessages({
 		const only = others.length === 1 ? others[0] : undefined
 		const starters =
 			only?.actorType === 'agent' ? starterPromptsForAgents([only.actorId], actors.data) : []
+		// The chips can only be known once the chat and the actor list have answered. Holding the
+		// empty state until then keeps it from popping in under "No messages yet". A failed load
+		// settles too (isPending is false), and then the thread shows with no chips.
+		const waitingForStarters =
+			onPickStarter != null &&
+			(conversationPending || (only?.actorType === 'agent' && actors.isPending))
+		if (waitingForStarters) {
+			return (
+				<div className={cn('flex flex-1 items-center justify-center', className)}>
+					<Spinner />
+				</div>
+			)
+		}
 		return (
 			<div className={cn('flex flex-1 flex-col', className)}>
 				<EmptyState
@@ -393,10 +415,11 @@ export function ThreadMessages({
 					title="No messages yet"
 					description="Send the first message to get the conversation started."
 				/>
-				{onPickStep ? (
+				{/* Chips need a composer to fill, so they show only where the caller passed one. */}
+				{onPickStarter ? (
 					<StarterPrompts
 						prompts={starters}
-						onPick={onPickStep}
+						onPick={onPickStarter}
 						className="px-[var(--chat-gut)] pb-3"
 					/>
 				) : null}

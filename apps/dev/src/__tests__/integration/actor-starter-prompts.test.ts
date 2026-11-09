@@ -133,7 +133,7 @@ describe('Starter prompts on agents', () => {
 		])
 	})
 
-	it('refuses a fifth starter, a too long one, an empty one, a line break, a person and no workspace', async () => {
+	it('refuses a fifth starter, a too long one, an empty one, a control character, a repeat and a person', async () => {
 		const app = createApp()
 		const workspace = await insertWorkspace(db, getTestActorId())
 		const agent = await addMember(workspace.id, 'Strict')
@@ -145,14 +145,97 @@ describe('Starter prompts on agents', () => {
 		expect((await patch(agent.id, { starter_prompts: ['x'.repeat(61)] })).status).toBe(400)
 		expect((await patch(agent.id, { starter_prompts: ['   '] })).status).toBe(400)
 		expect((await patch(agent.id, { starter_prompts: ['one\ntwo'] })).status).toBe(400)
+		// C1 "next line" and the Unicode line separator hide a line break too.
+		expect((await patch(agent.id, { starter_prompts: ['one\u0085two'] })).status).toBe(400)
+		expect((await patch(agent.id, { starter_prompts: ['one two'] })).status).toBe(400)
+		// A repeat is refused, not quietly dropped: capitals do not make it different, and the final
+		// sigma is folded so "ΑΣ" and "ας" are one prompt, as on the Swift reader.
+		expect((await patch(agent.id, { starter_prompts: ['Hi', 'hi'] })).status).toBe(400)
+		expect((await patch(agent.id, { starter_prompts: ['ΑΣ', 'ας'] })).status).toBe(400)
+		expect((await patch(agent.id, { starter_prompts: ['Hi', ' HI '] })).status).toBe(400)
 		expect((await patch(person.id, { starter_prompts: ['Hi'] })).status).toBe(400)
-		expect((await patch(agent.id, { starter_prompts: ['Hi'] }, {})).status).toBe(400)
 
 		const [row] = await db
 			.select({ metadata: actors.metadata })
 			.from(actors)
 			.where(eq(actors.id, agent.id))
 		expect(row.metadata ?? {}).not.toHaveProperty('starter_prompts')
+	})
+
+	it('writes without the workspace header, as the mailbox does, and records no event', async () => {
+		const app = createApp()
+		const workspace = await insertWorkspace(db, getTestActorId())
+		const agent = await addMember(workspace.id, 'Headerless')
+
+		// How the MCP update_actor tool calls: no X-Workspace-Id.
+		const res = await app.request(
+			jsonRequest('PATCH', `/api/actors/${agent.id}`, { starter_prompts: ['Keep going'] }, {}),
+		)
+		expect(res.status).toBe(200)
+		expect(((await res.json()) as { starter_prompts: string[] }).starter_prompts).toEqual([
+			'Keep going',
+		])
+		const [row] = await db
+			.select({ metadata: actors.metadata })
+			.from(actors)
+			.where(eq(actors.id, agent.id))
+		expect(row.metadata).toEqual({ starter_prompts: ['Keep going'] })
+		// The audit event is per workspace, so there is none without one.
+		const rows = await db
+			.select({ id: events.id })
+			.from(events)
+			.where(and(eq(events.entityId, agent.id), eq(events.action, 'actor_starter_prompts_updated')))
+		expect(rows).toHaveLength(0)
+	})
+
+	it('reset to defaults clears the starters and keeps tags and the other metadata', async () => {
+		const app = createApp()
+		const workspace = await insertWorkspace(db, getTestActorId())
+		const coach = await insertActor(db, { type: 'agent', name: 'Coach', isSystem: true })
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: workspace.id, actorId: coach.id, role: 'member' })
+		await db
+			.update(actors)
+			.set({
+				metadata: {
+					tags: ['Sales'],
+					starter_prompts: ['What needs me today?'],
+					avatar_version: 3,
+					voice_enabled: true,
+				},
+			})
+			.where(eq(actors.id, coach.id))
+
+		const res = await app.request(
+			jsonRequest('POST', `/api/actors/${coach.id}/reset`, undefined, ws(workspace.id)),
+		)
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as { starter_prompts: string[]; tags: string[] }
+		expect(body.starter_prompts).toEqual([])
+		expect(body.tags).toEqual(['Sales'])
+
+		const [row] = await db
+			.select({ metadata: actors.metadata })
+			.from(actors)
+			.where(eq(actors.id, coach.id))
+		expect(row.metadata).toEqual({ tags: ['Sales'], avatar_version: 3, voice_enabled: true })
+	})
+
+	it('reset on an actor with no metadata at all still works', async () => {
+		const app = createApp()
+		const workspace = await insertWorkspace(db, getTestActorId())
+		const coach = await insertActor(db, { type: 'agent', name: 'Bare Coach', isSystem: true })
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: workspace.id, actorId: coach.id, role: 'member' })
+		await db.update(actors).set({ metadata: null }).where(eq(actors.id, coach.id))
+
+		const res = await app.request(
+			jsonRequest('POST', `/api/actors/${coach.id}/reset`, undefined, ws(workspace.id)),
+		)
+		expect(res.status).toBe(200)
+		expect(((await res.json()) as { starter_prompts: string[] }).starter_prompts).toEqual([])
 	})
 
 	it('accepts exactly four starters of exactly 60 characters', async () => {
