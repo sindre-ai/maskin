@@ -14,6 +14,7 @@ import { logger as honoLogger } from 'hono/logger'
 import { CLIENT_SOURCE_HEADER } from './lib/analytics/knowledge-events'
 import { buildAppleAppSiteAssociation } from './lib/apple-app-site-association'
 import { ApiErrorCode, createApiError, mapStatusToCode, validationFailureHook } from './lib/errors'
+import { createHealthHandler } from './lib/health'
 import { PlanCapExceededError } from './lib/llm-routing'
 import { logger } from './lib/logger'
 import { redactLogLine } from './lib/redact-path'
@@ -309,9 +310,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		await next()
 	})
 
-	app.get('/api/health', (c) => {
-		return c.json({ status: 'ok', timestamp: new Date().toISOString() })
-	})
+	app.get('/api/health', createHealthHandler(db))
 
 	// Auth allowlist — each exemption has a distinct reason; do not tighten
 	// without checking the corresponding flow:
