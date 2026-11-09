@@ -28,7 +28,6 @@ vi.mock('@/lib/analytics', () => ({
 	deriveEntryAgentRole: () => 'coach',
 	trackSpecialistSummonedManually: () => {},
 	trackChatMentionInserted: () => {},
-	trackChatObjectReferenceCreated: () => {},
 }))
 
 type Sent = { content: string; mentions: string[] }

@@ -40,8 +40,8 @@ interface ThreadComposerProps {
 }
 
 /**
- * Adapts the existing `<Composer>` (attach/upload/slash-picker/send) to the
- * conversation send path. Objects/notifications picked via the slash picker
+ * Adapts the existing `<Composer>` (attach/upload/send) to the
+ * conversation send path. Objects/notifications in the selection
  * are sent as structured `metadata.context_objects` / `context_notifications`
  * (rendered as chips by `MessageBubble`) rather than inlined into the message
  * text — the backend rebuilds the equivalent context block for the agent's
@@ -189,7 +189,7 @@ export function ThreadComposer({
 			: 'Reply…'
 		: counterpart
 			? `Reply to ${counterpart}…`
-			: 'Message… / reference or create · @ mention'
+			: 'Message… @ mention'
 
 	// Group-chat cue (3 or more active participants). While a needed answer is still
 	// loading it is the neutral placeholder with no hint; the box itself is never disabled.
