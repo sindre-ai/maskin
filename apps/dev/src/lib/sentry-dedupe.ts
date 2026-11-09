@@ -1,6 +1,6 @@
 import type { ErrorEvent } from '@sentry/node'
 
-// The five messages that made 82% of the stored errors from 20 to 29 Oct 2026
+// The first five messages made 82% of the stored errors from 20 to 29 Oct 2026
 // and used up the free Sentry quota. Each is reported with captureMessage, so
 // event.message is the issue title; titles stay unchanged so alert rules on
 // them keep matching. Everything else passes through untouched.
@@ -10,6 +10,10 @@ export const NOISY_MESSAGES: ReadonlySet<string> = new Set([
 	'Session dispatch permanent failure',
 	'Failed to build agent-base image — sessions will fail until image is available',
 	'Claude session died on a 401',
+	// Logged by onQueryTimeout 45 s after any query gets no answer. During a database stall
+	// the /api/health probe alone adds about 6 a minute, because its 3 s race answers 503
+	// but leaves the query queued on the pool.
+	'DB query got no response',
 ])
 
 export const DEDUPE_WINDOW_MS = 60 * 60 * 1000

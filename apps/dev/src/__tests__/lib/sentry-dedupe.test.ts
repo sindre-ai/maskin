@@ -65,8 +65,21 @@ describe('createSentryDedupe', () => {
 		}
 	})
 
-	it('covers the five top repeat errors', () => {
-		expect([...NOISY_MESSAGES]).toHaveLength(5)
+	it('lets one stalled-database event per hour through, not one per health probe', () => {
+		const { dedupe, advance } = setup()
+		const stalled = () => event('DB query got no response', { extra: { timeoutMs: 45_000 } })
+		expect(dedupe(stalled())).not.toBeNull()
+		// the Docker probe runs every 10 s, so a timeout lands every 10 s for as long as the stall lasts
+		for (let elapsed = 10_000; elapsed < DEDUPE_WINDOW_MS; elapsed += 10_000) {
+			advance(10_000)
+			expect(dedupe(stalled())).toBeNull()
+		}
+		advance(10_000)
+		expect(dedupe(stalled())).not.toBeNull()
+	})
+
+	it('covers the top repeat errors', () => {
+		expect([...NOISY_MESSAGES]).toHaveLength(6)
 		const { dedupe } = setup()
 		for (const message of NOISY_MESSAGES) {
 			expect(dedupe(event(message))).not.toBeNull()
