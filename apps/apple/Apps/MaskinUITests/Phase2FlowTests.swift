@@ -156,8 +156,8 @@ final class Phase2FlowTests: LiveTestCase {
 		openSettings()
 		shot("settings")
 		let original = try XCTUnwrap((try json("/actors/\(seed["ME"]!)") as? [String: Any])?["name"] as? String)
-		// Profile
-		app.buttons.matching(NSPredicate(format: "label CONTAINS 'Profile'")).firstMatch.tap()
+		// Account (was Profile)
+		app.buttons.matching(NSPredicate(format: "label CONTAINS 'Account'")).firstMatch.tap()
 		let nameField = app.textFields["Your name"]
 		XCTAssertTrue(nameField.waitForExistence(timeout: 5), "name field")
 		let newName = "Live Tester \(Int(Date().timeIntervalSince1970) % 1000)"
@@ -183,14 +183,15 @@ final class Phase2FlowTests: LiveTestCase {
 		sleep(3)
 		shot("settings-integrations")
 		app.navigationBars.buttons.element(boundBy: 0).tap()
-		// API key: masked by default; regenerate is gated.
-		app.buttons.matching(NSPredicate(format: "label CONTAINS 'API key'")).firstMatch.tap()
-		XCTAssertTrue(app.navigationBars["API key"].waitForExistence(timeout: 5))
+		// API key (now on Keys and secrets): masked by default; a new key is gated.
+		app.buttons.matching(NSPredicate(format: "label CONTAINS 'Keys and secrets'")).firstMatch.tap()
+		XCTAssertTrue(app.navigationBars["Keys and secrets"].waitForExistence(timeout: 5))
 		XCTAssertFalse(el("ank_").exists, "no key material on screen by default")
-		let regen = app.buttons["Regenerate API key"]
+		let regen = app.buttons["New key"]
+		scrollTo(regen)
 		if regen.exists && regen.isEnabled {
 			regen.tap()
-			XCTAssertTrue(el("Regenerate your API key?").waitForExistence(timeout: 5), "confirmation before regenerating")
+			XCTAssertTrue(el("Revoke key?").waitForExistence(timeout: 5), "confirmation before making a new key")
 			shot("settings-apikey-confirm")
 			let cancel = app.buttons["Cancel"].firstMatch
 			if cancel.exists { cancel.tap() } else { app.tap() }
@@ -240,14 +241,15 @@ final class Phase2FlowTests: LiveTestCase {
 		app.buttons["Sign in"].tap()
 		XCTAssertTrue(app.buttons["Account"].firstMatch.waitForExistence(timeout: 20), "throwaway signed in")
 		openSettings()
-		app.buttons.matching(NSPredicate(format: "label CONTAINS 'API key'")).firstMatch.tap()
-		let regen = app.buttons["Regenerate API key"]
+		app.buttons.matching(NSPredicate(format: "label CONTAINS 'Keys and secrets'")).firstMatch.tap()
+		let regen = app.buttons["New key"]
 		XCTAssertTrue(regen.waitForExistence(timeout: 5))
-		guard regen.isEnabled else { shot("throwaway-regen-disabled"); XCTFail("Regenerate disabled"); return }
+		scrollTo(regen)
+		guard regen.isEnabled else { shot("throwaway-regen-disabled"); XCTFail("New key disabled"); return }
 		regen.tap()
 		shot("throwaway-regen-confirm")
-		app.buttons["Regenerate and sign out other devices"].tap()
-		XCTAssertTrue(el("Shown only now").waitForExistence(timeout: 15), "new key shown once")
+		app.buttons["Revoke and make a new key"].tap()
+		XCTAssertTrue(el("It will not be shown again").waitForExistence(timeout: 15), "new key shown once")
 		XCTAssertFalse(el(oldKey).exists, "old key not displayed")
 		shot("throwaway-regen-shown")
 		// Old key no longer authenticates.
@@ -257,9 +259,12 @@ final class Phase2FlowTests: LiveTestCase {
 		req.setValue(wsId, forHTTPHeaderField: "X-Workspace-Id")
 		let body = try send(req)
 		XCTAssertTrue(body.contains("error") || body.contains("UNAUTH"), "old key rejected: \(body.prefix(120))")
-		// Leave the app signed out so later runs start clean.
+		// Leave the app signed out so later runs start clean: back to Settings, back to the account menu, Sign out.
 		app.navigationBars.buttons.element(boundBy: 0).tap()
-		app.buttons["Done"].firstMatch.tap()
-		if app.buttons["Account"].waitForExistence(timeout: 5) { app.buttons["Account"].tap(); app.buttons["Sign out"].firstMatch.tap(); confirmSignOutDialog() }
+		app.navigationBars.buttons.element(boundBy: 0).tap()
+		let signOut = app.buttons["Sign out"].firstMatch
+		scrollTo(signOut)
+		signOut.tap()
+		confirmSignOutDialog()
 	}
 }

@@ -397,6 +397,8 @@ export const conversationListItemResponseSchema = z.object({
 	subjectType: z.enum(['object', 'loop']).nullable(),
 	subjectId: z.string().uuid().nullable(),
 	createdBy: z.string().uuid(),
+	// Labels for grouping chats, for example a team name. Shared by every participant.
+	tags: z.array(z.string()),
 	lastMessageAt: z.string().nullable(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
@@ -454,6 +456,8 @@ export const messageResponseSchema = z.object({
 	sessionId: z.string().uuid().nullable(),
 	createdAt: z.string().nullable(),
 	editedAt: z.string().nullable(),
+	/** Set when the author deleted the message; its content is then empty. */
+	deletedAt: z.string().nullable(),
 	/** Root message id when this is a thread reply; null for top-level messages. */
 	threadRootId: z.number().nullable(),
 	/** A thread reply also shown in the main timeline. */

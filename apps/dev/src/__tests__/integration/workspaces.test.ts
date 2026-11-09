@@ -1018,6 +1018,18 @@ describe('Workspaces Integration', () => {
 			expect(audit[0].data).toMatchObject({ role: { from: 'member', to: 'admin' } })
 		})
 
+		it('shows the new role in the members list', async () => {
+			const { app, ws, member } = await workspaceWithMember()
+
+			await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}/members/${member.id}`, { role: 'viewer' }),
+			)
+			const res = await app.request(jsonGet(`/api/workspaces/${ws.id}/members`))
+
+			const rows = (await res.json()) as Array<{ actorId: string; role: string }>
+			expect(rows.find((r) => r.actorId === member.id)?.role).toBe('viewer')
+		})
+
 		it('refuses to demote the last owner and leaves the role untouched', async () => {
 			const { app, ws, member } = await workspaceWithMember()
 			// Hand the sole ownership to `member` and drop the caller to admin —
