@@ -306,6 +306,28 @@ const dataQueryRoute = createRoute({
 	},
 })
 
+/**
+ * Custom loop views fire a burst of these, and the database pool is shared with everything else
+ * (auth on every request, session logs, triggers). Left unbounded, one view held every
+ * connection and the whole server stopped answering. Only this many run at once; the rest wait.
+ */
+const MAX_CONCURRENT_DATA_QUERIES = 3
+let activeDataQueries = 0
+const waitingDataQueries: Array<() => void> = []
+
+async function withDataQuerySlot<T>(work: () => Promise<T>): Promise<T> {
+	if (activeDataQueries >= MAX_CONCURRENT_DATA_QUERIES) {
+		await new Promise<void>((resolve) => waitingDataQueries.push(resolve))
+	}
+	activeDataQueries += 1
+	try {
+		return await work()
+	} finally {
+		activeDataQueries -= 1
+		waitingDataQueries.shift()?.()
+	}
+}
+
 type SpecOutcome =
 	| { spec: DataQuerySpec }
 	| { status: 400 | 404; error: ReturnType<typeof createApiError> }
@@ -349,11 +371,13 @@ app.openapi(dataQueryRoute, (async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const { spec: rawSpec } = c.req.valid('query')
 
-	const outcome = await readSpec(db, workspaceId, rawSpec)
-	if ('error' in outcome) return c.json(outcome.error, outcome.status)
+	return withDataQuerySlot(async () => {
+		const outcome = await readSpec(db, workspaceId, rawSpec)
+		if ('error' in outcome) return c.json(outcome.error, outcome.status)
 
-	const rows = await db.execute<DataQueryRow>(buildDataQuerySql(workspaceId, outcome.spec))
-	return c.json(shapeDataQueryResult(Array.from(rows), outcome.spec), 200)
+		const rows = await db.execute<DataQueryRow>(buildDataQuerySql(workspaceId, outcome.spec))
+		return c.json(shapeDataQueryResult(Array.from(rows), outcome.spec), 200)
+	})
 }) as RouteHandler<typeof dataQueryRoute, Env>)
 
 const nextChangeResultSchema = z.object({
@@ -389,14 +413,16 @@ app.openapi(nextChangeRoute, (async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const { spec: rawSpec } = c.req.valid('query')
 
-	const outcome = await readSpec(db, workspaceId, rawSpec)
-	if ('error' in outcome) return c.json(outcome.error, outcome.status)
+	return withDataQuerySlot(async () => {
+		const outcome = await readSpec(db, workspaceId, rawSpec)
+		if ('error' in outcome) return c.json(outcome.error, outcome.status)
 
-	const rows = await db.execute<{ in_ms: number | string | null }>(
-		buildNextChangeSql(workspaceId, outcome.spec),
-	)
-	const ms = Array.from(rows)[0]?.in_ms
-	return c.json({ in_ms: ms === null || ms === undefined ? null : Math.max(0, Number(ms)) }, 200)
+		const rows = await db.execute<{ in_ms: number | string | null }>(
+			buildNextChangeSql(workspaceId, outcome.spec),
+		)
+		const ms = Array.from(rows)[0]?.in_ms
+		return c.json({ in_ms: ms === null || ms === undefined ? null : Math.max(0, Number(ms)) }, 200)
+	})
 }) as RouteHandler<typeof nextChangeRoute, Env>)
 
 export default app

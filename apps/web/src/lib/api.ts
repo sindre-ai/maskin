@@ -48,9 +48,11 @@ export type {
 	UpdateFileCommentInput,
 	WorkspaceDeletionPreview,
 }
+import { parseRelativeBound } from '@maskin/shared'
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 import { reportApiFailure } from './faro'
+import { limitConcurrency } from './limit-concurrency'
 
 import type {
 	DailyBudget,
@@ -464,6 +466,44 @@ export type ExtensionSampleResult =
 	  }
 	| { ok: false; field: string; message: string }
 
+/**
+ * A custom loop view can ask for dozens of sources at once, and each one is a database query on the
+ * server's small shared pool. Sending them all together starves every other request, so they go
+ * out a few at a time. The timeout starts when a request does, not while it waits its turn.
+ */
+const DATA_REQUESTS_AT_ONCE = 4
+
+const limitedDataQuery = limitConcurrency(
+	DATA_REQUESTS_AT_ONCE,
+	(workspaceId: string, spec: DataQuerySpec, opts?: { timeoutMs?: number }) =>
+		request<DataQueryResult>(`/data/query?spec=${encodeURIComponent(JSON.stringify(spec))}`, {
+			workspaceId,
+			signal: opts?.timeoutMs === undefined ? undefined : AbortSignal.timeout(opts.timeoutMs),
+		}),
+)
+
+/** Only a moving date (a relative bound or a time bucket) changes an answer with no write. */
+function answerMovesWithTime(spec: DataQuerySpec) {
+	if (spec.group_by && /^(created_at|updated_at)\.(hour|day|week|month)$/.test(spec.group_by)) {
+		return true
+	}
+	return Object.values(spec.filters ?? {}).some(
+		(v) => typeof v === 'string' && parseRelativeBound(v) !== null,
+	)
+}
+
+const limitedNextChange = limitConcurrency(
+	DATA_REQUESTS_AT_ONCE,
+	async (workspaceId: string, spec: DataQuerySpec) => {
+		// Nothing to wait for, so do not spend a request (and a database query) finding that out.
+		if (!answerMovesWithTime(spec)) return { in_ms: null }
+		return request<{ in_ms: number | null }>(
+			`/data/next-change?spec=${encodeURIComponent(JSON.stringify(spec))}`,
+			{ workspaceId },
+		)
+	},
+)
+
 export const api = {
 	// The unified search endpoint: all five sources, true counts, AND matching.
 	search: {
@@ -736,16 +776,8 @@ export const api = {
 	},
 
 	data: {
-		query: (workspaceId: string, spec: DataQuerySpec, opts?: { signal?: AbortSignal }) =>
-			request<DataQueryResult>(`/data/query?spec=${encodeURIComponent(JSON.stringify(spec))}`, {
-				workspaceId,
-				signal: opts?.signal,
-			}),
-		nextChange: (workspaceId: string, spec: DataQuerySpec) =>
-			request<{ in_ms: number | null }>(
-				`/data/next-change?spec=${encodeURIComponent(JSON.stringify(spec))}`,
-				{ workspaceId },
-			),
+		query: limitedDataQuery,
+		nextChange: limitedNextChange,
 	},
 
 	triggers: {
