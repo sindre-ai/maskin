@@ -97,15 +97,7 @@ struct TeamRow: View {
 		}
 	}
 
-	private var title: String {
-		switch row.kind {
-		case .conversation(let c):
-			if hasCustomTitle(c) { return ChatPreviewText.plain(c.title) }
-			return TeamLayout.title(of: c, me: currentActorID)
-		case .person(let p): return p.name
-		case .flow(let f): return f.name
-		}
-	}
+	private var title: String { TeamLayout.displayedTitle(of: row.kind, me: currentActorID) }
 
 	/// A 1:1 conversation with its own title keeps the person's name beside it.
 	private var role: String? {
@@ -120,10 +112,7 @@ struct TeamRow: View {
 	}
 
 	private func hasCustomTitle(_ c: ConversationSummary) -> Bool {
-		guard !c.isGroupChat(excluding: currentActorID) else { return false }
-		let names = c.others(excluding: currentActorID).map(\.name)
-		let title = c.title.trimmingCharacters(in: .whitespacesAndNewlines)
-		return !title.isEmpty && title != ThreadLayout.defaultTitle(for: names) && !names.contains(title)
+		TeamLayout.hasCustomTitle(c, me: currentActorID)
 	}
 
 	private var canExpand: Bool {
@@ -275,7 +264,11 @@ struct ConversationRow: View {
 	var body: some View {
 		TeamRow(
 			row: TeamLayout.Row(id: conversation.id, kind: .conversation(conversation)),
-			status: ConversationRowStatus.make(conversation: conversation), currentActorID: currentActorID, now: now)
+			status: ConversationRowStatus.make(
+				conversation: conversation,
+				displayedTitle: TeamLayout.displayedTitle(of: .conversation(conversation), me: currentActorID),
+				me: currentActorID),
+			currentActorID: currentActorID, now: now)
 	}
 
 	/// v3: a 28pt plate on a row (the mockup's single avatar).

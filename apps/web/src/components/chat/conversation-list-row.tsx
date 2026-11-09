@@ -10,6 +10,7 @@ import { useUpdateConversationMe } from '@/hooks/use-conversations'
 import type { ConversationListItemResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
+import { snippetAuthorLabel } from '@/lib/conversation-snippet'
 import { plainPreview } from '@/lib/linked-objects'
 import { Link } from '@tanstack/react-router'
 import { MoreHorizontal } from 'lucide-react'
@@ -57,11 +58,8 @@ export function ConversationListRow({
 			: workingNames.length === 1
 				? `${workingNames[0]} is working…`
 				: `${workingNames.length} agents are working…`
-	const snippetAuthor = conversation.snippet_actor_id
-		? conversation.snippet_actor_id === self?.id
-			? 'You'
-			: conversation.snippet_actor_name
-		: null
+	// The title rendered below is `conversation.title`; compare against exactly that.
+	const snippetAuthor = snippetAuthorLabel(conversation, conversation.title, self?.id)
 
 	return (
 		<div className="group/row relative border-t border-border first:border-t-0">
