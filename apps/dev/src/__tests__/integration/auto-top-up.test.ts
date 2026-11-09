@@ -280,6 +280,30 @@ describe('auto top-up (Integration)', () => {
 		expect(calls).toEqual([])
 	})
 
+	it('fails the rule instead of charging again when the card is charged but the credit step errors', async () => {
+		await seed(400)
+		const spy = vi.spyOn(db, 'transaction').mockRejectedValueOnce(new Error('db down'))
+		const now = Date.now()
+		await maybeAutoTopUp({ db, workspaceId, actorId, now })
+		spy.mockRestore()
+
+		const settings = await readSettings()
+		expect(settings.billing.credit_balance_cents).toBe(400)
+		expect(settings.auto_top_up.status).toBe('failed')
+		expect(settings.auto_top_up.failure_reason).toBe('charge_error')
+		expect(settings.auto_top_up.in_flight).toBeUndefined()
+		expect(await topUpRows()).toHaveLength(0)
+		const failed = (await db.select().from(events).where(eq(events.entityId, workspaceId))).find(
+			(e) => e.action === 'workspace_auto_top_up_failed',
+		)
+		expect(JSON.stringify(failed?.data)).toContain('in_test_1')
+
+		// Past the 10 minute claim timeout the card is still not charged again.
+		calls.length = 0
+		await maybeAutoTopUp({ db, workspaceId, actorId, now: now + 11 * 60_000 })
+		expect(calls).toEqual([])
+	})
+
 	it('fails with no_payment_method when there is no saved card', async () => {
 		await seed(400)
 		defaultPaymentMethod = null
