@@ -151,6 +151,7 @@ struct MessageRow: View {
 	/// Tap on an emoji chip under the bubble (add or take back).
 	var onToggleReaction: (String) -> Void = { _ in }
 	var onAnswer: ([Int: [String]]) -> Void = { _ in }
+	var onDismissQuestion: (() -> Void)?
 	/// The person's answer to a Keychain card (allow or not now), posted into the chat.
 	var onKeychainReply: (String, ChatSendMetadata) -> Void = { _, _ in }
 	/// An intro's send step tapped: send its words, noting which step it was.
@@ -489,7 +490,11 @@ struct MessageRow: View {
 			ReactionChips(reactions: message.reactions, onToggle: onToggleReaction)
 			if let threadSummary { ThreadPill(summary: threadSummary, onOpen: onOpenThread) }
 			if !message.questions.isEmpty {
-				QuestionOptionsView(questions: message.questions, answers: questionAnswers, onSubmit: onAnswer)
+				QuestionOptionsView(
+					questions: message.questions, answers: questionAnswers, onSubmit: onAnswer,
+					// Not on a helper's question: iOS has no session-input path, so a chat message
+					// would leave the helper session blocked.
+					onDismiss: message.isHelperQuestion ? nil : onDismissQuestion)
 			}
 			if let access = KeychainAccessRequest(message: message) {
 				KeychainAccessCard(
