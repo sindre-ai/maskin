@@ -1050,6 +1050,15 @@ struct ThreadTranscript: View {
 	/// The call running in this thread: its card shows what you are saying as you say it.
 	var call: LiveMeetingSession?
 
+	/// Agents carry their name above their words only where more than one can speak.
+	/// Read once per transcript update, never per row. The agents that have spoken come from the
+	/// store's cached set, so this does not scan the messages.
+	private var namesAgents: Bool {
+		AgentRowStyle.namesAgents(
+			participants: store.participants, currentActorID: store.currentActorID,
+			agentAuthorIDs: store.agentAuthorIDs)
+	}
+
 	/// Each tagged person under your message with where they stand (Working, Replied, Waiting for X).
 	private func mentionChips(for message: ChatMessage) -> [MentionStateChip] {
 		message.mentionIDs.compactMap { id -> MentionStateChip? in
@@ -1101,10 +1110,12 @@ struct ThreadTranscript: View {
 		let latestOwn = ThreadLayout.latestOwnMessageID(in: messages, currentActorID: store.currentActorID)
 		let cardOwners = LinkedConversationItems.firstMentions(in: messages)
 		let statusIDs = ThreadLayout.statusLineIDs(in: messages, currentActorID: store.currentActorID)
+		let namesAgents = namesAgents
+		let runs = ThreadLayout.runs(in: items)
 		ForEach(items) { item in
 			row(
 				item, answers: answers, anchors: anchors, latestOwnID: latestOwn, statusIDs: statusIDs,
-				cardOwners: cardOwners)
+				cardOwners: cardOwners, namesAgents: namesAgents, runs: runs)
 				.padding(.top, ThreadLayout.gap(before: item) == .grouped ? Self.groupedGap : Self.listGap)
 		}
 		TimelineView(.periodic(from: now, by: 15)) { context in
@@ -1129,7 +1140,7 @@ struct ThreadTranscript: View {
 			Group {
 				let session = sessions.first { $0.actorID == row.agent.id }
 				if let draft = store.liveReplyDraft(for: row.agent.id) {
-					StreamingReplyBubble(agent: row.agent, text: draft)
+					StreamingReplyBubble(agent: row.agent, text: draft, namesAgent: namesAgents)
 				} else {
 					LiveActivityView(
 						agent: row.agent, fallbackActivity: session?.currentActivity,
@@ -1144,7 +1155,9 @@ struct ThreadTranscript: View {
 		}
 		let liveIDs = Set(live.map(\.id))
 		ForEach(store.stoppedAgentIDs.sorted().filter { !liveIDs.contains($0) }, id: \.self) { agentID in
-			StreamingReplyBubble(agent: store.participant(for: agentID), text: store.liveReplyDraft(for: agentID), stopped: true)
+			StreamingReplyBubble(
+				agent: store.participant(for: agentID), text: store.liveReplyDraft(for: agentID), stopped: true,
+				namesAgent: namesAgents)
 				.padding(.top, Self.listGap)
 		}
 		if live.isEmpty, let stalled = store.stalledSession() {
@@ -1237,7 +1250,7 @@ struct ThreadTranscript: View {
 	@ViewBuilder
 	private func row(
 		_ item: ThreadItem, answers: [Int: [ChatQuestionAnswer.Answer]], anchors: ActivityAnchors, latestOwnID: String?,
-		statusIDs: Set<String>, cardOwners: [String: String]
+		statusIDs: Set<String>, cardOwners: [String: String], namesAgents: Bool, runs: [String: ThreadLayout.Run]
 	) -> some View {
 		switch item {
 		case .daySeparator(let day):
@@ -1263,7 +1276,8 @@ struct ThreadTranscript: View {
 				FinishedTraceView(turn: turn).padding(.bottom, MaskinSpace.s3)
 			}
 			MessageRow(
-				message: message, isOwn: isOwn, showsAuthor: showsAuthor,
+				message: message, isOwn: isOwn, showsAuthor: showsAuthor, namesAgent: namesAgents,
+				endsRun: runs[message.id]?.endsRun ?? true,
 				mentionNames: message.mentionIDs.compactMap { store.displayName(for: $0) },
 				mentionChips: isOwn ? mentionChips(for: message) : [],
 				mentions: message.mentionIDs.compactMap { id in

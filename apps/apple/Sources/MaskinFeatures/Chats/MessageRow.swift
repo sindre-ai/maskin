@@ -115,8 +115,10 @@ struct MentionLine: View {
 	}
 }
 
-/// One message as a spec 7 bubble. Theirs: a `card` bubble with the tail top-left, full width,
-/// with the 24pt avatar + name + time header on the first of a run (an agent's opens its page);
+/// One message as a spec 7 bubble. An agent's: plain text on the page (v3), no bubble, avatar or
+/// time, with its name above the first of a run only in a chat with several agents (it opens the
+/// agent's page). Another person's: a `card` bubble with the tail top-left, full width, with the 24pt
+/// avatar + name + time header on the first of a run;
 /// yours: an ink bubble with the tail bottom-right, at most 82% wide, with the status line under
 /// your newest one. A quote sits at the top of the bubble and `edited` inside it; pictures and
 /// files sit outside it, above, and a message with no words has no bubble. Long-press opens the actions with a preview; swiping right starts a reply. An agent's
@@ -125,6 +127,11 @@ struct MessageRow: View {
 	let message: ChatMessage
 	let isOwn: Bool
 	let showsAuthor: Bool
+	/// More than one agent can speak here (`AgentRowStyle.namesAgents`): an agent's first message
+	/// of a run carries its name. In a one-to-one chat the title already says who it is.
+	var namesAgent = false
+	/// The last message of a run by its author: an agent's carries its time under the words.
+	var endsRun = true
 	var mentionNames: [String] = []
 	/// Where each tagged person stands; shown under your own message in place of the caption.
 	var mentionChips: [MentionStateChip] = []
@@ -189,30 +196,32 @@ struct MessageRow: View {
 		}
 		.onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { rowWidth = $0 }
 		.accessibilityElement(children: .contain)
+		// The plain agent row draws no avatar or time, so VoiceOver reads who wrote it and when.
+		.accessibilityLabelIf(
+			plainAgent ? AgentRowStyle.spokenSender(name: message.actorName, date: message.createdAt) : nil
+		)
 		.accessibilityActions {
-			ForEach(Array(zip(actions.titles.indices, actions.titles)), id: \.0) { _, title in
-				Button(title) { perform(title) }
+			ForEach(menuActions.entries, id: \.item) { entry in
+				Button(entry.title) { menuActions.run(entry.item) }
 			}
 		}
 	}
 
-	private func perform(_ title: String) {
-		switch title {
-		case "Reply": actions.onReply?()
-		case "Reply in thread": actions.onThread?()
-		case "Copy": actions.onCopy?()
-		case "Select text": actions.onSelectText?()
-		case "Pin", "Unpin": actions.onPin?()
-		case "Edit": actions.onEdit?()
-		case "Try again": actions.onTryAgain?()
-		case "Make it shorter": actions.onShorter?()
-		case "Good answer": actions.onGoodAnswer?()
-		case "Not right": actions.onNotRight?()
-		case "Retry": actions.onRetrySend?()
-		case "Delete": actions.onDiscard?()
-		default: actions.onReadAloud?()
-		}
+	/// The long-press actions. An agent's plain words have no avatar or name row to tap, so every
+	/// one of them (1:1 or group, first of a run or not) also offers "Open <agent>" here.
+	private var menuActions: MessageMenuActions {
+		guard plainAgent, let runtime else { return actions }
+		var menu = actions
+		menu.onOpenAgent = { runtime.openAgent(message.actorID) }
+		menu.openAgentTitle = "Open \(message.actorName)"
+		return menu
 	}
+
+	/// An agent's message is plain text on the page; a person's other than yours keeps the bubble.
+	private var shape: AgentRowStyle.Row {
+		AgentRowStyle.row(author: message.author, showsAuthor: showsAuthor, namesAgent: namesAgent, endsRun: endsRun)
+	}
+	private var plainAgent: Bool { !shape.bubble }
 
 	private var shownText: String { messageOverride.text(original: message.contentWithoutIntroTail) }
 	private var quote: QuotedReply? { QuotedReply.parse(shownText) }
@@ -445,8 +454,15 @@ struct MessageRow: View {
 		// Read once per evaluation: finding the links costs a scan of the text.
 		let targets = linkedTargets
 		let layout = linkedLayout(for: targets)
-		return VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-			if showsAuthor {
+		// The same gap `StreamingReplyBubble` stacks its name and words with, from one constant.
+		return VStack(alignment: .leading, spacing: AgentNameLabel.gap) {
+			// v3: an agent's words are plain text; its name is shown only where more than one agent can
+			// speak. A person's message keeps the avatar header. `AgentRowStyle` decides both.
+			if shape.nameLabel {
+				AgentNameLabel(
+					name: message.actorName, working: working,
+					onOpen: runtime != nil ? { runtime?.openAgent(message.actorID) } : nil)
+			} else if shape.header {
 				MessageHeader(
 					name: message.actorName, kind: message.author, seed: message.actorID, time: message.createdAt,
 					working: working,
@@ -476,14 +492,16 @@ struct MessageRow: View {
 						}
 					}
 					.foregroundStyle(MaskinColor.ink2)
-					.padding(.vertical, BubbleShape.theirVertical)
-					.padding(.horizontal, BubbleShape.horizontal)
+					.padding(.vertical, plainAgent ? 0 : BubbleShape.theirVertical)
+					.padding(.horizontal, plainAgent ? 0 : BubbleShape.horizontal)
 					.frame(maxWidth: .infinity, alignment: .leading)
-					.background(MaskinSurface.card, in: BubbleShape.agent)
+					.background {
+						if !plainAgent { BubbleShape.agent.fill(MaskinSurface.card) }
+					}
 				}
 			}
 			.swipeToReply(onReply)
-			.messageContextMenu(message, isOwn: false, actions: actions)
+			.messageContextMenu(message, isOwn: false, actions: menuActions)
 			if let appended = layout?.appended {
 				ForEach(appended) { LinkedTargetCard(target: $0, onApproved: onApprovedDraft) }
 			}
@@ -535,6 +553,14 @@ struct MessageRow: View {
 			}
 			footer
 			MentionLine(names: untaggedNames, isOwn: false)
+			// An agent's time: quiet, under the last message of its run, in the clock style the other
+			// rows use. Below the words so a streaming reply landing never moves the text. VoiceOver
+			// already hears it in the row's label, so it is hidden here.
+			if shape.time, let time = message.createdAt {
+				RelativeTime(time, style: .clock)
+					.font(MaskinTypeface.sans(MaskinFontSize.t12, relativeTo: .caption)).foregroundStyle(MaskinColor.ink5)
+					.accessibilityHidden(true)
+			}
 		}
 		.frame(maxWidth: .infinity, alignment: .leading)
 		.environment(\.markdownStandaloneLink, standaloneStyle(placingCards: layout != nil))
@@ -571,6 +597,14 @@ struct MessageRow: View {
 				}
 			}
 		}
+	}
+}
+
+extension View {
+	/// Sets an accessibility label only when there is one; otherwise the view reads as it did.
+	@ViewBuilder
+	func accessibilityLabelIf(_ label: String?) -> some View {
+		if let label { accessibilityLabel(label) } else { self }
 	}
 }
 

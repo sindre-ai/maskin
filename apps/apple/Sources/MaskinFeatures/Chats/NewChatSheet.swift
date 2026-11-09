@@ -179,10 +179,6 @@ struct NewConversationForm: View {
 			Text("New conversation")
 				.maskinText(.sheetTitle)
 				.foregroundStyle(MaskinColor.ink)
-			Text("Choose who's in it, then say what you need.")
-				.font(MaskinTypeface.sans(MaskinFontSize.t15, relativeTo: .subheadline))
-				.foregroundStyle(MaskinColor.ink4)
-				.padding(.top, MaskinSpace.s3)
 			toCard.padding(.top, MaskinSpace.s9)
 			if let error { FormError(error).padding(.top, MaskinSpace.s7) }
 			// The list only exists while To has focus, so no person row sits under the message box.
@@ -247,7 +243,7 @@ struct NewConversationForm: View {
 				card(rows: matches)
 			}
 		} else if !matches.isEmpty {
-			sectionLabel("Suggested")
+			sectionLabel("Recent")
 			card(rows: matches)
 		}
 	}
