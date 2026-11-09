@@ -164,24 +164,3 @@ public enum ActivityGrouping {
 		return f.string(from: date)
 	}
 }
-
-/// When an object's description folds and what the fold button says
-/// (`specs/8-Objects.md`: above ~520 characters it collapses, "Read all · N min").
-public enum DescriptionCollapse {
-	public static let characterThreshold = 520
-	public static let wordsPerMinute = 200
-
-	public static func collapses(_ text: String) -> Bool {
-		text.trimmingCharacters(in: .whitespacesAndNewlines).count > characterThreshold
-	}
-
-	/// Whole minutes at a reading pace, never under one.
-	public static func readingMinutes(_ text: String) -> Int {
-		let words = text.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
-		return max(1, Int((Double(words) / Double(wordsPerMinute)).rounded(.up)))
-	}
-
-	public static func readAllLabel(_ text: String) -> String {
-		"Read all · \(readingMinutes(text)) min"
-	}
-}
