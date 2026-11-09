@@ -8,6 +8,7 @@ import { createIntegrationApp, db, getTestActorId } from './global-setup'
 
 vi.mock('../../lib/analytics/integration-events', () => ({
 	trackIntegrationConnected: vi.fn().mockResolvedValue(undefined),
+	trackIntegrationConnectStarted: vi.fn().mockResolvedValue(undefined),
 }))
 
 vi.mock('../../lib/integrations/registry', async () => {

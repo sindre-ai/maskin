@@ -37,6 +37,7 @@ export const GATEWAY_PROVIDERS: ReadonlySet<string> = new Set([
 	'google-calendar',
 	'linear',
 	'miro',
+	'notion',
 	'posthog',
 	'resend',
 	'ubersuggest',
