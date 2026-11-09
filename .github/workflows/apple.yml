@@ -115,7 +115,7 @@ jobs:
       # always(): a failing test should not hide the images that did render.
       - name: Upload chat card snapshots
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: chats-snapshots
           path: ${{ runner.temp }}/chats-snapshots
@@ -125,7 +125,7 @@ jobs:
 
       - name: Upload For you snapshots
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: foryou-snapshots
           path: ${{ runner.temp }}/foryou-snapshots
@@ -135,7 +135,7 @@ jobs:
 
       - name: Upload loop screen snapshots
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: loops-snapshots
           path: ${{ runner.temp }}/loops-snapshots
@@ -197,7 +197,7 @@ jobs:
       # failure() alone skips on a timeout cancel, which is exactly when the log is needed.
       - name: Upload build log
         if: failure() || cancelled()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: apple-xcodebuild-log-${{ matrix.platform }}
           path: ${{ runner.temp }}/xcodebuild.log
