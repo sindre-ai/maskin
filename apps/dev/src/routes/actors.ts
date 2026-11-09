@@ -29,6 +29,7 @@ import {
 	PLATFORM_MCP_PRESET,
 	WORKSPACE_COACH_DEFAULT,
 	createActorSchema,
+	normalizeTags,
 	updateActorSchema,
 } from '@maskin/shared'
 import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'drizzle-orm'
@@ -71,6 +72,7 @@ import {
 	isWorkspaceMember,
 } from '../lib/workspace-auth'
 import { OwnershipCapExceededError } from '../lib/workspace-capacity'
+import { listAgentObjects, loadAgentWorkingNow } from '../services/agent-activity'
 import { introduceAgentToRecipient } from '../services/agent-intro'
 import { createIntroScanRunner } from '../services/agent-intro-scan'
 import type { AgentStorageManager } from '../services/agent-storage'
@@ -120,6 +122,11 @@ function actorEventData(actor: { id: string; type: string; name: string; isSyste
 const actorAvatarUrlSql = sql<
 	string | null
 >`CASE WHEN ${actors.metadata}->>'avatar_version' IS NOT NULL THEN '/api/actors/' || ${actors.id} || '/avatar?v=' || (${actors.metadata}->>'avatar_version') END`
+
+/** The actor's tags off its metadata. Anything that is not an array reads as none. Writes go through PATCH, which stores a clean list. */
+const actorTagsSql = sql<
+	string[]
+>`CASE WHEN jsonb_typeof(${actors.metadata}->'tags') = 'array' THEN ${actors.metadata}->'tags' ELSE '[]'::jsonb END`
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
@@ -768,6 +775,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					role: workspaceMembers.role,
 					voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 					avatar_url: actorAvatarUrlSql,
+					tags: actorTagsSql,
 				})
 				.from(workspaceMembers)
 				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
@@ -823,6 +831,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					role: workspaceMembers.role,
 					voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 					avatar_url: actorAvatarUrlSql,
+					tags: actorTagsSql,
 				})
 				.from(workspaceMembers)
 				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
@@ -1054,6 +1063,7 @@ app.openapi(getActorRoute, (async (c) => {
 				installedLoopId: sql<string | null>`${actors.metadata}->>'installed_loop_id'`,
 				voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 				avatar_url: actorAvatarUrlSql,
+				tags: actorTagsSql,
 			})
 			.from(actors)
 			.where(eq(actors.id, id))
@@ -1155,6 +1165,109 @@ app.openapi(actorAccessRoute, (async (c) => {
 	}
 	return c.json(await describeAgentAccess(db, workspaceId, id), 200)
 }) as RouteHandler<typeof actorAccessRoute, Env>)
+
+// GET /:id/objects - Objects an actor created, changed or drives (agent page, Objects tab)
+const actorObjectsQuerySchema = z.object({
+	limit: z.coerce.number().int().min(1).max(100).default(25),
+	offset: z.coerce.number().int().min(0).default(0),
+})
+
+const actorObjectsRoute = createRoute({
+	method: 'get',
+	path: '/{id}/objects',
+	tags: ['Actors'],
+	summary: 'Objects an actor has created, changed or drives in the workspace, newest first',
+	request: {
+		params: idParamSchema,
+		query: actorObjectsQuerySchema,
+		headers: z.object({ 'x-workspace-id': z.string().uuid() }),
+	},
+	responses: {
+		200: {
+			content: {
+				'application/json': {
+					schema: z.object({
+						items: z.array(
+							z.object({
+								id: z.string().uuid(),
+								type: z.string(),
+								title: z.string().nullable(),
+								status: z.string(),
+								updatedAt: z.string().nullable(),
+							}),
+						),
+						hasMore: z.boolean(),
+					}),
+				},
+			},
+			description: 'One page of objects',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Actor not found in this workspace',
+		},
+	},
+})
+
+app.openapi(actorObjectsRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { limit, offset } = c.req.valid('query')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	if (!(await actorsShareWorkspace(db, callerId, id, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+	const page = await listAgentObjects(db, { workspaceId, actorId: id, limit, offset })
+	return c.json({ items: serializeArray(page.items), hasMore: page.hasMore }, 200)
+}) as RouteHandler<typeof actorObjectsRoute, Env>)
+
+// GET /:id/working-now - The one-line "working now" for an agent, from its live session
+const actorWorkingNowRoute = createRoute({
+	method: 'get',
+	path: '/{id}/working-now',
+	tags: ['Actors'],
+	summary: 'What an agent is doing right now, or null when it is not working',
+	request: {
+		params: idParamSchema,
+		headers: z.object({ 'x-workspace-id': z.string().uuid() }),
+	},
+	responses: {
+		200: {
+			content: {
+				'application/json': {
+					schema: z.object({
+						workingNow: z
+							.object({
+								sessionId: z.string().uuid(),
+								doing: z.string(),
+								startedAt: z.string(),
+								conversationId: z.string().uuid().nullable(),
+							})
+							.nullable(),
+					}),
+				},
+			},
+			description: 'The live line, or null',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Actor not found in this workspace',
+		},
+	},
+})
+
+app.openapi(actorWorkingNowRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	if (!(await actorsShareWorkspace(db, callerId, id, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+	const workingNow = await loadAgentWorkingNow(db, { workspaceId, actorId: id, nowMs: Date.now() })
+	return c.json({ workingNow: workingNow ? serialize(workingNow) : null }, 200)
+}) as RouteHandler<typeof actorWorkingNowRoute, Env>)
 
 // PATCH /:id - Update actor
 const updateActorRoute = createRoute({
@@ -1340,6 +1453,19 @@ app.openapi(updateActorRoute, (async (c) => {
 		await assertActorWriterAccess(db, actorId, id, workspaceId, c.get('workspaceRole'))
 	}
 
+	// Tags group agents, for example by team. Only agents carry them. They live on the actor's
+	// metadata, the same place a flow keeps its tags, and the whole list is replaced.
+	let tags: string[] | undefined
+	if (body.tags !== undefined) {
+		if (existing.type !== 'agent') {
+			return c.json(createApiError('BAD_REQUEST', 'Only an agent carries tags'), 400)
+		}
+		if (!workspaceId) {
+			return c.json(createApiError('BAD_REQUEST', 'Tags need the X-Workspace-Id header'), 400)
+		}
+		tags = normalizeTags(body.tags)
+	}
+
 	// A config read back masked must not overwrite the stored secrets with the mask.
 	let tools = body.tools
 	if (tools !== undefined) {
@@ -1400,11 +1526,14 @@ app.openapi(updateActorRoute, (async (c) => {
 			...(body.default_workspace_id !== undefined && {
 				defaultWorkspaceId: body.default_workspace_id,
 			}),
-			...(mailbox !== undefined && {
-				metadata:
-					mailbox === null
-						? sql`coalesce(${actors.metadata}, '{}'::jsonb) - 'mailbox'`
-						: sql`coalesce(${actors.metadata}, '{}'::jsonb) || ${JSON.stringify({ mailbox })}::jsonb`,
+			...((mailbox !== undefined || tags !== undefined) && {
+				// One metadata write for both keys, so sending a mailbox and tags together keeps both.
+				metadata: sql`${mailbox === null ? sql`coalesce(${actors.metadata}, '{}'::jsonb) - 'mailbox'` : sql`coalesce(${actors.metadata}, '{}'::jsonb)`} || ${JSON.stringify(
+					{
+						...(mailbox ? { mailbox } : {}),
+						...(tags !== undefined ? { tags } : {}),
+					},
+				)}::jsonb`,
 			}),
 			updatedAt: new Date(),
 		})
@@ -1427,11 +1556,23 @@ app.openapi(updateActorRoute, (async (c) => {
 			updatedAt: actors.updatedAt,
 			voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 			avatar_url: actorAvatarUrlSql,
+			tags: actorTagsSql,
 			default_workspace_id: actors.defaultWorkspaceId,
 		})
 
 	if (!updated) {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	if (tags !== undefined && workspaceId) {
+		await recordEvent(db, {
+			workspaceId,
+			actorId,
+			action: 'actor_tags_updated',
+			entityType: 'actor',
+			entityId: id,
+			data: { ...actorEventData(updated), tags },
+		})
 	}
 
 	updated.tools = await redactActorToolsForCaller(db, actorId, id, updated.tools)
@@ -1587,6 +1728,7 @@ app.openapi(resetActorRoute, (async (c) => {
 			updatedAt: actors.updatedAt,
 			voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 			avatar_url: actorAvatarUrlSql,
+			tags: actorTagsSql,
 		})
 
 	if (!updated) {

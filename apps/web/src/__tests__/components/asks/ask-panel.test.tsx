@@ -57,13 +57,13 @@ function renderPanel(asks: NotificationResponse[], onRespond = vi.fn()) {
 }
 
 describe('AskPanel', () => {
-	it('renders pending asks with agent name, ask text, and Approve/Hold buttons', () => {
+	it('renders pending asks with agent name, ask text, and an Approve button with no Hold', () => {
 		renderPanel([buildAsk()])
 
 		expect(screen.getByText('Framer Agent')).toBeInTheDocument()
 		expect(screen.getByText('Can you sign off on this approach?')).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: /Approve/ })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /Hold/ })).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /Hold/ })).not.toBeInTheDocument()
 	})
 
 	it('shows an Approved done label for an already-resolved approve ask', () => {
@@ -99,16 +99,6 @@ describe('AskPanel', () => {
 
 		expect(onRespond).toHaveBeenCalledWith('33333333-3333-4333-8333-333333333333', 'approve')
 		expect(screen.getByText('Approved')).toBeInTheDocument()
-	})
-
-	it('calls onRespond with hold when Hold is clicked', () => {
-		const onRespond = vi.fn()
-		renderPanel([buildAsk()], onRespond)
-
-		fireEvent.click(screen.getByRole('button', { name: /Hold/ }))
-
-		expect(onRespond).toHaveBeenCalledWith('33333333-3333-4333-8333-333333333333', 'hold')
-		expect(screen.getByText('Held')).toBeInTheDocument()
 	})
 
 	it('shows an Approve all button only when more than one ask is pending', () => {

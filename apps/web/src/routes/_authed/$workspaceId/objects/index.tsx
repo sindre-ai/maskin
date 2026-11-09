@@ -1430,7 +1430,7 @@ function ObjectsRoute() {
 
 	// Filtered-empty sentence, built from what is actually applied (mockup 1021).
 	const filteredEmptyTitle = useMemo(() => {
-		if (!hasAnyActiveFilter) return 'No items found'
+		if (!hasAnyActiveFilter) return 'No items yet'
 		const noun = typeFilter ? `${typeFilter}s` : 'objects'
 		const clauses: string[] = []
 		if (attention === 'waiting') clauses.push('waiting on you')

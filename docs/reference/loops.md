@@ -105,7 +105,11 @@ The MCP server exposes loops as first-class tools (`packages/mcp`):
 Do not author loops through raw `create_objects` — the tools above wire the metadata and edges
 correctly. Marketplace loop *templates* are installed via `get_started` (see
 `apps/dev/src/routes/installed-loops.ts`); installing one provisions its items and creates the
-`type = 'loop'` object automatically.
+`type = 'loop'` object automatically. A locked install follows the catalog: the hourly version
+pusher brings it to the newest version, and `POST /api/installed-loops/{id}/update` ("update
+now") runs that same push for one install right away. Forked installs belong to the workspace and
+are refused (409). An update keeps the workspace's own `llm_config` keys, such as its `apiKey`;
+only `provider` and `model` come from the catalog snapshot.
 
 ## Event steps and dynamic types
 

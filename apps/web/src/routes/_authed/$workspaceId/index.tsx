@@ -11,6 +11,7 @@ import {
 import { OnboardingPromptCard } from '@/components/foryou/onboarding-prompt-card'
 import { TakeSuggestedDialog } from '@/components/foryou/take-suggested-dialog'
 import { PageHeader } from '@/components/layout/page-header'
+import { EmptyState } from '@/components/shared/empty-state'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
@@ -61,24 +62,12 @@ import {
 	feedTailLabel,
 	isObjectlessCard,
 } from '@/lib/foryou-feed'
-import {
-	type LaterOption,
-	addLater,
-	isSetAside,
-	laterForWorkspace,
-	laterKey,
-	laterToast,
-	nextLaterDue,
-	pruneLaterStore,
-	readLaterStore,
-	removeLater,
-	writeLaterStore,
-} from '@/lib/foryou-later'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
+import { CheckCircle2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -242,86 +231,16 @@ function ForYouFeed() {
 		[unreadRegular, typeFilter],
 	)
 
-	// "Later": cards set aside in this browser only (localStorage, never the server). The
-	// clock moves when the nearest one is due so it falls back into Decisions by itself.
-	const [laterStore, setLaterStore] = useState(() => readLaterStore())
-	const [laterClock, setLaterClock] = useState(() => Date.now())
-	const laterEntries = useMemo(
-		() => laterForWorkspace(laterStore, workspaceId),
-		[laterStore, workspaceId],
-	)
-	useEffect(() => {
-		const refresh = () => {
-			const now = Date.now()
-			setLaterClock(now)
-			setLaterStore((prev) => pruneLaterStore(prev, now))
-		}
-		const due = nextLaterDue(laterStore, Date.now())
-		// setTimeout overflows past ~24.8 days; the visibility refresh below catches the rest.
-		const timer =
-			due === null ? null : setTimeout(refresh, Math.min(due - Date.now() + 50, 2 ** 31 - 1))
-		const onVisible = () => document.visibilityState === 'visible' && refresh()
-		const onStorage = (event: StorageEvent) => {
-			if (event.key === null || event.key.startsWith('maskin:foryou-later:')) {
-				setLaterStore(readLaterStore())
-			}
-		}
-		document.addEventListener('visibilitychange', onVisible)
-		window.addEventListener('storage', onStorage)
-		return () => {
-			if (timer) clearTimeout(timer)
-			document.removeEventListener('visibilitychange', onVisible)
-			window.removeEventListener('storage', onStorage)
-		}
-	}, [laterStore])
-
-	const updateLater = useCallback((change: (store: typeof laterStore) => typeof laterStore) => {
-		setLaterStore((prev) => {
-			const next = change(prev)
-			if (next !== prev) writeLaterStore(next)
-			return next
-		})
-	}, [])
-
-	const bringBack = useCallback(
-		(item: UnreadItem) =>
-			updateLater((store) => removeLater(store, laterKey(workspaceId, feedItemKey(item)))),
-		[updateLater, workspaceId],
-	)
-
-	const setAside = useCallback(
-		(item: UnreadItem, option: LaterOption) => {
-			const storeKey = laterKey(workspaceId, feedItemKey(item))
-			updateLater((store) =>
-				addLater(
-					store,
-					storeKey,
-					{ until: option.until, label: option.label, eventId: item.latest_event_id ?? 0 },
-					Date.now(),
-				),
-			)
-			toast(laterToast(option.label), {
-				duration: UNDO_WINDOW_MS,
-				action: {
-					label: 'Undo',
-					onClick: () => updateLater((store) => removeLater(store, storeKey)),
-				},
-			})
-		},
-		[updateLater, workspaceId],
-	)
-
 	const bucketOf = useCallback(
 		(item: UnreadItem): FeedBucket => {
 			const key = feedItemKey(item)
 			if (decided.has(key)) return 'done'
-			if (isSetAside(laterEntries[key], item.latest_event_id, laterClock)) return 'later'
 			if (repliedKeys.has(key)) return 'waiting'
 			// A mention that may be a question stays under the decisions; only a card that
 			// asks nothing of the person is an update.
 			return isInformational(item) ? 'fyi' : 'needs'
 		},
-		[decided, repliedKeys, laterEntries, laterClock],
+		[decided, repliedKeys],
 	)
 
 	// The feed is one flat column ordered by bucket — decisions first, then
@@ -821,7 +740,7 @@ function ForYouFeed() {
 	}
 
 	// A failed unread fetch must never fall through to the empty-feed tail —
-	// "Feed cleared" would tell the reader nothing is waiting when the feed
+	// "You're caught up" would tell the reader nothing is waiting when the feed
 	// simply didn't load.
 	if (isError) {
 		return (
@@ -856,7 +775,7 @@ function ForYouFeed() {
 				typeCounts={typeCounts}
 				filterPills={filterPills}
 				bulkActions={bulkActions}
-				hideMenu={sections.length > 0}
+				hideMenu={sections.length > 0 || feedIsEmpty}
 			/>
 
 			{bulkConfirm && (
@@ -903,7 +822,7 @@ function ForYouFeed() {
 				<div className="flex w-full max-w-280 flex-col">
 					{isMobile ? <h1 className="page-title pb-2">{greeting}</h1> : null}
 					<p
-						className="pb-4 text-base font-semibold leading-relaxed text-foreground"
+						className="max-w-[520px] pb-6 text-[17px] leading-[1.5] text-muted-foreground"
 						data-testid="foryou-greeting"
 					>
 						{lead}
@@ -931,18 +850,12 @@ function ForYouFeed() {
 								data-testid={`foryou-section-${bucket}`}
 								className="flex flex-col gap-2"
 							>
-								<div className="flex items-center justify-between gap-2">
+								<div className="flex items-center justify-between gap-2 pb-1.5">
 									<h2
 										id={`foryou-section-${bucket}`}
-										className="flex items-baseline gap-1.5 text-[13px] font-bold text-foreground"
+										className="whitespace-nowrap text-[20px] font-bold tracking-[-0.03em] text-foreground"
 									>
 										{SECTION_LABEL[bucket]}
-										<span
-											className="font-normal tabular-nums text-muted-foreground"
-											data-testid="foryou-section-count"
-										>
-											{sectionItems.length}
-										</span>
 									</h2>
 									{sectionIndex === 0 && <ForYouBulkMenu bulkActions={bulkActions} />}
 									{bucket === 'fyi' && (
@@ -982,9 +895,6 @@ function ForYouFeed() {
 												replied={repliedKeys.has(key)}
 												onReplied={() => handleReplied(item)}
 												onMarkRead={() => dismissAll([item], 'Marked as read')}
-												onLater={(option) => setAside(item, option)}
-												laterLabel={bucket === 'later' ? laterEntries[key]?.label : null}
-												onBringBack={() => bringBack(item)}
 											/>
 										)
 									})}
@@ -994,18 +904,20 @@ function ForYouFeed() {
 					</div>
 
 					{tail && (
-						<div className="flex items-center justify-center gap-2 pb-2.5 pt-[34px] text-[11.5px] text-muted-foreground">
-							<span className="h-px w-10 bg-border" />
-							{tail}
-							<span className="h-px w-10 bg-border" />
-						</div>
-					)}
-					{feedIsEmpty && typeFilter && (
-						<div className="flex justify-center pb-2.5">
-							<Button variant="outline" size="sm" onClick={() => setTypeFilter(undefined)}>
-								Show everything
-							</Button>
-						</div>
+						<EmptyState
+							icon={<CheckCircle2 size={24} aria-hidden="true" />}
+							title={tail}
+							description={
+								typeFilter ? 'Nothing matches this filter.' : 'Nothing needs you right now.'
+							}
+							action={
+								typeFilter ? (
+									<Button variant="outline" size="sm" onClick={() => setTypeFilter(undefined)}>
+										Show everything
+									</Button>
+								) : undefined
+							}
+						/>
 					)}
 				</div>
 			</div>
@@ -1018,7 +930,6 @@ const SECTION_LABEL: Record<FeedBucket, string> = {
 	waiting: 'Waiting on an agent',
 	fyi: 'Updates for you',
 	done: 'Handled today',
-	later: 'Later',
 }
 
 export function greetingFor(name: string | undefined, now: Date): string {

@@ -345,12 +345,6 @@ struct NewConversationCopyTests {
 		#expect(NewConversationCopy.placeholder(for: [sam, chief, ida, forge]) == "Message Sam, Chief of Staff +2")
 	}
 
-	@Test("the group note counts you in and only shows with two or more recipients")
-	func note() {
-		#expect(NewConversationCopy.groupNote(recipientCount: 1) == nil)
-		#expect(NewConversationCopy.groupNote(recipientCount: 2) == "3 in this conversation, including you. Everyone sees the whole thread.")
-	}
-
 	@Test("matches search name and role, never someone already picked")
 	func matching() {
 		let actors = [

@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import MaskinCore
@@ -15,9 +16,9 @@ struct ShellTabTests {
 
 	@Test func barItemsPerTab() {
 		#expect(ShellTab.forYou.barItems == [.live, .avatar])
-		#expect(ShellTab.chats.barItems == [.display, .new, .avatar])
-		#expect(ShellTab.loops.barItems == [.display, .avatar])
-		#expect(ShellTab.objects.barItems == [.display, .avatar])
+		#expect(ShellTab.chats.barItems == [.search, .display, .new, .avatar])
+		#expect(ShellTab.loops.barItems == [.marketplace, .display, .avatar])
+		#expect(ShellTab.objects.barItems == [.search, .display, .avatar])
 	}
 
 	@Test func everyTabHasTheAvatar() {
@@ -40,47 +41,70 @@ struct ShellTabTests {
 
 @Suite("ProfileMenu")
 struct ProfileMenuTests {
-	@Test func workspaceGroupThenYouGroup() {
+	@Test func fourSectionsInOrder() {
+		#expect(ProfileMenuGroup.allCases.map(\.title) == ["Account", "Workspace", "Agents and access", "Admin"])
 		#expect(
-			ProfileMenu.items(in: .workspace, hasWorkspace: true, role: .owner).map(\.title)
-				== [
-					"Agents", "Marketplace", "Artefacts", "Members", "Integrations", "Keychain", "Triggers",
-					"Billing", "Keys & MCP",
-				])
+			ProfileMenu.items(in: .account, hasWorkspace: true).map(\.title)
+				== ["Settings", "Account", "Billing", "Notifications", "App lock", "Sign in a device"])
 		#expect(
-			ProfileMenu.items(in: .you, hasWorkspace: true).map(\.title)
-				== ["Settings", "Autonomy"])
+			ProfileMenu.items(in: .workspace, hasWorkspace: true).map(\.title)
+				== ["Agents", "Members", "Integrations", "Triggers"])
+		#expect(
+			ProfileMenu.items(in: .access, hasWorkspace: true).map(\.title)
+				== ["Skills", "Item types", "Keys and secrets", "Marketplace"])
+		#expect(ProfileMenu.items(in: .admin, hasWorkspace: true).map(\.title) == ["Native surfaces", "Advanced"])
 	}
 
 	@Test func workspaceScopedRowsHideWithoutAWorkspace() {
-		#expect(
-			ProfileMenu.items(in: .workspace, hasWorkspace: false, role: .owner) == [.artefacts])
-		#expect(ProfileMenu.items(in: .you, hasWorkspace: false) == [.settings])
+		#expect(ProfileMenu.items(in: .account, hasWorkspace: false) == [.settings, .account, .notifications, .appLock])
+		#expect(ProfileMenu.items(in: .workspace, hasWorkspace: false).isEmpty)
+		#expect(ProfileMenu.items(in: .admin, hasWorkspace: false) == [.nativeSurfaces, .advanced])
 	}
 
-	@Test func keysAndMCPAreForEveryMember() {
-		// The page shows the person's own key and how to connect their own tools, so a plain member
-		// must reach it too; what only a manager may do is gated on the page.
-		for role in MemberRole.allCases {
-			#expect(ProfileMenu.items(in: .workspace, hasWorkspace: true, role: role).contains(.keys))
-		}
+	@Test func settingsIsTheFirstAccountRow() {
+		#expect(ProfileMenu.items(in: .account, hasWorkspace: true).first == .settings)
+		#expect(ProfileMenu.items(in: .account, hasWorkspace: false).first == .settings)
 	}
 
-	@Test func agentsIsTheFirstWorkspaceRowAndMembersStillListsThem() {
-		#expect(ProfileMenu.items(in: .workspace, hasWorkspace: true).first == .agents)
-		#expect(ProfileMenuItem.members.subtitle == "People and agents in this workspace")
-	}
-
-	@Test func everyItemIsInExactlyOneGroup() {
-		let all = ProfileMenuGroup.allCases.flatMap {
-			ProfileMenu.items(in: $0, hasWorkspace: true, role: .owner)
-		}
+	@Test func everyItemIsInExactlyOneSection() {
+		let all = ProfileMenuGroup.allCases.flatMap { ProfileMenu.items(in: $0, hasWorkspace: true) }
 		#expect(Set(all) == Set(ProfileMenuItem.allCases))
 		#expect(all.count == ProfileMenuItem.allCases.count)
 	}
+}
 
-	@Test func autonomyIsPerWorkspace() {
-		#expect(ProfileMenuItem.autonomy.group == .you)
-		#expect(!ProfileMenu.items(in: .you, hasWorkspace: false).contains(.autonomy))
+@Suite("SettingsPageRow")
+struct SettingsPageRowTests {
+	@Test func fiveSectionsWithOneAdvancedRow() {
+		#expect(SettingsPageRow.Section.allCases.count == 5)
+		#expect(SettingsPageRow.rows(in: .account, hasWorkspace: true).map(\.title) == ["Account", "Billing"])
+		#expect(
+			SettingsPageRow.rows(in: .preferences, hasWorkspace: true).map(\.title)
+				== ["Notifications", "App lock", "Sign in a device"])
+		#expect(
+			SettingsPageRow.rows(in: .workspace, hasWorkspace: true).map(\.title)
+				== ["Members", "Integrations", "Triggers", "Files"])
+		#expect(
+			SettingsPageRow.rows(in: .access, hasWorkspace: true).map(\.title)
+				== ["Skills", "Item types", "Keys and secrets"])
+		#expect(SettingsPageRow.rows(in: .advanced, hasWorkspace: true) == [.advanced])
+	}
+}
+
+@Suite("AppearancePreference")
+struct AppearancePreferenceTests {
+	@Test func cyclesFollowDeviceLightDarkAndBack() {
+		#expect(AppearancePreference.system.next == .light)
+		#expect(AppearancePreference.light.next == .dark)
+		#expect(AppearancePreference.dark.next == .system)
+	}
+
+	@Test func unknownStoredValueMeansFollowDevice() throws {
+		let defaults = try #require(UserDefaults(suiteName: "appearance-test-\(UUID().uuidString)"))
+		#expect(AppearancePreference.stored(in: defaults) == .system)
+		defaults.set("dark", forKey: AppearancePreference.storageKey)
+		#expect(AppearancePreference.stored(in: defaults) == .dark)
+		defaults.set("sepia", forKey: AppearancePreference.storageKey)
+		#expect(AppearancePreference.stored(in: defaults) == .system)
 	}
 }

@@ -218,6 +218,54 @@ const usageBreakdownRoute = createRoute({
 	},
 })
 
+const INVOICES_MAX_ROWS = 100
+
+const invoiceSchema = z.object({
+	id: z.string(),
+	// Human-facing invoice number, null until Stripe numbers the invoice.
+	number: z.string().nullable(),
+	// Unix seconds, same unit as period_start on the usage read.
+	created: z.number().int().nonnegative(),
+	// Invoice total in minor units of its own currency (not USD cents).
+	amount_cents: z.number().int(),
+	currency: z.string(),
+	status: z.enum(['open', 'paid', 'uncollectible', 'void']),
+	hosted_invoice_url: z.string().nullable(),
+	invoice_pdf: z.string().nullable(),
+})
+
+const invoicesResponseSchema = z.object({
+	invoices: z.array(invoiceSchema).max(INVOICES_MAX_ROWS),
+})
+
+const invoicesRoute = createRoute({
+	method: 'get',
+	path: '/invoices',
+	tags: ['billing'],
+	summary: "List the workspace's own Stripe invoices",
+	description:
+		"Read-only list of the workspace's invoices, newest first, from the Stripe customer stored in the workspace's own billing settings (never taken from the request). Each invoice is shown in the currency it was charged in. Draft invoices are not listed. A workspace with no Stripe customer gets an empty list. Only human workspace owners and admins can read it.",
+	request: { headers: workspaceIdHeader },
+	responses: {
+		200: {
+			description: 'Invoices, newest first',
+			content: { 'application/json': { schema: invoicesResponseSchema } },
+		},
+		403: {
+			description: 'Caller is not a human workspace admin or owner',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Workspace not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		500: {
+			description: 'Stripe is not configured or the invoice list failed',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
 type BillingWorkspace = {
 	settings: unknown
 	enterpriseGranted: boolean | null
@@ -389,6 +437,80 @@ app.openapi(usageBreakdownRoute, async (c) => {
 		return c.json({ usd_cents_used: 0, by_model: empty, by_agent: empty, by_flow: empty }, 200)
 	}
 	return c.json(await readUsageBreakdown(db, workspaceId, periodStartMs), 200)
+})
+
+app.openapi(invoicesRoute, async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const [workspace] = await db
+		.select({ settings: workspaces.settings })
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+	if (!workspace) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+
+	// Invoices carry amounts and hosted links, so this takes the same human
+	// admin/owner gate as the checkout routes. Checked after the existence
+	// lookup so a missing workspace still 404s.
+	if (!(await isWorkspaceHumanAdminOrOwner(db, c.get('actorId'), workspaceId))) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only workspace owners/admins can manage billing'),
+			403,
+		)
+	}
+
+	// The customer always comes from this workspace's own settings, never from
+	// the request, so one workspace can't read another's invoices.
+	const settingsParse = workspaceSettingsSchema.partial().safeParse(workspace.settings ?? {})
+	const customerId = settingsParse.success
+		? (settingsParse.data.billing?.stripe_customer_id ?? null)
+		: null
+	if (!customerId) {
+		return c.json({ invoices: [] }, 200)
+	}
+
+	let stripeEnv: ReturnType<typeof readStripeEnv>
+	try {
+		stripeEnv = readStripeEnv()
+	} catch (err) {
+		logger.error('Stripe is not configured', {
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Stripe is not configured'), 500)
+	}
+
+	try {
+		const list = await getStripeClient(stripeEnv).invoices.list({
+			customer: customerId,
+			limit: INVOICES_MAX_ROWS,
+		})
+		const invoices = list.data.flatMap((invoice) => {
+			// Drafts are not final and have no hosted page. Skip them.
+			if (invoice.status === null || invoice.status === 'draft') return []
+			return [
+				{
+					id: invoice.id,
+					number: invoice.number ?? null,
+					created: invoice.created,
+					amount_cents: invoice.total,
+					currency: invoice.currency,
+					status: invoice.status,
+					hosted_invoice_url: invoice.hosted_invoice_url ?? null,
+					invoice_pdf: invoice.invoice_pdf ?? null,
+				},
+			]
+		})
+		return c.json({ invoices }, 200)
+	} catch (err) {
+		logger.error('Stripe invoice list failed', {
+			workspaceId,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to list invoices'), 500)
+	}
 })
 
 app.openapi(checkoutRoute, async (c) => {

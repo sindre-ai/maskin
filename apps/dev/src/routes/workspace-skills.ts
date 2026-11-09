@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { getOAuthPin } from '@maskin/auth'
 import type { Database } from '@maskin/db'
-import { workspaceMembers, workspaceSkills } from '@maskin/db/schema'
+import { actors, agentSkills, workspaceMembers, workspaceSkills } from '@maskin/db/schema'
 import {
 	createWorkspaceSkillSchema,
 	parseSkillMd,
@@ -11,7 +11,7 @@ import {
 	updateWorkspaceSkillSchema,
 } from '@maskin/shared'
 import AdmZip from 'adm-zip'
-import { and, asc, desc, eq } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import {
 	buildCreatedAtCursorConditions,
@@ -128,6 +128,11 @@ const workspaceSkillListItemSchema = z.object({
 	updatedAt: z.string(),
 })
 
+// The list also says which agents of this workspace have each skill attached.
+const workspaceSkillListEntrySchema = workspaceSkillListItemSchema.extend({
+	agentIds: z.array(z.string().uuid()),
+})
+
 const workspaceSkillDetailSchema = workspaceSkillListItemSchema.extend({
 	content: z.string(),
 })
@@ -177,8 +182,8 @@ const listWorkspaceSkillsRoute = createRoute({
 	},
 	responses: {
 		200: {
-			content: { 'application/json': { schema: z.array(workspaceSkillListItemSchema) } },
-			description: 'Workspace skills list',
+			content: { 'application/json': { schema: z.array(workspaceSkillListEntrySchema) } },
+			description: 'Workspace skills list, each with the agents that have it attached',
 		},
 		403: {
 			content: { 'application/json': { schema: errorSchema } },
@@ -248,7 +253,42 @@ app.openapi(listWorkspaceSkillsRoute, (async (c) => {
 			? baseSelect.limit(effectiveLimit).offset(effectiveOffset ?? 0)
 			: baseSelect)
 
-	return c.json(serializeArray(rows) as z.infer<typeof workspaceSkillListItemSchema>[], 200)
+	// One grouped read for the whole page, not one per skill. Only agents that are still members
+	// of this workspace count, so another workspace's agents can never show up.
+	const agentIdsBySkill = new Map<string, string[]>()
+	if (rows.length > 0) {
+		const attached = await db
+			.select({ skillId: agentSkills.workspaceSkillId, agentId: agentSkills.actorId })
+			.from(agentSkills)
+			.innerJoin(actors, eq(actors.id, agentSkills.actorId))
+			.innerJoin(
+				workspaceMembers,
+				and(
+					eq(workspaceMembers.actorId, agentSkills.actorId),
+					eq(workspaceMembers.workspaceId, workspaceId),
+				),
+			)
+			.where(
+				and(
+					inArray(
+						agentSkills.workspaceSkillId,
+						rows.map((r) => r.id),
+					),
+					eq(actors.type, 'agent'),
+				),
+			)
+			.orderBy(asc(actors.name), asc(actors.id))
+		for (const { skillId, agentId } of attached) {
+			agentIdsBySkill.set(skillId, [...(agentIdsBySkill.get(skillId) ?? []), agentId])
+		}
+	}
+
+	return c.json(
+		serializeArray(
+			rows.map((r) => ({ ...r, agentIds: agentIdsBySkill.get(r.id) ?? [] })),
+		) as z.infer<typeof workspaceSkillListEntrySchema>[],
+		200,
+	)
 }) as RouteHandler<typeof listWorkspaceSkillsRoute, Env>)
 
 // GET /:workspaceId/skills/:name — Get a skill with full content

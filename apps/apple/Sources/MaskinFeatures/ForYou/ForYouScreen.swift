@@ -46,11 +46,11 @@ public struct ForYouScreen: View {
 			store: runtime.store, outbox: runtime.outbox,
 			openObject: openObject, chief: runtime.chief, environment: environment,
 			stories: appRuntime.storiesStore(), wide: isWide, undoOffer: $undoOffer,
-			openAgent: { appRuntime.openAgent($0) }
+			openAgent: { appRuntime.openAgent($0) },
+			greetingName: environment.auth.session?.name
 		)
 		.shellToolbar(
 			environment: environment,
-			title: ForYouHeader.greeting(name: environment.auth.session?.name, at: Date()),
 			actions: ShellActions(
 				live: true, displaySymbol: ShellActions.slidersSymbol,
 				displayActive: !runtime.store.options.isDefaultDisplay,
@@ -138,6 +138,8 @@ struct ForYouFeedView: View {
 	@State private var confirmTakeSuggested = false
 	/// Frozen "now" for snapshots; live screens pass nil.
 	var fixedNow: Date?
+	/// Whose greeting heads the feed; nil in snapshots.
+	var greetingName: String?
 
 	@Environment(\.scenePhase) private var scenePhase
 	@State private var openedAt = Date()
@@ -165,7 +167,7 @@ struct ForYouFeedView: View {
 					Color.clear.frame(height: 0).id(Self.topId)
 						.listRowSeparator(.hidden).listRowBackground(Color.clear)
 						.listRowInsets(EdgeInsets())
-					ForYouHeaderView(summary: store.blockedSummary)
+					ForYouGreetingView(text: ForYouHeader.greeting(name: greetingName, at: fixedNow ?? Date()))
 					.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 					if let stories, !stories.cards.isEmpty {
 						StoryRow(stories: stories, open: { card in openStory = card }, metrics: storyMetrics)
@@ -377,7 +379,7 @@ struct ForYouFeedView: View {
 			} else {
 				ForEach(groups(of: open).filter { $0.bucket != .needs }, id: \.bucket) { group in
 					SectionHeader(
-						title: title(for: group.bucket), count: group.entries.count,
+						title: title(for: group.bucket),
 						action: group.bucket == .fyi ? ("Mark all read", { store.dismissAllFYIs() }) : nil
 					)
 					.modifier(ReadableRow(width: rowWidth, inset: rowInset))
@@ -399,7 +401,7 @@ struct ForYouFeedView: View {
 		let count = store.needsCount
 		if count > 0 {
 			SectionHeader(
-				title: "Needs you", count: count,
+				title: "Needs you",
 				menu: [
 					store.suggestedOptionCount > 0
 						? ("Take every suggested option", { confirmTakeSuggested = true }) : nil,
@@ -472,10 +474,7 @@ struct ForYouFeedView: View {
 			let drafts = store.reviewDrafts
 			let receipts = reviews.receiptDrafts
 			if !drafts.isEmpty {
-				SectionHeader(
-					title: "Drafts to review", count: drafts.count,
-					countText: drafts.count == 1 ? "1 draft" : "\(drafts.count) drafts"
-				)
+				SectionHeader(title: "Drafts to review")
 				.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 				ForEach(drafts) { draft in
 					EditableDraftCard(draft: draft, store: reviews)
@@ -503,7 +502,7 @@ struct ForYouFeedView: View {
 	@ViewBuilder private var laterSection: some View {
 		let deferred = store.laterEntries
 		if !deferred.isEmpty {
-			SectionHeader(title: "LATER", count: deferred.count, mono: true)
+			SectionHeader(title: "Later")
 				.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 			SummaryList {
 				ForEach(deferred) { entry in
@@ -528,7 +527,7 @@ struct ForYouFeedView: View {
 			HandledSummary.make(for: entry, sender: store.senderName(of: entry.card)).map { (entry, $0) }
 		}
 		if !rows.isEmpty {
-			SectionHeader(title: "HANDLED TODAY", count: rows.count, mono: true)
+			SectionHeader(title: "Handled today")
 				.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 			SummaryList {
 				ForEach(rows, id: \.0.id) { entry, summary in
@@ -627,7 +626,9 @@ struct ForYouFeedView: View {
 			typeLabel: store.typeLabel(for:), draftIsElsewhere: { entry.bucket == .needs && entry.record == nil && store.isInStrip($0) },
 			unsentEditNote: entry.bucket == .needs && entry.record == nil ? store.unsentEditNote(for: entry.card) : nil)
 		// Cards lift under a pointer; flat rows have nothing to lift.
-		return wide ? AnyView(view.maskinHover(.lift, cornerRadius: MaskinRadius.brief)) : AnyView(view)
+		let shown = wide ? AnyView(view.maskinHover(.lift, cornerRadius: MaskinRadius.brief)) : AnyView(view)
+		// Only cards still waiting on the reader count as shown, not the handled ones.
+		return AnyView(shown.onAppear { if entry.record == nil { store.trackShown(entry.card) } })
 	}
 
 	/// The compact card shown inside the iPad Discuss sheet, live from the same store entry.
@@ -646,33 +647,26 @@ struct ForYouFeedView: View {
 
 // MARK: - Pieces
 
-/// A quiet label above each group of cards, with its count and an optional bulk action.
+/// The heading above each group of cards: 24 pt bold on one line, 40 pt above, with an optional
+/// action link in the accent colour and a ⋯ menu at the trailing edge (Needs you: bulk actions).
 private struct SectionHeader: View {
 	let title: String
-	let count: Int
-	/// A mono label (LATER, HANDLED TODAY) rather than a heading.
-	var mono = false
-	/// What the count reads as ("2 drafts"); the bare number when nil.
-	var countText: String?
 	var action: (title: String, run: () -> Void)?
-	/// A ⋯ menu at the trailing edge (Needs you): bulk actions on the group.
 	var menu: [(title: String, run: () -> Void)] = []
 
 	var body: some View {
-		HStack(spacing: MaskinSpace.s3) {
-			if mono {
-				Text(title).font(MaskinTypeface.mono(MaskinFontSize.t12, weight: .semibold)).tracking(0.96)
-					.foregroundStyle(MaskinColor.ink5)
-				Text("\(count)").font(MaskinTypeface.mono(MaskinFontSize.t12, weight: .semibold))
-					.foregroundStyle(MaskinColor.inkPlaceholder)
-			} else {
-				Text(title).maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)
-				Text(countText ?? "\(count)").maskinText(.subhead).foregroundStyle(MaskinColor.ink5)
-			}
+		HStack(spacing: MaskinSpace.s4) {
+			Text(title)
+				.font(MaskinTypeface.sans(MaskinFontSize.t24, weight: .bold, relativeTo: .title2))
+				.tracking(-0.035 * MaskinFontSize.t24)
+				.foregroundStyle(MaskinColor.ink)
+				.lineLimit(1)
+				.fixedSize(horizontal: true, vertical: false)
+				.layoutPriority(1)
 			Spacer(minLength: MaskinSpace.s3)
 			if let action {
 				Button(action.title, action: action.run)
-					.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+					.maskinText(.body).fontWeight(.medium).foregroundStyle(MaskinColor.accent)
 					.frame(minHeight: MaskinSpace.touchMin)
 			}
 			if !menu.isEmpty {
@@ -682,7 +676,7 @@ private struct SectionHeader: View {
 					}
 				} label: {
 					Image(systemName: "ellipsis")
-						.maskinSymbol(MaskinFontSize.t16, weight: .semibold)
+						.maskinSymbol(MaskinFontSize.t18, weight: .bold)
 						.foregroundStyle(MaskinColor.ink)
 						.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin, alignment: .trailing)
 						.contentShape(Rectangle())
@@ -690,6 +684,7 @@ private struct SectionHeader: View {
 				.accessibilityLabel("More for \(title)")
 			}
 		}
+		.padding(.top, MaskinSpace.s14 + MaskinSpace.s4)
 		.accessibilityElement(children: .contain)
 		.accessibilityAddTraits(.isHeader)
 	}

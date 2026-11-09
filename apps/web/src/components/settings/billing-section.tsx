@@ -320,9 +320,7 @@ export function BillingSection({
 	if (usageQuery.isLoading) {
 		return (
 			<div>
-				<h2 className="px-2 pb-1 text-[13px] font-semibold text-muted-foreground">
-					Maskin Subscription
-				</h2>
+				<h2 className="px-2 pb-1 text-[15px] font-semibold text-foreground">Maskin Subscription</h2>
 				<p className="px-2 text-xs text-muted-foreground">Loading…</p>
 			</div>
 		)
@@ -331,9 +329,7 @@ export function BillingSection({
 	if (usageQuery.isError || !usageQuery.data) {
 		return (
 			<div>
-				<h2 className="px-2 pb-1 text-[13px] font-semibold text-muted-foreground">
-					Maskin Subscription
-				</h2>
+				<h2 className="px-2 pb-1 text-[15px] font-semibold text-foreground">Maskin Subscription</h2>
 				<p className="text-xs text-error">
 					{usageQuery.error?.message ?? 'Could not load subscription state.'}
 				</p>
@@ -357,9 +353,7 @@ export function BillingSection({
 
 	return (
 		<div>
-			<h2 className="px-2 pb-1 text-[13px] font-semibold text-muted-foreground">
-				Maskin Subscription
-			</h2>
+			<h2 className="px-2 pb-1 text-[15px] font-semibold text-foreground">Maskin Subscription</h2>
 			<p className="mb-3 px-2 text-xs text-muted-foreground">
 				Hosted LLM — pay Maskin, no API key needed. Included usage per period, billed at actual
 				dollar cost, then buy prepaid usage credits any time to keep going — you choose the amount,
