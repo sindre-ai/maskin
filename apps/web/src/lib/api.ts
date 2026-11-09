@@ -53,6 +53,7 @@ import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 import { reportApiFailure } from './faro'
 import { limitConcurrency } from './limit-concurrency'
+import { reportServerFailure, reportServerOk } from './server-reachability'
 
 import type {
 	DailyBudget,
@@ -175,6 +176,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		// the user still experienced a broken screen, so it belongs in Faro.
 		reportApiFailure({ method, path, status: 0, code: 'NETWORK_ERROR' })
 		if (err instanceof TypeError) {
+			reportServerFailure()
 			const unavailable = new ApiError(0, SERVICE_UNAVAILABLE_MESSAGE)
 			unavailable.code = 'NETWORK_ERROR'
 			throw unavailable
@@ -254,9 +256,14 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		// Method, path (query stripped), status and the structured error code
 		// only — never the response body or the message, which are free text.
 		reportApiFailure({ method, path, status: res.status, code })
+		// A gateway answering for a down backend carries no code of ours; our own
+		// API's 5xx does, and proves the server is up.
+		if (SERVICE_UNAVAILABLE_STATUSES.has(res.status) && code === undefined) reportServerFailure()
+		else reportServerOk()
 		throw err
 	}
 
+	reportServerOk()
 	return res.json()
 }
 
