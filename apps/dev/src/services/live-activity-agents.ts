@@ -100,6 +100,31 @@ function encodeAgent(a: WorkingAgent): EncodedWorkingAgent {
 	}
 }
 
+/** The `FollowActivityState` the opt-in follow card decodes (apps/apple FollowActivityState.swift). */
+export interface EncodedFollowState {
+	agentName: string
+	topic?: string
+	/** The agent's latest step, one line. */
+	doing: string
+	startedAt: number
+	phase: 'following' | 'finished'
+}
+
+/** The follow card for one agent, clamped like the Swift initialiser. */
+export function encodeFollowState(
+	a: Pick<WorkingAgent, 'name' | 'doing' | 'startedAt' | 'topic'>,
+	phase: EncodedFollowState['phase'],
+): EncodedFollowState {
+	const topic = a.topic?.trim()
+	return {
+		agentName: clamp(a.name, WORKING_AGENT_NAME_MAX, 'Agent'),
+		...(topic ? { topic: clamp(topic, WORKING_AGENT_TOPIC_MAX, '') } : {}),
+		doing: clamp(a.doing, WORKING_AGENT_DOING_MAX, 'working'),
+		startedAt: toSwiftReferenceSeconds(a.startedAt),
+		phase,
+	}
+}
+
 /**
  * Ranks, counts and encodes the set. `maxBytes` bounds the JSON of the state so a push stays
  * inside APNs' 4 KB limit: trailing rows are dropped before the limit is hit, `count` is not.

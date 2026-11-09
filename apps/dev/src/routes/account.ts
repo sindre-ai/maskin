@@ -14,6 +14,7 @@ import {
 	deviceTokens,
 	forYouDismissals,
 	liveActivityCards,
+	liveActivityFollows,
 	liveActivityTokens,
 	notificationPreferences,
 	notifications,
@@ -226,6 +227,7 @@ app.openapi(deleteRoute, async (c) => {
 		// phone. Tokens go before devices so nothing depends on the device cascade.
 		await tx.delete(liveActivityTokens).where(eq(liveActivityTokens.actorId, actorId))
 		await tx.delete(liveActivityCards).where(eq(liveActivityCards.actorId, actorId))
+		await tx.delete(liveActivityFollows).where(eq(liveActivityFollows.actorId, actorId))
 		await tx.delete(deviceTokens).where(eq(deviceTokens.actorId, actorId))
 		await tx.delete(deviceAuthCodes).where(eq(deviceAuthCodes.actorId, actorId))
 		// Browser push subscriptions are endpoint URLs plus keys that can reach the person's browser.

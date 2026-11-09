@@ -47,7 +47,11 @@ import type { Database } from '@maskin/db'
 import { deviceTokens } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { logger } from '../lib/logger'
-import { type WorkingAgent, encodeAgentsState } from './live-activity-agents'
+import {
+	type EncodedFollowState,
+	type WorkingAgent,
+	encodeAgentsState,
+} from './live-activity-agents'
 import {
 	CLEAR_IDS_MAX,
 	type PushChannel,
@@ -271,6 +275,8 @@ export function buildApnsClearPayload(clear: PushClear): Record<string, unknown>
 export const LIVE_ACTIVITY_ATTRIBUTES_TYPE = 'MaskinAgentsAttributes'
 /** How long the "Agents finished" card lingers on the Lock Screen after the last agent stops. */
 export const LIVE_ACTIVITY_END_DISMISS_S = 60
+/** How long a followed run's "finished" card lingers on the Lock Screen (offers Review). */
+export const FOLLOW_ACTIVITY_FINISHED_DISMISS_S = 15 * 60
 /** Start/update: mark the card stale if updates stop arriving (server down). */
 export const LIVE_ACTIVITY_STALE_S = 15 * 60
 
@@ -281,32 +287,38 @@ export interface LiveActivityPush {
 	workspaceId: string
 	/** Every agent working now (empty for an end); ranked, counted and clamped on encode. */
 	agents: WorkingAgent[]
+	/**
+	 * Set for the opt-in follow card (never a `start`: the app starts that card itself): it
+	 * replaces the aggregate content state, and a finished card lingers longer than the aggregate.
+	 */
+	follow?: EncodedFollowState
 }
 
 export function buildLiveActivityPayload(
 	push: LiveActivityPush,
 	nowMs: number,
 ): Record<string, unknown> {
-	const state = encodeAgentsState(push.agents, nowMs)
+	const aggregate = push.follow ? null : encodeAgentsState(push.agents, nowMs)
 	const timestamp = Math.floor(nowMs / 1000)
 	const aps: Record<string, unknown> = {
 		timestamp,
 		event: push.event,
-		'content-state': state,
+		'content-state': push.follow ?? aggregate,
 	}
-	if (push.event === 'start') {
+	if (push.event === 'start' && aggregate) {
 		aps['attributes-type'] = LIVE_ACTIVITY_ATTRIBUTES_TYPE
 		aps.attributes = { workspaceId: push.workspaceId }
 		// A start push must carry an alert (iOS shows it as the banner that begins the activity).
-		const first = state.agents[0]
+		const first = aggregate.agents[0]
 		aps.alert =
-			state.count > 1 || !first
-				? { title: `${state.count} agents working` }
+			aggregate.count > 1 || !first
+				? { title: `${aggregate.count} agents working` }
 				: { title: truncate(first.name, TITLE_MAX), body: truncate(first.doing, BODY_MAX) }
 	}
 	// Never an alert for a decision waiting on the person: those are notifications and widgets.
 	if (push.event === 'end') {
-		aps['dismissal-date'] = timestamp + LIVE_ACTIVITY_END_DISMISS_S
+		aps['dismissal-date'] =
+			timestamp + (push.follow ? FOLLOW_ACTIVITY_FINISHED_DISMISS_S : LIVE_ACTIVITY_END_DISMISS_S)
 	} else {
 		aps['stale-date'] = timestamp + LIVE_ACTIVITY_STALE_S
 	}

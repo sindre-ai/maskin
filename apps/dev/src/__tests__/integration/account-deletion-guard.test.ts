@@ -14,6 +14,7 @@ const ERASED = new Set([
 	'device_tokens',
 	'for_you_dismissals',
 	'live_activity_cards',
+	'live_activity_follows',
 	'live_activity_tokens',
 	'notification_preferences',
 	'notifications',

@@ -9,6 +9,7 @@ import {
 import {
 	type WorkingAgent,
 	encodeAgentsState,
+	encodeFollowState,
 	groupWorkingAgents,
 	rankWorkingAgents,
 	toSwiftReferenceSeconds,
@@ -183,6 +184,62 @@ describe('buildLiveActivityPayload', () => {
 		const aps = build('end', [])
 		expect(aps['content-state']).toEqual({ count: 0, finishingSoon: 0, agents: [] })
 		expect(aps['dismissal-date']).toBe(Math.floor(NOW_MS / 1000) + 60)
+		expect(aps['stale-date']).toBeUndefined()
+	})
+})
+
+describe('encodeFollowState', () => {
+	it('encodes exactly the keys FollowActivityState decodes, topic omitted when there is none', () => {
+		const state = encodeFollowState(agent({ doing: 'Running the booking tests' }), 'following')
+		expect(state).toEqual({
+			agentName: 'Chief of Staff',
+			doing: 'Running the booking tests',
+			startedAt: toSwiftReferenceSeconds(new Date('2026-10-03T10:00:00Z')),
+			phase: 'following',
+		})
+		expect(encodeFollowState(agent({ topic: ' Webhook dedup fix ' }), 'finished')).toMatchObject({
+			topic: 'Webhook dedup fix',
+			phase: 'finished',
+		})
+	})
+
+	it('clamps like the Swift initialiser: blank falls back, long text ends with an ellipsis', () => {
+		const state = encodeFollowState(
+			agent({ name: '  ', doing: 'x'.repeat(200), topic: 'y'.repeat(100) }),
+			'following',
+		)
+		expect(state.agentName).toBe('Agent')
+		expect(state.doing).toHaveLength(80)
+		expect(state.doing.endsWith('…')).toBe(true)
+		expect(state.topic).toHaveLength(60)
+		expect(encodeFollowState(agent({ doing: null }), 'following').doing).toBe('working')
+	})
+})
+
+describe('buildLiveActivityPayload for the follow card', () => {
+	const follow = encodeFollowState(agent(), 'following')
+	const build = (event: 'update' | 'end', state = follow) =>
+		(
+			buildLiveActivityPayload(
+				{ workspaceId: 'ws-1', event, agents: [], follow: state },
+				NOW_MS,
+			) as {
+				aps: Record<string, unknown>
+			}
+		).aps
+
+	it('carries the follow state as content-state, with no aggregate keys', () => {
+		const aps = build('update')
+		expect(aps['content-state']).toEqual(follow)
+		expect(aps['attributes-type']).toBeUndefined()
+		expect(aps.alert).toBeUndefined()
+		expect(aps['stale-date']).toBe(Math.floor(NOW_MS / 1000) + 15 * 60)
+	})
+
+	it('lets the finished card linger 15 minutes instead of 60 seconds', () => {
+		const aps = build('end', encodeFollowState(agent(), 'finished'))
+		expect(aps['content-state']).toMatchObject({ phase: 'finished' })
+		expect(aps['dismissal-date']).toBe(Math.floor(NOW_MS / 1000) + 15 * 60)
 		expect(aps['stale-date']).toBeUndefined()
 	})
 })
