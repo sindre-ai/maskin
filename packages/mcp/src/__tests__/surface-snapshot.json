@@ -1,5 +1,6 @@
 {
 	"tools": {
+		"approve_draft_from_chat": ["message_id", "object_id", "workspace_id"],
 		"approve_object_draft": ["content_hash", "object_id", "workspace_id"],
 		"ask_user_question": [
 			"questions",
@@ -91,6 +92,7 @@
 			"close_condition",
 			"closed_statuses",
 			"content",
+			"driver_id",
 			"entry_condition",
 			"name",
 			"object_ids",
@@ -244,10 +246,12 @@
 		"list_notifications": ["kind", "limit", "offset", "status", "type", "workspace_id"],
 		"list_objects": [
 			"cursor",
+			"detail",
 			"driver",
 			"include_archived",
 			"limit",
 			"metadata_eq",
+			"q",
 			"sort",
 			"status",
 			"type",
@@ -276,7 +280,7 @@
 			"verbose",
 			"workspace_id"
 		],
-		"list_triggers": ["cursor", "limit", "workspace_id"],
+		"list_triggers": ["agent_id", "compact", "cursor", "limit", "q", "status", "workspace_id"],
 		"list_unread": ["cursor", "entity_type", "limit", "workspace_id"],
 		"list_workspace_skills": ["cursor", "limit", "workspace_id"],
 		"list_workspaces": ["cursor", "limit"],
@@ -374,7 +378,14 @@
 			"workspace_id"
 		],
 		"request_keychain_access": ["credential_name", "hint", "workspace_id"],
-		"request_keychain_credential": ["hint", "kind", "suggested_name", "workspace_id"],
+		"request_keychain_credential": [
+			"hint",
+			"kind",
+			"suggested_name",
+			"target_agent_ids",
+			"workspace_id"
+		],
+		"resend_send_email": ["object_id", "workspace_id"],
 		"resume_session": ["id", "workspace_id"],
 		"search_objects": [
 			"driver_id",
@@ -461,6 +472,7 @@
 			"close_condition",
 			"closed_statuses",
 			"content",
+			"driver_id",
 			"entry_condition",
 			"id",
 			"name",
@@ -532,6 +544,7 @@
 			"values",
 			"workspace_id"
 		],
-		"update_workspace_skill": ["content", "name", "workspace_id"]
+		"update_workspace_skill": ["content", "name", "workspace_id"],
+		"withdraw_decision_card": ["comment_id", "reason", "workspace_id"]
 	}
 }

@@ -5,7 +5,7 @@ import PDFKit
 import SwiftUI
 
 /// A loaded file's body, routed by content kind: markdown reads like a document, text and source
-/// are monospaced, images and PDFs use the system viewers, anything else shows its metadata.
+/// are monospaced, images and PDFs use the system viewers, audio plays, anything else shows its metadata.
 struct FileContentView: View {
 	let file: FileDetail
 	var showsSource = false
@@ -29,6 +29,8 @@ struct FileContentView: View {
 		case .pdf:
 			FilePDFView(data: file.data, revision: revision)
 				.frame(minHeight: 480)
+		case .audio:
+			FileAudioView(data: file.data, name: file.name, mimeType: file.mimeType, revision: revision)
 		case .other:
 			EmptyState(
 				symbol: "doc", title: "No preview for this file",
@@ -109,21 +111,89 @@ private struct FileImageView: View {
 }
 
 #if canImport(UIKit)
-private struct FilePDFView: UIViewRepresentable {
+/// The PDF with a "3 / 12" page pill over it and a thumbnail strip under it, to jump to a page
+/// (handoff 2l).
+private struct FilePDFView: View {
 	let data: Data
 	let revision: Int
+	@State private var link = PDFLink()
+
+	var body: some View {
+		VStack(spacing: MaskinSpace.s4) {
+			PDFPageView(data: data, revision: revision, link: link)
+				.overlay(alignment: .topTrailing) {
+					if link.pageCount > 1 {
+						Text("\(link.page) / \(link.pageCount)")
+							.font(MaskinTypeface.mono(MaskinFontSize.t12, relativeTo: .caption))
+							.monospacedDigit()
+							.foregroundStyle(MaskinSurface.onInverse)
+							.padding(.horizontal, MaskinSpace.s5)
+							.padding(.vertical, MaskinSpace.s2)
+							.background(MaskinSurface.inverse, in: Capsule())
+							.padding(MaskinSpace.s5)
+							.accessibilityLabel("Page \(link.page) of \(link.pageCount)")
+					}
+				}
+			if link.pageCount > 1 {
+				PDFThumbnails(link: link)
+					.frame(height: MaskinSpace.s14 * 2)
+			}
+		}
+	}
+}
+
+/// Shares the page view with its thumbnail strip and the page pill.
+@MainActor @Observable
+private final class PDFLink {
+	var page = 1
+	var pageCount = 0
+	weak var view: PDFView?
+}
+
+private struct PDFPageView: UIViewRepresentable {
+	let data: Data
+	let revision: Int
+	let link: PDFLink
 	func makeCoordinator() -> Coordinator { Coordinator() }
 	func makeUIView(context: Context) -> PDFView {
 		let view = PDFView()
 		view.autoScales = true
+		link.view = view
+		context.coordinator.observer = NotificationCenter.default.addObserver(
+			forName: .PDFViewPageChanged, object: view, queue: .main
+		) { [weak view, link] _ in
+			MainActor.assumeIsolated {
+				guard let view, let document = view.document, let current = view.currentPage else { return }
+				link.page = document.index(for: current) + 1
+			}
+		}
 		return view
 	}
 	func updateUIView(_ view: PDFView, context: Context) {
 		guard context.coordinator.revision != revision || view.document == nil else { return }
 		context.coordinator.revision = revision
 		view.document = PDFDocument(data: data)
+		link.pageCount = view.document?.pageCount ?? 0
+		link.page = 1
 	}
-	final class Coordinator { var revision = -1 }
+	final class Coordinator {
+		var revision = -1
+		var observer: (any NSObjectProtocol)?
+		deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
+	}
+}
+
+private struct PDFThumbnails: UIViewRepresentable {
+	let link: PDFLink
+	func makeUIView(context: Context) -> PDFThumbnailView {
+		let thumbs = PDFThumbnailView()
+		thumbs.layoutMode = .horizontal
+		thumbs.thumbnailSize = CGSize(width: MaskinSpace.s14 + MaskinSpace.s8, height: MaskinSpace.s14 * 2 - MaskinSpace.s4)
+		return thumbs
+	}
+	func updateUIView(_ thumbs: PDFThumbnailView, context: Context) {
+		if thumbs.pdfView !== link.view { thumbs.pdfView = link.view }
+	}
 }
 #else
 private struct FilePDFView: NSViewRepresentable {

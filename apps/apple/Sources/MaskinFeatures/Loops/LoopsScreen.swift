@@ -9,15 +9,18 @@ import SwiftUI
 /// Triggers are not here: they open from the profile sheet (or from a flow's detail).
 public struct LoopsScreen: View {
 	private let environment: AppEnvironment
+	/// A loop link asks for a flow by id; the screen opens it and resets this to nil.
+	@Binding private var requestedLoopId: String?
 
-	public init(environment: AppEnvironment) {
+	public init(environment: AppEnvironment, requestedLoopId: Binding<String?> = .constant(nil)) {
 		self.environment = environment
+		_requestedLoopId = requestedLoopId
 	}
 
 	public var body: some View {
 		if let workspaceID = environment.workspaceId {
 			// Rebuilt per workspace so nothing from the previous one lingers.
-			LoopsContainer(environment: environment, workspaceID: workspaceID)
+			LoopsContainer(environment: environment, workspaceID: workspaceID, requestedLoopId: $requestedLoopId)
 				.id(workspaceID)
 		} else {
 			NavigationStack {
@@ -31,6 +34,7 @@ public struct LoopsScreen: View {
 private struct LoopsContainer: View {
 	let environment: AppEnvironment
 	let workspaceID: String
+	@Binding var requestedLoopId: String?
 	@State private var loops: LoopsStore
 	@State private var loopSelection: String?
 	@State private var triggersRequest: TriggersRequest?
@@ -39,11 +43,13 @@ private struct LoopsContainer: View {
 	@Namespace private var zoom
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@State private var showMarketplace = false
+	@State private var showDisplay = false
 	@Environment(\.horizontalSizeClass) private var sizeClass
 
-	init(environment: AppEnvironment, workspaceID: String) {
+	init(environment: AppEnvironment, workspaceID: String, requestedLoopId: Binding<String?>) {
 		self.environment = environment
 		self.workspaceID = workspaceID
+		_requestedLoopId = requestedLoopId
 		_loops = State(
 			initialValue: LoopsStore(
 				api: APILoopsSource(
@@ -52,7 +58,7 @@ private struct LoopsContainer: View {
 					objects: APIObjectsRemote(
 						client: environment.client, credentials: environment.auth.credentialsProvider)),
 				events: environment.events, cache: environment.snapshotCache,
-				sortStorage: UserDefaultsLoopsSortStorage()))
+				sortStorage: UserDefaultsLoopsSortStorage(), displayStorage: UserDefaultsLoopsDisplayStorage()))
 	}
 
 	var body: some View {
@@ -75,6 +81,12 @@ private struct LoopsContainer: View {
 			}
 		}
 		.task { await loops.start() }
+		// A loop link: open that flow, then clear the request so it fires once.
+		.onChange(of: requestedLoopId, initial: true) {
+			guard let id = requestedLoopId else { return }
+			loopSelection = id
+			requestedLoopId = nil
+		}
 		.onDisappear { loops.stop() }
 		.sheet(item: $triggersRequest) { request in
 			TriggersSheet(
@@ -103,15 +115,21 @@ private struct LoopsContainer: View {
 			store: loops, selection: $loopSelection, search: search, isLive: isLive, isGrid: sizeClass == .regular, zoomNamespace: zoom,
 			onNew: { buildLoopInChat() }
 		)
-		// Same as Team: the field stays tucked away until the list is pulled down, so the top bar has
-		// no search icon.
-		.flowsSearch(text: $search, isPresented: $searchPresented)
+		// Search is a button in the top bar that opens into a field and looks only through the
+		// flows on this page; it folds back into the button when dismissed.
+		.pageSearch(text: $search, isPresented: $searchPresented, prompt: "Search flows")
 		// Closing the field can't leave a stale query behind.
 		.onChange(of: searchPresented) { if !searchPresented, !search.isEmpty { search = "" } }
-		// Flows carry no tags, so there is no filter bar: the one Display item is the sort.
+		// Flows carry no tags, so there is no tag filter bar; Display holds the sort, filter and Summary.
 		.shellToolbar(
 			environment: environment, title: "Flows",
-			actions: ShellActions(display: ShellDisplayMenu { FlowsDisplayMenu(store: loops) }))
+			actions: ShellActions(
+				new: { buildLoopInChat() }, newLabel: "New flow",
+				displaySymbol: ShellActions.slidersSymbol, displayActive: loops.isDisplayCustomised,
+				displayToggle: { showDisplay = true },
+				search: { searchPresented = true }, marketplace: { showMarketplace = true })
+		)
+		.sheet(isPresented: $showDisplay) { FlowsDisplaySheet(store: loops) }
 	}
 
 	@ViewBuilder
@@ -186,26 +204,29 @@ private struct LoopDetailHost: View {
 	}
 }
 
-/// The Flows Display menu in the shell's pill: Recent or Name. Remembered on this device.
-struct FlowsDisplayMenu: View {
+/// The Flows Display sheet: Sort by and Order, the Show filter and the Summary property. Flows carry
+/// no tags, so there is no Tags chip. Remembered on this device.
+struct FlowsDisplaySheet: View {
 	@Bindable var store: LoopsStore
 
 	var body: some View {
-		Picker("Sort", selection: $store.sort) {
-			ForEach(LoopsSort.allCases) { Text($0.title).tag($0) }
+		DisplaySheet(canReset: store.isDisplayCustomised, onReset: { store.resetDisplay() }) {
+			DisplaySection(title: "Ordering", showsDivider: false) {
+				DisplayChoice(
+					label: "Sort by", options: LoopsSort.allCases.map { ($0, $0.title) }, selection: $store.sort)
+				DisplayChoice(
+					label: "Order", options: [(false, "Normal"), (true, "Reversed")],
+					selection: $store.display.reversed)
+			}
+			DisplaySection(title: "Filters") {
+				DisplayChoice(
+					label: "Show", options: LoopsFilter.allCases.map { ($0, $0.title) }, selection: $store.filter)
+			}
+			DisplaySection(title: "Properties") {
+				DisplayToggles(
+					label: "Show",
+					items: [.init(id: "summary", title: "Summary", isOn: $store.display.showsSummary)])
+			}
 		}
-	}
-}
-
-extension View {
-	/// Flows search: a pull-down field, like Team's.
-	fileprivate func flowsSearch(text: Binding<String>, isPresented: Binding<Bool>) -> some View {
-		#if os(iOS)
-			searchable(
-				text: text, isPresented: isPresented, placement: .navigationBarDrawer(displayMode: .automatic),
-				prompt: "Search flows")
-		#else
-			searchable(text: text, isPresented: isPresented, prompt: "Search flows")
-		#endif
 	}
 }

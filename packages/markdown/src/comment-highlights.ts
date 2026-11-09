@@ -169,7 +169,7 @@ export function setTextComments(
  * dispatched from that click (clicking off a highlight clears the active one)
  * would otherwise carry the old selection and put it back on the page.
  */
-function withPageSelection(view: EditorView, tr: Transaction): Transaction {
+export function withPageSelection(view: EditorView, tr: Transaction): Transaction {
 	if (!view.hasFocus() || !(tr.selection instanceof TextSelection)) return tr
 	const page = view.dom.ownerDocument.getSelection()
 	const { anchorNode, focusNode } = page ?? {}

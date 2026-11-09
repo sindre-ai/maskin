@@ -139,6 +139,7 @@ export function classifyReadError(err: unknown): ReadErrorKind {
 	// hitting the API — treat them as invalid-param so the caller gets pointed
 	// at the same tool with a corrected example rather than a search fallback.
 	if (/^No workspace specified/i.test(message)) return 'invalid_param'
+	if (/^Invalid sort/i.test(message)) return 'invalid_param'
 	if (/^Not authenticated/i.test(message)) return 'permission'
 	if (/not found/i.test(message)) return 'not_found'
 	return 'unknown'
@@ -295,11 +296,11 @@ const GUIDANCE: Record<string, ToolGuidance> = {
 	get_workspace_skill: {
 		notFound: {
 			tool: 'list_workspace_skills',
-			hint: 'list_workspace_skills({ workspace_id: "<uuid>" }) to find valid skill names, then retry get_workspace_skill({ name: "<name>" }).',
+			hint: 'list_workspace_skills({ workspace_id: "<uuid>" }) to find valid skill ids and names, then retry get_workspace_skill({ name: "<id or name>" }).',
 		},
 		invalidParam: {
 			tool: 'get_workspace_skill',
-			hint: 'get_workspace_skill({ workspace_id: "<uuid>", name: "<skill-name>" }) — name must be a non-empty string.',
+			hint: 'get_workspace_skill({ workspace_id: "<uuid>", name: "<skill id or name>" }) — name must be a non-empty string.',
 		},
 	},
 	list_files: {

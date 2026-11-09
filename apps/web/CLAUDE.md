@@ -1,5 +1,7 @@
 # Frontend — apps/web
 
+> **iOS parity:** any user-visible change here must also be made in `apps/apple` in the same PR (and vice versa). Native idiom may differ; capability, wording and behaviour may not. See `.claude/rules/web-ios-parity.md`.
+
 ## Product Philosophy
 This is a **steering interface for humans overseeing autonomous agents**, not a task management app where humans do the work. Humans care about **bets** (strategic decisions) and only drill into details when needed. Agents handle insights and tasks autonomously.
 
@@ -9,7 +11,7 @@ This is a **steering interface for humans overseeing autonomous agents**, not a 
 3. **Instant feedback** — Every action is optimistic. SSE drives real-time updates. No loading spinners for mutations.
 4. **Linear/Apple aesthetic** — Clean, minimal, monospace accents, tight spacing, keyboard-driven.
 5. **Light/dark mode** — Defaults to light. User can choose system/light/dark in settings. Both modes are first-class.
-6. **Solid zinc + indigo (v2)** — the product's visual language matches the maskin.io landing page: the Tailwind zinc neutral ramp with an indigo brand accent and amber for warning/at-risk states, no glass/blur. Source of truth: `Maskin App v2 Standalone.html`. Never re-introduce frosted or translucent surfaces — overlays are solid with a shadow.
+6. **Solid neutral grey + cobalt (v16)** — neutral greys with a cobalt brand accent and amber for warning/at-risk states, no glass/blur. Source of truth: the web v16 prototype's palette (the handoff README token list is stale; colours only; the font stays Schibsted Grotesk + JetBrains Mono). Never re-introduce frosted or translucent surfaces — overlays are solid with a shadow.
 7. **Document-first detail** — Each object opens as a Notion-like document: title, dynamic metadata badges, markdown content, linked objects.
 8. **Composable-ready** — Architecture the component system so blocks/views can be added incrementally.
 
@@ -80,7 +82,7 @@ This is a **steering interface for humans overseeing autonomous agents**, not a 
 ### Color Tokens (defined in `src/app.css`)
 - Surface + text: `background`, `foreground`, `card`, `card-foreground`, `popover`, `popover-foreground`, `primary`, `primary-foreground`, `secondary`, `secondary-foreground`, `muted`, `muted-foreground`, `accent`, `accent-foreground`
 - Borders: `border` (default), `border-strong` (hover / dividers in dense UI), `input`, `ring`
-- Brand: `brand`, `brand-foreground`, `brand-hover` — indigo, used for links and primary actions
+- Brand: `brand`, `brand-foreground`, `brand-hover` — cobalt, used for links and primary actions
 - Status: `success`, `warning`, `error`
 - Status badges: `status-{name}-bg` / `status-{name}-text` for each workflow status
 - Type badges: `type-{insight|bet|task}-bg` / `type-{insight|bet|task}-text`
@@ -89,8 +91,8 @@ This is a **steering interface for humans overseeing autonomous agents**, not a 
 
 ### Visual Style — v2
 - Light + dark with full token parity — both are first-class.
-- Light mode: zinc neutrals on `#ffffff`, indigo brand for links and primary actions, amber for warning/at-risk, pastel status badges.
-- Dark mode: zinc ramp inverted (zinc-950 field, zinc-800 borders), indigo brand lifted two stops for legibility (`#4f46e5` → `#818cf8`).
+- Light mode: neutral greys (ink `#10131a` on white, sidebar `#f6f7f9`), cobalt brand `#2545c8` for links and primary actions, amber for warning/at-risk, pastel status badges.
+- Dark mode: `#0d0f13` field, `#23272e` borders, ink `#e8eaee` (also the filled primary button), cobalt lifted to `#6a8cff` for legibility.
 - Overlays are **solid**, elevated by shadow only — no glass, no blur.
 - Fonts: Schibsted Grotesk (sans, variable 400–900) + JetBrains Mono (mono) — self-hosted from `/public/fonts/`, see `src/styles/typography.md`.
 - Base border radius: 10px (`--radius: 0.625rem`) — the `sm`/`md`/`lg`/`xl`/`2xl` scale steps 6/8/10/14/16px, matched to the v2 mockup's chip / menu-item / control / card / modal usage.

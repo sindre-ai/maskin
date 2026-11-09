@@ -222,7 +222,7 @@ describe('urlIsInDefaultShape', () => {
 	// and silently disables persisted-display-settings hydration.
 	it('accepts the values validateSearch seeds on a fresh load', () => {
 		expect(
-			urlIsInDefaultShape({ sort: DEFAULT_SORT, order: DEFAULT_ORDER, groupBy: 'status' }, {}),
+			urlIsInDefaultShape({ sort: DEFAULT_SORT, order: DEFAULT_ORDER, groupBy: 'none' }, {}),
 		).toBe(true)
 	})
 
@@ -239,7 +239,7 @@ describe('urlIsInDefaultShape', () => {
 	})
 
 	it('rejects an explicit grouping other than the default', () => {
-		expect(urlIsInDefaultShape({ groupBy: 'none' }, {})).toBe(false)
+		expect(urlIsInDefaultShape({ groupBy: 'status' }, {})).toBe(false)
 		expect(urlIsInDefaultShape({ groupBy: 'driver' }, {})).toBe(false)
 	})
 

@@ -1,4 +1,5 @@
 import { RelativeTime } from '@/components/shared/relative-time'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import {
 	ResponsivePopover,
@@ -6,6 +7,7 @@ import {
 	ResponsivePopoverTrigger,
 } from '@/components/ui/responsive-popover'
 import { useActors } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useCreateFile, useFiles } from '@/hooks/use-files'
 import { useObjectFileAttachments } from '@/hooks/use-object-file-attachments'
 import { useCreateRelationship } from '@/hooks/use-relationships'
@@ -39,16 +41,16 @@ const TOGGLEABLE_PROPERTIES: { id: ToggleableProperty; label: string }[] = [
 	{ id: 'uploaded_by', label: 'Uploaded by' },
 ]
 
-// Per T1's design: Filename is locked-on. Size defaults ON; everything else
-// defaults OFF — only non-default toggles count toward the bet's PostHog ship
-// metric, so any default-ON property is invisible to the measurement.
-// `MD · 4 KB · Quill` — the mockup's file meta line (1454–1462).
+// Filename is locked-on. v11 defaults: Kind, Size and Modified on; Created and
+// Uploaded by off. Only non-default toggles count toward the PostHog ship
+// metric, so any default-ON property is invisible to the measurement. People
+// with a saved choice keep it (hydration only overrides persisted keys).
 const DEFAULT_VISIBLE: Record<ToggleableProperty, boolean> = {
 	kind: true,
 	size: true,
-	uploaded_by: true,
+	uploaded_by: false,
 	created_at: false,
-	modified_at: false,
+	modified_at: true,
 }
 
 function deriveKind(file: Pick<FileListItem, 'name' | 'mimeType'>): string {
@@ -102,12 +104,37 @@ export function ObjectFiles({
 
 	const { data: files = [] } = useFiles(workspaceId, { ids: candidateFileIds })
 
-	const { upload: handleUpload, isUploading } = useObjectFileAttachments({
+	const { upload, isUploading } = useObjectFileAttachments({
 		workspaceId,
 		objectId,
 		objectType,
 	})
 
+	// Names of files in flight. The attached row only exists once the file and
+	// its edge are written, so these render as placeholder rows that read
+	// "Uploading…" in the Modified slot until the batch settles.
+	const [pendingNames, setPendingNames] = useState<string[]>([])
+	const handleUpload = useCallback(
+		async (incoming: File[]) => {
+			const names = incoming.map((f) => f.name)
+			setPendingNames((prev) => [...prev, ...names])
+			try {
+				await upload(incoming)
+			} finally {
+				setPendingNames((prev) => {
+					const next = [...prev]
+					for (const n of names) {
+						const i = next.indexOf(n)
+						if (i >= 0) next.splice(i, 1)
+					}
+					return next
+				})
+			}
+		},
+		[upload],
+	)
+
+	const canWrite = useCanWrite()
 	const inputRef = useRef<HTMLInputElement>(null)
 	const [isDragging, setIsDragging] = useState(false)
 	const [visible, setVisible] = useState<Record<ToggleableProperty, boolean>>(DEFAULT_VISIBLE)
@@ -168,9 +195,9 @@ export function ObjectFiles({
 			e.preventDefault()
 			setIsDragging(false)
 			const dropped = e.dataTransfer.files
-			if (dropped?.length) handleUpload(Array.from(dropped))
+			if (canWrite && dropped?.length) handleUpload(Array.from(dropped))
 		},
-		[handleUpload],
+		[handleUpload, canWrite],
 	)
 
 	const toggleProperty = useCallback((id: ToggleableProperty, next: boolean) => {
@@ -206,11 +233,15 @@ export function ObjectFiles({
 		<div
 			onDragOver={(e) => {
 				e.preventDefault()
-				if (!isDragging) setIsDragging(true)
+				if (canWrite && !isDragging) setIsDragging(true)
 			}}
-			onDragLeave={() => setIsDragging(false)}
+			onDragLeave={(e) => {
+				// Moving over a child fires dragleave on the section; only clear when truly leaving.
+				if (e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget)) return
+				setIsDragging(false)
+			}}
 			onDrop={handleDrop}
-			className={cn('rounded-md transition-colors', isDragging && 'bg-accent/5')}
+			className={cn('rounded-md transition-colors', isDragging && 'bg-accent/5 ring-2 ring-ring')}
 		>
 			<div className="mb-2 flex items-center gap-2 px-2">
 				<h3 className="eyebrow">Files</h3>
@@ -219,16 +250,17 @@ export function ObjectFiles({
 					<ResponsivePopoverTrigger asChild>
 						<Button
 							variant="ghost"
-							size="icon"
-							className="relative size-6 text-muted-foreground"
+							size="sm"
+							className="relative h-6 gap-1 px-1.5 text-muted-foreground"
 							title="File properties"
 							aria-label="File properties"
 						>
 							<Columns3 size={13} />
+							<span className="hidden text-xs sm:inline">Columns</span>
 							{hasActiveOverrides && (
 								<span
 									aria-hidden="true"
-									className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full bg-primary"
+									className="absolute top-0.5 right-0.5 h-1.5 w-1.5 rounded-full bg-primary"
 								/>
 							)}
 						</Button>
@@ -265,23 +297,52 @@ export function ObjectFiles({
 						</div>
 					</ResponsivePopoverContent>
 				</ResponsivePopover>
-				<Button
-					variant="ghost"
-					size="icon"
-					className="size-6 text-muted-foreground"
-					title="Attach file"
-					aria-label="Attach file"
-					onClick={() => inputRef.current?.click()}
-					disabled={isUploading}
-				>
-					{isUploading ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
-				</Button>
+				<ViewerTooltip>
+					<Button
+						variant="ghost"
+						size="icon"
+						className="size-6 text-muted-foreground"
+						title="Attach file"
+						aria-label="Attach file"
+						onClick={() => inputRef.current?.click()}
+						disabled={isUploading || !canWrite}
+					>
+						{isUploading ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
+					</Button>
+				</ViewerTooltip>
 			</div>
+
+			{isDragging && (
+				<p className="px-2 pb-1.5 text-xs font-medium text-foreground">
+					Drop to attach to this item
+				</p>
+			)}
 
 			<input ref={inputRef} type="file" multiple className="hidden" onChange={handleFileChange} />
 
-			{hasFiles ? (
+			{hasFiles || pendingNames.length > 0 ? (
 				<ul className="flex flex-col gap-1 m-0 p-0 list-none">
+					{pendingNames.map((name, i) => (
+						// biome-ignore lint/suspicious/noArrayIndexKey: names can repeat; the list is append/remove only
+						<li key={`pending-${name}-${i}`}>
+							<div className="flex items-center gap-2.5 rounded-[9px] p-2">
+								<span
+									aria-hidden="true"
+									className="grid size-[26px] shrink-0 place-items-center rounded-[7px] bg-muted text-muted-foreground"
+								>
+									<FileIcon size={13} />
+								</span>
+								<span className="min-w-0 flex-1 leading-tight">
+									<span className="block truncate text-[12.5px] font-semibold text-foreground">
+										{name}
+									</span>
+									<span className="mt-px block text-[10.5px] text-muted-foreground">
+										Uploading…
+									</span>
+								</span>
+							</div>
+						</li>
+					))}
 					{files.map((file) => (
 						<FileRow
 							key={file.id}

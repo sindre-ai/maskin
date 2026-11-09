@@ -1,8 +1,104 @@
+import { featureAreaForEvent } from '@maskin/shared'
 import posthog, { type CaptureOptions } from 'posthog-js'
 
 const DEFAULT_HOST = 'https://eu.i.posthog.com'
 
 let initialized = false
+
+const AUTHORIZE_PATH = '/oauth/authorize'
+
+function scrubUrl(raw: unknown): unknown {
+	if (typeof raw !== 'string') return raw
+	try {
+		const url = new URL(raw)
+		if (url.pathname === AUTHORIZE_PATH) return `${url.origin}${url.pathname}`
+		// The login detour carries the whole authorize address in its redirect parameter.
+		if (url.searchParams.get('redirect')?.startsWith(AUTHORIZE_PATH)) {
+			url.searchParams.delete('redirect')
+			return url.toString()
+		}
+	} catch {
+		// Not a URL: leave it.
+	}
+	return raw
+}
+
+// Every place posthog-js puts a page address or referrer: the page view itself, the session entry
+// (`$session_entry_*`), and the first-visit and session-entry person properties in `$set` / `$set_once`.
+const URL_KEYS = [
+	'$current_url',
+	'$referrer',
+	'$session_entry_url',
+	'$session_entry_referrer',
+	'$initial_current_url',
+	'$initial_referrer',
+]
+
+function scrubBag(bag: unknown): void {
+	if (!bag || typeof bag !== 'object') return
+	const record = bag as Record<string, unknown>
+	for (const key of URL_KEYS) {
+		if (key in record) record[key] = scrubUrl(record[key])
+	}
+}
+
+/**
+ * The consent page's address holds the sign-in request (state, code challenge, return address), which must
+ * not leave the browser. Drops the query string from every page URL and referrer an event carries when it is
+ * the consent page, or the login detour to it.
+ */
+export function scrubAuthorizeUrls<
+	T extends {
+		properties?: Record<string, unknown>
+		$set?: Record<string, unknown>
+		$set_once?: Record<string, unknown>
+	} | null,
+>(event: T): T {
+	if (!event) return event
+	const props = event.properties
+	scrubBag(props)
+	scrubBag(props?.$set)
+	scrubBag(props?.$set_once)
+	scrubBag(event.$set)
+	scrubBag(event.$set_once)
+	return event
+}
+
+// Every web event says where it came from and who acted. The web is only ever
+// used by a signed-in or signing-up person, so an event with no actor_type yet
+// (pageviews before the workspace mounts, sign-up events) is a human's. The
+// workspace mount registers the real actor_type, which wins.
+//
+// An event that belongs to a product area also carries feature_area (the shared
+// list in @maskin/shared, the same one the server and the iPhone app use). A value
+// the caller set wins.
+export function withSharedProperties<
+	T extends { event?: string; properties?: Record<string, unknown> },
+>(event: T | null): T | null {
+	if (!event) return event
+	const properties = event.properties ?? {}
+	const area = event.event ? featureAreaForEvent(event.event) : undefined
+	return {
+		...event,
+		properties: {
+			actor_type: 'human',
+			...(area ? { feature_area: area } : {}),
+			...properties,
+			surface: 'web',
+		},
+	} as T
+}
+
+// What posthog-js runs on every event before it leaves the browser.
+export function beforeSend<
+	T extends {
+		properties?: Record<string, unknown>
+		$set?: Record<string, unknown>
+		$set_once?: Record<string, unknown>
+	},
+>(event: T | null): T | null {
+	return scrubAuthorizeUrls(withSharedProperties(event))
+}
 
 export function initPosthog(): void {
 	if (initialized) return
@@ -13,7 +109,12 @@ export function initPosthog(): void {
 			api_host: import.meta.env.VITE_POSTHOG_HOST ?? DEFAULT_HOST,
 			person_profiles: 'identified_only',
 			capture_pageview: true,
+			// Leave and web-vitals events were a share of the browser volume with
+			// no question behind them.
+			capture_pageleave: false,
+			capture_performance: false,
 			autocapture: false,
+			before_send: beforeSend,
 		})
 		initialized = true
 	} catch {
@@ -55,6 +156,8 @@ export interface WorkspaceSuperProperties {
 	workspace_id: string
 	actor_id: string
 	actor_type: string
+	// True when the person is on our own team. A plain boolean, never a name or email.
+	is_team: boolean
 }
 
 // Pins the Synthesizer's join keys onto every subsequent capture call —
@@ -63,6 +166,22 @@ export function registerWorkspaceProperties(props: WorkspaceSuperProperties): vo
 	if (!initialized) return
 	try {
 		posthog.register(props)
+	} catch {
+		// Analytics must never break the UI.
+	}
+}
+
+// Ties every event from this browser to one `workspace` group, so per-workspace
+// funnels and retention read off a single group instead of the workspace_id
+// super property. Only the id and created date go up: the workspace name is
+// never sent, so the anonymise setting needs no branch here. Call it after
+// setCapturingEnabled so an opted-out workspace sends nothing.
+export function setWorkspaceGroup(workspaceId: string, createdAt?: string | null): void {
+	if (!initialized) return
+	try {
+		const properties: Record<string, string> = { workspace_id: workspaceId }
+		if (createdAt) properties.created_at = createdAt
+		posthog.group('workspace', workspaceId, properties)
 	} catch {
 		// Analytics must never break the UI.
 	}
@@ -101,6 +220,29 @@ export async function hashDistinctId(value: string): Promise<string> {
 export interface IdentifiedPerson {
 	name?: string | null
 	email?: string | null
+	// Where the person came from, set once on sign-up. A channel label, not an identifier.
+	signupSource?: string | null
+}
+
+// The channel a sign-up came from: the utm_source on the page, else the site that
+// sent the person, else direct. Lower case, short, and only letters, digits and
+// . _ - so a crafted link cannot put free text on a person.
+export function signupSourceFrom(search: string, referrer: string, ownHost: string): string {
+	const clean = (value: string) =>
+		value
+			.trim()
+			.toLowerCase()
+			.replace(/[^a-z0-9._-]/g, '')
+			.slice(0, 60)
+	const utm = clean(new URLSearchParams(search).get('utm_source') ?? '')
+	if (utm) return utm
+	try {
+		const host = clean(new URL(referrer).hostname.replace(/^www\./, ''))
+		if (host && host !== clean(ownHost.replace(/^www\./, ''))) return host
+	} catch {
+		// No referrer, or one that is not a URL.
+	}
+	return 'direct'
 }
 
 // Identify the actor for analytics, applying the workspace's anonymise pref.
@@ -126,7 +268,9 @@ export async function identifyForWorkspace(
 		}
 		// Only pass the second arg when there is something to set — keeps the
 		// single-arg call shape the existing identify specs assert on.
-		if (Object.keys(properties).length > 0) {
+		if (person?.signupSource) {
+			posthog.identify(distinctId, properties, { signup_source: person.signupSource })
+		} else if (Object.keys(properties).length > 0) {
 			posthog.identify(distinctId, properties)
 		} else {
 			posthog.identify(distinctId)

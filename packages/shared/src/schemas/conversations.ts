@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { firstStepSchema } from './first-steps'
 import { booleanQueryParam } from './primitives'
+import { tagListSchema } from './tags'
 
 export const CONVERSATION_TITLE_MAX_LENGTH = 200
 // Chat turns are capped separately from object comments (COMMENT_MAX_LENGTH in events.ts).
@@ -150,6 +151,12 @@ export const messageQuestionSchema = z.object({
 	 * this chat: the answer goes to that session's input, not to the chat's agents.
 	 */
 	reply_to_session: z.boolean().optional(),
+	/**
+	 * Where the ask route put this question: the asking session's own chat, the chat a helper
+	 * was started from, or the asking agent's master chat with the person. Backend-owned;
+	 * the delivery readout is one query on this field.
+	 */
+	routed_to: z.enum(['session_chat', 'helper_chat', 'master']).optional(),
 })
 
 /**
@@ -254,6 +261,11 @@ export const messageKeychainRequestSchema = z.object({
 	suggested_name: z.string().min(1).max(80).optional(),
 	/** One line on what the credential is for, shown on the card. */
 	hint: z.string().min(1).max(300).optional(),
+	/** The agents the asker said will use it, resolved by the server. Shown ticked on the card. */
+	target_agents: z
+		.array(z.object({ id: z.string().uuid(), name: z.string() }))
+		.max(10)
+		.optional(),
 })
 
 /**
@@ -357,6 +369,38 @@ export const messageCardAnswerSchema = z.object({
 	outcome: z.enum(['declined', 'done']),
 })
 
+/**
+ * The backend-owned blocks that make a message a request card: each one asks the person to
+ * save, allow, add or do something. Only a message holding one of these can be answered.
+ */
+export const REQUEST_CARD_METADATA_KEYS = [
+	'keychain_request',
+	'keychain_access_request',
+	'integration_access_request',
+	'mcp_server_request',
+	'computer_request',
+] as const
+export type RequestCardMetadataKey = (typeof REQUEST_CARD_METADATA_KEYS)[number]
+
+/**
+ * Set by the backend on a request card's own message the moment the person answers it: when,
+ * by whom and how. 'done' covers saved, allowed, added and finished; 'declined' is Not now. The
+ * first answer wins and nothing is written for a card nobody has answered, so a client shows
+ * the time and name only when this is there (an older card has none).
+ *
+ * Read-only for clients and deliberately not a field of messageMetadataSchema: a client never
+ * sends it (stripServerOwnedMetadata drops it), so it stays out of the request schema, the
+ * generated Apple client and the tool schemas. The message read returns the metadata as stored.
+ */
+export const messageCardResolvedSchema = z.object({
+	/** When the answer was saved (ISO 8601). Not the time the card was asked. */
+	at: z.string().datetime({ offset: true }),
+	/** The person (or agent) whose action answered the card. */
+	by_actor_id: z.string().uuid(),
+	outcome: messageCardAnswerSchema.shape.outcome,
+})
+export type MessageCardResolved = z.infer<typeof messageCardResolvedSchema>
+
 export const messageMetadataSchema = z.object({
 	attachments: z.array(messageAttachmentSchema).max(MESSAGE_MAX_ATTACHMENTS).optional(),
 	mentions: z.array(z.string().uuid()).max(MESSAGE_MAX_MENTIONS).optional(),
@@ -450,6 +494,7 @@ export function stripServerOwnedMetadata<T extends Record<string, unknown> | und
 		mcp_server_request: _mcpServerRequest,
 		computer_request: _computerRequest,
 		comment_event_id: _commentEventId,
+		card_resolved: _cardResolved,
 		...rest
 	} = metadata
 	return rest as T
@@ -461,26 +506,51 @@ export const conversationSubjectSchema = z.object({
 	id: z.string().uuid(),
 })
 
-export const createConversationSchema = z.object({
-	// With a subject, asking again returns the chat that already exists for it
-	// (and adds any new participants) instead of creating a second one.
-	subject: conversationSubjectSchema.optional(),
-	title: z.string().min(1, 'Title cannot be empty').max(CONVERSATION_TITLE_MAX_LENGTH),
-	participant_actor_ids: z.array(z.string().uuid()).max(MAX_CONVERSATION_PARTICIPANTS),
-	// Open the direct message (DM) with the one other participant instead of a new
-	// topical chat: the pair's existing DM is returned (200), or created once (201,
-	// titled with `title`). Leave it out for a new topical chat, which is always created.
-	direct: z.boolean().optional(),
-	initial_message: z.string().min(1).max(MESSAGE_MAX_LENGTH).optional(),
-	// Structured context (objects/notifications picked via the composer) for the
-	// initial message — mirrors postMessageSchema's metadata so a brand-new
-	// conversation's first turn renders context as chips instead of inline text.
-	initial_message_metadata: messageMetadataSchema.optional(),
-})
+/**
+ * A message needs words or a file. Empty content is allowed only when the metadata carries
+ * at least one attachment, so a message with neither is still refused.
+ */
+function hasAttachments(metadata: { attachments?: unknown[] } | undefined): boolean {
+	return (metadata?.attachments?.length ?? 0) > 0
+}
 
-export const updateConversationSchema = z.object({
-	title: z.string().min(1, 'Title cannot be empty').max(CONVERSATION_TITLE_MAX_LENGTH),
-})
+export const createConversationSchema = z
+	.object({
+		// With a subject, asking again returns the chat that already exists for it
+		// (and adds any new participants) instead of creating a second one.
+		subject: conversationSubjectSchema.optional(),
+		title: z.string().min(1, 'Title cannot be empty').max(CONVERSATION_TITLE_MAX_LENGTH),
+		participant_actor_ids: z.array(z.string().uuid()).max(MAX_CONVERSATION_PARTICIPANTS),
+		// Open the direct message (DM) with the one other participant instead of a new
+		// topical chat: the pair's existing DM is returned (200), or created once (201,
+		// titled with `title`). Leave it out for a new topical chat, which is always created.
+		direct: z.boolean().optional(),
+		initial_message: z.string().max(MESSAGE_MAX_LENGTH).optional(),
+		// Structured context (objects/notifications picked via the composer) for the
+		// initial message — mirrors postMessageSchema's metadata so a brand-new
+		// conversation's first turn renders context as chips instead of inline text.
+		initial_message_metadata: messageMetadataSchema.optional(),
+	})
+	.refine(
+		(v) =>
+			v.initial_message === undefined ||
+			v.initial_message.length > 0 ||
+			hasAttachments(v.initial_message_metadata),
+		{
+			message: 'Message cannot be empty',
+			path: ['initial_message'],
+		},
+	)
+
+export const updateConversationSchema = z
+	.object({
+		title: z.string().min(1, 'Title cannot be empty').max(CONVERSATION_TITLE_MAX_LENGTH).optional(),
+		// Labels for grouping chats, for example a team name. Replaces the whole list.
+		tags: tagListSchema.optional(),
+	})
+	.refine((v) => v.title !== undefined || v.tags !== undefined, {
+		message: 'Send a title, tags, or both',
+	})
 
 export const addConversationParticipantsSchema = z.object({
 	actor_ids: z.array(z.string().uuid()).min(1).max(MAX_CONVERSATION_PARTICIPANTS),
@@ -505,33 +575,40 @@ export const conversationListQuerySchema = z.object({
 	offset: z.coerce.number().int().min(0).default(0),
 })
 
-export const postMessageSchema = z.object({
-	content: z
-		.string()
-		.min(1, 'Message cannot be empty')
-		.max(MESSAGE_MAX_LENGTH, `Message must be ${MESSAGE_MAX_LENGTH} characters or fewer.`),
-	metadata: messageMetadataSchema.optional(),
-	// Only honored when the caller is an agent actor and the referenced
-	// session belongs to them + carries this conversation in
-	// config.conversation — see conversations route for the ownership check.
-	// Ignored (silently) otherwise, e.g. for human-authored messages.
-	session_id: z.string().uuid().optional(),
-	// Post as a reply in the thread rooted at this message. The root must be a
-	// top-level message of the same conversation (threads do not nest).
-	thread_root_id: z.number().int().positive().optional(),
-	// With thread_root_id: also show the reply in the main timeline.
-	also_in_channel: z.boolean().optional(),
-	// An agent posting mid-turn lands in the thread of the message that started the turn when
-	// no thread_root_id is given. true opts out and posts to the main timeline. Ignored when
-	// thread_root_id is given, and for anyone but an agent in its own session for this chat.
-	top_level: z.boolean().optional(),
-})
+export const postMessageSchema = z
+	.object({
+		content: z
+			.string()
+			.max(MESSAGE_MAX_LENGTH, `Message must be ${MESSAGE_MAX_LENGTH} characters or fewer.`),
+		metadata: messageMetadataSchema.optional(),
+		// Only honored when the caller is an agent actor and the referenced
+		// session belongs to them + carries this conversation in
+		// config.conversation — see conversations route for the ownership check.
+		// Ignored (silently) otherwise, e.g. for human-authored messages.
+		session_id: z.string().uuid().optional(),
+		// Post as a reply in the thread rooted at this message. The root must be a
+		// top-level message of the same conversation (threads do not nest).
+		thread_root_id: z.number().int().positive().optional(),
+		// With thread_root_id: also show the reply in the main timeline.
+		also_in_channel: z.boolean().optional(),
+		// An agent posting mid-turn lands in the thread of the message that started the turn when
+		// no thread_root_id is given. true opts out and posts to the main timeline. Ignored when
+		// thread_root_id is given, and for anyone but an agent in its own session for this chat.
+		top_level: z.boolean().optional(),
+	})
+	.refine((v) => v.content.length > 0 || hasAttachments(v.metadata), {
+		message: 'Message cannot be empty',
+		path: ['content'],
+	})
 
 export const editMessageSchema = z.object({
 	content: z
 		.string()
 		.min(1, 'Message cannot be empty')
 		.max(MESSAGE_MAX_LENGTH, `Message must be ${MESSAGE_MAX_LENGTH} characters or fewer.`),
+	// The tagged ids after the edit. Omitted: the stored ids stay as they are. Sent: they replace
+	// the stored ids, and only ids that were not stored before wake anyone.
+	metadata: z.object({ mentions: messageMetadataSchema.shape.mentions }).optional(),
 })
 
 export const messageQuerySchema = z.object({
@@ -625,6 +702,8 @@ export const sessionKeychainCardSchema = z.object({
 	kind: z.enum(KEYCHAIN_REQUEST_KINDS),
 	suggested_name: z.string().trim().min(1).max(80).optional(),
 	hint: z.string().trim().min(1).max(300).optional(),
+	/** Agents that will use it. Ids that are not agents in this workspace are ignored. */
+	target_agent_ids: z.array(z.string().max(64)).max(10).optional(),
 })
 
 /**

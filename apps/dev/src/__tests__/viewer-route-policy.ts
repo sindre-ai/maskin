@@ -35,6 +35,11 @@ export const OPEN_ROUTES: OpenRoute[] = [
 		'/api/voice-sessions/:id/hangup',
 		'ends the caller’s own call; a member demoted to viewer mid-call must still be able to hang up, or the call keeps running and billing',
 	],
+	[
+		'POST',
+		'/api/actors/:id/avatar',
+		'a viewer may set their own picture; setting anyone else’s needs a workspace admin, checked in the handler',
+	],
 	['POST', '/api/webhooks/:provider', 'provider webhook, authenticated by signature'],
 	['POST', '/api/webhooks/google-drive', 'provider webhook, authenticated by channel token'],
 	['POST', '/api/webhooks/resend/:token', 'provider webhook, authenticated by token'],
@@ -75,6 +80,11 @@ export const OPEN_ROUTES: OpenRoute[] = [
 		'the one-time code and its PKCE verifier are the credential',
 	],
 	['POST', '/api/integrations/linkedin-unipile/webhook', 'provider webhook, authenticated by HMAC'],
+	// The Claude connector. A token a viewer approves carries the viewer role, so writes through it are refused.
+	['POST', '/api/oauth/authorize/approve', 'approves a Claude connection for the caller only'],
+	['POST', '/api/oauth/authorize/deny', 'declines a Claude connection for the caller only'],
+	['DELETE', '/api/oauth/grants/:id', 'ends a Claude connection of the caller only'],
+	['POST', '/oauth/token', 'public, the one-time code or refresh token is the credential'],
 	// Group B leftovers: no handler logic or no workspace data.
 	['DELETE', '/api/integrations/google-drive/mcp', 'always answers 405, no handler'],
 	['DELETE', '/api/integrations/google-meet/mcp', 'always answers 405, no handler'],
@@ -144,10 +154,20 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	['DELETE', '/api/subscriptions', 'Group E, personal state'],
 	['POST', '/api/subscriptions/read', 'Group E, personal state'],
 	['POST', '/api/subscriptions/unread', 'Group E, personal state'],
+	[
+		'POST',
+		'/api/for-you/dismissals',
+		'Group E, personal state: replaces mark-read for Dismiss, so a viewer can still clear their own card',
+	],
+	['POST', '/api/for-you/dismissals/undo', 'Group E, personal state'],
 	['POST', '/api/objects/:id/star', 'Group E, personal state'],
 	['DELETE', '/api/objects/:id/star', 'Group E, personal state'],
 	['PUT', '/api/user-display-settings/:object_type', 'Group E, personal state'],
-	['POST', '/api/briefing/spoken', 'Group E, generates a briefing and changes no workspace data'],
+	[
+		'POST',
+		'/api/briefing/spoken',
+		'Group E, a viewer is served the day’s cached brief or deterministic prose; only a writer triggers a model call and the cache write',
+	],
 	['POST', '/api/telemetry/mcp', 'Group E, telemetry aggregates'],
 	[
 		'POST',
@@ -186,6 +206,16 @@ export const HAND_GATED_ROUTES: OpenRoute[] = [
 	],
 	['POST', '/api/integrations/slack/mcp', 'MCP endpoint, tools post as the workspace bot'],
 	[
+		'PUT',
+		'/api/integrations/slack/direct-post-channels',
+		'human admin or owner only, checked in the handler (a viewer gets 403)',
+	],
+	[
+		'PUT',
+		'/api/send-permissions',
+		'human admin or owner only, checked in the handler (a viewer gets 403)',
+	],
+	[
 		'POST',
 		'/api/integrations/:provider/gateway',
 		'MCP gateway, forwards tool calls with the provider token',
@@ -207,11 +237,6 @@ export const HAND_GATED_ROUTES: OpenRoute[] = [
 		'/api/integrations/linkedin-unipile/mcp/:instanceSlug',
 		'MCP endpoint, tools act as the identity',
 	],
-	['POST', '/api/integrations/linkedin-unipile/send-message', 'sends a LinkedIn message'],
-	['POST', '/api/integrations/linkedin-unipile/reply', 'sends a LinkedIn reply'],
-	['POST', '/api/integrations/linkedin-unipile/publish-post', 'publishes a LinkedIn post'],
-	['POST', '/api/integrations/linkedin-unipile/comment-on-post', 'posts a LinkedIn comment'],
-	['POST', '/api/integrations/linkedin-unipile/reply-to-comment', 'posts a LinkedIn reply'],
 	['POST', '/api/admin/linkedin-unipile/refresh-identities', 'refreshes stored credentials'],
 ]
 

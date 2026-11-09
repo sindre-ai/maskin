@@ -8,19 +8,11 @@ public protocol SpeechTranscribing: Sendable {
 	func transcribe(wav: Data, language: String?) async throws -> String
 }
 
-/// What the app needs to dictate through the server: the transcription call, and whether this
-/// person is switched on for it.
-public protocol BackendDictationService: SpeechTranscribing {
-	/// True when the `ios-backend-dictation` feature flag is on for the signed-in person. False on
-	/// any failure to find out (offline, signed out), so dictation falls back to the phone.
-	func isEnabled() async -> Bool
-}
-
 /// Where the dictation code finds the server service. Set once by the real app wiring; nil in
 /// previews and tests, which dictate on the phone.
 @MainActor
 public enum DictationBackend {
-	public static var service: (any BackendDictationService)?
+	public static var service: (any SpeechTranscribing)?
 }
 
 public enum DictationLanguage {

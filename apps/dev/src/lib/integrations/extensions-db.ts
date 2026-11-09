@@ -106,6 +106,15 @@ export async function upsertExtensionSecret(
 	})
 }
 
+/** Remove an extension's stored signing secret. A no-op when none is stored. */
+export async function deleteExtensionSecret(
+	db: Database | Transaction,
+	workspaceId: string,
+	slug: string,
+): Promise<void> {
+	await db.delete(integrations).where(secretRowWhere(workspaceId, slug))
+}
+
 export async function hasExtensionSecret(
 	db: Database | Transaction,
 	workspaceId: string,
@@ -339,6 +348,7 @@ export async function buildExtensionMcpServers(
 				.set({ mcpLastError: `tool cap exceeded: ${tools.length}/${MAX_EXTENSION_TOOLS}` })
 				.where(eq(extensions.id, entry.extensionId))
 			void capturePosthogEvent('extension_mcp_tool_cap_exceeded', workspaceId, {
+				workspace_id: workspaceId,
 				extension_id: entry.extensionId,
 				slug: entry.slug,
 				tool_count: tools.length,

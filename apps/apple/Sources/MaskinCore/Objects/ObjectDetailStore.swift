@@ -35,6 +35,22 @@ public struct TimelineItem: Identifiable, Sendable, Equatable {
 	public var refs: [String] = []
 	/// Files attached to the comment: ids, resolved to names by the store.
 	public var attachments: [String] = []
+	/// Tasks the comment lists (`metadata.tasks`), resolved to titles and status by the store.
+	public var taskIds: [String] = []
+	/// The decision the comment asks for, when it carries one.
+	public var decision: CommentDecision?
+
+	/// A status move the event recorded (`data.changes` entry for `status`), when it is one.
+	public var statusChange: StatusChange?
+
+	public struct StatusChange: Sendable, Equatable {
+		public var from: String?
+		public var to: String
+		public init(from: String?, to: String) {
+			self.from = from
+			self.to = to
+		}
+	}
 
 	public var isLocal: Bool { eventId == nil }
 
@@ -361,6 +377,7 @@ public final class ObjectDetailStore {
 		// Keep local items the server doesn't know yet (sending or failed).
 		timeline = stored + timeline.filter { $0.isLocal }
 		resolveReferences()
+		resolveTasks()
 		resolveFiles()
 	}
 
@@ -419,6 +436,33 @@ public final class ObjectDetailStore {
 		}
 	}
 
+	/// Title and status of the tasks listed in comments, by object id. `nil` once known missing.
+	public private(set) var taskStates: [String: TaskState?] = [:]
+	@ObservationIgnored private var resolvingTasks: Set<String> = []
+
+	public struct TaskState: Sendable, Equatable {
+		public var title: String
+		public var status: String
+		public var isDone: Bool { CommentTasks.doneStatuses.contains(status) }
+	}
+
+	private func resolveTasks() {
+		let missing = Set(timeline.flatMap(\.taskIds)).subtracting(taskStates.keys).subtracting(resolvingTasks)
+		for id in missing {
+			resolvingTasks.insert(id)
+			Task { [weak self] in
+				guard let self else { return }
+				if let graph = try? await remote.graph(objectId: id) {
+					let title = graph.object.title ?? ""
+					taskStates[id] = TaskState(title: title.isEmpty ? "Untitled task" : title, status: graph.object.status)
+				} else {
+					taskStates[id] = .some(nil)
+				}
+				resolvingTasks.remove(id)
+			}
+		}
+	}
+
 	private func resolveReferences() {
 		let missing = Set(timeline.flatMap(\.refs)).subtracting(references.keys).subtracting(resolving)
 		for id in missing {
@@ -456,13 +500,34 @@ public final class ObjectDetailStore {
 				delivery: .sent, eventId: event.id, refs: ReferenceTrigger.ids(in: event.data?["metadata"]),
 				attachments: Self.attachmentIDs(in: event.data))
 			item.parentEventId = Self.parentEventId(in: event.data)
+			item.taskIds = CommentTasks.ids(in: event.data)
+			item.decision = CommentDecision.parse(event.data?["decision"])
 			return item
 		}
 		let summary = (event.summary?.isEmpty == false ? event.summary : nil)
 			?? event.action.replacingOccurrences(of: "_", with: " ")
-		return TimelineItem(
+		var item = TimelineItem(
 			id: "e-\(event.id)", kind: .activity(summary), actorId: event.actorId, date: event.createdAt,
 			delivery: .sent, eventId: event.id)
+		item.statusChange = Self.statusChange(in: event.data)
+		return item
+	}
+
+	/// The status move in an `updated` / `status_changed` payload: the diff shape
+	/// (`changes: [{field, old, new}]`) or the older `{previous, updated}` snapshots.
+	public static func statusChange(in data: JSONValue?) -> TimelineItem.StatusChange? {
+		if case .array(let changes)? = data?["changes"] {
+			for change in changes where change["field"]?.stringValue == "status" {
+				guard let to = change["new"]?.stringValue, !to.isEmpty else { return nil }
+				return TimelineItem.StatusChange(from: change["old"]?.stringValue, to: to)
+			}
+			return nil
+		}
+		if let to = data?["updated"]?["status"]?.stringValue, !to.isEmpty {
+			let from = data?["previous"]?["status"]?.stringValue
+			return from == to ? nil : TimelineItem.StatusChange(from: from, to: to)
+		}
+		return nil
 	}
 
 	// MARK: Comments

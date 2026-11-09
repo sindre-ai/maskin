@@ -42,7 +42,7 @@ private extension TeamLayout {
 
 @Suite("TeamLayout")
 struct TeamLayoutTests {
-	@Test("pinned rows live only in the tiles, unread rows only in UNREAD, the rest by time")
+	@Test("pinned rows live only in the Pinned group, unread rows only in UNREAD, the rest by time")
 	func sections() {
 		let layout = build([
 			chatConvo("pin", last: ago(hours: 1), pinned: true, unread: 2),
@@ -153,6 +153,16 @@ struct TeamLayoutTests {
 		#expect(layout.tiles[2].title == "Relay", "a 1:1 tile is named after the other person")
 	}
 
+	@Test("a pinned item is drawn as the ordinary row of its kind, keeping its pin key as id")
+	func pinnedItemsAreOrdinaryRows() {
+		let layout = build(
+			[chatConvo("a", last: ago(hours: 1), pinned: true)], flows: [flow("f")], pinnedFlows: ["f"])
+		let rows = layout.tiles.map(\.row)
+		#expect(rows.map(\.id) == ["a", "flow:f"])
+		if case .conversation(let c) = rows[0].kind { #expect(c.id == "a") } else { Issue.record("not a conversation row") }
+		if case .flow(let f) = rows[1].kind { #expect(f.id == "f") } else { Issue.record("not a flow row") }
+	}
+
 	@Test("the Unread chip keeps only unread rows and says caught up when there are none")
 	func unreadChip() {
 		let some = build([chatConvo("a", unread: 1), chatConvo("b")], flows: [flow("f", unread: 1)], chip: .unread)
@@ -201,6 +211,32 @@ struct TeamLayoutTests {
 		#expect(none.empty == .noResults("zzz"))
 		#expect(none.empty?.title == "No results for “zzz”")
 		#expect(none.empty?.action == "Search all of Maskin")
+	}
+
+	@Test("a search also finds archived chats, keeps the Archived row for them and is not a dead end")
+	func searchFindsArchived() {
+		let archived = [
+			chatConvo("old", title: "Roadmap 2025", last: ago(hours: 900)),
+			chatConvo("other", title: "Budget", last: ago(hours: 800)),
+		]
+		let found = build([chatConvo("a")], archived: archived, query: "road")
+		#expect(found.archivedMatches.map(\.id) == ["old"])
+		#expect(found.showsArchived)
+		#expect(found.archivedCount == 2)
+		#expect(found.empty == nil, "an archived match is a result")
+		#expect(found.sections.isEmpty)
+
+		let miss = build([chatConvo("a")], archived: archived, query: "zzz")
+		#expect(miss.archivedMatches.isEmpty)
+		#expect(miss.showsArchived == false)
+		#expect(miss.empty == .noResults("zzz"))
+
+		let plain = build([chatConvo("a")], archived: archived)
+		#expect(plain.archivedMatches.isEmpty, "no query, no matches list")
+		#expect(plain.showsArchived)
+
+		let chipped = build([chatConvo("a")], archived: archived, chip: .unread, query: "road")
+		#expect(chipped.archivedMatches.isEmpty, "a filter chip leaves archived chats out")
 	}
 
 	@Test("nothing at all shows the first-run empty state; archived rows count and show when not filtering")
@@ -307,12 +343,6 @@ struct NewConversationCopyTests {
 		#expect(NewConversationCopy.placeholder(for: [sam]) == "Message Sam")
 		#expect(NewConversationCopy.placeholder(for: [sam, chief]) == "Message Sam and Chief of Staff")
 		#expect(NewConversationCopy.placeholder(for: [sam, chief, ida, forge]) == "Message Sam, Chief of Staff +2")
-	}
-
-	@Test("the group note counts you in and only shows with two or more recipients")
-	func note() {
-		#expect(NewConversationCopy.groupNote(recipientCount: 1) == nil)
-		#expect(NewConversationCopy.groupNote(recipientCount: 2) == "3 in this conversation, including you. Everyone sees the whole thread.")
 	}
 
 	@Test("matches search name and role, never someone already picked")

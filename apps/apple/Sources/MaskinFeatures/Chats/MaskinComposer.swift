@@ -30,13 +30,22 @@ public struct MaskinComposerConfig {
 	public var roster: MentionRoster? = nil
 	/// Told when the field gains or loses focus (For you hides its quick-question chips while typing).
 	public var onFocusChange: ((Bool) -> Void)? = nil
+	/// Outside chat the "+" has no attach menu: when set, tapping it calls this instead (a toast stub
+	/// today). Nil keeps the chat attach menu.
+	public var onPlus: (() -> Void)? = nil
+	/// Outside chat the mic does not dictate: when set, tapping it calls this instead (a toast stub).
+	public var onMic: (() -> Void)? = nil
+	/// What `/` lists and creates. Nil: `/` is plain text.
+	public var slash: SlashSource? = nil
 
 	public init(
 		variant: MaskinComposerVariant = .floating, placeholder: String, showsAttach: Bool = true,
 		showsMic: Bool = true, showsSend: Bool = true, goLive: (() -> Void)? = nil,
 		suggestions: @escaping (String) -> [ChatParticipant] = { _ in [] }, inConversation: Set<String> = [],
-		roster: MentionRoster? = nil, onFocusChange: ((Bool) -> Void)? = nil
+		roster: MentionRoster? = nil, onFocusChange: ((Bool) -> Void)? = nil,
+		onPlus: (() -> Void)? = nil, onMic: (() -> Void)? = nil, slash: SlashSource? = nil
 	) {
+		self.slash = slash
 		self.variant = variant
 		self.placeholder = placeholder
 		self.showsAttach = showsAttach
@@ -47,6 +56,8 @@ public struct MaskinComposerConfig {
 		self.inConversation = inConversation
 		self.roster = roster
 		self.onFocusChange = onFocusChange
+		self.onPlus = onPlus
+		self.onMic = onMic
 	}
 }
 
@@ -95,6 +106,10 @@ struct MaskinComposer: View {
 
 	@FocusState private var focused: Bool
 	@State private var trayOpen = false
+	/// Where the bar's top edge sits on screen: the + menu may not be taller than the room above it.
+	@State private var barTop: CGFloat = .infinity
+	/// The + menu card's measured height, so its offset holds at any text size. Nil until it has been laid out.
+	@State private var attachMenuHeight: CGFloat?
 	@State private var dropTargeted = false
 	@State private var showPhotos = false
 	@State private var showFiles = false
@@ -181,6 +196,7 @@ struct MaskinComposer: View {
 		// Spec 7 §1: bar padding 6, gap 8.
 		.padding(MaskinSpace.s3)
 		.background { surface }
+		.onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .global).minY }) { barTop = $0 }
 		.overlay {
 			if isDropTargeted {
 				shape.strokeBorder(
@@ -192,18 +208,12 @@ struct MaskinComposer: View {
 		.animation(MaskinMotion.quick, value: isDropTargeted)
 	}
 
-	@ViewBuilder
+	/// The standard bar for every host: white, hairline border, soft shadow (`variant` no longer
+	/// changes how it looks).
 	private var surface: some View {
-		switch config.variant {
-		case .floating:
-			shape.fill(.clear)
-				.maskinGlass(in: shape)
-				.overlay(shape.strokeBorder(MaskinSurface.glassBorder, lineWidth: 0.5))
-				.shadow(color: MaskinColor.overlayDim.opacity(0.35), radius: MaskinSpace.s10, y: MaskinSpace.s7)
-		case .inline:
-			shape.fill(MaskinSurface.cardInset)
-				.overlay(shape.strokeBorder(MaskinSurface.line, lineWidth: 1))
-		}
+		shape.fill(MaskinSurface.card)
+			.overlay(shape.strokeBorder(MaskinSurface.line, lineWidth: 0.5))
+			.shadow(color: MaskinColor.overlayDim.opacity(0.12), radius: MaskinSpace.s7, y: MaskinSpace.s2)
 	}
 
 	private var row: some View {
@@ -299,11 +309,11 @@ struct MaskinComposer: View {
 
 	private var micButton: some View {
 		ComposerCircleButton(
-			symbol: "mic", fill: MaskinSurface.fill, foreground: MaskinColor.ink3, label: "Dictate",
+			symbol: "mic", fill: MaskinSurface.inverse, foreground: MaskinSurface.onInverse, label: "Dictate",
 			weight: .regular
 		) {
 			MaskinHaptics.play(.selection)
-			startDictation()
+			if let onMic = config.onMic { onMic() } else { startDictation() }
 		}
 		.transition(.opacity)
 	}
@@ -317,6 +327,13 @@ struct MaskinComposer: View {
 			rotation: isTrayOpen ? 45 : 0
 		) {
 			MaskinHaptics.play(.selection)
+			if let onPlus = config.onPlus {
+				onPlus()
+				return
+			}
+			// Opening the menu puts the keyboard away first: the menu is up to 7 rows tall and floats above
+			// the bar, so with the keyboard up it ran down behind it and lost its lower rows.
+			if !trayOpen { focused = false }
 			withAnimation(reduceMotion ? nil : MaskinMotion.standard) { trayOpen.toggle() }
 		}
 	}
@@ -333,12 +350,25 @@ struct MaskinComposer: View {
 		return actions
 	}
 
+	/// The room above the bar, less the status bar, navigation bar and the 8pt gap. Never under three
+	/// rows, so a short window scrolls the list instead of shrinking it to nothing.
+	private var attachMenuMaxHeight: CGFloat {
+		max(ComposerAttachMenu.contentHeight(rows: 3), barTop - 120)
+	}
+
 	@ViewBuilder
 	private var attachMenu: some View {
 		if isTrayOpen, !isDictating {
-			ComposerAttachMenu(actions: attachActions, onPick: pick)
-				.alignmentGuide(.top) { $0[.bottom] + MaskinSpace.s4 }
-				.transition(.opacity.combined(with: .move(edge: .bottom)))
+			// Placed by an explicit offset, not an alignment guide: on iPhone the guide did not take and the
+			// card opened below the bar, running off the screen. The card's height is known, so the offset
+			// does not depend on how a guide resolves. Fade only: a move transition can park the card off its spot.
+			let rows = attachActions
+			let estimate = min(ComposerAttachMenu.contentHeight(rows: rows.count), attachMenuMaxHeight)
+			ComposerAttachMenu(actions: rows, maxHeight: attachMenuMaxHeight, onPick: pick)
+				.onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { attachMenuHeight = $0 }
+				.offset(y: ComposerAttachMenu.offsetY(height: attachMenuHeight ?? estimate))
+				.transition(.opacity)
+				.onDisappear { attachMenuHeight = nil }
 		}
 	}
 
@@ -390,6 +420,28 @@ struct MaskinComposer: View {
 					focused = true
 				}
 			)
+			.alignmentGuide(.top) { $0[.bottom] + MaskinSpace.s4 }
+			.transition(.opacity.combined(with: .move(edge: .bottom)))
+		} else if !isDictating, let source = config.slash, let match = SlashTrigger.find(in: model.text) {
+			SlashSuggestions(
+				items: source.rows(query: match.query), isRecent: match.query.isEmpty, query: match.query,
+				onPick: { item in
+					model.pickSlash(
+						markdown: SlashReference.markdown(
+							title: item.title, workspaceID: source.workspaceID, objectID: item.id))
+					focused = true
+				},
+				onCreate: { type in
+					let query = match.query
+					Task {
+						if let link = await source.create(type, title: query) {
+							model.pickSlash(markdown: link)
+							focused = true
+						}
+					}
+				}
+			)
+			.task(id: match.query) { await source.refresh(query: match.query) }
 			.alignmentGuide(.top) { $0[.bottom] + MaskinSpace.s4 }
 			.transition(.opacity.combined(with: .move(edge: .bottom)))
 		} else if let match = EmojiTrigger.find(in: model.text) {

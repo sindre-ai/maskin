@@ -37,6 +37,31 @@ public struct LiveTranscript: Equatable, Sendable {
 			}
 	}
 
+	/// The transcript of a call this device holds no record of (held on the web or another device),
+	/// read the way the web does: every spoken line of the thread tagged with the call's voice session
+	/// id, oldest first, timed from the first of them. Nil when none was said.
+	public init?(
+		voiceSessionID: String, title: String, durationSeconds: Int?, messages: [ChatMessage],
+		currentActorID: String?
+	) {
+		let ofCall = messages
+			.filter { $0.metadata?["voice_session_id"]?.stringValue == voiceSessionID && LiveSpokenLine.isSpoken($0) }
+			.sorted { ($0.serverID ?? .max) < ($1.serverID ?? .max) }
+		let start = ofCall.compactMap(\.createdAt).first
+		let spoken = ofCall.filter { !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+		guard !spoken.isEmpty else { return nil }
+		recordID = voiceSessionID
+		self.title = title
+		self.durationSeconds = durationSeconds
+		lines = spoken.map { message in
+			let seconds = start.flatMap { s in message.createdAt.map { max(0, Int($0.timeIntervalSince(s))) } } ?? 0
+			let isYou = message.actorID == currentActorID
+			return LiveTranscriptLine(
+				id: message.id, seconds: seconds, speaker: isYou ? LiveMeetingNote.youName : message.actorName,
+				text: ChatPreviewText.plain(message.content), isYou: isYou)
+		}
+	}
+
 	/// "Relay · 7:01" under the title; just the lead while the length is unknown.
 	public var subtitle: String {
 		guard let durationSeconds else { return "" }

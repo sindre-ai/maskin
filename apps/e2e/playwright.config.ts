@@ -2,6 +2,11 @@ import { defineConfig, devices } from '@playwright/test'
 import { E2E_AGENT_SERVER_SECRET } from './src/helpers/api.helper'
 import { isArgosEnabled } from './src/helpers/argos.helper'
 import { E2E_MOCK_RESEND_PORT } from './src/helpers/mock-resend.helper'
+import {
+	E2E_OAUTH_ACTORS,
+	E2E_OAUTH_CAPTURE_PORT,
+	E2E_OAUTH_ISSUER,
+} from './src/helpers/oauth-consent.helper'
 
 // Without ARGOS_TOKEN, every upload attempt fails (quota, auth, or a
 // missing-token error) — SafeArgosReporter already keeps that from failing
@@ -75,6 +80,18 @@ export default defineConfig({
 				RESEND_BASE_URL: `http://localhost:${E2E_MOCK_RESEND_PORT}`,
 				EMAIL_FROM: 'notifications@e2e.invalid',
 				APP_URL: 'http://localhost:5173',
+				// The Claude connector (mcp-oauth-consent.spec.ts): the switch is on, the flag is on for
+				// the two fixed-id actors the spec signs in as, and the issuer is the web app the specs
+				// drive, so the resource equals the server URL Settings > MCP shows. POSTHOG_* sends
+				// the server's funnel events to a stub the spec starts, so it can read them back.
+				MASKIN_MCP_OAUTH_ENABLED: 'true',
+				MASKIN_OAUTH_ISSUER: E2E_OAUTH_ISSUER,
+				FF_TESTER_ACTOR_IDS: Object.values(E2E_OAUTH_ACTORS)
+					.map((actor) => actor.id)
+					.join(','),
+				FF_TESTER_FEATURES: 'mcp-oauth-consent',
+				POSTHOG_API_KEY: 'phc_e2e_stub',
+				POSTHOG_HOST: `http://localhost:${E2E_OAUTH_CAPTURE_PORT}`,
 			},
 		},
 		{

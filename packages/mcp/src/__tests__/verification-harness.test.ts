@@ -685,15 +685,19 @@ describe('list_workspace_skills — cursor walk returns every row once', () => {
 
 	// Stands in for GET /api/workspaces/:id/skills: (createdAt desc, id asc),
 	// created_at <= snapshot_at, keyset seek after (cursor_created_at, cursor_id),
-	// and a hard 100-row cap like the real route.
+	// and a hard 100-row cap like the real route when a limit is sent. With no limit and no
+	// snapshot_at the real route returns every row.
 	function stubSkillsApi(rows: ReturnType<typeof skillRow>[]) {
 		return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 			const u = new URL(String(url))
 			if (!u.pathname.endsWith('/skills')) {
 				return { ok: true, json: () => Promise.resolve([]) } as Response
 			}
-			const limit = Number(u.searchParams.get('limit') ?? 100)
-			if (limit > 100) throw new Error(`limit ${limit} is above the route cap of 100`)
+			const limitParam = u.searchParams.get('limit')
+			const limit = limitParam === null ? rows.length : Number(limitParam)
+			if (limit > 100 && limitParam !== null) {
+				throw new Error(`limit ${limit} is above the route cap of 100`)
+			}
 			const snapshot = u.searchParams.get('snapshot_at')
 			const cursorAt = u.searchParams.get('cursor_created_at')
 			const cursorId = u.searchParams.get('cursor_id')
@@ -718,7 +722,7 @@ describe('list_workspace_skills — cursor walk returns every row once', () => {
 		_meta: { truncated?: boolean }
 		structuredContent: {
 			skills: Array<{ id: string }>
-			page: { limit: number; returned: number; next_cursor?: string }
+			page: { limit: number; returned: number; has_more: boolean }
 			next_cursor?: string
 		}
 	}
@@ -761,7 +765,7 @@ describe('list_workspace_skills — cursor walk returns every row once', () => {
 				const { page, skills, next_cursor } = p.structuredContent
 				expect(page.limit).toBe(limit)
 				expect(page.returned).toBe(skills.length)
-				expect(page.next_cursor).toBe(next_cursor)
+				expect(page.has_more).toBe(i !== pages.length - 1)
 				expect(next_cursor === undefined).toBe(i === pages.length - 1)
 			})
 		},

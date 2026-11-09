@@ -1,5 +1,7 @@
 import { CommentVisual, isVisualLanguage } from '@/components/activity/comment-visual'
 import { EditorBanner } from '@/components/shared/editor-banner'
+import { useEditorLinkChips } from '@/components/shared/editor-link-chips'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useFile } from '@/hooks/use-files'
 import type { ActorListItem } from '@/lib/api'
 import { captureEditorParseError, editorTelemetry } from '@/lib/editor-events'
@@ -248,6 +250,10 @@ type MarkdownContentProps = {
 	disallowedElements?: string[]
 	mentionActors?: ActorListItem[]
 	onMentionClick?: (actor: ActorListItem) => void
+	/** Ids the author tagged (a comment's stored mentions): those @names draw as the brand chip. */
+	taggedActorIds?: string[]
+	/** The viewer: a tag of them draws amber instead of the brand chip. */
+	selfActorId?: string | null
 	/**
 	 * Opt-in: when true, fenced blocks tagged ```chart render as inline visuals
 	 * (e.g. recharts). Defaults to false so object-document body markdown is
@@ -280,6 +286,8 @@ function RenderedMarkdownContent({
 	disallowedElements,
 	mentionActors,
 	onMentionClick,
+	taggedActorIds,
+	selfActorId,
 	renderVisuals = false,
 	linkedCards: linkedCardsOption,
 }: Omit<
@@ -434,6 +442,8 @@ function RenderedMarkdownContent({
 				disallowedElements={disallowedElements}
 				mentionActors={mentionActors as MentionActor[] | undefined}
 				onMentionClick={onMentionClick as ((actor: MentionActor) => void) | undefined}
+				taggedActorIds={taggedActorIds}
+				selfActorId={selfActorId}
 				renderVisuals={renderVisuals}
 				renderCodeBlock={renderChartBlock}
 				renderImage={renderMarkdownImage}
@@ -462,7 +472,10 @@ export function MarkdownContent({
 	objectId,
 	...renderProps
 }: MarkdownContentProps) {
-	if (editable) {
+	// A viewer reads the rendered text and never drops into an editor.
+	const canWrite = useCanWrite()
+
+	if (editable && canWrite) {
 		return (
 			<EditorAdapter
 				content={renderProps.content}
@@ -473,6 +486,7 @@ export function MarkdownContent({
 				preserveSource={preserveSource}
 				surface={surface}
 				objectId={objectId}
+				linkChipsWorkspaceId={renderProps.linkedCards?.workspaceId}
 			/>
 		)
 	}
@@ -500,6 +514,7 @@ function EditorAdapter({
 	preserveSource,
 	surface,
 	objectId,
+	linkChipsWorkspaceId,
 }: {
 	content: string
 	onChange?: (value: string) => unknown
@@ -509,7 +524,10 @@ function EditorAdapter({
 	preserveSource?: boolean
 	surface?: string
 	objectId?: string
+	/** Set where the links in the text draw as chips, except the one the cursor touches. */
+	linkChipsWorkspaceId?: string
 }) {
+	const { host: linkChips, layer: linkChipLayer } = useEditorLinkChips(linkChipsWorkspaceId)
 	const [readOnly, setReadOnly] = useState(false)
 	const [rewriteRefused, setRewriteRefused] = useState(false)
 	// The editor reads `value` once, at mount. With preserveSource it also builds
@@ -608,8 +626,10 @@ function EditorAdapter({
 					preserveSource={preserveSource}
 					surface={surface}
 					objectId={objectId}
+					linkChips={linkChips}
 				/>
 			</Suspense>
+			{linkChipLayer}
 		</>
 	)
 }

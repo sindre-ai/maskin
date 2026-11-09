@@ -35,15 +35,17 @@ public final class InternalLinkDirectory {
 
 	/// The object's type, title and status once known. The first call for an id starts the lookup and
 	/// returns nil; reading the store here registers the caller to be told when it arrives.
-	public func object(_ id: String) -> Object? {
-		if case .object(let object) = lookup(id) { return object }
+	/// `workspace` is the one the link's address names: an object in another workspace is not
+	/// looked up.
+	public func object(_ id: String, workspace: String? = nil) -> Object? {
+		if case .object(let object) = lookup(id, workspace: workspace) { return object }
 		return nil
 	}
 
 	/// Where the lookup of this object stands. The first call for an id starts it.
-	public func lookup(_ id: String) -> Lookup {
+	public func lookup(_ id: String, workspace: String? = nil) -> Lookup {
 		guard let store = store() else { return .unreadable }
-		let target = LinkedTarget(kind: .object, uuid: id)
+		let target = LinkedTarget(kind: .object, uuid: id, workspaceID: workspace)
 		switch store.state(for: target) {
 		case nil:
 			Task { await store.resolve([target]) }
@@ -56,12 +58,41 @@ public final class InternalLinkDirectory {
 				return .object(
 					Object(type: object.type, title: Self.title(object.title), status: Self.title(object.status)))
 			case .deleted: return .deleted
-			case .file, .plain: return .unreadable
+			case .file, .plain, .otherWorkspace, .loop, .trigger, .agent, .chat, .chatUnavailable: return .unreadable
 			}
 		case .loading?:
 			return .loading
 		case .unavailable?:
 			return .unreadable
+		}
+	}
+
+	/// What a link to a loop or a trigger turned out to be.
+	public struct Named: Equatable, Sendable {
+		/// The loop's or trigger's own name; nil for a deleted one.
+		public var title: String?
+		public var isDeleted: Bool
+	}
+
+	/// The name of a loop or trigger once known, or that it was deleted. The first call for an id
+	/// starts the lookup and returns nil; while it loads, or if it can't be read (offline, a trigger
+	/// the triggers list does not hold), callers fall back to the kind alone.
+	public func named(_ kind: LinkedTarget.Kind, id: String) -> Named? {
+		guard kind == .loop || kind == .trigger, let store = store() else { return nil }
+		let target = LinkedTarget(kind: kind, uuid: id)
+		switch store.state(for: target) {
+		case nil:
+			Task { await store.resolve([target]) }
+			return nil
+		case .ready(let item)?:
+			switch item {
+			case .loop(let loop): return Named(title: loop.displayName, isDeleted: false)
+			case .trigger(let trigger): return Named(title: trigger.displayName, isDeleted: false)
+			case .deleted: return Named(title: nil, isDeleted: true)
+			case .draft, .file, .object, .plain, .agent, .chat, .chatUnavailable, .otherWorkspace: return nil
+			}
+		case .loading?, .unavailable?:
+			return nil
 		}
 	}
 

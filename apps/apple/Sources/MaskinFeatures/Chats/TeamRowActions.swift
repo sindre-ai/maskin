@@ -19,8 +19,13 @@ struct TeamRowActions {
 	var more: () -> Void
 	/// Enters selection mode with this row picked (the list's bulk actions). Nil hides it.
 	var select: (() -> Void)? = nil
+	/// Reorder within PINNED; set only for a pinned tile that has a neighbour on that side.
+	var moveEarlier: (() -> Void)? = nil
+	var moveLater: (() -> Void)? = nil
 
 	var pinLabel: String { isPinned ? "Unpin" : "Pin" }
+	/// The row menu says what Pin does; the swipe button has no room for it.
+	var pinMenuLabel: String { isPinned ? "Unpin" : "Pin to top" }
 	var readLabel: String { isUnread ? "Read" : "Unread" }
 	var readMenuLabel: String { isUnread ? "Mark as read" : "Mark as unread" }
 }
@@ -89,11 +94,17 @@ struct TeamRowMenuItems: View {
 	let actions: TeamRowActions
 
 	var body: some View {
-		Button(actions.pinLabel, systemImage: actions.isPinned ? "pin.slash" : "pin", action: actions.pin)
+		Button(actions.pinMenuLabel, systemImage: actions.isPinned ? "pin.slash" : "pin", action: actions.pin)
 		if actions.canToggleRead {
 			Button(
 				actions.readMenuLabel, systemImage: actions.isUnread ? "envelope.open" : "envelope.badge",
 				action: actions.toggleRead)
+		}
+		if let earlier = actions.moveEarlier {
+			Button("Move earlier", systemImage: "arrow.up", action: earlier)
+		}
+		if let later = actions.moveLater {
+			Button("Move later", systemImage: "arrow.down", action: later)
 		}
 		if actions.canArchive {
 			Button("Archive", systemImage: "archivebox", action: actions.archive)

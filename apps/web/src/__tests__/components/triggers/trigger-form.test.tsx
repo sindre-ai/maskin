@@ -110,7 +110,7 @@ describe('TriggerForm', () => {
 		// The type chip and the selected radio chip both read "Event".
 		expect(screen.getAllByText('Event').length).toBeGreaterThan(1)
 		expect(screen.getAllByText('Scout').length).toBeGreaterThan(0)
-		expect(screen.getByText(/not tied to a loop/)).toBeInTheDocument()
+		expect(screen.getByText(/not tied to a flow/)).toBeInTheDocument()
 	})
 
 	it('renders the config-driven sections only when their fields are present', () => {

@@ -14,6 +14,7 @@ struct ObjectOverviewView<Decision: View>: View {
 	/// The description starts unfolded (snapshots).
 	var descriptionExpanded = false
 	var onShowActivity: () -> Void = {}
+	var sessionActions = ObjectSessionActions.none
 	@ViewBuilder var decision: () -> Decision
 
 	var body: some View {
@@ -34,6 +35,15 @@ struct ObjectOverviewView<Decision: View>: View {
 				.padding(.vertical, MaskinSpace.s9)
 				.background(
 					MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
+			}
+			if let session = object.lastSession,
+				let line = ObjectSessionCopy.originLine(
+					starterName: store.directory.name(for: session.createdByActorID),
+					agentName: store.directory.name(for: session.agentID))
+			{
+				ObjectOriginRow(
+					session: session, line: line, starterName: store.directory.name(for: session.createdByActorID),
+					actions: sessionActions)
 			}
 			OutcomesSection(outputs: store.outcomes, sourceName: object.displayTitle)
 			ObjectPropertiesCard(store: store, object: object)
@@ -93,6 +103,13 @@ struct ObjectPropertiesCard: View {
 	let store: ObjectDetailStore
 	let object: WorkObject
 	@State private var showAll = false
+	@State private var pickingDue = false
+	@State private var addingProperty = false
+	@State private var schema: SchemaStore?
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
+	@Environment(\.openURL) private var openURL
+	@Environment(\.canPlaceCalls) private var canPlaceCalls
+	@Environment(\.showToast) private var showToast
 
 	private static var preview: Int { 6 }
 
@@ -118,6 +135,31 @@ struct ObjectPropertiesCard: View {
 		relative.dateTimeStyle = .named
 		let phrase = relative.localizedString(for: date, relativeTo: now)
 		return "\(phrase.prefix(1).uppercased() + phrase.dropFirst()) · \(date.formatted(.dateTime.day().month(.abbreviated)))"
+	}
+
+	/// Metadata keys a person or company keeps a phone number under.
+	private static let phoneKeys: Set<String> = ["phone", "phone_number", "phonenumber", "mobile", "telephone", "tel"]
+
+	/// The `tel:` link for a person's or company's phone field; nil for any other row or an empty field.
+	private func callURL(for row: (key: String, label: String, value: String)) -> URL? {
+		guard ["person", "company"].contains(ObjectTypeCatalog.canonical(object.type)),
+			Self.phoneKeys.contains(row.key.lowercased())
+		else { return nil }
+		return PhoneNumberLink.url(for: row.value)
+	}
+
+	/// Tap: the system Call confirmation. Where this device cannot call, copy the number instead.
+	private func call(_ url: URL) {
+		if canPlaceCalls {
+			openURL(url)
+		} else {
+			copyNumber(url)
+		}
+	}
+
+	private func copyNumber(_ url: URL) {
+		MarkdownClipboard.copy(PhoneNumberLink.dialString(of: url))
+		showToast?("Copied")
 	}
 
 	private var rows: [(key: String, label: String, value: String)] {
@@ -149,9 +191,39 @@ struct ObjectPropertiesCard: View {
 							Text(row.label)
 								.foregroundStyle(MaskinColor.ink4)
 							Spacer(minLength: MaskinSpace.s7)
-							Text(row.value).foregroundStyle(MaskinColor.ink).multilineTextAlignment(.trailing)
+							if let url = callURL(for: row) {
+								Button { call(url) } label: {
+									Label(row.value, systemImage: "phone")
+										.foregroundStyle(MaskinColor.ink)
+										.multilineTextAlignment(.trailing)
+										.frame(minHeight: MaskinSpace.touchMin, alignment: .trailing)
+								}
+								.buttonStyle(.maskinPressed)
+								.contextMenu { Button("Copy", systemImage: "doc.on.doc") { copyNumber(url) } }
+								.accessibilityHint("Calls this number")
+							} else {
+								Text(row.value).foregroundStyle(MaskinColor.ink).multilineTextAlignment(.trailing)
+							}
 						}
 						.maskinText(.subhead)
+					}
+					if store.dueDate == nil {
+						HStack(alignment: .firstTextBaseline) {
+							Text("Due").foregroundStyle(MaskinColor.ink5)
+							Spacer(minLength: MaskinSpace.s7)
+							Button("Add") { pickingDue = true }
+								.foregroundStyle(MaskinColor.ink4)
+								.frame(minHeight: MaskinSpace.touchMin, alignment: .trailing)
+						}
+						.maskinText(.subhead)
+					}
+					if let schema, schema.canEdit {
+						Button { addingProperty = true } label: {
+							Label("Add property", systemImage: "plus")
+								.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin, alignment: .leading)
+						}
+						.maskinText(.subhead)
+						.foregroundStyle(MaskinColor.ink3)
 					}
 					if all.count > Self.preview {
 						Button(showAll ? "Show fewer" : "Show all \(all.count)") {
@@ -165,6 +237,17 @@ struct ObjectPropertiesCard: View {
 				.padding(MaskinSpace.s9)
 				.frame(maxWidth: .infinity, alignment: .leading)
 				.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
+			}
+			.sheet(isPresented: $pickingDue) {
+				DuePickerSheet(date: nil) { date in Task { await store.setDueDate(date) } }
+			}
+			.task {
+				if schema == nil, let environment = runtime?.environment {
+					schema = SettingsServices(environment: environment).schemaStore()
+				}
+			}
+			.sheet(isPresented: $addingProperty) {
+				if let schema { AddPropertySheet(store: store, schema: schema, type: object.type) }
 			}
 		}
 	}

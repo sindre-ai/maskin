@@ -9,7 +9,7 @@ const { default: workspacesRoutes } = await import('../../routes/workspaces')
 
 describe('Workspaces Routes', () => {
 	describe('POST /api/workspaces', () => {
-		// Each of the 7 default agents does one actor insert + one
+		// Each of the 6 default agents does one actor insert + one
 		// workspaceMembers insert inside the create transaction (seedDefaultAgentActors);
 		// mockResults.insert is the static fallback once insertQueue is exhausted, so
 		// unconfigured agent/member inserts still resolve to a row with an id.
@@ -38,8 +38,8 @@ describe('Workspaces Routes', () => {
 			const body = await res.json()
 			expect(body.id).toBe(ws.id)
 			expect(body.name).toBe(ws.name)
-			// workspace + owner-member + 7 default agents × (actor + member) = 16.
-			expect(calls.inserts).toHaveLength(16)
+			// workspace + owner-member + 6 default agents × (actor + member) = 14.
+			expect(calls.inserts).toHaveLength(14)
 			expect(calls.inserts[1]).toMatchObject({ workspaceId: ws.id, role: 'owner' })
 		})
 
@@ -178,6 +178,40 @@ describe('Workspaces Routes', () => {
 
 			expect(res.status).toBe(404)
 			expect(calls.updates).toHaveLength(0)
+		})
+
+		const DAILY_BUDGET = { unit: 'tokens', amount: 2000000, stop_share: 100, timezone: 'UTC' }
+
+		it('returns 400 and does not touch the DB when settings.daily_budget would change', async () => {
+			const ws = buildWorkspace({ settings: { daily_budget: DAILY_BUDGET } })
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [MEMBER, [ws]]
+			mockResults.update = [ws]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { daily_budget: { ...DAILY_BUDGET, amount: 5000000 } },
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			expect(calls.updates).toHaveLength(0)
+		})
+
+		it('accepts a settings object that re-sends the stored daily_budget unchanged', async () => {
+			const ws = buildWorkspace({ settings: { daily_budget: DAILY_BUDGET } })
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [MEMBER, [ws], HUMAN_OWNER]
+			mockResults.update = [ws]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { daily_budget: DAILY_BUDGET, display_names: { insight: 'Signal' } },
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			expect(calls.updates).toHaveLength(1)
 		})
 
 		it('returns 404 when workspace not found for settings merge', async () => {
@@ -403,6 +437,43 @@ describe('Workspaces Routes', () => {
 				expect(openSecret(stored)).toBe('sk-ant-rotated')
 			})
 
+			it('keeps the stored custom_llm.api_key when an admin edits the endpoint without sending one', async () => {
+				const { api_key: _key, ...readBack } = STORED_CUSTOM_LLM
+				const ws = buildByoWorkspace()
+				const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+				mockResults.selectQueue = [MEMBER, [ws], HUMAN_ADMIN]
+				mockResults.update = [{ ...ws }]
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+						settings: { custom_llm: { ...readBack, model: 'model-b' } },
+					}),
+				)
+
+				expect(res.status).toBe(200)
+				expect(calls.updates[0]).toMatchObject({
+					settings: { custom_llm: { ...STORED_CUSTOM_LLM, model: 'model-b' } },
+				})
+			})
+
+			it('clears custom_llm.api_key only when the admin sends null', async () => {
+				const ws = buildByoWorkspace()
+				const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+				mockResults.selectQueue = [MEMBER, [ws], HUMAN_ADMIN]
+				mockResults.update = [{ ...ws }]
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+						settings: { custom_llm: { ...STORED_CUSTOM_LLM, enabled: false, api_key: null } },
+					}),
+				)
+
+				expect(res.status).toBe(200)
+				expect(calls.updates[0]).toMatchObject({
+					settings: { custom_llm: { enabled: false, api_key: null } },
+				})
+			})
+
 			it('lets a plain member pin files (a member-level settings key)', async () => {
 				const pinnedId = randomUUID()
 				const ws = buildWorkspace()
@@ -446,6 +517,25 @@ describe('Workspaces Routes', () => {
 							llm_keys: { anthropic: 'sk-ant-stored' },
 							custom_llm: STORED_CUSTOM_LLM,
 						},
+					})
+				})
+
+				it('gets 200 for the custom_llm read back from GET, which has no api_key, and keeps the stored key', async () => {
+					const { api_key: _key, ...readBack } = STORED_CUSTOM_LLM
+					const ws = buildByoWorkspace()
+					const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+					mockResults.selectQueue = [MEMBER, [ws]] // no admin lookup: nothing admin-only changed
+					mockResults.update = [{ ...ws }]
+
+					const res = await app.request(
+						jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+							settings: { custom_llm: readBack, max_concurrent_sessions: 5 },
+						}),
+					)
+
+					expect(res.status).toBe(200)
+					expect(calls.updates[0]).toMatchObject({
+						settings: { custom_llm: STORED_CUSTOM_LLM, max_concurrent_sessions: 5 },
 					})
 				})
 
@@ -658,16 +748,15 @@ describe('Workspaces Routes', () => {
 	})
 
 	describe('POST /api/workspaces/:id/members', () => {
-		it('adds a member and returns 201 when caller is a human owner', async () => {
+		it('adds an agent the caller created and returns 201 when caller is a human owner', async () => {
 			const wsId = randomUUID()
 			const actorId = randomUUID()
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.selectQueue = [
 				[{ actorId: 'test-actor-id' }], // isWorkspaceMember(caller)
 				[{ role: 'owner', type: 'human' }], // isWorkspaceHumanAdminOrOwner(caller)
-				[{ type: 'human' }], // target actor type lookup
-				[{ id: wsId, settings: {} }], // workspace row locked FOR UPDATE (trial plan)
-				[{ n: 0 }], // countHumanMembers — 0 < trial cap 1
+				[{ type: 'agent', createdBy: 'test-actor-id' }], // target actor lookup
+				[{ id: wsId }], // workspace row locked FOR UPDATE
 			]
 			mockResults.insert = [{}]
 
@@ -681,6 +770,96 @@ describe('Workspaces Routes', () => {
 			expect(res.status).toBe(201)
 			const body = await res.json()
 			expect(body.added).toBe(true)
+		})
+
+		it('adds an agent created by another member of the workspace', async () => {
+			const wsId = randomUUID()
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [
+				[{ actorId: 'test-actor-id' }], // isWorkspaceMember(caller)
+				[{ role: 'owner', type: 'human' }], // isWorkspaceHumanAdminOrOwner(caller)
+				[{ type: 'agent', createdBy: randomUUID() }], // target actor lookup
+				[{ actorId: 'creator' }], // isWorkspaceMember(creator of the agent)
+				[{ id: wsId }], // workspace row locked FOR UPDATE
+			]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/workspaces/${wsId}/members`, { actor_id: randomUUID() }),
+			)
+
+			expect(res.status).toBe(201)
+			expect((await res.json()).added).toBe(true)
+		})
+
+		it('returns 403 and writes nothing when the target is a person', async () => {
+			const wsId = randomUUID()
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [
+				[{ actorId: 'test-actor-id' }], // isWorkspaceMember(caller)
+				[{ role: 'owner', type: 'human' }], // isWorkspaceHumanAdminOrOwner(caller)
+				[{ type: 'human', createdBy: 'test-actor-id' }], // target actor lookup
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/workspaces/${wsId}/members`, { actor_id: randomUUID() }),
+			)
+
+			expect(res.status).toBe(403)
+			expect((await res.json()).error.code).toBe('FORBIDDEN')
+			expect(calls.inserts).toHaveLength(0)
+		})
+
+		it('returns 403, the same as for a refused actor, when the actor does not exist', async () => {
+			const wsId = randomUUID()
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [
+				[{ actorId: 'test-actor-id' }], // isWorkspaceMember(caller)
+				[{ role: 'owner', type: 'human' }], // isWorkspaceHumanAdminOrOwner(caller)
+				[], // target actor lookup: no such actor
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/workspaces/${wsId}/members`, { actor_id: randomUUID() }),
+			)
+
+			expect(res.status).toBe(403)
+			expect(calls.inserts).toHaveLength(0)
+		})
+
+		it('returns 403 and writes nothing when the agent was created outside the workspace', async () => {
+			const wsId = randomUUID()
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [
+				[{ actorId: 'test-actor-id' }], // isWorkspaceMember(caller)
+				[{ role: 'owner', type: 'human' }], // isWorkspaceHumanAdminOrOwner(caller)
+				[{ type: 'agent', createdBy: randomUUID() }], // target actor lookup
+				[], // isWorkspaceMember(creator of the agent): not a member
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/workspaces/${wsId}/members`, { actor_id: randomUUID() }),
+			)
+
+			expect(res.status).toBe(403)
+			expect(calls.inserts).toHaveLength(0)
+		})
+
+		it('returns 403 and writes nothing when the agent has no recorded creator', async () => {
+			const wsId = randomUUID()
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [
+				[{ actorId: 'test-actor-id' }], // isWorkspaceMember(caller)
+				[{ role: 'owner', type: 'human' }], // isWorkspaceHumanAdminOrOwner(caller)
+				[{ type: 'agent', createdBy: null }], // target actor lookup
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/workspaces/${wsId}/members`, { actor_id: randomUUID() }),
+			)
+
+			expect(res.status).toBe(403)
+			expect(calls.inserts).toHaveLength(0)
 		})
 
 		it('returns 404 when caller is not a member of the workspace', async () => {

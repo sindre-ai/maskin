@@ -18,6 +18,7 @@ import { CredentialNameError } from '../lib/integrations/credential-name'
 import { updateCredential } from '../lib/integrations/credential-update'
 import { CredentialValueError } from '../lib/integrations/credential-value'
 import {
+	LOGIN_EMAIL_MAX_LENGTH,
 	LOGIN_PASSWORD_MAX_LENGTH,
 	LOGIN_USERNAME_MAX_LENGTH,
 	LoginValueError,
@@ -314,6 +315,7 @@ const byoLoginBodySchema = z
 		displayName: z.string().trim().min(1).max(80),
 		username: z.string().min(1).max(LOGIN_USERNAME_MAX_LENGTH),
 		password: z.string().min(1).max(LOGIN_PASSWORD_MAX_LENGTH),
+		email: z.string().min(1).max(LOGIN_EMAIL_MAX_LENGTH).optional(),
 	})
 	.strict()
 
@@ -361,6 +363,7 @@ app.openapi(byoLoginRoute, (async (c) => {
 			displayName: body.displayName,
 			username: body.username,
 			password: body.password,
+			email: body.email,
 		})
 
 		void capturePosthogEvent('keychain_credential_created', actorId, {
@@ -704,31 +707,36 @@ app.openapi(removeRoute, (async (c) => {
 
 // ── POST /api/integrations/:id/update ────────────────────────────────────
 
-// A new name, a new secret, or both. A key takes rawSecret; a login takes username and password
-// together. No `request.body`: the handler owns the raw bytes so it can zero them.
+// A new name, a new secret, or both. A key takes rawSecret; a login takes any of username, password
+// and email, and keeps the parts left out. No `request.body`: the handler owns the raw bytes so it
+// can zero them.
 const updateBodySchema = z
 	.object({
 		displayName: z.string().trim().min(1).max(80).optional(),
 		rawSecret: z.string().min(1).max(4096).optional(),
 		username: z.string().min(1).max(LOGIN_USERNAME_MAX_LENGTH).optional(),
 		password: z.string().min(1).max(LOGIN_PASSWORD_MAX_LENGTH).optional(),
+		email: z.string().min(1).max(LOGIN_EMAIL_MAX_LENGTH).optional(),
 	})
 	.strict()
-	.refine((b) => (b.username === undefined) === (b.password === undefined), {
-		message: 'username and password are replaced together',
-		path: ['username'],
-	})
 	.refine(
 		(b) =>
 			b.displayName !== undefined ||
 			b.rawSecret !== undefined ||
-			(b.username !== undefined && b.password !== undefined),
+			b.username !== undefined ||
+			b.password !== undefined ||
+			b.email !== undefined,
 		{ message: 'Nothing to change', path: ['displayName'] },
 	)
-	.refine((b) => b.rawSecret === undefined || b.username === undefined, {
-		message: 'a credential is a key or a login, not both',
-		path: ['rawSecret'],
-	})
+	.refine(
+		(b) =>
+			b.rawSecret === undefined ||
+			(b.username === undefined && b.password === undefined && b.email === undefined),
+		{
+			message: 'a credential is a key or a login, not both',
+			path: ['rawSecret'],
+		},
+	)
 
 const updateRoute = createRoute({
 	method: 'post',
@@ -791,8 +799,8 @@ app.openapi(updateRoute, (async (c) => {
 				displayName: body.displayName,
 				rawSecret: body.rawSecret,
 				login:
-					body.username !== undefined && body.password !== undefined
-						? { username: body.username, password: body.password }
+					body.username !== undefined || body.password !== undefined || body.email !== undefined
+						? { username: body.username, password: body.password, email: body.email }
 						: undefined,
 			},
 			// The same rule as removing it: the person who saved it, or a workspace admin or owner.
@@ -818,9 +826,18 @@ app.openapi(updateRoute, (async (c) => {
 			return c.json(
 				createApiError(
 					'BAD_REQUEST',
-					'An API key takes a key, and a login takes a username and password',
+					'An API key takes a key, and a login takes a username, password or email',
 				),
 				400,
+			)
+		}
+		if (outcome.kind === 'unreadable_login') {
+			return c.json(
+				createApiError(
+					'CONFLICT',
+					'The saved login could not be read. Enter the username and password together to replace it',
+				),
+				409,
 			)
 		}
 

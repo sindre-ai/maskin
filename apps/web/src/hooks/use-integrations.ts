@@ -249,8 +249,12 @@ export function useCreateByoApiKey(workspaceId: string) {
 export function useCreateByoLogin(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
-		mutationFn: (input: { displayName: string; username: string; password: string }) =>
-			api.integrations.createByoLogin(workspaceId, input),
+		mutationFn: (input: {
+			displayName: string
+			username: string
+			password: string
+			email?: string
+		}) => api.integrations.createByoLogin(workspaceId, input),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
 		},
@@ -270,6 +274,7 @@ export function useUpdateCredential(workspaceId: string, integrationId: string) 
 			rawSecret?: string
 			username?: string
 			password?: string
+			email?: string
 		}) => api.integrations.updateCredential(integrationId, workspaceId, body),
 		onSuccess: () => {
 			toast.success('Credential updated')

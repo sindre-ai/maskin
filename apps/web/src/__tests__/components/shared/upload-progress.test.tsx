@@ -44,4 +44,17 @@ describe('UploadProgress', () => {
 		render(<UploadProgress progress={0} status="failed" error="Upload failed" />)
 		expect(screen.getByText('Upload failed')).toBeInTheDocument()
 	})
+
+	it('says Preparing until bytes move', () => {
+		render(<UploadProgress progress={0} status="uploading" />)
+		expect(screen.getByText('Preparing…')).toBeInTheDocument()
+		expect(screen.queryByText('0%')).not.toBeInTheDocument()
+	})
+
+	it('shows a readable percentage once progress is reported', () => {
+		render(<UploadProgress progress={0.42} status="uploading" />)
+		expect(screen.getByLabelText('Uploading: 42%')).toBeInTheDocument()
+		expect(screen.getByText('42%')).toBeInTheDocument()
+		expect(screen.queryByText('Preparing…')).not.toBeInTheDocument()
+	})
 })

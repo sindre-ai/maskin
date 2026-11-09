@@ -1,6 +1,11 @@
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { SKJALD_CONNECT_REDIRECT_URI } from '@maskin/shared'
-import { createS256CodeChallenge } from '../../oauth/pkce'
+import { verifyPkce } from '../../../oauth-server/pkce'
+import { createRateLimiter } from '../../../oauth-server/rate-limit'
+
+// The PKCE check and the limiter live in lib/oauth-server (the Claude connector uses them too);
+// re-exported so this module's callers and tests keep importing them from here.
+export { createRateLimiter, verifyPkce }
 
 /**
  * The pure parts of "Connect with Maskin" from the Skjald app. The app opens `/connect/skjald`, the person picks a
@@ -45,13 +50,6 @@ export function generateSigningSecret(): string {
 	return randomBytes(32).toString('hex')
 }
 
-/** PKCE S256 check, constant time. */
-export function verifyPkce(verifier: string, challenge: string): boolean {
-	const expected = Buffer.from(createS256CodeChallenge(verifier))
-	const given = Buffer.from(challenge)
-	return expected.length === given.length && timingSafeEqual(expected, given)
-}
-
 export function isGrantLive(
 	grant: Pick<SkjaldConnectGrant, 'expires_at'>,
 	now = new Date(),
@@ -83,25 +81,4 @@ export function readGrant(config: unknown): SkjaldConnectGrant | null {
 		return grant as SkjaldConnectGrant
 	}
 	return null
-}
-
-/**
- * A tiny fixed-window limiter for the one route that takes no API key. In memory and per process: it slows a
- * guesser down, it is not the thing that makes guessing hopeless (the code has 256 bits).
- */
-export function createRateLimiter(limit: number, windowMs: number, now: () => number = Date.now) {
-	const hits = new Map<string, { count: number; resetAt: number }>()
-	return function allow(key: string): boolean {
-		const t = now()
-		if (hits.size > 5000) {
-			for (const [k, v] of hits) if (v.resetAt <= t) hits.delete(k)
-		}
-		const entry = hits.get(key)
-		if (!entry || entry.resetAt <= t) {
-			hits.set(key, { count: 1, resetAt: t + windowMs })
-			return true
-		}
-		entry.count += 1
-		return entry.count <= limit
-	}
 }

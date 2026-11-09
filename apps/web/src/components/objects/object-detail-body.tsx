@@ -35,7 +35,7 @@ export function ObjectDetailBody({
 		// measure (1105–1122); sections below it sit on the same column.
 		<div className="mt-4 flex flex-col gap-3.5">
 			{/* Editable when the host wires a commit handler — an empty body still
-			    renders the editor so a new object can be written into, which a
+			    renders the editor so a new item can be written into, which a
 			    truthy-content guard alone would make impossible. */}
 			{object.content || onContentChange ? (
 				<MarkdownContent
@@ -49,8 +49,8 @@ export function ObjectDetailBody({
 					preserveSource
 					surface="description"
 					objectId={object.id}
-					// A read-only body (no commit handler) draws its links as chips; the live editor does not.
-					linkedCards={onContentChange ? undefined : outsideChatLinkedCards(workspaceId, 'chips')}
+					// Links draw as chips here too; in the live editor the one the cursor touches stays plain text.
+					linkedCards={outsideChatLinkedCards(workspaceId, 'chips')}
 				/>
 			) : null}
 

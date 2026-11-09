@@ -57,6 +57,21 @@ export const objectResponseSchema = z.object({
 	// the ring on states where the agent isn't actively working. Null when
 	// there is no active session, or when the session row has been deleted.
 	active_session_state: z.string().nullable().optional(),
+	// Newest session started for this object (failure, origin and Watch/Stop
+	// cards). Detail endpoint only; null when there is no session or the caller
+	// may not read it. failure_reason is a short message, never raw log text.
+	last_session: z
+		.object({
+			id: z.string().uuid(),
+			status: z.string(),
+			agent_id: z.string().uuid(),
+			started_at: z.string().nullable(),
+			failure_reason: z.string().nullable(),
+			chat_id: z.string().uuid().nullable(),
+			created_by_actor_id: z.string().uuid(),
+		})
+		.nullable()
+		.optional(),
 	createdBy: z.string().uuid(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
@@ -135,12 +150,22 @@ export const workspaceResponseSchema = z.object({
 	name: z.string(),
 	settings: jsonbField.transform((v) => v ?? {}),
 	// Whether a BYO key is stored, for every caller. Only a human admin or owner
-	// gets llm_keys, custom_llm, claude_oauth and billing inside settings.
+	// gets custom_llm (without its api_key), claude_oauth and billing inside
+	// settings. No caller gets a key back.
 	llm_configured: z.object({
 		anthropic: z.boolean(),
 		openai: z.boolean(),
 		custom_llm: z.boolean(),
 	}),
+	// Last four characters of each stored key, for a human admin or owner only.
+	// Null where no key is stored or it is too short to hint at.
+	llm_key_hints: z
+		.object({
+			anthropic: z.string().nullable(),
+			openai: z.string().nullable(),
+			custom_llm: z.string().nullable(),
+		})
+		.optional(),
 	onboardingEnabled: z.boolean(),
 	// Effective enterprise status = `isEnterprise()` (the `enterprise_granted`
 	// column OR an enterprise billing owner), not the raw column. Derived, so it
@@ -192,6 +217,16 @@ export const eventResponseSchema = z.object({
 export const createCommentResponseSchema = eventResponseSchema.extend({
 	unresolved_mentions: z.array(z.string().uuid()).optional(),
 	warning: z.string().optional(),
+	/** Set when the reply was a tap on a status button: whether the status changed, and if not why. */
+	status_action: z
+		.object({
+			applied: z.boolean(),
+			object_id: z.string().uuid(),
+			status: z.string().optional(),
+			reason: z.enum(['moved_on', 'not_found', 'invalid_status']).optional(),
+			current_status: z.string().nullable().optional(),
+		})
+		.optional(),
 })
 
 export const fileSummarySchema = z.object({
@@ -334,6 +369,8 @@ export const sessionResponseSchema = z.object({
 	createdBy: z.string().uuid(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
+	// Short failure line (200 characters at most), set only when status is failed.
+	failure_reason: z.string().nullable().optional(),
 })
 
 // PATCH /sessions/:id answer when notify_on_complete was requested: what happened
@@ -358,6 +395,8 @@ export const conversationListItemResponseSchema = z.object({
 	subjectType: z.enum(['object', 'loop']).nullable(),
 	subjectId: z.string().uuid().nullable(),
 	createdBy: z.string().uuid(),
+	// Labels for grouping chats, for example a team name. Shared by every participant.
+	tags: z.array(z.string()),
 	lastMessageAt: z.string().nullable(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
@@ -376,6 +415,9 @@ export const conversationListItemResponseSchema = z.object({
 	// True when the caller wrote the snippet.
 	snippet_is_caller: z.boolean(),
 	participants: z.array(conversationParticipantResponseSchema),
+	// Agents with an open turn in this chat right now (not merely a live session — a chat
+	// session stays running between turns). The list row shows them as working.
+	working_actor_ids: z.array(z.string().uuid()),
 })
 
 export const conversationDetailResponseSchema = conversationListItemResponseSchema
@@ -384,6 +426,7 @@ export const conversationDetailResponseSchema = conversationListItemResponseSche
 		snippet_actor_id: true,
 		snippet_actor_name: true,
 		snippet_is_caller: true,
+		working_actor_ids: true,
 	})
 	.extend({
 		last_read_message_id: z.number().nullable(),
@@ -407,6 +450,8 @@ export const messageResponseSchema = z.object({
 	sessionId: z.string().uuid().nullable(),
 	createdAt: z.string().nullable(),
 	editedAt: z.string().nullable(),
+	/** Set when the author deleted the message; its content is then empty. */
+	deletedAt: z.string().nullable(),
 	/** Root message id when this is a thread reply; null for top-level messages. */
 	threadRootId: z.number().nullable(),
 	/** A thread reply also shown in the main timeline. */

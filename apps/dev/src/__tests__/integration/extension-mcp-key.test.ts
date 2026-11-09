@@ -1,4 +1,4 @@
-import { integrations } from '@maskin/db/schema'
+import { extensions, integrations } from '@maskin/db/schema'
 import { mcpRemoteServer } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
@@ -12,6 +12,14 @@ import { createIntegrationApp, db, getTestActorId } from './global-setup'
 vi.mock('../../lib/analytics/integration-events', () => ({
 	trackIntegrationConnected: vi.fn().mockResolvedValue(undefined),
 }))
+
+// The probe makes a real network call; the 401-to-rejected mapping itself is
+// covered in lib/integrations/mcp-probe.test.ts.
+const probeMcpTools = vi.hoisted(() => vi.fn())
+vi.mock('../../lib/integrations/mcp-probe', () => ({ probeMcpTools }))
+
+const REJECTED = 'The server rejected the API key.'
+const rejected401 = { ok: false, reason: 'rejected', message: REJECTED } as const
 
 // The MCP API key goes on its own row (provider extension-mcp:{slug}), apart
 // from the webhook signing secret (extension:{slug}), and is never returned.
@@ -59,6 +67,7 @@ describe('extension MCP key (integration)', () => {
 
 	beforeEach(async () => {
 		workspaceId = (await insertWorkspace(db, getTestActorId())).id
+		probeMcpTools.mockReset().mockResolvedValue({ ok: true, tools: [] })
 	})
 
 	it('stores the key encrypted on its own row and never returns it', async () => {
@@ -151,5 +160,91 @@ describe('extension MCP key (integration)', () => {
 		)
 		expect(res.status).toBe(403)
 		expect(await rowsFor(workspaceId, 'extension-mcp:acme')).toHaveLength(0)
+	})
+})
+
+describe('extension MCP key check after save (integration)', () => {
+	let workspaceId: string
+	const headers = () => ({ 'x-workspace-id': workspaceId })
+	const lastError = async (id: string) =>
+		(await db.select().from(extensions).where(eq(extensions.id, id)))[0]?.mcpLastError
+
+	beforeEach(async () => {
+		workspaceId = (await insertWorkspace(db, getTestActorId())).id
+		probeMcpTools.mockReset().mockResolvedValue({ ok: true, tools: [] })
+	})
+
+	it('marks the connection when the server answers 401 to the new key, and keeps the key', async () => {
+		probeMcpTools.mockResolvedValue(rejected401)
+		const res = await buildApp().request(
+			jsonRequest('POST', '/api/extensions', mcpBody(), headers()),
+		)
+		expect(res.status).toBe(201)
+		const json = (await res.json()) as { id: string; mcpLastError: string | null }
+		expect(json.mcpLastError).toBe(REJECTED)
+		expect(await lastError(json.id)).toBe(REJECTED)
+		expect(probeMcpTools).toHaveBeenCalledWith('https://example.com/mcp', KEY)
+		expect(await rowsFor(workspaceId, 'extension-mcp:acme')).toHaveLength(1)
+	})
+
+	it('clears the rejection when a replacement key works, but not other errors', async () => {
+		const app = buildApp()
+		probeMcpTools.mockResolvedValue(rejected401)
+		const created = (await (
+			await app.request(jsonRequest('POST', '/api/extensions', mcpBody(), headers()))
+		).json()) as { id: string }
+		expect(await lastError(created.id)).toBe(REJECTED)
+
+		probeMcpTools.mockResolvedValue({ ok: true, tools: [] })
+		const fixed = await app.request(
+			jsonRequest('PATCH', `/api/extensions/${created.id}`, { mcp_api_key: 'sk-new' }, headers()),
+		)
+		expect(fixed.status).toBe(200)
+		expect(((await fixed.json()) as { mcpLastError: string | null }).mcpLastError).toBeNull()
+		expect(await lastError(created.id)).toBeNull()
+		expect(probeMcpTools).toHaveBeenLastCalledWith('https://example.com/mcp', 'sk-new')
+
+		await db
+			.update(extensions)
+			.set({ mcpLastError: 'tool cap exceeded: 25/20' })
+			.where(eq(extensions.id, created.id))
+		await app.request(
+			jsonRequest('PATCH', `/api/extensions/${created.id}`, { mcp_api_key: 'sk-newer' }, headers()),
+		)
+		expect(await lastError(created.id)).toBe('tool cap exceeded: 25/20')
+	})
+
+	it.each(['unreachable', 'invalid', 'blocked'] as const)(
+		'saves and marks nothing when the probe says %s',
+		async (reason) => {
+			probeMcpTools.mockResolvedValue({ ok: false, reason, message: 'nope' })
+			const res = await buildApp().request(
+				jsonRequest('POST', '/api/extensions', mcpBody(), headers()),
+			)
+			expect(res.status).toBe(201)
+			expect(((await res.json()) as { mcpLastError: string | null }).mcpLastError).toBeNull()
+		},
+	)
+
+	it('still saves when the probe itself throws', async () => {
+		probeMcpTools.mockRejectedValue(new Error('boom'))
+		const res = await buildApp().request(
+			jsonRequest('POST', '/api/extensions', mcpBody(), headers()),
+		)
+		expect(res.status).toBe(201)
+		expect(await rowsFor(workspaceId, 'extension-mcp:acme')).toHaveLength(1)
+	})
+
+	it('does not probe when no key is sent', async () => {
+		const app = buildApp()
+		const created = (await (
+			await app.request(
+				jsonRequest('POST', '/api/extensions', mcpBody({ mcp_api_key: undefined }), headers()),
+			)
+		).json()) as { id: string }
+		await app.request(
+			jsonRequest('PATCH', `/api/extensions/${created.id}`, { name: 'Acme 2' }, headers()),
+		)
+		expect(probeMcpTools).not.toHaveBeenCalled()
 	})
 })

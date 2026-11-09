@@ -15,10 +15,12 @@ async function openChatWithCards(
 	await account.api.addWorkspaceMember(ws, agent.id)
 	const links: string[] = []
 	for (const title of TITLES.slice(0, count)) {
+		// An insight, not a task: a task alone on its line is its own open card (see
+		// chat-linked-object-preview.spec.ts), and this spec is about the reference card's fold.
 		const task = await account.api.createObject(ws, {
-			type: 'task',
+			type: 'insight',
 			title,
-			status: 'todo',
+			status: 'new',
 			content: `The text of ${title}.`,
 			driver: agent.id,
 		})

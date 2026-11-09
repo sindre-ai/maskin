@@ -16,8 +16,18 @@ name: iOS TestFlight
 # key creates the distribution certificate and App Store profiles for io.maskin.app and its
 # extensions, so no certificate or profile files live in the repo or in secrets.
 #
+# Every run starts on a fresh Mac, and automatic signing mints a new development certificate
+# on it. Apple caps the certificates per account, so a step at the end of the job revokes the
+# development certificates this run created (.github/scripts/asc-dev-certs.mjs). Distribution
+# certificates and profiles are never touched.
+#
 # Build number is a UTC timestamp (yymmddHHMM), always higher than the last upload. The
 # marketing version still comes from project.yml.
+#
+# The debug symbols (dSYMs) of each build are kept as a workflow artifact for 7 days, named
+# Maskin-dSYMs-<build number>. Apple's copy cannot be downloaded for a build without bitcode,
+# so this is the only way to symbolicate a crash log from a CI build. Each artifact is about
+# 400 MB, which is why retention is 7 days and not 14.
 #
 # Internal testers get the build automatically once App Store Connect finishes processing it,
 # if the internal TestFlight group has "Automatic distribution" switched on.
@@ -49,6 +59,9 @@ jobs:
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
       ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+      # The PostHog project token (public by design, same as the web build's VITE_POSTHOG_KEY). Unset =
+      # the app ships without analytics: it sends nothing and never asks.
+      POSTHOG_PROJECT_KEY: ${{ vars.POSTHOG_PROJECT_KEY }}
     steps:
       - name: Check signing secrets
         id: gate
@@ -90,6 +103,20 @@ jobs:
           printf '%s' "$ASC_KEY_P8" > "$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8"
           chmod 600 "$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8"
 
+      # The certificate clean-up script needs Node; the Mac image does not guarantee it.
+      - uses: actions/setup-node@v6
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          node-version: 20
+
+      - name: Record the development certificates before the archive
+        id: certs_before
+        if: steps.gate.outputs.enabled == 'true'
+        continue-on-error: true
+        run: |
+          ASC_KEY_P8_PATH="$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8" \
+            node .github/scripts/asc-dev-certs.mjs snapshot "$RUNNER_TEMP/dev-certs-before.json"
+
       - name: Archive
         if: steps.gate.outputs.enabled == 'true'
         working-directory: apps/apple
@@ -109,8 +136,21 @@ jobs:
             -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
             DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
             CURRENT_PROJECT_VERSION="$build_number" \
+            MASKIN_POSTHOG_KEY="$POSTHOG_PROJECT_KEY" \
             2>&1 | tee "$RUNNER_TEMP/archive.log" | tail -n 25
           test "${PIPESTATUS[0]}" -eq 0
+
+      # The debug symbols exist only inside this archive, which disappears with the runner.
+      # Kept before the upload so a failed upload still leaves them. Never fails the build.
+      - name: Keep the debug symbols
+        if: steps.gate.outputs.enabled == 'true'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: Maskin-dSYMs-${{ env.BUILD_NUMBER }}
+          path: ${{ runner.temp }}/Maskin.xcarchive/dSYMs
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Export and upload to TestFlight
         if: steps.gate.outputs.enabled == 'true'
@@ -141,6 +181,15 @@ jobs:
             2>&1 | tee "$RUNNER_TEMP/export.log" | tail -n 25
           test "${PIPESTATUS[0]}" -eq 0
           echo "Uploaded build $BUILD_NUMBER to App Store Connect."
+
+      # Runs even when the build failed or was cancelled, so a failed run does not leave
+      # certificates behind. Skipped when the snapshot above did not succeed.
+      - name: Revoke the development certificates this run created
+        if: always() && steps.gate.outputs.enabled == 'true' && steps.certs_before.outcome == 'success'
+        continue-on-error: true
+        run: |
+          ASC_KEY_P8_PATH="$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8" \
+            node .github/scripts/asc-dev-certs.mjs revoke-new "$RUNNER_TEMP/dev-certs-before.json"
 
       - name: Remove the key
         if: always() && steps.gate.outputs.enabled == 'true'

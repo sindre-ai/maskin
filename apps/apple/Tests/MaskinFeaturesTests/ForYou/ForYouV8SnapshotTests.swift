@@ -106,15 +106,12 @@ struct ForYouV8SnapshotTests {
 		DraftReviewStore(remote: StubReviewRemote(fails: fails), undoWindow: window, announce: { _ in true })
 	}
 
-	@Test("header with a sentence, with none, and as the date only", arguments: [false, true])
+	@Test("greeting, one line and two", arguments: [false, true])
 	func header(dark: Bool) throws {
 		try render(
 			VStack(alignment: .leading, spacing: MaskinSpace.s9) {
-				ForYouHeaderView(
-					dateLine: "SUN 18 OCT", spokenDate: "Sunday 18 October",
-					summary: "Forge needs a call: Is the onboarding bet worth running?")
-				ForYouHeaderView(dateLine: "SUN 18 OCT", spokenDate: "Sunday 18 October", summary: "Nothing is blocked on you.")
-				ForYouHeaderView(dateLine: "SUN 18 OCT", spokenDate: "Sunday 18 October", summary: nil)
+				ForYouGreetingView(text: "Good evening, Sebastian")
+				ForYouGreetingView(text: "Good morning")
 			}, dark: dark, name: "header")
 	}
 
@@ -195,10 +192,7 @@ struct ForYouV8SnapshotTests {
 	func largestTextSize() throws {
 		try render(
 			VStack(alignment: .leading, spacing: MaskinSpace.s9) {
-				ForYouHeaderView(
-					dateLine: "SUN 18 OCT", spokenDate: "Sunday 18 October",
-					summary: "Forge needs a call: Is the onboarding bet worth running?")
-				ForYouHeaderView(dateLine: "SUN 18 OCT", spokenDate: "Sunday 18 October", summary: nil)
+				ForYouGreetingView(text: "Good evening, Sebastian")
 			}, type: .accessibility3, name: "header-ax")
 		try render(
 			ApprovalGroupCard(group: group(approved: 5), typeLabel: "Wiki page", undoableCount: 3),

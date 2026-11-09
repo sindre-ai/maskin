@@ -6,12 +6,16 @@ public struct OfflineBanner: View {
 	private let isVisible: Bool
 	private let message: String
 	private let retry: (() -> Void)?
+	private let symbol: String
+	private let actionTitle: String
 
 	/// `retry`: when set, a trailing "Retry" button runs it (the caller wires the real refetch).
 	public init(
 		isVisible: Bool = true, message: String = "Can't reach Maskin. Decisions queue offline.",
-		retry: (() -> Void)? = nil
+		symbol: String = "wifi.slash", actionTitle: String = "Retry", retry: (() -> Void)? = nil
 	) {
+		self.symbol = symbol
+		self.actionTitle = actionTitle
 		self.isVisible = isVisible
 		self.message = message
 		self.retry = retry
@@ -20,11 +24,11 @@ public struct OfflineBanner: View {
 	public var body: some View {
 		if isVisible {
 			HStack(spacing: MaskinSpace.s4) {
-				Image(systemName: "wifi.slash").accessibilityHidden(true)
+				Image(systemName: symbol).accessibilityHidden(true)
 				Text(message).maskinText(.subhead)
 				if let retry {
 					Spacer(minLength: MaskinSpace.s3)
-					Button("Retry", action: retry)
+					Button(actionTitle, action: retry)
 						.maskinText(.subhead)
 						.fontWeight(.semibold)
 						.frame(minHeight: MaskinSpace.touchMin)

@@ -255,17 +255,23 @@ describe('Helper return (integration)', () => {
 		expect(await returnComments()).toHaveLength(1)
 	})
 
-	it('does not report a helper that completed, or one a person stopped, when the sender ends', async () => {
+	it('tells a sender that finished about a helper that completed while it was busy, but not one a person stopped', async () => {
 		const s = await senderSession({ status: 'running' })
 		const done = await helperSession(s, { status: 'completed' })
 		const stopped = await helperSession(s, { status: 'user_stopped' })
-		await returnToSender(db, done.id)
-		await returnToSender(db, stopped.id)
+		expect((await returnToSender(db, done.id)).returned).toBe(false)
+		expect((await returnToSender(db, stopped.id)).returned).toBe(false)
+		expect(await returnComments()).toHaveLength(0)
 
 		await db.update(sessions).set({ status: 'completed' }).where(eq(sessions.id, s.id))
 		await returnDeferredHelpers(db, s.id)
 
-		expect(await returnComments()).toHaveLength(0)
+		const rows = await returnComments()
+		expect(rows).toHaveLength(1)
+		expect((rows[0].data as { content: string }).content).toContain('finished the work')
+		// Once only.
+		await returnDeferredHelpers(db, s.id)
+		expect(await returnComments()).toHaveLength(1)
 	})
 
 	it('a completed mention-spawned helper does not return; a failed one does', async () => {

@@ -254,7 +254,7 @@ function SettingsView({ settings }: { settings: Record<string, unknown> }) {
 			{statuses && Object.keys(statuses).length > 0 && (
 				<div className="border-t border-border pt-3">
 					<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">
-						Object Types
+						Item Types
 					</h3>
 					<div className="space-y-3">
 						{Object.entries(statuses).map(([type, statusList]) => (
@@ -285,7 +285,7 @@ function WorkspaceSchemaView({ schema }: { schema: WorkspaceSchema }) {
 			{types.length > 0 && (
 				<div className="space-y-3 mb-4">
 					<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-						Object Types
+						Item Types
 					</h3>
 					{types.map(([type, typeSchema]) => (
 						<ObjectTypeCard
@@ -360,7 +360,7 @@ function ExtensionConfirmView({ data, action }: { data: Extension; action: strin
 			{data.object_types.length > 0 && (
 				<div className="space-y-3">
 					<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-						Object Types
+						Item Types
 					</h3>
 					{data.object_types.map((ot) => (
 						<ObjectTypeCard

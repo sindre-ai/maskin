@@ -37,6 +37,8 @@ export interface SearchQueryInput {
 	text: string
 	types: string[]
 	statuses: string[]
+	/** Actor ids: only chats that all of them are in. Leave out for no participant filter. */
+	participants?: string[]
 	updated: UpdatedFilter
 	sort: SearchSort
 	/** Cap on the rows sent back. The launcher asks for a few; the page takes the default. */
@@ -49,6 +51,7 @@ export function hasSearchInput(input: SearchQueryInput): boolean {
 		input.text.trim() !== '' ||
 		input.types.length > 0 ||
 		input.statuses.length > 0 ||
+		(input.participants?.length ?? 0) > 0 ||
 		input.updated !== ''
 	)
 }
@@ -60,6 +63,7 @@ export function buildSearchParams(input: SearchQueryInput, now: number = Date.no
 	if (q) params.q = q
 	if (input.types.length) params.types = input.types.join(',')
 	if (input.statuses.length) params.statuses = input.statuses.join(',')
+	if (input.participants?.length) params.participants = input.participants.join(',')
 	if (input.updated) {
 		params.updated_after = new Date(now - UPDATED_WINDOW_MS[input.updated]).toISOString()
 	}
@@ -68,8 +72,17 @@ export function buildSearchParams(input: SearchQueryInput, now: number = Date.no
 	return params
 }
 
-export function useSearchQuery(workspaceId: string, input: SearchQueryInput, active = true) {
-	const enabled = active && hasSearchInput(input)
+/**
+ * `browse` asks even with nothing typed or chosen: the search page then lists everything,
+ * the way the launcher and the page's own filters never do.
+ */
+export function useSearchQuery(
+	workspaceId: string,
+	input: SearchQueryInput,
+	active = true,
+	browse = false,
+) {
+	const enabled = active && (browse || hasSearchInput(input))
 	return useQuery<SearchResponse>({
 		// The Updated window is kept as its name in the key; the cutoff time is computed
 		// inside queryFn so the key does not change every time the clock does.
@@ -77,6 +90,7 @@ export function useSearchQuery(workspaceId: string, input: SearchQueryInput, act
 			q: input.text.trim(),
 			types: input.types,
 			statuses: input.statuses,
+			participants: input.participants ?? [],
 			updated: input.updated,
 			sort: input.sort,
 			limit: input.limit,

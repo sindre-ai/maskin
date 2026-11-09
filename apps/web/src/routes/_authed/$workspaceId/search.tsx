@@ -1,11 +1,12 @@
 import { SearchPageV2 } from '@/components/search/search-page'
 import { createFileRoute } from '@tanstack/react-router'
 
-// q, types, statuses, updated and sort are the params the search page reads.
+// q, types, statuses, participants, updated and sort are the params the search page reads.
 export interface SearchParams {
 	q?: string
 	types?: string
 	statuses?: string
+	participants?: string
 	updated?: string
 	sort?: string
 }
@@ -18,6 +19,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/search')({
 		q: optionalString(search.q),
 		types: optionalString(search.types),
 		statuses: optionalString(search.statuses),
+		participants: optionalString(search.participants),
 		updated: optionalString(search.updated),
 		sort: optionalString(search.sort),
 	}),

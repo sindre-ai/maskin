@@ -4,6 +4,8 @@ import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { TypeBadge } from '@/components/shared/type-badge'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useObjectFileAttachments } from '@/hooks/use-object-file-attachments'
 import { useObjectGraph, useObjects } from '@/hooks/use-objects'
 import { useCreateRelationship, useDeleteRelationship } from '@/hooks/use-relationships'
@@ -25,7 +27,7 @@ const DEFAULT_RELATIONSHIP_TYPES = ['informs', 'breaks_into', 'blocks', 'relates
  * Related tab for the object detail page (mockup 1155–1174): one bordered list
  * per edge type under a mono group label, each row reading
  * `dot · TYPE · name · status · when · ×`, then two dashed CTAs in a
- * responsive 2-column grid — `+ Link an object` / `+ Upload a file`. Empty
+ * responsive 2-column grid — `+ Link an item` / `+ Upload a file`. Empty
  * groups render the CTAs anyway; the point of D11 is that an empty group is
  * actionable, not just labelled. There is no table header and no sort — the
  * tab is a reading of the object's graph, and the Objects list is where
@@ -45,6 +47,7 @@ export function RelatedTab({ object }: { object: ObjectResponse }) {
 	// Groups keep their own picker state so opening one doesn't close another.
 	const [pickerOpenForType, setPickerOpenForType] = useState<string | null>(null)
 	const fileInputRef = useRef<HTMLInputElement>(null)
+	const canWrite = useCanWrite()
 	const { upload, isUploading } = useObjectFileAttachments({
 		workspaceId,
 		objectId: object.id,
@@ -98,7 +101,7 @@ export function RelatedTab({ object }: { object: ObjectResponse }) {
 			{isGraphLoading ? (
 				<ListSkeleton rows={3} />
 			) : isGraphError ? (
-				<QueryStateError title="Couldn't load related objects" error={graphError} />
+				<QueryStateError title="Couldn't load related items" error={graphError} />
 			) : (
 				groups.map((group) => (
 					<div key={group.type}>
@@ -145,15 +148,18 @@ export function RelatedTab({ object }: { object: ObjectResponse }) {
 												>
 													<span className="sr-only">{row.file.name}</span>
 												</a>
-												<button
-													type="button"
-													aria-label={`Remove link to ${row.file.name}`}
-													title="Remove link"
-													onClick={() => deleteRelationship.mutate(row.rel.id)}
-													className="relative z-[2] shrink-0 px-0.5 text-border transition-colors hover:text-destructive"
-												>
-													<X size={13} />
-												</button>
+												<ViewerTooltip>
+													<button
+														type="button"
+														aria-label={`Remove link to ${row.file.name}`}
+														title="Remove link"
+														disabled={!canWrite}
+														onClick={() => deleteRelationship.mutate(row.rel.id)}
+														className="relative z-[2] shrink-0 px-0.5 text-border transition-colors hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
+													>
+														<X size={13} />
+													</button>
+												</ViewerTooltip>
 											</div>
 										)
 									}
@@ -212,15 +218,18 @@ export function RelatedTab({ object }: { object: ObjectResponse }) {
 												aria-label={row.object.title ?? 'Untitled'}
 												className="absolute inset-0 z-[1]"
 											/>
-											<button
-												type="button"
-												aria-label={`Remove link to ${row.object.title ?? 'Untitled'}`}
-												title="Remove link"
-												onClick={() => deleteRelationship.mutate(row.rel.id)}
-												className="relative z-[2] shrink-0 px-0.5 text-border transition-colors hover:text-destructive"
-											>
-												<X size={13} />
-											</button>
+											<ViewerTooltip>
+												<button
+													type="button"
+													aria-label={`Remove link to ${row.object.title ?? 'Untitled'}`}
+													title="Remove link"
+													disabled={!canWrite}
+													onClick={() => deleteRelationship.mutate(row.rel.id)}
+													className="relative z-[2] shrink-0 px-0.5 text-border transition-colors hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
+												>
+													<X size={13} />
+												</button>
+											</ViewerTooltip>
 										</div>
 									)
 								})}
@@ -251,21 +260,26 @@ export function RelatedTab({ object }: { object: ObjectResponse }) {
 								group.rows.length > 0 && 'mt-2',
 							)}
 						>
-							<CTA
-								aria-label={`Link an object as ${group.type.replace(/_/g, ' ')}`}
-								onClick={() =>
-									setPickerOpenForType((prev) => (prev === group.type ? null : group.type))
-								}
-							>
-								+ Link an object
-							</CTA>
-							<CTA
-								aria-label={`Upload a file as ${group.type.replace(/_/g, ' ')}`}
-								onClick={() => fileInputRef.current?.click()}
-								disabled={isUploading}
-							>
-								{isUploading ? 'Uploading…' : '+ Upload a file'}
-							</CTA>
+							<ViewerTooltip className="flex">
+								<CTA
+									aria-label={`Link an item as ${group.type.replace(/_/g, ' ')}`}
+									disabled={!canWrite}
+									onClick={() =>
+										setPickerOpenForType((prev) => (prev === group.type ? null : group.type))
+									}
+								>
+									+ Link an item
+								</CTA>
+							</ViewerTooltip>
+							<ViewerTooltip className="flex">
+								<CTA
+									aria-label={`Upload a file as ${group.type.replace(/_/g, ' ')}`}
+									onClick={() => fileInputRef.current?.click()}
+									disabled={isUploading || !canWrite}
+								>
+									{isUploading ? 'Uploading…' : '+ Upload a file'}
+								</CTA>
+							</ViewerTooltip>
 						</div>
 					</div>
 				))

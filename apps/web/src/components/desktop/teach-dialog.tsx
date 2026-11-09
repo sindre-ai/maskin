@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { useActors, useDefaultChatAgent } from '@/hooks/use-actors'
+import { PILL_BUTTON } from '@/lib/pill-button'
 import { useMemo, useState } from 'react'
 
 const LAST_AGENT_KEY = 'desktop-teach-agent'
@@ -129,7 +130,7 @@ export function TeachDialog({
 						/>
 					</div>
 
-					<p className="text-xs text-muted-foreground">
+					<p className="text-[13px] text-muted-foreground">
 						Everything you click and type on the desktop is recorded, including anything you type
 						into a password field, and the agent will see it. Don't enter real credentials while
 						teaching. Screenshots are deleted once the agent has finished learning, and recording
@@ -137,10 +138,15 @@ export function TeachDialog({
 					</p>
 
 					<DialogFooter>
-						<Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+						<Button
+							type="button"
+							variant="outline"
+							className={PILL_BUTTON}
+							onClick={() => onOpenChange(false)}
+						>
 							Cancel
 						</Button>
-						<Button type="submit" disabled={!canStart}>
+						<Button type="submit" className={PILL_BUTTON} disabled={!canStart}>
 							Start recording
 						</Button>
 					</DialogFooter>

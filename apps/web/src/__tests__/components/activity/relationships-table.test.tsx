@@ -54,7 +54,7 @@ describe('RelationshipsTable', () => {
 				workspaceId="ws-1"
 			/>,
 		)
-		expect(screen.getByText(/no related objects yet/i)).toBeInTheDocument()
+		expect(screen.getByText(/no related items yet/i)).toBeInTheDocument()
 	})
 
 	it('shows a muted fallback when the linked object cannot be resolved', () => {

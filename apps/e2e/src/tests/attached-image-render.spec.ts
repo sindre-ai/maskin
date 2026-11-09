@@ -6,7 +6,7 @@ const PNG_1X1_BASE64 =
 	'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNgAAIAAAUAAarVyFEAAAAASUVORK5CYII='
 
 test.describe('Attached image rendering', () => {
-	test('renders an inline <img> for an attached image on the object detail page', async ({
+	test('lists an attached image as a file row on the object detail page', async ({
 		page,
 		account,
 	}) => {
@@ -34,13 +34,14 @@ test.describe('Attached image rendering', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/objects/${obj.id}`)
-		await expect(page.getByText('Bet with image attachment')).toBeVisible({ timeout: 10000 })
+		await expect(page.getByRole('heading', { name: 'Bet with image attachment' })).toBeVisible({
+			timeout: 10000,
+		})
 
-		// The AttachedFileCard fetches the file detail and renders an <img> with
-		// a data: URI for safe image MIME types. The bet's regression-detection
-		// contract is that the <img> actually shows up after attachment.
-		const img = page.getByRole('img', { name: 'pixel.png' })
-		await expect(img).toBeVisible({ timeout: 10000 })
-		await expect(img).toHaveAttribute('src', /^data:image\/png;base64,/)
+		// The item page lists an attached image in its Files section as a row that
+		// links to the file (the inline <img> lives in chat and comments, not here).
+		const row = page.getByRole('link', { name: /^pixel\.png/ })
+		await expect(row).toBeVisible({ timeout: 10000 })
+		await expect(row).toHaveAttribute('href', new RegExp(`/files/${file.id}$`))
 	})
 })

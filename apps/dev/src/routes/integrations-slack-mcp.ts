@@ -9,6 +9,7 @@ import {
 	createSlackMcpServer,
 	isSlackBotToken,
 } from '../lib/integrations/providers/slack/mcp-server'
+import { directPostChannelsFromConfig } from '../lib/integrations/providers/slack/send-object'
 import { toolGateFor } from '../lib/integrations/tool-gate'
 import type { StoredCredentials } from '../lib/integrations/types'
 import { logger } from '../lib/logger'
@@ -32,7 +33,12 @@ const app = new Hono<Env>()
 async function resolveSlackBotToken(
 	db: Database,
 	workspaceId: string,
-): Promise<{ botToken: string; integrationId: string; slackTeamId: string | undefined } | null> {
+): Promise<{
+	botToken: string
+	integrationId: string
+	slackTeamId: string | undefined
+	directPostChannels: string[] | undefined
+} | null> {
 	const [integration] = await db
 		.select()
 		.from(integrations)
@@ -73,6 +79,7 @@ async function resolveSlackBotToken(
 		botToken: accessToken as string,
 		integrationId: integration.id,
 		slackTeamId: integration.externalId ?? undefined,
+		directPostChannels: directPostChannelsFromConfig(integration.config),
 	}
 }
 
@@ -142,6 +149,8 @@ app.post('/', async (c) => {
 			workspaceId,
 			actorId,
 			slackTeamId: resolved.slackTeamId,
+			db,
+			directPostChannels: resolved.directPostChannels,
 		},
 		gate,
 	)

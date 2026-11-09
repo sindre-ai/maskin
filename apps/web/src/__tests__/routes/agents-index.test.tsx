@@ -18,10 +18,13 @@ vi.mock('@tanstack/react-router', async () => {
 	}
 })
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({ workspaceId: 'ws-1', workspace: { id: 'ws-1' } }),
 }))
 
+vi.mock('@/hooks/use-loops', () => ({ useLoops: () => ({ data: [] }) }))
 vi.mock('@/hooks/use-actors', () => ({ useActors: (wsId?: string) => useActorsMock(wsId) }))
 vi.mock('@/hooks/use-sessions', () => ({
 	useWorkspaceSessions: (...args: unknown[]) => useWorkspaceSessionsMock(...args),
@@ -65,6 +68,7 @@ function captureViewProps(props: Record<string, unknown>) {
 }
 vi.mock('@/components/agents/agents-index-view', () => ({
 	AgentsIndexView: captureViewProps,
+	AgentsSearch: () => null,
 }))
 
 import { Route } from '@/routes/_authed/$workspaceId/agents/index'
@@ -105,17 +109,20 @@ describe('AgentsPage', () => {
 		expect(screen.queryByTestId('agents-index-view')).not.toBeInTheDocument()
 	})
 
-	it('publishes the title and the agent count to the nav row', () => {
+	it('publishes the bare title for the empty state and leaves it to the list otherwise', () => {
+		useActorsMock.mockReturnValue({ data: [], isLoading: false })
+		const { unmount } = mount()
+		expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Agents')
+		unmount()
+
+		// With agents, the list publishes its own title, search and Display.
 		useActorsMock.mockReturnValue({
-			data: [
-				buildActorListItem({ id: 'agent-a', type: 'agent' }),
-				buildActorListItem({ id: 'agent-b', type: 'agent' }),
-			],
+			data: [buildActorListItem({ id: 'agent-a', type: 'agent' })],
 			isLoading: false,
 		})
 		mount()
-		expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Agents')
-		expect(screen.getByText('2 agents · each owns one outcome')).toBeInTheDocument()
+		expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument()
+		expect(screen.getByTestId('agents-index-view')).toBeInTheDocument()
 	})
 
 	it('passes only agent-typed actors and their sessions to the index view', () => {

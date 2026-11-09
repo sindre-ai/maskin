@@ -45,6 +45,13 @@ RUN printf '%s\n' \
     'export CHROMIUM_FLAGS="$CHROMIUM_FLAGS --disable-gpu --disable-dev-shm-usage --no-first-run --no-default-browser-check"' \
     > /etc/chromium.d/desktop-flags
 
+# Pages open at 67 percent zoom so more of each page fits on the 1920x1080 screen. The
+# setting is the profile's default page zoom (log(0.67)/log(1.2) = -2.1966), not a
+# device scale factor, so the tab strip and address bar keep their normal size.
+# Ctrl+0 returns to this default, not to 100 percent.
+RUN mkdir -p /home/user/.config/chromium/Default
+COPY chromium/preferences.json /home/user/.config/chromium/Default/Preferences
+
 # Compositor on: Plank needs it for its translucent, rounded dock. It is software
 # (xrender) rendering, but the screen is mostly static so the cost is small.
 RUN mkdir -p /home/user/.config/xfce4/xfconf/xfce-perchannel-xml \
@@ -74,7 +81,7 @@ COPY dock/launchers/ /home/user/.config/plank/dock1/launchers/
 COPY dock/theme/ /home/user/.local/share/plank/themes/Maskin/
 # Plank reads its settings through GSettings; the keyfile backend needs no dconf.
 # The same file seeds the GTK file chooser's size: left alone it opens 1124x822, taller
-# than the 1280x720 screen, so its Open button is off-screen and an agent cannot click it.
+# than the 1920x1080 screen, so its Open button is off-screen and an agent cannot click it.
 COPY dock/keyfile /home/user/.config/glib-2.0/settings/keyfile
 
 # Everything above was written as root; hand the user its home.

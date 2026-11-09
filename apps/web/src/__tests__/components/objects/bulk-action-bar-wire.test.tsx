@@ -61,7 +61,7 @@ function Harness({ selectedIds, onClear }: HarnessProps) {
 						const okCount = data.results.filter((r) => r.ok).length
 						const failed = ids.length - okCount
 						if (failed === 0) {
-							toast.success(`${okCount} object${okCount === 1 ? '' : 's'} updated`)
+							toast.success(`${okCount} item${okCount === 1 ? '' : 's'} updated`)
 							onClear()
 						} else {
 							toast.error(`${okCount} of ${ids.length} updated; ${failed} failed`)
@@ -82,7 +82,7 @@ function Harness({ selectedIds, onClear }: HarnessProps) {
 					const okCount = data.results.filter((r) => r.ok).length
 					const failed = ids.length - okCount
 					if (failed === 0) {
-						toast.success(`${okCount} object${okCount === 1 ? '' : 's'} archived`)
+						toast.success(`${okCount} item${okCount === 1 ? '' : 's'} archived`)
 						onClear()
 					} else {
 						toast.error(`${okCount} of ${ids.length} archived; ${failed} failed`)
@@ -159,7 +159,7 @@ describe('BulkActionBar wired to bulk-update', () => {
 				patch: { status: 'done' },
 			}),
 		)
-		await waitFor(() => expect(toast.success).toHaveBeenCalledWith('2 objects updated'))
+		await waitFor(() => expect(toast.success).toHaveBeenCalledWith('2 items updated'))
 		await waitFor(() => expect(onClear).toHaveBeenCalledTimes(1))
 
 		const cache = queryClient.getQueryData<{ pages: ObjectResponse[][] }>(key)
@@ -200,7 +200,7 @@ describe('BulkActionBar wired to bulk-update', () => {
 				patch: { status: 'archived' },
 			}),
 		)
-		await waitFor(() => expect(toast.success).toHaveBeenCalledWith('2 objects archived'))
+		await waitFor(() => expect(toast.success).toHaveBeenCalledWith('2 items archived'))
 		await waitFor(() => expect(onClear).toHaveBeenCalledTimes(1))
 
 		const cache = queryClient.getQueryData<{ pages: ObjectResponse[][] }>(key)

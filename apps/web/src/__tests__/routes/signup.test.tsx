@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockSignup = vi.fn()
+// What `Route.useSearch()` returns: the page's validated query string.
+let mockSearch: { redirect?: string } = {}
 
 vi.mock('@/hooks/use-auth', () => ({
 	useAuth: () => ({ signup: mockSignup }),
@@ -13,6 +15,7 @@ vi.mock('@/lib/api', () => ({
 		landingEvents: { emit: vi.fn() },
 		publicBetStrategist: { claim: vi.fn() },
 		objects: { create: vi.fn() },
+		conversations: { list: vi.fn().mockResolvedValue({ conversations: [], has_more: false }) },
 	},
 }))
 
@@ -20,21 +23,31 @@ vi.mock('@/lib/analytics', () => ({
 	trackEvent: vi.fn(),
 }))
 
+vi.mock('@/lib/posthog', () => ({
+	identifyForWorkspace: vi.fn().mockResolvedValue(undefined),
+	signupSourceFrom: vi.fn().mockReturnValue('direct'),
+}))
+
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
 		...mockTanStackRouter(),
-		createFileRoute: () => (options: Record<string, unknown>) => options,
+		createFileRoute: () => (options: Record<string, unknown>) => ({
+			...options,
+			useSearch: () => mockSearch,
+		}),
 	}
 })
 
 import { trackEvent } from '@/lib/analytics'
 import { api } from '@/lib/api'
+import { identifyForWorkspace } from '@/lib/posthog'
 import { Route } from '@/routes/signup'
 
 const SignupPage = (Route as unknown as { component: React.FC }).component
-
-const ASSIGN_PATH = '/'
+const validateSearch = (
+	Route as unknown as { validateSearch: (search: Record<string, unknown>) => { redirect?: string } }
+).validateSearch
 
 async function fillAndSubmit(user: ReturnType<typeof userEvent.setup>) {
 	await user.type(screen.getByPlaceholderText('Your name'), 'Test User')
@@ -51,6 +64,7 @@ describe('SignupPage', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks()
+		mockSearch = {}
 		localStorage.clear()
 		Object.defineProperty(window, 'location', {
 			configurable: true,
@@ -201,6 +215,46 @@ describe('SignupPage', () => {
 		expect(meta.name).toBe('Test User')
 		expect(meta.organization).toBe('Test Co')
 		expect(meta.role).toBe('Founder')
+		expect(meta.welcome_in_chat).toBe(true)
+	})
+
+	it('lands in the welcome chat the Chief of Staff opened in the new workspace', async () => {
+		mockSignup.mockResolvedValue({ id: 'actor-1', workspace_id: 'ws-1' })
+		vi.mocked(api.objects.create).mockResolvedValue({} as never)
+		vi.mocked(api.conversations.list).mockResolvedValue({
+			conversations: [{ id: 'conv-welcome' }],
+			has_more: false,
+		} as never)
+
+		const user = userEvent.setup()
+		render(<SignupPage />)
+		await fillAndSubmit(user)
+
+		await waitFor(() =>
+			expect(window.location.assign).toHaveBeenCalledWith('/ws-1/chats/conv-welcome'),
+		)
+	})
+
+	it('falls back to New Chat when the welcome chat cannot be found', async () => {
+		mockSignup.mockResolvedValue({ id: 'actor-1', workspace_id: 'ws-1' })
+		vi.mocked(api.objects.create).mockResolvedValue({} as never)
+		vi.mocked(api.conversations.list).mockRejectedValue(new Error('boom'))
+
+		const user = userEvent.setup()
+		render(<SignupPage />)
+		await fillAndSubmit(user)
+
+		await waitFor(() => expect(window.location.assign).toHaveBeenCalledWith('/ws-1/chats/new'))
+	})
+
+	it('falls back to the index when signup returns no workspace id', async () => {
+		mockSignup.mockResolvedValue({ id: 'actor-1' })
+
+		const user = userEvent.setup()
+		render(<SignupPage />)
+		await fillAndSubmit(user)
+
+		await waitFor(() => expect(window.location.assign).toHaveBeenCalledWith('/'))
 	})
 
 	it('emits signup_form_submitted with user_id + completed:true on success', async () => {
@@ -217,6 +271,46 @@ describe('SignupPage', () => {
 				completed: true,
 			})
 		})
+	})
+
+	it('identifies the person before emitting signup_completed', async () => {
+		mockSignup.mockResolvedValue({ id: 'actor-1', workspace_id: 'ws-1' })
+		vi.mocked(api.objects.create).mockResolvedValue({} as never)
+
+		const user = userEvent.setup()
+		render(<SignupPage />)
+		await fillAndSubmit(user)
+
+		await waitFor(() => {
+			expect(trackEvent).toHaveBeenCalledWith('signup_completed', {
+				user_id: 'actor-1',
+				workspace_id: 'ws-1',
+			})
+		})
+		expect(identifyForWorkspace).toHaveBeenCalledWith('actor-1', false, {
+			name: 'Test User',
+			email: 'test@example.com',
+			signupSource: 'direct',
+		})
+		const identifyOrder = vi.mocked(identifyForWorkspace).mock.invocationCallOrder[0]
+		const completedOrder = vi
+			.mocked(trackEvent)
+			.mock.calls.findIndex((c) => c[0] === 'signup_completed')
+		expect(identifyOrder).toBeLessThan(
+			vi.mocked(trackEvent).mock.invocationCallOrder[completedOrder],
+		)
+	})
+
+	it('does not emit signup_completed when signup fails', async () => {
+		mockSignup.mockRejectedValue(new Error('Email already in use'))
+
+		const user = userEvent.setup()
+		render(<SignupPage />)
+		await fillAndSubmit(user)
+
+		await screen.findByText('Email already in use')
+		expect(trackEvent).not.toHaveBeenCalledWith('signup_completed', expect.anything())
+		expect(identifyForWorkspace).not.toHaveBeenCalled()
 	})
 
 	it('still emits signup_form_submitted when the knowledge-object write fails', async () => {
@@ -317,5 +411,38 @@ describe('SignupPage', () => {
 
 		await waitFor(() => expect(mockSignup).toHaveBeenCalled())
 		expect(api.landingEvents.emit).not.toHaveBeenCalled()
+	})
+
+	it('lands back on the page that sent the person here, query string intact', async () => {
+		mockSearch = { redirect: '/oauth/authorize?client_id=abc&state=xyz' }
+		mockSignup.mockResolvedValue({ id: 'actor-1', workspace_id: 'ws-1' })
+		vi.mocked(api.objects.create).mockResolvedValue({} as never)
+
+		const user = userEvent.setup()
+		render(<SignupPage />)
+		await fillAndSubmit(user)
+
+		await waitFor(() =>
+			expect(window.location.assign).toHaveBeenCalledWith(
+				'/oauth/authorize?client_id=abc&state=xyz',
+			),
+		)
+	})
+
+	describe('validateSearch', () => {
+		it('keeps an internal path, up to the 2000 character cap', () => {
+			const path = `/oauth/authorize?${'a'.repeat(900)}`
+			expect(validateSearch({ redirect: path })).toEqual({ redirect: path })
+		})
+
+		it.each([
+			['a full URL', 'https://evil.example/steal'],
+			['a protocol-relative URL', '//evil.example/steal'],
+			['a backslash path', '/\\evil.example'],
+			['a missing value', undefined],
+			['an over-long value', `/${'a'.repeat(2000)}`],
+		])('drops %s', (_label, redirect) => {
+			expect(validateSearch({ redirect })).toEqual({})
+		})
 	})
 })

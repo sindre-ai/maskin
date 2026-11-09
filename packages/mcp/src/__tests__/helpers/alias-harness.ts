@@ -40,6 +40,8 @@ export async function startAliasHarness(
 		telemetrySink?: TelemetrySink
 		/** Answers an API request with this body instead of the empty envelope. */
 		respond?: (req: { method: string; path: string }) => unknown
+		/** Extra response headers for an answered request, e.g. the API's X-Total-Count. */
+		headers?: (req: { method: string; path: string }) => Record<string, string>
 	} = {},
 ): Promise<AliasHarness> {
 	let recorded: RecordedRequest[] = []
@@ -65,6 +67,11 @@ export async function startAliasHarness(
 				workspace: req.headers['x-workspace-id'] as string | undefined,
 			})
 			res.setHeader('content-type', 'application/json')
+			for (const [name, value] of Object.entries(
+				opts.headers?.({ method: req.method ?? '', path: req.url ?? '' }) ?? {},
+			)) {
+				res.setHeader(name, value)
+			}
 			const custom = opts.respond?.({ method: req.method ?? '', path: req.url ?? '' })
 			if (custom !== undefined) {
 				res.end(JSON.stringify(custom))
@@ -243,10 +250,31 @@ export const ROW_SCENARIOS: RowScenario[] = [
 		control: { workspace_id: WS },
 	},
 	{
+		covers: ['create_comment object_id'],
+		tool: 'create_comment',
+		old: { workspace_id: WS, object_id: U1, content: 'Done' },
+		canonical: { workspace_id: WS, entity_id: U1, content: 'Done' },
+		control: { workspace_id: WS, content: 'Done' },
+	},
+	{
 		covers: ['search_objects query'],
 		tool: 'search_objects',
 		old: { workspace_id: WS, query: 'roadmap' },
 		canonical: { workspace_id: WS, q: 'roadmap' },
+		control: { workspace_id: WS },
+	},
+	{
+		covers: ['list_objects query'],
+		tool: 'list_objects',
+		old: { workspace_id: WS, query: 'roadmap' },
+		canonical: { workspace_id: WS, q: 'roadmap' },
+		control: { workspace_id: WS },
+	},
+	{
+		covers: ['list_triggers actor_id'],
+		tool: 'list_triggers',
+		old: { workspace_id: WS, actor_id: U1 },
+		canonical: { workspace_id: WS, agent_id: U1 },
 		control: { workspace_id: WS },
 	},
 	{

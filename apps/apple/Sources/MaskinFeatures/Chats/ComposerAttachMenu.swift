@@ -14,7 +14,7 @@ enum ComposerAttachAction: String, CaseIterable, Identifiable {
 		case .photo: "Photo or video"
 		case .camera: "Camera"
 		case .file: "File"
-		case .object: "Object"
+		case .object: "Item"
 		case .person: "Person or agent"
 		case .paste: "Paste image"
 		}
@@ -36,13 +36,42 @@ enum ComposerAttachAction: String, CaseIterable, Identifiable {
 /// 48pt rows, a 19pt `fg3` icon and a 16pt label per row.
 struct ComposerAttachMenu: View {
 	let actions: [ComposerAttachAction]
+	/// The most height the card may take. Taller than that, the rows scroll inside it.
+	var maxHeight: CGFloat = .infinity
 	let onPick: (ComposerAttachAction) -> Void
 
 	static let width: CGFloat = 250
 	private static let row: CGFloat = MaskinSpace.touchMin + MaskinSpace.s2
 	private let shape = RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous)
 
+	/// The card's height with every row showing: the rows plus a 1pt separator between each.
+	static func contentHeight(rows count: Int) -> CGFloat {
+		CGFloat(count) * row + CGFloat(max(count - 1, 0))
+	}
+
+	/// How far to move the card, from the bar's top edge, so its bottom sits 8pt above the bar.
+	static func offsetY(height: CGFloat) -> CGFloat { -(height + MaskinSpace.s4) }
+
 	var body: some View {
+		Group {
+			if Self.contentHeight(rows: actions.count) > maxHeight {
+				ScrollView { rows }
+					.scrollBounceBehavior(.basedOnSize)
+					.frame(height: maxHeight)
+					.clipShape(shape)
+			} else {
+				rows
+			}
+		}
+		.frame(width: Self.width)
+		.background(MaskinSurface.card, in: shape)
+		.overlay(shape.strokeBorder(MaskinSurface.line, lineWidth: 1))
+		.shadow(color: MaskinColor.overlayDim.opacity(0.35), radius: MaskinSpace.s9, y: MaskinSpace.s5)
+		.accessibilityElement(children: .contain)
+		.accessibilityLabel("Attach")
+	}
+
+	private var rows: some View {
 		VStack(alignment: .leading, spacing: 0) {
 			ForEach(Array(actions.enumerated()), id: \.element) { index, action in
 				if index > 0 { Rectangle().fill(MaskinSurface.separator).frame(height: 1) }
@@ -68,11 +97,5 @@ struct ComposerAttachMenu: View {
 				.buttonStyle(.maskinPressed)
 			}
 		}
-		.frame(width: Self.width)
-		.background(MaskinSurface.card, in: shape)
-		.overlay(shape.strokeBorder(MaskinSurface.line, lineWidth: 1))
-		.shadow(color: MaskinColor.overlayDim.opacity(0.35), radius: MaskinSpace.s9, y: MaskinSpace.s5)
-		.accessibilityElement(children: .contain)
-		.accessibilityLabel("Attach")
 	}
 }

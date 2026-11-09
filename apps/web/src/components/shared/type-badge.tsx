@@ -1,6 +1,7 @@
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/cn'
 import { defaultTypeColor, typeColors, typeIcons } from '@/lib/constants'
+import { Shapes } from 'lucide-react'
 
 export function TypeBadge({
 	type,
@@ -15,7 +16,7 @@ export function TypeBadge({
 	 *  `pill` variant needed a human label. */
 	label?: string
 	className?: string
-	variant?: 'badge' | 'mono' | 'pill' | 'tile' | 'dot'
+	variant?: 'badge' | 'mono' | 'pill' | 'tile' | 'dot' | 'glyph'
 	/** `tile` only: 30px in card headers, 38px in list rows and detail headers. */
 	size?: 'sm' | 'lg'
 }) {
@@ -31,6 +32,23 @@ export function TypeBadge({
 				aria-hidden="true"
 				className={cn('size-1.5 shrink-0 rounded-full bg-current', colors.text, className)}
 			/>
+		)
+	}
+
+	// A bare muted glyph for the Items list row (mockup 08): the type's lucide
+	// icon, a generic one for module and custom types that have none, and the
+	// display name as its tooltip and accessible name.
+	if (variant === 'glyph') {
+		const Icon = typeIcons[type] ?? Shapes
+		return (
+			<span
+				role="img"
+				title={label ?? type}
+				aria-label={label ?? type}
+				className={cn('grid size-4 shrink-0 place-items-center text-muted-foreground', className)}
+			>
+				<Icon aria-hidden="true" className="size-[15px]" />
+			</span>
 		)
 	}
 
@@ -76,13 +94,14 @@ export function TypeBadge({
 	// plate carrying the type's display name in sentence case. Fixed width, not
 	// intrinsic — every title in the list then starts on the same x, which is
 	// what makes a mixed-type list scan as one column of titles rather than a
-	// ragged left edge. Overlong names ellipsize inside the plate.
+	// ragged left edge. Overlong names ellipsize inside the plate. The plate is
+	// 88px wide: 64px cut "Knowledge" at this size to "Knowle…".
 	if (variant === 'pill') {
 		return (
 			<span
 				title={label ?? type}
 				className={cn(
-					'inline-block w-16 shrink-0 truncate rounded-[5px] bg-muted px-2 py-0.5 text-center',
+					'inline-block w-22 shrink-0 truncate rounded-[5px] bg-muted px-2 py-0.5 text-center',
 					'text-[10.5px] font-semibold text-muted-foreground/70',
 					className,
 				)}

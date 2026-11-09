@@ -1,37 +1,60 @@
 import Foundation
 
-/// An object or a file a chat message links to. Agents refer to their work by a link to its page
+/// An object, file, loop or trigger a chat message links to. Agents refer to their work by a link to its page
 /// (`https://maskin.io/<workspace>/objects/<uuid>`, `…/files/<uuid>`); the link is the signal that the
 /// reader would want to see what is behind it.
 public struct LinkedTarget: Hashable, Sendable, Identifiable {
-	public enum Kind: String, Sendable { case object, file }
+	public enum Kind: String, Sendable { case object, file, agent, chat, loop, trigger }
 
 	public var kind: Kind
 	/// Lowercased, so the same thing linked twice is one target.
 	public var uuid: String
+	/// The workspace the address names (`https://maskin.io/<workspace>/objects/<uuid>`), when it names
+	/// one. Not part of what the target is: the same thing linked twice is one target either way.
+	public var workspaceID: String?
 
 	public var id: String { key }
-	/// `object:<uuid>` / `file:<uuid>`: the cache and de-duplication key.
+	/// `object:<uuid>`, `file:<uuid>`, `agent:<uuid>`, `chat:<uuid>`, `loop:<uuid>` or `trigger:<uuid>`: the cache and de-duplication key.
 	public var key: String { "\(kind.rawValue):\(uuid)" }
 
-	public init(kind: Kind, uuid: String) {
+	public init(kind: Kind, uuid: String, workspaceID: String? = nil) {
 		self.kind = kind
 		self.uuid = uuid.lowercased()
+		self.workspaceID = workspaceID
 	}
+
+	public static func == (lhs: LinkedTarget, rhs: LinkedTarget) -> Bool { lhs.key == rhs.key }
+
+	public func hash(into hasher: inout Hasher) { hasher.combine(key) }
 
 	private static let hrefPattern = try! NSRegularExpression(
 		pattern:
-			#"/(objects|files)/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)"#,
+			#"/(objects|files|agents|chats|loops|triggers)/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)"#,
 		options: .caseInsensitive)
 
 	/// The object or file an address points at, if it points at one. Absolute web links and relative
-	/// `/<workspace>/objects/<uuid>` paths both count.
+	/// `/<workspace>/objects/<uuid>` paths both count. A full Maskin address also says which workspace
+	/// it is in; a relative one does not, and reads as the workspace being read.
 	public static func parse(href: String) -> LinkedTarget? {
 		let range = NSRange(href.startIndex..., in: href)
 		guard let m = hrefPattern.firstMatch(in: href, range: range),
 			let kindRange = Range(m.range(at: 1), in: href), let idRange = Range(m.range(at: 2), in: href)
 		else { return nil }
-		return LinkedTarget(kind: href[kindRange].lowercased() == "files" ? .file : .object, uuid: String(href[idRange]))
+		let kind: Kind =
+			switch href[kindRange].lowercased() {
+			case "files": .file
+			case "agents": .agent
+			case "chats": .chat
+			case "loops": .loop
+			case "triggers": .trigger
+			default: .object
+			}
+		let workspace: String? =
+			switch DeepLink(string: href) {
+			case .object(let workspace, _)?, .file(let workspace, _)?: workspace
+			default: nil
+			}
+		return LinkedTarget(kind: kind, uuid: String(href[idRange]), workspaceID: workspace)
 	}
 
 	/// Every object and file a text links to, in the order each first appears, without repeats.
@@ -282,18 +305,18 @@ public enum LinkedMessagePart: Equatable, Sendable {
 public enum LinkedMessageLayout {
 	/// Cards in one message, across every kind (objects, files, drafts). The links past it stay links.
 	public static let maxCardsPerMessage = 3
-	/// Object links in one message that are looked up. The links past it stay plain.
+	/// Object, agent and chat links in one message that are looked up. The links past it stay plain.
 	public static let maxObjectLookupsPerMessage = 10
 	/// File links in one message that are looked up.
 	public static let maxFileLookupsPerMessage = 12
 
-	/// The targets of a message that are looked up: the first ten objects and the first twelve files.
+	/// The targets of a message that are looked up: the first ten objects, agents, chats, loops and triggers (counted together) and the first twelve files.
 	public static func lookupTargets(_ targets: [LinkedTarget]) -> [LinkedTarget] {
 		var objects = 0
 		var files = 0
 		return targets.filter { target in
 			switch target.kind {
-			case .object:
+			case .object, .agent, .chat, .loop, .trigger:
 				objects += 1
 				return objects <= maxObjectLookupsPerMessage
 			case .file:
@@ -387,6 +410,11 @@ public struct LinkedEntry: Equatable, Sendable, Identifiable {
 public enum LinkedConversationItems {
 	public static let defaultLimit = 100
 
+	/// Cheap test before scanning a message for links: does it name an address of a kind we look up?
+	public static func mayLink(_ content: String) -> Bool {
+		["/objects/", "/files/", "/agents/", "/chats/", "/loops/", "/triggers/"].contains { content.contains($0) }
+	}
+
 	/// For each target the conversation links to, the message (`ChatMessage.id`) that links it first.
 	/// A target is a card in that message only; later messages show it as a link. `messages` run
 	/// oldest first.
@@ -394,7 +422,7 @@ public enum LinkedConversationItems {
 		var owners: [String: String] = [:]
 		for message in messages {
 			guard message.kind == "message", !message.isFailed,
-				message.content.contains("/objects/") || message.content.contains("/files/")
+				Self.mayLink(message.content)
 			else { continue }
 			for target in LinkedTarget.extract(from: message.content) where owners[target.key] == nil {
 				owners[target.key] = message.id
@@ -412,10 +440,10 @@ public enum LinkedConversationItems {
 		for message in messages.reversed() {
 			guard entries.count < limit else { break }
 			guard message.kind == "message", !message.isFailed,
-				message.content.contains("/objects/") || message.content.contains("/files/")
+				Self.mayLink(message.content)
 			else { continue }
 			let targets = LinkedTarget.extract(from: message.content)
-			let objects = targets.filter { $0.kind == .object }
+			let objects = targets.filter { $0.kind != .file }
 			let files = targets.filter { $0.kind == .file }
 			for target in objects + files {
 				guard entries.count < limit, seen.insert(target.key).inserted else { continue }

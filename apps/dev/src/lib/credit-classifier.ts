@@ -7,6 +7,9 @@ import {
 
 import { parseCliResetBanner, parseRateLimitEventReset } from './subscription-limit-reset'
 
+/** What Anthropic's API (and the CLI that prints it) says when a key has no credit left. */
+export const CREDIT_BALANCE_LOW_BANNER = 'Credit balance is too low'
+
 const CLI_BANNERS: ReadonlyArray<{
 	match: string
 	reasonCode: FailureReasonCode
@@ -43,7 +46,7 @@ const CLI_BANNERS: ReadonlyArray<{
 		humanMessage: 'Claude request rejected — rate limit',
 	},
 	{
-		match: 'Credit balance is too low',
+		match: CREDIT_BALANCE_LOW_BANNER,
 		reasonCode: 'credit_balance_low',
 		humanMessage: 'Claude credit balance is too low',
 	},
@@ -68,6 +71,16 @@ const CLI_BANNERS: ReadonlyArray<{
 			'Claude OAuth token was revoked — moving this workspace to the next connected subscription',
 	},
 ]
+
+/**
+ * True when `text` is the "credit balance is too low" error. The one place that
+ * answers it: the route picker's out-of-credit mark and its callers go through
+ * here, so the wording is matched in a single spot. Pass the text of a failed
+ * turn or the classified banner, not a whole stdout tail.
+ */
+export function isCreditBalanceLowText(text: string): boolean {
+	return text.includes(CREDIT_BALANCE_LOW_BANNER)
+}
 
 /**
  * Inspects the stdout tail from a failed session and returns a typed failure
@@ -249,6 +262,18 @@ function findFinalResult(tail: string): StreamJsonResult | null {
 }
 
 /**
+ * The failure reason for a final result text that opens with a CLI banner (the
+ * way the CLI prints a real stop), or null. A banner further into the text does
+ * not count: that is something the agent read, not a stop.
+ */
+export function classifyBannerResult(text: string): SessionResultFailureReason | null {
+	const opening = text.trimStart()
+	return CLI_BANNERS.some((banner) => opening.startsWith(banner.match))
+		? classifyCreditExhaustion(opening, { includeAmbiguousSignals: false })
+		: null
+}
+
+/**
  * Classifies a finished session's exit. Both completion paths (the local
  * handleCompletion and the remote markRemoteSessionComplete) call this, so the
  * two cannot drift apart.
@@ -267,12 +292,7 @@ export function classifySessionExit(
 ): SessionResultFailureReason | null {
 	if (exitCode === 0) {
 		const result = findFinalResult(tail)
-		if (result && !result.isError) {
-			const text = result.text.trimStart()
-			return CLI_BANNERS.some((banner) => text.startsWith(banner.match))
-				? classifyCreditExhaustion(text, { includeAmbiguousSignals: false })
-				: null
-		}
+		if (result && !result.isError) return classifyBannerResult(result.text)
 	}
 	return (
 		(exitCode !== 0 ? classifyClaudeAuthFailure(tail) : null) ??

@@ -28,6 +28,7 @@ function buildConversation(
 		snippet: null,
 		snippet_actor_id: null,
 		snippet_actor_name: null,
+		working_actor_ids: [],
 		participants: [],
 		...overrides,
 	}
@@ -130,5 +131,24 @@ describe('groupConversations', () => {
 				now: NOW,
 			})[0].label,
 		).toBe('2 results')
+	})
+
+	it('splits unread mode into Pinned, Unread and Earlier and drops empty groups', () => {
+		const groups = groupConversations(
+			[
+				buildConversation({ id: 'p', pinned: true }),
+				buildConversation({ id: 'u', unread_count: 2 }),
+				buildConversation({ id: 'e' }),
+			],
+			{ mode: 'unread', now: NOW },
+		)
+		expect(groups.map((g) => [g.label, g.items.map((c) => c.id)])).toEqual([
+			['Pinned', ['p']],
+			['Unread', ['u']],
+			['Earlier', ['e']],
+		])
+		expect(
+			groupConversations([buildConversation()], { mode: 'unread', now: NOW }).map((g) => g.label),
+		).toEqual(['Earlier'])
 	})
 })

@@ -1,7 +1,13 @@
 import type { Database, Transaction } from '@maskin/db'
-import { type events, subscriptions, workspaceMembers } from '@maskin/db/schema'
+import {
+	events,
+	actors,
+	forYouWithdrawals,
+	subscriptions,
+	workspaceMembers,
+} from '@maskin/db/schema'
 import type { CommentDecision } from '@maskin/shared'
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray, lt, sql } from 'drizzle-orm'
 import { mirrorCommentIntoChat } from '../services/object-chat-sync'
 import { recordEventReturning } from './events/record-event'
 
@@ -50,6 +56,49 @@ export interface PostCommentResult {
 	unresolvedMentions: string[]
 }
 
+const SUPERSEDED_CARD_REASON = 'Replaced by a newer card from the same author'
+
+/**
+ * Retires the agent's earlier decision cards on the same object, the same way a withdrawal does,
+ * so a new card replaces the old one instead of sitting next to it. Cards by other authors or on
+ * other objects are untouched, and a card with `drafts` is still one card. A person's cards are
+ * never retired this way.
+ */
+async function withdrawSupersededCards(
+	tx: Transaction,
+	input: { workspaceId: string; actorId: string; entityId: string; newCommentId: number },
+): Promise<void> {
+	const earlier = await tx
+		.select({ id: events.id })
+		.from(events)
+		.innerJoin(actors, eq(actors.id, events.actorId))
+		.where(
+			and(
+				eq(events.workspaceId, input.workspaceId),
+				eq(events.actorId, input.actorId),
+				eq(events.action, 'commented'),
+				eq(events.entityType, 'object'),
+				eq(events.entityId, input.entityId),
+				lt(events.id, input.newCommentId),
+				eq(actors.type, 'agent'),
+				sql`${events.data}->'decision' IS NOT NULL`,
+			),
+		)
+	if (earlier.length === 0) return
+	await tx
+		.insert(forYouWithdrawals)
+		.values(
+			earlier.map((row) => ({
+				sourceCommentId: row.id,
+				workspaceId: input.workspaceId,
+				withdrawnBy: input.actorId,
+				reason: SUPERSEDED_CARD_REASON,
+			})),
+		)
+		// An earlier card that was already withdrawn keeps its first reason.
+		.onConflictDoNothing()
+}
+
 /**
  * Core comment-creation logic: insert the `commented` event and auto-subscribe
  * the commenter + mentions. Shared by `POST /api/events` and any backend code
@@ -85,6 +134,15 @@ export async function postComment(
 				...(input.approvedSendHash ? { approved_send_hash: input.approvedSendHash } : {}),
 			},
 		})
+
+		if (input.decision && entityType === 'object') {
+			await withdrawSupersededCards(tx, {
+				workspaceId: input.workspaceId,
+				actorId: input.actorId,
+				entityId: input.entityId,
+				newCommentId: Number(comment.id),
+			})
+		}
 
 		// Mention ids come straight off the request body, so they can reference
 		// actors that never existed, were deleted since the client rendered the

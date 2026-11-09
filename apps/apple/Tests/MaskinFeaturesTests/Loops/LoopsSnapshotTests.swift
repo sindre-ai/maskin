@@ -78,6 +78,31 @@ private let fixtureActivity = [
 	LoopActivityEntry(id: "1", action: "trigger_fired", entityType: "trigger", createdAt: base.addingTimeInterval(-7200)),
 ]
 
+/// A loop API whose loop, steps and activity reads fail, or never answer.
+private actor BrokenLoopsAPI: LoopsAPI {
+	enum Mode { case failing, hanging }
+	let mode: Mode
+	init(_ mode: Mode) { self.mode = mode }
+
+	private func answer<T: Sendable>(_ value: T) async throws -> T {
+		switch mode {
+		case .failing: throw AutomationError("offline")
+		case .hanging:
+			try await Task.sleep(for: .seconds(3600))
+			return value
+		}
+	}
+	func loops() async throws -> [LoopSummary] { try await answer([fixtureLoop]) }
+	func steps(loopID: String) async throws -> [LoopStep] { try await answer(fixtureSteps) }
+	func activity(loopID: String) async throws -> [LoopActivityEntry] { try await answer(fixtureActivity) }
+	func actors() async throws -> [AutomationActor] { [relay, forge, scout] }
+	func installs() async throws -> [LoopInstall] { [] }
+	func setStatus(loopID: String, status: LoopPill, idempotencyKey: String) async throws {}
+	func createLoop(name: String, content: String, idempotencyKey: String) async throws -> String { "new" }
+	func updateLoop(loopID: String, name: String?, content: String?, idempotencyKey: String) async throws {}
+	func deleteLoop(loopID: String) async throws {}
+}
+
 @MainActor
 private func render<V: View>(_ view: V, width: CGFloat, dark: Bool, name: String) throws {
 	let framed = view
@@ -138,8 +163,29 @@ struct LoopsSnapshotTests {
 				LoopDetailContent(store: store, initialTab: .activity).padding(MaskinSpace.s9),
 				width: width, dark: dark, name: "loop-detail-activity")
 			try render(
-				LoopDetailContent(store: store, underTheHood: true).padding(MaskinSpace.s9),
+				LoopDetailContent(store: store, initialTab: .setup).padding(MaskinSpace.s9),
 				width: width, dark: dark, name: "loop-detail-hood")
+		}
+	}
+
+	@Test("loop detail says what failed with Try again when its reads fail or hang", arguments: [false, true])
+	func detailWhenReadsFail(dark: Bool) async throws {
+		let modes: [(BrokenLoopsAPI.Mode, String)] = [(.failing, "failing"), (.hanging, "hanging")]
+		let tabs: [(LoopDetailTab, String)] = [
+			(.overview, "overview"), (.performance, "performance"), (.activity, "activity"), (.setup, "setup"),
+		]
+		for (mode, name) in modes {
+			let store = LoopDetailStore(
+				loop: fixtureLoop, api: BrokenLoopsAPI(mode), events: nil, giveUpAfter: .milliseconds(100))
+			await store.start()
+			#expect(store.failedBlocks == [.description, .steps, .activity])
+			for width in Self.widths {
+				for (tab, label) in tabs {
+					try render(
+						LoopDetailContent(store: store, initialTab: tab).padding(MaskinSpace.s9),
+						width: width, dark: dark, name: "loop-detail-\(name)-\(label)")
+				}
+			}
 		}
 	}
 
@@ -157,28 +203,6 @@ struct LoopsSnapshotTests {
 			.padding(MaskinSpace.s9)
 			try render(view, width: width, dark: dark, name: "trigger-rows")
 		}
-	}
-
-	@Test("the Flows header pill renders off and on", arguments: [false, true])
-	func needsYouPill(dark: Bool) throws {
-		for width in Self.widths {
-			let view = VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-				Text("Flows").maskinText(.largeTitle).foregroundStyle(MaskinColor.ink)
-				FlowsNeedsYouPill(count: 2, isOn: false) {}
-				FlowsNeedsYouPill(count: 1, isOn: false) {}
-				FlowsNeedsYouPill(count: 2, isOn: true) {}
-			}
-			.padding(MaskinSpace.s9)
-			try render(view, width: width, dark: dark, name: "flows-needs-you-pill")
-		}
-	}
-
-	@Test("the pill reads as the handoff writes it")
-	func pillCopy() {
-		#expect(FlowsNeedsYouPill.label(count: 2, isOn: false) == "2 need you ›")
-		#expect(FlowsNeedsYouPill.label(count: 1, isOn: false) == "1 needs you ›")
-		#expect(FlowsNeedsYouPill.label(count: 2, isOn: true) == "Showing 2 that need you · Show all")
-		#expect(FlowsNeedsYouPill.height == 34)
 	}
 
 	@Test("loop pills render all states", arguments: [false, true])

@@ -5,8 +5,9 @@ import type { Page } from '@playwright/test'
 
 /**
  * A just-enough VNC server for noVNC, running as a real WebSocket server in the
- * test process. It speaks the RFB 3.8 handshake (no-auth security, a 1280x720
- * ServerInit) and then idles, which is all noVNC needs to report "connected".
+ * test process. It speaks the RFB 3.8 handshake (no-auth security, a 1920x1080
+ * ServerInit) and then idles, which is all noVNC needs to report "connected". It records the
+ * key presses the client sends (`keys`, as X11 keysyms) so a test can see what was typed.
  *
  * A real server rather than Playwright's `routeWebSocket`: noVNC inspects the
  * socket object it is handed, and the mocked one fails its "Raw channel missing
@@ -26,8 +27,8 @@ function frame(payload: Buffer): Buffer {
 function serverInit(): Buffer {
 	const name = Buffer.from('e2e')
 	const init = Buffer.alloc(24 + name.length)
-	init.writeUInt16BE(1280, 0)
-	init.writeUInt16BE(720, 2)
+	init.writeUInt16BE(1920, 0)
+	init.writeUInt16BE(1080, 2)
 	init.writeUInt8(32, 4) // bits per pixel
 	init.writeUInt8(24, 5) // depth
 	init.writeUInt8(0, 6) // big-endian
@@ -70,30 +71,67 @@ function readFrames(buf: Buffer): { messages: Buffer[]; rest: Buffer } {
 	return { messages, rest: buf.subarray(offset) }
 }
 
-function serve(socket: Socket): void {
+/** Bytes in one RFB client message, or null while `buf` does not hold all of it yet. */
+function clientMessageLength(buf: Buffer): number | null {
+	const need = (n: number) => (buf.length >= n ? n : null)
+	switch (buf[0]) {
+		case 0:
+			return need(20) // SetPixelFormat
+		case 2: {
+			if (buf.length < 4) return null
+			return need(4 + 4 * buf.readUInt16BE(2)) // SetEncodings
+		}
+		case 3:
+			return need(10) // FramebufferUpdateRequest
+		case 4:
+			return need(8) // KeyEvent
+		case 5:
+			return need(6) // PointerEvent
+		case 6: {
+			if (buf.length < 8) return null
+			return need(8 + buf.readUInt32BE(4)) // ClientCutText
+		}
+		default:
+			return buf.length // unknown: drop what there is
+	}
+}
+
+function serve(socket: Socket, keys: number[]): void {
 	let step = 0
 	let pending: Buffer = Buffer.alloc(0)
+	let stream: Buffer = Buffer.alloc(0)
 	socket.write(frame(Buffer.from('RFB 003.008\n')))
 	socket.on('data', (chunk) => {
 		pending = Buffer.concat([pending, chunk as Buffer])
 		const { messages, rest } = readFrames(pending)
 		pending = Buffer.from(rest)
-		for (const _m of messages) {
+		for (const message of messages) {
 			step += 1
 			if (step === 1)
 				socket.write(frame(Buffer.from([1, 1]))) // version chosen -> offer "None"
 			else if (step === 2)
 				socket.write(frame(Buffer.from([0, 0, 0, 0]))) // SecurityResult OK
-			else if (step === 3) socket.write(frame(serverInit())) // ClientInit -> ServerInit
+			else if (step === 3)
+				socket.write(frame(serverInit())) // ClientInit -> ServerInit
+			else {
+				// After the handshake, messages can share a frame: walk them one by one.
+				stream = Buffer.concat([stream, message])
+				for (let len = clientMessageLength(stream); len && len > 0; ) {
+					if (stream[0] === 4 && stream[1] === 1) keys.push(stream.readUInt32BE(4)) // key down
+					stream = stream.subarray(len)
+					len = stream.length ? clientMessageLength(stream) : null
+				}
+			}
 		}
 	})
 	socket.on('error', () => {})
 }
 
-export type FakeVnc = { port: number; close: () => Promise<void> }
+export type FakeVnc = { port: number; keys: number[]; close: () => Promise<void> }
 
 export async function startFakeVnc(): Promise<FakeVnc> {
 	const sockets = new Set<Socket>()
+	const keys: number[] = []
 	const server: Server = createServer((_req, res) => {
 		res.writeHead(426).end()
 	})
@@ -112,13 +150,14 @@ export async function startFakeVnc(): Promise<FakeVnc> {
 		)
 		sockets.add(socket)
 		socket.on('close', () => sockets.delete(socket))
-		serve(socket)
+		serve(socket, keys)
 	})
 	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
 	const address = server.address()
 	const port = typeof address === 'object' && address ? address.port : 0
 	return {
 		port,
+		keys,
 		close: () =>
 			new Promise<void>((resolve) => {
 				for (const s of sockets) s.destroy()

@@ -6,12 +6,26 @@ import type {
 } from '@/lib/api'
 import { isValidJsonPath } from '@maskin/shared'
 
-/** The three verifiers the backend ships. No "none" and no bearer option (signing is required). */
+/** The verifiers the backend ships. No "none" and no bearer option (signing is required). */
 export const SIGNATURE_SCHEMES: { value: ExtensionSignatureScheme; label: string }[] = [
 	{ value: 'hmac-sha256', label: 'HMAC-SHA256 raw body' },
 	{ value: 'hmac-sha1', label: 'HMAC-SHA1 raw body' },
 	{ value: 'timestamp', label: 'HMAC-SHA256 timestamp + body' },
+	{ value: 'ed25519', label: 'Ed25519 public key, timestamp + body' },
 ]
+
+/** Both schemes sign a text built from a timestamp header and the body. */
+export const usesTimestamp = (scheme: ExtensionSignatureScheme) =>
+	scheme === 'timestamp' || scheme === 'ed25519'
+
+/** The vendor's Ed25519 public key as the form expects it: the raw 32 bytes, base64. */
+export function isEd25519PublicKey(value: string): boolean {
+	try {
+		return atob(value.trim()).length === 32
+	} catch {
+		return false
+	}
+}
 
 export type FieldMode = 'literal' | 'path'
 
@@ -95,7 +109,7 @@ export function configFromForm(form: WebhookFormState): ExtensionWebhookConfig {
 		},
 	}
 	if (form.signaturePrefix.trim()) cfg.signaturePrefix = form.signaturePrefix.trim()
-	if (form.scheme === 'timestamp') {
+	if (usesTimestamp(form.scheme)) {
 		cfg.timestampHeader = form.timestampHeader.trim()
 		cfg.timestampBodyTemplate = form.timestampBodyTemplate.trim()
 	}
@@ -111,11 +125,15 @@ export function validateWebhookForm(
 ): WebhookFormErrors {
 	const errors: WebhookFormErrors = {}
 	if (!form.signatureHeader.trim()) errors.signatureHeader = 'Required'
-	if (form.scheme === 'timestamp') {
+	if (usesTimestamp(form.scheme)) {
 		if (!form.timestampHeader.trim()) errors.timestampHeader = 'Required'
 		if (!form.timestampBodyTemplate.trim()) errors.timestampBodyTemplate = 'Required'
 	}
-	if ((opts.requireSecret || form.signingSecret) && form.signingSecret.length < 16) {
+	if (form.scheme === 'ed25519') {
+		if ((opts.requireSecret || form.signingSecret) && !isEd25519PublicKey(form.signingSecret)) {
+			errors.signingSecret = 'Not an Ed25519 public key. Paste the 32-byte public key as base64.'
+		}
+	} else if ((opts.requireSecret || form.signingSecret) && form.signingSecret.length < 16) {
 		errors.signingSecret = 'Use at least 16 characters, or press Generate'
 	}
 	if (!form.externalIdPath.trim()) errors.externalIdPath = 'Required'

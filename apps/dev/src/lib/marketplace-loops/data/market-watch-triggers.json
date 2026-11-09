@@ -1,0 +1,62 @@
+{
+	"de448b1f-1a86-4037-929a-8b0fb76d0b49": {
+		"id": "de448b1f-1a86-4037-929a-8b0fb76d0b49",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Weekly sweep",
+		"type": "cron",
+		"config": {
+			"expression": "0 7 * * 0"
+		},
+		"actionPrompt": "Run the weekly sweep for the loop named Market & Competitor Watch (find it with list_loops). Load the skill market-watch-sweep and follow it in full. It tells you how to build the working sets, scan, file insights, rewrite the briefing page (with the skill market-briefing-page) and post the one consolidated comment. The briefing page is rewritten every week, even a quiet one.",
+		"targetActorId": "b8a5aee6-b884-4fdb-82fe-1968c3dbd0bb",
+		"enabled": true
+	},
+	"51831e1e-4d46-41b9-9f27-68bb167f31f1": {
+		"id": "51831e1e-4d46-41b9-9f27-68bb167f31f1",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Monthly revalidation",
+		"type": "cron",
+		"config": {
+			"expression": "0 9 20 * *"
+		},
+		"actionPrompt": "Run the monthly revalidation for the loop named Market & Competitor Watch (find it with list_loops). Load the skill competitor-list-review and follow it in full: the competitor list, the category scope and the regulation check. Post the one comment it describes. Do not add, remove or re-role companies yourself; propose and wait for the human decision.",
+		"targetActorId": "b8a5aee6-b884-4fdb-82fe-1968c3dbd0bb",
+		"enabled": true
+	},
+	"4fb0178a-fea4-4285-ba6a-e843a612f2f0": {
+		"id": "4fb0178a-fea4-4285-ba6a-e843a612f2f0",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Monthly outlook and positioning",
+		"type": "cron",
+		"config": {
+			"expression": "0 8 3 * *"
+		},
+		"actionPrompt": "Run the monthly refresh of the long-view page for the loop named Market & Competitor Watch (find it with list_loops). Load the skill market-outlook-page and follow it in full, then post the one comment it describes. The Market Researcher owns the weekly briefing page. Read it and never edit it.",
+		"targetActorId": "7668f065-8179-461e-a908-77d80ecd54c0",
+		"enabled": true
+	},
+	"c82bf4f3-50ed-408f-ac37-68810b6ad74b": {
+		"id": "c82bf4f3-50ed-408f-ac37-68810b6ad74b",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Weekly briefing check",
+		"type": "cron",
+		"config": {
+			"expression": "30 5 * * 1"
+		},
+		"actionPrompt": "You own the loop named Market & Competitor Watch (find it with list_loops). Every Monday make sure the weekly briefing has reached the people who read it. Nobody else chases this, so you do.\n\nFirst, make sure the briefing page \"Market briefing: what happened and what it means\" (find it with search_objects) is linked into the loop with an in_loop relationship (source the loop, target the page). Check with list_relationships and create the edge with update_objects edges if it is missing.\n\n1. Did the weekly sweep run? The sweep runs on Sunday at 07:00 UTC. Look for a completed Market Researcher session since the previous Saturday 00:00 UTC (list_sessions with the Market Researcher as actor, and check pending, starting and running too so you never start a second copy). Then read the briefing page with get_objects and confirm the \"Last updated\" date in the intro is on or after that Saturday.\n2. If both are true, you are done. Stay silent.\n3. If not, start the Market Researcher (find it with list_actors) with create_session and this prompt: \"Run the weekly sweep for the Market & Competitor Watch loop now. Load the skill market-watch-sweep and follow it in full, including rewriting the briefing page.\" Poll get_session until it ends (a sweep takes about 15 minutes; allow up to 45). If it fails or never starts, start it once more.\n4. If the second attempt also fails, post one comment on the loop with attention 3 that says what failed, and @mention the workspace owner (a human; find them with list_actors). Do not ask a human anything else.",
+		"targetActorId": "6617273e-ce12-4b6e-9108-949b07cc06a9",
+		"enabled": true
+	},
+	"22b1ed51-c8ba-4867-88d9-526a1547b207": {
+		"id": "22b1ed51-c8ba-4867-88d9-526a1547b207",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Confirm briefing landed",
+		"type": "cron",
+		"config": {
+			"expression": "0 8 * * 1"
+		},
+		"actionPrompt": "Safety check for the loop named Market & Competitor Watch (find it with list_loops), which you own. Read the briefing page \"Market briefing: what happened and what it means\" (find it with search_objects) and its comments (get_comments). Confirm that its \"Last updated\" date is within the last 2 days and that the weekly sweep posted its consolidated comment on the loop this week (or deliberately skipped it because nothing was notable; the page itself must still be current).\n\nIf everything is current, exit silently. If it is not, check list_sessions for the Market Researcher since Sunday (pending, starting and running too). If a session failed or stalled, rerun the sweep the same way the Weekly briefing check does: start the Market Researcher once with create_session and tell it to run the market-watch-sweep skill in full. If it is still not current after one rerun, post one comment on the loop with attention 3 that names what is blocked, and @mention the workspace owner (a human; find them with list_actors).",
+		"targetActorId": "6617273e-ce12-4b6e-9108-949b07cc06a9",
+		"enabled": true
+	}
+}

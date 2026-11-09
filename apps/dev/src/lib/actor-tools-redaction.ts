@@ -1,3 +1,4 @@
+import { getOAuthPin } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { workspaceMembers } from '@maskin/db/schema'
 import { and, eq, inArray } from 'drizzle-orm'
@@ -31,11 +32,15 @@ const URL_PASSWORD = /(:\/\/[^\s/:@]+:)([^\s/@]+)(?=@)/g
 // A bare flag whose next arg is the value, e.g. ["--api-key", "<value>"].
 const SECRET_FLAG = new RegExp(`^--?${SECRET_KEYWORD}$`, 'i')
 
+/** Copy of a string with the password in a user:password@host url replaced by MASKED_VALUE. */
+export function maskUrlPassword(value: string): string {
+	return value.replace(URL_PASSWORD, `$1${MASKED_VALUE}`)
+}
+
 function maskArg(arg: string): string {
-	return arg
-		.replace(KEYED_VALUE, `$1${MASKED_VALUE}`)
-		.replace(BEARER_VALUE, `$1${MASKED_VALUE}`)
-		.replace(URL_PASSWORD, `$1${MASKED_VALUE}`)
+	return maskUrlPassword(
+		arg.replace(KEYED_VALUE, `$1${MASKED_VALUE}`).replace(BEARER_VALUE, `$1${MASKED_VALUE}`),
+	)
 }
 
 /**
@@ -112,6 +117,9 @@ export async function canViewActorSecrets(
 ): Promise<boolean> {
 	if (callerId === targetId) return true
 
+	// A Claude connector token is pinned to one workspace: admin rights held in any other
+	// workspace must not unmask secrets for it.
+	const pin = getOAuthPin()
 	const adminOf = await db
 		.select({ workspaceId: workspaceMembers.workspaceId })
 		.from(workspaceMembers)
@@ -119,6 +127,7 @@ export async function canViewActorSecrets(
 			and(
 				eq(workspaceMembers.actorId, callerId),
 				inArray(workspaceMembers.role, ['owner', 'admin']),
+				...(pin ? [eq(workspaceMembers.workspaceId, pin.workspaceId)] : []),
 			),
 		)
 	if (adminOf.length === 0) return false

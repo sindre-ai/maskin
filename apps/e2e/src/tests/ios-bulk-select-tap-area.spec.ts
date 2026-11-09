@@ -51,7 +51,7 @@ test.describe('iOS bulk-select checkbox tap area (T1)', () => {
 			expect(box.width, `width 16 at ${viewport.label}`).toBeLessThan(20)
 			expect(box.height, `height 16 at ${viewport.label}`).toBeLessThan(20)
 
-			const star = page.getByRole('button', { name: 'Star this object' }).first()
+			const star = page.getByRole('button', { name: 'Star this item' }).first()
 			await expect(star).toBeVisible()
 			const starBox = await requireBox(star, `row star at ${viewport.label}`)
 			// The star's box includes its tap-area padding, so compare its centre.

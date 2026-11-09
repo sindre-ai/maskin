@@ -2,6 +2,7 @@ import type { Database, Transaction } from '@maskin/db'
 import { events, actors } from '@maskin/db/schema'
 import type { ObjectPreview } from '@maskin/shared'
 import { and, desc, eq } from 'drizzle-orm'
+import { withAttachmentNames } from './email-attachments'
 import { recordEventReturning } from './events/record-event'
 
 /**
@@ -89,8 +90,10 @@ export async function withDeliveryState(
 	db: Database,
 	workspaceId: string,
 	objectId: string,
-	preview: ObjectPreview,
+	basePreview: ObjectPreview,
 ): Promise<ObjectPreview> {
+	// File names for display; the hash was computed from the ids and stays as it is.
+	const preview = await withAttachmentNames(db, workspaceId, basePreview)
 	const delivered = await latestEvent(db, workspaceId, objectId, DELIVERED_ACTION, false)
 	if (delivered?.contentHash === preview.content_hash) {
 		return {
@@ -113,8 +116,9 @@ export async function withDeliveryState(
  * decision card leave the same record behind.
  *
  * `via` says how the person said yes: `approval` (the Approve button, which names the hash
- * the person saw) or `reply` (they chose the send option on a card, so the hash is the text
- * as it read at that moment).
+ * the person saw), `reply` (they chose the send option on a card, so the hash is the text
+ * as it read at that moment) or `chat` (they said yes in a chat message, which the server
+ * checked in chat-approval.ts; `chat` names the message, the chat and the agent that asked).
  */
 export async function recordObjectApproval(
 	db: Database | Transaction,
@@ -124,9 +128,11 @@ export async function recordObjectApproval(
 		objectId: string
 		objectType: string
 		preview: Pick<ObjectPreview, 'content_hash' | 'kind'>
-		via: 'approval' | 'reply'
+		via: 'approval' | 'reply' | 'chat'
 		/** The decision comment the person answered, when `via` is `reply`. */
 		replyToEventId?: number
+		/** The message that counted as the yes, when `via` is `chat`. Kept for the audit trail. */
+		chat?: { messageId: number; conversationId: string; agentId: string }
 	},
 ) {
 	return recordEventReturning(db, {
@@ -140,6 +146,13 @@ export async function recordObjectApproval(
 			kind: params.preview.kind,
 			via: params.via,
 			...(params.replyToEventId === undefined ? {} : { reply_to_event_id: params.replyToEventId }),
+			...(params.chat
+				? {
+						chat_message_id: params.chat.messageId,
+						conversation_id: params.chat.conversationId,
+						requested_by_agent_id: params.chat.agentId,
+					}
+				: {}),
 		},
 	})
 }

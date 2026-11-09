@@ -48,12 +48,12 @@ describe('ItemCard', () => {
 		expect(link).toHaveAttribute('href', '/$workspaceId/marketplace/$loopId/$itemId')
 	})
 
-	it('shows the Install CTA when not installed', () => {
+	it('shows the Add action when not installed', () => {
 		render(<ItemCard workspaceId={workspaceId} item={item()} />, { wrapper: TestWrapper })
-		expect(screen.getByRole('button', { name: /install/i })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /^add$/i })).toBeInTheDocument()
 	})
 
-	it('shows Installed + Remove when individually installed', () => {
+	it('shows Added + Remove when individually installed', () => {
 		const installedEntity: MarketplaceItemInstalledEntry = {
 			marketplace_item_id: 'item-1',
 			entity_id: 'actor-1',
@@ -62,7 +62,7 @@ describe('ItemCard', () => {
 		render(<ItemCard workspaceId={workspaceId} item={item()} installedEntity={installedEntity} />, {
 			wrapper: TestWrapper,
 		})
-		expect(screen.getByText('Installed')).toBeInTheDocument()
+		expect(screen.getByText('Added')).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: /remove/i })).toBeInTheDocument()
 	})
 
@@ -88,14 +88,14 @@ describe('ItemCard', () => {
 			/>,
 			{ wrapper: TestWrapper },
 		)
-		expect(screen.queryByRole('button', { name: /install/i })).not.toBeInTheDocument()
-		expect(screen.getByText(/Managed/)).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /^add$/i })).not.toBeInTheDocument()
+		expect(screen.getByText('Added')).toBeInTheDocument()
 	})
 
-	it('calls the install mutation with the item id when Install is clicked', async () => {
+	it('calls the install mutation with the item id when Add is clicked', async () => {
 		const { api } = await import('@/lib/api')
 		render(<ItemCard workspaceId={workspaceId} item={item()} />, { wrapper: TestWrapper })
-		await userEvent.click(screen.getByRole('button', { name: /install/i }))
+		await userEvent.click(screen.getByRole('button', { name: /^add$/i }))
 		expect(api.marketplaceItems.install).toHaveBeenCalledWith('item-1', workspaceId)
 	})
 })

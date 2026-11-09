@@ -1,4 +1,7 @@
 export const queryKeys = {
+	oauthGrants: {
+		all: () => ['oauthGrants'] as const,
+	},
 	account: {
 		deletionPreview: (deleteSoleWorkspaces: boolean) =>
 			['account', 'deletion-preview', { deleteSoleWorkspaces }] as const,
@@ -109,6 +112,7 @@ export const queryKeys = {
 			['notifications', workspaceId, 'list', filters] as const,
 		detail: (id: string) => ['notifications', 'detail', id] as const,
 	},
+	notificationPreferences: { me: ['notification-preferences'] as const },
 	skills: {
 		all: (actorId: string) => ['skills', actorId] as const,
 		detail: (actorId: string, skillName: string) => ['skills', actorId, skillName] as const,
@@ -170,6 +174,10 @@ export const queryKeys = {
 	fileComments: {
 		all: (workspaceId: string, fileId: string) => ['file-comments', workspaceId, fileId] as const,
 	},
+	fileProposals: {
+		open: (workspaceId: string, fileId: string) =>
+			['file-proposals', workspaceId, fileId, 'open'] as const,
+	},
 	attachingObjects: {
 		byFile: (workspaceId: string, fileId: string) =>
 			['attaching-objects', workspaceId, fileId] as const,
@@ -184,6 +192,7 @@ export const queryKeys = {
 	billing: {
 		all: (workspaceId: string) => ['billing', workspaceId] as const,
 		usage: (workspaceId: string) => ['billing', workspaceId, 'usage'] as const,
+		dailyBudget: (workspaceId: string) => ['billing', workspaceId, 'daily-budget'] as const,
 	},
 	forYou: {
 		list: (workspaceId: string) => ['for-you', workspaceId] as const,

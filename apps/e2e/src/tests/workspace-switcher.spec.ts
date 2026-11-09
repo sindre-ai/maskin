@@ -57,7 +57,7 @@ test.describe('Workspace switcher (SidebarHeader pill)', () => {
 		await expect(pill).not.toContainText(account.workspaceName)
 	})
 
-	test('labels each workspace row with its member count, not the caller role', async ({
+	test('lists each workspace by name with the current one ticked, no role or member count', async ({
 		page,
 		account,
 	}) => {
@@ -67,10 +67,10 @@ test.describe('Workspace switcher (SidebarHeader pill)', () => {
 
 		await page.getByRole('button', { name: /switch workspace/i }).click()
 
+		// v3: a plain list, the current workspace ticked on the left.
 		const currentRow = page.getByRole('menu').getByRole('menuitem', { name: account.workspaceName })
-		// A freshly seeded workspace has exactly one human member — the caller —
-		// so it reads "just you" rather than "1 members" or the role word.
-		await expect(currentRow).toContainText('just you')
+		await expect(currentRow).toHaveText(account.workspaceName)
+		await expect(currentRow.locator('svg')).toHaveCount(1)
 		await expect(currentRow).not.toContainText('owner')
 	})
 

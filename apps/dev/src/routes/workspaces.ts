@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
-import { evictMembership } from '@maskin/auth'
+import { evictMembership, evictOAuthTokens, getOAuthPin } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { actors, workspaceMembers, workspaceOnboardingPrompts, workspaces } from '@maskin/db/schema'
 import {
@@ -18,6 +18,7 @@ import {
 import type { StorageProvider } from '@maskin/storage'
 import { and, count, eq, inArray } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
+import { isTeamActor } from '../lib/analytics/team-member'
 import { isEnterprise, isEnterpriseActor } from '../lib/enterprise'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -29,7 +30,9 @@ import {
 	patchAddsByoSource,
 } from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
+import { loadMembersLastActive } from '../lib/member-last-active'
 import { loadMembershipFacts } from '../lib/membership-facts'
+import { revokeMemberGrants } from '../lib/oauth-server/grants'
 import { shouldSkipOnboardingKickoff } from '../lib/onboarding/chief-of-staff-kickoff'
 import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
@@ -43,17 +46,14 @@ import {
 } from '../lib/workspace-auth'
 import {
 	OwnershipCapExceededError,
-	SeatCapExceededError,
 	computeEffectiveTier,
-	countHumanMembers,
 	lockActorForOwnershipClaim,
 	ownedWorkspacePlans,
 	ownershipCapErrorBody,
 	ownershipCapForTier,
 	resolvePlanTier,
-	seatCapErrorBody,
-	seatCapForPlan,
 } from '../lib/workspace-capacity'
+import { loadForYouCounts, loadUnreadChatCounts } from '../lib/workspace-counts'
 import { workspaceDeletionPreview } from '../lib/workspace-deletion'
 import {
 	evictPurgedWorkspace,
@@ -86,6 +86,8 @@ const memberResponseSchema = z.object({
 	joinedAt: z.string().nullable(),
 	name: z.string(),
 	type: z.string(),
+	// Only in the list, and only for an owner or admin: it can show activity in other workspaces.
+	lastActiveAt: z.string().nullable().optional(),
 })
 
 const addMemberBodySchema = z.object({
@@ -104,6 +106,9 @@ const workspaceWithRoleSchema = workspaceResponseSchema.extend({
 	memberCount: z.number().int().nonnegative(),
 	// True for the one workspace the caller chose as their default (actors.default_workspace_id).
 	isDefault: z.boolean(),
+	// Whether the caller is on our own team, for marking browser analytics events.
+	// A fact about the caller, so every row carries the same value.
+	isTeam: z.boolean(),
 })
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
@@ -267,6 +272,7 @@ const listWorkspacesRoute = createRoute({
 app.openapi(listWorkspacesRoute, async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
+	const pin = getOAuthPin()
 
 	const results = await db
 		.select({
@@ -288,7 +294,13 @@ app.openapi(listWorkspacesRoute, async (c) => {
 		})
 		.from(workspaceMembers)
 		.innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
-		.where(eq(workspaceMembers.actorId, actorId))
+		.where(
+			and(
+				eq(workspaceMembers.actorId, actorId),
+				// A Claude connector token sees only the workspace it was approved for.
+				...(pin ? [eq(workspaceMembers.workspaceId, pin.workspaceId)] : []),
+			),
+		)
 
 	// Report the *effective* entitlement, not the raw column — an enterprise
 	// billing owner is entitled on every workspace they own without a
@@ -331,13 +343,73 @@ app.openapi(listWorkspacesRoute, async (c) => {
 		.limit(1)
 
 	// The caller is a member of every row here, so 1 is the floor, never 0.
+	const isTeam = await isTeamActor(actorId, callerIsHuman ? 'human' : 'agent')
 	const withCounts = withEntitlement.map((w) => ({
 		...w,
 		memberCount: countByWorkspace.get(w.id) ?? 1,
 		isDefault: w.id === defaultWorkspaceId,
+		isTeam,
 	}))
 
 	return c.json(serializeArray(withCounts) as z.infer<typeof workspaceWithRoleSchema>[])
+})
+
+// GET /api/workspaces/counts
+const workspaceCountsSchema = z.object({
+	workspaceId: z.string().uuid(),
+	// Chats with a message from someone else the caller has not read (archived chats left out).
+	unreadChats: z.number().int().nonnegative(),
+	// Items waiting on the caller on that workspace's For You page.
+	forYou: z.number().int().nonnegative(),
+	// unreadChats + forYou: the "N need you" number the iPhone workspace switcher shows.
+	needYou: z.number().int().nonnegative(),
+})
+
+const workspaceCountsRoute = createRoute({
+	method: 'get',
+	path: '/counts',
+	tags: ['workspaces'],
+	summary:
+		"What waits on the caller in each of their workspaces (the iPhone workspace switcher's counts)",
+	description:
+		'One row per workspace the caller belongs to. Kept off the workspace list so that hot read stays cheap.',
+	responses: {
+		200: {
+			description: 'Per-workspace counts for the caller',
+			content: { 'application/json': { schema: z.array(workspaceCountsSchema) } },
+		},
+	},
+})
+
+app.openapi(workspaceCountsRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const pin = getOAuthPin()
+
+	const memberships = await db
+		.select({ workspaceId: workspaceMembers.workspaceId })
+		.from(workspaceMembers)
+		.where(
+			and(
+				eq(workspaceMembers.actorId, actorId),
+				// A Claude connector token sees only the workspace it was approved for.
+				...(pin ? [eq(workspaceMembers.workspaceId, pin.workspaceId)] : []),
+			),
+		)
+	const ids = memberships.map((m) => m.workspaceId)
+
+	const [unreadByWorkspace, forYouByWorkspace] = await Promise.all([
+		loadUnreadChatCounts(db, actorId, ids),
+		loadForYouCounts(db, actorId, ids),
+	])
+
+	return c.json(
+		ids.map((workspaceId) => {
+			const unreadChats = unreadByWorkspace.get(workspaceId) ?? 0
+			const forYou = forYouByWorkspace.get(workspaceId) ?? 0
+			return { workspaceId, unreadChats, forYou, needYou: unreadChats + forYou }
+		}),
+	)
 })
 
 /** Top-level keys whose value differs between two settings objects. Names only, never values. */
@@ -384,9 +456,16 @@ function pickChangedAdminSettings(
 		}
 	}
 
-	if (custom_llm !== undefined && !isDeepStrictEqual(custom_llm, stored.custom_llm)) {
-		settings.custom_llm = custom_llm
-		changed = true
+	if (custom_llm !== undefined) {
+		// A body spread back from GET has no api_key (the key is write-only), so
+		// without one the comparison leaves the stored key out too.
+		const storedCustom = stored.custom_llm as Record<string, unknown> | undefined
+		const { api_key: _storedKey, ...storedWithoutKey } = storedCustom ?? {}
+		const comparable = 'api_key' in custom_llm || !storedCustom ? storedCustom : storedWithoutKey
+		if (!isDeepStrictEqual(custom_llm, comparable)) {
+			settings.custom_llm = custom_llm
+			changed = true
+		}
 	}
 
 	return { settings, changed }
@@ -450,9 +529,10 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 	// PATCHes with the whole settings object spread back in, so a member's
 	// ordinary edit carries llm_keys/custom_llm exactly as stored. A null that
 	// deletes a stored key is a change and is gated.
-	const { settings: patchSettings, changed: changesLlm } = body.settings
+	const { settings: pickedSettings, changed: changesLlm } = body.settings
 		? pickChangedAdminSettings(body.settings, existingSettings)
 		: { settings: undefined, changed: false }
+	let patchSettings = pickedSettings
 	const changesName = body.name !== undefined && body.name !== existing.name
 	const callerIsHumanAdminOrOwner = await isWorkspaceHumanAdminOrOwner(db, actorId, id)
 	if ((changesName || changesLlm) && !callerIsHumanAdminOrOwner) {
@@ -503,6 +583,27 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 		)
 	}
 
+	// `daily_budget` is written only by PUT /api/billing/daily-budget, which holds
+	// the admin/owner check, the dollar-unit gate and the audit event; the shallow
+	// merge below would skip all three. The web app spreads the whole stored
+	// settings object back on unrelated edits, so a value equal to the stored one
+	// is dropped quietly and only a changed or newly set one is rejected.
+	if (body.settings && 'daily_budget' in body.settings) {
+		if (!isDeepStrictEqual(body.settings.daily_budget, existingSettings.daily_budget)) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					'daily_budget cannot be updated via PATCH /api/workspaces/:id — use PUT /api/billing/daily-budget instead',
+				),
+				400,
+			)
+		}
+		if (patchSettings) {
+			const { daily_budget: _storedUnchanged, ...withoutDailyBudget } = patchSettings
+			patchSettings = withoutDailyBudget
+		}
+	}
+
 	const updateData: Record<string, unknown> = { updatedAt: new Date() }
 	if (body.name) updateData.name = body.name
 	if (patchSettings) {
@@ -539,12 +640,26 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 			merged.llm_keys = mergedLlm
 		}
 
+		// custom_llm is replaced as a whole object, and its api_key is write-only:
+		// a patch without one keeps the stored (sealed) key, null clears it.
+		const storedCustomKey = (existingSettings.custom_llm as { api_key?: unknown } | undefined)
+			?.api_key
+		const keptCustomKey =
+			sealedPatch.custom_llm && !('api_key' in sealedPatch.custom_llm) && storedCustomKey
+		if (keptCustomKey) {
+			merged.custom_llm = { ...sealedPatch.custom_llm, api_key: storedCustomKey }
+		}
+
 		// BYO-LLM ↔ paid plan mutex: if the PATCH is adding a BYO Anthropic
 		// key or enabling custom_llm AND a live Stripe subscription exists,
 		// cancel the subscription via API first and roll the billing slot
 		// into the same merged write. The .deleted webhook will arrive
 		// shortly after and is idempotent against this exact terminal state.
-		if (patchAddsByoSource(patchSettings)) {
+		// The kept key counts: enabling a stored endpoint is adding a BYO source.
+		const effectivePatch = keptCustomKey
+			? { ...patchSettings, custom_llm: merged.custom_llm as SettingsPatch['custom_llm'] }
+			: patchSettings
+		if (patchAddsByoSource(effectivePatch)) {
 			const errorRes = await cancelPaidPlanForByoTransition(existingSettings, merged, id)
 			if (errorRes) return c.json(...errorRes)
 		}
@@ -809,11 +924,11 @@ const addMemberRoute = createRoute({
 		},
 		403: {
 			description:
-				'Caller is a member but not a human admin or owner, or the workspace has reached its seat cap',
+				'Caller is a member but not a human admin or owner, or the actor is missing or is not an agent created in this workspace',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		404: {
-			description: 'Workspace not found, caller is not a member of it, or actor not found',
+			description: 'Workspace not found, or the caller is not a member of it',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 	},
@@ -838,40 +953,40 @@ app.openapi(addMemberRoute, (async (c) => {
 	}
 
 	const [targetActor] = await db
-		.select({ type: actors.type })
+		.select({ type: actors.type, createdBy: actors.createdBy })
 		.from(actors)
 		.where(eq(actors.id, actor_id))
 		.limit(1)
-	if (!targetActor) return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+
+	// An admin may attach an actor without its consent only when this workspace
+	// already owns it: an agent made by the caller or by a current member. A
+	// person, or an agent made elsewhere, has to accept an invitation instead.
+	// A missing id gets the same 403, so the answer never confirms an id exists.
+	const isOwnedAgent =
+		targetActor?.type === 'agent' &&
+		targetActor.createdBy !== null &&
+		(targetActor.createdBy === callerId ||
+			(await isWorkspaceMember(db, targetActor.createdBy, workspaceId)))
+	if (!isOwnedAgent) {
+		return c.json(
+			createApiError(
+				'FORBIDDEN',
+				'Only agents created in this workspace can be added by id. Invite people by email instead.',
+			),
+			403,
+		)
+	}
 
 	const outcome = await db.transaction(async (tx) => {
-		// Lock the workspace row for the duration of the capacity check + insert.
-		// Serializes ALL concurrent member-adds against this workspace — the
-		// seat cap is a workspace-scoped aggregate (COUNT across all members),
-		// not a per-row invariant a UNIQUE constraint alone could enforce.
+		// Lock the workspace row so a workspace deleted mid-request is reported
+		// as missing instead of failing the insert on its foreign key.
 		const [locked] = await tx
-			.select({
-				id: workspaces.id,
-				settings: workspaces.settings,
-				billingOwnerId: workspaces.billingOwnerId,
-			})
+			.select({ id: workspaces.id })
 			.from(workspaces)
 			.where(eq(workspaces.id, workspaceId))
 			.for('update')
 			.limit(1)
 		if (!locked) return { kind: 'ws_not_found' as const }
-
-		// Agents never count toward the seat cap and are never blocked by it.
-		if (targetActor.type === 'human' && !isEnterpriseActor(locked.billingOwnerId)) {
-			const plan = resolvePlanTier(locked.settings)
-			const cap = seatCapForPlan(plan)
-			if (cap !== null) {
-				const used = await countHumanMembers(tx, workspaceId)
-				if (used >= cap) {
-					return { kind: 'cap_exceeded' as const, plan, used, cap }
-				}
-			}
-		}
 
 		// onConflictDoNothing turns a re-invite of an already-a-member actor into
 		// a safe idempotent no-op instead of an uncaught PK-violation crash.
@@ -897,21 +1012,6 @@ app.openapi(addMemberRoute, (async (c) => {
 
 	if (outcome.kind === 'ws_not_found') {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
-	}
-	if (outcome.kind === 'cap_exceeded') {
-		const err = new SeatCapExceededError({
-			workspaceId,
-			plan: outcome.plan,
-			used: outcome.used,
-			cap: outcome.cap,
-		})
-		logger.warn('Workspace seat cap exceeded', {
-			workspaceId,
-			plan: outcome.plan,
-			used: outcome.used,
-			cap: outcome.cap,
-		})
-		return c.json(seatCapErrorBody(err), 403)
 	}
 
 	// Telemetry for the retirement-observation window: counts residual actor-ID
@@ -970,7 +1070,17 @@ app.openapi(listMembersRoute, (async (c) => {
 		.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
 		.where(eq(workspaceMembers.workspaceId, workspaceId))
 
-	return c.json(serializeArray(members) as z.infer<typeof memberResponseSchema>[])
+	// A person's last-active time is account-wide (it also reflects other workspaces), so only a
+	// human owner or admin gets it; everyone else gets the list as before.
+	if (!(await isWorkspaceHumanAdminOrOwner(db, actorId, workspaceId))) {
+		return c.json(serializeArray(members) as z.infer<typeof memberResponseSchema>[])
+	}
+	const lastActive = await loadMembersLastActive(db, workspaceId, members)
+	return c.json(
+		serializeArray(
+			members.map((m) => ({ ...m, lastActiveAt: lastActive.get(m.actorId) ?? null })),
+		) as z.infer<typeof memberResponseSchema>[],
+	)
 }) as RouteHandler<typeof listMembersRoute, Env>)
 
 // POST /api/workspaces/:id/transfer-ownership
@@ -1389,7 +1499,10 @@ app.openapi(removeMemberRoute, (async (c) => {
 			data: { removed_actor_id: targetActorId, self_removal: isSelfRemoval },
 		})
 
-		return { kind: 'removed' as const }
+		// Their Claude connections to this workspace end with their membership.
+		const revokedGrants = await revokeMemberGrants(tx, targetActorId, workspaceId)
+
+		return { kind: 'removed' as const, revokedGrants }
 	})
 
 	switch (outcome.kind) {
@@ -1409,6 +1522,7 @@ app.openapi(removeMemberRoute, (async (c) => {
 			// Takes effect on the member's next request, not when its cached auth
 			// lookup expires.
 			evictMembership(targetActorId, workspaceId)
+			if (outcome.revokedGrants > 0) evictOAuthTokens()
 			return c.json({ removed: true as const }, 200)
 	}
 }) as RouteHandler<typeof removeMemberRoute, Env>)

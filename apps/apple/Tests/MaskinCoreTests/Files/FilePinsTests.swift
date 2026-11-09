@@ -224,6 +224,13 @@ struct MiniAppHTMLTests {
 	func fragment() {
 		#expect(MiniAppHTML.prepare("<p>x</p>").hasPrefix("<meta http-equiv=\"Content-Security-Policy\""))
 	}
+
+	@Test("the background version gives the same page, for a page of several megabytes")
+	func backgroundMatches() async {
+		let picture = String(repeating: "A", count: 4_000_000)
+		let html = "<html><head><meta http-equiv=refresh content=\"0\"></head><body><img src=\"data:image/png;base64,\(picture)\"></body></html>"
+		#expect(await MiniAppHTML.prepareInBackground(html) == MiniAppHTML.prepare(html))
+	}
 }
 
 @MainActor

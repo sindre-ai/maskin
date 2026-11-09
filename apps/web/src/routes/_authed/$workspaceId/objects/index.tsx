@@ -6,18 +6,20 @@ import { getStaticColumns } from '@/components/objects/data-table/columns'
 import type { ColumnInfo } from '@/components/objects/data-table/data-table-controls'
 import {
 	DataTableToolbar,
+	type DataTableToolbarProps,
 	type ToolbarQuickChip,
 } from '@/components/objects/data-table/data-table-toolbar'
 import {
 	type DisplayFilterSectionModel,
 	pinToken,
 } from '@/components/objects/data-table/display-filter-section'
-import type { DisplayPanelView } from '@/components/objects/data-table/display-panel'
+import { DisplayPanel, type DisplayPanelView } from '@/components/objects/data-table/display-panel'
 import { getDynamicColumns } from '@/components/objects/data-table/dynamic-columns'
 import type { FieldDefinition } from '@/components/objects/field-value-input'
 import { ListView, type ListViewHandle } from '@/components/objects/list/list-view'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { type FilterTabItem, FilterTabs } from '@/components/shared/filter-tabs'
+import { PageSearchInput } from '@/components/shared/page-search-input'
 import { RouteError } from '@/components/shared/route-error'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -25,6 +27,7 @@ import { useActors } from '@/hooks/use-actors'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
+import { useIsMobile } from '@/hooks/use-mobile'
 import { useNotifications, useRespondNotification } from '@/hooks/use-notifications'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
 import {
@@ -150,10 +153,9 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 					? (search.order as 'asc' | 'desc')
 					: DEFAULT_ORDER,
 			q: typeof search.q === 'string' ? search.q : undefined,
-			// GROUP BY rests on State (mockup 994–999). `none` is the explicit
-			// "ungrouped" choice — without a sentinel, clearing the param would just
-			// fall back to the default again.
-			groupBy: typeof search.groupBy === 'string' ? search.groupBy : 'status',
+			// GROUP BY rests on `none` (a flat list). `none` stays an explicit sentinel so a
+			// persisted or deep-linked grouping can still be told apart from "no param".
+			groupBy: typeof search.groupBy === 'string' ? search.groupBy : 'none',
 			ids: typeof search.ids === 'string' ? search.ids : undefined,
 			includeArchived: includeArchived ? (1 as const) : undefined,
 			...metadataFilters,
@@ -169,10 +171,13 @@ const BOARD_MANUAL_SORT = 'boardOrder'
 // `{ fresh: true, star: true, work: false }`). Both are workspace-agnostic —
 // unlike a status or driver pin, they mean the same thing on day one as they
 // do on day one hundred, so they are safe to pre-place in the chip row.
-const DEFAULT_PINNED_FILTERS = ['quick:fresh', 'quick:starred']
+const DEFAULT_GROUP_BY = 'status'
+const DEFAULT_PINNED_FILTERS = ['quick:waiting', 'quick:starred', 'quick:fresh']
 
 function ObjectsRoute() {
-	useDocumentTitle('Objects')
+	// Below md the Display control is its icon, so the title keeps its room.
+	const isMobile = useIsMobile()
+	useDocumentTitle('Items')
 	const { workspaceId, workspace } = useWorkspace()
 	const navigate = useNavigate()
 	const searchParams = useSearch({ from: '/_authed/$workspaceId/objects/' })
@@ -193,7 +198,12 @@ function ObjectsRoute() {
 	} = searchParams
 	const includeArchived = includeArchivedParam === 1
 	// `none` is the URL's way of saying "explicitly ungrouped".
-	const groupBy = groupByParam === 'none' ? undefined : groupByParam
+	// Nothing saved and no display intent in the URL: the list opens grouped by
+	// Status. Held in state, never written to the URL, so the first render does
+	// not navigate (a navigation remounts the list and breaks Back restoration).
+	const [defaultGrouped, setDefaultGrouped] = useState(false)
+	const groupBy =
+		groupByParam === 'none' ? (defaultGrouped ? DEFAULT_GROUP_BY : undefined) : groupByParam
 	const fresh = freshParam === 1
 	const starred = starredParam === 1
 	// Per the task scope, the "Show" section (with the Include archived toggle)
@@ -271,9 +281,14 @@ function ObjectsRoute() {
 	// page (scroll) before actually restoring.
 	const shouldRestoreScrollRef = useRef(false)
 	const shouldRestoreExpandedRef = useRef(false)
+	// Classified at the first render, not in the mount effect: the back-nav
+	// tracker only counts a popstate from the last 100 ms, and the effect runs
+	// after the whole list (cached rows included) has rendered, which can take
+	// longer than that on a back landing.
+	const [arrivalNavType] = useState(consumeArrivalNavType)
 	// biome-ignore lint/correctness/useExhaustiveDependencies: mount-once event
 	useEffect(() => {
-		const navType = consumeArrivalNavType()
+		const navType = arrivalNavType
 		if (navType === 'back') {
 			shouldRestoreScrollRef.current = true
 			shouldRestoreExpandedRef.current = true
@@ -828,6 +843,7 @@ function ObjectsRoute() {
 	// (status/driver/metadata) cleared, archived hidden, columns back to the
 	// default set. `view` and `q` are deliberately untouched (separate surfaces).
 	const handleResetToDefault = useCallback(() => {
+		setDefaultGrouped(false)
 		const cleared: Record<string, string | undefined> = {
 			sort: DEFAULT_SORT,
 			order: DEFAULT_ORDER,
@@ -929,8 +945,13 @@ function ObjectsRoute() {
 			// No saved view for this key — fall back to the route default.
 			setView(pendingView ?? 'list')
 			setPinnedFilters(DEFAULT_PINNED_FILTERS)
+			// The v11 handoff opens Items grouped by Status. Only when nothing is
+			// saved and the URL carries no display intent of its own: a chosen
+			// "None" is persisted as the `none` sentinel, so it is never overridden.
+			setDefaultGrouped(urlIsInDefaultShape)
 			return
 		}
+		setDefaultGrouped(false)
 		const s = persisted.settings
 		// View hydrates regardless of urlIsInDefaultShape: `view` is route-local
 		// (not in the URL), so the URL's shape can't conflict with it.
@@ -1183,7 +1204,7 @@ function ObjectsRoute() {
 					},
 					{
 						id: 'waiting',
-						label: 'Waiting on you',
+						label: 'To decide',
 						count: attentionCounts.waiting,
 						active: attention === 'waiting',
 						onToggle: () => toggleAttention('waiting'),
@@ -1409,7 +1430,7 @@ function ObjectsRoute() {
 
 	// Filtered-empty sentence, built from what is actually applied (mockup 1021).
 	const filteredEmptyTitle = useMemo(() => {
-		if (!hasAnyActiveFilter) return 'No objects found'
+		if (!hasAnyActiveFilter) return 'No items yet'
 		const noun = typeFilter ? `${typeFilter}s` : 'objects'
 		const clauses: string[] = []
 		if (attention === 'waiting') clauses.push('waiting on you')
@@ -1466,9 +1487,9 @@ function ObjectsRoute() {
 						const result = Array.isArray(data?.results)
 							? data.results.find((item) => item.id === objectId)
 							: undefined
-						if (!result?.ok) toast.error(result?.error ?? 'Failed to move object')
+						if (!result?.ok) toast.error(result?.error ?? 'Failed to move item')
 					},
-					onError: () => toast.error('Failed to move object'),
+					onError: () => toast.error('Failed to move item'),
 				},
 			)
 		},
@@ -1494,7 +1515,7 @@ function ObjectsRoute() {
 						retainOnlyFailed(data)
 						reportBulkResult(data, ids.length, 'updated')
 					},
-					onError: () => toast.error('Failed to update objects'),
+					onError: () => toast.error('Failed to update items'),
 				},
 			)
 		},
@@ -1512,7 +1533,7 @@ function ObjectsRoute() {
 						retainOnlyFailed(data)
 						reportBulkResult(data, ids.length, 'updated')
 					},
-					onError: () => toast.error('Failed to update objects'),
+					onError: () => toast.error('Failed to update items'),
 				},
 			)
 		},
@@ -1532,7 +1553,7 @@ function ObjectsRoute() {
 					retainOnlyFailed(data)
 					reportBulkResult(data, ids.length, 'updated')
 				},
-				onError: () => toast.error('Failed to archive objects'),
+				onError: () => toast.error('Failed to archive items'),
 			},
 		)
 	}, [selectedIds, bulkUpdate, reportBulkResult, retainOnlyFailed])
@@ -1568,7 +1589,7 @@ function ObjectsRoute() {
 		const carried = selectedIds.slice(0, MAX_CHAT_OBJECT_REFERENCES)
 		if (selectedIds.length > carried.length) {
 			toast.warning(
-				`Only the first ${carried.length} of ${selectedIds.length} selected objects were attached to the chat.`,
+				`Only the first ${carried.length} of ${selectedIds.length} selected items were attached to the chat.`,
 			)
 		}
 		navigate({
@@ -1744,7 +1765,7 @@ function ObjectsRoute() {
 					starred: undefined,
 					updated: undefined,
 					q: undefined,
-					groupBy: 'status',
+					groupBy: 'none',
 					ids: undefined,
 					includeArchived: undefined,
 				},
@@ -1754,29 +1775,120 @@ function ObjectsRoute() {
 		[displaySettingsKey, workspaceId, navigate],
 	)
 
-	// Published into the shared nav row's *left* cluster, immediately after the
-	// <h1> — the mockup puts the type tabs beside "Objects" (146–153), not out
-	// beyond the search field. PageHeader's effect deps are `[titleTabs]`, so a
-	// fresh node every render would re-set context state on every pass;
-	// memoised for that reason.
-	const headerTabs = useMemo(
-		() => (
-			<FilterTabs
-				variant="nav"
-				tabs={tabsWithCounts}
-				value={typeFilter}
-				onChange={handleTypeFilterChange}
-				aria-label="Type filter"
-				// Below md, drop the tabs onto their own row (`basis-full`) after the
-				// title + search cluster (`order-2`) — otherwise the tabs share the
-				// header row with an expanded NavSearch and get clipped mid-label
-				// (last tab reads as "Custo…"). Restored to the inline "beside <h1>"
-				// arrangement at md and above with `md:basis-auto md:order-none`.
-				className="ml-[14px] min-w-0 basis-full order-2 md:basis-auto md:order-none"
-			/>
-		),
-		[tabsWithCounts, typeFilter, handleTypeFilterChange],
+	// The type chips lead the chip row under the title (mockup 2290), with the
+	// pinned quick filters after them; Display sits in the title row. Pill
+	// variant: counts on every chip, scrolls sideways inside the row on mobile.
+	const typeTabs = (
+		<FilterTabs
+			variant="chip"
+			tabs={tabsWithCounts}
+			value={typeFilter}
+			onChange={handleTypeFilterChange}
+			aria-label="Type filter"
+			foldable
+			className="shrink-0"
+		/>
 	)
+
+	const toolbarProps: DataTableToolbarProps = {
+		columns: columnInfo,
+		columnVisibility: effectiveVisibility,
+		onColumnVisibilityChange: handleColumnVisibilityChange,
+		quickChips,
+		filterPills,
+		onClearAllFilters: clearAllFilters,
+		filterSections,
+		pinnedFilters,
+		onTogglePinnedFilter: handleTogglePinnedFilter,
+		statusFilter,
+		onStatusFilterChange: (value) => updateSearch({ status: value }),
+		statusesByType,
+		driverFilter,
+		onDriverFilterChange: (value) => updateSearch({ driver: value }),
+		actors,
+		fieldDefinitions: typeFieldDefinitions,
+		metadataFilters,
+		onMetadataFilterChange: (field, value) => updateSearch({ [`metadata.${field}`]: value }),
+		onResetFilters: () => {
+			const cleared: Record<string, string | number | undefined> = {
+				status: undefined,
+				driver: undefined,
+				attention: undefined,
+				fresh: undefined,
+				starred: undefined,
+				updated: undefined,
+			}
+			for (const key of Object.keys(searchParams)) {
+				if (key.startsWith('metadata.')) cleared[key] = undefined
+			}
+			updateSearch(cleared)
+		},
+		sort,
+		onSortChange: (value) =>
+			updateSearch({
+				sort: value,
+				order: value === BOARD_MANUAL_SORT ? 'asc' : order,
+			}),
+		order,
+		onOrderChange: (value) => updateSearch({ order: value }),
+		groupBy,
+		onGroupByChange: (value) => {
+			setDefaultGrouped(false)
+			updateSearch({ groupBy: value ?? 'none' })
+		},
+		includeArchived: supportsIncludeArchived ? includeArchived : undefined,
+		archivedCount,
+		onIncludeArchivedChange: supportsIncludeArchived
+			? // Must be the number 1, not the string '1' — the router's default
+				// search stringifier round-trips through JSON.parse/stringify, so a
+				// string that looks like valid JSON gets re-quoted (`includeArchived=%221%22`)
+				// while a number serializes as the bare digit.
+				(next) => updateSearch({ includeArchived: next ? 1 : undefined })
+			: undefined,
+		view: effectiveView,
+		onViewChange: (next) => {
+			// Board on a type that can't render one (the All tab, or a type with
+			// no configured statuses) lands on the board-capable type rather
+			// than refusing the click.
+			if (next === 'board' && !boardSupported) {
+				if (!boardLandingType) return
+				pendingViewRef.current = { key: boardLandingType, view: 'board' }
+				setView('board')
+				handleTypeFilterChange(boardLandingType)
+				trackEvent('objects_control_changed', {
+					source: 'objects-page',
+					control: 'view',
+					value: next,
+					objectType: boardLandingType,
+				})
+				return
+			}
+			setView(next)
+			if (next === 'list' && sort === BOARD_MANUAL_SORT) {
+				updateSearch({ sort: DEFAULT_SORT, order: DEFAULT_ORDER })
+			}
+			// One analytics line per user-initiated switch so we can count
+			// distinct operators reaching for Board (the bet's success
+			// criterion). Hydration also sets view but bypasses this path.
+			trackEvent('objects_control_changed', {
+				source: 'objects-page',
+				control: 'view',
+				value: next,
+				objectType: typeFilter ?? null,
+			})
+		},
+		boardSupported: boardSupported || !!boardLandingType,
+		onResetToDefault: handleResetToDefault,
+	}
+	// The Display control sits in the title row; the toolbar keeps the chips.
+	const {
+		quickChips: _qc,
+		filterPills: _fp,
+		onClearAllFilters: _oc,
+		leading: _l,
+		hideDisplay: _h,
+		...displayPanelProps
+	} = toolbarProps
 
 	return (
 		// The shared scroll area already supplies the page gutter, so the screen
@@ -1786,7 +1898,23 @@ function ObjectsRoute() {
 			{/* No subtitle: the mockup's Objects header carries the count on the
 			    active type tab (`All 1,063`), not beside the <h1> — printing it in
 			    both places states the same number twice, three characters apart. */}
-			<PageHeader title="Objects" titleTabs={headerTabs} scrollLocked />
+			<PageHeader
+				title="Items"
+				actions={
+					<>
+						{/* The page's own search (wires the URL `q`); the workspace search
+						    and New stay in the shared header beside it. */}
+						<PageSearchInput
+							value={q ?? ''}
+							onChange={(next) => updateSearch({ q: next.trim() ? next : undefined })}
+							label="Search items"
+							debounceMs={250}
+						/>
+						<DisplayPanel {...displayPanelProps} />
+					</>
+				}
+				scrollLocked
+			/>
 			{idsFilter && (
 				<div className="mb-3 flex items-center gap-2 rounded-md border bg-muted/50 px-3 py-2 text-sm">
 					<Filter className="h-4 w-4 text-muted-foreground shrink-0" />
@@ -1809,96 +1937,7 @@ function ObjectsRoute() {
 				</div>
 			)}
 
-			<DataTableToolbar
-				columns={columnInfo}
-				columnVisibility={effectiveVisibility}
-				onColumnVisibilityChange={handleColumnVisibilityChange}
-				quickChips={quickChips}
-				filterPills={filterPills}
-				onClearAllFilters={clearAllFilters}
-				filterSections={filterSections}
-				pinnedFilters={pinnedFilters}
-				onTogglePinnedFilter={handleTogglePinnedFilter}
-				statusFilter={statusFilter}
-				onStatusFilterChange={(value) => updateSearch({ status: value })}
-				statusesByType={statusesByType}
-				driverFilter={driverFilter}
-				onDriverFilterChange={(value) => updateSearch({ driver: value })}
-				actors={actors}
-				fieldDefinitions={typeFieldDefinitions}
-				metadataFilters={metadataFilters}
-				onMetadataFilterChange={(field, value) => updateSearch({ [`metadata.${field}`]: value })}
-				onResetFilters={() => {
-					const cleared: Record<string, string | number | undefined> = {
-						status: undefined,
-						driver: undefined,
-						attention: undefined,
-						fresh: undefined,
-						starred: undefined,
-						updated: undefined,
-					}
-					for (const key of Object.keys(searchParams)) {
-						if (key.startsWith('metadata.')) cleared[key] = undefined
-					}
-					updateSearch(cleared)
-				}}
-				sort={sort}
-				onSortChange={(value) =>
-					updateSearch({
-						sort: value,
-						order: value === BOARD_MANUAL_SORT ? 'asc' : order,
-					})
-				}
-				order={order}
-				onOrderChange={(value) => updateSearch({ order: value })}
-				groupBy={groupBy}
-				onGroupByChange={(value) => updateSearch({ groupBy: value ?? 'none' })}
-				includeArchived={supportsIncludeArchived ? includeArchived : undefined}
-				archivedCount={archivedCount}
-				onIncludeArchivedChange={
-					supportsIncludeArchived
-						? // Must be the number 1, not the string '1' — the router's default
-							// search stringifier round-trips through JSON.parse/stringify, so a
-							// string that looks like valid JSON gets re-quoted (`includeArchived=%221%22`)
-							// while a number serializes as the bare digit.
-							(next) => updateSearch({ includeArchived: next ? 1 : undefined })
-						: undefined
-				}
-				view={effectiveView}
-				onViewChange={(next) => {
-					// Board on a type that can't render one (the All tab, or a type with
-					// no configured statuses) lands on the board-capable type rather
-					// than refusing the click.
-					if (next === 'board' && !boardSupported) {
-						if (!boardLandingType) return
-						pendingViewRef.current = { key: boardLandingType, view: 'board' }
-						setView('board')
-						handleTypeFilterChange(boardLandingType)
-						trackEvent('objects_control_changed', {
-							source: 'objects-page',
-							control: 'view',
-							value: next,
-							objectType: boardLandingType,
-						})
-						return
-					}
-					setView(next)
-					if (next === 'list' && sort === BOARD_MANUAL_SORT) {
-						updateSearch({ sort: DEFAULT_SORT, order: DEFAULT_ORDER })
-					}
-					// One analytics line per user-initiated switch so we can count
-					// distinct operators reaching for Board (the bet's success
-					// criterion). Hydration also sets view but bypasses this path.
-					trackEvent('objects_control_changed', {
-						source: 'objects-page',
-						control: 'view',
-						value: next,
-						objectType: typeFilter ?? null,
-					})
-				}}
-				boardSupported={boardSupported || !!boardLandingType}
-				onResetToDefault={handleResetToDefault}
-			/>
+			<DataTableToolbar {...toolbarProps} leading={typeTabs} hideDisplay />
 
 			<CreatePicker
 				open={createPickerOpen}

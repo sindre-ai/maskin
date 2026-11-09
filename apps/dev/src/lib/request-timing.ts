@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import type { MiddlewareHandler } from 'hono'
 import { routePath } from 'hono/route'
 import { logger } from './logger'
+import type { RouteTimingSink } from './route-timing-store'
 
 /**
  * Per-route API timing, to rank which endpoints cost the most (total time and database time).
@@ -19,12 +20,34 @@ import { logger } from './logger'
  * connection, so they are recorded when the client disconnects and carry the database reads done
  * while it was open (the Last-Event-ID replay and per-frame reads). Frames sent for events that
  * arrive from the live bridge run outside the request and are not attributed.
+ *
+ * Each bucket is also split by who sent the request, read from `X-Client-Source` and mapped onto a
+ * fixed list (`resolveClientSourceLabel`): ui (web), ios, mcp (agents), other, none (no header).
+ * The raw header is never stored or logged.
+ *
+ * The same numbers can also be handed to a sink on each flush (`setRouteTimingSink`), which keeps
+ * them in the database. The sink never blocks or fails a request.
  */
 
 const FLUSH_INTERVAL_MS = 60_000
 const SLOW_REQUEST_MS = 1_000
 const SLOW_DB_MS = 500
 const SKIPPED_PATHS = new Set(['/api/health'])
+
+/** Who sent a request, as kept in the counts. `none` is a request with no `X-Client-Source`. */
+export type ClientSourceLabel = 'ui' | 'ios' | 'mcp' | 'other' | 'none'
+
+/**
+ * Maps the self-reported `X-Client-Source` header onto the fixed list above. The web app sends
+ * 'ui', the iOS app 'ios' and the MCP client 'mcp'. Anything else the caller typed collapses to
+ * 'other', so the stored value never carries caller text and the label stays at five values.
+ */
+export function resolveClientSourceLabel(header: string | undefined | null): ClientSourceLabel {
+	const source = header?.trim().toLowerCase()
+	if (!source) return 'none'
+	if (source === 'ui' || source === 'ios' || source === 'mcp') return source
+	return 'other'
+}
 
 interface RequestTiming {
 	dbMs: number
@@ -39,11 +62,21 @@ interface Bucket {
 	dbMs: number
 	dbMaxMs: number
 	dbQueries: number
+	slow: number
 }
 
 const requestStore = new AsyncLocalStorage<RequestTiming>()
-const buckets = new Map<string, Bucket & { method: string; route: string; stream: boolean }>()
+const buckets = new Map<
+	string,
+	Bucket & { method: string; route: string; stream: boolean; clientSource: ClientSourceLabel }
+>()
 let flushTimer: ReturnType<typeof setInterval> | undefined
+let sink: RouteTimingSink | undefined
+
+/** Called once with the flushed buckets of each minute. Pass undefined to stop. */
+export function setRouteTimingSink(next: RouteTimingSink | undefined): void {
+	sink = next
+}
 
 /** Passed to `createDb` as `onQuery`. A no-op for queries outside a request. */
 export function recordDbTime(ms: number): void {
@@ -60,16 +93,18 @@ function record(
 	route: string,
 	status: number,
 	stream: boolean,
+	clientSource: ClientSourceLabel,
 	totalMs: number,
 	timing: RequestTiming,
 ) {
-	const key = `${method} ${route} ${stream}`
+	const key = `${method} ${route} ${stream} ${clientSource}`
 	let bucket = buckets.get(key)
 	if (!bucket) {
 		bucket = {
 			method,
 			route,
 			stream,
+			clientSource,
 			requests: 0,
 			errors5xx: 0,
 			totalMs: 0,
@@ -77,6 +112,7 @@ function record(
 			dbMs: 0,
 			dbMaxMs: 0,
 			dbQueries: 0,
+			slow: 0,
 		}
 		buckets.set(key, bucket)
 	}
@@ -90,6 +126,7 @@ function record(
 
 	// A stream's total is the connection lifetime, so only its database time can make it slow.
 	if ((!stream && totalMs >= SLOW_REQUEST_MS) || timing.dbMs >= SLOW_DB_MS) {
+		bucket.slow++
 		logger.info('api_slow_request', {
 			method,
 			route,
@@ -126,6 +163,28 @@ export function flushRouteTiming(): void {
 			db_queries: b.dbQueries,
 		})
 	}
+	if (sink && buckets.size > 0) {
+		try {
+			sink(
+				[...buckets.values()].map((b) => ({
+					method: b.method,
+					route: b.route,
+					stream: b.stream,
+					clientSource: b.clientSource,
+					requests: b.requests,
+					slowRequests: b.slow,
+					errors5xx: b.errors5xx,
+					totalMs: b.totalMs,
+					dbMs: b.dbMs,
+					dbQueries: b.dbQueries,
+				})),
+			)
+		} catch (err) {
+			logger.warn('api_route_timing sink failed', {
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
+	}
 	buckets.clear()
 }
 
@@ -134,6 +193,7 @@ export function requestTiming(): MiddlewareHandler {
 		if (SKIPPED_PATHS.has(c.req.path)) return next()
 
 		const timing: RequestTiming = { dbMs: 0, dbQueries: 0 }
+		const clientSource = resolveClientSourceLabel(c.req.header('x-client-source'))
 		const start = performance.now()
 		await requestStore.run(timing, next)
 
@@ -144,12 +204,13 @@ export function requestTiming(): MiddlewareHandler {
 		const status = c.res.status
 		const stream = c.res.headers.get('content-type')?.startsWith('text/event-stream') ?? false
 		if (!stream) {
-			record(method, route, status, false, performance.now() - start, timing)
+			record(method, route, status, false, clientSource, performance.now() - start, timing)
 			return
 		}
 
 		const signal = c.req.raw.signal
-		const finish = () => record(method, route, status, true, performance.now() - start, timing)
+		const finish = () =>
+			record(method, route, status, true, clientSource, performance.now() - start, timing)
 		if (signal.aborted) finish()
 		else signal.addEventListener('abort', finish, { once: true })
 	}

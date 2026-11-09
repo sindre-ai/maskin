@@ -1,15 +1,18 @@
 import { EmptyState } from '@/components/shared/empty-state'
 import { MarkdownContent } from '@/components/shared/markdown-content'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { ButtonGroup } from '@/components/ui/button-group'
 import { useAutoSave } from '@/hooks/use-auto-save'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useUpdateFile } from '@/hooks/use-files'
-import { trackMiniAppFileViewed } from '@/lib/analytics'
+import { trackBriefingViewed, trackMiniAppFileViewed } from '@/lib/analytics'
 import { compileAnnotations, hydrateAnnotations } from '@/lib/annotations'
 import type { AnnotationJson } from '@/lib/annotations'
 import type { FileAnnotation, FileDetail } from '@/lib/api'
 import { base64ToBytes, decodeBase64Utf8 } from '@/lib/file-utils'
 import { prepareMiniAppHtml } from '@/lib/mini-app'
+import { resolveViewerVariant } from '@/lib/viewer-detect'
 import { Bot, Check, Clipboard, ExternalLink, Pin } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { type Annotation, AnnotationOverlay } from './annotation-overlay'
@@ -41,6 +44,45 @@ export function isPdf(mimeType: string): boolean {
 
 export function isInlineImage(mimeType: string): boolean {
 	return mimeType.startsWith('image/') && !UNSAFE_INLINE_MIME.has(mimeType)
+}
+
+export function isAudio(mimeType: string): boolean {
+	return mimeType.startsWith('audio/')
+}
+
+export function isVideo(mimeType: string): boolean {
+	return mimeType.startsWith('video/')
+}
+
+/**
+ * Player for an audio or video file. `<audio>`/`<video>` requests do not carry our bearer
+ * token, so a large file streams from its short-lived storage URL (seekable, nothing buffered)
+ * and a small one is rebuilt from its inline bytes as a Blob URL.
+ */
+export function MediaPlayer({ file, className }: { file: FileDetail; className?: string }) {
+	// The Blob URL is made and revoked inside one effect, so StrictMode's mount → cleanup → mount
+	// gets a fresh URL instead of reusing one the cleanup already revoked.
+	const [blobUrl, setBlobUrl] = useState<string>()
+	useEffect(() => {
+		if (file.downloadUrl) return
+		const b64 = file.encoding === 'base64' ? file.content : btoa(file.content)
+		const url = URL.createObjectURL(
+			new Blob([base64ToBytes(b64).buffer as ArrayBuffer], { type: file.mimeType }),
+		)
+		setBlobUrl(url)
+		return () => {
+			URL.revokeObjectURL(url)
+			setBlobUrl(undefined)
+		}
+	}, [file.downloadUrl, file.content, file.encoding, file.mimeType])
+	const src = file.downloadUrl || blobUrl
+	const Tag = isAudio(file.mimeType) ? 'audio' : 'video'
+	return (
+		// playsInline stops iOS forcing native fullscreen for video.
+		<Tag src={src} controls playsInline preload="metadata" className={className}>
+			<track kind="captions" />
+		</Tag>
+	)
 }
 
 export function isPlainText(mimeType: string): boolean {
@@ -179,10 +221,12 @@ export interface FileBodyProps {
 }
 
 export function FileBody({ file, onReviseWithAnnotations, isRevising = false }: FileBodyProps) {
+	const canWrite = useCanWrite()
 	const [mode, setMode] = useState<ViewMode>('rendered')
 	// Open straight into pin-visible mode when the file already has annotations,
 	// so other humans see existing review comments without hunting for the toggle.
-	const [annotateMode, setAnnotateMode] = useState((file.annotations?.length ?? 0) > 0)
+	// Viewers cannot place pins, so the overlay (which captures clicks) stays closed for them.
+	const [annotateMode, setAnnotateMode] = useState(canWrite && (file.annotations?.length ?? 0) > 0)
 	const [annotations, setAnnotations] = useState<Annotation[]>(() =>
 		hydrateAnnotations(file.annotations),
 	)
@@ -199,8 +243,16 @@ export function FileBody({ file, onReviseWithAnnotations, isRevising = false }: 
 		trackMiniAppFileViewed({
 			entity_id: file.id,
 			entity_type: 'file',
-			file_name: file.name,
 		})
+		// A deck is a briefing too. Same once-per-open guard as above.
+		const variant = resolveViewerVariant({
+			filename: file.name,
+			html: fileText(file),
+			override: null,
+		})
+		if (variant === 'deck') {
+			trackBriefingViewed({ entity_id: file.id, entity_type: 'file', kind: 'deck' })
+		}
 	}, [file])
 
 	// Persist annotations to the file so other humans and agents see them. The
@@ -209,7 +261,7 @@ export function FileBody({ file, onReviseWithAnnotations, isRevising = false }: 
 	// resolution that lands after a pin is placed.
 	const updateFile = useUpdateFile(file.workspaceId)
 	const { showSaved } = useAutoSave<FileAnnotation[]>({
-		isActive: isHtml(file.mimeType),
+		isActive: isHtml(file.mimeType) && canWrite,
 		isValid: true,
 		buildPayload: useCallback(() => annotations, [annotations]),
 		onSave: useCallback(
@@ -252,16 +304,18 @@ export function FileBody({ file, onReviseWithAnnotations, isRevising = false }: 
 					{annotations.length > 0 && (
 						<>
 							{onReviseWithAnnotations && (
-								<Button
-									type="button"
-									variant="ghost"
-									size="sm"
-									onClick={handleReviseWithAnnotations}
-									disabled={isRevising}
-								>
-									<Bot size={14} />
-									{isRevising ? 'Starting…' : 'Revise with annotations'}
-								</Button>
+								<ViewerTooltip>
+									<Button
+										type="button"
+										variant="ghost"
+										size="sm"
+										onClick={handleReviseWithAnnotations}
+										disabled={isRevising || !canWrite}
+									>
+										<Bot size={14} />
+										{isRevising ? 'Starting…' : 'Revise with annotations'}
+									</Button>
+								</ViewerTooltip>
 							)}
 							<Button type="button" variant="ghost" size="sm" onClick={handleCopyAnnotations}>
 								<Clipboard size={14} />
@@ -270,19 +324,22 @@ export function FileBody({ file, onReviseWithAnnotations, isRevising = false }: 
 						</>
 					)}
 					{mode === 'rendered' && (
-						<Button
-							type="button"
-							variant={annotateMode ? 'secondary' : 'ghost'}
-							size="sm"
-							onClick={() => setAnnotateMode((v) => !v)}
-						>
-							<Pin size={14} />
-							{annotateMode
-								? 'Exit annotate'
-								: annotations.length > 0
-									? `Annotate (${annotations.length})`
-									: 'Annotate'}
-						</Button>
+						<ViewerTooltip>
+							<Button
+								type="button"
+								variant={annotateMode ? 'secondary' : 'ghost'}
+								size="sm"
+								onClick={() => setAnnotateMode((v) => !v)}
+								disabled={!canWrite}
+							>
+								<Pin size={14} />
+								{annotateMode
+									? 'Exit annotate'
+									: annotations.length > 0
+										? `Annotate (${annotations.length})`
+										: 'Annotate'}
+							</Button>
+						</ViewerTooltip>
 					)}
 					<ViewToggle
 						mode={mode}

@@ -15,6 +15,10 @@ public protocol ConversationsAPI: Sendable {
 		title: String, participantIDs: [String], initialMessage: String?,
 		initialMetadata: ChatSendMetadata?, idempotencyKey: String
 	) async throws -> ConversationSummary
+	/// `POST /api/conversations` with `direct: true`: the one stored direct message with this actor,
+	/// created on first use. `title` only names it when it is created.
+	func directChat(with participantID: String, title: String, idempotencyKey: String)
+		async throws -> ConversationSummary
 	func updateState(
 		conversationID: String, pinned: Bool?, archived: Bool?, lastReadMessageID: Int?,
 		markUnread: Bool
@@ -36,6 +40,14 @@ extension ConversationsAPI {
 		try await create(
 			title: title, participantIDs: participantIDs, initialMessage: initialMessage,
 			idempotencyKey: idempotencyKey)
+	}
+
+	/// Sources without a stored direct message (test doubles) start a plain chat.
+	public func directChat(with participantID: String, title: String, idempotencyKey: String)
+		async throws -> ConversationSummary
+	{
+		try await create(
+			title: title, participantIDs: [participantID], initialMessage: nil, idempotencyKey: idempotencyKey)
 	}
 
 	public func latestMessageID(conversationID: String) async throws -> Int? { nil }

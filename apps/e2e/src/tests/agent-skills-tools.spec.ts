@@ -1,4 +1,5 @@
 import { expect, test } from '../fixtures/auth.fixture'
+import { openAgentTab } from '../helpers/agent-tab.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 test.describe('Agent detail — Skills and Access sections', () => {
@@ -35,6 +36,8 @@ test.describe('Agent detail — Skills and Access sections', () => {
 			}
 
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
+
+			await openAgentTab(page, 'setup')
 
 			// Skills section — labelled region, count, both origin groups and the seeded name.
 			const skills = page.getByRole('region', { name: 'Skills', exact: true })

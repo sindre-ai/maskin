@@ -1,5 +1,7 @@
+import { DraftTextEditor } from '@/components/shared/draft-text-editor'
 import { FilePreview } from '@/components/shared/file-preview'
 import { ObjectPreviewMeta } from '@/components/shared/object-preview-meta'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import type { LatestMentionDecisionDraft } from '@/lib/api'
 
 interface DraftPreviewProps {
@@ -10,14 +12,16 @@ interface DraftPreviewProps {
 /**
  * The message an agent proposes to send, shown above the decision buttons so the
  * reader sees exactly what Send would send. Always the whole message, never folded:
- * approving text you could not read in full is not approving it. Read only: changing it
- * is the For You draft-edit bet's job. Renders nothing without text, so a draft the feed could not
- * fill never shows as an empty box.
+ * approving text you could not read in full is not approving it. With the draft-edit flag on,
+ * the text is a box the person can change where it stands; the change is saved and approved
+ * when they take the sending option (see `approveDraftText`). Renders nothing without text, so a
+ * draft the feed could not fill never shows as an empty box.
  *
  * A card about a file (an HTML page, a document, a picture) shows the file itself, open, in
  * the same place: the reader decides on what the file looks like, not on its name.
  */
 export function DraftPreview({ workspaceId, draft }: DraftPreviewProps) {
+	const canEdit = useFeatureFlag('foryou-draft-edit')
 	if (draft.file) {
 		return (
 			<FilePreview
@@ -49,7 +53,20 @@ export function DraftPreview({ workspaceId, draft }: DraftPreviewProps) {
 				) : null}
 			</div>
 			{draft.preview ? <ObjectPreviewMeta preview={draft.preview} /> : null}
-			<p className="whitespace-pre-wrap text-[13px] leading-[1.55] text-foreground">{body}</p>
+			{canEdit && draft.object_id ? (
+				<DraftTextEditor
+					workspaceId={workspaceId}
+					objectId={draft.object_id}
+					fallback={body}
+					readOnly={(text) => <DraftText text={text} />}
+				/>
+			) : (
+				<DraftText text={body} />
+			)}
 		</section>
 	)
+}
+
+function DraftText({ text }: { text: string }) {
+	return <p className="whitespace-pre-wrap text-[13px] leading-[1.55] text-foreground">{text}</p>
 }

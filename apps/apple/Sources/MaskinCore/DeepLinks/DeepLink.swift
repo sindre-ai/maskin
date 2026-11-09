@@ -23,6 +23,10 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 	case agents(workspaceId: String)
 	/// `…/<ws>/agents/<id>`: one agent.
 	case agent(workspaceId: String, id: String)
+	/// `…/<ws>/loops/<id>`: one loop (a flow).
+	case loop(workspaceId: String, id: String)
+	/// `…/<ws>/triggers/<id>`: one trigger.
+	case trigger(workspaceId: String, id: String)
 
 	public static let scheme = "maskin"
 
@@ -32,7 +36,7 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 	public var workspaceId: String {
 		switch self {
 		case .object(let ws, _), .chat(let ws, _), .thread(let ws, _, _), .file(let ws, _),
-			.notifications(let ws), .agents(let ws), .agent(let ws, _): ws
+			.notifications(let ws), .agents(let ws), .agent(let ws, _), .loop(let ws, _), .trigger(let ws, _): ws
 		}
 	}
 
@@ -49,6 +53,8 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 		case .notifications: c.path = "/notifications"
 		case .agents: c.path = "/agents"
 		case .agent(_, let id): c.path = "/agents/\(id)"
+		case .loop(_, let id): c.path = "/loops/\(id)"
+		case .trigger(_, let id): c.path = "/triggers/\(id)"
 		}
 		return c.url!
 	}
@@ -66,6 +72,8 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 		case .notifications(let ws): c.path = "/\(ws)"
 		case .agents(let ws): c.path = "/\(ws)/agents"
 		case .agent(let ws, let id): c.path = "/\(ws)/agents/\(id)"
+		case .loop(let ws, let id): c.path = "/\(ws)/loops/\(id)"
+		case .trigger(let ws, let id): c.path = "/\(ws)/triggers/\(id)"
 		}
 		return c.url!
 	}
@@ -120,6 +128,8 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 				}
 			case "files": self = .file(workspaceId: workspace, id: rest[1])
 			case "agents": self = .agent(workspaceId: workspace, id: rest[1])
+			case "loops": self = .loop(workspaceId: workspace, id: rest[1])
+			case "triggers": self = .trigger(workspaceId: workspace, id: rest[1])
 			default: return nil
 			}
 		default:

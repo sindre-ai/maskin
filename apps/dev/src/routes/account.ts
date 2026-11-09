@@ -12,10 +12,12 @@ import {
 	apiKeys,
 	deviceAuthCodes,
 	deviceTokens,
+	forYouDismissals,
 	liveActivityCards,
 	liveActivityTokens,
 	notificationPreferences,
 	notifications,
+	oauthGrants,
 	readState,
 	slackUserLinks,
 	starState,
@@ -212,6 +214,7 @@ app.openapi(deleteRoute, async (c) => {
 		await tx.delete(workspaceMembers).where(eq(workspaceMembers.actorId, actorId))
 		await tx.delete(subscriptions).where(eq(subscriptions.actorId, actorId))
 		await tx.delete(readState).where(eq(readState.actorId, actorId))
+		await tx.delete(forYouDismissals).where(eq(forYouDismissals.actorId, actorId))
 		await tx.delete(starState).where(eq(starState.actorId, actorId))
 		await tx.delete(notifications).where(eq(notifications.targetActorId, actorId))
 		// Personal data (timezone, quiet hours, briefing state); the actor row stays, so its cascade never fires.
@@ -233,6 +236,9 @@ app.openapi(deleteRoute, async (c) => {
 		// password and email mean no sign-in and a free email.
 		const revokedKeyHashes = await revokeActorKeys(tx, actorId)
 		await tx.delete(apiKeys).where(eq(apiKeys.actorId, actorId))
+		// A Claude connection is a credential for this person. The actor row stays, so the grant's
+		// cascade never fires: delete it, and its codes and tokens go with it.
+		await tx.delete(oauthGrants).where(eq(oauthGrants.actorId, actorId))
 		await tx
 			.update(actors)
 			.set({

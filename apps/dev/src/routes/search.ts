@@ -23,7 +23,8 @@ const searchRoute = createRoute({
 	description:
 		'Every typed word must match (AND). Counts and facets cover the full result set; ' +
 		'`results` is capped at `limit`. A source that fails is listed in `partial` and the rest still answer. ' +
-		"Chats are limited to the caller's own conversations.",
+		"Chats are limited to the caller's own conversations. `participants` (actor ids) keeps only chats " +
+		'every listed person or agent is in, and the other sources then return nothing.',
 	request: { headers: workspaceIdHeader, query: searchQuerySchema },
 	responses: {
 		200: {

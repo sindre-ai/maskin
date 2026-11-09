@@ -31,6 +31,20 @@ vi.mock('@/hooks/use-actors', () => ({ useActors: () => ({ data: actorsRef.curre
 vi.mock('@/hooks/use-conversations', () => ({
 	useConversationsInfinite: () => ({ data: { pages: [{ conversations: chatsRef.current }] } }),
 }))
+vi.mock('@/hooks/use-for-you', () => ({
+	useForYou: () => ({
+		data: {
+			items: [
+				{
+					entity_type: 'object',
+					entity_id: '00000000-0000-4000-8000-0000000000f1',
+					object: { title: 'Review the launcher' },
+					curated: { headline: 'Review the launcher' },
+				},
+			],
+		},
+	}),
+}))
 vi.mock('@/hooks/use-loops', () => ({ useLoops: () => ({ data: loopsRef.current }) }))
 vi.mock('@/hooks/use-subscriptions', () => ({
 	useUnread: () => ({ data: { items: [] } }),
@@ -135,7 +149,7 @@ beforeEach(() => {
 			? response([needsYouRow])
 			: response([
 					row({}),
-					row({ id: IDS.loop, group: 'loops', type: 'loop', title: 'Hans loop' }),
+					row({ id: IDS.loop, group: 'loops', type: 'loop', title: 'Hans flow' }),
 				]),
 	)
 	localStorage.clear()
@@ -155,7 +169,11 @@ describe('launcher with an empty field', () => {
 		await screen.findByRole('option', { name: /Review the launcher/ })
 		expect(groupLabels()).toEqual(['Needs you', 'Recent', 'Commands', 'Go to', 'Search'])
 		expect(screen.getByRole('option', { name: /Recent bet/ })).toBeInTheDocument()
-		// Needs you comes from the shared status group, three rows at most.
+		// Needs you leads with the For you decisions, tagged DECISION, then the shared status group
+		// (three rows at most).
+		expect(screen.getByRole('option', { name: /Review the launcher/ })).toHaveTextContent(
+			'DECISION',
+		)
 		expect(api.search.query).toHaveBeenCalledWith(
 			'ws-1',
 			expect.objectContaining({ statuses: 'needs_you', limit: '3' }),
@@ -182,7 +200,7 @@ describe('launcher content from the shared module', () => {
 		expect(await screen.findByRole('option', { name: /New chat/ })).toBeInTheDocument()
 	})
 
-	it('puts up to four recents, chats and loops included, after Needs you', async () => {
+	it('puts up to five recents, chats and loops included, after Needs you', async () => {
 		localStorage.setItem('maskin-recent-objects-ws-1', JSON.stringify([IDS.recent]))
 		objectsRef.current = [
 			{ id: IDS.recent, type: 'bet', title: 'Recent bet', status: 'active' } as unknown,
@@ -206,6 +224,7 @@ describe('launcher content from the shared module', () => {
 			expect.stringContaining('Pricing chat'),
 			expect.stringContaining('Older chat'),
 			expect.stringContaining('Weekly review'),
+			expect.stringContaining('Cut by the limit'),
 		])
 
 		await user.click(screen.getByRole('option', { name: /Weekly review/ }))
@@ -331,6 +350,28 @@ describe('launcher rows', () => {
 })
 
 describe('launcher with words and pills', () => {
+	it('shows the matched snippet as a line under the title of a result that has one', async () => {
+		vi.mocked(api.search.query).mockImplementation(async () =>
+			response([
+				row({
+					id: IDS.task,
+					group: 'objects',
+					type: 'task',
+					title: 'Pricing page',
+					snippet: 'We agreed the hans discount applies from March',
+				}),
+				row({ id: IDS.loop, group: 'loops', type: 'loop', title: 'Hans flow' }),
+			]),
+		)
+		const user = userEvent.setup()
+		renderLauncher()
+		await user.type(field(), 'hans')
+		const withSnippet = await screen.findByRole('option', { name: /Pricing page/ })
+		expect(withSnippet).toHaveTextContent('We agreed the hans discount applies from March')
+		const without = screen.getByRole('option', { name: /Hans flow/ })
+		expect(without).not.toHaveTextContent('We agreed')
+	})
+
 	it('asks for six rows, shows them under Jump to, and Enter opens the top one', async () => {
 		const user = userEvent.setup()
 		renderLauncher()
@@ -408,6 +449,25 @@ describe('launcher with words and pills', () => {
 		expect(JSON.parse(localStorage.getItem('maskin-recent-searches-ws-1') ?? '[]')).toEqual([
 			{ q: 'hans', types: ['company'], statuses: [] },
 		])
+	})
+
+	it('offers an @ menu, and Cmd+Enter hands the participant pill to the search page', async () => {
+		const PM = '00000000-0000-4000-8000-0000000000a1'
+		actorsRef.current = [{ id: PM, name: 'Product Marketing', type: 'agent', isSystem: false }]
+		const user = userEvent.setup()
+		renderLauncher()
+		await user.type(field(), '@prod')
+		await user.click(await screen.findByRole('option', { name: /Product Marketing/ }))
+		expect(
+			await screen.findByRole('button', { name: 'Remove filter: @Product Marketing' }),
+		).toBeInTheDocument()
+		await user.keyboard('{Control>}{Enter}{/Control}')
+
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: '/$workspaceId/search',
+			params: { workspaceId: 'ws-1' },
+			search: { participants: PM },
+		})
 	})
 
 	it('Enter on the Search row hands over too', async () => {
@@ -490,49 +550,20 @@ describe('launcher states', () => {
 })
 
 describe('⌘F', () => {
-	const press = () => {
-		const event = new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, cancelable: true })
-		document.dispatchEvent(event)
-		return event
-	}
-
-	beforeEach(() => {
-		openRef.current = false
-	})
-
-	it('is left to the browser everywhere except Search and Marketplace', () => {
-		pathnameRef.current = '/ws-1/objects'
-		renderLauncher()
-		expect(press().defaultPrevented).toBe(false)
-	})
-
-	it('focuses the page field on Search', () => {
-		pathnameRef.current = '/ws-1/search'
-		renderLauncher()
-		const input = document.createElement('input')
-		input.setAttribute('data-search-field', 'page')
-		document.body.append(input)
-
-		expect(press().defaultPrevented).toBe(true)
-		expect(input).toHaveFocus()
-		input.remove()
-	})
-
-	it('focuses the catalog filter on Marketplace', () => {
-		pathnameRef.current = '/ws-1/marketplace'
-		renderLauncher()
-		const input = document.createElement('input')
-		input.setAttribute('aria-label', 'Filter marketplace')
-		document.body.append(input)
-
-		expect(press().defaultPrevented).toBe(true)
-		expect(input).toHaveFocus()
-		input.remove()
-	})
-
-	it('leaves the key alone on Search when the page field is not there', () => {
-		pathnameRef.current = '/ws-1/search'
-		renderLauncher()
-		expect(press().defaultPrevented).toBe(false)
+	// The palette does not handle ⌘F: the pages register their own search with
+	// lib/page-search-shortcut, and the shell owns the one listener.
+	it('is never taken by the launcher', () => {
+		for (const path of ['/ws-1/objects', '/ws-1/search', '/ws-1/marketplace']) {
+			pathnameRef.current = path
+			const { unmount } = renderLauncher()
+			const input = document.createElement('input')
+			input.setAttribute('data-search-field', 'page')
+			document.body.append(input)
+			const event = new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, cancelable: true })
+			document.dispatchEvent(event)
+			expect(event.defaultPrevented).toBe(false)
+			input.remove()
+			unmount()
+		}
 	})
 })

@@ -27,9 +27,8 @@ describe('SettingsLayout', () => {
 		mockMatchRoute.mockReturnValue(false)
 	})
 
-	// The "Settings" title is not this layout's — in v2 it belongs to the shared
-	// top nav, which renders the per-screen <h1> (mockup lines 195-199). This
-	// layout owns only the section nav and the outlet.
+	// The "Settings" title belongs to the shared top nav, which renders the per-screen
+	// <h1>. This layout owns only the section nav and the outlet.
 	it('renders no heading of its own', () => {
 		render(<SettingsLayout />)
 		expect(screen.queryByRole('heading')).not.toBeInTheDocument()
@@ -41,7 +40,7 @@ describe('SettingsLayout', () => {
 		)
 		render(<SettingsLayout />)
 		const billing = screen.getByRole('link', { name: 'Billing' })
-		expect(billing.className).toContain('bg-muted')
+		expect(billing.className).toContain('bg-secondary')
 		expect(billing.className).toContain('font-bold')
 	})
 
@@ -50,14 +49,14 @@ describe('SettingsLayout', () => {
 		const labels = screen.getAllByRole('link').map((link) => link.textContent)
 		expect(labels).toEqual([
 			'General',
-			'Objects',
 			'Members',
 			'Integrations',
-			'Keychain',
-			'Extensions',
-			'Skills',
-			'MCP',
 			'Billing',
+			'Notifications',
+			'Skills',
+			'Item types',
+			'Keys and MCP',
+			'Keychain',
 		])
 	})
 

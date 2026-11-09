@@ -7,6 +7,7 @@ import {
 	getStatusColor,
 	getTypeColor,
 	statusColors,
+	statusStage,
 	typeColors,
 } from '@/lib/constants'
 
@@ -59,5 +60,31 @@ describe('getStatusColor', () => {
 describe('API_BASE', () => {
 	it('equals /api', () => {
 		expect(API_BASE).toBe('/api')
+	})
+})
+
+describe('statusStage', () => {
+	it.each([
+		['done', 'done'],
+		['in_review', 'review'],
+		['In progress', 'progress'],
+		['active', 'progress'],
+		['todo', 'todo'],
+		['backlog', 'todo'],
+		['cancelled', 'cancelled'],
+		['canceled', 'cancelled'],
+		['discarded', 'cancelled'],
+		['failed', 'cancelled'],
+		['blocked', 'blocked'],
+		['paused', 'blocked'],
+		['parked', 'blocked'],
+		['at_risk', 'blocked'],
+	] as const)('maps %s to %s', (status, stage) => {
+		expect(statusStage(status)).toBe(stage)
+	})
+
+	it('treats a custom workspace status as unknown, never as not started', () => {
+		expect(statusStage('waiting_for_legal')).toBe('unknown')
+		expect(statusStage('')).toBe('unknown')
 	})
 })

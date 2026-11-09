@@ -54,11 +54,14 @@ const literalOrPathSchema = z.union([
 
 export const webhookConfigSchema = z
 	.object({
-		signatureScheme: z.enum(['hmac-sha256', 'hmac-sha1', 'timestamp']),
+		signatureScheme: z.enum(['hmac-sha256', 'hmac-sha1', 'timestamp', 'ed25519']),
 		signatureHeader: z.string().min(1),
 		signaturePrefix: z.string().optional(),
 		timestampHeader: z.string().optional(),
-		/** Signing base for the 'timestamp' scheme, e.g. "v0:{timestamp}:{body}". */
+		/**
+		 * Signing base for the 'timestamp' and 'ed25519' schemes, e.g. "v0:{timestamp}:{body}"
+		 * or "{timestamp}|{body}" (Telnyx).
+		 */
 		timestampBodyTemplate: z.string().optional(),
 		maxAgeSeconds: z.number().int().positive().default(300),
 		/** V1 stores the signing secret encrypted per extension. */
@@ -74,20 +77,13 @@ export const webhookConfigSchema = z
 			.default({ perMinute: 60 }),
 	})
 	.superRefine((cfg, ctx) => {
-		if (cfg.signatureScheme === 'timestamp') {
+		if (cfg.signatureScheme === 'timestamp' || cfg.signatureScheme === 'ed25519') {
+			const message = `Required for the ${cfg.signatureScheme} scheme`
 			if (!cfg.timestampHeader) {
-				ctx.addIssue({
-					code: 'custom',
-					path: ['timestampHeader'],
-					message: 'Required for the timestamp scheme',
-				})
+				ctx.addIssue({ code: 'custom', path: ['timestampHeader'], message })
 			}
 			if (!cfg.timestampBodyTemplate) {
-				ctx.addIssue({
-					code: 'custom',
-					path: ['timestampBodyTemplate'],
-					message: 'Required for the timestamp scheme',
-				})
+				ctx.addIssue({ code: 'custom', path: ['timestampBodyTemplate'], message })
 			}
 		}
 	})

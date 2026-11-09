@@ -1,7 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { type SSEEvent, SSEFatalError, type SSEStatus, connectSSE } from '../lib/sse'
-import { invalidateFromSSE } from '../lib/sse-invalidation'
+import { invalidateFromSSE, notifySSEGap } from '../lib/sse-invalidation'
 
 export type { SSEStatus } from '../lib/sse'
 
@@ -72,6 +72,7 @@ export function useSSE(workspaceId: string): SSEStatus {
 			// transcript from staying frozen after a dropped connection until
 			// the user reloads the page.
 			onReconnect: () => {
+				notifySSEGap()
 				const elapsed = Date.now() - lastSyncAtRef.current
 				if (elapsed >= MIN_RECONNECT_SYNC_MS) {
 					resync()

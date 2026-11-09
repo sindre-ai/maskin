@@ -2,7 +2,7 @@
 title: Drafts and previews
 slug: drafts
 description: How an agent drafts an email, a LinkedIn message or post, or a Slack message as an ordinary object, how a person previews, edits and approves it in chat, For You and Claude, how files (HTML, markdown, images) preview, and how it is sent.
-last_updated: 2026-10-26
+last_updated: 2026-11-02
 ---
 
 # Drafts and previews
@@ -31,16 +31,22 @@ Agents learn this from the `draft-approval-tasks` skill, which every default age
 
 | `metadata.kind` | Provider | Fields in `metadata` | Text limit | Send tool |
 |---|---|---|---|---|
-| `email` | Gmail | `to` (required), `cc`, `subject` (required) | 100,000 | `gmail_send_email({ object_id })` |
+| `email` | Gmail | `to` (required), `cc`, `subject` (required), `attachment_file_ids` (workspace file ids, a list or comma separated, up to 5 files and 20 MB in total) | 100,000 | `gmail_send_email({ object_id })`, or `resend_send_email({ object_id })` from the agent's own mailbox (see agent-access) |
 | `linkedin_message` | LinkedIn | `to` (recommended): a name or a profile link; `thread_id`, `reply_to`; `recipient_provider_id` (LinkedIn id, for a first message with no `thread_id`); `attachment_file_id` (one workspace PDF, PNG or JPEG up to 10 MB) | 8,000 | `reply({ object_id })` with a `thread_id`, `send_message({ object_id })` for a first message |
-| `linkedin_connection_request` | LinkedIn | `to` (required) | 300 | `send_connection_request` |
+| `linkedin_connection_request` | LinkedIn | `to` (required), `recipient_provider_id` (required, the LinkedIn id the invitation goes to) | 300 | `send_connection_request({ object_id })` |
 | `linkedin_inmail` | LinkedIn | `to` (required), `recipient_provider_id` (required, shown as "LinkedIn id"), `attachment_file_id`; no subject | 1,900 | `send_inmail` |
-| `linkedin_post` | LinkedIn | `account` ("Posting as"), `scheduled_date` | 3,000 | `publish_post` |
-| `slack_message` | Slack | `channel` (required): the name, `#coach-maskin`, never the id | 40,000 | `slack_send_message` |
+| `linkedin_post` | LinkedIn | `account` ("Posting as"), `scheduled_date`, `attachment_file_ids` (workspace PNG or JPEG file ids, comma separated, up to 9) | 3,000 | `publish_post({ object_id })` |
+| `linkedin_comment` | LinkedIn | `post_id` (required, the post commented on), `to` (recommended): whose post it is | 3,000 | `comment_on_post({ object_id })` |
+| `linkedin_comment_reply` | LinkedIn | `post_id` (required), `comment_id` (required, the comment answered), `reply_to` (the comment text, shown above the draft), `to` (recommended) | 3,000 | `reply_to_comment({ object_id })` |
+| `linkedin_post_edit` | LinkedIn | `post_id` (required, a post this identity already published); the content is the new post text | 3,000 | `edit_post({ object_id })` |
+| `slack_message` | Slack | `channel` (required): the name, `#coach-maskin`, never the id | 40,000 | `slack_send_message({ object_id })` |
+| `manual_message` | none (declared on the always-present custom tool server) | `to` (required): a name or a profile link; `channel` (required): where it is typed, such as `Facebook` | 100,000 | none: an agent types it through the computer, or a person sends it |
 
 LinkedIn tools are served per identity, so each is prefixed `linkedin-{account}-{identity}__`.
 
-Both LinkedIn message tools send through one path: the text, the recipient and the file are read from the approved object, never from the call, and the send is refused until a person has approved exactly this content and refused again once it has gone. `recipient_provider_id` and `attachment_file_id` are detail lines, so changing either withdraws the approval. `send_message` takes no `attachments`: a call that passes them gets `INVALID_INPUT`. A file is checked at send time: it must be in the caller's workspace, typed by its bytes (not its name), at most 10 MB, and not changed after the approval.
+`send_message` and `reply` send through one path: the text, the recipient and the file are read from the approved object, never from the call, and the send is refused until a person has approved exactly this content and refused again once it has gone. `recipient_provider_id` and `attachment_file_id` are detail lines, so changing either withdraws the approval. `send_message` takes no `attachments`: a call that passes them gets `INVALID_INPUT`. A file is checked at send time: it must be in the caller's workspace, typed by its bytes (not its name), at most 10 MB, and not changed after the approval.
+
+An **email with files** (a receipt to forward to an accountant) names workspace files in `attachment_file_ids`: save each with `create_file`, then `metadata: { kind: "email", to, subject, attachment_file_ids: ["<file id>", ...] }`. The ids are a detail line of the preview ("Attachments", shown as file names), so adding, removing or swapping a file changes the content hash and withdraws the approval. Both `gmail_send_email` (a multipart message) and `resend_send_email` (the Resend `attachments` field) read the files from the approved object at send time, never from the call. A send is refused, and nothing goes out or is used up, when the list is over 5 files or 20 MB, an id is not a file of this workspace, or a file was changed after the approval (an approval covers the ids and not what a file holds, so an overwritten file needs a new approval). Only the object route carries files: an approval card (`approval_comment_id`) cannot.
 
 A LinkedIn reply is a task filed with `channel: "linkedin_dm"` (that matches the kind, so `kind` is not needed) and `to` (who it goes to; without it the card warns "To is not filed"), `thread_id` (the conversation) and `reply_to` (the message being answered, shown above the draft):
 
@@ -53,6 +59,10 @@ create_objects({ nodes: [{
 ```
 
 A **LinkedIn post** also previews without any `kind` when the object has `metadata.content_type = "linkedin_post"`, which is how the Copywriter files them. The content may carry a header (account, voice, angle) above the copy; the preview shows only what lies between the `--- POST ---` and `--- MEDIA ---` lines, and nothing else is treated as the post. An explicit `kind` always wins over this match.
+
+`slack_send_message` is held the same way: a post goes out only from an approved `slack_message` draft passed as `object_id` (the channel and text are read from the object, an edit withdraws the approval, and a posted draft is refused). A call with only `channel` and `text` is refused with instructions to draft and ask, except for channels on the workspace's allowlist. A human admin or owner sets it with `PUT /api/integrations/slack/direct-post-channels` and `{ "channels": ["C0123456789"] }` (Slack channel ids; names and DM ids are rejected; the list replaces the old one; agents get 403). It is stored on the Slack connection (`config.slack_direct_post_channels`), so it changes without a deploy. Until a list is saved, the built-in default applies (#development only, in `providers/slack/send-object.ts`); a saved list, even an empty one, replaces it. The same list decides which channels accept a direct `slack_update_message`. `slack_update_message` follows the same rule: an edit goes out only from an approved `slack_message` draft passed as `object_id` together with the `ts` of the message to edit (the channel and new text are read from the object), and a draft that has been used is refused.
+
+A **`manual_message`** is text that goes out by hand, with no integration to send it (a Facebook message an agent types through the computer, a portal form, a text). It previews like the others: recipient, channel, text and state. A person's approval is bound to the content hash, so editing the text, the recipient or the channel withdraws it. Nothing sends it from the object: the agent that types it reads the approved text and sends exactly that.
 
 A kind is declared by its provider in `deliverables` (`DeliverableKind` in `apps/dev/src/lib/integrations/types.ts`). A text field with no `slot` shows as a labelled line in the preview (`details`); `slot: "hidden"` keeps one the send tool needs (a conversation id) off the card, and `slot: "context"` fills the text shown above the draft; those lines, like the recipients, subject and text, are part of what an approval is bound to, so changing the account a post is published as withdraws the approval. Approval is recorded for every kind. Only `email` and `linkedin_message` read their text from the object when sent by object id; for the others the agent is woken by the approval and sends with its own tool. A field may also be `recommended` (a warning when empty, not a block), and a kind matches through `alsoMatches` when `metadata.kind` is absent (an explicit `kind` wins).
 
@@ -85,9 +95,15 @@ The For You list is the Chief of Staff's. An agent that needs a person to decide
 
 A draft with no `kind` still shows its text. It just has no recipient lines and no approval.
 
+With the `foryou-draft-edit` flag on, the draft text on the web card is a box. The chat card uses the same box and the same step (`DraftTextEditor` and `approveDraftText` in `apps/web`), without the flag. Nothing is saved while the person types: taking the sending option (or **Approve draft** in chat) saves the text to the draft object (`PATCH /api/objects/:id`), then approves the hash of the saved text, in one tap; on For You the reply follows. The object is read first, and if it no longer matches what the card showed (an agent edited it meanwhile) nothing is saved or sent and the card shows the new text. For a LinkedIn post with a header only the lines between the POST and MEDIA markers change. A draft whose message cannot be told from the rest of its text stays read only. If the server refuses the approval because the draft changed (409), the card shows the new text and sends nothing. Taking any other option (Hold, Skip) saves nothing.
+
 A card can also be about a **file** instead of text: `draft: { file_id, label }`. The feed returns the file's name, type and size as `draft.file`, and the card draws the file itself, open, above the buttons (see Files). A `file_id` from another workspace, or a deleted file, shows nothing (the stored `body`, if any, is used instead).
 
-A card disappears when its task reaches `done`, `archived`, `dismissed` or `discarded`, when the person replies, or when the notification's `only_while_status` no longer holds.
+A card disappears when its task reaches `done`, `archived`, `dismissed` or `discarded`, when the person replies, when the notification's `only_while_status` no longer holds, or when the decision's `expires_at` has passed.
+
+`expires_at` is an optional ISO 8601 date-time on the `decision` block. Agents set it whenever an option or the ask names a date ("this week", "before Thursday"). It must be in the future when the comment is posted, or the API rejects the card. After it passes the card is hidden from For You, the briefing and the lifecycle pushes. A card without it is unchanged.
+
+A decision card also drops once the object it sits on leaves the status it had when the card was posted: posting stamps that status (`status_stamp`), so an ask about work that has since moved on does not stay. Two ways to change that: `only_while_status` on the decision names the statuses the ask assumed (it replaces the stamp), and `keep_on_status_change: true` keeps the card up through a status change, for a card that must outlive the move (for example one about a task the agent moves on itself while the person still decides). A card posted before this behaviour has no stamp and stays until answered.
 
 ## In chat
 
@@ -95,9 +111,9 @@ A message that links an object (`/objects/<id>`) or a file (`/files/<id>`) shows
 
 - **Where.** A link that stands alone as a paragraph or a list item (a short lead-in ending in ":" is fine) is replaced by its card in place, so the message reads once. A link inside a sentence stays a link, and its card is added under the message. A card is never drawn twice for one link.
 - **A link never vanishes.** The original link stays while the object loads, if it fails, if the object is missing or in another workspace, or if it does not deserve a card. Only a resolved card replaces it. Links inside code are not links.
-- **The card.** Contracted to its title, a click opens it. A draft names its kind ("Email", "LinkedIn post"), shows recipients and detail lines and the text, and ends in **Approve draft**. A draft of about 12 lines or fewer shows all its text and can be approved at once. A longer one shows its first 12 lines with **Show all**, and its button reads **Read full draft to approve**: the first tap opens the full text and sends nothing, then the button reads **Approve draft** and the next tap approves. If the draft changes afterwards, or the text is folded again, it is clamped again. So nobody approves text they did not see, and no part of the card scrolls on its own. Approving records the same `approved` event as answering a For You card, for exactly the text on screen, and tells the agent what was approved. Then it reads "Approved, waiting for send", and "Sent" after a send. A draft that carries a header (a LinkedIn post) shows only the text that goes out; it is edited on the object page.
+- **The card.** Contracted to its title, a click opens it. A draft names its kind ("Email", "LinkedIn post"), shows recipients and detail lines and the text, and ends in **Approve draft**. A draft of about 12 lines or fewer shows all its text and can be approved at once. A longer one shows its first 12 lines with **Show all**, and its button reads **Read full draft to approve**: the first tap opens the full text and sends nothing, then the button reads **Approve draft** and the next tap approves. If the draft changes afterwards, or the text is folded again, it is clamped again. So nobody approves text they did not see, and no part of the card scrolls on its own. Approving records the same `approved` event as answering a For You card, for exactly the text on screen, and tells the agent what was approved. Then it reads "Approved, waiting for send", and "Sent" after a send. A draft that carries a header (a LinkedIn post) shows only the text that goes out, and edits only that part.
 - **The drawer.** The chat's Overview drawer (right rail on desktop, bottom sheet on small screens) has a **Linked** tab listing every object and file the conversation links, newest first, with who linked it and a jump to that message. Drafts and files are full cards there; every other object is the same reference card the transcript draws for a link on its own line. "Show in panel" on a card in the transcript opens the drawer on that item.
-- **Native apps.** The iOS and iPad apps draw the same cards in chat (in place or under the message), approve from them, and have a Linked sheet from the chat toolbar. The For You card shows the preview's recipients, subject, detail lines, approval state and files.
+- **Native apps.** The iOS and iPad apps draw the same cards in chat (in place or under the message), approve from them, and have a Linked sheet from the chat toolbar. The For You card shows the preview's recipients, subject, detail lines, approval state and files. The For You card and the chat draft card let the person change the text (an email's subject too) before approving: Approve saves the edit, then approves the text as saved, in one tap. Both go through one save-then-approve path (`DraftSaveAndApprove` in `MaskinCore`): a draft that changed under the person is not saved over or approved, and a LinkedIn post with a header changes only the text between the markers.
 
 ## Files
 
@@ -114,14 +130,24 @@ A file (`create_file`) previews as a card wherever it is linked or attached, by 
 
 Three places draw them: a chat message that links `/files/<id>`, a file attached to a comment or message, and a For You card with `draft.file_id`. Past 1.5 MB (8 MB for a picture) the card says the file is too large and links to the viewer. A file that is missing, or in another workspace, shows nothing.
 
+### A receipt in Gmail, sent on as a file
+
+Google's hosted Gmail tools return no attachment bytes, so an attachment in a mail takes two steps before it can go out on an email draft:
+
+1. **Save the attachment.** `gmail_save_attachment({ message_id, attachment_id, part_id })` reads that one attachment of the connected account (`POST /api/integrations/gmail/save-attachment`) and stores it as a workspace file. The name and type come from the message part, not from the call. It needs Read or Read & write access to Gmail, refuses an attachment over 20 MB, and returns `file_id`, `name`, `mime_type`, `size_bytes` and `url`. Attachment ids change on every read, so pass `part_id` (the `partId` the Gmail read tool lists next to the attachment): the attachment is matched by it first, then by attachment id, and a message with one attachment needs neither.
+2. **List it on the draft.** Put the returned `file_id` in `attachment_file_ids` on the email object (see the table above), then get a person to approve it and send as usual.
+
+The call uses the `gmail.readonly` and `gmail.modify` scopes, which are already in the connect scopes, so no install needs to reconnect.
+
 ## Approve, then send
 
 1. A person approves in one of two ways, and both leave the same `approved` event:
    - **Answering the card.** Choosing the send option on a decision card (or "Send: ... (id)" on one message of a stack) approves the draft behind it. The server reads this from the reply itself (`POST /api/events` with `parent_event_id`), in the same transaction as the reply, so every client approves without a second call and the agent the reply wakes already finds the approval. The approval covers the text as it reads when the reply arrives. Replies from an agent, or sent through MCP (`X-Client-Source: mcp`, where a model holds the person's key), never approve.
    - **The Approve button** (`POST /api/objects/:id/approval`, used by the chat card, the Claude card, and by web before it replies on For You). Only a person can: an agent gets 403. The body may carry the `content_hash` the person saw; if the draft changed since, the answer is 409. This is the stricter path, because it is bound to the exact text shown.
+   - **A person's yes in a chat** (email drafts only, `POST /api/objects/:id/chat-approval`, the `approve_draft_from_chat` tool). An agent shows the draft by linking it in the chat, the person answers, and the agent passes the draft's `object_id` and the `message_id` of the answer. The server reads the message itself and records the approval only if a person with write access wrote it (never an agent), in a chat the agent is in, as their newest message there, after the draft's last edit, and after an earlier message in that chat linked the draft (also after the last edit). The approval is recorded under the person's actor with `via: "chat"`, `chat_message_id`, `conversation_id` and `requested_by_agent_id`. A showing message that was edited after the person's reply does not count. It proves who wrote the words and that they saw the current text, not that the words mean yes. Known limit: chat messages carry no marker for how they were posted, so a message sent through a person's own AI tool (where a model holds their key) looks the same as one they typed; the replies on a card do refuse that route. Any other kind is refused until its send path honours it.
 2. The approval is an `approved` event on the object carrying the hash. **Editing the recipients, subject or text changes the hash, which withdraws the approval.**
 3. The agent sends. For an email: `gmail_send_email({ object_id })`. It needs "Read & write" access and a current approval: nothing is sent without a person's yes. One approval sends once (the same claim a decision card uses, keyed on the approval event). A send records a `delivered` event on the object and, when the object is a task, moves it to `done`, so nothing still says "to do" for an email that went out.
-   For LinkedIn it is `reply({ object_id })` on the identity's tools: the text sent is the approved text read from the object (a `body` is refused), it is refused until a person has approved that exact text, refused once sent, and the conversation is the `thread_id` on the object or one the agent passes. Sending with a `thread_id` and a `body` and no object is unchanged and needs no approval; `object_id` is the path for drafts a person was asked to approve.
+   For LinkedIn it is `reply({ object_id })` on the identity's tools: the text sent is the approved text read from the object (a `body` is refused), it is refused until a person has approved that exact text, refused once sent, and the conversation is the `thread_id` on the object or one the agent passes. There is no direct path: `reply`, `send_message`, `send_connection_request`, `publish_post`, `comment_on_post`, `reply_to_comment` and `edit_post` all refuse a call without `object_id` (`INVALID_INPUT`, "held for a person"), and nothing is sent.
 
 In chat, the card for a linked draft ends in **Approve draft**: it approves the text as it reads in the card (an edit made there is what is approved), then tells the agent, naming the object id to send. The approval is not the send, so the card reads "Approved, waiting for send" until the send is recorded, and then "Sent".
 
@@ -131,14 +157,15 @@ To have an agent send the moment a person approves (for example from the Claude 
 
 ## LinkedIn sends
 
-The LinkedIn send tools (`send_message`, `reply`, `send_connection_request`) take an optional `object_id`: the task or draft the message carries out. With it, the server checks the object before sending and ends it after:
+The LinkedIn send tools (`send_message`, `reply`, `send_connection_request`, `publish_post`, `comment_on_post`, `reply_to_comment`, `edit_post`, `send_inmail`) take an `object_id`: the task or draft the send carries out. It is required. A call without it is refused with `INVALID_INPUT` ("held for a person") and nothing goes out. The text, the person and any file or images are read from the object, never from the call; passing them next to `object_id` is refused. The server checks the object before sending and ends it after:
 
-- The object must exist in the workspace, and must not already carry a `delivered` event. A second send of the same object is refused with `INVALID_INPUT` and nothing goes out, whatever the new text. Create a new task for a new message.
-- Once LinkedIn accepts the message, a `delivered` event is written on the object and a task moves to `done` (a `status_changed` event records it). A task already `done`, `validated` or `discarded` is left alone, and other object types get the event only.
+- The object must exist in the workspace, be a draft of the kind the tool sends (`linkedin_message` for `send_message` and `reply`, `linkedin_connection_request`, `linkedin_post`, `linkedin_comment`, `linkedin_comment_reply`, `linkedin_post_edit`, `linkedin_inmail`), be complete, and carry a person's approval of exactly its current content. An edit withdraws the approval.
+- A draft that was already sent is refused with `INVALID_INPUT` and nothing goes out. Create a new task for a new message.
+- Once LinkedIn accepts the send, a `delivered` event is written on the object and a task moves to `done` (a `status_changed` event records it). A task already `done`, `validated` or `discarded` is left alone, and other object types get the event only.
 - The tool's result carries `object: { id, delivered, task_closed }`, so the agent can see what happened and does not update the task itself.
-- A failure to write the record never turns into an error: the message is gone, so the tool still reports success with `delivered: false`, and the failure is logged.
+- A failure to write the record never turns into an error: the send is gone, so the tool still reports success with `delivered: false`, and the failure is logged.
 
-Without `object_id` a send behaves as before and nothing is recorded.
+`delete_post` and `react_to_post` stay direct by decision. `edit_post` changes the text only: who may comment on the post is not part of a held edit. The post, the comment and the comment answered are detail lines on the draft, so changing one withdraws the approval. There is no HTTP route that comments or replies to a comment either; those go out only through the MCP tools.
 
 ## Older paths
 

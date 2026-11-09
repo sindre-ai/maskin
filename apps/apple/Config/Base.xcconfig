@@ -10,6 +10,13 @@ MASKIN_IOS_ENTITLEMENTS = Apps/Maskin/Maskin.entitlements
 // Where the app opens web-only settings pages. Empty = the API's own origin (production).
 MASKIN_WEB_BASE_URL =
 
+// Product analytics. The PostHog project token of the project the web app reports to (the same value
+// as VITE_POSTHOG_KEY). Empty = this build sends nothing and never shows the usage question; CI and
+// local builds leave it empty. The TestFlight workflow passes it in. The host is written with $()
+// because a bare // would start a comment.
+MASKIN_POSTHOG_KEY =
+MASKIN_POSTHOG_HOST = https:/$()/eu.i.posthog.com
+
 // Optional, gitignored: DEVELOPMENT_TEAM and any overrides. CI has none and builds with
 // CODE_SIGNING_ALLOWED=NO.
 #include? "Local.xcconfig"

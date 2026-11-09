@@ -1,3 +1,4 @@
+import { StatusPill } from '@/components/integrations/drive/status-pill'
 import { ProviderConnectRow } from '@/components/integrations/provider-connect-row'
 import { InstallGithubOrgSection } from '@/components/integrations/provider-dialogs'
 import {
@@ -5,10 +6,12 @@ import {
 	type ResendConnectPrefill,
 } from '@/components/integrations/resend/resend-connect-dialog'
 import { ToolsSection } from '@/components/integrations/tools-section'
+import { SettingsPageTitle } from '@/components/settings/settings-page-title'
 import { EditorBanner } from '@/components/shared/editor-banner'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import {
 	Dialog,
@@ -17,7 +20,7 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from '@/components/ui/dialog'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
+import { useCanWrite } from '@/hooks/use-can-write'
 import {
 	useGithubPendingSelection,
 	useIntegrations,
@@ -25,6 +28,7 @@ import {
 	useSelectGithubInstallation,
 } from '@/hooks/use-integrations'
 import type { IntegrationResponse, ResendDnsRecord } from '@/lib/api'
+import { PILL_BUTTON } from '@/lib/pill-button'
 import { safeReturnPath } from '@/lib/return-path'
 import { sortBy } from '@/lib/sort'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -61,11 +65,8 @@ function IntegrationsPage() {
 	const { workspaceId } = useWorkspace()
 	const { data: integrations, isLoading: integrationsLoading } = useIntegrations(workspaceId)
 	const { data: providers, isLoading: providersLoading } = useProviders()
-	// The backend registers google-drive unconditionally; only the connect entry
-	// point is hidden until `google-drive-integration-ui` is on.
-	const googleDriveVisible = useFeatureFlag('google-drive-integration-ui')
 	const visibleProviders = sortBy(
-		(providers ?? []).filter((p) => p.name !== 'google-drive' || googleDriveVisible),
+		providers ?? [],
 		(p) => p.displayName,
 		(p) => p.name,
 	)
@@ -134,7 +135,8 @@ function IntegrationsPage() {
 	const resendAwaitingSecret = awaitingSecretByProvider.get('resend') ?? []
 
 	return (
-		<div>
+		<div className="max-w-[760px]">
+			<SettingsPageTitle title="Integrations" />
 			{connectError && (
 				<EditorBanner
 					tone="danger"
@@ -156,22 +158,25 @@ function IntegrationsPage() {
 					description="No integration providers are configured on the server"
 				/>
 			) : (
-				<div className="space-y-2">
-					{visibleProviders.map((provider) => (
-						<ProviderConnectRow
-							key={provider.name}
-							provider={provider}
-							installations={activeByProvider.get(provider.name) ?? []}
-							workspaceId={workspaceId}
-						/>
-					))}
-					{resendAwaitingSecret.length > 0 && (
-						<ResendResumeSection
-							rows={resendAwaitingSecret}
-							onResume={(prefill) => setResendDialog({ open: true, prefill })}
-						/>
-					)}
-				</div>
+				<section>
+					<h2 className="px-2 pb-1.5 text-[15px] font-semibold text-foreground">Connected tools</h2>
+					<div className="border-t border-border-subtle">
+						{visibleProviders.map((provider) => (
+							<ProviderConnectRow
+								key={provider.name}
+								provider={provider}
+								installations={activeByProvider.get(provider.name) ?? []}
+								workspaceId={workspaceId}
+							/>
+						))}
+						{resendAwaitingSecret.length > 0 && (
+							<ResendResumeSection
+								rows={resendAwaitingSecret}
+								onResume={(prefill) => setResendDialog({ open: true, prefill })}
+							/>
+						)}
+					</div>
+				</section>
 			)}
 			<ToolsSection workspaceId={workspaceId} />
 			<SelectGithubInstallationDialog
@@ -202,31 +207,39 @@ function ResendResumeSection({
 	rows: IntegrationResponse[]
 	onResume: (prefill: ResendConnectPrefill) => void
 }) {
+	const canWrite = useCanWrite()
 	return (
 		<div className="space-y-2">
-			<p className="text-[8px] font-bold tracking-[0.11em] uppercase text-muted-foreground font-mono pt-2">
-				CONNECTIONS AWAITING A SECRET
-			</p>
+			<p className="settings-label pt-2">Connections awaiting a secret</p>
 			{rows.map((row) => {
 				const prefill = extractResendPrefill(row)
 				if (!prefill) return null
 				return (
 					<div
 						key={row.id}
-						className="flex items-center gap-3 rounded-lg border border-warning/40 bg-warning/5 p-4"
+						className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card px-4 py-3.5"
 					>
-						<div className="h-3 w-3 shrink-0 rounded-full bg-warning" aria-hidden="true" />
-						<div className="flex-1 min-w-0">
-							<p className="text-sm font-medium text-foreground truncate">
+						<div className="flex-1 min-w-0 basis-40">
+							<p className="text-[15px] font-medium text-foreground truncate">
 								Resend — {prefill.receiveSubdomain}
 							</p>
-							<p className="text-xs text-muted-foreground truncate">
+							<p className="text-[13px] text-muted-foreground truncate">
 								Awaiting the whsec_… secret. Pick up where you left off in Step 3.
 							</p>
 						</div>
-						<Button size="sm" onClick={() => onResume(prefill)}>
-							Finish setup
-						</Button>
+						<StatusPill soft tone="warn">
+							Awaiting secret
+						</StatusPill>
+						<ViewerTooltip>
+							<Button
+								size="sm"
+								className={PILL_BUTTON}
+								disabled={!canWrite}
+								onClick={() => onResume(prefill)}
+							>
+								Finish setup
+							</Button>
+						</ViewerTooltip>
 					</div>
 				)
 			})}
@@ -288,6 +301,7 @@ function SelectGithubInstallationDialog({
 }) {
 	const { data, isLoading } = useGithubPendingSelection(workspaceId, integrationId)
 	const select = useSelectGithubInstallation(workspaceId)
+	const canWrite = useCanWrite()
 	const options = data?.installations ?? []
 
 	return (
@@ -332,7 +346,7 @@ function SelectGithubInstallationDialog({
 											{ onSuccess: onSelected },
 										)
 									}
-									disabled={select.isPending}
+									disabled={select.isPending || !canWrite}
 								>
 									Connect
 								</Button>

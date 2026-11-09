@@ -1,5 +1,9 @@
 import { PageHeader } from '@/components/layout/page-header'
 import { AskBanner } from '@/components/loops/ask-banner'
+import { LoopBlockError } from '@/components/loops/loop-block-error'
+import { itemsNeedingYou } from '@/components/loops/loop-counters'
+import { LoopCustomView } from '@/components/loops/loop-custom-view'
+import { LoopDetailTabs } from '@/components/loops/loop-detail-tabs'
 import { LoopFirstRunBanner } from '@/components/loops/loop-first-run-banner'
 import { LoopFlow } from '@/components/loops/loop-flow'
 import { LOOP_PILL_STYLES, isLiveLoopPill } from '@/components/loops/loop-pill'
@@ -10,16 +14,22 @@ import {
 	readStoredPlan,
 } from '@/components/loops/loop-proposed-edit'
 import { LoopStats } from '@/components/loops/loop-stats'
+import { LoopTags } from '@/components/loops/loop-tags'
 import { LoopUtteranceInput } from '@/components/loops/loop-utterance-input'
 import { TargetsAndOwners } from '@/components/loops/targets-and-owners'
 import { ObjectDetailBody } from '@/components/objects/object-detail-body'
 import { TimelineTab } from '@/components/objects/timeline-tab'
+import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EditableTitle } from '@/components/shared/editable-title'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
+import { StatusBadge } from '@/components/shared/status-badge'
+import { TypeBadge } from '@/components/shared/type-badge'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
+import { ButtonGroup } from '@/components/ui/button-group'
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -27,12 +37,16 @@ import {
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useActors } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useLoadFailed } from '@/hooks/use-load-failed'
 import { useLoop, useLoopActivity } from '@/hooks/use-loops'
+import { useNotifications } from '@/hooks/use-notifications'
 import { useDeleteObject, useObject, useObjects, useUpdateObject } from '@/hooks/use-objects'
 import { useRelationships } from '@/hooks/use-relationships'
 import { useTriggers } from '@/hooks/use-triggers'
-import { trackAskBannerDecideClicked } from '@/lib/analytics'
+import { trackAskBannerDecideClicked, trackLoopViewed } from '@/lib/analytics'
+import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { nextFireAt, nextFireLabel } from '@/lib/loop-next-fire'
 import { type LoopPlan, parseLoopDescription } from '@/lib/loop-plan'
@@ -40,13 +54,15 @@ import { useWorkspace } from '@/lib/workspace-context'
 import { useWaitingOnViewer } from '@maskin/shared'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { MoreHorizontal, Pause, Play, Trash2 } from 'lucide-react'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 /** Relationship type marking loop membership — mirrors
  * `LOOP_MEMBERSHIP_RELATIONSHIP_TYPE` in `apps/dev/src/routes/loops.ts`.
  * Source is the loop, target is the child object. */
 const LOOP_MEMBERSHIP_RELATIONSHIP_TYPE = 'in_loop'
+
+const SLOW_LOAD_MESSAGE = 'The server may be busy.'
 
 export const Route = createFileRoute('/_authed/$workspaceId/loops/$loopId')({
 	component: LoopDetailRoute,
@@ -63,9 +79,23 @@ interface ProposedEdit {
 	nextSource: string
 }
 
+function SetupBlock({ label, text }: { label: string; text: string | null }) {
+	return (
+		<section className="flex flex-col gap-2">
+			<span className="font-mono text-[10px] font-bold uppercase tracking-[0.11em] text-muted-foreground">
+				{label}
+			</span>
+			<p className="text-[14px] leading-[1.55] text-foreground">
+				{text?.trim() ? text : 'Not set yet.'}
+			</p>
+		</section>
+	)
+}
+
 function LoopDetailRoute() {
 	const { loopId } = Route.useParams()
 	const { workspaceId, workspace } = useWorkspace()
+	const canWrite = useCanWrite()
 	const {
 		data: loop,
 		isLoading: loopLoading,
@@ -73,21 +103,48 @@ function LoopDetailRoute() {
 		error: loopError,
 		refetch: refetchLoop,
 	} = useLoop(loopId, workspaceId)
-	const { data: object } = useObject(loopId)
+	const objectQuery = useObject(loopId)
+	const { data: object } = objectQuery
 	useDocumentTitle(loop?.name)
-	const { data: triggers } = useTriggers(workspaceId)
-	const { data: actors } = useActors(workspaceId)
-	const { data: membershipEdges } = useRelationships(workspaceId, {
+	// One event per open of a loop page. Keyed on the id so refetches and
+	// StrictMode's double effect do not repeat it.
+	const viewedLoopRef = useRef<string | null>(null)
+	const viewedLoopId = loop?.id ?? null
+	useEffect(() => {
+		if (!viewedLoopId || viewedLoopRef.current === viewedLoopId) return
+		viewedLoopRef.current = viewedLoopId
+		trackLoopViewed({ entity_id: viewedLoopId })
+	}, [viewedLoopId])
+	const triggersQuery = useTriggers(workspaceId)
+	const { data: triggers } = triggersQuery
+	const actorsQuery = useActors(workspaceId)
+	const { data: actors } = actorsQuery
+	const edgesQuery = useRelationships(workspaceId, {
 		source_id: loopId,
 		type: LOOP_MEMBERSHIP_RELATIONSHIP_TYPE,
 	})
+	const { data: membershipEdges } = edgesQuery
 	const childIds = (membershipEdges ?? []).map((r) => r.targetId)
-	const { data: children } = useObjects(
+	const childrenQuery = useObjects(
 		workspaceId,
 		{ ids: childIds.join(',') },
 		{ enabled: childIds.length > 0 },
 	)
-	const { data: activityEvents } = useLoopActivity(loopId, workspaceId)
+	const { data: children } = childrenQuery
+	const activityQuery = useLoopActivity(loopId, workspaceId)
+	const { data: activityEvents } = activityQuery
+	const { data: needsInputNotifications } = useNotifications(workspaceId, { type: 'needs_input' })
+	// A block whose calls fail, or stay unanswered for 30 s, says so with a retry instead of
+	// rendering empty. Each block judges only its own calls, so one slow call does not blank
+	// the others. Called before the early returns so hook order stays stable.
+	const loopFailed = useLoadFailed({ data: loop, isLoading: loopLoading, isError: isLoopError })
+	const objectFailed = useLoadFailed(objectQuery)
+	const triggersFailed = useLoadFailed(triggersQuery)
+	const actorsFailed = useLoadFailed(actorsQuery)
+	const edgesFailed = useLoadFailed(edgesQuery)
+	const childrenFailed = useLoadFailed(childrenQuery)
+	const activityFailed = useLoadFailed(activityQuery)
+	const flowFailed = triggersFailed || actorsFailed || edgesFailed || childrenFailed
 	const updateObject = useUpdateObject(workspaceId)
 	const deleteObject = useDeleteObject(workspaceId)
 	const navigate = useNavigate()
@@ -95,6 +152,19 @@ function LoopDetailRoute() {
 	const composerRef = useRef<HTMLDivElement>(null)
 	const [proposedEdit, setProposedEdit] = useState<ProposedEdit | null>(null)
 	const [confirmDelete, setConfirmDelete] = useState(false)
+	const [tab, setTab] = useState('overview')
+
+	// Custom view: an agent pins an HTML file with set_loop_view
+	// (metadata.view_file_id); it replaces the stats and flow, and the toggle
+	// switches back. A view that cannot be shown sets customFailure and the
+	// default page renders with a note; choosing "Custom view" again clears it
+	// and retries.
+	const viewFileId =
+		typeof object?.metadata?.view_file_id === 'string' ? object.metadata.view_file_id : null
+	const hasCustomView = viewFileId !== null
+	const [viewMode, setViewMode] = useState<'default' | 'custom'>('custom')
+	const [customFailure, setCustomFailure] = useState<string | null>(null)
+	const showCustomView = hasCustomView && viewMode === 'custom' && customFailure === null
 
 	// D3 AskBanner wiring — the shared `useWaitingOnViewer` (T1) takes a getter
 	// so `packages/shared` stays React-free. The loop-level `waitingOnViewer` bit
@@ -140,6 +210,17 @@ function LoopDetailRoute() {
 		[loopId, updateObject],
 	)
 
+	const handleUpdateTags = useCallback(
+		async (tags: string[]) => {
+			try {
+				await updateObject.mutateAsync({ id: loopId, data: { metadata: { tags } } })
+			} catch {
+				toast.error('Could not save your changes')
+			}
+		},
+		[loopId, updateObject],
+	)
+
 	const handleUpdateContent = useCallback(
 		async (content: string) => {
 			try {
@@ -158,12 +239,13 @@ function LoopDetailRoute() {
 	// `/loops` since the current route's data has just been removed. Mirrors the
 	// agent-detail trash affordance restored in PR #1667.
 	const handleDelete = useCallback(() => {
+		if (!canWrite) return
 		deleteObject.mutate(loopId, {
 			onSuccess: () => {
 				navigate({ to: '/$workspaceId/loops', params: { workspaceId } })
 			},
 		})
-	}, [deleteObject, loopId, navigate, workspaceId])
+	}, [deleteObject, loopId, navigate, workspaceId, canWrite])
 
 	// An utterance is read back as a diff against the plan snapshot `/loops/new`
 	// wrote to `metadata.plan`. Loops without one (marketplace installs, MCP
@@ -196,7 +278,7 @@ function LoopDetailRoute() {
 	)
 
 	const applyProposedEdit = useCallback(() => {
-		if (!proposedEdit) return
+		if (!proposedEdit || !canWrite) return
 		updateObject.mutate(
 			{
 				id: loopId,
@@ -212,12 +294,52 @@ function LoopDetailRoute() {
 			{
 				onSuccess: () => {
 					setProposedEdit(null)
-					toast.success('Loop updated')
+					// Undo re-applies the values the edit replaced. 30 s is long enough
+					// to notice a wrong read-back, short enough that it never silently
+					// reverts later changes.
+					const previous = object?.metadata
+					toast.success('Flow updated', {
+						duration: 30_000,
+						action: previous
+							? {
+									label: 'Undo',
+									onClick: () =>
+										updateObject.mutate(
+											{
+												id: loopId,
+												data: {
+													metadata: {
+														plan: typeof previous.plan === 'string' ? previous.plan : '',
+														plan_source:
+															typeof previous.plan_source === 'string' ? previous.plan_source : '',
+													},
+												},
+											},
+											{
+												onSuccess: () => toast.success('Change undone'),
+												onError: () => toast.error('Could not undo that change'),
+											},
+										),
+								}
+							: undefined,
+					})
 				},
 				onError: () => toast.error('Could not apply that change'),
 			},
 		)
-	}, [proposedEdit, updateObject, loopId])
+	}, [proposedEdit, updateObject, loopId, canWrite, object?.metadata])
+
+	if (loopFailed) {
+		return (
+			<div className="max-w-3xl mx-auto">
+				<QueryStateError
+					title="Couldn't load flow"
+					error={loopError ?? new Error(SLOW_LOAD_MESSAGE)}
+					onRetry={() => refetchLoop()}
+				/>
+			</div>
+		)
+	}
 
 	if (loopLoading && !loop) {
 		return (
@@ -230,24 +352,12 @@ function LoopDetailRoute() {
 		)
 	}
 
-	if (isLoopError && !loop) {
-		return (
-			<div className="max-w-3xl mx-auto">
-				<QueryStateError
-					title="Couldn't load loop"
-					error={loopError ?? new Error('Something went wrong.')}
-					onRetry={() => refetchLoop()}
-				/>
-			</div>
-		)
-	}
-
 	if (!loop) {
 		return (
 			<div className="max-w-3xl mx-auto">
 				<EmptyState
-					title="Loop not found"
-					description="This loop may have been deleted or you don't have access to it."
+					title="Flow not found"
+					description="This flow may have been deleted or you don't have access to it."
 				/>
 			</div>
 		)
@@ -256,7 +366,7 @@ function LoopDetailRoute() {
 	const loopTriggers = (triggers ?? []).filter((t) => loop.triggerIds.includes(t.id))
 	// D3 AskBanner content sourcing: the banner names the loop's first agent.
 	const askAgentActor = firstAgentActor ?? null
-	const askAgentName = askAgentActor?.name ?? 'This loop'
+	const askAgentName = askAgentActor?.name ?? 'This flow'
 	// Copy pattern per SPEC: `{agentName} asks — {askText}`.
 	const askText = 'is waiting on your input.'
 	const askAvatarType = firstAgentActor?.type
@@ -281,9 +391,21 @@ function LoopDetailRoute() {
 	const asksWaiting = loop.waitingCount
 	const nextFire = nextFireLabel(nextFireAt(loopTriggers))
 	const pill = LOOP_PILL_STYLES[loop.pill]
+	// The flow's driver is the object's own `driver`; no driver, no pill.
+	const driver = object?.driver ? actors?.find((a) => a.id === object.driver) : undefined
+	const needsYouRows = itemsNeedingYou(
+		children ?? [],
+		needsInputNotifications ?? [],
+		getStoredActor()?.id,
+	)
+	const sortedChildren = [...(children ?? [])].sort((a, b) =>
+		(a.title ?? '').localeCompare(b.title ?? '', undefined, { sensitivity: 'base', numeric: true }),
+	)
 	const isPaused = loop.status === 'paused'
 	// Built but never run: no children have entered it and nothing has happened.
-	const isPreFirstRun = childIds.length === 0 && (activityEvents?.length ?? 0) === 0
+	// Unknown is not empty: when the membership or activity call failed, say nothing.
+	const isPreFirstRun =
+		childIds.length === 0 && (activityEvents?.length ?? 0) === 0 && !edgesFailed && !activityFailed
 
 	// Resuming returns the loop to `learning`, the lowest live rung of the
 	// autonomy ladder, matching every server-side creation path
@@ -291,82 +413,76 @@ function LoopDetailRoute() {
 	// re-earns trust rather than snapping back to full autonomy. The trigger
 	// re-enable is handled server-side by the status hook in
 	// PATCH /api/objects/:id, so this only writes the status.
-	const togglePause = () =>
+	const togglePause = () => {
+		if (!canWrite) return
 		updateObject.mutate({
 			id: loop.id,
 			data: { status: isPaused ? 'learning' : 'paused' },
 		})
+	}
 
 	return (
 		<>
 			<PageHeader
-				title={loop.name ?? 'Untitled loop'}
+				title={loop.name ?? 'Untitled flow'}
 				actions={
 					confirmDelete ? (
 						// Inline confirm mirrors the agent-detail delete affordance
 						// (PR #1667) — a Radix Dialog would collide with the
 						// LoopUtteranceInput at the bottom of the page on mobile.
 						<div className="flex items-center gap-2">
-							<span className="text-xs text-error">Delete this loop?</span>
-							<Button
-								variant="destructive"
-								size="sm"
-								onClick={handleDelete}
-								disabled={deleteObject.isPending}
-							>
-								{deleteObject.isPending ? 'Deleting...' : 'Confirm'}
-							</Button>
+							<span className="text-xs text-error">Delete this flow?</span>
+							<ViewerTooltip>
+								<Button
+									variant="destructive"
+									size="sm"
+									onClick={handleDelete}
+									disabled={deleteObject.isPending || !canWrite}
+								>
+									{deleteObject.isPending ? 'Deleting...' : 'Confirm'}
+								</Button>
+							</ViewerTooltip>
 							<Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>
 								Cancel
 							</Button>
 						</div>
 					) : (
 						<>
-							<span
-								data-testid="loop-pill"
-								className={cn(
-									'inline-flex items-center gap-1.5 text-[11.5px] font-semibold',
-									pill.text,
-								)}
-							>
-								<span
-									aria-hidden="true"
-									className={cn(
-										'size-1.5 rounded-full',
-										pill.dot,
-										isLiveLoopPill(loop.pill) && 'animate-pulse',
-									)}
-								/>
-								{pill.label}
-							</span>
 							<DropdownMenu>
-								<DropdownMenuTrigger asChild>
-									<Button
-										variant="ghost"
-										size="icon"
-										className="h-7 w-7 text-muted-foreground"
-										aria-label="More"
-									>
-										<MoreHorizontal size={15} />
-									</Button>
-								</DropdownMenuTrigger>
+								<ViewerTooltip>
+									<DropdownMenuTrigger asChild>
+										<Button
+											variant="ghost"
+											size="icon"
+											className="h-7 w-7 text-muted-foreground"
+											aria-label="More"
+											disabled={!canWrite}
+										>
+											<MoreHorizontal size={15} />
+										</Button>
+									</DropdownMenuTrigger>
+								</ViewerTooltip>
 								<DropdownMenuContent align="end">
-									<DropdownMenuItem onSelect={togglePause} disabled={updateObject.isPending}>
+									<DropdownMenuItem
+										onSelect={togglePause}
+										disabled={updateObject.isPending || !canWrite}
+									>
 										{isPaused ? (
 											<>
-												<Play size={14} /> Resume loop
+												<Play size={14} /> Resume flow
 											</>
 										) : (
 											<>
-												<Pause size={14} /> Pause loop
+												<Pause size={14} /> Pause flow
 											</>
 										)}
 									</DropdownMenuItem>
 									<DropdownMenuItem
 										onSelect={() => setConfirmDelete(true)}
+										disabled={!canWrite}
 										className="text-error focus:text-error"
 									>
-										<Trash2 size={14} /> Delete loop
+										<Trash2 size={14} /> Delete flow
 									</DropdownMenuItem>
 								</DropdownMenuContent>
 							</DropdownMenu>
@@ -374,22 +490,33 @@ function LoopDetailRoute() {
 					)
 				}
 			/>
-			<div className="mx-auto flex w-full max-w-3xl flex-col">
+			<div className="flex w-full min-w-0 flex-col">
 				<EditableTitle
 					value={loop.name}
 					entityId={loop.id}
-					onChange={object ? handleUpdateTitle : undefined}
-					ariaLabel="Loop title"
-					placeholder="Untitled loop"
+					onChange={object && canWrite ? handleUpdateTitle : undefined}
+					ariaLabel="Flow title"
+					placeholder="Untitled flow"
+					className="text-[clamp(24px,3vw,33px)]"
 				/>
 
 				{/* The loop's promise, written the same way an object's document body
 				    is — the description IS the summary now. */}
 				{object && (
-					<ObjectDetailBody
-						object={object}
-						workspaceId={workspaceId}
-						onContentChange={handleUpdateContent}
+					// Pulled up under the title, as the prototype sets the promise close to it.
+					<div className="-mt-4">
+						<ObjectDetailBody
+							object={object}
+							workspaceId={workspaceId}
+							onContentChange={handleUpdateContent}
+						/>
+					</div>
+				)}
+				{objectFailed && (
+					<LoopBlockError
+						className="mt-4"
+						message={`Couldn't load the description. ${SLOW_LOAD_MESSAGE}`}
+						onRetry={() => objectQuery.refetch?.()}
 					/>
 				)}
 
@@ -403,68 +530,231 @@ function LoopDetailRoute() {
 					</Link>
 				)}
 
-				{/* Stable aria-live wrapper for the D3 AskBanner. The wrapper element
+				<div className="mt-4 flex flex-wrap items-center gap-2">
+					<span
+						data-testid="loop-pill"
+						className="inline-flex h-8 items-center gap-2 rounded-full border border-border px-3 text-[13px] font-semibold text-foreground"
+					>
+						<span
+							aria-hidden="true"
+							className={cn(
+								'size-2 rounded-full',
+								pill.dot,
+								isLiveLoopPill(loop.pill) && 'animate-pulse',
+							)}
+						/>
+						{LOOP_PILL_STYLES[loop.status].label}
+						{loop.pill === 'waiting_on_you' && (
+							<span className={LOOP_PILL_STYLES.waiting_on_you.text}>· Needs you</span>
+						)}
+					</span>
+					{driver && (
+						<span
+							data-testid="loop-driver"
+							className="inline-flex h-8 items-center gap-2 rounded-full border border-border px-3 text-[13px]"
+						>
+							<ActorAvatar id={driver.id} name={driver.name} type={driver.type} />
+							<span className="font-semibold text-foreground">{driver.name}</span>
+							<span className="text-muted-foreground">drives</span>
+						</span>
+					)}
+					<LoopTags tags={loop.tags} canWrite={canWrite && !!object} onChange={handleUpdateTags} />
+				</div>
+
+				<div className="mt-6">
+					<LoopDetailTabs
+						tabs={[
+							{ value: 'overview', label: 'Overview' },
+							{ value: 'items', label: 'Items', count: childIds.length },
+							{ value: 'activity', label: 'Activity' },
+							{ value: 'setup', label: 'Setup' },
+						]}
+						value={tab}
+						onChange={setTab}
+					/>
+				</div>
+
+				{tab === 'overview' && (
+					<div role="tabpanel" className="mt-8 flex flex-col gap-8">
+						{/* Stable aria-live wrapper for the D3 AskBanner. The wrapper element
 				    is permanent so screen readers announce the banner appearance
 				    without racing the DOM swap — banner content swaps in and out of
 				    the wrapper, the wrapper does not swap. Never put aria-live on
 				    the banner. */}
-				<div
-					aria-live="polite"
-					aria-atomic="true"
-					data-testid="ask-banner-live-region"
-					className={cn('mt-5', askBannerVisible ? '' : 'sr-only')}
-				>
-					{askBannerVisible && (
-						<AskBanner
-							agentName={askAgentName}
-							askText={askText}
-							jumpHref={decideJumpHref}
-							onDecideClick={handleDecideClick}
-							pendingCount={pendingCount}
-							avatarId={askAgentActor?.id}
-							avatarType={askAvatarType}
-						/>
-					)}
-				</div>
+						<div
+							aria-live="polite"
+							aria-atomic="true"
+							data-testid="ask-banner-live-region"
+							className={cn(askBannerVisible ? '' : 'sr-only')}
+						>
+							{askBannerVisible && (
+								<AskBanner
+									agentName={askAgentName}
+									askText={askText}
+									jumpHref={decideJumpHref}
+									onDecideClick={handleDecideClick}
+									pendingCount={pendingCount}
+									avatarId={askAgentActor?.id}
+									avatarType={askAvatarType}
+								/>
+							)}
+						</div>
 
-				<div className="mt-5">
-					<LoopStats
-						loop={loop}
-						cyclesRunning={cyclesRunning}
-						asksWaiting={asksWaiting}
-						nextFire={nextFire}
-					/>
-				</div>
+						{isPreFirstRun && (
+							<div>
+								<LoopFirstRunBanner triggers={loopTriggers} />
+							</div>
+						)}
 
-				{isPreFirstRun && (
-					<div className="mt-4">
-						<LoopFirstRunBanner triggers={loopTriggers} />
+						<TargetsAndOwners loop={loop} actors={actors} />
+
+						{hasCustomView && (
+							<div
+								className={cn(
+									'flex flex-wrap items-center justify-between gap-2',
+									// The view sits right under its switch, not a whole section away.
+									showCustomView && '-mb-4',
+								)}
+							>
+								<p className="text-xs text-muted-foreground">
+									{viewMode === 'custom' && customFailure
+										? `Custom view unavailable: ${customFailure} Showing the default page.`
+										: ''}
+								</p>
+								<ButtonGroup aria-label="Loop view">
+									<Button
+										type="button"
+										variant={viewMode === 'default' ? 'secondary' : 'ghost'}
+										size="sm"
+										onClick={() => setViewMode('default')}
+									>
+										Default
+									</Button>
+									<Button
+										type="button"
+										variant={viewMode === 'custom' ? 'secondary' : 'ghost'}
+										size="sm"
+										onClick={() => {
+											setCustomFailure(null)
+											setViewMode('custom')
+										}}
+									>
+										Custom view
+									</Button>
+								</ButtonGroup>
+							</div>
+						)}
+
+						{showCustomView && viewFileId && (
+							// One block, so the "Updated" line and the view are not spaced as sections.
+							<div className="min-w-0">
+								<LoopCustomView
+									workspaceId={workspaceId}
+									fileId={viewFileId}
+									onFailure={setCustomFailure}
+								/>
+							</div>
+						)}
+
+						{!showCustomView && (
+							<>
+								{needsYouRows.length > 0 && (
+									<section
+										aria-label="Needs you"
+										data-testid="loop-needs-you"
+										className="flex flex-col"
+									>
+										<span className="text-[13px] font-semibold text-muted-foreground">
+											Needs you
+										</span>
+										<p className="mt-2 text-[14px] font-semibold text-foreground">
+											{needsYouRows.length === 1
+												? '1 item is waiting for you'
+												: `${needsYouRows.length} items are waiting for you`}
+										</p>
+										{needsYouRows.map(({ item, ask }) => (
+											<Link
+												key={item.id}
+												to="/$workspaceId/objects/$objectId"
+												params={{ workspaceId, objectId: item.id }}
+												className="mt-2 flex flex-col gap-0.5 rounded-lg border border-border px-3 py-2.5 transition-colors duration-150 hover:bg-muted"
+											>
+												<span className="truncate text-[14px] font-semibold text-foreground">
+													{item.title ?? 'Untitled'}
+												</span>
+												<span className="truncate text-[12.5px] text-muted-foreground">
+													{ask.title}
+												</span>
+											</Link>
+										))}
+									</section>
+								)}
+
+								<div>
+									{flowFailed ? (
+										<LoopBlockError
+											message={`Couldn't load the steps of this flow. ${SLOW_LOAD_MESSAGE}`}
+											onRetry={() => {
+												for (const [failed, query] of [
+													[triggersFailed, triggersQuery],
+													[actorsFailed, actorsQuery],
+													[edgesFailed, edgesQuery],
+													[childrenFailed, childrenQuery],
+												] as const) {
+													if (failed) query.refetch?.()
+												}
+											}}
+										/>
+									) : (
+										<LoopFlow
+											workspaceId={workspaceId}
+											triggers={loopTriggers}
+											actors={actors}
+											childObjects={children ?? []}
+											loop={loop}
+										/>
+									)}
+								</div>
+							</>
+						)}
 					</div>
 				)}
 
-				<TargetsAndOwners loop={loop} actors={actors} />
+				{tab === 'items' && (
+					<div role="tabpanel" className="mt-8 flex flex-col">
+						{sortedChildren.length === 0 ? (
+							<EmptyState
+								title="No items in this flow yet"
+								description="Items show up here once the flow starts working on them."
+							/>
+						) : (
+							sortedChildren.map((child) => (
+								<Link
+									key={child.id}
+									to="/$workspaceId/objects/$objectId"
+									params={{ workspaceId, objectId: child.id }}
+									className="flex items-center gap-3 border-b border-border px-1 py-3 transition-colors duration-150 hover:bg-muted"
+								>
+									<TypeBadge type={child.type} variant="dot" />
+									<span className="min-w-0 flex-1 truncate text-[14px] font-semibold text-foreground">
+										{child.title ?? 'Untitled'}
+									</span>
+									<StatusBadge status={child.status} variant="word" className="text-[12px]" />
+								</Link>
+							))
+						)}
+					</div>
+				)}
 
-				<div className="mt-7">
-					<LoopFlow
-						workspaceId={workspaceId}
-						triggers={loopTriggers}
-						actors={actors}
-						childObjects={children ?? []}
-						loop={loop}
-					/>
-				</div>
-
-				{/* The same Activity block object detail carries (mockup 1138–1143):
-				    a mono micro-heading on a hairline rule, then the shared timeline.
-				    A loop is an object, so this is the object's own event stream. */}
-				{object && (
-					<div className="mt-9">
-						<div className="flex items-center gap-2.5">
-							<span className="shrink-0 font-mono text-[10px] font-bold uppercase tracking-[0.11em] text-muted-foreground">
-								Activity
-							</span>
-							<div className="h-px flex-1 bg-muted" />
-						</div>
+				{tab === 'activity' && object && (
+					<div role="tabpanel" className="mt-8">
+						{activityFailed && (
+							<LoopBlockError
+								className="mb-3"
+								message={`Couldn't load the flow's recent activity. ${SLOW_LOAD_MESSAGE}`}
+								onRetry={() => activityQuery.refetch?.()}
+							/>
+						)}
 						<TimelineTab
 							object={object}
 							loopUnread={{ loopId }}
@@ -473,9 +763,49 @@ function LoopDetailRoute() {
 					</div>
 				)}
 
+				{tab === 'setup' && (
+					<div role="tabpanel" className="mt-8 flex flex-col gap-8">
+						<LoopStats
+							loop={loop}
+							cyclesRunning={cyclesRunning}
+							asksWaiting={asksWaiting}
+							nextFire={nextFire}
+						/>
+						<SetupBlock label="Starts when" text={loop.entryCondition} />
+						<SetupBlock label="Ends when" text={loop.closeCondition} />
+						<section className="flex flex-col gap-3">
+							<span className="font-mono text-[10px] font-bold uppercase tracking-[0.11em] text-muted-foreground">
+								Agents
+							</span>
+							{loop.agentIds.length === 0 ? (
+								<p className="text-[13px] text-muted-foreground">No agents are attached yet.</p>
+							) : (
+								loop.agentIds.map((id) => {
+									const agent = actors?.find((a) => a.id === id)
+									if (!agent) return null
+									return (
+										<Link
+											key={id}
+											to="/$workspaceId/agents/$agentId"
+											params={{ workspaceId, agentId: id }}
+											className="flex items-center gap-2.5 text-[14px] font-semibold text-foreground hover:underline"
+										>
+											<ActorAvatar id={agent.id} name={agent.name} type={agent.type} />
+											{agent.name}
+										</Link>
+									)
+								})
+							)}
+						</section>
+					</div>
+				)}
+
 				<LoopUtteranceInput
 					ref={composerRef}
 					loop={loop}
+					placeholder={
+						driver ? `Message ${driver.name}, who drives ${loop.name ?? 'this flow'}` : undefined
+					}
 					showSuggestions={!proposedEdit}
 					onUtterance={handleUtterance}
 				>

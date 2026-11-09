@@ -47,6 +47,31 @@ public enum ActorIdentity {
 		return Int(bucketHash(seed.isEmpty ? "?" : seed) % UInt32(count))
 	}
 
+	/// The avatar's hue, 0..<360, from the actor's seed: the v3 mockup's `avG`, `h = (h * 31 + c) % 360`
+	/// over every character. Stable per actor on every client.
+	public static func hue(seed: String) -> Int {
+		var h = 0
+		for unit in (seed.isEmpty ? "?" : seed).utf16 { h = (h * 31 + Int(unit)) % 360 }
+		return h
+	}
+
+	/// The v3 avatar plate: a 135 degree gradient from one hue to the same hue plus 38 degrees
+	/// (HSL 52/44 into 58/32 in the mockup). The same in light and dark, with a white mark on it.
+	public static func plateColors(seed: String) -> (from: Color, to: Color) {
+		let h = hue(seed: seed)
+		return (
+			hsl(hue: h, saturation: 0.52, lightness: 0.44),
+			hsl(hue: (h + 38) % 360, saturation: 0.58, lightness: 0.32)
+		)
+	}
+
+	/// An HSL colour through SwiftUI's HSB initialiser.
+	static func hsl(hue: Int, saturation s: Double, lightness l: Double) -> Color {
+		let v = l + s * min(l, 1 - l)
+		let sb = v == 0 ? 0 : 2 * (1 - l / v)
+		return Color(hue: Double(hue) / 360, saturation: sb, brightness: v)
+	}
+
 	/// One glyph per agent identity swatch (Relay, Compass, Forge, Sentinel, Quill), so an agent
 	/// reads as an agent at a glance and keeps its own mark across clients.
 	static let agentSymbols = ["paperplane.fill", "safari.fill", "hammer.fill", "shield.fill", "pencil.line"]
@@ -63,8 +88,8 @@ public enum ActorIdentity {
 
 }
 
-/// Avatar showing initials on the Patina avatar gradient. People are circles; agents are characters:
-/// their own geometry (and glyph) per identity, all in the one brand colour.
+/// Avatar showing initials on a per-actor gradient plate (v3): a rounded square for people and agents
+/// alike, white initials. Agents are told apart by their mood badge, not by their shape.
 public struct ActorAvatar: View {
 	public enum Kind: Sendable { case human, agent }
 
@@ -98,7 +123,9 @@ public struct ActorAvatar: View {
 		}
 	}
 
-	private var shape: AgentShape { kind == .agent ? ActorIdentity.agentShape(seed: seed) : .circle }
+	/// Every actor is a rounded square in v3. (`ActorIdentity.agentShape` stays for callers that want
+	/// the old per-agent geometry.)
+	private var shape: AgentShape { .roundedSquare }
 	private var working: Bool { mood == .working }
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	@Environment(\.actorPictures) private var pictures
@@ -160,19 +187,21 @@ public struct ActorAvatar: View {
 			MaskinLogoTile(size: size)
 		} else {
 			Text(ActorIdentity.initials(for: name))
-				.font(MaskinTypeface.sans(size * (shape == .circle ? 0.4 : 0.36), weight: .semibold, relativeTo: .caption))
+				.font(MaskinTypeface.sans(size * 0.36, weight: .bold, relativeTo: .caption))
 				.minimumScaleFactor(0.6)
-				.foregroundStyle(MaskinColor.avFg)
+				.foregroundStyle(MaskinBrand.mark)
 				.frame(width: size, height: size)
 				.background {
-					// A touch of depth so a character reads as an object, not a flat chip.
-					shape.fill(MaskinGradient.avatar)
-						.overlay(
-							shape.fill(
-								LinearGradient(
-									colors: [Color.white.opacity(0.22), .clear], startPoint: .top, endPoint: .center))
-						)
-						.overlay(shape.strokeBorder(MaskinColor.avFg.opacity(0.12), lineWidth: 1))
+					// A touch of depth so a plate reads as an object, not a flat chip.
+					let plate = ActorIdentity.plateColors(seed: seed)
+					shape.fill(
+						LinearGradient(colors: [plate.from, plate.to], startPoint: .topLeading, endPoint: .bottomTrailing)
+					)
+					.overlay(
+						shape.fill(
+							LinearGradient(
+								colors: [Color.white.opacity(0.18), .clear], startPoint: .top, endPoint: .center))
+					)
 				}
 		}
 	}

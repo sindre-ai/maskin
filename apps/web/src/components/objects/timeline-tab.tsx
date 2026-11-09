@@ -1,10 +1,10 @@
 import { ActivityComment } from '@/components/activity/activity-comment'
 import { computeUnreadEventIds } from '@/components/activity/object-activity'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
-import { ListSkeleton } from '@/components/shared/loading-skeleton'
+import { EmptyState } from '@/components/shared/empty-state'
 import { ObjectReference } from '@/components/shared/object-reference'
-import { QueryStateError } from '@/components/shared/query-state'
 import { RelativeTime } from '@/components/shared/relative-time'
+import { COMPACT_CAPTURE_DELAY_MS, reportRouteError } from '@/components/shared/route-error'
 import {
 	DecidedFold,
 	findDecisionAnswer,
@@ -17,9 +17,11 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useObjectGraph } from '@/hooks/use-objects'
+import { useOriginDeepLinkScroll } from '@/hooks/use-origin-deep-link-scroll'
 import { useSession } from '@/hooks/use-sessions'
 import { useMarkRead } from '@/hooks/use-subscriptions'
 import { trackMarkReadClicked } from '@/lib/analytics'
+import { ApiError } from '@/lib/api'
 import type { ActorListItem, EventResponse, GraphFileSummary, ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { hasDecision } from '@/lib/comment-decision'
@@ -35,6 +37,23 @@ import { toast } from 'sonner'
  *  Kept just below the graph endpoint's 100-event page limit so a full page
  *  reads as an overflow indicator rather than an exact tally. */
 const TAB_COUNT_CUTOFF = 99
+
+/** Three placeholder rows (avatar + two lines) on the 1.4s activity pulse; no spinner. */
+function ActivitySkeleton() {
+	return (
+		<div className="space-y-4">
+			{[0, 1, 2].map((i) => (
+				<div key={i} className="flex items-start gap-3">
+					<div className="size-6 shrink-0 animate-pulse-fast rounded-full bg-muted" />
+					<div className="flex-1 space-y-2">
+						<div className="h-3 w-1/3 animate-pulse-fast rounded bg-muted" />
+						<div className="h-3 w-2/3 animate-pulse-fast rounded bg-muted" />
+					</div>
+				</div>
+			))}
+		</div>
+	)
+}
 
 function formatTabCount(value: number): string {
 	if (value > TAB_COUNT_CUTOFF) return `${TAB_COUNT_CUTOFF}+`
@@ -294,9 +313,12 @@ export function TimelineTab({
 	object,
 	loopUnread,
 	additionalEvents,
+	focusCommentId,
 }: {
 	object: ObjectResponse
 	loopUnread?: LoopUnreadOptions
+	/** Event id from `?comment=`: scroll to that comment (or reply) and highlight it. */
+	focusCommentId?: number
 	/** Extra events to merge into the stream — used by the loop detail page to
 	 * fold in agent-work events (session lifecycle, trigger fires) that don't
 	 * carry `entityId = object.id` and so aren't returned by the object graph.
@@ -309,7 +331,17 @@ export function TimelineTab({
 		isLoading: isGraphLoading,
 		isError: isGraphError,
 		error: graphError,
+		refetch: refetchGraph,
 	} = useObjectGraph(workspaceId, object.id)
+	// The card below replaces QueryStateError, so it reports the way RouteError's compact
+	// variant does: after the same delay, and not at all if a refetch resolves it first.
+	const graphFailed = isGraphError && !graph
+	useEffect(() => {
+		if (!graphFailed || !graphError) return
+		const timer = window.setTimeout(() => reportRouteError(graphError), COMPACT_CAPTURE_DELAY_MS)
+		return () => window.clearTimeout(timer)
+	}, [graphFailed, graphError])
+	const graphNetworkError = graphError instanceof ApiError && graphError.code === 'NETWORK_ERROR'
 	const events = useMemo(() => {
 		const base = graph?.events ?? []
 		if (!additionalEvents || additionalEvents.length === 0) return base
@@ -548,6 +580,14 @@ export function TimelineTab({
 		return null
 	}, [loopUnread, entries])
 
+	// Rows mount once the graph resolves, so `events` is the trigger that
+	// re-runs the jump when a cold load lands on `?comment=`.
+	const jumpAnnouncement = useOriginDeepLinkScroll({
+		messageId: focusCommentId ?? null,
+		dataTrigger: events,
+		kind: 'comment',
+	})
+
 	const containerRef = useRef<HTMLDivElement>(null)
 	const [jumpTick, setJumpTick] = useState(0)
 	useEffect(() => {
@@ -633,6 +673,7 @@ export function TimelineTab({
 									workspaceId={workspaceId}
 									objectId={object.id}
 									isUnread={unreadEventIds.has(entry.event.id)}
+									focusEventId={focusCommentId}
 								/>
 							) : (
 								<ActivityComment
@@ -641,8 +682,9 @@ export function TimelineTab({
 									workspaceId={workspaceId}
 									objectId={object.id}
 									isUnread={unreadEventIds.has(entry.event.id)}
-									variant="bubble"
+									variant="plain"
 									collapsibleReplies
+									focusEventId={focusCommentId}
 								/>
 							)
 						})()
@@ -695,21 +737,14 @@ export function TimelineTab({
 	if (isGraphLoading) {
 		return (
 			<div className="w-full min-w-0 pt-2.5">
-				<ListSkeleton rows={3} />
-			</div>
-		)
-	}
-
-	if (isGraphError) {
-		return (
-			<div className="w-full min-w-0 pt-2.5">
-				<QueryStateError title="Couldn't load activity" error={graphError} />
+				<ActivitySkeleton />
 			</div>
 		)
 	}
 
 	return (
 		<div className="w-full min-w-0">
+			<output className="sr-only">{jumpAnnouncement}</output>
 			{/*
 			 * D8 a11y — a stable, visually-hidden `role="status"` region above
 			 * the stream. Screen readers announce its text as soon as the
@@ -780,7 +815,25 @@ export function TimelineTab({
 				)}
 			</div>
 
-			{visible.length === 0 ? (
+			{isGraphError && !graph ? (
+				// Failed with nothing cached: the filter row above stays, and the
+				// composer lives outside this tab (object-detail-shell), so only the
+				// list area carries the error.
+				<EmptyState
+					title="Activity did not load"
+					description={
+						graphNetworkError
+							? 'Your connection dropped. Nothing was lost.'
+							: 'Something went wrong on our side. Nothing was lost.'
+					}
+					className="py-8"
+					action={
+						<Button variant="outline" size="sm" onClick={() => refetchGraph()}>
+							Try again
+						</Button>
+					}
+				/>
+			) : visible.length === 0 ? (
 				<div className="flex flex-col items-center gap-2.5 px-3 py-8 text-center">
 					<p className="text-[12.5px] text-muted-foreground">
 						{filter === 'all' ? 'No activity yet.' : 'Nothing in this view yet.'}

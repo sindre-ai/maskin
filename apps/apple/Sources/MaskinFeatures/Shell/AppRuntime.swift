@@ -25,7 +25,33 @@ public final class AppRuntime {
 
 	/// The tab on screen. (Notification permission is NOT asked on a tab change: it waits for a
 	/// moment of value, see `valueMomentSeen()`.)
-	var selectedTab: ShellTab = .forYou
+	var selectedTab: ShellTab = .forYou {
+		didSet {
+			// Two entries of the tab bar are not tabs: the detached "+" starts a chat with the Chief of
+			// Staff, and Search opens as a sheet (also reachable from the profile sheet). Neither stays
+			// selected, so the tab you were on stays on screen.
+			switch selectedTab {
+			case .search:
+				selectedTab = oldValue
+				presentation = .search
+			case .newChat:
+				selectedTab = oldValue
+				requestChiefChat()
+			default: break
+			}
+		}
+	}
+
+	/// Set by the tab bar's "+"; `ChatsScreen` takes it and resets it to false: a new chat with the
+	/// workspace's Chief of Staff in the new-chat sheet.
+	public var chiefChatRequested = false
+
+	/// Opens Chats and asks it for a new chat with the Chief of Staff.
+	func requestChiefChat() {
+		presentation = nil
+		selectedTab = .chats
+		chiefChatRequested = true
+	}
 
 	/// The Team filter pill the tab bar carries as its bottom accessory (iPhone, iOS 26.1+).
 	let teamPill = TeamPillModel()
@@ -37,20 +63,24 @@ public final class AppRuntime {
 		case object(String)
 		case agent(String)
 		case file(String)
+		case triggers(String)
 		case profile
 		case files
 		case agents
 		case settings
+		case search
 
 		public var id: String {
 			switch self {
 			case .object(let id): "object:\(id)"
 			case .agent(let id): "agent:\(id)"
 			case .file(let id): "file:\(id)"
+			case .triggers(let id): "triggers:\(id)"
 			case .profile: "profile"
 			case .files: "files"
 			case .agents: "agents"
 			case .settings: "settings"
+			case .search: "search"
 			}
 		}
 	}
@@ -88,12 +118,12 @@ public final class AppRuntime {
 		set { presentation = newValue ? .profile : clearing(.profile) }
 	}
 
-	private enum Kind { case object, agent, file, files, agents, settings, profile }
+	private enum Kind { case object, agent, file, triggers, files, agents, settings, profile }
 
 	/// Closing one kind of sheet must not close a DIFFERENT one that replaced it meanwhile.
 	private func clearing(_ kind: Kind) -> Presentation? {
 		switch (kind, presentation) {
-		case (.object, .object), (.agent, .agent), (.file, .file), (.settings, .settings),
+		case (.object, .object), (.agent, .agent), (.file, .file), (.triggers, .triggers), (.settings, .settings),
 			(.profile, .profile), (.files, .files), (.agents, .agents):
 			return nil
 		default:
@@ -107,6 +137,8 @@ public final class AppRuntime {
 
 	/// Set by a chat link; `ChatsScreen` takes it and resets it to nil.
 	public var requestedConversationId: String?
+	/// Set by a loop link; the Flows tab takes it, opens that loop and resets it to nil.
+	public var requestedLoopId: String?
 	/// A thread push or link names the root message to open inside the requested chat. `ChatThreadView`
 	/// takes it once that chat is on screen and resets it to nil.
 	public var requestedThreadRoot: ThreadRequest?
@@ -142,13 +174,15 @@ public final class AppRuntime {
 		public let id = UUID()
 		public let agent: ChatParticipant
 		public let live: Bool
+		/// Text for the new chat's message box (item detail's Message mode).
+		public let draft: String
 	}
 	public var agentChatRequest: AgentChatRequest?
 
-	public func startChat(with agent: ChatParticipant, live: Bool = false) {
+	public func startChat(with agent: ChatParticipant, live: Bool = false, draft: String = "") {
 		presentation = nil
 		selectedTab = .chats
-		agentChatRequest = AgentChatRequest(agent: agent, live: live)
+		agentChatRequest = AgentChatRequest(agent: agent, live: live, draft: draft)
 	}
 
 	public func buildInChat(_ text: String) {
@@ -172,13 +206,17 @@ public final class AppRuntime {
 	@ObservationIgnored private let signOutTimeout: Duration
 	@ObservationIgnored private let forYouDirectory: URL?
 	@ObservationIgnored private var forYouRuntime: ForYouRuntime?
+	/// Keeps delivered pushes and the icon badge in step with what is still pending. Nil off iOS,
+	/// or with nothing to badge.
+	@ObservationIgnored private let deliveredSync: DeliveredNotificationSync?
 
 	public init(
 		environment: AppEnvironment, push: PushRegistrar? = nil,
 		router: DeepLinkRouter? = nil,
 		signOutTimeout: Duration = .seconds(3), forYouDirectory: URL? = nil,
 		promptStorage: any NotificationPromptStorage = UserDefaultsNotificationPromptStorage(),
-		preferencesAPI: (any NotificationPreferencesAPI)? = nil
+		preferencesAPI: (any NotificationPreferencesAPI)? = nil,
+		deliveredSync: DeliveredNotificationSync? = nil
 	) {
 		self.forYouDirectory = forYouDirectory
 		self.preferencesAPI = preferencesAPI
@@ -189,6 +227,22 @@ public final class AppRuntime {
 		self.push = push
 		self.router = router ?? DeepLinkRouter(environment: environment)
 		self.signOutTimeout = signOutTimeout
+		self.deliveredSync = deliveredSync ?? Self.makeDeliveredSync(environment: environment, push: push)
+	}
+
+	private static func makeDeliveredSync(
+		environment: AppEnvironment, push: PushRegistrar?
+	) -> DeliveredNotificationSync? {
+		#if os(iOS)
+			guard let push else { return nil }
+			return DeliveredNotificationSync(
+				center: SystemDeliveredNotificationCenter(),
+				pending: APIPendingNotificationSource(client: environment.client),
+				workspaceId: { [environment] in environment.workspaceId },
+				setBadge: { [push] in push.setBadge($0) })
+		#else
+			return nil
+		#endif
 	}
 
 	// MARK: For You
@@ -210,6 +264,10 @@ public final class AppRuntime {
 			return ForYouRuntime.make(environment: environment, directory: forYouDirectory, start: false)
 		}
 		let runtime = ForYouRuntime.make(environment: environment, directory: forYouDirectory)
+		// Answering or dismissing a card here also drops its push from the lock screen.
+		runtime.store.onCardHandled = { [weak self] objectId in
+			Task { await self?.deliveredSync?.cardHandled(objectId: objectId) }
+		}
 		forYouRuntime = runtime
 		return runtime
 	}
@@ -264,10 +322,11 @@ public final class AppRuntime {
 		// scoped but rebuild themselves, so only the id-addressed sheets are dropped.
 		if let previous = lastSyncedWorkspaceId, previous != environment.workspaceId {
 			switch presentation {
-			case .object, .agent, .file, .profile: presentation = nil
+			case .object, .agent, .file, .triggers, .profile: presentation = nil
 			default: break
 			}
 			requestedConversationId = nil
+			requestedLoopId = nil
 			requestedThreadRoot = nil
 			forYouSelection = nil
 			// Switching workspace starts over on For you; a link that caused the switch then
@@ -304,9 +363,11 @@ public final class AppRuntime {
 	/// outbox is driven by the coordinator itself).
 	public func scenePhaseChanged(_ phase: SyncScenePhase) {
 		syncCoordinator?.scenePhaseChanged(phase)
+		// Signed in or not: a pending push unregister is finished on every foreground.
+		if phase == .active { Task { await push?.foregrounded() } }
 		if phase == .active, let session = environment.auth.session {
+			Task { await deliveredSync?.reconcile() }
 			Task { await syncTimezone() }
-			Task { await push?.foregrounded() }
 			ChatsRuntime.shared(environment: environment).outbox.appDidBecomeActive()
 			drainShareQueue(apiKey: session.apiKey)
 		}
@@ -339,6 +400,7 @@ public final class AppRuntime {
 		environment.events.disconnect()
 		presentation = nil
 		requestedConversationId = nil
+		requestedLoopId = nil
 		requestedThreadRoot = nil
 		forYouSelection = nil
 		selectedTab = .forYou
@@ -399,8 +461,20 @@ public final class AppRuntime {
 		await push?.requestAuthorization()
 	}
 
-	/// The app icon carries no badge: keep it cleared rather than mirroring the unread count.
-	func updateBadge() { push?.setBadge(0) }
+	/// Take handled pushes off the lock screen and set the icon badge to the pending count. Runs at
+	/// launch and on every foreground; signed out, there is nothing pending to show.
+	func updateBadge() async {
+		guard environment.auth.session != nil else {
+			push?.setBadge(0)
+			return
+		}
+		await deliveredSync?.reconcile()
+	}
+
+	/// The person opened a chat: its pushes are read.
+	func chatOpened(_ conversationId: String) {
+		Task { await deliveredSync?.chatOpened(conversationId: conversationId) }
+	}
 
 	// MARK: Deep links
 
@@ -424,10 +498,7 @@ public final class AppRuntime {
 		case .object(_, let id):
 			presentation = .object(id)
 		case .chat(_, let id):
-			presentation = nil
-			selectedTab = .chats
-			requestedConversationId = id
-			requestedThreadRoot = nil
+			openChat(id)
 		case .thread(_, let id, let rootId):
 			presentation = nil
 			selectedTab = .chats
@@ -443,7 +514,20 @@ public final class AppRuntime {
 			presentation = .agents
 		case .agent(_, let id):
 			presentedAgentId = id
+		case .loop(_, let id):
+			openLoop(id)
+		case .trigger(_, let id):
+			openTrigger(id)
 		}
+	}
+
+	/// The code from `maskin://connect?code=`, while Settings is open on the approve page for it.
+	public var deviceCode: String?
+
+	/// Opens Settings on "Sign in a device" with the code already typed in.
+	public func presentDeviceSignIn(code: String) {
+		deviceCode = code
+		presentation = .settings
 	}
 
 	/// For You and the shell's own surfaces open objects through here.
@@ -452,7 +536,25 @@ public final class AppRuntime {
 	}
 
 	public func openAgent(_ id: String) { presentedAgentId = id }
+
+	/// Selects the Chats tab and asks for the thread.
+	public func openChat(_ id: String) {
+		presentation = nil
+		selectedTab = .chats
+		requestedConversationId = id
+		requestedThreadRoot = nil
+	}
 	public func openFile(_ id: String) { presentedFileId = id }
+
+	/// A loop opens on the Flows tab, the way a chat link opens on Chats: the tab takes the request.
+	public func openLoop(_ id: String) {
+		presentation = nil
+		selectedTab = .loops
+		requestedLoopId = id
+	}
+
+	/// A trigger opens in the triggers sheet, on that trigger.
+	public func openTrigger(_ id: String) { presentation = .triggers(id) }
 
 	/// Where a search result lands: objects, agents and files open in a sheet over the current
 	/// tab; a chat selects the Chats tab and requests the thread.
@@ -510,6 +612,7 @@ public final class AppRuntime {
 		router.reset()
 		presentation = nil
 		requestedConversationId = nil
+		requestedLoopId = nil
 		requestedThreadRoot = nil
 		forYouSelection = nil
 		selectedTab = .forYou

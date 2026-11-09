@@ -16,7 +16,7 @@ test.describe('Objects CRUD', () => {
 		// once the workspace resolves. Anchor on a layout element first — on a
 		// cold CI worker the first navigation can outlast the default click
 		// wait while the workspace fetch is still in flight.
-		await expect(page.getByRole('link', { name: 'Objects' }).first()).toBeVisible({
+		await expect(page.getByRole('link', { name: 'Items' }).first()).toBeVisible({
 			timeout: 30000,
 		})
 
@@ -104,7 +104,7 @@ test.describe('Objects CRUD', () => {
 		await page.goto(`/${account.workspaceId}/objects`)
 
 		// Same cold-boot anchor as the create test above.
-		await expect(page.getByRole('link', { name: 'Objects' }).first()).toBeVisible({
+		await expect(page.getByRole('link', { name: 'Items' }).first()).toBeVisible({
 			timeout: 30000,
 		})
 

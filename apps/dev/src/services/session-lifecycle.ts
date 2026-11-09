@@ -34,6 +34,7 @@ import { logger } from '../lib/logger'
 import { MAX_RETRY_ATTEMPTS } from '../lib/subscription-limit-reset'
 import { assertInWorkspace } from '../lib/workspace-scope'
 import { postRetryNotice } from './chat-retry-notice'
+import { recordSessionAdmission } from './daily-budget-events'
 import { returnDeferredHelpers, returnToSender } from './helper-return'
 import type { CreateSessionParams, SessionManager } from './session-manager'
 
@@ -243,6 +244,18 @@ export async function startSession(
 
 	const session = await sessionManager.createSession(input.workspaceId, params)
 
+	// Daily budget 1a: one admission event per start, the baseline 1b is judged against. Every
+	// decision is 'admitted' until the gate exists. Best effort and not awaited: reporting must not
+	// slow the start path. recordSessionAdmission never throws, so there is nothing to catch here.
+	void recordSessionAdmission(db, {
+		sessionId: session.id,
+		workspaceId: input.workspaceId,
+		actorId: input.actorId,
+		triggerId: input.triggerId ?? null,
+		callerKind: input.callerKind,
+		humanFacing: isHumanFacing(input),
+	})
+
 	// Commit-8 lifecycle fields set on the fresh row. session_state='queued'
 	// and state_entered_at=NOW() are schema defaults; attempt_number defaults
 	// to 1. Only patch when a non-default is supplied.
@@ -300,6 +313,12 @@ export async function startSession(
 	}
 
 	return handle
+}
+
+/** Human-facing work: a chat turn, or anything that belongs to a conversation. */
+function isHumanFacing(input: StartSessionInput): boolean {
+	const config = input.config as { conversation?: unknown } | undefined
+	return input.callerKind === 'chat' || !!input.conversationId || !!config?.conversation
 }
 
 /**
@@ -511,6 +530,7 @@ export type TerminalClassification =
 	| 'idle_timeout'
 	| 'wall_timeout'
 	| 'dispatch_failure'
+	| 'daily_budget'
 	| 'startup_stalled'
 	| 'sandbox_crash'
 	| 'agent_completed'
@@ -1181,6 +1201,9 @@ export async function settleSession(
 					workspaceId: row.workspaceId,
 					actorId: row.actorId,
 					outcome: mapKindToOutcomeProp(outcome.kind) as AiGenerationOutcome,
+					failureReasonCode:
+						outcome.failureReason?.reason_code ?? row.result?.failure_reason?.reason_code,
+					classification: outcome.classification,
 					config: row.config,
 					modelName: row.modelName ?? null,
 					inputTokens: totals.inputTokens,

@@ -163,9 +163,9 @@ describe('<UnifiedChatSlashPicker>', () => {
 		expect(await screen.findByText('Recent Bet')).toBeInTheDocument()
 		expect(screen.getByText('Older Task')).toBeInTheDocument()
 		// The three built-in NEWKIND rows always render.
-		expect(screen.getByText('Task')).toBeInTheDocument()
-		expect(screen.getByText('Bet')).toBeInTheDocument()
-		expect(screen.getByText('Insight')).toBeInTheDocument()
+		expect(screen.getAllByText('Task').length).toBeGreaterThan(0)
+		expect(screen.getAllByText('Bet').length).toBeGreaterThan(0)
+		expect(screen.getAllByText('Insight').length).toBeGreaterThan(0)
 		// Section headings are rendered as eyebrow labels.
 		expect(screen.getByText('Reference')).toBeInTheDocument()
 		expect(screen.getByText('Create new')).toBeInTheDocument()
@@ -236,7 +236,8 @@ describe('<UnifiedChatSlashPicker>', () => {
 		renderPicker({ query: 'alph' })
 		expect(await screen.findByText("Couldn't search — try again")).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
-		await waitFor(() => expect(trackErrorMock).toHaveBeenCalled())
+		// The event carries the error name only, never the message.
+		await waitFor(() => expect(trackErrorMock).toHaveBeenCalledWith({ errorClass: 'Error' }))
 	})
 
 	it('exposes role=listbox with role=option rows for keyboard navigation', async () => {

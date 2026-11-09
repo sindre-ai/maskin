@@ -66,7 +66,7 @@ export interface CredentialEntry {
 	displayName: string
 	kind: 'api_key' | 'login'
 	/** Which part of a login the variable holds. An API key has one value. */
-	field: 'value' | 'username' | 'password'
+	field: 'value' | 'username' | 'password' | 'email'
 	createdBy: string
 }
 
@@ -99,6 +99,7 @@ export async function credentialIndex(
 			if (!names) continue
 			index.set(names.username, { ...base, kind: 'login', field: 'username' })
 			index.set(names.password, { ...base, kind: 'login', field: 'password' })
+			index.set(names.email, { ...base, kind: 'login', field: 'email' })
 		} else {
 			const name = byoApiKeyEnvName(r.displayName)
 			if (name) index.set(name, { ...base, kind: 'api_key', field: 'value' })
@@ -154,7 +155,11 @@ export async function fillKeychainReferences(
 			if (entry.kind === 'login') {
 				const login = decodeLogin(credential.value)
 				if (!login) throw new KeychainReferenceError(`${entry.displayName} is not a usable login.`)
-				filled.set(name, entry.field === 'username' ? login.username : login.password)
+				const part = login[entry.field as 'username' | 'password' | 'email']
+				if (part === undefined) {
+					throw new KeychainReferenceError(`${entry.displayName} has no email saved.`)
+				}
+				filled.set(name, part)
 			} else {
 				filled.set(name, credential.value)
 			}

@@ -80,6 +80,33 @@ describe('resolveKeychainTyping', () => {
 		expect(reads.every((r) => r.outboundTarget === 'desktop:type')).toBe(true)
 	})
 
+	it('types the email only for a login saved with one', async () => {
+		const s = await setup()
+		await createByoLogin(db, kms, {
+			workspaceId: s.ws.id,
+			actorId: s.human,
+			displayName: 'Dinero',
+			username: USERNAME,
+			password: PASSWORD,
+			email: 'me@work.test',
+			agentIds: [s.granted.id],
+		})
+
+		const withEmail = await resolveKeychainTyping(
+			db,
+			s.ctx(s.granted.id),
+			'{{keychain:Dinero.email}}',
+		)
+		expect(withEmail).toMatchObject({ kind: 'resolved', text: 'me@work.test', field: 'email' })
+
+		const without = await resolveKeychainTyping(
+			db,
+			s.ctx(s.granted.id),
+			'{{keychain:Facebook.email}}',
+		)
+		expect(without).toMatchObject({ kind: 'error', status: 404 })
+	})
+
 	it('refuses an agent that has not been given the login, and reads nothing', async () => {
 		const s = await setup()
 

@@ -7,7 +7,7 @@ import type { PillKind } from './vocabulary'
 
 export interface Pill {
 	kind: PillKind
-	/** Type key or status group key. */
+	/** Type key, status group key or actor id. */
 	value: string
 	/** The word the user typed to make this pill. Absent for pills made from chips or Display. */
 	word?: string
@@ -92,11 +92,17 @@ export function backspaceToWord(parts: SearchParts): SearchParts | null {
 }
 
 /** Builds parts from filters held elsewhere (the URL). Pills go before the text. */
-export function partsFrom(types: string[], statuses: string[], text: string): SearchParts {
+export function partsFrom(
+	types: string[],
+	statuses: string[],
+	text: string,
+	participants: string[] = [],
+): SearchParts {
 	return {
 		pills: [
 			...types.map((value): Pill => ({ kind: 'type', value })),
 			...statuses.map((value): Pill => ({ kind: 'status', value })),
+			...participants.map((value): Pill => ({ kind: 'participant', value })),
 		],
 		text,
 		suppressed: '',

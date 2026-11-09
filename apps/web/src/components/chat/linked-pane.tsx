@@ -12,7 +12,7 @@ import type { LinkedItem } from '@/hooks/use-conversation-linked'
 import type { ProducedFileItem, ProducedObjectItem } from '@/hooks/use-conversation-produced'
 import { useObject } from '@/hooks/use-objects'
 import { cn } from '@/lib/cn'
-import { showsObjectCard } from '@/lib/linked-objects'
+import { showsObjectCard, showsTaskCard } from '@/lib/linked-objects'
 import { useEffect, useRef, useState } from 'react'
 
 export interface LinkedFocus {
@@ -82,7 +82,7 @@ function LinkedObjectBody({
 	if (isLoading) return <Skeleton className="h-14 w-full rounded-md" />
 	if (!object || object.workspaceId !== workspaceId) return null
 	// The same gate as the transcript: a draft is the approval card, any other object the reference card.
-	if (showsObjectCard(object, workspaceId)) {
+	if (showsObjectCard(object, workspaceId) || showsTaskCard(object, workspaceId)) {
 		return (
 			<LinkedObjectCard
 				workspaceId={workspaceId}
@@ -194,7 +194,7 @@ export function LinkedPane({
 				) : (
 					<EmptyState
 						title="Nothing here yet"
-						description="Objects and files that messages link to, or that agents produce in this chat, will appear here."
+						description="Items and files that messages link to, or that agents produce in this chat, will appear here."
 					/>
 				)
 			) : (

@@ -24,10 +24,10 @@ struct ReturnKeyActionTests {
 		#expect(picked == option)
 	}
 
-	@Test func asksForAReasonBeforeAHold() {
+	@Test func aHoldIsJustAnOptionNow() {
 		let option = DecisionOption(label: "Hold", recommended: true)
 		let (action, _) = DecisionCardView.ReturnKeyAction.resolve(for: prompt([option]))
-		#expect(action == .askReason)
+		#expect(action == .choose)
 	}
 
 	@Test func doesNothingWithoutARecommendation() {

@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createWorkspaceWrapper } from '../setup'
 
 const mockUseWorkspaceMembers = vi.fn()
 const mockUpdateRoleMutateAsync = vi.fn().mockResolvedValue({})
@@ -20,7 +21,9 @@ vi.mock('@tanstack/react-router', async () => {
 	}
 })
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({ workspaceId: 'ws-1', workspace: { name: 'Værksted' } }),
 }))
 
@@ -120,7 +123,7 @@ describe('MembersPage', () => {
 		expect(screen.getByRole('combobox', { name: /Role for Bot One/i })).toHaveTextContent('member')
 	})
 
-	it('renders the member count line beside the inline Members header', () => {
+	it('renders the People section header', () => {
 		mockUseWorkspaceMembers.mockReturnValue({
 			data: [
 				{ actorId: 'a1', name: 'Alice', type: 'human', role: 'admin', joinedAt: null },
@@ -129,11 +132,10 @@ describe('MembersPage', () => {
 			isLoading: false,
 		})
 		render(<MembersPage />)
-		expect(screen.getByRole('heading', { name: 'Members' })).toBeInTheDocument()
-		expect(screen.getByText('2 people & agents')).toBeInTheDocument()
+		expect(screen.getByRole('heading', { name: 'People' })).toBeInTheDocument()
 	})
 
-	it('hides connected integrations (system members) from the list and the count', () => {
+	it('hides connected integrations (system members) from the list', () => {
 		mockUseWorkspaceMembers.mockReturnValue({
 			data: [
 				{ actorId: 'a1', name: 'Alice', type: 'human', role: 'admin', joinedAt: null },
@@ -144,7 +146,7 @@ describe('MembersPage', () => {
 		})
 		render(<MembersPage />)
 		expect(screen.queryByText('GitHub')).not.toBeInTheDocument()
-		expect(screen.getByText('2 people & agents')).toBeInTheDocument()
+		expect(screen.getAllByText('Bot One').length).toBeGreaterThan(0)
 	})
 
 	it('navigates to agent detail when an agent row is clicked', () => {
@@ -310,5 +312,34 @@ describe('MembersPage', () => {
 
 			expect(mockNavigate).not.toHaveBeenCalled()
 		})
+	})
+})
+
+describe('MembersPage write controls by workspace role', () => {
+	const people = [
+		{ actorId: 'a1', name: 'Alice', type: 'human', role: 'member', joinedAt: null },
+		{ actorId: 'a2', name: 'Bob', type: 'human', role: 'member', joinedAt: null },
+	]
+
+	beforeEach(() => {
+		vi.clearAllMocks()
+		mockSearch = {}
+		mockUseWorkspaceInvites.mockReturnValue({ data: [] })
+		mockUseWorkspaceMembers.mockReturnValue({ data: people, isLoading: false })
+	})
+
+	it('disables add, role change and remove for a viewer, but still lists the members', () => {
+		render(<MembersPage />, { wrapper: createWorkspaceWrapper({ role: 'viewer' }) })
+		expect(screen.getAllByText('Alice').length).toBeGreaterThanOrEqual(1)
+		expect(screen.getByRole('button', { name: /Add member/ })).toBeDisabled()
+		expect(screen.getByRole('combobox', { name: /Role for Alice/i })).toBeDisabled()
+		expect(screen.getByRole('button', { name: /Remove Alice/ })).toBeDisabled()
+	})
+
+	it('leaves add, role change and remove enabled for a member', () => {
+		render(<MembersPage />, { wrapper: createWorkspaceWrapper({ role: 'member' }) })
+		expect(screen.getByRole('button', { name: /Add member/ })).toBeEnabled()
+		expect(screen.getByRole('combobox', { name: /Role for Alice/i })).toBeEnabled()
+		expect(screen.getByRole('button', { name: /Remove Alice/ })).toBeEnabled()
 	})
 })

@@ -3,6 +3,7 @@ import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -19,6 +20,7 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
 import { useAutoSave } from '@/hooks/use-auto-save'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useEntityEvents } from '@/hooks/use-events'
@@ -29,6 +31,7 @@ import { EMPTY_CHAT_SELECTION } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { describeCronSchedule, parseCronExpression } from '@/lib/cron'
 import { isTriggerChange } from '@/lib/triggers'
+import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
 import type { SafeJsonValue, conditionOperatorSchema } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
 import { Bell, Clock, Plus, X, Zap } from 'lucide-react'
@@ -209,7 +212,7 @@ const TRIGGER_TYPE_INFO: Record<
 		icon: Zap,
 		label: 'Event',
 		description:
-			'Fires when something happens — e.g., an object is created, updated, or changes status.',
+			'Fires when something happens — e.g., an item is created, updated, or changes status.',
 		tagline: 'Something happens',
 	},
 	cron: {
@@ -245,6 +248,10 @@ export function readEventStatusTransition(config: Record<string, unknown> | null
 		}
 	}
 	return { fromStatus, toStatus: '__any__' }
+}
+
+function withArticle(word: string): string {
+	return `${/^[aeiou]/i.test(word) ? 'an' : 'a'} ${word}`
 }
 
 function buildTriggerSummary({
@@ -304,11 +311,11 @@ function buildTriggerSummary({
 			}
 			return `When a comment is posted ${clauses.join(' ')}, ${agent} will be prompted to act.`
 		}
-		let when = `a ${entityType ?? 'object'} is ${action ?? 'modified'}`
+		let when = `${withArticle(entityType ?? 'item')} is ${action ?? 'modified'}`
 		if (action === 'status_changed') {
 			const from = fromStatus && fromStatus !== '__any__' ? fromStatus : 'any status'
 			const to = toStatus && toStatus !== '__any__' ? toStatus : 'any status'
-			when = `a ${entityType ?? 'object'} changes from ${from} to ${to}`
+			when = `${withArticle(entityType ?? 'item')} changes from ${from} to ${to}`
 		}
 		return `When ${when}, ${agent} will be prompted to act.`
 	}
@@ -374,6 +381,7 @@ export function TriggerForm({
 	isCreated?: boolean
 }) {
 	const navigate = useNavigate()
+	const canWrite = useCanWrite()
 	const { data: integrations } = useIntegrations(workspaceId)
 	const { data: providers } = useProviders()
 	const { data: sessions } = useWorkspaceSessions(workspaceId)
@@ -707,16 +715,16 @@ export function TriggerForm({
 
 	// --- Auto-create: fire once when form first becomes valid ---
 	useEffect(() => {
-		if (!onAutoCreate || hasAutoCreatedRef.current || !isValid) return
+		if (!onAutoCreate || hasAutoCreatedRef.current || !isValid || !canWrite) return
 		const payload = buildPayload()
 		if (!payload) return
 		hasAutoCreatedRef.current = true
 		onAutoCreate(payload)
-	}, [isValid, onAutoCreate, buildPayload])
+	}, [isValid, onAutoCreate, buildPayload, canWrite])
 
 	// --- Debounced auto-save for edits ---
 	const { showSaved: showSaving, error: autoSaveError } = useAutoSave({
-		isActive: isCreated,
+		isActive: isCreated && canWrite,
 		isValid: !!isValid,
 		buildPayload,
 		onSave,
@@ -893,6 +901,7 @@ export function TriggerForm({
 
 	const handleUtterance = useCallback(
 		async (_content: string) => {
+			if (!canWrite) return
 			// An in-place language patch has no backend contract yet — hand the
 			// utterance to a chat with this trigger attached, the same way loop
 			// detail does, so the operator's words still reach an agent.
@@ -906,11 +915,16 @@ export function TriggerForm({
 				},
 			})
 		},
-		[navigate, workspaceId, triggerId, name],
+		[navigate, workspaceId, triggerId, name, canWrite],
 	)
 
 	return (
-		<div className="mx-auto w-full max-w-[700px] px-4 pb-6 sm:px-0">
+		// A viewer gets the whole form read-only: a disabled fieldset switches off
+		// every field, picker and button inside it.
+		<fieldset
+			disabled={!canWrite}
+			className="mx-auto w-full min-w-0 max-w-[700px] border-0 px-4 pb-6 sm:px-0"
+		>
 			{agents.length === 0 && (
 				<div className="mb-4 rounded-lg bg-warning/10 px-3 py-2 text-sm text-warning">
 					No agents available. Create an agent first before setting up triggers.
@@ -921,26 +935,28 @@ export function TriggerForm({
 			    renaming is meant to happen through the language bar, but that bar
 			    can only hand off to a chat today, so removing this would leave the
 			    app with no way to rename a trigger at all. */}
-			<textarea
-				value={name}
-				onChange={(e) => {
-					setName(e.target.value)
-					e.target.style.height = 'auto'
-					e.target.style.height = `${e.target.scrollHeight}px`
-				}}
-				placeholder="Trigger name"
-				aria-label="Trigger name"
-				// biome-ignore lint/a11y/noAutofocus: focus title on create
-				autoFocus={!initialValues}
-				rows={1}
-				className="w-full resize-none overflow-hidden border-none bg-transparent p-0 text-[26px] font-bold leading-tight tracking-[-0.025em] text-foreground outline-none focus:outline-none"
-				ref={(el) => {
-					if (el) {
-						el.style.height = 'auto'
-						el.style.height = `${el.scrollHeight}px`
-					}
-				}}
-			/>
+			<ViewerTooltip className="block w-full">
+				<textarea
+					value={name}
+					onChange={(e) => {
+						setName(e.target.value)
+						e.target.style.height = 'auto'
+						e.target.style.height = `${e.target.scrollHeight}px`
+					}}
+					placeholder="Trigger name"
+					aria-label="Trigger name"
+					// biome-ignore lint/a11y/noAutofocus: focus title on create
+					autoFocus={!initialValues}
+					rows={1}
+					className="w-full resize-none overflow-hidden border-none bg-transparent p-0 text-[26px] font-bold leading-tight tracking-[-0.025em] text-foreground outline-none focus:outline-none"
+					ref={(el) => {
+						if (el) {
+							el.style.height = 'auto'
+							el.style.height = `${el.scrollHeight}px`
+						}
+					}}
+				/>
+			</ViewerTooltip>
 
 			{/* Meta row (mockup 1604–1609) */}
 			<div className="mt-3 flex flex-wrap items-center gap-2">
@@ -966,7 +982,7 @@ export function TriggerForm({
 							<RelativeTime date={initialValues.updatedAt} />
 						</>
 					)}
-					{' · not tied to a loop'}
+					{' · not tied to a flow'}
 				</span>
 			</div>
 
@@ -977,7 +993,7 @@ export function TriggerForm({
 					value={type}
 					onValueChange={(v) => setType(v as 'cron' | 'event' | 'reminder')}
 					aria-label="Trigger type"
-					className="mt-2.5 flex flex-wrap gap-2"
+					className="mt-2.5 inline-flex max-w-full flex-wrap overflow-hidden rounded-lg border border-border bg-card"
 				>
 					{(['event', 'cron', 'reminder'] as const).map((t) => {
 						const info = TRIGGER_TYPE_INFO[t]
@@ -989,10 +1005,10 @@ export function TriggerForm({
 								key={t}
 								htmlFor={id}
 								className={cn(
-									'inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-lg border px-3.5 text-[12.5px] font-semibold transition-colors sm:min-h-8',
+									'inline-flex min-h-11 cursor-pointer items-center gap-1.5 border-r border-border px-3.5 text-[12.5px] font-semibold transition-colors last:border-r-0 sm:min-h-8',
 									selected
-										? 'border-primary bg-primary text-primary-foreground'
-										: 'border-border bg-card text-muted-foreground hover:border-border-strong hover:text-foreground',
+										? 'bg-primary text-primary-foreground'
+										: 'bg-card text-muted-foreground hover:bg-muted hover:text-foreground',
 								)}
 							>
 								<RadioGroupItem id={id} value={t} className="sr-only" />
@@ -1005,6 +1021,24 @@ export function TriggerForm({
 				<p className="mt-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
 					{TRIGGER_TYPE_INFO[type].description}
 				</p>
+			</section>
+
+			{/* Live read-back sentence, directly under the type so each choice below
+			    visibly rewrites it (v3) */}
+			<section
+				aria-live="polite"
+				className="mt-4 flex items-start gap-2.5 rounded-xl border border-border bg-card px-3.5 py-3"
+			>
+				<span
+					aria-hidden="true"
+					className="mt-0.5 grid size-4 shrink-0 place-items-center rounded-full border border-border-strong text-[9.5px] font-bold text-muted-foreground"
+				>
+					i
+				</span>
+				<div>
+					<p className="eyebrow mb-1">What happens</p>
+					<p className="text-[12.5px] leading-relaxed text-foreground">{summary}</p>
+				</div>
 			</section>
 
 			{type === 'cron' && (
@@ -1059,11 +1093,11 @@ export function TriggerForm({
 								{isCommentedAction ? (
 									<div
 										id="trigger-subject"
-										title="Comment triggers fire on any object type; use the on-target-type filter below to narrow."
-										aria-label="Subject pinned to Any object"
+										title="Comment triggers fire on any item type; use the on-target-type filter below to narrow."
+										aria-label="Subject pinned to Any item"
 										className="flex min-h-11 w-full items-center rounded-md border border-border bg-muted px-3 text-[12.5px] font-semibold text-muted-foreground sm:min-h-9"
 									>
-										Any object
+										Any item
 									</div>
 								) : (
 									<Select value={entityType} onValueChange={handleEntityTypeChange}>
@@ -1172,15 +1206,19 @@ export function TriggerForm({
 					<section className="mt-5">
 						<h2 className="eyebrow">ADDITIONAL CONDITIONS</h2>
 						<div className="mt-2.5 flex flex-col gap-2">
-							{conditions.map((condition, index) => (
-								<ConditionEditor
-									key={condition.id}
-									condition={condition}
-									fieldDefs={fieldDefs}
-									onChange={(updates) => updateCondition(index, updates)}
-									onRemove={() => removeCondition(index)}
-								/>
-							))}
+							{conditions.length > 0 && (
+								<div className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">
+									{conditions.map((condition, index) => (
+										<ConditionEditor
+											key={condition.id}
+											condition={condition}
+											fieldDefs={fieldDefs}
+											onChange={(updates) => updateCondition(index, updates)}
+											onRemove={() => removeCondition(index)}
+										/>
+									))}
+								</div>
+							)}
 							<Button
 								variant="ghost"
 								size="sm"
@@ -1311,23 +1349,6 @@ export function TriggerForm({
 				</section>
 			)}
 
-			{/* Plain-language read-back, below the config it summarises */}
-			<section
-				aria-live="polite"
-				className="mt-6 flex items-start gap-2.5 rounded-xl border border-border bg-card px-3.5 py-3"
-			>
-				<span
-					aria-hidden="true"
-					className="mt-0.5 grid size-4 shrink-0 place-items-center rounded-full border border-border-strong text-[9.5px] font-bold text-muted-foreground"
-				>
-					i
-				</span>
-				<div>
-					<p className="eyebrow mb-1">What happens</p>
-					<p className="text-[12.5px] leading-relaxed text-foreground">{summary}</p>
-				</div>
-			</section>
-
 			{isCreated && initialValues && (
 				<TriggerHistory workspaceId={workspaceId} triggerId={initialValues.id} />
 			)}
@@ -1350,17 +1371,20 @@ export function TriggerForm({
 						/>
 						{enabled ? 'Enabled' : 'Disabled'}
 					</span>
-					<Button
-						variant="outline"
-						size="sm"
-						className="min-h-11 sm:min-h-9"
-						onClick={() => {
-							setEnabled(!enabled)
-							onToggleEnabled?.()
-						}}
-					>
-						{enabled ? 'Disable' : 'Enable'}
-					</Button>
+					<ViewerTooltip>
+						<Button
+							variant="outline"
+							size="sm"
+							className="min-h-11 sm:min-h-9"
+							disabled={!canWrite}
+							onClick={() => {
+								setEnabled(!enabled)
+								onToggleEnabled?.()
+							}}
+						>
+							{enabled ? 'Disable' : 'Enable'}
+						</Button>
+					</ViewerTooltip>
 				</div>
 			)}
 
@@ -1380,38 +1404,42 @@ export function TriggerForm({
 					{isCreated && !hasChanges && (
 						<div className="flex flex-wrap gap-1.5 pb-2.5" aria-label="Suggested changes">
 							{UTTERANCE_SUGGESTIONS.map((suggestion) => (
-								<Button
-									key={suggestion}
-									variant="ghost"
-									size="sm"
-									className="h-[26px] rounded-full border border-dashed border-border px-3 text-[11.5px] font-semibold text-muted-foreground hover:border-border-strong hover:text-foreground"
-									onClick={() => void handleUtterance(suggestion)}
-								>
-									{suggestion}
-								</Button>
+								<ViewerTooltip key={suggestion}>
+									<Button
+										variant="ghost"
+										size="sm"
+										className="h-[26px] rounded-full border border-dashed border-border px-3 text-[11.5px] font-semibold text-muted-foreground hover:border-border-strong hover:text-foreground"
+										disabled={!canWrite}
+										onClick={() => void handleUtterance(suggestion)}
+									>
+										{suggestion}
+									</Button>
+								</ViewerTooltip>
 							))}
 						</div>
 					)}
-					<Composer
-						workspaceId={workspaceId}
-						onSend={handleUtterance}
-						disabled={!isCreated}
-						pending={false}
-						surface="pulse-bar"
-						placeholder="Say what should change…"
-						selection={EMPTY_CHAT_SELECTION}
-						onRemoveAgent={() => {}}
-						onRemoveObject={() => {}}
-						onRemoveNotification={() => {}}
-						onRemoveFile={() => {}}
-						textareaLabel="Say what should change about this trigger"
-					/>
+					<ViewerTooltip className="block w-full">
+						<Composer
+							workspaceId={workspaceId}
+							onSend={handleUtterance}
+							disabled={!isCreated || !canWrite}
+							pending={false}
+							surface="pulse-bar"
+							placeholder={canWrite ? 'Say what should change…' : VIEWER_READ_ONLY_MESSAGE}
+							selection={EMPTY_CHAT_SELECTION}
+							onRemoveAgent={() => {}}
+							onRemoveObject={() => {}}
+							onRemoveNotification={() => {}}
+							onRemoveFile={() => {}}
+							textareaLabel="Say what should change about this trigger"
+						/>
+					</ViewerTooltip>
 					<p className="mt-1.5 text-[11px] text-muted-foreground">
 						Say what should change — it edits the trigger above
 					</p>
 				</div>
 			</div>
-		</div>
+		</fieldset>
 	)
 }
 
@@ -1457,7 +1485,7 @@ function ConditionEditor({
 	}
 
 	return (
-		<div className="flex flex-wrap items-center gap-1.5">
+		<div className="flex flex-wrap items-center gap-1.5 px-3 py-2">
 			{fieldDefs.length === 0 ? (
 				<Input
 					value={condition.field}
@@ -1511,6 +1539,7 @@ function ConditionEditor({
 				size="icon"
 				className="min-h-11 min-w-11 shrink-0 text-muted-foreground hover:text-error sm:min-h-9 sm:min-w-9"
 				onClick={onRemove}
+				aria-label="Remove condition"
 			>
 				<X size={14} />
 			</Button>

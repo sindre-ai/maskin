@@ -1,10 +1,18 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { workspaces } from '@maskin/db/schema'
-import { CREDIT_TOPUP_MAX_USD, CREDIT_TOPUP_MIN_USD, workspaceSettingsSchema } from '@maskin/shared'
-import { eq } from 'drizzle-orm'
+import {
+	CREDIT_TOPUP_MAX_USD,
+	CREDIT_TOPUP_MIN_USD,
+	dailyBudgetResponseSchema,
+	setDailyBudgetSchema,
+	workspaceSettingsSchema,
+} from '@maskin/shared'
+import { eq, sql } from 'drizzle-orm'
 import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from '../lib/billing-defaults'
+import { USAGE_BREAKDOWN_MAX_ROWS, readUsageBreakdown } from '../lib/billing-usage-breakdown'
 import { cachedBillingUsage, evictBillingUsage } from '../lib/billing-usage-cache'
+import { evaluateDollarUnit, readZeroCostDays } from '../lib/daily-budget'
 import { isEnterprise, isEnterpriseWorkspace } from '../lib/enterprise'
 import { createApiError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -170,21 +178,54 @@ const usageRoute = createRoute({
 	},
 })
 
-// The uncached usage read. Returns null when the workspace does not exist.
-async function readBillingUsage(db: Database, workspaceId: string) {
-	const [workspace] = await db
-		.select({
-			id: workspaces.id,
-			settings: workspaces.settings,
-			enterpriseGranted: workspaces.enterpriseGranted,
-			billingOwnerId: workspaces.billingOwnerId,
-		})
-		.from(workspaces)
-		.where(eq(workspaces.id, workspaceId))
-		.limit(1)
+const usageBreakdownRowSchema = z.object({
+	// Model id, agent id or flow id. Null for sessions that carry none.
+	id: z.string().nullable(),
+	name: z.string(),
+	usd_cents: z.number().int().positive(),
+})
 
-	if (!workspace) return null
+const usageSplitSchema = z.object({
+	rows: z.array(usageBreakdownRowSchema).max(USAGE_BREAKDOWN_MAX_ROWS),
+	// Everything past the top rows, so rows + other always add up to usd_cents_used.
+	other_usd_cents: z.number().int().nonnegative(),
+})
 
+const usageBreakdownResponseSchema = z.object({
+	usd_cents_used: z.number().int().nonnegative(),
+	by_model: usageSplitSchema,
+	by_agent: usageSplitSchema,
+	by_flow: usageSplitSchema,
+})
+
+const usageBreakdownRoute = createRoute({
+	method: 'get',
+	path: '/usage/breakdown',
+	tags: ['billing'],
+	summary: 'Spend this period split by model, agent and flow',
+	description:
+		'Splits the same usage GET /usage totals (usd_cents_used) by model, by agent and by flow. Each split lists the top rows plus an other bucket, and its rows plus other add up to usd_cents_used. Sessions that belong to no flow are listed as "No flow". Enterprise workspaces are not metered, so every split is empty.',
+	request: { headers: workspaceIdHeader },
+	responses: {
+		200: {
+			description: 'Usage split for the current billing period',
+			content: { 'application/json': { schema: usageBreakdownResponseSchema } },
+		},
+		404: {
+			description: 'Workspace not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+type BillingWorkspace = {
+	settings: unknown
+	enterpriseGranted: boolean | null
+	billingOwnerId: string | null
+}
+
+// The plan and billing window the usage read (and its breakdown) are measured over.
+function resolveBillingWindow(workspace: BillingWorkspace) {
 	const parsed = workspaceSettingsSchema.partial().safeParse(workspace.settings ?? {})
 	const billing = parsed.success ? parsed.data.billing : undefined
 
@@ -218,6 +259,26 @@ async function readBillingUsage(db: Database, workspaceId: string) {
 			: null
 	const periodStartMs =
 		periodStartSec !== null ? periodStartSec * 1000 : Date.now() - DEFAULT_PERIOD_LENGTH_MS
+	return { billing, plan, status, hardCapCents, periodStartSec, periodStartMs }
+}
+
+// The uncached usage read. Returns null when the workspace does not exist.
+async function readBillingUsage(db: Database, workspaceId: string) {
+	const [workspace] = await db
+		.select({
+			id: workspaces.id,
+			settings: workspaces.settings,
+			enterpriseGranted: workspaces.enterpriseGranted,
+			billingOwnerId: workspaces.billingOwnerId,
+		})
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+
+	if (!workspace) return null
+
+	const { billing, plan, status, hardCapCents, periodStartSec, periodStartMs } =
+		resolveBillingWindow(workspace)
 	const rawPeriodEnd = billing?.period_end
 	const periodEndSec =
 		typeof rawPeriodEnd === 'number' && Number.isFinite(rawPeriodEnd) && rawPeriodEnd > 0
@@ -304,6 +365,32 @@ app.openapi(usageRoute, async (c) => {
 	return c.json(usage, 200)
 })
 
+app.openapi(usageBreakdownRoute, async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const [workspace] = await db
+		.select({
+			settings: workspaces.settings,
+			enterpriseGranted: workspaces.enterpriseGranted,
+			billingOwnerId: workspaces.billingOwnerId,
+		})
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+	if (!workspace) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+
+	const { plan, periodStartMs } = resolveBillingWindow(workspace)
+	// Enterprise is not metered: /usage reports 0 for it, so the splits are empty too.
+	if (plan === 'enterprise') {
+		const empty = { rows: [], other_usd_cents: 0 }
+		return c.json({ usd_cents_used: 0, by_model: empty, by_agent: empty, by_flow: empty }, 200)
+	}
+	return c.json(await readUsageBreakdown(db, workspaceId, periodStartMs), 200)
+})
+
 app.openapi(checkoutRoute, async (c) => {
 	const db = c.get('db')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
@@ -378,20 +465,31 @@ app.openapi(checkoutRoute, async (c) => {
 	}
 })
 
+// The schema only takes the widest range any currency allows. The exact
+// min/max for the chosen currency is checked in the handler, otherwise this
+// check would cap EUR/DKK callers at the USD maximum.
+const BUY_CREDITS_WIDEST_MIN_MINOR = Math.min(
+	CREDIT_TOPUP_MIN_USD * 100,
+	...Object.values(CREDIT_TOPUP_BOUNDS_MINOR).map((b) => b.min),
+)
+const BUY_CREDITS_WIDEST_MAX_MINOR = Math.max(
+	CREDIT_TOPUP_MAX_USD * 100,
+	...Object.values(CREDIT_TOPUP_BOUNDS_MINOR).map((b) => b.max),
+)
+
 const buyCreditsBodySchema = z.object({
 	amount_usd_cents: z
 		.number()
 		.int()
-		.min(CREDIT_TOPUP_MIN_USD * 100)
-		.max(CREDIT_TOPUP_MAX_USD * 100),
+		.min(BUY_CREDITS_WIDEST_MIN_MINOR)
+		.max(BUY_CREDITS_WIDEST_MAX_MINOR),
 	success_url: z.string().url(),
 	cancel_url: z.string().url(),
 	/**
 	 * Optional currency for the top-up (custom-amount top-up uses the
-	 * maskin_credits_custom Price). When set, the route re-validates the
-	 * amount against the per-currency bounds from CREDIT_TOPUP_BOUNDS_MINOR
-	 * (spec Delta 1b) so a EUR/DKK caller can't sneak in outside the
-	 * currency-specific min/max.
+	 * maskin_credits_custom Price). EUR/DKK amounts are checked against the
+	 * per-currency bounds from CREDIT_TOPUP_BOUNDS_MINOR (spec Delta 1b);
+	 * USD or no currency keeps the $10 to $500 range.
 	 */
 	currency: z.enum(['usd', 'eur', 'dkk']).optional(),
 })
@@ -438,20 +536,23 @@ app.openapi(buyCreditsRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const { amount_usd_cents, success_url, cancel_url, currency } = c.req.valid('json')
 
-	// Delta 1b currency-scoped bounds. The USD bounds already ran in
-	// buyCreditsBodySchema above; this adds the stricter per-currency min/max
-	// for EUR/DKK callers.
-	if (currency && currency !== 'usd') {
-		const bounds = CREDIT_TOPUP_BOUNDS_MINOR[currency as MaskinCreditsCurrency]
-		if (amount_usd_cents < bounds.min || amount_usd_cents > bounds.max) {
-			return c.json(
-				createApiError(
-					'BAD_REQUEST',
-					`amount_usd_cents must be between ${bounds.min} and ${bounds.max} for currency=${currency}`,
-				),
-				400,
-			)
-		}
+	// Delta 1b currency-scoped bounds. The body schema only enforces the widest
+	// range across currencies; USD (or no currency) keeps $10 to $500 and
+	// EUR/DKK use their own table entry.
+	const bounds =
+		currency && currency !== 'usd'
+			? CREDIT_TOPUP_BOUNDS_MINOR[currency as MaskinCreditsCurrency]
+			: { min: CREDIT_TOPUP_MIN_USD * 100, max: CREDIT_TOPUP_MAX_USD * 100 }
+	if (amount_usd_cents < bounds.min || amount_usd_cents > bounds.max) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				`amount_usd_cents must be between ${bounds.min} and ${bounds.max}${
+					currency ? ` for currency=${currency}` : ''
+				}`,
+			),
+			400,
+		)
 	}
 
 	const [workspace] = await db
@@ -661,6 +762,131 @@ app.openapi(cancelRoute, async (c) => {
 
 	logger.info('Plan downgraded to Free', { workspaceId })
 	return c.json({ ok: true as const }, 200)
+})
+
+// ── Daily budget (bet: A daily token budget, slice 1a) ──────────────────────
+// One daily target per workspace, stored at settings.daily_budget. It reports
+// only: nothing reads stop_share or holds work yet.
+
+const getDailyBudgetRoute = createRoute({
+	method: 'get',
+	path: '/daily-budget',
+	tags: ['billing'],
+	summary: 'The workspace daily target and whether the dollar unit can be used',
+	request: { headers: workspaceIdHeader },
+	responses: {
+		200: {
+			description: 'Current daily target (null when off) and the dollar-unit check',
+			content: { 'application/json': { schema: dailyBudgetResponseSchema } },
+		},
+		404: {
+			description: 'Workspace not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+const setDailyBudgetRoute = createRoute({
+	method: 'put',
+	path: '/daily-budget',
+	'x-viewer-policy': 'writer',
+	tags: ['billing'],
+	summary: 'Set the workspace daily target, or switch it off with null',
+	request: {
+		headers: workspaceIdHeader,
+		body: {
+			content: { 'application/json': { schema: setDailyBudgetSchema } },
+			required: true,
+		},
+	},
+	responses: {
+		200: {
+			description: 'Daily target stored',
+			content: { 'application/json': { schema: dailyBudgetResponseSchema } },
+		},
+		403: {
+			description: 'Caller is not a human workspace admin or owner',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Workspace not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		409: {
+			description: 'The dollar unit is locked until cost numbers are reliable',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+async function readStoredDailyBudget(db: Database, workspaceId: string) {
+	const [workspace] = await db
+		.select({ id: workspaces.id, settings: workspaces.settings })
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+	if (!workspace) return null
+	const parsed = workspaceSettingsSchema.shape.daily_budget.safeParse(
+		(workspace.settings as Record<string, unknown> | null)?.daily_budget,
+	)
+	return { dailyBudget: parsed.success ? (parsed.data ?? null) : null }
+}
+
+app.openapi(getDailyBudgetRoute, async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const stored = await readStoredDailyBudget(db, workspaceId)
+	if (!stored) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	const days = await readZeroCostDays(db, workspaceId, stored.dailyBudget?.timezone ?? 'UTC')
+	return c.json({ daily_budget: stored.dailyBudget, dollar_unit: evaluateDollarUnit(days) }, 200)
+})
+
+app.openapi(setDailyBudgetRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { daily_budget: next } = c.req.valid('json')
+
+	const before = await readStoredDailyBudget(db, workspaceId)
+	if (!before) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+
+	// Spend controls sit next to plan changes, so they take the same human
+	// admin/owner gate (agents holding a workspace API key stay out).
+	if (!(await isWorkspaceHumanAdminOrOwner(db, actorId, workspaceId))) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only workspace owners/admins can set the daily budget'),
+			403,
+		)
+	}
+
+	const days = await readZeroCostDays(db, workspaceId, next?.timezone ?? 'UTC')
+	const dollarUnit = evaluateDollarUnit(days)
+	if (next?.unit === 'dollars' && !dollarUnit.available) {
+		return c.json(createApiError('CONFLICT', dollarUnit.reason ?? 'Dollar targets are locked'), 409)
+	}
+
+	// Atomic key write: a read-modify-write of the whole settings object could
+	// drop a concurrent change to another key (a Stripe webhook, a PATCH).
+	await db
+		.update(workspaces)
+		.set({
+			settings: next
+				? sql`jsonb_set(coalesce(${workspaces.settings}, '{}'::jsonb), '{daily_budget}', ${JSON.stringify(next)}::jsonb)`
+				: sql`coalesce(${workspaces.settings}, '{}'::jsonb) - 'daily_budget'`,
+			updatedAt: new Date(),
+		})
+		.where(eq(workspaces.id, workspaceId))
+
+	await recordEvent(db, {
+		workspaceId,
+		actorId,
+		action: 'workspace_daily_budget_updated',
+		entityType: 'workspace',
+		entityId: workspaceId,
+		data: { before: before.dailyBudget, after: next },
+	})
+
+	return c.json({ daily_budget: next, dollar_unit: dollarUnit }, 200)
 })
 
 export default app

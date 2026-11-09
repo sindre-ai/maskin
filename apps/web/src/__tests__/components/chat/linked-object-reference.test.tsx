@@ -15,7 +15,9 @@ vi.mock('@/hooks/use-actors', () => ({
 vi.mock('@/hooks/use-object-type-label', () => ({
 	useObjectTypeLabel: () => (type: string) => type.charAt(0).toUpperCase() + type.slice(1),
 }))
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({ workspace: { settings: { field_definitions: fieldDefinitions } } }),
 }))
 vi.mock('@tanstack/react-router', () => ({
@@ -119,7 +121,7 @@ describe('ObjectReferenceChip', () => {
 		for (const data of [undefined, objectRow({ workspaceId: 'other' })]) {
 			useObject.mockReturnValue({ data, isLoading: false })
 			const { unmount } = renderChip()
-			expect(screen.getByText('Deleted object')).toBeInTheDocument()
+			expect(screen.getByText('Deleted item')).toBeInTheDocument()
 			unmount()
 		}
 	})
@@ -246,7 +248,7 @@ describe('ObjectReferenceChip plate', () => {
 	it('draws the deleted chip with a trash icon and a dashed border at the sentence size', () => {
 		useObject.mockReturnValue({ data: undefined, isLoading: false })
 		renderChip()
-		const chip = screen.getByText('Deleted object')
+		const chip = screen.getByText('Deleted item')
 		expect(chip.className).toContain('border-dashed')
 		expect(chip.className).not.toMatch(/text-\[/)
 		expect(chip.querySelector('svg')?.getAttribute('class')).toContain('lucide-trash')
@@ -329,7 +331,7 @@ describe('ObjectReferenceCard face', () => {
 	it('says an object was deleted, with a trash icon, in the dashed look', () => {
 		useObject.mockReturnValue({ data: undefined, isLoading: false })
 		renderCard()
-		const card = screen.getByText('This object was deleted')
+		const card = screen.getByText('This item was deleted')
 		expect(card).toHaveClass('border-dashed', 'italic')
 		expect(card.querySelector('svg')?.getAttribute('class')).toContain('lucide-trash')
 	})
@@ -469,7 +471,7 @@ describe('ObjectReferenceChip preview', () => {
 		const user = userEvent.setup()
 		renderChip()
 		await user.hover(chip())
-		const dialog = screen.getByRole('dialog', { name: 'Object preview' })
+		const dialog = screen.getByRole('dialog', { name: 'Item preview' })
 		expect(dialog).toBe(preview())
 		expect(dialog).not.toHaveAttribute('aria-hidden')
 		expect(dialog).not.toHaveAttribute('aria-modal')
@@ -479,7 +481,7 @@ describe('ObjectReferenceChip preview', () => {
 		const user = userEvent.setup()
 		renderChip()
 		await user.hover(chip())
-		const dialog = screen.getByRole('dialog', { name: 'Object preview' })
+		const dialog = screen.getByRole('dialog', { name: 'Item preview' })
 		expect(dialog).toHaveTextContent('Chat preview cards')
 		expect(dialog.querySelectorAll('a')).toHaveLength(1)
 		expect(screen.getByRole('link', { name: 'Open' })).toBeInTheDocument()
@@ -544,7 +546,7 @@ describe('ObjectReferenceChip preview', () => {
 		useObject.mockReturnValue({ data: undefined, isLoading: false })
 		renderChip()
 		act(() => {
-			fireEvent.mouseEnter(screen.getByText('Deleted object'))
+			fireEvent.mouseEnter(screen.getByText('Deleted item'))
 		})
 		expect(preview()).toBeNull()
 	})
@@ -585,6 +587,8 @@ describe('ObjectReferenceChip preview in a pane', () => {
 		({ left, right, top: 0, bottom: 20, width: right - left, height: 20, x: left, y: 0 }) as DOMRect
 	let boundsRect = rect(0, 0)
 	let chipRect = rect(0, 0)
+	// The chip's line pieces. One for a chip on a single line; a chip that wraps has one per line.
+	let pieces: DOMRect[] | null = null
 
 	beforeEach(() => {
 		useObject.mockReset()
@@ -599,13 +603,31 @@ describe('ObjectReferenceChip preview in a pane', () => {
 			configurable: true,
 			value: 1024,
 		})
+		pieces = null
 		vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
 			this: Element,
 		) {
+			if (this.hasAttribute('data-linked-preview')) {
+				// Where a browser puts the absolutely positioned card: against the chip's containing
+				// block, which runs from the first line piece's left to the last piece's right (and is
+				// no wider than nothing when the chip wraps from a line end to the next line's start).
+				const line = pieces ?? [chipRect]
+				const first = line[0] as DOMRect
+				const last = line[line.length - 1] as DOMRect
+				const style = (this as HTMLElement).style
+				const width = style.width ? Number.parseFloat(style.width) : 380
+				const cbLeft = first.left
+				const cbRight = Math.max(first.left, last.right)
+				const right =
+					style.right !== ''
+						? cbRight - Number.parseFloat(style.right)
+						: cbLeft + Number.parseFloat(style.left || '0') + width
+				return rect(right - width, right)
+			}
 			return this.hasAttribute(PREVIEW_BOUNDS_ATTR) ? boundsRect : chipRect
 		})
 		vi.spyOn(Element.prototype, 'getClientRects').mockImplementation(
-			() => [chipRect] as unknown as DOMRectList,
+			() => (pieces ?? [chipRect]) as unknown as DOMRectList,
 		)
 	})
 	afterEach(() => {
@@ -650,6 +672,16 @@ describe('ObjectReferenceChip preview in a pane', () => {
 		const card = await hoverInPane({ left: 482, right: 700 })
 		expect(card?.style.left).toBe('-30px')
 		expect(card?.style.width).toBe('202px')
+	})
+
+	it('lands the card on the chip when the chip wraps from a line end to the next line start', async () => {
+		// The first piece ends the first line (960 to 1020); the last starts the next (640 to 680).
+		// The card's containing block is then as wide as nothing, so the card is measured and moved
+		// until its right edge meets the chip's (1020), not left past the pane.
+		pieces = [rect(960, 1020), rect(640, 680)]
+		chipRect = rect(640, 1020)
+		const card = await hoverInPane({ left: 482, right: 1024 })
+		expect(card?.style.right).toBe('-60px')
 	})
 
 	it('keeps the screen rule with no pane', async () => {
@@ -748,7 +780,7 @@ describe('ObjectReferenceChip sheet', () => {
 		const user = userEvent.setup()
 		useObject.mockReturnValue({ data: undefined, isLoading: false })
 		renderChip()
-		await user.click(screen.getByText('Deleted object'))
+		await user.click(screen.getByText('Deleted item'))
 		expect(sheet()).toBeNull()
 	})
 

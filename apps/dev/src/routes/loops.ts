@@ -18,6 +18,7 @@ import {
 	listLoopStepsResponseSchema,
 	listLoopsResponseSchema,
 	loopTargetSchema,
+	normalizeTags,
 	readChanges,
 } from '@maskin/shared'
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
@@ -212,33 +213,6 @@ function readLoopTargets(meta: Record<string, unknown>): LoopTarget[] | null {
 		if (parsed.success) cleaned.push(parsed.data)
 	}
 	return cleaned.length > 0 ? cleaned : null
-}
-
-/** Longest tag we show, and the most per loop: tags are short labels, not sentences. */
-const LOOP_TAG_MAX_LENGTH = 40
-const LOOP_TAG_MAX_COUNT = 10
-
-/**
- * Extract a loop's `metadata.tags`: the non-empty strings, trimmed, de-duplicated
- * (case-insensitively, first spelling wins) and capped. Anything else in the
- * array is dropped — same tolerance as the other metadata readers, a hand-edited
- * blob must not 500 the page.
- */
-function readLoopTags(meta: Record<string, unknown>): string[] {
-	const raw = meta.tags
-	if (!Array.isArray(raw)) return []
-	const seen = new Set<string>()
-	const tags: string[] = []
-	for (const entry of raw) {
-		if (typeof entry !== 'string') continue
-		const tag = entry.trim().slice(0, LOOP_TAG_MAX_LENGTH)
-		const key = tag.toLowerCase()
-		if (tag.length === 0 || seen.has(key)) continue
-		seen.add(key)
-		tags.push(tag)
-		if (tags.length >= LOOP_TAG_MAX_COUNT) break
-	}
-	return tags
 }
 
 const listLoopsQuerySchema = z.object({
@@ -606,7 +580,7 @@ app.openapi(listLoopsRoute, (async (c) => {
 					? meta.close_condition
 					: null
 			const targets = readLoopTargets(meta)
-			const tags = readLoopTags(meta)
+			const tags = normalizeTags(meta.tags)
 
 			const stats = childStatsByLoop.get(row.id) ?? {
 				inProgressCount: 0,
@@ -649,6 +623,7 @@ app.openapi(listLoopsRoute, (async (c) => {
 				entryCondition,
 				closeCondition,
 				tags,
+				driverId: row.driver,
 				inProgressCount: stats.inProgressCount,
 				closedCount: stats.closedCount,
 				medianTimeToCloseMs: stats.medianCloseMs,

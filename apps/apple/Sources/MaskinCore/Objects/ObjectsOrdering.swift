@@ -12,6 +12,13 @@ extension ObjectsUrgency {
 
 /// Orders a list of objects by the chosen sort.
 public enum ObjectsSorter {
+	public static func sorted(
+		_ objects: [WorkObject], by sort: ObjectsSort, reversed: Bool
+	) -> [WorkObject] {
+		let ordered = sorted(objects, by: sort)
+		return reversed && sort != .needsYou ? Array(ordered.reversed()) : ordered
+	}
+
 	public static func sorted(_ objects: [WorkObject], by sort: ObjectsSort) -> [WorkObject] {
 		switch sort {
 		case .updated:

@@ -11,6 +11,7 @@ struct WatchHome: View {
 	let watch: MaskinWatchStore
 	@State private var loops: LoopsStore?
 	@State private var conversation: WatchConversationStore
+	@State private var listening: WatchListeningStore
 	@State private var page: Page = WatchHome.startingPage
 	@State private var path: [WatchRoute] = []
 	@State private var openFlow: String?
@@ -23,6 +24,12 @@ struct WatchHome: View {
 		self.store = store
 		self.watch = watch
 		_conversation = State(initialValue: .live(environment: environment))
+		let client = environment.client
+		_listening = State(
+			initialValue: WatchListeningStore(
+				transcriber: environment.auth.session == nil ? nil : APIBackendDictation(client: client),
+				language: DictationLanguage.hint(preferredLanguages: Locale.preferredLanguages),
+				makeMicrophone: { EnginePhraseMicrophone() }))
 	}
 
 	/// Design review only: `MASKIN_DEMO_PAGE=briefing` opens that page, because a simulator has no
@@ -52,13 +59,16 @@ struct WatchHome: View {
 			if signedOut {
 				watch.clear()
 				conversation.stop()
+				listening.cancel()
 				path = []
 			}
 		}
+		.onAppear { listening.deliver = ask }
 		// Actions are ink; the system accent would otherwise paint titles and links indigo.
 		.tint(MaskinColor.ink)
 		.task(id: environment.auth.credentials) {
 			conversation.stop()
+			listening.cancel()
 			await startLoops()
 		}
 		.onDisappear {
@@ -70,7 +80,7 @@ struct WatchHome: View {
 	private var pages: some View {
 		TabView(selection: $page) {
 			NavigationStack(path: $path) {
-				WatchAskHome(store: store, watch: watch, ask: ask)
+				WatchAskHome(store: store, watch: watch, listen: listen)
 					.containerBackground(for: .navigation) { WatchBackdrop() }
 					.toolbar(.hidden, for: .navigationBar)
 					.navigationDestination(for: WatchRoute.self) { route in
@@ -79,6 +89,8 @@ struct WatchHome: View {
 							WatchNeedsYou(store: store, watch: watch, workspaceId: environment.workspaceId)
 						case .conversation:
 							WatchConversationScreen(conversation: conversation)
+						case .listening:
+							WatchListeningScreen(listening: listening, ask: ask)
 						}
 					}
 			}
@@ -94,11 +106,19 @@ struct WatchHome: View {
 		.onOpenURL(perform: open)
 	}
 
+	/// The mic was tapped: listen by itself, and show what is heard.
+	private func listen() {
+		listening.begin()
+		if path.last != .listening { path.append(.listening) }
+	}
+
 	/// The wearer asked something: hand it to the Chief of Staff and show the conversation.
 	private func ask(_ text: String) {
 		conversation.ask(text)
 		firstRunDone = true
 		page = .home
+		path.removeAll { $0 == .listening }
+		listening.reset()
 		if path.last != .conversation { path.append(.conversation) }
 	}
 

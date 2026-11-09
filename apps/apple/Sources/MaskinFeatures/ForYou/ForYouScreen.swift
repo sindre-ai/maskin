@@ -30,6 +30,7 @@ public struct ForYouScreen: View {
 	@State private var path: [String] = []
 	/// The Undo toast: shared by the cards' gestures and the ⋯ menu's "Take every suggested".
 	@State private var undoOffer: UndoOffer?
+	@State private var showDisplay = false
 
 	public var body: some View {
 		NavigationStack(path: $path) {
@@ -45,12 +46,17 @@ public struct ForYouScreen: View {
 			store: runtime.store, outbox: runtime.outbox,
 			openObject: openObject, chief: runtime.chief, environment: environment,
 			stories: appRuntime.storiesStore(), wide: isWide, undoOffer: $undoOffer,
-			openAgent: { appRuntime.openAgent($0) }
+			openAgent: { appRuntime.openAgent($0) },
+			greetingName: environment.auth.session?.name
 		)
 		.shellToolbar(
-			environment: environment, title: "For you",
-			actions: ShellActions(live: true)
+			environment: environment,
+			actions: ShellActions(
+				live: true, displaySymbol: ShellActions.slidersSymbol,
+				displayActive: !runtime.store.options.isDefaultDisplay,
+				displayToggle: { showDisplay = true })
 		)
+		.sheet(isPresented: $showDisplay) { ForYouDisplaySheet(store: runtime.store) }
 		.task(id: environment.workspaceId) {
 			Perf.event("foryou.screen.task")
 			async let feed: Void = runtime.store.load()
@@ -122,14 +128,18 @@ struct ForYouFeedView: View {
 	/// Opens the agent behind "with {agent}". Nil in snapshots.
 	var openAgent: ((String) -> Void)?
 	@State private var openStory: StoryCard?
+	/// The draft a card's pointer line asked to scroll to; cleared once the list has moved.
+	@State private var draftToShow: String?
 	/// Which cards the reader opened with Discuss; the rest stay compact.
 	/// Width of the feed, to pick the briefing card size with or without the sidebar open.
 	@State private var feedWidth: CGFloat = 0
 	@State private var expansion = CardExpansion()
-	/// The card whose Later presets are showing (the Later pill, or a swipe left).
-	@State private var laterOpenId: String?
+	/// "Take every suggested option?" is asking for confirmation.
+	@State private var confirmTakeSuggested = false
 	/// Frozen "now" for snapshots; live screens pass nil.
 	var fixedNow: Date?
+	/// Whose greeting heads the feed; nil in snapshots.
+	var greetingName: String?
 
 	@Environment(\.scenePhase) private var scenePhase
 	@State private var openedAt = Date()
@@ -143,6 +153,8 @@ struct ForYouFeedView: View {
 	private let sidebarFeedWidth: CGFloat = 780
 
 	private static let topId = "forYou.top"
+	/// The scroll id of a draft's row under Drafts to review.
+	static func draftRowId(_ objectId: String) -> String { "forYou.draft.\(objectId)" }
 	private static let intents: [ForYouIntent?] = [nil] + ForYouIntent.allCases
 
 	var body: some View {
@@ -155,10 +167,7 @@ struct ForYouFeedView: View {
 					Color.clear.frame(height: 0).id(Self.topId)
 						.listRowSeparator(.hidden).listRowBackground(Color.clear)
 						.listRowInsets(EdgeInsets())
-					ForYouHeaderView(
-						dateLine: store.dateLine(at: fixedNow), spokenDate: store.spokenDate(at: fixedNow),
-						summary: store.blockedSummary
-					)
+					ForYouGreetingView(text: ForYouHeader.greeting(name: greetingName, at: fixedNow ?? Date()))
 					.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 					if let stories, !stories.cards.isEmpty {
 						StoryRow(stories: stories, open: { card in openStory = card }, metrics: storyMetrics)
@@ -171,6 +180,9 @@ struct ForYouFeedView: View {
 					feedRows(entries: entries)
 				}
 				.listStyle(.plain)
+				// The zero-height scroll anchor above is still a list row: without this it is padded to
+				// the 44 pt default and pushes the sentence down, away from the title.
+				.environment(\.defaultMinListRowHeight, 0)
 				.scrollDismissesKeyboard(.interactively)
 				.scrollContentBackground(.hidden)
 				.ambientBackground()
@@ -185,9 +197,19 @@ struct ForYouFeedView: View {
 					_ = await (feed, rail)
 				}
 				.overlay(alignment: .top) { newAsksPill(proxy: proxy) }
+				.onChange(of: draftToShow) { _, objectId in
+					guard let objectId else { return }
+					withAnimation(MaskinMotion.standard) {
+						proxy.scrollTo(Self.draftRowId(objectId), anchor: .top)
+					}
+					draftToShow = nil
+				}
 			}
 			.animation(store.isFetching ? nil : MaskinMotion.standard, value: layoutKey)
 			.onChange(of: cardIds) { _, ids in expansion.prune(keeping: Set(ids)) }
+			.onChange(of: store.options.opening, initial: true) { _, opening in
+				expansion.setStartsOpen(opening == .expanded)
+			}
 			.onChange(of: scenePhase) { _, phase in
 				switch phase {
 				case .active:
@@ -230,6 +252,13 @@ struct ForYouFeedView: View {
 			Text(chief?.notice ?? "")
 		}
 		.undoToast(undoOffer)
+		.confirmationDialog(
+			"Take every suggested option?", isPresented: $confirmTakeSuggested, titleVisibility: .visible
+		) {
+			Button("Take \(store.suggestedOptionCount) suggested") { takeSuggested() }
+		} message: {
+			Text("Each answer is posted as your reply. You can undo them one by one.")
+		}
 	}
 
 	/// Briefing cards: 128 wide on compact, 204 on iPad, 150 when the sidebar takes room (4-iPad.md).
@@ -338,8 +367,9 @@ struct ForYouFeedView: View {
 			.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 		case .loaded:
 			let open = entries.filter { $0.bucket != .done }
-			// The primary group is the feed itself: the design shows no header above it. Related
-			// approvals are folded into one card inside it.
+			// "Needs you N" with its ⋯ menu heads the primary group (v3). Related approvals are
+			// folded into one card inside it.
+			needsHeader
 			needsRows(store.needsItems)
 			if open.isEmpty {
 				CaughtUp(
@@ -349,7 +379,7 @@ struct ForYouFeedView: View {
 			} else {
 				ForEach(groups(of: open).filter { $0.bucket != .needs }, id: \.bucket) { group in
 					SectionHeader(
-						title: title(for: group.bucket), count: group.entries.count,
+						title: title(for: group.bucket),
 						action: group.bucket == .fyi ? ("Mark all read", { store.dismissAllFYIs() }) : nil
 					)
 					.modifier(ReadableRow(width: rowWidth, inset: rowInset))
@@ -364,6 +394,29 @@ struct ForYouFeedView: View {
 			laterSection
 			handledSection(entries.filter { $0.bucket == .done })
 		}
+	}
+
+	/// "Needs you 5" with the ⋯ menu: take every suggested option, dismiss all updates.
+	@ViewBuilder private var needsHeader: some View {
+		let count = store.needsCount
+		if count > 0 {
+			SectionHeader(
+				title: "Needs you",
+				menu: [
+					store.suggestedOptionCount > 0
+						? ("Take every suggested option", { confirmTakeSuggested = true }) : nil,
+					store.entries.contains { $0.bucket == .fyi }
+						? ("Dismiss all updates", { store.dismissAllFYIs() }) : nil,
+				].compactMap { $0 }
+			)
+			.modifier(ReadableRow(width: rowWidth, inset: rowInset))
+		}
+	}
+
+	private func takeSuggested() {
+		MaskinHaptics.play(.success)
+		let batch = withAnimation(MaskinMotion.standard) { store.takeSuggestedOptions() }
+		offerUndo(batch.summary) { withAnimation(MaskinMotion.standard) { store.undo(batch) } }
 	}
 
 	private func groups(of entries: [FeedEntry]) -> [(bucket: FeedBucket, entries: [FeedEntry])] {
@@ -421,14 +474,12 @@ struct ForYouFeedView: View {
 			let drafts = store.reviewDrafts
 			let receipts = reviews.receiptDrafts
 			if !drafts.isEmpty {
-				SectionHeader(
-					title: "Drafts to review", count: drafts.count,
-					countText: drafts.count == 1 ? "1 draft" : "\(drafts.count) drafts"
-				)
+				SectionHeader(title: "Drafts to review")
 				.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 				ForEach(drafts) { draft in
 					EditableDraftCard(draft: draft, store: reviews)
 						.modifier(ReadableRow(width: rowWidth, inset: rowInset))
+						.id(Self.draftRowId(draft.objectId))
 				}
 			}
 			ForEach(receipts) { draft in
@@ -451,7 +502,7 @@ struct ForYouFeedView: View {
 	@ViewBuilder private var laterSection: some View {
 		let deferred = store.laterEntries
 		if !deferred.isEmpty {
-			SectionHeader(title: "LATER", count: deferred.count, mono: true)
+			SectionHeader(title: "Later")
 				.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 			SummaryList {
 				ForEach(deferred) { entry in
@@ -475,8 +526,8 @@ struct ForYouFeedView: View {
 		let rows = handled.compactMap { entry in
 			HandledSummary.make(for: entry, sender: store.senderName(of: entry.card)).map { (entry, $0) }
 		}
-		if store.options.showsHandled, !rows.isEmpty {
-			SectionHeader(title: "HANDLED TODAY", count: rows.count, mono: true)
+		if !rows.isEmpty {
+			SectionHeader(title: "Handled today")
 				.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 			SummaryList {
 				ForEach(rows, id: \.0.id) { entry, summary in
@@ -506,7 +557,7 @@ struct ForYouFeedView: View {
 
 	private func feedRow(_ entry: FeedEntry) -> some View {
 		card(entry)
-			.modifier(ReadableRow(width: rowWidth, inset: rowInset))
+			.modifier(ReadableRow(width: rowWidth, inset: rowInset, vertical: 0))
 			.swipeActions(edge: .leading, allowsFullSwipe: true) {
 				// Swipe right takes the agent's recommendation (the mockup says Done; the owner
 				// kept "accept recommended"). Options that can't be undone are never one swipe
@@ -532,18 +583,6 @@ struct ForYouFeedView: View {
 					}
 				}
 			}
-			.swipeActions(edge: .trailing, allowsFullSwipe: true) {
-				// Swipe left opens Later (the mockup's left swipe).
-				if entry.record == nil {
-					Button {
-						withAnimation(MaskinMotion.standard) { laterOpenId = entry.id }
-						MaskinHaptics.play(.light)
-					} label: {
-						Label("Later", systemImage: "clock")
-					}
-					.tint(MaskinSurface.inverse)
-				}
-			}
 	}
 
 	private func liveActions(_ entry: FeedEntry) -> DecisionCardView.Actions {
@@ -565,34 +604,29 @@ struct ForYouFeedView: View {
 		.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 	}
 
-	private func card(_ entry: FeedEntry) -> some View {
+	private func card(_ entry: FeedEntry) -> AnyView {
 		var actions = liveActions(entry)
 		let id = entry.card.id
 		let agent = store.agent(of: entry.card)
+		actions.showDraft = { draftToShow = $0 }
 		if wide {
 			// The Chief of Staff thread opens in a form sheet; the card stays compact behind it.
-			actions.expand = { Task { await chief?.openThread(card: entry.card) } }
+			actions.expand = { Task { await chief?.openThread(card: entry.card, agent: agent) } }
 		} else {
 			actions.expand = { withAnimation(MaskinMotion.standard) { expansion.expand(id) } }
 			actions.collapse = { withAnimation(MaskinMotion.standard) { expansion.collapse(id) } }
 		}
-		actions.toggleLater = {
-			withAnimation(MaskinMotion.standard) { laterOpenId = laterOpenId == id ? nil : id }
-		}
-		let deferTo = actions.deferTo
-		actions.deferTo = { preset in
-			laterOpenId = nil
-			deferTo?(preset)
-		}
 		if let agent, let openAgent { actions.openAgent = { openAgent(agent.id) } }
-		return DecisionCardView(
+		let view = DecisionCardView(
 			entry: entry, sender: store.senderName(of: entry.card),
-			expanded: !wide && expansion.isManuallyExpanded(id), now: fixedNow ?? Date(),
+			expanded: !wide && expansion.isManuallyExpanded(id), style: wide ? .card : .row,
+			now: fixedNow ?? Date(),
 			actions: actions, chief: chief, threadInDetail: wide, agent: agent,
-			laterOpen: laterOpenId == id, acceptsReturnKey: wide,
+			acceptsReturnKey: wide,
 			typeLabel: store.typeLabel(for:), draftIsElsewhere: { entry.bucket == .needs && entry.record == nil && store.isInStrip($0) },
 			unsentEditNote: entry.bucket == .needs && entry.record == nil ? store.unsentEditNote(for: entry.card) : nil)
-			.maskinHover(.lift, cornerRadius: MaskinRadius.brief)
+		// Cards lift under a pointer; flat rows have nothing to lift.
+		return wide ? AnyView(view.maskinHover(.lift, cornerRadius: MaskinRadius.brief)) : AnyView(view)
 	}
 
 	/// The compact card shown inside the iPad Discuss sheet, live from the same store entry.
@@ -601,7 +635,6 @@ struct ForYouFeedView: View {
 		var actions = liveActions(entry)
 		actions.expand = nil
 		actions.collapse = nil
-		actions.toggleLater = nil
 		return AnyView(
 			DecisionCardView(
 				entry: entry, sender: store.senderName(of: entry.card), expanded: false,
@@ -612,35 +645,45 @@ struct ForYouFeedView: View {
 
 // MARK: - Pieces
 
-/// A quiet label above each group of cards, with its count and an optional bulk action.
+/// The heading above each group of cards: 24 pt bold on one line, 40 pt above, with an optional
+/// action link in the accent colour and a ⋯ menu at the trailing edge (Needs you: bulk actions).
 private struct SectionHeader: View {
 	let title: String
-	let count: Int
-	/// A mono label (LATER, HANDLED TODAY) rather than a heading.
-	var mono = false
-	/// What the count reads as ("2 drafts"); the bare number when nil.
-	var countText: String?
 	var action: (title: String, run: () -> Void)?
+	var menu: [(title: String, run: () -> Void)] = []
 
 	var body: some View {
-		HStack(spacing: MaskinSpace.s3) {
-			if mono {
-				Text(title).font(MaskinTypeface.mono(MaskinFontSize.t12, weight: .semibold)).tracking(0.96)
-					.foregroundStyle(MaskinColor.ink5)
-				Text("\(count)").font(MaskinTypeface.mono(MaskinFontSize.t12, weight: .semibold))
-					.foregroundStyle(MaskinColor.inkPlaceholder)
-			} else {
-				Text(title).maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)
-				Text(countText ?? "\(count)").maskinText(.subhead).foregroundStyle(MaskinColor.ink5)
-			}
+		HStack(spacing: MaskinSpace.s4) {
+			Text(title)
+				.font(MaskinTypeface.sans(MaskinFontSize.t24, weight: .bold, relativeTo: .title2))
+				.tracking(-0.035 * MaskinFontSize.t24)
+				.foregroundStyle(MaskinColor.ink)
+				.lineLimit(1)
+				.fixedSize(horizontal: true, vertical: false)
+				.layoutPriority(1)
 			Spacer(minLength: MaskinSpace.s3)
 			if let action {
 				Button(action.title, action: action.run)
-					.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+					.maskinText(.body).fontWeight(.medium).foregroundStyle(MaskinColor.accent)
 					.frame(minHeight: MaskinSpace.touchMin)
 			}
+			if !menu.isEmpty {
+				Menu {
+					ForEach(Array(menu.enumerated()), id: \.offset) { _, item in
+						Button(item.title, action: item.run)
+					}
+				} label: {
+					Image(systemName: "ellipsis")
+						.maskinSymbol(MaskinFontSize.t18, weight: .bold)
+						.foregroundStyle(MaskinColor.ink)
+						.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin, alignment: .trailing)
+						.contentShape(Rectangle())
+				}
+				.accessibilityLabel("More for \(title)")
+			}
 		}
-		.accessibilityElement(children: .combine)
+		.padding(.top, MaskinSpace.s14 + MaskinSpace.s4)
+		.accessibilityElement(children: .contain)
 		.accessibilityAddTraits(.isHeader)
 	}
 }
@@ -648,6 +691,8 @@ private struct SectionHeader: View {
 private struct ReadableRow: ViewModifier {
 	let width: CGFloat
 	var inset: CGFloat = MaskinSpace.s9
+	/// Space above and below the row; flat decision rows pass 0 and draw their own hairline.
+	var vertical: CGFloat = MaskinSpace.s3
 
 	func body(content: Content) -> some View {
 		content
@@ -655,15 +700,15 @@ private struct ReadableRow: ViewModifier {
 			.frame(maxWidth: .infinity)
 			.listRowSeparator(.hidden)
 			.listRowBackground(Color.clear)
-			.listRowInsets(EdgeInsets(top: MaskinSpace.s3, leading: inset, bottom: MaskinSpace.s3, trailing: inset))
+			.listRowInsets(EdgeInsets(top: vertical, leading: inset, bottom: vertical, trailing: inset))
 	}
 }
 
 /// "You're caught up": the feed is genuinely empty.
 struct CaughtUp: View {
 	var filtered = false
-	/// Under "You're caught up": who is carrying on because of the reader's calls.
-	var detail = "Nothing needs you right now. The flows keep running \u{2014} you\u{2019}ll hear when one does."
+	/// Under "You're caught up": who is carrying on because of the reader's calls. Nil says nothing.
+	var detail: String?
 
 	var body: some View {
 		VStack(spacing: MaskinSpace.s7) {
@@ -676,8 +721,10 @@ struct CaughtUp: View {
 				.accessibilityHidden(true)
 			Text(filtered ? "Nothing of this kind" : "You're caught up")
 				.maskinText(.title).foregroundStyle(MaskinColor.ink)
-			Text(filtered ? "Nothing in your feed matches this filter." : detail)
-			.maskinText(.body).foregroundStyle(MaskinColor.ink4).multilineTextAlignment(.center)
+			if !filtered, let detail {
+				Text(detail)
+					.maskinText(.body).foregroundStyle(MaskinColor.ink4).multilineTextAlignment(.center)
+			}
 		}
 		.frame(maxWidth: .infinity)
 		.padding(MaskinSpace.s12 + MaskinSpace.s4)

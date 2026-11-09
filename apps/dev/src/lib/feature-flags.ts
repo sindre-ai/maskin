@@ -27,21 +27,6 @@
 // first step of introducing a new flag.
 export const FLAGS = {
 	/**
-	 * Google Drive integration visibility on the Settings > Integrations page.
-	 * When off, the provider card + Connect button are filtered out of the
-	 * providers list rendered by `apps/web/src/routes/_authed/$workspaceId/settings/integrations.tsx`
-	 * — the customer sees no google-drive entry point at all. When on, google-drive
-	 * appears alongside every other OAuth provider with a standard Connect button.
-	 * Per-actor behaviour gate, never shared state: the backend still registers the
-	 * provider unconditionally, so `POST /api/integrations/google-drive/connect` and
-	 * the `google_drive__*` MCP tools stay reachable for tester actors (add them to
-	 * `FF_TESTER_ACTOR_IDS` + `google-drive-integration-ui` to `FF_TESTER_FEATURES`).
-	 * See parent bet [Google Drive MCP — cover the Drive-shaped JTBDs across the workspace](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/e5cd108b-ad30-498b-a4ac-e961587389c5)
-	 * for the rollout plan. Retire (drop the boundary + delete this entry) once
-	 * google-drive ships to every workspace.
-	 */
-	GOOGLE_DRIVE_INTEGRATION_UI: 'google-drive-integration-ui',
-	/**
 	 * Gates the weekly capability note that Chief of Staff sends in a person's
 	 * 1-1 (bet
 	 * [Agents look through connected integrations for new things they can do](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/3dae5ff5-7c94-41ee-8687-0023b37994f2)).
@@ -54,23 +39,47 @@ export const FLAGS = {
 	 */
 	AGENT_PROACTIVE_1_1: 'agent-proactive-1-1',
 	/**
-	 * Gates iOS dictation through the backend transcription route (task
-	 * [iOS dictation: send speech to the backend transcription route](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/0a322ceb-338c-4b2d-b796-fcb228d0a7a4)).
-	 * Read by the iPhone app once per launch from GET /api/feature-flags, for the
-	 * signed-in actor. Off means the app dictates with Apple's on-device recogniser
-	 * as before and no audio leaves the phone. On means each phrase is sent to
-	 * POST /transcriptions, and Apple's recogniser takes over if a request fails.
-	 * The route itself is not flagged. Retire once iOS dictation is on for everyone.
+	 * Gates the Daily budget setting in Settings, Billing (bet [A daily token budget,
+	 * spent on the right work first](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/0f3ae096-7efc-4412-aba0-7a21a91ba040),
+	 * slice 1a). UI only: the route layout reads it once and mounts the section
+	 * under the usage banner. Off means Billing looks as it does today. The
+	 * storage and API behind it are additive and safe with the flag off. Retire
+	 * once the daily budget is on for everyone.
 	 */
-	IOS_BACKEND_DICTATION: 'ios-backend-dictation',
+	DAILY_BUDGET: 'daily-budget',
 	/**
-	 * Web chat: images and files on a message sit outside the text bubble (images as their own
-	 * rounded blocks, files as cards), and only the text keeps a bubble. Read once, in
-	 * `apps/web/src/components/chat/message-bubble.tsx`. Off keeps the files inside the bubble as
-	 * before. Visual only, per actor; no data or API change. Retire (drop the old branch and this
-	 * entry) once it is on for everyone.
+	 * Gates the Paste and Copy buttons on the Computer view, which move plain text
+	 * between the person's clipboard and the agent's computer while they are in
+	 * control. Frontend only: read with useFeatureFlag in desktop-viewer. Retire
+	 * once the buttons are on for everyone.
 	 */
-	CHAT_ATTACHMENTS_LIFTED: 'chat-attachments-lifted',
+	COMPUTER_CLIPBOARD: 'computer-clipboard',
+	/**
+	 * Claude connector sign-in. Gates only what a person sees and does: the consent preview
+	 * and approve routes under /api/oauth/authorize answer 403 access_denied for non-testers,
+	 * and the Claude tab and consent page read the same id. Default off (FF_TESTER_FEATURES
+	 * empty). Listing and disconnecting connections is NOT behind this flag: a flag that hides
+	 * the only revoke button is a trap. Discovery, the token endpoint and token acceptance act
+	 * before any person is known and sit behind the MASKIN_MCP_OAUTH_ENABLED switch instead.
+	 * See docs/reference/mcp-oauth.md. Retire when the connector ships to everyone.
+	 */
+	MCP_OAUTH_CONSENT: 'mcp-oauth-consent',
+	/**
+	 * Gates editing a draft's text in place on the web For You card, with Send saving the
+	 * edit and approving the saved text in one step. Frontend only: read with useFeatureFlag
+	 * in draft-preview. Retire once editing is on for everyone.
+	 */
+	FORYOU_DRAFT_EDIT: 'foryou-draft-edit',
+	/**
+	 * Gates the visual layer of agent change review (bet
+	 * [Humans accept, edit or reject an agent's proposed changes to a file instead of re-reading the whole thing](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/a0daec7c-7c63-4898-bfac-a4dfc98a2d23)):
+	 * the proposal banner above a markdown file and the review view that
+	 * replaces the editor. Off means the file viewer is unchanged. The tables,
+	 * endpoints and MCP tool behind it are not gated: nothing in a file changes
+	 * until a non-viewer human accepts. Read once, in
+	 * `EditableMarkdownStage`. Retire once the review is on for everyone.
+	 */
+	AGENT_CHANGE_REVIEW: 'agent-change-review',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

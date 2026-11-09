@@ -55,7 +55,6 @@ import {
 	count as countFn,
 	desc,
 	eq,
-	gte,
 	inArray,
 	isNotNull,
 	isNull,
@@ -65,6 +64,7 @@ import {
 	or,
 	sql,
 } from 'drizzle-orm'
+import type { AnyPgColumn } from 'drizzle-orm/pg-core'
 import { resolveChatIdleCloseMs } from '../config/session-idle'
 import { notHumanPaused, withoutHumanPauseMarker } from '../lib/agent-pause'
 import {
@@ -75,6 +75,7 @@ import {
 } from '../lib/analytics/agent-session-events'
 import { claimLoopActiveDay, trackLoopActiveDay, utcDayString } from '../lib/analytics/loop-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
+import { markApiKeyOutOfCredit } from '../lib/api-key-credit-mark'
 import { evictBillingUsage } from '../lib/billing-usage-cache'
 import {
 	SESSION_OAUTH_EXPIRES_AT_KEY,
@@ -87,11 +88,13 @@ import {
 import { getValidOAuthToken } from '../lib/claude-oauth'
 import { debitCreditForSession } from '../lib/credit-billing'
 import {
+	CREDIT_BALANCE_LOW_BANNER,
 	classifyClaudeAuthFailureText,
 	classifyCreditExhaustion,
 	classifySessionExit,
 	endsInClaudeAuthDeath,
 	isClaudeAuthDeathText,
+	isCreditBalanceLowText,
 } from '../lib/credit-classifier'
 import { readEmptyTurnFallbackModel } from '../lib/empty-turn-fallback'
 import { isEnterprise } from '../lib/enterprise'
@@ -162,6 +165,8 @@ import {
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import { getProvider } from '../lib/integrations/registry'
 import {
+	CredentialResolutionTimeoutError,
+	LLM_ROUTE_API_KEY,
 	LLM_ROUTE_MASKIN_PLAN,
 	LLM_ROUTE_OAUTH,
 	LlmCredentialsUnavailableError,
@@ -178,6 +183,7 @@ import {
 	preflightLlmCredentials,
 	resolveLlmRoute,
 	unreadableKeyError,
+	withCredentialResolutionTimeout,
 } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import {
@@ -559,6 +565,14 @@ function classifyExit(args: {
 	return args.failureReason.reason_code === 'plan_cap_exceeded' ? 'plan_cap' : 'credit_exhaustion'
 }
 
+/**
+ * Matches a chat thread on a column holding a thread root id. A null thread is the main
+ * chat, stored as NULL, so it needs IS NULL: `= NULL` never matches.
+ */
+export function matchThread(column: AnyPgColumn, threadRootId: number | null): SQL {
+	return threadRootId === null ? isNull(column) : eq(column, threadRootId)
+}
+
 export class SessionManager extends EventEmitter {
 	private containers: ContainerManager
 	private agentStorage: AgentStorageManager
@@ -575,16 +589,12 @@ export class SessionManager extends EventEmitter {
 	private lastLogPruneAt = 0
 	private static readonly LOG_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 	private static readonly LOG_PRUNE_INTERVAL_MS = 60 * 60 * 1000
-	private static readonly LOG_PRUNE_SESSIONS_PER_RUN = 200
-	// Once the backlog is drained, how far past the retention cutoff the sweep
-	// looks for sessions that still hold old logs. Steady state only finds
-	// sessions that crossed the cutoff since the last run, so this also covers a
-	// multi-week outage.
-	private static readonly LOG_PRUNE_LOOKBACK_MS = 14 * 24 * 60 * 60 * 1000
-	// False until a sweep finds less than a full batch. Until then the scan is
-	// unbounded so any backlog older than the window still drains; afterwards it
-	// is windowed so it stops walking every already-pruned session.
-	private logPruneBacklogDrained = false
+	// The sweep reads unmarked sessions (sessions.logs_pruned_at IS NULL) oldest first, a slice per
+	// statement, and marks each slice once its old logs are gone. Slices keep every statement short;
+	// the cap keeps one run from working through the whole backlog at once. Before the marker the
+	// sweep re-read every old session on each run (11 to 20 s, 124,646 sessions, 68 with logs).
+	private static readonly LOG_PRUNE_SLICE = 500
+	private static readonly LOG_PRUNE_SLICES_PER_RUN = 20
 	private activeSessions: Map<
 		string,
 		{
@@ -741,6 +751,10 @@ export class SessionManager extends EventEmitter {
 			onTurnFinished: (sessionId, outcome) =>
 				this.emit('turn', { sessionId, phase: 'finished', outcome } satisfies SessionTurnEvent),
 			onHelperResult: (sessionId, outcome) => this.finishHelperSession(sessionId, outcome),
+			// An interactive CLI stays alive after printing a limit banner as its
+			// final error, so no exit settles the row. Same teardown as a helper.
+			onLimitResult: (sessionId, outcome) =>
+				this.finishHelperSession(sessionId, outcome, { retry: false }),
 		})
 	}
 
@@ -830,6 +844,14 @@ export class SessionManager extends EventEmitter {
 		// "resume conversation from scratch" flow).
 		const conversationMessageId =
 			(config.conversation as { message_id?: number } | undefined)?.message_id ?? null
+		// The thread this chat session answers in; null for the main-chat session. Only a chat
+		// session has one, and only a real message id counts.
+		const rawThreadRootId = (config.conversation as { thread_root_id?: unknown } | undefined)
+			?.thread_root_id
+		const threadRootId =
+			conversationId && typeof rawThreadRootId === 'number' && Number.isSafeInteger(rawThreadRootId)
+				? rawThreadRootId
+				: null
 
 		// Pre-flight billing cap. Only enforced when no BYO credentials are
 		// present — BYO routes (OAuth, custom_llm, api_key) take precedence over
@@ -872,6 +894,7 @@ export class SessionManager extends EventEmitter {
 				config,
 				interactive,
 				conversationId,
+				threadRootId,
 				createdBy: params.createdBy,
 				sourceSessionId: params.sourceSessionId,
 				spawnedBySessionId: params.spawnedBySessionId ?? null,
@@ -922,9 +945,10 @@ export class SessionManager extends EventEmitter {
 
 	/**
 	 * Find a currently-usable interactive session for a (conversation, agent)
-	 * pair — i.e. one that can accept a writeInput() call right now. Fast-path
+	 * pair and thread — i.e. one that can accept a writeInput() call right now. A null
+	 * thread is the main chat; a thread root id is that thread's own session. Fast-path
 	 * optimization for the conversation responder; the DB's
-	 * sessions_conversation_actor_active_uniq partial unique index is the
+	 * sessions_conversation_actor_thread_active_uniq partial unique index is the
 	 * authoritative guard against double-spawn, this just avoids an
 	 * unnecessary createSession attempt in the common case. Only matches
 	 * `running` (not `pending`/`starting`) since writeInput needs a live
@@ -933,6 +957,7 @@ export class SessionManager extends EventEmitter {
 	async findActiveConversationSession(
 		conversationId: string,
 		actorId: string,
+		threadRootId: number | null = null,
 	): Promise<typeof sessions.$inferSelect | null> {
 		const [row] = await this.db
 			.select()
@@ -941,6 +966,7 @@ export class SessionManager extends EventEmitter {
 				and(
 					eq(sessions.conversationId, conversationId),
 					eq(sessions.actorId, actorId),
+					matchThread(sessions.threadRootId, threadRootId),
 					eq(sessions.interactive, true),
 					eq(sessions.status, 'running'),
 				),
@@ -958,6 +984,7 @@ export class SessionManager extends EventEmitter {
 	async findConversationSessionAnyActive(
 		conversationId: string,
 		actorId: string,
+		threadRootId: number | null = null,
 	): Promise<typeof sessions.$inferSelect | null> {
 		const [row] = await this.db
 			.select()
@@ -966,6 +993,7 @@ export class SessionManager extends EventEmitter {
 				and(
 					eq(sessions.conversationId, conversationId),
 					eq(sessions.actorId, actorId),
+					matchThread(sessions.threadRootId, threadRootId),
 					eq(sessions.interactive, true),
 					inArray(sessions.status, ['pending', 'starting', 'queued', 'running']),
 				),
@@ -976,7 +1004,9 @@ export class SessionManager extends EventEmitter {
 
 	/**
 	 * Delivers every turn buffered in conversation_pending_turns for this
-	 * session's (conversation, agent) pair — messages that arrived while the
+	 * session's (conversation, agent, thread) — the thread is read from the
+	 * session row (null = main chat), so a session never drains another
+	 * thread's turns. Messages that arrived while the
 	 * session was still booting. Rows are claimed atomically with
 	 * DELETE ... RETURNING so a concurrent drain (post-boot hook racing the
 	 * responder's own re-check) can't double-deliver a turn. A turn whose
@@ -991,6 +1021,7 @@ export class SessionManager extends EventEmitter {
 				interactive: sessions.interactive,
 				conversationId: sessions.conversationId,
 				actorId: sessions.actorId,
+				threadRootId: sessions.threadRootId,
 			})
 			.from(sessions)
 			.where(eq(sessions.id, sessionId))
@@ -1003,6 +1034,7 @@ export class SessionManager extends EventEmitter {
 				and(
 					eq(conversationPendingTurns.conversationId, session.conversationId),
 					eq(conversationPendingTurns.actorId, session.actorId),
+					matchThread(conversationPendingTurns.threadRootId, session.threadRootId),
 				),
 			)
 			.returning()
@@ -1039,6 +1071,7 @@ export class SessionManager extends EventEmitter {
 							conversationId: t.conversationId,
 							actorId: t.actorId,
 							messageId: t.messageId,
+							threadRootId: t.threadRootId,
 							payload: t.payload,
 						})),
 					)
@@ -1907,7 +1940,7 @@ export class SessionManager extends EventEmitter {
 	 * `ContainerManager.stdinStreams` entry, leaving the row orphaned at
 	 * `running`). Also used directly by callers (e.g. the conversation
 	 * responder) that already know from a failed `writeInput` that a session
-	 * is dead, so the row stops blocking `sessions_conversation_actor_active_uniq`
+	 * is dead, so the row stops blocking `sessions_conversation_actor_thread_active_uniq`
 	 * for a fresh session.
 	 */
 	async markSessionFailedAfterContainerLoss(
@@ -2147,12 +2180,33 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
+	 * How many thread sessions (a session with a thread, not the main-chat one) this agent has
+	 * live in this chat, counting those still on their way up.
+	 */
+	async countActiveThreadSessions(conversationId: string, actorId: string): Promise<number> {
+		const [row] = await this.db
+			.select({ count: countFn() })
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.conversationId, conversationId),
+					eq(sessions.actorId, actorId),
+					eq(sessions.interactive, true),
+					isNotNull(sessions.threadRootId),
+					inArray(sessions.status, ['pending', 'starting', 'queued', 'running']),
+				),
+			)
+		return Number(row?.count ?? 0)
+	}
+
+	/**
 	 * Separate aggregate cap for chat sessions (see the isChatSession bypass in
 	 * startSession()) — they don't compete with max_concurrent_sessions, but
 	 * still need a ceiling so a workspace with many active conversations can't
-	 * spawn unbounded concurrent containers.
+	 * spawn unbounded concurrent containers. Public so the conversation responder can
+	 * check it before it starts a thread session, which must fall back instead of queueing.
 	 */
-	private async hasChatCapacity(workspaceId: string): Promise<boolean> {
+	async hasChatCapacity(workspaceId: string): Promise<boolean> {
 		const [workspace] = await this.db
 			.select()
 			.from(workspaces)
@@ -2549,19 +2603,24 @@ ${cont.continues_prompt}
 				}
 			: null
 		try {
-			const resolved = await resolveLlmRoute({
-				db: this.db,
-				workspaceId: session.workspaceId,
-				actorId: session.actorId,
-				wsSettings,
-				enterprise,
-				pinned: pinnedModel,
-				agent: {
-					provider: agent.llmProvider,
-					apiKey: (llmConfig.api_key as string | undefined) ?? null,
-					model: (llmConfig.model as string | undefined)?.trim() || null,
-				},
-			})
+			// Bounded by wall-clock: the fetch timeouts inside resolution cover
+			// sockets only, so a stuck DB step would otherwise leave the row in
+			// `starting` until the 10 minute reaper.
+			const resolved = await withCredentialResolutionTimeout(
+				resolveLlmRoute({
+					db: this.db,
+					workspaceId: session.workspaceId,
+					actorId: session.actorId,
+					wsSettings,
+					enterprise,
+					pinned: pinnedModel,
+					agent: {
+						provider: agent.llmProvider,
+						apiKey: (llmConfig.api_key as string | undefined) ?? null,
+						model: (llmConfig.model as string | undefined)?.trim() || null,
+					},
+				}),
+			)
 			if (resolved) {
 				routeTaken = resolved.route
 				oauthSlotTaken = resolved.oauthSlot
@@ -2571,6 +2630,15 @@ ${cont.continues_prompt}
 				Object.assign(envVars, resolved.envVars)
 			}
 		} catch (err) {
+			if (err instanceof CredentialResolutionTimeoutError) {
+				logger.error('Launch credential resolution timed out', {
+					sessionId: session.id,
+					workspaceId: session.workspaceId,
+					actorId: session.actorId,
+					step: 'resolveLlmRoute',
+					timeoutMs: err.timeoutMs,
+				})
+			}
 			if (err instanceof PlanCapExceededError) {
 				logger.warn('Maskin plan cap exceeded', {
 					sessionId: session.id,
@@ -4051,6 +4119,22 @@ ${cont.continues_prompt}
 		return null
 	}
 
+	/**
+	 * A session on the workspace Anthropic API key that ended on "Credit balance
+	 * is too low" marks that key out of credit, so the route picker leaves it
+	 * alone for a while (lib/api-key-credit-mark.ts). Other routes and other
+	 * failures are none of its business.
+	 */
+	private async markApiKeyOutOfCreditOnExit(
+		session: typeof sessions.$inferSelect,
+		failureReason: { verbatim_output: string | null } | null,
+	): Promise<void> {
+		const config = ((session.config as Record<string, unknown>) ?? {}) as Record<string, unknown>
+		if (config.llm_route !== LLM_ROUTE_API_KEY) return
+		if (!isCreditBalanceLowText(failureReason?.verbatim_output ?? '')) return
+		await markApiKeyOutOfCredit({ db: this.db, workspaceId: session.workspaceId })
+	}
+
 	private async maybeRetryClaudeOAuthOnNextSlot(params: {
 		session: typeof sessions.$inferSelect
 		failureReason: { provider: string; reason_code: string } | null
@@ -4325,6 +4409,7 @@ ${cont.continues_prompt}
 		}
 
 		if (status === 'failed' && !userStopped) {
+			await this.markApiKeyOutOfCreditOnExit(session, failureReason)
 			await this.maybeRetryClaudeOAuthOnNextSlot({ session, failureReason, stdoutTail }).catch(
 				(err) =>
 					logger.warn('Failed to retry Claude OAuth session on backup', {
@@ -4859,6 +4944,30 @@ ${cont.continues_prompt}
 	}
 
 	/**
+	 * True when this session has spoken in its conversation and every one of
+	 * those messages is a turn that failed with "Credit balance is too low" (the
+	 * turn finalizer tags them). Such a chat never did any work, so closing it as
+	 * `completed` makes a dead key look like a quiet session. One real reply, by
+	 * the final-output path or by the chat tool, is enough to keep it completed.
+	 */
+	private async onlyCreditErrorTurns(session: typeof sessions.$inferSelect): Promise<boolean> {
+		const [counts] = await this.db
+			.select({
+				total: sql<number>`count(*)::int`,
+				creditFailed: sql<number>`(count(*) FILTER (WHERE (${messages.metadata}->'final_output'->>'credit_balance_low') = 'true'))::int`,
+			})
+			.from(messages)
+			.where(
+				and(
+					eq(messages.sessionId, session.id),
+					eq(messages.actorId, session.actorId),
+					eq(messages.kind, 'message'),
+				),
+			)
+		return (counts?.total ?? 0) > 0 && counts?.total === counts?.creditFailed
+	}
+
+	/**
 	 * Gracefully closes an idle interactive conversation session as
 	 * `completed`. The row is CAS-flipped to terminal BEFORE the container
 	 * teardown, so the local exit watcher (`handleCompletion`) and a remote
@@ -4881,14 +4990,33 @@ ${cont.continues_prompt}
 		// stopSandbox into its post-commit callbacks per §3.1 (folded from
 		// what used to be a mid-function inline `pushAgentFiles` at :3552 and
 		// a per-host `client.stopSession` / `containers.stop` branch below).
+		//
+		// A chat whose every turn failed on a dead key ends as failed, with the
+		// reason the agents page shows, instead of passing as a quiet session.
+		const creditFailure = (await this.onlyCreditErrorTurns(session))
+			? classifyCreditExhaustion(CREDIT_BALANCE_LOW_BANNER, { includeAmbiguousSignals: false })
+			: null
 		const settled = await settleSession(
 			session.id,
-			{
-				kind: 'complete',
-				classification: 'agent_completed',
-				source: 'idle-watcher',
-				resultText: 'Conversation went idle — session closed',
-			},
+			creditFailure
+				? {
+						kind: 'fail',
+						classification: classifyExit({
+							userStopped: false,
+							status: 'failed',
+							failureReason: creditFailure,
+						}),
+						reason: creditFailure.human_message,
+						resultText: 'Every turn failed with a credit error — session closed',
+						failureReason: creditFailure,
+						source: 'idle-watcher',
+					}
+				: {
+						kind: 'complete',
+						classification: 'agent_completed',
+						source: 'idle-watcher',
+						resultText: 'Conversation went idle — session closed',
+					},
 			this.buildSettleDeps(),
 		)
 		if (settled.alreadySettled) return
@@ -4930,16 +5058,21 @@ ${cont.continues_prompt}
 
 		this.telemetry.recordSessionEnded({
 			sessionId: session.id,
-			endReason: 'completed',
+			endReason: creditFailure ? 'failed' : 'completed',
 			durationMs: elapsedMs(session.startedAt, session.createdAt),
 			agentServerUrl: LOCAL_RUNTIME_BUCKET,
 			contextObjectId: session.initiatedFromObjectId,
 		})
 
-		// Prefix must stay 'Session completed' — the SSE /logs/stream endpoint
-		// matches it to emit its `done` event (TERMINAL_SYSTEM_LOGS in
-		// routes/sessions.ts).
-		await this.insertSystemLog(session.id, 'Session completed — conversation idle').catch((err) =>
+		// The prefix must stay 'Session completed' or 'Session failed' — the SSE
+		// /logs/stream endpoint matches it to emit its `done` event
+		// (TERMINAL_SYSTEM_LOGS in routes/sessions.ts).
+		await this.insertSystemLog(
+			session.id,
+			creditFailure
+				? 'Session failed — every turn hit a credit error'
+				: 'Session completed — conversation idle',
+		).catch((err) =>
 			logger.warn('Failed to write idle chat close system log', {
 				sessionId: session.id,
 				error: String(err),
@@ -4963,10 +5096,15 @@ ${cont.continues_prompt}
 	 * Settled through settleSession like any other end, so the row reads
 	 * completed (or failed), `notify_on_complete` still sends the result back to
 	 * the agent that started it, and `wait: true` callers see it finish.
+	 *
+	 * `retry: false` keeps the failure reason but sets no retry time. A chat that
+	 * ends on a limit uses it: rerunning an idle chat at the reset is a product
+	 * call nobody has made, so only helper and cron sessions are retried.
 	 */
 	async finishHelperSession(
 		sessionId: string,
 		outcome: { isError: boolean; text: string },
+		options: { retry?: boolean } = {},
 	): Promise<void> {
 		const [session] = await this.db
 			.select()
@@ -5004,7 +5142,7 @@ ${cont.continues_prompt}
 						reason: outcome.text.slice(0, 300) || 'The helper ended its turn with an error',
 						resultText: outcome.text,
 						failureReason: limitReason ?? undefined,
-						retryAt: scheduledRetryAt ?? undefined,
+						retryAt: options.retry === false ? undefined : (scheduledRetryAt ?? undefined),
 						// Same settle source the idle close uses: the remote stop endpoint
 						// validates it against a fixed list, and this is a close-out of an
 						// idle interactive session.
@@ -5953,6 +6091,11 @@ ${cont.continues_prompt}
 			const skillsAttached =
 				typeof staging?.manifest_skills === 'number' ? staging.manifest_skills : undefined
 			const skillsStaged = typeof staging?.staged === 'number' ? staging.staged : undefined
+			// The row may predate settle (no completedAt yet), so fall back to now.
+			const startedAt = session.startedAt ?? session.createdAt
+			const durationMs = startedAt
+				? Math.max(0, (session.completedAt ?? new Date()).getTime() - startedAt.getTime())
+				: undefined
 			await trackAgentSessionCompletedWithSkills({
 				workspaceId: session.workspaceId,
 				sessionId: session.id,
@@ -5965,6 +6108,7 @@ ${cont.continues_prompt}
 					modelSource: typeof config.llm_model_source === 'string' ? config.llm_model_source : null,
 					route: typeof config.llm_route === 'string' ? config.llm_route : null,
 				},
+				durationMs,
 			})
 		} catch (err) {
 			// Never propagate — completion path must not be blocked by analytics.
@@ -6546,6 +6690,7 @@ ${cont.continues_prompt}
 		}
 
 		if (status === 'failed' && !userStopped) {
+			await this.markApiKeyOutOfCreditOnExit(updated, failureReason)
 			await this.maybeRetryClaudeOAuthOnNextSlot({
 				session: updated,
 				failureReason,
@@ -6695,6 +6840,13 @@ ${cont.continues_prompt}
 	 * first means each delete is an index scan on
 	 * `session_logs_session_idx (session_id, created_at)` with a bounded blast
 	 * radius, and interactive sessions never enter the candidate set at all.
+	 *
+	 * Each session is marked (`logs_pruned_at`) once its old logs are gone, and
+	 * the candidate query reads only unmarked sessions, in short slices. Without
+	 * the mark the query re-read every old session on every run: 11 to 20 s on
+	 * production (5 Nov), where about 124,000 old sessions were walked to find
+	 * the 68 that still held logs. A session that completed before the cutoff
+	 * gets no new logs, so a mark does not go stale.
 	 */
 	private async pruneSessionLogs(): Promise<void> {
 		const now = Date.now()
@@ -6702,49 +6854,63 @@ ${cont.continues_prompt}
 		this.lastLogPruneAt = now
 
 		const cutoff = new Date(now - SessionManager.LOG_RETENTION_MS)
-		// Once the backlog is drained, only look at sessions that completed inside
-		// [cutoff - lookback, cutoff). Without a lower bound the scan starts at the
-		// oldest completed session and walks every already-pruned one (an EXISTS
-		// probe each) before it reaches any work — the whole table, every hour. The
-		// window keeps the range scan on sessions_prune_candidates_idx to the few
-		// days that can still hold logs. The first sweep after boot is unbounded so
-		// a backlog older than the window is never stranded.
-		const floor = new Date(cutoff.getTime() - SessionManager.LOG_PRUNE_LOOKBACK_MS)
-		// The EXISTS probe keeps already-pruned sessions inside the window from
-		// being selected again.
-		const candidates = await this.db
-			.select({ id: sessions.id })
-			.from(sessions)
-			.where(
-				and(
-					eq(sessions.interactive, false),
-					isNotNull(sessions.completedAt),
-					lt(sessions.completedAt, cutoff),
-					this.logPruneBacklogDrained ? gte(sessions.completedAt, floor) : undefined,
-					// Interpolate the ISO string, not the Date: inside a raw `sql`
-					// template there is no column to infer the type mapping from,
-					// so a Date object reaches the driver unmapped and throws.
-					sql`EXISTS (SELECT 1 FROM session_logs WHERE session_logs.session_id = sessions.id AND session_logs.created_at < ${cutoff.toISOString()}::timestamptz)`,
-				),
-			)
-			.limit(SessionManager.LOG_PRUNE_SESSIONS_PER_RUN)
-
-		if (candidates.length < SessionManager.LOG_PRUNE_SESSIONS_PER_RUN) {
-			this.logPruneBacklogDrained = true
-		}
-		if (candidates.length === 0) return
-
+		let checked = 0
+		let pruned = 0
 		let deleted = 0
-		for (const candidate of candidates) {
-			const rows = await this.db
-				.delete(sessionLogs)
-				.where(and(eq(sessionLogs.sessionId, candidate.id), lt(sessionLogs.createdAt, cutoff)))
-				.returning({ id: sessionLogs.id })
-			deleted += rows.length
+		for (let slices = 0; slices < SessionManager.LOG_PRUNE_SLICES_PER_RUN; slices++) {
+			// A range scan on sessions_logs_unpruned_idx, which holds only the sessions this
+			// predicate selects.
+			const slice = await this.db
+				.select({ id: sessions.id })
+				.from(sessions)
+				.where(
+					and(
+						eq(sessions.interactive, false),
+						isNotNull(sessions.completedAt),
+						isNull(sessions.logsPrunedAt),
+						lt(sessions.completedAt, cutoff),
+					),
+				)
+				.orderBy(asc(sessions.completedAt))
+				.limit(SessionManager.LOG_PRUNE_SLICE)
+			if (slice.length === 0) break
+			const sliceIds = slice.map((row) => row.id)
+
+			// Of this slice, the sessions that still hold logs past the cutoff. Interpolate the ISO
+			// string, not the Date: inside a raw `sql` template there is no column to infer the
+			// type mapping from, so a Date object reaches the driver unmapped and throws.
+			const holding = await this.db
+				.select({ id: sessions.id })
+				.from(sessions)
+				.where(
+					and(
+						inArray(sessions.id, sliceIds),
+						sql`EXISTS (SELECT 1 FROM session_logs WHERE session_logs.session_id = sessions.id AND session_logs.created_at < ${cutoff.toISOString()}::timestamptz)`,
+					),
+				)
+			for (const row of holding) {
+				const rows = await this.db
+					.delete(sessionLogs)
+					.where(and(eq(sessionLogs.sessionId, row.id), lt(sessionLogs.createdAt, cutoff)))
+					.returning({ id: sessionLogs.id })
+				deleted += rows.length
+			}
+
+			// Mark the whole slice, sessions that had no old logs included: that is what keeps the
+			// next run from reading them again. A session whose delete threw above is not marked
+			// (the error leaves this loop) and is picked up again next run.
+			await this.db
+				.update(sessions)
+				.set({ logsPrunedAt: new Date(now) })
+				.where(inArray(sessions.id, sliceIds))
+			checked += sliceIds.length
+			pruned += holding.length
+			if (slice.length < SessionManager.LOG_PRUNE_SLICE) break
 		}
 
+		if (checked === 0) return
 		logger.info(
-			`Pruned ${deleted} session log rows across ${candidates.length} completed non-interactive sessions`,
+			`Pruned ${deleted} session log rows across ${pruned} of ${checked} completed non-interactive sessions checked`,
 		)
 	}
 

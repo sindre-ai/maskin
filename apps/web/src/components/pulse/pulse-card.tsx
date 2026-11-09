@@ -96,7 +96,7 @@ export function resolveActions(
 		case 'recommendation':
 			return [
 				{
-					label: hasObject ? 'View object' : 'View objects',
+					label: hasObject ? 'View item' : 'View items',
 					response: 'view_object',
 					navigate: { to: hasObject ? 'object' : 'objects' },
 				},
@@ -359,7 +359,7 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 							className="inline-flex items-center gap-1 text-primary hover:underline"
 						>
 							<ExternalLink className="h-3 w-3" />
-							Linked object
+							Linked item
 						</Link>
 					</>
 				)}

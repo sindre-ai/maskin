@@ -191,6 +191,46 @@ struct MaskinComposerSnapshotTests {
 		}
 	}
 
+	@Test("the + menu with every row fits above the bar on the smallest supported iPhone")
+	func attachMenuFits() throws {
+		let renderer = ImageRenderer(content: ComposerAttachMenu(actions: ComposerAttachAction.allCases, onPick: { _ in }))
+		renderer.scale = 2
+		let image = try #require(renderer.cgImage)
+		let height = CGFloat(image.height) / renderer.scale
+		// iPhone SE (667pt) with the keyboard down: minus status bar, navigation bar, the composer bar,
+		// the home indicator and the 8pt gap between the menu and the bar.
+		let visible: CGFloat = 667 - 20 - 44 - 56 - 34 - MaskinSpace.s4
+		#expect(height <= visible, "all six rows must sit inside the visible area, got \(height)pt of \(visible)pt")
+	}
+
+	@Test("the + menu card ends 8pt above the bar for every row count and cap")
+	func attachMenuSitsAboveBar() {
+		let barTop: CGFloat = 0
+		for rows in 1...ComposerAttachAction.allCases.count {
+			for cap in [CGFloat.infinity, 300, 150] {
+				let height = min(ComposerAttachMenu.contentHeight(rows: rows), cap)
+				// Overlaid at the bar's top-leading corner, the card's top is the offset and its bottom is that plus its height.
+				let cardTop = barTop + ComposerAttachMenu.offsetY(height: height)
+				let cardBottom = cardTop + height
+				#expect(cardBottom == barTop - MaskinSpace.s4, "\(rows) rows, cap \(cap): bottom \(cardBottom)")
+				#expect(cardTop < barTop, "the card must start above the bar, so the + stays uncovered")
+			}
+		}
+	}
+
+	@Test("the + menu caps its height and scrolls when the room above the bar is short")
+	func attachMenuCapped() throws {
+		let all = ComposerAttachAction.allCases
+		let full = ComposerAttachMenu.contentHeight(rows: all.count)
+		let cap: CGFloat = 200
+		#expect(full > cap, "the cap must bite for this test to mean anything")
+		let renderer = ImageRenderer(content: ComposerAttachMenu(actions: all, maxHeight: cap, onPick: { _ in }))
+		renderer.scale = 2
+		let image = try #require(renderer.cgImage)
+		#expect(CGFloat(image.height) / renderer.scale <= cap, "a capped card must not outgrow its cap")
+		#expect(ComposerAttachMenu.contentHeight(rows: 0) == 0)
+	}
+
 	@Test("the old ChatComposer wrapper still renders every voice state", arguments: [false, true])
 	func wrapper(dark: Bool) async throws {
 		let typed = await model("what changed since Friday and what is blocked")

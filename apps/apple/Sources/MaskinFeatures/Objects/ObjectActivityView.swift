@@ -22,17 +22,42 @@ struct ObjectActivityView: View {
 	/// Pins "now" for snapshots; the live page uses the clock.
 	var now: Date = Date()
 
+	@State private var filter: ActivityFilter = .all
+	@State private var retrying = false
+
+	private var loadState: ActivityLoadState {
+		.of(
+			fetched: store.hasFetched, revalidateFailed: store.freshness.lastRevalidateFailed,
+			hasItems: !store.timeline.isEmpty, retrying: retrying)
+	}
+
 	var body: some View {
-		let days = ActivityGrouping.days(store.timeline.filter(include), now: now)
+		let days = ActivityGrouping.days(filter.apply(to: store.timeline.filter(include)), now: now)
+		let dividers = filter == .all
+			? ActivityPhases.dividers(
+				newestFirst: days.flatMap { $0.entries.map(\.id) },
+				statuses: ActivityPhases.statuses(of: store.timeline))
+			: [:]
 		VStack(alignment: .leading, spacing: 0) {
+			ActivityFilterChips(selected: $filter)
+				.padding(.bottom, MaskinSpace.s3)
 			if days.isEmpty {
-				if store.hasFetched {
-					Text("No activity yet. Start the conversation below.")
+				switch loadState {
+				case .failed:
+					ActivityLoadFailed {
+						retrying = true
+						Task {
+							await store.refresh()
+							retrying = false
+						}
+					}
+				case .loading:
+					LoadingSkeleton(rows: 3)
+				case .ready:
+					Text(filter == .all ? "No activity yet. Start the conversation below." : "Nothing under \(filter.title) yet.")
 						.maskinText(.subhead)
 						.foregroundStyle(MaskinColor.ink4)
 						.padding(.top, MaskinSpace.s5)
-				} else {
-					LoadingSkeleton(rows: 2)
 				}
 			}
 			ForEach(days) { day in
@@ -46,6 +71,9 @@ struct ObjectActivityView: View {
 				ForEach(day.entries) { entry in
 					ActivityEntryView(store: store, entry: entry, onOpenObject: onOpenObject, onReply: onReply)
 						.id(entry.id)
+					if let status = dividers[entry.id] {
+						PhaseDivider(label: MaskinStatus.sentenceLabel(for: status))
+					}
 				}
 			}
 			if !days.isEmpty, onReply != nil {
@@ -56,6 +84,83 @@ struct ObjectActivityView: View {
 					.padding(.top, MaskinSpace.s9)
 			}
 		}
+		.accessibilityElement(children: .contain)
+	}
+}
+
+/// "—— REVIEW ——": where the object entered a status, between the entries before and after.
+struct PhaseDivider: View {
+	let label: String
+
+	var body: some View {
+		HStack(spacing: MaskinSpace.s5) {
+			rule
+			Text(label.uppercased())
+				.font(MaskinTypeface.sans(MaskinFontSize.t12, weight: .bold, relativeTo: .caption))
+				.tracking(MaskinSpace.s1)
+				.foregroundStyle(MaskinColor.ink5)
+			rule
+		}
+		.padding(.vertical, MaskinSpace.s5)
+		.accessibilityElement(children: .ignore)
+		.accessibilityLabel("\(label) phase")
+	}
+
+	private var rule: some View {
+		Rectangle().fill(MaskinSurface.separator).frame(height: MaskinSpace.s1 / 2)
+	}
+}
+
+/// All · Comments · Updates: a quiet pill row above the timeline; the chosen one is soft-filled.
+struct ActivityFilterChips: View {
+	@Binding var selected: ActivityFilter
+
+	var body: some View {
+		HStack(spacing: MaskinSpace.s3) {
+			ForEach(ActivityFilter.allCases) { option in
+				let active = option == selected
+				Button {
+					MaskinHaptics.play(.selection)
+					selected = option
+				} label: {
+					Text(option.title)
+						.maskinText(.subhead)
+						.fontWeight(active ? .bold : .semibold)
+						.foregroundStyle(active ? MaskinColor.ink : MaskinColor.ink4)
+						.padding(.horizontal, MaskinSpace.s7)
+						.frame(height: MaskinSpace.s14)
+						.background(active ? MaskinSurface.fill : Color.clear, in: Capsule())
+						.frame(minHeight: MaskinSpace.touchMin)
+						.contentShape(Rectangle())
+				}
+				.buttonStyle(.maskinPressed(.shrink))
+				.accessibilityAddTraits(active ? .isSelected : [])
+			}
+			Spacer(minLength: 0)
+		}
+		.accessibilityElement(children: .contain)
+		.accessibilityLabel("Filter activity")
+	}
+}
+
+/// "Activity did not load" with a way back, in place of the skeleton when the first fetch failed.
+struct ActivityLoadFailed: View {
+	let retry: () -> Void
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+			Text("Activity did not load").maskinText(.body).fontWeight(.semibold)
+				.foregroundStyle(MaskinColor.ink)
+			Text("Your connection dropped. Nothing was lost.")
+				.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+			Button("Try again", action: retry)
+				.maskinText(.subhead).fontWeight(.semibold)
+				.foregroundStyle(MaskinColor.sigInk)
+				.frame(minHeight: MaskinSpace.touchMin, alignment: .leading)
+		}
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.padding(MaskinSpace.s9)
+		.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
 		.accessibilityElement(children: .contain)
 	}
 }
@@ -104,6 +209,15 @@ struct ActivityEntryView: View {
 				item: entry.item, name: store.authorName(for: entry.item), isAgent: store.isAgent(entry.item),
 				mentionable: Array(store.directory.actors.values), references: store.references(for: entry.item),
 				files: store.attachments(for: entry.item), openObject: onOpenObject,
+				tasks: entry.item.taskIds.map { id in (id: id, state: store.taskStates[id] ?? nil) },
+				decision: entry.item.decision,
+				decisionAnswer: entry.item.decision?.answer(in: entry.replies.compactMap { reply in
+					if case .comment(let text) = reply.item.kind { return text } else { return nil }
+				}),
+				onAnswer: { label in
+					guard let parent = entry.item.eventId else { return }
+					Task { await store.postComment(label, parentEventId: parent) }
+				},
 				retry: { Task { await store.retryComment(entry.item.id) } },
 				discard: { store.discardComment(entry.item.id) },
 				time: entry.timeLabel)
@@ -184,6 +298,12 @@ struct TimelineRow: View {
 	/// Files attached to the comment, as cards under it.
 	var files: [FileSummary] = []
 	var openObject: ((String) -> Void)?
+	/// Tasks the comment lists; `state` is nil while loading or when the task is gone.
+	var tasks: [(id: String, state: ObjectDetailStore.TaskState?)] = []
+	var decision: CommentDecision?
+	/// The option already taken, by a reply.
+	var decisionAnswer: String?
+	var onAnswer: (String) -> Void = { _ in }
 	var retry: () -> Void = {}
 	var discard: () -> Void = {}
 	/// Clock time, only when the comment is from today.
@@ -210,6 +330,8 @@ struct TimelineRow: View {
 					}
 					.frame(minHeight: MaskinSpace.s11)
 					bubble(text)
+					if !tasks.isEmpty { CommentTaskList(tasks: tasks, open: openObject) }
+					if let decision { CommentDecisionCard(decision: decision, answer: decisionAnswer, onAnswer: onAnswer) }
 					if !files.isEmpty {
 						ChipFlow { ForEach(files) { AttachedFileChip(file: $0) } }
 					}

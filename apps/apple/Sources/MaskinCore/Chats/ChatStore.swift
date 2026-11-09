@@ -80,6 +80,12 @@ public final class ChatStore {
 	/// while it is still hidden at the bottom have not been read.
 	public var countsSeen = false
 	@ObservationIgnored private var seenTask: Task<Void, Never>?
+	/// A failed read mark tries again until the server confirms it: the bottom is reached once, so
+	/// nothing else would ask for it again and the chat would stay unread.
+	@ObservationIgnored private var readRetryTask: Task<Void, Never>?
+	@ObservationIgnored private var readRetryAttempt = 0
+	/// First wait before a failed read mark is retried; doubles each time, up to 30 seconds.
+	@ObservationIgnored var readRetryDelay: Duration = .seconds(2)
 	/// Told after the server accepted a read cursor, so the list's unread badge clears too.
 	@ObservationIgnored public var onMarkedRead: (@MainActor (String, Int) -> Void)?
 	/// The agents' step-by-step trace (live and per finished turn). Nil: threads show only the
@@ -567,6 +573,8 @@ public final class ChatStore {
 	public func stop() {
 		seenTask?.cancel()
 		seenTask = nil
+		readRetryTask?.cancel()
+		readRetryTask = nil
 		listener?.cancel()
 		listener = nil
 		queueListener?.cancel()
@@ -1063,10 +1071,26 @@ public final class ChatStore {
 				detail?.unreadCount = 0
 				onMarkedRead?(conversationID, last)
 			}
+			readRetryAttempt = 0
 			// The saved thread must carry the new cursor, or the next open shows NEW over read messages.
 			writeCache()
 		} catch {
 			readSent = previous
+			scheduleReadRetry()
+		}
+	}
+
+	/// Ask again after a pause. One retry is pending at a time; it stops on its own once the thread
+	/// is no longer active or the cursor has caught up (`markReadIfNeeded` then does nothing).
+	private func scheduleReadRetry() {
+		guard readRetryTask == nil else { return }
+		let delay = min(readRetryDelay * (1 << min(readRetryAttempt, 4)), .seconds(30))
+		readRetryAttempt += 1
+		readRetryTask = Task { [weak self] in
+			try? await Task.sleep(for: delay)
+			if Task.isCancelled { return }
+			self?.readRetryTask = nil
+			await self?.markReadIfNeeded()
 		}
 	}
 
@@ -1261,7 +1285,7 @@ public final class ChatStore {
 		return (rows, clears)
 	}
 
-	static func message(_ error: Error) -> String {
+	public static func message(_ error: Error) -> String {
 		if let http = error as? ChatsHTTPError { return http.message }
 		return (error as? ChatsError)?.message ?? error.localizedDescription
 	}

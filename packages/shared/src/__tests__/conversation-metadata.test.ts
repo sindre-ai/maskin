@@ -33,6 +33,15 @@ describe('stripServerOwnedMetadata', () => {
 		expect(stripped).toEqual({ mentions: [SESSION_ID] })
 	})
 
+	it('removes card_resolved so a client cannot mark a card as answered by someone else', () => {
+		const stripped = stripServerOwnedMetadata({
+			mentions: [SESSION_ID],
+			card_resolved: { at: '2026-11-08T09:38:00.000Z', by_actor_id: SESSION_ID, outcome: 'done' },
+		})
+
+		expect(stripped).toEqual({ mentions: [SESSION_ID] })
+	})
+
 	it('still removes the markers it already owned', () => {
 		const stripped = stripServerOwnedMetadata({
 			source: 'final_output',

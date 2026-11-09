@@ -76,15 +76,16 @@ export async function returnToSender(
 }
 
 /**
- * Tell a sender about helpers that failed while it was still busy.
+ * Tell a sender about helpers that ended while it was still busy.
  *
  * A helper that ends while its sender is mid-run has its return skipped as
  * `sender_live`, so a sender that never stopped to wait would carry on without
- * knowing the helper died. Called when the sender itself finishes: every helper of
- * it that failed or timed out under that skip gets its one-shot claim back and is
- * returned now, waking the sender for a follow-up run. A person's own stop is not
- * reported, and neither are completed helpers (their result is not lost work the
- * sender must hear about; a sender that wanted it used wait or notify_on_complete).
+ * knowing the helper ended. Called when the sender itself finishes: every helper of
+ * it that completed, failed or timed out under that skip gets its one-shot claim
+ * back and is returned now, waking the sender for a follow-up run. Completed
+ * helpers are included because create_session promises their result comes back and
+ * the caller can no longer opt in or out (notify_on_complete is not a parameter).
+ * A person's own stop is not reported.
  *
  * Never throws: the caller is on a session's terminal path.
  */
@@ -106,7 +107,7 @@ export async function returnDeferredHelpers(
 			.where(
 				and(
 					eq(sessions.spawnedBySessionId, senderSessionId),
-					inArray(sessions.status, ['failed', 'timeout']),
+					inArray(sessions.status, ['completed', 'failed', 'timeout']),
 					isNotNull(sessions.helperReturnedAt),
 					sql`exists (
 						select 1 from events
@@ -128,9 +129,18 @@ export async function returnDeferredHelpers(
 			if (classify(helper.status, helper.result) === 'user_stopped') continue
 			// The claim is given back only while the skip is the last word, so a helper
 			// already returned later is not reported twice.
+			// A completed helper is returned the way a flagged one is, so the sender gets
+			// the helper's final message and not just a pointer to its logs.
 			const [reset] = await db
 				.update(sessions)
-				.set({ helperReturnedAt: null })
+				.set({
+					helperReturnedAt: null,
+					...(helper.status === 'completed'
+						? {
+								config: sql`coalesce(${sessions.config}, '{}'::jsonb) || '{"notify_on_complete": true}'::jsonb`,
+							}
+						: {}),
+				})
 				.where(and(eq(sessions.id, helper.id), isNotNull(sessions.helperReturnedAt)))
 				.returning({ id: sessions.id })
 			if (!reset) continue

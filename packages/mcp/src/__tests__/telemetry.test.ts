@@ -171,6 +171,7 @@ describe('MCP telemetry wrapper', () => {
 			'connect_integration',
 			'disconnect_integration',
 			'gmail_send_email',
+			'resend_send_email',
 			'stop_session',
 			'pause_session',
 			'resume_session',
@@ -506,6 +507,69 @@ describe('recordToolCallResponseSize — shape fields', () => {
 			args: { query: 'Acquire the Nakatomi account' },
 		})
 		expect(JSON.stringify(event)).not.toContain('Nakatomi')
+	})
+})
+
+describe('recordToolCall: list-family fields', () => {
+	const TARGET = { apiBaseUrl: 'http://localhost:3000', apiKey: 'ank_testkey', workspaceId: wsId }
+
+	async function record(tool_name: string, args?: unknown) {
+		vi.resetModules()
+		const mod = await import('../telemetry')
+		const events: TelemetryEvent[] = []
+		mod.recordToolCall((e) => events.push(e), TARGET, {
+			tool_name,
+			has_rich_render: false,
+			duration_ms: 1,
+			args,
+		})
+		return events[0] as Extract<TelemetryEvent, { event_type: 'tool_call' }>
+	}
+
+	it('writes the object type and a false cursor flag for each list-family tool', async () => {
+		expect(await record('list_objects', { type: 'bet' })).toMatchObject({
+			object_type: 'bet',
+			has_cursor: false,
+		})
+		expect(await record('search_objects', { type: 'insight', q: 'x' })).toMatchObject({
+			object_type: 'insight',
+			has_cursor: false,
+		})
+		expect(await record('list_triggers', {})).toMatchObject({
+			object_type: 'trigger',
+			has_cursor: false,
+		})
+		expect(await record('list_loops', {})).toMatchObject({ object_type: 'loop', has_cursor: false })
+		expect(await record('list_workspace_skills', {})).toMatchObject({
+			object_type: 'skill',
+			has_cursor: false,
+		})
+		expect(await record('list_extensions', {})).toMatchObject({
+			object_type: 'extension',
+			has_cursor: false,
+		})
+	})
+
+	it('records the cursor flag as true for a cursor and for an offset', async () => {
+		expect((await record('list_objects', { type: 'task', cursor: 'abc' })).has_cursor).toBe(true)
+		expect((await record('search_objects', { type: 'task', q: 'x', offset: 25 })).has_cursor).toBe(
+			true,
+		)
+	})
+
+	it('records a custom type as other and never stores the cursor or the type text', async () => {
+		const event = await record('list_objects', { type: 'acme_deal', cursor: 'secret-cursor-value' })
+		expect(event.object_type).toBe('other')
+		expect(event.has_cursor).toBe(true)
+		const json = JSON.stringify(event)
+		expect(json).not.toContain('acme_deal')
+		expect(json).not.toContain('secret-cursor-value')
+	})
+
+	it('leaves both fields off for any other tool', async () => {
+		const event = await record('get_objects', { type: 'bet', cursor: 'abc' })
+		expect(event.object_type).toBeUndefined()
+		expect(event.has_cursor).toBeUndefined()
 	})
 })
 

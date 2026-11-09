@@ -1,3 +1,4 @@
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -8,8 +9,10 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from '@/components/ui/select'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useIntegrations } from '@/hooks/use-integrations'
 import type { CustomMcpServerSpec } from '@/lib/api'
+import { PILL_BUTTON } from '@/lib/pill-button'
 import { useWorkspace } from '@/lib/workspace-context'
 import { byoApiKeyEnvName, byoLoginEnvNames } from '@maskin/shared'
 import { Plus, Trash2 } from 'lucide-react'
@@ -82,6 +85,7 @@ export function ToolServerForm({
 	onSave: (name: string, server: CustomMcpServerSpec) => void
 	onCancel: () => void
 }) {
+	const canWrite = useCanWrite()
 	const [name, setName] = useState(initialName)
 	const [transport, setTransport] = useState<'stdio' | 'http'>(
 		initialServer?.url ? 'http' : 'stdio',
@@ -94,7 +98,8 @@ export function ToolServerForm({
 	const [url, setUrl] = useState(initialServer?.url ?? '')
 	const [headerPairs, setHeaderPairs] = useState<Pair[]>(toPairs(initialServer?.headers))
 
-	const canSave = !!name.trim() && (transport === 'stdio' ? !!command.trim() : !!url.trim())
+	const canSave =
+		canWrite && !!name.trim() && (transport === 'stdio' ? !!command.trim() : !!url.trim())
 
 	const handleSave = () => {
 		if (!canSave) return
@@ -114,7 +119,7 @@ export function ToolServerForm({
 	}
 
 	return (
-		<div className="space-y-2 rounded-lg border border-border bg-card p-4">
+		<div className="space-y-3 rounded-xl border border-border bg-card p-4">
 			<div className="flex flex-wrap gap-2">
 				<div className="min-w-0 flex-1 basis-40">
 					<Label htmlFor="tool-server-name">Name</Label>
@@ -191,12 +196,25 @@ export function ToolServerForm({
 			{error && <p className="text-xs text-error">{error}</p>}
 
 			<div className="flex justify-end gap-2 pt-1">
-				<Button size="sm" variant="ghost" onClick={onCancel} disabled={saving}>
+				<Button
+					size="sm"
+					variant="ghost"
+					className={PILL_BUTTON}
+					onClick={onCancel}
+					disabled={saving}
+				>
 					Cancel
 				</Button>
-				<Button size="sm" onClick={handleSave} disabled={!canSave || saving}>
-					Save
-				</Button>
+				<ViewerTooltip>
+					<Button
+						size="sm"
+						className={PILL_BUTTON}
+						onClick={handleSave}
+						disabled={!canSave || saving}
+					>
+						Save
+					</Button>
+				</ViewerTooltip>
 			</div>
 		</div>
 	)

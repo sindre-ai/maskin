@@ -2,24 +2,60 @@
 title: MCP tools
 slug: mcp-tools
 description: The MCP tool surface — which tools exist, what they return, and when to reach for each.
-last_updated: 2026-07-09
+last_updated: 2026-11-02
 ---
 
 # MCP tools
 
 Stub — content pending. See parent bet.
 
+## Workspace skills: id or name
+
+`get_workspace_skill`, `update_workspace_skill` and `delete_workspace_skill` take the skill in their `name` argument, and that value can be either the skill's id (as listed by `list_workspace_skills`) or its name. The argument key stays `name`.
+
+- A lowercase UUID-shaped value is tried as an id first. If no skill in the workspace has that id, it is tried as a name, so a skill that happens to be named like a UUID is still reachable.
+- Any other value is tried as an exact name. There is no trimming, fuzzy matching or case-insensitive matching.
+- Both lookups are scoped to the workspace in the call, so an id from another workspace is "not found".
+- An unknown value returns 404 NOT_FOUND: `No skill with id or name '<value>' in this workspace. Call list_workspace_skills for valid ids and names.`
+- Updates and deletes by name write to the resolved row's id, so they touch exactly one skill.
+
+The lookup lives in the API route (`apps/dev/src/routes/workspace-skills.ts`) on top of `resolveByIdOrName` (`apps/dev/src/lib/resolve-by-id-or-name.ts`), so the web app and direct API callers get the same rule. `attach_skill_ids` and `detach_skill_ids` stay id-only.
+
+## list_objects: list and search in one call
+
+**list_objects** is the one tool for listing and searching objects. It takes everything it took before, plus these parameters (wave 2 of the list contract):
+
+- **q**: search text, matched against title and content. When set, the walk is ranked by match quality and **sort** defaults to **relevance**. Ranked walks page with the same **cursor** as plain ones.
+- **status**: one status, or a list meaning "any of these", for example ["todo", "in_progress"].
+- **sort**: **created_at_desc** (default without **q**), **created_at_asc**, **updated_at_desc**, **updated_at_asc**, or **relevance** (default with **q**; an error without **q**). With **q** the ranking decides the order and the column only fixes what the walk's snapshot freezes.
+- **detail**: **full** (default, today's rows exactly) or **concise** (id, type, title, status, driver, updatedAt and url, no content).
+- **updated_before**: now also works together with **q**.
+- **workspace_id**: optional. Left out, the call runs in the caller's default workspace.
+
+Unchanged: **type**, **driver**, **updated_after**, **limit** (default 25, max 100), **cursor**, **metadata_eq** and **include_archived**. The page block carries **limit**, **returned**, **has_more** and **total**; **total** is null when **q** is set, because the search route sends no count. Keep the same filters and **q** while following **next_cursor**.
+
+**search_objects** is now a listed alias of **list_objects** (see below). New calls should use **list_objects** with **q**.
+
 ## Deprecated tool names
 
 A tool that was removed from the surface can stay callable as a listed alias: a real entry in the tool list whose one line description says "Deprecated, use X", and whose handler maps its arguments onto the tool it points to. Listed, not hidden, because a model can only call tools it sees. Each one costs roughly 60 to 100 tokens in every tool list, so at most 10 are kept (see **packages/mcp/src/tool-aliases.ts**).
 
-Today there is one: **run_agent**, an alias of **create_session** with **wait** on.
+Today there are two:
+
+- **run_agent**, an alias of **create_session** with **wait** on (details below).
+- **search_objects**, an alias of **list_objects**. It maps **query** to **q**, **driver_id** to **driver** and **offset** to the ranked walk's offset, and passes everything else through, **cursor** included, so a caller can follow **next_cursor** or **page.offset**. Its output is the **list_objects** output, with **page.offset** kept for older callers. Reason: one query tool with one paging style, so agents stop retrying across two tools. Earliest removal: 2027-02-01, and only after a clean stored-prompt sweep (see the ledger entry in **packages/mcp/src/removal-ledger.ts**).
+
+For **run_agent**:
 
 - **actor_id**, **action_prompt** and **spawned_by_message_id** carry over unchanged. **workspace_id** is filled from the connection default when it is missing.
 - **notify_on_complete** is accepted and ignored: **create_session** no longer takes it and registers the same fallback itself when the wait times out.
 - **config**, **poll_interval_seconds**, **timeout_seconds** and **depends_on_session_ids** have no equivalent and are dropped. Their names are recorded in the **alias_use** event.
 
 Removal is a decision with a sweep date, never a zero count alone. Earliest for **run_agent**: late January 2027.
+
+### Rollback for the list contract
+
+**MASKIN_MCP_LIST_CONTRACT** is an environment variable read when the server starts. Setting it to **off** (also **0**, **false**, **no**, **disabled**) brings back the old **list_objects** and **search_objects**, tool list included. Infra & DevOps changes it and restarts the server; it is not an instant flip. It is set in Coolify on the application "Zero-Downtime Maskin" (the API process serves **/mcp**), as a runtime-only variable, then the application is restarted. Allow up to 10 minutes from the request to the old tools being live: the last 50 production deploys of that application took 81 seconds at the shortest, 263 at the median and 490 at the slowest, and a restart does not rebuild the image. To undo the rollback, delete the variable and restart again.
 
 ## Old-name telemetry (alias_use)
 
@@ -47,3 +83,31 @@ FROM mcp_telemetry;
 ```
 
 Safe to remove when **alias_uses_since_clock** is 0, **tool_calls_since_clock** is above 0 and **test_call_rows** is 1. No workspace filter: read every workspace.
+
+## Tool description length
+
+No registered tool description is over 1,500 characters; **packages/mcp/src/__tests__/description-length.test.ts** fails if one is. The first sentence of each description says what the tool does and when to use it, because tool search matches on it. Keep the rules that stop a wrong call in the description; put walkthroughs here or on the parameter descriptions.
+
+**get_actor** is the one exception until the 6 Nov 2026 misfire read (it is on the test's exemption list); shorten it after that read.
+
+### create_actor: first steps and integrations
+
+- Pass **first_steps** with 2 to 3 steps specific to the job the agent was made for, written as things the person can say to the agent.
+- Use action **send** only for a step that reads and reports (a tap sends it as written, so **prompt** must equal **label**). Use **fill** for everything else: a step that needs words only the person can supply, or that writes, sends, spends or deletes.
+- Pass **needed_integrations** for the tools the agent cannot do the job without.
+- A new agent is always a member (never admin or owner). Setting **tools** or **llm_config** needs a human admin or owner caller; a member or agent caller gets a 403 and nothing is created.
+
+### gmail_send_email: the two approval routes
+
+1. Preferred: save the email as an object (**metadata.kind** email, **to**, **subject**, optional **cc**, text as **content**), mention the person with create_comment, and call the tool with only **object_id** once they approve. Any edit withdraws the approval. See [drafts.md](./drafts.md).
+2. Older: a comment with a **decision** whose **draft** holds the email (real address in **to**, first line "Subject: ...", then the body), with exactly one destructive send option. After the person picks it, call the tool with only **approval_comment_id**. For several emails on one card use **decision.drafts** and pass each message's **draft_id**.
+
+Never pass **to**, **subject** or **body**. If the answer says the outcome is unknown, do not send again; check the Sent folder.
+
+### create_loop: steps, status and closing
+
+A step and a trigger are the same thing: **steps** authors new triggers inline, **trigger_ids** attaches existing ones, and both land in the loop's step list. The response nests each step's resolved agent under it. Pick agents by role and system prompt (list_actors, list_triggers); create a specialised agent rather than reuse a mismatched one. **driver_id** is required: the agent accountable for the loop, one whose job covers the outcome, preferably the owner of the main target. A human, an unknown actor or a paused agent is refused before anything is created; update_loop can change it but never clear it. **status** runs draft, pilot, supervised, live and can be paused from any point (pausing disables every referenced trigger); **archived** is terminal. A loop is closed when one step is a feedback step. See [loops.md](./loops.md).
+
+### request_keychain_credential: where the secret lands
+
+The user types the value into the card and it goes to the encrypted vault; the agent never sees a login. An API key reaches the restarted agent as **KEYCHAIN_BYO_APIKEY_NAME** (name in capitals, other characters as underscores). A login is typed on the agent's computer with desktop_type using **{{keychain:Name.username}}** and **{{keychain:Name.password}}**.

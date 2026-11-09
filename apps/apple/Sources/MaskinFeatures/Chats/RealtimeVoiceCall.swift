@@ -26,15 +26,25 @@ protocol RealtimeTransport: AnyObject {
 	func setMicEnabled(_ enabled: Bool)
 	func restartIce()
 	func close()
+	/// The microphone hint for the offer, read once the audio session is set up (so after
+	/// `makeOffer`). Nil sends none.
+	var noiseReduction: VoiceNoiseReduction? { get }
+	/// Start writing the call's audio levels into `meter` until `close()`.
+	func startMetering(into meter: CallLevelMeter)
+}
+
+extension RealtimeTransport {
+	var noiseReduction: VoiceNoiseReduction? { nil }
+	func startMetering(into meter: CallLevelMeter) {}
 }
 
 /// A live voice call with one agent over the OpenAI Realtime API, through the Maskin server: the
 /// server holds the vendor key and the tools, this app only sends microphone audio and plays the
 /// agent's. The same flow as the web app's `use-voice-call.ts`.
 ///
-/// When the server says voice calls aren't available to this person (the `voice-mode-v1` flag is
-/// off) or WebRTC isn't built in, it calls `onFallBack` once and does nothing else, so the caller can
-/// use the dictation call instead.
+/// When the server says it can't take this call (the agent isn't in the workspace) or WebRTC isn't
+/// built in, it calls `onFallBack` once and does nothing else, so the caller can use the dictation
+/// call instead.
 @MainActor
 @Observable
 final class RealtimeVoiceCall: LiveVoiceDriving {
@@ -47,6 +57,10 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 	private(set) var machine = RealtimeCallMachine()
 	private(set) var failure: String?
 	private(set) var isMuted = false
+	/// False until the call is up, and again while it is being recovered: the orb breathes meanwhile.
+	private(set) var isConnected = false
+	/// The live audio levels, read by the call orb every frame. Not observed on purpose.
+	@ObservationIgnored let meter = CallLevelMeter()
 
 	var phase: LiveVoicePhase { machine.phase }
 	var transcript: String { machine.heardText }
@@ -66,6 +80,7 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 	@ObservationIgnored private let now: @MainActor () -> Date
 	@ObservationIgnored private let reconnectWindow: Duration
 	@ObservationIgnored private let recoveryDelays: [Duration]
+	@ObservationIgnored private let chime: (any CallChimePlaying)?
 
 	@ObservationIgnored private var transport: (any RealtimeTransport)?
 	@ObservationIgnored private var voiceSessionID: String?
@@ -73,6 +88,8 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 	@ObservationIgnored private var startTask: Task<Void, Never>?
 	@ObservationIgnored private var reconnectTask: Task<Void, Never>?
 	@ObservationIgnored private var restartedIce = false
+	/// The ready chime plays once per call (per transport), the first time it connects.
+	@ObservationIgnored private var chimed = false
 	/// A call that was lost and whose hangup may not have reached the server, which would keep the
 	/// person's one live-call slot taken and make the next call a 409.
 	@ObservationIgnored private var lostSession: (id: String, input: Int, output: Int)?
@@ -90,8 +107,10 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 		makeTransport: @escaping @MainActor () -> (any RealtimeTransport)?,
 		now: @escaping @MainActor () -> Date = { Date() },
 		reconnectWindow: Duration = RealtimeVoiceCall.reconnectWindow,
-		recoveryDelays: [Duration] = RealtimeVoiceCall.recoveryDelays
+		recoveryDelays: [Duration] = RealtimeVoiceCall.recoveryDelays,
+		chime: (any CallChimePlaying)? = nil
 	) {
+		self.chime = chime
 		self.agentID = agentID
 		self.agentName = agentName
 		self.conversationID = conversationID
@@ -176,6 +195,7 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 			return true
 		}
 		self.transport = transport
+		chimed = false
 		do {
 			let id = try await calls.create(agentActorID: agentID, conversationID: conversationID)
 			voiceSessionID = id
@@ -195,9 +215,11 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 				release(reason: .userHangup)
 				return true
 			}
-			let answer = try await calls.offer(voiceSessionID: id, sdp: sdp)
+			let answer = try await calls.offer(
+				voiceSessionID: id, sdp: sdp, noiseReduction: transport.noiseReduction)
 			machine.toolsAvailable = answer.toolsAvailable
 			try await transport.accept(answer: answer.sdp)
+			transport.startMetering(into: meter)
 			transport.setMicEnabled(!isMuted)
 			return true
 		} catch RealtimeTransportError.microphoneDenied {
@@ -274,10 +296,17 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 		guard isActive else { return }
 		switch state {
 		case .connected:
+			isConnected = true
+			// The call is up and the person speaks first: say so softly, once.
+			if !chimed {
+				chimed = true
+				chime?.play()
+			}
 			reconnectTask?.cancel()
 			reconnectTask = nil
 			restartedIce = false
 		case .disconnected, .failed:
+			isConnected = false
 			// One ICE restart per drop, then the call gets a window to recover before it is ended.
 			if state == .failed, !restartedIce {
 				restartedIce = true
@@ -343,6 +372,8 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 		let input = machine.inputSeconds(at: date)
 		let output = machine.outputSeconds(at: date)
 		machine.connectionEnded(at: date)
+		isConnected = false
+		meter.reset()
 		transport?.close()
 		transport = nil
 		guard let id else { return }

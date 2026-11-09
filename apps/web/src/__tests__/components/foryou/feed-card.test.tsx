@@ -364,7 +364,47 @@ ${tail}`,
 		await waitFor(() =>
 			expect(mockUseEntityEvents).toHaveBeenLastCalledWith('ws-1', 'task-1', { enabled: true }),
 		)
-		expect(screen.getByText('On this object')).toBeInTheDocument()
+		expect(screen.getByText('On this item')).toBeInTheDocument()
+	})
+})
+
+describe('FeedCard — card with no object', () => {
+	function buildObjectlessItem(): UnreadItem {
+		return {
+			entity_type: 'notification',
+			entity_id: 'n-1',
+			unread_count: 1,
+			mentioning_unread_count: 1,
+			max_unread_attention: null,
+			latest_event_id: null,
+			latest_activity_at: new Date(Date.now() - 5 * 3_600_000).toISOString(),
+			curated: {
+				headline: 'Yesterday: 38 runs, $3.20.',
+				rationale: 'Today: ░░░░░░░░░░ $0.00 of $10.00 so far.',
+			},
+		}
+	}
+
+	it('shows the headline and body with nothing to open or reply to', () => {
+		renderCard({ item: buildObjectlessItem() })
+		expect(screen.getByText('Yesterday: 38 runs, $3.20.')).toBeInTheDocument()
+		expect(screen.getByText(/Today: .* \$0\.00 of \$10\.00 so far\./)).toBeInTheDocument()
+		expect(screen.queryByTestId('comment-input')).not.toBeInTheDocument()
+		expect(screen.queryByRole('link')).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /Show timeline history/ })).not.toBeInTheDocument()
+	})
+
+	it('can be dismissed', async () => {
+		const user = userEvent.setup()
+		const { props } = renderCard({ item: buildObjectlessItem() })
+		await user.click(screen.getByRole('button', { name: 'Mark as read' }))
+		expect(props.onMarkRead).toHaveBeenCalledTimes(1)
+	})
+
+	it('still gives a card tied to an object its link and composer', () => {
+		renderCard()
+		expect(screen.getByTestId('comment-input')).toBeInTheDocument()
+		expect(screen.getByRole('link')).toBeInTheDocument()
 	})
 })
 
@@ -415,8 +455,8 @@ describe('FeedCard — mention author vs object driver', () => {
 
 	it('attributes the expanded meta line to the mention author, not the object driver', () => {
 		renderCard({ item: magnusDriven })
-		expect(screen.getByText(/from Code Reviewer/)).toBeInTheDocument()
-		expect(screen.queryByText(/from Magnus/)).not.toBeInTheDocument()
+		expect(screen.getByText(/Code Reviewer ·/)).toBeInTheDocument()
+		expect(screen.queryByText(/Magnus ·/)).not.toBeInTheDocument()
 	})
 
 	it('threads the receipt back to the mention author, not the object driver', () => {

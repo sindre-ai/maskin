@@ -4,8 +4,9 @@ import MaskinUI
 import SwiftUI
 
 /// New conversation (spec 7 §6b): a To card with chips and an inline field that filters people
-/// and agents by name and role, N MATCHES / SUGGESTED rows with a 32pt +, the group note, starter
-/// chips above the shared composer, and a draft that survives closing the sheet. The Chief of
+/// and agents by name and role, N MATCHES / SUGGESTED rows with a 32pt +, starter chips above the
+/// shared composer, and a draft that survives closing the sheet. The keyboard stays open: picking a
+/// recipient moves focus to the message field, removing a chip moves it back to To. The Chief of
 /// Staff is on the line to begin with; more than one recipient makes a group chat.
 struct NewChatSheet: View {
 	let store: ConversationsStore
@@ -141,7 +142,7 @@ struct NewChatSheet: View {
 	}
 }
 
-/// The sheet's scrolling content: title, the To card, the group note, and the people rows.
+/// The sheet's scrolling content: title, the To card and the people rows.
 /// Separate from the sheet so it renders in a snapshot without the scroll view.
 struct NewConversationForm: View {
 	let store: ConversationsStore
@@ -153,6 +154,8 @@ struct NewConversationForm: View {
 	/// The last chip, after one Backspace on an empty field; a second Backspace removes it.
 	@Binding var highlightedChip: String?
 	var toFocused: FocusState<Bool>.Binding
+	/// Called after a recipient is picked: the message field takes the keyboard.
+	var onRecipientPicked: () -> Void = {}
 
 	static func recipients(_ ids: [String], store: ConversationsStore, initialRecipient: ChatParticipant?) -> [ChatParticipant] {
 		ids.compactMap { id in
@@ -180,14 +183,6 @@ struct NewConversationForm: View {
 				.foregroundStyle(MaskinColor.ink4)
 				.padding(.top, MaskinSpace.s3)
 			toCard.padding(.top, MaskinSpace.s9)
-			if let note = NewConversationCopy.groupNote(recipientCount: recipients.count) {
-				Text(note)
-					.font(MaskinTypeface.sans(MaskinFontSize.t13, relativeTo: .footnote))
-					.foregroundStyle(MaskinColor.ink5)
-					.fixedSize(horizontal: false, vertical: true)
-					.padding(.top, MaskinSpace.s4)
-					.padding(.horizontal, MaskinSpace.s2)
-			}
 			if let error { FormError(error).padding(.top, MaskinSpace.s7) }
 			// The list only exists while To has focus, so no person row sits under the message box.
 			if toFocused.wrappedValue {
@@ -311,13 +306,16 @@ struct NewConversationForm: View {
 		withAnimation(MaskinMotion.quick) { draft.toggle(id) }
 		query = ""
 		highlightedChip = nil
-		toFocused.wrappedValue = true
+		toFocused.wrappedValue = false
+		onRecipientPicked()
 	}
 
 	private func remove(_ id: String) {
 		MaskinHaptics.play(.selection)
 		withAnimation(MaskinMotion.quick) { draft.remove(id) }
 		highlightedChip = nil
+		// The chip is gone: the next thing to do is name someone else, so To takes the keyboard.
+		toFocused.wrappedValue = true
 	}
 
 	/// Return adds the top match, like a mail client's To field.

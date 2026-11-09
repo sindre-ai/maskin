@@ -177,6 +177,8 @@ describe('LoopVersionPusher', () => {
 			// resolveWorkspaceActor(): a system actor is a member of the workspace —
 			// resolved unconditionally now, since the audit event always needs an actorId.
 			[{ id: 'system-actor' }],
+			// transaction start: the install row, locked and re-read for its version
+			[{ installedVersion: '1.0.0' }],
 		]
 
 		const pusher = new LoopVersionPusher(db, createMockAgentStorage(), 60_000)
@@ -262,6 +264,8 @@ describe('LoopVersionPusher', () => {
 			[],
 			// resolveWorkspaceActor(): a system actor is a member of the workspace.
 			[{ id: 'system-actor' }],
+			// transaction start: the install row, locked and re-read for its version
+			[{ installedVersion: '1.0.0' }],
 		]
 		// Inserts fire in order: actor, workspace_members (binds the actor), trigger,
 		// then the audit event.

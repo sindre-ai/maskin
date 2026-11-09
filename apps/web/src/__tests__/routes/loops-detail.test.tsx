@@ -1,8 +1,8 @@
 import type { LoopSummary } from '@/lib/api'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type React from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildLoopSummary } from '../factories'
 
 const mockNavigate = vi.fn()
@@ -38,6 +38,9 @@ vi.mock('@/hooks/use-actors', () => ({
 }))
 
 const mockUseTriggers = vi.fn()
+vi.mock('@/hooks/use-notifications', () => ({
+	useNotifications: () => ({ data: [] }),
+}))
 vi.mock('@/hooks/use-triggers', () => ({
 	useTriggers: () => mockUseTriggers(),
 }))
@@ -48,20 +51,25 @@ vi.mock('@/hooks/use-relationships', () => ({
 }))
 
 const mockDeleteObject = vi.fn()
+const mockUseObject = vi.fn()
 vi.mock('@/hooks/use-objects', () => ({
-	useObject: () => ({ data: undefined }),
+	useObject: () => mockUseObject(),
 	useObjects: () => ({ data: [] }),
 	useUpdateObject: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
 	useDeleteObject: () => ({ mutate: mockDeleteObject, isPending: false }),
 }))
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({ workspaceId: 'ws-1', workspace: { settings: {} } }),
 }))
 
 const trackAskBannerDecideClicked = vi.fn()
+const trackLoopViewed = vi.fn()
 vi.mock('@/lib/analytics', () => ({
 	trackAskBannerDecideClicked: (payload: unknown) => trackAskBannerDecideClicked(payload),
+	trackLoopViewed: (payload: unknown) => trackLoopViewed(payload),
 }))
 
 // Layout + heavy child components are irrelevant to the AskBanner wiring
@@ -80,6 +88,24 @@ vi.mock('@/components/loops/loop-first-run-banner', () => ({
 }))
 vi.mock('@/components/loops/loop-utterance-input', () => ({
 	LoopUtteranceInput: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
+}))
+vi.mock('@/components/loops/loop-detail-tabs', () => ({
+	// The real strip folds tabs under "More" by measured width, which jsdom cannot measure.
+	LoopDetailTabs: ({
+		tabs,
+		onChange,
+	}: {
+		tabs: { value: string; label: string }[]
+		onChange: (value: string) => void
+	}) => (
+		<div>
+			{tabs.map((t) => (
+				<button key={t.value} type="button" onClick={() => onChange(t.value)}>
+					{t.label}
+				</button>
+			))}
+		</div>
+	),
 }))
 vi.mock('@/components/loops/loop-stats', () => ({
 	LoopStats: () => null,
@@ -123,6 +149,7 @@ beforeEach(() => {
 	mockUseTriggers.mockReturnValue({ data: [] })
 	mockUseActors.mockReturnValue({ data: [] })
 	mockUseRelationships.mockReturnValue({ data: [] })
+	mockUseObject.mockReturnValue({ data: undefined })
 })
 
 describe('LoopDetailRoute — AskBanner wiring', () => {
@@ -159,6 +186,17 @@ describe('LoopDetailRoute — AskBanner wiring', () => {
 	})
 })
 
+describe('LoopDetailRoute — loop_viewed', () => {
+	it('sends loop_viewed once with the loop id when the page opens', () => {
+		mockUseLoops.mockReturnValue({ data: [buildLoopSummary({ id: 'loop-1' })] })
+		const { rerender } = render(<LoopDetailRoute />)
+		rerender(<LoopDetailRoute />)
+
+		expect(trackLoopViewed).toHaveBeenCalledOnce()
+		expect(trackLoopViewed).toHaveBeenCalledWith({ entity_id: 'loop-1' })
+	})
+})
+
 describe('LoopDetailRoute — delete affordance', () => {
 	beforeEach(() => {
 		mockUseLoops.mockReturnValue({
@@ -170,14 +208,14 @@ describe('LoopDetailRoute — delete affordance', () => {
 		await user.click(screen.getByRole('button', { name: 'More' }))
 	}
 
-	it('opens an inline confirm when Delete loop is selected', async () => {
+	it('opens an inline confirm when Delete flow is selected', async () => {
 		const user = userEvent.setup()
 		render(<LoopDetailRoute />)
 
 		await openMenu(user)
-		await user.click(screen.getByRole('menuitem', { name: /Delete loop/i }))
+		await user.click(screen.getByRole('menuitem', { name: /Delete flow/i }))
 
-		expect(screen.getByText(/Delete this loop\?/i)).toBeInTheDocument()
+		expect(screen.getByText(/Delete this flow\?/i)).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Confirm' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument()
 		expect(mockDeleteObject).not.toHaveBeenCalled()
@@ -191,7 +229,7 @@ describe('LoopDetailRoute — delete affordance', () => {
 		render(<LoopDetailRoute />)
 
 		await openMenu(user)
-		await user.click(screen.getByRole('menuitem', { name: /Delete loop/i }))
+		await user.click(screen.getByRole('menuitem', { name: /Delete flow/i }))
 		await user.click(screen.getByRole('button', { name: 'Confirm' }))
 
 		expect(mockDeleteObject).toHaveBeenCalledWith('loop-1', expect.any(Object))
@@ -206,11 +244,82 @@ describe('LoopDetailRoute — delete affordance', () => {
 		render(<LoopDetailRoute />)
 
 		await openMenu(user)
-		await user.click(screen.getByRole('menuitem', { name: /Delete loop/i }))
+		await user.click(screen.getByRole('menuitem', { name: /Delete flow/i }))
 		await user.click(screen.getByRole('button', { name: 'Cancel' }))
 
-		expect(screen.queryByText(/Delete this loop\?/i)).not.toBeInTheDocument()
+		expect(screen.queryByText(/Delete this flow\?/i)).not.toBeInTheDocument()
 		expect(mockDeleteObject).not.toHaveBeenCalled()
 		expect(mockNavigate).not.toHaveBeenCalled()
+	})
+})
+
+describe('LoopDetailRoute — slow or failing calls', () => {
+	const refetch = vi.fn()
+
+	beforeEach(() => {
+		mockUseLoops.mockReturnValue({
+			data: [buildLoopSummary({ id: 'loop-1', name: 'Deal pipeline' })],
+		})
+		mockUseObject.mockReturnValue({ data: { id: 'loop-1', metadata: {} } })
+	})
+
+	afterEach(() => {
+		vi.useRealTimers()
+	})
+
+	it('shows nothing extra when every call answers', () => {
+		render(<LoopDetailRoute />)
+
+		expect(screen.queryByTestId('loop-block-error')).not.toBeInTheDocument()
+	})
+
+	it('shows a message with Try again for the steps when their calls fail, and the rest stays', async () => {
+		const user = userEvent.setup()
+		mockUseTriggers.mockReturnValue({ data: undefined, isError: true, refetch })
+		render(<LoopDetailRoute />)
+
+		expect(screen.getAllByTestId('loop-block-error')).toHaveLength(1)
+		expect(screen.getByText(/Couldn't load the steps of this flow/)).toBeInTheDocument()
+		expect(screen.queryByText(/recent activity/)).not.toBeInTheDocument()
+
+		await user.click(screen.getByRole('button', { name: 'Try again' }))
+		expect(refetch).toHaveBeenCalledTimes(1)
+	})
+
+	it('shows a message for the activity when its call fails', async () => {
+		const user = userEvent.setup()
+		mockUseLoopActivity.mockReturnValue({ data: undefined, isError: true, refetch })
+		render(<LoopDetailRoute />)
+
+		await user.click(screen.getByRole('button', { name: 'Activity' }))
+		expect(screen.getByText(/Couldn't load the flow's recent activity/)).toBeInTheDocument()
+		expect(screen.queryByText(/Couldn't load the steps/)).not.toBeInTheDocument()
+
+		await user.click(screen.getByRole('button', { name: 'Try again' }))
+		expect(refetch).toHaveBeenCalledTimes(1)
+	})
+
+	it('shows a message for the description when the loop object fails', () => {
+		mockUseObject.mockReturnValue({ data: undefined, isError: true, refetch })
+		render(<LoopDetailRoute />)
+
+		expect(screen.getByText(/Couldn't load the description/)).toBeInTheDocument()
+	})
+
+	it('gives up on a call that is still waiting after 30 seconds', () => {
+		vi.useFakeTimers()
+		mockUseActors.mockReturnValue({ data: undefined, isLoading: true, refetch })
+		render(<LoopDetailRoute />)
+
+		act(() => {
+			vi.advanceTimersByTime(29_000)
+		})
+		expect(screen.queryByTestId('loop-block-error')).not.toBeInTheDocument()
+
+		act(() => {
+			vi.advanceTimersByTime(1_000)
+		})
+		expect(screen.getByText(/Couldn't load the steps of this flow/)).toBeInTheDocument()
+		expect(screen.getByText(/The server may be busy/)).toBeInTheDocument()
 	})
 })

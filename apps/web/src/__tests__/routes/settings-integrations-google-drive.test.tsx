@@ -16,7 +16,6 @@ const mockDisconnect = vi.fn()
 const mockNavigate = vi.fn()
 const mockSearch = vi.fn<() => { oauth?: string }>(() => ({}))
 const connectState = { isPending: false, isError: false }
-const mockFlag = vi.fn<() => boolean>(() => true)
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
@@ -30,12 +29,10 @@ vi.mock('@tanstack/react-router', async () => {
 	}
 })
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
-}))
-
-vi.mock('@/hooks/use-feature-flag', () => ({
-	useFeatureFlag: () => mockFlag(),
 }))
 
 vi.mock('@/hooks/use-integrations', () => ({
@@ -107,22 +104,10 @@ function setRows(rows: ReturnType<typeof buildIntegrationResponse>[]) {
 describe('Google Drive detail page', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
-		mockFlag.mockReturnValue(true)
 		mockSearch.mockReturnValue({})
 		mockDriveWatches.mockReturnValue({ data: [], isLoading: false, isError: false })
 		connectState.isPending = false
 		connectState.isError = false
-	})
-
-	it('renders nothing Drive-related when the flag is off', () => {
-		mockFlag.mockReturnValue(false)
-		setRows([googleRow('priya@acme.test', 'actor-priya')])
-		render(<DriveDetailPage />)
-		expect(screen.getByText('Google Drive is not available yet')).toBeInTheDocument()
-		expect(screen.queryByTestId('drive-detail')).not.toBeInTheDocument()
-		expect(mockUseIntegrations).not.toHaveBeenCalled()
-		expect(mockDriveWatches).not.toHaveBeenCalled()
-		expect(screen.queryByTestId('folder-watches')).not.toBeInTheDocument()
 	})
 
 	it('shows a skeleton while the integrations load', () => {
@@ -239,16 +224,6 @@ describe('Google Drive detail page', () => {
 
 			expect(screen.queryByTestId('drive-cancelled-alert')).not.toBeInTheDocument()
 		})
-
-		it('flag off: the param is not read and nothing renders', () => {
-			mockFlag.mockReturnValue(false)
-			setRows(scopeAddRows())
-			mockSearch.mockReturnValue({ oauth: 'cancelled' })
-			render(<DriveDetailPage />)
-
-			expect(screen.queryByTestId('drive-cancelled-alert')).not.toBeInTheDocument()
-			expect(mockNavigate).not.toHaveBeenCalled()
-		})
 	})
 
 	describe('connect wizard', () => {
@@ -341,15 +316,6 @@ describe('Google Drive detail page', () => {
 
 			expect(screen.queryByTestId('drive-connect-wizard')).not.toBeInTheDocument()
 			expect(screen.getByTestId('drive-first-call')).toBeInTheDocument()
-		})
-
-		it('flag off: neither the wizard nor the first-call state is reachable', () => {
-			mockFlag.mockReturnValue(false)
-			noGoogleRows()
-			render(<DriveDetailPage />)
-
-			expect(screen.queryByTestId('drive-connect-wizard')).not.toBeInTheDocument()
-			expect(screen.queryByTestId('drive-first-call')).not.toBeInTheDocument()
 		})
 	})
 
@@ -448,7 +414,6 @@ describe('Google Drive detail page', () => {
 describe('Google Drive detail page, disconnect flow', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
-		mockFlag.mockReturnValue(true)
 	})
 
 	const kaiRows = () => [
@@ -457,14 +422,6 @@ describe('Google Drive detail page, disconnect flow', () => {
 		googleRow('kai@acme.test', 'actor-kai', 'google-meet'),
 		driveRow('kai@acme.test', { actorId: 'actor-kai', config: { first_tool_call_at: STAMP } }),
 	]
-
-	it('flag off: the page is unreachable, so is the modal', () => {
-		mockFlag.mockReturnValue(false)
-		setRows(kaiRows())
-		render(<DriveDetailPage />)
-		expect(screen.queryByRole('button', { name: 'Disconnect Drive' })).not.toBeInTheDocument()
-		expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-	})
 
 	it('only a human with a Drive row gets a Disconnect Drive action', () => {
 		setRows([googleRow('priya@acme.test', 'actor-priya'), ...kaiRows()])

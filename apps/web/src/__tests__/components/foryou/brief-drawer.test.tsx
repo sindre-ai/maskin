@@ -268,7 +268,7 @@ describe('BriefDrawer', () => {
 
 		await waitFor(() =>
 			expect(createConversationMutateAsync).toHaveBeenCalledWith({
-				title: 'Workspace Coach',
+				title: 'Turn this into a task',
 				participant_actor_ids: ['agent-1'],
 				initial_message: 'Turn this into a task',
 			}),

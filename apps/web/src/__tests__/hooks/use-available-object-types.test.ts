@@ -15,6 +15,7 @@ function createWrapper(settings: Record<string, unknown>) {
 			billingOwnerId: 'actor-1',
 			role: 'owner',
 			isDefault: false,
+			isTeam: false,
 			memberCount: 1,
 			createdBy: 'actor-1',
 			createdAt: null,

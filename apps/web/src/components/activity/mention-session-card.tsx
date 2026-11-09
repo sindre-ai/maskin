@@ -4,7 +4,9 @@ import {
 	isSessionIdleAwaitingInput,
 } from '@/components/agents/session-log-transcript'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { useActor } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useSessionLogs, useStopSession } from '@/hooks/use-sessions'
 import type { SessionLogResponse, SessionResponse } from '@/lib/api'
 import { type ChatEvent, parseChatLine } from '@/lib/chat-stream'
@@ -73,6 +75,7 @@ function ActiveCard({
 	const { data: actor } = useActor(session.actorId)
 	const { data: logs } = useSessionLogs(session.id, workspaceId, true, { live: true })
 	const stopMutation = useStopSession(workspaceId)
+	const canWrite = useCanWrite()
 
 	const idle = useMemo(() => isSessionIdleAwaitingInput(logs ?? []), [logs])
 	const preview = useMemo(() => getLatestActivityPreview(logs ?? []), [logs])
@@ -83,7 +86,7 @@ function ActiveCard({
 		: `${actor?.name ?? 'Agent'} is working`
 
 	return (
-		<div className="rounded-md border border-border bg-secondary/30 animate-in fade-in slide-in-from-bottom-1 duration-200">
+		<div className="rounded-lg border border-border bg-card animate-in fade-in slide-in-from-bottom-1 duration-200">
 			{/* Header — pulsing indicator renders from mount without waiting for logs */}
 			<div className="flex items-center gap-2 px-3 py-2">
 				<span className={cn('shrink-0', idle ? 'text-muted-foreground' : 'text-primary')}>
@@ -95,23 +98,25 @@ function ActiveCard({
 					<span className="text-sm text-muted-foreground truncate min-w-0 flex-1">{preview}</span>
 				)}
 				<div className="ml-auto shrink-0 flex items-center gap-0.5">
-					<button
-						type="button"
-						onClick={(e) => {
-							e.stopPropagation()
-							stopMutation.mutate(session.id)
-						}}
-						disabled={stopMutation.isPending}
-						className="rounded p-1 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-50"
-						aria-label="Stop session"
-						title="Stop session"
-					>
-						{stopMutation.isPending ? (
-							<Loader2 size={12} className="animate-spin" />
-						) : (
-							<Square size={12} />
-						)}
-					</button>
+					<ViewerTooltip>
+						<button
+							type="button"
+							onClick={(e) => {
+								e.stopPropagation()
+								stopMutation.mutate(session.id)
+							}}
+							disabled={stopMutation.isPending || !canWrite}
+							className="rounded p-1 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-50"
+							aria-label="Stop session"
+							title="Stop session"
+						>
+							{stopMutation.isPending ? (
+								<Loader2 size={12} className="animate-spin" />
+							) : (
+								<Square size={12} />
+							)}
+						</button>
+					</ViewerTooltip>
 					{activities.length > 0 && (
 						<button
 							type="button"
@@ -248,7 +253,7 @@ function TerminalCard({
 		<button
 			type="button"
 			onClick={onOpen}
-			className="flex items-center gap-2 w-full text-left rounded-md border border-border bg-secondary/30 px-3 py-2 hover:bg-secondary/50 transition-colors cursor-pointer"
+			className="flex items-center gap-2 w-full text-left rounded-lg border border-border bg-card px-3 py-2 hover:bg-muted transition-colors cursor-pointer"
 		>
 			<status.Icon size={14} className={cn('shrink-0', status.iconClass)} />
 			{actor && <ActorAvatar name={actor.name} type={actor.type} size="sm" />}

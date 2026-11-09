@@ -1,7 +1,9 @@
 import { AgentAccess } from '@/components/integrations/agent-access'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Switch } from '@/components/ui/switch'
 import { useActors } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import {
 	useRemoveAgentGrant,
 	useSetAgentGrant,
@@ -64,6 +66,7 @@ function ToolServerSwitches({
 }) {
 	const [open, setOpen] = useState(false)
 	const { workspace } = useWorkspace()
+	const canWrite = useCanWrite()
 	const { data: actors } = useActors(workspaceId)
 	const setGrant = useSetAgentGrant(workspaceId, integration.id)
 	const removeGrant = useRemoveAgentGrant(workspaceId, integration.id)
@@ -74,6 +77,7 @@ function ToolServerSwitches({
 	const agents = (actors ?? []).filter((a) => a.type === 'agent')
 	const me = getStoredActor()
 	const canEdit =
+		canWrite &&
 		me?.type === 'human' &&
 		(integration.createdBy === me.id || workspace.role === 'owner' || workspace.role === 'admin')
 	const busy = setGrant.isPending || removeGrant.isPending || setDefault.isPending
@@ -108,41 +112,44 @@ function ToolServerSwitches({
 
 			{open && (
 				<div className="mt-2 space-y-2">
-					<div className="flex items-center gap-2 rounded-md border border-border bg-bg-surface p-2.5">
-						<div className="min-w-0 flex-1">
-							<p className="text-sm font-medium text-foreground">All agents</p>
-							<p className="text-xs text-muted-foreground">
-								Also every agent added later, unless switched off below
-							</p>
-						</div>
-						<Switch
-							checked={defaultAccess !== 'none'}
-							onCheckedChange={(on) => setDefault.mutate(on ? 'read' : 'none')}
-							disabled={!canEdit || busy}
-							aria-label={`${integration.displayName ?? 'Tool server'} for all agents`}
-						/>
-					</div>
-
-					{agents.map((agent) => (
-						<div
-							key={agent.id}
-							className="flex items-center gap-2 rounded-md border border-border bg-bg-surface p-2.5"
-						>
-							<div className="flex min-w-0 flex-1 items-center gap-2">
-								<ActorAvatar name={agent.name} type={agent.type} size="sm" />
-								<p className="truncate text-sm font-medium text-foreground">{agent.name}</p>
+					<div className="divide-y divide-border-subtle overflow-hidden rounded-xl border border-border bg-card">
+						<div className="flex items-center gap-2 px-3 py-2.5">
+							<div className="min-w-0 flex-1">
+								<p className="text-[15px] font-semibold text-foreground">All agents</p>
+								<p className="text-[13px] text-muted-foreground">
+									Also every agent added later, unless switched off below
+								</p>
 							</div>
-							<Switch
-								checked={toolServerEnabled(
-									defaultAccess,
-									grants.find((g) => g.actorId === agent.id),
-								)}
-								onCheckedChange={(on) => toggle(agent.id, on)}
-								disabled={!canEdit || busy}
-								aria-label={`${integration.displayName ?? 'Tool server'} for ${agent.name}`}
-							/>
+							<ViewerTooltip>
+								<Switch
+									checked={defaultAccess !== 'none'}
+									onCheckedChange={(on) => setDefault.mutate(on ? 'read' : 'none')}
+									disabled={!canEdit || busy}
+									aria-label={`${integration.displayName ?? 'Tool server'} for all agents`}
+								/>
+							</ViewerTooltip>
 						</div>
-					))}
+
+						{agents.map((agent) => (
+							<div key={agent.id} className="flex items-center gap-2 px-3 py-2.5">
+								<div className="flex min-w-0 flex-1 items-center gap-2">
+									<ActorAvatar name={agent.name} type={agent.type} size="sm" />
+									<p className="truncate text-[15px] font-semibold text-foreground">{agent.name}</p>
+								</div>
+								<ViewerTooltip>
+									<Switch
+										checked={toolServerEnabled(
+											defaultAccess,
+											grants.find((g) => g.actorId === agent.id),
+										)}
+										onCheckedChange={(on) => toggle(agent.id, on)}
+										disabled={!canEdit || busy}
+										aria-label={`${integration.displayName ?? 'Tool server'} for ${agent.name}`}
+									/>
+								</ViewerTooltip>
+							</div>
+						))}
+					</div>
 
 					<p className="text-xs text-muted-foreground">
 						{canEdit

@@ -1,6 +1,8 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { readEventStatusTransition } from '@/components/triggers/trigger-form'
 import { Switch } from '@/components/ui/switch'
+import { useCanWrite } from '@/hooks/use-can-write'
 import type { TriggerResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { describeCronExpression } from '@/lib/cron'
@@ -71,6 +73,7 @@ export function TriggerRow({
 	 *  The loops page opts in; other surfaces keep the original row. */
 	v4Polish?: boolean
 }) {
+	const canWrite = useCanWrite()
 	const Icon = TRIGGER_TYPE_ICON[trigger.type] ?? Zap
 	const description = describeTrigger(trigger)
 
@@ -79,11 +82,11 @@ export function TriggerRow({
 		// anchor is invalid and would navigate on toggle, so the link is a full-row
 		// overlay underneath pointer-transparent content, and only the switch opts
 		// pointer events back in.
-		<div className="group relative flex items-center gap-3.5 rounded-xl border border-border px-4 py-3.5 transition-colors duration-150 hover:border-border-strong">
+		<div className="group relative flex items-center gap-3.5 border-b border-border px-3.5 py-4 transition-colors duration-150 hover:bg-muted">
 			<Link
 				to="/$workspaceId/triggers/$triggerId"
 				params={{ workspaceId, triggerId: trigger.id }}
-				className="absolute inset-0 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+				className="absolute inset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 			>
 				<span className="sr-only">Open {trigger.name}</span>
 			</Link>
@@ -120,12 +123,14 @@ export function TriggerRow({
 
 			{onToggleEnabled && (
 				<span className="relative shrink-0">
-					<Switch
-						checked={trigger.enabled}
-						disabled={isToggling}
-						onCheckedChange={(next) => onToggleEnabled(next)}
-						aria-label={`${trigger.enabled ? 'Disable' : 'Enable'} ${trigger.name}`}
-					/>
+					<ViewerTooltip>
+						<Switch
+							checked={trigger.enabled}
+							disabled={isToggling || !canWrite}
+							onCheckedChange={(next) => onToggleEnabled(next)}
+							aria-label={`${trigger.enabled ? 'Disable' : 'Enable'} ${trigger.name}`}
+						/>
+					</ViewerTooltip>
 				</span>
 			)}
 

@@ -7,6 +7,7 @@ import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createWorkspaceWrapper } from '../../setup'
 
 // The dialog is covered by its own suite; here it is only a presence marker.
 vi.mock('@/components/agents/voice-call-dialog', () => ({
@@ -35,9 +36,8 @@ describe('AgentCallButton', () => {
 		wrap(<AgentCallButton agent={agent} variant="row" shortcut={false} />)
 		const button = screen.getByRole('button', { name: 'Call Chief of Staff' })
 		expect(button).toHaveTextContent('Call')
-		// Hover-reveal only from md up; below md it is plain inline (no opacity-0).
-		expect(button.className).toContain('md:opacity-0')
-		expect(button.className).not.toMatch(/(^|\s)opacity-0/)
+		// Always visible (v11): no hover reveal.
+		expect(button.className).not.toContain('opacity-0')
 		await userEvent.click(button)
 		expect(screen.getByText('Call dialog for Chief of Staff')).toBeInTheDocument()
 	})
@@ -94,5 +94,18 @@ describe('AgentCallButton — call outlives the button', () => {
 		wrap(<AgentCallButton agent={agent} variant="composer" shortcut={false} />)
 		await userEvent.click(screen.getByRole('button', { name: 'Call Chief of Staff' }))
 		expect(screen.getByText('Call dialog for Chief of Staff')).toBeInTheDocument()
+	})
+
+	it('viewer: the button is off and V does not start a call', async () => {
+		render(
+			<>
+				<AgentCallButton agent={agent} variant="icon" />
+				<VoiceCallHost />
+			</>,
+			{ wrapper: createWorkspaceWrapper({ role: 'viewer' }) },
+		)
+		expect(screen.getByRole('button', { name: 'Call Chief of Staff' })).toBeDisabled()
+		await userEvent.keyboard('v')
+		expect(screen.queryByText('Call dialog for Chief of Staff')).not.toBeInTheDocument()
 	})
 })

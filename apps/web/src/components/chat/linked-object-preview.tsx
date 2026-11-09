@@ -16,15 +16,18 @@ import {
 } from '@/components/chat/linked-object-reference'
 import { useLinkedPanel } from '@/components/chat/linked-panel-context'
 import { StatusSelect } from '@/components/objects/property-selects'
+import { DraftTextEditor } from '@/components/shared/draft-text-editor'
 import { FilePreview, isPreviewableFile } from '@/components/shared/file-preview'
 import { type LinkedCardsOptions, MarkdownContent } from '@/components/shared/markdown-content'
 import { ObjectPreviewMeta } from '@/components/shared/object-preview-meta'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { Button } from '@/components/ui/button'
+import { CopyButton } from '@/components/ui/copy-button'
 import { useActors } from '@/hooks/use-actors'
+import { useApproveDraft, useDraftEdit } from '@/hooks/use-draft-editor'
 import { useFiles } from '@/hooks/use-files'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
-import { useApproveObject, useObject, useUpdateObject } from '@/hooks/use-objects'
+import { useObject, useUpdateObject } from '@/hooks/use-objects'
 import { cn } from '@/lib/cn'
 import { statusLabel } from '@/lib/constants'
 import {
@@ -33,6 +36,7 @@ import {
 	type SettingsTarget,
 	isOtherWorkspace,
 	showsObjectCard,
+	showsTaskCard,
 } from '@/lib/linked-objects'
 import { describeObjectProperties } from '@/lib/object-properties'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -71,21 +75,25 @@ export function LinkedObjectCard({
 	const { workspace } = useWorkspace()
 	const typeLabel = useObjectTypeLabel()
 	const update = useUpdateObject(workspaceId)
-	const approve = useApproveObject()
+	const approve = useApproveDraft()
+	// What the person has typed into the draft and not approved yet; approving saves it first.
+	const edit = useDraftEdit(objectId)
 	const linkedPanel = useLinkedPanel()
 	// A draft is always a full card (its text and Approve are what the person came for), so it
-	// starts open. Any other object starts contracted, showing the header and title; the text and
+	// starts open, and so does a task (its text is what the person came for). Any other object starts contracted, showing the header and title; the text and
 	// the next-phase button appear once the top of the card is clicked. `toggled` is the person's
 	// own choice and wins once made.
 	const [toggled, setToggled] = useState<boolean | null>(null)
-	const expanded = toggled ?? (defaultExpanded || Boolean(object?.preview))
+	const expanded =
+		toggled ?? (defaultExpanded || Boolean(object?.preview) || object?.type === 'task')
 	// A long draft shows about 12 lines until the person asks for all of it. `revealedHash` is the
 	// text they opened in full, so a draft that changes underneath them is clamped again.
 	const [revealedHash, setRevealedHash] = useState<string | null>(null)
 	const textRef = useRef<HTMLDivElement>(null)
 	const revealedAt = useRef(0)
 	const [overflowing, setOverflowing] = useState(false)
-	const draftHash = object?.preview?.content_hash
+	// What the person has seen in full: the draft's hash, or for a task with no preview its text.
+	const draftHash = object?.preview?.content_hash ?? object?.content ?? undefined
 	const clamped = Boolean(draftHash) && draftHash !== revealedHash
 
 	// Whether the text is taller than the clamp. Measured, not counted, because a wrapped
@@ -139,7 +147,11 @@ export function LinkedObjectCard({
 	// (a LinkedIn post filed with its account and angle) it is the post alone, and that is
 	// what the card shows. Such a text is edited on the object page, where the header is.
 	const shown = preview ? preview.body : body
-	const editable = canAct && (!preview || preview.body.trim() === body)
+	// A draft is edited in the shared draft editor (the For You card uses it too); any other
+	// object with text keeps click-to-edit, saved when you click away.
+	const copied = edit ?? shown
+	// Edited text waiting to be approved can be approved again, even after an earlier approval.
+	const approved = delivery === 'approved' && edit === undefined
 	// A draft that does not fit the clamp cannot be approved until its full text has been opened.
 	// Its button stays enabled and reads "Read full draft to approve": the first tap opens the
 	// text and sends nothing. Checked in the handler too, so no path approves clamped text.
@@ -166,7 +178,7 @@ export function LinkedObjectCard({
 			return
 		}
 		if (Date.now() - revealedAt.current < REVEAL_SETTLE_MS) return
-		approve.mutate({ id: object.id, contentHash: preview.content_hash, chat })
+		approve.mutate({ draft: { object_id: object.id, body: preview.body, preview }, chat })
 	}
 
 	return (
@@ -286,23 +298,35 @@ export function LinkedObjectCard({
 							<ObjectPreviewMeta preview={object.preview} />
 						</div>
 					) : null}
-					{/* Click the text to edit it where it stands; it saves when you click away.
+					{/* The text is a box a person can change; approving saves it and approves what they
+					    saw. Any other object: click the text to edit it, saved when you click away.
 					    A long draft is cut at about 12 lines with Show all, never a scroll box. */}
 					<div
 						ref={textRef}
 						className={cn('px-3 pt-2 text-[13.5px]', clamped && 'max-h-76 overflow-hidden')}
 					>
-						<MarkdownContent
-							content={shown}
-							size="sm"
-							editable={editable}
-							editorLabel="Edit the text"
-							onChange={async (value) => {
-								await update.mutateAsync({ id: object.id, data: { content: value } })
-							}}
-						/>
+						{preview ? (
+							<DraftTextEditor
+								workspaceId={workspaceId}
+								objectId={object.id}
+								fallback={shown}
+								// A clamped draft is read first (the gate below), so it is edited once opened in full.
+								canEdit={canAct && delivery !== 'sent' && !gated}
+								readOnly={(text) => <MarkdownContent content={edit ?? text} size="sm" />}
+							/>
+						) : (
+							<MarkdownContent
+								content={shown}
+								size="sm"
+								editable={canAct}
+								editorLabel="Edit the text"
+								onChange={async (value) => {
+									await update.mutateAsync({ id: object.id, data: { content: value } })
+								}}
+							/>
+						)}
 					</div>
-					{preview && (gated || (overflowing && !clamped)) ? (
+					{gated || (overflowing && !clamped) ? (
 						<div className="px-3 pt-1">
 							<Button
 								type="button"
@@ -321,13 +345,17 @@ export function LinkedObjectCard({
 						</div>
 					) : null}
 					{preview ? (
-						<div aria-live="polite" className="flex items-center justify-end gap-2 px-3 pb-3 pt-1">
+						<div
+							aria-live="polite"
+							className="flex flex-wrap items-center justify-end gap-2 px-3 pb-3 pt-1"
+						>
+							<CopyButton text={copied} label ariaLabel="Copy the text" />
 							{delivery === 'sent' ? (
 								<span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
 									<Check size={13} aria-hidden />
 									Sent
 								</span>
-							) : delivery === 'approved' ? (
+							) : approved ? (
 								<span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
 									<Check size={13} aria-hidden />
 									Approved, waiting for send
@@ -347,7 +375,8 @@ export function LinkedObjectCard({
 							)}
 						</div>
 					) : canAct && nextStatus ? (
-						<div className="flex items-center justify-end px-3 pb-3 pt-1">
+						<div className="flex items-center justify-end gap-2 px-3 pb-3 pt-1">
+							<CopyButton text={shown} label ariaLabel="Copy the text" />
 							<Button
 								type="button"
 								size="sm"
@@ -359,7 +388,9 @@ export function LinkedObjectCard({
 							</Button>
 						</div>
 					) : (
-						<div className="pb-3" />
+						<div className="flex items-center justify-end px-3 pb-3 pt-1">
+							<CopyButton text={shown} label ariaLabel="Copy the text" />
+						</div>
 					)}
 				</>
 			) : null}
@@ -642,6 +673,19 @@ function ObjectCardOrLink({
 	if (showsObjectCard(object, workspaceId)) {
 		return withLabel(
 			inList ? label : undefined,
+			<LinkedObjectCard
+				workspaceId={workspaceId}
+				objectId={objectId}
+				conversationId={conversationId}
+				agentId={agentId}
+				updated={updated}
+			/>,
+		)
+	}
+	// A task with text, alone on its own line in chat, is its text; see `showsTaskCard`.
+	if (draftsAndFiles && !after && !inList && showsTaskCard(object, workspaceId)) {
+		return withLabel(
+			label,
 			<LinkedObjectCard
 				workspaceId={workspaceId}
 				objectId={objectId}

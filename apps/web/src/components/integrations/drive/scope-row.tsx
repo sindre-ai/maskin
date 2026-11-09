@@ -1,5 +1,7 @@
 import { getActorInitials } from '@/components/shared/actor-avatar'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { cn } from '@/lib/cn'
 import { Check, Plus } from 'lucide-react'
 
@@ -76,6 +78,7 @@ export function ScopeRow({
 	onDisconnect?: () => void
 	children: React.ReactNode
 }) {
+	const canWrite = useCanWrite()
 	return (
 		<li
 			className={cn(
@@ -101,14 +104,23 @@ export function ScopeRow({
 				</div>
 				<div className="flex shrink-0 flex-wrap gap-2">
 					{actionLabel && onAction && (
-						<Button size="sm" variant="outline" onClick={onAction} disabled={actionPending}>
-							{actionLabel}
-						</Button>
+						<ViewerTooltip>
+							<Button
+								size="sm"
+								variant="outline"
+								onClick={onAction}
+								disabled={actionPending || !canWrite}
+							>
+								{actionLabel}
+							</Button>
+						</ViewerTooltip>
 					)}
 					{disconnectLabel && onDisconnect && (
-						<Button size="sm" variant="ghost" onClick={onDisconnect}>
-							{disconnectLabel}
-						</Button>
+						<ViewerTooltip>
+							<Button size="sm" variant="ghost" onClick={onDisconnect} disabled={!canWrite}>
+								{disconnectLabel}
+							</Button>
+						</ViewerTooltip>
 					)}
 				</div>
 			</div>

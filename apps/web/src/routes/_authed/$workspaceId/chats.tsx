@@ -1,15 +1,16 @@
-import { type ChatsFilter, ChatsFilterMenu } from '@/components/chat/chats-filter-menu'
-import { ConversationList } from '@/components/chat/conversation-list'
+import type { ChatsFilter } from '@/components/chat/chats-filter-menu'
+import { ConversationList, ConversationListHeader } from '@/components/chat/conversation-list'
 import { PageHeader } from '@/components/layout/page-header'
 import { useChatUnreadCount } from '@/hooks/use-chat-unread'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useMediaQuery } from '@/hooks/use-media-query'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { cn } from '@/lib/cn'
 import { useVoiceCallLive } from '@/lib/voice-call-view'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Outlet, createFileRoute, useMatches, useNavigate } from '@tanstack/react-router'
-import { useCallback } from 'react'
+import { useCallback, useState } from 'react'
 
 interface ChatsSearch {
 	filter?: ChatsFilter
@@ -54,6 +55,10 @@ function ChatsListTitle() {
 	return null
 }
 
+// Cancels MainScrollArea's padding (`px-4 pt-4`, `md:px-8 md:py-8`, `lg:px-7`
+// in `$workspaceId.tsx`) so the split pane runs edge to edge. Keep in step.
+const SHELL_BLEED = '-mx-4 -my-4 md:-mx-8 md:-mt-3 md:-mb-8 lg:-mx-7'
+
 function ChatsLayout() {
 	const { workspaceId } = useWorkspace()
 	const isMobile = useIsMobile()
@@ -62,8 +67,10 @@ function ChatsLayout() {
 	// aside for the length of the call.
 	const onCall = useVoiceCallLive()
 	const narrowForCall = useMediaQuery('(max-width: 1279px)')
+	const isLg = useMediaQuery('(min-width: 1024px)')
 	const listAside = onCall && narrowForCall
 	const navigate = useNavigate()
+	const [query, setQuery] = useState('')
 	const matches = useMatches()
 	const { filter = 'all', wide } = Route.useSearch()
 	const leafMatch = matches[matches.length - 1]
@@ -95,77 +102,101 @@ function ChatsLayout() {
 		[navigate],
 	)
 
-	// One writer for the shared nav row: a child route rendering its own
-	// <PageHeader> would lose the race (parent effects run last) and leave the
-	// draft screen labelled "Chats".
+	// From md the list column draws the "Chats" h1 itself, but below lg an open chat hides the
+	// list, so the nav row keeps the h1 then (and in focus mode).
+	const listTitleInColumn = !isMobile && !isDraft && !wide && !listAside && (!hasThread || isLg)
+
+	// The shared nav row carries the title, search and New chat; the list column
+	// adds its own search and filter pills below it.
 	const header = (
 		<PageHeader
 			title={isDraft ? 'New chat' : 'Chats'}
-			subtitle={isDraft ? undefined : subtitle}
+			// Desktop's list column carries the title and the v3 mockup has no count beside it, so
+			// the nav row shows no subtitle there.
+			subtitle={isDraft || listTitleInColumn ? undefined : subtitle}
 			// The split pane owns two internal scrollers; without this the shared
 			// page container scrolls too and the surface double-scrolls.
 			scrollLocked
-			actions={<ChatsFilterMenu value={filter} onChange={handleFilterChange} />}
+			// Desktop draws its own title in the list column (v3); the nav row keeps New chat.
+			hideTitle={listTitleInColumn}
+			// From md the Chats screens carry their own top edge (list title and buttons, the thread's
+			// own header), so the shared bar and its New button step aside, as in the design.
+			hideBar={listTitleInColumn || (!isMobile && isDraft)}
 		/>
 	)
+	const listColumn = (
+		<>
+			<ConversationListHeader
+				workspaceId={workspaceId}
+				titled={!isMobile}
+				pageTitle={!isDraft}
+				filter={filter}
+				onFilterChange={handleFilterChange}
+				query={query}
+				onQueryChange={setQuery}
+			/>
+			<ConversationList
+				workspaceId={workspaceId}
+				filter={filter}
+				query={query}
+				hideStartLink={isDraft}
+			/>
+		</>
+	)
 
-	// Full-bleed: reclaim the workspace shell's page padding (`p-4 md:p-8` on
-	// `data-scroll-root` in `$workspaceId.tsx`) so the split pane gets the
-	// full content width. At exactly 768px (iPad portrait — the narrowest
-	// viewport that still gets the two-pane layout), that padding alone was
-	// enough to squeeze the thread header's title down to a few visible
-	// pixels next to its fixed-width controls (participants pill, pin,
-	// archive, copy) — see the known-pitfalls-style regression this fixed.
+	// Full-bleed: reclaim the workspace shell's page padding so the split pane gets
+	// the full content width.
 	if (isMobile) {
 		return (
 			<>
 				{header}
 				{hasThread ? null : <ChatsListTitle />}
 				{hasThread ? (
-					<div className="-m-4 flex min-h-0 flex-1 flex-col [--chat-gut:clamp(14px,3vw,28px)]">
+					<div
+						className={cn(
+							'flex min-h-0 flex-1 flex-col [--chat-gut:clamp(14px,3vw,28px)]',
+							SHELL_BLEED,
+						)}
+					>
 						<Outlet />
 					</div>
 				) : (
-					<ConversationList workspaceId={workspaceId} filter={filter} className="-m-4" />
+					<div className={cn('flex min-h-0 flex-1 flex-col', SHELL_BLEED)}>{listColumn}</div>
 				)}
 			</>
 		)
 	}
 
-	// Desktop with nothing selected: the list spans the whole content width and
-	// the thread pane isn't mounted at all (mockup 8124–8125).
-	if (!hasThread) {
-		return (
-			<>
-				{header}
-				<ChatsListTitle />
-				<ConversationList
-					workspaceId={workspaceId}
-					filter={filter}
-					expanded
-					className="-m-4 md:-m-8"
-				/>
-			</>
-		)
-	}
-
+	// Desktop: the list column always sits beside the thread pane; with nothing
+	// selected the pane holds the "pick a conversation" state.
 	return (
 		<>
 			{header}
-			<div className="-m-4 flex min-h-0 flex-1 md:-m-8">
-				{wide || listAside ? null : (
-					// `bg-surface-sunken` is what makes the split read as index +
-					// document rather than two equal halves (mockup 273).
-					<div className="hidden w-[clamp(266px,25vw,326px)] shrink-0 flex-col border-r border-border bg-surface-sunken md:flex">
-						<ConversationList workspaceId={workspaceId} filter={filter} />
+			{hasThread ? null : <ChatsListTitle />}
+			<div className={cn('flex min-h-0 flex-1', SHELL_BLEED)}>
+				{wide || listAside || isDraft ? null : (
+					// Below lg (iPad portrait) the list and the thread take turns: the list fills the
+					// width until a chat is open, then the thread replaces it. From lg they sit side by side.
+					<div
+						className={cn(
+							'hidden min-w-0 flex-col border-r border-border bg-background lg:flex lg:w-70 lg:flex-none xl:w-100',
+							// With a chat open the list is lg-and-up only; otherwise it fills the width from md.
+							!hasThread && 'md:flex md:flex-1',
+						)}
+					>
+						{listColumn}
 					</div>
 				)}
 				{/* One gutter variable for the whole thread pane — the header,
 				    transcript and composer all read `--chat-gut` so they can never
-				    drift apart, and on desktop the value is a centring margin
-				    (a 900px column) instead of padding on top of the base gutter
-				    (mockup 7763). */}
-				<div className="flex min-w-0 flex-1 flex-col [--chat-gut:clamp(14px,3vw,28px)] md:[--chat-gut:max(28px,calc((100%-900px)/2))]">
+				    drift apart. */}
+				<div
+					className={cn(
+						'min-w-0 flex-1 flex-col [--chat-gut:clamp(14px,3vw,28px)] md:[--chat-gut:max(32px,calc((100%-900px)/2))]',
+						// Below lg the pane only shows with a chat open; the list holds the width otherwise.
+						hasThread || wide || listAside ? 'flex' : 'max-lg:hidden lg:flex',
+					)}
+				>
 					<Outlet />
 				</div>
 			</div>

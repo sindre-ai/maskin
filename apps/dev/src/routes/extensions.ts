@@ -8,9 +8,11 @@ import {
 	workspaceMembers,
 } from '@maskin/db/schema'
 import {
+	type McpConfig,
 	type ToolGrants,
 	createExtensionBodySchema,
 	mcpConfigSchema,
+	mcpRemoteUrl,
 	probeMcpBodySchema,
 	setAgentGrantBodySchema,
 	setToolGrantBodySchema,
@@ -29,8 +31,10 @@ import {
 	generateWebhookToken,
 	mapWebhookEvent,
 	mcpConfigWriteError,
+	webhookSecretWriteError,
 } from '../lib/integrations/extensions'
 import {
+	deleteExtensionSecret,
 	ensureExtensionSystemActor,
 	hasExtensionMcpKey,
 	hasExtensionSecret,
@@ -237,6 +241,45 @@ async function respond(
 
 const notFound = createApiError('NOT_FOUND', 'Extension not found')
 
+/** The only mcpLastError this check writes, and the only one it clears. */
+const KEY_REJECTED = 'The server rejected the API key.'
+
+/**
+ * After a save that carried an MCP API key for a hosted MCP, ask the server once
+ * whether it takes the key. A rejection goes in mcpLastError so the connection
+ * shows it; a key that works clears that same sentence and no other error.
+ * Every other outcome (unreachable, invalid, blocked) leaves the row alone, and
+ * nothing here can fail the save: the key is already committed.
+ */
+async function checkSavedMcpKey(
+	db: Database,
+	row: ExtensionRow,
+	apiKey: string | undefined,
+): Promise<ExtensionRow> {
+	const server = (row.mcpConfig as McpConfig | null)?.server
+	const url = apiKey && server ? mcpRemoteUrl(server) : null
+	if (!apiKey || !url) return row
+	try {
+		const probe = await probeMcpTools(url, apiKey)
+		const rejected = !probe.ok && probe.reason === 'rejected'
+		if (!rejected && !(probe.ok && row.mcpLastError === KEY_REJECTED)) return row
+		const [updated] = await db
+			.update(extensions)
+			.set({ mcpLastError: rejected ? KEY_REJECTED : null })
+			.where(
+				and(
+					eq(extensions.id, row.id),
+					eq(extensions.workspaceId, row.workspaceId),
+					rejected ? undefined : eq(extensions.mcpLastError, KEY_REJECTED),
+				),
+			)
+			.returning()
+		return updated ?? row
+	} catch {
+		return row
+	}
+}
+
 // ── GET /api/extensions ─────────────────────────────────────────────────────
 
 const listRoute = createRoute({
@@ -441,6 +484,16 @@ app.openapi(createExtensionRoute, async (c) => {
 		)
 	}
 
+	const keyError = body.signing_secret
+		? webhookSecretWriteError(body.webhook_config, body.signing_secret)
+		: null
+	if (keyError) {
+		return c.json(
+			createApiError('BAD_REQUEST', keyError, [{ field: 'signing_secret', message: keyError }]),
+			400,
+		)
+	}
+
 	const webhookToken = body.webhook_config ? generateWebhookToken() : null
 
 	let row: ExtensionRow
@@ -502,7 +555,7 @@ app.openapi(createExtensionRoute, async (c) => {
 
 	if (hasConfig(row)) trackExtensionConnected(workspaceId, actorId, row)
 
-	return c.json(await respond(c, db, row), 201)
+	return c.json(await respond(c, db, await checkSavedMcpKey(db, row, body.mcp_api_key)), 201)
 })
 
 // ── GET /api/extensions/:id ─────────────────────────────────────────────────
@@ -591,6 +644,27 @@ app.openapi(updateExtensionRoute, async (c) => {
 		)
 	}
 
+	// An ed25519 secret is the vendor's public key. Check a new one now, and refuse to
+	// switch an existing webhook to ed25519 on the old random secret, which can never verify.
+	// The reverse also needs a new secret: the stored public key is not private and must not
+	// become an HMAC secret.
+	const schemeOf = (cfg: unknown) => (cfg as { signatureScheme?: string } | null)?.signatureScheme
+	const fromScheme = schemeOf(existing.webhookConfig)
+	const toScheme = schemeOf(nextWebhook)
+	const keyError = body.signing_secret
+		? webhookSecretWriteError({ signatureScheme: toScheme }, body.signing_secret)
+		: toScheme === 'ed25519' && fromScheme !== 'ed25519'
+			? 'Paste the vendor public key as the signing secret'
+			: nextWebhook && fromScheme === 'ed25519' && toScheme !== 'ed25519'
+				? 'Enter a new signing secret to move off Ed25519'
+				: null
+	if (keyError) {
+		return c.json(
+			createApiError('BAD_REQUEST', keyError, [{ field: 'signing_secret', message: keyError }]),
+			400,
+		)
+	}
+
 	const patch: Partial<typeof extensions.$inferInsert> = { updatedAt: new Date() }
 	if (body.name !== undefined) patch.name = body.name
 	if (body.status !== undefined) patch.status = body.status
@@ -609,7 +683,10 @@ app.openapi(updateExtensionRoute, async (c) => {
 			.where(and(eq(extensions.id, id), eq(extensions.workspaceId, workspaceId)))
 			.returning()
 		if (!updated) throw new Error('Failed to update extension')
-		if (body.signing_secret) {
+		// Turning the webhook off deletes its stored secret with it. A webhook cannot exist without one.
+		if (body.webhook_config === null) {
+			await deleteExtensionSecret(tx, workspaceId, existing.slug)
+		} else if (body.signing_secret) {
 			await upsertExtensionSecret(tx, {
 				workspaceId,
 				slug: existing.slug,
@@ -637,7 +714,8 @@ app.openapi(updateExtensionRoute, async (c) => {
 		data: {
 			slug: row.slug,
 			fields: Object.keys(body).filter((k) => k !== 'signing_secret' && k !== 'mcp_api_key'),
-			secret_replaced: !!body.signing_secret,
+			secret_replaced: !!body.signing_secret && body.webhook_config !== null,
+			secret_removed: body.webhook_config === null,
 			mcp_key_replaced: !!body.mcp_api_key,
 		},
 	})
@@ -645,7 +723,7 @@ app.openapi(updateExtensionRoute, async (c) => {
 	// Only the save that first gives the extension a config counts as connecting it.
 	if (!hasConfig(existing) && hasConfig(row)) trackExtensionConnected(workspaceId, actorId, row)
 
-	return c.json(await respond(c, db, row), 200)
+	return c.json(await respond(c, db, await checkSavedMcpKey(db, row, body.mcp_api_key)), 200)
 })
 
 // ── POST /api/extensions/:id/regenerate-token ───────────────────────────────

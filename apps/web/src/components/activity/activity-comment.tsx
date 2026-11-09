@@ -2,17 +2,20 @@ import { outsideChatLinkedCards } from '@/components/chat/linked-object-preview'
 import { HumanDetailDialog } from '@/components/settings/human-detail-dialog'
 import { ObjectReference } from '@/components/shared/object-reference'
 import { useActor, useActors } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useFiles } from '@/hooks/use-files'
 import type { ActorListItem, EventResponse, SessionResponse } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { hasDecision, legacyChipsOf } from '@/lib/comment-decision'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { ChevronDown, Reply } from 'lucide-react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { AgentOutput } from '../shared/agent-output'
 import { AttachedFileCard } from '../shared/attached-file-card'
 import { RelativeTime } from '../shared/relative-time'
+import { ViewerTooltip } from '../shared/viewer-tooltip'
 import { CommentDecisionBlock } from './comment-decision-block'
 import { CommentInput } from './comment-input'
 import { CommentTaskList, hasTaskList } from './comment-task-list'
@@ -26,6 +29,12 @@ function readReferencedObjectIds(event: EventResponse): string[] {
 	const refs = metadata?.refs
 	if (!Array.isArray(refs)) return []
 	return refs.filter((id): id is string => typeof id === 'string' && id.length > 0)
+}
+
+/** Actor ids the author tagged through the picker, stored on the comment as `mentions`. */
+function readTaggedActorIds(mentions: unknown): string[] | undefined {
+	if (!Array.isArray(mentions)) return undefined
+	return mentions.filter((id): id is string => typeof id === 'string')
 }
 
 interface ActivityCommentProps {
@@ -48,6 +57,9 @@ interface ActivityCommentProps {
 	collapsibleReplies?: boolean
 	// Reading of the row itself — see CommentVariant.
 	variant?: CommentVariant
+	// The comment a `?comment=` link points at. A collapsed thread opens when
+	// the target is one of its replies, so the jump has a node to land on.
+	focusEventId?: number
 }
 
 /**
@@ -82,6 +94,7 @@ function CommentRow({
 	footer,
 }: CommentRowProps) {
 	const isBubble = variant === 'bubble'
+	const canWrite = useCanWrite()
 	const { data: actor } = useActor(event.actorId)
 	const content = (event.data?.content as string) ?? ''
 	const attachmentFileIds = (event.data?.attachmentFileIds as string[] | undefined) ?? []
@@ -109,6 +122,10 @@ function CommentRow({
 	const isAgent = actor?.type === 'agent'
 	const referencedObjectIds = readReferencedObjectIds(event)
 	const legacyChips = legacyChipsOf(event)
+	// Memoised on the stored list: a fresh array each render would rebuild the markdown
+	// component map and remount everything in the message.
+	const storedMentions = event.data?.mentions
+	const taggedActorIds = useMemo(() => readTaggedActorIds(storedMentions), [storedMentions])
 
 	const avatarClass = isBubble
 		? 'size-[30px] border-[3px] border-background text-[11px]'
@@ -160,11 +177,14 @@ function CommentRow({
 	return (
 		<>
 			<div
+				data-comment-id={event.id}
 				className={cn(
-					'relative flex items-start rounded-md transition-colors',
+					'relative flex items-start scroll-mt-16 rounded-md transition-colors',
 					// Mockup 1281–1284: 24px avatar, 10px gutter, 2px of vertical air —
 					// the timeline is read as a stream, so rows sit close together.
-					isBubble ? 'z-[1] gap-2.5 py-0.5' : '-mx-1 gap-2 px-1 py-1 hover:bg-secondary/50',
+					// No right bleed: a -mx-1 row sticks out 4px past the column and the page
+					// scrolls sideways on a phone.
+					isBubble ? 'z-[1] gap-2.5 py-0.5' : '-ml-1 gap-2 pl-1 py-1 hover:bg-secondary/50',
 					isDecisionPoint && !isBubble && 'pl-3',
 				)}
 			>
@@ -225,6 +245,8 @@ function CommentRow({
 						disallowedElements={COMMENT_DISALLOWED_ELEMENTS}
 						mentionActors={actors}
 						onMentionClick={handleMentionClick}
+						taggedActorIds={taggedActorIds}
+						selfActorId={getStoredActor()?.id}
 						size="sm"
 						className={cn(isBubble ? 'inline [&_p:first-child]:inline [&_p]:my-0' : 'mt-1')}
 						renderVisuals
@@ -283,15 +305,18 @@ function CommentRow({
 					)}
 				</div>
 				{onReply && (
-					<button
-						type="button"
-						onClick={() => onReply(actor?.name ?? 'this message')}
-						aria-label="Reply"
-						/* Always visible on touch (no hover capability); fades behind hover/focus on mouse devices. */
-						className="opacity-100 can-hover:opacity-0 can-hover:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-foreground self-end shrink-0 p-1 -my-1 -ml-1"
-					>
-						<Reply size={14} />
-					</button>
+					<ViewerTooltip className="inline-flex self-end shrink-0">
+						<button
+							type="button"
+							onClick={() => onReply(actor?.name ?? 'this message')}
+							aria-label="Reply"
+							disabled={!canWrite}
+							/* Always visible on touch (no hover capability); fades behind hover/focus on mouse devices. */
+							className="opacity-100 can-hover:opacity-0 can-hover:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-foreground shrink-0 p-1 -my-1 -ml-1 disabled:cursor-not-allowed disabled:opacity-50"
+						>
+							<Reply size={14} />
+						</button>
+					</ViewerTooltip>
 				)}
 			</div>
 			{humanDialogActorId && (
@@ -320,6 +345,7 @@ export function ActivityComment({
 	onReplyTo,
 	collapsibleReplies,
 	variant = 'plain',
+	focusEventId,
 }: ActivityCommentProps) {
 	const { data: actors } = useActors(workspaceId)
 	const [showReplyInput, setShowReplyInput] = useState(false)
@@ -330,7 +356,8 @@ export function ActivityComment({
 	// count and a note naming who spoke last, both read off the replies
 	// themselves (mockup 369).
 	const [repliesOpen, setRepliesOpen] = useState(false)
-	const collapsed = !!collapsibleReplies && hasReplies && !repliesOpen
+	const focusInReplies = focusEventId !== undefined && replies.some((r) => r.id === focusEventId)
+	const collapsed = !!collapsibleReplies && hasReplies && !repliesOpen && !focusInReplies
 	const lastReply = replies[replies.length - 1]
 	const lastReplyAuthor = actorList.find((a) => a.id === lastReply?.actorId)?.name
 	const threadNote = lastReplyAuthor ? `last from ${lastReplyAuthor}` : null
@@ -421,7 +448,7 @@ export function ActivityComment({
 			{hasReplies && !collapsed && (
 				<div className={cn('space-y-1.5', variant === 'bubble' ? 'ml-[41px]' : 'ml-7')}>
 					{replies.map((reply, idx) => (
-						<div key={reply.id}>
+						<div key={reply.id} id={`comment-${reply.id}`}>
 							{divider && dividerBeforeReplyId === reply.id && divider}
 							<CommentRow
 								event={reply}

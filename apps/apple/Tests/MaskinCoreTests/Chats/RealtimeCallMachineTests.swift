@@ -14,6 +14,16 @@ import Testing
 		RealtimeEvent(type: type, transcript: transcript)
 	}
 
+	@Test("the call is listening from the start and stays so when the edge opens, until someone speaks")
+	func startsListening() {
+		var machine = RealtimeCallMachine()
+		#expect(machine.phase == .listening)
+		_ = machine.handle(RealtimeEvent(type: "session.created"), at: at(0))
+		_ = machine.handle(RealtimeEvent(type: "session.updated"), at: at(0.1))
+		#expect(machine.phase == .listening)
+		#expect(machine.lastAgentWords == nil)
+	}
+
 	@Test("a turn goes listening, thinking, speaking, listening")
 	func turn() {
 		var m = RealtimeCallMachine()
@@ -104,18 +114,11 @@ import Testing
 		#expect(m.interrupted(at: at(2)).isEmpty)
 	}
 
-	@Test("the call greets once, on the first session.created, and not again")
-	func greetsOnce() throws {
+	@Test("the call sends nothing when it connects: the server makes the agent greet")
+	func sendsNothingOnConnect() {
 		var m = RealtimeCallMachine()
-		let first = m.handle(event("session.created"), at: at(0))
-		#expect(first == [.sendEvent(RealtimeCallMachine.greetingRequest)])
+		#expect(m.handle(event("session.created"), at: at(0)).isEmpty)
 		#expect(m.handle(event("session.created"), at: at(1)).isEmpty)
-
-		let sent = try #require(JSONSerialization.jsonObject(with: Data(RealtimeCallMachine.greetingRequest.utf8)) as? [String: Any])
-		#expect(sent["type"] as? String == "response.create")
-		let response = try #require(sent["response"] as? [String: Any])
-		#expect((response["instructions"] as? String)?.isEmpty == false)
-		#expect(response["tool_choice"] as? String == "none")
 	}
 
 	@Test("events it does not know, or that are not JSON, change nothing")
@@ -208,9 +211,13 @@ private let errorBody = #"{"error":{"code":"x","message":"x"}}"#
 	func offerAndHangup() async throws {
 		let offerWire = VoiceWire(
 			status: 200, json: #"{"sdp":"answer","tools_available":false,"persist_transcripts":true}"#)
-		let answer = try await calls(offerWire).offer(voiceSessionID: "vs-1", sdp: "offer")
+		let answer = try await calls(offerWire).offer(
+			voiceSessionID: "vs-1", sdp: "offer", noiseReduction: .nearField)
 		#expect(answer == VoiceCallAnswer(sdp: "answer", toolsAvailable: false, persistTranscripts: true))
 		#expect(offerWire.seen.first?.path == "/api/voice-sessions/vs-1/offer")
+		let offerSeen = try #require(offerWire.seen.first)
+		let offerBody = try #require(try JSONSerialization.jsonObject(with: offerSeen.body) as? [String: Any])
+		#expect(offerBody["noise_reduction"] as? String == "near_field")
 
 		let hangupWire = VoiceWire(
 			status: 200,
@@ -245,7 +252,7 @@ private let errorBody = #"{"error":{"code":"x","message":"x"}}"#
 			status: 429,
 			json: #"{"error":{"code":"RATE_LIMITED","message":"x"},"retry_after_seconds":120}"#)
 		do {
-			_ = try await calls(wire).offer(voiceSessionID: "vs-1", sdp: "offer")
+			_ = try await calls(wire).offer(voiceSessionID: "vs-1", sdp: "offer", noiseReduction: nil)
 			Issue.record("expected the offer to fail")
 		} catch {
 			#expect(error as? VoiceCallFailure == .rateLimited(retryAfterSeconds: 120))

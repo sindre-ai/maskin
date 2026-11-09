@@ -1,0 +1,21 @@
+-- Migration: make the object title match in GET /api/search use an index (1 of 2, content is 0130).
+--
+-- apps/dev/src/services/search.ts (the objects source) now keeps only the objects whose title or
+-- body holds every typed word, inside its candidates query: (title ILIKE '%word%' OR content ILIKE
+-- '%word%') per word. Without an index that reads every object body of the workspace once for the
+-- first word (about 0.7 s on production's 22,000 objects and 48 MB of text). This GIN index answers
+-- the title half; 0130 answers the body half, and the planner combines the two.
+--
+-- Why workspace_id is the first key: a search is always for one workspace, and with the id in the
+-- index the database narrows to that workspace before it counts trigram matches. It needs the
+-- btree_gin extension, which migration 0123 already turned on. pg_trgm is from 0122.
+--
+-- Alone in its file: CREATE INDEX CONCURRENTLY cannot share a transaction with other statements
+-- (see packages/db/MIGRATIONS.md Rule 1). CONCURRENTLY keeps object writes flowing during the build.
+-- IF NOT EXISTS lets a retry pass after an interrupted build; drop an INVALID leftover first.
+-- Words of fewer than 3 letters cannot use the index and still scan, as before. Each object write
+-- pays a small extra cost to keep the index current.
+--
+-- Needs 0122 and 0123. Reversible: drizzle/down/0129_objects_title_trgm_idx_down.sql.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "objects_ws_title_trgm_idx"
+  ON "objects" USING gin ("workspace_id", "title" gin_trgm_ops);

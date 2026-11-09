@@ -74,6 +74,7 @@ const READS_OUTSIDE_READ_TOOL_NAMES = [
 	'list_notifications',
 	'list_keychain_credentials',
 	'desktop_list_ports',
+	'query_data',
 ]
 
 // get_started is in READ_TOOL_NAMES but its confirm path installs a loop.
@@ -183,7 +184,6 @@ describe('MCP surface pin', () => {
 			skills: [
 				shared.FOR_YOU_FORMAT_SKILL,
 				shared.DRAFT_APPROVAL_TASKS_SKILL,
-				shared.SHAPED_BET_FORMAT_SKILL,
 				shared.MASKIN_WAY_OF_WORKING_SKILL,
 				shared.CONTINUOUS_ONBOARDING_SKILL,
 			],
@@ -211,6 +211,17 @@ describe('MCP surface pin', () => {
 		}
 
 		expect(violations, violations.join('\n')).toEqual([])
+	})
+
+	it('registers propose_file_changes as a plain write, not a read, delete or idempotent update', () => {
+		expect(registeredTools.has('propose_file_changes')).toBe(true)
+		expect(TOOL_ANNOTATIONS.propose_file_changes).toMatchObject({
+			readOnlyHint: false,
+			destructiveHint: false,
+			idempotentHint: false,
+			openWorldHint: false,
+		})
+		expect(MUTATION_TOOL_KINDS.propose_file_changes).toBe('file_propose')
 	})
 
 	it('every alias row targets a registered tool', async () => {
@@ -325,13 +336,15 @@ describe('MCP surface pin', () => {
 			for (const name of expected) expect(registeredTools.has(name)).toBe(true)
 		})
 
-		it('idempotentHint is true for update_*, delete_*, pause_session and mark_read only', () => {
+		it('idempotentHint is true for update_*, delete_*, pause_session, mark_read, set_loop_view and withdraw_decision_card only', () => {
 			const expected = [
 				...Object.keys(TOOL_ANNOTATIONS).filter(
 					(n) => n.startsWith('update_') || n.startsWith('delete_'),
 				),
 				'pause_session',
 				'mark_read',
+				'set_loop_view',
+				'withdraw_decision_card',
 			].sort()
 			const actual = Object.entries(TOOL_ANNOTATIONS)
 				.filter(([, entry]) => entry.idempotentHint)
@@ -340,7 +353,7 @@ describe('MCP surface pin', () => {
 			expect(actual).toEqual(expected)
 		})
 
-		it('openWorldHint is true for create_session and its alias run_agent, the integration tools and the tools that send mail only', () => {
+		it('openWorldHint is true for create_session and its alias run_agent, the integration tools and the tools that send or read mail only', () => {
 			const expected = [
 				'create_session',
 				'create_sub_chat',
@@ -350,8 +363,11 @@ describe('MCP surface pin', () => {
 				'list_integration_providers',
 				'connect_integration',
 				'disconnect_integration',
+				'approve_draft_from_chat',
 				'approve_object_draft',
 				'gmail_send_email',
+				'gmail_save_attachment',
+				'resend_send_email',
 				'update_integration_access',
 			].sort()
 			const actual = Object.entries(TOOL_ANNOTATIONS)

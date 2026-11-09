@@ -41,7 +41,7 @@ public struct ChatsScreen: View {
 		} else {
 			NavigationStack {
 				EmptyState(symbol: "bubble.left.and.bubble.right", title: "Choose a workspace")
-					.shellToolbar(environment: environment, title: "Team")
+					.shellToolbar(environment: environment, title: "Chats")
 			}
 		}
 	}
@@ -50,8 +50,10 @@ public struct ChatsScreen: View {
 private struct ChatsContainer: View {
 	let environment: AppEnvironment
 	@State private var store: ConversationsStore
+	@State private var showDisplay = false
 	@State private var selection: String?
 	@State private var search = ""
+	@State private var searchPresented = false
 	@State private var newChat: NewChatRequest?
 	@State private var showThreads = false
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
@@ -96,12 +98,15 @@ private struct ChatsContainer: View {
 				pill: runtime?.teamPill
 			)
 			.shellToolbar(
-				environment: environment, title: "Team",
+				environment: environment, title: "Chats",
 				actions: ShellActions(
 					new: { newChat = NewChatRequest() }, newLabel: "New conversation",
-					display: ShellDisplayMenu { ChatsDisplayMenu(store: store) },
 					displaySymbol: ShellActions.slidersSymbol, displayActive: !store.displayOptions.isDefault,
-					hidesAvatar: true, newAlwaysVisible: true))
+					displayToggle: { showDisplay = true },
+					hidesAvatar: true, newAlwaysVisible: true, newIsPrimary: true,
+					search: { searchPresented = true }))
+			.pageSearch(text: $search, isPresented: $searchPresented, prompt: "Search chats")
+			.sheet(isPresented: $showDisplay) { ChatsDisplaySheet(store: store) }
 			// iPad spec: the Team column is 430 wide.
 			.navigationSplitViewColumnWidth(min: 360, ideal: 430, max: 520)
 		} detail: {
@@ -128,13 +133,18 @@ private struct ChatsContainer: View {
 			runtime?.newConversationRequested = false
 			newChat = NewChatRequest()
 		}
+		.onChange(of: runtime?.chiefChatRequested, initial: true) {
+			guard runtime?.chiefChatRequested == true else { return }
+			runtime?.chiefChatRequested = false
+			Task { await newChatWithChiefOfStaff() }
+		}
 		.onChange(of: runtime?.agentChatRequest, initial: true) {
 			guard let request = runtime?.agentChatRequest else { return }
 			runtime?.agentChatRequest = nil
 			if request.live {
 				Task { await startLive(with: request.agent) }
 			} else {
-				newChat = NewChatRequest(recipient: request.agent)
+				newChat = NewChatRequest(prefill: request.draft, recipient: request.agent)
 			}
 		}
 		.onChange(of: runtime?.chatDraft, initial: true) {
@@ -144,6 +154,9 @@ private struct ChatsContainer: View {
 			Task { await startWithChiefOfStaff(text: draft.text) }
 		}
 		.task { await store.start() }
+		.onChange(of: selection != nil || showThreads, initial: true) { _, covered in
+			runtime?.teamPill.isCovered = covered
+		}
 		.onAppear { runtime?.teamPill.attach(store: store, onThreads: { showThreads = true }) }
 		.onDisappear {
 			store.stop()
@@ -190,18 +203,27 @@ private struct ChatsContainer: View {
 }
 
 extension ChatsContainer {
-	/// A live call with `agent` from its page: a fresh one-to-one chat the call runs in. Falls back
-	/// to the new-chat sheet addressed to the agent if the chat can't be created.
+	/// A live call with `agent` from its page: the person's one direct message with the agent, which
+	/// the call runs in. Falls back to the new-chat sheet addressed to the agent if it can't be opened.
 	fileprivate func startLive(with agent: ChatParticipant) async {
 		do {
-			let created = try await store.create(
-				title: ThreadLayout.newChatTitle(for: [agent.name], startsLiveCall: true), participantIDs: [agent.id],
-				firstMessage: nil)
+			let created = try await store.openDirect(
+				with: agent.id, title: ThreadLayout.defaultTitle(for: [agent.name]))
 			selection = created.id
 			liveMeeting.present(.conversation(id: created.id, lead: agent))
 		} catch {
 			newChat = NewChatRequest(recipient: agent)
 		}
+	}
+
+	/// The tab bar's "+": the new-chat sheet addressed to the workspace's Chief of Staff. Without one
+	/// the sheet opens with nobody picked; it never claims a recipient it did not find.
+	fileprivate func newChatWithChiefOfStaff() async {
+		await store.loadActors()
+		let chief = store.actors.first {
+			$0.isSystem && $0.participant.kind == .agent && $0.participant.name == "Chief of Staff"
+		}
+		newChat = NewChatRequest(recipient: chief?.participant)
 	}
 
 	/// Agents and loops are never built through a form: the Chief of Staff scopes them with the

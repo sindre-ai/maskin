@@ -48,6 +48,7 @@ actor FakeChatAPI: ChatAPI {
 	/// Persist the next N sends, then fail as if the response was lost on the way back.
 	var loseResponses = 0
 	var readCalls: [Int] = []
+	var failRead = false
 	var retried: [(Int, String?)] = []
 	var actorList: [ChatActor] = []
 	var messageCalls: [(before: Int?, after: Int?)] = []
@@ -194,7 +195,9 @@ actor FakeChatAPI: ChatAPI {
 		return server[index]
 	}
 
+	func setFailRead(_ v: Bool) { failRead = v }
 	func markRead(conversationID: String, lastMessageID: Int) async throws {
+		if failRead { throw URLError(.notConnectedToInternet) }
 		readCalls.append(lastMessageID)
 	}
 
@@ -235,6 +238,20 @@ actor FakeListAPI: ConversationsAPI {
 	{
 		created.append((title, participantIDs, initialMessage))
 		return chatConvo("new", title: title, participants: [chatMe])
+	}
+
+	/// The direct message the fake server already has per participant; the first call makes one.
+	var directChats: [String: ConversationSummary] = [:]
+	var directCalls: [String] = []
+
+	func directChat(with participantID: String, title: String, idempotencyKey: String) async throws
+		-> ConversationSummary
+	{
+		directCalls.append(participantID)
+		if let existing = directChats[participantID] { return existing }
+		let made = chatConvo("dm-\(participantID)", title: title, participants: [chatMe, chatRelay])
+		directChats[participantID] = made
+		return made
 	}
 
 	var createdMetadata: [ChatSendMetadata?] = []

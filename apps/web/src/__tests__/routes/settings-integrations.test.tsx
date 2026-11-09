@@ -31,7 +31,9 @@ vi.mock('@tanstack/react-router', async () => {
 	}
 })
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
 
@@ -326,7 +328,9 @@ describe('IntegrationsPage', () => {
 
 			const header = screen.getByRole('button', { name: /GitHub · 2/ })
 			expect(header).toHaveAttribute('aria-expanded', 'false')
-			expect(screen.queryByRole('button', { name: /Add another/ })).not.toBeInTheDocument()
+			expect(
+				screen.queryByRole('button', { name: /Connect another installation/ }),
+			).not.toBeInTheDocument()
 		})
 
 		it('defaults to collapsed when only one installation exists', () => {
@@ -340,7 +344,9 @@ describe('IntegrationsPage', () => {
 			const header = screen.getByRole('button', { name: /GitHub · 1/ })
 			expect(header).toHaveAttribute('aria-expanded', 'false')
 			expect(screen.queryByText('vaerksted-ai')).not.toBeInTheDocument()
-			expect(screen.queryByRole('button', { name: /Add another/ })).not.toBeInTheDocument()
+			expect(
+				screen.queryByRole('button', { name: /Connect another installation/ }),
+			).not.toBeInTheDocument()
 		})
 
 		it('toggles the nested list when the header is clicked — no chevron, header IS the toggle', async () => {
@@ -380,7 +386,28 @@ describe('IntegrationsPage', () => {
 			render(<IntegrationsPage />)
 			await user.click(screen.getByRole('button', { name: /GitHub · 2/ }))
 
-			await user.click(screen.getByRole('button', { name: /Add another/ }))
+			await user.click(screen.getByRole('button', { name: /Connect another installation/ }))
+			expect(mockConnect).toHaveBeenCalledWith({ provider: 'github' })
+		})
+
+		it('marks each installation Active, or Reconnect needed when its token lacks a new scope', async () => {
+			const user = userEvent.setup()
+			mockUseIntegrations.mockReturnValue({
+				data: [
+					twoInstallations[0],
+					{ ...twoInstallations[1], needsReconnect: true, missingScopes: ['workflow'] },
+				],
+				isLoading: false,
+			})
+			mockUseProviders.mockReturnValue({ data: [githubProvider], isLoading: false })
+			render(<IntegrationsPage />)
+			await user.click(screen.getByRole('button', { name: /GitHub · 2/ }))
+
+			expect(screen.getAllByLabelText('Active')).toHaveLength(1)
+			expect(screen.getAllByLabelText('Reconnect needed')).toHaveLength(1)
+
+			// Reconnect runs the provider's normal sign-in, which updates the row in place.
+			await user.click(screen.getByRole('button', { name: 'Reconnect' }))
 			expect(mockConnect).toHaveBeenCalledWith({ provider: 'github' })
 		})
 
@@ -453,7 +480,7 @@ describe('IntegrationsPage', () => {
 		})
 	})
 
-	describe('google drive provider card (google-drive-integration-ui flag)', () => {
+	describe('google drive provider card', () => {
 		const googleDriveProvider = {
 			name: 'google-drive',
 			displayName: 'Google Drive',
@@ -462,30 +489,7 @@ describe('IntegrationsPage', () => {
 			externalIdDisplay: 'email' as const,
 		}
 
-		afterEach(() => {
-			localStorage.removeItem('ff:google-drive-integration-ui')
-		})
-
-		it('hides the Drive card and Connect button when the flag is off', () => {
-			localStorage.setItem('ff:google-drive-integration-ui', 'off')
-			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
-			mockUseProviders.mockReturnValue({
-				data: [
-					googleDriveProvider,
-					{ ...googleDriveProvider, name: 'gmail', displayName: 'Gmail' },
-				],
-				isLoading: false,
-			})
-
-			render(<IntegrationsPage />)
-
-			expect(screen.queryByText('Google Drive')).not.toBeInTheDocument()
-			// Other OAuth providers are unaffected by the Drive flag.
-			expect(screen.getByText('Gmail')).toBeInTheDocument()
-		})
-
-		it('shows the Drive card next to the other OAuth providers when the flag is on', () => {
-			localStorage.setItem('ff:google-drive-integration-ui', 'on')
+		it('shows the Drive card next to the other OAuth providers', () => {
 			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
 			mockUseProviders.mockReturnValue({
 				data: [
@@ -503,7 +507,6 @@ describe('IntegrationsPage', () => {
 		})
 
 		it('shows the New pill, description, meta line and a Details link on the Drive card', () => {
-			localStorage.setItem('ff:google-drive-integration-ui', 'on')
 			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
 			mockUseProviders.mockReturnValue({ data: [googleDriveProvider], isLoading: false })
 
@@ -518,7 +521,6 @@ describe('IntegrationsPage', () => {
 		})
 
 		it('keeps the Details link on a connected Drive card', () => {
-			localStorage.setItem('ff:google-drive-integration-ui', 'on')
 			mockUseIntegrations.mockReturnValue({
 				data: [
 					buildIntegrationResponse({
@@ -539,7 +541,6 @@ describe('IntegrationsPage', () => {
 		})
 
 		it('does not put Drive extras on other providers', () => {
-			localStorage.setItem('ff:google-drive-integration-ui', 'on')
 			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
 			mockUseProviders.mockReturnValue({
 				data: [{ ...googleDriveProvider, name: 'gmail', displayName: 'Gmail' }],
@@ -933,7 +934,9 @@ describe('IntegrationsPage', () => {
 			await user.click(screen.getByRole('button', { name: /LinkedIn/ }))
 			await screen.findByText('Magnus')
 			expect(screen.queryByRole('button', { name: /Connect your account/ })).not.toBeInTheDocument()
-			expect(screen.queryByRole('button', { name: /Add another/ })).not.toBeInTheDocument()
+			expect(
+				screen.queryByRole('button', { name: /Connect another installation/ }),
+			).not.toBeInTheDocument()
 		})
 
 		it('still states the per-identity price once accounts are connected', async () => {

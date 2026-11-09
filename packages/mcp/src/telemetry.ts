@@ -1,4 +1,10 @@
-import type { McpEra, McpProtocolVersionLabel } from '@maskin/shared'
+import {
+	type ListCallObjectType,
+	type McpEra,
+	type McpProtocolVersionLabel,
+	listCallHasCursor,
+	listCallObjectType,
+} from '@maskin/shared'
 import { measureResponseShape } from './response-shape'
 
 /**
@@ -75,6 +81,8 @@ export interface TelemetryConfig {
 	 *  `unknown` marks a per-request throwaway that groups nothing — the host
 	 *  had no client identity to work from. */
 	sessionSource?: 'maskin-session' | 'process' | 'unknown'
+	/** See `McpConfig.forwardMarker`: sent as `X-Maskin-Mcp-Forward` on the telemetry POST too. */
+	forwardMarker?: string
 	/**
 	 * Protocol era and allowlisted version label of the request this server is
 	 * serving, stamped onto `tool_call` and `tool_call_response_size` events.
@@ -111,6 +119,10 @@ export interface ToolCallEvent {
 	seq?: number
 	/** Sorted argument key NAMES. Never values — see `recordToolCall`. */
 	arg_keys?: string[]
+	/** Object type a list-family call listed, from a fixed vocabulary. Absent otherwise. */
+	object_type?: ListCallObjectType
+	/** Whether a list-family call carried a cursor or offset. Absent for other tools. */
+	has_cursor?: boolean
 	/** False when the handler threw. */
 	ok?: boolean
 	/** Which transport the emitting server is exposed over. */
@@ -250,6 +262,7 @@ async function postEvent(event: TelemetryEvent, target: TelemetryConfig): Promis
 				'Content-Type': 'application/json',
 				Authorization: `Bearer ${target.apiKey}`,
 				'X-Workspace-Id': target.workspaceId ?? '',
+				...(target.forwardMarker ? { 'X-Maskin-Mcp-Forward': target.forwardMarker } : {}),
 			},
 			body: JSON.stringify(event),
 		})
@@ -316,6 +329,8 @@ export function recordToolCall(
 			duration_ms: Math.max(0, Math.round(event.duration_ms)),
 			seq: toolCallSeq,
 			arg_keys: argKeys(event.args),
+			object_type: listCallObjectType(event.tool_name, event.args),
+			has_cursor: listCallHasCursor(event.tool_name, event.args),
 			ok: event.ok ?? true,
 			transport: event.transport,
 			session_source: session.source,
@@ -533,6 +548,7 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	create_loop: 'loop_create',
 	update_loop: 'loop_update',
 	delete_loop: 'loop_delete',
+	set_loop_view: 'loop_view_set',
 	// Comments
 	create_comment: 'comment_create',
 	// Notifications
@@ -545,6 +561,7 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	// Files
 	create_file: 'file_create',
 	update_file: 'file_update',
+	propose_file_changes: 'file_propose',
 	delete_file: 'file_delete',
 	// Extensions / modules
 	create_extension: 'extension_create',
@@ -554,10 +571,14 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	connect_integration: 'integration_connect',
 	disconnect_integration: 'integration_disconnect',
 	gmail_send_email: 'gmail_email_send',
+	gmail_save_attachment: 'gmail_attachment_save',
+	resend_send_email: 'resend_email_send',
 	update_integration_access: 'integration_access_update',
 	// Sessions
 	create_session: 'session_create',
 	create_sub_chat: 'session_create',
+	// For You
+	withdraw_decision_card: 'for_you_withdraw',
 	// Chats
 	create_chat: 'chat_create',
 	add_chat_participant: 'chat_participant_add',

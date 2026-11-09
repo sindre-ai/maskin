@@ -45,8 +45,6 @@ async function mockIntegrations(page: Page, rows: unknown[]) {
 }
 
 async function gotoDrive(page: Page, workspaceId: string) {
-	// The flag is off for the fixture actor; the client override flips it on.
-	await page.addInitScript(() => localStorage.setItem('ff:google-drive-integration-ui', 'on'))
 	await page.goto(`/${workspaceId}/settings/integrations/google-drive`)
 	await page.waitForLoadState('load')
 }
@@ -110,7 +108,6 @@ test.describe('Drive connect wizard', () => {
 		account,
 	}) => {
 		await mockIntegrations(page, [])
-		await page.addInitScript(() => localStorage.setItem('ff:google-drive-integration-ui', 'on'))
 		await page.goto(`/${account.workspaceId}/settings/integrations/google-drive?oauth=cancelled`)
 
 		await expect(page.getByText('Sign-in was cancelled. Try again when ready.')).toBeVisible()

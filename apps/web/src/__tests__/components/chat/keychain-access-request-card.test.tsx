@@ -33,7 +33,9 @@ vi.mock('@/hooks/use-sessions', () => ({
 }))
 
 let role = 'member'
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({ workspace: { role }, workspaceId: 'ws-1' }),
 }))
 let actor: { id: string; type: string } | null = { id: 'human-1', type: 'human' }
@@ -224,8 +226,9 @@ describe('KeychainAccessRequestCard', () => {
 	it('only lets the person who saved it, or an admin, allow', () => {
 		integrations = [credential({ createdBy: 'someone-else' })]
 		const first = renderCard()
-		expect(screen.getByRole('button', { name: 'Always allow' })).toBeDisabled()
-		expect(screen.getByRole('button', { name: 'Allow in this chat' })).toBeDisabled()
+		// A line saying who can, and an action: not a form with disabled buttons.
+		expect(screen.queryByRole('button', { name: 'Always allow' })).not.toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Ask an admin' })).toBeEnabled()
 		expect(
 			screen.getByText(/Only the person who saved this or a workspace admin/),
 		).toBeInTheDocument()

@@ -14,7 +14,9 @@ vi.mock('@/hooks/use-integrations', () => ({
 }))
 
 let role = 'member'
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({ workspace: { role }, workspaceId: 'ws-1' }),
 }))
 vi.mock('@/lib/auth', () => ({ getStoredActor: () => ({ id: 'human-1', type: 'human' }) }))

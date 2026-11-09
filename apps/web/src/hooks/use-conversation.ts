@@ -11,6 +11,7 @@ import { api } from '../lib/api'
 import { getStoredActor } from '../lib/auth'
 import { threadRootOfQueryKey } from '../lib/message-threads'
 import { queryKeys } from '../lib/query-keys'
+import { isViewerRefusal } from '../lib/workspace-role'
 
 const MESSAGES_PAGE_SIZE = 50
 
@@ -219,19 +220,23 @@ interface EditMessageContext {
 	snapshots: Array<[readonly unknown[], InfiniteData<MessagesListResponse> | undefined]>
 }
 
-// Optimistically rewrites the message's content in every cached page and marks
-// it edited; rolled back on error, reconciled with the server row on success.
+// Optimistically rewrites the message's content (and its tagged ids, when the edit sends them)
+// in every cached page and marks it edited; rolled back on error, reconciled with the server row
+// on success.
 export function useEditMessage(id: string, workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation<
 		MessageResponse,
 		Error,
-		{ messageId: number; content: string },
+		{ messageId: number; content: string; mentions?: string[] },
 		EditMessageContext
 	>({
-		mutationFn: ({ messageId, content }) =>
-			api.conversations.editMessage(id, workspaceId, messageId, { content }),
-		onMutate: async ({ messageId, content }) => {
+		mutationFn: ({ messageId, content, mentions }) =>
+			api.conversations.editMessage(id, workspaceId, messageId, {
+				content,
+				...(mentions ? { metadata: { mentions } } : {}),
+			}),
+		onMutate: async ({ messageId, content, mentions }) => {
 			await queryClient.cancelQueries({ queryKey: queryKeys.conversations.messagesPrefix(id) })
 			const snapshots = queryClient.getQueriesData<InfiniteData<MessagesListResponse>>({
 				queryKey: queryKeys.conversations.messagesPrefix(id),
@@ -243,7 +248,14 @@ export function useEditMessage(id: string, workspaceId: string) {
 					pages: cache.pages.map((page) => ({
 						...page,
 						messages: page.messages.map((m) =>
-							m.id === messageId ? { ...m, content, editedAt: new Date().toISOString() } : m,
+							m.id === messageId
+								? {
+										...m,
+										content,
+										editedAt: new Date().toISOString(),
+										...(mentions ? { metadata: { ...m.metadata, mentions } } : {}),
+									}
+								: m,
 						),
 					})),
 				})
@@ -283,8 +295,9 @@ export function useRetryMessage(id: string, workspaceId: string) {
 		onSuccess: () => {
 			toast.success('Asked the agents to respond')
 		},
-		onError: () => {
-			toast.error('Failed to retry')
+		onError: (error) => {
+			// A viewer's refused retry already got the shared message.
+			if (!isViewerRefusal(error)) toast.error('Failed to retry')
 		},
 	})
 }

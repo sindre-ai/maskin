@@ -1,5 +1,6 @@
 import { useEditableMarkdown } from '@/components/files/editable-markdown-stage'
 import { isHtml } from '@/components/files/file-body'
+import { FileReadView } from '@/components/files/file-read-view'
 import { PinFileButton } from '@/components/files/pin-file-button'
 import { ProvenanceStrip } from '@/components/files/provenance-strip'
 import { type ReviewFilter, ReviewPanel } from '@/components/files/review-panel'
@@ -8,6 +9,7 @@ import { PageHeader } from '@/components/layout/page-header'
 import { LinkedObjectsForFile } from '@/components/objects/linked-objects'
 import { EmptyState } from '@/components/shared/empty-state'
 import { RouteError } from '@/components/shared/route-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import {
 	DropdownMenu,
@@ -23,6 +25,7 @@ import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { Spinner } from '@/components/ui/spinner'
 import { useActors } from '@/hooks/use-actors'
 import { useAttachingObjects } from '@/hooks/use-attaching-objects'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import {
 	useCreateFileComment,
@@ -71,6 +74,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 interface FileViewerSearch {
 	round?: string
 	panel?: 'open' | 'closed'
+	// `edit` opens a markdown file in the editor instead of the text-first view.
+	view?: 'edit'
 }
 
 export const Route = createFileRoute('/_authed/$workspaceId/files/$fileId')({
@@ -79,6 +84,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/files/$fileId')({
 	validateSearch: (search: Record<string, unknown>): FileViewerSearch => ({
 		round: typeof search.round === 'string' ? search.round : undefined,
 		panel: search.panel === 'open' || search.panel === 'closed' ? search.panel : undefined,
+		view: search.view === 'edit' ? 'edit' : undefined,
 	}),
 })
 
@@ -139,6 +145,12 @@ function FileViewerPage() {
 	// page owns which card is open, which quotes no longer match, and the
 	// request for the editor to scroll to a highlight.
 	const textMode = useEditableMarkdown(file)
+	// A markdown file opens text-first; the editor and review panel are one tap
+	// away, and a deep link to a round or the panel goes straight to them.
+	const [editing, setEditing] = useState<boolean>(
+		search.view === 'edit' || search.panel === 'open' || Boolean(search.round),
+	)
+	const readMode = textMode && !editing && !panelOpen
 	const [activeCommentId, setActiveCommentId] = useState<string | null>(null)
 	const [orphanedIds, setOrphanedIds] = useState<ReadonlySet<string>>(() => new Set())
 	const [scrollRequest, setScrollRequest] = useState<TextCommentScrollRequest | null>(null)
@@ -489,7 +501,22 @@ function FileViewerPage() {
 		)
 	}
 
-	const strip = (
+	const askAboutFile = () => {
+		const first = attachers[0]
+		navigate({
+			to: '/$workspaceId/chats/new',
+			params: { workspaceId },
+			search: {
+				text: `About ${file.name}: `,
+				objectId: first?.id,
+				objectTitle: first?.title,
+				objectType: first?.type,
+			},
+		})
+	}
+	const author = actors?.find((a) => a.id === file.createdBy)?.name ?? null
+
+	const strip = readMode ? null : (
 		<ProvenanceStrip
 			workspaceId={workspaceId}
 			attachers={attachers}
@@ -573,16 +600,27 @@ function FileViewerPage() {
 			<ViewerShell panelOpen={panelOpen} strip={strip}>
 				<div className="flex min-h-0 flex-1 overflow-hidden">
 					<div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-						<TextCommentsProvider value={textCommentsValue}>
-							<ViewerStage
+						{readMode ? (
+							<FileReadView
 								file={file}
-								variantOverride={variantOverride}
-								mockupPreset={mockupPreset}
-								annotateMode={annotateMode}
-								pins={stagePins}
-								onPinPlace={handlePinPlace}
+								workspaceId={workspaceId}
+								authorName={author}
+								attachers={attachers}
+								onOpenEditor={() => setEditing(true)}
+								onAsk={askAboutFile}
 							/>
-						</TextCommentsProvider>
+						) : (
+							<TextCommentsProvider value={textCommentsValue}>
+								<ViewerStage
+									file={file}
+									variantOverride={variantOverride}
+									mockupPreset={mockupPreset}
+									annotateMode={annotateMode}
+									pins={stagePins}
+									onPinPlace={handlePinPlace}
+								/>
+							</TextCommentsProvider>
+						)}
 					</div>
 					{panelOpen && panelLayout === 'inline' && (
 						<ReviewPanel {...commonPanelProps} layout="inline" />
@@ -620,7 +658,7 @@ function FileViewerPage() {
 			)}
 			<Sheet open={linkedOpen} onOpenChange={setLinkedOpen}>
 				<SheetContent side="right" className="w-[640px] max-w-full overflow-y-auto sm:max-w-none">
-					<SheetTitle className="sr-only">Linked objects and files</SheetTitle>
+					<SheetTitle className="sr-only">Linked items and files</SheetTitle>
 					<div className="pt-12">
 						<LinkedObjectsForFile fileId={file.id} />
 					</div>
@@ -682,39 +720,48 @@ function TopBarActions({
 	// "Comments {n}" at every width, since comments are made by selecting text.
 	commentCount: number | null
 }) {
+	const canWrite = useCanWrite()
 	return (
-		<div className="flex flex-wrap items-center gap-1 max-md:min-w-0 max-md:max-w-full">
+		<div className="flex flex-wrap md:flex-nowrap items-center gap-1 max-md:min-w-0 max-md:max-w-full">
 			<PinFileButton file={file} isPinned={pinnedFlag} onToggle={onTogglePin} />
 			<Button
-				variant="ghost"
+				variant="outline"
 				size="sm"
+				className="max-md:h-11"
 				onClick={() => downloadFile(file)}
 				aria-label="Download file"
 			>
 				<Download size={14} />
+				<span className="hidden lg:inline">Download</span>
 			</Button>
 			<Button
 				variant="ghost"
 				size="sm"
+				className="max-md:h-11"
 				onClick={onOpenLinked}
-				aria-label="Linked objects and files"
+				aria-label="Linked items and files"
 			>
 				<Link2 size={14} />
-				<span className="hidden md:inline">Linked</span>
+				<span className="hidden lg:inline">Linked</span>
 			</Button>
-			<Button
-				variant={annotateMode ? 'secondary' : 'ghost'}
-				size="sm"
-				onClick={onToggleAnnotate}
-				aria-label="Toggle annotate mode"
-				aria-pressed={annotateMode}
-			>
-				<MapPin size={14} className="md:hidden" />
-				<span className="hidden md:inline">Annotate</span>
-			</Button>
+			<ViewerTooltip>
+				<Button
+					variant={annotateMode ? 'secondary' : 'ghost'}
+					size="sm"
+					className="max-md:h-11"
+					onClick={onToggleAnnotate}
+					disabled={!canWrite}
+					aria-label="Toggle annotate mode"
+					aria-pressed={annotateMode}
+				>
+					<MapPin size={14} className="md:hidden" />
+					<span className="hidden lg:inline">Annotate</span>
+				</Button>
+			</ViewerTooltip>
 			<Button
 				variant={panelOpen ? 'secondary' : 'ghost'}
 				size="sm"
+				className="max-md:h-11"
 				onClick={onTogglePanel}
 				aria-label={
 					commentCount === null
@@ -726,7 +773,7 @@ function TopBarActions({
 			>
 				<MessageSquare size={14} />
 				{commentCount === null ? (
-					<span className="hidden md:inline">Review</span>
+					<span className="hidden lg:inline">Review</span>
 				) : (
 					<span>Comments {commentCount}</span>
 				)}
@@ -782,6 +829,7 @@ function ViewerMoreMenu({
 			<Button
 				variant="ghost"
 				size="sm"
+				className="max-md:h-11"
 				disabled
 				aria-label="More actions — no options for this file type"
 				title="More — no options for this file type"
@@ -797,7 +845,7 @@ function ViewerMoreMenu({
 	return (
 		<DropdownMenu>
 			<DropdownMenuTrigger asChild>
-				<Button variant="ghost" size="sm" aria-label="More actions">
+				<Button variant="ghost" size="sm" className="max-md:h-11" aria-label="More actions">
 					<MoreHorizontal size={14} />
 				</Button>
 			</DropdownMenuTrigger>

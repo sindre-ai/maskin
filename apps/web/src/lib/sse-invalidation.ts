@@ -1,6 +1,4 @@
 import type { InvalidateQueryFilters, QueryClient } from '@tanstack/react-query'
-import { trackAgentSessionCompleted, trackTriggerFired } from './analytics'
-import { api } from './api'
 import { queryKeys } from './query-keys'
 import type { SSEEvent } from './sse'
 
@@ -94,7 +92,33 @@ function scheduleTrailingRefetch(
 	)
 }
 
+// Things that live outside the query cache (a custom loop view's frame) listen for the same
+// stream here instead of opening a second one. `null` means events may have been missed
+// (a reconnect), so a listener should treat everything it shows as possibly stale.
+export type SSEListener = (event: SSEEvent | null) => void
+const sseListeners = new Set<SSEListener>()
+
+export function subscribeToSSE(listener: SSEListener): () => void {
+	sseListeners.add(listener)
+	return () => {
+		sseListeners.delete(listener)
+	}
+}
+
+export function notifySSEGap() {
+	for (const listener of sseListeners) listener(null)
+}
+
 export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string, event: SSEEvent) {
+	for (const listener of sseListeners) {
+		try {
+			listener(event)
+		} catch (err) {
+			// One broken listener must not stop the cache invalidation below.
+			console.error('[sse] listener failed', err)
+		}
+	}
+
 	// `session.state_changed` frames (bet/444b-handed-off-strip) carry a
 	// `SessionStateChangedPayload` — not the generic `events` row shape — so
 	// `entity_type`/`entity_id` are absent and the switch below never matches
@@ -177,11 +201,6 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 				// keyed to the trigger — we don't know which loop from the payload,
 				// so invalidate every open loop-activity query in this workspace.
 				invalidate(queryClient, { queryKey: ['loops', workspaceId, 'activity'] })
-				trackTriggerFired({
-					entity_id: event.entity_id,
-					entity_type: 'trigger',
-					flow_id: event.event_id ?? null,
-				})
 			}
 			break
 		case 'session': {
@@ -246,37 +265,6 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 					BILLING_REFETCH_MS,
 				)
 			}
-			if (outcome) {
-				const sessionId = event.entity_id
-				// G2 trigger provenance lives on the session row — the `trigger_id`
-				// column plus the `trigger_type` folded into `config` by
-				// `createSession` — and the SSE payload has carried no `data` since
-				// migration 0006 dropped it for the 8KB NOTIFY limit. So read the row
-				// back. Fire-and-forget: `onEvent` is not awaited upstream
-				// (`sse.ts`), so this cannot stall the stream, and a completion whose
-				// row is unreadable (deleted, evicted) still emits — just without
-				// provenance, rather than being dropped.
-				void (async () => {
-					let triggerId: string | null = null
-					let triggerType: string | null = null
-					try {
-						const session = await api.sessions.get(sessionId, workspaceId)
-						triggerId = session.triggerId
-						triggerType =
-							typeof session.config?.trigger_type === 'string' ? session.config.trigger_type : null
-					} catch {
-						// Provenance is best-effort; the completion itself is not.
-					}
-					trackAgentSessionCompleted({
-						entity_id: sessionId,
-						entity_type: 'session',
-						outcome,
-						flow_id: event.event_id ?? null,
-						trigger_id: triggerId,
-						trigger_type: triggerType,
-					})
-				})()
-			}
 			break
 		}
 		case 'integration':
@@ -289,6 +277,11 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			invalidate(queryClient, { queryKey: queryKeys.forYou.list(workspaceId) })
 			break
 		case 'actor':
+			invalidate(queryClient, { queryKey: queryKeys.actors.all(workspaceId) })
+			break
+		case 'installed_loop':
+			// A loop version update rewrites the loop's agents (name, description, tools) in place
+			// and emits only this event, never an `actor` one — so the agent list kept the old name.
 			invalidate(queryClient, { queryKey: queryKeys.actors.all(workspaceId) })
 			break
 		case 'workspace':

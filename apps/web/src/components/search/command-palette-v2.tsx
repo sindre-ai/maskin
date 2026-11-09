@@ -1,12 +1,12 @@
 import { type CreatableType, CreatePicker } from '@/components/shared/create-picker'
-import { SearchRowTitle } from '@/components/shared/search-row'
-import { TypeBadge } from '@/components/shared/type-badge'
 import { useActors } from '@/hooks/use-actors'
 import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
+import { useForYou } from '@/hooks/use-for-you'
 import { useLoops } from '@/hooks/use-loops'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
 import { useObjects } from '@/hooks/use-objects'
+import { useParticipantMenu, useParticipantOptions } from '@/hooks/use-participant-menu'
 import { useSearchFieldHandlers } from '@/hooks/use-search-field-handlers'
 import {
 	SEARCH_QUERY_DEBOUNCE_MS,
@@ -20,6 +20,8 @@ import { useMarkRead, useUnread } from '@/hooks/use-subscriptions'
 import { trackCommandPaletteOpened } from '@/lib/analytics'
 import { cn } from '@/lib/cn'
 import { useCommandPalette } from '@/lib/command-palette-context'
+import { statusLabel } from '@/lib/constants'
+import { cardHeadline } from '@/lib/foryou-card-kind'
 import {
 	askRowTitle,
 	emptyStateText,
@@ -30,6 +32,7 @@ import {
 import { TRIGGERS_PAGE, matchSettingsPages } from '@/lib/palette/go-to'
 import { initialsMatch, matches, rankTitleMatchesFirst } from '@/lib/palette/ranking'
 import { buildRecents } from '@/lib/palette/recents'
+import { highlightText } from '@/lib/search-highlight'
 import { getRecentObjectIds, pushRecentObject } from '@/lib/search-recents'
 import {
 	searchEntityType,
@@ -44,12 +47,11 @@ import { rowSub, rowTitle } from '@/lib/search/row-display'
 import { serializeSearchState, urlStateFromParts } from '@/lib/search/url-state'
 import { useWorkspace } from '@/lib/workspace-context'
 import type { SearchResultRow } from '@maskin/shared'
-import { useNavigate, useRouterState } from '@tanstack/react-router'
+import { useNavigate } from '@tanstack/react-router'
 import {
 	Bot,
 	Check,
 	CircleDot,
-	type LucideIcon,
 	MessagesSquare,
 	Plus,
 	RefreshCw,
@@ -62,7 +64,6 @@ import {
 } from 'lucide-react'
 import {
 	type KeyboardEvent as ReactKeyboardEvent,
-	type ReactNode,
 	useCallback,
 	useEffect,
 	useId,
@@ -72,8 +73,9 @@ import {
 	useState,
 } from 'react'
 import { toast } from 'sonner'
+import { ParticipantMenu } from './participant-menu'
 import { SearchField } from './search-field'
-import { RowIcon, orderRows } from './search-results'
+import { orderRows } from './search-results'
 import { PartialNotice, ResultsError, ResultsSkeleton } from './search-states'
 
 // The ⌘K launcher. It is the search page's field in a smaller
@@ -82,8 +84,21 @@ import { PartialNotice, ResultsError, ResultsSkeleton } from './search-states'
 // results come. Enter on the Search row, or ⌘↵, hands the words and the pills to /search.
 
 const MAX_JUMP_ROWS = 6
+
+const KIND_BY_GROUP: Record<SearchResultRow['group'], string> = {
+	objects: 'ITEM',
+	loops: 'FLOW',
+	chats: 'CHAT',
+	agents: 'AGENT',
+	people: 'PERSON',
+	automations: 'AUTOMATION',
+}
+
+/** The kind column: ITEM / FLOW / CHAT as v3 draws it. Rows in Needs you are decisions. */
+function resultKind(group: string, row: SearchResultRow): string {
+	return group === 'Needs you' && row.group === 'objects' ? 'DECISION' : KIND_BY_GROUP[row.group]
+}
 const MAX_NEEDS_YOU = 3
-const MAX_RECENT = 4
 
 interface PaletteRow {
 	id: string
@@ -92,7 +107,8 @@ interface PaletteRow {
 	kind: string
 	title: string
 	sub?: string
-	icon: ReactNode
+	/** Matched text from the item's body, shown as a grey line under the title. */
+	snippet?: string
 	run: () => void
 }
 
@@ -100,30 +116,32 @@ interface PaletteCommand {
 	id: string
 	title: string
 	sub?: string
-	icon: LucideIcon
+	/** Extra words that find this row, e.g. the pre-rename name ("loop" for Flows). */
+	keywords?: string[]
 	run: () => void
 }
 
-function GlyphTile({ icon: Icon }: { icon: LucideIcon }) {
-	return (
-		<span
-			aria-hidden="true"
-			className="grid size-[22px] shrink-0 place-items-center rounded-md bg-muted text-muted-foreground"
-		>
-			<Icon className="size-[13px]" />
-		</span>
-	)
-}
-
-const VIEWS: { title: string; path: (workspaceId: string) => string; icon: LucideIcon }[] = [
-	{ title: 'For you', path: (w) => `/${w}`, icon: CircleDot },
-	{ title: 'Chats', path: (w) => `/${w}/chats`, icon: MessagesSquare },
-	{ title: 'Loops', path: (w) => `/${w}/loops`, icon: RefreshCw },
-	{ title: 'Agents', path: (w) => `/${w}/agents`, icon: Bot },
-	{ title: 'Objects', path: (w) => `/${w}/objects`, icon: Table2 },
-	{ title: TRIGGERS_PAGE.title, path: (w) => `/${w}/${TRIGGERS_PAGE.path}`, icon: Zap },
-	{ title: 'Marketplace', path: (w) => `/${w}/marketplace`, icon: Store },
-	{ title: 'Settings', path: (w) => `/${w}/settings`, icon: Settings },
+const VIEWS: {
+	title: string
+	path: (workspaceId: string) => string
+	keywords?: string[]
+}[] = [
+	{ title: 'For you', path: (w) => `/${w}` },
+	{ title: 'Chats', path: (w) => `/${w}/chats` },
+	{
+		title: 'Flows',
+		path: (w) => `/${w}/loops`,
+		keywords: ['loop', 'loops'],
+	},
+	{
+		title: 'Items',
+		path: (w) => `/${w}/objects`,
+		keywords: ['object', 'objects'],
+	},
+	{ title: 'Agents', path: (w) => `/${w}/agents` },
+	{ title: TRIGGERS_PAGE.title, path: (w) => `/${w}/${TRIGGERS_PAGE.path}` },
+	{ title: 'Marketplace', path: (w) => `/${w}/marketplace` },
+	{ title: 'Settings', path: (w) => `/${w}/settings` },
 ]
 
 /**
@@ -132,35 +150,23 @@ const VIEWS: { title: string; path: (workspaceId: string) => string; icon: Lucid
  * group name or a row's description anywhere would put every command above the result for
  * a short query.
  */
-function matchesRow(query: string, title: string, groupName: string): boolean {
+function matchesRow(
+	query: string,
+	title: string,
+	groupName: string,
+	keywords: string[] = [],
+): boolean {
 	return (
-		matches(query, title) ||
+		matches(query, title, ...keywords) ||
 		initialsMatch(query, title) ||
 		(query.length >= 3 && groupName.startsWith(query.toLowerCase()))
 	)
-}
-
-/**
- * ⌘F opens the browser's find everywhere except Search and Marketplace, where the
- * page has a field of its own and the key focuses it. Returns true if it took the key.
- */
-function focusFindTarget(workspaceId: string, pathname: string): boolean {
-	const selector =
-		pathname === `/${workspaceId}/search`
-			? '[data-search-field="page"]'
-			: pathname.startsWith(`/${workspaceId}/marketplace`)
-				? 'input[aria-label="Filter marketplace"]'
-				: null
-	const target = selector ? document.querySelector<HTMLInputElement>(selector) : null
-	target?.focus()
-	return Boolean(target)
 }
 
 export function CommandPaletteV2() {
 	const { open, setOpen } = useCommandPalette()
 	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
-	const pathname = useRouterState({ select: (s) => s.location.pathname })
 	const objectTypes = useAvailableObjectTypes()
 	const typeLabel = useObjectTypeLabel()
 	const triggerRef = useRef<HTMLElement | null>(null)
@@ -228,35 +234,31 @@ export function CommandPaletteV2() {
 				id: 'new-chat',
 				title: 'New chat',
 				sub: 'talk to your agents',
-				icon: MessagesSquare,
 				run: openChat,
 			},
 			...objectTypes.map((type) => ({
 				id: `new-${type.value}`,
 				title: `New ${typeLabel(type.value).toLowerCase()}`,
 				sub: 'an agent structures it from what you say',
-				icon: Plus,
 				run: () => openCreate('object', type.value),
 			})),
 			{
 				id: 'new-loop',
-				title: 'New loop',
+				title: 'New flow',
+				keywords: ['loop', 'new loop'],
 				sub: 'describe it and Maskin wires it',
-				icon: RefreshCw,
 				run: () => navigateTo(`/${workspaceId}/loops/new`),
 			},
 			{
 				id: 'new-agent',
 				title: 'New agent',
 				sub: 'hire one for an outcome',
-				icon: Sparkles,
 				run: () => openCreate('agent'),
 			},
 			{
 				id: 'mark-all-read',
 				title: 'Mark all read',
 				sub: 'clear For you',
-				icon: Check,
 				run: markAllRead,
 			},
 		],
@@ -289,9 +291,6 @@ export function CommandPaletteV2() {
 			if (e.key === 'k') {
 				e.preventDefault()
 				setOpen((o) => !o)
-			} else if (e.key === 'f') {
-				// Only Search and Marketplace take ⌘F. Anywhere else the browser's find works.
-				if (!open && focusFindTarget(workspaceId, pathname)) e.preventDefault()
 			} else if (e.key === 'j') {
 				e.preventDefault()
 				openChat()
@@ -299,7 +298,7 @@ export function CommandPaletteV2() {
 		}
 		document.addEventListener('keydown', handler)
 		return () => document.removeEventListener('keydown', handler)
-	}, [open, openChat, pathname, setOpen, workspaceId])
+	}, [openChat, setOpen])
 
 	return (
 		<>
@@ -335,11 +334,13 @@ interface PanelProps {
 function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProps) {
 	const navigate = useNavigate()
 	const { workspace } = useWorkspace()
+	const typeLabel = useObjectTypeLabel()
 	const panelRef = useRef<HTMLDivElement>(null)
 	const inputRef = useRef<HTMLInputElement>(null)
 	const listboxId = useId()
 	const vocab = useSearchVocabulary()
-	const { state, dispatch, suggestion, types, statuses, query } = useSearchState(vocab)
+	const { state, dispatch, suggestion, types, statuses, participants, query } =
+		useSearchState(vocab)
 	const { parts } = state
 	const [announcement, setAnnouncement] = useState('')
 
@@ -347,7 +348,7 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 		inputRef.current?.focus()
 	}, [])
 
-	const { onTextChange, onAcceptSuggestion, onBackspaceToWord, onRemovePill } =
+	const { onTextChange, onAcceptSuggestion, onBackspaceToWord, onRemovePill, onPickParticipant } =
 		useSearchFieldHandlers({
 			surface: 'command_palette',
 			parts,
@@ -356,6 +357,12 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 			dispatch,
 			inputRef,
 		})
+	const participantOptions = useParticipantOptions(vocab)
+	const menu = useParticipantMenu({
+		parts,
+		options: participantOptions,
+		onPick: onPickParticipant,
+	})
 
 	const hasQuery = query !== ''
 	const hasPills = parts.pills.length > 0
@@ -367,6 +374,7 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 		text: debouncedText,
 		types,
 		statuses,
+		participants,
 		updated: '',
 		sort: 'rel',
 		limit: MAX_JUMP_ROWS,
@@ -376,7 +384,9 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 	const typedSettled = queryText({ ...parts, text: debouncedText }) === query
 	const settled = Boolean(data) && !isPlaceholderData && !isFetching && !isError && typedSettled
 
-	// With nothing typed, the first group is what needs the person: the Needs you status group.
+	// With nothing typed, the first group is what needs the person: the For you decisions, then
+	// anything else in the Needs you status group.
+	const { data: forYou } = useForYou(workspaceId)
 	const needsYou = useSearchQuery(
 		workspaceId,
 		{
@@ -455,10 +465,10 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 	): PaletteRow => ({
 		id: `${group}-${row.group}-${row.id}`,
 		group,
-		kind: row.type.replace(/_/g, ' ').toUpperCase(),
+		kind: resultKind(group, row),
 		title: rowTitle(row),
 		sub: rowSub(row),
-		icon: <RowIcon row={row} />,
+		snippet: row.snippet ?? undefined,
 		// A row from the previous answer must not open while the new one is on its way.
 		run: () => {
 			if (withQuery && !settled) return
@@ -473,12 +483,26 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 		const groups: { label: string; rows: PaletteRow[] }[] = []
 
 		if (isEmpty) {
-			const needs = (needsYou.data?.results ?? []).slice(0, MAX_NEEDS_YOU)
+			const decisionRows: PaletteRow[] = (forYou?.items ?? []).map((item) => ({
+				id: `needs-you-${item.entity_id}`,
+				group: 'Needs you',
+				kind: 'DECISION',
+				title: item.object?.title?.trim() || cardHeadline(item),
+				run: () => {
+					onClose()
+					navigate({
+						to: '/$workspaceId/objects/$objectId',
+						params: { workspaceId, objectId: item.entity_id },
+					})
+				},
+			}))
+			const seen = new Set((forYou?.items ?? []).map((item) => item.entity_id))
+			const statusRows = (needsYou.data?.results ?? [])
+				.filter((row) => !seen.has(row.id))
+				.map((row) => resultRow(row, 'Needs you', 0, MAX_NEEDS_YOU, false))
 			groups.push({
 				label: 'Needs you',
-				rows: needs.map((row, index) =>
-					resultRow(row, 'Needs you', index + 1, needs.length, false),
-				),
+				rows: [...decisionRows, ...statusRows].slice(0, MAX_NEEDS_YOU),
 			})
 			const byId = new Map((objects ?? []).map((o) => [o.id, o]))
 			const items = buildRecents({
@@ -507,20 +531,14 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 					const common = {
 						id: `recent-${item.kind}-${item.id}`,
 						group: 'Recent',
-						kind: (item.type ?? item.kind).toUpperCase(),
+						kind: item.kind === 'object' ? 'ITEM' : item.kind === 'chat' ? 'CHAT' : 'FLOW',
 						title: item.title,
 					}
 					if (item.kind === 'object') {
 						const object = byId.get(item.id)
 						return {
 							...common,
-							icon: (
-								<TypeBadge
-									type={object?.type ?? 'task'}
-									variant="tile"
-									className="size-[22px] shrink-0 rounded-md"
-								/>
-							),
+							sub: object ? `${typeLabel(object.type)} · ${statusLabel(object.status)}` : undefined,
 							run: () => {
 								track()
 								pushRecentObject(workspaceId, item.id)
@@ -530,7 +548,6 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 					}
 					return {
 						...common,
-						icon: <GlyphTile icon={item.kind === 'chat' ? MessagesSquare : RefreshCw} />,
 						run: () => {
 							track()
 							navigateTo(`/${workspaceId}/${item.kind === 'chat' ? 'chats' : 'loops'}/${item.id}`)
@@ -545,7 +562,7 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 			groups.push({
 				label: 'Commands',
 				rows: rankTitleMatchesFirst(
-					commands.filter((c) => matchesRow(query, c.title, 'command')),
+					commands.filter((c) => matchesRow(query, c.title, 'command', c.keywords)),
 					query,
 				).map((c) => ({
 					id: c.id,
@@ -553,19 +570,17 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 					kind: 'COMMAND',
 					title: c.title,
 					sub: c.sub,
-					icon: <GlyphTile icon={c.icon} />,
 					run: c.run,
 				})),
 			})
 			const views = rankTitleMatchesFirst(
-				VIEWS.filter((view) => matchesRow(query, view.title, 'go to')),
+				VIEWS.filter((view) => matchesRow(query, view.title, 'go to', view.keywords)),
 				query,
 			).map((view) => ({
 				id: `go-${view.title}`,
 				group: 'Go to',
 				kind: 'GO TO',
 				title: view.title,
-				icon: <GlyphTile icon={view.icon} />,
 				run: () => navigateTo(view.path(workspaceId)),
 			}))
 			// Typing a settings page name ("keychain") adds a Settings › Keychain row.
@@ -575,7 +590,6 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 					group: 'Go to',
 					kind: 'GO TO',
 					title: page.title,
-					icon: <GlyphTile icon={Settings} />,
 					run: () => navigateTo(`/${workspaceId}/${page.path}`),
 				}),
 			)
@@ -610,7 +624,6 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 						: settled
 							? searchRowSub(total)
 							: undefined,
-					icon: <GlyphTile icon={Search} />,
 					run: handOver,
 				},
 			],
@@ -635,7 +648,6 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 						kind: 'ASK',
 						title: askRowTitle(query),
 						sub: 'opens a new chat, nothing is sent',
-						icon: <GlyphTile icon={Sparkles} />,
 						run: () => {
 							onClose()
 							navigate({
@@ -718,11 +730,11 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 	const noMatches = nothingFound && settled
 
 	return (
-		<div className="fixed inset-0 z-50 flex items-start justify-center pt-[18vh] max-sm:items-end max-sm:pt-0">
+		<div className="fixed inset-0 z-50 flex items-start justify-center pt-22.5 max-sm:items-end max-sm:pt-0">
 			<button
 				type="button"
 				aria-label="Close palette"
-				className="fixed inset-0 bg-foreground/40"
+				className="fixed inset-0 bg-foreground/45"
 				onClick={onClose}
 			/>
 			<div
@@ -732,7 +744,7 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 				aria-modal="true"
 				aria-label="Command palette"
 				onKeyDown={onPanelKeyDown}
-				className="relative mx-auto flex w-full max-w-xl flex-col overflow-hidden border border-border bg-popover text-popover-foreground shadow-xl max-sm:max-h-[92dvh] max-sm:rounded-t-2xl max-sm:rounded-b-none max-sm:pb-[env(safe-area-inset-bottom)] sm:w-[calc(100%-2rem)] sm:rounded-2xl"
+				className="relative mx-auto flex max-h-140 w-full max-w-150 flex-col overflow-hidden bg-popover text-popover-foreground shadow-2xl ring-1 ring-border max-sm:max-h-[92dvh] max-sm:rounded-t-2xl max-sm:rounded-b-none max-sm:pb-[env(safe-area-inset-bottom)] sm:w-[calc(100%-2rem)] sm:rounded-2xl"
 			>
 				<div className="flex items-center border-b border-border">
 					<SearchField
@@ -744,6 +756,7 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 						listboxId={listboxId}
 						activeOptionId={activeDomId}
 						listboxOpen
+						menu={menu}
 						onTextChange={onTextChange}
 						onAcceptSuggestion={onAcceptSuggestion}
 						onDismissSuggestion={() => {
@@ -758,10 +771,21 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 						onModEnter={handOver}
 						onEscape={onEscape}
 					/>
-					<kbd className="mr-3.5 hidden shrink-0 items-center rounded-md border border-border bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground sm:inline-flex">
+					<span className="mr-4.5 hidden shrink-0 text-[13px] text-muted-foreground sm:inline">
 						Esc
-					</kbd>
+					</span>
 				</div>
+
+				{/* The @ menu takes the results' place while it is open; the results stay mounted underneath. */}
+				{menu.open ? (
+					<ParticipantMenu
+						rows={menu.rows}
+						activeIndex={menu.activeIndex}
+						listboxId={menu.listboxId}
+						onPick={menu.pick}
+						className="m-1.5 border-0 p-0 shadow-none"
+					/>
+				) : null}
 
 				{/* biome-ignore lint/a11y/useFocusableInteractive: focus stays in the search field, the listbox is never tabbed to */}
 				<div
@@ -770,7 +794,10 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 					role="listbox"
 					aria-label="Commands and results"
 					aria-busy={loading || isFetching}
-					className="max-h-[360px] min-h-0 flex-1 overflow-auto p-1.5 max-sm:max-h-none"
+					className={cn(
+						'max-h-105 min-h-0 flex-1 overflow-auto p-1.5 max-sm:max-h-none [&_mark]:bg-warning/25 [&_mark]:text-foreground',
+						menu.open && 'hidden',
+					)}
 				>
 					{rows.map((group) => (
 						<div
@@ -781,7 +808,10 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 							// The previous answer stays on screen, dimmed, while a new one loads.
 							className={cn(group.label === 'Jump to' && !settled && data && 'opacity-60')}
 						>
-							<div aria-hidden="true" className="eyebrow px-2.5 pb-1 pt-2">
+							<div
+								aria-hidden="true"
+								className="px-2.5 pb-1 pt-2.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground"
+							>
 								{group.label}
 							</div>
 							{group.label === 'Jump to' && loading ? <ResultsSkeleton /> : null}
@@ -800,28 +830,34 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 									onMouseMove={() => setActiveId(row.id)}
 									onClick={row.run}
 									className={cn(
-										'group flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1.5 max-[1024.02px]:min-h-11',
-										row.id === activeId && 'bg-accent text-accent-foreground',
+										'group flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.75 max-lg:min-h-11 pointer-coarse:min-h-11',
+										row.id === activeId && 'bg-secondary',
 									)}
 								>
-									{row.icon}
-									<SearchRowTitle
-										title={row.title}
-										sub={row.sub}
-										query={hasQuery ? query : ''}
-										className="min-w-0 flex-1 font-semibold"
-									/>
-									<span className="shrink-0 font-mono text-[9.5px] font-semibold tracking-[0.05em] text-muted-foreground">
+									<span className="flex min-w-0 flex-1 flex-col">
+										<span className="truncate text-sm font-semibold text-foreground">
+											{highlightText(row.title, hasQuery ? query : '')}
+										</span>
+										{row.sub ? (
+											<span className="truncate text-xs font-normal text-muted-foreground">
+												{row.sub}
+											</span>
+										) : null}
+										{hasQuery && row.snippet ? (
+											<span className="truncate text-xs font-normal text-muted-foreground">
+												{highlightText(row.snippet, query)}
+											</span>
+										) : null}
+									</span>
+									<span className="shrink-0 font-mono text-[11px] font-semibold text-muted-foreground">
 										{row.kind}
 									</span>
-									<kbd
-										className={cn(
-											'hidden shrink-0 rounded-md border border-border bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground',
-											row.id === activeId && 'inline-flex',
-										)}
+									<span
+										aria-hidden="true"
+										className="w-4 shrink-0 text-center font-mono text-[11px] text-muted-foreground"
 									>
-										↵
-									</kbd>
+										{row.id === activeId ? '↵' : ''}
+									</span>
 								</div>
 							))}
 						</div>
@@ -839,7 +875,7 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 				</div>
 
 				{/* Keyboard hints mean nothing on a phone or tablet: no footer there. */}
-				<div className="flex shrink-0 items-center gap-3.5 border-t border-border bg-secondary px-4 py-2 text-[10.5px] text-muted-foreground max-sm:hidden pointer-coarse:hidden">
+				<div className="flex shrink-0 items-center gap-4 border-t border-border bg-secondary px-4 py-2 text-[11.5px] text-muted-foreground max-sm:hidden pointer-coarse:hidden">
 					<span>↑↓ navigate</span>
 					<span>↵ run</span>
 					<span>{shortcutLabel('↵')} search everything</span>

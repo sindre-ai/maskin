@@ -51,6 +51,8 @@ function createMockDb(workspace?: Record<string, unknown>) {
 		update: vi.fn().mockReturnValue({
 			set: vi.fn().mockReturnValue({ where: mockUpdateWhere }),
 		}),
+		// persistRefreshedSlot sets lock_timeout / statement_timeout first.
+		execute: vi.fn().mockResolvedValue([]),
 		transaction: mockTransaction,
 	}
 	mockTransaction.mockImplementation(async (fn: (tx: typeof db) => Promise<unknown>) => fn(db))

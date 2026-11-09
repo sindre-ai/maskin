@@ -15,6 +15,8 @@ export const BYO_LOGIN_PROVIDER = 'login'
 export interface LoginFields {
 	username: string
 	password: string
+	/** For a site that has both a username and an email. Absent on a login saved without one. */
+	email?: string
 }
 
 /**
@@ -22,7 +24,11 @@ export interface LoginFields {
  * one envelope and one audit trail like any other key.
  */
 export function encodeLogin(login: LoginFields): string {
-	return JSON.stringify({ username: login.username, password: login.password })
+	return JSON.stringify({
+		username: login.username,
+		password: login.password,
+		...(login.email !== undefined ? { email: login.email } : {}),
+	})
 }
 
 /** The inverse of encodeLogin. Null for anything that is not a well-formed login. */
@@ -30,9 +36,10 @@ export function decodeLogin(value: string): LoginFields | null {
 	try {
 		const parsed: unknown = JSON.parse(value)
 		if (typeof parsed !== 'object' || parsed === null) return null
-		const { username, password } = parsed as Record<string, unknown>
+		const { username, password, email } = parsed as Record<string, unknown>
 		if (typeof username !== 'string' || typeof password !== 'string') return null
-		return { username, password }
+		if (email !== undefined && typeof email !== 'string') return null
+		return email === undefined ? { username, password } : { username, password, email }
 	} catch {
 		return null
 	}
@@ -64,7 +71,7 @@ export async function createByoLogin(
 ): Promise<ByoLoginResult> {
 	const { workspaceId, actorId } = input
 	assertValidCredentialName(input.displayName)
-	assertValidLoginFields(input.username, input.password)
+	assertValidLoginFields(input.username, input.password, input.email)
 	await assertSlugFree(db, workspaceId, input.displayName)
 	const agentIds = input.agentIds ?? []
 	const { credentials, dekCiphertext } = await encryptEnvelope(kms, workspaceId, encodeLogin(input))

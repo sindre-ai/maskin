@@ -178,6 +178,49 @@ describe('FilePreview', () => {
 			expect(screen.queryByTitle(/Preview of/)).not.toBeInTheDocument()
 		})
 
+		it('plays audio from its inline bytes once opened, with no size cap', async () => {
+			const createObjectURL = vi.fn(() => 'blob:audio-1')
+			const revokeObjectURL = vi.fn()
+			vi.stubGlobal('URL', Object.assign(URL, { createObjectURL, revokeObjectURL }))
+			useFileMock.mockReturnValue({
+				data: detail({ name: 'memo.mp3', mimeType: 'audio/mpeg', content: 'ZmFrZQ==' }),
+				isError: false,
+			})
+			const { container } = renderCard({
+				meta: { name: 'memo.mp3', mimeType: 'audio/mpeg', sizeBytes: 9_000_000 },
+			})
+			expect(container.querySelector('audio')).toBeNull()
+			expect(useFileMock).toHaveBeenLastCalledWith(WS, null)
+			await userEvent.click(screen.getByRole('button', { name: /Expand preview of memo.mp3/ }))
+			expect(screen.getByText('Audio')).toBeInTheDocument()
+			const player = container.querySelector('audio')
+			expect(player).toHaveAttribute('src', 'blob:audio-1')
+			expect(player).toHaveAttribute('controls')
+			vi.unstubAllGlobals()
+		})
+
+		it('streams a large audio file from its storage URL', () => {
+			useFileMock.mockReturnValue({
+				data: detail({
+					name: 'talk.m4a',
+					mimeType: 'audio/mp4',
+					content: '',
+					contentOmitted: true,
+					downloadUrl: 'https://storage.example/talk.m4a?sig=1',
+				}),
+				isError: false,
+			})
+			const { container } = renderCard({
+				meta: { name: 'talk.m4a', mimeType: 'audio/mp4', sizeBytes: 50_000_000 },
+				defaultExpanded: true,
+			})
+			expect(container.querySelector('audio')).toHaveAttribute(
+				'src',
+				'https://storage.example/talk.m4a?sig=1',
+			)
+			expect(screen.queryByText(/too large to preview/)).not.toBeInTheDocument()
+		})
+
 		it('says so when the file could not be loaded', () => {
 			useFileMock.mockReturnValue({ data: undefined, isError: true })
 			renderCard({ meta, defaultExpanded: true })
@@ -225,6 +268,8 @@ describe('isPreviewableFile', () => {
 			'image/jpeg',
 			'text/plain',
 			'application/json',
+			'audio/mpeg',
+			'audio/wav',
 		]) {
 			expect(isPreviewableFile(type)).toBe(true)
 		}

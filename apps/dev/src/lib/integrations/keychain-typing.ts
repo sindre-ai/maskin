@@ -21,12 +21,17 @@ import { getCredential } from './lookup'
  * read is audited by getCredential.
  */
 
-const PLACEHOLDER = /^\{\{keychain:([^{}]+)\.(username|password)\}\}$/
+const PLACEHOLDER = /^\{\{keychain:([^{}]+)\.(username|password|email)\}\}$/
 const MENTIONS_PLACEHOLDER = /\{\{\s*keychain:/i
 
 export type KeychainTyping =
 	| { kind: 'plain' }
-	| { kind: 'resolved'; text: string; credentialName: string; field: 'username' | 'password' }
+	| {
+			kind: 'resolved'
+			text: string
+			credentialName: string
+			field: 'username' | 'password' | 'email'
+	  }
 	| { kind: 'error'; status: 400 | 403 | 404; message: string }
 
 export interface KeychainTypingContext {
@@ -50,14 +55,14 @@ export async function resolveKeychainTyping(
 				kind: 'error',
 				status: 400,
 				message:
-					'A saved credential must be typed on its own: send exactly {{keychain:<Name>.username}} or {{keychain:<Name>.password}} as the whole text, with nothing before or after it. Nothing was typed.',
+					'A saved credential must be typed on its own: send exactly {{keychain:<Name>.username}}, {{keychain:<Name>.password}} or {{keychain:<Name>.email}} as the whole text, with nothing before or after it. Nothing was typed.',
 			}
 		}
 		return { kind: 'plain' }
 	}
 
 	const name = (match[1] as string).trim()
-	const field = match[2] as 'username' | 'password'
+	const field = match[2] as 'username' | 'password' | 'email'
 	if (ctx.actorType !== 'agent') {
 		return {
 			kind: 'error',
@@ -135,9 +140,17 @@ export async function resolveKeychainTyping(
 				message: `"${entry.displayName}" is not a usable login. Nothing was typed.`,
 			}
 		}
+		const text = login[field]
+		if (text === undefined) {
+			return {
+				kind: 'error',
+				status: 404,
+				message: `"${entry.displayName}" has no email saved. Nothing was typed.`,
+			}
+		}
 		return {
 			kind: 'resolved',
-			text: login[field],
+			text,
 			credentialName: entry.displayName,
 			field,
 		}

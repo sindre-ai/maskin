@@ -1,5 +1,7 @@
+import { StatusPill } from '@/components/integrations/drive/status-pill'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { FormError } from '@/components/shared/form-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import {
 	Dialog,
@@ -21,6 +23,7 @@ import {
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useActor, useUpdateActor } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import {
 	useRemoveWorkspaceMember,
 	useUpdateWorkspaceMemberRole,
@@ -28,7 +31,10 @@ import {
 } from '@/hooks/use-workspaces'
 import { ApiError } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
+import { cn } from '@/lib/cn'
+import { PILL_BUTTON } from '@/lib/pill-button'
 import { useWorkspace } from '@/lib/workspace-context'
+import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
 import { useEffect, useState } from 'react'
 
 interface HumanDetailDialogProps {
@@ -56,6 +62,7 @@ export function HumanDetailDialog({
 	const { data: members } = useWorkspaceMembers(workspaceId)
 	const member = members?.find((m) => m.actorId === actorId)
 	const { workspace } = useWorkspace()
+	const canWrite = useCanWrite()
 
 	const [descriptionDraft, setDescriptionDraft] = useState('')
 	const [systemPromptDraft, setSystemPromptDraft] = useState('')
@@ -78,7 +85,7 @@ export function HumanDetailDialog({
 	if (!actorId) return null
 
 	const handleRoleChange = async (nextRole: string) => {
-		if (!member || nextRole === member.role) return
+		if (!member || !canWrite || nextRole === member.role) return
 		setRoleError(null)
 		try {
 			await updateRole.mutateAsync({ actorId: member.actorId, role: nextRole })
@@ -88,7 +95,7 @@ export function HumanDetailDialog({
 	}
 
 	const handleSave = () => {
-		if (!actor) return
+		if (!actor || !canWrite) return
 		const description = descriptionDraft.trim()
 		const systemPrompt = systemPromptDraft
 		const data: { description?: string; system_prompt?: string } = {}
@@ -130,12 +137,18 @@ export function HumanDetailDialog({
 					<DialogFooter className="gap-2">
 						<Button
 							variant="ghost"
+							className={PILL_BUTTON}
 							onClick={() => setConfirmingRemove(false)}
 							disabled={removeMember.isPending}
 						>
 							Cancel
 						</Button>
-						<Button variant="destructive" onClick={handleRemove} disabled={removeMember.isPending}>
+						<Button
+							variant="destructive"
+							className={PILL_BUTTON}
+							onClick={handleRemove}
+							disabled={removeMember.isPending}
+						>
 							{removeMember.isPending ? (
 								<>
 									<Spinner className="h-3 w-3" />
@@ -151,13 +164,31 @@ export function HumanDetailDialog({
 		)
 	}
 
+	// A viewer may still leave on their own; removing someone else is a write.
+	const leaveButton = (
+		<Button
+			type="button"
+			variant="ghost"
+			className={cn(PILL_BUTTON, 'text-error hover:text-error')}
+			disabled={isBillingOwner || (!canWrite && !isSelf)}
+			onClick={() => setConfirmingRemove(true)}
+		>
+			{removeLabel}
+		</Button>
+	)
+
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent>
 				<DialogHeader>
-					<DialogTitle className="flex items-center gap-2">
+					<DialogTitle className="flex items-center gap-3 text-[17px] font-semibold">
 						<ActorAvatar name={actor?.name ?? 'Member'} type="human" size="md" />
-						{actor?.name ?? 'Member'}
+						<span className="min-w-0 truncate">{actor?.name ?? 'Member'}</span>
+						{member && (
+							<StatusPill soft tone="ok" className="ml-auto capitalize">
+								{member.role}
+							</StatusPill>
+						)}
 					</DialogTitle>
 					<DialogDescription>
 						{actor?.email ??
@@ -168,26 +199,28 @@ export function HumanDetailDialog({
 					{member && member.role !== 'owner' && (
 						<div>
 							<Label htmlFor="human-role">Role</Label>
-							<Select
-								value={member.role}
-								onValueChange={handleRoleChange}
-								disabled={updateRole.isPending}
-							>
-								<SelectTrigger
-									id="human-role"
-									aria-label={`Role for ${member.name}`}
-									className="w-full"
+							<ViewerTooltip className="flex w-full">
+								<Select
+									value={member.role}
+									onValueChange={handleRoleChange}
+									disabled={updateRole.isPending || !canWrite}
 								>
-									<SelectValue />
-								</SelectTrigger>
-								<SelectContent>
-									{ROLE_OPTIONS.map((role) => (
-										<SelectItem key={role} value={role}>
-											{role}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
+									<SelectTrigger
+										id="human-role"
+										aria-label={`Role for ${member.name}`}
+										className="w-full"
+									>
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent>
+										{ROLE_OPTIONS.map((role) => (
+											<SelectItem key={role} value={role}>
+												{role}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+							</ViewerTooltip>
 							{roleError && (
 								<p className="mt-1 text-sm text-error" role="alert">
 									{roleError}
@@ -202,8 +235,9 @@ export function HumanDetailDialog({
 							type="text"
 							value={descriptionDraft}
 							onChange={(e) => setDescriptionDraft(e.target.value)}
-							placeholder="Short one-liner (max 80 chars)"
+							placeholder={canWrite ? 'Short one-liner (max 80 chars)' : VIEWER_READ_ONLY_MESSAGE}
 							maxLength={80}
+							disabled={!canWrite}
 						/>
 					</div>
 					<div>
@@ -212,8 +246,13 @@ export function HumanDetailDialog({
 							id="human-system-prompt"
 							value={systemPromptDraft}
 							onChange={(e) => setSystemPromptDraft(e.target.value)}
-							placeholder="Context for agents when this person is @mentioned in a comment."
+							placeholder={
+								canWrite
+									? 'Context for agents when this person is @mentioned in a comment.'
+									: VIEWER_READ_ONLY_MESSAGE
+							}
 							className="min-h-[160px] font-mono text-sm"
+							disabled={!canWrite}
 						/>
 						<p className="mt-1 text-xs text-muted-foreground">
 							Agents fetch this on demand via the actor API when this person is @mentioned in a
@@ -229,22 +268,26 @@ export function HumanDetailDialog({
 					)}
 				</div>
 				<div className="flex justify-between gap-2">
-					<Button
-						type="button"
-						variant="ghost"
-						className="text-error hover:text-error"
-						disabled={isBillingOwner}
-						onClick={() => setConfirmingRemove(true)}
-					>
-						{removeLabel}
-					</Button>
+					{isSelf ? leaveButton : <ViewerTooltip>{leaveButton}</ViewerTooltip>}
 					<div className="flex gap-2">
-						<Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+						<Button
+							type="button"
+							variant="ghost"
+							className={PILL_BUTTON}
+							onClick={() => onOpenChange(false)}
+						>
 							Cancel
 						</Button>
-						<Button type="button" onClick={handleSave} disabled={updateActor.isPending}>
-							{updateActor.isPending ? 'Saving…' : 'Save'}
-						</Button>
+						<ViewerTooltip>
+							<Button
+								type="button"
+								className={PILL_BUTTON}
+								onClick={handleSave}
+								disabled={updateActor.isPending || !canWrite}
+							>
+								{updateActor.isPending ? 'Saving…' : 'Save'}
+							</Button>
+						</ViewerTooltip>
 					</div>
 				</div>
 			</DialogContent>

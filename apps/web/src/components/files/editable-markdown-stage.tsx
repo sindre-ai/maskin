@@ -1,16 +1,17 @@
+import { useCanWrite } from '@/hooks/use-can-write'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import {
 	FileConflictError,
 	FileRetryableError,
 	type FileSaveClient,
 } from '@/hooks/use-markdown-file-save'
-import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import { ApiError, type FileDetail, api } from '@/lib/api'
-import { getStoredActor } from '@/lib/auth'
 import { decodeBase64Utf8 } from '@/lib/file-utils'
 import { queryKeys } from '@/lib/query-keys'
 import { isMarkdownFile } from '@maskin/shared'
 import { useQueryClient } from '@tanstack/react-query'
 import { useMemo } from 'react'
+import { ChangeReviewLayer } from './change-review'
 import { MarkdownFileEditor } from './markdown-file-editor'
 
 function fileText(file: FileDetail): string {
@@ -26,24 +27,34 @@ export function useEditableMarkdown(file: FileDetail | undefined): boolean {
 }
 
 export function EditableMarkdownStage({ file }: { file: FileDetail }) {
+	// The one read of the agent-change-review flag: banner and review view only.
+	const reviewEnabled = useFeatureFlag('agent-change-review')
 	const client = useFileSaveClient(file)
-	const { data: members } = useWorkspaceMembers(file.workspaceId)
-	// Viewers count as members on file routes, so the API would let them edit;
-	// the UI must not offer it. Until the role is known, show the read view.
-	const actorId = getStoredActor()?.id
-	const role = members?.find((m) => m.actorId === actorId)?.role
+	// Viewers get the rendered document and no editor.
+	const canWrite = useCanWrite()
 	const hash = file.contentHash ?? null
-	const canEdit = hash !== null && role !== undefined && role !== 'viewer'
+	const canEdit = hash !== null && canWrite
+	const canReview = canWrite
+	const text = fileText(file)
+	const editor = (
+		<MarkdownFileEditor
+			fileId={file.id}
+			text={text}
+			hash={hash ?? ''}
+			client={client}
+			canEdit={canEdit}
+		/>
+	)
 	return (
 		<div className="h-full w-full overflow-auto">
 			<div className="mx-auto max-w-[740px] px-6 py-8">
-				<MarkdownFileEditor
-					fileId={file.id}
-					text={fileText(file)}
-					hash={hash ?? ''}
-					client={client}
-					canEdit={canEdit}
-				/>
+				{reviewEnabled && canReview ? (
+					<ChangeReviewLayer file={file} fileText={text}>
+						{editor}
+					</ChangeReviewLayer>
+				) : (
+					editor
+				)}
 			</div>
 		</div>
 	)

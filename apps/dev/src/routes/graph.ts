@@ -4,7 +4,12 @@ import { objects, relationships, workspaces } from '@maskin/db/schema'
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import { createGraphSchema } from '@maskin/shared'
 import { and, eq, inArray } from 'drizzle-orm'
-import { maybeEmitKnowledgeReferenceFromEdge } from '../lib/analytics/knowledge-events'
+import {
+	CLIENT_SOURCE_HEADER,
+	maybeEmitKnowledgeReferenceFromEdge,
+	resolveCreatedVia,
+} from '../lib/analytics/knowledge-events'
+import { trackObjectCreated } from '../lib/analytics/object-events'
 import { createApiError, createInvalidTypeError, validationFailureHook } from '../lib/errors'
 import { capturePosthogRelationshipCreated, recordEvent } from '../lib/events/record-event'
 import {
@@ -479,6 +484,18 @@ app.openapi(createGraphRoute, async (c) => {
 			entityType: 'object',
 			entityId: node.id,
 			source: 'author',
+		})
+	}
+
+	// One object_created per node, same as POST /api/objects.
+	const createdVia = resolveCreatedVia(c.req.header(CLIENT_SOURCE_HEADER), c.get('actorType'))
+	for (const node of result.nodes) {
+		void trackObjectCreated({
+			workspaceId,
+			actorId,
+			objectId: node.id,
+			objectType: node.type,
+			createdVia,
 		})
 	}
 

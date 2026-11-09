@@ -12,6 +12,8 @@ struct McpServerRequestCard: View {
 	let request: McpServerRequest
 	/// The agent that asked: the one the server is given to.
 	let agentID: String
+	/// Who asked, for the title and the settled line. Nil reads "this agent".
+	var agentName: String?
 	let messageCreatedAt: Date?
 	/// The card's own message id, so the answer can be recorded against it.
 	let messageID: Int?
@@ -35,11 +37,12 @@ struct McpServerRequestCard: View {
 	@State private var stillRunning = false
 
 	init(
-		request: McpServerRequest, agentID: String, messageCreatedAt: Date?, messageID: Int?,
+		request: McpServerRequest, agentID: String, agentName: String? = nil, messageCreatedAt: Date?, messageID: Int?,
 		answered: ChatCardAnswer.Outcome?, onReply: @escaping (String, ChatSendMetadata) -> Void
 	) {
 		self.request = request
 		self.agentID = agentID
+		self.agentName = agentName
 		self.messageCreatedAt = messageCreatedAt
 		self.messageID = messageID
 		self.answered = answered
@@ -50,11 +53,10 @@ struct McpServerRequestCard: View {
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s6) {
 			if let line = settledLine {
-				HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s3) {
-					Image(systemName: "puzzlepiece.extension").foregroundStyle(MaskinColor.ink4).accessibilityHidden(true)
-					Text(line).maskinText(.subhead).foregroundStyle(MaskinColor.ink3)
-				}
-				.accessibilityElement(children: .combine)
+				RequestCardDeclined(
+					symbol: "puzzlepiece.extension", text: line,
+					onAskAgain: declined && addedName == nil && !request.replyToSession
+						? { onReply(request.askAgainText, ChatSendMetadata()) } : nil)
 				if stillRunning {
 					Text("The agent is still running without it. Stop it from the chat, then send a message to start it again with the server.")
 						.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
@@ -79,6 +81,11 @@ struct McpServerRequestCard: View {
 		RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous)
 	}
 
+	private var who: String {
+		let trimmed = agentName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+		return trimmed.isEmpty ? "this agent" : trimmed
+	}
+
 	private var declined: Bool { declinedNow || answered == .declined }
 
 	/// Saved but not given to the agent: only the grant is left, so no secrets are asked for again.
@@ -86,46 +93,32 @@ struct McpServerRequestCard: View {
 
 	/// What to say once the card has been answered; nil while it asks.
 	private var settledLine: String? {
-		if let addedName { return "Added \(addedName) and gave it to this agent." }
+		if let addedName { return "\(addedName) allowed for \(who)." }
 		// Only "given" counts as done: a server saved whose grant failed offers to give it instead.
-		if let earlier, earlier.givenToAgent { return "Added \(earlier.name) and gave it to this agent." }
-		if answered == .done { return "Added \(request.name) and gave it to this agent." }
-		if declined { return "Declined \(request.name)." }
+		if let earlier, earlier.givenToAgent { return "\(earlier.name) allowed for \(who)." }
+		if answered == .done { return "\(request.name) allowed for \(who)." }
+		if declined { return "\(request.name) declined for \(who)." }
 		return nil
 	}
 
 	@ViewBuilder
 	private var form: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-			Text("Add the \(request.name) tool server?")
-				.maskinText(.headline).foregroundStyle(MaskinColor.ink)
-				.fixedSize(horizontal: false, vertical: true)
-			Text(
-				(request.hint.map { $0 + " " } ?? "")
-					+ "It is saved for this workspace and given to this agent only, with read and write access. You can change that in Settings."
-			)
-			.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
-			.fixedSize(horizontal: false, vertical: true)
-		}
-		VStack(alignment: .leading, spacing: MaskinSpace.s2) {
+		RequestCardTitle(
+			title: "Add the \(request.name) tool server?",
+			subtitle: [agentName.flatMap { $0.isEmpty ? nil : "Asked for by \($0)." }, request.hint]
+				.compactMap { $0 }.joined(separator: " "),
+			symbol: "puzzlepiece.extension")
+		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
 			if let commandLine = request.commandLine {
-				Text("Runs this command inside the agent").maskinText(.microLabel).foregroundStyle(MaskinColor.ink4)
-				Text(commandLine)
-					.maskinText(.caption).monospaced().foregroundStyle(MaskinColor.ink2)
-					.textSelection(.enabled)
-					.fixedSize(horizontal: false, vertical: true)
+				RequestCardRow(label: "Runs inside the agent", value: commandLine, monospaced: true)
 			}
 			if let url = request.url {
-				Text("Connects to").maskinText(.microLabel).foregroundStyle(MaskinColor.ink4)
-				Text(url)
-					.maskinText(.caption).monospaced().foregroundStyle(MaskinColor.ink2)
-					.textSelection(.enabled)
-					.fixedSize(horizontal: false, vertical: true)
+				RequestCardRow(label: "Connects to", value: url, monospaced: true)
 			}
 			ForEach(request.givenValues, id: \.self) { line in
-				Text(line).maskinText(.caption).monospaced().foregroundStyle(MaskinColor.ink4)
-					.fixedSize(horizontal: false, vertical: true)
+				RequestCardRow(label: "Given", value: line, monospaced: true)
 			}
+			RequestCardRow(label: "Access", value: "Read and write, this agent only")
 		}
 		if savedServerID != nil {
 			Text("The server is added. Give it to this agent to finish; nothing more to type.")

@@ -222,6 +222,8 @@ export const sessionLeanRowSchema = z.object({
 	title: z.string(),
 	status: sessionStatusSchema,
 	updated_at: z.string().datetime().nullable(),
+	// Short failure line (200 characters at most), set only when status is failed.
+	failure_reason: z.string().nullable(),
 })
 export type SessionLeanRow = z.infer<typeof sessionLeanRowSchema>
 
@@ -507,6 +509,9 @@ export type SessionStatsRow = z.infer<typeof sessionStatsRowSchema>
  *                         SessionManager's budget watchdog because workspace
  *                         usage crossed the plan cap with no usage credits
  *                         left to cover it — not a provider-side failure.
+ * - daily_budget_blocked  The workspace's daily budget kept the session from
+ *                         running today. Nothing writes it yet: the gate that
+ *                         does is daily budget slice 1b.
  */
 export const failureReasonCodeSchema = z.enum([
 	'session_limit',
@@ -526,6 +531,7 @@ export const failureReasonCodeSchema = z.enum([
 	'agent_server_lost',
 	'container_lost',
 	'plan_cap_exceeded',
+	'daily_budget_blocked',
 	// The session could not be handed to any agent-server before the dispatch
 	// queue ran out of attempts. Recoverable by starting a new session.
 	'dispatch_failed',

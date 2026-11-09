@@ -5,6 +5,7 @@ import { eq } from 'drizzle-orm'
 import { postComment } from '../lib/comments'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
+import { resolveCardFromAnswerMessage } from './card-resolution'
 import { notifyChatMention, notifyChatReply, resolveAnsweredQuestions } from './chat-notifications'
 
 export type InsertConversationMessageArgs = {
@@ -136,6 +137,17 @@ export async function insertConversationMessage(
 		messageId: created.id,
 	})
 
+	// A Not now or a Done on a request card: the card's own message records when and by whom.
+	if (args.metadata?.card_answer) {
+		await resolveCardFromAnswerMessage(db, {
+			conversationId: args.conversationId,
+			cardMessageId: args.metadata.card_answer.message_id,
+			byActorId: args.actorId,
+			at: created.createdAt ?? new Date(),
+			outcome: args.metadata.card_answer.outcome,
+		})
+	}
+
 	return created
 }
 
@@ -158,6 +170,8 @@ export async function mirrorAsObjectComment(
 		messageId: number
 	},
 ): Promise<void> {
+	// A message of only attachments has no words to mirror as a comment.
+	if (msg.content.length === 0) return
 	try {
 		const [conversation] = await db
 			.select({ subjectType: conversations.subjectType, subjectId: conversations.subjectId })

@@ -8,7 +8,7 @@ import type { UnreadItem } from '@/lib/api'
 // Routes are tested by extracting the component from the file route and
 // rendering it directly, mirroring objects-index-persistence.test.tsx. The
 // For You page keeps a local `sort` (session-only, out of scope) but persists
-// `mode` through the `__chrome__` display-settings row. These tests guard the
+// `mode` through the `__chrome__` display settings row. These tests guard the
 // hydrate (persisted list -> list rows) and write-through (toggle -> upsert
 // with foryouViewMode + unrelated settings preserved) directions.
 vi.mock('@tanstack/react-router', async () => {
@@ -31,11 +31,13 @@ type FeedState = {
 const feedState = globalThis as unknown as FeedState
 feedState.__foryouItems = []
 
-vi.mock('@/hooks/use-for-you', () => ({
+vi.mock('@/hooks/use-for-you', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@/hooks/use-for-you')>()),
 	useForYou: () => ({
 		data: { items: (globalThis as unknown as FeedState).__foryouItems },
 		isLoading: false,
 	}),
+	useDismissForYou: () => ({ mutateAsync: vi.fn().mockResolvedValue(undefined) }),
 }))
 
 vi.mock('@/hooks/use-subscriptions', () => ({
@@ -77,7 +79,7 @@ vi.mock('@/lib/api', () => {
 				list: async () => ({ items: [] }),
 				get: async () => {
 					const settings = state.__dsPersisted
-					if (settings === null) throw new ApiError(404, 'No display settings for this object type')
+					if (settings === null) throw new ApiError(404, 'No display settings for this item type')
 					return {
 						object_type: '__chrome__',
 						name: 'default',
@@ -121,7 +123,8 @@ const pageHeaderProps: { current: Record<string, unknown> } = { current: {} }
 vi.mock('@/components/layout/page-header', () => ({
 	PageHeader: (props: Record<string, unknown>) => {
 		pageHeaderProps.current = props
-		return null
+		// The Display menu (View: Cards | List) lives in the title row's actions.
+		return <div>{props.actions as React.ReactNode}</div>
 	},
 }))
 vi.mock('@/components/foryou/onboarding-prompt-card', () => ({
@@ -226,8 +229,8 @@ describe('ForYou view-mode persistence via __chrome__ display settings', () => {
 	}
 
 	async function pickView(user: ReturnType<typeof userEvent.setup>, label: RegExp) {
-		await user.click(screen.getByRole('button', { name: /view options/i }))
-		await user.click(await screen.findByRole('menuitem', { name: label }))
+		await user.click(screen.getByRole('button', { name: /display/i }))
+		await user.click(await screen.findByRole('button', { name: label }))
 	}
 
 	it('expands every card when no display-settings row exists yet', async () => {
@@ -260,7 +263,7 @@ describe('ForYou view-mode persistence via __chrome__ display settings', () => {
 		mount()
 		await flush()
 
-		await pickView(user, /^List/)
+		await pickView(user, /View: List/)
 		await flush()
 
 		expect(settingsState.__dsUpsertCalls).toBe(1)
@@ -277,7 +280,7 @@ describe('ForYou view-mode persistence via __chrome__ display settings', () => {
 		mount()
 		await flush()
 
-		await pickView(user, /^List/)
+		await pickView(user, /View: List/)
 		await flush()
 
 		expect(settingsState.__dsUpsertCalls).toBe(0)
@@ -290,7 +293,7 @@ describe('ForYou view-mode persistence via __chrome__ display settings', () => {
 		await flush()
 		expect(cardStates()).toEqual(['false', 'false'])
 
-		await pickView(user, /^Cards/)
+		await pickView(user, /View: Cards/)
 		await flush()
 
 		expect(settingsState.__dsLastUpsertBody).toMatchObject({ foryouViewMode: 'card' })
@@ -332,18 +335,10 @@ describe('ForYou curated order', () => {
 describe('ForYou nav identity', () => {
 	beforeEach(resetState)
 
-	it('publishes title/subtitle into the shared nav instead of its own identity node', async () => {
+	it('publishes the greeting as the shared nav title instead of its own identity node', async () => {
 		mount()
 		await flush()
-		expect(pageHeaderProps.current.title).toBe('For you')
-		expect(pageHeaderProps.current.subtitle).toBe('2 need you')
+		expect(pageHeaderProps.current.title).toMatch(/^Good (night|morning|afternoon|evening)/)
 		expect(pageHeaderProps.current.stickyIdentity).toBeUndefined()
-	})
-
-	it('reads "All caught up" once nothing is unread', async () => {
-		feedState.__foryouItems = []
-		mount()
-		await flush()
-		expect(pageHeaderProps.current.subtitle).toBe('All caught up')
 	})
 })

@@ -66,12 +66,15 @@ private extension Int { var asCGFloat: CGFloat { CGFloat(self) } }
 #endif
 
 @Suite("Markdown link policy") struct MarkdownLinkPolicyTests {
-	@Test("only http(s) with a host and mailto are allowed; web links confirm", arguments: [
+	@Test("only http(s) with a host, mailto and a plain tel number are allowed; web links confirm", arguments: [
 		("https://maskin.io/x", MarkdownLinkPolicy.Decision.confirm),
 		("http://example.com", .confirm),
 		("HTTPS://Example.com", .confirm),
 		("mailto:a@b.co", .open),
-		("tel:+4512345678", .reject),
+		("tel:+4512345678", .open),
+		("tel:", .reject),
+		("tel:*21*4512345678#", .reject),
+		("tel:+45+12", .reject),
 		("sms:+4512345678", .reject),
 		("facetime:a@b.co", .reject),
 		("maskin://objects/1", .reject),

@@ -8,10 +8,12 @@ import {
 	SkjaldConnectDialog,
 } from '@/components/integrations/provider-dialogs'
 import { ResendConnectDialog } from '@/components/integrations/resend/resend-connect-dialog'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useActors } from '@/hooks/use-actors'
 import { useAuth } from '@/hooks/use-auth'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useIdentityAddonPricing } from '@/hooks/use-identity-addon-pricing'
 import {
 	useConnectIntegration,
@@ -19,12 +21,14 @@ import {
 	useLinkableGithubInstallations,
 } from '@/hooks/use-integrations'
 import type { IntegrationResponse, ProviderInfo } from '@/lib/api'
+import { cn } from '@/lib/cn'
 import { DRIVE_COPY } from '@/lib/drive-copy'
 import { DRIVE_PROVIDER } from '@/lib/drive-humans'
 import type { IntegrationToolState } from '@/lib/integration-tool-state'
+import { PILL_BUTTON } from '@/lib/pill-button'
 import { MULTI_INSTALL_PROVIDERS } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
-import { Check, Link2, Plus } from 'lucide-react'
+import { Check, ChevronDown, Link2, Plus } from 'lucide-react'
 import { useState } from 'react'
 
 const SLACK_HISTORY_SCOPES: readonly string[] = [
@@ -39,6 +43,18 @@ const INTRO_SUBTITLES: Record<IntegrationToolState, string> = {
 	sharing_off: 'Connected to the workspace',
 	needs_reconnect: 'Needs reconnecting',
 	missing: 'Not connected yet',
+}
+
+/** What each tool is for, in a few words (mockup Settings, Integrations). */
+const PROVIDER_TAGLINES: Record<string, string> = {
+	github: 'Pull requests',
+	gmail: 'Drafts and sending',
+	'google-drive': 'Files',
+	'linkedin-unipile': 'Posting and outreach',
+	linear: 'Issues',
+	posthog: 'Product analytics',
+	resend: 'Email sending',
+	slack: 'Channels and triggers',
 }
 
 export function ProviderRow({
@@ -80,12 +96,13 @@ export function ProviderRow({
 }) {
 	const connect = useConnectIntegration(workspaceId)
 	const disconnect = useDisconnectIntegration(workspaceId)
+	const canWrite = useCanWrite()
 	const isConnected = !!integration
 	// The Drive card carries a pill, a one-line pitch and a link to its detail page
 	// in Settings; the chat card stays the plain row every provider gets.
 	const isDrive = provider.name === DRIVE_PROVIDER && variant === 'settings'
 	const driveDetailsLink = isDrive ? (
-		<Button asChild variant="outline" size="sm">
+		<Button asChild variant="outline" size="sm" className={PILL_BUTTON}>
 			<Link to="/$workspaceId/settings/integrations/google-drive" params={{ workspaceId }}>
 				Details
 			</Link>
@@ -135,10 +152,14 @@ export function ProviderRow({
 				: `Update needed — reconnect to grant ${missingCount} new permission${missingCount === 1 ? '' : 's'}`
 			: provider.externalIdDisplay === 'email' && integration.externalId
 				? `Connected as ${integration.externalId}`
-				: `Connected${integration.externalId ? ` · Installation ${integration.externalId}` : ''}`
-		: provider.events.length > 0
-			? `${provider.events.length} event types available`
-			: 'Available to connect'
+				: integration.externalId
+					? `Connected · Installation ${integration.externalId}`
+					: (variant === 'settings' && PROVIDER_TAGLINES[provider.name]) || 'Connected'
+		: variant === 'settings' && PROVIDER_TAGLINES[provider.name]
+			? PROVIDER_TAGLINES[provider.name]
+			: provider.events.length > 0
+				? `${provider.events.length} event types available`
+				: 'Available to connect'
 
 	// The intro's quiet row says plainly where the tool stands for this agent, in
 	// place of the event count and the install id.
@@ -156,6 +177,7 @@ export function ProviderRow({
 			name={provider.displayName}
 			badge={isDrive && <StatusPill tone="new">{DRIVE_COPY.providerCard.pill}</StatusPill>}
 			compact={introState !== undefined}
+			chat={variant === 'chat'}
 			subtitle={introSubtitle ?? connectedLabel}
 			tone={
 				needsReconnect || (introState && introNeedsReconnect)
@@ -165,6 +187,13 @@ export function ProviderRow({
 						: 'available'
 			}
 			subtitleTitle={needsReconnect ? integration?.missingScopes?.join(', ') : undefined}
+			status={
+				isConnected
+					? needsReconnect
+						? { tone: 'warn', label: 'Reconnect needed' }
+						: { tone: 'ok', label: 'Connected' }
+					: undefined
+			}
 			notes={
 				<>
 					{isDrive && (
@@ -192,14 +221,17 @@ export function ProviderRow({
 					<div className="flex shrink-0 items-center gap-2">
 						{driveDetailsLink}
 						{needsReconnect && (
-							<Button
-								variant="outline"
-								size="sm"
-								onClick={handleConnect}
-								disabled={connect.isPending}
-							>
-								Reconnect
-							</Button>
+							<ViewerTooltip>
+								<Button
+									variant="outline"
+									size="sm"
+									className={PILL_BUTTON}
+									onClick={handleConnect}
+									disabled={connect.isPending || !canWrite}
+								>
+									Reconnect
+								</Button>
+							</ViewerTooltip>
 						)}
 						{variant === 'chat' ? (
 							// The intro's row already warns and offers Reconnect; a disabled
@@ -208,42 +240,58 @@ export function ProviderRow({
 								<ConnectedButton />
 							)
 						) : (
-							<Button
-								variant="ghost"
-								size="sm"
-								className="text-muted-foreground hover:text-error"
-								onClick={() => disconnect.mutate(integration.id)}
-								disabled={disconnect.isPending}
-							>
-								Disconnect
-							</Button>
+							<ViewerTooltip>
+								<Button
+									variant="ghost"
+									size="sm"
+									className={cn(PILL_BUTTON, 'text-muted-foreground hover:text-error')}
+									onClick={() => disconnect.mutate(integration.id)}
+									disabled={disconnect.isPending || !canWrite}
+								>
+									Disconnect
+								</Button>
+							</ViewerTooltip>
 						)}
 					</div>
 				) : (
 					<div className="flex shrink-0 items-center gap-2">
 						{driveDetailsLink}
 						{linkableCount > 0 && (
-							<Button variant="outline" size="sm" onClick={onRequestLink}>
-								<Link2 className="mr-1 h-3.5 w-3.5" />
-								Add existing
-							</Button>
+							<ViewerTooltip>
+								<Button
+									variant="outline"
+									size="sm"
+									className={PILL_BUTTON}
+									onClick={onRequestLink}
+									disabled={!canWrite}
+								>
+									<Link2 className="mr-1 h-3.5 w-3.5" />
+									Add existing
+								</Button>
+							</ViewerTooltip>
 						)}
-						<Button
-							size="sm"
-							variant={introState ? 'outline' : undefined}
-							onClick={handleConnect}
-							disabled={connect.isPending}
-							aria-label={introState ? `${connectLabel} ${provider.displayName}` : undefined}
-						>
-							{introState && connect.isPending ? (
-								<>
-									<Spinner className="mr-1" />
-									Connecting…
-								</>
-							) : (
-								connectLabel
-							)}
-						</Button>
+						<ViewerTooltip>
+							<Button
+								size="sm"
+								className={cn(
+									PILL_BUTTON,
+									!introState && variant === 'settings' && 'text-brand hover:text-brand-hover',
+								)}
+								variant={introState ? 'outline' : variant === 'settings' ? 'ghost' : undefined}
+								onClick={handleConnect}
+								disabled={connect.isPending || !canWrite}
+								aria-label={introState ? `${connectLabel} ${provider.displayName}` : undefined}
+							>
+								{introState && connect.isPending ? (
+									<>
+										<Spinner className="mr-1" />
+										Connecting…
+									</>
+								) : (
+									connectLabel
+								)}
+							</Button>
+						</ViewerTooltip>
 					</div>
 				)
 			}
@@ -280,6 +328,7 @@ export function GroupedProviderRow({
 }) {
 	const connect = useConnectIntegration(workspaceId)
 	const disconnect = useDisconnectIntegration(workspaceId)
+	const canWrite = useCanWrite()
 	const [expanded, setExpanded] = useState(false)
 	const count = installations.length
 
@@ -301,6 +350,8 @@ export function GroupedProviderRow({
 		isActorScoped && installations.some((i) => i.actorId && i.actorId === currentActorId)
 	const canAdd = isActorScoped ? Boolean(currentActorId) && !hasOwnInstall : true
 	const addLabel = isActorScoped ? 'Connect your account' : 'Add another'
+	// Settings spells out what is being added; the chat card keeps the short "+ Add another".
+	const settingsAddLabel = isActorScoped ? addLabel : 'Connect another installation'
 
 	const unitLabel = isActorScoped ? 'connected account' : 'active installation'
 
@@ -326,6 +377,7 @@ export function GroupedProviderRow({
 				name={`${provider.displayName} · ${count}`}
 				subtitle={`${count} ${unitLabel}${count === 1 ? '' : 's'}`}
 				tone="connected"
+				chat
 				notes={
 					<>
 						{isFreeIdentityAddon && (
@@ -344,16 +396,31 @@ export function GroupedProviderRow({
 					<div className="flex shrink-0 flex-wrap items-center gap-2">
 						<ConnectedButton />
 						{canAdd && (
-							<Button variant="outline" size="sm" onClick={addInstall} disabled={connect.isPending}>
-								<Plus className="mr-1 h-3.5 w-3.5" />
-								{addLabel}
-							</Button>
+							<ViewerTooltip>
+								<Button
+									variant="outline"
+									size="sm"
+									onClick={addInstall}
+									disabled={connect.isPending || !canWrite}
+								>
+									<Plus className="mr-1 h-3.5 w-3.5" />
+									{addLabel}
+								</Button>
+							</ViewerTooltip>
 						)}
 						{linkableCount > 0 && (
-							<Button variant="outline" size="sm" onClick={onRequestLink}>
-								<Link2 className="mr-1 h-3.5 w-3.5" />
-								Add existing
-							</Button>
+							<ViewerTooltip>
+								<Button
+									variant="outline"
+									size="sm"
+									className={PILL_BUTTON}
+									onClick={onRequestLink}
+									disabled={!canWrite}
+								>
+									<Link2 className="mr-1 h-3.5 w-3.5" />
+									Add existing
+								</Button>
+							</ViewerTooltip>
 						)}
 					</div>
 				}
@@ -362,19 +429,18 @@ export function GroupedProviderRow({
 	}
 
 	return (
-		<div className="overflow-hidden rounded-lg border border-border bg-card">
+		<div className="overflow-hidden rounded-xl border border-border bg-card">
 			<button
 				type="button"
 				onClick={() => setExpanded((v) => !v)}
 				aria-expanded={expanded}
-				className="flex w-full items-center gap-3 p-4 text-left transition-colors hover:bg-bg-hover"
+				className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-bg-hover max-md:min-h-11"
 			>
-				<div className="h-3 w-3 shrink-0 rounded-full bg-success" />
 				<div className="flex-1 min-w-0">
-					<p className="text-sm font-medium text-foreground truncate">
+					<p className="text-[15px] font-semibold text-foreground truncate">
 						{provider.displayName} · {count}
 					</p>
-					<p className="text-xs text-muted-foreground truncate">
+					<p className="text-[13px] text-muted-foreground truncate">
 						{count} {unitLabel}
 						{count === 1 ? '' : 's'}
 					</p>
@@ -390,9 +456,16 @@ export function GroupedProviderRow({
 						</p>
 					)}
 				</div>
+				<ChevronDown
+					className={cn(
+						'h-4 w-4 shrink-0 text-muted-foreground transition-transform',
+						expanded && 'rotate-180',
+					)}
+					aria-hidden="true"
+				/>
 			</button>
 			{expanded && (
-				<div className="space-y-2 border-t border-border p-2">
+				<div className="divide-y divide-border-subtle border-t border-border">
 					{installations.map((installation) => (
 						<NestedInstallationRow
 							key={installation.id}
@@ -403,31 +476,38 @@ export function GroupedProviderRow({
 							workspaceId={workspaceId}
 							onDisconnect={() => disconnect.mutate(installation.id)}
 							disconnecting={disconnect.isPending}
+							onReconnect={() => connect.mutate({ provider: provider.name, returnTo })}
+							reconnecting={connect.isPending}
 						/>
 					))}
-					<div className="flex flex-col gap-2 md:flex-row">
+					<div className="flex flex-col gap-2 px-4 py-3 md:flex-row md:flex-wrap">
 						{canAdd && (
-							<Button
-								variant="outline"
-								size="sm"
-								className="w-full md:flex-1"
-								onClick={addInstall}
-								disabled={connect.isPending}
-							>
-								<Plus className="h-3.5 w-3.5 mr-1" />
-								{addLabel}
-							</Button>
+							<ViewerTooltip className="flex w-full md:w-auto">
+								<Button
+									variant="outline"
+									size="sm"
+									className={cn(PILL_BUTTON, 'w-full md:w-auto')}
+									onClick={addInstall}
+									disabled={connect.isPending || !canWrite}
+								>
+									<Plus className="h-3.5 w-3.5 mr-1" />
+									{settingsAddLabel}
+								</Button>
+							</ViewerTooltip>
 						)}
 						{linkableCount > 0 && (
-							<Button
-								variant="outline"
-								size="sm"
-								className="w-full md:flex-1"
-								onClick={onRequestLink}
-							>
-								<Link2 className="h-3.5 w-3.5 mr-1" />
-								Add existing
-							</Button>
+							<ViewerTooltip className="flex w-full md:w-auto">
+								<Button
+									variant="outline"
+									size="sm"
+									className={cn(PILL_BUTTON, 'w-full md:w-auto')}
+									onClick={onRequestLink}
+									disabled={!canWrite}
+								>
+									<Link2 className="h-3.5 w-3.5 mr-1" />
+									Add existing
+								</Button>
+							</ViewerTooltip>
 						)}
 						{provider.name === 'github' && (
 							<InstallGithubOrgButton workspaceId={workspaceId} returnTo={returnTo} />
@@ -447,6 +527,8 @@ function NestedInstallationRow({
 	workspaceId,
 	onDisconnect,
 	disconnecting,
+	onReconnect,
+	reconnecting,
 }: {
 	integration: IntegrationResponse
 	/** True for providers whose installs belong to a member, not the workspace. */
@@ -457,7 +539,15 @@ function NestedInstallationRow({
 	workspaceId: string
 	onDisconnect: () => void
 	disconnecting: boolean
+	/** Runs the provider's normal sign-in, which updates this row in place. */
+	onReconnect: () => void
+	reconnecting: boolean
 }) {
+	const canWrite = useCanWrite()
+	// Same rule as the single row: a token that predates a scope the provider now asks for
+	// keeps working for what it was granted, so the install stays listed but says so.
+	const needsReconnect =
+		Boolean(integration.needsReconnect) && (integration.missingScopes?.length ?? 0) > 0
 	const ownerLogin =
 		typeof integration.config.owner_login === 'string' ? integration.config.owner_login : undefined
 	// An actor-scoped install is identified by the member who connected it —
@@ -470,30 +560,48 @@ function NestedInstallationRow({
 			(integration.externalId ? `Installation ${integration.externalId}` : 'Installation'))
 
 	return (
-		<div className="flex flex-wrap items-center gap-3 rounded-md border border-border bg-bg-surface p-3">
-			<div className="h-3 w-3 shrink-0 rounded-full bg-success" />
-			<div className="flex-1 min-w-0">
-				<p className="text-sm font-medium text-foreground truncate">
+		<div className="flex flex-wrap items-center gap-3 px-4 py-3.5">
+			<div className="flex-1 min-w-0 basis-40">
+				<p className="text-[15px] font-semibold text-foreground truncate">
 					{label}
 					{actorScoped && isOwn && (
 						<span className="ml-1 font-normal text-muted-foreground">(you)</span>
 					)}
 				</p>
 				{integration.externalId && (
-					<p className="text-xs text-muted-foreground truncate">
+					<p className="text-[13px] text-muted-foreground truncate">
 						{noun} {integration.externalId}
 					</p>
 				)}
 			</div>
-			<Button
-				variant="ghost"
-				size="sm"
-				className="shrink-0 text-muted-foreground hover:text-error"
-				onClick={onDisconnect}
-				disabled={disconnecting}
-			>
-				Disconnect
-			</Button>
+			<StatusPill soft tone={needsReconnect ? 'warn' : 'ok'}>
+				{needsReconnect ? 'Reconnect needed' : 'Active'}
+			</StatusPill>
+			{needsReconnect && (
+				<ViewerTooltip>
+					<Button
+						variant="outline"
+						size="sm"
+						className={cn(PILL_BUTTON, 'shrink-0')}
+						onClick={onReconnect}
+						disabled={reconnecting || !canWrite}
+						title={integration.missingScopes?.join(', ')}
+					>
+						Reconnect
+					</Button>
+				</ViewerTooltip>
+			)}
+			<ViewerTooltip>
+				<Button
+					variant="ghost"
+					size="sm"
+					className={cn(PILL_BUTTON, 'shrink-0 text-muted-foreground hover:text-error')}
+					onClick={onDisconnect}
+					disabled={disconnecting || !canWrite}
+				>
+					Disconnect
+				</Button>
+			</ViewerTooltip>
 			<div className="basis-full">
 				<AgentAccess integration={integration} workspaceId={workspaceId} />
 			</div>

@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
-import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
+import { SHIP_GATE_VIEWPORTS, VIEWPORTS } from '../helpers/viewports'
 
 /**
  * For You — the v4 feed (`Maskin For You - Feed v4`).
@@ -158,7 +158,12 @@ const BRIEFING_PAGES = [
 	},
 ] as const
 
-function briefingFile(workspaceId: string, page: (typeof BRIEFING_PAGES)[number], index: number) {
+function briefingFile(
+	workspaceId: string,
+	page: (typeof BRIEFING_PAGES)[number],
+	index: number,
+	createdBy = '00000000-0000-4000-8000-0000000000aa',
+) {
 	const stamp = new Date(Date.UTC(2026, 9, 21 - index, 5)).toISOString()
 	return {
 		id: page.id,
@@ -169,13 +174,13 @@ function briefingFile(workspaceId: string, page: (typeof BRIEFING_PAGES)[number]
 		mimeType: 'text/html',
 		sizeBytes: 200,
 		storageKey: `files/${page.id}`,
-		createdBy: '00000000-0000-4000-8000-0000000000aa',
+		createdBy,
 		createdAt: stamp,
 		updatedAt: stamp,
 	}
 }
 
-async function mockBriefings(page: Page, workspaceId: string) {
+async function mockBriefings(page: Page, workspaceId: string, createdBy?: string) {
 	// `**` at the end: a single `*` would not match `/api/files/<id>`, so each page's detail
 	// request would skip this mock and 404 against the real server.
 	await page.route('**/api/files**', async (route) => {
@@ -186,7 +191,9 @@ async function mockBriefings(page: Page, workspaceId: string) {
 			return route.fulfill({
 				status: 200,
 				contentType: 'application/json',
-				body: JSON.stringify(BRIEFING_PAGES.map((p, i) => briefingFile(workspaceId, p, i))),
+				body: JSON.stringify(
+					BRIEFING_PAGES.map((p, i) => briefingFile(workspaceId, p, i, createdBy)),
+				),
 			})
 		}
 		const index = BRIEFING_PAGES.findIndex((p) => url.pathname.endsWith(`/api/files/${p.id}`))
@@ -197,7 +204,7 @@ async function mockBriefings(page: Page, workspaceId: string) {
 			status: 200,
 			contentType: 'application/json',
 			body: JSON.stringify({
-				...briefingFile(workspaceId, found, index),
+				...briefingFile(workspaceId, found, index, createdBy),
 				content: `<!doctype html><html><head><title>${found.title}</title></head><body><h1>${found.title}</h1><p>All quiet otherwise.</p></body></html>`,
 				encoding: 'utf8',
 				url: '',
@@ -206,8 +213,13 @@ async function mockBriefings(page: Page, workspaceId: string) {
 	})
 }
 
-async function mockFeed(page: Page, workspaceId: string, items = feed(workspaceId)) {
-	await mockBriefings(page, workspaceId)
+async function mockFeed(
+	page: Page,
+	workspaceId: string,
+	items = feed(workspaceId),
+	briefingAuthorId?: string,
+) {
+	await mockBriefings(page, workspaceId, briefingAuthorId)
 	await page.route('**/api/for-you*', async (route) => {
 		if (route.request().method() !== 'GET') return route.fallback()
 		await route.fulfill({
@@ -219,12 +231,12 @@ async function mockFeed(page: Page, workspaceId: string, items = feed(workspaceI
 }
 
 async function openViewMenu(page: Page) {
-	await page.getByRole('button', { name: /view options/i }).click()
+	await page.getByRole('button', { name: /display/i }).click()
 }
 
 async function pickView(page: Page, label: RegExp) {
 	await openViewMenu(page)
-	await page.getByRole('menuitem', { name: label }).click()
+	await page.getByRole('button', { name: label }).click()
 	await page.keyboard.press('Escape')
 }
 
@@ -264,7 +276,7 @@ test.describe('For You v4 — the feed at every ship-gate viewport', () => {
 			// desktop wording). Once the Object detail split lands `placeholder`
 			// on the composer — see the TODO in feed-card.tsx — this should
 			// tighten back to /Reply to /.
-			await expect(page.getByPlaceholder(/Write a comment/).first()).toBeVisible()
+			await expect(page.getByRole('textbox', { name: 'Comment' }).first()).toBeVisible()
 
 			// A plain mention carries its whole body on the card — nothing is held
 			// behind a "Read the rest" link any more.
@@ -275,14 +287,14 @@ test.describe('For You v4 — the feed at every ship-gate viewport', () => {
 			await assertNoHorizontalOverflow(page, `${vp.label} cards`)
 
 			// List view collapses them to one line each — the composer goes away.
-			await pickView(page, /^List/)
-			await expect(page.getByPlaceholder(/Write a comment/)).toHaveCount(0)
+			await pickView(page, /View: List/)
+			await expect(page.getByRole('textbox', { name: 'Comment' })).toHaveCount(0)
 			await expect(page.getByText('Merge the trigger settings rewrite?').first()).toBeVisible()
 			await assertNoHorizontalOverflow(page, `${vp.label} list`)
 
 			// A row opens back up in place.
 			await page.getByRole('button', { name: /Merge the trigger settings rewrite\?/ }).click()
-			await expect(page.getByPlaceholder(/Write a comment/).first()).toBeVisible()
+			await expect(page.getByRole('textbox', { name: 'Comment' }).first()).toBeVisible()
 		})
 	}
 })
@@ -372,7 +384,7 @@ test.describe('For You v4 — cards, options and the receipt', () => {
 		await page.goto(`/${account.workspaceId}`)
 
 		const fyi = page.getByTestId('foryou-feed-card').filter({ hasText: 'Is the feed too long?' })
-		await expect(fyi.getByPlaceholder(/Write a comment/)).toBeVisible()
+		await expect(fyi.getByRole('textbox', { name: 'Comment' })).toBeVisible()
 		await expect(fyi.getByRole('button', { name: 'Merge now' })).toHaveCount(0)
 		await expect(fyi.getByRole('button', { name: 'Send back' })).toHaveCount(0)
 	})
@@ -395,16 +407,52 @@ test.describe('For You v4 — cards, options and the receipt', () => {
 		await mockFeed(page, account.workspaceId)
 		await page.goto(`/${account.workspaceId}`)
 
-		await expect(page.getByRole('button', { name: /^Tasks \(/ })).toHaveCount(0)
+		await expect(page.getByRole('button', { name: /^Decisions \(/ })).toHaveCount(0)
 
 		await openViewMenu(page)
-		await page.getByRole('menuitem', { name: /Filter bar under the header/ }).click()
+		await page.getByRole('button', { name: /^Filter bar filter/ }).click()
+		await page.getByRole('button', { name: /Show under the header/ }).click()
 		await page.keyboard.press('Escape')
 
-		await expect(page.getByRole('button', { name: /^Tasks \(/ })).toBeVisible()
-		await page.getByRole('button', { name: /^Insights \(/ }).click()
-		await expect(page.getByTestId('foryou-feed-card')).toHaveCount(1)
+		await expect(page.getByRole('button', { name: /^Decisions \(/ })).toBeVisible()
+		// Every card in this feed asks something (its comment holds a question mark), so
+		// they are all Decisions and there are no Drafts or Updates to filter to.
+		await expect(page.getByRole('button', { name: /^Updates \(/ })).toHaveCount(0)
+		await expect(page.getByRole('button', { name: /^Drafts \(/ })).toHaveCount(0)
+		const all = await page.getByTestId('foryou-feed-card').count()
+		await page.getByRole('button', { name: /^Decisions \(/ }).click()
+		await expect(page.getByTestId('foryou-feed-card')).toHaveCount(all)
 		await expect(page.getByText('Is the feed too long?').first()).toBeVisible()
+	})
+
+	test('a filtered feed that runs dry says which filter is on and can show everything', async ({
+		page,
+		account,
+	}) => {
+		await page.route('**/api/for-you/dismissals', async (route) => {
+			if (route.request().method() !== 'POST') return route.fallback()
+			await route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' })
+		})
+		await mockFeed(page, account.workspaceId)
+		await page.goto(`/${account.workspaceId}`)
+		await expect(page.getByTestId('foryou-feed-card').first()).toBeVisible()
+
+		await openViewMenu(page)
+		await page.getByRole('button', { name: /^Decisions/ }).click()
+		await page.keyboard.press('Escape')
+
+		// The last card goes: the filter stays on, so the feed says so instead of reading as cleared.
+		const cards = page.getByTestId('foryou-feed-card')
+		while ((await cards.count()) > 0) {
+			await cards.first().getByRole('button', { name: 'Mark as read' }).click()
+		}
+		await expect(page.getByText('Nothing in Decisions')).toBeVisible()
+		await openViewMenu(page)
+		await expect(page.getByRole('button', { name: /^Decisions/ })).toBeVisible()
+		await page.keyboard.press('Escape')
+
+		await page.getByRole('button', { name: 'Show everything' }).click()
+		await expect(page.getByText("You're caught up")).toBeVisible()
 	})
 })
 
@@ -446,22 +494,22 @@ test.describe('For You v4 — the card\u2019s own controls', () => {
 		expect(historyRequests).toBe(0)
 
 		await card.getByRole('button', { name: /Show timeline history/ }).click()
-		await expect(card.getByText('On this object', { exact: true })).toBeVisible({ timeout: 10_000 })
+		await expect(card.getByText('On this item', { exact: true })).toBeVisible({ timeout: 10_000 })
 		await expect(card.getByText('Second pass: both blockers hold.')).toBeVisible({
 			timeout: 10_000,
 		})
 		expect(historyRequests).toBeGreaterThan(0)
 
 		await card.getByRole('button', { name: 'Hide' }).click()
-		await expect(card.getByText('On this object', { exact: true })).toHaveCount(0)
+		await expect(card.getByText('On this item', { exact: true })).toHaveCount(0)
 	})
 
-	test('the per-card mark-as-read takes the card out of the feed', async ({ page, account }) => {
-		let readCalls = 0
-		await page.route('**/api/subscriptions/read', async (route) => {
+	test('the per-card dismiss takes the card out of the feed', async ({ page, account }) => {
+		let dismissCalls = 0
+		await page.route('**/api/for-you/dismissals', async (route) => {
 			if (route.request().method() !== 'POST') return route.fallback()
-			readCalls++
-			await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' })
+			dismissCalls++
+			await route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' })
 		})
 		await mockFeed(page, account.workspaceId)
 		await page.goto(`/${account.workspaceId}`)
@@ -472,7 +520,7 @@ test.describe('For You v4 — the card\u2019s own controls', () => {
 		await expect(
 			page.getByTestId('foryou-feed-card').filter({ hasText: 'Is the feed too long?' }),
 		).toHaveCount(0)
-		expect(readCalls).toBeGreaterThan(0)
+		expect(dismissCalls).toBeGreaterThan(0)
 	})
 
 	test('"Take every suggested option" answers each open card at once', async ({
@@ -495,6 +543,12 @@ test.describe('For You v4 — the card\u2019s own controls', () => {
 
 		await page.getByRole('button', { name: 'Feed actions' }).click()
 		await page.getByRole('menuitem', { name: /Take every suggested option/ }).click()
+
+		// The bulk tap opens a confirm step first; nothing is posted until it is taken.
+		const dialog = page.getByRole('dialog', { name: 'Take every suggested option?' })
+		await expect(dialog).toBeVisible()
+		expect(posted.length).toBe(0)
+		await dialog.getByRole('button', { name: 'Answer 3 cards' }).click()
 
 		// Three of the five cards carry an agent-authored decision. The plain
 		// insight and the blocked bet are mentions with nothing to answer.
@@ -575,6 +629,198 @@ test.describe('For You v4 — light and dark', () => {
 
 			await expect(page.getByTestId('foryou-feed-card').first()).toBeVisible()
 			await expect(page.getByRole('button', { name: 'Merge now' }).first()).toBeVisible()
+		})
+	}
+})
+
+test.describe('For You v4 — the briefing viewer', () => {
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`the page and the conversation panel share the viewer @ ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			const agent = await account.api.createAgentActor(`Briefing Author ${Date.now()}`)
+			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+			await mockFeed(page, account.workspaceId, undefined, agent.id)
+			await page.goto(`/${account.workspaceId}`)
+
+			await page.getByTestId('briefing-card').first().click()
+			const viewer = page.getByTestId('briefing-viewer')
+			await expect(viewer).toBeVisible()
+
+			// The untrusted page stays in the sandboxed frame, with nothing added to its sandbox.
+			const frame = viewer.locator('iframe')
+			await expect(frame).toHaveAttribute('sandbox', 'allow-scripts')
+			await expect(
+				viewer.frameLocator('iframe').getByRole('heading', { name: BRIEFING_PAGES[0].title }),
+			).toBeVisible()
+
+			const panel = viewer.getByRole('complementary', { name: 'Conversation' })
+			await expect(panel).toBeVisible()
+			await expect(panel.getByRole('button', { name: 'Tell me more' })).toBeVisible()
+			await expect(panel.getByRole('textbox', { name: 'Talk about this briefing' })).toBeVisible()
+
+			const viewerBox = await viewer.boundingBox()
+			const frameBox = await frame.boundingBox()
+			const panelBox = await panel.boundingBox()
+			if (!viewerBox || !frameBox || !panelBox) throw new Error('viewer has no layout')
+
+			if (vp.width < 768) {
+				// A full page: it fills the screen, and the conversation sits under the page.
+				expect(viewerBox.width).toBeGreaterThanOrEqual(vp.width - 1)
+				expect(viewerBox.height).toBeGreaterThanOrEqual(vp.height - 1)
+				expect(panelBox.y).toBeGreaterThanOrEqual(frameBox.y + frameBox.height - 1)
+				// The page keeps real room to read.
+				expect(frameBox.height).toBeGreaterThan(200)
+			} else {
+				// Two panes: the page on the left, the conversation beside it, the page wider.
+				expect(panelBox.x).toBeGreaterThanOrEqual(frameBox.x + frameBox.width - 1)
+				expect(frameBox.width).toBeGreaterThan(panelBox.width)
+				expect(Math.abs(panelBox.y - frameBox.y)).toBeLessThan(200)
+			}
+
+			// Previous and Next are on screen and hit-testable.
+			const next = viewer.getByRole('button', { name: 'Next briefing' })
+			await expect(next).toBeVisible()
+			expect(
+				await next.evaluate((el) => {
+					const r = el.getBoundingClientRect()
+					return el.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2))
+				}),
+			).toBe(true)
+
+			await assertNoHorizontalOverflow(page, vp.label)
+		})
+	}
+
+	test('typing in the conversation box does not turn the page', async ({ page, account }) => {
+		await mockFeed(page, account.workspaceId)
+		await page.goto(`/${account.workspaceId}`)
+		await page.getByTestId('briefing-card').first().click()
+		const viewer = page.getByTestId('briefing-viewer')
+		await expect(viewer.getByText('1 of 2')).toBeVisible()
+
+		const box = viewer.getByRole('textbox', { name: 'Talk about this briefing' })
+		await box.click()
+		await page.keyboard.type('jjk ')
+		await expect(box).toHaveValue('jjk ')
+		await expect(viewer.getByText('1 of 2')).toBeVisible()
+
+		// With the focus off the box, J still moves on.
+		await box.blur()
+		await page.keyboard.press('j')
+		await expect(viewer.getByText('2 of 2')).toBeVisible()
+	})
+
+	test('a message starts a chat with the agent that wrote the page, and the page goes along', async ({
+		page,
+		account,
+	}) => {
+		const agent = await account.api.createAgentActor(`Briefing Author ${Date.now()}`)
+		await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+		await mockFeed(page, account.workspaceId, undefined, agent.id)
+
+		const posted: Array<Record<string, unknown>> = []
+		await page.route('**/api/conversations', async (route) => {
+			if (route.request().method() !== 'POST') return route.fallback()
+			posted.push(route.request().postDataJSON())
+			await route.fulfill({
+				status: 201,
+				contentType: 'application/json',
+				body: JSON.stringify({ id: '00000000-0000-4000-8000-00000000c0de' }),
+			})
+		})
+		await page.goto(`/${account.workspaceId}`)
+		await page.getByTestId('briefing-card').first().click()
+		const viewer = page.getByTestId('briefing-viewer')
+
+		await expect(viewer.getByRole('heading', { name: /^Talk to Briefing Author/ })).toBeVisible()
+		await viewer.getByRole('textbox', { name: 'Talk about this briefing' }).fill('Go ahead with it')
+		await page.keyboard.press('Enter')
+
+		await expect.poll(() => posted.length).toBe(1)
+		expect(posted[0]).toMatchObject({
+			participant_actor_ids: [agent.id],
+			initial_message: 'Go ahead with it',
+			title: BRIEFING_PAGES[0].title,
+			initial_message_metadata: {
+				attachments: [{ file_id: BRIEFING_PAGES[0].id, mime_type: 'text/html' }],
+			},
+		})
+	})
+
+	for (const scheme of ['light', 'dark'] as const) {
+		for (const vp of [VIEWPORTS.mobile, VIEWPORTS.tabletLandscape]) {
+			test(`the viewer reads in ${scheme} mode @ ${vp.label}`, async ({
+				page,
+				account,
+			}, testInfo) => {
+				await page.setViewportSize({ width: vp.width, height: vp.height })
+				await page.addInitScript((value) => {
+					localStorage.setItem('maskin-theme', value)
+				}, scheme)
+				await mockFeed(page, account.workspaceId)
+				await page.goto(`/${account.workspaceId}`)
+				await page.getByTestId('briefing-card').first().click()
+				const viewer = page.getByTestId('briefing-viewer')
+				await expect(viewer).toBeVisible()
+				const panel = viewer.getByRole('complementary', { name: 'Conversation' })
+				await expect(panel.getByRole('button', { name: 'Tell me more' })).toBeVisible()
+
+				// The panes use theme tokens: the class on <html> follows the chosen mode.
+				const isDark = await page.evaluate(() =>
+					document.documentElement.classList.contains('dark'),
+				)
+				expect(isDark).toBe(scheme === 'dark')
+				const bg = await panel.evaluate((el) => getComputedStyle(el).backgroundColor)
+				expect(bg).not.toBe('rgba(0, 0, 0, 0)')
+
+				await page.waitForTimeout(300)
+				await testInfo.attach(`briefing-viewer-${scheme}-${vp.width}`, {
+					body: await page.screenshot(),
+					contentType: 'image/png',
+				})
+			})
+		}
+	}
+})
+
+test.describe('For You v16 - Ask about this slide', () => {
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`fills and focuses the one conversation box, then moves with the slide @ ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			await mockFeed(page, account.workspaceId)
+			const posted: unknown[] = []
+			await page.route('**/api/conversations', async (route) => {
+				if (route.request().method() === 'POST') posted.push(route.request().postDataJSON())
+				await route.fallback()
+			})
+			await page.goto(`/${account.workspaceId}`)
+			await page.getByTestId('briefing-card').first().click()
+			const viewer = page.getByTestId('briefing-viewer')
+
+			const ask = viewer.getByRole('button', { name: 'Ask about this slide' })
+			await expect(ask).toBeVisible()
+			await ask.click()
+
+			const box = viewer.getByRole('textbox', { name: 'Talk about this briefing' })
+			await expect(viewer.getByRole('textbox')).toHaveCount(1)
+			await expect(box).toHaveValue(`About "${BRIEFING_PAGES[0].title}" (briefing 1 of 2): `)
+			await expect(box).toBeFocused()
+
+			// On the next slide the same control names that slide.
+			await viewer.getByRole('button', { name: 'Next briefing' }).click()
+			await viewer.getByRole('button', { name: 'Ask about this slide' }).click()
+			await expect(box).toHaveValue(`About "${BRIEFING_PAGES[1].title}" (briefing 2 of 2): `)
+
+			// Nothing was sent, and the sandbox is untouched.
+			expect(posted).toHaveLength(0)
+			await expect(viewer.locator('iframe')).toHaveAttribute('sandbox', 'allow-scripts')
+			await assertNoHorizontalOverflow(page, vp.label)
 		})
 	}
 })

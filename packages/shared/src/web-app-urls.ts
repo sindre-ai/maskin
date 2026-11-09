@@ -26,7 +26,7 @@
  * | person           | /{ws}/objects/{id}                   | object               |
  * | actor (= agent)  | /{ws}/agents/{id}                    | actor / agent        |
  * | trigger          | /{ws}/triggers/{id}                  | trigger              |
- * | session          | /{ws}/agents/{actorId}               | session              |
+ * | session          | /{ws}/sessions/{id}                  | session              |
  * | notification     | /{ws}                                | notification / pulse |
  * | extension        | /{ws}/settings                       | extension / settings |
  * | relationship     | /{ws}/objects/{sourceId}             | relationship         |
@@ -38,9 +38,9 @@
  * `object` kind. Types backed by their own table (actor, trigger, session,
  * notification, extension, relationship, file, skill, workspace) each have a
  * dedicated kind; the resulting URL falls back to the closest existing route
- * when no dedicated detail page exists yet (sessions, notifications,
+ * when no dedicated detail page exists yet (notifications,
  * extensions, relationships, skills are surfaced inside the parent context
- * today — skills land on the settings list, matching the trigger/session
+ * today — skills land on the settings list, matching the trigger
  * fallback pattern).
  *
  * Unauthenticated callers hitting any `/{ws}/...` URL are redirected through
@@ -107,10 +107,10 @@ export type WebAppTarget =
 	| { kind: 'agent'; id?: string }
 	/** Trigger list or detail. */
 	| { kind: 'trigger'; id?: string }
-	/** Container session — no dedicated detail page yet, falls back to the
-	 * actor that ran it (its logs surface in the session panel on the agent
-	 * detail page). Pass `actorId` so the link lands on the right page; if
-	 * omitted we link to the agents list instead. */
+	/** Container session. Resolves to `/{ws}/sessions/{id}`, a web route that opens
+	 * the session as a chat (making its conversation the first time) and redirects
+	 * there, so a link to a session is a link to its chat. `actorId` is accepted for
+	 * older callers and no longer used. */
 	| { kind: 'session'; id: string; actorId?: string }
 	/** Notification — no detail page yet, falls back to the Pulse Dashboard
 	 * where notifications surface. The `id` is recorded for forward-compat
@@ -202,7 +202,7 @@ export function buildWebAppPath(workspaceId: string, target: WebAppTarget): stri
 		case 'trigger':
 			return target.id ? `${root}/triggers/${target.id}` : `${root}/triggers`
 		case 'session':
-			return target.actorId ? `${root}/agents/${target.actorId}` : `${root}/agents`
+			return `${root}/sessions/${target.id}`
 		case 'extension':
 			return `${root}/settings`
 		case 'relationship':

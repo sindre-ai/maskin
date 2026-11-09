@@ -59,6 +59,13 @@ vi.mock('../../lib/claude-oauth', async (importOriginal) => {
 	}
 })
 
+// Wraps the real resolver so every launch test keeps its behaviour; the
+// credential-resolution timeout test swaps in a promise that never settles.
+vi.mock('../../lib/llm-routing', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../lib/llm-routing')>()
+	return { ...actual, resolveLlmRoute: vi.fn(actual.resolveLlmRoute) }
+})
+
 vi.mock('../../lib/crypto', () => ({
 	decrypt: vi.fn().mockReturnValue('decrypted'),
 }))
@@ -136,6 +143,11 @@ import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import type { StorageProvider } from '@maskin/storage'
 import { getProvider } from '../../lib/integrations/registry'
+import {
+	CREDENTIAL_RESOLUTION_TIMEOUT_MS,
+	CredentialResolutionTimeoutError,
+	resolveLlmRoute,
+} from '../../lib/llm-routing'
 import { logger } from '../../lib/logger'
 import { AgentStorageManager } from '../../services/agent-storage'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
@@ -1381,6 +1393,59 @@ describe('SessionManager', () => {
 			const spec = await launchWith(null)
 
 			expect(Object.keys(spec.env).filter((k) => k.startsWith('AGENT_SECRET_'))).toEqual([])
+		})
+	})
+
+	describe('buildLaunchSpec() — credential resolution timeout', () => {
+		afterEach(() => {
+			vi.useRealTimers()
+		})
+
+		it('rejects with the credential-resolution timeout when resolveLlmRoute never resolves, at the guard time', async () => {
+			vi.useFakeTimers()
+			const session = buildSession({ status: 'pending', interactive: false, config: {} })
+			mockResults.selectQueue = [
+				[
+					{
+						id: session.actorId,
+						type: 'agent',
+						systemPrompt: 'You are a helpful AI agent.',
+						llmProvider: null,
+						llmConfig: null,
+						apiKey: 'ank_test_agent_key',
+						tools: null,
+					},
+				], // buildLaunchSpec: agent lookup
+				[
+					{
+						id: session.workspaceId,
+						enterpriseGranted: false,
+						settings: LAUNCHABLE_WS_SETTINGS,
+					},
+				], // buildLaunchSpec: workspace lookup
+			]
+			vi.mocked(resolveLlmRoute).mockImplementationOnce(() => new Promise(() => {}))
+
+			const outcome = manager
+				.buildLaunchSpec(session as unknown as Parameters<typeof manager.buildLaunchSpec>[0])
+				.then(
+					() => null,
+					(err: unknown) => err,
+				)
+			let settled = false
+			void outcome.then(() => {
+				settled = true
+			})
+
+			await vi.advanceTimersByTimeAsync(CREDENTIAL_RESOLUTION_TIMEOUT_MS - 1)
+			expect(settled).toBe(false)
+			await vi.advanceTimersByTimeAsync(1)
+
+			const err = await outcome
+			expect(err).toBeInstanceOf(CredentialResolutionTimeoutError)
+			expect((err as CredentialResolutionTimeoutError).toFailureReason().human_message).toMatch(
+				/looking up the LLM credentials/i,
+			)
 		})
 	})
 

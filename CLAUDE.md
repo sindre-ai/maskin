@@ -28,6 +28,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `.claude/rules/structural-verification.md` — file placement and build configuration verification checklist
 - `.claude/rules/known-pitfalls.md` — registry of recurring bugs to check against before submitting code
 - `.claude/rules/integrations-mcp.md` — Integrations & MCP class rules (source of truth: workspace's Tech principles & best-practices doc)
+- `.claude/rules/web-ios-parity.md` — **any user-visible change to the web app or the iOS app must be made in both, in the same PR**; read before touching `apps/web` or `apps/apple`
 - `.claude/rules/feature-flags.md` — how to add, place, and retire a feature flag (one boundary per feature; no shared-state change)
 - `.claude/rules/verification.md` — mandatory runtime-verification gates: integration tests for DB/route changes, E2E specs for frontend changes
 - `.claude/rules/live-verification.md` — live-environment evidence gates for integration/provider work: surface matrix, staging + production runs, no provider ids in the UI
@@ -78,6 +79,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `pnpm lint` — lint with Biome (`biome check .`)
 - `pnpm lint:fix` — auto-fix lint issues
 - `pnpm format` — format with Biome
+- A pre-commit hook (`.githooks/pre-commit`, installed by `pnpm install`) runs the Biome auto-fix on staged files; skip it with `git commit --no-verify` or `SKIP_BIOME_HOOK=1`
 - `docker-compose up postgres -d` — start PostgreSQL only (not needed if using `pnpm dev`)
 - `docker-compose up` — start PostgreSQL + all services
 - `pnpm db:generate` — generate Drizzle migration from schema changes
@@ -98,6 +100,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - Frontend SSE: real-time cache invalidation via `apps/web/src/lib/sse-invalidation.ts`
 - UI components: Radix UI primitives + custom components in `apps/web/src/components/ui/`
 - **Lists are alphabetical by default**: every list, dropdown, picker and filter option list sorts A→Z by its visible label (locale-aware, case-insensitive, numeric-aware) — never by `createdAt`/`updatedAt` or API order unless the user picks that order or the order is inherent to the data (statuses, timelines, chat/log feeds, wizard steps). Sort a copy with a stable tiebreaker, once in the shared hook/helper that feeds the list
+- **Web and iOS stay aligned**: a user-visible change in `apps/web` is not done until the equivalent change is made in `apps/apple`, and vice versa — same task, same PR, same wording and behaviour. Native idiom may differ; capability may not. Rules and exemptions: `.claude/rules/web-ios-parity.md`
 - **Frontend responsiveness is non-negotiable**: every UI surface must work at 375px (mobile), 768px (iPad portrait), and 1024px (iPad landscape). Use Tailwind breakpoints (`md:`, `lg:`) — never hardcode widths or skip mobile collapse. Full guidelines in `apps/web/CLAUDE.md` under "Responsive (mobile + iPad)".
 - All external inputs validated at system boundaries — see `.claude/rules/input-validation.md` for specifics
 - PG NOTIFY payloads must stay under 8KB — truncate large fields in DB triggers

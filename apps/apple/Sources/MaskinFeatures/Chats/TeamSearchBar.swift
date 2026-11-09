@@ -3,19 +3,6 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-extension View {
-	/// Team search (spec 7 §6): a field that stays tucked away until the person pulls the list
-	/// down, so the top bar carries no search icon. It filters every section live by name and
-	/// preview. A leftover query is cleared when the field closes.
-	func teamSearch(text: Binding<String>) -> some View {
-		#if os(iOS)
-			searchable(text: text, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search Team")
-		#else
-			searchable(text: text, prompt: "Search Team")
-		#endif
-	}
-}
-
 /// The filter chips row: All · Unread n · Threads n · Pinned · People · Agents · Groups. 34pt, `inverse` when
 /// on. Shown only when the Display menu turns chips on. On the bottom pill the row is cut to
 /// All · Unread n · Threads n · Pinned; People, Agents and Groups are not drawn there.

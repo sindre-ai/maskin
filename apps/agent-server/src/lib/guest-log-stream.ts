@@ -93,6 +93,7 @@ const REDACTIONS: ReadonlyArray<readonly [RegExp, string]> = [
 	[/\bsk-ant-[A-Za-z0-9._-]{16,}/g, REDACTED],
 	[/\bsk-[A-Za-z0-9]{20,}/g, REDACTED],
 	[/\bank_[A-Za-z0-9]{16,}/g, REDACTED],
+	[/\b(?:mat|mrt)_[A-Za-z0-9_-]{16,}/g, REDACTED],
 	[/\bxox[abposr]-[A-Za-z0-9-]{10,}/g, REDACTED],
 	// JWTs (Anthropic OAuth, GitHub App installation tokens, MCP bearer tokens).
 	[/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, REDACTED],

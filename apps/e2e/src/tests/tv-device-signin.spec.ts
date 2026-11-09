@@ -58,7 +58,7 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 		expect((await pollFromTv(tv.device_code)).status).toBe('pending')
 
 		await page.getByRole('button', { name: 'Approve' }).click()
-		await expect(page.getByRole('heading', { name: 'Your TV is signing in' })).toBeVisible()
+		await expect(page.getByRole('heading', { name: 'Your device is signing in' })).toBeVisible()
 
 		const approved = await pollFromTv(tv.device_code)
 		expect(approved.status).toBe('approved')
@@ -82,7 +82,7 @@ test('a person types the code by hand, lower case and without the dash', async (
 	await page.getByRole('button', { name: 'Continue' }).click()
 	await expect(page.getByRole('heading', { name: 'Sign in Bedroom?' })).toBeVisible()
 	await page.getByRole('button', { name: 'Approve' }).click()
-	await expect(page.getByRole('heading', { name: 'Your TV is signing in' })).toBeVisible()
+	await expect(page.getByRole('heading', { name: 'Your device is signing in' })).toBeVisible()
 	await expectTvKeySignsInAs((await pollFromTv(tv.device_code)).actor?.api_key, account.actorId)
 })
 

@@ -165,8 +165,9 @@ export interface SessionModelProps {
  * Dev-side `agent_session_started` and, for a trigger-dispatched session,
  * `trigger_fired`, fired once when a session first launches with its model
  * resolved. A resume keeps the model it started on and does not fire again.
- * The web app emits events of the same names from the browser; `emitted_from`
- * tells the two apart, as on `agent_session_completed`.
+ * The web app still emits `agent_session_started` from the browser, and
+ * `emitted_from` tells the two apart. It no longer sends `trigger_fired`, so
+ * the dev-side one is the only copy.
  *
  * Best-effort — analytics can never block a launch.
  */
@@ -228,6 +229,8 @@ export async function trackAgentSessionCompletedWithSkills(p: {
 	skillsAttached?: number
 	skillsStaged?: number
 	modelProps?: SessionModelProps
+	/** Wall-clock run time; absent when the session has no start time on record. */
+	durationMs?: number
 }): Promise<void> {
 	try {
 		await capturePosthogEvent('agent_session_completed', p.agentId, {
@@ -240,6 +243,7 @@ export async function trackAgentSessionCompletedWithSkills(p: {
 			model: p.modelProps?.model ?? null,
 			model_source: p.modelProps?.modelSource ?? null,
 			route: p.modelProps?.route ?? null,
+			duration_ms: p.durationMs,
 			// Distinguishes the dev-side emission from the frontend one at query
 			// time. PostHog treats absent properties as null; setting this on the
 			// dev-side path lets a query filter to a single source when needed.

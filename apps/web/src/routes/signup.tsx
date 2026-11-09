@@ -4,11 +4,20 @@ import { Label } from '@/components/ui/label'
 import { useAuth } from '@/hooks/use-auth'
 import { trackEvent } from '@/lib/analytics'
 import { api } from '@/lib/api'
+import { identifyForWorkspace, signupSourceFrom } from '@/lib/posthog'
+import { safeInternalPath } from '@/lib/safe-redirect'
 import { buildSignupCaptureKnowledge } from '@maskin/shared'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 
 export const Route = createFileRoute('/signup')({
+	// Where to go after signing up, when a page sent the person here. Same value and check as /login.
+	validateSearch: (search: Record<string, unknown>): { redirect?: string } => {
+		// An explicit undefined, not a missing key: the router merges this result over the raw URL
+		// search, so an unsafe value left out of the result would come back through the merge.
+		const redirect = safeInternalPath(search.redirect)
+		return { redirect: redirect ?? undefined }
+	},
 	head: () => ({
 		meta: [
 			{ title: 'Sign up for Maskin — Open-source AI-native workspace' },
@@ -24,6 +33,7 @@ export const Route = createFileRoute('/signup')({
 
 function SignupPage() {
 	const { signup } = useAuth()
+	const { redirect } = Route.useSearch()
 	const [name, setName] = useState('')
 	const [organization, setOrganization] = useState('')
 	const [role, setRole] = useState('')
@@ -112,7 +122,12 @@ function SignupPage() {
 						organization: trimmedOrg,
 						role: trimmedRole,
 					})
-					await api.objects.create(workspaceId, payload)
+					// The welcome is shown on New Chat for web sign-ups, so the server
+					// should not also put it on For You. Other clients leave this out.
+					await api.objects.create(workspaceId, {
+						...payload,
+						metadata: { ...payload.metadata, welcome_in_chat: true },
+					})
 					console.info('[maskin] wrote signup capture knowledge', {
 						workspaceId,
 						actorId,
@@ -132,13 +147,45 @@ function SignupPage() {
 					user_id: actorId,
 					completed: true,
 				})
+				// Identify before signup_completed so the signup lands on the person
+				// the rest of the funnel reads from. A new account has the default
+				// privacy settings, so it is identified in the clear.
+				await identifyForWorkspace(actorId, false, {
+					name: trimmedName,
+					email: email.trim(),
+					signupSource: signupSourceFrom(
+						window.location.search,
+						document.referrer,
+						window.location.hostname,
+					),
+				})
+				trackEvent('signup_completed', { user_id: actorId, workspace_id: workspaceId })
 			}
 			if (anonId) {
 				api.landingEvents
 					.emit([{ name: 'signup_complete', anonId, props: { fromGuest: true } }])
 					.catch(() => console.error('[maskin] failed to emit signup_complete'))
 			}
-			window.location.assign('/')
+			// A return path (the Claude consent page) wins and is followed with a full
+			// navigation, as login does, so the target's query string survives. Otherwise land in
+			// the chat the Chief of Staff opened with its welcome. Without a workspace id there is
+			// nowhere to point, so fall back to the index; if the chat could not be opened, New
+			// Chat still has the Chief of Staff to talk to.
+			if (redirect) {
+				window.location.assign(redirect)
+				return
+			}
+			let landing = '/'
+			if (workspaceId) {
+				landing = `/${workspaceId}/chats/new`
+				try {
+					const { conversations } = await api.conversations.list(workspaceId, { limit: '1' })
+					if (conversations[0]) landing = `/${workspaceId}/chats/${conversations[0].id}`
+				} catch (err) {
+					console.error('[maskin] failed to find the welcome chat', err)
+				}
+			}
+			window.location.assign(landing)
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Signup failed')
 		} finally {
@@ -195,6 +242,11 @@ function SignupPage() {
 						/>
 					</div>
 
+					<p className="-mt-2 text-xs text-muted-foreground">
+						We use Organization and Role to prepare your first workspace. We may look up you and
+						your organization from public sources.
+					</p>
+
 					<div>
 						<Label className="mb-1 text-muted-foreground">Email</Label>
 						<Input
@@ -243,7 +295,7 @@ function SignupPage() {
 
 				<p className="text-center text-xs text-muted-foreground">
 					Already have an account?{' '}
-					<Link to="/login" className="text-primary hover:text-primary-hover">
+					<Link to="/login" search={{ redirect }} className="text-primary hover:text-primary-hover">
 						Sign in
 					</Link>
 				</p>

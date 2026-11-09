@@ -30,7 +30,7 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 	public func rename(actorId: String, name: String, idempotencyKey: String) async throws
 		-> ProfileInfo
 	{
-		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let output = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.patch_sol_api_sol_actors_sol__lcub_id_rcub_(
 				.init(
 					path: .init(id: actorId),
@@ -49,7 +49,7 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 	// MARK: Workspace
 
 	public func rename(workspaceId: String, name: String, idempotencyKey: String) async throws {
-		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let output = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_(
 				.init(path: .init(id: workspaceId), body: .json(.init(name: name))))
 		}
@@ -61,7 +61,7 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 	}
 
 	public func create(name: String, idempotencyKey: String) async throws -> CreatedWorkspace {
-		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let output = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.post_sol_api_sol_workspaces(.init(body: .json(.init(name: name))))
 		}
 		switch output {
@@ -96,7 +96,7 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 		guard let wire = Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub__sol_members_sol__lcub_actorId_rcub_
 			.Input.Body.jsonPayload.rolePayload(rawValue: role.rawValue)
 		else { throw SettingsError("That role can't be assigned here.") }
-		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let output = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.patch_sol_api_sol_workspaces_sol__lcub_id_rcub__sol_members_sol__lcub_actorId_rcub_(
 				.init(path: .init(id: workspaceId, actorId: actorId), body: .json(.init(role: wire))))
 		}
@@ -109,7 +109,7 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 	}
 
 	public func remove(workspaceId: String, actorId: String, idempotencyKey: String) async throws {
-		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let output = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.delete_sol_api_sol_workspaces_sol__lcub_id_rcub__sol_members_sol__lcub_actorId_rcub_(
 				.init(path: .init(id: workspaceId, actorId: actorId)))
 		}
@@ -130,7 +130,7 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 			let serverRole = Operations.post_sol_api_sol_workspaces_sol__lcub_id_rcub__sol_members.Input.Body
 				.jsonPayload.rolePayload(rawValue: role.rawValue)
 		else { throw SettingsError("People can only be added as an admin or a member.") }
-		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let output = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.post_sol_api_sol_workspaces_sol__lcub_id_rcub__sol_members(
 				.init(path: .init(id: workspaceId), body: .json(.init(actor_id: actorId, role: serverRole))))
 		}
@@ -172,7 +172,8 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 			return try ok.body.json.map {
 				ConnectedIntegration(
 					id: $0.id, provider: $0.provider, status: $0.status, externalId: $0.externalId,
-					missingScopes: $0.missingScopes?.count ?? 0, needsReconnect: $0.needsReconnect ?? false)
+					missingScopes: $0.missingScopes?.count ?? 0, needsReconnect: $0.needsReconnect ?? false,
+					displayName: $0.displayName)
 			}
 		default:
 			throw SettingsError("Couldn't load integrations.")
@@ -180,7 +181,7 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 	}
 
 	public func disconnect(id: String, idempotencyKey: String) async throws {
-		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let output = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.delete_sol_api_sol_integrations_sol__lcub_id_rcub_(
 				.init(
 					path: .init(id: id), headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
@@ -199,7 +200,7 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 			let installURL: String?
 			let integrationId: String?
 			if provider == "linkedin-unipile" {
-				let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+				let output = try await IdempotencyKey.bind(idempotencyKey) {
 					try await client.post_sol_api_sol_integrations_sol_linkedin_hyphen_unipile_sol_connect(
 						.init(headers: .init(x_hyphen_workspace_hyphen_id: workspaceID), body: linkedInBody))
 				}
@@ -208,7 +209,7 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 				installURL = json.install_url
 				integrationId = json.integration_id
 			} else {
-				let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+				let output = try await IdempotencyKey.bind(idempotencyKey) {
 					try await client.post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect(
 						.init(
 							path: .init(provider: provider),
@@ -253,7 +254,7 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 		integrationId: String, installationId: String, idempotencyKey: String
 	) async throws {
 		do {
-			let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+			let output = try await IdempotencyKey.bind(idempotencyKey) {
 				try await client.post_sol_api_sol_integrations_sol_github_sol_select_hyphen_installation(
 					.init(
 						headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),
@@ -288,7 +289,7 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 	public func regenerate(actorId: String) async throws -> SecretValue {
 		// Pinned to nil even inside an outer scope: the response carries the plaintext key, and a
 		// keyed write would have the server's idempotency ledger store it for 24 hours.
-		let output = try await IdempotencyKey.$current.withValue(nil) {
+		let output = try await IdempotencyKey.bind(nil) {
 			try await client.post_sol_api_sol_actors_sol__lcub_id_rcub__sol_api_hyphen_keys(
 				.init(path: .init(id: actorId)))
 		}
@@ -337,7 +338,7 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 	public func create(workspaceId: String, name: String, content: String, idempotencyKey: String)
 		async throws
 	{
-		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let output = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.post_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills(
 				.init(path: .init(workspaceId: workspaceId), body: .json(.init(name: name, content: content))))
 		}
@@ -353,7 +354,7 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 	public func update(workspaceId: String, name: String, content: String, idempotencyKey: String)
 		async throws
 	{
-		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let output = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.put_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_(
 				.init(path: .init(workspaceId: workspaceId, name: name), body: .json(.init(content: content))))
 		}
@@ -365,7 +366,7 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 	}
 
 	public func delete(workspaceId: String, name: String, idempotencyKey: String) async throws {
-		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let output = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_(
 				.init(path: .init(workspaceId: workspaceId, name: name)))
 		}
@@ -409,7 +410,7 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 		_ schema: WorkspaceSchema, keys: Set<WorkspaceSchema.Key>, idempotencyKey: String
 	) async throws {
 		let body = SettingsSchemaWire.patchBody(schema, keys: keys)
-		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let output = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_(
 				.init(path: .init(id: workspaceID), body: .json(body)))
 		}

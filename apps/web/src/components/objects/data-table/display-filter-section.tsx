@@ -26,6 +26,8 @@ export interface DisplayFilterSectionModel {
 	 *  A section with hundreds of options (drivers in a large workspace) still
 	 *  allows it; one whose values are not stable across sessions should not. */
 	pinnable?: boolean
+	/** Start expanded instead of folded (For you's "Show" opens with its values). */
+	defaultExpanded?: boolean
 }
 
 interface DisplayFilterSectionProps {
@@ -53,7 +55,7 @@ export function DisplayFilterSection({
 	pinnedTokens,
 	onTogglePin,
 }: DisplayFilterSectionProps) {
-	const [expanded, setExpanded] = useState(false)
+	const [expanded, setExpanded] = useState(section.defaultExpanded ?? false)
 
 	return (
 		<div>
@@ -64,14 +66,14 @@ export function DisplayFilterSection({
 				// glyph and the summary run together into the computed name.
 				aria-label={`${section.label} filter, ${section.summary}`}
 				onClick={() => setExpanded((v) => !v)}
-				className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-accent"
+				className="flex h-11 w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-muted md:h-9"
 			>
 				{section.label}
 				<span className="flex-1" />
-				<span className="max-w-[9rem] truncate font-semibold text-foreground">
+				<span className="max-w-36 truncate text-xs font-medium text-muted-foreground">
 					{section.summary}
 				</span>
-				<span aria-hidden="true" className="text-[10px] text-muted-foreground/60">
+				<span aria-hidden="true" className="text-[10px] text-muted-foreground">
 					▾
 				</span>
 			</button>
@@ -85,7 +87,7 @@ export function DisplayFilterSection({
 						<div
 							key={option.id}
 							className={cn(
-								'flex items-center gap-2 rounded-lg pr-2 transition-colors hover:bg-accent',
+								'flex items-center gap-2 rounded-lg pr-2 transition-colors hover:bg-muted',
 								option.active && 'bg-muted',
 							)}
 						>
@@ -93,7 +95,7 @@ export function DisplayFilterSection({
 								type="button"
 								aria-pressed={option.active}
 								onClick={option.onToggle}
-								className="flex min-w-0 flex-1 items-center gap-2 py-1 pl-[22px] pr-0 text-left text-xs text-foreground"
+								className="flex min-w-0 flex-1 items-center gap-2 py-2 pl-5.5 pr-0 text-left text-sm text-foreground md:py-1.5"
 							>
 								<span className="min-w-0 truncate">{option.label}</span>
 								<span className="flex-1" />

@@ -69,7 +69,9 @@ import {
 	type ReactElement,
 	type ReactNode,
 	cloneElement,
+	createContext,
 	isValidElement,
+	useContext,
 	useEffect,
 	useLayoutEffect,
 	useRef,
@@ -138,6 +140,14 @@ function previewBounds(chip: Element) {
 }
 
 const PREVIEW_QUERY = '(min-width: 640px) and (hover: hover) and (pointer: fine)'
+
+/**
+ * Provided around chips that sit inside text being edited. There is no hover preview and no phone
+ * sheet (a card opening over words you are about to change gets in the way), a chip whose object is
+ * still loading stays the plain link (the line must not jump), and `label`, when set, is the link
+ * text the author wrote and replaces the name on the chip.
+ */
+export const EditorChipContext = createContext<{ label?: string } | null>(null)
 
 /** True on a pointer device at 640px or wider, the only place a chip opens a preview. */
 function usePreviewCapable() {
@@ -219,7 +229,7 @@ function PreviewActions({ openLink, path }: Pick<ChipSheetContent, 'openLink' | 
 function ChipPreview({
 	card,
 	sheet,
-	enabled,
+	enabled: enabledByChip,
 	children,
 }: {
 	/** The card to open, drawn as a preview (see the cards' `preview` prop), given the buttons for its footer. */
@@ -228,6 +238,8 @@ function ChipPreview({
 	enabled: boolean
 	children: ReactNode
 }) {
+	const inEditor = useContext(EditorChipContext) !== null
+	const enabled = enabledByChip && !inEditor
 	const capable = usePreviewCapable()
 	const [open, setOpen] = useState(false)
 	const [sheetOpen, setSheetOpen] = useState(false)
@@ -238,7 +250,15 @@ function ChipPreview({
 	const tapped = useRef<HTMLElement | null>(null)
 	// The card is placed against the first and last line piece of the chip; `shift` moves it to the
 	// bounding box of all of them (nothing for a chip on one line).
-	const [place, setPlace] = useState({ alignEnd: false, shift: 0, width: 0 })
+	const [place, setPlace] = useState<{
+		alignEnd: boolean
+		shift: number
+		width: number
+		/** The viewport x the card's near edge belongs at: its left, or its right when aligned to the end. */
+		anchor: number
+		corrected: boolean
+	}>({ alignEnd: false, shift: 0, width: 0, anchor: 0, corrected: true })
+	const previewRef = useRef<HTMLSpanElement>(null)
 
 	useLayoutEffect(() => {
 		if (shown && root.current) {
@@ -263,9 +283,29 @@ function ChipPreview({
 								: box.left - first.left
 						: 0,
 				width: where.side === 'pinned' ? where.width : 0,
+				anchor: where.side === 'pinned' ? where.left : alignEnd ? box.right : box.left,
+				corrected: false,
 			})
 		}
 	}, [shown])
+
+	// A chip that wraps from the end of one line to the start of the next has no usable
+	// containing block (the browser collapses it to the first piece's left edge), so the
+	// shift above can land the card off the pane. Measure where it really sits and move it
+	// the difference, once.
+	useLayoutEffect(() => {
+		const card = previewRef.current
+		if (!shown || !card || place.corrected) return
+		const rect = card.getBoundingClientRect()
+		// Nothing laid out (a test DOM): there is nothing to measure against.
+		if (rect.width === 0) return
+		const off = (place.alignEnd ? rect.right : rect.left) - place.anchor
+		setPlace((p) =>
+			p === place
+				? { ...p, shift: p.alignEnd ? p.shift + off : p.shift - off, corrected: true }
+				: p,
+		)
+	}, [shown, place])
 
 	useEffect(() => {
 		if (!shown) return
@@ -309,7 +349,8 @@ function ChipPreview({
 					// biome-ignore lint/a11y/useSemanticElements: a non-modal popup anchored under the chip; native <dialog> is against project convention (apps/web/CLAUDE.md) and would need showModal or top-layer positioning
 					<span
 						role="dialog"
-						aria-label="Object preview"
+						ref={previewRef}
+						aria-label="Item preview"
 						data-linked-preview=""
 						style={{
 							...(place.alignEnd ? { right: place.shift } : { left: place.shift }),
@@ -360,7 +401,7 @@ function ChipSheet({
 				side="bottom"
 				hideCloseButton
 				aria-modal="true"
-				aria-label="Object preview"
+				aria-label="Item preview"
 				aria-describedby={undefined}
 				overlayClassName="bg-foreground/40 chip-sheet-fade"
 				className="chip-sheet-rise flex flex-col gap-3 rounded-t-2xl bg-popover p-4 pb-6 motion-reduce:animate-none"
@@ -369,7 +410,7 @@ function ChipSheet({
 					returnFocus()
 				}}
 			>
-				<SheetTitle className="sr-only">Object preview</SheetTitle>
+				<SheetTitle className="sr-only">Item preview</SheetTitle>
 				<span aria-hidden="true" className="mx-auto h-1 w-9 rounded-full bg-border-strong" />
 				{card}
 				<div className="mt-1 flex items-center gap-2">
@@ -411,7 +452,16 @@ const JOIN = '\u2060'
  * The text of a chip with its marks: `lead` stays on the first character and `trail` on the last,
  * so a dot never wraps onto a line of its own. Everything between breaks like words in a sentence.
  */
-function ChipText({ lead, text, trail }: { lead?: ReactNode; text: string; trail?: ReactNode }) {
+function ChipText({
+	lead,
+	text: name,
+	trail,
+}: {
+	lead?: ReactNode
+	text: string
+	trail?: ReactNode
+}) {
+	const text = useContext(EditorChipContext)?.label ?? name
 	const chars = Array.from(text)
 	if (chars.length < 2) {
 		return (
@@ -442,7 +492,12 @@ function ChipText({ lead, text, trail }: { lead?: ReactNode; text: string; trail
  * at the sentence size, with a neutral dot that pulses (it holds still under reduced motion).
  */
 function loadingChip(fallback: ReactNode, dot = true): ReactNode {
-	if (!isValidElement(fallback)) return fallback
+	return <LoadingChip fallback={fallback} dot={dot} />
+}
+
+function LoadingChip({ fallback, dot }: { fallback: ReactNode; dot: boolean }) {
+	// In the editor the link stays plain until its object arrives.
+	if (useContext(EditorChipContext) !== null || !isValidElement(fallback)) return <>{fallback}</>
 	const link = fallback as ReactElement<{ className?: string; children?: ReactNode }>
 	return cloneElement(
 		link,
@@ -473,12 +528,15 @@ export function ObjectReferenceChip({
 	objectId,
 	fallback,
 	cardFollows = true,
+	newTab = false,
 }: {
 	workspaceId: string
 	objectId: string
 	fallback: ReactNode
 	/** A draft's approval card is drawn under its sentence. Without one the draft is a chip too. */
 	cardFollows?: boolean
+	/** Opens the object in a new tab (your own message). */
+	newTab?: boolean
 }) {
 	const object = useLinkedObject(workspaceId, objectId)
 	const driver = useDriver(workspaceId, object)
@@ -538,6 +596,7 @@ export function ObjectReferenceChip({
 			<Link
 				to="/$workspaceId/objects/$objectId"
 				params={{ workspaceId, objectId: object.id }}
+				{...(newTab ? NEW_TAB : {})}
 				aria-label={name}
 				className={CHIP}
 			>
@@ -640,6 +699,9 @@ export function SettingsReferenceChip({
 	)
 }
 
+/** Your own messages open an object in a new tab, so the conversation stays where it is. */
+const NEW_TAB = { target: '_blank', rel: 'noopener noreferrer' } as const
+
 const CARD_SHELL =
 	'not-prose @container my-2 flex w-full max-w-[460px] flex-col rounded-xl border bg-card'
 // The same card as a hover preview: no outer margin, a fixed width, lifted off the page.
@@ -672,6 +734,7 @@ function FoldableCard({
 	title,
 	head,
 	state,
+	className,
 	children,
 }: {
 	title: string
@@ -679,6 +742,8 @@ function FoldableCard({
 	head: ReactNode
 	/** The status badge or state. */
 	state: ReactNode
+	/** Added to the card's shell, e.g. to change its width or margin. */
+	className?: string
 	/** The card's link, drawn without a shell of its own. */
 	children: ReactNode
 }) {
@@ -706,6 +771,7 @@ function FoldableCard({
 				CARD_SHELL,
 				'relative border-border transition-colors duration-180 ease-standard hover:border-border-hover has-[a:focus-visible]:ring-2 has-[a:focus-visible]:ring-ring',
 				folded && 'h-10',
+				className,
 			)}
 		>
 			{folded ? (
@@ -791,6 +857,8 @@ export function ObjectReferenceCard({
 	preview = false,
 	sheet = false,
 	actions,
+	newTab = false,
+	className,
 }: {
 	workspaceId: string
 	objectId: string
@@ -800,12 +868,16 @@ export function ObjectReferenceCard({
 	sheet?: boolean
 	/** The preview's Copy link and Open, at the right end of the footer. */
 	actions?: ReactNode
+	/** Opens the object in a new tab (your own message). */
+	newTab?: boolean
+	/** Added to the card's shell, e.g. to change its width or margin. */
+	className?: string
 }) {
 	const object = useLinkedObject(workspaceId, objectId)
 	const driver = useDriver(workspaceId, object)
 	const typeLabel = useObjectTypeLabel()
 	const { workspace } = useWorkspace()
-	const shell = sheet ? SHEET_SHELL : preview ? PREVIEW_SHELL : CARD_SHELL
+	const shell = cn(sheet ? SHEET_SHELL : preview ? PREVIEW_SHELL : CARD_SHELL, className)
 	const marker = preview || sheet ? undefined : ''
 
 	if (object === undefined) {
@@ -843,7 +915,11 @@ export function ObjectReferenceCard({
 			preview={preview}
 			sheet={sheet}
 			link={
-				<Link to="/$workspaceId/objects/$objectId" params={{ workspaceId, objectId: object.id }} />
+				<Link
+					to="/$workspaceId/objects/$objectId"
+					params={{ workspaceId, objectId: object.id }}
+					{...(newTab ? NEW_TAB : {})}
+				/>
 			}
 		>
 			<LinkedCardFace
@@ -900,7 +976,7 @@ export function ObjectReferenceCard({
 	return preview || sheet ? (
 		link
 	) : (
-		<FoldableCard title={title} head={head} state={state}>
+		<FoldableCard title={title} head={head} state={state} className={className}>
 			{link}
 		</FoldableCard>
 	)
@@ -1030,14 +1106,14 @@ export function LoopReferenceChip({
 		)
 	}
 
-	const name = loop.name?.trim() || 'Untitled loop'
+	const name = loop.name?.trim() || 'Untitled flow'
 	const state = LOOP_PILL_STYLES[loop.pill].label.toLowerCase()
 	return (
 		<ChipPreview card={card} sheet={sheet} enabled>
 			<Link
 				to="/$workspaceId/loops/$loopId"
 				params={{ workspaceId, loopId: loop.id }}
-				aria-label={`Loop, ${state}: ${name}`}
+				aria-label={`Flow, ${state}: ${name}`}
 				className={CHIP}
 			>
 				<ChipText
@@ -1088,11 +1164,11 @@ export function LoopReferenceCard({
 		...(agentNames ? [{ label: 'Agents', value: agentNames }] : []),
 		...(activity ? [{ label: 'Activity', value: activity }] : []),
 	]
-	const name = loop.name?.trim() || 'Untitled loop'
+	const name = loop.name?.trim() || 'Untitled flow'
 	const head = (
 		<span className={KIND_TAG}>
 			<RefreshCw size={11} aria-hidden />
-			Loop
+			Flow
 		</span>
 	)
 	const state = (
@@ -1111,7 +1187,7 @@ export function LoopReferenceCard({
 			<LinkedCardFace
 				icon={<RefreshCw size={14} aria-hidden />}
 				tile={KIND_TILE}
-				eyebrow="Loop"
+				eyebrow="Flow"
 				state={state}
 				trailing={preview || sheet ? null : <OpenArrow />}
 				title={name}
@@ -1493,8 +1569,8 @@ export function AgentReferenceCard({
 type OtherWorkspaceKind = 'object' | 'loop' | 'trigger' | 'agent' | 'chat'
 
 const OTHER_WORKSPACE_KIND: Record<OtherWorkspaceKind, string> = {
-	object: 'Object',
-	loop: 'Loop',
+	object: 'Item',
+	loop: 'Flow',
 	trigger: 'Trigger',
 	agent: 'Agent',
 	chat: 'Chat',

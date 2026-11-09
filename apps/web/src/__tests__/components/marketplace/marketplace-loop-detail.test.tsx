@@ -109,7 +109,7 @@ describe('MarketplaceLoopDetail', () => {
 			wrapper: TestWrapper,
 		})
 		expect(screen.getByRole('link', { name: 'Marketplace' })).toBeInTheDocument()
-		// The dead middle "Loops" crumb is gone (mockup 2611).
+		// The dead middle "Flows" crumb is gone (mockup 2611).
 		expect(screen.queryByText('Loops')).not.toBeInTheDocument()
 	})
 
@@ -166,7 +166,7 @@ describe('MarketplaceLoopDetail', () => {
 			/>,
 			{ wrapper: TestWrapper },
 		)
-		expect(screen.getByText('The loop, once installed')).toBeInTheDocument()
+		expect(screen.getByText('The flow, once installed')).toBeInTheDocument()
 		// "Relay" appears once in the flow and once in "What it brings".
 		expect(screen.getAllByText('Relay')).toHaveLength(2)
 		expect(screen.getByText('When opportunity is created')).toBeInTheDocument()
@@ -255,7 +255,7 @@ describe('MarketplaceLoopDetail', () => {
 			/>,
 			{ wrapper: TestWrapper },
 		)
-		expect(screen.queryByText('The loop, once installed')).not.toBeInTheDocument()
+		expect(screen.queryByText('The flow, once installed')).not.toBeInTheDocument()
 	})
 
 	it('renders "How it runs" from the loop version', () => {
@@ -282,7 +282,7 @@ describe('MarketplaceLoopDetail', () => {
 		expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 
 		const user = userEvent.setup()
-		await user.click(screen.getByRole('button', { name: 'Loop actions' }))
+		await user.click(screen.getByRole('button', { name: 'Flow actions' }))
 		await user.click(await screen.findByText('Remove from workspace'))
 
 		// Removing discards provisioned agents, triggers and skills, so the menu
@@ -306,7 +306,7 @@ describe('MarketplaceLoopDetail', () => {
 			{ wrapper: TestWrapper },
 		)
 		const user = userEvent.setup()
-		await user.click(screen.getByRole('button', { name: 'Loop actions' }))
+		await user.click(screen.getByRole('button', { name: 'Flow actions' }))
 		await user.click(await screen.findByText('Remove from workspace'))
 		await user.click(
 			within(await screen.findByRole('dialog')).getByRole('button', { name: 'Remove' }),
@@ -327,7 +327,7 @@ describe('MarketplaceLoopDetail', () => {
 		// Nothing for Manage to point at, so Remove takes the primary slot and
 		// the ⋯ menu (which would only repeat it) is not rendered.
 		expect(screen.queryByRole('link', { name: 'Manage' })).not.toBeInTheDocument()
-		expect(screen.queryByRole('button', { name: 'Loop actions' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Flow actions' })).not.toBeInTheDocument()
 
 		const user = userEvent.setup()
 		await user.click(screen.getByRole('button', { name: 'Remove' }))

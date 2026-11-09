@@ -14,6 +14,9 @@ public struct ObjectsScreen: View {
 	@State private var picking = SelectionModel()
 	@State private var intents = ObjectsListIntents()
 	@State private var path: [ObjectRoute] = []
+	@State private var showDisplay = false
+	@State private var searchText = ""
+	@State private var searchPresented = false
 	@Namespace private var zoom
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 
@@ -52,14 +55,15 @@ public struct ObjectsScreen: View {
 		}
 	}
 
-	/// The title lives in the content (tap it for Go to); the pill holds Display and the avatar.
-	/// The Objects page has no search field in its top bar.
+	/// The title lives in the content; the pill holds Display and the avatar. Go to opens from Display.
+	/// The magnifier opens a field that filters this page only.
 	private var shellActions: ShellActions {
 		ShellActions(
-			display: ShellDisplayMenu { ObjectsDisplayMenu(store: store, picking: picking, intents: intents) },
 			displaySymbol: ShellActions.slidersSymbol,
 			displayActive: store.display.isCustomised || store.statusFilter != nil,
-			hidesAvatar: true)
+			displayToggle: { showDisplay = true },
+			hidesAvatar: true,
+			search: { searchPresented = true })
 	}
 
 	// MARK: Asks
@@ -103,6 +107,13 @@ public struct ObjectsScreen: View {
 				store: store, board: board, selection: nil, zoomNamespace: zoom, picking: picking, intents: intents,
 				askActions: askActions, onOpen: { path.append(ObjectRoute(id: $0)) })
 				.shellToolbar(environment: environment, title: nil, actions: shellActions)
+				.pageSearch(text: $searchText, isPresented: $searchPresented, prompt: "Search items")
+				// Filters this page only; closing the field clears the filter.
+				.onChange(of: searchText) { _, text in Task { await store.setSearch(text) } }
+				.onChange(of: searchPresented) { _, open in if !open, !searchText.isEmpty { searchText = "" } }
+				.sheet(isPresented: $showDisplay) {
+					ObjectsDisplaySheet(store: store, picking: picking, intents: intents)
+				}
 				.navigationDestination(for: ObjectRoute.self) { route in
 					detail(route, onOpen: { path.append(ObjectRoute(id: $0)) }, onClose: { path.removeLast() })
 					.zoomDestination(id: route.id, in: zoom)

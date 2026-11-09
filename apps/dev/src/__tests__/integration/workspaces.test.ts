@@ -15,6 +15,7 @@ import type { PgNotifyBridge } from '@maskin/realtime'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
 import { onTestFinished } from 'vitest'
+import { __resetTeamMemberForTesting, configureTeamMember } from '../../lib/analytics/team-member'
 import { createApiError, formatZodError } from '../../lib/errors'
 import { openSecret } from '../../lib/workspace-secrets'
 import { insertActor, insertWorkspace, setWorkspacePlan } from '../factories'
@@ -87,7 +88,6 @@ const DEFAULT_AGENT_NAMES = [
 	'Workspace Coach',
 	'Chief of Staff',
 	'Driver',
-	'Strategist',
 	'Signal Analyst',
 	'Researcher',
 	'Knowledge Curator',
@@ -166,6 +166,14 @@ async function memberActorIdsFor(workspaceId: string): Promise<string[]> {
 		.from(workspaceMembers)
 		.where(eq(workspaceMembers.workspaceId, workspaceId))
 	return rows.map((r) => r.actorId).sort()
+}
+
+async function storedSettings(id: string): Promise<Record<string, unknown>> {
+	const [row] = await db
+		.select({ settings: workspacesTable.settings })
+		.from(workspacesTable)
+		.where(eq(workspacesTable.id, id))
+	return row.settings as Record<string, unknown>
 }
 
 describe('Workspaces Integration', () => {
@@ -287,19 +295,49 @@ describe('Workspaces Integration', () => {
 			// otherwise a rejected member reads here as a wrong count.
 			await setWorkspacePlan(db, workspace.id, 'pro')
 			const teammate = await insertActor(db)
-			const added = await app.request(
-				jsonRequest('POST', `/api/workspaces/${workspace.id}/members`, {
-					actor_id: teammate.id,
-					role: 'member',
-				}),
-			)
-			expect(added.status).toBe(201)
+			// People can't be added by id any more; seed the membership directly.
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId: workspace.id, actorId: teammate.id, role: 'member' })
 
 			const paired = await app.request(jsonGet('/api/workspaces'))
 			const pairedRow = (await paired.json()).find(
 				(w: { id: string }) => w.id === workspace.id,
 			) as { memberCount: number }
 			expect(pairedRow.memberCount).toBe(2)
+		})
+	})
+
+	describe('team flag for analytics', () => {
+		it('marks the caller as team only when they belong to the workspace named by the setting', async () => {
+			const app = createApp()
+			const created = await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Team WS' }))
+			const workspace = await created.json()
+			onTestFinished(() => {
+				vi.unstubAllEnvs()
+				__resetTeamMemberForTesting()
+			})
+			configureTeamMember(db)
+
+			const flagFor = async (id: string) =>
+				(
+					(await (await app.request(jsonGet('/api/workspaces'))).json()) as Array<{
+						id: string
+						isTeam: boolean
+					}>
+				).find((w) => w.id === id)?.isTeam
+
+			// Unset means nobody is the team.
+			vi.stubEnv('POSTHOG_TEAM_WORKSPACE_ID', '')
+			expect(await flagFor(workspace.id)).toBe(false)
+
+			// A workspace the caller is not in names no team member.
+			vi.stubEnv('POSTHOG_TEAM_WORKSPACE_ID', randomUUID())
+			expect(await flagFor(workspace.id)).toBe(false)
+
+			// The caller belongs to this one, so they are the team.
+			vi.stubEnv('POSTHOG_TEAM_WORKSPACE_ID', workspace.id)
+			expect(await flagFor(workspace.id)).toBe(true)
 		})
 	})
 
@@ -364,10 +402,12 @@ describe('Workspaces Integration', () => {
 				}),
 			)
 			const afterSet = await second.json()
-			expect(afterSet.settings.llm_keys).toEqual({
-				anthropic: 'sk-ant-AAA',
-				openai: 'sk-oai-BBB',
-			})
+			// No caller gets a key back; the row holds both, sealed.
+			expect(afterSet.settings.llm_keys).toBeUndefined()
+			expect(afterSet.llm_configured).toMatchObject({ anthropic: true, openai: true })
+			const setKeys = (await storedSettings(ws.id)) as { llm_keys: Record<string, string> }
+			expect(openSecret(setKeys.llm_keys.anthropic)).toBe('sk-ant-AAA')
+			expect(openSecret(setKeys.llm_keys.openai)).toBe('sk-oai-BBB')
 
 			// `null` inside llm_keys signals deletion; other providers stay.
 			const third = await app.request(
@@ -376,7 +416,10 @@ describe('Workspaces Integration', () => {
 				}),
 			)
 			const afterDelete = await third.json()
-			expect(afterDelete.settings.llm_keys).toEqual({ openai: 'sk-oai-BBB' })
+			expect(afterDelete.llm_configured).toMatchObject({ anthropic: false, openai: true })
+			const deletedKeys = (await storedSettings(ws.id)) as { llm_keys: Record<string, string> }
+			expect(deletedKeys.llm_keys.anthropic).toBeUndefined()
+			expect(openSecret(deletedKeys.llm_keys.openai)).toBe('sk-oai-BBB')
 		})
 	})
 
@@ -710,7 +753,8 @@ describe('Workspaces Integration', () => {
 				)
 				expect(res.status).toBe(200)
 				const body = await res.json()
-				expect(body.settings.llm_keys.anthropic).toBe('sk-ant-enterprise')
+				expect(body.settings.llm_keys).toBeUndefined()
+				expect(body.llm_configured.anthropic).toBe(true)
 			} finally {
 				// '' parses to an empty allowlist, same as unset.
 				process.env.MASKIN_ENTERPRISE_ACTOR_IDS = prev ?? ''
@@ -816,7 +860,8 @@ describe('Workspaces Integration', () => {
 			)
 			expect(res.status).toBe(200)
 			const body = await res.json()
-			expect(body.settings.llm_keys.anthropic).toBe('sk-ant-allowed')
+			expect(body.settings.llm_keys).toBeUndefined()
+			expect(body.llm_configured.anthropic).toBe(true)
 		})
 
 		it('does not block deleting an existing (pre-entitlement) BYO key', async () => {
@@ -846,7 +891,10 @@ describe('Workspaces Integration', () => {
 			)
 			expect(res.status).toBe(200)
 			const body = await res.json()
-			expect(body.settings.llm_keys).toEqual({})
+			expect(body.settings.llm_keys).toBeUndefined()
+			expect(body.llm_configured.anthropic).toBe(false)
+			const stored = (await storedSettings(ws.id)) as { llm_keys?: Record<string, string> }
+			expect(stored.llm_keys?.anthropic).toBeUndefined()
 		})
 	})
 
@@ -864,7 +912,11 @@ describe('Workspaces Integration', () => {
 			await setWorkspacePlan(db, ws.id, 'pro')
 
 			// Create another actor to add as member
-			const newActor = await insertActor(db, { name: 'New Member', email: 'member@test.com' })
+			const newActor = await insertActor(db, {
+				type: 'agent',
+				name: 'New Member',
+				createdBy: getTestActorId(),
+			})
 
 			// Add member
 			const addRes = await app.request(
@@ -879,9 +931,9 @@ describe('Workspaces Integration', () => {
 			const listRes = await app.request(jsonGet(`/api/workspaces/${ws.id}/members`))
 			expect(listRes.status).toBe(200)
 			const members = await listRes.json()
-			// Creator (owner) + all 7 default agents (seeded atomically inside the
-			// create transaction) + the newly-added member = 9.
-			expect(members).toHaveLength(9)
+			// Creator (owner) + all 6 default agents (seeded atomically inside the
+			// create transaction) + the newly-added member = 8.
+			expect(members).toHaveLength(8)
 			const roles = members.map((m: { role: string }) => m.role).sort()
 			expect(roles).toEqual([
 				'member',
@@ -891,40 +943,8 @@ describe('Workspaces Integration', () => {
 				'member',
 				'member',
 				'member',
-				'member',
 				'owner',
 			])
-		})
-
-		it('rejects an over-cap invite with 403 SEAT_CAP_EXCEEDED, not a 500', async () => {
-			// This app mounts the router with app.route() and defines no
-			// onError — exactly like every other route-level harness, and unlike
-			// createApp(). A cap rejection that is *thrown* rather than returned
-			// degrades to a bare framework 500 here, which is what this asserts
-			// against: the status is part of the route's contract, so it must not
-			// depend on how the router happens to be mounted.
-			const app = createApp()
-			const createRes = await app.request(
-				jsonRequest('POST', '/api/workspaces', { name: 'Seat Cap 403' }),
-			)
-			const ws = await createRes.json()
-
-			// Left on trial: the owner alone fills the single seat.
-			const overflow = await insertActor(db)
-			const res = await app.request(
-				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: overflow.id }),
-			)
-
-			expect(res.status).toBe(403)
-			const body = await res.json()
-			expect(body.error.code).toBe('SEAT_CAP_EXCEEDED')
-			expect(body.error.workspace_id).toBe(ws.id)
-			expect(body.error.plan).toBe('trial')
-			expect(body.error.cap).toBe(1)
-
-			// The rejection is a no-op, not a partial write.
-			const members = await memberActorIdsFor(ws.id)
-			expect(members).not.toContain(overflow.id)
 		})
 	})
 
@@ -942,12 +962,9 @@ describe('Workspaces Integration', () => {
 			const ws = await createRes.json()
 			await setWorkspacePlan(db, ws.id, 'pro')
 			const member = await insertActor(db, { name: 'Member', email: `${randomUUID()}@test.com` })
-			await app.request(
-				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, {
-					actor_id: member.id,
-					role: 'member',
-				}),
-			)
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId: ws.id, actorId: member.id, role: 'member' })
 			return { app, ws, member }
 		}
 
@@ -999,6 +1016,18 @@ describe('Workspaces Integration', () => {
 			expect(audit).toHaveLength(1)
 			expect(audit[0].action).toBe('updated')
 			expect(audit[0].data).toMatchObject({ role: { from: 'member', to: 'admin' } })
+		})
+
+		it('shows the new role in the members list', async () => {
+			const { app, ws, member } = await workspaceWithMember()
+
+			await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}/members/${member.id}`, { role: 'viewer' }),
+			)
+			const res = await app.request(jsonGet(`/api/workspaces/${ws.id}/members`))
+
+			const rows = (await res.json()) as Array<{ actorId: string; role: string }>
+			expect(rows.find((r) => r.actorId === member.id)?.role).toBe('viewer')
 		})
 
 		it('refuses to demote the last owner and leaves the role untouched', async () => {
@@ -1276,7 +1305,7 @@ describe('Workspaces Integration', () => {
 
 			// The shared "Maskin way of working" skill is attached to every default
 			// agent (mirrored from the Template workspace) — Coach, Chief of Staff,
-			// Driver, Strategist, Signal Analyst, Researcher, Knowledge Curator.
+			// Driver, Signal Analyst, Researcher, Knowledge Curator.
 			const [wayOfWorkingSkill] = await db
 				.select({ id: workspaceSkills.id })
 				.from(workspaceSkills)
@@ -1293,7 +1322,7 @@ describe('Workspaces Integration', () => {
 				.select({ actorId: agentSkills.actorId })
 				.from(agentSkills)
 				.where(eq(agentSkills.workspaceSkillId, wayOfWorkingSkillId))
-			expect(wayOfWorkingAttachRows).toHaveLength(7)
+			expect(wayOfWorkingAttachRows).toHaveLength(6)
 
 			const triggerRows = await db
 				.select({ name: triggers.name })
@@ -1303,11 +1332,47 @@ describe('Workspaces Integration', () => {
 			// "Deep-research brief validated → Signal Analyst clustering" trigger
 			// in DEFAULT_WORKSPACE_TRIGGERS, to 15 with the Chief of Staff's
 			// "Daily briefing" cron, and to 16 with its hourly "For You — curate
-			// the list" cron.
-			expect(triggerRows).toHaveLength(16)
+			// the list" cron, then down to 12 when the Bet discovery loop's four
+			// triggers were dropped from the seed.
+			expect(triggerRows).toHaveLength(12)
 		})
 
-		it('seeds the Bet discovery loop, Workspace improvements, and Knowledge Wiki loops wired to their triggers', async () => {
+		it('gives the Researcher the cited deep research mode and the deep-research-subagents skill', async () => {
+			const app = createApp()
+
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Researcher Deep Research' }),
+			)
+			const ws = await createRes.json()
+
+			const [researcher] = await db
+				.select({ id: actors.id, systemPrompt: actors.systemPrompt })
+				.from(workspaceMembers)
+				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+				.where(and(eq(workspaceMembers.workspaceId, ws.id), eq(actors.name, 'Researcher')))
+				.limit(1)
+			expect(researcher).toBeDefined()
+			expect(researcher?.systemPrompt).toContain('# Cited deep research mode')
+
+			const [skill] = await db
+				.select({ id: workspaceSkills.id })
+				.from(workspaceSkills)
+				.where(
+					and(
+						eq(workspaceSkills.workspaceId, ws.id),
+						eq(workspaceSkills.name, 'deep-research-subagents'),
+					),
+				)
+				.limit(1)
+			if (!skill) throw new Error('deep-research-subagents skill not seeded')
+			const attachRows = await db
+				.select({ actorId: agentSkills.actorId })
+				.from(agentSkills)
+				.where(eq(agentSkills.workspaceSkillId, skill.id))
+			expect(attachRows.map((r) => r.actorId)).toEqual([researcher?.id])
+		})
+
+		it('seeds the Workspace improvements and Knowledge Wiki loops wired to their triggers, and no Bet discovery loop', async () => {
 			const app = createApp()
 
 			const createRes = await app.request(
@@ -1322,7 +1387,6 @@ describe('Workspaces Integration', () => {
 				.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'loop')))
 
 			expect(loopRows.map((r) => r.title).sort()).toEqual([
-				'Bet discovery loop',
 				'Knowledge Wiki → digest',
 				'Workspace improvements',
 			])
@@ -1332,18 +1396,6 @@ describe('Workspaces Integration', () => {
 				.from(triggers)
 				.where(eq(triggers.workspaceId, ws.id))
 			const triggerIdByName = new Map(triggerRows.map((t) => [t.name, t.id]))
-
-			const discoveryBetLoop = loopRows.find((r) => r.title === 'Bet discovery loop')
-			const discoveryBetTriggerIds =
-				(discoveryBetLoop?.metadata as { trigger_ids?: string[] } | null)?.trigger_ids ?? []
-			expect(new Set(discoveryBetTriggerIds)).toEqual(
-				new Set([
-					triggerIdByName.get('Triage new insight'),
-					triggerIdByName.get('Daily signal sweep'),
-					triggerIdByName.get('Weekly deep revalidation'),
-					triggerIdByName.get('Shape the bet'),
-				]),
-			)
 
 			const workspaceImprovementsLoop = loopRows.find((r) => r.title === 'Workspace improvements')
 			const workspaceImprovementsTriggerIds =
@@ -1386,7 +1438,7 @@ describe('Workspaces Integration', () => {
 				.from(objects)
 				.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'loop')))
 
-			expect(loopRows).toHaveLength(3)
+			expect(loopRows).toHaveLength(2)
 		})
 
 		it('leaves three pre-existing workspaces byte-identical when a new workspace is seeded', async () => {
@@ -1440,18 +1492,18 @@ describe('Workspaces Integration', () => {
 
 		it('returns 500 naming the failed agent and rolls back workspace/member/actor rows when seeding fails on the 4th agent', async () => {
 			// Agents seed in DEFAULT_AGENT_IDS order — Workspace Coach, Chief of
-			// Staff, Driver, then Strategist. A trigger that rejects the Strategist
+			// Staff, Driver, then Signal Analyst. A trigger that rejects the Signal Analyst
 			// actor insert fails the 4th agent after agents 1-3 are already written
 			// into the transaction, running the real seed code. Everything —
 			// including those three partial actor inserts — must roll back.
 			onTestFinished(async () => {
-				await sql`drop trigger if exists test_reject_strategist on actors`
-				await sql`drop function if exists test_reject_strategist()`
+				await sql`drop trigger if exists test_reject_signal_analyst on actors`
+				await sql`drop function if exists test_reject_signal_analyst()`
 			})
 			await sql`
-				create function test_reject_strategist() returns trigger as $$
+				create function test_reject_signal_analyst() returns trigger as $$
 				begin
-					if new.name = 'Strategist' then
+					if new.name = 'Signal Analyst' then
 						raise exception 'mock failure on 4th agent';
 					end if;
 					return new;
@@ -1459,8 +1511,8 @@ describe('Workspaces Integration', () => {
 				$$ language plpgsql
 			`
 			await sql`
-				create trigger test_reject_strategist before insert on actors
-				for each row execute function test_reject_strategist()
+				create trigger test_reject_signal_analyst before insert on actors
+				for each row execute function test_reject_signal_analyst()
 			`
 
 			const workspacesBefore = await db.select({ id: workspacesTable.id }).from(workspacesTable)
@@ -1479,9 +1531,9 @@ describe('Workspaces Integration', () => {
 				error: { code: string; message: string; details?: { field: string; message: string }[] }
 			}
 			expect(body.error.code).toBe('INTERNAL_ERROR')
-			expect(body.error.message).toContain('strategist')
+			expect(body.error.message).toContain('signal_analyst')
 			expect(body.error.details).toEqual(
-				expect.arrayContaining([{ field: 'agent_id', message: 'strategist' }]),
+				expect.arrayContaining([{ field: 'agent_id', message: 'signal_analyst' }]),
 			)
 
 			// No workspace row, no member row, no actor row survived the aborted request.
@@ -1511,8 +1563,13 @@ describe('Workspaces Integration', () => {
 			expect(res.status).toBe(201)
 			const ws = await res.json()
 
-			expect(capturePosthogEventMock).toHaveBeenCalledOnce()
-			const [event, distinctId, properties] = capturePosthogEventMock.mock.calls[0] as [
+			// Workspace setup also sends first_agent_created, so look at the
+			// workspace_created calls only.
+			const created = capturePosthogEventMock.mock.calls.filter(
+				([name]) => name === 'workspace_created',
+			)
+			expect(created).toHaveLength(1)
+			const [event, distinctId, properties] = created[0] as [
 				string,
 				string,
 				Record<string, unknown>,
@@ -1536,7 +1593,7 @@ describe('Workspaces Integration', () => {
 			// re-add being a no-op, not about the cap.
 			await setWorkspacePlan(db, ws.id, 'pro')
 
-			const newMember = await insertActor(db)
+			const newMember = await insertActor(db, { type: 'agent', createdBy: getTestActorId() })
 
 			const first = await app.request(
 				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: newMember.id }),
@@ -1572,7 +1629,7 @@ describe('Workspaces Integration', () => {
 			const ws = await created.json()
 			await setWorkspacePlan(db, ws.id, 'pro')
 
-			const admin = await insertActor(db)
+			const admin = await insertActor(db, { type: 'agent', createdBy: getTestActorId() })
 
 			const first = await app.request(
 				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, {
