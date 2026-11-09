@@ -753,11 +753,6 @@ struct ChatThreadView: View {
 	/// and chips ride up as the composer grows.
 	private func composerStack(_ proxy: ScrollViewProxy) -> some View {
 		VStack(alignment: .trailing, spacing: MaskinSpace.s4) {
-			if !isNearBottom && store.phase == .loaded {
-				JumpToLatest(unseen: unseenCount) { scrollToBottom(proxy) }
-					.padding(.bottom, MaskinSpace.s1)
-					.transition(.opacity.combined(with: .scale(scale: 0.9)))
-			}
 			let replies = call == nil && !quickRepliesHidden ? quickReplies : []
 			if !replies.isEmpty {
 				QuickReplyChips(replies: replies) { reply in
@@ -777,6 +772,17 @@ struct ChatThreadView: View {
 					})
 			} else {
 				composerField
+			}
+		}
+		// Floats above the stack instead of sitting in it. This stack is the bottom inset, so a
+		// button that took room in it made the inset taller the moment it appeared; the thread's
+		// viewport moved, "near the bottom" flipped, the button went away and the inset shrank
+		// again. Opening a long draft card in the chat started that loop and froze the screen.
+		.overlay(alignment: .topTrailing) {
+			if !isNearBottom && store.phase == .loaded {
+				JumpToLatest(unseen: unseenCount) { scrollToBottom(proxy) }
+					.offset(y: -(MaskinSpace.touchMin + MaskinSpace.s4 + MaskinSpace.s1))
+					.transition(.opacity.combined(with: .scale(scale: 0.9)))
 			}
 		}
 		.frame(maxWidth: Self.maxReadableWidth)

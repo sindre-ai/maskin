@@ -791,6 +791,12 @@ export function overrides({ method, path, params, query, body, base, item }) {
 						m(1, first, 'Seven follow-ups to Northwind are ready.', 30),
 						m(2, ME, 'Why not all 47 contacts?', 20),
 						m(3, first, 'Only 7 have Sales approval. The other 40 still need review.', 10),
+						m(
+							4,
+							first,
+							`Not sent yet. Here is the draft:\n\nhttps://maskin.io/${WORKSPACE_ID}/objects/${uuid(7001)}\n\nReply "send" and it goes out.`,
+							5,
+						),
 					],
 					has_more: false,
 				},
@@ -889,6 +895,44 @@ export function overrides({ method, path, params, query, body, base, item }) {
 					m(2, first, r.snippet, r.at),
 				],
 				has_more: false,
+			},
+		}
+	}
+	if (method === 'get' && path === `/api/objects/${uuid(7001)}`) {
+		return {
+			body: {
+				...base,
+				id: uuid(7001),
+				workspaceId: WORKSPACE_ID,
+				type: 'task',
+				title: 'Email Jorgen Moller Nielsen (Orsted) - idea deck after the coffee',
+				content: 'Draft email body.',
+				status: 'in_progress',
+				metadata: {},
+				driver: CHIEF,
+				activeSessionId: null,
+				createdBy: CHIEF,
+				createdAt: ago(60),
+				updatedAt: ago(5),
+				preview: {
+					kind: 'email',
+					label: 'Email',
+					provider: 'gmail',
+					recipients: [{ role: 'to', name: 'Jorgen', address: 'jorni@orsted.example' }],
+					subject: 'Idea deck after the coffee',
+					details: [],
+					context: null,
+					body: Array.from(
+						{ length: 6 },
+						(_, i) =>
+							`Paragraph ${i + 1}. Tak for kaffen i dag, her er de syv slides som lovet, med de tre ideer vi talte om.`,
+					).join('\n\n'),
+					maxLength: null,
+					missing: [],
+					warnings: [],
+					content_hash: 'hash-7001',
+					delivery: { state: 'draft', at: null },
+				},
 			},
 		}
 	}
