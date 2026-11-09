@@ -39622,6 +39622,273 @@
 				}
 			}
 		},
+		"/api/billing/invoices": {
+			"get": {
+				"tags": [
+					"billing"
+				],
+				"summary": "List the workspace's own Stripe invoices",
+				"description": "Read-only list of the workspace's invoices, newest first, from the Stripe customer stored in the workspace's own billing settings (never taken from the request). Each invoice is shown in the currency it was charged in. Draft invoices are not listed. A workspace with no Stripe customer gets an empty list. Only human workspace owners and admins can read it.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Invoices, newest first",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"invoices": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string"
+													},
+													"number": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"created": {
+														"type": "integer",
+														"minimum": 0
+													},
+													"amount_cents": {
+														"type": "integer"
+													},
+													"currency": {
+														"type": "string"
+													},
+													"status": {
+														"type": "string",
+														"enum": [
+															"open",
+															"paid",
+															"uncollectible",
+															"void"
+														]
+													},
+													"hosted_invoice_url": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"invoice_pdf": {
+														"type": [
+															"string",
+															"null"
+														]
+													}
+												},
+												"required": [
+													"id",
+													"number",
+													"created",
+													"amount_cents",
+													"currency",
+													"status",
+													"hosted_invoice_url",
+													"invoice_pdf"
+												]
+											},
+											"maxItems": 100
+										}
+									},
+									"required": [
+										"invoices"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Caller is not a human workspace admin or owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Workspace not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Stripe is not configured or the invoice list failed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/billing/checkout": {
 			"post": {
 				"x-viewer-policy": "writer",
