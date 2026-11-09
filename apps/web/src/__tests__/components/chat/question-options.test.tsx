@@ -75,6 +75,25 @@ describe('QuestionOptions', () => {
 		expect(payload.content).toContain('API token')
 	})
 
+	it('dismisses with a hidden answer, so the card goes away on every device', async () => {
+		sendMutate.mockClear()
+		const user = userEvent.setup()
+		renderOptions()
+
+		await user.click(screen.getByRole('button', { name: 'Dismiss question' }))
+
+		expect(sendMutate).toHaveBeenCalledTimes(1)
+		const payload = sendMutate.mock.calls[0]?.[0]
+		expect(payload.metadata.hidden_from_chat).toBe(true)
+		expect(payload.metadata.question_answer.question_message_id).toBe(7)
+	})
+
+	it('offers no dismiss on a helper question, which has no chat to post into', () => {
+		renderOptions({ ...QUESTION, reply_to_session: true })
+
+		expect(screen.queryByRole('button', { name: 'Dismiss question' })).not.toBeInTheDocument()
+	})
+
 	it('cannot send until every question has a pick', async () => {
 		const user = userEvent.setup()
 		renderOptions({

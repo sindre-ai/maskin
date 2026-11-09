@@ -113,6 +113,74 @@ test.describe('Agent question options', () => {
 		expect(String(posted[0]?.content)).toContain('How should I reach Spotify?')
 	})
 
+	test('dismisses a question with the X, posting a hidden answer', async ({ page, account }) => {
+		const conversation = await account.api.createConversation(account.workspaceId, {
+			title: `Question dismiss ${Date.now()}`,
+			participant_actor_ids: [],
+			initial_message: 'Build me a weather playlist loop',
+		})
+		await stubQuestionThread(page, conversation.id)
+
+		const posted: Array<Record<string, unknown>> = []
+		await page.route('**/api/conversations/*/messages', async (route) => {
+			if (route.request().method() !== 'POST') return route.continue()
+			posted.push(route.request().postDataJSON())
+			await route.fulfill({
+				status: 201,
+				contentType: 'application/json',
+				body: JSON.stringify({ ...QUESTION_MESSAGE, id: 9002, metadata: null, content: 'ok' }),
+			})
+		})
+
+		await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+		await page.getByRole('button', { name: 'Dismiss question' }).click()
+
+		await expect.poll(() => posted.length).toBe(1)
+		expect(posted[0]?.metadata).toMatchObject({
+			hidden_from_chat: true,
+			question_answer: { question_message_id: 9001 },
+		})
+	})
+
+	test('the card goes away once the person has typed a normal message after it', async ({
+		page,
+		account,
+	}) => {
+		const conversation = await account.api.createConversation(account.workspaceId, {
+			title: `Question typed ${Date.now()}`,
+			participant_actor_ids: [],
+			initial_message: 'Build me a weather playlist loop',
+		})
+		await page.route('**/api/conversations/*/messages*', async (route) => {
+			if (route.request().method() !== 'GET') return route.continue()
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					messages: [
+						{
+							...QUESTION_MESSAGE,
+							id: 9002,
+							conversationId: conversation.id,
+							actorId: 'me',
+							actorName: 'Me',
+							actorType: 'human',
+							content: 'Skip the token, just curate a link.',
+							metadata: null,
+							sessionId: null,
+						},
+						{ ...QUESTION_MESSAGE, conversationId: conversation.id },
+					],
+					has_more: false,
+				}),
+			})
+		})
+		await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+
+		await expect(page.getByText('Skip the token, just curate a link.')).toBeVisible()
+		await expect(page.getByRole('button', { name: 'Send answer' })).toHaveCount(0)
+	})
+
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
 		test(`options are reachable and legible at ${viewport.label}`, async ({ page, account }) => {
 			const conversation = await account.api.createConversation(account.workspaceId, {
@@ -129,6 +197,7 @@ test.describe('Agent question options', () => {
 			const option = page.getByRole('button', { name: 'API token' })
 			await expect(option).toBeVisible()
 			await expect(page.getByRole('button', { name: 'Send answer' })).toBeVisible()
+			await expect(page.getByRole('button', { name: 'Dismiss question' })).toBeVisible()
 
 			const box = await option.boundingBox()
 			expect(box?.height ?? 0).toBeGreaterThanOrEqual(28)

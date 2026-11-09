@@ -694,6 +694,34 @@ struct ChatStoreTests {
 		#expect(meta??.questionAnswer == ChatQuestionAnswer(questionMessageID: 7, answers: [.init(header: "Env", selected: ["Prod"])]))
 	}
 
+	@Test("a normal message instead of a pick closes the question, a hidden card nudge does not")
+	func typedReplyClosesQuestion() async {
+		let q = chatMsg(7, by: "relay", agent: true, "Which environment?", metadata: questionMeta)
+		let nudge = chatMsg(8, by: "me", agent: false, "Done", metadata: .object(["hidden_from_chat": .bool(true)]))
+		let h = ChatHarness(server: [q, nudge], online: false)
+		await h.store.start()
+		#expect(h.store.answeredQuestionIDs.isEmpty)
+		h.store.send("Let's go with prod.")
+		#expect(h.store.answeredQuestionIDs == [7])
+		// No picks to summarise, so the card draws nothing.
+		#expect(h.store.questionAnswerIndex[7] == [])
+		#expect(h.store.answer(question: q, picks: [0: ["Prod"]]) == nil)
+	}
+
+	@Test("dismissing posts a hidden answer that closes the question")
+	func dismissClosesQuestion() async {
+		let q = chatMsg(7, by: "relay", agent: true, "Which environment?", metadata: questionMeta)
+		let h = ChatHarness(server: [q], online: false)
+		await h.store.start()
+		#expect(h.store.dismiss(question: q) != nil)
+		let sent = h.store.allMessages.last
+		#expect(sent?.isHiddenFromChat == true)
+		#expect(sent?.dismissedQuestion == true)
+		#expect(h.store.answeredQuestionIDs == [7])
+		#expect(h.store.questionAnswerIndex[7] == [])
+		#expect(h.store.dismiss(question: q) == nil)
+	}
+
 	// MARK: Editing and the unread cursor
 
 	@Test("editing your own message shows the new text at once and keeps what the server returns")

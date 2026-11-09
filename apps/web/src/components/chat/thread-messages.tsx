@@ -170,6 +170,25 @@ export function ThreadMessages({
 			.map((m) => m.metadata?.question_answer?.question_message_id)
 			.filter((id): id is number => typeof id === 'number'),
 	)
+	// Typing a normal message instead of picking an option also answers the card:
+	// the person has moved on, so the options go away rather than waiting beside a
+	// disabled button. Helper questions are excluded, their answers live in the
+	// helper's own thread.
+	const lastTypedHumanId = messages.reduce(
+		(latest, m) =>
+			m.actorType === 'human' &&
+			m.kind === 'message' &&
+			!m.metadata?.hidden_from_chat &&
+			!m.metadata?.helper_return
+				? Math.max(latest, m.id)
+				: latest,
+		-1,
+	)
+	for (const m of messages) {
+		if (m.metadata?.question && !m.metadata.question.reply_to_session && m.id < lastTypedHumanId) {
+			answeredQuestionIds.add(m.id)
+		}
+	}
 
 	// A helper's question and the person's answer are a conversation with that
 	// helper, which lives in its thread. Until it is answered the question stays

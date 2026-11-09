@@ -1283,6 +1283,7 @@ struct ThreadTranscript: View {
 				onOpenThread: { onOpenThread(message) },
 				onToggleReaction: { emoji in Task { await store.toggleReaction(emoji, on: message) } },
 				onAnswer: { picks in _ = store.answer(question: message, picks: picks) },
+				onDismissQuestion: { _ = store.dismiss(question: message) },
 				onKeychainReply: { text, metadata in _ = store.send(text, metadata: metadata) },
 				onSendStep: { prompt, introID, index in
 					_ = store.send(

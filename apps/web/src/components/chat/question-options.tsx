@@ -6,7 +6,7 @@ import { useSendMessage } from '@/hooks/use-conversation'
 import { useSendSessionInput } from '@/hooks/use-sessions'
 import type { MessageQuestion, MessageQuestionAnswer, MessageQuestionItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { Check } from 'lucide-react'
+import { Check, X } from 'lucide-react'
 import { useId, useState } from 'react'
 
 interface QuestionOptionsProps {
@@ -104,6 +104,25 @@ export function QuestionOptions({
 			answers: [
 				{ header: question.questions[0]?.header ?? 'Question', selected: [text.slice(0, 200)] },
 			],
+		})
+	}
+
+	// Closing the card without answering. It posts a hidden answer so every device
+	// sees the card gone, and tells the agent no answer is coming. A helper's
+	// question has no chat to post into, so it can only be answered.
+	const dismiss = () => {
+		if (isPending) return
+		sendMessage.mutate({
+			content: 'I dismissed this question. No answer needed, carry on with your best judgement.',
+			metadata: {
+				hidden_from_chat: true,
+				question_answer: {
+					question_message_id: questionMessageId,
+					answers: [
+						{ header: question.questions[0]?.header ?? 'Question', selected: ['Dismissed'] },
+					],
+				},
+			},
 		})
 	}
 
@@ -214,8 +233,23 @@ export function QuestionOptions({
 						</Button>
 					)}
 				</ViewerTooltip>
-				{/* Read-only (opens the thread), so it stays usable for viewers. */}
-				{trailingAction ? <div className="ml-auto">{trailingAction}</div> : null}
+				<div className="ml-auto flex items-center gap-1">
+					{question.reply_to_session ? null : (
+						<Button
+							type="button"
+							variant="ghost"
+							size="icon"
+							className="size-7 text-muted-foreground hover:text-foreground"
+							aria-label="Dismiss question"
+							onClick={dismiss}
+							disabled={!canWrite || isPending}
+						>
+							<X size={14} aria-hidden />
+						</Button>
+					)}
+					{/* Read-only (opens the thread), so it stays usable for viewers. */}
+					{trailingAction}
+				</div>
 			</div>
 			{typing ? (
 				<div className="flex items-end gap-2">

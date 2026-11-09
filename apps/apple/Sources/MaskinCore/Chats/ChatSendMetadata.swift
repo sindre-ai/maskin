@@ -33,6 +33,9 @@ public struct ChatQuestionAnswer: Codable, Sendable, Equatable {
 		}
 	}
 
+	/// The pick a dismissed question carries (the X on the card), so every device closes it.
+	public static let dismissedPick = "Dismissed"
+
 	public var questionMessageID: Int
 	public var answers: [Answer]
 
@@ -242,6 +245,14 @@ extension ChatMessage {
 				index: index, header: header, question: question,
 				multiSelect: item["multi_select"]?.boolValue == true, options: options)
 		}
+	}
+
+	/// True for a question a helper agent asked: its answer lives in the helper's own thread.
+	public var isHelperQuestion: Bool { metadata?["question"]?["reply_to_session"]?.boolValue == true }
+
+	/// True when the person closed the card with its X rather than answering.
+	public var dismissedQuestion: Bool {
+		questionAnswers.contains { $0.selected == [ChatQuestionAnswer.dismissedPick] }
 	}
 
 	/// The session whose turn asked the question.

@@ -14,13 +14,17 @@ struct QuestionOptionsView: View {
 	/// What a later human message picked, when this question was already answered.
 	let answers: [ChatQuestionAnswer.Answer]?
 	let onSubmit: ([Int: [String]]) -> Void
+	/// Closes the card without answering (the X).
+	var onDismiss: (() -> Void)?
 
 	@State private var picked: [Int: [String]]
 
 	init(
 		questions: [ChatQuestionItem], answers: [ChatQuestionAnswer.Answer]?,
-		picked: [Int: [String]] = [:], onSubmit: @escaping ([Int: [String]]) -> Void
+		picked: [Int: [String]] = [:], onSubmit: @escaping ([Int: [String]]) -> Void,
+		onDismiss: (() -> Void)? = nil
 	) {
+		self.onDismiss = onDismiss
 		self.questions = questions
 		self.answers = answers
 		self.onSubmit = onSubmit
@@ -29,7 +33,8 @@ struct QuestionOptionsView: View {
 
 	var body: some View {
 		if let answers {
-			answeredSummary(answers)
+			// Answered by typing or dismissed: nothing to summarise, so nothing is drawn.
+			if !answers.isEmpty { answeredSummary(answers) }
 		} else {
 			VStack(alignment: .leading, spacing: MaskinSpace.s8) {
 				ForEach(questions) { question in
@@ -51,6 +56,20 @@ struct QuestionOptionsView: View {
 					.buttonStyle(.maskinPressed(.shrink))
 					.disabled(!complete)
 					Text("or just type your reply").maskinText(.caption).foregroundStyle(MaskinColor.ink4)
+					if let onDismiss {
+						Spacer(minLength: 0)
+						Button {
+							MaskinHaptics.play(.light)
+							onDismiss()
+						} label: {
+							Image(systemName: "xmark").maskinSymbol(MaskinFontSize.t14, weight: .semibold)
+								.foregroundStyle(MaskinColor.ink4)
+								.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
+								.contentShape(Rectangle())
+						}
+						.buttonStyle(.maskinPressed)
+						.accessibilityLabel("Dismiss question")
+					}
 				}
 			}
 			.padding(MaskinSpace.s8)
