@@ -23,8 +23,8 @@ name: iOS TestFlight
 #
 # Build number is a UTC timestamp (yymmddHHMM), always higher than the last upload. The
 # marketing version still comes from project.yml. After a successful upload the commit is
-# tagged ios/v<marketing version>+<build number>, so any build in App Store Connect maps to
-# its commit (see apps/apple/docs/versioning.md).
+# tagged ios/v<MAJOR.MINOR.PATCH>+<build number> (semver with the build as metadata), so any
+# build in App Store Connect maps to its commit (see apps/apple/docs/versioning.md).
 #
 # The debug symbols (dSYMs) of each build are kept as a workflow artifact for 7 days, named
 # Maskin-dSYMs-<build number>. Apple's copy cannot be downloaded for a build without bitcode,
@@ -187,15 +187,17 @@ jobs:
           test "${PIPESTATUS[0]}" -eq 0
           echo "Uploaded build $BUILD_NUMBER to App Store Connect."
 
-      # Maps the build number App Store Connect shows to the commit it was built from. A failed
-      # tag never fails the release path.
+      # Maps the build number App Store Connect shows to the commit it was built from. The
+      # version is padded to MAJOR.MINOR.PATCH (1.1 becomes 1.1.0) so the tag is valid semver
+      # with the build number as metadata. A failed tag never fails the release path.
       - name: Tag the commit with the version and build number
         if: steps.gate.outputs.enabled == 'true'
         continue-on-error: true
         run: |
           set -euo pipefail
           version=$(sed -n 's/^ *MARKETING_VERSION: *"\(.*\)".*/\1/p' apps/apple/project.yml | head -n 1)
-          tag="ios/v${version}+${BUILD_NUMBER}"
+          semver=$(echo "$version" | awk -F. '{ printf "%d.%d.%d", $1, $2, $3 }')
+          tag="ios/v${semver}+${BUILD_NUMBER}"
           git tag "$tag" "$GITHUB_SHA"
           git push origin "refs/tags/$tag"
           echo "Tagged $GITHUB_SHA as $tag."
