@@ -7,7 +7,9 @@ import {
 	DialogTitle,
 } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
+import { useCanWrite } from '@/hooks/use-can-write'
 import type { CustomMcpServerSpec } from '@/lib/api'
+import { PILL_BUTTON } from '@/lib/pill-button'
 import { useState } from 'react'
 
 /** The servers in a pasted .mcp.json, or an error message to show. */
@@ -40,6 +42,7 @@ export function ImportMcpDialog({
 	onClose: () => void
 	onImport: (servers: Record<string, CustomMcpServerSpec>) => void
 }) {
+	const canWrite = useCanWrite()
 	const [json, setJson] = useState('')
 	const [parseError, setParseError] = useState<string | null>(null)
 
@@ -50,6 +53,7 @@ export function ImportMcpDialog({
 	}
 
 	const handleImport = () => {
+		if (!canWrite) return
 		const result = parseMcpJson(json)
 		if ('error' in result) {
 			setParseError(result.error)
@@ -65,10 +69,11 @@ export function ImportMcpDialog({
 		<Dialog open={open} onOpenChange={(v) => !v && close()}>
 			<DialogContent className="sm:max-w-lg">
 				<DialogHeader>
-					<DialogTitle>Import .mcp.json</DialogTitle>
+					<DialogTitle>Import from Claude</DialogTitle>
 					<DialogDescription>
-						Paste the contents of a .mcp.json file. Each server is added to the workspace; choose
-						which agents get it afterwards.
+						Paste the contents of the .mcp.json file from your Claude project (or the mcpServers
+						block of ~/.claude.json). Each server is added to the workspace; choose which agents get
+						it afterwards.
 					</DialogDescription>
 				</DialogHeader>
 				<Textarea
@@ -81,10 +86,14 @@ export function ImportMcpDialog({
 				/>
 				{shown && <p className="text-xs text-error">{shown}</p>}
 				<div className="flex justify-end gap-2">
-					<Button variant="ghost" onClick={close} disabled={saving}>
+					<Button variant="ghost" className={PILL_BUTTON} onClick={close} disabled={saving}>
 						Cancel
 					</Button>
-					<Button onClick={handleImport} disabled={!json.trim() || saving}>
+					<Button
+						className={PILL_BUTTON}
+						onClick={handleImport}
+						disabled={!json.trim() || saving || !canWrite}
+					>
 						Import
 					</Button>
 				</div>

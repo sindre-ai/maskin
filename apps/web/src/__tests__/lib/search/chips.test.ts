@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 const options = [
 	{ key: 'chat', label: 'Chats' },
-	{ key: 'loop', label: 'Loops' },
+	{ key: 'loop', label: 'Flows' },
 	{ key: 'company', label: 'Companies' },
 ]
 const fallbackLabel = (key: string) => `[${key}]`
@@ -85,6 +85,11 @@ describe('failedTypeKeys', () => {
 		expect(
 			failedTypeKeys(['objects'], ['chat', 'loop', 'agent', 'bet', 'company', 'automation']),
 		).toEqual(['bet', 'company'])
+	})
+
+	it('maps a failed people source to the person chip, and keeps person out of the objects source', () => {
+		expect(failedTypeKeys(['people'], ['chat', 'person', 'bet'])).toEqual(['person'])
+		expect(failedTypeKeys(['objects'], ['chat', 'person', 'bet'])).toEqual(['bet'])
 	})
 
 	it('returns nothing when no source failed', () => {

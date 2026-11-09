@@ -37,7 +37,23 @@ public enum CallMentions {
 	private static let markdownLink = try! NSRegularExpression(pattern: #"\[([^\]\n]+)\]\((https?://[^)\s]+)\)"#)
 	private static let bareURL = try! NSRegularExpression(pattern: #"https?://[^\s)\]>]+"#)
 
+	struct Link: Sendable, Equatable {
+		var title: String
+		var url: String
+	}
+
+	/// Both patterns need an `http`; most messages have none, so they skip the regex passes. The
+	/// rest are remembered by text: a call card reads these links on every render of the thread.
 	private static func links(in text: String) -> [(title: String, url: String)] {
+		links(in: text, cache: LinkScanCaches.callLinks).map { ($0.title, $0.url) }
+	}
+
+	static func links(in text: String, cache: LinkScanCache<[Link]>) -> [Link] {
+		guard text.contains("http") else { return [] }
+		return cache.value(for: text) { scanLinks(in: text).map { Link(title: $0.title, url: $0.url) } }
+	}
+
+	private static func scanLinks(in text: String) -> [(title: String, url: String)] {
 		let whole = NSRange(text.startIndex..., in: text)
 		var out: [(Int, String, String)] = []
 		var covered: [NSRange] = []

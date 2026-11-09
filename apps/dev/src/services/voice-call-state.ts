@@ -21,6 +21,8 @@ export interface StartCard {
 	notificationId: string | null
 	source: 'curated' | 'decision'
 	rank: number
+	/** What the card is called, for receipts. Kept in memory only. */
+	title?: string | null
 }
 
 export interface PendingHoldSummary {
@@ -36,6 +38,8 @@ export interface VoiceCallState {
 	/** The first card of startCards that the call showed, opened or changed. */
 	firstCardNamed: string | null
 	pendingHold: (() => PendingHoldSummary | null) | null
+	/** True once the call read the caller's For You list, so the receipt may talk about cards. */
+	forYouRead?: boolean
 	/** Receipt rows still being written, so the closing receipt can wait for them. */
 	inflight: Set<Promise<unknown>>
 }
@@ -70,6 +74,7 @@ export function startCardsFrom(items: ForYouItem[]): StartCard[] {
 		notificationId: item.notification_id,
 		source: item.source,
 		rank: item.rank,
+		title: item.object?.title || item.headline || null,
 	}))
 }
 

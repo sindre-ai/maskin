@@ -1,6 +1,13 @@
 import { type NotificationResponse, type UpdateNotificationInput, api } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
+import { closeShownNotifications, pushTagsOf } from '@/lib/web-push'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+
+/** Close this browser's notification for a handled one (card answered, marked read, deleted). */
+function closeBrowserNotification(n: { id: string; metadata?: Record<string, unknown> | null }) {
+	const tags = new Set(pushTagsOf(n))
+	void closeShownNotifications((shown) => shown.filter((s) => tags.has(s.tag)))
+}
 
 export function useNotifications(workspaceId: string, filters?: Record<string, string>) {
 	return useQuery({
@@ -15,6 +22,9 @@ export function useUpdateNotification(workspaceId: string) {
 	return useMutation({
 		mutationFn: ({ id, data }: { id: string; data: UpdateNotificationInput }) =>
 			api.notifications.update(id, data),
+		onSuccess: (updated, { data }) => {
+			if (data.status && data.status !== 'pending') closeBrowserNotification(updated)
+		},
 		onMutate: async ({ id, data }) => {
 			await queryClient.cancelQueries({ queryKey: queryKeys.notifications.all(workspaceId) })
 
@@ -50,6 +60,7 @@ export function useRespondNotification(workspaceId: string) {
 	return useMutation({
 		mutationFn: ({ id, response }: { id: string; response: unknown }) =>
 			api.notifications.respond(id, response, workspaceId),
+		onSuccess: (updated) => closeBrowserNotification(updated),
 		onMutate: async ({ id }) => {
 			await queryClient.cancelQueries({ queryKey: queryKeys.notifications.all(workspaceId) })
 
@@ -88,11 +99,14 @@ export function useDeleteNotification(workspaceId: string) {
 			await queryClient.cancelQueries({ queryKey: queryKeys.notifications.all(workspaceId) })
 
 			const previousQueries: [readonly unknown[], NotificationResponse[] | undefined][] = []
+			// The optimistic filter below drops the row, and its collapse key is only known from it.
+			let notification: NotificationResponse | undefined
 			const queries = queryClient.getQueriesData<NotificationResponse[]>({
 				queryKey: queryKeys.notifications.all(workspaceId),
 			})
 			for (const [key, existing] of queries) {
 				if (existing) {
+					notification ??= existing.find((n) => n.id === id)
 					previousQueries.push([key, existing])
 					queryClient.setQueryData(
 						key,
@@ -100,8 +114,9 @@ export function useDeleteNotification(workspaceId: string) {
 					)
 				}
 			}
-			return { previousQueries }
+			return { previousQueries, notification }
 		},
+		onSuccess: (_res, id, context) => closeBrowserNotification(context?.notification ?? { id }),
 		onError: (_err, _id, context) => {
 			for (const [key, data] of context?.previousQueries ?? []) {
 				queryClient.setQueryData(key, data)

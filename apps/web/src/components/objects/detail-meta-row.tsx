@@ -15,7 +15,7 @@ interface DetailMetaStarProps {
  *
  *  Keyboard: focus the button and press `s` (or Enter / Space) to toggle.
  *  `aria-pressed` reflects the current state; `aria-label` flips between
- *  "Star this object" and "Starred (click to remove)". */
+ *  "Star this item" and "Starred (click to remove)". */
 export function DetailMetaStar({ objectId }: DetailMetaStarProps) {
 	const { isStarred, isSaving, toggle } = useStar(objectId)
 
@@ -32,7 +32,7 @@ export function DetailMetaStar({ objectId }: DetailMetaStarProps) {
 		<button
 			type="button"
 			aria-pressed={isStarred}
-			aria-label={isStarred ? 'Starred (click to remove)' : 'Star this object'}
+			aria-label={isStarred ? 'Starred (click to remove)' : 'Star this item'}
 			onClick={(e) => {
 				e.preventDefault()
 				e.stopPropagation()

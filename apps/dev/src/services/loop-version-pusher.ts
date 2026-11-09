@@ -29,7 +29,7 @@ import {
 import { and, eq, inArray, ne, or, sql } from 'drizzle-orm'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
-import { dropLegacyBrowserFlag } from '../lib/marketplace-loops/loop-snapshot'
+import { LLM_CONFIG_ALLOWLIST, dropLegacyBrowserFlag } from '../lib/marketplace-loops/loop-snapshot'
 import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
 import {
 	buildActorInsert,
@@ -49,6 +49,7 @@ import {
 	captureLiveSessions,
 	stopCapturedSandboxes,
 } from './session-cleanup'
+import { createWorkspaceDesktopService, removeDesktopsForActors } from './workspace-desktop'
 
 // The install endpoint and this cron must build element rows identically, so
 // the insert builders + wiring helpers live in `loop-provisioning` and are
@@ -66,6 +67,13 @@ interface MarketplaceItem {
 	sourceItemId: string
 	itemType: ItemType
 	itemSnapshot: Record<string, unknown>
+}
+
+export interface PushCounts {
+	adds: number
+	updates: number
+	removes: number
+	reuses: number
 }
 
 interface InstalledRow {
@@ -188,10 +196,66 @@ export class LoopVersionPusher {
 		}
 	}
 
+	/**
+	 * "Update now" for one locked install: the same re-provision the hourly tick
+	 * runs, started by a person. `callerActorId` is who the audit event is
+	 * attributed to. Returns `current` when the install is already at the
+	 * catalog version (nothing is written), `forked` when the workspace owns the
+	 * install (never touched), and `updated` with the item counts otherwise.
+	 */
+	async updateInstallNow(
+		installId: string,
+		callerActorId: string,
+	): Promise<
+		| { status: 'not_found' }
+		| { status: 'forked'; install: typeof installedLoops.$inferSelect }
+		| { status: 'current'; install: typeof installedLoops.$inferSelect; version: string }
+		| {
+				status: 'updated'
+				install: typeof installedLoops.$inferSelect
+				fromVersion: string
+				toVersion: string
+				items: PushCounts
+		  }
+	> {
+		const [row] = await this.db
+			.select({ install: installedLoops, targetVersion: marketplaceLoops.version })
+			.from(installedLoops)
+			.innerJoin(marketplaceLoops, eq(marketplaceLoops.id, installedLoops.sourceLoopId))
+			.where(eq(installedLoops.id, installId))
+			.limit(1)
+		if (!row) return { status: 'not_found' }
+		if (!row.install.isLocked) return { status: 'forked', install: row.install }
+		if (row.install.installedVersion === row.targetVersion) {
+			return { status: 'current', install: row.install, version: row.targetVersion }
+		}
+
+		const items = await this.pushLockedInstall(row.install, row.targetVersion, callerActorId)
+		const [fresh] = await this.db
+			.select()
+			.from(installedLoops)
+			.where(eq(installedLoops.id, installId))
+			.limit(1)
+		if (!items) {
+			// A concurrent push (the hourly tick) got there first.
+			return { status: 'current', install: fresh ?? row.install, version: row.targetVersion }
+		}
+		return {
+			status: 'updated',
+			install: fresh ?? row.install,
+			fromVersion: row.install.installedVersion,
+			toVersion: row.targetVersion,
+			items,
+		}
+	}
+
+	// Returns the item counts, or null when a concurrent push had already brought
+	// the install to `targetVersion` by the time this one held the row lock.
 	private async pushLockedInstall(
 		install: typeof installedLoops.$inferSelect,
 		targetVersion: string,
-	): Promise<void> {
+		actingActorId?: string,
+	): Promise<PushCounts | null> {
 		const loopItemRows = await this.db
 			.select()
 			.from(marketplaceLoopItems)
@@ -227,7 +291,8 @@ export class LoopVersionPusher {
 		// below — are attributed to a workspace actor (system actor if present,
 		// else any member). Always resolved: adds/actor-removes need it for FK
 		// attribution, and the events row always needs a non-null actorId.
-		const createdBy = await this.resolveWorkspaceActor(install.workspaceId)
+		// An on-demand update is attributed to the person who asked for it.
+		const createdBy = actingActorId ?? (await this.resolveWorkspaceActor(install.workspaceId))
 
 		let adds = 0
 		let updates = 0
@@ -244,6 +309,8 @@ export class LoopVersionPusher {
 		// on as agents the loop no longer defines, holding agent-server capacity
 		// until the 2h timeout and streaming logs at a deleted session row.
 		const strandedSessions: CapturedLiveSession[] = []
+		// Agents this push deletes; their computers are removed once it commits.
+		const deletedActorIds: string[] = []
 		// Newly-inserted / removed trigger ids this tick — folded into the linked
 		// Loop object's `metadata.trigger_ids` after the transaction's per-item
 		// work finishes (see below).
@@ -255,7 +322,22 @@ export class LoopVersionPusher {
 		// pass-1.5 — see installed-loops.ts).
 		const skillActorBindings: Array<{ sourceSkillId: string; sourceActorIds: string[] }> = []
 
+		let alreadyCurrent = false
 		await this.db.transaction(async (tx) => {
+			// Serialise with any other push of this install (the hourly tick or a
+			// second "update now"): hold the row lock, then re-check the version.
+			// A push that finished while this one was reading has already moved
+			// installed_version, so this one stops before writing anything.
+			const [locked] = await tx
+				.select({ installedVersion: installedLoops.installedVersion })
+				.from(installedLoops)
+				.where(eq(installedLoops.id, install.id))
+				.for('update')
+			if (!locked || locked.installedVersion === targetVersion) {
+				alreadyCurrent = true
+				return
+			}
+
 			// Adds + updates — iterate the marketplace loop so adds happen in a stable order.
 			for (const item of loopItems) {
 				const existing = installedBySourceId.get(item.sourceItemId)
@@ -273,7 +355,7 @@ export class LoopVersionPusher {
 					}
 				}
 				if (existing) {
-					if (snapshotsEqual(existing.snapshot, rewritten)) continue
+					if (snapshotsEqual(existing.snapshot, metadata.snapshot)) continue
 					switch (item.itemType) {
 						case 'actor':
 							await tx
@@ -562,6 +644,7 @@ export class LoopVersionPusher {
 
 			if (removedActorIds.length > 0) {
 				strandedSessions.push(...(await captureLiveSessions(tx, removedActorIds)))
+				deletedActorIds.push(...removedActorIds)
 
 				if (!createdBy) {
 					throw new Error(
@@ -723,6 +806,7 @@ export class LoopVersionPusher {
 						from_version: install.installedVersion,
 						to_version: targetVersion,
 						items: { adds, updates, removes, reuses },
+						trigger: actingActorId ? 'manual' : 'cron',
 					},
 				})
 			} else {
@@ -733,7 +817,14 @@ export class LoopVersionPusher {
 			}
 		})
 
+		if (alreadyCurrent) return null
+
 		await stopCapturedSandboxes(this.db, strandedSessions)
+		await removeDesktopsForActors(
+			install.workspaceId,
+			deletedActorIds,
+			createWorkspaceDesktopService(this.db),
+		)
 
 		for (const skillId of removedSkillIds) {
 			try {
@@ -757,6 +848,7 @@ export class LoopVersionPusher {
 			removes,
 			reuses,
 		})
+		return { adds, updates, removes, reuses }
 	}
 
 	private async loadInstalledRows(installId: string): Promise<InstalledRow[]> {
@@ -881,8 +973,18 @@ function toInstalledRow(id: string, type: ItemType, metadata: unknown): Installe
 	}
 }
 
-function snapshotsEqual(a: unknown, b: unknown): boolean {
-	return JSON.stringify(a) === JSON.stringify(b)
+// Key order must not matter: the stored snapshot comes back from a jsonb column
+// (keys reordered, shorter first), while the catalog copy is rebuilt in code.
+function canonicalJson(value: unknown): string {
+	return JSON.stringify(value, (_key, v) =>
+		v && typeof v === 'object' && !Array.isArray(v)
+			? Object.fromEntries(Object.entries(v).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0)))
+			: v,
+	)
+}
+
+export function snapshotsEqual(a: unknown, b: unknown): boolean {
+	return canonicalJson(a) === canonicalJson(b)
 }
 
 function buildActorUpdate(snapshot: Record<string, unknown>): Partial<typeof actors.$inferInsert> {
@@ -891,12 +993,27 @@ function buildActorUpdate(snapshot: Record<string, unknown>): Partial<typeof act
 		description: (snapshot.description as string) ?? null,
 		systemPrompt: (snapshot.systemPrompt as string) ?? (snapshot.system_prompt as string) ?? null,
 		llmProvider: (snapshot.llmProvider as string) ?? (snapshot.llm_provider as string) ?? null,
-		llmConfig:
-			(snapshot.llmConfig as Record<string, unknown>) ??
-			(snapshot.llm_config as Record<string, unknown>) ??
-			null,
+		...mergeLlmConfig(snapshot),
 		// Same handling as buildActorInsert — see its comment.
 		tools: (dropLegacyBrowserFlag(snapshot.tools) as Record<string, unknown>) ?? null,
+	}
+}
+
+// The agent's llm_config holds the workspace's own provider credential, which a
+// catalog snapshot never carries. An update merges provider and model over the
+// existing config instead of replacing it, so the workspace's key and any other
+// keys it set survive. Only the allowlisted keys are read from the snapshot, so
+// an old published snapshot that still holds a key cannot write it here.
+function mergeLlmConfig(snapshot: Record<string, unknown>): Partial<typeof actors.$inferInsert> {
+	const source = (snapshot.llmConfig ?? snapshot.llm_config) as Record<string, unknown> | null
+	if (source === null || typeof source !== 'object' || Array.isArray(source)) return {}
+	const picked: Record<string, unknown> = {}
+	for (const key of LLM_CONFIG_ALLOWLIST) {
+		if (key in source) picked[key] = source[key]
+	}
+	if (Object.keys(picked).length === 0) return {}
+	return {
+		llmConfig: sql`coalesce(${actors.llmConfig}, '{}'::jsonb) || ${JSON.stringify(picked)}::jsonb`,
 	}
 }
 

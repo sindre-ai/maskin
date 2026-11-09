@@ -36,10 +36,12 @@ import {
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
+import { shouldSkipOnboardingKickoff } from '../lib/onboarding/chief-of-staff-kickoff'
 import { errorSchema, idParamSchema, jsonbField } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
 import { isWorkspaceMember, isWorkspaceWriter } from '../lib/workspace-auth'
 import { type AgentStorageManager, workspaceSkillKey } from '../services/agent-storage'
+import { startLoopPersonalizationChat } from '../services/loop-personalization-chat'
 import {
 	type MarketplaceItemType,
 	buildActorInsert,
@@ -55,6 +57,7 @@ import {
 	rewriteWiring,
 	sourceItemIdOf,
 } from '../services/loop-provisioning'
+import { LoopVersionPusher } from '../services/loop-version-pusher'
 import {
 	type CapturedLiveSession,
 	captureLiveSessions,
@@ -62,6 +65,10 @@ import {
 } from '../services/session-cleanup'
 import type { SessionManager } from '../services/session-manager'
 import { autoSubscribe } from '../services/subscriptions'
+import {
+	createWorkspaceDesktopService,
+	removeDesktopsForActors,
+} from '../services/workspace-desktop'
 
 type Env = {
 	Variables: {
@@ -92,9 +99,10 @@ const installLoopBodySchema = z.object({
 	loopId: z.string().uuid(),
 	workspaceId: z.string().uuid(),
 	// Which marketplace surface the install was started from. Absent means the
-	// catalogue card; the loop detail page sends `'detail'`. Analytics only —
+	// catalogue card; the loop detail page sends `'detail'` and the install page
+	// reached from a public loop page sends `'public_site'`. Analytics only —
 	// it changes nothing about what gets provisioned.
-	source: z.enum(['detail']).optional(),
+	source: z.enum(['detail', 'public_site']).optional(),
 })
 
 const listInstalledLoopsQuerySchema = z.object({
@@ -287,6 +295,11 @@ app.openapi(installLoopRoute, async (c) => {
 
 	if (!loop) {
 		return c.json(createApiError('NOT_FOUND', 'Marketplace loop not found'), 404)
+	}
+
+	// A retired loop is no longer offered; existing installs of it keep working.
+	if (loop.retiredAt) {
+		return c.json(createApiError('NOT_FOUND', 'Marketplace loop is no longer available'), 404)
 	}
 
 	const items = await db
@@ -616,6 +629,26 @@ app.openapi(installLoopRoute, async (c) => {
 		source,
 	})
 
+	// Ask the Chief of Staff how to tailor the new loop to this workspace. Suggest-only
+	// and best effort: the install is done, so a failure here is logged, never returned.
+	// Skipped in E2E stacks, which have no LLM credentials for the session to run on.
+	if (!shouldSkipOnboardingKickoff()) {
+		startLoopPersonalizationChat({
+			db,
+			sessionManager: c.get('sessionManager'),
+			workspaceId,
+			installerId: actorId,
+			installedLoopId: installed.id,
+			loop: { name: loop.name, description: loop.description },
+		}).catch((err: unknown) =>
+			logger.error('Failed to start loop personalization chat', {
+				installedLoopId: installed.id,
+				workspaceId,
+				error: String(err),
+			}),
+		)
+	}
+
 	return c.json(
 		{
 			...serialize(installed),
@@ -827,6 +860,164 @@ app.openapi(forkLoopRoute, async (c) => {
 	)
 })
 
+// ── POST /api/installed-loops/:id/update ─────────────────────────────────────
+//
+// "Update now" for a locked install: runs the same re-provision the hourly
+// version pusher runs (LoopVersionPusher.pushLockedInstall) for this one
+// install, right away, attributed to the caller. There is no second update
+// path here, so the workspace's own credentials (the agents' llm_config keys,
+// integration credentials and status) are handled exactly as the cron handles
+// them. Forked installs are workspace-owned and refused with a 409. Already at
+// the catalog version is a 200 with `updated: false` and nothing written.
+
+const updateInstalledLoopResponseSchema = z.object({
+	id: z.string().uuid(),
+	workspaceId: z.string().uuid(),
+	sourceLoopId: z.string().uuid(),
+	objectId: z.string().uuid().nullable(),
+	installedVersion: z.string(),
+	isLocked: z.boolean(),
+	updated: z.boolean(),
+	fromVersion: z.string(),
+	toVersion: z.string(),
+	message: z.string(),
+	items: z
+		.object({
+			adds: z.number(),
+			updates: z.number(),
+			removes: z.number(),
+			reuses: z.number(),
+		})
+		.nullable(),
+})
+
+const updateInstalledLoopRoute = createRoute({
+	method: 'post',
+	path: '/{id}/update',
+	'x-viewer-policy': 'writer',
+	tags: ['installed-loops'],
+	summary: 'Update a locked installed loop to the current catalog version now',
+	request: {
+		params: idParamSchema,
+	},
+	responses: {
+		200: {
+			description: 'Install is at the catalog version (updated: false when it already was)',
+			content: { 'application/json': { schema: updateInstalledLoopResponseSchema } },
+		},
+		400: {
+			description: 'Validation error',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Not allowed to edit loops in the install workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Installed loop not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		409: {
+			description: 'Install is forked, so the workspace owns it and it cannot be updated',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		500: {
+			description: 'Update failed',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(updateInstalledLoopRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const agentStorage = c.get('agentStorage')
+	const { id } = c.req.valid('param')
+
+	// By-id route: the workspace comes off the row, so check the caller's role
+	// against it before running anything.
+	const [install] = await db
+		.select({ workspaceId: installedLoops.workspaceId })
+		.from(installedLoops)
+		.where(eq(installedLoops.id, id))
+		.limit(1)
+	if (!install) {
+		return c.json(createApiError('NOT_FOUND', 'Installed loop not found'), 404)
+	}
+	if (!(await isWorkspaceWriter(db, actorId, install.workspaceId))) {
+		return c.json(createApiError('FORBIDDEN', 'You are not a member of the install workspace'), 403)
+	}
+
+	let result: Awaited<ReturnType<LoopVersionPusher['updateInstallNow']>>
+	try {
+		result = await new LoopVersionPusher(db, agentStorage).updateInstallNow(id, actorId)
+	} catch (err) {
+		logger.error('Installed loop update now failed', {
+			installedLoopId: id,
+			workspaceId: install.workspaceId,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return c.json(
+			createApiError('INTERNAL_ERROR', 'The update failed and nothing was changed. Try again.'),
+			500,
+		)
+	}
+
+	if (result.status === 'not_found') {
+		return c.json(createApiError('NOT_FOUND', 'Installed loop not found'), 404)
+	}
+	if (result.status === 'forked') {
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				'This loop was forked, so your workspace owns it and it does not follow the catalog. There is nothing to update.',
+			),
+			409,
+		)
+	}
+
+	const base = {
+		id: result.install.id,
+		workspaceId: result.install.workspaceId,
+		sourceLoopId: result.install.sourceLoopId,
+		objectId: result.install.objectId,
+		installedVersion: result.install.installedVersion,
+		isLocked: result.install.isLocked,
+	}
+	if (result.status === 'current') {
+		return c.json(
+			{
+				...base,
+				updated: false,
+				fromVersion: result.version,
+				toVersion: result.version,
+				message: `Already up to date at version ${result.version}.`,
+				items: null,
+			},
+			200,
+		)
+	}
+
+	logger.info('Installed loop updated on request', {
+		installedLoopId: result.install.id,
+		workspaceId: result.install.workspaceId,
+		fromVersion: result.fromVersion,
+		toVersion: result.toVersion,
+		items: result.items,
+	})
+	return c.json(
+		{
+			...base,
+			updated: true,
+			fromVersion: result.fromVersion,
+			toVersion: result.toVersion,
+			message: `Updated from version ${result.fromVersion} to ${result.toVersion}.`,
+			items: result.items,
+		},
+		200,
+	)
+})
+
 // ── DELETE /api/installed-loops/:id ──────────────────────────────────────────
 //
 // Remove an installed loop from the workspace.
@@ -931,6 +1122,8 @@ app.openapi(uninstallLoopRoute, async (c) => {
 	// sandboxes keep running as agents the user just uninstalled, holding
 	// agent-server capacity until the 2h timeout.
 	let strandedSessions: CapturedLiveSession[] = []
+	// Ids of the agents this uninstall deleted, for removing their computers after commit.
+	let deletedActorIds: string[] = []
 
 	await db.transaction(async (tx) => {
 		if (keepProvisionedItems) {
@@ -1059,6 +1252,7 @@ app.openapi(uninstallLoopRoute, async (c) => {
 
 			if (actorIds.length > 0) {
 				strandedSessions = await captureLiveSessions(tx, actorIds)
+				deletedActorIds = actorIds
 
 				// Delete triggers that target or were created by provisioned actors.
 				// The metadata-based delete above only removed marketplace-managed triggers;
@@ -1205,6 +1399,11 @@ app.openapi(uninstallLoopRoute, async (c) => {
 	})
 
 	await stopCapturedSandboxes(db, strandedSessions)
+	await removeDesktopsForActors(
+		install.workspaceId,
+		deletedActorIds,
+		createWorkspaceDesktopService(db),
+	)
 
 	for (const skillId of removedSkillIds) {
 		try {

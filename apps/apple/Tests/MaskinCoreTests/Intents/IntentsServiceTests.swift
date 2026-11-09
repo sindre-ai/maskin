@@ -143,6 +143,16 @@ private func direct(_ id: String, with agent: String, archived: Bool = false) ->
 		#expect(summary.detail.contains("…and 2 more."))
 	}
 
+	@Test func snippetTitleAndRowsFollowTheSnapshot() {
+		let rows = (1...5).map { WidgetSnapshot.Decision(objectId: "o\($0)", title: "Q\($0)") }
+		let summary = NeedsMeSummary(state: snapshot(count: 5, decisions: rows))
+		#expect(summary.snippetTitle == "5 decisions need you")
+		#expect(summary.titles == ["Q1", "Q2", "Q3"])
+		#expect(NeedsMeSummary(state: snapshot(count: 1, decisions: [rows[0]])).snippetTitle == "1 decision needs you")
+		#expect(NeedsMeSummary(state: snapshot(count: 0, decisions: [])).snippetTitle == "Nothing needs you right now.")
+		#expect(NeedsMeSummary(state: .unavailable).titles.isEmpty)
+	}
+
 	@Test func neverPrintsAnIdWhenTheAgentNameIsUnknown() {
 		let top = WidgetSnapshot.Decision(objectId: "o-secret-id", title: "Pick one", agentName: nil)
 		let summary = NeedsMeSummary(state: snapshot(count: 1, decisions: [top]))

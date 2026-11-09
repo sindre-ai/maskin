@@ -1,28 +1,36 @@
-import { ActorAvatar } from '@/components/shared/actor-avatar'
-import { TypeBadge } from '@/components/shared/type-badge'
 import { cn } from '@/lib/cn'
-import { statusLabel } from '@/lib/constants'
+import { TYPE_LABELS, statusLabel } from '@/lib/constants'
 import { highlightText } from '@/lib/search-highlight'
 import { rowSub, rowTitle } from '@/lib/search/row-display'
 import type { SearchResultRow, SearchSourceGroup } from '@maskin/shared'
-import { MessageSquare, RefreshCw, Zap } from 'lucide-react'
-import { statusDotClass } from './search-chips'
+import { ChevronRight } from 'lucide-react'
 
 export const GROUP_LABEL: Record<SearchSourceGroup, string> = {
 	chats: 'Chats',
-	loops: 'Loops',
+	loops: 'Flows',
 	agents: 'Agents',
-	objects: 'Objects',
+	people: 'People',
+	objects: 'Items',
 	automations: 'Automations',
 }
 
-const GROUP_ORDER: SearchSourceGroup[] = ['chats', 'loops', 'agents', 'objects', 'automations']
-
-const GROUP_GLYPH: Partial<Record<SearchSourceGroup, typeof MessageSquare>> = {
-	chats: MessageSquare,
-	loops: RefreshCw,
-	automations: Zap,
+const KIND_WORD: Record<SearchSourceGroup, string> = {
+	chats: 'Chat',
+	loops: 'Flow',
+	agents: 'Agent',
+	people: 'Person',
+	objects: 'Item',
+	automations: 'Automation',
 }
+
+const GROUP_ORDER: SearchSourceGroup[] = [
+	'chats',
+	'loops',
+	'agents',
+	'people',
+	'objects',
+	'automations',
+]
 
 /** DOM id of a result option; the field points at it with aria-activedescendant. */
 export function optionId(listboxId: string, row: SearchResultRow): string {
@@ -50,39 +58,12 @@ interface RowProps {
 	onOpen: (row: SearchResultRow) => void
 }
 
-export function RowIcon({
-	row,
-}: { row: Pick<SearchResultRow, 'id' | 'group' | 'type' | 'title'> }) {
-	const Glyph = GROUP_GLYPH[row.group]
-	if (row.group === 'objects') {
-		return (
-			<TypeBadge type={row.type} variant="tile" className="mt-px size-[22px] shrink-0 rounded-md" />
-		)
-	}
-	if (row.group === 'agents') {
-		return (
-			<ActorAvatar
-				id={row.id}
-				name={row.title}
-				type="agent"
-				className="mt-px size-[22px] shrink-0 text-[9px]"
-			/>
-		)
-	}
-	return Glyph ? (
-		<span
-			aria-hidden="true"
-			className="mt-px grid size-[22px] shrink-0 place-items-center rounded-md bg-muted text-muted-foreground"
-		>
-			<Glyph className="size-[13px]" />
-		</span>
-	) : null
-}
-
-// Live row structure and 13px scale: title with a muted suffix, kind in the right
-// column, status as a muted suffix with one 6px dot. Snippets are for chats only.
+// v3 row: the title over one grey meta line ("Bet · Proposed") with a chevron at the right.
+// The matched snippet is for chats only.
 function ResultRow({ row, query, id, active, onOpen }: RowProps) {
 	const sub = rowSub(row)
+	const kind =
+		row.group === 'objects' ? (TYPE_LABELS[row.type] ?? KIND_WORD.objects) : KIND_WORD[row.group]
 	return (
 		// biome-ignore lint/a11y/useKeyWithClickEvents: keyboard use goes through the search field (combobox with aria-activedescendant), not through focus on the row
 		<div
@@ -93,24 +74,18 @@ function ResultRow({ row, query, id, active, onOpen }: RowProps) {
 			aria-selected={active}
 			onClick={() => onOpen(row)}
 			className={cn(
-				'flex w-full cursor-pointer items-start gap-[11px] rounded-lg border border-transparent px-3 py-2.5 text-left transition-colors hover:border-border hover:bg-accent max-[1024.02px]:min-h-11',
-				active && 'border-border bg-accent',
+				'flex w-full cursor-pointer items-center gap-3 border-t border-border px-2 py-2.5 text-left transition-colors hover:bg-secondary max-lg:min-h-11 pointer-coarse:min-h-11',
+				active && 'bg-secondary',
 			)}
 		>
-			<RowIcon row={row} />
-			<span className="flex min-w-0 flex-1 flex-col gap-[3px]">
-				<span className="flex min-w-0 items-baseline gap-2">
-					<span className="min-w-0 truncate text-[13px] font-semibold text-foreground">
-						{highlightText(rowTitle(row), query)}
-						{sub ? <span className="font-normal text-muted-foreground"> — {sub}</span> : null}
-					</span>
-					<span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
-						<span
-							aria-hidden="true"
-							className={cn('size-1.5 shrink-0 rounded-full', statusDotClass(row.statusGroup))}
-						/>
-						{statusLabel(row.status)}
-					</span>
+			<span className="flex min-w-0 flex-1 flex-col">
+				<span className="truncate text-[15px] font-medium text-foreground">
+					{highlightText(rowTitle(row), query)}
+				</span>
+				<span className="truncate text-[13px] text-muted-foreground">
+					{[kind, row.group === 'people' ? null : statusLabel(row.status), sub]
+						.filter(Boolean)
+						.join(' · ')}
 				</span>
 				{row.group === 'chats' && row.snippet ? (
 					<span className="truncate text-xs leading-normal text-muted-foreground">
@@ -118,9 +93,7 @@ function ResultRow({ row, query, id, active, onOpen }: RowProps) {
 					</span>
 				) : null}
 			</span>
-			<span className="mt-0.5 shrink-0 font-mono text-[9.5px] font-semibold tracking-[0.05em] text-muted-foreground">
-				{row.type.replace(/_/g, ' ').toUpperCase()}
-			</span>
+			<ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
 		</div>
 	)
 }
@@ -167,7 +140,7 @@ export function SearchResultList({
 			aria-label="Search results"
 			aria-busy={dimmed}
 			className={cn(
-				'flex flex-col gap-0.5 px-3 pb-8 pt-3 transition-opacity md:px-5',
+				'flex flex-col pb-8 pt-1 transition-opacity [&_mark]:bg-warning/25 [&_mark]:text-foreground',
 				dimmed && 'opacity-60',
 			)}
 		>
@@ -181,9 +154,12 @@ export function SearchResultList({
 								// biome-ignore lint/a11y/useSemanticElements: a listbox groups its options with role=group; <fieldset> is for form controls
 								role="group"
 								aria-label={GROUP_LABEL[group]}
-								className="flex flex-col gap-0.5"
+								className="flex flex-col"
 							>
-								<div aria-hidden="true" className="eyebrow px-1 pb-1 pt-3">
+								<div
+									aria-hidden="true"
+									className="px-2 pb-2 pt-4 text-[13px] font-semibold text-muted-foreground"
+								>
 									{GROUP_LABEL[group]} · {groupRows.length}
 								</div>
 								{groupRows.map(renderRow)}

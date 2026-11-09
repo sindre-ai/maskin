@@ -1,7 +1,10 @@
-import { Composer } from '@/components/chat/chat'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { FormError } from '@/components/shared/form-error'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
 import { useActors, useDefaultChatAgent } from '@/hooks/use-actors'
-import { useConversationsInfinite, useCreateConversation } from '@/hooks/use-conversations'
+import { useCreateConversation } from '@/hooks/use-conversations'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useObjects } from '@/hooks/use-objects'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
@@ -13,27 +16,12 @@ import {
 	MAX_CHAT_OBJECT_REFERENCES,
 	chatSelectionReducer,
 } from '@/lib/chat-selection'
-import { cn } from '@/lib/cn'
-import { type ComposerCue, deriveComposerCue } from '@/lib/composer-cue'
 import { useWorkspace } from '@/lib/workspace-context'
-import { MESSAGE_MAX_MENTIONS, deriveConversationTitle } from '@maskin/shared'
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { X } from 'lucide-react'
-import {
-	type KeyboardEvent as ReactKeyboardEvent,
-	useCallback,
-	useEffect,
-	useMemo,
-	useReducer,
-	useRef,
-	useState,
-} from 'react'
+import { deriveConversationTitle } from '@maskin/shared'
+import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
+import { ChevronLeft } from 'lucide-react'
+import { type FormEvent, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { toast } from 'sonner'
-
-// Copy for the To row. The spec ships these strings; keeping them colocated
-// makes them grepable when the layout below references them by name.
-const chatToPh = 'Add person or agent…'
-const chatGroupNote = 'Everyone sees everything'
 
 interface NewChatSearch {
 	agentId?: string
@@ -69,8 +57,13 @@ interface Recipient {
 	id: string
 	name: string
 	type: string
-	description?: string | null
 }
+
+function GroupLabel({ children }: { children: string }) {
+	return <h2 className="px-1.5 pb-2 text-[13px] font-medium text-muted-foreground">{children}</h2>
+}
+
+const ROW = 'flex items-center gap-3 border-t border-border px-1.5 py-3.5 last:border-b'
 
 function NewChatRoute() {
 	useDocumentTitle('New chat')
@@ -82,33 +75,26 @@ function NewChatRoute() {
 	const { data: actors } = useActors(workspaceId, { enabled: true })
 	const defaultAgent = useDefaultChatAgent()
 	const currentActor = getStoredActor()
-	const conversationsInfinite = useConversationsInfinite(workspaceId)
 
-	const [recipients, setRecipients] = useState<Recipient[]>([])
-	const [query, setQuery] = useState('')
-	const [activeIndex, setActiveIndex] = useState(0)
+	const [pickedIds, setPickedIds] = useState<string[]>([])
 	const [selection, dispatchSelection] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
 	const [error, setError] = useState<string | null>(null)
 	const [draft, setDraft] = useState(search.text ?? '')
-	const [toFocused, setToFocused] = useState(false)
 	// The page stays mounted when the launcher opens /chats/new?text=... from
 	// here, so a new text has to replace the box; the initial value covers mount.
 	useEffect(() => {
 		if (search.text !== undefined) setDraft(search.text)
 	}, [search.text])
-	const inputRef = useRef<HTMLInputElement>(null)
 
-	// Objects handed over by "Ask an agent". Resolved so the chips read as
-	// titles rather than raw ids, then dispatched into the composer's selection
-	// once, so they are removable like any other reference.
+	// Objects handed over by "Ask an agent". Resolved so the rows read as titles
+	// rather than raw ids, then dispatched into the selection once, so they are
+	// removable like any other reference.
 	const referencedIds = useMemo(
 		() => (search.objectIds ? search.objectIds.split(',').filter(Boolean) : []),
 		[search.objectIds],
 	)
 	// `limit` is explicit because the endpoint's default is 50 — well under the
-	// selection sizes `Select all` produces. Without it a larger hand-over
-	// resolved its first fifty ids and dropped the rest with no chip and no
-	// message; the id list in the URL still said otherwise.
+	// selection sizes `Select all` produces.
 	const { data: referencedObjects } = useObjects(
 		workspaceId,
 		{ ids: referencedIds.join(','), limit: String(MAX_CHAT_OBJECT_REFERENCES) },
@@ -124,485 +110,261 @@ function NewChatRoute() {
 				object: { id: object.id, title: object.title, type: object.type },
 			})
 		}
-		// An id can also fail to resolve for reasons the cap has nothing to do
-		// with — deleted since the link was made, or belonging to another
-		// workspace. Either way the chat is about to carry fewer objects than the
-		// user picked, so say which, rather than letting the count quietly shrink.
+		// An id can also fail to resolve — deleted since the link was made, or
+		// belonging to another workspace. Say so, rather than letting the count
+		// quietly shrink.
 		const missing = referencedIds.length - referencedObjects.length
 		if (missing > 0) {
 			toast.warning(
-				`${missing} of ${referencedIds.length} objects couldn't be attached — they may have been deleted.`,
+				`${missing} of ${referencedIds.length} items couldn't be attached — they may have been deleted.`,
 			)
 		}
 	}, [referencedIds, referencedObjects])
 
-	const seedObject = search.objectId
-		? { id: search.objectId, title: search.objectTitle ?? null, type: search.objectType ?? null }
-		: null
-	const seedNotification = search.notificationId
-		? { id: search.notificationId, title: search.notificationTitle ?? null }
-		: null
+	// The single-object and notification hand-overs land in the same selection.
+	const seededSingleRef = useRef(false)
+	useEffect(() => {
+		if (seededSingleRef.current) return
+		seededSingleRef.current = true
+		if (search.objectId) {
+			dispatchSelection({
+				type: 'add_object',
+				object: {
+					id: search.objectId,
+					title: search.objectTitle ?? null,
+					type: search.objectType ?? null,
+				},
+			})
+		}
+		if (search.notificationId) {
+			dispatchSelection({
+				type: 'add_notification',
+				notification: { id: search.notificationId, title: search.notificationTitle ?? null },
+			})
+		}
+	}, [
+		search.objectId,
+		search.objectTitle,
+		search.objectType,
+		search.notificationId,
+		search.notificationTitle,
+	])
 
-	// All possible recipients: agents + workspace people, deduped by id.
+	// Every agent and every other person in the workspace, A→Z, deduped by id.
 	const candidates = useMemo<Recipient[]>(() => {
 		const agents: Recipient[] = (actors ?? [])
 			.filter((a) => a.type === 'agent')
-			.map((a) => ({ id: a.id, name: a.name, type: a.type, description: a.description }))
+			.map((a) => ({ id: a.id, name: a.name, type: a.type }))
 		const people: Recipient[] = (members ?? [])
 			.filter((m) => m.actorId !== currentActor?.id && m.type !== 'agent' && m.type !== 'system')
-			.map((m) => ({ id: m.actorId, name: m.name, type: m.type, description: m.role }))
+			.map((m) => ({ id: m.actorId, name: m.name, type: m.type }))
 		const byId = new Map<string, Recipient>()
 		for (const r of [...agents, ...people]) if (!byId.has(r.id)) byId.set(r.id, r)
-		return Array.from(byId.values())
-	}, [actors, members, currentActor])
+		return Array.from(byId.values()).sort(
+			(a, b) =>
+				a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }) ||
+				a.id.localeCompare(b.id),
+		)
+	}, [actors, members, currentActor?.id])
 
-	// Seed the initial recipient from the URL (agentId), or fall back to the
-	// workspace default chat agent — same URL contract as before, now folded
-	// into a chip. `search.agentName` covers first paint before actors resolve.
+	// Seed the initial pick from the URL (agentId), or fall back to the workspace
+	// default chat agent — same URL contract as before.
 	const seedInitial = useRef(false)
 	useEffect(() => {
 		if (seedInitial.current) return
 		const targetId = search.agentId ?? defaultAgent?.id ?? null
 		if (!targetId) return
-		let found: Recipient | null = candidates.find((c) => c.id === targetId) ?? null
-		if (!found && targetId === search.agentId) {
-			found = { id: targetId, name: search.agentName ?? 'Agent', type: 'agent' }
-		}
-		if (!found && defaultAgent && targetId === defaultAgent.id) {
-			found = { id: defaultAgent.id, name: defaultAgent.name, type: 'agent' }
-		}
-		if (!found) return
 		seedInitial.current = true
-		setRecipients([found])
-	}, [search.agentId, search.agentName, defaultAgent, candidates])
+		setPickedIds([targetId])
+	}, [search.agentId, defaultAgent])
 
-	const recipientIds = useMemo(() => new Set(recipients.map((r) => r.id)), [recipients])
-
-	// RECENT derivation: walk cached pages of ConversationListItemResponse,
-	// flatten participants[], dedupe by actorId, drop self + already-picked,
-	// sort desc by max lastMessageAt across appearances. First cache page (30
-	// rows) is enough breadth on empty query per the spec.
-	const recentCandidates = useMemo<Recipient[]>(() => {
-		const pages = conversationsInfinite.data?.pages ?? []
-		if (pages.length === 0) return []
-		const seen = new Map<string, { recipient: Recipient; ts: number }>()
-		for (const page of pages) {
-			for (const conv of page.conversations) {
-				const t = conv.lastMessageAt ? new Date(conv.lastMessageAt).getTime() : 0
-				for (const p of conv.participants) {
-					if (p.actorId === currentActor?.id) continue
-					if (p.actorType === 'system') continue
-					const existing = seen.get(p.actorId)
-					if (!existing || t > existing.ts) {
-						const enriched = candidates.find((c) => c.id === p.actorId)
-						seen.set(p.actorId, {
-							ts: t,
-							recipient: enriched ?? {
-								id: p.actorId,
-								name: p.actorName,
-								type: p.actorType,
-							},
-						})
-					}
-				}
+	// A seeded agent can be missing from the lists (a stale link, or the lists
+	// still loading): keep its row so the pick is visible and removable.
+	const rows = useMemo<Recipient[]>(() => {
+		const known = new Set(candidates.map((c) => c.id))
+		const extra: Recipient[] = []
+		for (const id of pickedIds) {
+			if (known.has(id)) continue
+			if (id === search.agentId)
+				extra.push({ id, name: search.agentName ?? 'Agent', type: 'agent' })
+			else if (defaultAgent && id === defaultAgent.id) {
+				extra.push({ id, name: defaultAgent.name, type: 'agent' })
 			}
 		}
-		return Array.from(seen.values())
-			.sort((a, b) => b.ts - a.ts)
-			.map((v) => v.recipient)
-			.filter((r) => !recipientIds.has(r.id))
-	}, [conversationsInfinite.data, currentActor, candidates, recipientIds])
+		return [...candidates, ...extra]
+	}, [candidates, pickedIds, search.agentId, search.agentName, defaultAgent])
 
-	const trimmedQuery = query.trim()
-	const typedMode = trimmedQuery.length > 0
+	const picked = useMemo(() => rows.filter((r) => pickedIds.includes(r.id)), [rows, pickedIds])
 
-	const typedMatches = useMemo<Recipient[]>(() => {
-		if (!typedMode) return []
-		const needle = trimmedQuery.toLowerCase()
-		return candidates.filter((c) => c.name.toLowerCase().includes(needle))
-	}, [candidates, typedMode, trimmedQuery])
+	const toggle = (id: string, on: boolean) => {
+		setError(null)
+		setPickedIds((prev) =>
+			on ? (prev.includes(id) ? prev : [...prev, id]) : prev.filter((p) => p !== id),
+		)
+	}
 
-	const dropdownRows = typedMode ? typedMatches : recentCandidates
-	// The whole dropdown block hides on the empty-RECENT case (no empty header).
-	// It stays visible in typed mode so the "No agent by that name" line has a
-	// place to render. It only shows while the To input has focus, so moving to
-	// the message box clears the list off the composer.
-	const showDropdown = toFocused && (typedMode || dropdownRows.length > 0)
-
-	// biome-ignore lint/correctness/useExhaustiveDependencies: dropdownRows.length and typedMode ARE the reset triggers — a shorter row set or a mode switch should snap the active row back to the top; setActiveIndex is a stable React setter, so it is deliberately absent.
-	useEffect(() => {
-		setActiveIndex(0)
-	}, [dropdownRows.length, typedMode])
-
-	const commitRecipient = useCallback((r: Recipient) => {
-		setRecipients((prev) => (prev.some((p) => p.id === r.id) ? prev : [...prev, r]))
-		setQuery('')
-		setActiveIndex(0)
-		inputRef.current?.focus()
-	}, [])
-
-	const removeRecipient = useCallback((id: string) => {
-		setRecipients((prev) => prev.filter((r) => r.id !== id))
-	}, [])
-
-	const handleInputKeyDown = useCallback(
-		(e: ReactKeyboardEvent<HTMLInputElement>) => {
-			if (e.key === 'ArrowDown') {
-				if (dropdownRows.length === 0) return
-				e.preventDefault()
-				setActiveIndex((i) => (i + 1) % dropdownRows.length)
-				return
-			}
-			if (e.key === 'ArrowUp') {
-				if (dropdownRows.length === 0) return
-				e.preventDefault()
-				setActiveIndex((i) => (i - 1 + dropdownRows.length) % dropdownRows.length)
-				return
-			}
-			if (e.key === 'Enter') {
-				const row = dropdownRows[activeIndex]
-				if (row) {
-					e.preventDefault()
-					commitRecipient(row)
-				}
-				return
-			}
-			if (e.key === 'Backspace' && query.length === 0 && recipients.length > 0) {
-				// Caret at position 0 pops the last chip — no beep, no navigation.
-				e.preventDefault()
-				setRecipients((prev) => prev.slice(0, -1))
-			}
-		},
-		[dropdownRows, activeIndex, query, recipients, commitRecipient],
-	)
-
-	const handleSend = useCallback(
-		async (content: string) => {
-			setError(null)
-			// Fold both entry points for participants into the id set:
-			// (1) recipient chips picked in the To row above, and
-			// (2) every actor @-mentioned in the composer's `selection.agents`.
-			// Self-mentions still count as intended participants (they get filtered
-			// from the outgoing `mentions` metadata below, but they came here by
-			// deliberate action, so they join the thread).
-			const ids = new Set<string>()
-			for (const r of recipients) ids.add(r.id)
-			for (const agentId of selection.agents) ids.add(agentId)
-			if (ids.size === 0) {
-				const err = new Error('Add at least one person or agent to start the conversation')
-				setError(err.message)
-				throw err
-			}
-
-			// The seeds from ?objectId= / ?notificationId= are additions to whatever
-			// the composer holds, not replacements: a user who arrives via "Ask an
-			// agent" and then attaches more objects must not have those silently
-			// dropped.
-			const objects =
-				seedObject && !selection.objects.some((o) => o.id === seedObject.id)
-					? [seedObject, ...selection.objects]
-					: selection.objects
-			const notifications =
-				seedNotification && !selection.notifications.some((n) => n.id === seedNotification.id)
-					? [seedNotification, ...selection.notifications]
-					: selection.notifications
-
-			const metadata: MessageMetadata = {}
-			if (selection.files.length > 0) {
-				metadata.attachments = selection.files.map((f) => ({
-					file_id: f.fileId,
-					name: f.name,
-					mime_type: f.mimeType ?? 'application/octet-stream',
-					size_bytes: f.sizeBytes,
-				}))
-			}
-			if (objects.length > 0) {
-				metadata.context_objects = objects.map((o) => ({
-					id: o.id,
-					...(o.title ? { title: o.title } : {}),
-					...(o.type ? { type: o.type } : {}),
-				}))
-			}
-			if (notifications.length > 0) {
-				metadata.context_notifications = notifications.map((n) => ({
-					id: n.id,
-					...(n.title ? { title: n.title } : {}),
-				}))
-			}
-			// Mentions ride the initial message; filter self so a self-mention
-			// (warning-styled in the composer) never fires the notification write.
-			const mentions = selection.agents
-				.filter((id) => id !== currentActor?.id)
-				.slice(0, MESSAGE_MAX_MENTIONS)
-			if (mentions.length > 0) {
-				metadata.mentions = mentions
-			}
-
-			try {
-				const conversation = await createConversation.mutateAsync({
-					title: deriveConversationTitle(content, recipients[0]?.name ?? 'New chat'),
-					participant_actor_ids: Array.from(ids),
-					initial_message: content,
-					...(Object.keys(metadata).length > 0 ? { initial_message_metadata: metadata } : {}),
-				})
-				const singleAgent =
-					recipients.length === 1 && recipients[0].type === 'agent' ? recipients[0] : null
-				trackChatSessionStarted({
-					entity_id: conversation.id,
-					entity_type: 'session',
-					entry_point: 'agent_one_shot',
-					entry_agent_role: singleAgent ? deriveEntryAgentRole(singleAgent.name) : null,
-					participant_count: ids.size,
-				})
-				dispatchSelection({ type: 'clear_all' })
-				navigate({
-					to: '/$workspaceId/chats/$conversationId',
-					params: { workspaceId, conversationId: conversation.id },
-				})
-			} catch (err) {
-				setError(err instanceof Error ? err.message : 'Failed to create conversation')
-				throw err
-			}
-		},
-		[
-			recipients,
-			seedObject,
-			seedNotification,
-			selection,
-			createConversation,
-			navigate,
-			workspaceId,
-			currentActor?.id,
-		],
-	)
-
-	// Call is offered only when exactly one agent is addressed, counting both the
-	// To-row chips and @-mentioned agents (a multi-agent call is v2). People
-	// don't count: a call targets the agent.
-	const callAgent = useMemo<Recipient | null>(() => {
-		const agents = new Map<string, Recipient>()
-		for (const r of recipients) if (r.type === 'agent') agents.set(r.id, r)
-		for (const id of selection.agents) {
-			const c = candidates.find((cand) => cand.id === id)
-			if (c?.type === 'agent') agents.set(c.id, c)
+	const handleSubmit = async (e: FormEvent) => {
+		e.preventDefault()
+		if (createConversation.isPending) return
+		if (picked.length === 0) {
+			setError('Pick at least one person or agent to start the conversation')
+			return
 		}
-		return agents.size === 1 ? (agents.values().next().value ?? null) : null
-	}, [recipients, selection.agents, candidates])
+		setError(null)
 
-	const todaysPlaceholder =
-		recipients.length === 1
-			? `Message ${recipients[0].name}…`
-			: 'Message… / reference or create · @ mention'
+		const content = draft.trim()
+		const metadata: MessageMetadata = {}
+		if (selection.objects.length > 0) {
+			metadata.context_objects = selection.objects.map((o) => ({
+				id: o.id,
+				...(o.title ? { title: o.title } : {}),
+				...(o.type ? { type: o.type } : {}),
+			}))
+		}
+		if (selection.notifications.length > 0) {
+			metadata.context_notifications = selection.notifications.map((n) => ({
+				id: n.id,
+				...(n.title ? { title: n.title } : {}),
+			}))
+		}
 
-	// Group-chat cue: this screen has its own composer wiring (it does not use ThreadComposer),
-	// so it calls the same shared function. A new chat has no messages,
-	// so nobody has spoken yet and the next message is the first one. Participants are you, the
-	// To-row chips and anyone tagged in the box, which is who the server adds when it creates
-	// the chat. Fewer than 3 participants: today's placeholder and no hint.
-	const cue = useMemo<ComposerCue | null>(() => {
-		const asParticipant = (r: Recipient) => ({
-			actorId: r.id,
-			actorName: r.name,
-			actorType: (r.type === 'agent' ? 'agent' : 'human') as 'agent' | 'human',
-		})
-		const people = new Map<string, ReturnType<typeof asParticipant>>()
-		if (currentActor) {
-			people.set(currentActor.id, asParticipant({ id: currentActor.id, name: '', type: 'human' }))
+		try {
+			const conversation = await createConversation.mutateAsync({
+				title: deriveConversationTitle(content, picked[0]?.name ?? 'New chat'),
+				participant_actor_ids: picked.map((r) => r.id),
+				...(content ? { initial_message: content } : {}),
+				...(content && Object.keys(metadata).length > 0
+					? { initial_message_metadata: metadata }
+					: {}),
+			})
+			const singleAgent = picked.length === 1 && picked[0]?.type === 'agent' ? picked[0] : null
+			trackChatSessionStarted({
+				entity_id: conversation.id,
+				entity_type: 'session',
+				entry_point: 'agent_one_shot',
+				entry_agent_role: singleAgent ? deriveEntryAgentRole(singleAgent.name) : null,
+				participant_count: picked.length,
+			})
+			dispatchSelection({ type: 'clear_all' })
+			navigate({
+				to: '/$workspaceId/chats/$conversationId',
+				params: { workspaceId, conversationId: conversation.id },
+			})
+		} catch (err) {
+			setError(err instanceof Error ? err.message : 'Failed to create conversation')
 		}
-		for (const r of recipients) people.set(r.id, asParticipant(r))
-		for (const id of selection.agents) {
-			if (people.has(id)) continue
-			// An id missing from the workspace lists counts as a person.
-			const known = candidates.find((c) => c.id === id)
-			people.set(
-				id,
-				asParticipant(known ?? { id, name: selection.agentNames[id] ?? '', type: 'human' }),
-			)
-		}
-		return deriveComposerCue({
-			selfId: currentActor?.id ?? '',
-			participants: [...people.values()],
-			taggedIds: selection.agents,
-			messages: null,
-			hasMoreMessages: false,
-			isNewChat: true,
-		})
-	}, [currentActor, recipients, selection.agents, selection.agentNames, candidates])
-	const composerPlaceholder = cue?.placeholder ?? todaysPlaceholder
+	}
 
 	return (
-		<div className="flex min-h-0 flex-1 flex-col">
-			<div className="flex shrink-0 items-center gap-2.5 border-b border-border px-[clamp(14px,3vw,28px)] py-3">
-				<span className="eyebrow shrink-0 tracking-[0.16em] text-foreground">NEW CHAT</span>
-				<span aria-hidden className="shrink-0 text-border-strong">
-					/
-				</span>
-				<span className="min-w-0 truncate text-xs text-muted-foreground">
-					it becomes a conversation you can come back to
-				</span>
+		<form
+			onSubmit={handleSubmit}
+			className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pb-10 md:px-8 lg:px-7"
+		>
+			<div>
+				<Link
+					to="/$workspaceId/chats"
+					params={{ workspaceId }}
+					className="-ml-1.5 inline-flex h-8 items-center gap-2 rounded-full pr-3 pl-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+				>
+					<ChevronLeft size={14} strokeWidth={2.4} aria-hidden />
+					Chats
+				</Link>
 			</div>
+			<h1 className="page-title mt-2 max-md:sr-only">New chat</h1>
 
-			<div className="relative flex shrink-0 flex-col gap-1.5 border-b border-border px-[clamp(14px,3vw,28px)] py-2.5">
-				<div className="flex flex-wrap items-center gap-1.5">
-					{recipients.map((r) => (
-						<span
-							key={r.id}
-							className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-border bg-card py-0.5 pr-1 pl-1"
-						>
-							<ActorAvatar id={r.id} name={r.name} type={r.type} size="sm" />
-							<span className="max-w-[16ch] truncate text-[12px] font-semibold text-foreground">
-								{r.name}
-							</span>
-							<button
-								type="button"
-								onClick={() => removeRecipient(r.id)}
-								aria-label={`Remove ${r.name}`}
-								className="inline-flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-							>
-								<X size={10} aria-hidden />
-							</button>
-						</span>
-					))}
-					<input
-						ref={inputRef}
-						type="text"
-						value={query}
-						onChange={(e) => setQuery(e.target.value)}
-						onFocus={() => setToFocused(true)}
-						onBlur={() => setToFocused(false)}
-						onKeyDown={handleInputKeyDown}
-						placeholder={recipients.length === 0 ? chatToPh : ''}
-						aria-label="Add recipients"
-						aria-autocomplete="list"
-						className="min-w-[10ch] flex-1 border-none bg-transparent px-1 py-1 text-sm text-foreground outline-none placeholder:text-muted-foreground"
-					/>
-					{recipients.length >= 2 ? (
-						<span className="ml-auto shrink-0 text-[11px] text-muted-foreground">
-							{chatGroupNote}
-						</span>
-					) : null}
-				</div>
+			<section aria-label="To" className="mt-16">
+				<GroupLabel>To</GroupLabel>
+				<ul className="m-0 flex list-none flex-col p-0">
+					{rows.map((r) => {
+						const on = pickedIds.includes(r.id)
+						return (
+							<li key={r.id} className={ROW}>
+								<ActorAvatar id={r.id} name={r.name} type={r.type} size="md" />
+								<span className="min-w-0 flex-1 truncate text-[14.5px] text-foreground">
+									{r.name}
+								</span>
+								<Switch
+									checked={on}
+									onCheckedChange={(next) => toggle(r.id, next)}
+									aria-label={`Add ${r.name}`}
+								/>
+							</li>
+						)
+					})}
+				</ul>
+			</section>
 
-				{showDropdown ? (
-					<div
-						// Keep focus in the To input while a row is pressed. Otherwise the
-						// blur hides the list before the click lands and nothing is picked.
-						onMouseDown={(e) => e.preventDefault()}
-						className="mt-1 rounded-[11px] border border-border bg-card p-1.5"
+			{selection.objects.length > 0 || selection.notifications.length > 0 ? (
+				<section aria-label="Context" className="mt-16">
+					<GroupLabel>Context</GroupLabel>
+					<ul className="m-0 flex list-none flex-col p-0">
+						{selection.objects.map((o) => (
+							<li key={o.id} className={ROW}>
+								<span className="min-w-0 flex-1 truncate text-[14.5px] text-foreground">
+									{o.title ?? 'Untitled item'}
+								</span>
+								<Button
+									type="button"
+									variant="ghost"
+									size="sm"
+									className="rounded-full text-muted-foreground"
+									onClick={() => dispatchSelection({ type: 'remove_object', id: o.id })}
+								>
+									Remove
+								</Button>
+							</li>
+						))}
+						{selection.notifications.map((n) => (
+							<li key={n.id} className={ROW}>
+								<span className="min-w-0 flex-1 truncate text-[14.5px] text-foreground">
+									{n.title ?? 'Notification'}
+								</span>
+								<Button
+									type="button"
+									variant="ghost"
+									size="sm"
+									className="rounded-full text-muted-foreground"
+									onClick={() => dispatchSelection({ type: 'remove_notification', id: n.id })}
+								>
+									Remove
+								</Button>
+							</li>
+						))}
+					</ul>
+				</section>
+			) : null}
+
+			<section aria-label="Message" className="mt-16">
+				<GroupLabel>Message</GroupLabel>
+				<div className={ROW}>
+					<label
+						htmlFor="new-chat-first-message"
+						className="shrink-0 text-[14.5px] text-foreground"
 					>
-						<div className="eyebrow px-1.5 pt-1 pb-1.5">
-							{typedMode ? 'ADD SOMEONE — PERSON OR AGENT' : 'RECENT'}
-						</div>
-						{dropdownRows.length === 0 ? (
-							<p className="px-1.5 py-4 text-center text-[12px] text-muted-foreground">
-								No agent by that name
-							</p>
-						) : (
-							// biome-ignore lint/a11y/useFocusableInteractive: focus lives on the query input and moves via arrow keys through activeIndex; the listbox itself is scrolled programmatically, so it should not steal tab order.
-							// biome-ignore lint/a11y/useSemanticElements: swapping to native <select> would drop the chip inline input, RECENT/typed modes, mouse-hover activeIndex sync, and the two-column tablet grid — WAI-ARIA listbox on <ul> is the correct primitive here.
-							<ul
-								// biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: same reason as the useSemanticElements suppression above — the composed listbox must sit on <ul> so screen readers announce it as a list of options paired with the chip input above.
-								role="listbox"
-								aria-label={typedMode ? 'Add someone — person or agent' : 'Recent collaborators'}
-								className={cn(
-									'flex list-none flex-col gap-0.5 overflow-y-auto p-0',
-									// Mobile: cap at 4 rows so the composer stays visible on small
-									// phones (dvh alone can't help — the To row is shrink-0). md+
-									// gets the full 8-row list.
-									'max-h-[calc(4*40px)] md:max-h-[calc(8*40px)]',
-									// Tablet 641–1024px: 2-col when RECENT has >4 rows.
-									!typedMode && dropdownRows.length > 4
-										? 'md:grid md:max-h-[calc(4*40px)] md:grid-cols-2 lg:flex lg:max-h-[calc(8*40px)]'
-										: undefined,
-								)}
-							>
-								{dropdownRows.map((row, i) => {
-									const selected = recipientIds.has(row.id)
-									return (
-										<li key={row.id}>
-											<button
-												type="button"
-												// biome-ignore lint/a11y/useSemanticElements: native <option> would strip the avatar, secondary line, and hover/activeIndex sync — this row is a real button that carries the option semantics on top.
-												role="option"
-												aria-selected={i === activeIndex}
-												onMouseEnter={() => setActiveIndex(i)}
-												onClick={() => commitRecipient(row)}
-												className={cn(
-													'flex w-full items-center gap-2.5 rounded-[9px] px-1.5 py-1.5 text-left hover:bg-muted',
-													i === activeIndex && 'bg-muted',
-												)}
-											>
-												<ActorAvatar id={row.id} name={row.name} type={row.type} size="md" />
-												<span className="min-w-0 flex-1">
-													<span className="block truncate text-[12.5px] font-semibold text-foreground">
-														{row.name}
-													</span>
-													<span className="block truncate text-[11px] text-muted-foreground">
-														{row.description || (row.type === 'agent' ? 'Agent' : 'Person')}
-													</span>
-												</span>
-												<span
-													className={cn(
-														'inline-flex items-center rounded-full border border-border px-1.5 py-[1px] text-[9.5px] font-bold uppercase tracking-[0.06em]',
-														row.type === 'agent'
-															? 'bg-muted text-foreground'
-															: 'bg-card text-muted-foreground',
-													)}
-												>
-													{row.type === 'agent' ? 'Agent' : 'Person'}
-												</span>
-												{selected ? (
-													<span aria-hidden className="shrink-0 text-foreground">
-														✓
-													</span>
-												) : null}
-											</button>
-										</li>
-									)
-								})}
-							</ul>
-						)}
-					</div>
-				) : null}
-			</div>
-
-			<div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-[clamp(14px,3vw,28px)] py-6">
-				<div className="m-auto w-full max-w-[660px]">
-					<h2 className="text-[clamp(20px,2.4vw,26px)] font-bold leading-tight tracking-[-0.025em]">
-						What are we working on?
-					</h2>
-					<p className="mt-2 max-w-[52ch] text-[13.5px] leading-relaxed text-balance text-muted-foreground">
-						Your agents are already inside the work — the loops they run, the objects they keep
-						current, the sessions live right now. You don't have to paste any of it in.
-					</p>
+						First message
+					</label>
+					<Input
+						id="new-chat-first-message"
+						value={draft}
+						onChange={(e) => setDraft(e.target.value)}
+						placeholder="What do you need?"
+						autoComplete="off"
+						className="ml-auto h-9 min-w-0 flex-1 rounded-full border-0 bg-secondary px-4 md:w-75 md:flex-none"
+					/>
 				</div>
-			</div>
+			</section>
 
-			{/* The composer is pinned below the scroll region, gutter-aligned with
-			    the header and with no divider above it (mockup 645–646). */}
-			<div className="shrink-0 px-[clamp(14px,3vw,28px)] pt-2.5 pb-3.5">
-				<Composer
-					workspaceId={workspaceId}
-					onSend={handleSend}
+			<FormError error={error ?? undefined} className="px-1.5" />
+
+			<div className="mt-6">
+				<Button
+					type="submit"
+					className="h-10 rounded-full px-5"
 					disabled={createConversation.isPending}
-					pending={createConversation.isPending}
-					surface="sheet"
-					placeholder={composerPlaceholder}
-					selection={selection}
-					onDispatchSelection={dispatchSelection}
-					onRemoveAgent={(id) => dispatchSelection({ type: 'remove_agent', id })}
-					onRemoveObject={(id) => dispatchSelection({ type: 'remove_object', id })}
-					onRemoveNotification={(id) => dispatchSelection({ type: 'remove_notification', id })}
-					onRemoveFile={(fileId) => dispatchSelection({ type: 'remove_file', fileId })}
-					externalError={error}
-					onDismissExternalError={() => setError(null)}
-					hint={cue ? cue.hint : undefined}
-					textareaLabel="Message this conversation"
-					value={draft}
-					onValueChange={setDraft}
-					callAgent={callAgent}
-				/>
+				>
+					Start chat
+				</Button>
 			</div>
-		</div>
+		</form>
 	)
 }

@@ -133,16 +133,16 @@ function HeaderActions({
 			{locked || canManage ? (
 				<DropdownMenu>
 					<DropdownMenuTrigger asChild>
-						<Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Loop actions">
+						<Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Flow actions">
 							<MoreHorizontal size={16} />
 						</Button>
 					</DropdownMenuTrigger>
 					<DropdownMenuContent align="end">
 						{locked ? (
 							<>
-								<DropdownMenuLabel>Loop actions</DropdownMenuLabel>
+								<DropdownMenuLabel>Flow actions</DropdownMenuLabel>
 								<DropdownMenuItem onSelect={() => setForkOpen(true)}>
-									Fork this loop
+									Fork this flow
 								</DropdownMenuItem>
 								{canManage ? <DropdownMenuSeparator /> : null}
 							</>
@@ -261,7 +261,7 @@ function LoopFlow({
 		<>
 			<FlowSection
 				steps={steps}
-				title={isBundle ? 'The loop, once installed' : 'How it works'}
+				title={isBundle ? 'The flow, once installed' : 'How it works'}
 				subtitle={
 					isBundle
 						? 'the steps that move work between states'

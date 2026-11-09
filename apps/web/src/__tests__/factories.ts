@@ -2,6 +2,7 @@ import type {
 	ActorListItem,
 	ActorResponse,
 	ActorWithKey,
+	DriveWatch,
 	EventResponse,
 	ImportResponse,
 	IntegrationResponse,
@@ -26,7 +27,7 @@ export function buildObjectResponse(overrides: Partial<ObjectResponse> = {}): Ob
 		id,
 		workspaceId: 'ws-1',
 		type: 'bet',
-		title: 'Test Object',
+		title: 'Test Item',
 		content: null,
 		status: 'active',
 		metadata: null,
@@ -142,6 +143,7 @@ export function buildWorkspaceWithRole(
 		role: 'admin',
 		memberCount: 3,
 		isDefault: false,
+		isTeam: false,
 		createdBy: 'actor-1',
 		createdAt: null,
 		updatedAt: null,
@@ -219,13 +221,14 @@ export function buildLoopSummary(overrides: Partial<LoopSummary> = {}): LoopSumm
 	return {
 		id,
 		workspaceId: 'ws-1',
-		name: 'Test loop',
-		content: 'What the loop does',
+		name: 'Test flow',
+		content: 'What the flow does',
 		status: 'learning',
 		pill: 'learning',
 		entryCondition: null,
 		closeCondition: null,
 		tags: [],
+		driverId: null,
 		inProgressCount: 0,
 		closedCount: 0,
 		medianTimeToCloseMs: null,
@@ -255,6 +258,21 @@ export function buildIntegrationResponse(
 		createdBy: 'actor-1',
 		createdAt: null,
 		updatedAt: null,
+		...overrides,
+	}
+}
+
+export function buildDriveWatch(overrides: Partial<DriveWatch> = {}): DriveWatch {
+	const id = overrides.folderId ?? nextId('folder')
+	return {
+		folderId: id,
+		name: 'Meet Recordings',
+		path: null,
+		addedAt: '2026-10-01T09:00:00.000Z',
+		lastFiredAt: null,
+		integrationId: 'integration-1',
+		account: 'priya@acme.test',
+		triggers: [],
 		...overrides,
 	}
 }

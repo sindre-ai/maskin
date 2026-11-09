@@ -92,7 +92,7 @@ test.describe('Voice — row-level Call button', () => {
 
 		// Client-side navigation (a full page.goto would reload and end the call):
 		// the dialog must survive it and must not block the page behind it.
-		await page.getByRole('link', { name: 'Objects' }).first().click()
+		await page.getByRole('link', { name: 'Items' }).first().click()
 		await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/objects`))
 		await expect(dialog).toBeVisible()
 	})

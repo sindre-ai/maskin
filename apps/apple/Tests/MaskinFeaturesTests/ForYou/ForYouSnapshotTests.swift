@@ -113,6 +113,23 @@ struct ForYouSnapshotTests {
 		}
 	}
 
+	@Test("flat rows (v3) render folded, open, waiting and as an update", arguments: [false, true])
+	func flatRows(dark: Bool) throws {
+		for width in [402.0] as [CGFloat] {
+			try render(
+				VStack(spacing: 0) {
+					DecisionCardView(entry: entry(decisionCard), sender: "Forge", expanded: false, style: .row, now: now)
+					DecisionCardView(entry: entry(decisionCard), sender: "Forge", expanded: true, style: .row, now: now)
+					DecisionCardView(
+						entry: entry(decisionCard, bucket: .waiting), sender: "Forge", expanded: false, style: .row, now: now)
+					DecisionCardView(
+						entry: entry(threadCard, bucket: .fyi), sender: "Forge", expanded: false, style: .row, now: now)
+				}
+				.padding(.horizontal, MaskinSpace.s9),
+				width: width, dark: dark, name: "flat-rows")
+		}
+	}
+
 	@Test("irreversible option renders marked", arguments: [false, true])
 	func irreversible(dark: Bool) throws {
 		for width in Self.widths {
@@ -253,5 +270,30 @@ struct ForYouSnapshotTests {
 			}
 			.padding(MaskinSpace.s13 + MaskinSpace.s4),
 			width: 1024, dark: dark, name: "ipad-grid")
+	}
+}
+
+private let linkCard = ForYouCard(
+	id: "o4", objectTitle: "Pricing page", objectType: "task", status: "in_progress",
+	latestEventId: 40, latestActivityAt: now.addingTimeInterval(-2 * 3600),
+	mention: ForYouMention(
+		eventId: 33, actorId: "forge",
+		content:
+			"The tiers are live on staging.\n\nHere is the page:\n\n[Pricing page](https://maskin.io/7d1f0c52-0e0a-4f43-9c1e-aaaaaaaaaaaa/objects/55555555-2222-3333-4444-555555555555)\n\nCan you check the copy before Thursday?"))
+
+extension ForYouSnapshotTests {
+	/// A link alone on its line is a chip in a For You card, not a card inside the card.
+	@Test("a link on its own line draws as a chip in the card", arguments: [false, true])
+	func linkIsAChip(dark: Bool) throws {
+		for width in Self.widths {
+			try render(
+				VStack(alignment: .leading, spacing: MaskinSpace.s7) { cardView(entry(linkCard, bucket: .fyi)) }
+					.padding(MaskinSpace.s9)
+					.environment(\.markdownInternalLinkInfo, { _ in
+						MarkdownLinkInfo(symbol: "checklist", kindLabel: "Task", title: "Pricing page")
+					})
+					.environment(\.markdownStandaloneLink, { _, _ in .card(AnyView(Text("CARD").padding())) }),
+				width: width, dark: dark, name: "link-chip")
+		}
 	}
 }

@@ -28,6 +28,15 @@ describe('buildVocabulary', () => {
 		}
 	})
 
+	it('labels the person scope People without claiming typed words from contact', () => {
+		const withContact = buildVocabulary([{ key: 'contact', label: 'Contact', plural: 'People' }])
+		expect(pillLabel(withContact, 'type', 'person')).toBe('People')
+		expect(withContact.typeWords.get('people')).toBe('contact')
+		expect(withContact.typeWords.has('person')).toBe(true)
+		expect(withContact.typeWords.get('person')).toBe('contact')
+		expect(buildVocabulary([]).typeWords.has('person')).toBe(false)
+	})
+
 	it('has no owner words', () => {
 		for (const w of ['owner', 'mine', 'assignee']) expect(vocab.typeWords.has(w)).toBe(false)
 	})
@@ -43,7 +52,7 @@ describe('buildVocabulary', () => {
 	})
 
 	it('labels pills from the real types and the five groups', () => {
-		expect(pillLabel(vocab, 'type', 'loop')).toBe('Loops')
+		expect(pillLabel(vocab, 'type', 'loop')).toBe('Flows')
 		expect(pillLabel(vocab, 'type', 'company')).toBe('Companies')
 		expect(pillLabel(vocab, 'type', 'contact')).toBe('People')
 		expect(pillLabel(vocab, 'status', 'needs_you')).toBe('Needs you')

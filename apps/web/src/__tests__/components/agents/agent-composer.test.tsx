@@ -55,7 +55,7 @@ vi.mock('@/components/chat/chat', () => ({
 				{error ? <p role="alert">{error}</p> : null}
 				<button
 					type="button"
-					aria-label="Seed object"
+					aria-label="Seed item"
 					onClick={() =>
 						onDispatchSelection?.({
 							type: 'add_object',
@@ -81,14 +81,14 @@ describe('AgentComposer', () => {
 	it('addresses the agent by name and says what sending does (mockup 2506)', () => {
 		render(<AgentComposer agent={agent} />)
 		expect(screen.getByPlaceholderText('Message Cass…')).toBeInTheDocument()
-		expect(screen.getByText('Starts a new chat')).toBeInTheDocument()
+		expect(screen.getByText('Opens your chat with Cass')).toBeInTheDocument()
 	})
 
 	// The defect that promoted this task to P1: the send used to create a
 	// session directly, which left the agent's reply orphaned — no row in the
 	// Chats list, nothing for the user to open. The fix routes through
 	// createConversation so the exchange lands on the conversation surface.
-	it('starts a chat conversation with the agent as the sole participant', async () => {
+	it('opens the direct message with the agent as the sole participant', async () => {
 		render(<AgentComposer agent={agent} />)
 		await userEvent.type(screen.getByLabelText('Message Cass'), 'Sweep the backlog')
 		await userEvent.click(screen.getByRole('button', { name: 'Send message' }))
@@ -97,8 +97,9 @@ describe('AgentComposer', () => {
 			expect(createConversationMock).toHaveBeenCalledWith(
 				expect.objectContaining({
 					participant_actor_ids: ['agent-1'],
+					direct: true,
 					initial_message: 'Sweep the backlog',
-					title: expect.stringContaining('Sweep the backlog'),
+					title: 'Cass',
 				}),
 			),
 		)
@@ -116,7 +117,7 @@ describe('AgentComposer', () => {
 	// conversation-responder reads context_objects off the initial message.
 	it('attaches selection objects as initial-message metadata', async () => {
 		render(<AgentComposer agent={agent} />)
-		await userEvent.click(screen.getByRole('button', { name: 'Seed object' }))
+		await userEvent.click(screen.getByRole('button', { name: 'Seed item' }))
 		await userEvent.type(screen.getByLabelText('Message Cass'), 'Look at this')
 		await userEvent.click(screen.getByRole('button', { name: 'Send message' }))
 

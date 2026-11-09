@@ -2,7 +2,7 @@ import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 
 // Bet "Rich Markdown editor across Maskin", Slice B: comments on selected text in
-// a markdown file, behind the rich-markdown-editor flag. A comment is a draft
+// a markdown file. A comment is a draft
 // carrying a text anchor; the highlight is an editor decoration, never saved in
 // the file.
 //
@@ -55,7 +55,7 @@ async function select(page: Page, text: string, nth = 0) {
 }
 
 async function openFile(page: Page, workspaceId: string, fileId: string) {
-	await page.goto(`/${workspaceId}/files/${fileId}`)
+	await page.goto(`/${workspaceId}/files/${fileId}?view=edit`)
 	await expect(page.locator('.ProseMirror')).toBeVisible({ timeout: 10000 })
 }
 
@@ -77,12 +77,6 @@ async function postDraft(page: Page) {
 
 test.describe('Comments on selected text in a markdown file', () => {
 	test.skip(!!process.env.CI, 'S3/SeaweedFS not available in CI')
-
-	test.beforeEach(async ({ page }) => {
-		await page.addInitScript(() => {
-			localStorage.setItem('ff:rich-markdown-editor', 'on')
-		})
-	})
 
 	test('offers Comment only inside one paragraph or heading', async ({ page, account }) => {
 		const file = await account.api.createFile(account.workspaceId, {

@@ -48,6 +48,43 @@ export async function loadApprovedAttachment(
 	deps: { db: Database; storage: StorageProvider | undefined },
 	input: { workspaceId: string; fileId: string; approvedAt: Date | null },
 ): Promise<LinkedInFileAttachment> {
+	return loadWorkspaceFile(deps, {
+		workspaceId: input.workspaceId,
+		fileId: input.fileId,
+		approval: { approvedAt: input.approvedAt },
+		allowed: ['application/pdf', 'image/png', 'image/jpeg'],
+		notAllowed:
+			'The attachment is not a PDF, PNG or JPEG. Those are the only files LinkedIn messages can carry here.',
+	})
+}
+
+/**
+ * An image a caller asked for on a public post. A post has no approval step, so the file is
+ * read as it is now: same workspace, size and first-bytes checks as above, PNG and JPEG only.
+ */
+export async function loadPostImage(
+	deps: { db: Database; storage: StorageProvider | undefined },
+	input: { workspaceId: string; fileId: string },
+): Promise<LinkedInFileAttachment> {
+	return loadWorkspaceFile(deps, {
+		...input,
+		allowed: ['image/png', 'image/jpeg'],
+		notAllowed:
+			'The file is not a PNG or JPEG image. Those are the only images a post can carry here.',
+	})
+}
+
+async function loadWorkspaceFile(
+	deps: { db: Database; storage: StorageProvider | undefined },
+	input: {
+		workspaceId: string
+		fileId: string
+		/** Set when a person's approval covers the file: refused if the file changed after it. */
+		approval?: { approvedAt: Date | null }
+		allowed: AttachmentType[]
+		notAllowed: string
+	},
+): Promise<LinkedInFileAttachment> {
 	const [file] = await deps.db
 		.select()
 		.from(files)
@@ -60,7 +97,10 @@ export async function loadApprovedAttachment(
 		)
 	}
 	// An approval with no time cannot show the file is unchanged, so it does not pass.
-	if (!input.approvedAt || file.updatedAt.getTime() > input.approvedAt.getTime()) {
+	if (
+		input.approval &&
+		(!input.approval.approvedAt || file.updatedAt.getTime() > input.approval.approvedAt.getTime())
+	) {
 		throw new LinkedInIntegrationError(
 			'INVALID_INPUT',
 			'The attachment changed after it was approved. Ask a person to approve it again.',
@@ -80,11 +120,8 @@ export async function loadApprovedAttachment(
 		throw new LinkedInIntegrationError('INVALID_INPUT', TOO_BIG)
 	}
 	const type = sniffAttachmentType(bytes)
-	if (!type) {
-		throw new LinkedInIntegrationError(
-			'INVALID_INPUT',
-			'The attachment is not a PDF, PNG or JPEG. Those are the only files LinkedIn messages can carry here.',
-		)
+	if (!type || !input.allowed.includes(type)) {
+		throw new LinkedInIntegrationError('INVALID_INPUT', input.notAllowed)
 	}
 	return { content: bytes.toString('base64'), content_type: type, filename: file.name }
 }

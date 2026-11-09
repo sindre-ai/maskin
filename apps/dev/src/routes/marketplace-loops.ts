@@ -27,7 +27,7 @@ import {
 	workspaceSkills,
 	workspaces,
 } from '@maskin/db/schema'
-import { and, asc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
+import { type SQL, and, asc, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
@@ -40,9 +40,14 @@ import {
 	buildIntegrationInsert,
 	buildSkillInsert,
 	buildTriggerInsert,
+	sanitizeSnapshotLlmConfig,
 } from '../services/loop-provisioning'
 import { stopSessionsForActors } from '../services/session-cleanup'
 import type { SessionManager } from '../services/session-manager'
+import {
+	createWorkspaceDesktopService,
+	removeDesktopsForActors,
+} from '../services/workspace-desktop'
 
 type Env = {
 	Variables: {
@@ -220,6 +225,7 @@ app.openapi(listMarketplaceLoopsRoute, (async (c) => {
 			useCase: marketplaceLoops.useCase,
 		})
 		.from(marketplaceLoops)
+		.where(isNull(marketplaceLoops.retiredAt))
 
 	const allLoopIds = allLoops.map((l) => l.id)
 	const allItemTypes = await loadItemTypesByLoop(db, allLoopIds)
@@ -233,7 +239,9 @@ app.openapi(listMarketplaceLoopsRoute, (async (c) => {
 		byUseCase[useCaseKey] = (byUseCase[useCaseKey] ?? 0) + 1
 	}
 
-	const conditions = []
+	// Retired loops (dropped from the seed list) stay in the table for the
+	// installs that still point at them, but are not offered any more.
+	const conditions: (SQL | undefined)[] = [isNull(marketplaceLoops.retiredAt)]
 	if (use_case) conditions.push(eq(marketplaceLoops.useCase, use_case))
 	if (q) {
 		const pattern = `%${q}%`
@@ -261,7 +269,7 @@ app.openapi(listMarketplaceLoopsRoute, (async (c) => {
 	const filteredRows = await db
 		.select()
 		.from(marketplaceLoops)
-		.where(conditions.length > 0 ? and(...conditions) : undefined)
+		.where(and(...conditions))
 		.orderBy(asc(marketplaceLoops.name))
 
 	const filteredIds = filteredRows.map((r) => r.id)
@@ -769,6 +777,10 @@ app.openapi(uninstallItemRoute, (async (c) => {
 		})
 	})
 
+	if (type === 'actor' && !keepProvisionedItems) {
+		await removeDesktopsForActors(workspaceId, [entityId], createWorkspaceDesktopService(db))
+	}
+
 	if (removedSkillId) {
 		try {
 			await agentStorage.deleteWorkspaceSkill(workspaceId, removedSkillId)
@@ -869,11 +881,25 @@ app.openapi(installItemRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Marketplace item not found'), 404)
 	}
 
+	// A retired loop is no longer offered, so neither are its items. Mirrors the loop install route.
+	const [loop] = await db
+		.select({ retiredAt: marketplaceLoops.retiredAt })
+		.from(marketplaceLoops)
+		.where(eq(marketplaceLoops.id, item.loopId))
+		.limit(1)
+	if (loop?.retiredAt) {
+		return c.json(createApiError('NOT_FOUND', 'Marketplace item is no longer available'), 404)
+	}
+
 	const type = item.itemType as MarketplaceItemType
 	const snapshot = (item.itemSnapshot as Record<string, unknown>) ?? {}
 	// Individual-item installs are tracked by marketplace_item_id in metadata.
 	// No installed_loop_id is set so the version-push cron ignores them.
-	const meta = { marketplace_item_id: item.id, source_item_id: item.sourceItemId, snapshot }
+	const meta = {
+		marketplace_item_id: item.id,
+		source_item_id: item.sourceItemId,
+		snapshot: sanitizeSnapshotLlmConfig(snapshot),
+	}
 
 	const name = (snapshot.name as string) ?? 'Untitled'
 

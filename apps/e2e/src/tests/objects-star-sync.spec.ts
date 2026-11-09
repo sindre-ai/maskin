@@ -30,9 +30,9 @@ async function findRowStar(page: Page, title: string) {
 	// don't match a stale row from a prior seed.
 	const row = page.locator('[data-obj-id]').filter({ hasText: title }).first()
 	await expect(row).toBeVisible({ timeout: 15000 })
-	// Either "Star this object" or "Starred (click to remove)" — whichever the
+	// Either "Star this item" or "Starred (click to remove)" — whichever the
 	// current state is. The caller asserts the aria-pressed value after.
-	return row.getByRole('button', { name: /^(Star this object|Starred \(click to remove\))$/ })
+	return row.getByRole('button', { name: /^(Star this item|Starred \(click to remove\))$/ })
 }
 
 test.describe('D5 star cross-device sync', () => {
@@ -112,7 +112,7 @@ test.describe('D5 star cross-device sync', () => {
 			timeout: 15000,
 		})
 
-		const star = page.getByRole('button', { name: /^Star this object$/ })
+		const star = page.getByRole('button', { name: /^Star this item$/ })
 		await expect(star).toBeVisible()
 		await expect(star).toHaveAttribute('aria-pressed', 'false')
 		await star.click()

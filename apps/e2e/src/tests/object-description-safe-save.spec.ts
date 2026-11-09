@@ -2,7 +2,7 @@ import type { Page, Request } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
-// Object description on the rich editor (bet 666e3c4a), flag on. The editor
+// Object description on the rich editor (bet 666e3c4a). The editor
 // saves only the blocks the person touched, opens text it cannot split safely
 // read-only, and refuses a rewrite that would lose something. One PATCH per
 // blur, nothing sent when nothing changed.
@@ -58,9 +58,6 @@ const READ_ONLY_CASES: Array<[label: string, content: string, cause: string]> = 
 ]
 
 async function openDescription(page: Page, workspaceId: string, objectId: string) {
-	await page.addInitScript(() => {
-		localStorage.setItem('ff:rich-markdown-editor', 'on')
-	})
 	await page.goto(`/${workspaceId}/objects/${objectId}`)
 }
 
@@ -81,8 +78,8 @@ async function editor(page: Page) {
 }
 
 async function leaveEditor(page: Page) {
-	// The title field is the nearest other focus target on the page.
-	await page.locator('textarea').first().click()
+	// The comment box is the nearest other focus target on the page.
+	await page.getByRole('textbox', { name: 'Comment' }).click()
 }
 
 test.describe('Object description on the rich editor', () => {
@@ -122,7 +119,20 @@ test.describe('Object description on the rich editor', () => {
 		await openDescription(page, account.workspaceId, bet.id)
 		const pm = await editor(page)
 		await pm.locator('p').first().click()
-		await page.keyboard.press('End')
+		// Put the caret at the end of the paragraph without the End key: on macOS
+		// End scrolls the page instead of moving the caret, so the word would land
+		// wherever the click happened.
+		await pm
+			.locator('p')
+			.first()
+			.evaluate((el) => {
+				const range = document.createRange()
+				range.selectNodeContents(el)
+				range.collapse(false)
+				const selection = window.getSelection()
+				selection?.removeAllRanges()
+				selection?.addRange(range)
+			})
 		await page.keyboard.type(' Reviewed.')
 		await leaveEditor(page)
 		await expect.poll(() => writes.length).toBe(1)

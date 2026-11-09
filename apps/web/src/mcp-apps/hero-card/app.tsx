@@ -79,7 +79,7 @@ function HeroCardApp() {
 		)
 	}
 	if (!heroCard.object) {
-		return <CompactEmpty toolName={heroCard.tool} label="no object" />
+		return <CompactEmpty toolName={heroCard.tool} label="no item" />
 	}
 	return <HeroCardSingle object={heroCard.object} />
 }
@@ -289,13 +289,13 @@ function pickPluralLabel(toolName: string, schema: WorkspaceSchema | null, rows:
 	const types = new Set(rows.map((o) => o.type))
 	if (types.size === 1) {
 		const [only] = [...types]
-		const display = only ? (schema?.types?.[only]?.display_name ?? only) : 'Objects'
+		const display = only ? (schema?.types?.[only]?.display_name ?? only) : 'Items'
 		// Naive pluralisation — most schema display_names are short nouns.
 		// `display_name + 's'` is wrong for irregulars, so callers can override
 		// via the schema if needed.
 		return `${display.charAt(0).toUpperCase()}${display.slice(1)}${display.endsWith('s') ? '' : 's'}`
 	}
-	return 'Objects'
+	return 'Items'
 }
 
 function HeroCardList({

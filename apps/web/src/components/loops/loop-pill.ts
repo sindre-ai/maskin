@@ -6,8 +6,8 @@ export const LOOP_PILL_STYLES: Record<
 > = {
 	draft: { label: 'Draft', dot: 'bg-muted-foreground', text: 'text-muted-foreground' },
 	paused: { label: 'Paused', dot: 'bg-muted-foreground', text: 'text-muted-foreground' },
-	learning: { label: 'Learning', dot: 'bg-primary', text: 'text-foreground' },
-	supervised: { label: 'Supervised', dot: 'bg-primary', text: 'text-foreground' },
+	learning: { label: 'Learning', dot: 'bg-success', text: 'text-foreground' },
+	supervised: { label: 'Supervised', dot: 'bg-success', text: 'text-foreground' },
 	fully_autonomous: { label: 'Fully autonomous', dot: 'bg-success', text: 'text-success' },
 	waiting_on_you: { label: 'Waiting on you', dot: 'bg-warning', text: 'text-warning' },
 }

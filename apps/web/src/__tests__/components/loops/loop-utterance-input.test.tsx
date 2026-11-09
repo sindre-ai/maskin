@@ -10,7 +10,9 @@ vi.mock('@tanstack/react-router', () => ({
 	useNavigate: () => navigateMock,
 }))
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
 
@@ -42,10 +44,12 @@ beforeEach(() => {
 })
 
 describe('LoopUtteranceInput', () => {
-	it('renders the "Listening — speak in plain words" placeholder', () => {
+	it('renders the change-by-talking placeholder', () => {
 		render(<LoopUtteranceInput loop={buildLoopSummary({ id: 'loop-1' })} />)
 
-		expect(screen.getByPlaceholderText('Listening — speak in plain words')).toBeInTheDocument()
+		expect(
+			screen.getByPlaceholderText('Say what should change about this flow'),
+		).toBeInTheDocument()
 	})
 
 	it('sticks to the bottom of the reader column', () => {
@@ -60,7 +64,7 @@ describe('LoopUtteranceInput', () => {
 		)
 
 		await user.type(
-			screen.getByPlaceholderText('Listening — speak in plain words'),
+			screen.getByPlaceholderText('Say what should change about this flow'),
 			'Tighten the close timeline',
 		)
 		await user.click(screen.getByRole('button', { name: 'Send' }))
@@ -79,7 +83,10 @@ describe('LoopUtteranceInput', () => {
 			<LoopUtteranceInput loop={buildLoopSummary({ id: 'loop-1' })} onUtterance={onUtterance} />,
 		)
 
-		await user.type(screen.getByPlaceholderText('Listening — speak in plain words'), 'Close faster')
+		await user.type(
+			screen.getByPlaceholderText('Say what should change about this flow'),
+			'Close faster',
+		)
 		await user.click(screen.getByRole('button', { name: 'Send' }))
 
 		expect(onUtterance).toHaveBeenCalledWith('Close faster')

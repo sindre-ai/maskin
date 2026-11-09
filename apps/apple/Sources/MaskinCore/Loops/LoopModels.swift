@@ -80,18 +80,22 @@ public struct LoopSummary: Identifiable, Equatable, Sendable, Codable {
 	public var updatedAt: Date?
 	/// Nil (or empty) when the loop has no targets; optional so older cached snapshots still decode.
 	public var targets: [LoopTarget]?
+	/// `tags` on the loops list; optional so older cached snapshots still decode.
+	public var tags: [String]?
 
 	public init(
 		id: String, name: String?, content: String? = nil, status: LoopPill = .learning,
 		pill: LoopPill? = nil, entryCondition: String? = nil, closeCondition: String? = nil,
 		inProgressCount: Int = 0, closedCount: Int = 0, medianTimeToClose: TimeInterval? = nil,
 		agentIDs: [String] = [], triggerIDs: [String] = [], waitingCount: Int = 0,
-		createdAt: Date? = nil, updatedAt: Date? = nil, targets: [LoopTarget]? = nil
+		createdAt: Date? = nil, updatedAt: Date? = nil, targets: [LoopTarget]? = nil,
+		tags: [String]? = nil
 	) {
 		self.id = id
 		self.name = name
 		self.content = content
 		self.targets = targets
+		self.tags = tags
 		self.status = status
 		self.pill = pill ?? status
 		self.entryCondition = entryCondition
@@ -279,11 +283,14 @@ public struct LoopPost: Identifiable, Equatable, Sendable {
 	public var replyCount: Int
 	/// The post asks the viewer to choose; it also surfaces in For You.
 	public var isDecision: Bool
+	/// The decision's own title (its ask), when the post carries one.
+	public var decisionTitle: String?
 
 	public init(
 		id: Int, actorID: String?, text: String, date: Date? = nil, replyCount: Int = 0,
-		isDecision: Bool = false
+		isDecision: Bool = false, decisionTitle: String? = nil
 	) {
+		self.decisionTitle = decisionTitle
 		self.id = id
 		self.actorID = actorID
 		self.text = text
@@ -326,15 +333,19 @@ public struct LoopOverview: Equatable, Sendable {
 	public var outputs: [LoopOutput]
 	/// The workspace's configured statuses for the member type, in workflow order.
 	public var statusOrder: [String]
+	/// The loop object's `driver`: the agent accountable for the flow. Nil when it has none.
+	public var driverID: String?
 
 	public static let empty = LoopOverview(members: [], posts: [], outputs: [], statusOrder: [])
 
 	public init(
-		members: [LoopMember], posts: [LoopPost], outputs: [LoopOutput], statusOrder: [String]
+		members: [LoopMember], posts: [LoopPost], outputs: [LoopOutput], statusOrder: [String],
+		driverID: String? = nil
 	) {
 		self.members = members
 		self.posts = posts
 		self.outputs = outputs
 		self.statusOrder = statusOrder
+		self.driverID = driverID
 	}
 }

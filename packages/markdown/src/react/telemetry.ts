@@ -17,13 +17,6 @@ export type EditorVariant = 'document' | 'comment' | 'notification'
 
 export type SaveTrigger = 'blur' | 'submit'
 
-/** Truncation ceiling for `error_message` — matches `editor.tsx`'s existing rule. */
-const MAX_ERROR_MESSAGE_LENGTH = 500
-
-function truncateErrorMessage(msg: string): string {
-	return msg.length > MAX_ERROR_MESSAGE_LENGTH ? `${msg.slice(0, MAX_ERROR_MESSAGE_LENGTH)}…` : msg
-}
-
 /** Signature of the injected posthog `capture` function. */
 export type EditorTelemetryCapture = (event: string, properties: Record<string, unknown>) => void
 
@@ -60,7 +53,8 @@ export interface SavedEmitInput {
 }
 
 export interface ParseErrorEmitInput {
-	errorMessage: string
+	/** A fixed class or code (an error name, never its message), so no document text can ride along. */
+	errorClass: string
 	/** parse_error, read_only_fallback or loss_check. The flag ramp reads parse errors where this is not read_only_fallback. */
 	reason?: string
 	cause?: string
@@ -130,9 +124,9 @@ export function createEditorTelemetry(ctx: EditorTelemetryContext): EditorTeleme
 				save_trigger: saveTrigger,
 			})
 		},
-		emitParseError: ({ errorMessage, reason, cause, construct }) => {
+		emitParseError: ({ errorClass, reason, cause, construct }) => {
 			safeCapture('editor_markdown_parse_error', {
-				error_message: truncateErrorMessage(errorMessage),
+				error_class: errorClass,
 				variant,
 				surface,
 				object_id: objectId,

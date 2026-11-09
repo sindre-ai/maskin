@@ -23,12 +23,13 @@ import type { Database } from '@maskin/db'
 import { events, sessions } from '@maskin/db'
 import type { SessionResult } from '@maskin/shared'
 
-import { CHAT_RESUME_INTERIM_MESSAGE_ENABLED } from '../config/chat-resume'
 import { logger } from '../lib/logger'
+import { MAX_RETRY_ATTEMPTS } from '../lib/subscription-limit-reset'
 import { startSession } from './session-lifecycle'
+import { TaskSessionRestarter } from './task-session-restart'
 
 const TICK_MS = 30_000
-export const MAX_RETRY_ATTEMPTS = 5
+export { MAX_RETRY_ATTEMPTS }
 export const KILLSWITCH_ENV_VAR = 'FEATURE_RETRY_SCHEDULER'
 
 /** Row shape the scheduler cares about — every column it reads. */
@@ -51,11 +52,14 @@ type RetryableSession = {
 export class SessionRetryScheduler {
 	private timer: NodeJS.Timeout | null = null
 	private running = false
+	private taskRestarter: TaskSessionRestarter
 
 	constructor(
 		private db: Database,
 		private env: NodeJS.ProcessEnv = process.env,
-	) {}
+	) {
+		this.taskRestarter = new TaskSessionRestarter(db, env)
+	}
 
 	/** Start the tick loop. Idempotent — a second call is a no-op. */
 	start(): void {
@@ -110,6 +114,12 @@ export class SessionRetryScheduler {
 					}),
 				)
 			}
+
+			// Same tick, its own killswitch (FEATURE_TASK_SESSION_RESTART=0): restart agent
+			// sessions that ended early while their task is still in progress.
+			await this.taskRestarter
+				.sweep(now)
+				.catch((err) => logger.error('TaskSessionRestarter sweep failed', { error: String(err) }))
 		} finally {
 			this.running = false
 		}
@@ -208,20 +218,6 @@ export class SessionRetryScheduler {
 			retriedSessionId: newSessionId,
 			attemptNumber: row.attemptNumber + 1,
 		})
-
-		// §7.8 chat-resume interim message: on the retry schedule, atomically post
-		// a system message so the user sees "Claude is at limit — resuming at HH:MM"
-		// instead of a silent gap. Config flag lets Magnus flip to silence-then-resume
-		// without a code re-open. Only fires when the session was chat-shaped.
-		if (row.conversationId && CHAT_RESUME_INTERIM_MESSAGE_ENABLED && row.retryAt) {
-			await this.emitInterimChatMessage(row).catch((err) =>
-				logger.warn('SessionRetryScheduler failed to post interim chat message', {
-					sessionId: row.id,
-					conversationId: row.conversationId,
-					error: String(err),
-				}),
-			)
-		}
 	}
 
 	private async clearRetryAtForCap(row: RetryableSession): Promise<void> {
@@ -274,42 +270,6 @@ export class SessionRetryScheduler {
 			logger.warn('SessionRetryScheduler failed to insert audit event', {
 				sessionId: row.id,
 				action,
-				error: String(err),
-			})
-		}
-	}
-
-	private async emitInterimChatMessage(row: RetryableSession): Promise<void> {
-		if (!row.conversationId || !row.retryAt) return
-		const retryAtIso = row.retryAt.toISOString()
-		const minutes = Math.max(1, Math.round((row.retryAt.getTime() - Date.now()) / 60_000))
-		const hhmm = row.retryAt.toISOString().slice(11, 16)
-		const body =
-			`Claude is at limit — your last message will get an answer at ${hhmm} UTC ` +
-			`(in ~${minutes} minute${minutes === 1 ? '' : 's'}).`
-
-		// Recorded via the `events` audit trail — the conversation UI subscribes
-		// to the events channel via PG NOTIFY and renders a system row for the
-		// `chat_resume_interim_posted` action. Kept as an event, not a real
-		// conversation message row, so the CAS-owned message ordering isn't
-		// disturbed by a system emission the user can't reply to.
-		try {
-			await this.db.insert(events).values({
-				workspaceId: row.workspaceId,
-				actorId: row.actorId,
-				action: 'chat_resume_interim_posted',
-				entityType: 'session',
-				entityId: row.id,
-				data: {
-					conversationId: row.conversationId,
-					retryAt: retryAtIso,
-					body,
-				},
-			})
-		} catch (err) {
-			logger.warn('SessionRetryScheduler failed to insert chat_resume_interim_posted event', {
-				sessionId: row.id,
-				conversationId: row.conversationId,
 				error: String(err),
 			})
 		}

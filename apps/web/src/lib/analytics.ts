@@ -117,6 +117,35 @@ export function trackAgentSessionStarted(p: BaseProps & { entity_type: 'session'
 	trackEvent('agent_session_started', fillBase(p))
 }
 
+// The browser does not send agent_session_completed or trigger_fired: the
+// backend already reports completions (with trigger provenance), and the
+// browser copies were about half of all PostHog events, outside the backend
+// daily caps. This one event a day per browser says someone opened the app,
+// which is all the browser has to add. It is the daily and weekly active users
+// event.
+const APP_ACTIVE_DAY_KEY = 'maskin-app-active-day'
+
+// Kept in memory too, so a browser with no usable storage sends once per page
+// load instead of on every mount.
+let appActiveDaySent = ''
+
+// Returns true when it sent the event, false when today's was already sent from
+// this browser. `utc_day` is the same day format as the backend's
+// loop_active_day. Call it after identify so the event lands on the person.
+export function trackAppActive(now: Date = new Date()): boolean {
+	const utcDay = now.toISOString().slice(0, 10)
+	if (appActiveDaySent === utcDay) return false
+	appActiveDaySent = utcDay
+	try {
+		if (localStorage.getItem(APP_ACTIVE_DAY_KEY) === utcDay) return false
+		localStorage.setItem(APP_ACTIVE_DAY_KEY, utcDay)
+	} catch {
+		// No storage: the in-memory record above still stops repeats this page load.
+	}
+	trackEvent('app_active', { utc_day: utcDay })
+	return true
+}
+
 // Operator opened a chat with Maskin (Sindre, or a one-shot agent via the `/`
 // picker). Powers the founder-substitution measurement on the
 // `Chat — Maskin becomes the operator's default AI client` bet: counted against
@@ -199,40 +228,33 @@ export function deriveEntryAgentRole(name: string | null | undefined): string | 
 		.replace(/^-+|-+$/g, '')
 }
 
-// G2 trigger provenance. `trigger_id` / `trigger_type` are present only for
-// trigger-dispatched sessions (`cron` / `event` / `reminder`); they are null for
-// comment-fallback, interactive, and API-created sessions, whose attribution
-// rides on `source` instead. Emitted on the same event so the skill-load rate
-// can be segmented cron-vs-event.
-export function trackAgentSessionCompleted(
-	p: BaseProps & {
-		entity_type: 'session'
-		outcome: 'completed' | 'failed' | 'timeout'
-		trigger_id?: string | null
-		trigger_type?: string | null
-	},
-): void {
-	trackEvent('agent_session_completed', {
-		...fillBase(p),
-		outcome: p.outcome,
-		trigger_id: p.trigger_id ?? null,
-		trigger_type: p.trigger_type ?? null,
-	})
+export type CommentLengthBucket = '1-50' | '51-200' | '201-1000' | '1000+'
+
+export interface CommentShape {
+	is_multiline: boolean
+	length_bucket: CommentLengthBucket
+}
+
+// What a comment looks like without what it says: PostHog never gets the text.
+export function commentShape(text: string): CommentShape {
+	const length = text.trim().length
+	return {
+		is_multiline: text.trim().includes('\n'),
+		length_bucket:
+			length <= 50 ? '1-50' : length <= 200 ? '51-200' : length <= 1000 ? '201-1000' : '1000+',
+	}
 }
 
 export function trackCommentPosted(
-	p: BaseProps & { is_reply: boolean; attachment_count: number; content: string },
+	p: BaseProps & CommentShape & { is_reply: boolean; attachment_count: number },
 ): void {
 	trackEvent('comment_posted', {
 		...fillBase(p),
 		is_reply: p.is_reply,
 		attachment_count: p.attachment_count,
-		content: p.content,
+		is_multiline: p.is_multiline,
+		length_bucket: p.length_bucket,
 	})
-}
-
-export function trackTriggerFired(p: BaseProps & { entity_type: 'trigger' }): void {
-	trackEvent('trigger_fired', { ...fillBase(p), source: 'trigger' })
 }
 
 // `source` on `relationship_created` is the UI attribution point Analytics
@@ -280,10 +302,133 @@ export function trackObjectAttachedFile(
 // id) to count workspaces where the same mini-app was opened on 7 consecutive
 // days, so exactly-once-per-open emission is enforced at the call site.
 
-export function trackMiniAppFileViewed(
-	p: BaseProps & { entity_type: 'file'; file_name: string },
+export function trackMiniAppFileViewed(p: BaseProps & { entity_type: 'file' }): void {
+	trackEvent('mini_app_file_viewed', fillBase(p))
+}
+
+// Usage questions the weekly data pack could not answer. Each fires once per
+// open, with `workspace_id` / `actor_id` riding as super-properties, and carries
+// ids only: no titles, names or text.
+//
+// A person opened a knowledge page. `entity_id` is the knowledge object id.
+export function trackKnowledgePageViewed(p: BaseProps & { entity_type: 'knowledge' }): void {
+	trackEvent('knowledge_page_viewed', fillBase(p))
+}
+
+// A person opened a briefing: a For You story card, or a deck in the file
+// viewer. `entity_id` is the file id.
+export type BriefingKind = 'story' | 'deck'
+
+export function trackBriefingViewed(
+	p: BaseProps & { entity_type: 'file'; kind: BriefingKind },
 ): void {
-	trackEvent('mini_app_file_viewed', { ...fillBase(p), file_name: p.file_name })
+	trackEvent('briefing_viewed', { ...fillBase(p), kind: p.kind })
+}
+
+// Feature usage events. Each carries `feature_area` so a dashboard can read use
+// per area, and ids only: no titles, names or text. `workspace_id`, `actor_id` and
+// `actor_type` ride as super-properties.
+export type FeatureArea = 'objects' | 'loops' | 'agents' | 'chats' | 'billing'
+
+// A person opened an object page. `object_type` is the object's `type` column
+// (bet, task, insight, knowledge and so on), so knowledge pages are covered.
+export function trackObjectViewed(p: { entity_id: string; object_type: string }): void {
+	trackEvent('object_viewed', {
+		...fillBase({ entity_id: p.entity_id, entity_type: 'object' }),
+		object_type: p.object_type,
+		feature_area: 'objects',
+	})
+}
+
+export function trackLoopViewed(p: { entity_id: string }): void {
+	trackEvent('loop_viewed', {
+		...fillBase({ entity_id: p.entity_id, entity_type: 'loop' }),
+		feature_area: 'loops',
+	})
+}
+
+export function trackAgentOpened(p: { entity_id: string }): void {
+	trackEvent('agent_opened', {
+		...fillBase({ entity_id: p.entity_id, entity_type: 'agent' }),
+		feature_area: 'agents',
+	})
+}
+
+// The first agent reply landed in a chat the person had open. `latency_ms` runs
+// from the person's last message before it.
+export function trackChatFirstReplyReceived(p: {
+	entity_id: string
+	latency_ms: number | null
+}): void {
+	trackEvent('chat_first_reply_received', {
+		...fillBase({ entity_id: p.entity_id, entity_type: 'conversation' }),
+		latency_ms: p.latency_ms,
+		feature_area: 'chats',
+	})
+}
+
+// The person left a chat they wrote in. `replied` means an agent had answered by
+// then, `abandoned` means they left with no answer. A chat they only read sends
+// nothing.
+export type ChatLeftOutcome = 'replied' | 'abandoned'
+
+export function trackChatLeft(p: { entity_id: string; outcome: ChatLeftOutcome }): void {
+	trackEvent('chat_left', {
+		...fillBase({ entity_id: p.entity_id, entity_type: 'conversation' }),
+		outcome: p.outcome,
+		feature_area: 'chats',
+	})
+}
+
+const creditLowShown = new Set<string>()
+
+// The no-credits notice was put in front of the person. `placement` says which
+// one (`surface` is taken: it names web, iPhone or server).
+export function trackCreditLowShown(p: {
+	placement: 'banner' | 'object_chip'
+	plan: string
+}): void {
+	// Once per notice per page load: the chip remounts on every object page.
+	const key = `${p.placement}:${p.plan}`
+	if (creditLowShown.has(key)) return
+	creditLowShown.add(key)
+	trackEvent('credit_low_shown', {
+		placement: p.placement,
+		plan: p.plan,
+		feature_area: 'billing',
+	})
+}
+
+// The person clicked an upgrade or renew button. `source` is where the button is.
+export function trackUpgradeClicked(p: {
+	source: 'billing_settings' | 'expired_dialog'
+	target_plan: 'pro' | 'team'
+	current_plan: string
+}): void {
+	trackEvent('upgrade_clicked', {
+		source: p.source,
+		target_plan: p.target_plan,
+		current_plan: p.current_plan,
+		feature_area: 'billing',
+	})
+}
+
+// Agent change review: fires when the human opens the review view from the
+// proposal banner. The other two review events (change_proposal_submitted,
+// change_reviewed) are sent from the server. Only mounted behind the
+// agent-change-review flag, so with the flag off it cannot fire.
+export function trackChangeReviewOpened(p: {
+	workspace_id: string
+	actor_id: string | null
+	file_name: string
+	proposal_id: string
+}): void {
+	trackEvent('change_review_opened', {
+		workspace_id: p.workspace_id,
+		actor_id: p.actor_id,
+		file_name: p.file_name,
+		proposal_id: p.proposal_id,
+	})
 }
 
 // iPadOS 13+ reports `MacIntel` from `navigator.userAgent` / `navigator.platform`
@@ -326,12 +471,11 @@ export function trackChatObjectReferenceCreated(p: {
 
 // Fires when the `/` picker's Reference search endpoint fails. Paired at query
 // time with `chat_object_reference_created` to compute error-rate on the
-// picker; the message is truncated so posthog-js's batching doesn't reject a
-// long payload on a slow network. See the parent bet's "Retry works from the
+// picker; it carries the error name only, never the message. See the parent bet's "Retry works from the
 // error state" gate.
-export function trackChatSlashPickerError(p: { message: string }): void {
+export function trackChatSlashPickerError(p: { errorClass: string }): void {
 	trackEvent('chat_slash_picker_error', {
-		message: p.message.slice(0, 200),
+		error_class: p.errorClass,
 		source: 'web',
 	})
 }
@@ -657,15 +801,16 @@ export function trackSearchResultOpened(
 	})
 }
 
-export type SearchFilterDimension = 'type' | 'status' | 'updated' | 'sort' | 'clear'
+export type SearchFilterDimension = 'type' | 'status' | 'participant' | 'updated' | 'sort' | 'clear'
 export type SearchFilterAction = 'add' | 'remove' | 'set' | 'reset'
 export type SearchFilterKind = 'chip' | 'pill' | 'display_menu' | 'clear_button'
 export type SearchFilterVia = 'click' | 'tab' | 'backspace' | 'typed' | 'keyboard'
 
 // Fires when a person changes a search filter on the v2 page: a chip, a pill, the
 // Display menu or Clear filters. Never fires for a change that comes from the URL
-// (a reload, back, a hand-over). `value` is a type key, a status group key or a
-// sort / updated key, empty for a clear. Never carries the query text.
+// (a reload, back, a hand-over). `value` is a type key, a status group key, an actor id
+// (participant, never sent) or a sort / updated key, empty for a clear. Never carries the query text.
+// For the participant dimension the value is an actor id, so it is dropped here.
 export function trackSearchFilterChanged(p: {
 	surface: SearchSurface
 	dimension: SearchFilterDimension
@@ -674,7 +819,8 @@ export function trackSearchFilterChanged(p: {
 	kind: SearchFilterKind
 	via: SearchFilterVia
 }): void {
-	trackEvent('search_filter_changed', { ...p, ui_version: 'v2', source: 'web' })
+	const value = p.dimension === 'participant' ? undefined : p.value
+	trackEvent('search_filter_changed', { ...p, value, ui_version: 'v2', source: 'web' })
 }
 
 // Ship-metric event for the language-only loop builder bet — fires once when

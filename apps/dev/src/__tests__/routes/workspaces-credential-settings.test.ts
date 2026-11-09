@@ -53,7 +53,7 @@ describe('Workspace credential settings by caller', () => {
 		it.each([
 			['human owner', 'owner'],
 			['human admin', 'admin'],
-		])('gives a %s the stored settings, and llm_configured', async (_l, role) => {
+		])('gives a %s the settings without any key, plus llm_configured', async (_l, role) => {
 			const ws = { ...buildSecretWorkspace(), role }
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.select = [ws]
@@ -61,8 +61,16 @@ describe('Workspace credential settings by caller', () => {
 			const res = await app.request(jsonGet('/api/workspaces'))
 
 			const [row] = await res.json()
-			expect(row.settings).toEqual(ws.settings)
+			expect(row.settings).toEqual({
+				...SHARED_SETTINGS,
+				custom_llm: { enabled: true, model: 'model-a' },
+				claude_oauth: { primary: { access_token: 'fake-oauth-token' } },
+				billing: { plan: 'team', stripe_customer_id: 'cus_fake' },
+			})
 			expect(row.llm_configured).toEqual({ anthropic: true, openai: false, custom_llm: true })
+			for (const secret of ['sk-ant-fake-stored', 'sk-fake-custom']) {
+				expect(JSON.stringify(row)).not.toContain(secret)
+			}
 		})
 
 		it('reports llm_configured false for a workspace with no stored key', async () => {
@@ -146,7 +154,7 @@ describe('Workspace credential settings by caller', () => {
 			expect(body.llm_configured.anthropic).toBe(true)
 		})
 
-		it('returns a human owner the stored settings, as before', async () => {
+		it('returns a human owner the settings without any key', async () => {
 			const ws = buildSecretWorkspace()
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.selectQueue = [MEMBER, [ws], HUMAN_OWNER]
@@ -159,8 +167,12 @@ describe('Workspace credential settings by caller', () => {
 			)
 
 			const body = await res.json()
-			expect(body.settings).toEqual(ws.settings)
+			expect(body.settings.llm_keys).toBeUndefined()
+			expect(body.settings.custom_llm).toEqual({ enabled: true, model: 'model-a' })
 			expect(body.llm_configured).toEqual({ anthropic: true, openai: false, custom_llm: true })
+			for (const secret of ['sk-ant-fake-stored', 'sk-fake-custom']) {
+				expect(JSON.stringify(body)).not.toContain(secret)
+			}
 		})
 
 		it('writes an updated event with field names only and no settings values', async () => {

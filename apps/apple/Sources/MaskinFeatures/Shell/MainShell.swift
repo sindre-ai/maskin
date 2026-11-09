@@ -6,11 +6,11 @@ import SwiftUI
 /// The signed-in app: a tab bar on iPhone that becomes a sidebar on iPad and Mac, from one
 /// declaration (`.sidebarAdaptable`).
 ///
-/// Four tabs (For you, Team, Flows, Objects) and the trailing system search tab. No More tab: the
+/// Four tabs (For you, Team, Flows, Objects) and the trailing round "+" (a chat with the Chief of Staff). No More tab: the
 /// avatar on every root screen opens the profile sheet (`ProfileSheet`).
 ///
 /// CONTRACT FOR SCREENS. Each tab hosts a screen taking `AppEnvironment`:
-/// `ForYouScreen`, `ChatsScreen`, `LoopsScreen`, `ObjectsScreen`, `SearchScreen`. A screen OWNS its
+/// `ForYouScreen`, `ChatsScreen`, `LoopsScreen`, `ObjectsScreen`. A screen OWNS its
 /// `NavigationStack` (or split view) and applies `.shellToolbar(environment:)` to its root content
 /// so its bar items and the profile avatar appear.
 public struct MainShell: View {
@@ -18,11 +18,34 @@ public struct MainShell: View {
 	@Bindable private var runtime: AppRuntime
 	@State private var badges = ShellBadges()
 	@State private var liveCalls = LiveCallCenter()
+	@State private var pictures = ActorPicturesStore()
+	/// The offline banner's View: what is waiting to send.
+	@State private var showQueue = false
+	/// Settings > Advanced > Preview > Show offline banner: draws the banner without losing the connection.
+	@AppStorage(StatePreview.offlineKey) private var previewOffline = false
+	@Environment(\.scenePhase) private var scenePhase
 
 	public init(environment: AppEnvironment, runtime: AppRuntime) {
 		self.environment = environment
 		self.runtime = runtime
 		TabBarBadgeStyle.applyOnce()
+	}
+
+	private var analytics: Analytics { .shared }
+
+	private static func trackScreen(_ tab: ShellTab) {
+		let area: AnalyticsFeatureArea? =
+			switch tab {
+			case .forYou: .forYou
+			case .chats: .chats
+			case .loops: .loopsTriggers
+			case .objects: .objects
+			case .search: .search
+			case .newChat: nil
+			}
+		// "+" and Search never stay selected; they open a chat and a sheet, counted where they land.
+		guard tab != .newChat, tab != .search else { return }
+		Analytics.shared.screen(tab.title, area: area)
 	}
 
 	public var body: some View {
@@ -31,7 +54,7 @@ public struct MainShell: View {
 				AdaptiveTabs(environment: environment, runtime: runtime, badges: badges)
 			} else {
 				TabView(selection: $runtime.selectedTab) {
-					ForEach(ShellTab.allCases) { tab in
+					ForEach(ShellTab.primary) { tab in
 						ShellTabContent(tab: tab, environment: environment, runtime: runtime)
 							.tabItem { Label(tab.title, systemImage: tab.systemImage) }
 							.badge(tab.badge(runtime: runtime, badges: badges).label.map { Text($0) })
@@ -49,7 +72,16 @@ public struct MainShell: View {
 				liveCalls.present(request, environment: environment)
 			}
 		)
-		.task(id: environment.workspaceId) { await badges.start(environment: environment) }
+		.task(id: environment.workspaceId) {
+			Perf.event("shell.task")
+			await badges.start(environment: environment)
+		}
+		// Profile pictures: loaded per workspace and again on return to the app, so one set on the web shows.
+		.environment(\.actorPictures, ActorPictures { [pictures] in pictures.url(for: $0) })
+		.task(id: environment.workspaceId) { await pictures.load(environment: environment) }
+		.onChange(of: scenePhase) { _, phase in
+			if phase == .active { Task { await pictures.load(environment: environment) } }
+		}
 		.onAppear {
 			// A call keeps running wherever you are; this returns you to its thread.
 			liveCalls.openConversation = { [runtime] id in
@@ -58,9 +90,10 @@ public struct MainShell: View {
 				runtime.requestedConversationId = id
 			}
 		}
-		// While a call runs, every screen but its own thread carries a pill to get back to it.
+		// While a call runs, every screen where its own panel is not on show carries a pill to get
+		// back to it. The pill follows the panel itself, not a marker for which thread is open.
 		.safeAreaInset(edge: .bottom, spacing: 0) {
-			if let call = liveCalls.current, liveCalls.visibleConversationID != call.chat.conversationID {
+			if let call = liveCalls.current, liveCalls.showsPill {
 				LiveCallPill(
 					session: call, onOpen: { liveCalls.openConversation(call.chat.conversationID) },
 					onEnd: { liveCalls.end() }
@@ -74,15 +107,23 @@ public struct MainShell: View {
 			"Can't start the call", isPresented: Binding(get: { liveCalls.problem != nil }, set: { if !$0 { liveCalls.problem = nil } }),
 			actions: { Button("OK", role: .cancel) {} }, message: { Text(liveCalls.problem ?? "") })
 		.focusedSceneValue(\.appRuntime, runtime)
+		.sheet(isPresented: $showQueue) { OutboxQueueSheet(queue: queue) }
 		.safeAreaInset(edge: .top, spacing: 0) {
-			OfflineBanner(isVisible: !runtime.isOnline, message: offlineMessage) {
-				Task {
-					runtime.syncCoordinator?.requestRefresh(reason: "retry")
-					await runtime.forYou.store.refresh()
+			OfflineBanner(
+				isVisible: !runtime.isOnline || previewOffline, message: offlineMessage, symbol: "icloud.slash",
+				actionTitle: queuedCount > 0 ? "View" : "Retry"
+			) {
+				if queuedCount > 0 {
+					showQueue = true
+				} else {
+					Task {
+						runtime.syncCoordinator?.requestRefresh(reason: "retry")
+						await runtime.forYou.store.refresh()
+					}
 				}
 			}
 				.padding(.horizontal, MaskinSpace.s8)
-				.animation(MaskinMotion.standard, value: runtime.isOnline)
+				.animation(MaskinMotion.standard, value: runtime.isOnline || previewOffline)
 		}
 		// A decision is on screen: the moment to explain notifications (never at first launch).
 		.onChange(of: runtime.forYou.store.needsCount, initial: true) { _, count in
@@ -101,7 +142,30 @@ public struct MainShell: View {
 				}
 			}
 		}
-		.sheet(item: $runtime.presentation) { presentation in
+		// The one-time usage question. Waits its turn behind any other sheet. Swiping it away counts as no.
+		.background {
+			Color.clear.sheet(
+				isPresented: Binding(
+					get: {
+						analytics.needsConsentPrompt && runtime.presentation == nil
+							&& runtime.notificationPrompt?.isPresented != true
+					},
+					set: { if !$0, analytics.consent == .undecided { analytics.setConsent(false) } })
+			) {
+				AnalyticsConsentSheet(
+					onShare: { analytics.setConsent(true) }, onNoThanks: { analytics.setConsent(false) })
+			}
+		}
+		// Screen views: the tab on show, and the two sheets that are screens of their own.
+		.onChange(of: runtime.selectedTab, initial: true) { _, tab in Self.trackScreen(tab) }
+		.onChange(of: runtime.presentation) { _, presentation in
+			switch presentation {
+			case .search: analytics.screen("Search", area: .search)
+			case .settings: analytics.screen("Settings", area: .settings)
+			default: break
+			}
+		}
+		.sheet(item: $runtime.presentation, onDismiss: { runtime.deviceCode = nil }) { presentation in
 			PresentationContent(
 				presentation: presentation, environment: environment, runtime: runtime)
 		}
@@ -111,12 +175,18 @@ public struct MainShell: View {
 			message: { Text(runtime.rejectionMessage ?? "") })
 	}
 
-	/// "Can't reach Maskin. Showing what we had at 08:14. Decisions queue offline."
+	private var queue: OutboxQueue {
+		OutboxQueue(outboxes: [runtime.forYou.outbox, ChatsRuntime.shared(environment: environment).outbox])
+	}
+
+	/// Writes (decisions, messages) still waiting for the connection, across For you and Chats.
+	private var queuedCount: Int { queue.entries.count }
+
+	/// "Offline. 3 waiting to send." With nothing queued: "Can't reach Maskin. Showing what we had at 08:14."
 	private var offlineMessage: String {
-		var text = "Can\u{2019}t reach Maskin. " + OfflineCopy.message(since: runtime.forYou.store.freshness.updatedAt)
-		let queued = runtime.forYou.outbox.pendingCount
-		if queued > 0 { text += " \(queued) waiting to send." }
-		return text
+		let queued = queuedCount
+		if queued > 0 { return "Offline. \(queued) waiting to send." }
+		return "Can\u{2019}t reach Maskin. " + OfflineCopy.message(since: runtime.forYou.store.freshness.updatedAt)
 	}
 
 	private var rejectionBinding: Binding<Bool> {
@@ -141,10 +211,12 @@ private struct AdaptiveTabs: View {
 				}
 				.badge(tab.badge(runtime: runtime, badges: badges).label.map { Text($0) })
 			}
-			// The system search role: a detached search button on iOS 26 (a plain trailing tab
-			// before that, a sidebar entry on iPad and the Mac). The only search entry point.
-			Tab(value: ShellTab.search, role: .search) {
-				ShellTabContent(tab: .search, environment: environment, runtime: runtime)
+			// The detached round button on iOS 26 (a plain trailing tab before that, a sidebar entry
+			// on iPad and the Mac). It rides the system search role for the detached look, but it is a
+			// button: picking it starts a chat with the Chief of Staff (see `AppRuntime.selectedTab`)
+			// and the tab you were on stays. Search lives in the profile sheet.
+			Tab(ShellTab.newChat.title, systemImage: ShellTab.newChat.systemImage, value: ShellTab.newChat, role: .search) {
+				Color.clear
 			}
 		}
 		.tabViewStyle(.sidebarAdaptable)
@@ -152,14 +224,19 @@ private struct AdaptiveTabs: View {
 		.tabViewSidebarHeader { SidebarWorkspaceHeader(name: environment.workspaces.selected?.name) { showWorkspaces = true } }
 		// The profile lives at the foot of the sidebar too (4-iPad.md).
 		.tabViewSidebarFooter {
-			SidebarProfileRow(name: environment.auth.session?.name) { runtime.showProfile = true }
+			SidebarProfileRow(
+				name: environment.auth.session?.name, actorID: environment.auth.session?.actorId
+			) { runtime.showProfile = true }
 		}
 		.sheet(isPresented: $showWorkspaces) {
 			WorkspaceSwitcher(environment: environment)
 				.presentationDetents([.medium, .large])
 				.environment(\.shellShowsAvatar, false)
 		}
-		.keepTabBarExpanded()
+		.modifier(TeamFoldingTabBar(runtime: runtime))
+		#if canImport(UIKit) && !os(watchOS) && !os(tvOS)
+			.background { TabBarBadgeStyler().frame(width: 0, height: 0) }
+		#endif
 	}
 }
 
@@ -188,13 +265,14 @@ private struct SidebarWorkspaceHeader: View {
 /// The signed-in person at the foot of the iPad sidebar; opens the profile.
 private struct SidebarProfileRow: View {
 	let name: String?
+	let actorID: String?
 	let open: () -> Void
 
 	var body: some View {
 		if let name {
 			Button(action: open) {
 				HStack(spacing: MaskinSpace.s5) {
-					ShellNavAvatar(name: name)
+					ShellNavAvatar(name: name, actorID: actorID)
 					Text(name).maskinText(.headline).foregroundStyle(MaskinColor.ink).lineLimit(1)
 					Spacer(minLength: 0)
 				}
@@ -227,15 +305,28 @@ private struct PresentationContent: View {
 			DetailSheet { AgentDetailScreen(environment: environment, agentId: id) }
 		case .file(let id):
 			DetailSheet { FileScreen(environment: environment, fileId: id) }
+		case .triggers(let id):
+			if let workspaceID = environment.workspaceId {
+				TriggersSheet(environment: environment, workspaceID: workspaceID, initialSelection: id)
+			}
 		case .profile:
 			ProfileSheet(environment: environment, runtime: runtime)
 		case .files:
 			FilesListScreen(environment: environment, onDone: { runtime.showFiles = false })
 		case .agents:
 			AgentsScreen(environment: environment)
+		case .search:
+			SearchScreen(environment: environment) { runtime.openSearchResult($0) }
 		case .settings:
-			SettingsScreen(environment: environment)
-				.environment(runtime)
+			Group {
+				if let code = runtime.deviceCode {
+					SettingsScreen(environment: environment, deviceCode: code)
+				} else {
+					SettingsScreen(environment: environment)
+				}
+			}
+			.id(runtime.deviceCode)
+			.environment(runtime)
 		}
 	}
 }
@@ -246,16 +337,20 @@ private struct ShellTabContent: View {
 	@Bindable var runtime: AppRuntime
 
 	var body: some View {
+		screen.tabStateOverride(tab)
+	}
+
+	@ViewBuilder private var screen: some View {
 		switch tab {
 		case .forYou:
 			ForYouScreen(environment: environment) { runtime.openObject($0) }
 		case .chats:
 			ChatsScreen(
 				environment: environment, requestedConversationId: $runtime.requestedConversationId)
-		case .loops: LoopsScreen(environment: environment)
+		case .loops: LoopsScreen(environment: environment, requestedLoopId: $runtime.requestedLoopId)
 		case .objects: ObjectsScreen(environment: environment)
-		case .search:
-			SearchScreen(environment: environment) { runtime.openSearchResult($0) }
+		case .search, .newChat:
+			EmptyView()
 		}
 	}
 }
@@ -273,19 +368,6 @@ extension ShellTab {
 		case .chats: return .make(count: badges.unreadChats)
 		default: return .none
 		}
-	}
-}
-
-extension View {
-	/// iOS 26: the tab bar stays expanded, every tab visible, however far the content scrolls.
-	/// No-op elsewhere.
-	fileprivate func keepTabBarExpanded() -> some View {
-		#if os(iOS)
-			if #available(iOS 26, *) {
-				return AnyView(tabBarMinimizeBehavior(.never))
-			}
-		#endif
-		return AnyView(self)
 	}
 }
 

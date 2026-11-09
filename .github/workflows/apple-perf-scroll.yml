@@ -1,0 +1,177 @@
+name: Apple scroll perf (manual)
+
+# Manually triggered. Records scroll hitch, memory and clock for the long chat thread and the
+# For you feed (apps/apple/scripts/perf-scroll.sh, ScrollPerfTests) on a hosted Mac runner, so the
+# numbers for a performance budget do not depend on someone having a quiet Mac.
+#
+# Run it from Actions > "Apple scroll perf (manual)" > Run workflow. It starts 3 runs in parallel,
+# each on its own runner, so the spread between runs shows how much the runner itself moves.
+#
+# What it is not:
+#   - Not a pull request, push or schedule check, and no pass/fail gate. It reports numbers only.
+#   - Not device speed. Debug build, simulator, instant demo server (DEMO_PERF=1): the numbers
+#     show relative cost between builds, nothing about an iPhone.
+#   - Hosted runners are shared hardware. Load average is logged before the build, before the test
+#     and after it, so a noisy run can be told apart from a clean one.
+#
+# Cost: macOS minutes are about 10x Linux. A run is roughly 30 to 40 Mac minutes (most of it the
+# Debug build), times 3. The job limit of 45 minutes is a hang guard.
+#
+# Output per run: the step summary (medians and range per screen, plus the environment) and the
+# `perf-scroll-<run>` artifact (environment.txt, medians.txt, build.log, test.log, server.log).
+
+on:
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: Measured iterations per test (PERF_ITERATIONS in perf-scroll.sh)
+        required: false
+        default: '5'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  perf-scroll:
+    name: perf-scroll (run ${{ matrix.run }})
+    runs-on: macos-26
+    timeout-minutes: 45
+    strategy:
+      # One slow or failed run should not hide the other two.
+      fail-fast: false
+      matrix:
+        run: [1, 2, 3]
+    env:
+      OUT: ${{ github.workspace }}/perf-out
+      # Job-level env has no `runner` or `steps` context, so this cannot use runner.temp.
+      DERIVED: ${{ github.workspace }}/maskin-perf-dd
+      PERF_ITERATIONS: ${{ inputs.iterations }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Select Xcode 26
+        run: |
+          set -euo pipefail
+          xcode=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)
+          if [ -z "$xcode" ]; then
+            echo "::error::No Xcode 26.x on this runner image (needed for iOS 26 APIs / Swift 6.x). Installed:"
+            ls -d /Applications/Xcode*.app || true
+            exit 1
+          fi
+          sudo xcode-select -s "$xcode/Contents/Developer"
+          xcodebuild -version
+
+      # The demo server uses only Node built-ins, so no pnpm install.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Create an iPhone simulator
+        id: sim
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUT"
+          runtime_id() {
+            xcrun simctl list -j runtimes available |
+              jq -r '[.runtimes[] | select(.platform == "iOS" or (.identifier | test("SimRuntime.iOS")))] | sort_by(.version | split(".") | map(tonumber)) | last | .identifier // empty'
+          }
+          runtime=$(runtime_id)
+          if [ -z "$runtime" ]; then
+            echo "No iOS simulator runtime on this image, downloading one."
+            xcodebuild -downloadPlatform iOS
+            runtime=$(runtime_id)
+          fi
+          if [ -z "$runtime" ]; then
+            echo "::error::No iOS simulator runtime available."
+            exit 1
+          fi
+          # Take the iPhone model from this runtime's own list. The global device type list also
+          # holds models that need a newer runtime than the image has, and simctl create then fails
+          # with "Incompatible device" (seen on the first dispatch).
+          devicetype=$(xcrun simctl list -j runtimes available |
+            jq -r --arg rt "$runtime" '[.runtimes[] | select(.identifier == $rt) | .supportedDeviceTypes[] | select(.productFamily == "iPhone")] | last | .identifier // empty')
+          echo "runtime: $runtime"
+          echo "device type: ${devicetype:-none}"
+          if [ -z "$devicetype" ]; then
+            echo "::error::The iOS runtime lists no iPhone device type. Runtimes on this image:"
+            xcrun simctl list runtimes available
+            exit 1
+          fi
+          udid=$(xcrun simctl create "perf-${{ matrix.run }}" "$devicetype" "$runtime")
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+          echo "runtime=$runtime" >> "$GITHUB_OUTPUT"
+          echo "devicetype=$devicetype" >> "$GITHUB_OUTPUT"
+
+      - name: Record the environment
+        run: |
+          {
+            echo "run: ${{ matrix.run }} of 3"
+            echo "date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "commit: ${{ github.sha }}"
+            echo "runner image: ${ImageOS:-unknown} ${ImageVersion:-unknown}"
+            echo "macOS: $(sw_vers -productVersion) ($(sw_vers -buildVersion))"
+            echo "cpu: $(sysctl -n machdep.cpu.brand_string) x $(sysctl -n hw.ncpu), $(( $(sysctl -n hw.memsize) / 1073741824 )) GB"
+            xcodebuild -version | tr '\n' ' '; echo
+            echo "simulator runtime: ${{ steps.sim.outputs.runtime }}"
+            echo "simulator device type: ${{ steps.sim.outputs.devicetype }}"
+            echo "simulator udid: ${{ steps.sim.outputs.udid }}"
+            echo "iterations per test: ${PERF_ITERATIONS}"
+            echo "load average before build: $(sysctl -n vm.loadavg)"
+          } | tee "$OUT/environment.txt"
+
+      # Build first (SKIP_BUILD in the run step reuses it) so the load average can be read between
+      # the build and the test: the build leaves the machine busy for a moment.
+      - name: Build for testing
+        working-directory: apps/apple
+        run: |
+          set -euo pipefail
+          xcodegen generate >/dev/null
+          xcodebuild -project Maskin.xcodeproj -scheme Maskin \
+            -destination "id=${{ steps.sim.outputs.udid }}" -configuration Debug \
+            -derivedDataPath "$DERIVED" CODE_SIGNING_ALLOWED=NO \
+            "MASKIN_API_BASE_URL=http://localhost:3010" \
+            build-for-testing >"$OUT/build.log" 2>&1 || { tail -40 "$OUT/build.log"; exit 1; }
+
+      - name: Run scroll perf tests
+        working-directory: apps/apple
+        env:
+          SIM: ${{ steps.sim.outputs.udid }}
+          SKIP_BUILD: '1'
+        run: |
+          set -euo pipefail
+          # Let the build settle, then log the load the test starts under.
+          sleep 30
+          echo "load average before test: $(sysctl -n vm.loadavg)" | tee -a "$OUT/environment.txt"
+          scripts/perf-scroll.sh | tee "$OUT/medians.txt"
+          echo "load average after test: $(sysctl -n vm.loadavg)" | tee -a "$OUT/environment.txt"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Scroll perf, run ${{ matrix.run }} of 3"
+            echo
+            echo "Simulator numbers show relative cost, not device speed."
+            echo
+            echo '```'
+            cat "$OUT/environment.txt" 2>/dev/null || true
+            echo '```'
+            echo
+            echo '```'
+            cat "$OUT/medians.txt" 2>/dev/null || echo "no medians (see test.log in the artifact)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # always(): a timeout cancel is exactly when the logs are needed.
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-scroll-${{ matrix.run }}
+          path: ${{ env.OUT }}
+          if-no-files-found: warn
+          retention-days: 30

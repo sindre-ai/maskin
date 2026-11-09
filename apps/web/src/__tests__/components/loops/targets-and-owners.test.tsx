@@ -16,6 +16,7 @@ function buildLoop(overrides: Partial<LoopSummary> = {}): LoopSummary {
 		entryCondition: null,
 		closeCondition: null,
 		tags: [],
+		driverId: null,
 		inProgressCount: 0,
 		closedCount: 0,
 		medianTimeToCloseMs: null,
@@ -143,8 +144,7 @@ describe('TargetsAndOwners', () => {
 			/>,
 		)
 		expect(screen.getByText('Posts published')).toBeInTheDocument()
-		expect(screen.getByText('6')).toBeInTheDocument()
-		expect(screen.getByText('/ 8')).toBeInTheDocument()
+		expect(screen.getByText('6 of 8')).toBeInTheDocument()
 		expect(screen.getByLabelText('Behind pace — 6 of 8')).toBeInTheDocument()
 	})
 	it('gives ahead / on-target / behind / missed visually distinct pills', () => {

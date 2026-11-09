@@ -37,6 +37,7 @@ describe('connectSSE', () => {
 				headers: {
 					Authorization: 'Bearer test-api-key',
 					'X-Workspace-Id': workspaceId,
+					'X-Client-Source': 'ui',
 				},
 				openWhenHidden: true,
 			}),

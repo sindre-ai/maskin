@@ -1,11 +1,13 @@
 import { CommentInput } from '@/components/activity/comment-input'
+import { outsideChatLinkedCards } from '@/components/chat/linked-object-preview'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { DecisionOptions } from '@/components/shared/decision-option-card'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
-import { TypeBadge } from '@/components/shared/type-badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { useActors } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
 import {
@@ -29,10 +31,10 @@ import {
 	classifyCardKind,
 	decisionOf,
 } from '@/lib/foryou-card-kind'
-import { heldNote } from '@/lib/foryou-feed'
+import { heldNote, isObjectlessCard } from '@/lib/foryou-feed'
 import { markImpressed } from '@/lib/foryou-impressions'
 import { Link } from '@tanstack/react-router'
-import { ArrowUpRight, Check, ChevronDown, ChevronUp } from 'lucide-react'
+import { ArrowUpRight, Check, ChevronDown, ChevronUp, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DraftPreview } from './draft-preview'
 import { type DraftAction, DraftStack } from './draft-stack'
@@ -84,6 +86,8 @@ export function FeedCard({
 	onDraftsDone,
 }: FeedCardProps) {
 	const objectId = item.entity_id
+	// A card with no object (the morning budget card): nothing to open, no thread to reply in.
+	const objectless = isObjectlessCard(item)
 	const object = item.object
 	const cardKind: CardKind = classifyCardKind(item)
 	const decision = decisionOf(item)
@@ -209,27 +213,30 @@ export function FeedCard({
 
 	return (
 		<CardShell expanded>
-			<div className="group/card flex flex-col gap-3 px-5 pb-[18px] pt-[17px]">
-				<div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1.5 border-b border-muted pb-[11px]">
-					<span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
-						{object?.type && (
-							<TypeBadge
-								type={object.type}
-								variant="mono"
-								className="text-[8px] font-bold tracking-[0.08em]"
-							/>
-						)}{' '}
-						<Link
-							to="/$workspaceId/objects/$objectId"
-							params={{ workspaceId, objectId }}
-							className="border-b border-border font-bold text-muted-foreground hover:border-foreground hover:text-foreground"
-						>
-							{objectTitle || 'Open'}
-							<ArrowUpRight size={10} className="ml-0.5 inline" aria-hidden />
-						</Link>
-						{sender?.name ? ` · from ${sender.name}` : ''}
+			<div className="group/card flex flex-col gap-3 px-[22px] pb-[18px] pt-5">
+				<div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+					<ActorAvatar
+						id={senderId ?? undefined}
+						name={sender?.name ?? 'Agent'}
+						type={sender?.type ?? 'agent'}
+						size="sm"
+					/>
+					<span className="min-w-0 flex-1 truncate text-[12.5px] text-muted-foreground">
+						{sender?.name ? `${sender.name}${objectless ? '' : ' · '}` : ''}
+						{!objectless && (
+							<Link
+								to="/$workspaceId/objects/$objectId"
+								params={{ workspaceId, objectId }}
+								className="hover:text-foreground hover:underline"
+							>
+								{objectTitle || 'Open'}
+								<ArrowUpRight size={10} className="ml-0.5 inline" aria-hidden />
+							</Link>
+						)}
 					</span>
-					<TimelineHistory workspaceId={workspaceId} objectId={objectId} item={item} />
+					{!objectless && (
+						<TimelineHistory workspaceId={workspaceId} objectId={objectId} item={item} />
+					)}
 					{waiting ? (
 						<span className="shrink-0 text-[11px] font-medium text-status-clustered-text">
 							Waiting on {who}
@@ -243,7 +250,12 @@ export function FeedCard({
 						compactDayLimit={7}
 						className="shrink-0 font-mono text-[10px] font-medium uppercase tabular-nums text-muted-foreground"
 					/>
-					<MarkReadButton cardKind={cardKind} cardId={objectId} onMarkRead={onMarkRead} />
+					<MarkReadButton
+						cardKind={cardKind}
+						cardId={objectId}
+						onMarkRead={onMarkRead}
+						alwaysVisible
+					/>
 					{onToggleExpanded && (
 						<button
 							type="button"
@@ -260,7 +272,7 @@ export function FeedCard({
 				    the card back down, the way the mockup's hero does. */}
 				<div
 					className={cn(
-						'text-[18px] font-bold leading-[1.32] tracking-[-0.015em] text-pretty text-foreground',
+						'text-[20px] font-bold leading-[1.28] tracking-[-0.02em] text-pretty text-foreground',
 						onToggleExpanded && 'cursor-pointer',
 					)}
 					onClick={onToggleExpanded}
@@ -304,7 +316,12 @@ export function FeedCard({
 						// The whole comment, not a preview: the reader answers here, so
 						// nothing about the ask lives behind a second click.
 						<div className="-mt-1 max-w-[58ch] text-[13px] leading-[1.55] text-pretty text-muted-foreground">
-							<MarkdownContent content={mentionBody} size="sm" mentionActors={actors} />
+							<MarkdownContent
+								content={mentionBody}
+								size="sm"
+								mentionActors={actors}
+								linkedCards={outsideChatLinkedCards(workspaceId, 'chips')}
+							/>
 						</div>
 					)
 				)}
@@ -317,19 +334,18 @@ export function FeedCard({
 					/>
 				)}
 
-				<CommentInput
-					workspaceId={workspaceId}
-					objectId={objectId}
-					// The composer answers the comment that put this card in the feed,
-					// so a typed reply threads under it exactly as a taken option does.
-					parentEventId={item.latest_mention?.event_id}
-					// TODO: restore `variant="bar"` and `placeholder` once the
-					// Object detail split lands them on the v2 composer (branch
-					// commit 9c126196). Until then the composer renders in its
-					// stacked form with the default placeholder.
-					mentionDropdownPlacement="above"
-					onSubmitted={onReplied}
-				/>
+				{!objectless && (
+					<CommentInput
+						workspaceId={workspaceId}
+						objectId={objectId}
+						// The composer answers the comment that put this card in the feed,
+						// so a typed reply threads under it exactly as a taken option does.
+						parentEventId={item.latest_mention?.event_id}
+						variant="bar"
+						placeholder={`Ask ${sender?.name ?? 'the agent'} or give instructions`}
+						onSubmitted={onReplied}
+					/>
+				)}
 			</div>
 		</CardShell>
 	)
@@ -342,8 +358,8 @@ function CardShell({ expanded, children }: { expanded: boolean; children: React.
 		<div
 			data-testid="foryou-feed-card"
 			className={cn(
-				'overflow-hidden rounded-xl border border-border bg-card',
-				expanded ? 'shadow-md' : 'shadow-xs',
+				'overflow-hidden rounded-[20px] border border-border bg-card',
+				expanded ? 'shadow-sm' : 'shadow-xs',
 			)}
 		>
 			{children}
@@ -383,10 +399,13 @@ function MarkReadButton({
 	cardKind,
 	cardId,
 	onMarkRead,
+	alwaysVisible = false,
 }: {
 	cardKind: CardKind
 	cardId: string
 	onMarkRead: () => void
+	/** The open card's header carries it as a plain × (v11); the row keeps it on hover. */
+	alwaysVisible?: boolean
 }) {
 	return (
 		<button
@@ -401,9 +420,13 @@ function MarkReadButton({
 				trackForyouCardMarkedRead({ card_kind: cardKind, card_id: cardId })
 				onMarkRead()
 			}}
-			className="grid size-[22px] shrink-0 place-items-center rounded-sm text-muted-foreground hover:bg-secondary hover:text-foreground can-hover:opacity-0 can-hover:focus-visible:opacity-100 can-hover:group-hover/card:opacity-100"
+			className={cn(
+				'grid size-[22px] shrink-0 place-items-center rounded-sm text-muted-foreground hover:bg-secondary hover:text-foreground',
+				!alwaysVisible &&
+					'can-hover:opacity-0 can-hover:focus-visible:opacity-100 can-hover:group-hover/card:opacity-100',
+			)}
 		>
-			<Check size={12} aria-hidden />
+			{alwaysVisible ? <X size={13} aria-hidden /> : <Check size={12} aria-hidden />}
 		</button>
 	)
 }
@@ -460,7 +483,7 @@ function TimelineHistory({
 		<div className="order-last w-full basis-full">
 			<div className="flex flex-col gap-[9px] rounded-xl border border-muted bg-secondary/40 px-[13px] pb-2.5 pt-[11px]">
 				<div className="flex items-center gap-2.5">
-					<span className="eyebrow shrink-0">On this object</span>
+					<span className="eyebrow shrink-0">On this item</span>
 					<div className="h-px flex-1 bg-muted" />
 					<button
 						type="button"
@@ -486,7 +509,7 @@ function TimelineHistory({
 					)
 				)}
 				{shown.map((event) => (
-					<TimelineMessage key={event.id} event={event} actors={actors} />
+					<TimelineMessage key={event.id} workspaceId={workspaceId} event={event} actors={actors} />
 				))}
 				{remaining > 0 && (
 					<button
@@ -503,9 +526,11 @@ function TimelineHistory({
 }
 
 function TimelineMessage({
+	workspaceId,
 	event,
 	actors,
 }: {
+	workspaceId: string
 	event: EventResponse
 	actors: ActorListItem[] | undefined
 }) {
@@ -531,7 +556,12 @@ function TimelineMessage({
 					/>
 				</div>
 				<div className="mt-px line-clamp-3 text-[12px] leading-[1.5] text-pretty text-muted-foreground">
-					<MarkdownContent content={content} size="xs" mentionActors={actors} />
+					<MarkdownContent
+						content={content}
+						size="xs"
+						mentionActors={actors}
+						linkedCards={outsideChatLinkedCards(workspaceId, 'chips')}
+					/>
 				</div>
 			</div>
 		</div>

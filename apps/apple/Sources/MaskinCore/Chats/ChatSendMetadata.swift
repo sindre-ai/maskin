@@ -90,11 +90,15 @@ public struct ChatSendMetadata: Codable, Sendable, Equatable {
 	public var hiddenFromChat: Bool?
 	public var cardAnswer: ChatCardAnswer?
 	public var fromSuggestedStep: ChatSuggestedStepRef?
+	/// Server id of the message a reply quotes. Free-form message metadata, so no API change; it
+	/// lets the quote find its original exactly instead of matching text.
+	public var quotedMessageId: Int?
 
 	public init(
 		attachments: [ChatAttachmentRef]? = nil, mentions: [String]? = nil,
 		questionAnswer: ChatQuestionAnswer? = nil, hiddenFromChat: Bool? = nil,
-		cardAnswer: ChatCardAnswer? = nil, fromSuggestedStep: ChatSuggestedStepRef? = nil
+		cardAnswer: ChatCardAnswer? = nil, fromSuggestedStep: ChatSuggestedStepRef? = nil,
+		quotedMessageId: Int? = nil
 	) {
 		self.attachments = attachments?.isEmpty == true ? nil : attachments
 		self.mentions = mentions?.isEmpty == true ? nil : mentions
@@ -102,18 +106,19 @@ public struct ChatSendMetadata: Codable, Sendable, Equatable {
 		self.hiddenFromChat = hiddenFromChat == true ? true : nil
 		self.cardAnswer = cardAnswer
 		self.fromSuggestedStep = fromSuggestedStep
+		self.quotedMessageId = quotedMessageId
 	}
 
 	enum CodingKeys: String, CodingKey {
 		case attachments, mentions, questionAnswer = "question_answer"
 		case hiddenFromChat = "hidden_from_chat", cardAnswer = "card_answer"
-		case fromSuggestedStep = "from_suggested_step"
+		case fromSuggestedStep = "from_suggested_step", quotedMessageId = "quoted_message_id"
 	}
 
 	public var isEmpty: Bool {
 		attachments == nil && mentions == nil && questionAnswer == nil && hiddenFromChat == nil
 			&& cardAnswer == nil
-			&& fromSuggestedStep == nil
+			&& fromSuggestedStep == nil && quotedMessageId == nil
 	}
 
 	/// The same data as a `JSONValue`, so an optimistic bubble reads it exactly like a server row.
@@ -194,6 +199,27 @@ extension ChatMessage {
 	public var mentionIDs: [String] {
 		guard case .array(let ids)? = metadata?["mentions"] else { return [] }
 		return ids.compactMap(\.stringValue)
+	}
+
+	/// True when the message text is only the markdown copy of its question card, which the backend
+	/// writes as `content` for readers without a card (`formatQuestionsAsMarkdown`). The card shows
+	/// every question and option description itself, so the copy is not drawn above it. Words the
+	/// agent wrote of its own never match, and stay.
+	public var isQuestionTwin: Bool {
+		guard case .array(let items)? = metadata?["question"]?["questions"] else { return false }
+		let twin = items.compactMap { item -> String? in
+			guard let question = item["question"]?.stringValue, case .array(let options)? = item["options"]
+			else { return nil }
+			let lines = options.compactMap { option -> String? in
+				guard let label = option["label"]?.stringValue else { return nil }
+				guard let detail = option["description"]?.stringValue, !detail.isEmpty else {
+					return "- **\(label)**"
+				}
+				return "- **\(label)** — \(detail)"
+			}
+			return ([question] + lines).joined(separator: "\n")
+		}.joined(separator: "\n\n")
+		return !twin.isEmpty && twin == content
 	}
 
 	/// The agent's questions, when this message carries any (backend-owned `metadata.question`).

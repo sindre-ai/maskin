@@ -11,6 +11,7 @@ type Env = {
 		db: Database
 		actorId: string
 		storageProvider: StorageProvider
+		workspaceRole?: string
 	}
 }
 
@@ -74,7 +75,7 @@ const spokenBriefRoute = createRoute({
 	tags: ['Briefing'],
 	summary: "Generate today's brief as spoken prose",
 	description:
-		"The human-facing brief: the workspace's default agent (its Chief of Staff) writing the same facts as something to listen to, rather than the agent-facing markdown `GET /briefing` returns.\n\nPOST because it generates — one small model call, on demand, only when someone asks to hear it. The result is cached for the rest of the UTC day under a fingerprint of the workspace state, so asking again costs nothing unless something actually changed. Falls back to deterministic prose when the workspace has no chat-callable credentials, so this never fails for want of a model.",
+		"The human-facing brief: the workspace's default agent (its Chief of Staff) writing the same facts as something to listen to, rather than the agent-facing markdown `GET /briefing` returns.\n\nPOST because it generates — one small model call, on demand, only when someone asks to hear it. The result is cached for the rest of the UTC day under a fingerprint of the workspace state, so asking again costs nothing unless something actually changed. Falls back to deterministic prose when the workspace has no chat-callable credentials, so this never fails for want of a model.\n\nA read-only viewer is served the day's cached brief, or the deterministic prose when nothing is cached yet. A viewer never triggers a model call or writes the cache.",
 	request: { headers: workspaceIdHeader },
 	responses: {
 		200: {
@@ -93,7 +94,11 @@ app.openapi(spokenBriefRoute, async (c) => {
 	const storage = c.get('storageProvider')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
-	const brief = await generateSpokenBrief(db, storage, workspaceId)
+	// A viewer is read-only: they hear the cached brief, or deterministic prose when
+	// there is none yet, and never trigger a model call on the workspace's credentials.
+	const brief = await generateSpokenBrief(db, storage, workspaceId, {
+		mayGenerate: c.get('workspaceRole') !== 'viewer',
+	})
 	return c.json(
 		{
 			workspace_id: brief.workspaceId,

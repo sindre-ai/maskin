@@ -20,6 +20,7 @@ import {
 	editMessageSchema,
 	markThreadReadSchema,
 	messageQuerySchema,
+	normalizeTags,
 	postMessageSchema,
 	removeReactionQuerySchema,
 	stripServerOwnedMetadata,
@@ -28,6 +29,12 @@ import {
 	updateConversationSchema,
 } from '@maskin/shared'
 import { and, desc, eq, gt, inArray, isNull, lt, ne, sql } from 'drizzle-orm'
+import {
+	resolveChatTagClient,
+	trackMessageEditedWithTags,
+	trackMessageSentTagged,
+} from '../lib/analytics/chat-tag-events'
+import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
 import { createApiError, formatZodError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { refuseRawSecret } from '../lib/integrations/raw-secret-backstop'
@@ -46,10 +53,15 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
+import { serializeMessage } from '../lib/serialize-message'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
+import { reportChatReply } from '../services/chat-reply-tracking'
+import { shareReplyDigest } from '../services/chat-session-context'
 import { insertConversationMessage, mirrorAsObjectComment } from '../services/conversation-messages'
 import { evaluateAndRespond } from '../services/conversation-responder'
 import { maybeGenerateConversationTitle } from '../services/conversation-titler'
+import { findOrCreateDirectChat } from '../services/direct-chat'
+import { LIVE_STATUSES, openInteractiveTurnsByLog } from '../services/live-activity-push'
 import { loadReactionsByMessage } from '../services/message-reactions'
 import { listCallerThreadRootIds, loadThreadSummaries } from '../services/message-threads'
 import { importObjectComments } from '../services/object-chat-sync'
@@ -63,6 +75,7 @@ import {
 	type ThreadReplyDelivery,
 	routeThreadReplyToSubSession,
 } from '../services/thread-reply-routing'
+import { resolveReplyThreadRootId, resolveTurnMessageId } from '../services/turn-origin'
 
 type Env = {
 	Variables: {
@@ -98,6 +111,121 @@ type ParticipantRow = {
 	actorType: string
 	joinedAt: Date | null
 	addedBy: string | null
+}
+
+/** The row preview: the words, or the file name(s) when the message is only attachments. */
+function snippetText(content: string, metadata: unknown) {
+	if (content.length > 0) return content
+	const attachments =
+		(metadata as { attachments?: Array<{ name?: string }> } | null)?.attachments ?? []
+	if (attachments.length === 0) return content
+	const first = attachments[0]?.name?.trim() || 'Attachment'
+	return attachments.length === 1 ? first : `${first} and ${attachments.length - 1} more`
+}
+
+/**
+ * Which agents are answering in each chat right now. A chat session stays `running` between turns,
+ * so a live status alone would keep the row "working" until the container dies; an interactive
+ * session only counts while its turn is open (see `isInteractiveTurnOpenByLog`).
+ */
+async function loadWorkingActorsByConversation(
+	db: Database,
+	conversationIds: string[],
+): Promise<Map<string, string[]>> {
+	const byConversation = new Map<string, string[]>()
+	if (conversationIds.length === 0) return byConversation
+	const live = await db
+		.select({
+			id: sessions.id,
+			actorId: sessions.actorId,
+			conversationId: sessions.conversationId,
+			interactive: sessions.interactive,
+			status: sessions.status,
+		})
+		.from(sessions)
+		.where(
+			and(
+				inArray(sessions.conversationId, conversationIds),
+				inArray(sessions.status, LIVE_STATUSES),
+			),
+		)
+	// A session still booting has no logs yet but is on its way to answering; only a running
+	// chat session can be sitting idle between turns. One lookup covers all of them.
+	const openTurns = await openInteractiveTurnsByLog(
+		db,
+		live.filter((s) => s.interactive && s.status === 'running').map((s) => s.id),
+		Date.now(),
+	)
+	for (const s of live) {
+		if (!s.conversationId) continue
+		if (s.interactive && s.status === 'running' && !openTurns.has(s.id)) continue
+		const actors = byConversation.get(s.conversationId) ?? []
+		if (!actors.includes(s.actorId)) actors.push(s.actorId)
+		byConversation.set(s.conversationId, actors)
+	}
+	return byConversation
+}
+
+type SnippetRow = {
+	conversationId: string
+	snippet: string
+	snippetActorId: string
+	snippetActorName: string | null
+}
+
+/**
+ * The newest message the thread shows in each conversation, with its author, in one statement
+ * (a lateral lookup per id, each an index walk down `messages` for that conversation).
+ *
+ * Only what the thread itself shows: a helper's result handed to the agent that started it, and a
+ * card button's nudge (`helper_return`, `hidden_from_chat`), are delivered to the agent but hidden
+ * from the chat, so they must not be the row's preview either. Mirrors the filter in apps/web
+ * `thread-messages.tsx`. The sender comes back with the preview so the row can say who is talking.
+ * Left-joined: a message from an actor that has since been deleted still yields its text rather
+ * than dropping the snippet. A conversation with no visible message has no entry.
+ */
+async function loadLatestSnippets(
+	db: Database,
+	conversationIds: string[],
+): Promise<Map<string, SnippetRow>> {
+	const byConversation = new Map<string, SnippetRow>()
+	if (conversationIds.length === 0) return byConversation
+	const rows = (await db.execute(sql`
+		SELECT ids.conversation_id AS conversation_id,
+			latest.content AS content,
+			latest.metadata AS metadata,
+			latest.actor_id AS actor_id,
+			latest.actor_name AS actor_name
+		FROM unnest(ARRAY[${sql.join(
+			conversationIds.map((id) => sql`${id}::uuid`),
+			sql`, `,
+		)}]) AS ids(conversation_id)
+		CROSS JOIN LATERAL (
+			SELECT m.content, m.metadata, m.actor_id, a.name AS actor_name
+			FROM messages m
+			LEFT JOIN actors a ON a.id = m.actor_id
+			WHERE m.conversation_id = ids.conversation_id
+				AND (m.metadata->>'helper_return') IS NULL
+				AND coalesce(m.metadata->>'hidden_from_chat', 'false') <> 'true'
+			ORDER BY m.id DESC
+			LIMIT 1
+		) latest
+	`)) as unknown as Array<{
+		conversation_id: string
+		content: string
+		metadata: unknown
+		actor_id: string
+		actor_name: string | null
+	}>
+	for (const row of rows) {
+		byConversation.set(row.conversation_id, {
+			conversationId: row.conversation_id,
+			snippet: snippetText(row.content, row.metadata),
+			snippetActorId: row.actor_id,
+			snippetActorName: row.actor_name,
+		})
+	}
+	return byConversation
 }
 
 async function loadParticipantsByConversation(
@@ -194,6 +322,19 @@ async function addParticipantsToConversation(
 	actorIds: string[],
 	addedBy: string,
 ): Promise<void> {
+	// A DM that gains a third person is a group chat from then on. Dropping the
+	// marker frees the pair to get a fresh DM instead of messages landing in the group.
+	const [marked] = await db
+		.select({ key: conversations.directPairKey })
+		.from(conversations)
+		.where(eq(conversations.id, conversationId))
+		.limit(1)
+	if (marked?.key && actorIds.some((id) => !marked.key?.includes(id))) {
+		await db
+			.update(conversations)
+			.set({ directPairKey: null, updatedAt: new Date() })
+			.where(eq(conversations.id, conversationId))
+	}
 	for (const actorId of actorIds) {
 		await db
 			.insert(conversationParticipants)
@@ -203,6 +344,46 @@ async function addParticipantsToConversation(
 				set: { leftAt: null, addedBy, updatedAt: new Date() },
 			})
 	}
+}
+
+/**
+ * Splits tagged actor ids into those who still need to join the conversation and those that
+ * are neither in it nor workspace members. The unresolved ones wake nobody and are reported
+ * back, so a mistyped UUID does not fail silently.
+ */
+async function resolveMentionedActors(
+	db: Database,
+	workspaceId: string,
+	conversationId: string,
+	mentionedIds: string[],
+): Promise<{ toAdd: string[]; unresolved: string[] }> {
+	if (mentionedIds.length === 0) return { toAdd: [], unresolved: [] }
+	const activeParticipants = await loadParticipantsByConversation(db, [conversationId])
+	const activeIds = new Set((activeParticipants.get(conversationId) ?? []).map((p) => p.actorId))
+	const notYetJoined = mentionedIds.filter((actorId) => !activeIds.has(actorId))
+	if (notYetJoined.length === 0) return { toAdd: [], unresolved: [] }
+	const memberIds = await loadWorkspaceMemberIds(db, workspaceId, notYetJoined)
+	return {
+		toAdd: notYetJoined.filter((actorId) => memberIds.has(actorId)),
+		unresolved: Array.from(new Set(notYetJoined.filter((actorId) => !memberIds.has(actorId)))),
+	}
+}
+
+/** Pulls tagged workspace members into the conversation so they are candidates for the very message that tagged them. */
+async function joinMentionedActors(
+	db: Database,
+	ctx: { workspaceId: string; conversationId: string; callerId: string; toAdd: string[] },
+): Promise<void> {
+	if (ctx.toAdd.length === 0) return
+	await addParticipantsToConversation(db, ctx.conversationId, ctx.toAdd, ctx.callerId)
+	await recordEvent(db, {
+		workspaceId: ctx.workspaceId,
+		actorId: ctx.callerId,
+		action: 'conversation_participant_added',
+		entityType: 'conversation',
+		entityId: ctx.conversationId,
+		data: { added_actor_ids: ctx.toAdd, via: 'mention' },
+	})
 }
 
 /** Load a conversation and verify the caller is an active (non-left) participant. */
@@ -239,6 +420,7 @@ const messageColumns = {
 	sessionId: messages.sessionId,
 	createdAt: messages.createdAt,
 	editedAt: messages.editedAt,
+	deletedAt: messages.deletedAt,
 	threadRootId: messages.threadRootId,
 	threadAlsoInChannel: messages.threadAlsoInChannel,
 }
@@ -292,6 +474,15 @@ async function joinSubjectConversation(
 		entityId: conversation.id,
 		data: { added_actor_ids: participantIds },
 	})
+	return conversationDetailForCaller(db, conversation, callerId)
+}
+
+// The conversation as the caller sees it: their own pin, archive and read state.
+async function conversationDetailForCaller(
+	db: Database,
+	conversation: typeof conversations.$inferSelect,
+	callerId: string,
+) {
 	const [mine] = await db
 		.select()
 		.from(conversationParticipants)
@@ -326,7 +517,8 @@ const createConversationRoute = createRoute({
 	responses: {
 		200: {
 			content: { 'application/json': { schema: conversationDetailResponseSchema } },
-			description: 'The existing chat for this subject; new participants were added to it',
+			description:
+				'The existing chat: the chat for this subject (new participants were added to it), or the existing direct message when direct is set',
 		},
 		201: {
 			content: { 'application/json': { schema: conversationDetailResponseSchema } },
@@ -377,6 +569,24 @@ app.openapi(createConversationRoute, (async (c) => {
 		)
 	}
 
+	// The other side of a direct message: exactly one person or agent besides the caller.
+	const directOtherId = body.direct ? participantIds.find((id) => id !== callerId) : undefined
+	if (body.direct && (body.subject || participantIds.length !== 2 || !directOtherId)) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				'A direct message is with exactly one other participant and has no subject',
+				[
+					{
+						field: 'direct',
+						message: 'Name one participant besides yourself and leave out subject',
+					},
+				],
+			),
+			400,
+		)
+	}
+
 	if (body.subject) {
 		const { type, id } = body.subject
 		const [target] =
@@ -417,7 +627,7 @@ app.openapi(createConversationRoute, (async (c) => {
 		if (!existing) throw err
 		return c.json(await joinSubjectConversation(db, existing, participantIds, callerId), 200)
 	}
-	const { conversation, initialMessage } = txResult
+	const { conversation, initialMessage, reused } = txResult
 	if (body.subject?.type === 'object') {
 		await importObjectComments(db, {
 			conversationId: conversation.id,
@@ -429,28 +639,52 @@ app.openapi(createConversationRoute, (async (c) => {
 
 	async function createInTransaction() {
 		return db.transaction(async (tx) => {
-			const [created] = await tx
-				.insert(conversations)
-				.values({
+			let created: typeof conversations.$inferSelect | undefined
+			let reused = false
+			if (directOtherId) {
+				// The pair's DM: found, or created once under the pair's lock. The lock is
+				// held to the end of this transaction, so the first message below lands
+				// before a concurrent caller looks for the chat.
+				const direct = await findOrCreateDirectChat(tx, {
 					workspaceId,
+					humanId: callerId,
+					agentId: directOtherId,
 					title: body.title,
 					createdBy: callerId,
-					subjectType: body.subject?.type ?? null,
-					subjectId: body.subject?.id ?? null,
 				})
-				.returning()
+				reused = !direct.created
+				;[created] = await tx
+					.select()
+					.from(conversations)
+					.where(eq(conversations.id, direct.id))
+					.limit(1)
+			} else {
+				;[created] = await tx
+					.insert(conversations)
+					.values({
+						workspaceId,
+						title: body.title,
+						createdBy: callerId,
+						subjectType: body.subject?.type ?? null,
+						subjectId: body.subject?.id ?? null,
+					})
+					.returning()
+			}
 			if (!created) throw new Error('Failed to create conversation')
 
-			await tx.insert(conversationParticipants).values(
-				participantIds.map((actorId) => ({
-					conversationId: created.id,
-					actorId,
-					addedBy: callerId,
-				})),
-			)
+			// findOrCreateDirectChat added the participants and recorded the event itself.
+			if (!directOtherId) {
+				await tx.insert(conversationParticipants).values(
+					participantIds.map((actorId) => ({
+						conversationId: created.id,
+						actorId,
+						addedBy: callerId,
+					})),
+				)
+			}
 
 			let initialMessage: typeof messages.$inferSelect | undefined
-			if (body.initial_message) {
+			if (body.initial_message !== undefined) {
 				const [msg] = await tx
 					.insert(messages)
 					.values({
@@ -467,19 +701,21 @@ app.openapi(createConversationRoute, (async (c) => {
 					.where(eq(conversations.id, created.id))
 			}
 
-			await recordEvent(tx, {
-				workspaceId,
-				actorId: callerId,
-				action: 'conversation_created',
-				entityType: 'conversation',
-				entityId: created.id,
-				data: {
-					participant_actor_ids: participantIds,
-					...(body.subject ? { subject: body.subject } : {}),
-				},
-			})
+			if (!directOtherId) {
+				await recordEvent(tx, {
+					workspaceId,
+					actorId: callerId,
+					action: 'conversation_created',
+					entityType: 'conversation',
+					entityId: created.id,
+					data: {
+						participant_actor_ids: participantIds,
+						...(body.subject ? { subject: body.subject } : {}),
+					},
+				})
+			}
 
-			return { conversation: created, initialMessage }
+			return { conversation: created, initialMessage, reused }
 		})
 	}
 
@@ -515,6 +751,8 @@ app.openapi(createConversationRoute, (async (c) => {
 				}),
 		)
 	}
+
+	if (reused) return c.json(await conversationDetailForCaller(db, conversation, callerId), 200)
 
 	const participantsByConversation = await loadParticipantsByConversation(db, [conversation.id])
 	return c.json(
@@ -617,59 +855,37 @@ app.openapi(listConversationsRoute, (async (c) => {
 	const page = rows.slice(0, query.limit)
 	const conversationIds = page.map((r) => r.conversation.id)
 
-	const [participantsByConversation, unreadRows, snippets] = await Promise.all([
-		loadParticipantsByConversation(db, conversationIds),
-		conversationIds.length === 0
-			? Promise.resolve([])
-			: db
-					.select({
-						conversationId: messages.conversationId,
-						unreadCount: sql<number>`count(*)::int`,
-					})
-					.from(messages)
-					.innerJoin(
-						conversationParticipants,
-						and(
-							eq(conversationParticipants.conversationId, messages.conversationId),
-							eq(conversationParticipants.actorId, callerId),
-						),
-					)
-					.where(
-						and(
-							inArray(messages.conversationId, conversationIds),
-							ne(messages.actorId, callerId),
-							sql`${messages.id} > COALESCE(${conversationParticipants.lastReadMessageId}, 0)`,
-						),
-					)
-					.groupBy(messages.conversationId),
-		Promise.all(
-			page.map(async (r) => {
-				// The sender comes back with the preview so the row can say who is
-				// talking. Left-joined: a message from an actor that has since been
-				// deleted still yields its text rather than dropping the snippet.
-				const [latest] = await db
-					.select({
-						content: messages.content,
-						actorId: messages.actorId,
-						actorName: actors.name,
-					})
-					.from(messages)
-					.leftJoin(actors, eq(actors.id, messages.actorId))
-					.where(eq(messages.conversationId, r.conversation.id))
-					.orderBy(desc(messages.id))
-					.limit(1)
-				return {
-					conversationId: r.conversation.id,
-					snippet: latest?.content ?? null,
-					snippetActorId: latest?.actorId ?? null,
-					snippetActorName: latest?.actorName ?? null,
-				}
-			}),
-		),
-	])
+	const [participantsByConversation, unreadRows, snippetByConversation, workingByConversation] =
+		await Promise.all([
+			loadParticipantsByConversation(db, conversationIds),
+			conversationIds.length === 0
+				? Promise.resolve([])
+				: db
+						.select({
+							conversationId: messages.conversationId,
+							unreadCount: sql<number>`count(*)::int`,
+						})
+						.from(messages)
+						.innerJoin(
+							conversationParticipants,
+							and(
+								eq(conversationParticipants.conversationId, messages.conversationId),
+								eq(conversationParticipants.actorId, callerId),
+							),
+						)
+						.where(
+							and(
+								inArray(messages.conversationId, conversationIds),
+								ne(messages.actorId, callerId),
+								sql`${messages.id} > COALESCE(${conversationParticipants.lastReadMessageId}, 0)`,
+							),
+						)
+						.groupBy(messages.conversationId),
+			loadLatestSnippets(db, conversationIds),
+			loadWorkingActorsByConversation(db, conversationIds),
+		])
 
 	const unreadByConversation = new Map(unreadRows.map((r) => [r.conversationId, r.unreadCount]))
-	const snippetByConversation = new Map(snippets.map((s) => [s.conversationId, s]))
 
 	return c.json({
 		conversations: page.map((r) => ({
@@ -682,6 +898,7 @@ app.openapi(listConversationsRoute, (async (c) => {
 			snippet_actor_name: snippetByConversation.get(r.conversation.id)?.snippetActorName ?? null,
 			snippet_is_caller: snippetByConversation.get(r.conversation.id)?.snippetActorId === callerId,
 			participants: participantsByConversation.get(r.conversation.id) ?? [],
+			working_actor_ids: workingByConversation.get(r.conversation.id) ?? [],
 		})) as z.infer<typeof conversationListItemResponseSchema>[],
 		has_more: hasMore,
 	})
@@ -744,9 +961,9 @@ app.openapi(listThreadsRoute, (async (c) => {
 				{
 					conversationId: root.conversationId,
 					conversationTitle,
-					root: serialize(rootMessage),
+					root: serializeMessage(rootMessage),
 					thread,
-					lastReply: reply ? serialize(reply) : null,
+					lastReply: reply ? serializeMessage(reply) : null,
 				},
 			]
 		}),
@@ -858,7 +1075,7 @@ const updateConversationRoute = createRoute({
 	path: '/{id}',
 	'x-viewer-policy': 'writer',
 	tags: ['Conversations'],
-	summary: 'Rename a conversation',
+	summary: 'Rename a conversation or change its tags',
 	request: {
 		headers: workspaceIdHeader,
 		params: idParamSchema,
@@ -886,12 +1103,17 @@ app.openapi(updateConversationRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
 	}
 
+	const tags = body.tags === undefined ? undefined : normalizeTags(body.tags)
 	const [updated] = await db
 		.update(conversations)
-		// A human rename permanently opts the conversation out of auto-titling
-		// (conversation-titler.ts) — otherwise the refinement pass would
-		// overwrite whatever they just typed.
-		.set({ title: body.title, titleAutoState: 'manual', updatedAt: new Date() })
+		.set({
+			// A human rename permanently opts the conversation out of auto-titling
+			// (conversation-titler.ts) — otherwise the refinement pass would
+			// overwrite whatever they just typed. A tags-only change leaves the title alone.
+			...(body.title !== undefined && { title: body.title, titleAutoState: 'manual' }),
+			...(tags !== undefined && { tags }),
+			updatedAt: new Date(),
+		})
 		.where(eq(conversations.id, id))
 		.returning()
 	if (!updated) return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
@@ -902,7 +1124,10 @@ app.openapi(updateConversationRoute, (async (c) => {
 		action: 'conversation_updated',
 		entityType: 'conversation',
 		entityId: id,
-		data: { title: body.title },
+		data: {
+			...(body.title !== undefined && { title: body.title }),
+			...(tags !== undefined && { tags }),
+		},
 	})
 
 	const [participantsByConversation, unreadByConversation] = await Promise.all([
@@ -1138,7 +1363,7 @@ app.openapi(listMessagesRoute, (async (c) => {
 		messages: page.map(
 			(m) =>
 				({
-					...serialize(m),
+					...serializeMessage(m),
 					spawned_sessions: spawned.get(m.id) ?? [],
 					reactions: reactions.get(m.id) ?? [],
 					thread: summaries.get(m.id) ?? null,
@@ -1229,6 +1454,28 @@ app.openapi(postMessageRoute, (async (c) => {
 		.where(eq(actors.id, callerId))
 		.limit(1)
 
+	// An agent posting mid-turn answers where the human is talking: in the thread of the message
+	// that started the turn, as the end-of-turn reply does. Only for the agent's own session in
+	// this chat (a verified sessionId), so humans and other callers post exactly as before.
+	// An explicit thread_root_id wins, top_level opts out.
+	// A thread session answers in its own thread; any other session follows the message that
+	// started the turn.
+	let turnThreadRootId: number | null = null
+	let sessionThreadRootId: number | null = null
+	let turnMessageId: number | null = null
+	if (sessionId && callerType === 'agent') {
+		turnMessageId = await resolveTurnMessageId(db, sessionId)
+		const placed = await resolveReplyThreadRootId(db, {
+			sessionId,
+			turnMessageId,
+			conversationId: id,
+		})
+		sessionThreadRootId = placed.sessionThreadRootId
+		if (body.thread_root_id === undefined && body.top_level !== true) {
+			turnThreadRootId = placed.threadRootId
+		}
+	}
+
 	// A thread reply must hang off a top-level message of this same conversation:
 	// threads are one level deep, so a reply to a reply is rejected rather than
 	// silently re-rooted.
@@ -1253,7 +1500,7 @@ app.openapi(postMessageRoute, (async (c) => {
 	// end-of-turn output. A client (or an agent via the MCP tool) must not be
 	// able to claim them — the frontend reconciles its optimistic bubble
 	// against `source`, so a forged one would strand that bubble forever.
-	const metadata = stripServerOwnedMetadata(body.metadata) ?? null
+	const metadata = stripServerOwnedMetadata(body.metadata, { callerType }) ?? null
 
 	const created = await insertConversationMessage(db, {
 		conversationId: id,
@@ -1262,10 +1509,29 @@ app.openapi(postMessageRoute, (async (c) => {
 		content: body.content,
 		metadata,
 		sessionId,
-		threadRootId: body.thread_root_id ?? null,
+		threadRootId: body.thread_root_id ?? turnThreadRootId,
 		threadAlsoInChannel: body.thread_root_id !== undefined && body.also_in_channel === true,
 	})
 	if (!created) throw new Error('Failed to create message')
+
+	if (sessionId && callerType === 'agent') {
+		reportChatReply(db, {
+			workspaceId,
+			conversationId: id,
+			agentId: callerId,
+			sessionThreadRootId,
+			replyThreadRootId: body.thread_root_id ?? turnThreadRootId,
+			originMessageId: turnMessageId,
+			source: 'post',
+		})
+		shareReplyDigest(db, {
+			conversationId: id,
+			agentId: callerId,
+			sessionId,
+			sessionThreadRootId,
+			content: body.content,
+		})
+	}
 
 	// Replying means the human has read everything before their message, so their read cursor
 	// moves to it: otherwise the thread keeps a NEW divider (and the list an unread badge) over
@@ -1334,27 +1600,27 @@ app.openapi(postMessageRoute, (async (c) => {
 	// Ids that are neither already in the conversation nor workspace members:
 	// nothing joins them and nothing wakes them. Reported back so a mistyped
 	// UUID doesn't fail silently (same contract as POST /events comments).
-	let unresolvedMentions: string[] = []
+	const { toAdd: mentionedToAdd, unresolved: unresolvedMentions } = await resolveMentionedActors(
+		db,
+		workspaceId,
+		id,
+		mentionedIds,
+	)
+	await joinMentionedActors(db, {
+		workspaceId,
+		conversationId: id,
+		callerId,
+		toAdd: mentionedToAdd,
+	})
 	if (mentionedIds.length > 0) {
-		const activeParticipants = await loadParticipantsByConversation(db, [id])
-		const activeIds = new Set((activeParticipants.get(id) ?? []).map((p) => p.actorId))
-		const notYetJoined = mentionedIds.filter((actorId) => !activeIds.has(actorId))
-		if (notYetJoined.length > 0) {
-			const memberIds = await loadWorkspaceMemberIds(db, workspaceId, notYetJoined)
-			const toAdd = notYetJoined.filter((actorId) => memberIds.has(actorId))
-			unresolvedMentions = Array.from(new Set(notYetJoined.filter((id) => !memberIds.has(id))))
-			if (toAdd.length > 0) {
-				await addParticipantsToConversation(db, id, toAdd, callerId)
-				await recordEvent(db, {
-					workspaceId,
-					actorId: callerId,
-					action: 'conversation_participant_added',
-					entityType: 'conversation',
-					entityId: id,
-					data: { added_actor_ids: toAdd, via: 'mention' },
-				})
-			}
-		}
+		void trackMessageSentTagged(db, {
+			workspaceId,
+			actorId: callerId,
+			conversationId: id,
+			client: resolveChatTagClient(c.req.header(CLIENT_SOURCE_HEADER)),
+			content: body.content,
+			taggedIds: mentionedIds,
+		})
 	}
 
 	// A reply under a message that a sub-chat hangs from goes to that sub-chat's agent too,
@@ -1401,7 +1667,7 @@ app.openapi(postMessageRoute, (async (c) => {
 	)
 
 	return c.json(
-		serialize({
+		serializeMessage({
 			...created,
 			actorName: caller?.name ?? 'Unknown',
 			actorType: caller?.type ?? 'human',
@@ -1457,7 +1723,7 @@ app.openapi(editMessageRoute, (async (c) => {
 		.from(messages)
 		.where(and(eq(messages.id, messageId), eq(messages.conversationId, id)))
 		.limit(1)
-	if (!message || message.kind !== 'message') {
+	if (!message || message.kind !== 'message' || message.deletedAt) {
 		return c.json(createApiError('NOT_FOUND', 'Message not found'), 404)
 	}
 	if (message.actorId !== callerId) {
@@ -1479,13 +1745,62 @@ app.openapi(editMessageRoute, (async (c) => {
 	})
 	if (secretRefusal) return c.json(secretRefusal, 400)
 
+	// Tagged ids sent with the edit replace the stored ones; none sent keeps them. Only ids the
+	// message did not carry before are new: they are checked and joined like a new message's tags,
+	// and they are the only ones that wake anyone.
+	const sentMentions = body.metadata?.mentions
+	const nextMentions = sentMentions ? Array.from(new Set(sentMentions)) : undefined
+	const storedMetadata = (message.metadata ?? {}) as { mentions?: string[] }
+	const storedMentions = new Set(storedMetadata.mentions ?? [])
+	const addedMentions = nextMentions?.filter((mentionId) => !storedMentions.has(mentionId)) ?? []
+	const { toAdd: mentionedToAdd, unresolved: unresolvedMentions } = await resolveMentionedActors(
+		db,
+		workspaceId,
+		id,
+		addedMentions,
+	)
+	if (unresolvedMentions.length > 0) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				`Tagged id not found in this workspace: ${unresolvedMentions.join(', ')}`,
+			),
+			400,
+		)
+	}
+
+	let nextMetadata: Record<string, unknown> | undefined
+	if (nextMentions) {
+		nextMetadata = { ...storedMetadata, mentions: nextMentions }
+	}
+
 	const editedAt = new Date()
 	const [updated] = await db
 		.update(messages)
-		.set({ content: body.content, editedAt })
+		.set({
+			content: body.content,
+			editedAt,
+			...(nextMetadata !== undefined ? { metadata: nextMetadata } : {}),
+		})
 		.where(eq(messages.id, messageId))
 		.returning()
 	if (!updated) throw new Error('Failed to update message')
+
+	await joinMentionedActors(db, {
+		workspaceId,
+		conversationId: id,
+		callerId,
+		toAdd: mentionedToAdd,
+	})
+	if (addedMentions.length > 0) {
+		void trackMessageEditedWithTags({
+			workspaceId,
+			actorId: callerId,
+			conversationId: id,
+			client: resolveChatTagClient(c.req.header(CLIENT_SOURCE_HEADER)),
+			addedCount: addedMentions.length,
+		})
+	}
 
 	await recordEvent(db, {
 		workspaceId,
@@ -1496,25 +1811,26 @@ app.openapi(editMessageRoute, (async (c) => {
 		data: { message_id: messageId },
 	})
 
-	// Re-notify agents only when the edited message is still the newest real
-	// message in the conversation — a correction of the message they are (or
-	// should be) responding to. Editing something further up is a silent fix;
-	// re-running the responder for it would produce a confusing out-of-order
-	// agent turn.
+	// Newly tagged agents are woken whatever the message's position: the tag is a fresh ask. With
+	// no new tag, agents are re-notified only when the edited message is still the newest real
+	// message in the conversation — a correction of the message they are (or should be)
+	// responding to. Editing something further up is a silent fix; re-running the responder for
+	// it would produce a confusing out-of-order agent turn.
 	const [newest] = await db
 		.select({ id: messages.id })
 		.from(messages)
 		.where(and(eq(messages.conversationId, id), eq(messages.kind, 'message')))
 		.orderBy(desc(messages.id))
 		.limit(1)
-	if (newest?.id === messageId) {
+	if (addedMentions.length > 0 || newest?.id === messageId) {
 		evaluateAndRespond({
 			db,
 			sessionManager,
 			workspaceId,
 			conversationId: id,
 			messageId,
-			options: { isEdit: true },
+			// Ids sent with the edit: a group chat wakes only the new ones.
+			options: { isEdit: true, ...(nextMentions ? { wakeOnlyIds: addedMentions } : {}) },
 		}).catch((err: unknown) =>
 			logger.error('Conversation responder failed after edit', {
 				conversationId: id,
@@ -1531,7 +1847,7 @@ app.openapi(editMessageRoute, (async (c) => {
 		.limit(1)
 
 	return c.json(
-		serialize({
+		serializeMessage({
 			...updated,
 			actorName: caller?.name ?? 'Unknown',
 			actorType: caller?.type ?? 'human',
@@ -1539,6 +1855,92 @@ app.openapi(editMessageRoute, (async (c) => {
 		200,
 	)
 }) as RouteHandler<typeof editMessageRoute, Env>)
+
+// DELETE /:id/messages/:messageId - Delete an own message (soft: the row stays, emptied)
+const deleteMessageRoute = createRoute({
+	method: 'delete',
+	path: '/{id}/messages/{messageId}',
+	'x-viewer-policy': 'writer',
+	tags: ['Conversations'],
+	summary: 'Delete a message you authored',
+	request: {
+		headers: workspaceIdHeader,
+		params: z.object({ id: z.string().uuid(), messageId: z.coerce.number().int().positive() }),
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: messageResponseSchema } },
+			description: 'Message deleted; content is empty and deletedAt is set',
+		},
+		403: { content: { 'application/json': { schema: errorSchema } }, description: 'Not author' },
+		404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
+	},
+})
+
+app.openapi(deleteMessageRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id, messageId } = c.req.valid('param')
+
+	const row = await loadConversationWithAuth(db, id, callerId)
+	if (!row || row.conversation.workspaceId !== workspaceId) {
+		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
+	}
+
+	const [message] = await db
+		.select()
+		.from(messages)
+		.where(and(eq(messages.id, messageId), eq(messages.conversationId, id)))
+		.limit(1)
+	if (!message || message.kind !== 'message') {
+		return c.json(createApiError('NOT_FOUND', 'Message not found'), 404)
+	}
+	if (message.actorId !== callerId) {
+		return c.json(createApiError('FORBIDDEN', 'Only the author can delete a message'), 403)
+	}
+	// Same rule as edit: an agent's auto-posted end-of-turn reply is a session artifact.
+	if ((message.metadata as { source?: string } | null)?.source === 'final_output') {
+		return c.json(createApiError('FORBIDDEN', 'Auto-posted agent output cannot be deleted'), 403)
+	}
+
+	// Deleting twice is a no-op: the first deletedAt and its audit event stand.
+	let deleted = message
+	if (!message.deletedAt) {
+		const [updated] = await db
+			.update(messages)
+			.set({ content: '', metadata: null, deletedAt: new Date() })
+			.where(eq(messages.id, messageId))
+			.returning()
+		if (!updated) throw new Error('Failed to delete message')
+		deleted = updated
+
+		await recordEvent(db, {
+			workspaceId,
+			actorId: callerId,
+			action: 'message_deleted',
+			entityType: 'conversation',
+			entityId: id,
+			data: { message_id: messageId },
+		})
+	}
+
+	const [caller] = await db
+		.select({ name: actors.name, type: actors.type })
+		.from(actors)
+		.where(eq(actors.id, callerId))
+		.limit(1)
+
+	return c.json(
+		serialize({
+			...deleted,
+			actorName: caller?.name ?? 'Unknown',
+			actorType: caller?.type ?? 'human',
+		}) as z.infer<typeof messageResponseSchema>,
+		200,
+	)
+}) as RouteHandler<typeof deleteMessageRoute, Env>)
 
 // PUT /:id/messages/:messageId/reactions - React with an emoji (idempotent)
 const addReactionRoute = createRoute({

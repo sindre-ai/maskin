@@ -8,6 +8,7 @@ import type { Database } from '@maskin/db'
 import { getAllModules } from '@maskin/module-sdk'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import type { StorageProvider } from '@maskin/storage'
+import type { MiddlewareHandler } from 'hono'
 import { cors } from 'hono/cors'
 import { logger as honoLogger } from 'hono/logger'
 import { CLIENT_SOURCE_HEADER } from './lib/analytics/knowledge-events'
@@ -16,6 +17,7 @@ import { ApiErrorCode, createApiError, mapStatusToCode, validationFailureHook } 
 import { PlanCapExceededError } from './lib/llm-routing'
 import { logger } from './lib/logger'
 import { redactLogLine } from './lib/redact-path'
+import { requestTiming } from './lib/request-timing'
 import { Sentry, resolveClientSourceTag } from './lib/sentry'
 import {
 	OwnershipCapExceededError,
@@ -39,6 +41,7 @@ import claudeOauthRoutes from './routes/claude-oauth'
 import conversationsRoutes from './routes/conversations'
 // import desktopTeachRoutes from './routes/desktop-teach'
 import customMcpServersRoutes from './routes/custom-mcp-servers'
+import dataQueryRoutes from './routes/data-query'
 import desktopRoutes from './routes/desktop'
 import deviceAuthRoutes from './routes/device-auth'
 import devicesRoutes from './routes/devices'
@@ -46,6 +49,7 @@ import eventsRoutes from './routes/events'
 import extensionsRoutes from './routes/extensions'
 import featureFlagsRoutes from './routes/feature-flags'
 import fileCommentsRoutes from './routes/file-comments'
+import fileProposalsRoutes from './routes/file-proposals'
 import filesRoutes from './routes/files'
 import forYouRoutes from './routes/for-you'
 import graphRoutes from './routes/graph'
@@ -54,13 +58,18 @@ import installedLoopsRoutes from './routes/installed-loops'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
 import integrationsGatewayRoutes from './routes/integrations-gateway'
 import integrationsGmailRoutes from './routes/integrations-gmail'
+import integrationsGoogleDisconnectRoutes from './routes/integrations-google-disconnect'
+import integrationsGoogleDriveRoutes from './routes/integrations-google-drive'
+import integrationsGoogleDriveMcpRoutes from './routes/integrations-google-drive-mcp'
 import integrationsGoogleMeetMcpRoutes from './routes/integrations-google-meet-mcp'
 import integrationsGoogleSearchConsoleMcpRoutes from './routes/integrations-google-search-console-mcp'
 import integrationsGrantsRoutes from './routes/integrations-grants'
 import integrationsKeychainRoutes from './routes/integrations-keychain'
 import integrationsLinkedinRoutes from './routes/integrations-linkedin-unipile'
 import integrationsLinkedinMcpRoutes from './routes/integrations-linkedin-unipile-mcp'
+import integrationsResendRoutes from './routes/integrations-resend'
 import integrationsSkjaldConnectRoutes from './routes/integrations-skjald-connect'
+import integrationsSlackDirectChannelsRoutes from './routes/integrations-slack-direct-channels'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
 import keychainAdminRoutes from './routes/keychain-admin'
 import liveActivitiesRoutes from './routes/live-activities'
@@ -72,12 +81,17 @@ import methodRoutes from './routes/method'
 import miniAppRegenRoutes from './routes/mini-app-regen'
 import notificationPreferencesRoutes from './routes/notification-preferences'
 import notificationsRoutes from './routes/notifications'
+import oauthRoutes from './routes/oauth'
+import oauthDiscoveryRoutes from './routes/oauth-discovery'
+import oauthTokenRoutes from './routes/oauth-token'
 import objectApprovalsRoutes from './routes/object-approvals'
 import objectsRoutes from './routes/objects'
 import publicBetStrategistRoutes from './routes/public-bet-strategist'
 import publicLandingEventsRoutes from './routes/public-landing-events'
 import relationshipsRoutes from './routes/relationships'
+import savedViewsRoutes from './routes/saved-views'
 import searchRoutes from './routes/search'
+import sendPermissionsRoutes from './routes/send-permissions'
 import sessionsRoutes from './routes/sessions'
 import stripeWebhookRoutes from './routes/stripe-webhook'
 import subscriptionsRoutes from './routes/subscriptions'
@@ -277,12 +291,14 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// webviews vary by origin. Do NOT add `credentials: true` to the /mcp
 	// policy — browsers reject wildcard + credentials together. /api/* uses
 	// the configured-origin policy with credentials for the web app.
-	app.use('/mcp', cors())
+	app.use('/mcp', cors({ origin: '*', exposeHeaders: ['WWW-Authenticate'] }))
 	app.use('/api/*', cors({ origin: allowedOrigins, credentials: true }))
 	app.use(
 		'*',
 		honoLogger((line, ...rest) => console.log(redactLogLine(line.replace(/\?\S*/, '')), ...rest)),
 	)
+
+	app.use('/api/*', requestTiming())
 
 	app.use('*', async (c, next) => {
 		c.set('db', db)
@@ -443,6 +459,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/relationships', relationshipsRoutes)
 	app.route('/api/triggers', triggersRoutes)
 	app.route('/api/loops', loopsRoutes)
+	app.route('/api/data', dataQueryRoutes)
 	// linkedin-unipile connect + callback use LinkedIn's Hosted Auth Wizard, NOT
 	// OAuth2 — so this dedicated route file handles /connect + /callback for
 	// that provider directly. Mounted BEFORE the generic /api/integrations so
@@ -458,6 +475,12 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// google-meet MCP surface — same trie-ordering constraint as linkedin's:
 	// mount the /mcp subtree BEFORE the generic /api/integrations catch-all.
 	app.route('/api/integrations/google-meet/mcp', integrationsGoogleMeetMcpRoutes)
+	// google-drive MCP surface — same ordering constraint as google-meet's above.
+	app.route('/api/integrations/google-drive/mcp', integrationsGoogleDriveMcpRoutes)
+	app.route('/api/integrations/google', integrationsGoogleDisconnectRoutes)
+	// folder watches list + stop for the Drive detail page; its own prefix, so the
+	// generic /api/integrations/{provider}/... routes never see these paths.
+	app.route('/api/integrations/google-drive', integrationsGoogleDriveRoutes)
 	app.route('/api/integrations/google-search-console/mcp', integrationsGoogleSearchConsoleMcpRoutes)
 	app.route('/api/custom-mcp-servers', customMcpServersRoutes)
 	app.route('/api/integrations', integrationsKeychainRoutes)
@@ -466,8 +489,13 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/integrations', integrationsGatewayRoutes)
 	// Gmail send (the gmail_send_email tool's route), before the generic catch-all.
 	app.route('/api/integrations/gmail', integrationsGmailRoutes)
+	// Resend send (the resend_send_email tool's route); the gateway holds the MCP's own send tools.
+	app.route('/api/integrations/resend', integrationsResendRoutes)
 	app.route('/api/integrations', integrationsRoutes)
 	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
+	app.route('/api/integrations/slack/direct-post-channels', integrationsSlackDirectChannelsRoutes)
+	// Who may send what without a person approving it; human admins and owners write.
+	app.route('/api/send-permissions', sendPermissionsRoutes)
 	// Stripe webhook mounted at /api/webhooks/stripe BEFORE the integrations
 	// catchall (`/api/webhooks/:provider`) so the more-specific match wins.
 	// Stripe is billing, not an integration provider.
@@ -502,10 +530,15 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// prefix so the nested /:id/comments paths sit under the existing files
 	// surface without touching files.ts.
 	app.route('/api/files', fileCommentsRoutes)
+	app.route('/api/files', fileProposalsRoutes)
 	app.route('/api/extensions', extensionsRoutes)
 	app.route('/api/claude-oauth', claudeOauthRoutes)
+	// The consent and connections API for the Claude connector. Behind authMiddleware like the rest
+	// of /api, and refused for Claude's own (mat_) tokens.
+	app.route('/api/oauth', oauthRoutes)
 	app.route('/api/telemetry', telemetryRoutes)
 	app.route('/api/user-display-settings', userDisplaySettingsRoutes)
+	app.route('/api/saved-views', savedViewsRoutes)
 	app.route('/api/feature-flags', featureFlagsRoutes)
 	app.route('/api/desktop', desktopRoutes)
 	// app.route('/api/desktop/teach', desktopTeachRoutes)
@@ -530,6 +563,25 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	}
 
 	app.route('/mcp', mcpRoutes)
+
+	// Claude sign-in discovery documents. Mounted before the SPA fallthrough below, which would
+	// otherwise answer these paths with index.html.
+	app.route('/', oauthDiscoveryRoutes)
+
+	// The consent page is a web route (apps/web/src/routes/oauth.authorize.tsx), served by the SPA
+	// fallthrough below. A page with an Allow button is a clickjacking target, so it refuses to be
+	// framed. Registered here, ahead of serveStatic and the SPA fallback, so both answers carry it.
+	const refuseFraming: MiddlewareHandler = async (c, next) => {
+		c.header('Content-Security-Policy', "frame-ancestors 'none'")
+		c.header('X-Frame-Options', 'DENY')
+		await next()
+	}
+	app.use('/oauth/authorize', refuseFraming)
+	app.use('/oauth/authorize/*', refuseFraming)
+
+	// POST /oauth/token (public: the one-time code or refresh token is the credential). Same reason
+	// for the position: the SPA fallthrough below would otherwise swallow the path.
+	app.route('/', oauthTokenRoutes)
 
 	// Public method-site routes — mounted BEFORE the SPA static fallthrough
 	// below so `/method/*` never falls through to `index.html`. The editorial

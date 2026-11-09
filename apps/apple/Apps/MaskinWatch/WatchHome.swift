@@ -3,34 +3,41 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// The watch: three vertical pages on the Digital Crown. Home (ask the Chief of Staff, and what
-/// waits on you), Briefing, Flows. Decisions and the conversation are pushed from Home.
+/// The watch: two vertical pages on the Digital Crown. Home (ask the Chief of Staff, and what
+/// waits on you) and Flows (the daily briefing and the flows, one card each). Decisions and the
+/// conversation are pushed from Home.
 struct WatchHome: View {
 	let environment: AppEnvironment
 	let store: ForYouStore?
 	let watch: MaskinWatchStore
 	@State private var loops: LoopsStore?
 	@State private var conversation: WatchConversationStore
+	@State private var listening: WatchListeningStore
 	@State private var page: Page = WatchHome.startingPage
 	@State private var path: [WatchRoute] = []
-	@State private var openFlow: String?
+	@State private var flowsRoute: WatchFlowsRoute?
 	@AppStorage(WatchFirstRun.doneKey) private var firstRunDone = false
 
-	enum Page: Int { case home, briefing, flows }
+	enum Page: Int { case home, flows }
 
 	init(environment: AppEnvironment, store: ForYouStore?, watch: MaskinWatchStore) {
 		self.environment = environment
 		self.store = store
 		self.watch = watch
 		_conversation = State(initialValue: .live(environment: environment))
+		let client = environment.client
+		_listening = State(
+			initialValue: WatchListeningStore(
+				transcriber: environment.auth.session == nil ? nil : APIBackendDictation(client: client),
+				language: DictationLanguage.hint(preferredLanguages: Locale.preferredLanguages),
+				makeMicrophone: { EnginePhraseMicrophone() }))
 	}
 
-	/// Design review only: `MASKIN_DEMO_PAGE=briefing` opens that page, because a simulator has no
+	/// Design review only: `MASKIN_DEMO_PAGE=flows` opens that page, because a simulator has no
 	/// Digital Crown to scroll with. Always the first page in Release.
 	private static var startingPage: Page {
 		#if DEBUG
 			switch ProcessInfo.processInfo.environment["MASKIN_DEMO_PAGE"] {
-			case "briefing": return .briefing
 			case "flows": return .flows
 			default: break
 			}
@@ -52,13 +59,16 @@ struct WatchHome: View {
 			if signedOut {
 				watch.clear()
 				conversation.stop()
+				listening.cancel()
 				path = []
 			}
 		}
+		.onAppear { listening.deliver = ask }
 		// Actions are ink; the system accent would otherwise paint titles and links indigo.
 		.tint(MaskinColor.ink)
 		.task(id: environment.auth.credentials) {
 			conversation.stop()
+			listening.cancel()
 			await startLoops()
 		}
 		.onDisappear {
@@ -70,7 +80,7 @@ struct WatchHome: View {
 	private var pages: some View {
 		TabView(selection: $page) {
 			NavigationStack(path: $path) {
-				WatchAskHome(store: store, watch: watch, ask: ask)
+				WatchAskHome(store: store, watch: watch, listen: listen)
 					.containerBackground(for: .navigation) { WatchBackdrop() }
 					.toolbar(.hidden, for: .navigationBar)
 					.navigationDestination(for: WatchRoute.self) { route in
@@ -79,14 +89,15 @@ struct WatchHome: View {
 							WatchNeedsYou(store: store, watch: watch, workspaceId: environment.workspaceId)
 						case .conversation:
 							WatchConversationScreen(conversation: conversation)
+						case .listening:
+							WatchListeningScreen(listening: listening, ask: ask)
 						}
 					}
 			}
 			.tag(Page.home)
-			WatchBriefing(store: store, watch: watch, firstName: firstName).tag(Page.briefing)
 			WatchFlows(
-				flows: flows, loaded: loops?.phase == .loaded || !watch.flows.isEmpty, store: store,
-				openFlow: $openFlow
+				flows: flows, needsCount: needsCount, loaded: loops?.phase == .loaded || !watch.flows.isEmpty,
+				store: store, watch: watch, route: $flowsRoute
 			).tag(Page.flows)
 		}
 		.tabViewStyle(.verticalPage)
@@ -94,11 +105,19 @@ struct WatchHome: View {
 		.onOpenURL(perform: open)
 	}
 
+	/// The mic was tapped: listen by itself, and show what is heard.
+	private func listen() {
+		listening.begin()
+		if path.last != .listening { path.append(.listening) }
+	}
+
 	/// The wearer asked something: hand it to the Chief of Staff and show the conversation.
 	private func ask(_ text: String) {
 		conversation.ask(text)
 		firstRunDone = true
 		page = .home
+		path.removeAll { $0 == .listening }
+		listening.reset()
 		if path.last != .conversation { path.append(.conversation) }
 	}
 
@@ -113,10 +132,11 @@ struct WatchHome: View {
 			page = .home
 			path = [.decisions]
 		case "brief":
-			page = .briefing
+			page = .flows
+			flowsRoute = .daily
 		case "flow":
 			page = .flows
-			openFlow = url.pathComponents.dropFirst().first
+			flowsRoute = url.pathComponents.dropFirst().first.map(WatchFlowsRoute.flow)
 		default:
 			break
 		}
@@ -135,6 +155,12 @@ struct WatchHome: View {
 			entries: store?.entries ?? [], sender: { store?.senderName(of: $0) },
 			briefMarkdown: briefMarkdown, loops: loops?.phase == .loaded ? loops?.loops ?? [] : [],
 			firstName: firstName, now: now)
+	}
+
+	/// How many decisions wait: the live feed when it has loaded, else the last snapshot's.
+	private var needsCount: Int {
+		if let store, !store.entries.isEmpty { return store.needsCount }
+		return watch.needsCount
 	}
 
 	private var firstName: String? {

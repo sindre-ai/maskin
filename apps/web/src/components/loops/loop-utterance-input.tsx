@@ -1,8 +1,11 @@
 import { Composer } from '@/components/chat/chat'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
+import { useCanWrite } from '@/hooks/use-can-write'
 import type { LoopSummary } from '@/lib/api'
 import { EMPTY_CHAT_SELECTION } from '@/lib/chat-selection'
 import { useWorkspace } from '@/lib/workspace-context'
+import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
 import { useNavigate } from '@tanstack/react-router'
 import { forwardRef, useCallback } from 'react'
 
@@ -28,6 +31,8 @@ export const LoopUtteranceInput = forwardRef<
 		children?: React.ReactNode
 		/** Offer the suggestion chips (no change history yet). */
 		showSuggestions?: boolean
+		/** Idle prompt in the composer; defaults to the change-by-talking line. */
+		placeholder?: string
 		/** True while a voice capture is running — renders the listening indicator. */
 		listening?: boolean
 		/** Return true to consume the utterance in place (the PROPOSED EDIT card).
@@ -35,12 +40,17 @@ export const LoopUtteranceInput = forwardRef<
 		 *  only path for loops that carry no plan snapshot. */
 		onUtterance?: (utterance: string) => boolean
 	}
->(function LoopUtteranceInput({ loop, children, showSuggestions, listening, onUtterance }, ref) {
+>(function LoopUtteranceInput(
+	{ loop, children, showSuggestions, placeholder, listening, onUtterance },
+	ref,
+) {
 	const { workspaceId } = useWorkspace()
+	const canWrite = useCanWrite()
 	const navigate = useNavigate()
 
 	const submit = useCallback(
 		async (utterance: string) => {
+			if (!canWrite) return
 			if (onUtterance?.(utterance)) return
 			navigate({
 				to: '/$workspaceId/chats/new',
@@ -48,7 +58,7 @@ export const LoopUtteranceInput = forwardRef<
 				search: { objectId: loop.id, objectTitle: loop.name ?? undefined, objectType: 'loop' },
 			})
 		},
-		[navigate, workspaceId, loop.id, loop.name, onUtterance],
+		[navigate, workspaceId, loop.id, loop.name, onUtterance, canWrite],
 	)
 
 	return (
@@ -62,15 +72,17 @@ export const LoopUtteranceInput = forwardRef<
 				{showSuggestions && (
 					<div className="mb-2.5 flex flex-wrap gap-2" aria-label="Suggested changes">
 						{SUGGESTIONS.map((suggestion) => (
-							<Button
-								key={suggestion}
-								variant="outline"
-								size="sm"
-								className="rounded-full"
-								onClick={() => void submit(suggestion)}
-							>
-								{suggestion}
-							</Button>
+							<ViewerTooltip key={suggestion}>
+								<Button
+									variant="outline"
+									size="sm"
+									className="rounded-full"
+									disabled={!canWrite}
+									onClick={() => void submit(suggestion)}
+								>
+									{suggestion}
+								</Button>
+							</ViewerTooltip>
 						))}
 					</div>
 				)}
@@ -85,20 +97,26 @@ export const LoopUtteranceInput = forwardRef<
 						</span>
 					</div>
 				)}
-				<Composer
-					workspaceId={workspaceId}
-					onSend={submit}
-					disabled={false}
-					pending={false}
-					surface="pulse-bar"
-					placeholder="Listening — speak in plain words"
-					selection={EMPTY_CHAT_SELECTION}
-					onRemoveAgent={() => {}}
-					onRemoveObject={() => {}}
-					onRemoveNotification={() => {}}
-					onRemoveFile={() => {}}
-					textareaLabel="Say what should change about this loop"
-				/>
+				<ViewerTooltip className="block w-full">
+					<Composer
+						workspaceId={workspaceId}
+						onSend={submit}
+						disabled={!canWrite}
+						pending={false}
+						surface="pulse-bar"
+						placeholder={
+							canWrite
+								? (placeholder ?? 'Say what should change about this flow')
+								: VIEWER_READ_ONLY_MESSAGE
+						}
+						selection={EMPTY_CHAT_SELECTION}
+						onRemoveAgent={() => {}}
+						onRemoveObject={() => {}}
+						onRemoveNotification={() => {}}
+						onRemoveFile={() => {}}
+						textareaLabel="Say what should change about this flow"
+					/>
+				</ViewerTooltip>
 			</div>
 		</div>
 	)

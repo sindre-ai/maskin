@@ -38,6 +38,7 @@ struct MaskinApp: App {
 	}
 
 	init() {
+		Perf.event("app.init")
 		#if os(macOS)
 			let source = "macos"
 			let platform = DevicePlatform.macos
@@ -51,12 +52,16 @@ struct MaskinApp: App {
 		// Agent names, thread links and Spotlight entries belong to the account that is leaving.
 		environment.auth.onSessionEnded { _ in Task { await MaskinIntentsContext.wipe() } }
 		_environment = State(initialValue: environment)
+		// Nil without a PostHog token in this build; then every analytics call is a no-op. Nothing is
+		// sent until the person agrees (see Analytics).
+		Analytics.shared.configure(sink: PostHogSink.forThisBuild())
 		let registrar = PushRegistrar(
 			system: SystemPushSystem(), devices: APIDeviceRegistrar(
 				baseURL: environment.baseURL, clientSource: environment.clientSource,
 				credentials: environment.auth.credentialsProvider),
 			environment: .detect(), platform: platform,
-			appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+			appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+			network: NWPathNetworkMonitor()
 		)
 		#if os(iOS)
 			Self.setUpLiveActivity(environment: environment, registrar: registrar)
@@ -96,9 +101,11 @@ struct MaskinApp: App {
 				// Hand the sign-in to the paired watch, and again whenever it changes; point the
 				// "Agents working" activity at the signed-in workspace.
 				.onChange(of: environment.auth.session, initial: true) { _, session in
+					Analytics.shared.sessionChanged(actorId: session?.actorId, workspaceId: session?.workspaceId)
 					watchBridge.publish(session)
 					Task { await AgentsActivityRuntime.shared?.sessionChanged(workspaceId: session?.workspaceId) }
 					Task { await CycleActivityController.shared?.workspaceChanged(session?.workspaceId) }
+					Task { await FollowActivityController.shared?.workspaceChanged(session?.workspaceId) }
 				}
 			#endif
 		}
@@ -108,7 +115,10 @@ struct MaskinApp: App {
 			.onChange(of: scenePhase) { _, phase in
 				if phase == .background { BackgroundRefresh.schedule() }
 				// Back in front: the agents card has no push path on this server, so refetch now.
-				if phase == .active { Task { await AgentsActivityRuntime.shared?.refresh() } }
+				if phase == .active {
+					Analytics.shared.appOpened()
+					Task { await AgentsActivityRuntime.shared?.refresh() }
+				}
 			}
 		#endif
 		.commands { ShellCommands() }
@@ -130,18 +140,38 @@ struct MaskinApp: App {
 								.init(apiKey: $0.apiKey, workspaceId: $0.workspaceId)
 							}
 						}
-					}))
+					}),
+				// v3: no automatic Agents card. The coordinator still folds the working agents; the
+				// opt-in follow activity listens to them.
+				startsAutomatically: false)
 			AgentsActivityCoordinator.shared = coordinator
 			host.attach(coordinator)
+			let follow = FollowActivityController(host: FollowActivityHost()) { sessionId in
+				// The working list leaves out chat sessions; ask the sessions list itself.
+				let source = await MainActor.run {
+					environment.workspaceId.map { APIAgentsSource(client: environment.client, workspaceID: $0) }
+				}
+				guard let source,
+					let sessions = try? await source.recentSessions(limit: WorkingAgentsFeed.sessionWindow)
+				else { return nil }
+				return sessions.first { $0.id == sessionId }?.isActive ?? false
+			}
+			FollowActivityController.shared = follow
+			coordinator.onWorkingChanged = { agents in await follow.workingChanged(agents) }
 			AgentsActivityRuntime.shared = AgentsActivityRuntime(environment: environment, coordinator: coordinator)
 			CycleActivityController.shared = CycleActivityController(host: CycleActivityHost())
 			MeetingActivityController.shared = MeetingActivityController(host: MeetingActivityHost())
+			// No call survives a relaunch, so a call card found now is stale.
+			let callActivity = CallActivityController(host: CallActivityHost())
+			CallActivityController.shared = callActivity
+			Task { await callActivity.endStaleCards() }
 			environment.auth.onSessionEnded { ending in
 				let creds = APILiveActivityTokens.Credentials(
 					apiKey: ending.apiKey, workspaceId: ending.workspaceId)
 				Task {
 					await AgentsActivityRuntime.shared?.sessionChanged(workspaceId: nil)
 					await CycleActivityController.shared?.workspaceChanged(nil)
+					await FollowActivityController.shared?.workspaceChanged(nil)
 					await coordinator.signedOut(credentials: creds)
 				}
 			}

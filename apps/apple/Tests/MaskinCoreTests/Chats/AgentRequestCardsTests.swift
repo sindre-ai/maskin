@@ -76,7 +76,50 @@ struct AgentRequestCardsTests {
 	@Test func onlyCardsThatRecordAnAnswerAskForOne() {
 		#expect(message(.object(["computer_request": .object([:])])).asksForAnswer)
 		#expect(message(.object(["integration_access_request": .object([:])])).asksForAnswer)
+		#expect(message(.object(["mcp_server_request": .object([:])])).asksForAnswer)
 		#expect(message(.object(["integration_connect": .object([:])])).asksForAnswer == false)
 		#expect(message(nil).asksForAnswer == false)
+	}
+
+	@Test func askingAgainNamesWhatWasDeclined() {
+		let m = message(
+			.object([
+				"integration_access_request": .object([
+					"session_id": .string("s"), "integration_id": .string("i"), "display_name": .string("Gmail"),
+					"level": .string("read"),
+				])
+			]))
+		#expect(IntegrationAccessRequest(message: m)?.askAgainText.contains("Gmail") == true)
+	}
+}
+
+@Suite("Integration access card copy")
+struct IntegrationAccessCopyTests {
+	private func request(level: String) throws -> IntegrationAccessRequest {
+		let m = ChatMessage(
+			id: "1", conversationID: "c", actorID: "a", actorName: "Chief", author: .agent, content: "x",
+			metadata: .object([
+				"integration_access_request": .object([
+					"session_id": .string("s"), "integration_id": .string("i"), "display_name": .string("Gmail"),
+					"level": .string(level),
+				])
+			]))
+		return try #require(IntegrationAccessRequest(message: m))
+	}
+
+	@Test func readWriteAskCanBeLoweredButReadCannotBeRaised() throws {
+		#expect(try request(level: "read_write").choosableLevels == [.read, .readWrite])
+		#expect(try request(level: "read").choosableLevels == [.read])
+	}
+
+	@Test func lowerLevelChangesTheReplyWords() throws {
+		let lowered = try request(level: "read_write").with(level: .read)
+		#expect(lowered.allowedReply(changed: true).contains("read access to Gmail"))
+	}
+
+	@Test func settledLinesNameTheAgent() throws {
+		let r = try request(level: "read")
+		#expect(r.allowedLine(agentName: "Chief of Staff") == "Allowed Gmail for Chief of Staff.")
+		#expect(r.declinedLine(agentName: nil) == "Declined Gmail for this agent.")
 	}
 }

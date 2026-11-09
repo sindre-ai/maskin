@@ -21,13 +21,21 @@ public final class LoopsStore {
 	public var sort: LoopsSort {
 		didSet { if sort != oldValue { sortStorage?.save(sort) } }
 	}
+	/// Order and Summary, remembered on this device with the sort.
+	public var display: LoopsDisplay {
+		didSet { if display != oldValue { displayStorage?.save(display) } }
+	}
 	/// Loop id → its newest post, for the card's latest update (only the bounded set is loaded).
 	public private(set) var latestPosts: [String: LoopPost] = [:]
+	/// Loop id → the title of the newest decision still unanswered (no replies), else the newest
+	/// decision, for the card's "waiting on you" line. Loaded with `latestPosts`.
+	public private(set) var decisionTitles: [String: String] = [:]
 	/// How current the list on screen is (cache-hydrated until the first fetch succeeds).
 	public private(set) var freshness = Freshness()
 
 	@ObservationIgnored private let cache: SnapshotCache?
 	@ObservationIgnored private let sortStorage: (any LoopsSortStorage)?
+	@ObservationIgnored private let displayStorage: (any LoopsDisplayStorage)?
 	@ObservationIgnored private let api: any LoopsAPI
 	@ObservationIgnored private let events: EventHub?
 	@ObservationIgnored private var listener: Task<Void, Never>?
@@ -42,8 +50,10 @@ public final class LoopsStore {
 
 	public init(
 		api: any LoopsAPI, events: EventHub?, cache: SnapshotCache? = nil,
-		sortStorage: (any LoopsSortStorage)? = nil
+		sortStorage: (any LoopsSortStorage)? = nil, displayStorage: (any LoopsDisplayStorage)? = nil
 	) {
+		self.displayStorage = displayStorage
+		self.display = displayStorage?.load() ?? LoopsDisplay()
 		self.api = api
 		self.events = events
 		self.debouncer = RefreshDebouncer()
@@ -77,8 +87,10 @@ public final class LoopsStore {
 	init(
 		api: any LoopsAPI, events: EventHub?, debounce: Duration,
 		sleep: @escaping RefreshDebouncer.Sleep, cache: SnapshotCache? = nil,
-		sortStorage: (any LoopsSortStorage)? = nil
+		sortStorage: (any LoopsSortStorage)? = nil, displayStorage: (any LoopsDisplayStorage)? = nil
 	) {
+		self.displayStorage = displayStorage
+		self.display = displayStorage?.load() ?? LoopsDisplay()
 		self.api = api
 		self.events = events
 		self.debouncer = RefreshDebouncer(delay: debounce, sleep: sleep)
@@ -98,6 +110,33 @@ public final class LoopsStore {
 	/// the viewer. Not remembered: it is a glance, not a view.
 	public var needsYouOnly = false
 
+	/// The tag chip above the list: only flows carrying it. Nil is "All". Not remembered.
+	public var tagFilter: String?
+
+	/// Every tag on any flow, A to Z.
+	public var tags: [String] { FlowTags.all(loops) }
+	/// The Display sheet's "Running" filter: only flows that are running work.
+	public var runningOnly = false
+
+	/// The Display sheet's Filters row, over the pill's flag and the running flag.
+	public var filter: LoopsFilter {
+		get { needsYouOnly ? .needsYou : runningOnly ? .running : .everything }
+		set {
+			needsYouOnly = newValue == .needsYou
+			runningOnly = newValue == .running
+		}
+	}
+
+	/// Display's Reset: the sort, order, filter and properties back to their defaults.
+	public func resetDisplay() {
+		sort = .recent
+		display = LoopsDisplay()
+		filter = .everything
+	}
+
+	/// Whether anything is off its default, for the Display button and Reset.
+	public var isDisplayCustomised: Bool { sort != .recent || display != LoopsDisplay() || filter != .everything }
+
 	/// Every loop in the chosen order, narrowed by the search text and, when the pill is on, to the
 	/// flows that need the viewer.
 	public func filtered(query: String = "") -> [LoopSummary] {
@@ -106,7 +145,9 @@ public final class LoopsStore {
 			to: loops.filter {
 				(text.isEmpty || $0.displayName.localizedCaseInsensitiveContains(text))
 					&& (!needsYouOnly || ($0.status.isLive && needsYou($0)))
-			})
+					&& (!runningOnly || $0.status.isLive)
+					&& (tagFilter == nil || FlowTags.has($0, tagFilter ?? ""))
+			}, reversed: display.reversed)
 	}
 
 	public var waitingCount: Int { loops.reduce(0) { $0 + $1.waitingCount } }
@@ -129,6 +170,9 @@ public final class LoopsStore {
 		return LoopLatestUpdate.line(
 			post: post, author: directory.name(post.actorID), limit: LoopLatestUpdate.cardLimit)
 	}
+
+	/// What the card's banner names: the title of the decision that waits, when the flow has one.
+	public func decisionTitle(for loop: LoopSummary) -> String? { decisionTitles[loop.id] }
 
 	/// Loads the newest post for the visible cards: at most `latestUpdateBound` flows, one graph
 	/// read each, and a flow is only read again after its `updatedAt` moved.
@@ -155,23 +199,26 @@ public final class LoopsStore {
 		}
 		guard !stale.isEmpty else { return }
 		let api = api
-		let results = await withTaskGroup(of: (LoopSummary, LoopPost??).self) { group in
+		let results = await withTaskGroup(of: (LoopSummary, [LoopPost]?).self) { group in
 			for loop in stale {
 				group.addTask {
-					do { return (loop, .some(try await api.latestPost(loopID: loop.id))) } catch {
+					do { return (loop, try await api.posts(loopID: loop.id)) } catch {
 						return (loop, nil)
 					}
 				}
 			}
-			var all: [(LoopSummary, LoopPost??)] = []
+			var all: [(LoopSummary, [LoopPost]?)] = []
 			for await result in group { all.append(result) }
 			return all
 		}
 		for (loop, outcome) in results {
 			// A failed read leaves the flow stale so the next refresh tries again.
-			guard let post = outcome else { continue }
+			guard let posts = outcome else { continue }
 			updatesSeenAt[loop.id] = loop.updatedAt ?? .distantPast
-			latestPosts[loop.id] = post
+			latestPosts[loop.id] = posts.first
+			let decisions = posts.filter(\.isDecision)
+			decisionTitles[loop.id] = FlowsOverview.decisionTitle(
+				from: (decisions.first { $0.replyCount == 0 } ?? decisions.first))
 		}
 	}
 

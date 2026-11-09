@@ -1,6 +1,19 @@
-import { keychainEnvNames } from '@/components/chat/keychain-request-card'
+import { keychainUseHint } from '@/components/chat/keychain-request-card'
+import {
+	REQUEST_CARD_LINK,
+	RequestCardHeader,
+	RequestCardReadOnly,
+	RequestCardSummary,
+} from '@/components/chat/request-card-parts'
+import {
+	REQUEST_CARD,
+	REQUEST_CARD_ACTIONS,
+	REQUEST_CARD_DECLINE,
+	REQUEST_CARD_PRIMARY,
+} from '@/components/chat/request-card-styles'
 import { FormError } from '@/components/shared/form-error'
 import { Button } from '@/components/ui/button'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useCardAnswer, useSendMessage } from '@/hooks/use-conversation'
 import { useIntegrations } from '@/hooks/use-integrations'
 import { useContinueSession, useSendSessionInput } from '@/hooks/use-sessions'
@@ -27,7 +40,8 @@ interface KeychainAccessRequestCardProps {
  * The card an agent puts in chat via `request_keychain_access` to use a credential that
  * is already in the Keychain. It names the credential and holds no secret. Allow grants
  * the agent access on the server, stops its idle session and posts a short message, which
- * starts a fresh session with the credential in its environment. Not now only tells the
+ * starts a fresh session with the credential (an API key in its environment; a login to
+ * type with desktop_type, never to read). Not now only tells the
  * agent, so it does not wait.
  *
  * Whether it was allowed is read from the integration list, so a card scrolled back to
@@ -49,6 +63,8 @@ export function KeychainAccessRequestCard({
 	const helper = request.reply_to_session === true
 	const continueSession = useContinueSession(workspaceId, conversationId)
 	const sendInput = useSendSessionInput(workspaceId)
+	// Allowing access and declining both answer the agent, which a viewer cannot do.
+	const canWrite = useCanWrite()
 
 	const [busy, setBusy] = useState(false)
 	const [error, setError] = useState<string | null>(null)
@@ -97,8 +113,7 @@ export function KeychainAccessRequestCard({
 				setAgentStillRunning(true)
 				return
 			}
-			const vars = keychainEnvNames(request.kind, request.credential_name)
-			const where = vars.length > 0 ? `. It's in your environment as ${vars.join(' and ')}` : ''
+			const where = keychainUseHint(request.kind, request.credential_name)
 			if (helper) {
 				continueSession.mutate({
 					id: request.session_id,
@@ -140,67 +155,78 @@ export function KeychainAccessRequestCard({
 		})
 	}
 
+	// Asking again is a plain message the agent answers with a new card.
+	const askAgain = () => {
+		setDeclinedNow(false)
+		const content = `Please ask me to use ${request.credential_name} again.`
+		if (helper) {
+			sendInput.mutate({ id: request.session_id, content, conversationId })
+			return
+		}
+		sendMessage.mutate({ content })
+	}
+
 	if (allowed || declined || gone) {
 		return (
-			<div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm">
-				<Lock className="size-4 text-muted-foreground" aria-hidden />
-				<span>
-					{allowed ? (
-						<>
-							Allowed <strong>{request.credential_name}</strong>{' '}
-							{allowedScope === 'chat'
-								? 'for this agent in this chat only.'
-								: 'for this agent. It stays until you remove it.'}
-						</>
-					) : declined ? (
-						<>
-							Declined <strong>{request.credential_name}</strong>.
-						</>
-					) : (
-						<>
-							<strong>{request.credential_name}</strong> is no longer in the Keychain.
-						</>
-					)}
-				</span>
+			<RequestCardSummary
+				icon={Lock}
+				note={
+					agentStillRunning
+						? 'The agent is still running without it. Stop it from the chat, then send a message to start it again with the credential.'
+						: null
+				}
+				actions={
+					allowed ? (
+						<Link
+							to="/$workspaceId/settings/keychain"
+							params={{ workspaceId }}
+							className={REQUEST_CARD_LINK}
+						>
+							Manage
+						</Link>
+					) : declined && canWrite ? (
+						<button type="button" className={REQUEST_CARD_LINK} onClick={askAgain}>
+							Ask again
+						</button>
+					) : null
+				}
+			>
 				{allowed ? (
-					<Link
-						to="/$workspaceId/settings/keychain"
-						params={{ workspaceId }}
-						className="text-xs text-muted-foreground underline"
-					>
-						Manage in Keychain
-					</Link>
-				) : null}
-				{agentStillRunning ? (
-					<p className="w-full text-xs text-muted-foreground">
-						The agent is still running without it. Stop it from the chat, then send a message to
-						start it again with the credential.
-					</p>
-				) : null}
-			</div>
+					<>
+						Allowed <strong>{request.credential_name}</strong>{' '}
+						{allowedScope === 'chat'
+							? 'for this agent in this chat only.'
+							: 'for this agent. It stays until you remove it.'}
+					</>
+				) : declined ? (
+					<>
+						Declined <strong>{request.credential_name}</strong>.
+					</>
+				) : (
+					<>
+						<strong>{request.credential_name}</strong> is no longer in the Keychain.
+					</>
+				)}
+			</RequestCardSummary>
+		)
+	}
+
+	if (!canWrite || !canAllow) {
+		return (
+			<RequestCardReadOnly icon={Lock} title={`Use ${request.credential_name}`}>
+				{canWrite
+					? 'Only the person who saved this or a workspace admin can allow it.'
+					: 'Only a person with edit access can allow it.'}
+			</RequestCardReadOnly>
 		)
 	}
 
 	return (
-		<fieldset
-			aria-label={`Allow ${request.credential_name}`}
-			className="mt-2 flex min-w-0 flex-col gap-3 rounded-xl border border-border bg-muted/40 p-4"
-		>
-			<div className="flex items-start gap-2">
-				<Lock className="mt-0.5 size-4 shrink-0" aria-hidden />
-				<div>
-					<h3 className="text-sm font-semibold">Let this agent use {request.credential_name}?</h3>
-					<p className="mt-0.5 text-xs text-muted-foreground">
-						{request.hint ? `${request.hint} ` : ''}It stays in your encrypted vault and the agent
-						never sees the value in the chat. Choose how long it can use it:
-					</p>
-				</div>
-			</div>
-			{!canAllow ? (
-				<p className="text-xs text-muted-foreground">
-					Only the person who saved this or a workspace admin can allow it.
-				</p>
-			) : null}
+		<fieldset aria-label={`Allow ${request.credential_name}`} className={REQUEST_CARD}>
+			<RequestCardHeader icon={Lock} title={`Let this agent use ${request.credential_name}?`}>
+				{request.hint ? `${request.hint} ` : ''}It stays in your encrypted vault and the agent never
+				sees the value in the chat. Choose how long it can use it:
+			</RequestCardHeader>
 			<FormError error={error ?? undefined} />
 			<ul className="list-disc space-y-0.5 pl-8 text-xs text-muted-foreground">
 				{helper ? null : (
@@ -214,12 +240,12 @@ export function KeychainAccessRequestCard({
 					chat or run, until you remove it in Settings → Keychain.
 				</li>
 			</ul>
-			<div className="flex flex-wrap items-center gap-2">
+			<div className={REQUEST_CARD_ACTIONS}>
 				{helper ? null : (
 					<Button
 						type="button"
-						size="sm"
-						disabled={busy || !canAllow}
+						className={REQUEST_CARD_PRIMARY}
+						disabled={busy}
 						onClick={() => void allow('chat')}
 					>
 						Allow in this chat
@@ -227,14 +253,20 @@ export function KeychainAccessRequestCard({
 				)}
 				<Button
 					type="button"
-					size="sm"
+					className={REQUEST_CARD_PRIMARY}
 					variant={helper ? 'default' : 'outline'}
-					disabled={busy || !canAllow}
+					disabled={busy}
 					onClick={() => void allow('always')}
 				>
 					Always allow
 				</Button>
-				<Button type="button" size="sm" variant="outline" disabled={busy} onClick={decline}>
+				<Button
+					type="button"
+					variant="ghost"
+					className={REQUEST_CARD_DECLINE}
+					disabled={busy}
+					onClick={decline}
+				>
 					Not now
 				</Button>
 			</div>

@@ -4,20 +4,23 @@ import Foundation
 /// There is no More tab and no Agents tab: Agents, Marketplace, Artefacts, Settings, Notifications and
 /// Triggers open from the profile sheet (`ProfileMenu`).
 public enum ShellTab: String, CaseIterable, Hashable, Identifiable, Sendable {
-	case forYou, chats, loops, objects, search
+	case forYou, chats, loops, objects, search, newChat
 
 	public var id: String { rawValue }
 
-	/// The tabs that hold a screen of their own, in order. Search is the detached trailing tab.
-	public static let primary: [ShellTab] = allCases.filter { $0 != .search }
+	/// The tabs that hold a screen of their own, in order. `newChat` is the detached trailing button
+	/// (it starts a chat with the Chief of Staff and never stays selected); Search is a sheet opened
+	/// from the profile sheet, and setting `selectedTab = .search` still opens it.
+	public static let primary: [ShellTab] = allCases.filter { $0 != .search && $0 != .newChat }
 
 	public var title: String {
 		switch self {
 		case .forYou: "For you"
-		case .chats: "Team"
+		case .chats: "Chats"
 		case .loops: "Flows"
-		case .objects: "Objects"
+		case .objects: "Items"
 		case .search: "Search"
+		case .newChat: "New chat with Chief of Staff"
 		}
 	}
 
@@ -26,10 +29,10 @@ public enum ShellTab: String, CaseIterable, Hashable, Identifiable, Sendable {
 	public var barItems: [ShellBarItem] {
 		switch self {
 		case .forYou: [.live, .avatar]
-		case .chats: [.display, .new, .avatar]
-		case .loops: [.display, .avatar]
-		case .objects: [.display, .avatar]
-		case .search: [.avatar]
+		case .chats: [.search, .display, .new, .avatar]
+		case .loops: [.marketplace, .display, .avatar]
+		case .objects: [.search, .display, .avatar]
+		case .search, .newChat: [.avatar]
 		}
 	}
 }
@@ -42,6 +45,10 @@ public enum ShellBarItem: String, CaseIterable, Hashable, Sendable {
 	case new
 	/// The filter / display menu. Stays while the screen is scrolled.
 	case display
+	/// The magnifier that opens search (Chats and Items; Flows has the system's own collapsing search).
+	case search
+	/// The shop icon that opens the marketplace (Flows only).
+	case marketplace
 	/// The profile avatar, which opens the profile sheet. Stays while the screen is scrolled.
 	case avatar
 

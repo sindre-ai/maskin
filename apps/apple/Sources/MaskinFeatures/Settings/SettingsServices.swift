@@ -1,11 +1,15 @@
 import MaskinCore
 import SwiftUI
 
-/// Settings keeps the account and the workspace's setup. Members, Integrations, Billing and
-/// Keys & MCP are reached from the profile sheet (`ProfileMenuItem`), not from here.
+/// Settings keeps the account and the workspace's setup pages (v19). The profile sheet still
+/// reaches the same pages through `ProfileMenuItem`.
 enum SettingsRoute: Hashable, Identifiable {
 	var id: Self { self }
 	case profile, notifications, workspace, skills, objectTypes, deleteAccount, deleteWorkspace
+	case members, integrations, files, keys, triggers, billing
+	case deviceSignIn, appLock, workspaces, advanced, nativeSurfaces
+	/// `maskin://connect?code=`: Sign in a device with the code already typed.
+	case deviceCode(String)
 }
 
 /// The Settings slice's dependencies, built once per screen from `AppEnvironment`.
@@ -59,6 +63,43 @@ struct SettingsServices {
 			.appendingPathComponent(path)
 	}
 
+	/// Plain-HTTP transport for the routes newer than the OpenAPI snapshot, scoped to this workspace.
+	var http: SettingsHTTP {
+		SettingsHTTP(
+			baseURL: environment.baseURL, clientSource: environment.clientSource,
+			credentials: environment.auth.credentialsProvider, workspaceID: workspaceId)
+	}
+
+	func deviceSignInStore() -> DeviceSignInStore {
+		DeviceSignInStore(api: APIDeviceSignInSource(http: http))
+	}
+
+	func invitationsStore() -> InvitationsStore {
+		InvitationsStore(
+			api: APIInvitationsSource(http: http), workspaceId: workspaceId ?? "", canManage: role.canManage)
+	}
+
+	func extensionsStore() -> ExtensionsStore {
+		ExtensionsStore(api: APIExtensionsSource(http: http), canManage: role == .owner)
+	}
+
+	func claudeAccountStore() -> ClaudeAccountStore {
+		ClaudeAccountStore(api: APIClaudeAccountSource(http: http))
+	}
+
+	/// Agents of this workspace, from the member list, for the Agent access page.
+	func integrationAccessStore(integrationId: String, agents: [IntegrationAccessStore.AgentRef])
+		-> IntegrationAccessStore
+	{
+		IntegrationAccessStore(
+			api: APISettingsIntegrationAccessSource(http: http), integrationId: integrationId, agents: agents,
+			canManage: role.canManage)
+	}
+
+	func addToolServerStore() -> AddToolServerStore {
+		AddToolServerStore(api: APIToolServersSource(http: http))
+	}
+
 	func profileStore() -> ProfileStore {
 		let session = environment.auth.session
 		return ProfileStore(
@@ -90,6 +131,18 @@ struct SettingsServices {
 		#endif
 		return IntegrationsStore(
 			api: source ?? NoSettingsSource(), currentRole: role, webAuth: webAuth)
+	}
+
+	/// The figures beside the rows of the account menu and the Settings page; nil without a workspace.
+	func countsStore() -> SettingsCountsStore? {
+		guard let source, let workspaceId else { return nil }
+		let client = environment.client
+		let files = APIFilesRemote(client: client, credentials: environment.auth.credentialsProvider)
+		return SettingsCountsStore(
+			workspaceId: workspaceId, members: source, integrations: source, skills: source, schema: source,
+			billing: source,
+			triggerCount: { try await APITriggersSource(client: client, workspaceID: workspaceId).list().count },
+			fileCount: { limit in try await files.list(query: "", limit: limit, offset: 0).count })
 	}
 
 	func keychainStore() -> KeychainStore {

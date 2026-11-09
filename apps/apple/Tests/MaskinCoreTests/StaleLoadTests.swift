@@ -24,8 +24,8 @@ actor Gate {
 	}
 
 	func waitUntilStarted(_ count: Int = 1) async {
-		let deadline = ContinuousClock.now.advanced(by: .seconds(20))
-		while started < count, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(2)) }
+		var budget = PollBudget()
+		while started < count, budget.spend() { try? await Task.sleep(for: .milliseconds(2)) }
 	}
 }
 

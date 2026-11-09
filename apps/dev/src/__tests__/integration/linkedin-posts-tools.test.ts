@@ -11,7 +11,6 @@ const { captureMock } = vi.hoisted(() => ({ captureMock: vi.fn(async () => {}) }
 vi.mock('../../lib/analytics/posthog', () => ({ capturePosthogEvent: captureMock }))
 
 import { encrypt } from '../../lib/crypto'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import {
 	POSTS_READS_AUTHOR_ID,
 	POSTS_READS_FIRST_POST_ID,
@@ -42,24 +41,16 @@ beforeAll(async () => {
 
 afterAll(async () => {
 	await mock.close()
-	process.env.FF_WORKSPACE_FEATURES = undefined
-	_resetFeatureFlagConfig()
 })
 
 beforeEach(() => {
 	mock.resetInbox()
 	captureMock.mockClear()
-	process.env.FF_WORKSPACE_FEATURES = undefined
-	_resetFeatureFlagConfig()
 })
 
-async function connect(opts: { flag?: boolean } = {}) {
+async function connect() {
 	const actorId = getTestActorId()
 	const ws = await insertWorkspace(db, actorId)
-	if (opts.flag !== false) {
-		process.env.FF_WORKSPACE_FEATURES = `${ws.id}:linkedin-outreach-actions`
-		_resetFeatureFlagConfig()
-	}
 	const [integration] = await db
 		.insert(integrations)
 		.values({
@@ -207,14 +198,6 @@ describe('react_to_post', () => {
 	const like = (postId = POSTS_READS_FIRST_POST_ID, author = POSTS_READS_AUTHOR_ID) => ({
 		post_id: postId,
 		author_provider_id: author,
-	})
-
-	it('is not registered while the flag is off', async () => {
-		const c = await connect({ flag: false })
-		const tools = (await c.mcp.listTools()).tools.map((t) => t.name)
-		expect(tools).toContain(toolName(c.cfg, 'list_user_posts'))
-		expect(tools).toContain(toolName(c.cfg, 'get_company'))
-		expect(tools).not.toContain(toolName(c.cfg, 'react_to_post'))
 	})
 
 	it('likes with the listed post id and logs the post and its author', async () => {

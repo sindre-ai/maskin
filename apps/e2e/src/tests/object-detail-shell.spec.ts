@@ -50,10 +50,6 @@ test.describe('Object detail shell — document sections', () => {
 			await expect(page.getByText(/Open question/)).toBeVisible()
 			await expect(page.getByText(new RegExp(ASK))).toBeVisible()
 
-			// "Answer it ↓" moves focus to the answer control.
-			await page.getByRole('button', { name: /answer it/i }).click()
-			await expect(page.getByPlaceholder(/^Comment/)).toBeFocused()
-
 			// Body: the document content. Custom fields are the drawer's, not the
 			// body's — the mockup lists them under CUSTOM FIELDS (1447–1455).
 			await expect(page.getByText(/Paragraph of context/)).toBeVisible()
@@ -70,6 +66,15 @@ test.describe('Object detail shell — document sections', () => {
 			await expect(page.getByText(new RegExp(EVIDENCE_QUOTE))).toBeVisible()
 			await expect(page.getByText(new RegExp(EVIDENCE_SOURCE))).toBeVisible()
 			await expect(page.getByText(new RegExp(EVIDENCE_DATE))).toBeVisible()
+
+			// "Answer it ↓" opens the Activity tab (the composer lives there) and
+			// moves focus to the answer control.
+			await page.getByRole('button', { name: /answer it/i }).click()
+			await expect(page.getByRole('tab', { name: /^Activity/ })).toHaveAttribute(
+				'aria-selected',
+				'true',
+			)
+			await expect(page.getByRole('textbox', { name: 'Comment' })).toBeFocused()
 
 			// No horizontal scroll at this ship-gate viewport.
 			const scrollWidth = await page.evaluate(

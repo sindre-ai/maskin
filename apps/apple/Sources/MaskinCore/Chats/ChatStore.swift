@@ -80,11 +80,22 @@ public final class ChatStore {
 	/// while it is still hidden at the bottom have not been read.
 	public var countsSeen = false
 	@ObservationIgnored private var seenTask: Task<Void, Never>?
+	/// A failed read mark tries again until the server confirms it: the bottom is reached once, so
+	/// nothing else would ask for it again and the chat would stay unread.
+	@ObservationIgnored private var readRetryTask: Task<Void, Never>?
+	@ObservationIgnored private var readRetryAttempt = 0
+	/// First wait before a failed read mark is retried; doubles each time, up to 30 seconds.
+	@ObservationIgnored var readRetryDelay: Duration = .seconds(2)
 	/// Told after the server accepted a read cursor, so the list's unread badge clears too.
 	@ObservationIgnored public var onMarkedRead: (@MainActor (String, Int) -> Void)?
 	/// The agents' step-by-step trace (live and per finished turn). Nil: threads show only the
 	/// one-line status. Set by the screen that builds the store.
 	@ObservationIgnored public var trace: ActivityStore?
+	/// Session reads whose finished-turn history is still on its way to `trace`. Each turn that has
+	/// steps adds a one-line row to the thread, so the thread waits for this (briefly) before it shows
+	/// itself, instead of letting those rows appear under the reader.
+	public var isLoadingTrace: Bool { traceLoads > 0 }
+	@ObservationIgnored private var traceLoads = 0
 	/// Told after every successful session refresh (feeds the Live Activity).
 	@ObservationIgnored public var onSessionsRefreshed: (@MainActor ([ChatAgentSession]) -> Void)?
 	/// The flow this conversation belongs to, when the opener knows it (the API does not link a
@@ -562,6 +573,8 @@ public final class ChatStore {
 	public func stop() {
 		seenTask?.cancel()
 		seenTask = nil
+		readRetryTask?.cancel()
+		readRetryTask = nil
 		listener?.cancel()
 		listener = nil
 		queueListener?.cancel()
@@ -640,7 +653,8 @@ public final class ChatStore {
 	}
 
 	public func load() async {
-		if await attemptLoad() { return }
+		let loaded = await Perf.measure("chat.load") { await attemptLoad() }
+		if loaded { return }
 		scheduleRetry()
 	}
 
@@ -812,13 +826,20 @@ public final class ChatStore {
 	}
 
 	public func refreshSessions() async {
-		guard let sessions = try? await api.sessions(conversationID: conversationID) else { return }
+		traceLoads += 1
+		guard let sessions = try? await api.sessions(conversationID: conversationID) else {
+			traceLoads -= 1
+			return
+		}
 		let sorted = sessions.sorted {
 			($0.startedAt ?? .distantPast) > ($1.startedAt ?? .distantPast)
 		}
 		if sorted != agentSessions { agentSessions = sorted }
 		// Not awaited: fetching a finished turn's history must never delay the thread itself.
-		Task { [trace, sessions = agentSessions] in await trace?.update(sessions: sessions) }
+		Task { [weak self, trace, sessions = agentSessions] in
+			await trace?.update(sessions: sessions)
+			self?.traceLoads -= 1
+		}
 		onSessionsRefreshed?(agentSessions)
 	}
 
@@ -1050,10 +1071,26 @@ public final class ChatStore {
 				detail?.unreadCount = 0
 				onMarkedRead?(conversationID, last)
 			}
+			readRetryAttempt = 0
 			// The saved thread must carry the new cursor, or the next open shows NEW over read messages.
 			writeCache()
 		} catch {
 			readSent = previous
+			scheduleReadRetry()
+		}
+	}
+
+	/// Ask again after a pause. One retry is pending at a time; it stops on its own once the thread
+	/// is no longer active or the cursor has caught up (`markReadIfNeeded` then does nothing).
+	private func scheduleReadRetry() {
+		guard readRetryTask == nil else { return }
+		let delay = min(readRetryDelay * (1 << min(readRetryAttempt, 4)), .seconds(30))
+		readRetryAttempt += 1
+		readRetryTask = Task { [weak self] in
+			try? await Task.sleep(for: delay)
+			if Task.isCancelled { return }
+			self?.readRetryTask = nil
+			await self?.markReadIfNeeded()
 		}
 	}
 
@@ -1116,6 +1153,18 @@ public final class ChatStore {
 			base: root.thread, rootAuthor: participant(for: root.actorID),
 			replies: confirmed.filter { $0.threadRootID == rootID && !$0.isHiddenFromChat }, currentActorID: currentActorID,
 			readThrough: threadReadThrough[rootID])
+	}
+
+	/// The message a thread hangs under, when the store holds it.
+	public func threadRoot(_ rootID: Int) -> ChatMessage? {
+		allMessages.first { $0.serverID == rootID }
+	}
+
+	/// The thread's root, fetching the thread first when the root is older than the page held. Nil
+	/// when it cannot be reached.
+	public func loadedThreadRoot(_ rootID: Int) async -> ChatMessage? {
+		if threadRoot(rootID) == nil { await loadThread(rootID) }
+		return threadRoot(rootID)
 	}
 
 	/// Fetch every reply of a thread and fold them in (a root opened from the Threads list, or one
@@ -1236,7 +1285,7 @@ public final class ChatStore {
 		return (rows, clears)
 	}
 
-	static func message(_ error: Error) -> String {
+	public static func message(_ error: Error) -> String {
 		if let http = error as? ChatsHTTPError { return http.message }
 		return (error as? ChatsError)?.message ?? error.localizedDescription
 	}

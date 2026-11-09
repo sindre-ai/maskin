@@ -105,10 +105,9 @@ vi.mock('@/hooks/use-user-display-settings', () => ({
 }))
 vi.mock('@/components/objects/bulk-action-bar', () => ({ BulkActionBar: () => null }))
 vi.mock('@/components/layout/page-header', () => ({
-	PageHeader: ({ title, titleTabs }: { title?: string; titleTabs?: React.ReactNode }) => (
+	PageHeader: ({ title }: { title?: string }) => (
 		<div>
 			<h1>{title}</h1>
-			<div data-testid="page-title-tabs">{titleTabs}</div>
 		</div>
 	),
 }))
@@ -119,7 +118,11 @@ vi.mock('@/components/objects/board/board-view', () => ({
 	BoardView: () => <div data-testid="board-view" />,
 }))
 vi.mock('@/components/objects/data-table/data-table-toolbar', () => ({
-	DataTableToolbar: () => <div data-testid="toolbar" />,
+	// The type chips are handed to the toolbar as `leading`, so the stand-in
+	// renders them where the real chip row does.
+	DataTableToolbar: ({ leading }: { leading?: React.ReactNode }) => (
+		<div data-testid="toolbar">{leading}</div>
+	),
 }))
 vi.mock('@/components/objects/data-table/columns', () => ({ getStaticColumns: () => [] }))
 vi.mock('@/components/objects/data-table/dynamic-columns', () => ({ getDynamicColumns: () => [] }))

@@ -251,7 +251,7 @@ describe('group_chat_message_routed', () => {
 		const session = (status: string) => ({ id: crypto.randomUUID(), status, workspaceId: '' })
 		const race = Object.assign(new Error('duplicate'), {
 			code: '23505',
-			constraint_name: 'sessions_conversation_actor_active_uniq',
+			constraint_name: 'sessions_conversation_actor_thread_active_uniq',
 		})
 
 		it.each([

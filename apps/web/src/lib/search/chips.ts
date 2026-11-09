@@ -32,6 +32,7 @@ const SOURCE_TYPE_KEY: Record<string, string> = {
 	chats: 'chat',
 	loops: 'loop',
 	agents: 'agent',
+	people: 'person',
 	automations: 'automation',
 }
 

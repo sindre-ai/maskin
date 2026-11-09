@@ -14,7 +14,9 @@ vi.mock('@tanstack/react-router', async () => {
 	}
 })
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({
 		workspaceId: 'ws-1',
 		workspace: buildWorkspaceWithRole({ name: 'My Workspace' }),
@@ -62,6 +64,7 @@ const GeneralPage = (Route as unknown as { component: React.FC }).component
 describe('GeneralPage', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		localStorage.setItem('maskin-actor', JSON.stringify({ id: 'a-1', name: 'A', type: 'human' }))
 	})
 
 	it('renders workspace name input with current value', () => {
@@ -122,14 +125,28 @@ describe('GeneralPage', () => {
 		expect(screen.queryByText('Extensions')).not.toBeInTheDocument()
 	})
 
-	it('renders the general sections as uppercase eyebrow labels in order', () => {
+	it('renders the general sections as titled blocks in order', () => {
 		render(<GeneralPage />)
 		const headings = screen.getAllByRole('heading').map((h) => h.textContent)
 		expect(headings).toEqual([
-			'WORKSPACE NAME',
-			'DEFAULT WORKSPACE',
-			'APPEARANCE',
-			'PRIVACY & DATA',
+			'Workspace',
+			'Default workspace',
+			'Appearance',
+			'Privacy and data',
+			'Workspace tools',
+			'Devices',
+			'Danger zone',
 		])
+	})
+
+	it('links Workspace tools to the triggers page and Devices to device sign-in', () => {
+		render(<GeneralPage />)
+		expect(screen.getByRole('link', { name: 'Triggers' })).toHaveAttribute(
+			'href',
+			'/$workspaceId/triggers',
+		)
+		expect(screen.getByRole('link', { name: 'Sign in a device' })).toHaveAttribute('href', '/tv')
+		expect(screen.getByText('Every trigger, including ones not tied to a flow')).toBeInTheDocument()
+		expect(screen.getByText('Apple TV, Mac or a maskin://connect link')).toBeInTheDocument()
 	})
 })

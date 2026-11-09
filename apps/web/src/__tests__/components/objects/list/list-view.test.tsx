@@ -222,7 +222,7 @@ describe('ListView', () => {
 			})
 
 			expect(groupHeaders()[0]?.textContent).toContain('19')
-			expect(screen.queryByText('No objects found')).toBeNull()
+			expect(screen.queryByText('No items yet')).toBeNull()
 		})
 
 		it('files rows with no value under the empty-string group the server sends', () => {
@@ -251,8 +251,8 @@ describe('ListView', () => {
 		]
 		renderListView({ data })
 
-		// Type label (monospace uppercase chip).
-		expect(screen.getByText('bet')).toBeInTheDocument()
+		// Type glyph, named by the type.
+		expect(screen.getByRole('img', { name: 'bet' })).toBeInTheDocument()
 
 		// Name is the shared Link → mock button; clicking navigates.
 		const titleLink = screen.getByRole('button', { name: 'Alpha' })
@@ -370,15 +370,12 @@ describe('ListView', () => {
 			asksByObjectId: new Map([['obj-1', ask]]),
 		})
 
-		// Pending-ask pill (bg-accent + text-accent-foreground per the "Needs
-		// you" accent-pairing rule) and the D3 ask line — SPEC copy is
-		// `{who} asks — "{text}"` with the asker's name in a bold span and
-		// the glue text on the parent paragraph.
-		expect(screen.getByText('Waiting on you')).toBeInTheDocument()
-		const asker = screen.getByText('Alice')
-		expect(asker.parentElement?.textContent).toContain(
-			'Alice asks — “Please approve this shipment”',
-		)
+		// v16 ask line: the asker's avatar plus the question only. No visible
+		// "Ask" tag; "<agent> asks" stays as screen-reader text.
+		expect(screen.queryByText('Ask')).toBeNull()
+		const asker = screen.getByText('Alice asks')
+		expect(asker.className).toContain('sr-only')
+		expect(asker.parentElement?.textContent).toContain('Alice asksPlease approve this shipment')
 	})
 
 	it('hides the ask pill + line once the row ask is resolved, and never for a row with no ask', () => {
@@ -399,7 +396,7 @@ describe('ListView', () => {
 			asksByObjectId: new Map([['obj-1', resolvedAsk]]),
 		})
 
-		expect(screen.queryByText('Waiting on you')).toBeNull()
+		expect(screen.queryByText('Ask')).toBeNull()
 		expect(screen.queryByText(/Alice asks/i)).toBeNull()
 	})
 
@@ -410,14 +407,14 @@ describe('ListView', () => {
 			error: new Error('Network request failed: 500'),
 		})
 
-		expect(screen.getByText("Couldn't load objects")).toBeInTheDocument()
+		expect(screen.getByText("Couldn't load items")).toBeInTheDocument()
 		expect(screen.getByText('Network request failed: 500')).toBeInTheDocument()
 	})
 
 	it('falls back to a generic error when isError fires without a concrete error', () => {
 		renderListView({ data: [], isError: true })
 
-		expect(screen.getByText("Couldn't load objects")).toBeInTheDocument()
+		expect(screen.getByText("Couldn't load items")).toBeInTheDocument()
 		expect(screen.getByText('Unknown error')).toBeInTheDocument()
 	})
 
@@ -462,7 +459,7 @@ describe('ListView', () => {
 
 	it('falls back to the create-your-first copy when no filter is applied', () => {
 		renderListView({ data: [], hasActiveFilters: false })
-		expect(screen.getByText('No objects found')).toBeInTheDocument()
+		expect(screen.getByText('No items yet')).toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: 'Clear all filters' })).toBeNull()
 	})
 

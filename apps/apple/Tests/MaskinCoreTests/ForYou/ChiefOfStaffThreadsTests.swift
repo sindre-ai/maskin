@@ -89,6 +89,25 @@ struct ChiefOfStaffThreadsTests {
 		}
 	}
 
+	@Test("the first message carries a decision card's text and a link to its object")
+	func firstMessageWithOptions() {
+		let text = ChiefOfStaffThreads.firstMessage("Why?", about: card, workspaceID: "w")
+		#expect(text.contains("Card: Ship it?"))
+		#expect(text.contains("- 7-day window (recommended)\n- Hold"))
+		#expect(text.contains("[Onboarding redesign](https://maskin.io/w/objects/o1)"))
+		#expect(text.hasSuffix("\n\nWhy?"))
+	}
+
+	@Test("the first message for a card without options carries its headline and body, and no link without a workspace")
+	func firstMessageWithoutOptions() {
+		let plain = ForYouCard(
+			id: "o2", objectTitle: "Pricing page",
+			mention: ForYouMention(eventId: 2, content: "Copy is ready. Please look at the second block."))
+		let text = ChiefOfStaffThreads.firstMessage("Looks fine?", about: plain)
+		#expect(text == "Re: Pricing page\n\nCard: Copy is ready.\nPlease look at the second block.\n\nLooks fine?")
+		#expect(!text.contains("Options:"))
+	}
+
 	@Test("quick questions are three; a decision gets the mockup's three")
 	func chips() {
 		let chips = ForYouQuickQuestions.chips(for: card)
@@ -112,7 +131,20 @@ struct ChiefOfStaffDeskTests {
 		desk.composer(for: card).text = "Why not send all?"
 		await desk.submit(card: card)
 		#expect(desk.presented?.conversationID == "new")
-		#expect(desk.presented?.pending?.text == "Re: Onboarding redesign\n\nWhy not send all?")
+		#expect(desk.presented?.pending?.text == """
+			Re: Onboarding redesign
+
+			Card: Ship it?
+			s
+			a
+			Options:
+			- 7-day window (recommended)
+			- Hold
+
+			[Onboarding redesign](https://maskin.io/w/objects/o1)
+
+			Why not send all?
+			""")
 		#expect(desk.composer(for: card).text.isEmpty)
 	}
 

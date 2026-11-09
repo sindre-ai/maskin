@@ -14,10 +14,11 @@ import UIKit
 
 @MainActor
 private func eventually(_ condition: @MainActor () -> Bool) async -> Bool {
-	for _ in 0..<300 {
+	var budget = PollBudget()
+	repeat {
 		if condition() { return true }
 		try? await Task.sleep(for: .milliseconds(10))
-	}
+	} while budget.spend()
 	return condition()
 }
 
@@ -221,7 +222,7 @@ struct ChatInteractionSnapshotTests {
 		#expect(ThreadNav.status(presences: [(relay, .working)], flow: nil) == .live("working"))
 		#expect(ThreadNav.status(presences: [(relay, .working), (forge, .typing)], flow: nil) == .live("working"))
 		#expect(ThreadNav.status(presences: [], flow: flow) == .quiet("Q4 launch flow"))
-		#expect(ThreadNav.status(presences: [(relay, .typing)], flow: flow) == .live("working"))
+		#expect(ThreadNav.status(presences: [(relay, .typing)], flow: flow) == .live("Relay working"))
 		#expect(ThreadNav.status(presences: [(relay, .working), (forge, .working)], flow: flow) == .live("2 working"))
 		#expect(!ThreadNav.showsMemberStack(participants: [relay, sam], flow: nil))
 		#expect(ThreadNav.showsMemberStack(participants: [relay, sam, forge], flow: nil))

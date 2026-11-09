@@ -1,12 +1,10 @@
 import type { DisplayPanelColumn } from '@/components/objects/data-table/display-panel'
-import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { AgentWorkingBadge } from '@/components/shared/agent-working-badge'
 import { RelativeTime } from '@/components/shared/relative-time'
-import { StatusBadge } from '@/components/shared/status-badge'
-import { TypeBadge } from '@/components/shared/type-badge'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
+import { useCanWrite } from '@/hooks/use-can-write'
 import type { ActorListItem, NotificationResponse, ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { getTypeColor } from '@/lib/constants'
 import { Link } from '@tanstack/react-router'
 import type { VisibilityState } from '@tanstack/react-table'
 import { ArrowRight } from 'lucide-react'
@@ -38,6 +36,7 @@ export function BoardCard({
 	onAdvance,
 	advanceLabel,
 }: BoardCardProps) {
+	const canWrite = useCanWrite()
 	const driver = object.driver ? actors?.find((a) => a.id === object.driver) : null
 	const availableProperties =
 		columns.length > 0
@@ -49,11 +48,14 @@ export function BoardCard({
 					{ id: 'updatedAt', label: 'Updated', canHide: true },
 				]
 	const visibleProperties = availableProperties.filter(
-		(column) => column.id !== 'title' && columnVisibility?.[column.id] !== false,
+		(column) =>
+			column.id !== 'title' &&
+			// v3 cards carry the last-updated age only; "Created" is opt-in.
+			(column.id === 'createdAt'
+				? columnVisibility?.createdAt === true
+				: columnVisibility?.[column.id] !== false),
 	)
-	const showStatus = isPropertyVisible('status', visibleProperties)
 	const hasPendingAsk = ask?.status === 'pending'
-	const typeDot = getTypeColor(object.type)
 
 	return (
 		<Link
@@ -63,7 +65,9 @@ export function BoardCard({
 			data-state={isSelected ? 'selected' : undefined}
 			aria-selected={isSelected}
 			className={cn(
-				'relative flex flex-col gap-2 rounded-xl border border-border bg-card p-3 text-sm transition-colors hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+				'relative flex flex-col gap-1.5 rounded-lg border border-border bg-card px-2.5 py-2 text-sm transition-colors hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+				// v11: a card that waits on the reader carries a brand rail on its left edge.
+				hasPendingAsk && 'border-l-[3px] border-l-brand',
 				// `accent` is a near-white background token in light mode, so it cannot
 				// carry a resting-state indicator on a white card — `muted`/`brand` read
 				// in both modes. Matches the v2 list row's selected state.
@@ -71,36 +75,50 @@ export function BoardCard({
 			)}
 		>
 			<div className="flex items-start gap-2">
-				<span
-					aria-hidden="true"
-					className={cn('mt-1 size-2 shrink-0 rounded-[2px] bg-current', typeDot.text)}
-				/>
-				<span className="line-clamp-2 min-w-0 flex-1 font-semibold text-foreground">
+				<span className="line-clamp-3 min-w-0 flex-1 text-[13px] font-semibold leading-snug text-foreground">
 					{object.title || 'Untitled'}
 				</span>
-				{showStatus && <StatusBadge status={object.status} className="shrink-0" />}
 				{onAdvance && (
-					// Always rendered at full opacity — a hover-only reveal would be
-					// unreachable on touch (see .claude/rules/verification.md).
-					<button
-						type="button"
-						title={advanceLabel}
-						aria-label={advanceLabel ?? 'Move to next column'}
-						onClick={(event) => {
-							event.preventDefault()
-							event.stopPropagation()
-							onAdvance()
-						}}
-						className="grid size-5 shrink-0 place-items-center rounded-md text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground"
-					>
-						<ArrowRight size={12} aria-hidden="true" />
-					</button>
+					// `<span role="button">` rather than a native `<button>`: the whole
+					// card is a `<Link>` (`<a>`), and `<button>` inside `<a>` is invalid
+					// HTML (React 19 logs `<button> cannot be a descendant of <a>` on
+					// every render). Always rendered at full opacity — a hover-only
+					// reveal would be unreachable on touch (see .claude/rules/verification.md).
+					<ViewerTooltip>
+						{/* biome-ignore lint/a11y/useSemanticElements: `<button>` would be a descendant of the card's `<a>`, which is invalid HTML — see comment above. */}
+						<span
+							role="button"
+							tabIndex={canWrite ? 0 : -1}
+							title={advanceLabel}
+							aria-label={advanceLabel ?? 'Move to next column'}
+							aria-disabled={!canWrite || undefined}
+							onClick={(event) => {
+								event.preventDefault()
+								event.stopPropagation()
+								if (canWrite) onAdvance()
+							}}
+							onKeyDown={(event) => {
+								if (event.key !== 'Enter' && event.key !== ' ') return
+								event.preventDefault()
+								event.stopPropagation()
+								if (canWrite) onAdvance()
+							}}
+							className={cn(
+								'grid size-5 shrink-0 place-items-center rounded-md text-muted-foreground/60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+								canWrite
+									? 'cursor-pointer hover:bg-muted hover:text-foreground'
+									: 'cursor-not-allowed opacity-50',
+							)}
+						>
+							<ArrowRight size={12} aria-hidden="true" />
+						</span>
+					</ViewerTooltip>
 				)}
 			</div>
 
 			{hasPendingAsk && (
-				<span className="w-fit rounded-full border border-ask-border bg-ask-surface px-2 py-0.5 text-[10px] font-bold leading-none text-warning">
-					Waiting on you
+				<span className="text-[11.5px] font-semibold text-brand">
+					To decide{driver ? ` · ${driver.name}` : ''}
 				</span>
 			)}
 
@@ -109,7 +127,7 @@ export function BoardCard({
 			)}
 
 			{visibleProperties.length > 0 && (
-				<div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+				<div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-muted-foreground">
 					{visibleProperties.map((property) => (
 						<PropertyValue
 							key={property.id}
@@ -123,10 +141,6 @@ export function BoardCard({
 			)}
 		</Link>
 	)
-}
-
-function isPropertyVisible(propertyId: string, visibleProperties: DisplayPanelColumn[]) {
-	return visibleProperties.some((property) => property.id === propertyId)
 }
 
 function PropertyValue({
@@ -144,13 +158,12 @@ function PropertyValue({
 		case 'status':
 			return null
 		case 'type':
-			return <TypeBadge type={object.type} />
+			// A board holds one type, so the column's own header already says it.
+			return null
 		// The route's Display panel emits `driver` column ids; the card cased on
 		// the retired `owner` id, so the avatar never rendered on a board card.
 		case 'driver':
-			return driver ? (
-				<ActorAvatar id={driver.id} name={driver.name} type={driver.type} className="shrink-0" />
-			) : null
+			return driver ? <span className="truncate font-semibold">{driver.name}</span> : null
 		case 'createdBy': {
 			const actor = actors?.find((a) => a.id === object.createdBy)
 			return actor ? <span className="truncate">{actor.name}</span> : null

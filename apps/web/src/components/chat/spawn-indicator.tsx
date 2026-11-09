@@ -67,6 +67,7 @@ const STATUS_ICON: Record<string, React.ElementType> = {
 	completed: CheckCircle2,
 	failed: XCircle,
 	timeout: XCircle,
+	user_stopped: XCircle,
 	paused: PauseCircle,
 	waiting_for_input: Clock,
 }
@@ -80,15 +81,28 @@ const STATUS_LABEL: Record<string, string> = {
 	completed: 'completed',
 	failed: 'failed',
 	timeout: 'timed out',
+	user_stopped: 'stopped',
 	paused: 'paused',
 	waiting_for_input: 'waiting',
 }
+
+// A session that is up and working is already visible through the agent's tool
+// calls, so the chip would only repeat it. It stays for the states the tool
+// calls cannot show: queued, failed, stopped, timed out, paused.
+const REDUNDANT_STATUSES = new Set([
+	'starting',
+	'running',
+	'snapshotting',
+	'completed',
+	'waiting_for_input',
+])
 
 function statusLabel(status: string): string {
 	return STATUS_LABEL[status] ?? status
 }
 
 export function SpawnChip({ info, className }: { info: MessageSpawnInfo; className?: string }) {
+	if (REDUNDANT_STATUSES.has(info.status)) return null
 	const duration = formatDurationBetween(info.startedAt, info.completedAt)
 	const Icon = STATUS_ICON[info.status] ?? Spinner
 	const isRunning =
@@ -100,7 +114,7 @@ export function SpawnChip({ info, className }: { info: MessageSpawnInfo; classNa
 	return (
 		<span
 			className={cn(
-				'inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-sunken px-2 py-0.5 text-[10.5px] font-medium text-muted-foreground',
+				'inline-flex items-center gap-1.5 rounded-md bg-muted px-2 py-0.5 text-[10.5px] font-medium text-muted-foreground ring-1 ring-inset ring-border',
 				className,
 			)}
 			data-testid="spawn-chip"

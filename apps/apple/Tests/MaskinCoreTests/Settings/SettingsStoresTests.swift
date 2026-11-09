@@ -157,7 +157,7 @@ struct MembersRosterTests {
 		#expect(groups.agents[0].isWorking)
 		#expect(groups.agents[0].statusLabel == "Working")
 		#expect(groups.agents[0].role == "Does it all")
-		#expect(groups.agents[1].statusLabel == "Paused")
+		#expect(groups.agents[1].statusLabel == "Disabled")
 		#expect(groups.agents.last?.statusLabel == nil)
 	}
 
@@ -452,7 +452,7 @@ struct WorkspacePageAgentStateTests {
 	func agentStates() {
 		#expect(WorkspacePageState.agent(.running) == PageState("Working", .active))
 		#expect(WorkspacePageState.agent(.idle) == PageState("Idle", .muted))
-		#expect(WorkspacePageState.agent(.paused) == PageState("Paused", .muted))
+		#expect(WorkspacePageState.agent(.paused) == PageState("Disabled", .muted))
 		#expect(WorkspacePageState.agent(.failed) == PageState("Failed", .muted))
 		#expect(WorkspacePageState.agent(nil) == nil)
 	}

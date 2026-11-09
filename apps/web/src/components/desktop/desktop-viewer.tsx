@@ -1,13 +1,18 @@
 // import { TeachDialog } from '@/components/desktop/teach-dialog'
+import { DesktopClipboardButtons } from '@/components/desktop/desktop-clipboard-buttons'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useConnectDesktop } from '@/hooks/use-desktop'
 import { type TeachingStatus, useDesktopTeaching } from '@/hooks/use-desktop-teaching'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { cn } from '@/lib/cn'
+import { attachClipboardShortcuts, createCopyArming, takeRemoteCopy } from '@/lib/desktop-clipboard'
+import { KEYBOARD_SENTINEL, SPECIAL_KEYS, diffTyped, keysymForChar } from '@/lib/desktop-keyboard'
 import type RfbClient from '@novnc/novnc/lib/rfb'
-import { Eye, Maximize2, MousePointer2, RefreshCw, Square } from 'lucide-react'
+import { Eye, Keyboard, Maximize2, MousePointer2, RefreshCw, Square } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { toast } from 'sonner'
 
 type Phase = 'starting' | 'connecting' | 'connected' | 'disconnected' | 'error'
 
@@ -16,6 +21,8 @@ interface RfbHandle {
 	viewOnly: boolean
 	disconnect: () => void
 	focus: () => void
+	clipboardPasteFrom: (text: string) => void
+	sendKey: (keysym: number, code: string | null, down?: boolean) => void
 }
 
 const STATUS_TEXT: Record<Phase, string> = {
@@ -24,6 +31,12 @@ const STATUS_TEXT: Record<Phase, string> = {
 	connected: 'Live',
 	disconnected: 'Disconnected',
 	error: 'Not connected',
+}
+
+// A phone's main pointer is a finger: there is no hardware keyboard to type with, so the
+// viewer offers the on-screen one.
+function isTouchDevice(): boolean {
+	return typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches
 }
 
 function formatElapsed(ms: number): string {
@@ -101,7 +114,7 @@ export function DesktopViewer({
 	toolbarEnd?: React.ReactNode
 	/**
 	 * `inline`: toolbar above the picture. `preview`: just the picture, for a card that opens
-	 * the popup. `immersive`: the popup, controls float under the picture.
+	 * the popup. `immersive`: the popup, controls sit in a top row above the picture, next to `toolbarEnd`.
 	 */
 	variant?: 'inline' | 'preview' | 'immersive'
 	/** `preview` only: what clicking the live picture does (open the popup). */
@@ -115,6 +128,19 @@ export function DesktopViewer({
 	const [error, setError] = useState<string | null>(null)
 	const [controlling, setControlling] = useState(false)
 	const [attempt, setAttempt] = useState(0)
+	// What the computer last copied, for the Copy button.
+	const [remoteText, setRemoteText] = useState('')
+	// Set by Ctrl/Cmd+C: until then, the computer's clipboard is not the person's to take.
+	const [copyArming] = useState(() => createCopyArming())
+	// The browser refused to take what the computer copied (Safari): the Copy button steps in.
+	const [copyBlocked, setCopyBlocked] = useState(false)
+	const clipboardEnabled = useFeatureFlag('computer-clipboard')
+	const [keyboardUp, setKeyboardUp] = useState(false)
+	const keyboardRef = useRef<HTMLTextAreaElement>(null)
+	const lastTyped = useRef(KEYBOARD_SENTINEL)
+	// Set when the person hides the keyboard, so a tap on the picture does not bring it back.
+	const keyboardHidden = useRef(false)
+	const [touch] = useState(isTouchDevice)
 	const { mutateAsync: connectDesktop } = useConnectDesktop(workspaceId, agentId)
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: `attempt` is the retry trigger, not a value the effect reads.
@@ -123,6 +149,7 @@ export function DesktopViewer({
 		setPhase('starting')
 		setError(null)
 		setControlling(false)
+		setRemoteText('')
 
 		void (async () => {
 			try {
@@ -150,6 +177,16 @@ export function DesktopViewer({
 				rfb.addEventListener('connect', () => {
 					if (!cancelled) setPhase('connected')
 				})
+				rfb.addEventListener('clipboard', (event) => {
+					if (cancelled) return
+					const text = event.detail?.text ?? ''
+					setRemoteText(text)
+					void takeRemoteCopy(copyArming, text).then((result) => {
+						if (cancelled || !result) return
+						setCopyBlocked(!result.ok)
+						if (result.ok) toast.success('Copied to your clipboard')
+					})
+				})
 				rfb.addEventListener('disconnect', () => {
 					if (cancelled) return
 					rfbRef.current = null
@@ -173,14 +210,33 @@ export function DesktopViewer({
 			rfbRef.current?.disconnect()
 			rfbRef.current = null
 		}
-	}, [workspaceId, agentId, attempt, connectDesktop])
+	}, [workspaceId, agentId, attempt, connectDesktop, copyArming])
 
 	useEffect(() => {
 		const rfb = rfbRef.current
 		if (!rfb) return
 		rfb.viewOnly = !controlling
 		if (controlling) rfb.focus()
-	}, [controlling])
+		else {
+			setRemoteText('')
+			setCopyBlocked(false)
+			copyArming.disarm()
+			keyboardHidden.current = false
+		}
+	}, [controlling, copyArming])
+
+	// Ctrl/Cmd+V and Ctrl/Cmd+C on the picture, while the person is in control.
+	const shortcutsOn = controlling && clipboardEnabled && phase === 'connected'
+	useEffect(() => {
+		const target = targetRef.current
+		if (!shortcutsOn || !target) return
+		return attachClipboardShortcuts(target, () => rfbRef.current, {
+			onPasteFailed: (message) => toast.error(message),
+			onCopyPressed: () => {
+				copyArming.arm()
+			},
+		})
+	}, [shortcutsOn, copyArming])
 
 	const busy = phase === 'starting' || phase === 'connecting'
 	const failed = phase === 'disconnected' || phase === 'error'
@@ -193,6 +249,49 @@ export function DesktopViewer({
 	})
 	const recording = teaching.status === 'recording'
 	const sending = teaching.status === 'sending'
+	// The hidden textarea that raises the phone keyboard exists only while the person is in control.
+	const typing = touch && controlling && phase === 'connected'
+	// A phone has no Ctrl/Cmd keys, so it keeps both buttons. Elsewhere the keys do the job and
+	// Copy appears only when the browser refused to take what the computer copied.
+	const clipboardButtons = controlling && clipboardEnabled && (touch || copyBlocked)
+
+	const typeIntoComputer = (e: React.FormEvent<HTMLTextAreaElement>) => {
+		const area = e.currentTarget
+		const { backspaces, typed } = diffTyped(lastTyped.current, area.value)
+		for (let i = 0; i < backspaces; i++)
+			rfbRef.current?.sendKey(SPECIAL_KEYS.Backspace, 'Backspace')
+		for (const char of typed) rfbRef.current?.sendKey(keysymForChar(char), null)
+		// Keep room to delete in, and never let the text grow without end.
+		if (area.value.length < 50 || area.value.length > 150) area.value = KEYBOARD_SENTINEL
+		lastTyped.current = area.value
+	}
+
+	const pressSpecialKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+		const keysym = SPECIAL_KEYS[e.key]
+		if (!keysym) return
+		e.preventDefault()
+		rfbRef.current?.sendKey(keysym, e.code || null)
+	}
+
+	const toggleKeyboard = () => {
+		keyboardHidden.current = keyboardUp
+		if (keyboardUp) keyboardRef.current?.blur()
+		else keyboardRef.current?.focus()
+	}
+
+	const keyboardButton = typing ? (
+		<Button
+			variant={keyboardUp ? 'secondary' : 'outline'}
+			size="sm"
+			className={variant === 'immersive' ? 'rounded-full' : undefined}
+			aria-label={keyboardUp ? 'Hide keyboard' : 'Show keyboard'}
+			// Keeps the textarea focused through the tap, so this reads the real state.
+			onMouseDown={(e) => e.preventDefault()}
+			onClick={toggleKeyboard}
+		>
+			<Keyboard size={15} />
+		</Button>
+	) : null
 
 	const controls =
 		phase === 'connected' ? (
@@ -220,6 +319,10 @@ export function DesktopViewer({
 						<span className="hidden sm:inline">Teach a task</span>
 					</Button>
 					*/}
+					{clipboardButtons && (
+						<DesktopClipboardButtons rfbRef={rfbRef} remoteText={remoteText} copyOnly={!touch} />
+					)}
+					{keyboardButton}
 					<Button
 						variant={controlling ? 'default' : 'outline'}
 						size="sm"
@@ -236,17 +339,29 @@ export function DesktopViewer({
 			)
 		) : null
 
-	// The popup's floating pill: what you are doing on the left, the one switch on the right.
+	// The popup's switch, in its top row: what you are doing on the left, the one switch on the right.
 	const pill = (
 		<div
 			role="toolbar"
 			aria-label="Computer controls"
-			className="flex items-center gap-1 self-center rounded-full border bg-card p-1 shadow-md"
+			className="flex h-7 items-center gap-1 rounded-full border bg-card pl-1 sm:h-6 [&_button]:h-7 sm:[&_button]:h-6"
 		>
-			<span className="flex items-center gap-1.5 px-3 text-sm text-muted-foreground">
+			<span className="flex items-center gap-1.5 px-2 text-sm text-muted-foreground">
 				{controlling ? <MousePointer2 size={15} /> : <Eye size={15} />}
-				{controlling ? "You're in control" : 'Watching'}
+				{/* With the copy and paste buttons in the pill, a phone has no room for the words. */}
+				<span className={clipboardButtons ? 'max-sm:hidden' : undefined}>
+					{controlling ? "You're in control" : 'Watching'}
+				</span>
 			</span>
+			{clipboardButtons && (
+				<DesktopClipboardButtons
+					rfbRef={rfbRef}
+					remoteText={remoteText}
+					copyOnly={!touch}
+					rounded
+				/>
+			)}
+			{keyboardButton}
 			<Button
 				variant={controlling ? 'secondary' : 'default'}
 				size="sm"
@@ -261,7 +376,14 @@ export function DesktopViewer({
 	)
 
 	return (
-		<div className="flex min-w-0 flex-col gap-2">
+		<div className={cn('flex min-w-0 flex-col gap-2', variant === 'immersive' && 'sm:gap-1')}>
+			{variant === 'immersive' && (
+				// pr-5 (pr-7 on wider screens) leaves room for the dialog's own close button, which sits in this row.
+				<div className="flex h-7 items-center justify-end gap-2 pr-5 max-sm:pl-3 max-sm:pr-8 sm:h-6 sm:pr-7">
+					{phase === 'connected' && (recording ? controls : pill)}
+					{toolbarEnd}
+				</div>
+			)}
 			{variant === 'inline' && (
 				<div
 					role="toolbar"
@@ -286,8 +408,14 @@ export function DesktopViewer({
 			<div
 				className={cn(
 					'group relative aspect-video w-full min-w-0 max-w-full overflow-hidden rounded-lg border bg-muted',
+					variant === 'immersive' && 'max-sm:rounded-none max-sm:border-0',
 					recording && 'ring-2 ring-destructive',
 				)}
+				// noVNC swallows touches on the picture, so listen on the way down: a tap while in
+				// control brings up the phone keyboard (it has to happen inside the tap to open).
+				onTouchEndCapture={() => {
+					if (typing && !keyboardHidden.current) keyboardRef.current?.focus()
+				}}
 			>
 				{/* noVNC mounts its canvas into this element and scales it to fit. */}
 				<div
@@ -299,6 +427,30 @@ export function DesktopViewer({
 						phase !== 'connected' && 'invisible',
 					)}
 				/>
+				{typing && (
+					<textarea
+						ref={keyboardRef}
+						aria-label="Type on the computer"
+						rows={1}
+						defaultValue={KEYBOARD_SENTINEL}
+						autoCapitalize="off"
+						autoCorrect="off"
+						autoComplete="off"
+						spellCheck={false}
+						// 16px: iOS zooms the page in on a smaller field.
+						className="absolute left-0 top-0 size-px resize-none text-base opacity-0"
+						onFocus={(e) => {
+							// Typing starts at the end of the text, so what changes is only what is added.
+							e.currentTarget.value = KEYBOARD_SENTINEL
+							e.currentTarget.setSelectionRange(KEYBOARD_SENTINEL.length, KEYBOARD_SENTINEL.length)
+							lastTyped.current = KEYBOARD_SENTINEL
+							setKeyboardUp(true)
+						}}
+						onBlur={() => setKeyboardUp(false)}
+						onInput={typeIntoComputer}
+						onKeyDown={pressSpecialKey}
+					/>
+				)}
 				{/* Not on the error state: that card holds a Reconnect button this must not cover. */}
 				{variant === 'preview' && onOpen && !failed && (
 					<button
@@ -339,7 +491,6 @@ export function DesktopViewer({
 					/>
 				)}
 			</div>
-			{variant === 'immersive' && phase === 'connected' && (recording ? controls : pill)}
 			{/* <TeachDialog
 				open={teaching.dialogOpen}
 				onOpenChange={teaching.setDialogOpen}

@@ -1,0 +1,45 @@
+{
+	"_note": "Hand-authored from the documented Drive v3 files.list response shape; not recorded from a live account.",
+	"interactions": [
+		{
+			"match": { "q": "(fullText contains 'invoice') and trashed = false", "pageToken": null },
+			"status": 200,
+			"body": {
+				"nextPageToken": "page-2-token",
+				"files": [
+					{
+						"id": "1AbC",
+						"name": "Invoice 2026-09.pdf",
+						"mimeType": "application/pdf",
+						"modifiedTime": "2026-09-30T08:15:00.000Z",
+						"parents": ["0Root"],
+						"owners": [{ "displayName": "Sebk", "emailAddress": "sebk@meshfirm.com" }],
+						"webViewLink": "https://drive.google.com/file/d/1AbC/view"
+					},
+					{
+						"id": "2DeF",
+						"name": "Invoice tracker",
+						"mimeType": "application/vnd.google-apps.spreadsheet",
+						"modifiedTime": "2026-10-01T10:00:00.000Z",
+						"parents": ["0Root"],
+						"owners": [{ "displayName": "Magnus", "emailAddress": "magnus@meshfirm.com" }],
+						"webViewLink": "https://docs.google.com/spreadsheets/d/2DeF/edit"
+					}
+				]
+			}
+		},
+		{
+			"match": {
+				"q": "(fullText contains 'invoice') and trashed = false",
+				"pageToken": "page-2-token"
+			},
+			"status": 200,
+			"body": { "files": [] }
+		},
+		{
+			"match": { "q": "(mimeType = 'application/vnd.google-apps.document')", "pageToken": null },
+			"status": 200,
+			"body": { "files": [] }
+		}
+	]
+}

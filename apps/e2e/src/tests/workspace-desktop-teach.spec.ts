@@ -9,7 +9,7 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
  *
  * The Teach button only exists once the stream is live, so the VNC server is
  * faked at the WebSocket: it answers the RFB 3.8 handshake (no-auth security, a
- * 1280x720 ServerInit), which is enough for noVNC to report "connected". The
+ * 1920x1080 ServerInit), which is enough for noVNC to report "connected". The
  * connect ticket and the teach endpoint are faked at the network edge too. What
  * this proves is the recorder and the page: a real canvas, real pointer and key
  * events, a real JPEG still, and the request the browser actually sends.

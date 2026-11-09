@@ -17,6 +17,7 @@ import {
 import { WebhookRevealDialog } from '@/components/extensions/webhook-reveal-dialog'
 import { WebhookSection } from '@/components/extensions/webhook-section'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -27,6 +28,7 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from '@/components/ui/dialog'
+import { useCanWrite } from '@/hooks/use-can-write'
 import {
 	useExtension,
 	useGenerateExtensionSecret,
@@ -37,7 +39,7 @@ import {
 import type { ExtensionResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, ArrowRight } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 
@@ -58,6 +60,7 @@ function ExtensionDetailBody({
 	ext,
 	workspaceId,
 }: { ext: ExtensionResponse; workspaceId: string }) {
+	const canWrite = useCanWrite()
 	const update = useUpdateExtension(workspaceId, ext.id)
 	const regenerate = useRegenerateExtensionToken(workspaceId, ext.id)
 	const generateSecret = useGenerateExtensionSecret(workspaceId)
@@ -82,6 +85,7 @@ function ExtensionDetailBody({
 		: configFromForm(form)
 
 	const startEditing = () => {
+		if (!canWrite) return
 		if (ext.webhookConfig) setForm(formFromConfig(ext.webhookConfig))
 		setAttempted(false)
 		setEditing(true)
@@ -94,6 +98,7 @@ function ExtensionDetailBody({
 	}
 
 	const handleGenerate = async () => {
+		if (!canWrite) return
 		try {
 			const { secret } = await generateSecret.mutateAsync()
 			setForm((f) => ({ ...f, signingSecret: secret }))
@@ -103,6 +108,7 @@ function ExtensionDetailBody({
 	}
 
 	const handleSave = async () => {
+		if (!canWrite) return
 		const found = validateWebhookForm(form, { requireSecret: !ext.hasSigningSecret })
 		if (hasErrors(found)) {
 			setAttempted(true)
@@ -129,6 +135,7 @@ function ExtensionDetailBody({
 	}
 
 	const handleRegenerate = async () => {
+		if (!canWrite) return
 		try {
 			const updated = await regenerate.mutateAsync()
 			setConfirmRegenerate(false)
@@ -182,9 +189,11 @@ function ExtensionDetailBody({
 								Cancel
 							</Button>
 						)}
-						<Button type="button" onClick={handleSave} disabled={update.isPending}>
-							{saved ? 'Save changes' : 'Save + generate URL'}
-						</Button>
+						<ViewerTooltip>
+							<Button type="button" onClick={handleSave} disabled={update.isPending || !canWrite}>
+								{saved ? 'Save changes' : 'Save + generate URL'}
+							</Button>
+						</ViewerTooltip>
 					</div>
 				</>
 			)}
@@ -227,13 +236,15 @@ function ExtensionDetailBody({
 						<Button variant="ghost" onClick={() => setConfirmRegenerate(false)}>
 							Cancel
 						</Button>
-						<Button
-							variant="destructive"
-							onClick={handleRegenerate}
-							disabled={regenerate.isPending}
-						>
-							Regenerate token
-						</Button>
+						<ViewerTooltip>
+							<Button
+								variant="destructive"
+								onClick={handleRegenerate}
+								disabled={regenerate.isPending || !canWrite}
+							>
+								Regenerate token
+							</Button>
+						</ViewerTooltip>
 					</DialogFooter>
 				</DialogContent>
 			</Dialog>
@@ -249,28 +260,27 @@ function describePath(v: { literal: string } | { path: string }): string {
 function MappingSummary({ ext }: { ext: ExtensionResponse }) {
 	const map = ext.webhookConfig?.eventMap
 	if (!map) return null
+	const rows = [
+		{ from: map.externalIdPath, to: 'External ID (dedup key)' },
+		{ from: describePath(map.entityType), to: 'Entity type' },
+		{ from: describePath(map.action), to: 'Action' },
+	]
 	return (
-		<section
-			className="rounded-xl border border-border bg-card p-4"
-			aria-labelledby="mapping-summary-heading"
-		>
-			<h2 id="mapping-summary-heading" className="text-[13px] font-bold">
-				Event mapping
+		<section aria-labelledby="mapping-summary-heading">
+			<h2 id="mapping-summary-heading" className="settings-label px-1 pb-1.5">
+				Field mapping
 			</h2>
-			<dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 text-xs sm:grid-cols-3">
-				<div>
-					<dt className="text-muted-foreground">External ID (dedup key)</dt>
-					<dd className="font-mono">{map.externalIdPath}</dd>
-				</div>
-				<div>
-					<dt className="text-muted-foreground">Entity type</dt>
-					<dd className="font-mono">{describePath(map.entityType)}</dd>
-				</div>
-				<div>
-					<dt className="text-muted-foreground">Action</dt>
-					<dd className="font-mono">{describePath(map.action)}</dd>
-				</div>
-			</dl>
+			<ul className="divide-y divide-border-subtle rounded-xl border border-border bg-card">
+				{rows.map((row) => (
+					<li key={row.to} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5">
+						<code className="min-w-0 break-all rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
+							{row.from}
+						</code>
+						<ArrowRight size={13} aria-hidden className="shrink-0 text-muted-foreground" />
+						<span className="text-[13px]">{row.to}</span>
+					</li>
+				))}
+			</ul>
 		</section>
 	)
 }

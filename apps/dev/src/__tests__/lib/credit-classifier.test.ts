@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+	classifyBannerResult,
 	classifyCreditExhaustion,
 	classifySessionExit,
 	endsInClaudeAuthDeath,
 	isClaudeAuthDeathText,
+	isCreditBalanceLowText,
 } from '../../lib/credit-classifier'
 
 describe('classifyCreditExhaustion', () => {
@@ -412,7 +414,72 @@ describe('Claude auth death', () => {
 		expect(endsInClaudeAuthDeath('')).toBe(false)
 	})
 
-	it('is not a failover banner, so a dead login never moves a healthy slot', () => {
-		expect(classifySessionExit(`${resultLine(DEAD, true)}\n`, 1)).toBeNull()
+	it('gives an expired login its own auth-class code, with no reset time so it is never retried', () => {
+		expect(classifySessionExit(`${resultLine(DEAD, true)}\n`, 1)).toMatchObject({
+			provider: 'anthropic',
+			reason_code: 'oauth_expired',
+			http_status: 401,
+			reset_at: null,
+		})
+	})
+
+	it('gives a rejected API key its own code', () => {
+		const tail = `working...\n${resultLine('Invalid API key · Fix external API key', true)}\n`
+		expect(classifySessionExit(tail, 1)).toMatchObject({
+			provider: 'anthropic',
+			reason_code: 'invalid_api_key',
+			http_status: 401,
+			reset_at: null,
+		})
+	})
+
+	it('leaves other authentication failures unclassified', () => {
+		const other = 'Failed to authenticate. API Error: 401 {"type":"error"}'
+		expect(classifySessionExit(`${resultLine(other, true)}\n`, 1)).toBeNull()
+	})
+
+	it('ignores the messages in tool output, a successful result, or a clean exit', () => {
+		const quoted = JSON.stringify({
+			type: 'user',
+			message: { content: [{ type: 'tool_result', content: DEAD }] },
+		})
+		const clean = `${quoted}\n${resultLine('Invalid API key', false)}\n`
+		expect(classifySessionExit(clean, 1)).toBeNull()
+		expect(classifySessionExit(`${resultLine(DEAD, true)}\n`, 0)).toBeNull()
+	})
+})
+
+describe('classifyBannerResult', () => {
+	it('classifies a result text that opens with a limit banner, keeping the reset time', () => {
+		expect(
+			classifyBannerResult("You've hit your session limit · resets 2:20pm (Europe/Copenhagen)"),
+		).toMatchObject({ reason_code: 'session_limit', provider: 'anthropic' })
+	})
+
+	it('ignores a banner quoted further into the text', () => {
+		expect(
+			classifyBannerResult("Session X failed: You've hit your session limit. Retried."),
+		).toBeNull()
+	})
+
+	it('ignores text with no banner', () => {
+		expect(classifyBannerResult('Found 3 gigs')).toBeNull()
+	})
+})
+
+describe('isCreditBalanceLowText', () => {
+	it('matches the credit error the API and the CLI print', () => {
+		expect(isCreditBalanceLowText('Credit balance is too low')).toBe(true)
+		expect(
+			isCreditBalanceLowText(
+				'API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API."}}\nCredit balance is too low',
+			),
+		).toBe(true)
+	})
+
+	it('does not match other limit errors', () => {
+		expect(isCreditBalanceLowText("You've hit your weekly limit")).toBe(false)
+		expect(isCreditBalanceLowText('Request rejected (429)')).toBe(false)
+		expect(isCreditBalanceLowText('')).toBe(false)
 	})
 })

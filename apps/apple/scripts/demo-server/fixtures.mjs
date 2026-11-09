@@ -1,3 +1,5 @@
+import { addPerfRoom, perfOverrides } from './perf-fixtures.mjs'
+
 // Demo data for the design review: the Northwind workspace from the Watch, iPad and TV prototypes.
 const uuid = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
 export const WORKSPACE_ID = uuid(1)
@@ -262,6 +264,9 @@ const rooms = [
 		at: DAY,
 	},
 ]
+
+const PERF = process.env.DEMO_PERF === '1'
+if (PERF) addPerfRoom(rooms, { PRIYA, CHIEF })
 // Participants as the API sends them on the list, create and detail responses alike.
 const participantRow = (id) => {
 	const a = actors.find((x) => x.id === id)
@@ -279,6 +284,17 @@ const postedComments = new Map()
 let nextEventId = 9000
 
 export function overrides({ method, path, params, query, body, base, item }) {
+	if (PERF) {
+		const hit = perfOverrides({
+			method,
+			path,
+			query,
+			item,
+			base,
+			ctx: { uuid, ago, ME, actors, WORKSPACE_ID, CHIEF, PRIYA },
+		})
+		if (hit) return hit
+	}
 	if (method !== 'get' && method !== 'post') return null
 	if (method === 'post' && path === '/api/events' && typeof body?.entity_id === 'string') {
 		const event = {
@@ -342,8 +358,226 @@ export function overrides({ method, path, params, query, body, base, item }) {
 			],
 		}
 	}
+	// Triggers and members, so the Triggers and Members screens show populated rows.
+	if (method === 'get' && path === '/api/triggers')
+		return {
+			body: [
+				{
+					id: uuid(900),
+					workspaceId: WORKSPACE_ID,
+					name: 'Review new tasks',
+					type: 'event',
+					config: {
+						entity_type: 'task',
+						action: 'status_changed',
+						from_status: 'todo',
+						to_status: 'in_review',
+					},
+					actionPrompt: 'Review the task and say what is missing.',
+					targetActorId: uuid(3),
+					enabled: true,
+					metadata: null,
+					createdBy: uuid(2),
+					createdAt: ago(20 * DAY),
+					updatedAt: ago(2 * DAY),
+				},
+				{
+					id: uuid(901),
+					workspaceId: WORKSPACE_ID,
+					name: 'Monday pipeline review',
+					type: 'cron',
+					config: { expression: '0 9 * * 1' },
+					actionPrompt: 'Summarise the pipeline for the week.',
+					targetActorId: uuid(5),
+					enabled: true,
+					metadata: null,
+					createdBy: uuid(2),
+					createdAt: ago(40 * DAY),
+					updatedAt: ago(1 * DAY),
+				},
+			],
+		}
+	if (method === 'get' && /^\/api\/workspaces\/[^/]+\/members$/.test(path))
+		return {
+			body: actors.map((a) => ({
+				actorId: a.id,
+				role: a.id === uuid(2) ? 'owner' : 'member',
+				joinedAt: ago(60 * DAY),
+				name: a.name,
+				type: a.type,
+			})),
+		}
 	if (method === 'get' && path === '/api/actors')
 		return { body: actors.map((a) => ({ ...item, ...a })) }
+	// Session log reader: one finished session with a spread of envelope kinds, newest rows paged
+	// by `before` / `since` the way the real route does.
+	if (method === 'get' && path === '/api/sessions' && query.get('verbose') === 'true') {
+		const wantsOutreach = !query.get('actor_id') || query.get('actor_id') === OUTREACH_AGENT
+		const sessionRow = (over) => ({
+			...item,
+			workspaceId: WORKSPACE_ID,
+			triggerId: null,
+			containerId: null,
+			config: null,
+			result: null,
+			snapshotPath: null,
+			timeoutAt: null,
+			createdBy: uuid(2),
+			interactive: false,
+			...over,
+		})
+		// One running session, so the agents list shows "1 working" and the agent page a live row.
+		const running = wantsOutreach
+			? [
+					sessionRow({
+						id: uuid(902),
+						actorId: OUTREACH_AGENT,
+						status: 'running',
+						actionPrompt: 'Score the new Northwind leads',
+						currentActivity: 'Reading the CRM export',
+						startedAt: ago(4),
+						completedAt: null,
+						createdAt: ago(5),
+						updatedAt: ago(1),
+					}),
+				]
+			: []
+		return {
+			body: [
+				...running,
+				{
+					...item,
+					id: uuid(900),
+					workspaceId: WORKSPACE_ID,
+					actorId: query.get('actor_id') ?? OUTREACH_AGENT,
+					triggerId: null,
+					containerId: null,
+					config: null,
+					result: null,
+					snapshotPath: null,
+					currentActivity: null,
+					timeoutAt: null,
+					createdBy: uuid(2),
+					updatedAt: ago(35),
+					status: 'completed',
+					actionPrompt: 'Draft the follow-up for Priya',
+					interactive: false,
+					startedAt: ago(40),
+					completedAt: ago(35),
+					createdAt: ago(41),
+				},
+			],
+		}
+	}
+	const logsMatch = path.match(/^\/api\/sessions\/[^/]+\/logs$/)
+	if (method === 'get' && logsMatch) {
+		const env = (o) => JSON.stringify(o)
+		const all = [
+			{ stream: 'system', content: 'Container started' },
+			{ stream: 'stdout', content: env({ type: 'system', subtype: 'init' }) },
+			{
+				stream: 'stdout',
+				content: env({
+					type: 'assistant',
+					message: {
+						content: [
+							{ type: 'text', text: 'Reading the last thread with Priya before drafting.' },
+						],
+					},
+				}),
+			},
+			{
+				stream: 'stdout',
+				content: env({
+					type: 'assistant',
+					message: { content: [{ type: 'tool_use', name: 'mcp__maskin__get_conversation' }] },
+				}),
+			},
+			{ stream: 'stderr', content: 'warn: slow response from the mail provider (retrying)' },
+			{
+				stream: 'stdout',
+				content: env({
+					type: 'assistant',
+					message: {
+						content: [{ type: 'text', text: 'Draft is ready and waiting on your approval.' }],
+					},
+				}),
+			},
+			{
+				stream: 'stdout',
+				content: env({ type: 'result', is_error: false, result: 'Draft saved for review.' }),
+			},
+		].map((r, i) => ({ ...item, id: i + 1, sessionId: uuid(900), createdAt: ago(40 - i), ...r }))
+		const since = Number(query.get('since') ?? 0)
+		const before = Number(query.get('before') ?? Number.POSITIVE_INFINITY)
+		let rows = all.filter((r) => r.id > since && r.id < before)
+		if (query.get('order') === 'desc') rows = rows.reverse()
+		return { body: rows.slice(0, Number(query.get('limit') ?? 100)) }
+	}
+	if (method === 'get' && path === '/api/integrations/providers') {
+		const provider = (name, displayName, authType, externalIdDisplay = 'email') => ({
+			...item,
+			name,
+			displayName,
+			authType,
+			externalIdDisplay,
+			events: [],
+		})
+		return {
+			body: [
+				provider('github', 'GitHub', 'oauth2_custom', 'installation'),
+				provider('slack', 'Slack', 'oauth2', 'installation'),
+				provider('gmail', 'Gmail', 'oauth2'),
+				provider('google-calendar', 'Google Calendar', 'oauth2'),
+				provider('linear', 'Linear', 'oauth2'),
+				provider('google-drive', 'Google Drive', 'oauth2'),
+			],
+		}
+	}
+	if (method === 'get' && path === '/api/integrations') {
+		const row = (n, provider, externalId, over = {}) => ({
+			...item,
+			id: uuid(n),
+			workspaceId: WORKSPACE_ID,
+			provider,
+			status: 'active',
+			externalId,
+			config: null,
+			actorId: null,
+			createdBy: ME.id,
+			createdAt: ago(30 * DAY),
+			updatedAt: ago(DAY),
+			missingScopes: [],
+			needsReconnect: false,
+			...over,
+		})
+		return {
+			body: [
+				row(950, 'gmail', 'sindre@northwind.example'),
+				row(951, 'slack', 'northwind'),
+				row(952, 'github', 'northwind-labs', {
+					needsReconnect: true,
+					missingScopes: ['workflow'],
+				}),
+			],
+		}
+	}
+	// A trial a few days from its end, with a credit meter, so Billing shows its banner and bar.
+	if (method === 'get' && path === '/api/billing/usage') {
+		return {
+			body: {
+				...base,
+				plan: 'trial',
+				status: 'active',
+				usd_cents_used: 4120,
+				hard_cap_usd_cents: 10000,
+				period_start: Date.now() - 9 * DAY * 60_000,
+				period_resets_in_ms: 5 * DAY * 60_000,
+				credit_balance_cents: 4120,
+				credit_topup_available: false,
+			},
+		}
+	}
 	if (method === 'get' && path === '/api/subscriptions/unread') return { body: unreadFeed(item) }
 	if (method === 'get' && path === '/api/briefing') {
 		return {
@@ -414,7 +648,7 @@ export function overrides({ method, path, params, query, body, base, item }) {
 	if (method === 'get' && path === '/api/files') {
 		const ids = (query.get('ids') ?? '').split(',').filter(Boolean)
 		const rows = flows
-			.filter((f) => ids.includes(pageId(f)))
+			.filter((f) => !ids.length || ids.includes(pageId(f)))
 			.map((f) => ({
 				...item,
 				id: pageId(f),
@@ -541,7 +775,13 @@ export function overrides({ method, path, params, query, body, base, item }) {
 			sessionId: null,
 			createdAt: ago(at),
 			editedAt: null,
+			// null, as the real API sends it: a number (even 0) marks the message as a thread reply
+			// and the app then hides it from the main chat.
+			threadRootId: null,
+			threadAlsoInChannel: false,
+			thread: null,
 			spawned_sessions: [],
+			reactions: [],
 		})
 		const first = actors.find((a) => a.id === r.with[0])
 		if (r.n === 300) {
@@ -552,6 +792,92 @@ export function overrides({ method, path, params, query, body, base, item }) {
 						m(2, ME, 'Why not all 47 contacts?', 20),
 						m(3, first, 'Only 7 have Sales approval. The other 40 still need review.', 10),
 					],
+					has_more: false,
+				},
+			}
+		}
+		if (r.n === 303) {
+			const ask = (id, text, metadata, at) => ({ ...m(id, first, text, at), metadata })
+			const session = uuid(902)
+			return {
+				body: {
+					messages: [
+						m(1, ME, 'Can you run the webinar follow-ups?', 300),
+						ask(
+							2,
+							'I need a key for the email provider.',
+							{
+								keychain_request: {
+									session_id: session,
+									kind: 'api_key',
+									suggested_name: 'Resend API key',
+									hint: 'Create one under API keys in Resend.',
+								},
+							},
+							200,
+						),
+						ask(
+							3,
+							'I would like to use the Linear tool server.',
+							{
+								mcp_server_request: {
+									session_id: session,
+									name: 'linear',
+									type: 'http',
+									url: 'https://mcp.linear.app/mcp',
+									hint: 'To file the follow-up tasks.',
+								},
+							},
+							120,
+						),
+						ask(
+							4,
+							'I need to read your Gmail to find the signups.',
+							{
+								integration_access_request: {
+									session_id: session,
+									integration_id: uuid(950),
+									display_name: 'Gmail',
+									level: 'read',
+									reason: 'To find the webinar signups.',
+								},
+							},
+							60,
+						),
+					],
+					has_more: false,
+				},
+			}
+		}
+		if (r.n === 302) {
+			// One real thread, shaped as the API sends it: the root carries a `thread` summary, each reply
+			// carries the root's id (and is hidden from the main timeline), and `?thread_root_id=` returns
+			// only the replies. MK-04 depends on this; do not reword the texts without updating it.
+			const root = {
+				...m(3, ME, 'Can you also check the pricing page?', 40),
+				thread: {
+					replyCount: 2,
+					unreadCount: 0,
+					lastReplyId: 5,
+					lastReplyAt: ago(20),
+					participants: [participantRow(ME.id), participantRow(first.id)],
+				},
+			}
+			const replies = [
+				{ ...m(4, first, 'Yes, the pricing page looks right.', 30), threadRootId: 3 },
+				{ ...m(5, ME, 'Thanks, I will ship it today.', 20), threadRootId: 3 },
+			]
+			const wanted = query.get('thread_root_id')
+			return {
+				body: {
+					messages: wanted
+						? replies.filter((x) => x.threadRootId === Number(wanted))
+						: [
+								m(1, ME, 'Where are we on the Northwind follow-ups?', r.at + 12),
+								m(2, first, r.snippet, r.at),
+								root,
+								...replies,
+							],
 					has_more: false,
 				},
 			}

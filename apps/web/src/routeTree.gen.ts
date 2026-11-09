@@ -17,6 +17,8 @@ import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
 import { Route as PrototypesGalleryRouteImport } from './routes/prototypes/gallery'
 import { Route as PrototypesAboveTitleHeaderRouteImport } from './routes/prototypes/above-title-header'
+import { Route as OauthAuthorizeRouteImport } from './routes/oauth.authorize'
+import { Route as InstallSlugRouteImport } from './routes/install.$slug'
 import { Route as ConnectSkjaldRouteImport } from './routes/connect.skjald'
 import { Route as AuthedWorkspacesRouteImport } from './routes/_authed/workspaces'
 import { Route as AuthedWorkspaceIdRouteImport } from './routes/_authed/$workspaceId'
@@ -34,12 +36,14 @@ import { Route as AuthedWorkspaceIdChatsIndexRouteImport } from './routes/_authe
 import { Route as AuthedWorkspaceIdAgentsIndexRouteImport } from './routes/_authed/$workspaceId/agents/index'
 import { Route as AuthedWorkspaceIdTriggersTriggerIdRouteImport } from './routes/_authed/$workspaceId/triggers/$triggerId'
 import { Route as AuthedWorkspaceIdSettingsSkillsRouteImport } from './routes/_authed/$workspaceId/settings/skills'
+import { Route as AuthedWorkspaceIdSettingsNotificationsRouteImport } from './routes/_authed/$workspaceId/settings/notifications'
 import { Route as AuthedWorkspaceIdSettingsMembersRouteImport } from './routes/_authed/$workspaceId/settings/members'
 import { Route as AuthedWorkspaceIdSettingsMcpRouteImport } from './routes/_authed/$workspaceId/settings/mcp'
 import { Route as AuthedWorkspaceIdSettingsKeysRouteImport } from './routes/_authed/$workspaceId/settings/keys'
 import { Route as AuthedWorkspaceIdSettingsKeychainRouteImport } from './routes/_authed/$workspaceId/settings/keychain'
 import { Route as AuthedWorkspaceIdSettingsIntegrationsRouteImport } from './routes/_authed/$workspaceId/settings/integrations'
 import { Route as AuthedWorkspaceIdSettingsBillingRouteImport } from './routes/_authed/$workspaceId/settings/billing'
+import { Route as AuthedWorkspaceIdSessionsSessionIdRouteImport } from './routes/_authed/$workspaceId/sessions/$sessionId'
 import { Route as AuthedWorkspaceIdObjectsObjectIdRouteImport } from './routes/_authed/$workspaceId/objects/$objectId'
 import { Route as AuthedWorkspaceIdLoopsNewRouteImport } from './routes/_authed/$workspaceId/loops/new'
 import { Route as AuthedWorkspaceIdLoopsLoopIdRouteImport } from './routes/_authed/$workspaceId/loops/$loopId'
@@ -53,6 +57,7 @@ import { Route as AuthedWorkspaceIdSettingsExtensionsIndexRouteImport } from './
 import { Route as AuthedWorkspaceIdMarketplaceLoopIdIndexRouteImport } from './routes/_authed/$workspaceId/marketplace/$loopId/index'
 import { Route as AuthedWorkspaceIdSettingsObjectsPropertyNameRouteImport } from './routes/_authed/$workspaceId/settings/objects/$propertyName'
 import { Route as AuthedWorkspaceIdSettingsKeychainNewRouteImport } from './routes/_authed/$workspaceId/settings/keychain/new'
+import { Route as AuthedWorkspaceIdSettingsIntegrationsGoogleDriveRouteImport } from './routes/_authed/$workspaceId/settings/integrations_.google-drive'
 import { Route as AuthedWorkspaceIdSettingsExtensionsExtIdRouteImport } from './routes/_authed/$workspaceId/settings/extensions/$extId'
 import { Route as AuthedWorkspaceIdMarketplaceLoopIdItemIdRouteImport } from './routes/_authed/$workspaceId/marketplace/$loopId/$itemId'
 
@@ -96,6 +101,16 @@ const PrototypesAboveTitleHeaderRoute =
     path: '/prototypes/above-title-header',
     getParentRoute: () => rootRouteImport,
   } as any)
+const OauthAuthorizeRoute = OauthAuthorizeRouteImport.update({
+  id: '/oauth/authorize',
+  path: '/oauth/authorize',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const InstallSlugRoute = InstallSlugRouteImport.update({
+  id: '/install/$slug',
+  path: '/install/$slug',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ConnectSkjaldRoute = ConnectSkjaldRouteImport.update({
   id: '/connect/skjald',
   path: '/connect/skjald',
@@ -192,6 +207,12 @@ const AuthedWorkspaceIdSettingsSkillsRoute =
     path: '/skills',
     getParentRoute: () => AuthedWorkspaceIdSettingsRoute,
   } as any)
+const AuthedWorkspaceIdSettingsNotificationsRoute =
+  AuthedWorkspaceIdSettingsNotificationsRouteImport.update({
+    id: '/notifications',
+    path: '/notifications',
+    getParentRoute: () => AuthedWorkspaceIdSettingsRoute,
+  } as any)
 const AuthedWorkspaceIdSettingsMembersRoute =
   AuthedWorkspaceIdSettingsMembersRouteImport.update({
     id: '/members',
@@ -227,6 +248,12 @@ const AuthedWorkspaceIdSettingsBillingRoute =
     id: '/billing',
     path: '/billing',
     getParentRoute: () => AuthedWorkspaceIdSettingsRoute,
+  } as any)
+const AuthedWorkspaceIdSessionsSessionIdRoute =
+  AuthedWorkspaceIdSessionsSessionIdRouteImport.update({
+    id: '/sessions/$sessionId',
+    path: '/sessions/$sessionId',
+    getParentRoute: () => AuthedWorkspaceIdRoute,
   } as any)
 const AuthedWorkspaceIdObjectsObjectIdRoute =
   AuthedWorkspaceIdObjectsObjectIdRouteImport.update({
@@ -306,6 +333,12 @@ const AuthedWorkspaceIdSettingsKeychainNewRoute =
     path: '/new',
     getParentRoute: () => AuthedWorkspaceIdSettingsKeychainRoute,
   } as any)
+const AuthedWorkspaceIdSettingsIntegrationsGoogleDriveRoute =
+  AuthedWorkspaceIdSettingsIntegrationsGoogleDriveRouteImport.update({
+    id: '/integrations_/google-drive',
+    path: '/integrations/google-drive',
+    getParentRoute: () => AuthedWorkspaceIdSettingsRoute,
+  } as any)
 const AuthedWorkspaceIdSettingsExtensionsExtIdRoute =
   AuthedWorkspaceIdSettingsExtensionsExtIdRouteImport.update({
     id: '/extensions/$extId',
@@ -328,6 +361,8 @@ export interface FileRoutesByFullPath {
   '/$workspaceId': typeof AuthedWorkspaceIdRouteWithChildren
   '/workspaces': typeof AuthedWorkspacesRoute
   '/connect/skjald': typeof ConnectSkjaldRoute
+  '/install/$slug': typeof InstallSlugRoute
+  '/oauth/authorize': typeof OauthAuthorizeRoute
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
   '/prototypes/gallery': typeof PrototypesGalleryRoute
   '/$workspaceId/chats': typeof AuthedWorkspaceIdChatsRouteWithChildren
@@ -342,12 +377,14 @@ export interface FileRoutesByFullPath {
   '/$workspaceId/loops/$loopId': typeof AuthedWorkspaceIdLoopsLoopIdRoute
   '/$workspaceId/loops/new': typeof AuthedWorkspaceIdLoopsNewRoute
   '/$workspaceId/objects/$objectId': typeof AuthedWorkspaceIdObjectsObjectIdRoute
+  '/$workspaceId/sessions/$sessionId': typeof AuthedWorkspaceIdSessionsSessionIdRoute
   '/$workspaceId/settings/billing': typeof AuthedWorkspaceIdSettingsBillingRoute
   '/$workspaceId/settings/integrations': typeof AuthedWorkspaceIdSettingsIntegrationsRoute
   '/$workspaceId/settings/keychain': typeof AuthedWorkspaceIdSettingsKeychainRouteWithChildren
   '/$workspaceId/settings/keys': typeof AuthedWorkspaceIdSettingsKeysRoute
   '/$workspaceId/settings/mcp': typeof AuthedWorkspaceIdSettingsMcpRoute
   '/$workspaceId/settings/members': typeof AuthedWorkspaceIdSettingsMembersRoute
+  '/$workspaceId/settings/notifications': typeof AuthedWorkspaceIdSettingsNotificationsRoute
   '/$workspaceId/settings/skills': typeof AuthedWorkspaceIdSettingsSkillsRoute
   '/$workspaceId/triggers/$triggerId': typeof AuthedWorkspaceIdTriggersTriggerIdRoute
   '/$workspaceId/agents/': typeof AuthedWorkspaceIdAgentsIndexRoute
@@ -359,6 +396,7 @@ export interface FileRoutesByFullPath {
   '/$workspaceId/triggers/': typeof AuthedWorkspaceIdTriggersIndexRoute
   '/$workspaceId/marketplace/$loopId/$itemId': typeof AuthedWorkspaceIdMarketplaceLoopIdItemIdRoute
   '/$workspaceId/settings/extensions/$extId': typeof AuthedWorkspaceIdSettingsExtensionsExtIdRoute
+  '/$workspaceId/settings/integrations/google-drive': typeof AuthedWorkspaceIdSettingsIntegrationsGoogleDriveRoute
   '/$workspaceId/settings/keychain/new': typeof AuthedWorkspaceIdSettingsKeychainNewRoute
   '/$workspaceId/settings/objects/$propertyName': typeof AuthedWorkspaceIdSettingsObjectsPropertyNameRoute
   '/$workspaceId/marketplace/$loopId/': typeof AuthedWorkspaceIdMarketplaceLoopIdIndexRoute
@@ -373,6 +411,8 @@ export interface FileRoutesByTo {
   '/tv': typeof TvRoute
   '/workspaces': typeof AuthedWorkspacesRoute
   '/connect/skjald': typeof ConnectSkjaldRoute
+  '/install/$slug': typeof InstallSlugRoute
+  '/oauth/authorize': typeof OauthAuthorizeRoute
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
   '/prototypes/gallery': typeof PrototypesGalleryRoute
   '/': typeof AuthedIndexRoute
@@ -386,11 +426,13 @@ export interface FileRoutesByTo {
   '/$workspaceId/loops/$loopId': typeof AuthedWorkspaceIdLoopsLoopIdRoute
   '/$workspaceId/loops/new': typeof AuthedWorkspaceIdLoopsNewRoute
   '/$workspaceId/objects/$objectId': typeof AuthedWorkspaceIdObjectsObjectIdRoute
+  '/$workspaceId/sessions/$sessionId': typeof AuthedWorkspaceIdSessionsSessionIdRoute
   '/$workspaceId/settings/billing': typeof AuthedWorkspaceIdSettingsBillingRoute
   '/$workspaceId/settings/integrations': typeof AuthedWorkspaceIdSettingsIntegrationsRoute
   '/$workspaceId/settings/keys': typeof AuthedWorkspaceIdSettingsKeysRoute
   '/$workspaceId/settings/mcp': typeof AuthedWorkspaceIdSettingsMcpRoute
   '/$workspaceId/settings/members': typeof AuthedWorkspaceIdSettingsMembersRoute
+  '/$workspaceId/settings/notifications': typeof AuthedWorkspaceIdSettingsNotificationsRoute
   '/$workspaceId/settings/skills': typeof AuthedWorkspaceIdSettingsSkillsRoute
   '/$workspaceId/triggers/$triggerId': typeof AuthedWorkspaceIdTriggersTriggerIdRoute
   '/$workspaceId/agents': typeof AuthedWorkspaceIdAgentsIndexRoute
@@ -402,6 +444,7 @@ export interface FileRoutesByTo {
   '/$workspaceId/triggers': typeof AuthedWorkspaceIdTriggersIndexRoute
   '/$workspaceId/marketplace/$loopId/$itemId': typeof AuthedWorkspaceIdMarketplaceLoopIdItemIdRoute
   '/$workspaceId/settings/extensions/$extId': typeof AuthedWorkspaceIdSettingsExtensionsExtIdRoute
+  '/$workspaceId/settings/integrations/google-drive': typeof AuthedWorkspaceIdSettingsIntegrationsGoogleDriveRoute
   '/$workspaceId/settings/keychain/new': typeof AuthedWorkspaceIdSettingsKeychainNewRoute
   '/$workspaceId/settings/objects/$propertyName': typeof AuthedWorkspaceIdSettingsObjectsPropertyNameRoute
   '/$workspaceId/marketplace/$loopId': typeof AuthedWorkspaceIdMarketplaceLoopIdIndexRoute
@@ -419,6 +462,8 @@ export interface FileRoutesById {
   '/_authed/$workspaceId': typeof AuthedWorkspaceIdRouteWithChildren
   '/_authed/workspaces': typeof AuthedWorkspacesRoute
   '/connect/skjald': typeof ConnectSkjaldRoute
+  '/install/$slug': typeof InstallSlugRoute
+  '/oauth/authorize': typeof OauthAuthorizeRoute
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
   '/prototypes/gallery': typeof PrototypesGalleryRoute
   '/_authed/': typeof AuthedIndexRoute
@@ -434,12 +479,14 @@ export interface FileRoutesById {
   '/_authed/$workspaceId/loops/$loopId': typeof AuthedWorkspaceIdLoopsLoopIdRoute
   '/_authed/$workspaceId/loops/new': typeof AuthedWorkspaceIdLoopsNewRoute
   '/_authed/$workspaceId/objects/$objectId': typeof AuthedWorkspaceIdObjectsObjectIdRoute
+  '/_authed/$workspaceId/sessions/$sessionId': typeof AuthedWorkspaceIdSessionsSessionIdRoute
   '/_authed/$workspaceId/settings/billing': typeof AuthedWorkspaceIdSettingsBillingRoute
   '/_authed/$workspaceId/settings/integrations': typeof AuthedWorkspaceIdSettingsIntegrationsRoute
   '/_authed/$workspaceId/settings/keychain': typeof AuthedWorkspaceIdSettingsKeychainRouteWithChildren
   '/_authed/$workspaceId/settings/keys': typeof AuthedWorkspaceIdSettingsKeysRoute
   '/_authed/$workspaceId/settings/mcp': typeof AuthedWorkspaceIdSettingsMcpRoute
   '/_authed/$workspaceId/settings/members': typeof AuthedWorkspaceIdSettingsMembersRoute
+  '/_authed/$workspaceId/settings/notifications': typeof AuthedWorkspaceIdSettingsNotificationsRoute
   '/_authed/$workspaceId/settings/skills': typeof AuthedWorkspaceIdSettingsSkillsRoute
   '/_authed/$workspaceId/triggers/$triggerId': typeof AuthedWorkspaceIdTriggersTriggerIdRoute
   '/_authed/$workspaceId/agents/': typeof AuthedWorkspaceIdAgentsIndexRoute
@@ -451,6 +498,7 @@ export interface FileRoutesById {
   '/_authed/$workspaceId/triggers/': typeof AuthedWorkspaceIdTriggersIndexRoute
   '/_authed/$workspaceId/marketplace/$loopId/$itemId': typeof AuthedWorkspaceIdMarketplaceLoopIdItemIdRoute
   '/_authed/$workspaceId/settings/extensions/$extId': typeof AuthedWorkspaceIdSettingsExtensionsExtIdRoute
+  '/_authed/$workspaceId/settings/integrations_/google-drive': typeof AuthedWorkspaceIdSettingsIntegrationsGoogleDriveRoute
   '/_authed/$workspaceId/settings/keychain/new': typeof AuthedWorkspaceIdSettingsKeychainNewRoute
   '/_authed/$workspaceId/settings/objects/$propertyName': typeof AuthedWorkspaceIdSettingsObjectsPropertyNameRoute
   '/_authed/$workspaceId/marketplace/$loopId/': typeof AuthedWorkspaceIdMarketplaceLoopIdIndexRoute
@@ -469,6 +517,8 @@ export interface FileRouteTypes {
     | '/$workspaceId'
     | '/workspaces'
     | '/connect/skjald'
+    | '/install/$slug'
+    | '/oauth/authorize'
     | '/prototypes/above-title-header'
     | '/prototypes/gallery'
     | '/$workspaceId/chats'
@@ -483,12 +533,14 @@ export interface FileRouteTypes {
     | '/$workspaceId/loops/$loopId'
     | '/$workspaceId/loops/new'
     | '/$workspaceId/objects/$objectId'
+    | '/$workspaceId/sessions/$sessionId'
     | '/$workspaceId/settings/billing'
     | '/$workspaceId/settings/integrations'
     | '/$workspaceId/settings/keychain'
     | '/$workspaceId/settings/keys'
     | '/$workspaceId/settings/mcp'
     | '/$workspaceId/settings/members'
+    | '/$workspaceId/settings/notifications'
     | '/$workspaceId/settings/skills'
     | '/$workspaceId/triggers/$triggerId'
     | '/$workspaceId/agents/'
@@ -500,6 +552,7 @@ export interface FileRouteTypes {
     | '/$workspaceId/triggers/'
     | '/$workspaceId/marketplace/$loopId/$itemId'
     | '/$workspaceId/settings/extensions/$extId'
+    | '/$workspaceId/settings/integrations/google-drive'
     | '/$workspaceId/settings/keychain/new'
     | '/$workspaceId/settings/objects/$propertyName'
     | '/$workspaceId/marketplace/$loopId/'
@@ -514,6 +567,8 @@ export interface FileRouteTypes {
     | '/tv'
     | '/workspaces'
     | '/connect/skjald'
+    | '/install/$slug'
+    | '/oauth/authorize'
     | '/prototypes/above-title-header'
     | '/prototypes/gallery'
     | '/'
@@ -527,11 +582,13 @@ export interface FileRouteTypes {
     | '/$workspaceId/loops/$loopId'
     | '/$workspaceId/loops/new'
     | '/$workspaceId/objects/$objectId'
+    | '/$workspaceId/sessions/$sessionId'
     | '/$workspaceId/settings/billing'
     | '/$workspaceId/settings/integrations'
     | '/$workspaceId/settings/keys'
     | '/$workspaceId/settings/mcp'
     | '/$workspaceId/settings/members'
+    | '/$workspaceId/settings/notifications'
     | '/$workspaceId/settings/skills'
     | '/$workspaceId/triggers/$triggerId'
     | '/$workspaceId/agents'
@@ -543,6 +600,7 @@ export interface FileRouteTypes {
     | '/$workspaceId/triggers'
     | '/$workspaceId/marketplace/$loopId/$itemId'
     | '/$workspaceId/settings/extensions/$extId'
+    | '/$workspaceId/settings/integrations/google-drive'
     | '/$workspaceId/settings/keychain/new'
     | '/$workspaceId/settings/objects/$propertyName'
     | '/$workspaceId/marketplace/$loopId'
@@ -559,6 +617,8 @@ export interface FileRouteTypes {
     | '/_authed/$workspaceId'
     | '/_authed/workspaces'
     | '/connect/skjald'
+    | '/install/$slug'
+    | '/oauth/authorize'
     | '/prototypes/above-title-header'
     | '/prototypes/gallery'
     | '/_authed/'
@@ -574,12 +634,14 @@ export interface FileRouteTypes {
     | '/_authed/$workspaceId/loops/$loopId'
     | '/_authed/$workspaceId/loops/new'
     | '/_authed/$workspaceId/objects/$objectId'
+    | '/_authed/$workspaceId/sessions/$sessionId'
     | '/_authed/$workspaceId/settings/billing'
     | '/_authed/$workspaceId/settings/integrations'
     | '/_authed/$workspaceId/settings/keychain'
     | '/_authed/$workspaceId/settings/keys'
     | '/_authed/$workspaceId/settings/mcp'
     | '/_authed/$workspaceId/settings/members'
+    | '/_authed/$workspaceId/settings/notifications'
     | '/_authed/$workspaceId/settings/skills'
     | '/_authed/$workspaceId/triggers/$triggerId'
     | '/_authed/$workspaceId/agents/'
@@ -591,6 +653,7 @@ export interface FileRouteTypes {
     | '/_authed/$workspaceId/triggers/'
     | '/_authed/$workspaceId/marketplace/$loopId/$itemId'
     | '/_authed/$workspaceId/settings/extensions/$extId'
+    | '/_authed/$workspaceId/settings/integrations_/google-drive'
     | '/_authed/$workspaceId/settings/keychain/new'
     | '/_authed/$workspaceId/settings/objects/$propertyName'
     | '/_authed/$workspaceId/marketplace/$loopId/'
@@ -606,6 +669,8 @@ export interface RootRouteChildren {
   SignupRoute: typeof SignupRoute
   TvRoute: typeof TvRoute
   ConnectSkjaldRoute: typeof ConnectSkjaldRoute
+  InstallSlugRoute: typeof InstallSlugRoute
+  OauthAuthorizeRoute: typeof OauthAuthorizeRoute
   PrototypesAboveTitleHeaderRoute: typeof PrototypesAboveTitleHeaderRoute
   PrototypesGalleryRoute: typeof PrototypesGalleryRoute
 }
@@ -666,6 +731,20 @@ declare module '@tanstack/react-router' {
       path: '/prototypes/above-title-header'
       fullPath: '/prototypes/above-title-header'
       preLoaderRoute: typeof PrototypesAboveTitleHeaderRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/oauth/authorize': {
+      id: '/oauth/authorize'
+      path: '/oauth/authorize'
+      fullPath: '/oauth/authorize'
+      preLoaderRoute: typeof OauthAuthorizeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/install/$slug': {
+      id: '/install/$slug'
+      path: '/install/$slug'
+      fullPath: '/install/$slug'
+      preLoaderRoute: typeof InstallSlugRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/connect/skjald': {
@@ -787,6 +866,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedWorkspaceIdSettingsSkillsRouteImport
       parentRoute: typeof AuthedWorkspaceIdSettingsRoute
     }
+    '/_authed/$workspaceId/settings/notifications': {
+      id: '/_authed/$workspaceId/settings/notifications'
+      path: '/notifications'
+      fullPath: '/$workspaceId/settings/notifications'
+      preLoaderRoute: typeof AuthedWorkspaceIdSettingsNotificationsRouteImport
+      parentRoute: typeof AuthedWorkspaceIdSettingsRoute
+    }
     '/_authed/$workspaceId/settings/members': {
       id: '/_authed/$workspaceId/settings/members'
       path: '/members'
@@ -828,6 +914,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/$workspaceId/settings/billing'
       preLoaderRoute: typeof AuthedWorkspaceIdSettingsBillingRouteImport
       parentRoute: typeof AuthedWorkspaceIdSettingsRoute
+    }
+    '/_authed/$workspaceId/sessions/$sessionId': {
+      id: '/_authed/$workspaceId/sessions/$sessionId'
+      path: '/sessions/$sessionId'
+      fullPath: '/$workspaceId/sessions/$sessionId'
+      preLoaderRoute: typeof AuthedWorkspaceIdSessionsSessionIdRouteImport
+      parentRoute: typeof AuthedWorkspaceIdRoute
     }
     '/_authed/$workspaceId/objects/$objectId': {
       id: '/_authed/$workspaceId/objects/$objectId'
@@ -920,6 +1013,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedWorkspaceIdSettingsKeychainNewRouteImport
       parentRoute: typeof AuthedWorkspaceIdSettingsKeychainRoute
     }
+    '/_authed/$workspaceId/settings/integrations_/google-drive': {
+      id: '/_authed/$workspaceId/settings/integrations_/google-drive'
+      path: '/integrations/google-drive'
+      fullPath: '/$workspaceId/settings/integrations/google-drive'
+      preLoaderRoute: typeof AuthedWorkspaceIdSettingsIntegrationsGoogleDriveRouteImport
+      parentRoute: typeof AuthedWorkspaceIdSettingsRoute
+    }
     '/_authed/$workspaceId/settings/extensions/$extId': {
       id: '/_authed/$workspaceId/settings/extensions/$extId'
       path: '/extensions/$extId'
@@ -981,9 +1081,11 @@ interface AuthedWorkspaceIdSettingsRouteChildren {
   AuthedWorkspaceIdSettingsKeysRoute: typeof AuthedWorkspaceIdSettingsKeysRoute
   AuthedWorkspaceIdSettingsMcpRoute: typeof AuthedWorkspaceIdSettingsMcpRoute
   AuthedWorkspaceIdSettingsMembersRoute: typeof AuthedWorkspaceIdSettingsMembersRoute
+  AuthedWorkspaceIdSettingsNotificationsRoute: typeof AuthedWorkspaceIdSettingsNotificationsRoute
   AuthedWorkspaceIdSettingsSkillsRoute: typeof AuthedWorkspaceIdSettingsSkillsRoute
   AuthedWorkspaceIdSettingsIndexRoute: typeof AuthedWorkspaceIdSettingsIndexRoute
   AuthedWorkspaceIdSettingsExtensionsExtIdRoute: typeof AuthedWorkspaceIdSettingsExtensionsExtIdRoute
+  AuthedWorkspaceIdSettingsIntegrationsGoogleDriveRoute: typeof AuthedWorkspaceIdSettingsIntegrationsGoogleDriveRoute
   AuthedWorkspaceIdSettingsObjectsPropertyNameRoute: typeof AuthedWorkspaceIdSettingsObjectsPropertyNameRoute
   AuthedWorkspaceIdSettingsExtensionsIndexRoute: typeof AuthedWorkspaceIdSettingsExtensionsIndexRoute
   AuthedWorkspaceIdSettingsObjectsIndexRoute: typeof AuthedWorkspaceIdSettingsObjectsIndexRoute
@@ -1001,10 +1103,14 @@ const AuthedWorkspaceIdSettingsRouteChildren: AuthedWorkspaceIdSettingsRouteChil
     AuthedWorkspaceIdSettingsMcpRoute: AuthedWorkspaceIdSettingsMcpRoute,
     AuthedWorkspaceIdSettingsMembersRoute:
       AuthedWorkspaceIdSettingsMembersRoute,
+    AuthedWorkspaceIdSettingsNotificationsRoute:
+      AuthedWorkspaceIdSettingsNotificationsRoute,
     AuthedWorkspaceIdSettingsSkillsRoute: AuthedWorkspaceIdSettingsSkillsRoute,
     AuthedWorkspaceIdSettingsIndexRoute: AuthedWorkspaceIdSettingsIndexRoute,
     AuthedWorkspaceIdSettingsExtensionsExtIdRoute:
       AuthedWorkspaceIdSettingsExtensionsExtIdRoute,
+    AuthedWorkspaceIdSettingsIntegrationsGoogleDriveRoute:
+      AuthedWorkspaceIdSettingsIntegrationsGoogleDriveRoute,
     AuthedWorkspaceIdSettingsObjectsPropertyNameRoute:
       AuthedWorkspaceIdSettingsObjectsPropertyNameRoute,
     AuthedWorkspaceIdSettingsExtensionsIndexRoute:
@@ -1029,6 +1135,7 @@ interface AuthedWorkspaceIdRouteChildren {
   AuthedWorkspaceIdLoopsLoopIdRoute: typeof AuthedWorkspaceIdLoopsLoopIdRoute
   AuthedWorkspaceIdLoopsNewRoute: typeof AuthedWorkspaceIdLoopsNewRoute
   AuthedWorkspaceIdObjectsObjectIdRoute: typeof AuthedWorkspaceIdObjectsObjectIdRoute
+  AuthedWorkspaceIdSessionsSessionIdRoute: typeof AuthedWorkspaceIdSessionsSessionIdRoute
   AuthedWorkspaceIdTriggersTriggerIdRoute: typeof AuthedWorkspaceIdTriggersTriggerIdRoute
   AuthedWorkspaceIdAgentsIndexRoute: typeof AuthedWorkspaceIdAgentsIndexRoute
   AuthedWorkspaceIdLoopsIndexRoute: typeof AuthedWorkspaceIdLoopsIndexRoute
@@ -1050,6 +1157,8 @@ const AuthedWorkspaceIdRouteChildren: AuthedWorkspaceIdRouteChildren = {
   AuthedWorkspaceIdLoopsLoopIdRoute: AuthedWorkspaceIdLoopsLoopIdRoute,
   AuthedWorkspaceIdLoopsNewRoute: AuthedWorkspaceIdLoopsNewRoute,
   AuthedWorkspaceIdObjectsObjectIdRoute: AuthedWorkspaceIdObjectsObjectIdRoute,
+  AuthedWorkspaceIdSessionsSessionIdRoute:
+    AuthedWorkspaceIdSessionsSessionIdRoute,
   AuthedWorkspaceIdTriggersTriggerIdRoute:
     AuthedWorkspaceIdTriggersTriggerIdRoute,
   AuthedWorkspaceIdAgentsIndexRoute: AuthedWorkspaceIdAgentsIndexRoute,
@@ -1089,6 +1198,8 @@ const rootRouteChildren: RootRouteChildren = {
   SignupRoute: SignupRoute,
   TvRoute: TvRoute,
   ConnectSkjaldRoute: ConnectSkjaldRoute,
+  InstallSlugRoute: InstallSlugRoute,
+  OauthAuthorizeRoute: OauthAuthorizeRoute,
   PrototypesAboveTitleHeaderRoute: PrototypesAboveTitleHeaderRoute,
   PrototypesGalleryRoute: PrototypesGalleryRoute,
 }

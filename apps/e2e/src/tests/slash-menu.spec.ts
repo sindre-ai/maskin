@@ -2,8 +2,6 @@ import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 
 // Slash-command menu in the document-variant rich editor (bet 666e3c4a).
-// The editor sits behind the rich-markdown-editor flag; the client-side test
-// override turns it on without provisioning a tester actor.
 
 const BLOCKS: Array<[title: string, description: string]> = [
 	['Heading', 'Section title'],
@@ -17,9 +15,6 @@ const BLOCKS: Array<[title: string, description: string]> = [
 ]
 
 async function openEditor(page: Page, workspaceId: string, objectId: string) {
-	await page.addInitScript(() => {
-		localStorage.setItem('ff:rich-markdown-editor', 'on')
-	})
 	await page.goto(`/${workspaceId}/objects/${objectId}`)
 	const editor = page.locator('.ProseMirror').first()
 	await expect(editor).toBeVisible({ timeout: 15000 })

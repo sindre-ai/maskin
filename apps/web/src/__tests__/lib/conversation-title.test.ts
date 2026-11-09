@@ -7,10 +7,26 @@ describe('deriveConversationTitle', () => {
 		expect(deriveConversationTitle('   \n\t ', 'Chief of Staff')).toBe('Chief of Staff')
 	})
 
-	it('keeps a short message intact, including its question mark', () => {
-		expect(deriveConversationTitle('Which accounts went quiet this week?', 'Sentinel')).toBe(
-			'Which accounts went quiet this week?',
+	it('titles by topic, dropping request phrasing and filler words', () => {
+		expect(
+			deriveConversationTitle(
+				'Please review the scope of the YouTube integration and tell me what is missing.',
+				'Developer',
+			),
+		).toBe('Scope YouTube integration')
+		expect(deriveConversationTitle("Let's update the knowledge base about pricing", 'Relay')).toBe(
+			'Knowledge base pricing',
 		)
+	})
+
+	it('keeps the keywords of a short question', () => {
+		expect(deriveConversationTitle('Which accounts went quiet?', 'Sentinel')).toBe(
+			'Accounts went quiet',
+		)
+	})
+
+	it('uses the first message sentence as the title when too few keywords are left', () => {
+		expect(deriveConversationTitle('We shipped v3. Now what?', 'Relay')).toBe('We shipped v3.')
 	})
 
 	it('takes only the first sentence of a multi-sentence message', () => {
@@ -19,55 +35,46 @@ describe('deriveConversationTitle', () => {
 				'Why did trial signups dip last week? I want the product or the channel, not both.',
 				'Compass',
 			),
-		).toBe('Why did trial signups dip last week?')
+		).toBe('Trial signups dip last week')
 	})
 
 	it('collapses newlines and runs of whitespace', () => {
-		expect(deriveConversationTitle('Catch me up\n\n  on   billing', 'Relay')).toBe(
-			'Catch me up on billing',
+		expect(deriveConversationTitle('Reindex\n\n  the   billing   tables', 'Relay')).toBe(
+			'Reindex billing tables',
 		)
 	})
 
-	it('cuts a long sentence on a word boundary and marks the cut', () => {
-		const long =
-			'Draft the note to Acme about the retry window before Thursday and include the usage numbers we pulled'
-		const title = deriveConversationTitle(long, 'Relay')
-		expect(title.endsWith('…')).toBe(true)
-		expect(title.length).toBeLessThanOrEqual(49)
-		expect(title).not.toMatch(/\s…$/)
-		// Cut on a word boundary — the last kept word is whole.
-		expect(long.startsWith(title.slice(0, -1))).toBe(true)
+	it('keeps at most five keywords', () => {
+		const title = deriveConversationTitle(
+			'Draft the note to Acme about the retry window before Thursday and include the usage numbers we pulled',
+			'Relay',
+		)
+		expect(title).toBe('Note Acme retry window Thursday')
 	})
 
 	it('does not treat a decimal point as the end of a sentence', () => {
 		expect(deriveConversationTitle('Ship 3.5 to the beta cohort by Friday', 'Relay')).toBe(
-			'Ship 3.5 to the beta cohort by Friday',
+			'Ship 3.5 beta cohort Friday',
 		)
 	})
 
 	it('does not cut inside a URL', () => {
 		expect(deriveConversationTitle('Check https://acme.com/dash for the drop', 'Relay')).toBe(
-			'Check https://acme.com/dash for the drop',
+			'Check https://acme.com/dash for…',
 		)
 	})
 
 	it('keeps the message when the first "sentence" is only an abbreviation', () => {
 		expect(deriveConversationTitle('Dr. Ruiz wants the Q3 numbers', 'Relay')).toBe(
-			'Dr. Ruiz wants the Q3 numbers',
+			'Dr Ruiz wants Q3 numbers',
 		)
-		expect(deriveConversationTitle('e.g. why did signups dip?', 'Relay')).toBe(
-			'e.g. why did signups dip?',
-		)
-	})
-
-	it('still ends the sentence on a digit when the terminator is a real one', () => {
-		expect(deriveConversationTitle('We shipped v3. Now what?', 'Relay')).toBe('We shipped v3.')
+		expect(deriveConversationTitle('e.g. why did signups dip?', 'Relay')).toBe('E.g signups dip')
 	})
 
 	it('cuts mid-word when a word boundary would leave a stub', () => {
 		const long = `Reindex ${'x'.repeat(120)}`
 		const title = deriveConversationTitle(long, 'Relay')
-		expect(title).toBe(`${long.slice(0, 48)}…`)
+		expect(title).toBe(`${long.slice(0, 32)}…`)
 	})
 
 	it('falls back to the whole message when it opens with punctuation', () => {

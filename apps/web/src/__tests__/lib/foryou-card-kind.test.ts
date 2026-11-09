@@ -8,6 +8,7 @@ import {
 	cardHeadline,
 	classifyCardKind,
 	decisionOf,
+	isInformational,
 	recommendedAction,
 } from '@/lib/foryou-card-kind'
 import { buildObjectResponse } from '../factories'
@@ -212,5 +213,45 @@ describe('a curated item with no source comment', () => {
 			latest_mention: buildMention({ content: 'Can you check the pricing page?' }),
 		})
 		expect(cardHeadline(item)).toBe('Can you check the pricing page?')
+	})
+})
+
+describe('isInformational', () => {
+	it('is false for a decision, an item with no source comment and a mention with a question', () => {
+		expect(
+			isInformational(buildItem({ latest_mention: buildMention({ decision: buildDecision() }) })),
+		).toBe(false)
+		expect(
+			isInformational(
+				buildItem({
+					curated: { headline: 'Pick one', rationale: null },
+					latest_mention: undefined,
+				}),
+			),
+		).toBe(false)
+		expect(
+			isInformational(
+				buildItem({ latest_mention: buildMention({ content: 'Which page should go first?' }) }),
+			),
+		).toBe(false)
+	})
+
+	it('is false for a high-attention mention and for an item with no mention', () => {
+		expect(
+			isInformational(
+				buildItem({ latest_mention: buildMention({ content: 'Heads up.', attention: 5 }) }),
+			),
+		).toBe(false)
+		expect(isInformational(buildItem({ latest_mention: undefined }))).toBe(false)
+	})
+
+	it('is true for a plain note that asks nothing', () => {
+		expect(
+			isInformational(
+				buildItem({
+					latest_mention: buildMention({ content: 'The brief shipped.', attention: 2 }),
+				}),
+			),
+		).toBe(true)
 	})
 })

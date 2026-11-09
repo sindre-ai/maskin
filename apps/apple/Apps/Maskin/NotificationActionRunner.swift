@@ -71,27 +71,24 @@ struct NotificationActionRunner: Sendable {
 		content.title = original.content.title
 		content.threadIdentifier = original.content.threadIdentifier
 		content.userInfo = original.content.userInfo
-		// A confirmation is information, not an interruption: no sound, never lights the screen.
-		content.interruptionLevel = .passive
-		var success = true
-		switch outcome {
-		case .answered(let text):
-			content.body = "You chose \u{201C}\(Self.excerpt(text))\u{201D}"
-		case .deferred(let when):
-			content.body = "Later \u{00B7} \(when). It comes back to For you then."
-		case .queued(let text):
-			content.body =
-				"Saved \u{201C}\(Self.excerpt(text))\u{201D}. It sends when you're back online."
-		case .failed(let message):
-			success = false
-			// Same body, same buttons, plus the reason: the user can simply tap again.
-			content.body = "Couldn't send. \(message)"
-			content.categoryIdentifier = original.content.categoryIdentifier
-			content.interruptionLevel = .active
-		case .notSignedIn:
-			success = false
-			content.body = "Open Maskin and sign in to answer from notifications."
+		let level: NotificationRepost.Level
+		switch original.content.interruptionLevel {
+		case .timeSensitive, .critical: level = .timeSensitive
+		case .passive: level = .passive
+		default: level = .active
 		}
+		let repost = NotificationRepost(
+			outcome: outcome, originalCategory: original.content.categoryIdentifier,
+			originalLevel: level)
+		content.body = repost.body
+		if let category = repost.categoryIdentifier { content.categoryIdentifier = category }
+		if repost.keepsSound { content.sound = original.content.sound }
+		switch repost.level {
+		case .passive: content.interruptionLevel = .passive
+		case .active: content.interruptionLevel = .active
+		case .timeSensitive: content.interruptionLevel = .timeSensitive
+		}
+		let success = repost.success
 		// Same identifier replaces the delivered notification instead of stacking a second one.
 		let replacement = UNNotificationRequest(identifier: original.identifier, content: content, trigger: nil)
 		center.removeDeliveredNotifications(withIdentifiers: [original.identifier])
@@ -110,25 +107,26 @@ struct NotificationActionRunner: Sendable {
 		#endif
 	}
 
-	private static func excerpt(_ text: String) -> String {
-		let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? text
-		return line.count > 60 ? String(line.prefix(60)) + "\u{2026}" : line
-	}
-
 	/// The fixed category every decision push names in `aps.category`. If the service extension
 	/// could not swap in the per-notification one (it was killed, or it is a Mac), the user still
 	/// gets a Reply field. It is MERGED into the registered set because
 	/// `setNotificationCategories` replaces everything, including the extension's dynamic ones.
 	static func registerFallbackCategory() {
 		let center = UNUserNotificationCenter.current()
-		let reply = UNTextInputNotificationAction(
-			identifier: NotificationActionPlan.replyIdentifier, title: "Reply", options: [],
-			textInputButtonTitle: "Send", textInputPlaceholder: "Reply")
-		let open = UNNotificationAction(
-			identifier: NotificationActionPlan.openIdentifier, title: "Open", options: [.foreground])
-		let fallback = UNNotificationCategory(
-			identifier: PushDecisionPayload.category, actions: [reply, open], intentIdentifiers: [],
-			options: [])
+		#if os(watchOS)
+			// `PushCategories` is not built for watchOS (its category initialiser is unavailable).
+			let fallback = UNNotificationCategory(
+				identifier: PushDecisionPayload.category,
+				actions: [
+					UNTextInputNotificationAction(
+						identifier: NotificationActionPlan.replyIdentifier, title: "Reply", options: [],
+						textInputButtonTitle: "Send", textInputPlaceholder: "Reply"),
+					UNNotificationAction(
+						identifier: NotificationActionPlan.openIdentifier, title: "Open", options: [.foreground]),
+				], intentIdentifiers: [], options: [])
+		#else
+			let fallback = PushCategories.fallback()
+		#endif
 		center.getNotificationCategories { existing in
 			// Already registered: do not write at all. `set` replaces the whole set, so every write
 			// is a chance to clobber a dynamic category the extension registered between our read

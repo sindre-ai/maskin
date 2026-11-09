@@ -1,5 +1,10 @@
+import { type PictogramShape, getAgentPictogram } from '@/lib/agent-pictogram'
+import { api } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { useState } from 'react'
+import { queryKeys } from '@/lib/query-keys'
+import { useWorkspace } from '@/lib/workspace-context'
+import { QueryClientContext, useQuery } from '@tanstack/react-query'
+import { useContext, useState } from 'react'
 
 const AVATAR_PALETTE = [
 	'bg-[var(--st-in_progress-bg)] text-[var(--st-in_progress-text)]',
@@ -75,17 +80,16 @@ export function getActorAvatarPaletteClass(
 	return palette[idx] ?? palette[0]
 }
 
-export function ActorAvatar({
-	name,
-	type: _type,
-	size = 'sm',
-	className,
-	onClick,
-	id,
-	imageUrl,
-	tone = 'subtle',
-	working = false,
-}: {
+// The workspace the avatar sits in, or undefined outside one (isolated renders, stories).
+function useOptionalWorkspaceId(): string | undefined {
+	try {
+		return useWorkspace().workspaceId
+	} catch {
+		return undefined
+	}
+}
+
+type ActorAvatarProps = {
 	name: string
 	type: string
 	/** 20 / 28 / 38 / 52px. Overlapping avatar stacks size themselves with
@@ -101,10 +105,63 @@ export function ActorAvatar({
 	 *  clockwise ~1.6s/rev; `prefers-reduced-motion: reduce` renders a static
 	 *  300° arc. Wired on the Objects list row to `object.active_session_state
 	 *  === 'running'` — the D2 delta of the v4 polish bet. `aria-label` names
-	 *  the container "Agent working on this object" so screen readers announce
+	 *  the container "Agent working on this item" so screen readers announce
 	 *  the state; the avatar itself keeps its existing name. */
 	working?: boolean
-}) {
+	/** The v11 list-row driver: a 26px rounded-square plate in the neutral muted
+	 *  fill with ink initials, instead of the round coloured avatar. */
+	tile?: boolean
+	/** v16 status dot on an agent's tile (from 24px up): green while it works, red
+	 *  when its last run failed. Omit for an idle agent. Ignored for non-agents. */
+	status?: 'working' | 'failed'
+}
+
+/**
+ * Draws the actor's picture when it has one. Callers that already hold an
+ * `avatar_url` pass it as `imageUrl`; every other call site that passes an
+ * `id` gets it from the workspace actors list, so lists, chats and the sidebar
+ * show pictures without each one threading the URL through. Outside a workspace
+ * or query provider (stories, isolated tests) it draws initials only.
+ */
+export function ActorAvatar(props: ActorAvatarProps) {
+	const queryClient = useContext(QueryClientContext)
+	const workspaceId = useOptionalWorkspaceId()
+	if (props.imageUrl === undefined && props.id && queryClient && workspaceId) {
+		return <ActorAvatarWithLookup {...props} id={props.id} workspaceId={workspaceId} />
+	}
+	return <ActorAvatarView {...props} />
+}
+
+// Same key and fetcher as useActors, so this shares the list every other surface loads.
+function useActorAvatarUrl(id: string, workspaceId: string) {
+	return useQuery({
+		queryKey: queryKeys.actors.all(workspaceId),
+		queryFn: () => api.actors.list(workspaceId),
+		select: (actors) => actors.find((actor) => actor.id === id)?.avatar_url ?? undefined,
+	})
+}
+
+function ActorAvatarWithLookup({
+	workspaceId,
+	...props
+}: ActorAvatarProps & { id: string; workspaceId: string }) {
+	const { data: imageUrl } = useActorAvatarUrl(props.id, workspaceId)
+	return <ActorAvatarView {...props} imageUrl={imageUrl} />
+}
+
+function ActorAvatarView({
+	name,
+	type: _type,
+	size = 'sm',
+	className,
+	onClick,
+	id,
+	imageUrl,
+	tone = 'subtle',
+	working = false,
+	tile = false,
+	status,
+}: ActorAvatarProps) {
 	// Track the specific url that failed so a caller swapping imageUrl resets the fallback
 	// automatically — without a useEffect that biome flags for missing dep semantics.
 	const [failedUrl, setFailedUrl] = useState<string | null>(null)
@@ -120,23 +177,50 @@ export function ActorAvatar({
 	const paletteClass = getActorAvatarPaletteClass(id ?? name, tone)
 	const showImage = Boolean(imageUrl) && !imageFailed
 
+	// Agents are drawn as a tinted tile with a pictogram (v16); people and anything
+	// else keep the round initials plate. An uploaded picture still covers either.
+	const pictogram = _type === 'agent' ? getAgentPictogram(name) : null
+
 	const baseClasses = cn(
-		'relative inline-flex items-center justify-center rounded-full font-medium select-none',
+		'relative inline-flex items-center justify-center font-medium select-none',
+		pictogram ? (size === 'sm' ? 'rounded-md' : 'rounded-lg') : 'rounded-full',
 		paletteClass,
 		sizeClasses,
+		tile && 'size-[26px] rounded-lg bg-muted text-[10.5px] font-bold text-foreground',
 		className,
+		// Last, so the team tint wins over a caller's plain or status fill.
+		pictogram?.tintClass,
 	)
 
 	const content = (
 		<>
-			<span className="leading-none" aria-hidden={showImage ? 'true' : undefined}>
-				{initials}
-			</span>
+			{pictogram ? (
+				<PictogramMark shapes={pictogram.shapes} />
+			) : (
+				<span className="leading-none" aria-hidden={showImage ? 'true' : undefined}>
+					{initials}
+				</span>
+			)}
+			{pictogram && status && size !== 'sm' ? (
+				<span
+					aria-hidden="true"
+					data-avatar-status={status}
+					className={cn(
+						// 1px out, not 2: the avatar's scroll width must stay within the 1px overflow gate.
+						'absolute -bottom-px -right-px rounded-full border-2 border-background',
+						size === 'xl' ? 'size-3.5' : 'size-2.5',
+						status === 'failed' ? 'bg-error' : 'bg-success motion-safe:animate-pulse',
+					)}
+				/>
+			) : null}
 			{imageUrl && !imageFailed ? (
 				<img
 					src={imageUrl}
 					alt=""
-					className="absolute inset-0 h-full w-full rounded-full object-cover"
+					className={cn(
+						'absolute inset-0 h-full w-full object-cover',
+						tile || pictogram ? 'rounded-[inherit]' : 'rounded-full',
+					)}
 					onError={() => setFailedUrl(imageUrl)}
 					draggable={false}
 				/>
@@ -176,6 +260,77 @@ export function ActorAvatar({
 	)
 }
 
+/** The pictogram itself: 62% of the tile, painted with the tile's ink colour. */
+function PictogramMark({ shapes }: { shapes: PictogramShape[] }) {
+	return (
+		<svg
+			viewBox="0 0 24 24"
+			className="size-[62%]"
+			fill="none"
+			aria-hidden="true"
+			focusable="false"
+			data-pictogram
+		>
+			{shapes.map((shape, i) => {
+				const key = `${shape[0]}-${i}`
+				switch (shape[0]) {
+					case 'c':
+						return <circle key={key} cx={shape[1]} cy={shape[2]} r={shape[3]} fill="currentColor" />
+					case 'rg':
+						return (
+							<circle
+								key={key}
+								cx={shape[1]}
+								cy={shape[2]}
+								r={shape[3]}
+								stroke="currentColor"
+								strokeWidth={shape[4]}
+							/>
+						)
+					case 'p':
+						return <path key={key} d={shape[1]} fill="currentColor" />
+					case 'l':
+						return (
+							<path
+								key={key}
+								d={shape[1]}
+								stroke="currentColor"
+								strokeWidth={shape[2]}
+								strokeLinecap="round"
+								strokeLinejoin="round"
+							/>
+						)
+					case 'r':
+						return (
+							<rect
+								key={key}
+								x={shape[1]}
+								y={shape[2]}
+								width={shape[3]}
+								height={shape[4]}
+								rx={shape[5]}
+								fill="currentColor"
+							/>
+						)
+					case 'ro':
+						return (
+							<rect
+								key={key}
+								x={shape[1]}
+								y={shape[2]}
+								width={shape[3]}
+								height={shape[4]}
+								rx={shape[5]}
+								stroke="currentColor"
+								strokeWidth={2.6}
+							/>
+						)
+				}
+			})}
+		</svg>
+	)
+}
+
 // Wraps the avatar in a fixed-thickness violet conic-gradient ring, animated
 // clockwise via CSS. Kept as an inline component so callers keep using
 // `<ActorAvatar working />` without threading the wrapper themselves.
@@ -195,10 +350,38 @@ function WorkingRing({
 	if (!working) return <>{children}</>
 	return (
 		<span
-			aria-label="Agent working on this object"
+			aria-label="Agent working on this item"
 			className="actor-avatar-working-ring relative inline-flex shrink-0 items-center justify-center"
 		>
 			{children}
 		</span>
+	)
+}
+
+/**
+ * Lays an actor's picture over a plate the caller already draws (the sidebar
+ * account row keeps its own tile). Draws nothing until the picture is known, so
+ * the plate's letter shows through while it loads and when there is none.
+ * The plate needs `relative overflow-hidden`.
+ */
+export function ActorPictureOverlay({ id }: { id: string }) {
+	const queryClient = useContext(QueryClientContext)
+	const workspaceId = useOptionalWorkspaceId()
+	if (!queryClient || !workspaceId) return null
+	return <ActorPictureOverlayWithLookup id={id} workspaceId={workspaceId} />
+}
+
+function ActorPictureOverlayWithLookup({ id, workspaceId }: { id: string; workspaceId: string }) {
+	const { data: imageUrl } = useActorAvatarUrl(id, workspaceId)
+	const [failedUrl, setFailedUrl] = useState<string | null>(null)
+	if (!imageUrl || failedUrl === imageUrl) return null
+	return (
+		<img
+			src={imageUrl}
+			alt=""
+			className="absolute inset-0 h-full w-full object-cover"
+			onError={() => setFailedUrl(imageUrl)}
+			draggable={false}
+		/>
 	)
 }

@@ -10,7 +10,6 @@ import { __resetLinkedInMcpRegistryForTests } from '@maskin/mcp/linkedin'
 import { and, eq } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encrypt } from '../../lib/crypto'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { __resetSenderCachesForTests } from '../../lib/integrations/providers/linkedin-unipile/sender-resolution'
 import type { LinkedInClient } from '../../lib/integrations/providers/linkedin-unipile/unipile-client'
 import { __setLinkedInWebhookClientForTests } from '../../lib/integrations/providers/linkedin-unipile/webhook'
@@ -28,15 +27,12 @@ import { createIntegrationApp, db, getTestActorId, sql } from './global-setup'
 const SECRET = 'wes_test_secret'
 const ACCOUNT_ID = 'acc_unipile_relation_01'
 const OTHER_ID = 'ACoAAExampleRelationProviderId'
-const FLAG = 'linkedin-unipile-events'
 
 const ENV_KEYS = [
 	'UNIPILE_WEBHOOK_SECRET',
 	'UNIPILE_BASE_URL',
 	'UNIPILE_API_KEY',
 	'INTEGRATION_ENCRYPTION_KEY',
-	'FF_TESTER_ACTOR_IDS',
-	'FF_TESTER_FEATURES',
 	'POSTHOG_API_KEY',
 ] as const
 const ORIGINAL_ENV: Record<string, string | undefined> = {}
@@ -58,7 +54,6 @@ afterAll(() => {
 		if (ORIGINAL_ENV[key] === undefined) delete process.env[key]
 		else process.env[key] = ORIGINAL_ENV[key]
 	}
-	_resetFeatureFlagConfig()
 	__resetLinkedInMcpRegistryForTests()
 })
 
@@ -98,10 +93,6 @@ beforeEach(async () => {
 		.returning()
 	if (!row) throw new Error('integration insert returned no row')
 	integrationId = row.id
-
-	process.env.FF_TESTER_ACTOR_IDS = ownerActorId
-	process.env.FF_TESTER_FEATURES = FLAG
-	_resetFeatureFlagConfig()
 })
 
 afterEach(() => {
@@ -338,9 +329,9 @@ describe('relation.new dedupe', () => {
 	})
 })
 
-// ── Account resolution and flag ────────────────────────────────────────────
+// ── Account resolution ────────────────────────────────────────────────────
 
-describe('relation.new account resolution and flag', () => {
+describe('relation.new account resolution', () => {
 	it('answers 200 skipped no_active_integration for a revoked integration and writes no row', async () => {
 		await db
 			.update(integrations)
@@ -350,17 +341,6 @@ describe('relation.new account resolution and flag', () => {
 		const res = await deliver(relationNew())
 		expect(res.status).toBe(200)
 		expect(await res.json()).toEqual({ ok: true, skipped: 'no_active_integration' })
-		expect(await connectionEvents()).toHaveLength(0)
-		expect(await deliveries()).toHaveLength(0)
-	})
-
-	it('answers 200 skipped flag_off with no events row and no claim row when the flag is off', async () => {
-		process.env.FF_TESTER_FEATURES = ''
-		_resetFeatureFlagConfig()
-
-		const res = await deliver(relationNew())
-		expect(res.status).toBe(200)
-		expect(await res.json()).toEqual({ ok: true, skipped: 'flag_off' })
 		expect(await connectionEvents()).toHaveLength(0)
 		expect(await deliveries()).toHaveLength(0)
 	})

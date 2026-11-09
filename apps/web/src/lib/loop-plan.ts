@@ -5,12 +5,12 @@ import { z } from 'zod'
  * Plan model + cue-word parser for the language-only loop builder (T1).
  *
  * Turns an operator's plain-language description (or a tapped example sentence)
- * into an in-memory `LoopPlan`: the object types and their state chain, the
+ * into an in-memory `LoopPlan`: the item types and their state chain, the
  * triggers, the agents, and the exact point the loop stops for the operator.
  *
  * This is a PURE model — parsing never creates, mutates, or persists any
  * workspace object. Nothing is created until the operator accepts (Create in
- * T2). It is also a composite over existing primitives only: object types and
+ * T2). It is also a composite over existing primitives only: item types and
  * statuses reuse the workspace-vocabulary concept (optional per-type chain
  * override), agent avatars reuse `getActorInitials`, and the plan carries no
  * CSS tokens — status values are domain statuses, mapped to the live
@@ -293,17 +293,17 @@ const READ_ONLY_VOCAB: Record<string, { name: string; role: string; note: string
 	customer: {
 		name: 'Customer',
 		role: 'who hears back',
-		note: 'linked, never changed by this loop',
+		note: 'linked, never changed by this flow',
 	},
 	client: {
 		name: 'Client',
 		role: 'who hears back',
-		note: 'linked, never changed by this loop',
+		note: 'linked, never changed by this flow',
 	},
 	account: {
 		name: 'Account',
 		role: 'who the work belongs to',
-		note: 'linked, never changed by this loop',
+		note: 'linked, never changed by this flow',
 	},
 }
 
@@ -555,7 +555,7 @@ export function describeLoopPlan(plan: LoopPlan): string {
 /** Footer reading of what would be created (mockup 2272 `lbSummary`). */
 export function summariseLoopPlan(plan: LoopPlan): string {
 	const counts = [
-		countLabel(plan.objectTypes.length, 'object type'),
+		countLabel(plan.objectTypes.length, 'item type'),
 		countLabel(plan.triggers.length, 'trigger'),
 		countLabel(plan.agents.length, 'agent'),
 	]

@@ -92,6 +92,12 @@ export const config: ProviderConfig = {
 					maxLength: 998,
 					slot: 'subject',
 				},
+				// Workspace file ids, a list or comma separated: at most 5 files and 20 MB. The ids are
+				// part of the approval; the preview shows the file names (lib/email-attachments.ts).
+				{ key: 'attachment_file_ids', label: 'Attachments', type: 'text' },
+				// The message being answered, shown above the draft so it is read in context.
+				// Not sent and not part of the approval.
+				{ key: 'reply_to', label: 'In reply to', type: 'text', slot: 'context' },
 			],
 		},
 	],

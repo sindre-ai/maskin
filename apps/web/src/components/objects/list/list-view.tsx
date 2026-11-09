@@ -1,8 +1,8 @@
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
+import { StatusBadge } from '@/components/shared/status-badge'
 import { Button } from '@/components/ui/button'
-import { useObjectLoops } from '@/hooks/use-object-loops'
 import { GROUP_PAGE_SIZE } from '@/hooks/use-objects'
 import type { ActorListItem, NotificationResponse, ObjectResponse } from '@/lib/api'
 import type { BetStatusResult } from '@/lib/bet-status'
@@ -11,7 +11,7 @@ import { NO_VALUE_GROUP, getObjectGroupLabel, getObjectGroupValue } from '@/lib/
 import { useNavigate } from '@tanstack/react-router'
 import type { GroupingState, RowSelectionState, VisibilityState } from '@tanstack/react-table'
 import type { OnChangeFn } from '@tanstack/react-table'
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight, Layers } from 'lucide-react'
 import {
 	forwardRef,
 	useCallback,
@@ -132,13 +132,6 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 	const scrollRef = useRef<HTMLDivElement>(null)
 	const sentinelRef = useRef<HTMLDivElement>(null)
 	const groupBy = grouping?.[0]
-	// D1 · Loop chip hydration. Reverse-index `in_loop` edges for the visible
-	// page so each row can render its first-loop chip. The hook fires ONE
-	// bounded batch of relationship queries after the list resolves — no
-	// server shape change, per the D1 acceptance criterion. A row's chip is
-	// absent (no reserved space) when the object has no `in_loop` edge.
-	const visibleObjectIds = useMemo(() => data.map((o) => o.id), [data])
-	const { data: loopsByObjectId } = useObjectLoops(workspaceId, visibleObjectIds)
 
 	// Rows the user is blocking float to the top of the pool (mockup fixture
 	// 6655's `nyOf`). A stable partition, so within each half the API's own
@@ -379,7 +372,6 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 				columnVisibility={columnVisibility}
 				anySelected={selectedIdSet.size > 0}
 				typeLabel={objectTypeLabel?.(object.type)}
-				loop={loopsByObjectId.get(object.id)}
 			/>
 		))
 
@@ -390,7 +382,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 	if (isError && isEmpty) {
 		return (
 			<QueryStateError
-				title="Couldn't load objects"
+				title="Couldn't load items"
 				error={error instanceof Error ? error : new Error('Unknown error')}
 			/>
 		)
@@ -405,7 +397,8 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 			<div ref={scrollRef} className={cn('min-h-0 flex-1 overflow-auto', 'touch-pan-y')}>
 				{hasActiveFilters ? (
 					<EmptyState
-						title={emptyTitle ?? 'No objects match these filters.'}
+						icon={<Layers size={24} aria-hidden="true" />}
+						title={emptyTitle ?? 'No items match these filters.'}
 						action={
 							onClearFilters ? (
 								<Button variant="outline" size="sm" onClick={onClearFilters}>
@@ -416,8 +409,9 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 					/>
 				) : (
 					<EmptyState
-						title={emptyTitle ?? 'No objects found'}
-						description="Create your first object to get started"
+						icon={<Layers size={24} aria-hidden="true" />}
+						title={emptyTitle ?? 'No items yet'}
+						description="Ask an agent to create one."
 					/>
 				)}
 				<div ref={sentinelRef} className="h-1" />
@@ -432,7 +426,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 
 	return (
 		<div ref={scrollRef} className={cn('min-h-0 flex-1 overflow-auto', 'touch-pan-y')}>
-			<ul className="m-0 list-none p-0" aria-label="Objects">
+			<ul className="m-0 list-none p-0" aria-label="Items">
 				{groups === null
 					? renderRows(rows)
 					: groups.map((group) => {
@@ -454,33 +448,33 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 								<li key={group.key}>
 									{/* Sticky so the group a row belongs to stays readable while
 									    its rows scroll past (mockup 995). */}
-									<div className="sticky top-0 z-[2] flex w-full items-center gap-2 bg-background px-1 pt-4 pb-1.5">
+									<div className="sticky top-0 z-[2] flex w-full items-center gap-2 bg-background px-2 pt-3.5 pb-1.5">
 										<button
 											type="button"
 											onClick={() => toggleGroup(group)}
 											aria-expanded={open}
-											className="flex flex-1 items-center gap-2 text-left transition-opacity hover:opacity-75"
+											className="flex items-center gap-2 text-left text-[15px] font-semibold transition-opacity hover:opacity-75"
 										>
 											<ChevronRight
-												size={12}
+												size={13}
 												aria-hidden="true"
 												className={cn(
-													'shrink-0 text-muted-foreground/50 transition-transform',
+													'shrink-0 text-muted-foreground transition-transform',
 													open && 'rotate-90',
 												)}
 											/>
-											{/* Mono, wide-tracked and colourless — the divider rule below
-											    carries the eye across the row, so the label doesn't also need
-											    a status swatch to mark where a group starts (mockup 748–752). */}
-											<span className="font-mono text-[10.5px] font-medium uppercase tracking-[0.1em] text-muted-foreground">
+											{/* The v3 group header: the status ring when grouped by status,
+											    the label in the page's ink and the count in the muted colour,
+											    plain sentence case — no rule. */}
+											{groupBy === 'status' && group.value !== NO_VALUE_GROUP && (
+												<StatusBadge status={group.value} variant="ring" />
+											)}
+											<span className="inline-block text-foreground first-letter:uppercase">
 												{getObjectGroupLabel(groupBy, group.value, actors)}
 											</span>
-											<span className="font-mono text-[10.5px] font-medium tabular-nums text-muted-foreground/50">
+											<span className="font-medium tabular-nums text-muted-foreground">
 												{group.total ?? group.rows.length}
 											</span>
-											{/* The hairline runs from the count to the right edge — a long
-											    scroll then always has a horizontal rule to break on. */}
-											<span aria-hidden="true" className="h-px flex-1 bg-muted" />
 										</button>
 									</div>
 									{open && (
@@ -506,7 +500,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 																? onLoadMoreInGroup?.(group.serverValue ?? '')
 																: revealGroup(group.key)
 														}
-														className="ml-[30px] flex w-fit items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+														className="ml-8 flex w-fit items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
 													>
 														Show{' '}
 														{serverPaged ? Math.min(hiddenCount, GROUP_PAGE_SIZE) : hiddenCount}{' '}

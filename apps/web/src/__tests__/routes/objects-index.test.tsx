@@ -196,7 +196,7 @@ describe('validateSearch', () => {
 			sort: 'updatedAt',
 			order: 'desc',
 			q: undefined,
-			groupBy: 'status',
+			groupBy: 'none',
 		})
 	})
 

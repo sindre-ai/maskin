@@ -1,6 +1,19 @@
+import { getOAuthPin } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { actors, workspaceMembers } from '@maskin/db/schema'
 import { and, eq, inArray, sql } from 'drizzle-orm'
+
+/**
+ * A Claude connector token (mat_) is pinned to one workspace for the whole request (see
+ * getOAuthPin in @maskin/auth). Every helper in this file answers "no" for any other
+ * workspace, even when the person behind the token is a member of it, so a by-ID route that
+ * derives the workspace from the resource cannot reach across the pin. Callers that are not
+ * OAuth-pinned are unaffected.
+ */
+function isOutsideOAuthPin(workspaceId: string): boolean {
+	const pin = getOAuthPin()
+	return pin !== undefined && pin.workspaceId.toLowerCase() !== workspaceId.toLowerCase()
+}
 
 /**
  * Check if an actor is a member of a workspace.
@@ -16,6 +29,7 @@ export async function isWorkspaceMember(
 	actorId: string,
 	workspaceId: string,
 ): Promise<boolean> {
+	if (isOutsideOAuthPin(workspaceId)) return false
 	const [member] = await db
 		.select({ actorId: workspaceMembers.actorId })
 		.from(workspaceMembers)
@@ -35,12 +49,16 @@ export class ViewerReadOnlyError extends Error {
 	}
 }
 
-/** The actor's role in a workspace, or null when they are not a member. */
+/**
+ * The actor's role in a workspace, or null when they are not a member. Null outside an OAuth
+ * pin too, like isWorkspaceMember, so isWorkspaceWriter cannot write across the pin.
+ */
 export async function getWorkspaceRole(
 	db: Database,
 	actorId: string,
 	workspaceId: string,
 ): Promise<string | null> {
+	if (isOutsideOAuthPin(workspaceId)) return null
 	const [member] = await db
 		.select({ role: workspaceMembers.role })
 		.from(workspaceMembers)
@@ -116,7 +134,7 @@ export async function actorsShareWorkspace(
 	db: Database,
 	callerId: string,
 	targetId: string,
-	workspaceId?: string,
+	workspaceId: string | undefined = getOAuthPin()?.workspaceId,
 ): Promise<boolean> {
 	if (callerId === targetId) return true
 	if (workspaceId) {
@@ -158,7 +176,7 @@ export async function isAdminOfSharedWorkspace(
 	db: Database,
 	callerId: string,
 	targetId: string,
-	workspaceId?: string,
+	workspaceId: string | undefined = getOAuthPin()?.workspaceId,
 	{ humanOnly = false }: { humanOnly?: boolean } = {},
 ): Promise<boolean> {
 	if (humanOnly) {
@@ -201,6 +219,7 @@ export async function isWorkspaceOwner(
 	actorId: string,
 	workspaceId: string,
 ): Promise<boolean> {
+	if (isOutsideOAuthPin(workspaceId)) return false
 	const [member] = await db
 		.select({ actorId: workspaceMembers.actorId })
 		.from(workspaceMembers)
@@ -224,6 +243,7 @@ export async function isWorkspaceHumanAdminOrOwner(
 	actorId: string,
 	workspaceId: string,
 ): Promise<boolean> {
+	if (isOutsideOAuthPin(workspaceId)) return false
 	const [row] = await db
 		.select({ role: workspaceMembers.role, type: actors.type })
 		.from(workspaceMembers)
@@ -235,4 +255,26 @@ export async function isWorkspaceHumanAdminOrOwner(
 	if (!row) return false
 	if (row.type === 'agent') return false
 	return row.role === 'owner' || row.role === 'admin'
+}
+
+/**
+ * A human member who is not a viewer. For actions that need a person's
+ * judgment, like accepting an agent's proposed change: viewers cannot write,
+ * and agents with the member role must not decide on their own work. Not
+ * isWorkspaceHumanAdminOrOwner, which would lock out regular members.
+ * Reads the role through getWorkspaceRole, so a role change applies at once.
+ */
+export async function isWorkspaceHumanNonViewer(
+	db: Database,
+	actorId: string,
+	workspaceId: string,
+): Promise<boolean> {
+	const role = await getWorkspaceRole(db, actorId, workspaceId)
+	if (role === null || role === 'viewer') return false
+	const [actor] = await db
+		.select({ type: actors.type })
+		.from(actors)
+		.where(eq(actors.id, actorId))
+		.limit(1)
+	return actor?.type === 'human'
 }

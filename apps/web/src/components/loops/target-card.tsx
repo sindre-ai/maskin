@@ -14,9 +14,9 @@ import type { ActorListItem, LoopSummary } from '@maskin/shared'
  * this component don't match the design bet's ship gate.
  */
 
-type LoopTarget = NonNullable<LoopSummary['targets']>[number]
+export type LoopTarget = NonNullable<LoopSummary['targets']>[number]
 
-interface PaceVerdict {
+export interface PaceVerdict {
 	label: 'Above target' | 'On target' | 'Behind pace' | 'Missed'
 	/** Tailwind classes for the pill background + text. Kept in sync with the
 	 *  amber / green / grey palette v4 uses on `loop-pill.ts`. */
@@ -34,7 +34,7 @@ interface PaceVerdict {
  * am I ahead or behind — did not come through at all. Green / amber / red is
  * the ordering the reader already expects, and both modes define all three.
  */
-function paceVerdict(target: LoopTarget): PaceVerdict {
+export function paceVerdict(target: LoopTarget): PaceVerdict {
 	const { actual, target: goal, pace_policy } = target
 	const isMissed = goal > 0 && actual <= 0
 	const ratio = goal !== 0 ? actual / goal : actual > 0 ? 1 : 0
@@ -83,37 +83,52 @@ export interface TargetCardProps {
 
 export function TargetCard({ target, owner }: TargetCardProps) {
 	const verdict = paceVerdict(target)
+	const percent =
+		target.target > 0 ? Math.min(100, Math.max(0, (target.actual / target.target) * 100)) : 0
 
 	return (
 		<div
 			data-testid="target-card"
 			className={cn(
-				'flex flex-col gap-2 rounded-lg border border-border bg-card p-4',
+				'flex flex-col gap-2.5 rounded-xl border border-border bg-background px-[18px] py-3.5 shadow-xs',
 				'transition-colors duration-150 hover:border-border-strong',
 			)}
 		>
 			<div className="flex items-start justify-between gap-3">
-				<span className="text-[12px] font-medium leading-tight text-foreground line-clamp-2">
+				<span className="line-clamp-2 text-[14px] font-semibold leading-tight text-foreground">
 					{target.label}
 				</span>
-				{owner && <ActorAvatar id={owner.id} name={owner.name} type={owner.type} size="sm" />}
-			</div>
-			<div className="flex items-baseline gap-1.5">
-				<span className="font-mono text-[20px] font-semibold tabular-nums text-foreground">
-					{target.actual}
+				<span className="flex shrink-0 items-center gap-2">
+					{owner && <ActorAvatar id={owner.id} name={owner.name} type={owner.type} size="sm" />}
+					<span
+						aria-label={verdict.description}
+						className={cn(
+							'inline-flex h-[22px] w-fit items-center rounded-full px-2.5',
+							'text-[11.5px] font-bold',
+							verdict.pillClass,
+						)}
+					>
+						{verdict.label}
+					</span>
 				</span>
-				<span className="text-[12px] text-muted-foreground">/ {target.target}</span>
 			</div>
-			<span
-				aria-label={verdict.description}
-				className={cn(
-					'inline-flex w-fit items-center rounded-full px-2 py-0.5',
-					'font-mono text-[10px] font-semibold uppercase tracking-[0.06em]',
-					verdict.pillClass,
-				)}
-			>
-				{verdict.label}
-			</span>
+			<p className="text-[26px] font-bold leading-[1.05] tracking-tight tabular-nums text-foreground">
+				{target.actual} of {target.target}
+			</p>
+			<div aria-hidden="true" className="h-2 overflow-hidden rounded-full bg-border">
+				<div
+					className={cn(
+						'h-full rounded-full',
+						verdict.label === 'Missed'
+							? 'bg-destructive'
+							: verdict.label === 'Behind pace'
+								? 'bg-brand'
+								: 'bg-success',
+					)}
+					// Data-driven width: the one value a Tailwind class cannot carry.
+					style={{ width: `${percent}%` }}
+				/>
+			</div>
 		</div>
 	)
 }

@@ -11,6 +11,8 @@ final class ObjectsListIntents {
 	var namingView = false
 	var createStatus: String?
 	var showCreate = false
+	/// The Go to sheet (saved views and places), opened from Display now the title is plain.
+	var showGoTo = false
 
 	func create(status: String? = nil) {
 		createStatus = status
@@ -18,8 +20,8 @@ final class ObjectsListIntents {
 	}
 }
 
-/// The list half of the Objects tab: large title with ▾ (Go to), type tabs, status groups as
-/// inset cards (or the board), Select mode and the Undo toast. Rows link by value in a stack, or
+/// The list half of the Objects tab: large title, quick-filter chips (type tabs when Display turns
+/// them on), groups of flat hairline rows (or the board), Select mode and the Undo toast. Rows link by value in a stack, or
 /// drive `selection` in a split view (when `selection` is non-nil).
 struct ObjectsListView: View {
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -37,7 +39,6 @@ struct ObjectsListView: View {
 
 	@Environment(\.horizontalSizeClass) private var sizeClass
 	@State private var undoOffer: UndoOffer?
-	@State private var showGoTo = false
 	@State private var holdTarget: ObjectAsk?
 	@State private var viewName = ""
 
@@ -57,7 +58,7 @@ struct ObjectsListView: View {
 		.onChange(of: allIDs) { picking.prune(toVisible: allIDs) }
 		.selectionToolbar(picking, allIDs: allIDs, noun: "object") { bulkActions }
 		.undoToast($undoOffer)
-		.sheet(isPresented: $showGoTo) {
+		.sheet(isPresented: $intents.showGoTo) {
 			GoToSheet(
 				store: store, onSelect: { scope in Task { await store.setScope(scope) } },
 				onRemoveSavedView: { removeSavedView($0) })
@@ -87,33 +88,22 @@ struct ObjectsListView: View {
 	/// The large title (tap for Go to), type tabs and the active filter chip.
 	private var header: some View {
 		VStack(alignment: .leading, spacing: 0) {
-			Button {
-				MaskinHaptics.play(.light)
-				showGoTo = true
-			} label: {
-				HStack(alignment: .center, spacing: MaskinSpace.s3) {
-					Text(store.title)
-						.maskinText(.largeTitle)
-						.foregroundStyle(MaskinColor.ink)
-						.lineLimit(1)
-						.minimumScaleFactor(0.7)
-					Image(systemName: "chevron.down")
-						.maskinSymbol(MaskinFontSize.t16, weight: .bold)
-						.foregroundStyle(MaskinColor.ink4)
-						.padding(.top, MaskinSpace.s3)
-				}
+			Text(store.title)
+				.maskinText(.largeTitle)
+				.foregroundStyle(MaskinColor.ink)
+				.lineLimit(1)
+				.minimumScaleFactor(0.7)
 				.frame(minHeight: MaskinSpace.touchMin)
-				.contentShape(Rectangle())
+				.padding(.horizontal, MaskinSpace.s11)
+				.accessibilityAddTraits(.isHeader)
+			if store.display.showsTypeTabs {
+				ObjectTypeTabs(tabs: ObjectTypeTab.tabs(for: store), selected: store.scope) { scope in
+					Task { await store.setScope(scope) }
+				}
+				.padding(.top, MaskinSpace.s5)
 			}
-			.buttonStyle(.maskinPressed)
-			.padding(.horizontal, MaskinSpace.s11)
-			.accessibilityLabel("\(store.title). Go to")
-			.accessibilityHint("Opens the list of places to go")
-			ObjectTypeTabs(tabs: ObjectTypeTab.tabs(for: store), selected: store.scope) { scope in
-				Task { await store.setScope(scope) }
-			}
-			.padding(.top, MaskinSpace.s5)
-			if store.statusFilter != nil {
+			ObjectQuickFilterChips(store: store).padding(.top, MaskinSpace.s3)
+			if store.statusFilter != nil || store.display.needsYouOnly {
 				filterChips.padding(.top, MaskinSpace.s5)
 			}
 			if store.isOffline && !store.objects.isEmpty {
@@ -124,33 +114,56 @@ struct ObjectsListView: View {
 		.padding(.bottom, MaskinSpace.s4)
 	}
 
+	/// The filters that are on, each removable, and Clear all once there is anything to clear.
 	private var filterChips: some View {
 		ScrollView(.horizontal, showsIndicators: false) {
 			HStack(spacing: MaskinSpace.s3) {
 				if let status = store.statusFilter {
-					Button {
-						Task { await store.setStatus(nil) }
-					} label: {
-						HStack(spacing: MaskinSpace.s3) {
-							Text(MaskinStatus.sentenceLabel(for: status))
-							Image(systemName: "xmark").maskinSymbol(MaskinFontSize.t9, weight: .heavy)
-						}
-						.maskinText(.caption)
-						.fontWeight(.semibold)
-						.foregroundStyle(MaskinColor.sigInk)
-						.padding(.leading, MaskinSpace.s7)
-						.padding(.trailing, MaskinSpace.s4 + 1)
-						.frame(height: MaskinSpace.s13 + MaskinSpace.s1)
-						.background(MaskinColor.sigTint, in: Capsule())
+					removableChip(
+						MaskinStatus.sentenceLabel(for: status),
+						label: "Status \(MaskinStatus.sentenceLabel(for: status)). Remove filter"
+					) { Task { await store.setStatus(nil) } }
+				}
+				if store.display.needsYouOnly {
+					removableChip("Needs you", label: "Needs you. Remove filter") { store.setNeedsYouOnly(false) }
+				}
+				Button {
+					MaskinHaptics.play(.selection)
+					store.quickFilters = []
+					store.setNeedsYouOnly(false)
+					Task { await store.setStatus(nil) }
+				} label: {
+					Text("Clear all")
+						.maskinText(.caption).fontWeight(.semibold)
+						.foregroundStyle(MaskinColor.ink4)
+						.padding(.horizontal, MaskinSpace.s7)
 						.frame(minHeight: MaskinSpace.touchMin)
 						.contentShape(Rectangle())
-					}
-					.buttonStyle(.maskinPressed(.shrink))
-					.accessibilityLabel("Status \(MaskinStatus.sentenceLabel(for: status)). Remove filter")
 				}
+				.buttonStyle(.maskinPressed(.shrink))
 			}
 			.padding(.horizontal, MaskinSpace.s9)
 		}
+	}
+
+	private func removableChip(_ title: String, label: String, action: @escaping () -> Void) -> some View {
+		Button(action: action) {
+			HStack(spacing: MaskinSpace.s3) {
+				Text(title)
+				Image(systemName: "xmark").maskinSymbol(MaskinFontSize.t9, weight: .heavy)
+			}
+			.maskinText(.caption)
+			.fontWeight(.semibold)
+			.foregroundStyle(MaskinColor.sigInk)
+			.padding(.leading, MaskinSpace.s7)
+			.padding(.trailing, MaskinSpace.s4 + 1)
+			.frame(height: MaskinSpace.s13 + MaskinSpace.s1)
+			.background(MaskinColor.sigTint, in: Capsule())
+			.frame(minHeight: MaskinSpace.touchMin)
+			.contentShape(Rectangle())
+		}
+		.buttonStyle(.maskinPressed(.shrink))
+		.accessibilityLabel(label)
 	}
 
 	// MARK: Selection
@@ -300,13 +313,14 @@ struct ObjectsListView: View {
 				symbol: "star", title: "No favourites yet",
 				message: "Tap the star on any object to keep it here, on every device.")
 		default:
-			if store.isFiltered || store.display.needsYouOnly {
+			if store.isFiltered || store.display.needsYouOnly || !store.quickFilters.isEmpty {
 				EmptyState(
 					symbol: "magnifyingglass",
 					title: store.searchText.isEmpty ? "Nothing in this status" : "Nothing matches \u{201C}\(store.searchText.trimmingCharacters(in: .whitespaces))\u{201D}",
 					message: "Nothing fits these filters. Try a different type or status, or clear the filter."
 				) {
 					Button("Clear filter") {
+						store.quickFilters = []
 						store.setNeedsYouOnly(false)
 						Task {
 							await store.setStatus(nil)
@@ -389,16 +403,14 @@ struct ObjectsListView: View {
 				let count = group.objects.count
 				ForEach(Array(group.objects.enumerated()), id: \.element.id) { index, object in
 					row(object)
-						.listRowInsets(EdgeInsets(top: MaskinSpace.s7, leading: MaskinSpace.s9 + MaskinSpace.s8, bottom: MaskinSpace.s7, trailing: MaskinSpace.s9 + MaskinSpace.s8))
+						.listRowInsets(EdgeInsets(top: MaskinSpace.s8, leading: MaskinSpace.s9, bottom: MaskinSpace.s8, trailing: MaskinSpace.s9))
 						.listRowBackground(
-							CardSlice(
-								isFirst: index == 0, isLast: index == count - 1,
-								selected: selection?.wrappedValue == object.id && !picking.isActive)
-								.padding(.horizontal, MaskinSpace.s9))
+							(selection?.wrappedValue == object.id && !picking.isActive)
+								? MaskinSurface.fillStrong : Color.clear)
 						.listRowSeparatorTint(MaskinSurface.separator)
-						.listRowSeparator(index == 0 ? .hidden : .visible, edges: .top)
+						.listRowSeparator(.visible, edges: .top)
 						.listRowSeparator(index == count - 1 ? .hidden : .visible, edges: .bottom)
-						.alignmentGuide(.listRowSeparatorLeading) { d in d[.leading] + MaskinSpace.s14 + MaskinSpace.s1 }
+						.alignmentGuide(.listRowSeparatorLeading) { d in d[.leading] }
 						.alignmentGuide(.listRowSeparatorTrailing) { d in d[.trailing] }
 				}
 			}
@@ -407,12 +419,12 @@ struct ObjectsListView: View {
 
 	@ViewBuilder private func row(_ object: WorkObject) -> some View {
 		let ask = store.ask(for: object.id)
-		let content = ObjectRow(
-			object: object, typeName: store.directory.typeName(object.type), showsGlyph: store.mixesTypes,
+		let content = ObjectFlatRow(
+			object: object, typeName: store.directory.typeName(object.type), showsType: store.mixesTypes,
 			ask: ask, ownerName: store.directory.name(for: object.driverId),
-			ownerIsAgent: store.directory.actor(for: object.driverId)?.isAgent == true,
 			showsStatus: store.display.shows(.status), showsDriver: store.display.shows(.driver),
-			showsUpdated: store.display.shows(.updated))
+			showsUpdated: store.display.shows(.updated),
+			onToggleStar: picking.isActive ? nil : { Task { _ = await store.toggleStar(object.id) } })
 		Group {
 			if picking.isActive {
 				HStack(spacing: MaskinSpace.s5) {
@@ -522,23 +534,6 @@ struct ObjectsListView: View {
 	}
 }
 
-/// A row's slice of its group card: top corners on the first row, bottom corners on the last.
-struct CardSlice: View {
-	let isFirst: Bool
-	let isLast: Bool
-	var selected = false
-
-	var body: some View {
-		let r = MaskinRadius.tile
-		UnevenRoundedRectangle(
-			cornerRadii: RectangleCornerRadii(
-				topLeading: isFirst ? r : 0, bottomLeading: isLast ? r : 0, bottomTrailing: isLast ? r : 0,
-				topTrailing: isFirst ? r : 0),
-			style: .continuous)
-		.fill(selected ? MaskinSurface.fillStrong : MaskinSurface.card)
-	}
-}
-
 extension View {
 	/// Tightens the gap between list sections where the platform lets us.
 	fileprivate func compactSections() -> some View {
@@ -547,104 +542,5 @@ extension View {
 		#else
 			return self
 		#endif
-	}
-}
-
-/// The Objects Display menu in the shell's pill: list or board, group by, sort, status filter,
-/// shown properties, saved views, Select and New.
-struct ObjectsDisplayMenu: View {
-	@Bindable var store: ObjectsStore
-	let picking: SelectionModel
-	let intents: ObjectsListIntents
-
-	var body: some View {
-		Section("View") {
-			Picker(
-				"View",
-				selection: Binding(
-					get: { store.display.layout },
-					set: { value in Task { await store.setLayout(value) } })
-			) {
-				ForEach(ObjectsLayout.allCases) { Text($0.title).tag($0) }
-			}
-			.pickerStyle(.inline)
-			.labelsHidden()
-		}
-		Menu {
-			Picker("Group by", selection: Binding(get: { store.display.groupBy }, set: { store.setGrouping($0) })) {
-				ForEach(ObjectsGrouping.allCases) { Text($0.title).tag($0) }
-			}
-		} label: {
-			Label("Group by: \(store.display.groupBy.title)", systemImage: "rectangle.3.group")
-		}
-		Menu {
-			Picker(
-				"Sort by",
-				selection: Binding(
-					get: { store.display.sort },
-					set: { value in Task { await store.setSort(value) } })
-			) {
-				ForEach(ObjectsSort.allCases) { Text($0.title).tag($0) }
-			}
-		} label: {
-			Label("Sort: \(store.display.sort.title)", systemImage: "arrow.up.arrow.down")
-		}
-		Menu {
-			Picker(
-				"Status",
-				selection: Binding(
-					get: { store.statusFilter ?? "" },
-					set: { value in Task { await store.setStatus(value.isEmpty ? nil : value) } })
-			) {
-				Text("Any status").tag("")
-				ForEach(store.statusOptions, id: \.self) { Text(MaskinStatus.sentenceLabel(for: $0)).tag($0) }
-			}
-		} label: {
-			Label(
-				store.statusFilter.map { "Status: \(MaskinStatus.sentenceLabel(for: $0))" } ?? "Status",
-				systemImage: store.statusFilter == nil ? "circle.dashed" : "circle.dashed.inset.filled")
-		}
-		Toggle(
-			"Needs you only", systemImage: "circle.fill",
-			isOn: Binding(
-				get: { store.display.needsYouOnly },
-				set: { store.setNeedsYouOnly($0) }))
-		Menu {
-			ForEach(ObjectsProperty.allCases) { property in
-				Toggle(
-					property.title,
-					isOn: Binding(
-						get: { store.display.shows(property) },
-						set: { _ in store.toggleProperty(property) }))
-			}
-		} label: {
-			Label("Shown properties", systemImage: "eye")
-		}
-		Section("Saved views") {
-			Button("Save as view", systemImage: "bookmark") { intents.namingView = true }
-			if case .saved(let id) = store.scope {
-				Button(role: .destructive) {
-					_ = store.removeSavedView(id)
-				} label: {
-					Label("Remove this view", systemImage: "bookmark.slash")
-				}
-			}
-		}
-		Section {
-			Button("Select", systemImage: "checkmark.circle") { picking.enter() }
-			Button("New object", systemImage: "plus") { intents.create() }
-		}
-		if store.statusFilter != nil || store.display.needsYouOnly || store.display.isCustomised {
-			Divider()
-			Button("Reset display", systemImage: "xmark.circle") {
-				store.setNeedsYouOnly(false)
-				store.setGrouping(.status)
-				Task {
-					await store.setStatus(nil)
-					await store.setSort(.needsYou)
-					await store.setLayout(.list)
-				}
-			}
-		}
 	}
 }

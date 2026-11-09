@@ -176,6 +176,59 @@ describe('trackSessionAiGeneration', () => {
 		}
 	})
 
+	it.each([
+		['failed', 'not_logged_in', 'dispatch_failure', 'no_route'],
+		['failed', 'invalid_api_key', 'agent_completed', 'key_rejected'],
+		['failed', 'oauth_revoked', 'unknown', 'key_rejected'],
+		['failed', 'credit_balance_low', 'credit_exhaustion', 'out_of_credit'],
+		['failed', 'weekly_limit', 'credit_exhaustion', 'rate_limited'],
+		['failed', 'startup_stalled', 'startup_stalled', 'container_start_failed'],
+		['failed', null, 'sandbox_crash', 'container_start_failed'],
+		['failed', null, 'unknown', 'other'],
+		['timeout', null, 'wall_timeout', 'timeout'],
+		['timeout', null, 'reaper', 'timeout'],
+	] as const)(
+		'puts failure_code on a %s session with reason %s and classification %s: %s',
+		async (outcome, failureReasonCode, classification, expected) => {
+			await trackSessionAiGeneration(
+				baseProps({ outcome, failureReasonCode, classification, config: { llm_route: '' } }),
+			)
+
+			expect(lastCall()[2].failure_code).toBe(expected)
+		},
+	)
+
+	it('keeps the route next to the failure code', async () => {
+		await trackSessionAiGeneration(
+			baseProps({
+				outcome: 'failed',
+				failureReasonCode: 'invalid_api_key',
+				config: { llm_route: LLM_ROUTE_API_KEY },
+			}),
+		)
+
+		const props = lastCall()[2]
+		expect(props.llm_route).toBe(LLM_ROUTE_API_KEY)
+		expect(props.failure_code).toBe('key_rejected')
+	})
+
+	it('leaves failure_code null on completed and user_stopped sessions', async () => {
+		for (const outcome of ['completed', 'user_stopped'] as const) {
+			await trackSessionAiGeneration(
+				baseProps({ outcome, failureReasonCode: 'not_logged_in', classification: 'sandbox_crash' }),
+			)
+			expect(lastCall()[2].failure_code).toBeNull()
+		}
+	})
+
+	it('never copies free text into failure_code', async () => {
+		await trackSessionAiGeneration(
+			baseProps({ outcome: 'failed', failureReasonCode: 'sk-ant-secret-not-a-code' }),
+		)
+
+		expect(lastCall()[2].failure_code).toBe('other')
+	})
+
 	it('skips sessions that never launched (no started_at)', async () => {
 		await trackSessionAiGeneration(baseProps({ startedAt: null }))
 

@@ -54,32 +54,38 @@ describe('deriveMessageSpawnMap', () => {
 })
 
 describe('SpawnChip', () => {
-	it('renders the verbatim copy for a completed session ("Session started · <duration> · completed")', () => {
-		render(
-			<SpawnChip
-				info={{
-					sessionId: 's-1',
-					status: 'completed',
-					startedAt: '2026-09-22T10:00:00Z',
-					completedAt: '2026-09-22T10:00:12Z',
-				}}
-			/>,
-		)
-		expect(screen.getByTestId('spawn-chip')).toHaveTextContent(/Session started · .* · completed/)
+	const chipFor = (status: string) => (
+		<SpawnChip
+			info={{
+				sessionId: 's-1',
+				status,
+				startedAt: '2026-09-22T10:00:00Z',
+				completedAt: status === 'completed' ? '2026-09-22T10:00:12Z' : null,
+			}}
+		/>
+	)
+
+	it.each(['starting', 'running', 'snapshotting', 'completed', 'waiting_for_input'])(
+		'renders nothing for a %s session, the tool calls already show it',
+		(status) => {
+			render(chipFor(status))
+			expect(screen.queryByTestId('spawn-chip')).toBeNull()
+		},
+	)
+
+	it('still shows a failed session ("Session started · <duration> · failed")', () => {
+		render(chipFor('failed'))
+		expect(screen.getByTestId('spawn-chip')).toHaveTextContent(/Session started · .* · failed/)
 	})
 
-	it('shows a running spinner for a live session', () => {
-		render(
-			<SpawnChip
-				info={{
-					sessionId: 's-1',
-					status: 'running',
-					startedAt: '2026-09-22T10:00:00Z',
-					completedAt: null,
-				}}
-			/>,
-		)
-		expect(screen.getByTestId('spawn-chip')).toHaveTextContent(/running/)
+	it('still shows a queued session', () => {
+		render(chipFor('queued'))
+		expect(screen.getByTestId('spawn-chip')).toHaveTextContent(/Session started/)
+	})
+
+	it('shows a stopped session with a readable label', () => {
+		render(chipFor('user_stopped'))
+		expect(screen.getByTestId('spawn-chip')).toHaveTextContent(/· stopped/)
 	})
 
 	it('omits the duration segment when startedAt is null (never-started session)', () => {

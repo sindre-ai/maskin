@@ -140,3 +140,42 @@ struct ShareSheetModelDestinationTests {
 		#expect(queue.pending().isEmpty)
 	}
 }
+
+@Suite("ShareSheet chips and New item")
+@MainActor
+struct ShareSheetChipsTests {
+	private let link = ShareContent(link: URL(string: "https://example.com/p")!, linkTitle: "A page")
+
+	private func started(_ titles: [String]) async -> ShareSheetModel {
+		let remote = FakeShareRemote()
+		remote.conversationsResult = titles.enumerated().map { ShareConversation(id: "c-\($0.offset)", title: $0.element) }
+		let store = InMemorySecretStore(
+			try! JSONEncoder().encode(StoredSession(apiKey: "ank_x", actorId: "a", name: "S", workspaceId: "ws-1")))
+		let model = ShareSheetModel(secretStore: store, loadContent: { link }, makeRemote: { _ in remote })
+		await model.start()
+		return model
+	}
+
+	@Test("offers at most three chats as chips")
+	func chipCount() async {
+		let model = await started(["A", "B", "C", "D"])
+		#expect(model.suggestedConversations.map(\.title) == ["A", "B", "C"])
+	}
+
+	@Test("no chats means no chips")
+	func noChips() async {
+		let model = await started([])
+		#expect(model.suggestedConversations.isEmpty)
+	}
+
+	@Test("New item leaves a chat for the default object type and keeps an object destination")
+	func newItem() async {
+		let model = await started(["A"])
+		model.destination = .chat(id: "c-0")
+		model.useNewItem()
+		#expect(model.destination == .object(type: "insight"))
+		model.destination = .object(type: "task")
+		model.useNewItem()
+		#expect(model.destination == .object(type: "task"))
+	}
+}

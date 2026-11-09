@@ -1,3 +1,4 @@
+import { ActorPictureOverlay } from '@/components/shared/actor-avatar'
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -55,10 +56,11 @@ export function NavUser() {
 							// and a screen reader hears the person twice with no clue which
 							// row does what. The prefix says what the control is first.
 							aria-label={`Your account, ${displayName}`}
-							className="h-auto rounded-lg py-[7px] data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+							className="h-11 rounded-[9px] px-2.5 py-2 data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
 						>
-							<span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand-subtle text-[10px] font-bold text-brand-subtle-foreground">
+							<span className="relative flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-full bg-brand-subtle text-[10px] font-bold text-brand-subtle-foreground">
 								{initial}
+								{actor?.id && <ActorPictureOverlay id={actor.id} />}
 							</span>
 							{/* The row identifies the person and the workspace they are in —
 							    the mockup pairs them because one account spans several. */}
@@ -83,12 +85,9 @@ export function NavUser() {
 						    as an extension of the row it came from, and swaps the workspace
 						    sub-line for the email — the one fact the row has no space for. */}
 						<DropdownMenuLabel className="p-0 font-normal">
-							<div className="flex items-center gap-2 px-2 pb-[9px] pt-[7px] text-left">
-								<span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-brand-subtle text-[11px] font-bold text-brand-subtle-foreground">
-									{initial}
-								</span>
+							<div className="flex items-center gap-2 px-2 pb-2 pt-1.5 text-left">
 								<span className="grid min-w-0 flex-1 leading-[1.3]">
-									<span className="truncate text-xs font-semibold">{displayName}</span>
+									<span className="truncate text-[13px] font-semibold">{displayName}</span>
 									{displayEmail && (
 										<span className="truncate text-[10.5px] text-muted-foreground">
 											{displayEmail}

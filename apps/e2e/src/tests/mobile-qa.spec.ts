@@ -86,6 +86,8 @@ async function assertNoHorizontalOverflow(page: Page, surface: string, viewport:
 						// Tailwind `line-clamp-1`, `line-clamp-2`, … all set
 						// `overflow: hidden` for multi-line ellipsis.
 						if (cls.startsWith('line-clamp-')) return true
+						// A breakpoint variant such as `max-md:sr-only` is the same a11y hide while it applies.
+						if (cls.endsWith(':sr-only')) return true
 					}
 				}
 				return false
@@ -159,17 +161,8 @@ async function assertNoHorizontalOverflow(page: Page, surface: string, viewport:
 // of which silently fail the parity constraint ("no functionality hidden on
 // iPad"). Each control is asserted by its accessible role/name + the
 // Playwright `toBeVisible` opacity check (ignores opacity:0 and visibility:hidden).
-// Both callers below are the object-detail surface, whose v2 shell passes its
-// own placeholder down to the composer rather than using comment-input.tsx's
-// default (object-detail-shell.tsx). The 768px split still mirrors
-// useIsMobile() (apps/web/src/hooks/use-mobile.tsx), which is what the shell
-// switches on.
-function commentPlaceholderFor(viewport: NamedViewport): string {
-	return viewport.width < 768 ? 'Comment…' : 'Comment — / commands, @ mentions'
-}
-
 async function assertCommentComposerVisible(page: Page, surface: string, viewport: NamedViewport) {
-	const composer = page.getByPlaceholder(commentPlaceholderFor(viewport)).first()
+	const composer = page.getByRole('textbox', { name: 'Comment' }).first()
 	await expect(
 		composer,
 		`${surface}: comment composer must be visible at ${viewport.label}`,
@@ -365,7 +358,8 @@ test.describe('Mobile + iPad QA — critical controls ship gate', () => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 			const ids = await seedObjects(account)
 
-			await page.goto(`/${account.workspaceId}/objects/${ids.betId}`)
+			// The composer lives in the Activity tab (v16).
+			await page.goto(`/${account.workspaceId}/objects/${ids.betId}?tab=activity`)
 			await expect(page.getByRole('heading', { level: 1, name: 'Mobile QA Bet' })).toBeVisible({
 				timeout: 10000,
 			})
@@ -394,7 +388,7 @@ test.describe('Mobile first-test flow — For You → object → comment', () =>
 		// 2. Object detail — drive directly to the seeded bet (no unread thread is required;
 		//    the brief's flow is "land → object → comment" and the unread feed depends on
 		//    cross-actor activity that this single-actor fixture can't synthesize).
-		await page.goto(`/${account.workspaceId}/objects/${ids.betId}`)
+		await page.goto(`/${account.workspaceId}/objects/${ids.betId}?tab=activity`)
 		await expect(page.getByRole('heading', { level: 1, name: 'Mobile QA Bet' })).toBeVisible({
 			timeout: 10000,
 		})
@@ -403,11 +397,11 @@ test.describe('Mobile first-test flow — For You → object → comment', () =>
 		// 3. Comment — type and send via the composer. The activity timeline is
 		//    T2 scope, so the send is confirmed by the composer clearing (the
 		//    posted comment row itself returns with the timeline).
-		const composer = page.getByPlaceholder(commentPlaceholderFor(VIEWPORTS.mobile))
+		const composer = page.getByRole('textbox', { name: 'Comment' })
 		await composer.click()
 		await composer.fill('QA comment from mobile')
 		await page.getByRole('button', { name: 'Send comment' }).click()
-		await expect(composer).toHaveValue('', { timeout: 10000 })
+		await expect(composer).toHaveText('', { timeout: 10000 })
 		await assertNoHorizontalOverflow(page, 'Object detail after comment (step 3)', VIEWPORTS.mobile)
 	})
 })
@@ -425,5 +419,134 @@ test.describe('Desktop regression — same surfaces at 1440', () => {
 			if (surface.waitFor) await surface.waitFor(page)
 			await assertNoHorizontalOverflow(page, surface.name, VIEWPORTS.desktop)
 		}
+	})
+})
+
+// A long plain-text message with blank lines, so the thread has to wrap and
+// scroll it instead of clipping it (the markdown table and URL above cover the
+// wide shapes; this one covers the tall shape).
+const LONG_MESSAGE = Array.from(
+	{ length: 14 },
+	(_, i) =>
+		`Paragraph ${i + 1}: who has a reason to care right now, then send a short, credible, human message. That is consistent with older sales guidance, but the 2026 environment adds a much bigger emphasis on intent, deliverability, and relevance.`,
+).join('\n\n')
+
+// iPhone portrait with a Dynamic Island and a home indicator.
+const SAFE_AREA = { top: 59, bottom: 34 }
+
+test.describe('Mobile chat — long content, send button and safe areas @ 375', () => {
+	test.beforeEach(async ({ page }) => {
+		await page.setViewportSize({ width: VIEWPORTS.mobile.width, height: VIEWPORTS.mobile.height })
+		// Chromium cannot reproduce Safari's insets on its own; this override makes
+		// env(safe-area-inset-*) report the iPhone values.
+		const cdp = await page.context().newCDPSession(page)
+		await cdp.send('Emulation.setSafeAreaInsetsOverride', {
+			insets: { top: SAFE_AREA.top, bottom: SAFE_AREA.bottom, left: 0, right: 0 },
+		})
+	})
+
+	async function seedLongThread(account: { workspaceId: string; api: TestAPI }) {
+		const stamp = Date.now()
+		const agent = await account.api.createAgentActor(`Mobile QA Long Agent ${stamp}`)
+		await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+		const conversation = await account.api.createConversation(account.workspaceId, {
+			title: 'Mobile QA Long Chat',
+			participant_actor_ids: [agent.id],
+			initial_message: 'Opening the thread',
+		})
+		await new TestAPI(agent.api_key).postConversationMessage(conversation.id, account.workspaceId, {
+			content: LONG_MESSAGE,
+		})
+		return conversation.id
+	}
+
+	async function assertComposerAndHeaderFit(page: Page, surface: string) {
+		const send = page.getByRole('button', { name: 'Send message' })
+		await expect(send, `${surface}: send button must be visible`).toBeVisible()
+		const box = await send.boundingBox()
+		const viewport = page.viewportSize()
+		if (!box || !viewport) throw new Error(`${surface}: no layout box for the send button`)
+		expect(box.y, `${surface}: send button top inside the viewport`).toBeGreaterThanOrEqual(0)
+		// The home indicator sits in the bottom inset, so the button must clear it.
+		expect(
+			box.y + box.height,
+			`${surface}: send button must sit above the bottom safe area`,
+		).toBeLessThanOrEqual(viewport.height - SAFE_AREA.bottom)
+		expect(
+			box.x + box.width,
+			`${surface}: send button right edge inside the viewport`,
+		).toBeLessThanOrEqual(viewport.width)
+
+		const headerBox = await page.locator('header').first().boundingBox()
+		const titleBox = await page.locator('header h1').first().boundingBox()
+		expect(headerBox, `${surface}: header has a layout box`).not.toBeNull()
+		expect(
+			titleBox?.y ?? 0,
+			`${surface}: top bar content must start below the status bar and system icons`,
+		).toBeGreaterThanOrEqual(SAFE_AREA.top)
+	}
+
+	async function assertTextareaCapped(page: Page, surface: string) {
+		const textarea = page.getByLabel('Message this conversation')
+		await textarea.fill(LONG_MESSAGE)
+		const metrics = await textarea.evaluate((el) => ({
+			fontSize: Number.parseFloat(getComputedStyle(el).fontSize),
+			height: el.getBoundingClientRect().height,
+			scrollHeight: el.scrollHeight,
+			overflowY: getComputedStyle(el).overflowY,
+		}))
+		// 16px is iOS Safari's no-zoom-on-focus floor.
+		expect(metrics.fontSize, `${surface}: composer font size`).toBeGreaterThanOrEqual(16)
+		// Grows to a cap, then scrolls inside itself.
+		expect(metrics.height, `${surface}: composer stops growing at its cap`).toBeLessThanOrEqual(200)
+		expect(
+			metrics.scrollHeight,
+			`${surface}: long text is taller than the capped box`,
+		).toBeGreaterThan(metrics.height)
+		expect(metrics.overflowY, `${surface}: composer scrolls inside itself`).toMatch(/auto|scroll/)
+	}
+
+	test('chat thread: long message wraps, long composer text keeps send visible', async ({
+		page,
+		account,
+	}) => {
+		const conversationId = await seedLongThread(account)
+		await page.goto(`/${account.workspaceId}/chats/${conversationId}`)
+		const thread = page.getByTestId('thread-messages')
+		await expect(thread).toBeVisible({ timeout: 10000 })
+		await expect(thread.getByText('Paragraph 14:')).toBeAttached({ timeout: 10000 })
+
+		// The long message must wrap inside the scroller: nothing wider than the
+		// box, and the scroller itself (not the page) carries the extra height.
+		const scroller = await thread.evaluate((el) => ({
+			scrollWidth: el.scrollWidth,
+			clientWidth: el.clientWidth,
+			scrollHeight: el.scrollHeight,
+			clientHeight: el.clientHeight,
+		}))
+		expect(scroller.scrollWidth).toBeLessThanOrEqual(scroller.clientWidth + 1)
+		expect(scroller.scrollHeight).toBeGreaterThan(scroller.clientHeight)
+		await assertNoHorizontalOverflow(page, 'Chat thread (long message)', VIEWPORTS.mobile)
+
+		await assertTextareaCapped(page, 'Chat thread')
+		await assertComposerAndHeaderFit(page, 'Chat thread (long composer text)')
+	})
+
+	test('new chat: many agents and a long first message keep the form inside the screen', async ({
+		page,
+		account,
+	}) => {
+		for (let i = 0; i < 6; i++) {
+			const agent = await account.api.createAgentActor(`Mobile QA Pick Agent ${Date.now()}-${i}`)
+			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+		}
+		await page.goto(`/${account.workspaceId}/chats/new`)
+		await expect(page.getByRole('region', { name: 'To' })).toBeVisible({ timeout: 10000 })
+		await page.getByLabel('First message').fill('A long first message. '.repeat(40))
+		await assertNoHorizontalOverflow(page, 'New chat (long first message)', VIEWPORTS.mobile)
+
+		const start = page.getByRole('button', { name: 'Start chat' })
+		await start.scrollIntoViewIfNeeded()
+		await expect(start).toBeInViewport()
 	})
 })

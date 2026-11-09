@@ -110,6 +110,62 @@ beforeEach(() => {
 })
 
 describe('call receipt against real Postgres', () => {
+	it('a call whose first card was not the top card says so by title, and a failed open is listed as not done', async () => {
+		const seeded = await seedCall()
+		const top = await insertObject(db, seeded.ws.id, seeded.humanId, {
+			title: 'Pricing page review',
+		})
+		const second = await insertObject(db, seeded.ws.id, seeded.humanId, { title: 'Reply to Anna' })
+		const state = voiceCallState(seeded.session.id)
+		state.startCards = [
+			{ objectId: top.id, notificationId: null, source: 'curated', rank: 1, title: top.title },
+			{
+				objectId: second.id,
+				notificationId: null,
+				source: 'curated',
+				rank: 2,
+				title: second.title,
+			},
+		]
+		state.firstCardNamed = second.id
+		await line(seeded, {
+			tool: 'get_objects',
+			draft: draft({
+				event: 'other',
+				objectId: top.id,
+				objectTitle: 'Pricing page review',
+				template: 'Open {title}',
+			}),
+			outcome: 'failed',
+			reason: 'Could not load the object',
+		})
+		await recordVoiceToolCall(db, seeded.session.id)
+
+		await endVoiceSession(db, { id: seeded.session.id, reason: 'user_hangup' })
+
+		const [perRead, summary] = await chatOf(seeded.session.id)
+		expect(metaOf(perRead)).toMatchObject({
+			kind: 'receipt',
+			outcome: 'failed',
+			tool: 'get_objects',
+		})
+		const meta = metaOf(summary)
+		expect(meta.not_done).toEqual([
+			'Open "Pricing page review": failed (Could not load the object)',
+		])
+		expect(meta.numbers).toMatchObject({
+			rank_1_card_at_start: top.id,
+			first_card_named: second.id,
+			first_card_is_rank_1: false,
+		})
+		expect(summary?.content).toContain('Failed:')
+		expect(summary?.content).toContain(
+			'The first card handled ("Reply to Anna") was not the top card: the top card "Pricing page review" was skipped.',
+		)
+		// ids may sit inside a link target, never in the sentences that are read
+		expect(summary?.content?.split('\n').at(-1)).not.toContain(top.id.slice(0, 8))
+	})
+
 	it('a call that runs one write and ends normally leaves the line and one closing receipt naming it', async () => {
 		const seeded = await seedCall()
 		const object = await insertObject(db, seeded.ws.id, seeded.humanId, { title: 'Reply to Anna' })
@@ -163,6 +219,47 @@ describe('call receipt against real Postgres', () => {
 		})
 	})
 
+	it('a call about something else says nothing was changed and leaves out the card statistics', async () => {
+		const seeded = await seedCall()
+		const top = await insertObject(db, seeded.ws.id, seeded.humanId, {
+			title: 'Pricing page review',
+		})
+		voiceCallState(seeded.session.id).startCards = [
+			{ objectId: top.id, notificationId: null, source: 'curated', rank: 1, title: top.title },
+		]
+		await recordVoiceTurn(db, seeded.session.id, { userAudioMs: 1000, agentAudioMs: 1000 })
+
+		await endVoiceSession(db, { id: seeded.session.id, reason: 'user_hangup' })
+
+		const [summary] = await chatOf(seeded.session.id)
+		expect(summary?.content).toContain('Nothing was changed.')
+		expect(summary?.content).not.toContain('card')
+		expect(summary?.content).not.toContain('Cards cleared')
+		expect(summary?.content?.split('\n').at(-1)).toBe('No sends. Call ended by hangup.')
+		expect(metaOf(summary).numbers).toMatchObject({ rank_1_card_at_start: top.id })
+	})
+
+	it('a call that read the For You list but handled no card still names the top card', async () => {
+		const seeded = await seedCall()
+		const top = await insertObject(db, seeded.ws.id, seeded.humanId, {
+			title: 'Pricing page review',
+		})
+		const state = voiceCallState(seeded.session.id)
+		state.startCards = [
+			{ objectId: top.id, notificationId: null, source: 'curated', rank: 1, title: top.title },
+		]
+		state.forYouRead = true
+		await recordVoiceTurn(db, seeded.session.id, { userAudioMs: 1000, agentAudioMs: 1000 })
+
+		await endVoiceSession(db, { id: seeded.session.id, reason: 'user_hangup' })
+
+		const [summary] = await chatOf(seeded.session.id)
+		expect(summary?.content).toContain('Nothing was changed.')
+		expect(summary?.content).toContain(
+			'No card was handled; the top card was "Pricing page review".',
+		)
+	})
+
 	it('a call that holds a send and then drops says the send was not done', async () => {
 		const seeded = await seedCall()
 		await recordVoiceTurn(db, seeded.session.id, { userAudioMs: 1000, agentAudioMs: 1000 })
@@ -203,7 +300,9 @@ describe('call receipt against real Postgres', () => {
 		const summary = rows[1]
 		expect(summary?.content).toContain('Failed:')
 		expect(summary?.content).toContain('status is not allowed')
-		expect(metaOf(summary).not_done).toEqual([])
+		expect(metaOf(summary).not_done).toEqual([
+			'Created task "Reply to Anna": failed (status is not allowed)',
+		])
 		expect(metaOf(summary).numbers).toMatchObject({
 			rank_1_card_at_start: 'unknown',
 			first_card_named: 'unknown',

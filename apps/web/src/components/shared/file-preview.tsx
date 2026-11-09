@@ -1,5 +1,12 @@
 import { useLinkedPanel } from '@/components/chat/linked-panel-context'
-import { isHtml, isInlineImage, isMarkdown, isPlainText } from '@/components/files/file-body'
+import {
+	MediaPlayer,
+	isAudio,
+	isHtml,
+	isInlineImage,
+	isMarkdown,
+	isPlainText,
+} from '@/components/files/file-body'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { Spinner } from '@/components/ui/spinner'
 import { useFile, useFiles } from '@/hooks/use-files'
@@ -40,13 +47,18 @@ function typeLabel(mimeType: string): string {
 	if (isMarkdown(mimeType)) return 'Markdown'
 	if (isInlineImage(mimeType)) return 'Image'
 	if (isPlainText(mimeType)) return 'Text'
+	if (isAudio(mimeType)) return 'Audio'
 	return 'File'
 }
 
 /** Whether a card can draw this type at all. The rest show a header and a link to the viewer. */
 export function isPreviewableFile(mimeType: string): boolean {
 	return (
-		isHtml(mimeType) || isMarkdown(mimeType) || isInlineImage(mimeType) || isPlainText(mimeType)
+		isHtml(mimeType) ||
+		isMarkdown(mimeType) ||
+		isInlineImage(mimeType) ||
+		isPlainText(mimeType) ||
+		isAudio(mimeType)
 	)
 }
 
@@ -214,7 +226,12 @@ function FileBodyPreview({
 			</div>
 		)
 	}
-	const limit = isInlineImage(mimeType) ? MAX_IMAGE_BYTES : MAX_TEXT_BYTES
+	// Audio has no size cap: the player streams from storage, or the server already inlined it.
+	const limit = isAudio(mimeType)
+		? Number.POSITIVE_INFINITY
+		: isInlineImage(mimeType)
+			? MAX_IMAGE_BYTES
+			: MAX_TEXT_BYTES
 	if ((sizeBytes ?? file.sizeBytes) > limit) {
 		return (
 			<p className="px-3 py-3 text-xs text-muted-foreground">
@@ -235,8 +252,17 @@ function LoadedBody({
 	mimeType: string
 }) {
 	// Hooks first: the body below branches on type, and the text is only needed for some.
-	const text = useMemo(() => (isInlineImage(mimeType) ? '' : fileText(file)), [file, mimeType])
+	const binary = isInlineImage(mimeType) || isAudio(mimeType)
+	const text = useMemo(() => (binary ? '' : fileText(file)), [file, binary])
 	const srcDoc = useMemo(() => (isHtml(mimeType) ? prepareMiniAppHtml(text) : ''), [text, mimeType])
+
+	if (isAudio(mimeType)) {
+		return (
+			<div className="bg-muted p-2">
+				<MediaPlayer file={file} className="block w-full" />
+			</div>
+		)
+	}
 
 	if (isInlineImage(mimeType)) {
 		// <img> requests do not carry our bearer token, so the bytes go in as a data URI.

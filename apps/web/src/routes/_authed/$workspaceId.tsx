@@ -1,36 +1,42 @@
+import { LiveCallSurface } from '@/components/agents/live-call-surface'
 import { VoiceCallHost } from '@/components/agents/voice-call-host'
 import { TrialExpiredBanner } from '@/components/billing/trial-expired-banner'
-import { Header } from '@/components/layout/header'
+import { Header, ScrollingPageTitle } from '@/components/layout/header'
+import { MobileNav } from '@/components/layout/mobile-nav'
 import { AppSidebar } from '@/components/layout/sidebar'
-import { CommandPalette } from '@/components/legacy/command-palette'
 import { CommandPaletteV2 } from '@/components/search/command-palette-v2'
 import { RouteError } from '@/components/shared/route-error'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { useDefaultChatAgent } from '@/hooks/use-actors'
 import { useCreateConversation } from '@/hooks/use-conversations'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
+import { useMediaQuery } from '@/hooks/use-media-query'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { usePersistedSidebarOpen } from '@/hooks/use-persisted-sidebar-open'
 import { useSSE } from '@/hooks/use-sse'
+import { useSweepBrowserNotifications } from '@/hooks/use-sweep-browser-notifications'
 import { useWorkspaces } from '@/hooks/use-workspaces'
+import { trackAppActive } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { CommandPaletteProvider } from '@/lib/command-palette-context'
 import { setFaroUser } from '@/lib/faro'
 import { setLastWorkspaceId } from '@/lib/last-workspace'
-import { isHiddenRouteId, migrateLegacySidebarState, viewKeyFromRouteId } from '@/lib/nav-view-keys'
+import { migrateLegacySidebarState } from '@/lib/nav-view-keys'
 import { NewConversationProvider } from '@/lib/new-conversation-context'
 import { PageHeaderProvider, usePageHeader } from '@/lib/page-header-context'
+import { usePageSearchShortcutListener } from '@/lib/page-search-shortcut'
 import { PendingCommentsProvider } from '@/lib/pending-comments-context'
 import {
 	identifyForWorkspace,
 	registerWorkspaceProperties,
 	setCapturingEnabled,
+	setWorkspaceGroup,
 } from '@/lib/posthog'
+import { useVoiceCallLive } from '@/lib/voice-call-view'
 import { WorkspaceContext, useWorkspace } from '@/lib/workspace-context'
 import { deriveConversationTitle } from '@maskin/shared'
-import { Outlet, createFileRoute, useMatches, useNavigate } from '@tanstack/react-router'
+import { Outlet, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { type ReactNode, useEffect, useMemo, useRef } from 'react'
 
 migrateLegacySidebarState()
@@ -43,13 +49,12 @@ export const Route = createFileRoute('/_authed/$workspaceId')({
 function WorkspaceLayout() {
 	const { workspaceId } = Route.useParams()
 	const { data: workspaces } = useWorkspaces()
+	// One Cmd/Ctrl+F listener for every page that owns a search field.
+	usePageSearchShortcutListener()
 
 	// Connect SSE for real-time updates
 	const sseStatus = useSSE(workspaceId)
-
-	// The one read of the search-v2 flag in the shell (the search route reads it for the
-	// page): flag on mounts the new launcher and tells the header to show one search button.
-	const searchV2 = useFeatureFlag('search-v2')
+	useSweepBrowserNotifications(workspaceId)
 
 	const workspace = useMemo(
 		() => workspaces?.find((w) => w.id === workspaceId),
@@ -63,10 +68,14 @@ function WorkspaceLayout() {
 		if (hasWorkspace) setLastWorkspaceId(workspaceId)
 	}, [hasWorkspace, workspaceId])
 
-	const matches = useMatches()
-	const leafMatch = [...matches].reverse().find((m) => !isHiddenRouteId(m.routeId))
-	const viewKey = leafMatch ? viewKeyFromRouteId(leafMatch.routeId) : null
-	const { open, setOpen } = usePersistedSidebarOpen(viewKey)
+	const { open, setOpen } = usePersistedSidebarOpen()
+	// While a call is open below 1100px the sidebar folds to its icon rail so the
+	// thread keeps room next to the call panel (design: sidebar 230 + chat + panel
+	// at 1100 and up, an icon rail between 700 and 1099). The person's own choice
+	// is left alone, so it is back as they had it when the call ends.
+	const onCall = useVoiceCallLive()
+	const narrowForCall = useMediaQuery('(max-width: 1099px)')
+	const railForCall = onCall && narrowForCall
 
 	// Pin the Synthesizer's join keys on every analytics event from this workspace,
 	// and apply the workspace's Privacy & data settings — both the share-usage
@@ -86,8 +95,10 @@ function WorkspaceLayout() {
 			workspace_id: workspaceId,
 			actor_id: actor.id,
 			actor_type: actor.type,
+			is_team: workspace.isTeam,
 		})
 		setCapturingEnabled(shareUsage)
+		setWorkspaceGroup(workspaceId, workspace.createdAt)
 		// Faro gets ids only — never the actor's email or the workspace name.
 		// Unlike PostHog this is not gated on the share-usage analytics toggle:
 		// it is crash reporting, the same category as Sentry, which is likewise
@@ -96,6 +107,8 @@ function WorkspaceLayout() {
 		void identifyForWorkspace(actor.id, anonymizeWorkspace, {
 			name: actor.name,
 			email: actor.email,
+		}).then(() => {
+			if (shareUsage) trackAppActive()
 		})
 	}, [workspace, workspaceId, shareUsage, anonymizeWorkspace])
 
@@ -110,15 +123,17 @@ function WorkspaceLayout() {
 	return (
 		<WorkspaceContext.Provider value={{ workspace, workspaceId, sseStatus }}>
 			<NewConversationProvider>
-				<CommandPaletteProvider searchV2={searchV2}>
+				<CommandPaletteProvider>
 					<PendingPromptBootstrap />
 					<GuestDraftClaimBootstrap workspaceId={workspaceId} />
 					<PendingCommentsProvider workspaceId={workspaceId}>
 						<PageHeaderProvider>
 							<ContentPushShell>
 								<SidebarProvider
-									open={open}
-									onOpenChange={setOpen}
+									open={open && !railForCall}
+									onOpenChange={(next) => {
+										if (!railForCall) setOpen(next)
+									}}
 									className="h-dvh !min-h-0"
 									data-shell="v2"
 								>
@@ -129,11 +144,13 @@ function WorkspaceLayout() {
 										<MainScrollArea>
 											<Outlet />
 										</MainScrollArea>
+										<MobileNav />
 									</SidebarInset>
+									<LiveCallSurface />
 								</SidebarProvider>
 							</ContentPushShell>
 						</PageHeaderProvider>
-						{searchV2 ? <CommandPaletteV2 /> : <CommandPalette />}
+						<CommandPaletteV2 />
 						<VoiceCallHost />
 					</PendingCommentsProvider>
 				</CommandPaletteProvider>
@@ -247,18 +264,20 @@ function ContentPushShell({ children }: { children: ReactNode }) {
  * own internal scroll region on the active card's thread) — the container
  * then clips instead of scrolling, so only that inner region scrolls.
  *
- * Padding steps up from `px-4 pt-4` on mobile to `p-8` from `md:` up.
+ * Padding steps up from `px-4 pt-4` on mobile to `px-8 py-8` from `md:` and `px-7` from `lg:` — the same side margin the shared header uses, so title and content share one left edge.
  */
 function MainScrollArea({ children }: { children: ReactNode }) {
-	const { scrollLocked } = usePageHeader()
+	const { scrollLocked, gutter } = usePageHeader()
 	return (
 		<div
 			className={cn(
-				'flex flex-col flex-1 min-w-0 px-4 pb-4 pt-4 md:p-8',
+				'flex flex-col flex-1 min-w-0 px-4 pb-4 pt-4 md:px-8 md:py-8',
+				gutter === 'wide' ? 'lg:px-12' : 'lg:px-7',
 				scrollLocked ? 'overflow-hidden' : 'overflow-auto',
 			)}
 			data-scroll-root
 		>
+			<ScrollingPageTitle />
 			{children}
 		</div>
 	)

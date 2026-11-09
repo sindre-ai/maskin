@@ -1,4 +1,7 @@
 export const queryKeys = {
+	oauthGrants: {
+		all: () => ['oauthGrants'] as const,
+	},
 	account: {
 		deletionPreview: (deleteSoleWorkspaces: boolean) =>
 			['account', 'deletion-preview', { deleteSoleWorkspaces }] as const,
@@ -24,6 +27,7 @@ export const queryKeys = {
 			['objects', workspaceId, 'facets', filters] as const,
 		groupPage: (workspaceId: string, filters?: Record<string, unknown>) =>
 			['objects', workspaceId, 'groupPage', filters] as const,
+		groupPagePrefix: (workspaceId: string) => ['objects', workspaceId, 'groupPage'] as const,
 		board: (workspaceId: string, filters?: Record<string, unknown>) =>
 			['objects', workspaceId, 'board', filters] as const,
 		boardPrefix: (workspaceId: string) => ['objects', workspaceId, 'board'] as const,
@@ -44,6 +48,10 @@ export const queryKeys = {
 		messages: (id: string, filters?: Record<string, unknown>) =>
 			['conversations', 'detail', id, 'messages', filters] as const,
 		messagesPrefix: (id: string) => ['conversations', 'detail', id, 'messages'] as const,
+		// Sits under messagesPrefix, so the conversation SSE invalidation refreshes it too.
+		threadMessages: (id: string, rootId: number) =>
+			['conversations', 'detail', id, 'messages', { thread_root_id: rootId }] as const,
+		replyThreads: (workspaceId: string) => ['conversations', workspaceId, 'replyThreads'] as const,
 		unreadCount: (workspaceId: string) => ['conversations', workspaceId, 'unreadCount'] as const,
 	},
 	actors: {
@@ -93,6 +101,8 @@ export const queryKeys = {
 			['integrations', integrationId, 'slack', 'conversations', [...types].sort()] as const,
 		slackUsers: (integrationId: string) =>
 			['integrations', integrationId, 'slack', 'users'] as const,
+		driveWatches: (workspaceId: string) =>
+			['integrations', workspaceId, 'google-drive', 'watched-folders'] as const,
 		linkedinIdentities: (workspaceId: string) =>
 			['integrations', workspaceId, 'linkedin-unipile', 'identities'] as const,
 	},
@@ -102,6 +112,7 @@ export const queryKeys = {
 			['notifications', workspaceId, 'list', filters] as const,
 		detail: (id: string) => ['notifications', 'detail', id] as const,
 	},
+	notificationPreferences: { me: ['notification-preferences'] as const },
 	skills: {
 		all: (actorId: string) => ['skills', actorId] as const,
 		detail: (actorId: string, skillName: string) => ['skills', actorId, skillName] as const,
@@ -140,6 +151,7 @@ export const queryKeys = {
 			['sessions', workspaceId, 'conversation', conversationId] as const,
 		firstOutput: (workspaceId: string, sessionId: string) =>
 			['sessions', workspaceId, 'first-output', sessionId] as const,
+		stats: (workspaceId: string) => ['sessions', workspaceId, 'stats'] as const,
 		usage: (
 			workspaceId: string,
 			actorId: string,
@@ -162,6 +174,10 @@ export const queryKeys = {
 	fileComments: {
 		all: (workspaceId: string, fileId: string) => ['file-comments', workspaceId, fileId] as const,
 	},
+	fileProposals: {
+		open: (workspaceId: string, fileId: string) =>
+			['file-proposals', workspaceId, fileId, 'open'] as const,
+	},
 	attachingObjects: {
 		byFile: (workspaceId: string, fileId: string) =>
 			['attaching-objects', workspaceId, fileId] as const,
@@ -176,6 +192,7 @@ export const queryKeys = {
 	billing: {
 		all: (workspaceId: string) => ['billing', workspaceId] as const,
 		usage: (workspaceId: string) => ['billing', workspaceId, 'usage'] as const,
+		dailyBudget: (workspaceId: string) => ['billing', workspaceId, 'daily-budget'] as const,
 	},
 	forYou: {
 		list: (workspaceId: string) => ['for-you', workspaceId] as const,

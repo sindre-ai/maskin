@@ -5,7 +5,13 @@ import { eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import { vi } from 'vitest'
 import { SessionManager } from '../../services/session-manager'
-import { SELF_HEAL_LOOKBACK_MS, SessionReconciler } from '../../services/session-reconciler'
+import {
+	SELF_HEAL_DEFAULT_LIMIT,
+	SELF_HEAL_GRACE_MS,
+	SELF_HEAL_LOOKBACK_MS,
+	SELF_HEAL_RECENT_LOOKBACK_MS,
+	SessionReconciler,
+} from '../../services/session-reconciler'
 import { insertActor, insertSession, insertWorkspace } from '../factories'
 import { db, getTestActorId, sql } from './global-setup'
 
@@ -67,6 +73,22 @@ describe('SessionReconciler.selfHealTerminalWithoutEvents window', () => {
 		expect(result.backFilled.map((b) => b.sessionId)).not.toContain(stale?.id)
 	})
 
+	it('the short per-tick window skips a session settled before it, the full window reaches it', async () => {
+		const older = await completedAgo(SELF_HEAL_RECENT_LOOKBACK_MS + 60 * 60_000)
+		const reconciler = new SessionReconciler(db)
+
+		const recent = await reconciler.selfHealTerminalWithoutEvents(
+			Date.now(),
+			SELF_HEAL_GRACE_MS,
+			SELF_HEAL_DEFAULT_LIMIT,
+			SELF_HEAL_RECENT_LOOKBACK_MS,
+		)
+		expect(recent.backFilled.map((b) => b.sessionId)).not.toContain(older?.id)
+
+		const full = await reconciler.selfHealTerminalWithoutEvents()
+		expect(full.backFilled.map((b) => b.sessionId)).toContain(older?.id)
+	})
+
 	it('leaves a session alone when its events row exists in the same workspace', async () => {
 		const session = await completedAgo(5 * 60_000)
 		await db.insert(events).values({
@@ -90,7 +112,7 @@ describe('SessionReconciler.selfHealTerminalWithoutEvents window', () => {
 		expect(index?.valid).toBe(true)
 	})
 
-	it('issues SQL that the settled-at index and the events workspace index can serve', async () => {
+	it('issues SQL that the settled-at index and the session events index can serve', async () => {
 		await completedAgo(5 * 60_000)
 		const captured: Array<{ query: string; params: unknown[] }> = []
 		const loggedDb = drizzle(sql, {
@@ -108,7 +130,36 @@ describe('SessionReconciler.selfHealTerminalWithoutEvents window', () => {
 		const plan = await explainWithIndexes(issued.query, issued.params)
 
 		expect(plan).toContain('sessions_settled_at_idx')
-		expect(plan).toContain('events_ws_entity_id_idx')
+		// On an empty test table the planner cannot rank the two events indexes (no
+		// statistics, no visibility map), so a bare EXPLAIN says nothing about which it
+		// prefers. What this pins is that the probe CAN be answered by the partial session
+		// index (migration 0114): with the older workspace index dropped inside a
+		// transaction that is rolled back, it is the only index left to serve it.
+		const rolledBack = new Error('rollback')
+		let probePlan = ''
+		await sql
+			.begin(async (tx) => {
+				await tx.unsafe('DROP INDEX events_ws_entity_id_idx')
+				await tx.unsafe('SET LOCAL enable_seqscan = off')
+				const rows = await tx.unsafe(
+					`EXPLAIN (FORMAT JSON) ${issued.query}`,
+					issued.params as never[],
+				)
+				probePlan = JSON.stringify(rows)
+				throw rolledBack
+			})
+			.catch((err) => {
+				if (err !== rolledBack) throw err
+			})
+		expect(probePlan).toContain('events_session_entity_action_idx')
+	})
+
+	it('has a valid session events probe index', async () => {
+		const [index] = await sql`
+			SELECT i.indisvalid AS valid
+			FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+			WHERE c.relname = 'events_session_entity_action_idx'`
+		expect(index?.valid).toBe(true)
 	})
 })
 
@@ -156,16 +207,25 @@ describe('session log retention window', () => {
 		manager = new SessionManager(db, {} as StorageProvider)
 	})
 
-	it('drains a backlog older than the window on the first sweep after boot', async () => {
+	async function prunedMark(sessionId: string) {
+		const [row] = await db
+			.select({ logsPrunedAt: sessions.logsPrunedAt })
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+		return row?.logsPrunedAt ?? null
+	}
+
+	it('prunes a backlog of any age and marks the session', async () => {
 		const ancient = await seed(120 * DAY_MS)
 
 		await prune()
 
 		expect(await logCount(ancient)).toBe(0)
+		expect(await prunedMark(ancient)).not.toBeNull()
 	})
 
-	it('once drained, still prunes sessions that cross the retention cutoff', async () => {
-		await prune() // nothing to do: marks the backlog drained
+	it('prunes sessions that cross the retention cutoff on a later run', async () => {
+		await prune()
 		const justPastCutoff = await seed(31 * DAY_MS)
 
 		await prune()
@@ -173,14 +233,95 @@ describe('session log retention window', () => {
 		expect(await logCount(justPastCutoff)).toBe(0)
 	})
 
-	it('once drained, stops looking beyond the window instead of rescanning old sessions', async () => {
+	it('reaches a session far past the old lookback window that appeared after an earlier run', async () => {
 		await prune()
 		const beyondWindow = await seed(120 * DAY_MS)
 
 		await prune()
 
-		// The documented trade-off: after the first sweep, only [cutoff - 14d, cutoff)
-		// is scanned, so a session this old that appeared since is left alone.
-		expect(await logCount(beyondWindow)).toBe(1)
+		expect(await logCount(beyondWindow)).toBe(0)
+	})
+
+	it('marks a session that had no old logs, and leaves recent, interactive and marked ones alone', async () => {
+		const empty = await seed(60 * DAY_MS)
+		await db.delete(sessionLogs).where(eq(sessionLogs.sessionId, empty))
+		const recent = await seed(5 * DAY_MS)
+		const interactive = await insertSession(db, workspaceId, actorId, actorId, {
+			interactive: true,
+			status: 'completed',
+			completedAt: new Date(Date.now() - 60 * DAY_MS),
+		})
+		if (!interactive) throw new Error('failed to seed session')
+		await db.insert(sessionLogs).values({
+			sessionId: interactive.id,
+			stream: 'stdout',
+			content: 'x',
+			createdAt: new Date(Date.now() - 60 * DAY_MS),
+		})
+
+		await prune()
+
+		expect(await prunedMark(empty)).not.toBeNull()
+		expect(await logCount(recent)).toBe(1)
+		expect(await prunedMark(recent)).toBeNull()
+		expect(await logCount(interactive.id)).toBe(1)
+		expect(await prunedMark(interactive.id)).toBeNull()
+
+		// Already marked: logs that appear afterwards are not looked at again.
+		await db.insert(sessionLogs).values({
+			sessionId: empty,
+			stream: 'stdout',
+			content: 'late',
+			createdAt: new Date(Date.now() - 60 * DAY_MS),
+		})
+		await prune()
+		expect(await logCount(empty)).toBe(1)
+	})
+
+	it('works through the backlog oldest first, a slice per statement, and picks up where it stopped', async () => {
+		const statics = SessionManager as unknown as Record<string, number>
+		const saved = {
+			slice: statics.LOG_PRUNE_SLICE,
+			perRun: statics.LOG_PRUNE_SLICES_PER_RUN,
+		}
+		statics.LOG_PRUNE_SLICE = 1
+		statics.LOG_PRUNE_SLICES_PER_RUN = 1
+		try {
+			const oldest = await seed(200 * DAY_MS)
+			const middle = await seed(150 * DAY_MS)
+			const newest = await seed(100 * DAY_MS)
+
+			await prune()
+			expect(await logCount(oldest)).toBe(0)
+			expect(await logCount(middle)).toBe(1)
+			expect(await logCount(newest)).toBe(1)
+
+			await prune()
+			expect(await logCount(middle)).toBe(0)
+			expect(await logCount(newest)).toBe(1)
+
+			await prune()
+			expect(await logCount(newest)).toBe(0)
+		} finally {
+			statics.LOG_PRUNE_SLICE = saved.slice as number
+			statics.LOG_PRUNE_SLICES_PER_RUN = saved.perRun as number
+		}
+	})
+
+	it('reads its work list from the partial index on unmarked sessions', async () => {
+		const [index] = await sql`
+			SELECT i.indisvalid AS valid
+			FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+			WHERE c.relname = 'sessions_logs_unpruned_idx'`
+		expect(index?.valid).toBe(true)
+
+		const plan = await explainWithIndexes(
+			`SELECT id FROM sessions
+			 WHERE interactive = false AND completed_at IS NOT NULL AND logs_pruned_at IS NULL
+			   AND completed_at < $1
+			 ORDER BY completed_at ASC LIMIT 500`,
+			[new Date().toISOString()],
+		)
+		expect(plan).toContain('sessions_logs_unpruned_idx')
 	})
 })

@@ -1,3 +1,4 @@
+import type { ParticipantMenuState } from '@/hooks/use-participant-menu'
 import { cn } from '@/lib/cn'
 import type { Pill, SearchParts } from '@/lib/search/parts'
 import type { Suggestion } from '@/lib/search/pillify'
@@ -7,7 +8,7 @@ import { type KeyboardEvent, type RefObject, useRef } from 'react'
 
 interface SearchFieldProps {
 	/** The page field is 50px tall with 30px pills; the launcher's is a 30px input with 26px pills. */
-	variant?: 'page' | 'palette'
+	variant?: 'page' | 'palette' | 'row'
 	parts: SearchParts
 	vocab: Vocabulary
 	suggestion: Suggestion | null
@@ -17,6 +18,8 @@ interface SearchFieldProps {
 	/** Id of the highlighted option, if any. Focus stays in the field. */
 	activeOptionId: string | undefined
 	listboxOpen: boolean
+	/** The @ menu. Absent when the participant filter is off. While it is open it takes the arrows, Enter, Tab and Esc. */
+	menu?: ParticipantMenuState
 	onTextChange: (text: string, composing: boolean) => void
 	onAcceptSuggestion: (via: 'tab' | 'click') => void
 	onDismissSuggestion: () => void
@@ -44,6 +47,7 @@ export function SearchField({
 	listboxId,
 	activeOptionId,
 	listboxOpen,
+	menu,
 	onTextChange,
 	onAcceptSuggestion,
 	onDismissSuggestion,
@@ -57,12 +61,31 @@ export function SearchField({
 }: SearchFieldProps) {
 	const composing = useRef(false)
 	const palette = variant === 'palette'
+	// The search page's form row: a borderless grey pill at the right of the "Search" label.
+	const row = variant === 'row'
 	const suggestionLabel = suggestion ? pillLabel(vocab, suggestion.kind, suggestion.value) : ''
 
 	const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
 		// Keys that belong to an input method (IME) are not ours.
 		if (composing.current || e.nativeEvent.isComposing) return
 		const plain = !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey
+		if (menu?.open) {
+			if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+				e.preventDefault()
+				menu.move(e.key === 'ArrowDown' ? 1 : -1)
+				return
+			}
+			if ((e.key === 'Enter' || e.key === 'Tab') && plain) {
+				e.preventDefault()
+				menu.pickActive(e.key === 'Enter' ? 'keyboard' : 'tab')
+				return
+			}
+			if (e.key === 'Escape') {
+				e.preventDefault()
+				menu.dismiss()
+				return
+			}
+		}
 		switch (e.key) {
 			case 'Tab':
 				// Tab accepts only a suggestion that is showing; otherwise focus moves on.
@@ -106,13 +129,23 @@ export function SearchField({
 			className={cn(
 				'flex min-w-0 flex-1 items-center gap-1.5',
 				palette
-					? 'min-h-12 px-3.5 py-1'
-					: 'min-h-[50px] rounded-lg border border-input bg-background px-3 py-1.5 transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30',
+					? 'min-h-14 px-4.5 py-1'
+					: row
+						? 'min-h-9 rounded-full bg-muted px-3.5 py-0.5 transition-colors focus-within:ring-2 focus-within:ring-ring/30'
+						: 'min-h-[50px] rounded-lg border border-input bg-background px-3 py-1.5 transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30',
 			)}
 		>
 			{/* Pills and the input wrap onto more lines on a narrow screen, so none is hidden; the clear button stays at the end of the first line. */}
 			<div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-1">
-				<Search aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+				{row ? null : (
+					<Search
+						aria-hidden="true"
+						className={cn(
+							'shrink-0 text-muted-foreground',
+							palette ? 'mr-1.5 size-[18px]' : 'size-4',
+						)}
+					/>
+				)}
 
 				{parts.pills.map((pill, index) => (
 					<PillButton
@@ -131,9 +164,9 @@ export function SearchField({
 					aria-label={palette ? 'Search or run a command' : 'Search'}
 					data-search-field={variant}
 					aria-autocomplete="list"
-					aria-expanded={listboxOpen}
-					aria-controls={listboxId}
-					aria-activedescendant={activeOptionId}
+					aria-expanded={menu?.open || listboxOpen}
+					aria-controls={menu?.open ? menu.listboxId : listboxId}
+					aria-activedescendant={menu?.open ? menu.activeId : activeOptionId}
 					autoComplete="off"
 					spellCheck={false}
 					value={parts.text}
@@ -141,8 +174,10 @@ export function SearchField({
 						parts.pills.length > 0
 							? 'Add words…'
 							: palette
-								? 'Run a command or jump to…'
-								: 'Search everything…'
+								? 'Search or run a command'
+								: row
+									? 'Search everything'
+									: 'Search everything…'
 					}
 					onChange={(e) => onTextChange(e.target.value, composing.current)}
 					onCompositionStart={() => {
@@ -155,7 +190,7 @@ export function SearchField({
 					onKeyDown={onKeyDown}
 					className={cn(
 						'min-w-[8ch] flex-1 bg-transparent text-foreground outline-none placeholder:text-muted-foreground',
-						palette ? 'h-[30px] text-[13.5px]' : 'h-[34px] text-[14px]',
+						palette ? 'h-[34px] text-base' : 'h-[34px] text-[14px]',
 					)}
 				/>
 
@@ -215,6 +250,7 @@ function PillButton({
 				'inline-flex shrink-0 items-center gap-0.5 rounded-md bg-muted pl-2.5 text-[13px] font-semibold text-foreground',
 				size === 26 ? 'h-[26px]' : 'h-[30px]',
 				pill.kind === 'status' && 'bg-secondary',
+				pill.kind === 'participant' && 'bg-accent',
 			)}
 		>
 			{label}

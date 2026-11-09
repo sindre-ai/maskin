@@ -20,7 +20,7 @@ vi.mock('node:fs', () => ({
 
 import { registerAppTool } from '@modelcontextprotocol/ext-apps/server'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { createMcpServer } from '../server'
+import { GET_OBJECTS_EDGE_CAP, createMcpServer } from '../server'
 import { tools } from '../tools'
 
 const apiTestKey = 'ank_testkey123'
@@ -322,5 +322,96 @@ describe('get_objects `include:` expansions', () => {
 			expect(setup.next_steps).toEqual([])
 			expect(setup.prose).toBe('')
 		})
+	})
+})
+
+describe('get_objects caps `relationships` and `connected_objects` at 100 rows', () => {
+	let handler: (args: Record<string, unknown>) => Promise<unknown>
+
+	const hubGraph = (edgeCount: number) => ({
+		...GRAPH_PAYLOAD,
+		object: { ...GRAPH_PAYLOAD.object, id: 'hub-1' },
+		relationships: Array.from({ length: edgeCount }, (_, i) => ({
+			id: `rel-${i}`,
+			sourceId: 'hub-1',
+			targetId: `task-${i}`,
+			type: 'duplicates',
+			sourceTitle: 'Hub',
+			targetTitle: `Task ${i}`,
+		})),
+		connected_objects: Array.from({ length: edgeCount }, (_, i) => ({
+			id: `task-${i}`,
+			type: 'task',
+			title: `Task ${i}`,
+			status: 'todo',
+		})),
+	})
+
+	async function callHub(edgeCount: number, include: string[]) {
+		vi.clearAllMocks()
+		const handlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>()
+		vi.mocked(McpServer).mockImplementation(
+			() => ({ registerResource: vi.fn(), connect: vi.fn() }) as unknown as McpServer,
+		)
+		vi.mocked(registerAppTool).mockImplementation((_server, name, _def, h) => {
+			handlers.set(name as string, h as (args: Record<string, unknown>) => Promise<unknown>)
+		})
+		createMcpServer(config)
+		handler = handlers.get('get_objects') as typeof handler
+		vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+			if ((url as string).includes('/api/objects/hub-1/graph')) {
+				return { ok: true, json: () => Promise.resolve(hubGraph(edgeCount)) } as Response
+			}
+			return { ok: true, json: () => Promise.resolve([]) } as Response
+		})
+		return (await handler({ ids: ['hub-1'], include })) as {
+			content: Array<{ text: string }>
+			structuredContent: { objects: Array<Record<string, unknown>> }
+		}
+	}
+
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	it('returns the first 100 rows plus the real total and a paging hint for 300 edges', async () => {
+		const result = await callHub(300, ['relationships', 'connected_objects'])
+		const entry = result.structuredContent.objects[0]
+
+		expect(entry.relationships).toHaveLength(GET_OBJECTS_EDGE_CAP)
+		expect(entry.connected_objects).toHaveLength(GET_OBJECTS_EDGE_CAP)
+		expect(entry.relationships_page).toMatchObject({ returned: 100, total: 300, truncated: true })
+		expect(entry.connected_objects_page).toMatchObject({
+			returned: 100,
+			total: 300,
+			truncated: true,
+		})
+		expect((entry.relationships_page as { hint: string }).hint).toContain('list_relationships')
+		expect((entry.relationships_page as { hint: string }).hint).toContain('hub-1')
+
+		// The text content the client reads is capped too, not just structuredContent.
+		const text = JSON.parse(result.content[0].text) as Array<{
+			result: { relationships: unknown[] }
+		}>
+		expect(text[0].result.relationships).toHaveLength(GET_OBJECTS_EDGE_CAP)
+	})
+
+	it('leaves an object at exactly 100 edges untouched, with no page block', async () => {
+		const result = await callHub(100, ['relationships', 'connected_objects'])
+		const entry = result.structuredContent.objects[0]
+
+		expect(entry.relationships).toHaveLength(100)
+		expect(entry.connected_objects).toHaveLength(100)
+		expect(entry).not.toHaveProperty('relationships_page')
+		expect(entry).not.toHaveProperty('connected_objects_page')
+	})
+
+	it('adds no page block for a block that was not requested', async () => {
+		const result = await callHub(300, ['relationships'])
+		const entry = result.structuredContent.objects[0]
+
+		expect(entry).toHaveProperty('relationships_page')
+		expect(entry).not.toHaveProperty('connected_objects')
+		expect(entry).not.toHaveProperty('connected_objects_page')
 	})
 })

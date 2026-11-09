@@ -1,4 +1,5 @@
 import {
+	SIGNATURE_SCHEMES,
 	configFromForm,
 	emptyWebhookForm,
 	formFromConfig,
@@ -98,6 +99,47 @@ describe('validateWebhookForm', () => {
 		const errors = validateWebhookForm({ ...valid, scheme: 'timestamp' }, { requireSecret: true })
 		expect(errors.timestampHeader).toBeTruthy()
 		expect(errors.timestampBodyTemplate).toBeTruthy()
+	})
+})
+
+describe('ed25519 scheme', () => {
+	const PUBLIC_KEY = Buffer.alloc(32, 7).toString('base64')
+	const telnyx = {
+		...formFromConfig(FIREFLIES),
+		scheme: 'ed25519' as const,
+		timestampHeader: 'telnyx-timestamp',
+		timestampBodyTemplate: '{timestamp}|{body}',
+	}
+
+	it('is offered in the scheme list', () => {
+		expect(SIGNATURE_SCHEMES.map((s) => s.value)).toContain('ed25519')
+	})
+
+	it('sends the timestamp fields, like the timestamp scheme', () => {
+		const cfg = configFromForm(telnyx)
+		expect(cfg.signatureScheme).toBe('ed25519')
+		expect(cfg.timestampHeader).toBe('telnyx-timestamp')
+		expect(cfg.timestampBodyTemplate).toBe('{timestamp}|{body}')
+	})
+
+	it('requires the timestamp header and signed text', () => {
+		const errors = validateWebhookForm(
+			{ ...telnyx, timestampHeader: '', timestampBodyTemplate: '', signingSecret: PUBLIC_KEY },
+			{ requireSecret: true },
+		)
+		expect(errors.timestampHeader).toBeTruthy()
+		expect(errors.timestampBodyTemplate).toBeTruthy()
+	})
+
+	it('accepts a 32-byte base64 public key and refuses anything else with a plain message', () => {
+		expect(
+			validateWebhookForm({ ...telnyx, signingSecret: PUBLIC_KEY }, { requireSecret: true }),
+		).toEqual({})
+		const errors = validateWebhookForm(
+			{ ...telnyx, signingSecret: SECRET },
+			{ requireSecret: true },
+		)
+		expect(errors.signingSecret).toMatch(/Ed25519 public key/)
 	})
 })
 

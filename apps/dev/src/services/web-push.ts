@@ -89,7 +89,13 @@ function truncate(s: string, max: number): string {
 
 /** The same targets the native deep links name, as paths the web app routes. */
 export function webUrlFor(msg: PushMessage): string {
-	if (msg.conversationId) return `/${msg.workspaceId}/chats/${msg.conversationId}`
+	if (msg.conversationId) {
+		const base = `/${msg.workspaceId}/chats/${msg.conversationId}`
+		const root = msg.threadRootId
+		return typeof root === 'number' && Number.isSafeInteger(root) && root > 0
+			? `${base}?thread=${root}`
+			: base
+	}
 	if (msg.objectId) return `/${msg.workspaceId}/objects/${msg.objectId}`
 	return `/${msg.workspaceId}/notifications`
 }
@@ -221,7 +227,11 @@ export class WebPushSender implements PushChannel {
 							payload,
 							options,
 						)
-						if (res.status >= 200 && res.status < 300) return
+						if (res.status >= 200 && res.status < 300) {
+							// The denominator for delivery health: pushes the push service accepted.
+							logger.info('Web Push accepted', { subscriptionId: sub.id, status: res.status })
+							return
+						}
 						if (res.status === 404 || res.status === 410) {
 							await this.db.delete(webPushSubscriptions).where(eq(webPushSubscriptions.id, sub.id))
 							logger.info('Web Push subscription gone, removed', {

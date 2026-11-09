@@ -4,7 +4,7 @@ import type { Server } from 'node:http'
 import path from 'node:path'
 import { serve } from '@hono/node-server'
 import type { NodeWebSocket } from '@hono/node-ws'
-import { createDb, syncAgentServersFromEnv } from '@maskin/db'
+import { DEFAULT_POOL_SIZE, createDb, syncAgentServersFromEnv } from '@maskin/db'
 import { actors, sessions } from '@maskin/db/schema'
 import { PgNotifyBridge } from '@maskin/realtime'
 import { S3StorageProvider } from '@maskin/storage'
@@ -18,7 +18,7 @@ import { RotateDeksJob } from './jobs/rotate-deks'
 import { UpgradeLegacyCredentialsJob } from './jobs/upgrade-legacy-credentials'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
-import { warnIfPosthogKeyUnset } from './lib/analytics/posthog'
+import { configurePosthogPrivacy, warnIfPosthogKeyUnset } from './lib/analytics/posthog'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
 import { runDefaultHeartbeatBackfillOnBoot } from './lib/default-heartbeat-boot'
 import { canAccessDesktop } from './lib/desktop-access'
@@ -27,19 +27,26 @@ import {
 	maybeBootstrapDev,
 	seedMarketplaceIfEmpty,
 } from './lib/dev-bootstrap'
+import { runDraftApprovalSkillBackfillOnBoot } from './lib/draft-approval-skill-boot'
 import { migrateAgentToolServers } from './lib/integrations/migrate-agent-tool-servers'
 import { repopulateLinkedInMcpRegistryOnBoot } from './lib/integrations/providers/linkedin-unipile/boot-repopulation'
 import { assertKeychainKeyConfig } from './lib/keychain-kms'
 import { logger } from './lib/logger'
+import { recordDbTime, setRouteTimingSink } from './lib/request-timing'
+import { createRouteTimingStore } from './lib/route-timing-store'
 import { getStripeClient } from './lib/stripe'
 import { isWorkspaceMember } from './lib/workspace-auth'
+import { initMcpRateLimit, stopMcpRateLimit } from './routes/mcp'
 import { AgentStorageManager } from './services/agent-storage'
 import { ApnsSender } from './services/apns'
 import { BlockedToolCallsCleaner } from './services/blocked-tool-calls-cleaner'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
 import { BriefingPushScheduler } from './services/briefing-push-scheduler'
 import { CapabilityScanner } from './services/capability-scanner'
+import { DailyBudgetCardScheduler } from './services/daily-budget-card-scheduler'
+import { DailyBudgetSummaryScheduler } from './services/daily-budget-events'
 import { handleDesktopStreamUpgrade, isDesktopStreamRequest } from './services/desktop-relay'
+import { DriveWatchRenewer } from './services/drive-watch-renewer'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { GscSyncScheduler } from './services/gsc-sync-scheduler'
 import { LifecyclePushScheduler } from './services/lifecycle-push-scheduler'
@@ -48,7 +55,9 @@ import { LoopVersionPusher } from './services/loop-version-pusher'
 import { MeetTranscriptReconciler } from './services/meet-transcript-reconciler'
 import { MeetWatchRenewer } from './services/meet-watch-renewer'
 import { NotificationPushFanout } from './services/notification-push'
+import { OAuthSweeper } from './services/oauth-sweeper'
 import { OrphanThreadDetector } from './services/orphan-thread-detector'
+import { PosthogAccountSync } from './services/posthog-account-sync'
 import { ResendDomainVerifier } from './services/resend-domain-verifier'
 import { RuntimeTelemetry } from './services/runtime-telemetry'
 import { SessionDispatchQueue } from './services/session-dispatch-queue'
@@ -62,6 +71,7 @@ import {
 	VoiceSessionTimeoutSweeper,
 	endAllLiveVoiceSessions,
 } from './services/voice-session-timeout-sweeper'
+import { VoiceToolCallLogCleaner } from './services/voice-tool-call-log-cleaner'
 import { WebPushSender } from './services/web-push'
 import { WebhookDeliveriesCleaner } from './services/webhook-deliveries-cleaner'
 import { WebhookDeliveriesReconciler } from './services/webhook-deliveries-reconciler'
@@ -72,13 +82,40 @@ const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL
 if (!databaseUrl) {
 	throw new Error('POSTGRES_URL or DATABASE_URL environment variable is required')
 }
-const db = createDb(databaseUrl)
+// Say when the pool fills up and when a query gets no answer, so a "whole app hangs" incident
+// shows whether queries were queuing behind connections that never came back.
+const POOL_SATURATED_LOG_INTERVAL_MS = 30_000
+let lastPoolSaturatedLogAt = 0
+const db = createDb(databaseUrl, {
+	onQuery: recordDbTime,
+	onQueryTimeout: ({ timeoutMs, inFlight, sql }) => {
+		logger.error('DB query got no response', {
+			timeoutMs,
+			inFlight,
+			poolSize: DEFAULT_POOL_SIZE,
+			sql,
+		})
+	},
+	onSaturated: (inFlight) => {
+		const now = Date.now()
+		if (now - lastPoolSaturatedLogAt < POOL_SATURATED_LOG_INTERVAL_MS) return
+		lastPoolSaturatedLogAt = now
+		logger.warn('DB pool saturated: new queries wait for a connection', {
+			inFlight,
+			poolSize: DEFAULT_POOL_SIZE,
+		})
+	},
+})
 
 // A malformed KEYCHAIN_MASTER_KEY must stop the process here, not surface on the
 // first credential read.
 assertKeychainKeyConfig()
 
 warnIfPosthogKeyUnset()
+configurePosthogPrivacy(db)
+
+// Keep the once-a-minute route timing counts for 30 days. A failed write is logged, never thrown.
+setRouteTimingSink(createRouteTimingStore(db))
 
 // Sync agent-server pool from env on every startup.
 // Set AGENT_SERVERS=url1|secret1,url2|secret2 to register boxes.
@@ -236,6 +273,10 @@ const meetWatchRenewer = new MeetWatchRenewer(db)
 meetWatchRenewer.start()
 logger.info('Meet watch renewer started')
 
+const driveWatchRenewer = new DriveWatchRenewer(db)
+driveWatchRenewer.start()
+logger.info('Drive watch renewer started')
+
 const resendDomainVerifier = new ResendDomainVerifier(db)
 resendDomainVerifier.start()
 logger.info('Resend domain verifier started')
@@ -256,6 +297,17 @@ const briefCacheCleaner = new BriefCacheCleaner(storageProvider)
 briefCacheCleaner.start()
 logger.info('Brief cache cleaner started')
 
+const posthogAccountSync = new PosthogAccountSync(db)
+posthogAccountSync.start()
+logger.info('PostHog account sync started')
+
+const voiceToolCallLogCleaner = new VoiceToolCallLogCleaner(db)
+voiceToolCallLogCleaner.start()
+logger.info('Voice tool call log cleaner started')
+const oauthSweeper = new OAuthSweeper(db)
+oauthSweeper.start()
+logger.info('OAuth sweeper started')
+
 // §7.6 — session-retry scheduler. Ticks every 30s, reads sessions_retry_at_idx
 // for due retry_at rows and fires startSession({retryOf, attemptNumber:N+1,
 // callerKind:'internal'}). Killswitch env FEATURE_RETRY_SCHEDULER=0 disables
@@ -271,6 +323,13 @@ const briefingPushScheduler = new BriefingPushScheduler(db)
 briefingPushScheduler.start()
 const lifecyclePushScheduler = new LifecyclePushScheduler(db)
 lifecyclePushScheduler.start()
+// Daily budget 1a: one summary event per workspace per day, no model call.
+const dailyBudgetSummaryScheduler = new DailyBudgetSummaryScheduler(db)
+dailyBudgetSummaryScheduler.start()
+// Daily token budget: one For You card per owner at the workspace day start. Only runs for a
+// workspace that has set a daily target (off by default).
+const dailyBudgetCardScheduler = new DailyBudgetCardScheduler(db)
+dailyBudgetCardScheduler.start()
 
 // §9.4 — self-heal: back-fills the session_* events row for terminal sessions
 // that never got one. Ticks every 60s; idempotent, so safe on every restart.
@@ -335,6 +394,11 @@ migrateAgentToolServers(db)
 // RUN_HEARTBEAT_BACKFILL=1, runs once per database, and never blocks or fails startup.
 void runDefaultHeartbeatBackfillOnBoot(db)
 
+// One-off: gives existing workspaces the draft-approval-tasks skill (skips any that already
+// have one). Does nothing unless RUN_DRAFT_APPROVAL_SKILL_BACKFILL is 1 (or dry), runs once per
+// database, and never blocks or fails startup.
+void runDraftApprovalSkillBackfillOnBoot(db, agentStorage)
+
 const loopVersionPusher = new LoopVersionPusher(db, agentStorage)
 loopVersionPusher.start()
 logger.info('Loop version pusher started')
@@ -343,9 +407,7 @@ const orphanThreadDetector = new OrphanThreadDetector(db)
 orphanThreadDetector.start()
 logger.info('Orphan thread detector started')
 
-// Daily capability scan, shadow mode. A server job with no model call. Does
-// nothing for a workspace unless FF_WORKSPACE_FEATURES lists it with
-// capability-scan.
+// Daily capability scan. A server job with no model call.
 const capabilityScanner = new CapabilityScanner(db)
 capabilityScanner.start()
 logger.info('Capability scanner started')
@@ -372,8 +434,8 @@ const sessionDispatchQueue = new SessionDispatchQueue(db, async () => ({ kind: '
 	// In production the dispatch queue — not the createSession promise — is
 	// where a workspace's missing LLM credentials surface, so this is the only
 	// way the trigger runner learns to stop firing against it.
-	onPermanentFailure: ({ workspaceId, reasonCode }) =>
-		triggerRunner.handleDispatchPermanentFailure(workspaceId, reasonCode),
+	onPermanentFailure: ({ workspaceId, reasonCode, noCredentialsConfigured }) =>
+		triggerRunner.handleDispatchPermanentFailure(workspaceId, reasonCode, noCredentialsConfigured),
 })
 if (process.env.NODE_ENV === 'production') {
 	const dispatcher = new SessionDispatcher({
@@ -449,6 +511,10 @@ if (process.env.NODE_ENV === 'production') {
 sessionDispatchQueue.start()
 logger.info('Session dispatch queue started')
 
+// Logs mcp_rate_limit_config once and starts the 60 second summary. The first
+// POST /mcp would build it anyway; doing it here puts the boot line at boot.
+initMcpRateLimit()
+
 let shuttingDown = false
 const shutdown = async (signal: string) => {
 	// A second signal while the first is still settling is an operator asking
@@ -462,7 +528,9 @@ const shutdown = async (signal: string) => {
 	shuttingDown = true
 	logger.info(`Received ${signal}, shutting down`)
 	sessionDispatchQueue.stop()
+	stopMcpRateLimit()
 	purgeIdempotencyJob.stop()
+	oauthSweeper.stop()
 	keychainUndoSweeperJob.stop()
 	fileUploadReaperJob.stop()
 	upgradeLegacyCredentialsJob.stop()
@@ -471,6 +539,8 @@ const shutdown = async (signal: string) => {
 	notificationPush.stop()
 	briefingPushScheduler.stop()
 	lifecyclePushScheduler.stop()
+	dailyBudgetSummaryScheduler.stop()
+	dailyBudgetCardScheduler.stop()
 	liveActivityPush.stop()
 	voiceSessionTimeoutSweeper.stop()
 	// Rows would otherwise stay live until the sweeper finds them after restart.

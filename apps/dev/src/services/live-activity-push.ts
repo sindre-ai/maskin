@@ -4,19 +4,21 @@ import {
 	conversations,
 	deviceTokens,
 	liveActivityCards,
+	liveActivityFollows,
 	liveActivityTokens,
 	sessionLogs,
 	sessions,
 	workspaceMembers,
 } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
-import { and, desc, eq, inArray } from 'drizzle-orm'
+import { and, desc, eq, inArray, lt, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import { LIVE_ACTIVITY_STALE_S } from './apns'
 import type { ApnsSender, LiveActivityEvent } from './apns'
 import {
 	type WorkingAgent,
 	type WorkingSessionRow,
+	encodeFollowState,
 	groupWorkingAgents,
 } from './live-activity-agents'
 import type { SessionTurnEvent } from './session-manager'
@@ -33,7 +35,66 @@ export const INTERACTIVE_TURN_STALE_MS = 20 * 60 * 1000
 /** Card bookkeeping older than this is dropped: the card is long gone. */
 export const CARD_TTL_MS = 24 * 60 * 60 * 1000
 
-const LIVE_STATUSES = ['pending', 'starting', 'running']
+export const LIVE_STATUSES = ['pending', 'starting', 'running']
+
+/**
+ * Whether an interactive (chat) session is mid-turn, read from its logs: its newest row is recent
+ * and is not the CLI's closing `result` envelope. A chat session stays `running` between turns, so
+ * its status says nothing about whether the agent is working right now.
+ */
+export async function isInteractiveTurnOpenByLog(
+	db: Database,
+	sessionId: string,
+	nowMs: number,
+): Promise<boolean> {
+	const [last] = await db
+		.select({ content: sessionLogs.content, createdAt: sessionLogs.createdAt })
+		.from(sessionLogs)
+		.where(eq(sessionLogs.sessionId, sessionId))
+		.orderBy(desc(sessionLogs.id))
+		.limit(1)
+	if (!last) return false
+	if (last.createdAt && nowMs - last.createdAt.getTime() > INTERACTIVE_TURN_STALE_MS) return false
+	return !last.content.includes('"type":"result"')
+}
+
+/**
+ * `isInteractiveTurnOpenByLog` for many sessions in one statement: the ids whose turn is open.
+ * Same rule (newest log row is recent and is not the closing `result` envelope), one lateral
+ * lookup per id inside the database instead of one round trip each.
+ */
+export async function openInteractiveTurnsByLog(
+	db: Database,
+	sessionIds: string[],
+	nowMs: number,
+): Promise<Set<string>> {
+	const open = new Set<string>()
+	if (sessionIds.length === 0) return open
+	// Literal, table-qualified column references — see known-pitfalls.md on Drizzle column
+	// objects rendering unqualified inside raw `sql` templates.
+	const rows = (await db.execute(sql`
+		SELECT ids.session_id AS session_id,
+			floor(extract(epoch FROM latest.created_at) * 1000)::float8 AS created_ms,
+			strpos(latest.content, '"type":"result"') > 0 AS has_result
+		FROM unnest(ARRAY[${sql.join(
+			sessionIds.map((id) => sql`${id}::uuid`),
+			sql`, `,
+		)}]) AS ids(session_id)
+		CROSS JOIN LATERAL (
+			SELECT l.content, l.created_at
+			FROM session_logs l
+			WHERE l.session_id = ids.session_id
+			ORDER BY l.id DESC
+			LIMIT 1
+		) latest
+	`)) as unknown as Array<{ session_id: string; created_ms: number | null; has_result: boolean }>
+	for (const row of rows) {
+		if (row.created_ms !== null && nowMs - Number(row.created_ms) > INTERACTIVE_TURN_STALE_MS)
+			continue
+		if (!row.has_result) open.add(row.session_id)
+	}
+	return open
+}
 
 /**
  * session lifecycle action -> does it change the set of working agents? `session_updated` is the
@@ -97,6 +158,8 @@ export class LiveActivityFanout {
 	private activeTurns = new Map<string, Date>()
 	/** `actor|workspace` -> signature of the last state pushed, so an unchanged state sends nothing. */
 	private lastSig = new Map<string, string>()
+	/** Follow id -> signature of the last card state pushed, so an unchanged step sends nothing. */
+	private lastFollowSig = new Map<string, string>()
 	/** Per-workspace serial queue: two events for one workspace must not both decide "start". */
 	private queues = new Map<string, Promise<void>>()
 
@@ -145,6 +208,7 @@ export class LiveActivityFanout {
 		this.pending.clear()
 		this.activeTurns.clear()
 		this.lastSig.clear()
+		this.lastFollowSig.clear()
 		this.queues.clear()
 	}
 
@@ -236,6 +300,11 @@ export class LiveActivityFanout {
 
 	/** Who is working in the workspace right now, one row per agent. */
 	async loadWorkingAgents(workspaceId: string): Promise<WorkingAgent[]> {
+		return groupWorkingAgents(await this.loadWorkingSessions(workspaceId))
+	}
+
+	/** The sessions that count as working right now, one row each (an agent may have several). */
+	async loadWorkingSessions(workspaceId: string): Promise<WorkingSessionRow[]> {
 		const rows = await this.db
 			.select({
 				sessionId: sessions.id,
@@ -270,32 +339,27 @@ export class LiveActivityFanout {
 				topic: r.topic,
 			})
 		}
-		return groupWorkingAgents(working)
+		return working
 	}
 
 	/**
 	 * No in-process turn event (restart, or another node ran it): a chat session is mid-turn when
 	 * its newest log row is recent and is not the CLI's closing `result` envelope.
 	 */
-	private async turnOpenByLog(sessionId: string): Promise<boolean> {
-		const [last] = await this.db
-			.select({ content: sessionLogs.content, createdAt: sessionLogs.createdAt })
-			.from(sessionLogs)
-			.where(eq(sessionLogs.sessionId, sessionId))
-			.orderBy(desc(sessionLogs.id))
-			.limit(1)
-		if (!last) return false
-		if (last.createdAt && this.now() - last.createdAt.getTime() > INTERACTIVE_TURN_STALE_MS) {
-			return false
-		}
-		return !last.content.includes('"type":"result"')
+	private turnOpenByLog(sessionId: string): Promise<boolean> {
+		return isInteractiveTurnOpenByLog(this.db, sessionId, this.now())
 	}
 
 	private async doSync(
 		workspaceId: string,
 		opts: { onlyActor?: string; force?: boolean },
 	): Promise<void> {
-		const agents = await this.loadWorkingAgents(workspaceId)
+		const sessionRows = await this.loadWorkingSessions(workspaceId)
+		const agents = groupWorkingAgents(sessionRows)
+		// Followed runs are independent of the aggregate card: a failure on one must not skip the other.
+		await this.syncFollows(workspaceId, sessionRows, opts).catch((err) =>
+			logger.warn('Live activity follow sync failed', { workspaceId, error: String(err) }),
+		)
 
 		const startTokens = await this.db
 			.select({
@@ -419,6 +483,129 @@ export class LiveActivityFanout {
 				await this.touchCard(actorId, workspaceId, true)
 				this.lastSig.delete(key)
 			}
+		}
+	}
+
+	/**
+	 * The opt-in follow cards of a workspace. A followed run that is still working gets its latest
+	 * step (only when the card would change); one that is not working any more gets the finished
+	 * card, which lingers so Review is one tap away, and its row is removed. "Working" is the same
+	 * rule as the aggregate card, so a chat run counts only while a turn is open.
+	 */
+	private async syncFollows(
+		workspaceId: string,
+		working: WorkingSessionRow[],
+		opts: { onlyActor?: string; force?: boolean },
+	): Promise<void> {
+		// A card nobody has heard from in a day is gone from the phone; keep the table bounded.
+		await this.db
+			.delete(liveActivityFollows)
+			.where(
+				and(
+					eq(liveActivityFollows.workspaceId, workspaceId),
+					lt(liveActivityFollows.updatedAt, new Date(this.now() - CARD_TTL_MS)),
+				),
+			)
+		const follows = await this.db
+			.select({
+				id: liveActivityFollows.id,
+				actorId: liveActivityFollows.actorId,
+				sessionId: liveActivityFollows.sessionId,
+				token: liveActivityFollows.token,
+				environment: deviceTokens.environment,
+			})
+			.from(liveActivityFollows)
+			.innerJoin(deviceTokens, eq(deviceTokens.id, liveActivityFollows.deviceId))
+			.innerJoin(
+				workspaceMembers,
+				and(
+					eq(workspaceMembers.actorId, liveActivityFollows.actorId),
+					eq(workspaceMembers.workspaceId, workspaceId),
+				),
+			)
+			.where(
+				and(
+					eq(liveActivityFollows.workspaceId, workspaceId),
+					// The device may have changed hands since the card was registered.
+					eq(deviceTokens.actorId, liveActivityFollows.actorId),
+					opts.onlyActor ? eq(liveActivityFollows.actorId, opts.onlyActor) : undefined,
+				),
+			)
+		if (follows.length === 0) return
+
+		const bySession = new Map(working.map((r) => [r.sessionId, r]))
+		const gone = [
+			...new Set(follows.filter((f) => !bySession.has(f.sessionId)).map((f) => f.sessionId)),
+		]
+		const finishedRows = new Map<string, WorkingSessionRow>()
+		if (gone.length > 0) {
+			const rows = await this.db
+				.select({
+					sessionId: sessions.id,
+					actorId: sessions.actorId,
+					agentName: actors.name,
+					currentActivity: sessions.currentActivity,
+					startedAt: sessions.startedAt,
+					createdAt: sessions.createdAt,
+					conversationId: sessions.conversationId,
+					topic: conversations.title,
+				})
+				.from(sessions)
+				.innerJoin(actors, eq(actors.id, sessions.actorId))
+				.leftJoin(conversations, eq(conversations.id, sessions.conversationId))
+				.where(inArray(sessions.id, gone))
+			for (const r of rows) {
+				finishedRows.set(r.sessionId, {
+					sessionId: r.sessionId,
+					actorId: r.actorId,
+					agentName: r.agentName,
+					currentActivity: r.currentActivity,
+					startedAt: r.startedAt ?? r.createdAt ?? new Date(this.now()),
+					conversationId: r.conversationId,
+					topic: r.topic,
+				})
+			}
+		}
+
+		const finishedIds: string[] = []
+		const deadIds: string[] = []
+		await Promise.all(
+			follows.map(async (f) => {
+				const live = bySession.get(f.sessionId)
+				const row = live ?? finishedRows.get(f.sessionId)
+				const toAgent = (r: WorkingSessionRow) => ({
+					name: r.agentName,
+					doing: r.currentActivity,
+					startedAt: r.startedAt,
+					topic: r.topic,
+				})
+				if (!row) {
+					// The run is gone altogether: nothing to show, and the card cannot be addressed.
+					finishedIds.push(f.id)
+					return
+				}
+				const follow = encodeFollowState(toAgent(row), live ? 'following' : 'finished')
+				const sig = JSON.stringify(follow)
+				if (live && !opts.force && this.lastFollowSig.get(f.id) === sig) return
+				const result = await this.sender.sendLiveActivity(
+					{ token: f.token, environment: f.environment },
+					{ event: live ? 'update' : 'end', workspaceId, agents: [], follow },
+				)
+				if (result === 'dead') deadIds.push(f.id)
+				else if (!live) finishedIds.push(f.id)
+				else if (result === 'sent') {
+					this.lastFollowSig.set(f.id, sig)
+					await this.db
+						.update(liveActivityFollows)
+						.set({ updatedAt: new Date(this.now()) })
+						.where(eq(liveActivityFollows.id, f.id))
+				}
+			}),
+		)
+		const remove = [...finishedIds, ...deadIds]
+		if (remove.length > 0) {
+			await this.db.delete(liveActivityFollows).where(inArray(liveActivityFollows.id, remove))
+			for (const id of remove) this.lastFollowSig.delete(id)
 		}
 	}
 

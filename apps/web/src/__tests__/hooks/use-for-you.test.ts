@@ -1,4 +1,4 @@
-import { forYouItemToFeedItem } from '@/hooks/use-for-you'
+import { dismissBodyFor, forYouItemToFeedItem } from '@/hooks/use-for-you'
 import type { ForYouItem } from '@/lib/api'
 
 function buildForYouItem(overrides: Partial<ForYouItem> = {}): ForYouItem {
@@ -46,8 +46,37 @@ describe('forYouItemToFeedItem', () => {
 		expect(item?.latest_activity_at).toBe('2026-10-18T08:00:00.000Z')
 	})
 
-	it('drops an item that points at no object, since the feed cannot open it', () => {
-		expect(forYouItemToFeedItem(buildForYouItem({ entity_id: null, entity_type: null }))).toBeNull()
+	it('drops an item that has neither an object nor a notification to dismiss', () => {
+		expect(
+			forYouItemToFeedItem(
+				buildForYouItem({ entity_id: null, entity_type: null, notification_id: null }),
+			),
+		).toBeNull()
+	})
+
+	it('keys a card with no object by its notification, which is what dismissing resolves', () => {
+		const item = forYouItemToFeedItem(
+			buildForYouItem({
+				entity_id: null,
+				entity_type: null,
+				notification_id: 'n-9',
+				headline: 'Yesterday: 38 runs, $3.20.',
+				rationale: 'Today: ░░░░░░░░░░ $0.00 of $10.00 so far.',
+			}),
+		)
+		expect(item).toMatchObject({
+			entity_type: 'notification',
+			entity_id: 'n-9',
+			latest_event_id: null,
+			curated: { headline: 'Yesterday: 38 runs, $3.20.' },
+		})
+	})
+
+	it('maps a card tied to an object exactly as before', () => {
+		expect(forYouItemToFeedItem(buildForYouItem())).toMatchObject({
+			entity_type: 'object',
+			entity_id: 'o-1',
+		})
 	})
 
 	it('maps a decision card that has no notification behind it', () => {
@@ -80,7 +109,36 @@ describe('forYouItemToFeedItem', () => {
 		expect(item?.curated).toEqual({
 			headline: 'Graduate 5 wiki pages',
 			rationale: 'Only you can approve voice.',
+			notification_id: 'n-1',
 		})
 		expect(item?.latest_event_id).toBe(321)
+	})
+})
+
+describe('dismissBodyFor', () => {
+	const mention = {
+		event_id: 77,
+		actor_id: 'a-2',
+		created_at: '2026-10-20T09:00:00.000Z',
+		content: 'Send the note?',
+		attention: 3,
+		decision: null,
+	}
+
+	it('names the notification of a curated card', () => {
+		const item = forYouItemToFeedItem(buildForYouItem({ latest_mention: mention }))
+		expect(item && dismissBodyFor(item)).toEqual({ notification_id: 'n-1' })
+	})
+
+	it('names the comment that raised a decision card, which has no notification', () => {
+		const item = forYouItemToFeedItem(
+			buildForYouItem({ notification_id: null, source: 'decision', latest_mention: mention }),
+		)
+		expect(item && dismissBodyFor(item)).toEqual({ source_comment_id: 77 })
+	})
+
+	it('has nothing to name for a card with neither', () => {
+		const item = forYouItemToFeedItem(buildForYouItem({ notification_id: null }))
+		expect(item && dismissBodyFor(item)).toBeNull()
 	})
 })

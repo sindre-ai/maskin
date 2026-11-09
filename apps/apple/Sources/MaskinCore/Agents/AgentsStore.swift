@@ -68,6 +68,96 @@ public final class AgentsStore {
 
 	public func agent(id: String) -> AgentSummary? { agents.first { $0.id == id } }
 
+	// MARK: - Teams
+
+	/// The workspace's flows, from which each agent's team is read. Set by the screen after its
+	/// own best-effort load; empty until then (every agent reads "No team", and no team chip
+	/// shows).
+	public private(set) var flows: [LoopSummary] = []
+
+	public func setFlows(_ flows: [LoopSummary]) { self.flows = flows }
+
+	/// Every flow that lists the agent, A to Z.
+	public func teams(of agentID: String) -> [String] {
+		flows.filter { $0.agentIDs.contains(agentID) }.map(AgentTeams.name(of:))
+			.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+	}
+
+	/// The agent's team: its first flow A to Z, or "No team".
+	public func team(of agentID: String) -> String { teams(of: agentID).first ?? AgentTeams.none }
+
+	/// The team chips: each team with its agent count, A to Z, "No team" last. Teams nobody
+	/// belongs to are left out.
+	public func teamChips() -> [AgentChipCount] {
+		var counts: [String: Int] = [:]
+		for agent in agents { counts[team(of: agent.id), default: 0] += 1 }
+		return counts.map { AgentChipCount(id: $0.key, label: $0.key, count: $0.value) }
+			.sorted {
+				if ($0.id == AgentTeams.none) != ($1.id == AgentTeams.none) { return $1.id == AgentTeams.none }
+				return $0.label.localizedStandardCompare($1.label) == .orderedAscending
+			}
+	}
+
+	/// The status chips, scoped to the chosen team: All, then Working, Idle, Failed. Disabled
+	/// shows only when something is disabled.
+	public func statusChips(team: String?) -> [AgentChipCount] {
+		let scoped = agents.filter { team == nil || self.team(of: $0.id) == team }
+		func count(_ status: AgentStatus) -> Int { scoped.filter { $0.status == status }.count }
+		var chips = [AgentChipCount(id: "all", label: "All", count: scoped.count)]
+		for status in [AgentStatus.running, .idle, .failed] {
+			chips.append(AgentChipCount(id: status.rawValue, label: status.label, count: count(status)))
+		}
+		if count(.paused) > 0 {
+			chips.append(AgentChipCount(id: AgentStatus.paused.rawValue, label: AgentStatus.paused.label, count: count(.paused)))
+		}
+		return chips
+	}
+
+	/// The list: filtered by search, status and team, ordered, then grouped.
+	public func sections(query: String = "", display: AgentsDisplay = .default) -> [AgentSection] {
+		let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
+		var rows = agents.filter { agent in
+			(display.status == nil || agent.status == display.status)
+				&& (display.team == nil || team(of: agent.id) == display.team)
+				&& (needle.isEmpty
+					|| agent.name.lowercased().contains(needle) || agent.role.lowercased().contains(needle))
+		}
+		func byName(_ a: AgentSummary, _ b: AgentSummary) -> Bool {
+			a.name.localizedStandardCompare(b.name) == .orderedAscending
+		}
+		rows.sort { a, b in
+			switch display.sort {
+			case .name: return byName(a, b)
+			case .sessions:
+				return a.sessionCount != b.sessionCount ? a.sessionCount > b.sessionCount : byName(a, b)
+			case .status:
+				let (x, y) = (a.status.attentionRank, b.status.attentionRank)
+				return x != y ? x < y : byName(a, b)
+			}
+		}
+		if display.reversed { rows.reverse() }
+		guard !rows.isEmpty else { return [] }
+
+		// One team picked: its header would say what the chip already does.
+		let grouping = display.grouping == .team && display.team != nil ? AgentsGrouping.none : display.grouping
+		switch grouping {
+		case .none:
+			return [AgentSection(id: "all", title: nil, items: rows)]
+		case .status:
+			return AgentStatus.allCases.sorted { $0.attentionRank < $1.attentionRank }.compactMap { status in
+				let items = rows.filter { $0.status == status }
+				return items.isEmpty ? nil : AgentSection(id: status.rawValue, title: status.groupTitle, items: items)
+			}
+		case .team:
+			let grouped = Dictionary(grouping: rows) { team(of: $0.id) }
+			let names = grouped.keys.sorted {
+				if ($0 == AgentTeams.none) != ($1 == AgentTeams.none) { return $1 == AgentTeams.none }
+				return $0.localizedStandardCompare($1) == .orderedAscending
+			}
+			return names.map { AgentSection(id: $0, title: $0, items: grouped[$0] ?? []) }
+		}
+	}
+
 	public func groups(query: String = "") -> [AgentGroup] {
 		let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
 		let filtered =
@@ -221,6 +311,6 @@ public final class AgentsStore {
 	}
 
 	static func message(_ error: Error) -> String {
-		(error as? AgentsError)?.message ?? error.localizedDescription
+		(error as? AgentsError)?.message ?? "Couldn't reach the server. Check your connection."
 	}
 }

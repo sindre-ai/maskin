@@ -124,7 +124,13 @@ export const config: ProviderConfig = {
 			label: 'LinkedIn connection request',
 			sendTool: 'send_connection_request',
 			bodyMaxLength: 300,
-			fields: [{ key: 'to', label: 'To', type: 'recipients', required: true, role: 'to' }],
+			fields: [
+				{ key: 'to', label: 'To', type: 'recipients', required: true, role: 'to' },
+				// The id the invitation goes to. A detail line, not hidden, so it is part of what a
+				// person approves: hidden fields are not hashed, and an edited recipient must withdraw
+				// the approval.
+				{ key: 'recipient_provider_id', label: 'LinkedIn id', type: 'text', required: true },
+			],
 		},
 		{
 			kind: 'linkedin_inmail',
@@ -143,6 +149,45 @@ export const config: ProviderConfig = {
 			],
 		},
 		{
+			kind: 'linkedin_comment',
+			label: 'LinkedIn comment',
+			sendTool: 'comment_on_post',
+			// Mirrors the limit in operations.ts.
+			bodyMaxLength: 3000,
+			fields: [
+				// Whose post it is, so the card can say who the comment is for. A name or profile
+				// link, not checked.
+				{ key: 'to', label: 'To', type: 'recipients', role: 'to', recommended: true },
+				// The post commented on. A detail line, not hidden, so it is part of what a person
+				// approves: hidden fields are not hashed, and a changed post must withdraw the approval.
+				{ key: 'post_id', label: 'Post', type: 'text', required: true },
+			],
+		},
+		{
+			kind: 'linkedin_comment_reply',
+			label: 'LinkedIn comment reply',
+			sendTool: 'reply_to_comment',
+			bodyMaxLength: 3000,
+			fields: [
+				{ key: 'to', label: 'To', type: 'recipients', role: 'to', recommended: true },
+				// The comment being answered, shown above the draft so it is read in context.
+				{ key: 'reply_to', label: 'In reply to', type: 'text', slot: 'context' },
+				// The post and the comment answered. Detail lines, for the same reason as above.
+				{ key: 'post_id', label: 'Post', type: 'text', required: true },
+				{ key: 'comment_id', label: 'Comment', type: 'text', required: true },
+			],
+		},
+		{
+			kind: 'linkedin_post_edit',
+			label: 'LinkedIn post edit',
+			sendTool: 'edit_post',
+			bodyMaxLength: 3000,
+			fields: [
+				// The post this identity already published, whose text becomes the draft's text.
+				{ key: 'post_id', label: 'Post', type: 'text', required: true },
+			],
+		},
+		{
 			kind: 'linkedin_post',
 			label: 'LinkedIn post',
 			sendTool: 'publish_post',
@@ -155,6 +200,9 @@ export const config: ProviderConfig = {
 			fields: [
 				{ key: 'account', label: 'Posting as', type: 'text' },
 				{ key: 'scheduled_date', label: 'Scheduled', type: 'text' },
+				// The images posted: workspace file ids of PNG or JPEG files, separated by commas.
+				// A detail line too, so swapping an image withdraws the approval.
+				{ key: 'attachment_file_ids', label: 'Images', type: 'text' },
 			],
 		},
 	],

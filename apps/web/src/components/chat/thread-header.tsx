@@ -1,4 +1,5 @@
 import { AgentCallButton } from '@/components/agents/agent-call-button'
+import { LiveCapsule } from '@/components/agents/live-call-surface'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { Button } from '@/components/ui/button'
 import {
@@ -17,21 +18,25 @@ import {
 import { useUpdateConversation, useUpdateConversationMe } from '@/hooks/use-conversations'
 import { useLoop } from '@/hooks/use-loops'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
+import { ACTIVE_STATUSES } from '@/lib/agent-status'
 import { trackNavItemClicked } from '@/lib/analytics'
+import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
-import { useNavigate, useSearch } from '@tanstack/react-router'
+import { useVoiceCallView } from '@/lib/voice-call-view'
+import { Link, useNavigate, useSearch } from '@tanstack/react-router'
 import {
 	Archive,
 	ArchiveRestore,
 	ArrowLeft,
 	Copy,
 	EyeOff,
-	Layers,
 	Maximize2,
 	Minimize2,
 	MoreHorizontal,
+	PanelRight,
+	Pencil,
 	Pin,
-	Plus,
 	X,
 } from 'lucide-react'
 import { useMemo, useState } from 'react'
@@ -80,7 +85,14 @@ export function ThreadHeader({
 		const only = agents.length === 1 ? agents[0] : null
 		return only ? { id: only.actorId, name: only.actorName, type: only.actorType } : null
 	}, [conversation?.participants])
+	// The one agent of a one-agent chat, whose page the title opens.
+	const singleAgent = useMemo(() => {
+		const agents = (conversation?.participants ?? []).filter((p) => p.actorType === 'agent')
+		return agents.length === 1 ? (agents[0] ?? null) : null
+	}, [conversation?.participants])
+	const liveCall = useVoiceCallView()
 	const { data: loop } = useLoop(loopId ?? '', workspaceId)
+	const { data: sessions } = useActiveSessionsForConversation(workspaceId, conversationId)
 	const [isEditingTitle, setIsEditingTitle] = useState(false)
 	const [titleDraft, setTitleDraft] = useState('')
 
@@ -162,21 +174,57 @@ export function ThreadHeader({
 			: loopName
 		: null
 
+	// "Strategist, Developer and you": everyone but the viewer by name, then "you".
+	// The tile counts the agents in the room, or shows the one agent's initials.
+	const self = getStoredActor()
+	const others = participants.filter((p) => p.actorId !== self?.id)
+	const includesSelf = participants.some((p) => p.actorId === self?.id)
+	const names = others.map((p) => p.actorName)
+	const roster = includesSelf
+		? names.length > 0
+			? `${names.join(', ')} and you`
+			: 'You'
+		: names.join(', ')
+	const agentCount = participants.filter((p) => p.actorType === 'agent').length
+	const tileLabel = String(agentCount || participants.length)
+	const working = new Set(
+		(sessions ?? []).filter((x) => ACTIVE_STATUSES.has(x.status)).map((x) => x.actorId),
+	).size
+	const iconButton =
+		'size-8 shrink-0 rounded-full bg-secondary text-foreground hover:bg-secondary/70'
+
 	return (
-		<div className="flex shrink-0 flex-col gap-1 border-b border-border px-[var(--chat-gut)] pt-2 pb-1.5">
-			<div className="flex items-start gap-2.5">
-				{isMobile ? (
-					<Button
-						type="button"
-						variant="ghost"
-						size="icon"
-						className="-ml-1 h-7 w-7 shrink-0"
-						onClick={handleClose}
-						aria-label="Back to conversations"
+		<div className="flex min-h-[69px] shrink-0 flex-wrap items-center gap-x-3 gap-y-1 lg:flex-nowrap border-b border-border py-2 pr-4 pl-[var(--chat-gut)] md:pr-6">
+			{/* Below lg the thread replaces the list, so the way back is always there. */}
+			<Button
+				type="button"
+				variant="ghost"
+				size="icon"
+				className="-ml-2 size-8 shrink-0 lg:hidden"
+				onClick={handleClose}
+				aria-label="Back to conversations"
+			>
+				<ArrowLeft size={16} />
+			</Button>
+			<span className="hidden shrink-0 lg:block">
+				{singleAgent ? (
+					<ActorAvatar
+						name={singleAgent.actorName}
+						type="agent"
+						id={singleAgent.actorId}
+						size="md"
+						className="size-[34px] rounded-[10px] text-xs font-bold"
+					/>
+				) : (
+					<span
+						aria-hidden
+						className="grid size-[34px] place-items-center rounded-[10px] bg-secondary text-xs font-bold text-foreground"
 					>
-						<ArrowLeft size={16} />
-					</Button>
-				) : null}
+						{tileLabel}
+					</span>
+				)}
+			</span>
+			<div className="min-w-[10rem] flex-1">
 				{isEditingTitle ? (
 					<Input
 						autoFocus
@@ -194,268 +242,154 @@ export function ThreadHeader({
 						}}
 						maxLength={200}
 						aria-label="Conversation title"
-						className="h-7 min-w-0 flex-1 text-[13px] font-bold"
+						className="h-7 min-w-0 text-base font-semibold"
 					/>
 				) : (
-					// The title *is* the rename affordance (mockup 311 draws no
-					// pencil beside it) — a dedicated icon button pushed the title
-					// into a third of the row at 768px and duplicated a target the
-					// heading can carry itself.
-					<h2 className="min-w-0 flex-1">
+					<h2 className="truncate text-base font-semibold leading-tight">
+						{singleAgent ? (
+							// A chat with one agent is that agent's chat: the title opens its page.
+							<Link
+								to="/$workspaceId/agents/$agentId"
+								params={{ workspaceId, agentId: singleAgent.actorId }}
+								aria-label={`Open ${singleAgent.actorName} — ${conversation.title}`}
+								className="hover:underline"
+							>
+								{conversation.title}
+							</Link>
+						) : (
+							conversation.title
+						)}
+					</h2>
+				)}
+				<div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+					<ParticipantsPopover
+						workspaceId={workspaceId}
+						conversationId={conversationId}
+						participants={participants}
+						createdBy={conversation.createdBy}
+					>
+						<button
+							type="button"
+							className="min-w-0 truncate text-left hover:text-foreground"
+							aria-label={`${participants.length} participants — manage`}
+						>
+							{roster}
+						</button>
+					</ParticipantsPopover>
+					{working > 0 ? (
+						<span className="shrink-0 font-semibold text-success">{working} working</span>
+					) : null}
+					{loopId && loopLabel ? (
 						<Tooltip>
 							<TooltipTrigger asChild>
 								<button
 									type="button"
-									onClick={startEditingTitle}
-									aria-label={`Rename conversation — ${conversation.title}`}
-									className="w-full rounded-md px-1 py-0.5 text-left line-clamp-2 text-[13px] font-bold leading-[1.35] tracking-[-0.01em] text-balance hover:bg-accent"
+									onClick={handleLoopChipClick}
+									aria-label={`Flow: ${loopName ?? loopLabel}`}
+									className="hidden h-[22px] shrink-0 items-center rounded-full border border-border bg-card px-2 text-[11px] font-semibold text-foreground hover:border-[color:var(--border-strong)] hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:inline-flex"
 								>
-									{conversation.title}
+									{loopLabel}
 								</button>
 							</TooltipTrigger>
-							<TooltipContent>Rename</TooltipContent>
+							<TooltipContent>{loopName ?? loopLabel}</TooltipContent>
 						</Tooltip>
-					</h2>
-				)}
-				{isMobile ? null : (
-					<Tooltip>
-						<TooltipTrigger asChild>
-							<Button
-								type="button"
-								variant="ghost"
-								size="icon"
-								className="h-6 w-6 shrink-0"
-								onClick={toggleWide}
-								aria-label={wide ? 'Show conversation list' : 'Hide conversation list'}
-								aria-pressed={!!wide}
-							>
-								{wide ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
-							</Button>
-						</TooltipTrigger>
-						<TooltipContent>{wide ? 'Exit focus mode' : 'Focus mode'}</TooltipContent>
-					</Tooltip>
-				)}
-				<Tooltip>
-					<TooltipTrigger asChild>
-						<Button
-							type="button"
-							variant="ghost"
-							size="icon"
-							className="h-6 w-6 shrink-0"
-							onClick={handleClose}
-							aria-label="Close conversation"
-						>
-							<X size={14} />
-						</Button>
-					</TooltipTrigger>
-					<TooltipContent>Close conversation</TooltipContent>
-				</Tooltip>
+					) : null}
+				</div>
 			</div>
-			<div className="flex flex-wrap items-center gap-2">
-				<ParticipantsPopover
-					workspaceId={workspaceId}
-					conversationId={conversationId}
-					participants={participants}
-					createdBy={conversation.createdBy}
-				>
-					<button
+			{liveCall ? (
+				<LiveCapsule />
+			) : voiceAgent ? (
+				isMobile ? (
+					<AgentCallButton agent={voiceAgent} variant="icon" />
+				) : (
+					<AgentCallButton agent={voiceAgent} variant="thread" tooltip="Talk live with this chat" />
+				)
+			) : null}
+			<DropdownMenu>
+				<DropdownMenuTrigger asChild>
+					<Button
 						type="button"
-						className="inline-flex h-[22px] shrink-0 items-center gap-1.5 rounded-full px-1.5 hover:bg-accent"
-						aria-label={`${participants.length} participants — manage`}
+						variant="ghost"
+						size="icon"
+						className={iconButton}
+						aria-label="More actions"
 					>
-						<span className="flex items-center -space-x-1.5">
-							{visibleAvatars.map((p) => (
-								<ActorAvatar
-									key={p.actorId}
-									id={p.actorId}
-									name={p.actorName}
-									type={p.actorType}
-									size="sm"
-									className="ring-2 ring-background"
-								/>
-							))}
-						</span>
-						{overflowCount > 0 ? (
-							<span className="text-[10.5px] font-bold text-muted-foreground">
-								+{overflowCount}
-							</span>
-						) : null}
-						<Plus size={11} className="text-muted-foreground" aria-hidden />
-					</button>
-				</ParticipantsPopover>
-				{loopId && loopLabel ? (
-					<Tooltip>
-						<TooltipTrigger asChild>
-							<button
-								type="button"
-								onClick={handleLoopChipClick}
-								aria-label={`Loop: ${loopName ?? loopLabel}`}
-								className="inline-flex h-[22px] shrink-0 items-center rounded-full border border-border bg-card px-2 text-[11px] font-semibold text-foreground hover:border-[color:var(--border-strong)] hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-							>
-								{loopLabel}
-							</button>
-						</TooltipTrigger>
-						<TooltipContent>{loopName ?? loopLabel}</TooltipContent>
-					</Tooltip>
-				) : null}
-				{/* Overview toggle: one entry point for the right rail's Threads and
-				    Produced tabs. The dot pulses while something has changed since the
-				    pane was last open — a handoff started or finished, a new output. */}
-				{onToggleOverview ? (
-					<Tooltip>
-						<TooltipTrigger asChild>
-							<button
-								type="button"
-								onClick={onToggleOverview}
-								aria-pressed={overviewOpen}
-								aria-label={overviewOpen ? 'Close Overview' : 'Open Overview'}
-								className={cn(
-									'inline-flex h-[22px] shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-2 text-[11px] font-semibold text-foreground transition-colors hover:border-[color:var(--border-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-									overviewOpen &&
-										'bg-brand-subtle text-brand-subtle-foreground hover:bg-brand-subtle',
-								)}
-							>
-								<Layers size={11} aria-hidden />
-								Overview
-								{overviewHasNew ? (
-									<output className="relative flex h-2 w-2" aria-label="New activity">
-										<span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-75 motion-reduce:animate-none" />
-										<span className="relative inline-flex h-2 w-2 rounded-full bg-brand" />
-									</output>
-								) : null}
-							</button>
-						</TooltipTrigger>
-						<TooltipContent>
-							{overviewOpen ? 'Hide Overview' : 'Show Overview · press P'}
-						</TooltipContent>
-					</Tooltip>
-				) : null}
-				<span className="ml-auto" />
-				{voiceAgent ? <AgentCallButton agent={voiceAgent} variant="icon" /> : null}
-				{/* At ≤640px, Copy · Pin · Mark-unread · Archive collapse into a
-				    ⋯ menu; Focus + Close stay inline. */}
-				<DropdownMenu>
-					<DropdownMenuTrigger asChild>
-						<Button
-							type="button"
-							variant="ghost"
-							size="icon"
-							className="h-6 w-6 shrink-0 min-[641px]:hidden"
-							aria-label="More actions"
-						>
-							<MoreHorizontal size={14} />
-						</Button>
-					</DropdownMenuTrigger>
-					<DropdownMenuContent align="end">
-						<DropdownMenuItem onSelect={handleCopyConversation}>
-							<Copy size={14} />
-							<span>Copy whole conversation</span>
+						<MoreHorizontal size={16} />
+					</Button>
+				</DropdownMenuTrigger>
+				<DropdownMenuContent align="end">
+					<DropdownMenuItem onSelect={startEditingTitle}>
+						<Pencil size={14} />
+						<span>Rename conversation</span>
+					</DropdownMenuItem>
+					<DropdownMenuItem onSelect={handleCopyConversation}>
+						<Copy size={14} />
+						<span>Copy whole conversation</span>
+					</DropdownMenuItem>
+					<DropdownMenuItem
+						onSelect={() =>
+							updateMe.mutate({ id: conversationId, data: { pinned: !conversation.pinned } })
+						}
+					>
+						<Pin size={14} fill={conversation.pinned ? 'currentColor' : 'none'} />
+						<span>{conversation.pinned ? 'Unpin conversation' : 'Pin conversation'}</span>
+					</DropdownMenuItem>
+					<DropdownMenuItem onSelect={handleMarkUnread}>
+						<EyeOff size={14} />
+						<span>Mark as unread</span>
+					</DropdownMenuItem>
+					<DropdownMenuItem
+						onSelect={() =>
+							updateMe.mutate({ id: conversationId, data: { archived: !conversation.archived } })
+						}
+					>
+						{conversation.archived ? <ArchiveRestore size={14} /> : <Archive size={14} />}
+						<span>{conversation.archived ? 'Unarchive conversation' : 'Archive conversation'}</span>
+					</DropdownMenuItem>
+					{isMobile ? null : (
+						<DropdownMenuItem onSelect={toggleWide} className="max-lg:hidden">
+							{wide ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+							<span>{wide ? 'Show conversation list' : 'Hide conversation list'}</span>
 						</DropdownMenuItem>
-						<DropdownMenuItem
-							onSelect={() =>
-								updateMe.mutate({
-									id: conversationId,
-									data: { pinned: !conversation.pinned },
-								})
-							}
-						>
-							<Pin size={14} fill={conversation.pinned ? 'currentColor' : 'none'} />
-							<span>{conversation.pinned ? 'Unpin' : 'Pin'}</span>
-						</DropdownMenuItem>
-						<DropdownMenuItem onSelect={handleMarkUnread}>
-							<EyeOff size={14} />
-							<span>Mark as unread</span>
-						</DropdownMenuItem>
-						<DropdownMenuItem
-							onSelect={() =>
-								updateMe.mutate({
-									id: conversationId,
-									data: { archived: !conversation.archived },
-								})
-							}
-						>
-							{conversation.archived ? <ArchiveRestore size={14} /> : <Archive size={14} />}
-							<span>{conversation.archived ? 'Unarchive' : 'Archive'}</span>
-						</DropdownMenuItem>
-					</DropdownMenuContent>
-				</DropdownMenu>
+					)}
+					<DropdownMenuItem onSelect={handleClose}>
+						<X size={14} />
+						<span>Close conversation</span>
+					</DropdownMenuItem>
+				</DropdownMenuContent>
+			</DropdownMenu>
+			{/* Overview toggle: one entry point for the right rail's Threads and
+			    Produced tabs. The dot pulses while something has changed since the
+			    pane was last open — a handoff started or finished, a new output. */}
+			{onToggleOverview ? (
 				<Tooltip>
 					<TooltipTrigger asChild>
-						<Button
+						<button
 							type="button"
-							variant="ghost"
-							size="icon"
-							className="hidden h-6 w-6 shrink-0 min-[641px]:inline-flex"
-							onClick={handleCopyConversation}
-							aria-label="Copy whole conversation"
-						>
-							<Copy size={14} />
-						</Button>
-					</TooltipTrigger>
-					<TooltipContent>Copy whole conversation</TooltipContent>
-				</Tooltip>
-				<Tooltip>
-					<TooltipTrigger asChild>
-						<Button
-							type="button"
-							variant="ghost"
-							size="icon"
+							onClick={onToggleOverview}
+							aria-pressed={overviewOpen}
+							aria-label={overviewOpen ? 'Close Overview' : 'Open Overview'}
 							className={cn(
-								'h-6 w-6 shrink-0',
-								// Pin collapses behind the mobile ⋯ menu.
-								'hidden min-[641px]:inline-flex',
-								// Pinned is a *state*, so it holds an indigo plate rather
-								// than swapping to a different glyph (mockup 7804–7806).
-								// PinOff read as "this button unpins" — i.e. as the action,
-								// not the current state — which is the wrong tense for a toggle.
-								conversation.pinned &&
+								'relative inline-flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+								iconButton,
+								overviewOpen &&
 									'bg-brand-subtle text-brand-subtle-foreground hover:bg-brand-subtle',
 							)}
-							onClick={() =>
-								updateMe.mutate({ id: conversationId, data: { pinned: !conversation.pinned } })
-							}
-							aria-label={conversation.pinned ? 'Unpin conversation' : 'Pin conversation'}
-							aria-pressed={conversation.pinned}
 						>
-							<Pin size={14} fill={conversation.pinned ? 'currentColor' : 'none'} />
-						</Button>
+							<PanelRight size={16} aria-hidden />
+							{overviewHasNew ? (
+								<output className="absolute top-1 right-1 flex h-2 w-2" aria-label="New activity">
+									<span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-75 motion-reduce:animate-none" />
+									<span className="relative inline-flex h-2 w-2 rounded-full bg-brand" />
+								</output>
+							) : null}
+						</button>
 					</TooltipTrigger>
-					<TooltipContent>{conversation.pinned ? 'Unpin' : 'Pin'}</TooltipContent>
+					<TooltipContent>
+						{overviewOpen ? 'Hide Overview' : 'Show Overview · press P'}
+					</TooltipContent>
 				</Tooltip>
-				<Tooltip>
-					<TooltipTrigger asChild>
-						<Button
-							type="button"
-							variant="ghost"
-							size="icon"
-							className="hidden h-6 w-6 shrink-0 min-[641px]:inline-flex"
-							onClick={handleMarkUnread}
-							aria-label="Mark as unread"
-						>
-							<EyeOff size={14} />
-						</Button>
-					</TooltipTrigger>
-					<TooltipContent>Mark as unread</TooltipContent>
-				</Tooltip>
-				<Tooltip>
-					<TooltipTrigger asChild>
-						<Button
-							type="button"
-							variant="ghost"
-							size="icon"
-							className="hidden h-6 w-6 shrink-0 min-[641px]:inline-flex"
-							onClick={() =>
-								updateMe.mutate({ id: conversationId, data: { archived: !conversation.archived } })
-							}
-							aria-label={conversation.archived ? 'Unarchive conversation' : 'Archive conversation'}
-							aria-pressed={conversation.archived}
-						>
-							{conversation.archived ? <ArchiveRestore size={14} /> : <Archive size={14} />}
-						</Button>
-					</TooltipTrigger>
-					<TooltipContent>{conversation.archived ? 'Unarchive' : 'Archive'}</TooltipContent>
-				</Tooltip>
-			</div>
+			) : null}
 		</div>
 	)
 }

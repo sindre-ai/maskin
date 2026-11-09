@@ -1,4 +1,6 @@
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { type LoopPlan, describeLoopPlan, loopPlanSchema } from '@/lib/loop-plan'
 
 export interface PlanDiffRow {
@@ -32,7 +34,7 @@ const NONE = 'nothing'
 function planFields(plan: LoopPlan): Record<string, string> {
 	const primary = plan.objectTypes[0]
 	return {
-		'OBJECT TYPE': primary?.name ?? NONE,
+		'ITEM TYPE': primary?.name ?? NONE,
 		STATES: primary?.stateChain?.join(' → ') || NONE,
 		TRIGGERS: plan.triggers.map((t) => t.whenClause).join(' · ') || NONE,
 		AGENTS: plan.agents.map((a) => a.name).join(', ') || NONE,
@@ -72,6 +74,7 @@ export function LoopProposedEdit({
 	onDismiss: () => void
 	applying?: boolean
 }) {
+	const canWrite = useCanWrite()
 	if (rows.length === 0) return null
 
 	return (
@@ -98,14 +101,16 @@ export function LoopProposedEdit({
 				</p>
 			</div>
 			<div className="flex flex-wrap items-center gap-2 border-t border-brand-subtle-foreground/20 bg-card px-4 py-2.5">
-				<Button size="sm" onClick={onApply} disabled={applying}>
-					{applying ? 'Applying…' : 'Make the change'}
-				</Button>
+				<ViewerTooltip>
+					<Button size="sm" onClick={onApply} disabled={applying || !canWrite}>
+						{applying ? 'Applying…' : 'Make the change'}
+					</Button>
+				</ViewerTooltip>
 				<Button size="sm" variant="outline" onClick={onDismiss} disabled={applying}>
 					Leave it
 				</Button>
 				<span className="ml-auto text-[11px] text-muted-foreground">
-					nothing moves until you say so
+					Nothing moves until you say so. Undo stays for 30 seconds.
 				</span>
 			</div>
 		</div>

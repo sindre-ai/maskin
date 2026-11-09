@@ -55,33 +55,6 @@ async function expectVaultModeHoldsTheToken(page: Page, requests: string[]) {
 
 test.describe('Vault mode (the ! prefix)', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
-		test(`paste ! plus a token in the main chat composer: no message, no storage @ ${vp.label}`, async ({
-			page,
-			account,
-		}) => {
-			await page.setViewportSize({ width: vp.width, height: vp.height })
-			const requests = watchMessageRequests(page)
-
-			await page.goto(`/${account.workspaceId}/chats/new`)
-			await page.getByLabel('Message this conversation').click()
-			await pasteInto(page, `!${FAKE_TOKEN}`)
-
-			await expectVaultModeHoldsTheToken(page, requests)
-			// Enter in a filled field opens the scope step, which sends nothing either. With
-			// no running session in a new chat there is nothing to vault into, so Vault waits.
-			await expect(page.getByRole('button', { name: 'Vault →' })).toBeDisabled()
-			await page.getByLabel('Secret to vault').press('Enter')
-			await expect(page.getByText(/Assign scope for/)).toHaveCount(0)
-			expect(requests).toEqual([])
-
-			// Esc leaves vault mode, clears the field and never sends it.
-			await page.getByLabel('Secret to vault').press('Escape')
-			await expect(page.getByLabel('Secret to vault')).toHaveCount(0)
-			await expect(page.getByLabel('Message this conversation')).toHaveValue('')
-			expect(await storageHolds(page, FAKE_TOKEN)).toBe(false)
-			expect(requests).toEqual([])
-		})
-
 		test(`type ! and the token in a thread composer: no message, no storage @ ${vp.label}`, async ({
 			page,
 			account,
@@ -129,6 +102,6 @@ test.describe('Vault mode (the ! prefix)', () => {
 		await composer.click()
 		await composer.pressSequentially(' !hello')
 		await expect(page.getByLabel('Secret to vault')).toHaveCount(0)
-		await expect(composer).toHaveValue(' !hello')
+		await expect(composer).toHaveText('!hello')
 	})
 })

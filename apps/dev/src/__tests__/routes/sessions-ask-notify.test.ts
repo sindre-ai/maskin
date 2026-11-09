@@ -8,14 +8,30 @@ import { createSessionTestApp } from '../setup'
 // and that a failure here can never change the response). The real rows are
 // covered against Postgres in integration/push-producers.test.ts.
 
-const { insertConversationMessage, notifyAgentQuestion, humanParticipants } = vi.hoisted(() => ({
+const {
+	insertConversationMessage,
+	notifyAgentQuestion,
+	humanParticipants,
+	resolveAskTargetHuman,
+	findOrCreateDirectChat,
+} = vi.hoisted(() => ({
 	insertConversationMessage: vi.fn(),
 	notifyAgentQuestion: vi.fn(),
 	humanParticipants: vi.fn(),
+	resolveAskTargetHuman: vi.fn(),
+	findOrCreateDirectChat: vi.fn(),
 }))
 
 vi.mock('../../services/conversation-messages', () => ({ insertConversationMessage }))
 vi.mock('../../services/chat-notifications', () => ({ notifyAgentQuestion, humanParticipants }))
+vi.mock('../../services/chief-of-staff-chat', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../services/chief-of-staff-chat')>()),
+	resolveAskTargetHuman,
+}))
+vi.mock('../../services/direct-chat', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../services/direct-chat')>()),
+	findOrCreateDirectChat,
+}))
 
 const { default: sessionsRoutes } = await import('../../routes/sessions')
 
@@ -64,6 +80,8 @@ describe('POST /api/sessions/:id/ask notification', () => {
 		insertConversationMessage.mockReset().mockResolvedValue({ id: 77 })
 		notifyAgentQuestion.mockReset().mockResolvedValue(undefined)
 		humanParticipants.mockReset().mockResolvedValue([humanA, humanB])
+		resolveAskTargetHuman.mockReset()
+		findOrCreateDirectChat.mockReset()
 	})
 
 	it('notifies the conversation humans once, keyed on the posted message', async () => {
@@ -81,6 +99,24 @@ describe('POST /api/sessions/:id/ask notification', () => {
 			targets: [humanA, humanB],
 			firstQuestion: 'How should I reach Spotify?',
 			objectId,
+			sessionId: session.id,
+		})
+	})
+
+	it('notifies only the resolved person for a question put in a direct message', async () => {
+		resolveAskTargetHuman.mockResolvedValue(humanA)
+		findOrCreateDirectChat.mockResolvedValue({ id: conversationId, created: false })
+		const { app, session } = setup({ conversationId: null, interactive: false })
+
+		const res = await app.request(ask(session.id))
+
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({ posted: true, delivered_to: 'master' })
+		expect(humanParticipants).not.toHaveBeenCalled()
+		expect(notifyAgentQuestion).toHaveBeenCalledTimes(1)
+		expect(notifyAgentQuestion.mock.calls[0]?.[1]).toMatchObject({
+			conversationId,
+			targets: [humanA],
 			sessionId: session.id,
 		})
 	})

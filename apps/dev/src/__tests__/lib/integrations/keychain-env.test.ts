@@ -30,10 +30,11 @@ describe('byoLoginEnvNames', () => {
 	it.each([
 		['e-conomic', 'KEYCHAIN_BYO_LOGIN_E_CONOMIC'],
 		['Dinero team', 'KEYCHAIN_BYO_LOGIN_DINERO_TEAM'],
-	])('%s -> %s_USERNAME and _PASSWORD', (name, base) => {
+	])('%s -> %s_USERNAME, _PASSWORD and _EMAIL', (name, base) => {
 		expect(byoLoginEnvNames(name)).toEqual({
 			username: `${base}_USERNAME`,
 			password: `${base}_PASSWORD`,
+			email: `${base}_EMAIL`,
 		})
 	})
 
@@ -41,15 +42,16 @@ describe('byoLoginEnvNames', () => {
 		expect(byoLoginEnvNames('🔑')).toBeNull()
 	})
 
-	it('only ever produces valid shell identifiers, and both are redacted from logs', () => {
+	it('only ever produces valid shell identifiers, and all are redacted from logs', () => {
 		const names = byoLoginEnvNames('a; rm -rf / $(whoami) "quoted"') as {
 			username: string
 			password: string
+			email: string
 		}
-		expect(names.username).toMatch(/^[A-Za-z_][A-Za-z0-9_]*$/)
-		expect(names.password).toMatch(/^[A-Za-z_][A-Za-z0-9_]*$/)
-		expect(isRedactedEnvKey(names.username)).toBe(true)
-		expect(isRedactedEnvKey(names.password)).toBe(true)
+		for (const name of [names.username, names.password, names.email]) {
+			expect(name).toMatch(/^[A-Za-z_][A-Za-z0-9_]*$/)
+			expect(isRedactedEnvKey(name)).toBe(true)
+		}
 	})
 })
 

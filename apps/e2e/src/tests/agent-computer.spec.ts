@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
+import { openAgentTab } from '../helpers/agent-tab.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 /**
@@ -64,6 +65,8 @@ test.describe("An agent's computer", () => {
 
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
 
+			await openAgentTab(page, 'computer')
+
 			const start = page.getByRole('button', { name: 'Start computer' })
 			await expect(start).toBeVisible()
 			await expect(page.getByText('Not started yet')).toBeVisible()
@@ -86,6 +89,8 @@ test.describe("An agent's computer", () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
+
+			await openAgentTab(page, 'computer')
 
 			await expect(page.getByRole('button', { name: 'Wake up' })).toBeVisible()
 			await expect(page.getByText('Asleep', { exact: true })).toBeVisible()
@@ -113,6 +118,8 @@ test.describe("An agent's computer", () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
+
+			await openAgentTab(page, 'computer')
 			await page.getByRole('button', { name: 'Start computer' }).click()
 
 			await expect(page.getByText("Couldn't open the desktop")).toBeVisible()
@@ -135,6 +142,8 @@ test.describe("An agent's computer", () => {
 			await page.route(CONNECT, () => {})
 
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
+
+			await openAgentTab(page, 'computer')
 			await page.getByRole('button', { name: 'Open computer in a popup' }).click()
 
 			const dialog = page.getByRole('dialog')
@@ -181,6 +190,8 @@ test.describe("An agent's computer", () => {
 
 		await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
 
+		await openAgentTab(page, 'computer')
+
 		const url = new URL(await streamUrl)
 		expect(url.pathname).toBe('/api/desktop/stream')
 		expect(url.searchParams.get('ticket')).toBe('e2e-ticket')
@@ -209,7 +220,9 @@ test.describe("An agent's computer", () => {
 
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
 
-			await expect(page.getByRole('region', { name: 'Computer' })).toBeVisible()
+			await openAgentTab(page, 'computer')
+
+			await expect(page.getByRole('region', { name: 'Computer', exact: true })).toBeVisible()
 			await expect(page.getByText("Couldn't open the desktop")).toBeVisible()
 			await expect(page.getByRole('button', { name: 'Reconnect' })).toBeVisible()
 		})

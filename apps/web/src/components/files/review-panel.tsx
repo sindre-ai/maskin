@@ -1,13 +1,16 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
 import { RelativeTime } from '@/components/shared/relative-time'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import type { ActorListItem, FileCommentDto } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import type { FileCommentDraft } from '@/lib/file-comments-context'
+import { summarizeOpenComments } from '@/lib/file-review-summary'
 import { textCommentCardId } from '@/lib/text-comments-context'
 import type { AttachingObject, ProvenanceResolution } from '@/lib/viewer-provenance'
 import { Check } from 'lucide-react'
@@ -207,6 +210,7 @@ export function ReviewPanel(props: ReviewPanelProps) {
 				open={open}
 				resolved={resolved}
 				total={comments.length}
+				summary={summarizeOpenComments(comments)}
 				roundFilter={roundFilter}
 				onClearRoundFilter={onClearRoundFilter}
 			/>
@@ -263,6 +267,7 @@ function PanelHeader({
 	open,
 	resolved,
 	total,
+	summary,
 	roundFilter,
 	onClearRoundFilter,
 }: {
@@ -271,12 +276,19 @@ function PanelHeader({
 	open: number
 	resolved: number
 	total: number
+	summary: string
 	roundFilter: string | null
 	onClearRoundFilter: () => void
 }) {
 	const counts: Record<ReviewFilter, number> = { open, resolved, all: total }
 	return (
 		<div className="flex flex-col gap-2 border-b p-3">
+			<div className="flex flex-col gap-0.5">
+				<span className="eyebrow">Review</span>
+				<span className="text-sm font-semibold text-foreground" data-testid="panel-summary">
+					{summary}
+				</span>
+			</div>
 			<div className="flex items-center gap-1" role="tablist" aria-label="Review filter">
 				{(Object.keys(FILTER_LABELS) as ReviewFilter[]).map((key) => (
 					<button
@@ -303,7 +315,7 @@ function PanelHeader({
 						type="button"
 						variant="ghost"
 						size="sm"
-						className="ml-auto h-6 px-2 text-xs"
+						className="ml-auto h-6 px-2 text-xs max-md:h-11"
 						onClick={onClearRoundFilter}
 					>
 						Clear
@@ -455,6 +467,7 @@ function CommentCard({
 	const author = actorsById.get(comment.authorId)
 	const resolvedActor = comment.resolvedBy ? actorsById.get(comment.resolvedBy) : null
 	const isResolved = Boolean(comment.resolvedAt)
+	const canWrite = useCanWrite()
 
 	const textAnchor = comment.textAnchor ?? null
 
@@ -519,26 +532,32 @@ function CommentCard({
 						<span className="text-[10px] uppercase tracking-wide text-muted-foreground">
 							Resolved {resolvedActor?.name ? `· ${resolvedActor.name}` : ''}
 						</span>
+						<ViewerTooltip className="ml-auto inline-flex">
+							<Button
+								type="button"
+								variant="ghost"
+								size="sm"
+								className="ml-auto h-6 px-2 text-[11px] max-md:h-11"
+								disabled={!canWrite}
+								onClick={() => onReopen(comment)}
+							>
+								Reopen
+							</Button>
+						</ViewerTooltip>
+					</>
+				) : (
+					<ViewerTooltip className="ml-auto inline-flex">
 						<Button
 							type="button"
 							variant="ghost"
 							size="sm"
-							className="ml-auto h-6 px-2 text-[11px]"
-							onClick={() => onReopen(comment)}
+							className="ml-auto h-6 px-2 text-[11px] max-md:h-11"
+							disabled={!canWrite}
+							onClick={() => onResolve(comment)}
 						>
-							Reopen
+							<Check size={12} /> Resolve
 						</Button>
-					</>
-				) : (
-					<Button
-						type="button"
-						variant="ghost"
-						size="sm"
-						className="ml-auto h-6 px-2 text-[11px]"
-						onClick={() => onResolve(comment)}
-					>
-						<Check size={12} /> Resolve
-					</Button>
+					</ViewerTooltip>
 				)}
 			</footer>
 		</article>
@@ -657,6 +676,7 @@ function DraftCard({
 	onPostDraft: (draft: FileCommentDraft) => void
 }) {
 	const [localBody, setLocalBody] = useState(draft.body)
+	const canWrite = useCanWrite()
 	const textAnchor = draft.textAnchor
 	return (
 		// biome-ignore lint/a11y/useKeyWithClickEvents: a click on the card supplements the quote button, which is the keyboard way to the same highlight
@@ -707,21 +727,23 @@ function DraftCard({
 					type="button"
 					variant="ghost"
 					size="sm"
-					className="h-7 px-2 text-xs"
+					className="h-7 px-2 text-xs max-md:h-11"
 					onClick={() => onRemoveDraft(draft.tempId)}
 				>
 					Discard
 				</Button>
-				<Button
-					type="button"
-					variant="secondary"
-					size="sm"
-					className="ml-auto h-7 px-2 text-xs"
-					disabled={localBody.trim().length === 0}
-					onClick={() => onPostDraft({ ...draft, body: localBody })}
-				>
-					Save draft
-				</Button>
+				<ViewerTooltip className="ml-auto inline-flex">
+					<Button
+						type="button"
+						variant="secondary"
+						size="sm"
+						className="ml-auto h-7 px-2 text-xs max-md:h-11"
+						disabled={localBody.trim().length === 0 || !canWrite}
+						onClick={() => onPostDraft({ ...draft, body: localBody })}
+					>
+						Save draft
+					</Button>
+				</ViewerTooltip>
 			</div>
 		</article>
 	)
@@ -746,6 +768,7 @@ function PanelFoot({
 	const disabledReason = deriveDisabledReason(provenance, target, unsentCount)
 	const isSending = sendState.phase === 'sending'
 	const isSent = sendState.phase === 'sent'
+	const canWrite = useCanWrite()
 
 	if (isSent) {
 		return (
@@ -776,17 +799,33 @@ function PanelFoot({
 					? 'Add comments on the stage, then send the round.'
 					: `${unsentCount} comment${unsentCount === 1 ? '' : 's'} ready to send.`}
 			</div>
-			<Button
-				type="button"
-				size="sm"
-				className="h-8 text-xs"
-				disabled={disabledReason !== null || unsentCount === 0 || !target || isSending}
-				onClick={() => target && onSendRound(target.id)}
-				title={disabledReason ?? undefined}
-				data-testid="panel-send-round"
-			>
-				{isSending ? 'Sending…' : `Send round${target ? ` · ${target.title}` : ''}`}
-			</Button>
+			<div className="flex items-center gap-2">
+				<div className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+					{target ? (
+						<>
+							Send round to <b className="font-semibold text-foreground">{target.title}</b>
+						</>
+					) : (
+						'Send round'
+					)}
+				</div>
+				<ViewerTooltip className="flex flex-col">
+					<Button
+						type="button"
+						size="sm"
+						className="text-xs max-md:h-11"
+						disabled={
+							disabledReason !== null || unsentCount === 0 || !target || isSending || !canWrite
+						}
+						onClick={() => target && onSendRound(target.id)}
+						title={disabledReason ?? undefined}
+						aria-label={target ? `Send round to ${target.title}` : 'Send round'}
+						data-testid="panel-send-round"
+					>
+						{isSending ? 'Sending…' : 'Send'}
+					</Button>
+				</ViewerTooltip>
+			</div>
 		</div>
 	)
 }
@@ -855,12 +894,12 @@ function deriveDisabledReason(
 	target: AttachingObject | null,
 	unsentCount: number,
 ): string | null {
-	if (provenance.variant === 'zero') return "This file isn't attached to any object"
-	if (provenance.variant === 'archived') return 'The attached object is archived'
-	if (provenance.variant === 'orphaned') return 'The attached object was archived mid-review'
-	if (provenance.send === 'picker-required') return 'Pick a target object first'
+	if (provenance.variant === 'zero') return "This file isn't attached to any item"
+	if (provenance.variant === 'archived') return 'The attached item is archived'
+	if (provenance.variant === 'orphaned') return 'The attached item was archived mid-review'
+	if (provenance.send === 'picker-required') return 'Pick a target item first'
 	if (unsentCount === 0) return 'Nothing to send yet'
-	if (!target) return 'No target object'
+	if (!target) return 'No target item'
 	return null
 }
 

@@ -84,10 +84,10 @@ export function ExtensionRemovalDialog({
 
 	const formatCount = (data: { count: number; hasMore: boolean } | undefined) => {
 		// No data means the count never came back — say so rather than showing a
-		// "0 objects" that reads as "safe to remove".
-		if (!data) return 'Unknown number of objects'
+		// "0 items" that reads as "safe to remove".
+		if (!data) return 'Unknown number of items'
 		const suffix = data.hasMore ? '+' : ''
-		return `${data.count}${suffix} object${data.count === 1 && !data.hasMore ? '' : 's'}`
+		return `${data.count}${suffix} item${data.count === 1 && !data.hasMore ? '' : 's'}`
 	}
 
 	const [choices, setChoices] = useState<Record<string, Choice>>({})
@@ -147,8 +147,8 @@ export function ExtensionRemovalDialog({
 					<ResponsiveDialogTitle>Remove extension</ResponsiveDialogTitle>
 					<ResponsiveDialogDescription>
 						{affectedTypes.length === 1
-							? 'This extension defines an object type that has existing data. Choose what to do with it.'
-							: 'This extension defines object types that have existing data. Choose what to do with each.'}
+							? 'This extension defines an item type that has existing data. Choose what to do with it.'
+							: 'This extension defines item types that have existing data. Choose what to do with each.'}
 					</ResponsiveDialogDescription>
 				</ResponsiveDialogHeader>
 
@@ -176,7 +176,7 @@ export function ExtensionRemovalDialog({
 
 								{isEmpty ? (
 									<p className="text-xs text-muted-foreground">
-										No objects to migrate. The extension will be removed.
+										No items to migrate. The extension will be removed.
 									</p>
 								) : (
 									<RadioGroup
@@ -203,7 +203,7 @@ export function ExtensionRemovalDialog({
 													<div className="mt-2 space-y-3">
 														{targetTypes.length === 0 ? (
 															<p className="text-xs text-error">
-																No remaining object types to migrate to.
+																No remaining item types to migrate to.
 															</p>
 														) : (
 															<Select
@@ -284,7 +284,7 @@ export function ExtensionRemovalDialog({
 											<Label htmlFor={`${type}-keep`} className="text-sm font-normal">
 												Keep as orphans
 												<span className="block text-xs text-muted-foreground">
-													Objects stay but won't load until the type is restored.
+													Items stay but won't load until the type is restored.
 												</span>
 											</Label>
 										</div>

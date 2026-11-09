@@ -1,0 +1,148 @@
+import { buildReviewItems, splitBlocks, stripMarkdown, wordDiff } from '@/lib/change-review'
+import { describe, expect, it } from 'vitest'
+
+const DOC = [
+	'# Title',
+	'',
+	'First paragraph.',
+	'',
+	'Second paragraph with **bold** text.',
+	'',
+	'Third paragraph.',
+	'',
+	'Fourth paragraph.',
+	'',
+	'Fifth paragraph.',
+].join('\n')
+
+describe('splitBlocks', () => {
+	it('splits on blank lines and records offsets', () => {
+		const blocks = splitBlocks(DOC)
+		expect(blocks.map((b) => b.text)).toEqual([
+			'# Title',
+			'First paragraph.',
+			'Second paragraph with **bold** text.',
+			'Third paragraph.',
+			'Fourth paragraph.',
+			'Fifth paragraph.',
+		])
+		for (const b of blocks) expect(DOC.slice(b.start, b.end)).toBe(b.text)
+	})
+
+	it('keeps a code fence with blank lines inside as one block', () => {
+		const text = 'Before\n\n```js\na\n\nb\n```\n\nAfter'
+		expect(splitBlocks(text).map((b) => b.text)).toEqual(['Before', '```js\na\n\nb\n```', 'After'])
+	})
+})
+
+describe('stripMarkdown', () => {
+	it('removes headings, emphasis, links and list markers', () => {
+		expect(stripMarkdown('## A [link](http://x) and **bold**')).toBe('A link and bold')
+		expect(stripMarkdown('- [ ] item one\n- item two')).toBe('item one item two')
+	})
+})
+
+describe('buildReviewItems', () => {
+	it('puts the card where the old text sits, with the neighbouring blocks as context', () => {
+		const items = buildReviewItems(DOC, [{ id: 'c1', oldText: 'Third paragraph.', ordinal: 0 }])
+		expect(items).toEqual([
+			{ kind: 'gap', key: 'gap-2', count: 2 },
+			{ kind: 'context', key: 'ctx-2', text: 'Second paragraph with bold text.' },
+			{ kind: 'change', key: 'c1', changeId: 'c1', number: 1 },
+			{ kind: 'context', key: 'ctx-4', text: 'Fourth paragraph.' },
+			{ kind: 'gap', key: 'gap-end', count: 1 },
+		])
+	})
+
+	it('numbers cards in document order, not submit order', () => {
+		const items = buildReviewItems(DOC, [
+			{ id: 'late', oldText: 'Fifth paragraph.', ordinal: 0 },
+			{ id: 'early', oldText: 'First paragraph.', ordinal: 1 },
+		])
+		const cards = items.filter((i) => i.kind === 'change')
+		expect(cards.map((c) => (c.kind === 'change' ? [c.changeId, c.number] : []))).toEqual([
+			['early', 1],
+			['late', 2],
+		])
+	})
+
+	it('puts two changes in one paragraph side by side without context between them', () => {
+		const doc = 'Alpha beta gamma delta.'
+		const items = buildReviewItems(doc, [
+			{ id: 'b', oldText: 'delta', ordinal: 1 },
+			{ id: 'a', oldText: 'beta', ordinal: 0 },
+		])
+		expect(items.map((i) => i.kind)).toEqual(['change', 'change'])
+		expect(items[0]).toMatchObject({ changeId: 'a', number: 1 })
+	})
+
+	it('gives a change whose old text no longer occurs exactly once a card but no place in the text', () => {
+		const doc = 'Same.\n\nSame.\n\nOther.'
+		expect(buildReviewItems(doc, [{ id: 'dup', oldText: 'Same.', ordinal: 0 }])).toEqual([
+			{ kind: 'gap', key: 'gap-end', count: 3 },
+			{ kind: 'change', key: 'dup', changeId: 'dup', number: 1 },
+		])
+	})
+
+	it('puts a change that no longer matches by ordinal, before the first placed change after it', () => {
+		const doc = 'One.\n\nTwo.\n\nThree.'
+		const items = buildReviewItems(doc, [
+			{ id: 'a', oldText: 'One.', ordinal: 0 },
+			{ id: 'gone', oldText: 'Missing', ordinal: 1 },
+			{ id: 'c', oldText: 'Three.', ordinal: 2 },
+		])
+		const cards = items.flatMap((i) => (i.kind === 'change' ? [[i.changeId, i.number]] : []))
+		expect(cards).toEqual([
+			['a', 1],
+			['gone', 2],
+			['c', 3],
+		])
+		const tail = buildReviewItems(doc, [{ id: 'gone', oldText: 'Missing', ordinal: 0 }])
+		expect(tail.at(-1)).toMatchObject({ kind: 'change', changeId: 'gone', number: 1 })
+	})
+})
+
+describe('wordDiff', () => {
+	it('marks removed and added words and keeps the rest', () => {
+		const parts = wordDiff('The quick brown fox', 'The slow brown fox')
+		expect(parts.map((p) => [p.type, p.text.trim()])).toEqual([
+			['same', 'The'],
+			['del', 'quick'],
+			['ins', 'slow'],
+			['same', 'brown fox'],
+		])
+	})
+
+	it('returns one same part for identical text and a pure insert for an empty before', () => {
+		expect(wordDiff('a b', 'a b')).toEqual([{ type: 'same', text: 'a b' }])
+		expect(wordDiff('', 'new words')).toEqual([{ type: 'ins', text: 'new words' }])
+	})
+
+	it('keeps a full stop after a word out of the change when words are added before it', () => {
+		expect(wordDiff('Ramp to 100%.', 'Ramp to 100% over three weeks.')).toEqual([
+			{ type: 'same', text: 'Ramp to 100%' },
+			{ type: 'ins', text: ' over three weeks' },
+			{ type: 'same', text: '.' },
+		])
+	})
+
+	it('shows a comma and new clause as one insert when the old text ended in a full stop', () => {
+		expect(
+			wordDiff(
+				'If it drops, we pause the risk.',
+				'If it drops, we pause the risk, and above 5% loss we stop the ramp.',
+			),
+		).toEqual([
+			{ type: 'same', text: 'If it drops, we pause the risk' },
+			{ type: 'ins', text: ', and above 5% loss we stop the ramp' },
+			{ type: 'same', text: '.' },
+		])
+	})
+
+	it('does not split a full stop inside a word or number', () => {
+		expect(wordDiff('Version 3.5 ships', 'Version 3.5 ships soon')).toEqual([
+			{ type: 'same', text: 'Version 3.5 ships' },
+			{ type: 'ins', text: ' soon' },
+		])
+	})
+})

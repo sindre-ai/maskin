@@ -37,6 +37,112 @@ test.describe('Objects list — v2 control row', () => {
 			await expect(page.getByText('Empty-state bet')).toBeVisible()
 		})
 
+		test(`title-row search wires the list, and both searches are reachable with no sideways scroll at ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			await account.api.createObject(account.workspaceId, {
+				type: 'bet',
+				title: 'Alpha plan',
+				status: 'active',
+			})
+			await account.api.createObject(account.workspaceId, {
+				type: 'bet',
+				title: 'Zulu plan',
+				status: 'active',
+			})
+			await page.goto(`/${account.workspaceId}/objects?type=bet`)
+			await expect(page.getByText('Alpha plan')).toBeVisible({ timeout: 15000 })
+
+			// The header has no workspace search button; the one New stays beside the page's own search.
+			await expect(page.getByRole('button', { name: 'Search or run a command' })).toHaveCount(0)
+			await expect(page.getByRole('button', { name: /^New/ }).first()).toBeVisible()
+			const overflow = await page.evaluate(() => ({
+				scroll: document.documentElement.scrollWidth,
+				client: document.documentElement.clientWidth,
+			}))
+			expect(overflow.scroll).toBeLessThanOrEqual(overflow.client)
+
+			// A field from xl up, an icon below it that opens an inline field.
+			if (vp.width < 1280) {
+				await expect(page.getByRole('searchbox', { name: 'Search items' })).toBeHidden()
+				await page.getByRole('button', { name: 'Search items' }).click()
+			}
+			const search = page.getByRole('searchbox', { name: 'Search items' })
+			await expect(search).toBeVisible()
+			await search.fill('zulu')
+			await expect(page.getByText('Zulu plan')).toBeVisible()
+			await expect(page.getByText('Alpha plan')).toHaveCount(0)
+			await expect(page).toHaveURL(/q=zulu/)
+
+			await search.fill('')
+			await expect(page.getByText('Alpha plan')).toBeVisible()
+			await expect(page).not.toHaveURL(/q=/)
+		})
+
+		test(`rows carry a type glyph named for the type at ${vp.label}`, async ({ page, account }) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			await account.api.createObject(account.workspaceId, {
+				type: 'bet',
+				title: 'Glyph bet',
+				status: 'active',
+			})
+			await page.goto(`/${account.workspaceId}/objects?type=bet`)
+			await expect(page.getByText('Glyph bet')).toBeVisible({ timeout: 15000 })
+			const row = page.locator('[data-obj-id]', { hasText: 'Glyph bet' })
+			await expect(row.getByRole('img', { name: /^bets?$/i })).toBeVisible()
+			for (const scheme of ['light', 'dark'] as const) {
+				await page.emulateMedia({ colorScheme: scheme })
+				await expect(row.getByRole('img', { name: /^bets?$/i })).toBeVisible()
+			}
+			await page.emulateMedia({ colorScheme: 'light' })
+		})
+
+		test(`type chips fold into More only when they do not fit at ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			for (const [type, status] of [
+				['bet', 'active'],
+				['task', 'todo'],
+				['insight', 'new'],
+			] as const) {
+				await account.api.createObject(account.workspaceId, {
+					type,
+					title: `Fold ${type}`,
+					status,
+				})
+			}
+			await page.goto(`/${account.workspaceId}/objects`)
+			const chips = page.getByRole('group', { name: 'Type filter' })
+			await expect(chips.getByRole('button', { name: /^All \(\d+\)$/ })).toBeVisible({
+				timeout: 15000,
+			})
+
+			const more = chips.getByRole('button', { name: /^More \(\d+\)$/ })
+			if (vp.width < 768) {
+				// 375px: not every chip fits the row, so the rest sit behind More.
+				await expect(more).toBeVisible()
+				await more.click()
+				const folded = page.getByRole('menuitemradio').first()
+				await expect(folded).toBeVisible()
+				await folded.click()
+				await expect(page).toHaveURL(/type=/)
+			} else {
+				// 768px and up: every chip fits, so there is no More at all.
+				await expect(chips.getByRole('button', { name: /^Tasks \(\d+\)$/ })).toBeVisible()
+				await expect(chips.getByRole('button', { name: /^Bets \(\d+\)$/ })).toBeVisible()
+				await expect(more).toHaveCount(0)
+			}
+			const overflow = await page.evaluate(() => ({
+				scroll: document.documentElement.scrollWidth,
+				client: document.documentElement.clientWidth,
+			}))
+			expect(overflow.scroll).toBeLessThanOrEqual(overflow.client)
+		})
+
 		test(`selecting one row shows a checkbox on every row at ${vp.label}`, async ({
 			page,
 			account,
@@ -88,16 +194,43 @@ test.describe('Objects list — v2 control row', () => {
 
 			await page.getByRole('button', { name: /^Display/ }).click()
 
-			// Segmented List | Board rail first (mockup 694–697), then the sections.
-			await expect(page.getByRole('button', { name: 'List' })).toBeVisible()
-			await expect(page.getByRole('button', { name: 'Board' })).toBeVisible()
-			await expect(page.getByText('Filters')).toBeVisible()
-			await expect(page.getByText('Properties')).toBeVisible()
-			await expect(page.getByText('Show archived')).toBeVisible()
-			await expect(page.getByText('Reset all')).toBeVisible()
+			// View rows first, then the sections.
+			await expect(page.getByRole('button', { name: /View: List/ })).toBeVisible()
+			await expect(page.getByRole('button', { name: /View: Board/ })).toBeVisible()
+			await expect(page.getByText('Filters', { exact: true })).toBeVisible()
+			await expect(page.getByText('Properties', { exact: true })).toBeVisible()
+			await expect(page.getByText('Show archived', { exact: true })).toBeVisible()
+			await expect(page.getByText('Reset all', { exact: true })).toBeVisible()
 		})
 
-		test(`the list rests grouped by state with its groups open at ${vp.label}`, async ({
+		test(`the list rests grouped by status, groups open, at ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+
+			await account.api.createObject(account.workspaceId, {
+				type: 'bet',
+				title: 'Active flat bet',
+				status: 'active',
+			})
+			await account.api.createObject(account.workspaceId, {
+				type: 'bet',
+				title: 'Done flat bet',
+				status: 'succeeded',
+			})
+
+			// No groupBy in the URL and nothing saved — the v11 resting state is Group by Status.
+			await page.goto(`/${account.workspaceId}/objects?type=bet`)
+
+			// Both rows are reachable at once, each under its own open status group.
+			await expect(page.getByText('Active flat bet')).toBeVisible({ timeout: 15000 })
+			await expect(page.getByText('Done flat bet')).toBeVisible()
+			await expect(page.getByRole('button', { expanded: true, name: /active/i })).toHaveCount(1)
+			await expect(page.getByRole('button', { expanded: false, name: /active/i })).toHaveCount(0)
+		})
+
+		test(`choosing Group by State still groups the list, groups open, at ${vp.label}`, async ({
 			page,
 			account,
 		}) => {
@@ -114,8 +247,8 @@ test.describe('Objects list — v2 control row', () => {
 				status: 'succeeded',
 			})
 
-			// No groupBy in the URL — the resting state is State (mockup 994–999).
-			await page.goto(`/${account.workspaceId}/objects?type=bet`)
+			// An explicit State grouping is an explicit choice and is honoured.
+			await page.goto(`/${account.workspaceId}/objects?type=bet&groupBy=status`)
 
 			const activeGroup = page.getByRole('button', { expanded: true, name: /active/i })
 			await expect(activeGroup).toBeVisible({ timeout: 15000 })
@@ -236,7 +369,7 @@ test.describe('Objects board — v2 column chrome', () => {
 			await expect(page.getByText('Board task')).toBeVisible({ timeout: 15000 })
 
 			await page.getByRole('button', { name: /^Display/ }).click()
-			await page.getByRole('button', { name: 'Board' }).click()
+			await page.getByRole('button', { name: /View: Board/ }).click()
 
 			await expect(page.getByTestId('board-view')).toBeVisible({ timeout: 15000 })
 			// Every status after the first has no cards yet.

@@ -3,8 +3,8 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// One loop: state and pause/resume, stats, the step pipeline (trigger → agent → hand-off) and
-/// recent agent activity.
+/// One loop (v19): status and stage, then the Overview, Performance, Briefings, Items, Activity
+/// and Setup tabs, with the flow's composer pinned at the bottom.
 struct LoopDetailView: View {
 	let store: LoopDetailStore
 	var install: LoopInstall?
@@ -12,23 +12,21 @@ struct LoopDetailView: View {
 
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@State private var confirmDelete = false
-	@State private var underTheHood = false
 	@State private var timeline: FlowTimelineModel?
 
 	var body: some View {
 		ScrollView {
 			VStack(alignment: .leading, spacing: MaskinSpace.s12) {
 				LoopDetailContent(
-					store: store, install: install, underTheHood: underTheHood, timeline: timeline,
-					onOpenTrigger: onOpenTrigger)
-				if underTheHood { manage }
+					store: store, install: install, timeline: timeline,
+					onOpenTrigger: onOpenTrigger, setupFooter: AnyView(manage))
 			}
 			.padding(MaskinSpace.s9)
 			.frame(maxWidth: 720, alignment: .leading)
 			.frame(maxWidth: .infinity)
 		}
 		.ambientBackground()
-		.navigationTitle(store.loop.displayName)
+		.navigationTitle("")
 		#if os(iOS)
 		.navigationBarTitleDisplayMode(.inline)
 		#endif
@@ -38,17 +36,6 @@ struct LoopDetailView: View {
 				FlowTimelineComposer(model: timeline)
 					.padding(.horizontal, MaskinSpace.s7)
 					.padding(.bottom, MaskinSpace.s3)
-			}
-		}
-		.toolbar {
-			// One gear: it opens the Under the hood page (and closes it again).
-			ToolbarItem(placement: .primaryAction) {
-				Button {
-					withAnimation(MaskinMotion.quick) { underTheHood.toggle() }
-				} label: {
-					Label("Under the hood", systemImage: underTheHood ? "gearshape.fill" : "gearshape")
-				}
-				.accessibilityValue(underTheHood ? "On" : "Off")
 			}
 		}
 		.confirmationDialog(
@@ -66,6 +53,13 @@ struct LoopDetailView: View {
 			}
 			await timeline?.start()
 		}
+		// The composer messages the flow's driver once the overview says who it is.
+		.onChange(of: store.driver?.id, initial: true) {
+			timeline?.owner = store.driver.map { ChatParticipant(id: $0.id, name: $0.name, kind: .agent) }
+		}
+		.onChange(of: timeline != nil) {
+			timeline?.owner = store.driver.map { ChatParticipant(id: $0.id, name: $0.name, kind: .agent) }
+		}
 		// The loop's briefing cards come from the store For you shares; load it if nothing has yet.
 		.task {
 			if let stories = runtime?.storiesStore(), !stories.hasLoaded { await stories.load() }
@@ -73,8 +67,7 @@ struct LoopDetailView: View {
 		.onDisappear { store.stop() }
 	}
 
-	/// What the nav menu used to hold, now at the foot of Under the hood: pause or resume, change the
-	/// flow in chat, delete it.
+	/// At the foot of Setup: pause or resume, change the flow in chat, delete it.
 	private var manage: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 			FlowSectionHeader("Manage")
@@ -106,7 +99,7 @@ struct LoopDetailView: View {
 				Text(title).maskinText(.body)
 				Spacer(minLength: 0)
 			}
-			.foregroundStyle(destructive ? MaskinColor.danger : MaskinColor.ink)
+			.foregroundStyle(destructive ? MaskinColor.destructive : MaskinColor.ink)
 			.padding(.horizontal, MaskinSpace.s9)
 			.frame(minHeight: 44)
 			.contentShape(Rectangle())
@@ -115,37 +108,50 @@ struct LoopDetailView: View {
 	}
 }
 
-/// The loop page's two tabs.
+/// The loop page's tabs.
 enum LoopDetailTab: String, CaseIterable, Identifiable {
-	case outcome = "Outcome"
+	case overview = "Overview"
+	case performance = "Performance"
+	case briefings = "Briefings"
+	case items = "Items"
 	case activity = "Activity"
+	case setup = "Setup"
 	var id: String { rawValue }
 }
 
-/// The loop detail body without its scroll view (so it can be rendered offscreen in tests): a
-/// header, then Outcome / Activity. "Under the hood" swaps the tabs for the loop's
-/// plumbing (flow, conditions, stats, steps).
+/// The loop detail body without its scroll view (so it can be rendered offscreen in tests): the
+/// title, status and tabs. Briefings appears only once the flow has published one.
 struct LoopDetailContent: View {
 	let store: LoopDetailStore
 	var install: LoopInstall?
-	var underTheHood = false
 	/// The flow's timeline (comments and events). Nil in previews and tests: the Activity tab then
 	/// shows the agents' posts and the run feed instead.
 	var timeline: FlowTimelineModel?
 	var onOpenTrigger: (String) -> Void = { _ in }
+	/// Shown at the foot of Setup (pause, change in chat, delete).
+	var setupFooter: AnyView?
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@State private var tab: LoopDetailTab
 
 	init(
-		store: LoopDetailStore, install: LoopInstall? = nil, underTheHood: Bool = false,
-		timeline: FlowTimelineModel? = nil,
-		initialTab: LoopDetailTab = .outcome, onOpenTrigger: @escaping (String) -> Void = { _ in }
+		store: LoopDetailStore, install: LoopInstall? = nil, timeline: FlowTimelineModel? = nil,
+		initialTab: LoopDetailTab = .overview, onOpenTrigger: @escaping (String) -> Void = { _ in },
+		setupFooter: AnyView? = nil
 	) {
 		self.store = store
 		self.install = install
-		self.underTheHood = underTheHood
 		self.timeline = timeline
 		self.onOpenTrigger = onOpenTrigger
+		self.setupFooter = setupFooter
 		_tab = State(initialValue: initialTab)
+	}
+
+	private var hasBriefings: Bool {
+		runtime?.storiesStore()?.cards(forLoop: store.loop.id).isEmpty == false
+	}
+
+	private var tabs: [LoopDetailTab] {
+		LoopDetailTab.allCases.filter { $0 != .briefings || hasBriefings }
 	}
 
 	var body: some View {
@@ -154,33 +160,74 @@ struct LoopDetailContent: View {
 			if let problem = store.problem() {
 				LoopProblemBanner(problem: problem, loop: store.loop, directory: store.directory)
 			}
-			if underTheHood {
-				LoopHoodSection(store: store, onOpenTrigger: onOpenTrigger)
+			FlowTabBar(tabs: tabs, selection: $tab)
+			content
+		}
+	}
+
+	@ViewBuilder
+	private var content: some View {
+		switch tab {
+		case .overview: overview
+		case .performance: performance
+		case .briefings: LoopBriefingsSection(loopID: store.loop.id)
+		case .items: LoopInMotionSection(store: store)
+		case .activity:
+			if let timeline {
+				FlowTimelineView(model: timeline)
 			} else {
-				Picker("Show", selection: $tab) {
-					ForEach(LoopDetailTab.allCases) { Text($0.rawValue).tag($0) }
-				}
-				.pickerStyle(.segmented)
-				switch tab {
-				case .outcome:
-					LoopNeedsYouSection(store: store)
-					LoopBriefingsSection(loopID: store.loop.id)
-					LoopStatsSection(loop: store.loop, failedSteps: store.failedSteps())
-					LoopTargetsSection(
-						cards: LoopOutcomes.cards(for: store.loop), directory: store.directory)
-					OutcomesSection(
-						outputs: store.outputs, sourceName: store.loop.displayName, producesStyle: true)
-					if store.outputs.isEmpty { emptyNote("Nothing produced yet. Pages and PDFs this flow makes land here.") }
-					LoopInMotionSection(store: store)
-				case .activity:
-					if let timeline {
-						FlowTimelineView(model: timeline)
-					} else {
-						LoopPostsSection(posts: store.posts, directory: store.directory, loopID: store.loop.id)
-						activity
-					}
-				}
+				LoopPostsSection(posts: store.posts, directory: store.directory, loopID: store.loop.id)
+				activity
 			}
+		case .setup: setup
+		}
+	}
+
+	// MARK: Tabs
+
+	@ViewBuilder
+	private var overview: some View {
+		let cards = LoopOutcomes.cards(for: store.loop)
+		let tags = store.loop.tags ?? []
+		LoopPropertiesCard(store: store)
+		LoopTargetsSection(cards: cards, directory: store.directory)
+		LoopNeedsYouSection(store: store)
+		OutcomesSection(outputs: store.outputs, sourceName: store.loop.displayName, producesStyle: true)
+		if tags.isEmpty, cards.isEmpty, store.outputs.isEmpty, store.posts.filter(\.isDecision).isEmpty {
+			emptyNote("Nothing to show yet. Targets and the pages this flow makes land here.")
+		}
+	}
+
+	@ViewBuilder
+	private var performance: some View {
+		// Unknown is not empty: with the activity unread, the tiles and chart would show zeros.
+		if store.failed(.activity) {
+			blockError(.activity)
+		} else {
+			LoopStatsSection(loop: store.loop, failedSteps: store.failedSteps())
+			LoopHealthSection(loop: store.loop, activity: store.activity, loaded: store.phase == .loaded)
+			LoopRunChart(activity: store.activity, loaded: store.phase == .loaded)
+		}
+	}
+
+	@ViewBuilder
+	private var setup: some View {
+		LoopAboutSection(loop: store.loop)
+		if store.failed(.steps) {
+			blockError(.steps)
+		} else {
+			LoopTriggersSection(steps: store.steps, onOpenTrigger: onOpenTrigger)
+		}
+		LoopStageSection(store: store)
+		LoopAgentsSection(names: store.loop.agentIDs.compactMap { store.directory.name($0) })
+		LoopScheduleSection(store: store)
+		LoopConditionsSection(loop: store.loop)
+		setupFooter
+	}
+
+	private func blockError(_ block: LoopDetailStore.Block) -> some View {
+		LoopBlockError(message: block.message, isRetrying: store.isRetrying) {
+			Task { await store.retry() }
 		}
 	}
 
@@ -190,28 +237,20 @@ struct LoopDetailContent: View {
 			.loopNote()
 	}
 
-	// MARK: Sections
+	// MARK: Header
 
 	private var header: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s7) {
-			HStack(alignment: .top, spacing: MaskinSpace.s9) {
-				LoopProgressRing(
-					loop: store.loop, size: MaskinSpace.s14 * 2 + MaskinSpace.s4 + MaskinSpace.s1,
-					lineWidth: MaskinSpace.s3,
-					valueFont: MaskinTypeface.mono(MaskinFontSize.t15, weight: .semibold))
-				VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-					Text(store.loop.displayName)
-						.maskinText(.sheetTitle).foregroundStyle(MaskinColor.ink)
-						.fixedSize(horizontal: false, vertical: true)
-					Text("\(store.loop.cycleLabel) · \(store.loop.pill.label)")
-						.font(MaskinTypeface.sans(MaskinFontSize.t14, relativeTo: .subheadline))
-						.foregroundStyle(MaskinColor.ink5)
-					stateLine.padding(.top, MaskinSpace.s3)
-				}
-			}
+			Text(store.loop.displayName)
+				.maskinText(.sheetTitle).foregroundStyle(MaskinColor.ink)
+				.fixedSize(horizontal: false, vertical: true)
+				.accessibilityAddTraits(.isHeader)
+			LoopStatusPill(loop: store.loop)
+			if let driver = store.driver { LoopDriverPill(id: driver.id, name: driver.name) }
 			if let notice = store.notice {
 				FormError(notice).onTapGesture { store.notice = nil }
 			}
+			if store.failed(.description) { blockError(.description) }
 			if let install, install.hasUpdate {
 				Text(
 					install.isForked
@@ -228,19 +267,6 @@ struct LoopDetailContent: View {
 		}
 	}
 
-	/// One line of how the flow is doing: a Patina dot while it runs, grey while it is stopped.
-	private var stateLine: some View {
-		HStack(spacing: MaskinSpace.s3) {
-			Circle()
-				.fill(store.loop.pill.isLive ? MaskinColor.sig : MaskinColor.ink5)
-				.frame(width: MaskinSpace.s3 + MaskinSpace.s1, height: MaskinSpace.s3 + MaskinSpace.s1)
-			Text(store.verdict)
-				.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: MaskinFontWeight.semibold, relativeTo: .subheadline))
-				.foregroundStyle(store.loop.pill.isLive ? MaskinColor.sigInk : MaskinColor.ink4)
-		}
-		.accessibilityElement(children: .combine)
-	}
-
 	/// Latest first, so the newest run is on screen without scrolling. Undated entries go last.
 	private func newestFirst(_ entries: [LoopActivityEntry]) -> [LoopActivityEntry] {
 		entries.enumerated().sorted {
@@ -252,7 +278,9 @@ struct LoopDetailContent: View {
 	private var activity: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 			FlowSectionHeader("Recent activity")
-			if store.activity.isEmpty {
+			if store.failed(.activity) {
+				blockError(.activity)
+			} else if store.activity.isEmpty {
 				Text(store.phase == .loaded ? "Nothing has run yet." : "")
 					.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
 			} else {
@@ -272,65 +300,112 @@ struct LoopDetailContent: View {
 	}
 }
 
-/// One step of the pipeline, joined to the next by a rail.
-struct LoopStepRow: View {
-	let number: Int
-	let step: LoopStep
-	let isLast: Bool
-	var onOpen: () -> Void = {}
+/// Overview, Performance, Briefings, Items, Activity, Setup: text tabs with an ink underline under
+/// the open one, scrolling sideways when they don't fit.
+struct FlowTabBar: View {
+	let tabs: [LoopDetailTab]
+	@Binding var selection: LoopDetailTab
 
 	var body: some View {
-		HStack(alignment: .top, spacing: MaskinSpace.s7) {
-			VStack(spacing: 0) {
-				Text("\(number)")
-					.maskinText(.caption)
-					.foregroundStyle(MaskinSurface.onInverse)
-					.frame(width: MaskinSpace.s12, height: MaskinSpace.s12)
-					.background(MaskinSurface.inverse, in: Circle())
-				if !isLast {
-					Rectangle().fill(MaskinSurface.line).frame(width: 2).frame(maxHeight: .infinity)
+		ScrollView(.horizontal, showsIndicators: false) {
+			HStack(spacing: MaskinSpace.s10) {
+				ForEach(tabs) { tab in
+					let selected = tab == selection
+					Button {
+						MaskinHaptics.play(.selection)
+						withAnimation(MaskinMotion.quick) { selection = tab }
+					} label: {
+						Text(tab.rawValue)
+							.font(MaskinTypeface.sans(MaskinFontSize.t17, weight: selected ? .bold : .medium, relativeTo: .headline))
+							.foregroundStyle(selected ? MaskinColor.ink : MaskinColor.ink4)
+							.frame(minHeight: MaskinSpace.touchMin)
+							.overlay(alignment: .bottom) {
+								Rectangle().fill(selected ? MaskinColor.ink : Color.clear).frame(height: 2)
+							}
+					}
+					.buttonStyle(.plain)
+					.accessibilityAddTraits(selected ? .isSelected : [])
 				}
 			}
-			.accessibilityHidden(true)
-			Button(action: onOpen) {
-				VStack(alignment: .leading, spacing: MaskinSpace.s4) {
-					HStack(alignment: .firstTextBaseline) {
-						Text(step.displayName).maskinText(.headline).foregroundStyle(MaskinColor.ink)
-						Spacer(minLength: MaskinSpace.s3)
-						if step.pendingCount > 0 {
-							Text("\(step.pendingCount) waiting")
-								.maskinText(.caption).foregroundStyle(MaskinColor.sigInk)
+		}
+		.overlay(alignment: .bottom) { Rectangle().fill(MaskinSurface.line).frame(height: 1) }
+	}
+}
+
+/// "● Learning · Needs you": the flow's stage, with the warning colour when decisions wait.
+struct LoopStatusPill: View {
+	let loop: LoopSummary
+
+	private var needsYou: Bool { loop.status.isLive && (loop.pill == .waitingOnYou || loop.waitingCount > 0) }
+
+	var body: some View {
+		HStack(spacing: MaskinSpace.s4) {
+			Circle().fill(loop.status.isLive ? MaskinColor.ok : MaskinColor.ink5)
+				.frame(width: MaskinSpace.s4 + MaskinSpace.s1, height: MaskinSpace.s4 + MaskinSpace.s1)
+			Text(loop.status.label).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)
+			if needsYou {
+				Text("· Needs you").fontWeight(.semibold).foregroundStyle(MaskinColor.warning)
+			}
+		}
+		.maskinText(.subhead)
+		.padding(.horizontal, MaskinSpace.s8)
+		.frame(minHeight: MaskinSpace.touchMin)
+		.background(MaskinSurface.card, in: Capsule())
+		.overlay(Capsule().strokeBorder(MaskinSurface.line, lineWidth: 1))
+		.accessibilityElement(children: .combine)
+		.accessibilityLabel("Status: \(loop.status.label)" + (needsYou ? ", needs you" : ""))
+	}
+}
+
+/// UNDER THE HOOD: Learning, Supervised, Autonomous as chips with a one-line explanation. Changing
+/// it moves the Status pill. Hidden while the flow is a draft or paused, since it has no stage then.
+struct LoopStageSection: View {
+	let store: LoopDetailStore
+
+	var body: some View {
+		if let current = LoopStage(status: store.loop.status) {
+			VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+				FlowSectionHeader("Under the hood")
+				ScrollView(.horizontal, showsIndicators: false) {
+					HStack(spacing: MaskinSpace.s4) {
+						ForEach(LoopStage.allCases, id: \.self) { stage in
+							AgentFilterChip(label: stage.title, selected: stage == current) {
+								Task { await store.setStage(stage) }
+							}
+							.disabled(store.isTogglingPause)
 						}
-					}
-					label("Fires", step.firesSummary)
-					if let agent = step.agentName {
-						HStack(spacing: MaskinSpace.s4) {
-							ActorAvatar(name: agent, kind: .agent, size: MaskinSpace.s11, seed: step.agentID)
-							Text(agent).maskinText(.subhead).foregroundStyle(MaskinColor.ink2)
-						}
-						.accessibilityElement(children: .combine)
-						.accessibilityLabel("Runs on \(agent)")
-					}
-					if let next = step.handsOffName { label("Hands off to", next) }
-					if let esc = step.escalatesToName {
-						label("Escalates to", esc + (step.escalateAfter.map { " after \(LoopDurationText.string($0))" } ?? ""))
 					}
 				}
-				.frame(maxWidth: .infinity, alignment: .leading)
-				.padding(MaskinSpace.s8)
-				.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
-				.contentShape(Rectangle())
+				Text(current.note).maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+					.padding(.horizontal, MaskinSpace.s3)
 			}
-			.buttonStyle(.maskinPressed)
-			.accessibilityHint("Opens this step's trigger")
-			.padding(.bottom, isLast ? 0 : MaskinSpace.s5)
 		}
 	}
+}
 
-	private func label(_ title: String, _ value: String) -> some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-			MonoLabel(title)
-			Text(value).maskinText(.subhead).foregroundStyle(MaskinColor.ink2)
+/// AGENTS: who works the flow, by name. Nothing when none resolve.
+struct LoopAgentsSection: View {
+	let names: [String]
+
+	var body: some View {
+		if !names.isEmpty {
+			VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+				FlowSectionHeader("Agents")
+				VStack(spacing: 0) {
+					ForEach(Array(names.enumerated()), id: \.offset) { index, name in
+						HStack(spacing: MaskinSpace.s6) {
+							ActorAvatar(name: name, kind: .agent, size: MaskinSpace.s13, seed: name)
+							Text(name).maskinText(.body).foregroundStyle(MaskinColor.ink)
+							Spacer(minLength: 0)
+						}
+						.padding(.vertical, MaskinSpace.s5)
+						.accessibilityElement(children: .combine)
+						if index < names.count - 1 { Divider().overlay(MaskinSurface.separator) }
+					}
+				}
+				.padding(.horizontal, MaskinSpace.s8)
+				.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
+			}
 		}
 	}
 }
@@ -364,6 +439,48 @@ struct LoopActivityRow: View {
 		case .failure: MaskinColor.warning
 		case .active: MaskinColor.sig
 		case .neutral: MaskinColor.ink5
+		}
+	}
+}
+
+/// "D Developer drives": opens a chat with the flow's driver (the existing one, or a new one).
+struct LoopDriverPill: View {
+	let id: String
+	let name: String
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
+	@State private var opening = false
+
+	var body: some View {
+		Button(action: open) {
+			HStack(spacing: MaskinSpace.s5) {
+				ActorAvatar(name: name, kind: .agent, size: MaskinSpace.s13, seed: id)
+				(Text(name).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)
+					+ Text(" drives").foregroundStyle(MaskinColor.ink4))
+					.maskinText(.subhead)
+			}
+			.padding(.leading, MaskinSpace.s4)
+			.padding(.trailing, MaskinSpace.s8)
+			.frame(minHeight: MaskinSpace.touchMin)
+			.background(MaskinSurface.card, in: Capsule())
+			.overlay(Capsule().strokeBorder(MaskinSurface.line, lineWidth: 1))
+		}
+		.buttonStyle(.maskinPressed(.shrink))
+		.disabled(opening)
+		.accessibilityLabel("\(name) drives this flow")
+		.accessibilityHint("Opens a chat with \(name)")
+	}
+
+	private func open() {
+		guard let runtime, let workspaceID = runtime.environment.workspaceId else { return }
+		opening = true
+		Task {
+			defer { opening = false }
+			let source = APIChatsSource(client: runtime.environment.client, workspaceID: workspaceID)
+			if let chat = try? await source.directChat(
+				with: id, title: name, idempotencyKey: UUID().uuidString)
+			{
+				runtime.openChat(chat.id)
+			}
 		}
 	}
 }

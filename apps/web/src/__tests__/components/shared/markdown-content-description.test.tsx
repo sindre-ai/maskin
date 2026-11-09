@@ -1,11 +1,9 @@
 import { MarkdownContent, READ_ONLY_DESCRIPTION_BANNER } from '@/components/shared/markdown-content'
 import { capture } from '@/lib/posthog'
 import { render, screen, waitFor } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/posthog', () => ({ capture: vi.fn() }))
-
-const FLAG = 'ff:rich-markdown-editor'
 
 function parseErrorCalls() {
 	return vi
@@ -28,13 +26,15 @@ function mount(content: string, onChange = vi.fn()) {
 	return { ...utils, onChange }
 }
 
+// The editor is a lazy chunk (Tiptap + extensions); the first import is slow under a
+// parallel full-suite run and would outlast findBy/waitFor's default 1000ms. Warm it.
+beforeAll(async () => {
+	await import('@/components/shared/document-markdown-editor')
+}, 60_000)
+
 describe('MarkdownContent description with preserveSource', () => {
 	beforeEach(() => {
 		vi.mocked(capture).mockClear()
-		localStorage.setItem(FLAG, 'on')
-	})
-	afterEach(() => {
-		localStorage.removeItem(FLAG)
 	})
 
 	it('opens a plain agent description in the editor with no banner', async () => {

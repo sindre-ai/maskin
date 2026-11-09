@@ -473,6 +473,80 @@ struct ChatStoreTests {
 		#expect(told == [2, 3])
 	}
 
+	@Test("a read mark that fails is retried until the server confirms it")
+	func failedReadMarkIsRetried() async {
+		let h = ChatHarness(server: [chatMsg(1, by: "relay", agent: true)], detail: chatConvo("c1", lastRead: 0))
+		h.store.readRetryDelay = .milliseconds(10)
+		var told: [Int] = []
+		h.store.onMarkedRead = { _, last in told.append(last) }
+		await h.api.setFailRead(true)
+		await h.store.start()
+		#expect(await h.api.readCalls.isEmpty)
+		#expect(told.isEmpty)
+		await h.api.setFailRead(false)
+		#expect(await eventually { await h.api.readCalls == [1] })
+		#expect(told == [1])
+	}
+
+	@Test("a newest message that arrives while open, with the first mark failing, still reads")
+	func newestArrivesWhileOpenRetries() async {
+		let h = ChatHarness(server: [chatMsg(1), chatMsg(2, by: "relay", agent: true)], detail: chatConvo("c1", lastRead: 0))
+		h.store.readRetryDelay = .milliseconds(10)
+		await h.store.start()
+		#expect(await eventually { await h.api.readCalls == [2] })
+		await h.api.setFailRead(true)
+		await h.api.append(chatMsg(3, by: "relay", agent: true))
+		await h.store.sync()
+		#expect(await h.api.readCalls == [2])
+		await h.api.setFailRead(false)
+		#expect(await eventually { await h.api.readCalls == [2, 3] })
+		#expect(h.store.detail?.lastReadMessageID == 3)
+		#expect(h.store.detail?.unreadCount == 0)
+	}
+
+	@Test("a chat that ends in cards is read at the bottom like any other")
+	func chatEndingInCardsReadsAtBottom() async {
+		let task = "https://maskin.io/w/objects/11111111-1111-1111-1111-111111111111"
+		let insight = "https://maskin.io/w/objects/22222222-2222-2222-2222-222222222222"
+		let h = ChatHarness(
+			server: [
+				chatMsg(1, by: "relay", agent: true, "Here is the plan"),
+				chatMsg(2, by: "relay", agent: true, "Task: \(task)"),
+				chatMsg(3, by: "relay", agent: true, "Insight: \(insight)")
+			],
+			detail: chatConvo("c1", unread: 3, lastRead: 0))
+		var told: [Int] = []
+		h.store.onMarkedRead = { _, last in told.append(last) }
+		// Opened on the NEW divider: parked above the bottom until the reader gets there.
+		h.store.isAtBottom = false
+		await h.store.start()
+		#expect(await h.api.readCalls.isEmpty)
+		#expect(h.store.detail?.unreadCount == 3)
+		h.store.isAtBottom = true
+		await h.store.markReadIfNeeded()
+		#expect(await h.api.readCalls == [3])
+		#expect(h.store.detail?.lastReadMessageID == 3)
+		#expect(h.store.detail?.unreadCount == 0)
+		#expect(told == [3])
+	}
+
+	@Test("a chat that ends in cards reads through the cards when the reader scrolls past the last text")
+	func chatEndingInCardsReadsThroughSeen() async {
+		let task = "https://maskin.io/w/objects/11111111-1111-1111-1111-111111111111"
+		let h = ChatHarness(
+			server: [
+				chatMsg(1, by: "relay", agent: true, "Here is the plan"),
+				chatMsg(2, by: "relay", agent: true, "Task: \(task)")
+			],
+			detail: chatConvo("c1", unread: 2, lastRead: 0))
+		h.store.isAtBottom = false
+		await h.store.start()
+		h.store.countsSeen = true
+		h.store.noteSeen(2)
+		#expect(await eventually { await h.api.readCalls == [2] })
+		#expect(h.store.detail?.lastReadMessageID == 2)
+	}
+
 	@Test("above the bottom, read state follows what the reader has scrolled past")
 	func readFollowsSeen() async {
 		let h = ChatHarness(server: [chatMsg(1, by: "relay", agent: true), chatMsg(2, by: "relay", agent: true), chatMsg(3, by: "relay", agent: true)],
@@ -587,6 +661,16 @@ struct ChatStoreTests {
 		#expect(m.questions[0].options.map(\.label) == ["Staging", "Prod"])
 		#expect(m.questions[0].options[1].detail == "Live users")
 		#expect(m.questionSessionID == "s1")
+	}
+
+	@Test("a question's markdown copy is not shown above its card, but the agent's own words are")
+	func questionTwin() {
+		let twin = "Which environment?\n- **Staging**\n- **Prod** — Live users"
+		let copy = chatMsg(7, by: "relay", agent: true, twin, metadata: questionMeta)
+		#expect(copy.isQuestionTwin)
+		let own = chatMsg(8, by: "relay", agent: true, "Let me ask.\n\n" + twin, metadata: questionMeta)
+		#expect(!own.isQuestionTwin)
+		#expect(!chatMsg(9, by: "relay", agent: true, twin).isQuestionTwin)
 	}
 
 	@Test("answering posts the web's message shape and marks the question answered")
@@ -782,6 +866,28 @@ private actor IdleTraceSource: SessionActivitySource {
 	init(_ turns: [ActivityTurn]) { self.turns = turns }
 	func activity(sessionID: String, limitTurns: Int, background: Bool) async throws -> SessionActivity {
 		SessionActivity(sessionID: sessionID, turns: turns)
+	}
+}
+
+@Suite("ChatStore trace loading")
+@MainActor
+struct ChatStoreTraceLoadingTests {
+	@Test("the trace counts as loading from a sessions read until the finished turns have landed")
+	func loadingUntilHistoryLands() async {
+		let h = ChatHarness(detail: chatConvo("c1", participants: [chatMe, chatRelay]))
+		await h.api.setSessions([ChatAgentSession(id: "s1", actorID: "relay", status: .completed, startedAt: chatT0)])
+		h.store.trace = ActivityStore(source: IdleTraceSource([]))
+		#expect(!h.store.isLoadingTrace)
+		await h.store.refreshSessions()
+		#expect(await eventually { !h.store.isLoadingTrace })
+	}
+
+	@Test("without a trace store nothing is left loading")
+	func noTraceStore() async {
+		let h = ChatHarness(detail: chatConvo("c1", participants: [chatMe, chatRelay]))
+		await h.api.setSessions([ChatAgentSession(id: "s1", actorID: "relay", status: .completed, startedAt: chatT0)])
+		await h.store.refreshSessions()
+		#expect(await eventually { !h.store.isLoadingTrace })
 	}
 }
 

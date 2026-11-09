@@ -65,7 +65,7 @@ function EmptyTranscript({ starting }: { starting: boolean }) {
 	}
 	return (
 		<div className="flex h-full items-center justify-center text-center text-muted-foreground">
-			Ask the agents about your workspace — notifications, objects, bets, or how to get started.
+			Ask the agents about your workspace — notifications, items, bets, or how to get started.
 		</div>
 	)
 }
@@ -218,7 +218,7 @@ function ToolUseBlock({ name, input }: { name: string; input: unknown }) {
 
 function ThinkingBlock({ text, redacted }: { text: string; redacted?: boolean }) {
 	const [open, setOpen] = useState(false)
-	const label = redacted ? 'Thinking (redacted)' : 'Thinking'
+	const label = 'Thinking'
 	const body = redacted
 		? 'Anthropic withheld the internal reasoning for this turn. The agent still thought about the problem — the content just isn’t available here.'
 		: text

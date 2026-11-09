@@ -1,10 +1,16 @@
 import { TimelineTab } from '@/components/objects/timeline-tab'
 import { useObjectGraph } from '@/hooks/use-objects'
 import { useMarkRead } from '@/hooks/use-subscriptions'
-import { render, screen, within } from '@testing-library/react'
+import { ApiError } from '@/lib/api'
+import { pushFaroError } from '@/lib/faro'
+import { captureException } from '@/lib/sentry'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { buildEventResponse, buildObjectResponse, buildRelationshipResponse } from '../../factories'
 import { createWorkspaceWrapper } from '../../setup'
+
+vi.mock('@/lib/sentry', () => ({ captureException: vi.fn() }))
+vi.mock('@/lib/faro', () => ({ pushFaroError: vi.fn() }))
 
 // D8 (bet/d166-loops-v4-polish) analytics helper — mocked here so the polish
 // variant's `mark_read_clicked` fire is observable without pulling posthog-js
@@ -27,6 +33,11 @@ vi.mock('@tanstack/react-router', async () => {
 vi.mock('@/hooks/use-objects', () => ({
 	useObjectGraph: vi.fn(),
 	useObject: () => ({ data: undefined, isLoading: false }),
+}))
+
+const useSessionMock = vi.fn()
+vi.mock('@/hooks/use-sessions', () => ({
+	useSession: (...args: unknown[]) => useSessionMock(...args),
 }))
 
 const markReadMutate = vi.fn()
@@ -163,6 +174,48 @@ describe('TimelineTab', () => {
 		expect(within(row).getByText('attached')).toBeInTheDocument()
 		expect(within(row).getByRole('link', { name: /design\.pdf/i })).toBeInTheDocument()
 		expect(within(row).queryByText(/deleted object/i)).toBeNull()
+	})
+
+	// Regression: a session endpoint (`produced_by`) is not an object either. It
+	// used to render through a placeholder object whose status was the literal
+	// word "unknown". It must name the agent that ran the session instead.
+	describe('session endpoint on a produced_by edge', () => {
+		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
+		const relationships = [
+			buildRelationshipResponse({
+				id: 'rel-session',
+				sourceId: 'session-1',
+				sourceType: 'session',
+				sourceTitle: 'Drive the task',
+				targetId: 'obj-1',
+				targetType: 'bet',
+				type: 'produced_by',
+				createdBy: 'actor-2',
+				createdAt: '2026-01-01T00:00:00Z',
+			}),
+		]
+
+		it('names the agent that ran the session, never "unknown"', () => {
+			useSessionMock.mockReturnValue({ data: { id: 'session-1', actorId: 'actor-2' } })
+			mockGraph([], relationships, [], object)
+
+			render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+			const row = screen.getAllByRole('listitem')[0]
+			expect(within(row).getByRole('link', { name: /Agent Smith session/i })).toBeInTheDocument()
+			expect(within(row).queryByText(/unknown/i)).toBeNull()
+		})
+
+		it('falls back to a neutral label when the session or its agent is gone', () => {
+			useSessionMock.mockReturnValue({ data: undefined })
+			mockGraph([], relationships, [], object)
+
+			render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+			const row = screen.getAllByRole('listitem')[0]
+			expect(within(row).getByText('Session')).toBeInTheDocument()
+			expect(within(row).queryByText(/unknown|deleted object/i)).toBeNull()
+		})
 	})
 
 	// The Activity/Timeline split is gone: one stream carries comments and
@@ -316,6 +369,26 @@ describe('TimelineTab', () => {
 		expect(screen.getAllByRole('listitem')).toHaveLength(2)
 	})
 
+	it('caps a filter count at 99+ while the accessible name keeps the exact number', () => {
+		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
+		const events = Array.from({ length: 100 }, (_, i) =>
+			buildEventResponse({
+				id: 1000 + i,
+				action: 'commented',
+				entityType: 'bet',
+				entityId: 'obj-1',
+				createdAt: `2026-01-01T00:${String(i % 60).padStart(2, '0')}:00Z`,
+			}),
+		)
+		mockGraph(events, [], [], object)
+
+		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+		const all = screen.getByRole('button', { name: 'All (100)' })
+		expect(within(all).getByText('99+')).toBeInTheDocument()
+		expect(within(all).queryByText('100')).not.toBeInTheDocument()
+	})
+
 	it('renders an empty state when there is nothing to show', () => {
 		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
 		mockGraph([], [], [], object)
@@ -338,21 +411,71 @@ describe('TimelineTab', () => {
 		})
 
 		expect(screen.queryByText('No activity yet.')).not.toBeInTheDocument()
-		expect(container.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0)
+		expect(container.querySelectorAll('.animate-pulse-fast')).toHaveLength(9)
 	})
 
 	it('shows an error card instead of the empty state when the graph fetch fails', () => {
 		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
+		const refetch = vi.fn()
 		vi.mocked(useObjectGraph).mockReturnValue({
 			data: undefined,
 			isError: true,
 			error: new Error('boom'),
+			refetch,
 		} as never)
 
 		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
 
 		expect(screen.queryByText('No activity yet.')).not.toBeInTheDocument()
-		expect(screen.getByText("Couldn't load activity")).toBeInTheDocument()
+		expect(screen.getByText('Activity did not load')).toBeInTheDocument()
+		expect(
+			screen.getByText('Something went wrong on our side. Nothing was lost.'),
+		).toBeInTheDocument()
+		// Filters stay visible on the error state.
+		expect(screen.getByRole('button', { name: /^All \(/ })).toBeInTheDocument()
+		fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+		expect(refetch).toHaveBeenCalledTimes(1)
+	})
+
+	it('says the connection dropped only for a network error', () => {
+		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
+		const error = new ApiError(0, 'Service unavailable.')
+		error.code = 'NETWORK_ERROR'
+		vi.mocked(useObjectGraph).mockReturnValue({
+			data: undefined,
+			isError: true,
+			error,
+			refetch: vi.fn(),
+		} as never)
+
+		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+		expect(screen.getByText('Your connection dropped. Nothing was lost.')).toBeInTheDocument()
+	})
+
+	it('reports a failed activity load to Sentry and Faro after the compact delay', () => {
+		vi.useFakeTimers()
+		try {
+			const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
+			const error = new Error('boom')
+			vi.mocked(useObjectGraph).mockReturnValue({
+				data: undefined,
+				isError: true,
+				error,
+				refetch: vi.fn(),
+			} as never)
+
+			render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+			expect(captureException).not.toHaveBeenCalled()
+			act(() => {
+				vi.advanceTimersByTime(3000)
+			})
+			expect(captureException).toHaveBeenCalledWith(error)
+			expect(pushFaroError).toHaveBeenCalledWith(error)
+		} finally {
+			vi.useRealTimers()
+		}
 	})
 
 	it('falls back to a denormalized title when the linked object is not in the graph', () => {
@@ -703,11 +826,19 @@ describe('TimelineTab', () => {
 	})
 
 	// D8 delta (bet/d166-loops-v4-polish) — every assertion below exercises
-	// the polish variant, opted in via the `loopsV4PolishUnread` prop the
-	// loop-detail route passes when the sub-flag is on. Objects (the other
+	// the polish variant, opted in via the `loopUnread` prop the
+	// loop-detail route passes. Objects (the other
 	// consumer of TimelineTab) never sets the prop, so these behaviours are
 	// scoped to the loop-detail surface by construction.
-	describe('loops-v4-polish.unread variant', () => {
+	describe('loop unread variant', () => {
+		// The timeline also renders a jump-to-comment status output, so pick the
+		// unread host by the attributes only it carries.
+		const unreadRegion = () => {
+			const region = screen.getAllByRole('status').find((el) => el.hasAttribute('aria-atomic'))
+			if (!region) throw new Error('unread aria-live region not found')
+			return region
+		}
+
 		beforeEach(() => {
 			vi.mocked(trackMarkReadClicked).mockReset()
 			markReadMutate.mockReset()
@@ -737,7 +868,7 @@ describe('TimelineTab', () => {
 				object,
 			)
 
-			render(<TimelineTab object={object} loopsV4PolishUnread={{ loopId: 'loop-1' }} />, {
+			render(<TimelineTab object={object} loopUnread={{ loopId: 'loop-1' }} />, {
 				wrapper: createWorkspaceWrapper(),
 			})
 
@@ -802,11 +933,11 @@ describe('TimelineTab', () => {
 				object,
 			)
 
-			render(<TimelineTab object={object} loopsV4PolishUnread={{ loopId: 'loop-1' }} />, {
+			render(<TimelineTab object={object} loopUnread={{ loopId: 'loop-1' }} />, {
 				wrapper: createWorkspaceWrapper(),
 			})
 
-			const region = screen.getByRole('status')
+			const region = unreadRegion()
 			expect(region).toHaveTextContent('3 unread activity items')
 			// aria-live must live on the host, not the swapped-in content — so
 			// the SR announcement doesn't race the DOM swap when the boundary
@@ -832,11 +963,11 @@ describe('TimelineTab', () => {
 				object,
 			)
 
-			render(<TimelineTab object={object} loopsV4PolishUnread={{ loopId: 'loop-1' }} />, {
+			render(<TimelineTab object={object} loopUnread={{ loopId: 'loop-1' }} />, {
 				wrapper: createWorkspaceWrapper(),
 			})
 
-			expect(screen.getByRole('status').textContent).toBe('')
+			expect(unreadRegion().textContent).toBe('')
 		})
 
 		it('fires mark_read_clicked with {loop_id, unread_count} and persists the server read marker on Mark read', async () => {
@@ -864,7 +995,7 @@ describe('TimelineTab', () => {
 				object,
 			)
 
-			render(<TimelineTab object={object} loopsV4PolishUnread={{ loopId: 'loop-1' }} />, {
+			render(<TimelineTab object={object} loopUnread={{ loopId: 'loop-1' }} />, {
 				wrapper: createWorkspaceWrapper(),
 			})
 
@@ -935,7 +1066,7 @@ describe('TimelineTab', () => {
 				object,
 			)
 
-			render(<TimelineTab object={object} loopsV4PolishUnread={{ loopId: 'loop-1' }} />, {
+			render(<TimelineTab object={object} loopUnread={{ loopId: 'loop-1' }} />, {
 				wrapper: createWorkspaceWrapper(),
 			})
 
@@ -967,7 +1098,7 @@ describe('TimelineTab', () => {
 				object,
 			)
 
-			render(<TimelineTab object={object} loopsV4PolishUnread={{ loopId: 'loop-1' }} />, {
+			render(<TimelineTab object={object} loopUnread={{ loopId: 'loop-1' }} />, {
 				wrapper: createWorkspaceWrapper(),
 			})
 

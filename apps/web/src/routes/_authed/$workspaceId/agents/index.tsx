@@ -3,11 +3,15 @@ import { PageHeader } from '@/components/layout/page-header'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
+import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import { useWorkspaceSessions } from '@/hooks/use-sessions'
+import { useLoops } from '@/hooks/use-loops'
+import { useWorkspaceSessionStats, useWorkspaceSessions } from '@/hooks/use-sessions'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
 import { Users } from 'lucide-react'
@@ -21,19 +25,22 @@ export const Route = createFileRoute('/_authed/$workspaceId/agents/')({
 function AgentsRoute() {
 	useDocumentTitle('Agents')
 	const { workspaceId } = useWorkspace()
-	const { data: actors, isLoading } = useActors(workspaceId)
+	const {
+		data: actors,
+		isLoading,
+		isError: actorsFailed,
+		error: actorsError,
+		refetch: refetchActors,
+	} = useActors(workspaceId)
 	// Live status comes from the 100-newest list the sidebar uses (one request,
-	// coalesced refetches). The full-history walk only refines per-agent counts,
-	// so it must never gate or overwrite status.
-	const { data: recentSessions, isLoading: recentLoading } = useWorkspaceSessions(workspaceId)
-	const { data: allSessions } = useWorkspaceSessions(workspaceId, { paged: true })
+	// coalesced refetches). Counts and cost come from one grouped server query, so
+	// neither grows with the size of the session history.
+	const { data: sessions, isLoading: recentLoading } = useWorkspaceSessions(workspaceId)
+	const { data: stats } = useWorkspaceSessionStats(workspaceId)
+	const { data: loops } = useLoops(workspaceId)
 	const [createPickerOpen, setCreatePickerOpen] = useState(false)
-
-	const sessions = useMemo(() => {
-		const byId = new Map((allSessions ?? []).map((s) => [s.id, s]))
-		for (const s of recentSessions ?? []) byId.set(s.id, s)
-		return Array.from(byId.values())
-	}, [allSessions, recentSessions])
+	const canWrite = useCanWrite()
+	const [query, setQuery] = useState('')
 
 	useEffect(() => {
 		function onKeydown(event: KeyboardEvent) {
@@ -46,12 +53,6 @@ function AgentsRoute() {
 	}, [])
 
 	const agents = useMemo(() => (actors ?? []).filter((a) => a.type === 'agent'), [actors])
-
-	// The nav row draws the title and this muted count — PageHeader renders
-	// nothing inline (mockup's `agentsHeadSub`).
-	const subtitle = agents.length
-		? `${agents.length} agent${agents.length === 1 ? '' : 's'} · each owns one outcome`
-		: undefined
 
 	if (isLoading || recentLoading) {
 		return (
@@ -67,19 +68,49 @@ function AgentsRoute() {
 		)
 	}
 
+	// A failed fetch must not fall through to "Nobody on this team yet".
+	if (actorsFailed && !actors) {
+		return (
+			<div>
+				<PageHeader title="Agents" />
+				<QueryStateError
+					title="Couldn't load agents"
+					error={actorsError}
+					onRetry={() => refetchActors()}
+				/>
+			</div>
+		)
+	}
+
 	return (
 		<div>
-			<PageHeader title="Agents" subtitle={subtitle} />
+			{/* The list owns its header (search + Display need its state); the empty
+			    state publishes the bare title. */}
+			{agents.length === 0 && <PageHeader title="Agents" />}
 			{agents.length === 0 ? (
 				<EmptyState
 					emphasis="page"
 					icon={<Users size={28} aria-hidden />}
 					title="Nobody on this team yet."
 					description="Agents own one outcome each and run on their own. Add the first one to get started."
-					action={<Button onClick={() => setCreatePickerOpen(true)}>Create an agent</Button>}
+					action={
+						<ViewerTooltip>
+							<Button disabled={!canWrite} onClick={() => setCreatePickerOpen(true)}>
+								Create an agent
+							</Button>
+						</ViewerTooltip>
+					}
 				/>
 			) : (
-				<AgentsIndexView workspaceId={workspaceId} agents={agents} sessions={sessions} />
+				<AgentsIndexView
+					workspaceId={workspaceId}
+					agents={agents}
+					sessions={sessions ?? []}
+					stats={stats}
+					loops={loops}
+					query={query}
+					onQueryChange={setQuery}
+				/>
 			)}
 			<CreatePicker
 				open={createPickerOpen}

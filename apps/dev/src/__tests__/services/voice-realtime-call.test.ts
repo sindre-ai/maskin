@@ -28,16 +28,25 @@ vi.mock('../../services/voice-session-lifecycle', () => ({
 vi.mock('../../lib/sentry-voice', () => ({ captureVoiceException: vi.fn() }))
 
 const {
+	VOICE_IDLE_NUDGE_INSTRUCTION,
+	VOICE_IDLE_NUDGE_MAX,
+	VOICE_IDLE_NUDGE_MS,
 	VOICE_LEGACY_TRANSCRIPTION,
 	VOICE_REALTIME_VOICE,
 	VOICE_SOCKET_MAX_RECONNECTS,
 	attachVoiceCall,
+	resolveVoiceGreeting,
 	buildTranscriptionConfig,
 	closeVoiceCall,
 	createRealtimeCall,
 	realtimeSocketUrl,
 	resolveRealtimeVoice,
+	resetReasoningRejection,
+	resolveReasoningEffort,
+	resolveVadEagerness,
 } = await import('../../services/voice-realtime-call')
+
+const { VOICE_GREETING_INSTRUCTION } = await import('../../services/voice-instructions')
 
 const WORKSPACE = 'c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f'
 const HUMAN = '3f7c1e2a-9b4d-4f21-8c6e-5a0d7b91e442'
@@ -57,6 +66,7 @@ function fakeSocket() {
 	let handlers: RealtimeSocketHandlers | null = null
 	let url = ''
 	let opens = 0
+	let greeting: Array<Record<string, unknown>> | null = null
 	const openSocket: OpenRealtimeSocketFn = (u, _key, h) => {
 		url = u
 		opens += 1
@@ -73,7 +83,14 @@ function fakeSocket() {
 		get opens() {
 			return opens
 		},
-		open: () => handlers?.onOpen(),
+		get greeting() {
+			return greeting
+		},
+		// The greeting the first attach sends is split off, so tests count only what they cause.
+		open: () => {
+			handlers?.onOpen()
+			if (greeting === null) greeting = sent.splice(0)
+		},
 		emit: (evt: Record<string, unknown>) => handlers?.onMessage(JSON.stringify(evt)),
 		drop: () => handlers?.onClose(),
 	}
@@ -110,6 +127,7 @@ beforeEach(() => {
 afterEach(() => {
 	vi.useRealTimers()
 	vi.unstubAllGlobals()
+	vi.unstubAllEnvs()
 })
 
 describe('realtimeSocketUrl', () => {
@@ -121,6 +139,43 @@ describe('realtimeSocketUrl', () => {
 })
 
 describe('attachVoiceCall', () => {
+	it('sends no greeting and no response.create when the socket first opens', async () => {
+		vi.stubEnv('MASKIN_VOICE_GREETING', '')
+		const socket = fakeSocket()
+		const attached = attach(socket)
+		socket.open()
+		await attached
+		expect(socket.greeting).toEqual([])
+	})
+
+	it('asks the model to greet the caller once the socket first opens when MASKIN_VOICE_GREETING=on', async () => {
+		vi.stubEnv('MASKIN_VOICE_GREETING', 'on')
+		const socket = fakeSocket()
+		const attached = attach(socket)
+		socket.open()
+		await attached
+		expect(socket.greeting).toEqual([
+			{
+				type: 'conversation.item.create',
+				item: {
+					type: 'message',
+					role: 'system',
+					content: [{ type: 'input_text', text: VOICE_GREETING_INSTRUCTION }],
+				},
+			},
+			{ type: 'response.create' },
+		])
+	})
+
+	it('treats an invalid MASKIN_VOICE_GREETING value as off', async () => {
+		vi.stubEnv('MASKIN_VOICE_GREETING', 'loud')
+		const socket = fakeSocket()
+		const attached = attach(socket)
+		socket.open()
+		await attached
+		expect(socket.greeting).toEqual([])
+	})
+
 	it('resolves true once the socket opens and connects to the call id', async () => {
 		const socket = fakeSocket()
 		const attached = attach(socket)
@@ -315,7 +370,12 @@ describe('attachVoiceCall', () => {
 		})
 		socket.emit({
 			type: 'response.output_audio_transcript.done',
+			response_id: 'r1',
 			transcript: 'Loops v4 is active.',
+		})
+		socket.emit({
+			type: 'response.done',
+			response: { id: 'r1', status: 'completed', output: [{ type: 'message' }] },
 		})
 		await vi.waitFor(() => expect(writeLine).toHaveBeenCalledTimes(2))
 
@@ -323,6 +383,93 @@ describe('attachVoiceCall', () => {
 			['user', 'search for the loops v4 bet'],
 			['assistant', 'Loops v4 is active.'],
 		])
+	})
+
+	describe('what the agent said, as chat lines', () => {
+		async function setup() {
+			writeLine.mockClear()
+			const socket = fakeSocket()
+			const attached = attach(socket)
+			socket.open()
+			await attached
+			const said = (id: string, text: string) =>
+				socket.emit({
+					type: 'response.output_audio_transcript.done',
+					response_id: id,
+					transcript: text,
+				})
+			const done = (id: string, status: string, kind: 'message' | 'function_call' = 'message') =>
+				socket.emit({ type: 'response.done', response: { id, status, output: [{ type: kind }] } })
+			const heard = (text: string) =>
+				socket.emit({
+					type: 'conversation.item.input_audio_transcription.completed',
+					transcript: text,
+				})
+			const lines = () => writeLine.mock.calls.map(([, args]) => [args.role, args.text])
+			return { said, done, heard, lines }
+		}
+
+		it('keeps a heads-up spoken before a tool call out of the chat', async () => {
+			const { said, done, lines } = await setup()
+			said('r1', 'Let me pull that up.')
+			done('r1', 'completed', 'function_call')
+			said('r2', 'You have three cards waiting.')
+			done('r2', 'completed')
+			await flush()
+			expect(lines()).toEqual([['assistant', 'You have three cards waiting.']])
+		})
+
+		it('does not post a line cut off by the caller when the answer repeats it', async () => {
+			const { said, done, lines } = await setup()
+			said('r1', 'The top card is a draft to Anna about the')
+			done('r1', 'cancelled')
+			said('r2', 'The top card is a draft to Anna about the invoice.')
+			done('r2', 'completed')
+			await flush()
+			expect(lines()).toEqual([['assistant', 'The top card is a draft to Anna about the invoice.']])
+		})
+
+		it('posts a cut-off line when what follows is something else, before it', async () => {
+			const { said, done, lines } = await setup()
+			said('r1', 'The top card is a draft to Anna about the')
+			done('r1', 'cancelled')
+			said('r2', 'Sure, moving on to the next one.')
+			done('r2', 'completed')
+			await flush()
+			expect(lines()).toEqual([
+				['assistant', 'The top card is a draft to Anna about the'],
+				['assistant', 'Sure, moving on to the next one.'],
+			])
+		})
+
+		it('posts a cut-off line once the caller speaks', async () => {
+			const { said, done, heard, lines } = await setup()
+			said('r1', 'The top card is a draft to Anna about the')
+			done('r1', 'cancelled')
+			heard('stop')
+			await flush()
+			expect(lines()).toEqual([
+				['assistant', 'The top card is a draft to Anna about the'],
+				['user', 'stop'],
+			])
+		})
+
+		it('drops an identical line said twice in a row, and keeps it after the caller spoke', async () => {
+			const { said, done, heard, lines } = await setup()
+			said('r1', 'Done.')
+			done('r1', 'completed')
+			said('r2', 'Done.')
+			done('r2', 'completed')
+			heard('ok')
+			said('r3', 'Done.')
+			done('r3', 'completed')
+			await flush()
+			expect(lines()).toEqual([
+				['assistant', 'Done.'],
+				['user', 'ok'],
+				['assistant', 'Done.'],
+			])
+		})
 	})
 
 	it('records a completed turn on response.done, but not for a response that only asked for a tool', async () => {
@@ -644,6 +791,15 @@ describe('buildTranscriptionConfig', () => {
 	})
 })
 
+describe('resolveVoiceGreeting', () => {
+	it('is off by default, blank or invalid, and on only for on', () => {
+		expect(resolveVoiceGreeting({})).toBe('off')
+		expect(resolveVoiceGreeting({ MASKIN_VOICE_GREETING: ' ' })).toBe('off')
+		expect(resolveVoiceGreeting({ MASKIN_VOICE_GREETING: 'maybe' })).toBe('off')
+		expect(resolveVoiceGreeting({ MASKIN_VOICE_GREETING: ' ON ' })).toBe('on')
+	})
+})
+
 describe('resolveRealtimeVoice', () => {
 	it('defaults to the current voice when unset or blank', () => {
 		expect(VOICE_REALTIME_VOICE).toBe('verse')
@@ -739,5 +895,244 @@ describe('createRealtimeCall — session settings and the transcription retry', 
 		vi.stubGlobal('fetch', serverError)
 		expect(await createRealtimeCall(input)).toMatchObject({ kind: 'error', status: 500 })
 		expect(serverError).toHaveBeenCalledTimes(1)
+	})
+})
+
+describe('session turn-taking and reasoning settings', () => {
+	const input = {
+		apiKey: 'sk-test',
+		callsUrl: 'https://api.openai.com/v1/realtime/calls',
+		offerSdp: 'v=0',
+		instructions: '',
+		voice: 'marin',
+		model: 'gpt-realtime',
+		tools: [],
+	}
+	const ok = () =>
+		new Response('v=0 answer', { status: 201, headers: { location: '/v1/realtime/calls/rtc_1' } })
+	type Sent = {
+		reasoning?: { effort: string }
+		audio: {
+			input: {
+				noise_reduction: { type: string }
+				turn_detection: { type: string; eagerness: string }
+			}
+		}
+	}
+	const sentSession = (fetchMock: ReturnType<typeof vi.fn>, call: number) => {
+		const form = (fetchMock.mock.calls[call] as [string, RequestInit])[1].body as FormData
+		return JSON.parse(form.get('session') as string) as Sent
+	}
+
+	afterEach(() => {
+		vi.unstubAllEnvs()
+		resetReasoningRejection()
+	})
+
+	it('defaults to medium eagerness, far_field noise reduction and low reasoning', async () => {
+		const fetchMock = vi.fn().mockResolvedValue(ok())
+		vi.stubGlobal('fetch', fetchMock)
+		await createRealtimeCall(input)
+		const sent = sentSession(fetchMock, 0)
+		expect(sent.audio.input.turn_detection).toEqual({ type: 'semantic_vad', eagerness: 'medium' })
+		expect(sent.audio.input.noise_reduction).toEqual({ type: 'far_field' })
+		expect(sent.reasoning).toEqual({ effort: 'low' })
+	})
+
+	it('uses near_field when the caller asks for it', async () => {
+		const fetchMock = vi.fn().mockResolvedValue(ok())
+		vi.stubGlobal('fetch', fetchMock)
+		await createRealtimeCall({ ...input, noiseReduction: 'near_field' })
+		expect(sentSession(fetchMock, 0).audio.input.noise_reduction).toEqual({ type: 'near_field' })
+	})
+
+	it('reads eagerness and reasoning from the environment, and off drops reasoning', async () => {
+		vi.stubEnv('MASKIN_VOICE_VAD_EAGERNESS', 'high')
+		vi.stubEnv('MASKIN_VOICE_REASONING_EFFORT', 'off')
+		const fetchMock = vi.fn().mockResolvedValue(ok())
+		vi.stubGlobal('fetch', fetchMock)
+		await createRealtimeCall(input)
+		const sent = sentSession(fetchMock, 0)
+		expect(sent.audio.input.turn_detection.eagerness).toBe('high')
+		expect(sent).not.toHaveProperty('reasoning')
+	})
+
+	it('falls back to the defaults for values that are not documented', () => {
+		expect(resolveVadEagerness({ MASKIN_VOICE_VAD_EAGERNESS: 'eager' })).toBe('medium')
+		expect(resolveVadEagerness({ MASKIN_VOICE_VAD_EAGERNESS: ' Auto ' })).toBe('auto')
+		expect(resolveReasoningEffort({ MASKIN_VOICE_REASONING_EFFORT: 'loud' })).toBe('low')
+		expect(resolveReasoningEffort({ MASKIN_VOICE_REASONING_EFFORT: 'xhigh' })).toBe('xhigh')
+		expect(resolveReasoningEffort({ MASKIN_VOICE_REASONING_EFFORT: 'off' })).toBeNull()
+	})
+
+	it('retries once without reasoning when OpenAI answers 400 about it', async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(
+				new Response('{"error":{"message":"Unknown parameter: session.reasoning."}}', {
+					status: 400,
+				}),
+			)
+			.mockResolvedValueOnce(ok())
+		vi.stubGlobal('fetch', fetchMock)
+		expect(await createRealtimeCall(input)).toMatchObject({ kind: 'ok', callId: 'rtc_1' })
+		expect(fetchMock).toHaveBeenCalledTimes(2)
+		expect(sentSession(fetchMock, 0).reasoning).toEqual({ effort: 'low' })
+		expect(sentSession(fetchMock, 1)).not.toHaveProperty('reasoning')
+	})
+
+	it('remembers the rejection so the next call leaves reasoning out and pays no retry', async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(
+				new Response('{"error":{"message":"Unknown parameter: session.reasoning."}}', {
+					status: 400,
+				}),
+			)
+			.mockResolvedValue(ok())
+		vi.stubGlobal('fetch', fetchMock)
+		await createRealtimeCall(input)
+		expect(fetchMock).toHaveBeenCalledTimes(2)
+		await createRealtimeCall(input)
+		expect(fetchMock).toHaveBeenCalledTimes(3)
+		expect(sentSession(fetchMock, 2)).not.toHaveProperty('reasoning')
+		resetReasoningRejection()
+		await createRealtimeCall(input)
+		expect(sentSession(fetchMock, 3).reasoning).toEqual({ effort: 'low' })
+	})
+
+	it('does not retry a 400 about reasoning when reasoning is off', async () => {
+		vi.stubEnv('MASKIN_VOICE_REASONING_EFFORT', 'off')
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValue(new Response('{"error":{"message":"reasoning"}}', { status: 400 }))
+		vi.stubGlobal('fetch', fetchMock)
+		expect(await createRealtimeCall(input)).toMatchObject({ kind: 'error', status: 400 })
+		expect(fetchMock).toHaveBeenCalledTimes(1)
+	})
+})
+
+describe('wait_for_user and the idle check-in', () => {
+	const respondCreates = (socket: ReturnType<typeof fakeSocket>) =>
+		socket.sent.filter((e) => e.type === 'response.create')
+
+	async function callWait(socket: ReturnType<typeof fakeSocket>, ...names: string[]) {
+		names.forEach((name, i) =>
+			socket.emit({
+				type: 'response.function_call_arguments.done',
+				call_id: `call_${i}`,
+				name,
+				arguments: '{}',
+			}),
+		)
+		socket.emit({
+			type: 'response.done',
+			response: {
+				id: 'resp_1',
+				status: 'completed',
+				output: names.map(() => ({ type: 'function_call' })),
+			},
+		})
+		await flush()
+		await flush()
+	}
+
+	it('answers wait_for_user but does not ask the model to speak', async () => {
+		const socket = fakeSocket()
+		const invokeTool = vi.fn()
+		const p = attach(socket, invokeTool)
+		socket.open()
+		await p
+		await callWait(socket, 'wait_for_user')
+		expect(invokeTool).not.toHaveBeenCalled()
+		expect(writeLine).not.toHaveBeenCalled()
+		const output = socket.sent.find(
+			(e) => (e.item as { type?: string })?.type === 'function_call_output',
+		)
+		expect(output).toBeTruthy()
+		expect(respondCreates(socket)).toHaveLength(0)
+	})
+
+	it('still speaks when a real tool is called next to wait_for_user', async () => {
+		const socket = fakeSocket()
+		const invokeTool = vi.fn(async () => ({ content: [{ type: 'text', text: 'hit' }] }))
+		const p = attach(socket, invokeTool)
+		socket.open()
+		await p
+		await callWait(socket, 'wait_for_user', 'search_objects')
+		expect(respondCreates(socket)).toHaveLength(1)
+	})
+
+	describe('idle check-in', () => {
+		async function quietCall() {
+			vi.useFakeTimers()
+			const socket = fakeSocket()
+			const p = attach(socket)
+			socket.open()
+			await p
+			// The greeting finishes: the agent has just stopped talking.
+			socket.emit({ type: 'response.created' })
+			socket.emit({
+				type: 'response.done',
+				response: { id: 'r0', status: 'completed', output: [] },
+			})
+			return socket
+		}
+		const nudges = (socket: ReturnType<typeof fakeSocket>) =>
+			socket.sent.filter(
+				(e) =>
+					(e.item as { content?: Array<{ text?: string }> } | undefined)?.content?.[0]?.text ===
+					VOICE_IDLE_NUDGE_INSTRUCTION,
+			)
+
+		it('checks in once after the silence, then not again until the person speaks', async () => {
+			const socket = await quietCall()
+			vi.advanceTimersByTime(VOICE_IDLE_NUDGE_MS - 1)
+			expect(nudges(socket)).toHaveLength(0)
+			vi.advanceTimersByTime(1)
+			expect(nudges(socket)).toHaveLength(1)
+			expect(respondCreates(socket)).toHaveLength(1)
+			// The agent answers the nudge and goes quiet again: no second check-in.
+			socket.emit({ type: 'response.created' })
+			socket.emit({
+				type: 'response.done',
+				response: { id: 'r1', status: 'completed', output: [] },
+			})
+			vi.advanceTimersByTime(VOICE_IDLE_NUDGE_MS * 3)
+			expect(nudges(socket)).toHaveLength(1)
+		})
+
+		it('re-arms after the person speaks, up to the cap', async () => {
+			const socket = await quietCall()
+			for (let i = 0; i < VOICE_IDLE_NUDGE_MAX + 2; i++) {
+				vi.advanceTimersByTime(VOICE_IDLE_NUDGE_MS)
+				socket.emit({ type: 'input_audio_buffer.speech_started' })
+				socket.emit({ type: 'input_audio_buffer.speech_stopped' })
+				socket.emit({ type: 'response.created' })
+				socket.emit({
+					type: 'response.done',
+					response: { id: `r${i}`, status: 'completed', output: [] },
+				})
+			}
+			expect(nudges(socket)).toHaveLength(VOICE_IDLE_NUDGE_MAX)
+		})
+
+		it('does not check in while the person is speaking or the agent is talking', async () => {
+			const socket = await quietCall()
+			socket.emit({ type: 'input_audio_buffer.speech_started' })
+			vi.advanceTimersByTime(VOICE_IDLE_NUDGE_MS * 2)
+			expect(nudges(socket)).toHaveLength(0)
+			socket.emit({ type: 'input_audio_buffer.speech_stopped' })
+			socket.emit({ type: 'response.created' })
+			vi.advanceTimersByTime(VOICE_IDLE_NUDGE_MS * 2)
+			expect(nudges(socket)).toHaveLength(0)
+		})
+
+		it('clears the timer when the call is closed or the socket drops', async () => {
+			const socket = await quietCall()
+			socket.drop()
+			vi.advanceTimersByTime(VOICE_IDLE_NUDGE_MS * 2)
+			expect(nudges(socket)).toHaveLength(0)
+		})
 	})
 })

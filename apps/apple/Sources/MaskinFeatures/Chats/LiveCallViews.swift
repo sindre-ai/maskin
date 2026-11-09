@@ -5,11 +5,14 @@ import SwiftUI
 
 /// The words for a call's state, shared by the banner, the control bar and the pill.
 extension LiveMeetingSession {
-	var statusLine: String {
+	var statusLine: String { statusLine(interruptible: false) }
+
+	/// `interruptible` is the dock, where tapping the avatar cuts the agent off.
+	func statusLine(interruptible: Bool) -> String {
 		LiveCallStatus.text(
 			phase: voice.phase, isMuted: voice.isMuted, failure: voice.failure,
 			notice: voice.notice ?? connectionNotice, leadName: lead.name,
-			hasWords: !voice.transcript.isEmpty, yourTurn: voice.isYourTurn)
+			hasWords: !voice.transcript.isEmpty, yourTurn: voice.isYourTurn, interruptible: interruptible)
 	}
 
 	var title: String { LiveCallStatus.title(kind: kind, leadName: lead.name) }
@@ -17,13 +20,22 @@ extension LiveMeetingSession {
 
 /// A round call control: 40 pt, with the 44 pt hit area the system adds around a button.
 private let callControlSize = MaskinSpace.s14 + MaskinSpace.s4
+/// The dock's controls are 50 pt circles.
+private let dockControlSize = MaskinSpace.s14 + MaskinSpace.s10
 
-private struct CallClock: View {
+struct CallClock: View {
 	let session: LiveMeetingSession
+	/// The thread header's capsule sets the time in the mono face.
+	var mono = false
 	var body: some View {
 		TimelineView(.periodic(from: .now, by: 1)) { context in
-			Text(LiveMeetingFormat.duration(session.elapsed(at: context.date)))
-				.maskinText(.subhead).foregroundStyle(MaskinColor.ink3).monospacedDigit()
+			let text = Text(LiveMeetingFormat.duration(session.elapsed(at: context.date)))
+			if mono {
+				text.font(MaskinTypeface.mono(MaskinFontSize.t13, weight: .semibold, relativeTo: .subheadline))
+					.foregroundStyle(MaskinColor.sigInk).monospacedDigit()
+			} else {
+				text.maskinText(.subhead).foregroundStyle(MaskinColor.ink3).monospacedDigit()
+			}
 		}
 	}
 }
@@ -103,29 +115,6 @@ private struct CallWaveform: View {
 	}
 }
 
-/// Two rings that swell and fade behind the agent while it speaks.
-private struct CallPulse: View {
-	let active: Bool
-	@Environment(\.accessibilityReduceMotion) private var reduceMotion
-	@State private var out = false
-
-	var body: some View {
-		ZStack {
-			ForEach(0..<2, id: \.self) { index in
-				Circle().strokeBorder(MaskinColor.sigInk.opacity(0.55), lineWidth: 1.5)
-					.scaleEffect(active && out ? 1.55 : 0.75)
-					.opacity(active ? (out ? 0 : 0.55) : 0)
-					.animation(
-						active && !reduceMotion
-							? .easeOut(duration: 2.4).repeatForever(autoreverses: false).delay(Double(index) * 1.2) : .default,
-						value: out)
-			}
-		}
-		.onChange(of: active, initial: true) { _, on in out = on && !reduceMotion }
-		.accessibilityHidden(true)
-	}
-}
-
 /// One labelled round control in the dock's bottom row.
 private struct CallControl: View {
 	enum Emphasis { case quiet, on, inverse, danger }
@@ -141,6 +130,7 @@ private struct CallControl: View {
 }
 
 private struct CallControlLabel: View {
+	@Environment(\.horizontalSizeClass) private var sizeClass
 	let title: String
 	let symbol: String
 	let emphasis: CallControl.Emphasis
@@ -150,13 +140,18 @@ private struct CallControlLabel: View {
 			Image(systemName: symbol)
 				.maskinSymbol(MaskinFontSize.t16, weight: .medium)
 				.foregroundStyle(foreground)
-				.frame(width: callControlSize, height: callControlSize)
+				.frame(width: controlSize, height: controlSize)
 				.background(fill, in: Circle())
 			Text(title).maskinText(.caption).foregroundStyle(MaskinColor.ink3)
 				.multilineTextAlignment(.center).lineLimit(1)
 		}
 		.frame(maxWidth: .infinity)
 		.accessibilityElement(children: .combine)
+	}
+
+	/// 64 pt in regular width, the phone's size otherwise.
+	private var controlSize: CGFloat {
+		sizeClass == .regular ? LiveMeetingMetrics.controlSize(regularWidth: true) : dockControlSize
 	}
 
 	private var foreground: Color {
@@ -178,8 +173,9 @@ private struct CallControlLabel: View {
 }
 
 /// The call card: it takes the composer's place at the bottom of the thread while a call runs in it.
-/// Who the call is with (pulsing while they speak), one state line, a waveform and the clock; the
-/// agent's latest words as captions; then Mic, Speaker, Captions, More and End. The chevron folds it
+/// Who the call is with (in an orb that follows the sound), one state line, a waveform and the clock; the
+/// agent's latest words as captions; the Deciding now card; then Mic, Speaker, Captions, Pull up and End
+/// (touch and hold Pull up for invite, pace and the objects mentioned). The chevron folds it
 /// to a pill. The conversation itself is the thread above.
 struct LiveCallPanel: View {
 	let session: LiveMeetingSession
@@ -187,6 +183,10 @@ struct LiveCallPanel: View {
 	let onInvite: () -> Void
 	let onOpenObject: (MentionedObject) -> Void
 	let onEnd: () -> Void
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
+	@Environment(\.horizontalSizeClass) private var sizeClass
+
+	private var regular: Bool { sizeClass == .regular }
 
 	var body: some View {
 		Group {
@@ -197,23 +197,70 @@ struct LiveCallPanel: View {
 			}
 		}
 		.animation(MaskinMotion.standard, value: session.isMinimized)
+		// Regular width: the call card is a centred cluster, not a bar across the window.
+		.frame(maxWidth: LiveMeetingMetrics.captionsMaxWidth(regularWidth: regular) ?? .infinity)
+		.frame(maxWidth: .infinity)
+	}
+
+	private var orbState: CallOrbState {
+		CallOrbState.derive(
+			phase: session.voice.phase, isMuted: session.voice.isMuted, isConnected: session.voice.isConnected)
 	}
 
 	private var speaking: Bool { session.voice.phase == .speaking && !session.voice.isMuted && !session.voice.isYourTurn }
 
+	/// The open decisions the card walks through. "Related to this thread" is decided in
+	/// `LiveDecisionQueue.isRelated`: the object was mentioned in the thread, or the agent who asked
+	/// is in the conversation. Those come first, then the rest of the ranked feed.
+	private var decisions: [ForYouCard] {
+		guard let store = runtime?.forYou.store else { return [] }
+		let thread = LiveDecisionQueue.Thread(
+			participantIDs: Set(session.chat.participants.map(\.id)).union([session.lead.id]),
+			objectIDs: Set(mentioned.map(\.id)))
+		return LiveDecisionQueue.queue(from: store.entries, thread: thread)
+	}
+
+	/// One tap answers as the person, through the same path as the For You card, then tells the
+	/// agent on the call what was chosen so it carries on.
+	private func choose(_ option: DecisionOption, on card: ForYouCard) {
+		guard let store = runtime?.forYou.store else { return }
+		MaskinHaptics.play(.light)
+		let question = LiveDecisionQueue.question(of: card)
+		store.choose(option, on: card)
+		session.recordDecision(label: option.label, question: question)
+		session.tellAgent(LiveDecisionQueue.chosenText(label: option.label, question: question))
+	}
+
+	/// Search and objects without ending the call: the dock folds to the bar, which follows the
+	/// person to the search screen (the pill shows wherever the call's panel is not).
+	private func pullUp() {
+		MaskinHaptics.play(.light)
+		session.isMinimized = true
+		runtime?.selectedTab = .search
+	}
+
 	private var dock: some View {
 		VStack(spacing: MaskinSpace.s7) {
 			HStack(spacing: MaskinSpace.s7) {
-				ZStack {
-					CallPulse(active: speaking).frame(width: callAvatarSize * 0.9, height: callAvatarSize * 0.9)
-					ActorAvatar(
-						name: session.lead.name, kind: session.lead.kind == .agent ? .agent : .human,
-						size: callAvatarSize * 0.9, seed: session.lead.id, working: session.voice.phase == .thinking)
+				Button {
+					MaskinHaptics.play(.light)
+					session.voice.interrupt()
+				} label: {
+					ZStack {
+						CallOrb(state: orbState, meter: session.voice.levels, size: callAvatarSize)
+						ActorAvatar(
+							name: session.lead.name, kind: session.lead.kind == .agent ? .agent : .human,
+							size: callAvatarSize * 0.5, seed: session.lead.id, working: session.voice.phase == .thinking)
+					}
+					.frame(width: callAvatarSize, height: callAvatarSize)
+					.contentShape(Circle())
 				}
-				.frame(width: callAvatarSize, height: callAvatarSize)
+				.buttonStyle(.plain)
+				.disabled(!speaking)
+				.accessibilityLabel(speaking ? "Interrupt \(session.lead.name)" : session.lead.name)
 				VStack(alignment: .leading, spacing: MaskinSpace.s1) {
 					Text(session.lead.name).maskinText(.headline).foregroundStyle(MaskinColor.ink).lineLimit(1)
-					Text(session.statusLine).maskinText(.subhead)
+					Text(session.statusLine(interruptible: speaking)).maskinText(.subhead)
 						.foregroundStyle(session.voice.failure == nil ? MaskinColor.ink3 : MaskinColor.danger)
 						.lineLimit(2).fixedSize(horizontal: false, vertical: true)
 				}
@@ -233,30 +280,41 @@ struct LiveCallPanel: View {
 				.accessibilityLabel("Minimise call")
 			}
 			if session.showsCaptions { captions }
+			LiveCallDecisionCard(queue: decisions, onChoose: { choose($0, on: $1) })
 			controls
 		}
 		.padding(.horizontal, MaskinSpace.s8)
 		.padding(.top, MaskinSpace.s8)
 		.padding(.bottom, MaskinSpace.s7)
-		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.brief + MaskinSpace.s4, style: .continuous))
+		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: dockRadius, style: .continuous))
 		.overlay(
-			RoundedRectangle(cornerRadius: MaskinRadius.brief + MaskinSpace.s4, style: .continuous)
+			RoundedRectangle(cornerRadius: dockRadius, style: .continuous)
 				.strokeBorder(MaskinSurface.line, lineWidth: 1))
 		.shadow(color: MaskinColor.overlayDim.opacity(0.18), radius: MaskinSpace.s9, y: MaskinSpace.s4)
 		.accessibilityElement(children: .contain)
+		.task {
+			// The decisions come from the For You feed; make sure it has been loaded this launch.
+			if let store = runtime?.forYou.store, store.phase == .idle { await store.load() }
+		}
 	}
 
 	private var captions: some View {
 		Text(session.latestAgentLine ?? "Captions appear here when \(session.lead.name) speaks.")
 			.maskinText(.subhead).foregroundStyle(MaskinColor.ink2)
 			.lineLimit(3).multilineTextAlignment(.leading)
-			.frame(maxWidth: .infinity, alignment: .leading)
+			.frame(maxWidth: LiveMeetingMetrics.captionsMaxWidth(regularWidth: regular) ?? .infinity, alignment: .leading)
 			.padding(.horizontal, MaskinSpace.s7).padding(.vertical, MaskinSpace.s5)
 			.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
 			.accessibilityLabel("Caption")
 	}
 
 	private var controls: some View {
+		controlsRow
+			.frame(maxWidth: LiveMeetingMetrics.controlsMaxWidth(regularWidth: regular) ?? .infinity)
+			.frame(maxWidth: .infinity)
+	}
+
+	private var controlsRow: some View {
 		HStack(alignment: .top, spacing: MaskinSpace.s2) {
 			CallControl(
 				title: session.voice.isMuted ? "Muted" : "Mic",
@@ -302,9 +360,12 @@ struct LiveCallPanel: View {
 					}
 				}
 			} label: {
-				CallControlLabel(title: "More", symbol: "ellipsis", emphasis: .quiet)
+				CallControlLabel(title: "Pull up", symbol: "arrow.up.circle", emphasis: .quiet)
+			} primaryAction: {
+				pullUp()
 			}
-			.accessibilityLabel("More call options")
+			.accessibilityLabel("Pull up search and objects")
+			.accessibilityHint("Touch and hold for more call options")
 			CallControl(title: "End", symbol: "phone.down.fill", emphasis: .danger) {
 				MaskinHaptics.play(.medium)
 				onEnd()
@@ -313,6 +374,8 @@ struct LiveCallPanel: View {
 	}
 }
 
+/// The dock card's corner radius (28).
+private let dockRadius = MaskinRadius.brief + MaskinSpace.s2
 private let callAvatarSize = MaskinSpace.s14 * 2
 
 /// What the thread shows while a call has just started and nothing has been said: no typing hint.

@@ -1,7 +1,8 @@
-import { Composer, nameClipboardImage } from '@/components/chat/chat'
+import { Composer, canSendMessage, nameClipboardImage } from '@/components/chat/chat'
 import { EMPTY_CHAT_SELECTION } from '@/lib/chat-selection'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createWorkspaceWrapper } from '../../setup'
 
 const uploadFileMock = vi.fn()
@@ -73,6 +74,31 @@ describe('Composer file-attach input', () => {
 		// so file types are validated by the backend, not the client.
 		expect(input.getAttribute('accept')).toBeNull()
 		expect(input.multiple).toBe(true)
+	})
+
+	it('offers one + menu with Photo, File, Item and Person or agent', async () => {
+		const user = userEvent.setup()
+		renderComposer()
+		await user.click(screen.getByRole('button', { name: 'Attach file' }))
+		for (const name of ['Photo', 'File', 'Item', 'Person or agent']) {
+			expect(await screen.findByRole('menuitem', { name })).toBeInTheDocument()
+		}
+	})
+
+	it('starts a mention from the Person or agent row', async () => {
+		const user = userEvent.setup()
+		renderComposer()
+		await user.click(screen.getByRole('button', { name: 'Attach file' }))
+		await user.click(await screen.findByRole('menuitem', { name: 'Person or agent' }))
+		expect(screen.getByRole('textbox')).toHaveValue('@')
+	})
+
+	it('shows one send button once there is text', async () => {
+		const user = userEvent.setup()
+		renderComposer()
+		await user.type(screen.getByRole('textbox'), 'hello')
+		expect(screen.getAllByRole('button', { name: 'Send message' })).toHaveLength(1)
+		expect(screen.queryByRole('button', { name: 'Dictate a message' })).not.toBeInTheDocument()
 	})
 
 	it('uploads a picked PDF via useUploadFile and dispatches add_file on success', async () => {
@@ -216,5 +242,143 @@ describe('nameClipboardImage', () => {
 	])('leaves %s alone', (name, type) => {
 		const file = new File(['x'], name, { type })
 		expect(nameClipboardImage(file, at)).toBe(file)
+	})
+})
+
+describe('Composer text over the message cap', () => {
+	const longText = `${'long message '.repeat(800)}the end`
+
+	beforeEach(() => uploadFileMock.mockReset())
+
+	function typeAndSend(container: HTMLElement, text: string) {
+		const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+		fireEvent.change(textarea, { target: { value: text } })
+		fireEvent.submit(textarea.closest('form') as HTMLFormElement)
+	}
+
+	it('uploads the full text as a .txt file and sends a short body with it', async () => {
+		uploadFileMock.mockResolvedValueOnce({ id: 'file-long-1' })
+		const { container, props } = renderComposer({ longTextAsFile: true })
+		typeAndSend(container, longText)
+
+		await waitFor(() => expect(props.onSend).toHaveBeenCalledTimes(1))
+		expect(uploadFileMock).toHaveBeenCalledWith(
+			expect.objectContaining({ mime_type: 'text/plain', content: longText, encoding: 'utf8' }),
+		)
+		const [body, extras] = vi.mocked(props.onSend).mock.calls[0]
+		expect(body.length).toBeLessThan(8000)
+		expect(extras?.files).toEqual([
+			expect.objectContaining({ fileId: 'file-long-1', mimeType: 'text/plain' }),
+		])
+	})
+
+	it('keeps the typed text and shows the error when the upload fails', async () => {
+		uploadFileMock.mockRejectedValueOnce(new Error('Upload failed'))
+		const { container, props } = renderComposer({ longTextAsFile: true })
+		typeAndSend(container, longText)
+
+		expect(await screen.findByText(/Upload failed/)).toBeInTheDocument()
+		expect(props.onSend).not.toHaveBeenCalled()
+		expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe(longText)
+	})
+
+	it('sends the text as typed when the caller did not opt in', async () => {
+		const { container, props } = renderComposer()
+		typeAndSend(container, longText)
+
+		await waitFor(() => expect(props.onSend).toHaveBeenCalledWith(longText.trim()))
+		expect(uploadFileMock).not.toHaveBeenCalled()
+	})
+})
+
+describe('Composer upload state', () => {
+	function pickFile(container: HTMLElement) {
+		const file = new File(['%PDF-1.4 hello'], 'report.pdf', { type: 'application/pdf' })
+		fireEvent.change(getFileInput(container), { target: { files: [file] } })
+	}
+
+	it('shows Preparing, then a percentage after a progress event, and says why Send is off', async () => {
+		uploadFileMock.mockReset()
+		let report: (p: number) => void = () => {}
+		uploadFileMock.mockImplementationOnce(
+			(_input: unknown, opts: { onProgress: (p: number) => void }) => {
+				report = opts.onProgress
+				return new Promise(() => {})
+			},
+		)
+		const { container } = renderComposer()
+		fireEvent.change(screen.getByRole('textbox'), { target: { value: 'hello' } })
+		pickFile(container)
+
+		expect(await screen.findByText('Preparing…')).toBeInTheDocument()
+		expect(screen.getByText('Waiting for 1 upload to finish')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
+
+		await waitFor(() => expect(uploadFileMock).toHaveBeenCalledTimes(1))
+		act(() => report(0.42))
+		expect(await screen.findByText('42%')).toBeInTheDocument()
+		expect(screen.queryByText('Preparing…')).not.toBeInTheDocument()
+		expect(screen.getByText('Waiting for 1 upload to finish')).toBeInTheDocument()
+	})
+
+	it('says a failed upload must be removed, and clears the reason once it is', async () => {
+		uploadFileMock.mockReset()
+		uploadFileMock.mockRejectedValueOnce(new Error('Storage is down'))
+		const { container } = renderComposer()
+		fireEvent.change(screen.getByRole('textbox'), { target: { value: 'hello' } })
+		pickFile(container)
+
+		expect(await screen.findByText('Storage is down')).toBeInTheDocument()
+		expect(screen.getByText('Remove the failed upload to send')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
+
+		fireEvent.click(screen.getByRole('button', { name: 'Remove failed upload report.pdf' }))
+		expect(screen.queryByText('Remove the failed upload to send')).not.toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled()
+	})
+})
+
+describe('Composer attachment-only send', () => {
+	const uploaded = {
+		...EMPTY_CHAT_SELECTION,
+		files: [{ fileId: 'file-1', name: 'report.pdf', sizeBytes: 10, mimeType: 'application/pdf' }],
+	}
+
+	it('turns Send on with an uploaded attachment and no text, and sends empty text', async () => {
+		const { props } = renderComposer({ selection: uploaded, allowAttachmentOnly: true })
+		const send = screen.getByRole('button', { name: 'Send message' })
+		expect(send).toBeEnabled()
+		fireEvent.click(send)
+		await waitFor(() => expect(props.onSend).toHaveBeenCalledWith(''))
+	})
+
+	it('keeps Send off with no text and no attachment', () => {
+		renderComposer({ allowAttachmentOnly: true })
+		expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
+	})
+
+	it('keeps Send off for an attachment alone unless the caller opts in', () => {
+		renderComposer({ selection: uploaded })
+		expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
+	})
+
+	it('keeps Send off while another upload is still running', async () => {
+		uploadFileMock.mockReset()
+		uploadFileMock.mockImplementation(() => new Promise(() => {}))
+		const { container } = renderComposer({ selection: uploaded, allowAttachmentOnly: true })
+		const file = new File(['%PDF-1.4 hello'], 'second.pdf', { type: 'application/pdf' })
+		fireEvent.change(getFileInput(container), { target: { files: [file] } })
+		expect(await screen.findByText('Waiting for 1 upload to finish')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
+	})
+})
+
+describe('canSendMessage', () => {
+	it('needs text or an attachment, and no upload in flight', () => {
+		expect(canSendMessage({ text: '  ', attachmentCount: 0, uploadsInFlight: 0 })).toBe(false)
+		expect(canSendMessage({ text: 'hi', attachmentCount: 0, uploadsInFlight: 0 })).toBe(true)
+		expect(canSendMessage({ text: '', attachmentCount: 1, uploadsInFlight: 0 })).toBe(true)
+		expect(canSendMessage({ text: '', attachmentCount: 1, uploadsInFlight: 1 })).toBe(false)
+		expect(canSendMessage({ text: 'hi', attachmentCount: 0, uploadsInFlight: 1 })).toBe(false)
 	})
 })

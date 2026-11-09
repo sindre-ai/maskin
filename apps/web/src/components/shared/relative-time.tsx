@@ -38,7 +38,7 @@ function formatClock(date: Date): string {
 	return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }).toUpperCase()
 }
 
-function formatRelative(date: Date): string {
+export function formatRelative(date: Date): string {
 	const now = Date.now()
 	const diff = now - date.getTime()
 	const seconds = Math.floor(diff / 1000)

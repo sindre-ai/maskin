@@ -77,6 +77,8 @@ export interface RecentPush {
 	critical: boolean
 	/** This entry is the rollup push itself. */
 	rollup: boolean
+	/** A clear push already went out for it, so it is never cleared twice. */
+	cleared?: boolean
 }
 
 export type PushAction = 'send' | 'skip' | 'delay' | 'rollup'
@@ -346,6 +348,16 @@ export class PushLedger {
 
 	recent(actorId: string, nowMs: number): RecentPush[] {
 		return (this.byActor.get(actorId) ?? []).filter((r) => nowMs - r.at < this.retentionMs)
+	}
+
+	/** Pushes that left the server and have not been cleared from the device yet. */
+	uncleared(actorId: string): RecentPush[] {
+		return (this.byActor.get(actorId) ?? []).filter((r) => r.sent && !r.cleared)
+	}
+
+	markCleared(actorId: string, notificationIds: string[]): void {
+		const ids = new Set(notificationIds)
+		for (const r of this.byActor.get(actorId) ?? []) if (ids.has(r.notificationId)) r.cleared = true
 	}
 
 	hasSent(actorId: string, notificationId: string): boolean {

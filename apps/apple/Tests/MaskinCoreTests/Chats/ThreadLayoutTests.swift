@@ -181,6 +181,20 @@ import Testing
 		#expect(ThreadLayout.latestOwnMessageID(in: [message(1, "a", at: 0)], currentActorID: "me") == nil)
 	}
 
+	@Test func everyUnconfirmedOwnMessageCarriesAStatusLine() {
+		func queued(_ id: String, at offset: TimeInterval) -> ChatMessage {
+			ChatMessage(
+				id: "local-\(id)", conversationID: "c", actorID: "me", actorName: "me", author: .human,
+				content: id, createdAt: t0.addingTimeInterval(offset), status: .sending, idempotencyKey: id)
+		}
+		let rows = [message(1, "me", at: 0), message(2, "a", at: 10), queued("x", at: 20), queued("y", at: 21), queued("z", at: 22)]
+		#expect(
+			ThreadLayout.statusLineIDs(in: rows, currentActorID: "me") == ["local-x", "local-y", "local-z"])
+		// Once everything is confirmed, only the newest own message keeps one.
+		let confirmedRows = [message(1, "me", at: 0), message(2, "a", at: 10), message(3, "me", at: 20)]
+		#expect(ThreadLayout.statusLineIDs(in: confirmedRows, currentActorID: "me") == ["m3"])
+	}
+
 	@Test func aReplyQuoteIsSplitFromTheBody() {
 		let content = ChatQuote.make(author: "Relay", content: "First line\nSecond line") + "Sounds right to me"
 		let quote = try! #require(QuotedReply.parse(content))

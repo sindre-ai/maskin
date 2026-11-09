@@ -8,6 +8,11 @@ export type WorkspaceSettings = z.infer<typeof workspaceSettingsSchema>
 export interface IntegrationConfig {
 	system_actor_id?: string
 	owner_login?: string
+	/** GitHub only: `organization` or `personal`, saved at install time. Absent on
+	 *  installs made before it existed; readers treat absent as unknown. */
+	owner_type?: 'organization' | 'personal'
+	/** GitHub only: the account's avatar URL, saved at install time. */
+	owner_avatar_url?: string
 	/**
 	 * When `false`, session-manager injects neither this integration's token env
 	 * var nor its auto-inject MCP server into agent sessions. Server-side callers

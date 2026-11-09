@@ -7,7 +7,6 @@ import {
 } from '../lib/analytics/capability-events'
 import { findChiefOfStaffId } from '../lib/chief-of-staff'
 import { recordEvent } from '../lib/events/record-event'
-import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
 import { logger } from '../lib/logger'
 import { findDirectChat, postToDirectChat } from './direct-chat'
 
@@ -41,7 +40,6 @@ const WEEK_MS = 7 * DAY_MS
 const OPT_OUT_REPLY = '^\\s*(stop|start)\\s*[.!]*\\s*$'
 
 export type ProactiveRefusal =
-	| 'flag_off'
 	| 'sender_not_allowed'
 	| 'sender_paused'
 	| 'recipient_not_member'
@@ -176,15 +174,12 @@ async function runChecksAndSend(
 	const { workspaceId, senderAgentId, recipientHumanId, reason, content, dedupeKey } = args
 	const now = Date.now()
 
-	// 1. The flag is read on the recipient.
-	if (!isFlagEnabled(recipientHumanId, FLAGS.AGENT_PROACTIVE_1_1)) return refuse('flag_off')
-
-	// 2. Only the workspace's Chief of Staff may speak first in v1.
+	// 1. Only the workspace's Chief of Staff may speak first in v1.
 	if ((await findChiefOfStaffId(tx, workspaceId)) !== senderAgentId) {
 		return refuse('sender_not_allowed')
 	}
 
-	// 3. A paused sender is refused. The idle watcher also writes paused, so this
+	// 2. A paused sender is refused. The idle watcher also writes paused, so this
 	// can refuse spuriously; it fails closed and the next daily tick retries.
 	const [sender] = await tx
 		.select({ agentState: actors.agentState })
@@ -193,7 +188,7 @@ async function runChecksAndSend(
 		.limit(1)
 	if (!sender || sender.agentState === 'paused') return refuse('sender_paused')
 
-	// 4. The recipient is a human and an active member of the workspace.
+	// 3. The recipient is a human and an active member of the workspace.
 	const [recipient] = await tx
 		.select({ id: actors.id })
 		.from(workspaceMembers)
@@ -208,7 +203,7 @@ async function runChecksAndSend(
 		.limit(1)
 	if (!recipient) return refuse('recipient_not_member')
 
-	// 5. Find the 1-1. Never created in v1.
+	// 4. Find the 1-1. Never created in v1.
 	const chat = await findDirectChat(tx, {
 		workspaceId,
 		humanId: recipientHumanId,
@@ -216,12 +211,12 @@ async function runChecksAndSend(
 	})
 	if (!chat) return refuse('no_direct_chat')
 
-	// 6. A person who replied stop is not messaged again, whatever the reason.
+	// 5. A person who replied stop is not messaged again, whatever the reason.
 	if (await isOptedOut(tx, { conversationId: chat.id, recipientHumanId })) {
 		return refuse('opted_out')
 	}
 
-	// 7. The same dedupe key never sends twice.
+	// 6. The same dedupe key never sends twice.
 	const [dup] = await tx
 		.select({ id: messages.id })
 		.from(messages)
@@ -234,7 +229,7 @@ async function runChecksAndSend(
 		.limit(1)
 	if (dup) return refuse('duplicate')
 
-	// 8. Caps. One from this sender per day.
+	// 7. Caps. One from this sender per day.
 	const dayAgo = new Date(now - DAY_MS)
 	const [fromAgent] = await tx
 		.select({ n: sql<number>`count(*)::int` })
@@ -249,7 +244,7 @@ async function runChecksAndSend(
 		)
 	if ((fromAgent?.n ?? 0) >= PROACTIVE_LIMITS.agentPerDay) return refuse('cap_agent_day')
 
-	// 9. Two per person per day from all agents, one per reason per week.
+	// 8. Two per person per day from all agents, one per reason per week.
 	const person = { workspaceId, recipientHumanId }
 	if (
 		(await countProactiveToPerson(tx, { ...person, since: dayAgo })) >=

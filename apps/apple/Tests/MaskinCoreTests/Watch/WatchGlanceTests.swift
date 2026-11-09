@@ -74,16 +74,8 @@ struct WatchGlanceTests {
 
 	@Test("the header says which decision of how many")
 	func position() {
-		#expect(WatchDecisionOptions.position(0, of: 3) == "1 of 3")
-		#expect(WatchDecisionOptions.position(2, of: 3) == "3 of 3")
-	}
-
-	@Test("the reason is the first sentence, and a decimal point does not end it")
-	func reasonLine() {
-		#expect(WatchDecisionOptions.reasonLine("7 people. Webhook fix shipped.") == "7 people.")
-		#expect(WatchDecisionOptions.reasonLine("Spends $2.4k from the budget. Cannot be refunded.") == "Spends $2.4k from the budget.")
-		#expect(WatchDecisionOptions.reasonLine("**CTO ruled**, Developer is waiting on you") == "CTO ruled, Developer is waiting on you")
-		#expect(WatchDecisionOptions.reasonLine("  ") == nil)
+		#expect(WatchDecisionOptions.position(0, of: 3) == "1/3")
+		#expect(WatchDecisionOptions.position(2, of: 3) == "3/3")
 	}
 
 	@Test("the offline header reads the age of the snapshot")

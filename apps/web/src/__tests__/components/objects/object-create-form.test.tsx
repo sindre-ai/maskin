@@ -53,7 +53,7 @@ describe('ObjectCreateForm', () => {
 	it('shows empty state when no available types', () => {
 		mockGetTabs.mockReturnValue([])
 		render(<ObjectCreateForm objectId="new-1" onAutoCreate={vi.fn()} />)
-		expect(screen.getByText('No object types available')).toBeInTheDocument()
+		expect(screen.getByText('No item types available')).toBeInTheDocument()
 	})
 
 	it('shows creating indicator when isPending', () => {

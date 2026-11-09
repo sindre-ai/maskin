@@ -1,6 +1,8 @@
 import { AgentOutput } from '@/components/shared/agent-output'
 import { ObjectReference } from '@/components/shared/object-reference'
 import { TypeBadge } from '@/components/shared/type-badge'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useSessionAffectedObjects } from '@/hooks/use-events'
 import { useCreateSession, useSessionLogs } from '@/hooks/use-sessions'
 import { trackEvent } from '@/lib/analytics'
@@ -9,6 +11,7 @@ import { cn } from '@/lib/cn'
 import { formatSize } from '@/lib/file-utils'
 import { formatDurationBetween } from '@/lib/format-duration'
 import { toastSessionCreateError } from '@/lib/session-errors'
+import { useIsEnterpriseWorkspace } from '@/lib/workspace-context'
 import { Link, useNavigate } from '@tanstack/react-router'
 import {
 	CheckCircle2,
@@ -71,13 +74,11 @@ const PROVIDER_LABELS: Record<string, string> = {
 }
 
 // Reason codes that show the recovery row (credit depletion + temporary quota limits).
-// Matches the codes emitted by credit-classifier.ts.
+// Matches the codes emitted by credit-classifier.ts. The codes in RECOVERY_BY_CODE
+// get their own card and are not listed here.
 const CREDIT_REASON_CODES = new Set([
 	'billing_error',
-	'credit_balance_low',
 	'insufficient_credits',
-	'session_limit',
-	'weekly_limit',
 	'opus_limit',
 	'max_plan_rate_limit',
 	'server_rate_limit',
@@ -86,17 +87,79 @@ const CREDIT_REASON_CODES = new Set([
 
 // Codes that require topping up credits (subset of CREDIT_REASON_CODES).
 // max_plan_rate_limit is excluded — it's a temporary rate limit, not credit depletion.
-const TOPUP_REASON_CODES = new Set([
-	'billing_error',
-	'credit_balance_low',
-	'insufficient_credits',
-	'session_limit',
-	'weekly_limit',
-	'opus_limit',
-])
+const TOPUP_REASON_CODES = new Set(['billing_error', 'insufficient_credits', 'opus_limit'])
 
-// Codes where the agent couldn't authenticate — recovery is connecting credentials.
-const AUTH_REASON_CODES = new Set(['not_logged_in'])
+// Where on the Keys page a recovery button lands (ids set in settings/keys.tsx).
+type KeysSection = 'claude-subscriptions' | 'llm-api-keys'
+
+interface RecoveryEntry {
+	// Shown to workspaces with the Keys page, who can fix it themselves.
+	title: string
+	sentence: string
+	button: string
+	section: KeysSection
+	// credit_balance_low also offers the Anthropic plans page.
+	topUp?: boolean
+	// Shown to workspaces without the Keys page, where Maskin's own credentials failed.
+	ours: { title: string; sentence: string }
+}
+
+const PAUSED_OUR_SIDE = {
+	title: 'Agents are paused on our side',
+	sentence: 'Nothing for you to do. We are working on it.',
+}
+
+const LOGIN_EXPIRED: RecoveryEntry = {
+	title: 'Claude login expired',
+	sentence: 'Agents cannot start sessions until you sign in again.',
+	button: 'Reconnect Claude',
+	section: 'claude-subscriptions',
+	ours: PAUSED_OUR_SIDE,
+}
+
+const LIMIT_REACHED = {
+	title: 'Usage limit reached',
+	sentence: 'Sessions resume when the limit resets, or add a backup subscription now.',
+	button: 'Add a backup subscription',
+	section: 'claude-subscriptions' as const,
+	ours: PAUSED_OUR_SIDE,
+}
+
+// Replaces the stored message for these codes, so sessions that ended before the
+// copy changed read the same as new ones.
+const RECOVERY_BY_CODE: Record<string, RecoveryEntry> = {
+	oauth_expired: LOGIN_EXPIRED,
+	oauth_revoked: LOGIN_EXPIRED,
+	not_logged_in: {
+		title: 'Claude is not connected',
+		sentence: 'Connect an account so agents can work.',
+		button: 'Connect Claude',
+		section: 'claude-subscriptions',
+		ours: PAUSED_OUR_SIDE,
+	},
+	invalid_api_key: {
+		title: 'The API key was rejected',
+		sentence: 'Anthropic refused the key. Replace it to continue.',
+		button: 'Replace API key',
+		section: 'llm-api-keys',
+		ours: PAUSED_OUR_SIDE,
+	},
+	session_limit: LIMIT_REACHED,
+	weekly_limit: LIMIT_REACHED,
+	credit_balance_low: {
+		title: 'Anthropic credit is low',
+		sentence: 'The key has too little credit to start new sessions.',
+		button: 'Change API key',
+		section: 'llm-api-keys',
+		topUp: true,
+		ours: PAUSED_OUR_SIDE,
+	},
+}
+
+const PLAN_CAP_COPY = {
+	title: 'Plan cap reached',
+	sentence: 'This workspace used its included sessions for the month.',
+}
 
 // The session was deliberately stopped by the plan-budget watchdog, not a
 // provider failure — recovery is buying usage credits or upgrading.
@@ -110,18 +173,37 @@ export function FailureCard({
 	const topUpUrl = TOP_UP_URLS[failureReason.provider]
 	const isCredit = CREDIT_REASON_CODES.has(failureReason.reason_code)
 	const isTopUp = TOPUP_REASON_CODES.has(failureReason.reason_code)
-	const isAuth = AUTH_REASON_CODES.has(failureReason.reason_code)
 	const isBudget = BUDGET_REASON_CODES.has(failureReason.reason_code)
 	const isOpenRouter = failureReason.provider === 'openrouter'
 	const providerLabel =
 		PROVIDER_LABELS[failureReason.provider] ??
 		failureReason.provider.charAt(0).toUpperCase() + failureReason.provider.slice(1)
+	const hasKeysPage = useIsEnterpriseWorkspace()
+	// not_logged_in from Maskin's own pre-flight keeps its stored message: it also
+	// covers a network blip and an unreadable saved key, which need different words.
+	const isPreflightLogin =
+		failureReason.reason_code === 'not_logged_in' && failureReason.provider === 'maskin'
+	const recovery = isPreflightLogin ? undefined : RECOVERY_BY_CODE[failureReason.reason_code]
+	const copy = recovery
+		? hasKeysPage
+			? recovery
+			: recovery.ours
+		: isBudget
+			? PLAN_CAP_COPY
+			: undefined
 
 	return (
 		<div className="rounded-md border border-warning/30 bg-warning/5 px-3 py-3 space-y-2">
-			<p className="text-sm font-bold text-warning">
-				{providerLabel} — {failureReason.human_message}
-			</p>
+			{copy ? (
+				<>
+					<p className="text-sm font-bold text-warning">{copy.title}</p>
+					<p className="text-sm text-foreground">{copy.sentence}</p>
+				</>
+			) : (
+				<p className="text-sm font-bold text-warning">
+					{providerLabel} — {failureReason.human_message}
+				</p>
+			)}
 			<div className="flex flex-wrap items-center gap-1.5">
 				<span className="inline-flex items-center text-xs px-1.5 py-0.5 rounded-md bg-warning/10 text-warning border border-warning/20">
 					{failureReason.provider}
@@ -163,19 +245,46 @@ export function FailureCard({
 					</span>
 				</div>
 			)}
-			{isAuth && (
+			{recovery && hasKeysPage && (
 				<div className="flex flex-wrap items-center gap-2">
 					<Button size="sm" asChild>
-						<Link to="/$workspaceId/settings/keys" params={{ workspaceId }}>
-							Connect Claude subscription
+						<Link to="/$workspaceId/settings/keys" params={{ workspaceId }} hash={recovery.section}>
+							{recovery.button}
 						</Link>
+					</Button>
+					{recovery.topUp && (
+						<Button size="sm" variant="outline" asChild>
+							<a href={TOP_UP_URLS.anthropic} target="_blank" rel="noreferrer">
+								Top up on Anthropic
+								<ExternalLink size={12} className="ml-1" />
+							</a>
+						</Button>
+					)}
+				</div>
+			)}
+			{isPreflightLogin && (
+				<div className="flex flex-wrap items-center gap-2">
+					<Button size="sm" asChild>
+						{hasKeysPage ? (
+							<Link
+								to="/$workspaceId/settings/keys"
+								params={{ workspaceId }}
+								hash="claude-subscriptions"
+							>
+								Connect Claude
+							</Link>
+						) : (
+							<Link to="/$workspaceId/settings/billing" params={{ workspaceId }}>
+								View plan and usage
+							</Link>
+						)}
 					</Button>
 				</div>
 			)}
 			{isBudget && (
 				<div className="flex flex-wrap items-center gap-2">
 					<Button size="sm" asChild>
-						<Link to="/$workspaceId/settings/keys" params={{ workspaceId }}>
+						<Link to="/$workspaceId/settings/billing" params={{ workspaceId }}>
 							Go to Billing
 						</Link>
 					</Button>
@@ -351,30 +460,33 @@ function RestartSessionButton({
 	workspaceId,
 }: { session: SessionResponse; workspaceId: string }) {
 	const createSession = useCreateSession(workspaceId)
+	const canWrite = useCanWrite()
 	const navigate = useNavigate()
 	return (
-		<button
-			type="button"
-			className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed min-h-[44px] inline-flex items-center"
-			disabled={createSession.isPending}
-			onClick={() => {
-				trackEvent('session_restart_clicked', {
-					source: 'session-detail-panel',
-					session_id: session.id,
-					actor_id: session.actorId,
-					prior_status: session.status,
-				})
-				createSession.mutate(
-					{
+		<ViewerTooltip>
+			<button
+				type="button"
+				className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed min-h-[44px] inline-flex items-center"
+				disabled={createSession.isPending || !canWrite}
+				onClick={() => {
+					trackEvent('session_restart_clicked', {
+						source: 'session-detail-panel',
+						session_id: session.id,
 						actor_id: session.actorId,
-						action_prompt: session.actionPrompt,
-					},
-					{ onError: (err) => toastSessionCreateError(err, navigate, workspaceId) },
-				)
-			}}
-		>
-			{createSession.isPending ? 'Restarting…' : 'Restart'}
-		</button>
+						prior_status: session.status,
+					})
+					createSession.mutate(
+						{
+							actor_id: session.actorId,
+							action_prompt: session.actionPrompt,
+						},
+						{ onError: (err) => toastSessionCreateError(err, navigate, workspaceId) },
+					)
+				}}
+			>
+				{createSession.isPending ? 'Restarting…' : 'Restart'}
+			</button>
+		</ViewerTooltip>
 	)
 }
 
@@ -515,9 +627,9 @@ export function SessionDetailPanel({
 							) : (
 								<div className="flex flex-col gap-3">
 									{producedObjects.length > 0 ? (
-										<section aria-label={`Objects · ${producedObjects.length}`}>
+										<section aria-label={`Items · ${producedObjects.length}`}>
 											<h5 className="mb-1.5 text-[10.5px] font-mono uppercase tracking-[0.09em] text-muted-foreground">
-												Objects · {producedObjects.length}
+												Items · {producedObjects.length}
 											</h5>
 											<div className="space-y-1">
 												{producedObjects.map((obj) => (

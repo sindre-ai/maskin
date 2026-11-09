@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * CI gate for the rich-markdown-editor bet (`666e3c4a`, tech spec §12 rabbit
+ * CI gate for the rich markdown editor bet (`666e3c4a`, tech spec §12 rabbit
  * hole #6).
  *
  * `<MarkdownEditor>` (Tiptap, ~180 KB gzip) MUST be dynamic-imported so it

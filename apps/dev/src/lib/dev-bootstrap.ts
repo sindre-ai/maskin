@@ -7,71 +7,17 @@ import {
 	workspaceMembers,
 	workspaces,
 } from '@maskin/db/schema'
-import { eq } from 'drizzle-orm'
+import { eq, inArray } from 'drizzle-orm'
 import type { AgentStorageManager } from '../services/agent-storage'
 import type { SessionManager } from '../services/session-manager'
 import { provisionWorkspace } from '../services/workspace-bootstrap'
 import { emitWorkspaceFirstReady } from './analytics/install-telemetry'
 import {
-	CCD_ACTOR_IDS,
-	CCD_LOOP,
-	CCD_SKILL_IDS,
-	CCD_TRIGGER_IDS,
-} from './marketplace-loops/ccd-loop'
-import {
-	DEV_PIPELINE_ACTOR_IDS,
-	DEV_PIPELINE_LOOP,
-	DEV_PIPELINE_SKILL_IDS,
-	DEV_PIPELINE_TRIGGER_IDS,
-} from './marketplace-loops/dev-pipeline-loop'
-import {
-	GROWTH_BET_ACTOR_IDS,
-	GROWTH_BET_LOOP,
-	GROWTH_BET_SKILL_IDS,
-	GROWTH_BET_TRIGGER_IDS,
-} from './marketplace-loops/growth-bet-loop'
-import {
-	GROWTH_BRAND_DEMAND_ACTOR_IDS,
-	GROWTH_BRAND_DEMAND_LOOP,
-	GROWTH_BRAND_DEMAND_SKILL_IDS,
-	GROWTH_BRAND_DEMAND_TRIGGER_IDS,
-} from './marketplace-loops/growth-brand-demand-loop'
-import {
-	GROWTH_CONTENT_INSIGHT_ACTOR_IDS,
-	GROWTH_CONTENT_INSIGHT_LOOP,
-	GROWTH_CONTENT_INSIGHT_SKILL_IDS,
-	GROWTH_CONTENT_INSIGHT_TRIGGER_IDS,
-} from './marketplace-loops/growth-content-insight-loop'
-import {
-	GROWTH_DEAL_RELATIONSHIP_ACTOR_IDS,
-	GROWTH_DEAL_RELATIONSHIP_LOOP,
-	GROWTH_DEAL_RELATIONSHIP_SKILL_IDS,
-	GROWTH_DEAL_RELATIONSHIP_TRIGGER_IDS,
-} from './marketplace-loops/growth-deal-relationship-loop'
-import {
-	GROWTH_LEAD_GEN_ACTOR_IDS,
-	GROWTH_LEAD_GEN_LOOP,
-	GROWTH_LEAD_GEN_SKILL_IDS,
-	GROWTH_LEAD_GEN_TRIGGER_IDS,
-} from './marketplace-loops/growth-lead-gen-loop'
-import {
-	GROWTH_MEETING_ACTOR_IDS,
-	GROWTH_MEETING_LOOP,
-	GROWTH_MEETING_SKILL_IDS,
-	GROWTH_MEETING_TRIGGER_IDS,
-} from './marketplace-loops/growth-meeting-loop'
-import {
-	GROWTH_OPS_KNOWLEDGE_ACTOR_IDS,
-	GROWTH_OPS_KNOWLEDGE_LOOP,
-	GROWTH_OPS_KNOWLEDGE_SKILL_IDS,
-	GROWTH_OPS_KNOWLEDGE_TRIGGER_IDS,
-} from './marketplace-loops/growth-ops-knowledge-loop'
-import {
-	GROWTH_SDR_OUTREACH_ACTOR_IDS,
-	GROWTH_SDR_OUTREACH_LOOP,
-	GROWTH_SDR_OUTREACH_SKILL_IDS,
-	GROWTH_SDR_OUTREACH_TRIGGER_IDS,
-} from './marketplace-loops/growth-sdr-outreach-loop'
+	DISCOVERY_ACTOR_IDS,
+	DISCOVERY_LOOP,
+	DISCOVERY_SKILL_IDS,
+	DISCOVERY_TRIGGER_IDS,
+} from './marketplace-loops/discovery-loop'
 import {
 	type MarketplaceLoopSeedConfig,
 	getActorData,
@@ -80,90 +26,24 @@ import {
 } from './marketplace-loops/loop-data'
 import { actorSnapshot, skillSnapshot, triggerSnapshot } from './marketplace-loops/loop-snapshot'
 import {
-	STRATEGY_GROWTH_ACTOR_IDS,
-	STRATEGY_GROWTH_LOOP,
-	STRATEGY_GROWTH_SKILL_IDS,
-	STRATEGY_GROWTH_TRIGGER_IDS,
-} from './marketplace-loops/strategy-growth-loop'
-import {
-	TEAM_OPS_ACTOR_IDS,
-	TEAM_OPS_LOOP,
-	TEAM_OPS_SKILL_IDS,
-	TEAM_OPS_TRIGGER_IDS,
-} from './marketplace-loops/team-ops-loop'
+	MARKET_WATCH_ACTOR_IDS,
+	MARKET_WATCH_LOOP,
+	MARKET_WATCH_SKILL_IDS,
+	MARKET_WATCH_TRIGGER_IDS,
+} from './marketplace-loops/market-watch-loop'
 
 const MARKETPLACE_SEED_CONFIGS: readonly MarketplaceLoopSeedConfig[] = [
 	{
-		loop: CCD_LOOP,
-		actorIds: CCD_ACTOR_IDS,
-		triggerIds: CCD_TRIGGER_IDS,
-		skillIds: CCD_SKILL_IDS,
+		loop: MARKET_WATCH_LOOP,
+		actorIds: MARKET_WATCH_ACTOR_IDS,
+		triggerIds: MARKET_WATCH_TRIGGER_IDS,
+		skillIds: MARKET_WATCH_SKILL_IDS,
 	},
 	{
-		loop: DEV_PIPELINE_LOOP,
-		actorIds: DEV_PIPELINE_ACTOR_IDS,
-		triggerIds: DEV_PIPELINE_TRIGGER_IDS,
-		skillIds: DEV_PIPELINE_SKILL_IDS,
-	},
-	{
-		loop: STRATEGY_GROWTH_LOOP,
-		actorIds: STRATEGY_GROWTH_ACTOR_IDS,
-		triggerIds: STRATEGY_GROWTH_TRIGGER_IDS,
-		skillIds: STRATEGY_GROWTH_SKILL_IDS,
-	},
-	{
-		loop: TEAM_OPS_LOOP,
-		actorIds: TEAM_OPS_ACTOR_IDS,
-		triggerIds: TEAM_OPS_TRIGGER_IDS,
-		skillIds: TEAM_OPS_SKILL_IDS,
-	},
-	{
-		loop: GROWTH_LEAD_GEN_LOOP,
-		actorIds: GROWTH_LEAD_GEN_ACTOR_IDS,
-		triggerIds: GROWTH_LEAD_GEN_TRIGGER_IDS,
-		skillIds: GROWTH_LEAD_GEN_SKILL_IDS,
-	},
-	{
-		loop: GROWTH_SDR_OUTREACH_LOOP,
-		actorIds: GROWTH_SDR_OUTREACH_ACTOR_IDS,
-		triggerIds: GROWTH_SDR_OUTREACH_TRIGGER_IDS,
-		skillIds: GROWTH_SDR_OUTREACH_SKILL_IDS,
-	},
-	{
-		loop: GROWTH_DEAL_RELATIONSHIP_LOOP,
-		actorIds: GROWTH_DEAL_RELATIONSHIP_ACTOR_IDS,
-		triggerIds: GROWTH_DEAL_RELATIONSHIP_TRIGGER_IDS,
-		skillIds: GROWTH_DEAL_RELATIONSHIP_SKILL_IDS,
-	},
-	{
-		loop: GROWTH_CONTENT_INSIGHT_LOOP,
-		actorIds: GROWTH_CONTENT_INSIGHT_ACTOR_IDS,
-		triggerIds: GROWTH_CONTENT_INSIGHT_TRIGGER_IDS,
-		skillIds: GROWTH_CONTENT_INSIGHT_SKILL_IDS,
-	},
-	{
-		loop: GROWTH_BRAND_DEMAND_LOOP,
-		actorIds: GROWTH_BRAND_DEMAND_ACTOR_IDS,
-		triggerIds: GROWTH_BRAND_DEMAND_TRIGGER_IDS,
-		skillIds: GROWTH_BRAND_DEMAND_SKILL_IDS,
-	},
-	{
-		loop: GROWTH_BET_LOOP,
-		actorIds: GROWTH_BET_ACTOR_IDS,
-		triggerIds: GROWTH_BET_TRIGGER_IDS,
-		skillIds: GROWTH_BET_SKILL_IDS,
-	},
-	{
-		loop: GROWTH_OPS_KNOWLEDGE_LOOP,
-		actorIds: GROWTH_OPS_KNOWLEDGE_ACTOR_IDS,
-		triggerIds: GROWTH_OPS_KNOWLEDGE_TRIGGER_IDS,
-		skillIds: GROWTH_OPS_KNOWLEDGE_SKILL_IDS,
-	},
-	{
-		loop: GROWTH_MEETING_LOOP,
-		actorIds: GROWTH_MEETING_ACTOR_IDS,
-		triggerIds: GROWTH_MEETING_TRIGGER_IDS,
-		skillIds: GROWTH_MEETING_SKILL_IDS,
+		loop: DISCOVERY_LOOP,
+		actorIds: DISCOVERY_ACTOR_IDS,
+		triggerIds: DISCOVERY_TRIGGER_IDS,
+		skillIds: DISCOVERY_SKILL_IDS,
 	},
 ]
 
@@ -171,24 +51,29 @@ export interface MarketplaceSyncResult {
 	inserted: string[]
 	updated: string[]
 	unchanged: string[]
+	/** Slugs newly retired because they are no longer in the seed list. */
+	retired: string[]
 }
 
 /**
- * Syncs the global marketplace with the installable Loop bundles (Discover &
- * Research, Build & Ship, Strategy & Growth, Team Ops & Retro), upserting by
- * slug. A loop missing from marketplace_loops is inserted; a loop whose
+ * Syncs the global marketplace with the installable Loop bundles (Product
+ * Discovery, Market & Competitor Watch), upserting by slug. A loop missing from marketplace_loops is inserted; a loop whose
  * code-defined version differs from the stored row is updated in place (its
  * marketplace_loop_items are replaced wholesale); a loop whose version
  * matches is left untouched. Safe to call on every startup/deploy.
+ *
+ * A marketplace_loops row whose slug is no longer in the seed list is retired
+ * (retired_at set), not deleted: installed_loops.source_loop_id has no ON DELETE
+ * rule and the version pusher, installed list and uninstall all join on the row,
+ * so existing installs must keep it. A retired slug that comes back in the seed
+ * list is restored (retired_at cleared) and re-snapshotted like an update.
  *
  * Bumping a loop's `version` is the deliberate signal that propagates a
  * change: `LoopVersionPusher` (services/loop-version-pusher.ts) polls
  * hourly for installed_loops rows whose installedVersion has fallen behind
  * marketplaceLoops.version and re-provisions locked installs accordingly.
  *
- * Reuses the exact same loop configs + snapshot data the publish-*.ts
- * scripts publish to a shared marketplace DB, so local dev never drifts from what
- * those scripts ship (see apps/dev/src/lib/marketplace-loops/).
+ * Loop configs + snapshot data live in apps/dev/src/lib/marketplace-loops/.
  *
  * No env guards here — production seeding goes through this function too, via
  * `scripts/seed-marketplace.ts` (wired into the Docker boot sequence). Env-gating
@@ -200,6 +85,7 @@ export async function seedMarketplaceLoops(db: Database): Promise<MarketplaceSyn
 			id: marketplaceLoops.id,
 			slug: marketplaceLoops.slug,
 			version: marketplaceLoops.version,
+			retiredAt: marketplaceLoops.retiredAt,
 		})
 		.from(marketplaceLoops)
 	const existingBySlug = new Map(existingRows.map((r) => [r.slug, r]))
@@ -207,11 +93,14 @@ export async function seedMarketplaceLoops(db: Database): Promise<MarketplaceSyn
 	const inserted: string[] = []
 	const updated: string[] = []
 	const unchanged: string[] = []
+	const retired: string[] = []
 
 	await db.transaction(async (tx) => {
 		for (const config of MARKETPLACE_SEED_CONFIGS) {
 			const existing = existingBySlug.get(config.loop.slug)
-			if (existing && existing.version === config.loop.version) {
+			// A retired row is never "unchanged": it falls through to the update path,
+			// which clears retired_at and re-snapshots the items.
+			if (existing && existing.version === config.loop.version && !existing.retiredAt) {
 				unchanged.push(config.loop.slug)
 				continue
 			}
@@ -238,6 +127,7 @@ export async function seedMarketplaceLoops(db: Database): Promise<MarketplaceSyn
 						description: config.loop.description,
 						version: config.loop.version,
 						useCase: config.loop.useCase,
+						retiredAt: null,
 						updatedAt: new Date(),
 					})
 					.where(eq(marketplaceLoops.id, existing.id))
@@ -285,9 +175,24 @@ export async function seedMarketplaceLoops(db: Database): Promise<MarketplaceSyn
 				})),
 			])
 		}
+
+		const seededSlugs = new Set(MARKETPLACE_SEED_CONFIGS.map((config) => config.loop.slug))
+		const toRetire = existingRows.filter((r) => !seededSlugs.has(r.slug) && !r.retiredAt)
+		if (toRetire.length > 0) {
+			await tx
+				.update(marketplaceLoops)
+				.set({ retiredAt: new Date(), updatedAt: new Date() })
+				.where(
+					inArray(
+						marketplaceLoops.id,
+						toRetire.map((r) => r.id),
+					),
+				)
+			retired.push(...toRetire.map((r) => r.slug))
+		}
 	})
 
-	return { inserted, updated, unchanged }
+	return { inserted, updated, unchanged, retired }
 }
 
 /**

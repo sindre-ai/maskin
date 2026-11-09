@@ -33,6 +33,25 @@ describe('parseFeatureFlagConfig', () => {
 	})
 })
 
+describe('mcp-oauth-consent', () => {
+	it('is registered and off by default, for testers and everyone else', () => {
+		expect(Object.values(FLAGS)).toContain('mcp-oauth-consent')
+		expect(FLAGS.MCP_OAUTH_CONSENT).toBe('mcp-oauth-consent')
+
+		const c = config({})
+		for (const actor of [TESTER, NON_TESTER]) {
+			expect(resolveFlags(actor, c)[FLAGS.MCP_OAUTH_CONSENT]).toBe(false)
+		}
+	})
+
+	it('is on only for a listed tester once it is listed', () => {
+		const c = config({ FF_TESTER_FEATURES: FLAGS.MCP_OAUTH_CONSENT, FF_TESTER_ACTOR_IDS: TESTER })
+
+		expect(resolveFlags(TESTER, c)[FLAGS.MCP_OAUTH_CONSENT]).toBe(true)
+		expect(resolveFlags(NON_TESTER, c)[FLAGS.MCP_OAUTH_CONSENT]).toBe(false)
+	})
+})
+
 describe('resolveFlags', () => {
 	// Asserts the SHAPE of a live-registry resolve, not a fixed flag set: every
 	// registered id resolves to a boolean, and an id absent from
@@ -44,25 +63,6 @@ describe('resolveFlags', () => {
 			const resolved = resolveFlags(actor, c)
 			expect(Object.keys(resolved).sort()).toEqual([...Object.values(FLAGS)].sort())
 			expect(Object.values(resolved).every((v) => v === false)).toBe(true)
-		}
-	})
-
-	it('resolves the live registry — a listed flag is on for a listed tester only', () => {
-		const c = config({
-			FF_TESTER_FEATURES: FLAGS.TRIGGER_ENGINE_V2,
-			FF_TESTER_ACTOR_IDS: TESTER,
-		})
-		// Assert the tester sees the listed flag ON while every other registered
-		// flag stays OFF — the check is per-flag so it survives future flags being
-		// added to FLAGS without churn.
-		const tester = resolveFlags(TESTER, c)
-		const nonTester = resolveFlags(NON_TESTER, c)
-		expect(tester[FLAGS.TRIGGER_ENGINE_V2]).toBe(true)
-		expect(nonTester[FLAGS.TRIGGER_ENGINE_V2]).toBe(false)
-		for (const other of Object.values(FLAGS)) {
-			if (other === FLAGS.TRIGGER_ENGINE_V2) continue
-			expect(tester[other]).toBe(false)
-			expect(nonTester[other]).toBe(false)
 		}
 	})
 

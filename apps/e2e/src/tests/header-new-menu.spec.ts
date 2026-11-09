@@ -8,7 +8,7 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 //   2. Each entry point actually does the right thing (chat panel, object
 //      creation seeded to the right subtype, agent/loop creation, command
 //      palette).
-//   3. Object-detail pages keep the button but hide "Create an object".
+//   3. Object-detail pages keep the button but hide "Create an item".
 //
 // Other pages (Objects list, Loops, Agents, Triggers) may render their own
 // contextual "New" button in the page body — locators here scope to the
@@ -23,7 +23,7 @@ function headerNewTrigger(page: Page) {
 }
 
 // Scopes to the open dropdown's content so an unscoped
-// `page.getByText('Create an object')` can't match similar copy elsewhere on
+// `page.getByText('Create an item')` can't match similar copy elsewhere on
 // the page.
 function newMenu(page: Page) {
 	return page.getByRole('menu')
@@ -38,13 +38,24 @@ test.describe('Header New menu', () => {
 			await headerNewTrigger(page).click()
 
 			await expect(page.getByRole('menuitem', { name: /new chat/i })).toBeVisible()
-			await expect(newMenu(page).getByText('Create an object')).toBeVisible()
+			await expect(newMenu(page).getByText('Create an item')).toBeVisible()
 			await expect(page.getByRole('menuitem', { name: /^new task/i })).toBeVisible()
 			await expect(page.getByRole('menuitem', { name: /^new insight/i })).toBeVisible()
 			await expect(page.getByRole('menuitem', { name: /^new bet/i })).toBeVisible()
-			await expect(page.getByRole('menuitem', { name: /new loop/i })).toBeVisible()
+			await expect(page.getByRole('menuitem', { name: /new flow/i })).toBeVisible()
 			await expect(page.getByRole('menuitem', { name: /new agent/i })).toBeVisible()
 			await expect(page.getByRole('menuitem', { name: /find a past conversation/i })).toBeVisible()
+		})
+	}
+
+	for (const path of ['objects', 'loops', 'agents']) {
+		test(`the primary New button reads "New chat" on /${path}`, async ({ page, account }) => {
+			await page.goto(`/${account.workspaceId}/${path}`)
+			const primary = page.locator('header').getByRole('button', { name: 'New chat', exact: true })
+			await expect(primary).toBeVisible({ timeout: 15_000 })
+			await expect(
+				page.locator('header').getByRole('button', { name: /^New (item|flow|agent)$/ }),
+			).toHaveCount(0)
 		})
 	}
 
@@ -82,16 +93,16 @@ test.describe('Header New menu', () => {
 		await page.goto(`/${account.workspaceId}`)
 
 		await headerNewTrigger(page).click()
-		await page.getByRole('menuitem', { name: /new loop/i }).click()
+		await page.getByRole('menuitem', { name: /new flow/i }).click()
 
 		const dialog = page.getByRole('dialog')
-		await expect(dialog.getByText('New loop')).toBeVisible()
+		await expect(dialog.getByText('New flow')).toBeVisible()
 		const titleInput = page.getByRole('dialog').getByLabel('Title', { exact: true })
 		await expect(titleInput).toBeVisible()
 
 		await titleInput.fill('Header New menu loop check')
 		// The submit button names the thing being created ("Create loop").
-		await dialog.getByRole('button', { name: /^create loop$/i }).click()
+		await dialog.getByRole('button', { name: /^create flow$/i }).click()
 
 		// Creating a loop must land on the loop detail page, not the trigger one —
 		// confirms it created an objects row with type='loop', not a trigger.
@@ -118,18 +129,17 @@ test.describe('Header New menu', () => {
 		await headerNewTrigger(page).click()
 		await page.getByRole('menuitem', { name: /find a past conversation/i }).click()
 
-		// v2's palette rewrote its own prompt (components/command-palette.tsx).
-		await expect(page.getByPlaceholder('Run a command or jump to…')).toBeVisible()
+		await expect(page.getByRole('dialog', { name: 'Command palette' })).toBeVisible()
 	})
 
 	// v2 gives the object page the same split New button as every other screen
 	// (mockup 925–946), so its menu offers the same sections. The pre-v2
-	// contract that hid "Create an object" here is superseded — see
+	// contract that hid "Create an item" here is superseded — see
 	// sticky-nav-bet.spec.ts, which pins the same behaviour from the other side.
 	// The pre-v2 branch still hides it: `Header` only passes
 	// `hideObjectSection` on the non-crumb path, which is the branch the
 	// legacy object document renders through.
-	test('keeps "Create an object" and the rest of the menu on an object-detail page', async ({
+	test('keeps "Create an item" and the rest of the menu on an object-detail page', async ({
 		page,
 		account,
 	}) => {
@@ -150,6 +160,6 @@ test.describe('Header New menu', () => {
 		await headerNewTrigger(page).click()
 
 		await expect(page.getByRole('menuitem', { name: /new chat/i })).toBeVisible()
-		await expect(newMenu(page).getByText('Create an object')).toHaveCount(1)
+		await expect(newMenu(page).getByText('Create an item')).toHaveCount(1)
 	})
 })

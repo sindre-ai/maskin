@@ -19,7 +19,7 @@ import { createApiError, formatZodError } from '../../lib/errors'
 import { evaluateAndRespond } from '../../services/conversation-responder'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import type { SessionManager } from '../../services/session-manager'
-import { insertActor, insertSession, insertWorkspace } from '../factories'
+import { insertActor, insertSession, insertSessionLog, insertWorkspace } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
 
@@ -189,6 +189,63 @@ describe('Conversations Integration', () => {
 			expect(messagesBody.messages[0]?.metadata?.context_objects).toEqual([
 				{ id: objectId, title: 'Signup context', type: 'knowledge' },
 			])
+		})
+
+		it('accepts an empty message when it carries an attachment, and refuses it without one', async () => {
+			const other = await insertActor(db, { type: 'human' })
+			await addMember(workspaceId, other.id)
+			const { app } = createConversationsApp(ownerId)
+			const headers = { 'x-workspace-id': workspaceId }
+			const attachment = {
+				file_id: crypto.randomUUID(),
+				name: 'report.pdf',
+				mime_type: 'application/pdf',
+				size_bytes: 10,
+			}
+
+			const bare = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Nothing', participant_actor_ids: [other.id], initial_message: '' },
+					headers,
+				),
+			)
+			expect(bare.status).toBe(400)
+
+			const created = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{
+						title: 'Just a file',
+						participant_actor_ids: [other.id],
+						initial_message: '',
+						initial_message_metadata: { attachments: [attachment] },
+					},
+					headers,
+				),
+			)
+			expect(created.status).toBe(201)
+			const { id } = (await created.json()) as { id: string }
+			const [first] = await db.select().from(messages).where(eq(messages.conversationId, id))
+			expect(first?.content).toBe('')
+			expect(first?.metadata?.attachments).toHaveLength(1)
+
+			const emptyReply = await app.request(
+				jsonRequest('POST', `/api/conversations/${id}/messages`, { content: '' }, headers),
+			)
+			expect(emptyReply.status).toBe(400)
+
+			const fileReply = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${id}/messages`,
+					{ content: '', metadata: { attachments: [attachment] } },
+					headers,
+				),
+			)
+			expect(fileReply.status).toBe(201)
 		})
 
 		it('rejects a participant who is not a workspace member', async () => {
@@ -1577,7 +1634,7 @@ describe('Conversations Integration', () => {
 		})
 	})
 
-	describe('sessions_conversation_actor_active_uniq', () => {
+	describe('sessions_conversation_actor_thread_active_uniq', () => {
 		it('rejects a second active interactive session for the same (conversation, agent) pair', async () => {
 			const agent = await insertActor(db, { type: 'agent' })
 			await addMember(workspaceId, agent.id)
@@ -2050,7 +2107,7 @@ describe('Conversations Integration', () => {
 			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
 			expect(sessionManager.createSession.mock.calls[0]?.[1]).toMatchObject({ actorId: agent.id })
 			// Regression: the dead session must be marked failed so it stops
-			// satisfying sessions_conversation_actor_active_uniq — otherwise the
+			// satisfying sessions_conversation_actor_thread_active_uniq — otherwise the
 			// fresh createSession above collides with its own zombie on every
 			// subsequent message (see the race-recovery test below).
 			expect(sessionManager.markSessionFailedAfterContainerLoss).toHaveBeenCalledWith(
@@ -2064,7 +2121,7 @@ describe('Conversations Integration', () => {
 			// unique-constraint race-recovery path re-looks-up the "winner" and tries
 			// writeInput on it. If that winner is itself dead (the same self-heal gap
 			// as the primary reuse path), it used to be logged and dropped forever,
-			// permanently wedging sessions_conversation_actor_active_uniq for this
+			// permanently wedging sessions_conversation_actor_thread_active_uniq for this
 			// (conversation, agent) pair until the 2h timeout reaper caught it.
 			const agent = await insertActor(db, { type: 'agent' })
 			await addMember(workspaceId, agent.id)
@@ -2091,7 +2148,7 @@ describe('Conversations Integration', () => {
 
 			const raceViolation = Object.assign(new Error('duplicate key value'), {
 				code: '23505',
-				constraint_name: 'sessions_conversation_actor_active_uniq',
+				constraint_name: 'sessions_conversation_actor_thread_active_uniq',
 			})
 			const sessionManager = {
 				// No existing session visible on the first lookup — goes straight to
@@ -2315,7 +2372,7 @@ describe('Conversations Integration', () => {
 
 			const raceViolation = Object.assign(new Error('duplicate key value'), {
 				code: '23505',
-				constraint_name: 'sessions_conversation_actor_active_uniq',
+				constraint_name: 'sessions_conversation_actor_thread_active_uniq',
 			})
 			const sessionManager = {
 				createSession: vi.fn().mockRejectedValue(raceViolation),
@@ -2527,6 +2584,154 @@ describe('Conversations Integration', () => {
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
 
+		describe('tags in an edit', () => {
+			// Owner plus two agents: a group chat, so the wake rule decides who answers. The message
+			// starts with the tags `stored` names, and is the newest unless `newerMessage` is set.
+			async function groupChatWithMessage(opts: {
+				stored: 'none' | 'a' | 'ab'
+				newerMessage: boolean
+			}) {
+				const agentA = await insertActor(db, { type: 'agent' })
+				const agentB = await insertActor(db, { type: 'agent' })
+				await addMember(workspaceId, agentA.id)
+				await addMember(workspaceId, agentB.id)
+				const { app, sessionManager } = createConversationsApp(ownerId)
+				const created = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/conversations',
+						{ title: 'Tag edit', participant_actor_ids: [agentA.id, agentB.id] },
+						{ 'x-workspace-id': workspaceId },
+					),
+				)
+				const conversation = (await created.json()) as { id: string }
+				const mentions = { none: [], a: [agentA.id], ab: [agentA.id, agentB.id] }[opts.stored]
+				const [msg] = await db
+					.insert(messages)
+					.values({
+						conversationId: conversation.id,
+						actorId: ownerId,
+						content: 'ask the agents',
+						metadata: { mentions },
+					})
+					.returning()
+				if (opts.newerMessage) {
+					await db.insert(messages).values({
+						conversationId: conversation.id,
+						actorId: agentA.id,
+						content: 'a later reply',
+					})
+				}
+				const edit = (body: Record<string, unknown>) =>
+					app.request(
+						jsonRequest(
+							'PATCH',
+							`/api/conversations/${conversation.id}/messages/${msg?.id}`,
+							body,
+							{ 'x-workspace-id': workspaceId },
+						),
+					)
+				const storedMentions = async () => {
+					const [row] = await db
+						.select()
+						.from(messages)
+						.where(eq(messages.id, msg?.id ?? -1))
+					return (row?.metadata as { mentions?: string[] } | null)?.mentions
+				}
+				const wokenAgentIds = () =>
+					sessionManager.createSession.mock.calls.map(
+						(call) => (call[1] as { actorId: string }).actorId,
+					)
+				return { agentA, agentB, sessionManager, edit, storedMentions, wokenAgentIds }
+			}
+
+			it('stores a newly tagged agent and wakes only that agent, even when the message is not the newest', async () => {
+				const { agentB, sessionManager, edit, storedMentions, wokenAgentIds } =
+					await groupChatWithMessage({ stored: 'none', newerMessage: true })
+
+				const res = await edit({
+					content: 'ask the agents, @B first',
+					metadata: { mentions: [agentB.id] },
+				})
+				expect(res.status).toBe(200)
+				const body = (await res.json()) as { metadata: { mentions?: string[] } | null }
+				expect(body.metadata?.mentions).toEqual([agentB.id])
+				expect(await storedMentions()).toEqual([agentB.id])
+
+				await waitForSessions(sessionManager, 1)
+				await new Promise((resolve) => setTimeout(resolve, 50))
+				expect(wokenAgentIds()).toEqual([agentB.id])
+			})
+
+			it('wakes only the added agent when another one was already tagged', async () => {
+				const { agentA, agentB, sessionManager, edit, storedMentions, wokenAgentIds } =
+					await groupChatWithMessage({ stored: 'a', newerMessage: false })
+
+				const res = await edit({
+					content: 'ask both',
+					metadata: { mentions: [agentA.id, agentB.id] },
+				})
+				expect(res.status).toBe(200)
+				expect(await storedMentions()).toEqual([agentA.id, agentB.id])
+
+				await waitForSessions(sessionManager, 1)
+				await new Promise((resolve) => setTimeout(resolve, 50))
+				expect(wokenAgentIds()).toEqual([agentB.id])
+			})
+
+			it('wakes nobody when the sent ids are the stored ids', async () => {
+				const { agentA, agentB, sessionManager, edit, storedMentions } = await groupChatWithMessage(
+					{ stored: 'ab', newerMessage: false },
+				)
+
+				const res = await edit({
+					content: 'reworded',
+					metadata: { mentions: [agentA.id, agentB.id] },
+				})
+				expect(res.status).toBe(200)
+				await new Promise((resolve) => setTimeout(resolve, 100))
+				expect(sessionManager.createSession).not.toHaveBeenCalled()
+				expect(await storedMentions()).toEqual([agentA.id, agentB.id])
+			})
+
+			it('stores the smaller list and wakes nobody when a tag is removed', async () => {
+				const { agentA, sessionManager, edit, storedMentions } = await groupChatWithMessage({
+					stored: 'ab',
+					newerMessage: false,
+				})
+
+				const res = await edit({ content: 'less', metadata: { mentions: [agentA.id] } })
+				expect(res.status).toBe(200)
+				await new Promise((resolve) => setTimeout(resolve, 100))
+				expect(sessionManager.createSession).not.toHaveBeenCalled()
+				expect(await storedMentions()).toEqual([agentA.id])
+			})
+
+			it('keeps the stored ids when the edit sends only content', async () => {
+				const { agentA, edit, storedMentions } = await groupChatWithMessage({
+					stored: 'a',
+					newerMessage: true,
+				})
+
+				const res = await edit({ content: 'only the words changed' })
+				expect(res.status).toBe(200)
+				expect(await storedMentions()).toEqual([agentA.id])
+			})
+
+			it('refuses an unknown tagged id, naming it, and keeps the message as it was', async () => {
+				const { edit, storedMentions } = await groupChatWithMessage({
+					stored: 'none',
+					newerMessage: true,
+				})
+				const unknownId = '99999999-9999-4999-8999-999999999999'
+
+				const res = await edit({ content: 'changed', metadata: { mentions: [unknownId] } })
+				expect(res.status).toBe(400)
+				expect(JSON.stringify(await res.json())).toContain(unknownId)
+				expect(await storedMentions()).toEqual([])
+			})
+		})
+
 		it("rejects editing someone else's message", async () => {
 			const other = await insertActor(db, { type: 'human' })
 			await addMember(workspaceId, other.id)
@@ -2554,6 +2759,165 @@ describe('Conversations Integration', () => {
 				),
 			)
 			expect(res.status).toBe(403)
+		})
+	})
+
+	describe('message deletion', () => {
+		async function chatWithMessage(
+			title: string,
+			values: Partial<typeof messages.$inferInsert> = {},
+		) {
+			const { app } = createConversationsApp(ownerId)
+			const created = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title, participant_actor_ids: [] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const [msg] = await db
+				.insert(messages)
+				.values({ conversationId: conversation.id, actorId: ownerId, content: 'secret', ...values })
+				.returning()
+			const remove = (messageId: number | undefined = msg?.id) =>
+				app.request(
+					jsonDelete(`/api/conversations/${conversation.id}/messages/${messageId}`, {
+						'x-workspace-id': workspaceId,
+					}),
+				)
+			return { app, conversation, msg, remove }
+		}
+
+		it('lets the author delete: row stays, content and metadata are cleared, event recorded', async () => {
+			const { conversation, msg, remove } = await chatWithMessage('Delete test', {
+				metadata: { mentions: [ownerId] },
+			})
+
+			const res = await remove()
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as {
+				content: string
+				deletedAt: string | null
+				metadata: unknown
+			}
+			expect(body.content).toBe('')
+			expect(body.deletedAt).toBeTruthy()
+			expect(body.metadata).toBeNull()
+
+			const [row] = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.id, msg?.id ?? -1))
+			expect(row?.content).toBe('')
+			expect(row?.metadata).toBeNull()
+			expect(row?.deletedAt).toBeTruthy()
+
+			const auditRows = await db
+				.select()
+				.from(events)
+				.where(and(eq(events.entityId, conversation.id), eq(events.action, 'message_deleted')))
+			expect(auditRows).toHaveLength(1)
+		})
+
+		it('keeps a thread root readable as deleted, with its replies', async () => {
+			const { app, conversation, msg, remove } = await chatWithMessage('Delete root test')
+			await db.insert(messages).values({
+				conversationId: conversation.id,
+				actorId: ownerId,
+				content: 'a reply',
+				threadRootId: msg?.id,
+			})
+
+			expect((await remove()).status).toBe(200)
+
+			const list = await app.request(
+				jsonGet(`/api/conversations/${conversation.id}/messages`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(list.status).toBe(200)
+			const page = (await list.json()) as {
+				messages: { id: number; content: string; deletedAt: string | null }[]
+			}
+			const root = page.messages.find((m) => m.id === msg?.id)
+			expect(root?.deletedAt).toBeTruthy()
+			expect(root?.content).toBe('')
+			const [reply] = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.threadRootId, msg?.id ?? -1))
+			expect(reply?.content).toBe('a reply')
+		})
+
+		it('is a no-op the second time: one event, same deletedAt', async () => {
+			const { conversation, msg, remove } = await chatWithMessage('Delete twice test')
+			const first = (await (await remove()).json()) as { deletedAt: string }
+			const secondRes = await remove()
+			expect(secondRes.status).toBe(200)
+			const second = (await secondRes.json()) as { deletedAt: string }
+			expect(second.deletedAt).toBe(first.deletedAt)
+			const auditRows = await db
+				.select()
+				.from(events)
+				.where(and(eq(events.entityId, conversation.id), eq(events.action, 'message_deleted')))
+			expect(auditRows).toHaveLength(1)
+			expect(msg?.id).toBeDefined()
+		})
+
+		it("rejects deleting someone else's message", async () => {
+			const other = await insertActor(db, { type: 'human' })
+			await addMember(workspaceId, other.id)
+			const { conversation, msg, remove } = await chatWithMessage('Foreign delete test', {
+				actorId: other.id,
+				content: 'not yours',
+			})
+			void conversation
+
+			const res = await remove()
+			expect(res.status).toBe(403)
+			const [row] = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.id, msg?.id ?? -1))
+			expect(row?.content).toBe('not yours')
+			expect(row?.deletedAt).toBeNull()
+		})
+
+		it('rejects deleting auto-posted agent output', async () => {
+			const { msg, remove } = await chatWithMessage('Final output delete test', {
+				content: 'agent turn output',
+				metadata: { source: 'final_output' },
+			})
+
+			const res = await remove()
+			expect(res.status).toBe(403)
+			const [row] = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.id, msg?.id ?? -1))
+			expect(row?.deletedAt).toBeNull()
+		})
+
+		it('returns not found for a message that is not in the conversation', async () => {
+			const { remove } = await chatWithMessage('Missing delete test')
+			expect((await remove(999999999)).status).toBe(404)
+		})
+
+		it('refuses to edit a deleted message', async () => {
+			const { app, conversation, msg, remove } = await chatWithMessage('Edit after delete test')
+			expect((await remove()).status).toBe(200)
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${conversation.id}/messages/${msg?.id}`,
+					{ content: 'back from the dead' },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(404)
 		})
 	})
 
@@ -2656,6 +3020,153 @@ describe('Conversations Integration', () => {
 				),
 			)
 			expect(res.status).toBe(404)
+		})
+	})
+
+	describe('list: agents working now', () => {
+		async function chatWithAgent() {
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			const { app } = createConversationsApp(ownerId)
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Working chat', participant_actor_ids: [agent.id], initial_message: 'hi' },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(201)
+			const chatId = ((await res.json()) as { id: string }).id
+			return { agent, chatId }
+		}
+
+		async function workingIn(chatId: string) {
+			const { app } = createConversationsApp(ownerId)
+			const res = await app.request(
+				jsonGet('/api/conversations', { 'x-workspace-id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as {
+				conversations: Array<{ id: string; working_actor_ids: string[] }>
+			}
+			return body.conversations.find((c) => c.id === chatId)?.working_actor_ids
+		}
+
+		async function chatSession(
+			chatId: string,
+			agentId: string,
+			overrides: Record<string, unknown>,
+		) {
+			return insertSession(db, workspaceId, agentId, ownerId, {
+				conversationId: chatId,
+				...overrides,
+			})
+		}
+
+		it('lists the agent while its chat session is mid-turn', async () => {
+			const { agent, chatId } = await chatWithAgent()
+			const session = await chatSession(chatId, agent.id, { status: 'running', interactive: true })
+			await insertSessionLog(db, session.id, { content: '{"type":"assistant","message":{}}' })
+
+			expect(await workingIn(chatId)).toEqual([agent.id])
+		})
+
+		it('stops listing the agent once the turn has closed, though the session is still running', async () => {
+			const { agent, chatId } = await chatWithAgent()
+			const session = await chatSession(chatId, agent.id, { status: 'running', interactive: true })
+			await insertSessionLog(db, session.id, { content: '{"type":"assistant","message":{}}' })
+			await insertSessionLog(db, session.id, { content: '{"type":"result","subtype":"success"}' })
+
+			expect(await workingIn(chatId)).toEqual([])
+		})
+
+		it('lists the agent again when the next turn opens in the same session', async () => {
+			const { agent, chatId } = await chatWithAgent()
+			const session = await chatSession(chatId, agent.id, { status: 'running', interactive: true })
+			await insertSessionLog(db, session.id, { content: '{"type":"result","subtype":"success"}' })
+			await insertSessionLog(db, session.id, { content: '{"type":"user","message":{}}' })
+
+			expect(await workingIn(chatId)).toEqual([agent.id])
+		})
+
+		it('lists an agent whose session is still starting, and ignores a finished one', async () => {
+			const { agent, chatId } = await chatWithAgent()
+			await chatSession(chatId, agent.id, { status: 'starting', interactive: true })
+			expect(await workingIn(chatId)).toEqual([agent.id])
+
+			const { agent: other, chatId: otherChat } = await chatWithAgent()
+			await chatSession(otherChat, other.id, { status: 'completed', interactive: true })
+			expect(await workingIn(otherChat)).toEqual([])
+		})
+	})
+
+	describe('list: preview skips messages the thread hides', () => {
+		async function previewOf(chatId: string) {
+			const { app } = createConversationsApp(ownerId)
+			const res = await app.request(
+				jsonGet('/api/conversations', { 'x-workspace-id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as {
+				conversations: Array<{
+					id: string
+					snippet: string | null
+					snippet_actor_id: string | null
+				}>
+			}
+			return body.conversations.find((c) => c.id === chatId)
+		}
+
+		async function chatWithCto() {
+			const cto = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, cto.id)
+			const developer = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, developer.id)
+			const { app } = createConversationsApp(ownerId)
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Status', participant_actor_ids: [cto.id], initial_message: 'status?' },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(201)
+			const chatId = ((await res.json()) as { id: string }).id
+			return { cto, developer, chatId }
+		}
+
+		it('previews the last message the thread shows, not a helper result handed to the agent', async () => {
+			const { cto, developer, chatId } = await chatWithCto()
+			await db
+				.insert(messages)
+				.values({ conversationId: chatId, actorId: cto.id, content: 'The fix is merged.' })
+			await db.insert(messages).values({
+				conversationId: chatId,
+				actorId: developer.id,
+				content: 'Developer finished the work you handed it.',
+				metadata: { helper_return: crypto.randomUUID() },
+			})
+
+			const row = await previewOf(chatId)
+			expect(row?.snippet).toBe('The fix is merged.')
+			expect(row?.snippet_actor_id).toBe(cto.id)
+		})
+
+		it('skips a card nudge hidden from the chat', async () => {
+			const { cto, chatId } = await chatWithCto()
+			await db
+				.insert(messages)
+				.values({ conversationId: chatId, actorId: cto.id, content: 'Allow this credential?' })
+			await db.insert(messages).values({
+				conversationId: chatId,
+				actorId: ownerId,
+				content: 'Not now',
+				metadata: { hidden_from_chat: true },
+			})
+
+			expect((await previewOf(chatId))?.snippet).toBe('Allow this credential?')
 		})
 	})
 })

@@ -554,13 +554,13 @@ export function useBulkResultHandlers(
 	const reportBulkResult = useCallback(
 		(response: BulkOperationResponse, total: number, verb: 'updated' | 'deleted') => {
 			if (!Array.isArray(response?.results)) {
-				toast.error(`Failed to ${verb === 'deleted' ? 'delete' : 'update'} objects`)
+				toast.error(`Failed to ${verb === 'deleted' ? 'delete' : 'update'} items`)
 				return
 			}
 			const okCount = response.results.filter((r) => r.ok).length
 			const failed = total - okCount
 			if (failed === 0) {
-				toast.success(`${okCount} object${okCount === 1 ? '' : 's'} ${verb}`)
+				toast.success(`${okCount} item${okCount === 1 ? '' : 's'} ${verb}`)
 				clearSelection()
 			} else {
 				const firstError = response.results.find((r) => !r.ok)?.error
@@ -653,7 +653,7 @@ export function useDeleteObject(workspaceId: string) {
 			return { type: cached?.type ?? null, id }
 		},
 		onSuccess: (_data, _variables, ctx) => {
-			toast.success('Object deleted')
+			toast.success('Item deleted')
 			if (ctx?.type === 'bet') {
 				trackBetArchived({ entity_id: ctx.id, entity_type: 'bet' })
 			}
@@ -667,7 +667,7 @@ export function useDeleteObject(workspaceId: string) {
 			}
 		},
 		onError: () => {
-			toast.error('Failed to delete object')
+			toast.error('Failed to delete item')
 		},
 		onSettled: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })

@@ -109,7 +109,7 @@ describe('searchResponseSchema', () => {
 
 	it('accepts a partial response naming the failed source', () => {
 		expect(searchResponseSchema.safeParse({ ...response, partial: ['chats'] }).success).toBe(true)
-		expect(searchResponseSchema.safeParse({ ...response, partial: ['people'] }).success).toBe(false)
+		expect(searchResponseSchema.safeParse({ ...response, partial: ['bogus'] }).success).toBe(false)
 	})
 
 	it('needs all five status facet counts', () => {

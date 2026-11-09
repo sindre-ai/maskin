@@ -48,6 +48,8 @@ public struct IntegrationAccessRequest: Equatable, Sendable {
 		/// "none" < "read" < "read_write", for comparing what an agent has with what it asked for.
 		var rank: Int { self == .read ? 1 : 2 }
 		public var words: String { self == .readWrite ? "read and write access" : "read access" }
+		/// The short name the access picker shows.
+		public var label: String { self == .readWrite ? "Read and write" : "Read" }
 	}
 
 	public var sessionID: String
@@ -71,6 +73,35 @@ public struct IntegrationAccessRequest: Equatable, Sendable {
 		self.level = level
 		self.reason = raw["reason"]?.stringValue
 		self.replyToSession = raw["reply_to_session"]?.boolValue == true
+	}
+
+	/// A normal chat message that asks the agent to put the request again after a decline.
+	public var askAgainText: String { "Please ask me again about \(displayName). I've changed my mind." }
+
+	/// The levels the person may grant: what was asked for or less (the card lets them lower it
+	/// before Allow, never raise it).
+	public var choosableLevels: [Level] { level == .readWrite ? [.read, .readWrite] : [.read] }
+
+	/// The same ask at another level, for the Allow press.
+	public func with(level: Level) -> IntegrationAccessRequest {
+		var copy = self
+		copy.level = level
+		return copy
+	}
+
+	/// The one line a card shows once allowed: "Allowed Gmail for Chief of Staff." Without the agent's
+	/// name (a card whose author is unknown) it says "this agent".
+	public func allowedLine(agentName: String?) -> String {
+		"Allowed \(displayName) for \(Self.who(agentName))."
+	}
+
+	public func declinedLine(agentName: String?) -> String {
+		"Declined \(displayName) for \(Self.who(agentName))."
+	}
+
+	static func who(_ agentName: String?) -> String {
+		let trimmed = agentName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+		return trimmed.isEmpty ? "this agent" : trimmed
 	}
 
 	/// What the person says back after an Allow, worded as the web does. `changed` is false when the
@@ -171,6 +202,6 @@ extension ChatMessage {
 	/// answer back is only worth doing for these).
 	public var asksForAnswer: Bool {
 		metadata?["keychain_access_request"] != nil || metadata?["integration_access_request"] != nil
-			|| metadata?["computer_request"] != nil
+			|| metadata?["computer_request"] != nil || metadata?["mcp_server_request"] != nil
 	}
 }

@@ -30,6 +30,7 @@ filter:
     - /api/for-you
     - /api/events/history
     - /api/feature-flags
+    - /api/transcriptions
     - /api/events
     - /api/subscriptions
     - /api/subscriptions/read

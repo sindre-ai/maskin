@@ -6,27 +6,28 @@ import SwiftUI
 /// Settings, presented by the shell as a sheet or destination. Owns its `NavigationStack` and a
 /// Done button.
 ///
-/// ACCOUNT: your profile. NOTIFICATIONS: push permission, preferences and Lock Screen flows
-/// (`NotificationsPage`). SETUP: the workspace's name, skills, object types and extensions (web).
-/// Members, Integrations, Billing and Keys & MCP are not here: they live in the profile sheet's
-/// WORKSPACE group (handoff `7-Chat.md` §10). Log out at the end.
+/// Five sections: Account (Account, Billing), Preferences (Notifications, App lock, Sign in a
+/// device), Workspace (Members, Integrations, Triggers, Files), Agents and access (Skills, Item
+/// types, Keys and secrets) and one Advanced row. Advanced holds Native surfaces, the state
+/// previews, About and the danger zone. A figure sits beside a row only when it is known.
 public struct SettingsScreen: View {
 	@Environment(\.dismiss) private var dismiss
-	@Environment(\.openURL) private var openURL
 	@Environment(\.isPushedInHostStack) private var pushed
-	/// Present inside the signed-in shell; nil in previews. Sign-out goes through it so the push
-	/// token is unregistered and this account's queued writes are discarded.
-	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	private let environment: AppEnvironment
 	@State private var services: SettingsServices
-	@State private var confirmSignOut = false
+	private var analytics: Analytics { .shared }
 	@State private var path: [SettingsRoute]
-	/// Present inside the signed-in app; nil in previews, which hides the Security section.
+	@State private var counts: SettingsCountsStore?
+	/// Present inside the signed-in app; nil in previews, which hides the App lock row.
 	@Environment(AppLockController.self) private var appLock: AppLockController?
 
-	/// `initialRoute` opens straight onto one page (More's Members, Billing…), with Settings
-	/// behind it.
+	/// `initialRoute` opens straight onto one page, with Settings behind it.
 	public init(environment: AppEnvironment) { self.init(environment: environment, initialRoute: nil) }
+
+	/// Settings opened onto Sign in a device with a code from `maskin://connect?code=`.
+	public init(environment: AppEnvironment, deviceCode: String) {
+		self.init(environment: environment, initialRoute: .deviceCode(deviceCode))
+	}
 
 	init(environment: AppEnvironment, initialRoute: SettingsRoute?) {
 		self.environment = environment
@@ -38,137 +39,86 @@ public struct SettingsScreen: View {
 		if pushed { hub } else { NavigationStack(path: $path) { hub } }
 	}
 
+	private var hasWorkspace: Bool { services.workspaceId != nil }
+
 	private var hub: some View {
-		Group {
-			List {
-				Section("Account") {
-					NavigationLink(value: SettingsRoute.profile) {
-						SettingsRow(
-							symbol: "person.crop.circle", title: "Your profile",
-							detail: environment.auth.session?.name)
-					}
-					NavigationLink(value: SettingsRoute.deleteAccount) {
-						SettingsRow(
-							symbol: "person.crop.circle.badge.minus", title: "Delete account", destructive: true)
-					}
-				}
-				Section("Notifications") {
-					NavigationLink(value: SettingsRoute.notifications) {
-						SettingsRow(symbol: "bell", title: "Notifications")
-					}
-				}
-				if services.workspaceId != nil {
+		List {
+			ForEach(SettingsPageRow.Section.allCases) { section in
+				let rows = SettingsPageRow.rows(in: section, hasWorkspace: hasWorkspace)
+				if !rows.isEmpty {
 					Section {
-						NavigationLink(value: SettingsRoute.workspace) {
-							SettingsRow(
-								symbol: "building.2", title: "Workspace name", detail: services.workspace?.name)
+						ForEach(rows, id: \.self) { row in
+							if row == .appLock, !showsAppLock {
+								EmptyView()
+							} else {
+								NavigationLink(value: row.route) {
+									SettingsRow(symbol: row.symbol, title: row.title, detail: detail(for: row))
+								}
+							}
 						}
-						NavigationLink(value: SettingsRoute.skills) {
-							SettingsRow(symbol: "wand.and.stars", title: "Skills")
-						}
-						NavigationLink(value: SettingsRoute.objectTypes) {
-							SettingsRow(symbol: "square.stack.3d.up", title: "Object types")
-						}
-						Button {
-							if let url = services.webURL("extensions") { openURL(url) }
-						} label: {
-							SettingsRow(symbol: "puzzlepiece.extension", title: "Extensions", detail: "Opens in browser")
-						}
-						NavigationLink(value: SettingsRoute.deleteWorkspace) {
-							SettingsRow(symbol: "trash", title: "Delete workspace", destructive: true)
+						// Only in builds that can send. Off until the person agrees (the first-run question).
+						if section == .preferences, analytics.isAvailable {
+							Toggle(
+								AnalyticsCopy.settingsTitle,
+								isOn: Binding(
+									get: { analytics.consent == .granted }, set: { analytics.setConsent($0) }))
 						}
 					} header: {
-						Text("Setup")
+						if let title = section.title { Text(title) }
 					} footer: {
-						Text("Members, integrations, billing and keys are under your profile.")
+						if section == .preferences, analytics.isAvailable { Text(AnalyticsCopy.settingsFooter) }
 					}
-				}
-				if let appLock, appLock.availability != .unavailable || appLock.isEnabled {
-					Section {
-						Toggle(isOn: appLockBinding(appLock)) {
-							SettingsRow(symbol: "lock", title: "App lock")
-						}
-						.disabled(appLock.isAuthenticating)
-					} header: {
-						Text("Security")
-					} footer: {
-						Text(Self.appLockFooter(appLock.availability))
-					}
-				}
-				Section("About") {
-					// Signed in, privacy choices are the workspace's own settings on the web app.
-					if let url = services.webSettingsURL {
-						Button("Privacy & data") { openURL(url) }
-					}
-					// The public pages; a link only appears when its Info.plist key is set.
-					if let url = AuthConfig.current.privacyURL {
-						Button("Privacy policy") { openURL(url) }
-					}
-					if let url = AuthConfig.current.termsURL {
-						Button("Terms of Service") { openURL(url) }
-					}
-					LabeledContent("Version", value: Self.versionString)
-				}
-				// Its own centred red card, as the mockup draws it.
-				Section {
-					Button("Log out", role: .destructive) { confirmSignOut = true }
-						.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin)
 				}
 			}
-			.settingsListStyle()
-			.navigationTitle("Settings")
-			#if os(iOS)
-				.navigationBarTitleDisplayMode(.inline)
-			#endif
-			.toolbar {
-				if !pushed {
-					ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
-				}
+		}
+		.settingsListStyle()
+		.task { await loadCounts() }
+		.navigationTitle("Settings")
+		#if os(iOS)
+			.navigationBarTitleDisplayMode(.inline)
+		#endif
+		.toolbar {
+			if !pushed {
+				ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
 			}
-			.navigationDestination(for: SettingsRoute.self) { route in
-				switch route {
-				case .profile: ProfileView(store: services.profileStore())
-				case .notifications: SettingsNotificationsPage(environment: environment)
-				case .workspace:
-					WorkspaceSettingsView(
-						store: services.workspaceStore(), workspaceId: services.workspaceId ?? "",
-						currentName: services.workspace?.name ?? "", role: services.role)
-				case .skills: SkillsView(store: services.skillsStore())
-				case .objectTypes: ObjectTypesView(store: services.schemaStore())
-				case .deleteAccount:
-					DeleteAccountView(
-						store: services.accountDeletionStore { [environment, runtime] in
-							if let runtime { await runtime.signOut() } else { environment.signOut() }
-						})
-				case .deleteWorkspace:
-					DeleteWorkspaceView(
-						store: services.workspaceDeletionStore(workspaceId: services.workspaceId ?? ""))
-				}
-			}
-			.confirmationDialog("Log out of Maskin?", isPresented: $confirmSignOut, titleVisibility: .visible) {
-				Button("Log out", role: .destructive) {
-					dismiss()
-					if let runtime { Task { await runtime.signOut() } } else { environment.signOut() }
-				}
-			} message: {
-				Text("You will need your email and password to sign back in.")
-			}
+		}
+		.navigationDestination(for: SettingsRoute.self) {
+			SettingsRouteView(route: $0, environment: environment).environment(\.isPushedInHostStack, pushed)
 		}
 	}
 
-	private func appLockBinding(_ lock: AppLockController) -> Binding<Bool> {
-		Binding(
-			get: { lock.isEnabled },
-			set: { on in Task { await lock.setEnabled(on) } })
+	private var showsAppLock: Bool {
+		guard let appLock else { return false }
+		return appLock.availability != .unavailable || appLock.isEnabled
 	}
 
-	static func appLockFooter(_ availability: AppLockAvailability) -> String {
+	private func detail(for row: SettingsPageRow) -> String? {
+		switch row {
+		case .account: environment.auth.session?.name
+		case .billing: counts?.plan
+		case .appLock: appLock.map { $0.isEnabled ? "On" : "Off" }
+		case .members: SettingsCountsStore.detail(counts?.members)
+		case .integrations: counts?.integrationsDetail
+		case .triggers: SettingsCountsStore.detail(counts?.triggers)
+		case .files: SettingsCountsStore.detail(counts?.files)
+		case .skills: SettingsCountsStore.detail(counts?.skills)
+		case .objectTypes: SettingsCountsStore.detail(counts?.itemTypes)
+		default: nil
+		}
+	}
+
+	private func loadCounts() async {
+		if counts == nil { counts = services.countsStore() }
+		await counts?.load()
+	}
+
+	static func appLockFooter(_ availability: AppLockAvailability, delay: AppLockDelay = .default) -> String {
 		let how: String
 		switch availability {
 		case .biometric(let name): how = "Unlock with \(name) or your device passcode."
 		case .passcodeOnly, .unavailable: how = "Unlock with your device passcode."
 		}
-		return "\(how) Maskin locks when you open it, and after \(Int(AppLockController.gracePeriod)) seconds in the background."
+		return "\(how) Maskin locks when you open it, and \(delay == .immediately ? "as soon as you leave it" : "after \(delay.label) in the background")."
 	}
 
 	static var versionString: String {
@@ -179,24 +129,40 @@ public struct SettingsScreen: View {
 	}
 }
 
-/// Notifications, pushed from Settings. Loads the workspace's flows itself for the Lock Screen
-/// group, since Settings has no flows list of its own.
-private struct SettingsNotificationsPage: View {
-	let environment: AppEnvironment
-	@State private var loops: LoopsStore?
-
-	init(environment: AppEnvironment) {
-		self.environment = environment
-		if let workspaceID = environment.workspaceId {
-			_loops = State(
-				initialValue: LoopsStore(
-					api: APILoopsSource(client: environment.client, workspaceID: workspaceID),
-					events: nil, cache: environment.snapshotCache))
+extension SettingsPageRow {
+	var route: SettingsRoute {
+		switch self {
+		case .account: .profile
+		case .billing: .billing
+		case .notifications: .notifications
+		case .appLock: .appLock
+		case .deviceSignIn: .deviceSignIn
+		case .members: .members
+		case .integrations: .integrations
+		case .triggers: .triggers
+		case .files: .files
+		case .skills: .skills
+		case .objectTypes: .objectTypes
+		case .keys: .keys
+		case .advanced: .advanced
 		}
 	}
 
-	var body: some View {
-		NotificationsPage(flows: loops?.loops ?? [], workspaces: environment.workspaces.workspaces)
-			.task { await loops?.refresh() }
+	var symbol: String {
+		switch self {
+		case .account: "person.crop.circle"
+		case .billing: "creditcard"
+		case .notifications: "bell"
+		case .appLock: "lock"
+		case .deviceSignIn: "appletv"
+		case .members: "person.2"
+		case .integrations: "puzzlepiece.extension"
+		case .triggers: "bolt"
+		case .files: "doc.text"
+		case .skills: "wand.and.stars"
+		case .objectTypes: "square.stack.3d.up"
+		case .keys: "key"
+		case .advanced: "gearshape.2"
+		}
 	}
 }

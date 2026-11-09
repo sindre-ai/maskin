@@ -228,6 +228,19 @@ struct ChatStoreThreadTests {
 		#expect(h.store.replies(to: 1).compactMap(\.serverID) == [2])
 	}
 
+	@Test("a pill with unread replies and one already read both resolve their root to open")
+	func pillRootResolves() async {
+		let h = harness()
+		await h.store.start()
+		let unread = h.store.threadRoot(10)
+		#expect(unread.flatMap(h.store.threadSummary(for:))?.unreadCount == 1)
+		#expect(await h.store.loadedThreadRoot(10)?.serverID == 10)
+		await h.store.markThreadRead(10)
+		let read = h.store.threadRoot(10)
+		#expect(read.flatMap(h.store.threadSummary(for:))?.unreadCount == 0)
+		#expect(await h.store.loadedThreadRoot(10)?.serverID == 10)
+	}
+
 	@Test("a reply that failed to send keeps its thread so retry posts it there")
 	func failedReplyKeepsThread() async {
 		let h = harness()

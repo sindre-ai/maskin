@@ -7,8 +7,8 @@ import type { ReactNode } from 'react'
 
 /**
  * Shared rendering for a cross-entity search result row (command palette
- * "Jump to" and the `/search` page) — both surfaces rank the same
- * `useWorkspaceSearch` index and must render it identically.
+ * "Jump to" and the `/search` page) — both surfaces rank the same search results and must
+ * render them identically.
  */
 
 interface SearchRowIconProps {

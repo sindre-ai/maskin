@@ -5,9 +5,7 @@ import type { ActorListItem, LoopSummary } from '@maskin/shared'
  * Loop-detail "TARGETS & OWNERS" section (bet D5). Renders one `<TargetCard>`
  * per target on the loop, on a responsive grid that stacks full-width on
  * mobile (≤ 640px) per the SPEC. Rendered only when the loop actually has
- * targets — a loop with `targets: null` (existing loops) reads nothing here,
- * and the caller further gates on the `loops-v4-polish.targets` sub-flag so
- * the section can be reverted independently of the rest of the bet.
+ * targets — a loop with `targets: null` (existing loops) reads nothing here.
  */
 export function TargetsAndOwners({
 	loop,
@@ -21,14 +19,9 @@ export function TargetsAndOwners({
 	const actorById = new Map<string, ActorListItem>((actors ?? []).map((a) => [a.id, a] as const))
 
 	return (
-		<section aria-label="Targets and owners" className="mt-9">
-			<div className="flex items-center gap-2.5">
-				<span className="shrink-0 font-mono text-[10px] font-bold uppercase tracking-[0.11em] text-muted-foreground">
-					Targets &amp; owners
-				</span>
-				<div className="h-px flex-1 bg-muted" />
-			</div>
-			<div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
+		<section aria-label="Targets and owners">
+			<h2 className="px-1 text-[13px] font-semibold text-muted-foreground">Targets</h2>
+			<div className="mt-3 grid grid-cols-[repeat(auto-fill,minmax(min(100%,300px),1fr))] gap-3">
 				{loop.targets.map((target, idx) => (
 					<TargetCard
 						key={`${target.label}-${idx}`}

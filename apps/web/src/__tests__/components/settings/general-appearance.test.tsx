@@ -8,7 +8,17 @@ const mockSetTheme = vi.fn()
 const mockTheme = { current: 'light' as 'light' | 'dark' | 'system' }
 const mockWorkspace = { current: buildWorkspaceWithRole({ settings: {} }) }
 
-vi.mock('@/lib/workspace-context', () => ({
+// General now links to Triggers and device sign-in; the real Link needs a router.
+vi.mock('@tanstack/react-router', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@tanstack/react-router')>()),
+	Link: ({ children, to }: { children: React.ReactNode; to?: string }) => (
+		<a href={to}>{children}</a>
+	),
+}))
+
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({
 		workspace: mockWorkspace.current,
 		workspaceId: mockWorkspace.current.id,
@@ -42,15 +52,15 @@ describe('Settings > General > section labels', () => {
 		mockTheme.current = 'light'
 	})
 
-	// Mockup 2697/2704/2710 sets these at 11px sans, not the 8px mono `.eyebrow`
-	// used for the "VIEW / SHOW / SORT" micro-labels elsewhere in the app.
-	it('renders the three section labels with the settings label style', () => {
+	// The v11 mockup sets these in sentence case at 12px sans, not the 8px mono
+	// `.eyebrow` used for the "VIEW / SHOW / SORT" micro-labels elsewhere in the app.
+	it('renders the section labels as plain sans headings', () => {
 		renderPage()
 
-		for (const name of ['WORKSPACE NAME', 'APPEARANCE', 'PRIVACY & DATA']) {
+		for (const name of ['Workspace', 'Appearance', 'Privacy and data']) {
 			const heading = screen.getByRole('heading', { name })
-			expect(heading).toHaveClass('settings-label')
-			expect(heading).not.toHaveClass('eyebrow')
+			expect(heading).toHaveClass('text-[15px]', 'font-semibold', 'text-foreground')
+			expect(heading).not.toHaveClass('eyebrow', 'uppercase')
 		}
 	})
 })

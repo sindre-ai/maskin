@@ -190,6 +190,11 @@ const TEXT_TOOLS: Record<
 		body: 'content',
 		target: ['Person', 'target_actor_id'],
 	},
+	create_comment: {
+		summary: 'Record your answer on a decision card',
+		body: 'content',
+		target: ['Card', 'entity_id'],
+	},
 	create_session: { summary: 'Start an agent session', body: 'action_prompt' },
 }
 

@@ -2,11 +2,11 @@
 // and runtime state (apiKey, memory, agentState, createdBy, timestamps, ids)
 // from actor/trigger source records before they're written into a
 // marketplace_loop_items.item_snapshot, keeping the exact same shape across
-// every publish-*.ts script and their tests.
+// every marketplace loop and their tests.
 //
 // The input types are intentionally structural (a subset of the columns), so
 // both a live Drizzle `actors`/`triggers` row and a plain record loaded from
-// the checked-in `data/dev-actors.json` / `data/dev-triggers.json` snapshots
+// the checked-in `data/*-actors.json` / `data/*-triggers.json` snapshots
 // satisfy them.
 
 export interface ActorSnapshotSource {
@@ -68,7 +68,7 @@ export function dropLegacyBrowserFlag(tools: unknown): unknown {
 // publishing workspace, so llmConfig is deny-by-default: only these keys
 // survive and every other key (including ones added later) is dropped.
 // Installers supply their own apiKey after install.
-const LLM_CONFIG_ALLOWLIST = ['provider', 'model'] as const
+export const LLM_CONFIG_ALLOWLIST = ['provider', 'model'] as const
 
 function allowlistLlmConfig(llmConfig: unknown): Record<string, unknown> | null {
 	if (llmConfig === null || typeof llmConfig !== 'object' || Array.isArray(llmConfig)) {

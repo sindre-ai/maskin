@@ -71,7 +71,7 @@ describe('activity label parity (web vs backend)', () => {
 		expect(backend.contains_reply).toBe(web.containsReply)
 		expect(backend.result?.text).toBe(web.result?.text)
 		// Sanity: the fixture exercised the interesting branches.
-		expect(backend.steps.map((s) => s.label)).toContain('Using mcp__maskin__get_objects')
+		expect(backend.steps.map((s) => s.label)).toContain('Get objects')
 		expect(backend.steps.map((s) => s.label)).toContain('unknown error')
 		expect(backend.steps.map((s) => s.label)).toContain('Replied to the conversation.')
 	})

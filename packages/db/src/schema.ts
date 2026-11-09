@@ -3,6 +3,7 @@ import type {
 	WebhookConfig as ExtensionWebhookConfig,
 	FileAnnotation,
 	McpConfig,
+	SendPermissionMode,
 	SessionResult,
 	ToolGrants,
 } from '@maskin/shared'
@@ -14,6 +15,7 @@ import {
 	boolean,
 	check,
 	date,
+	doublePrecision,
 	index,
 	integer,
 	jsonb,
@@ -176,6 +178,106 @@ export const workspaceInvitations = pgTable(
 export type WorkspaceInvitation = typeof workspaceInvitations.$inferSelect
 export type NewWorkspaceInvitation = typeof workspaceInvitations.$inferInsert
 
+// ── MCP OAuth ───────────────────────────────────────────────────────────────
+// Claude connector sign-in. Tokens and codes live here as SHA-256 hex only: a raw
+// mat_ / mrt_ value or authorization code is never written to any column or event.
+
+export const oauthGrants = pgTable(
+	'oauth_grants',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		actorId: uuid('actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		// The client's metadata URL, exactly as presented at consent.
+		clientId: text('client_id').notNull(),
+		// Snapshot at consent time, for the grants list.
+		clientName: text('client_name').notNull(),
+		scope: text('scope').notNull().default('mcp'),
+		// Canonical MCP URL the grant was issued for.
+		resource: text('resource').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		// Written at most once per 5 minutes per grant.
+		lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+		revokedAt: timestamp('revoked_at', { withTimezone: true }),
+		revokedByActorId: uuid('revoked_by_actor_id').references(() => actors.id, {
+			onDelete: 'set null',
+		}),
+		// user | member_removed | code_reuse | refresh_reuse | pkce_failure | admin
+		revokeReason: text('revoke_reason'),
+	},
+	(t) => [
+		// One live grant per person, workspace and client. A second approval revokes the
+		// old grant in the same transaction; this index is the backstop.
+		uniqueIndex('oauth_grants_live_uniq')
+			.on(t.actorId, t.workspaceId, t.clientId)
+			.where(sql`${t.revokedAt} IS NULL`),
+		index('oauth_grants_workspace_live_idx').on(t.workspaceId).where(sql`${t.revokedAt} IS NULL`),
+	],
+)
+
+export const oauthAuthorizationCodes = pgTable(
+	'oauth_authorization_codes',
+	{
+		// SHA-256 hex of the code.
+		codeHash: text('code_hash').primaryKey(),
+		grantId: uuid('grant_id')
+			.notNull()
+			.references(() => oauthGrants.id, { onDelete: 'cascade' }),
+		// The exact string from the authorize request.
+		redirectUri: text('redirect_uri').notNull(),
+		// S256 only, so there is no method column.
+		codeChallenge: text('code_challenge').notNull(),
+		resource: text('resource').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		// created_at + 60 s
+		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+		consumedAt: timestamp('consumed_at', { withTimezone: true }),
+	},
+	(t) => [
+		index('oauth_authorization_codes_grant_idx').on(t.grantId),
+		index('oauth_authorization_codes_expires_at_idx').on(t.expiresAt),
+	],
+)
+
+export const oauthTokens = pgTable(
+	'oauth_tokens',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		grantId: uuid('grant_id')
+			.notNull()
+			.references(() => oauthGrants.id, { onDelete: 'cascade' }),
+		// 'access' | 'refresh'
+		kind: text('kind').notNull(),
+		// SHA-256 hex of the raw token.
+		tokenHash: text('token_hash').notNull().unique(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		// access: +1 h. refresh: +30 d, set again on each rotation.
+		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+		revokedAt: timestamp('revoked_at', { withTimezone: true }),
+		// Refresh only: set when rotated. A second presentation is reuse.
+		usedAt: timestamp('used_at', { withTimezone: true }),
+		replacedBy: uuid('replaced_by').references((): AnyPgColumn => oauthTokens.id, {
+			onDelete: 'set null',
+		}),
+	},
+	(t) => [
+		check('oauth_tokens_kind_check', sql`${t.kind} in ('access', 'refresh')`),
+		index('oauth_tokens_grant_idx').on(t.grantId),
+		index('oauth_tokens_expires_at_idx').on(t.expiresAt),
+	],
+)
+
+export type OauthGrant = typeof oauthGrants.$inferSelect
+export type NewOauthGrant = typeof oauthGrants.$inferInsert
+export type OauthAuthorizationCode = typeof oauthAuthorizationCodes.$inferSelect
+export type NewOauthAuthorizationCode = typeof oauthAuthorizationCodes.$inferInsert
+export type OauthToken = typeof oauthTokens.$inferSelect
+export type NewOauthToken = typeof oauthTokens.$inferInsert
+
 // ── Objects ─────────────────────────────────────────────────────────────────
 
 export const objects = pgTable(
@@ -214,6 +316,11 @@ export const objects = pgTable(
 		index('objects_active_session_idx')
 			.on(t.activeSessionId)
 			.where(sql`${t.activeSessionId} IS NOT NULL`),
+		// Workspace id + trigram indexes for the object word filter in the search (services/search.ts,
+		// the objects source). Extensions are from migrations 0122 and 0123; these are 0129 and 0130,
+		// built CONCURRENTLY.
+		index('objects_ws_title_trgm_idx').using('gin', t.workspaceId, t.title.op('gin_trgm_ops')),
+		index('objects_ws_content_trgm_idx').using('gin', t.workspaceId, t.content.op('gin_trgm_ops')),
 	],
 )
 
@@ -273,6 +380,16 @@ export const events = pgTable(
 	(t) => [
 		index('events_ws_created_at_idx').on(t.workspaceId, t.createdAt),
 		index('events_ws_entity_id_idx').on(t.workspaceId, t.entityId, t.id),
+		// Session self-heal's "does this session already have its completion event?" probe,
+		// answered from the index alone. Built CONCURRENTLY in migration 0114.
+		index('events_session_entity_action_idx')
+			.on(t.entityId, t.action, t.workspaceId)
+			.where(sql`${t.entityType} = 'session'`),
+		// The agent page's Objects tab: which objects an actor changed. Partial, so it holds only
+		// updates and status changes. Built CONCURRENTLY in migration 0139.
+		index('events_actor_changed_idx')
+			.on(t.actorId, t.entityId)
+			.where(sql`${t.action} IN ('updated', 'status_changed')`),
 		// For You unread feed: comments only. Built CONCURRENTLY in migration 0084.
 		index('events_ws_entity_commented_idx')
 			.on(t.workspaceId, t.entityId, t.id)
@@ -456,6 +573,42 @@ export const agentGrants = pgTable(
 	],
 )
 export type AgentGrant = typeof agentGrants.$inferSelect
+
+/**
+ * How an agent's sends of one draft kind are treated: always_allow, ask_first or deny. A row
+ * with a null agent_id is the workspace default for that kind; a row with an agent is that
+ * agent's own setting and beats the default. No row at all falls back to the starting table in
+ * packages/shared/src/send-permissions.ts. Only a human admin or owner writes it. Read at send
+ * time by apps/dev/src/lib/send-permissions.ts.
+ */
+export const sendPermissions = pgTable(
+	'send_permissions',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		// Null is the workspace default.
+		agentId: uuid('agent_id').references(() => actors.id, { onDelete: 'cascade' }),
+		kind: text('kind').notNull(),
+		mode: text('mode').$type<SendPermissionMode>().notNull(),
+		updatedBy: uuid('updated_by').references(() => actors.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		// One setting per agent and kind, and one workspace default per kind. Two indexes
+		// because a null agent_id would never collide in a single unique constraint.
+		uniqueIndex('send_permissions_agent_kind_uniq')
+			.on(t.workspaceId, t.agentId, t.kind)
+			.where(sql`agent_id IS NOT NULL`),
+		uniqueIndex('send_permissions_default_kind_uniq')
+			.on(t.workspaceId, t.kind)
+			.where(sql`agent_id IS NULL`),
+		check('send_permissions_mode_enum', sql`${t.mode} IN ('always_allow', 'ask_first', 'deny')`),
+	],
+)
+export type SendPermission = typeof sendPermissions.$inferSelect
 
 /**
  * Access to a saved credential for one conversation ("Allow in this chat"). Reaches only
@@ -642,6 +795,11 @@ export const sessions = pgTable(
 		conversationId: uuid('conversation_id').references((): AnyPgColumn => conversations.id, {
 			onDelete: 'set null',
 		}),
+		// The thread a chat session answers in: the id of the thread's root message in
+		// the same conversation (same type as messages.thread_root_id). NULL = the main
+		// chat, which is every session today. No FK on purpose: a session row outlives
+		// the message and must not cascade with it. Added in migration 0119.
+		threadRootId: bigint('thread_root_id', { mode: 'number' }),
 		result: jsonb('result').$type<SessionResult>(),
 		snapshotPath: text('snapshot_path'),
 		sourceSessionId: uuid('source_session_id'),
@@ -668,6 +826,9 @@ export const sessions = pgTable(
 		dependsOnSessionIds: uuid('depends_on_session_ids').array(),
 		startedAt: timestamp('started_at', { withTimezone: true }),
 		completedAt: timestamp('completed_at', { withTimezone: true }),
+		// Set by the log retention sweep once it has deleted this session's logs past the
+		// retention cutoff (or found none), so the sweep never reads the session again.
+		logsPrunedAt: timestamp('logs_pruned_at', { withTimezone: true }),
 		timeoutAt: timestamp('timeout_at', { withTimezone: true }),
 		totalCostUsd: numeric('total_cost_usd', { precision: 12, scale: 6 }),
 		// OpenRouter model id that actually ran this session (e.g.
@@ -704,6 +865,12 @@ export const sessions = pgTable(
 		cacheCreationInputTokens: bigint('cache_creation_input_tokens', { mode: 'number' }),
 		cacheReadInputTokens: bigint('cache_read_input_tokens', { mode: 'number' }),
 		durationMs: bigint('duration_ms', { mode: 'number' }),
+		// Usage watermark (migration 0113): the newest session_logs.id whose `result`
+		// envelope is already added into the usage columns above, and the CLI's cumulative
+		// cost at that point. Lets a per-turn write and every settle path add only the
+		// results not yet counted, so none of them double-counts.
+		usageCountedLogId: bigint('usage_counted_log_id', { mode: 'number' }),
+		usageCountedCliCost: numeric('usage_counted_cli_cost', { precision: 12, scale: 6 }),
 		currentActivity: text('current_activity'),
 		// Redesigned lifecycle state (§15.1) — distinct from the ambiguous
 		// `status` text because reaper + retry-scheduler need to tell
@@ -765,11 +932,15 @@ export const sessions = pgTable(
 			.where(sql`${t.conversationId} IS NOT NULL`),
 		// Authoritative concurrency guard, not just an optimization: at most one
 		// interactive session may be actively spawning/running for a given
-		// (conversation, agent) pair. Enforced at the DB layer because the
+		// (conversation, agent, thread). Enforced at the DB layer because the
 		// application-level lookup-then-insert in evaluateAndRespond has a race
 		// window between two near-simultaneous replies from the same agent.
-		uniqueIndex('sessions_conversation_actor_active_uniq')
-			.on(t.conversationId, t.actorId)
+		// COALESCE maps the main chat (NULL thread) to 0, which no message id takes,
+		// so two main-chat sessions still collide. Built CONCURRENTLY in migration 0120;
+		// it replaced the (conversation, agent) index sessions_conversation_actor_active_uniq,
+		// dropped in migration 0122.
+		uniqueIndex('sessions_conversation_actor_thread_active_uniq')
+			.on(t.conversationId, t.actorId, sql`(coalesce(${t.threadRootId}, 0))`)
 			.where(sql`${t.interactive} = true AND ${t.status} IN ('pending','starting','running')`),
 		// Backs the session-log retention sweep. Interactive sessions are excluded
 		// from the index entirely — their logs are never pruned, so a chat keeps
@@ -777,6 +948,15 @@ export const sessions = pgTable(
 		index('sessions_prune_candidates_idx')
 			.on(t.completedAt)
 			.where(sql`${t.interactive} = false AND ${t.completedAt} IS NOT NULL`),
+		// The sweep's work list: finished non-interactive sessions whose logs it has not
+		// pruned yet, oldest first. A session leaves the index when the sweep marks it, so
+		// steady state reads only the sessions that crossed the cutoff since the last run
+		// instead of walking every old session. Built CONCURRENTLY in migration 0135.
+		index('sessions_logs_unpruned_idx')
+			.on(t.completedAt)
+			.where(
+				sql`${t.interactive} = false AND ${t.completedAt} IS NOT NULL AND ${t.logsPrunedAt} IS NULL`,
+			),
 		// Reaper's live-session scan (Commit 6): only the states the reaper
 		// cares about, so the index carries a tiny slice of the table.
 		index('sessions_session_state_state_entered_at_idx')
@@ -823,6 +1003,78 @@ export const apiKeys = pgTable(
 	],
 )
 export type ApiKey = typeof apiKeys.$inferSelect
+
+// ── Comment Responder Claims ───────────────────────────────────────────────
+// One responder session per (comment event, actor). The thread-reply spawn and the
+// CommentDispatcher fallback ladder both claim here before starting a session; the INSERT that
+// wins starts it, the other stands down. See migration 0115.
+export type CommentResponderClaimedBy = 'thread_reply' | 'comment_fallback'
+export const commentResponderClaims = pgTable(
+	'comment_responder_claims',
+	{
+		sourceCommentEventId: bigint('source_comment_event_id', { mode: 'number' })
+			.references(() => events.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		claimedBy: text('claimed_by').$type<CommentResponderClaimedBy>().notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		primaryKey({
+			name: 'comment_responder_claims_pk',
+			columns: [t.sourceCommentEventId, t.actorId],
+		}),
+		check(
+			'comment_responder_claims_claimed_by_enum',
+			sql`${t.claimedBy} IN ('thread_reply', 'comment_fallback')`,
+		),
+	],
+)
+
+// ── For You dismissals ─────────────────────────────────────────────────────
+//
+// One row per person and source comment: the person pressed Dismiss on the For You card
+// that comment raised. Dismissing is its own record because the read position moves on
+// every page open, so it cannot tell "I looked" from "I am done with this". Curated
+// cards carry a status on their notification row; this table is for decision cards,
+// which have no row of their own. Deleting the row is Undo.
+export const forYouDismissals = pgTable(
+	'for_you_dismissals',
+	{
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		sourceCommentId: bigint('source_comment_id', { mode: 'number' })
+			.references(() => events.id, { onDelete: 'cascade' })
+			.notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [primaryKey({ name: 'for_you_dismissals_pk', columns: [t.actorId, t.sourceCommentId] })],
+)
+
+// ── For You withdrawals ────────────────────────────────────────────────────
+//
+// One row per withdrawn decision card, keyed on the card's source comment. The agent that wrote
+// the comment, or the Chief of Staff, retires a card that is dead (a test card, a passed
+// deadline, a duplicate). Global: the card leaves every list that reads the For You loaders.
+// withdrawn_by is SET NULL, not cascade: removing the withdrawer must not bring the card back.
+// Deleting the row is the undo.
+export const forYouWithdrawals = pgTable('for_you_withdrawals', {
+	sourceCommentId: bigint('source_comment_id', { mode: 'number' })
+		.primaryKey()
+		.references(() => events.id, { onDelete: 'cascade' }),
+	workspaceId: uuid('workspace_id')
+		.references(() => workspaces.id, { onDelete: 'cascade' })
+		.notNull(),
+	withdrawnBy: uuid('withdrawn_by').references(() => actors.id, { onDelete: 'set null' }),
+	reason: text('reason').notNull(),
+	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
 
 // ── Session Logs ───────────────────────────────────────────────────────────
 
@@ -877,11 +1129,23 @@ export const conversations = pgTable(
 		// the workspace. NULL for ordinary chats.
 		subjectType: text('subject_type'),
 		subjectId: uuid('subject_id'),
+		// Marks the one direct message (DM) between two actors: the two actor ids,
+		// lowest first, joined with ':' (directPairKey in services/direct-chat.ts).
+		// NULL for every topical chat, however many people are in it.
+		directPairKey: text('direct_pair_key'),
+		// Labels for grouping chats, for example a team name. A JSON array of short strings,
+		// written only through PATCH /api/conversations/:id (strict) and read through
+		// normalizeTags. Same shape as a flow's metadata.tags and an agent's metadata.tags.
+		tags: jsonb('tags').notNull().default(sql`'[]'::jsonb`),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
 		index('conversations_ws_last_message_at_idx').on(t.workspaceId, t.lastMessageAt),
+		// One DM per pair of actors in a workspace.
+		uniqueIndex('conversations_direct_pair_uniq')
+			.on(t.workspaceId, t.directPairKey)
+			.where(sql`${t.directPairKey} IS NOT NULL`),
 		// One group chat per subject: asking for it again finds the existing one.
 		uniqueIndex('conversations_subject_uniq')
 			.on(t.workspaceId, t.subjectType, t.subjectId)
@@ -968,6 +1232,9 @@ export const messages = pgTable(
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		// Set when the author edits the message; null for never-edited messages.
 		editedAt: timestamp('edited_at', { withTimezone: true }),
+		// Set when the author deletes the message. The row stays (threads and read markers keep
+		// pointing at it) but its content is cleared and its metadata nulled. Null while live.
+		deletedAt: timestamp('deleted_at', { withTimezone: true }),
 		// Set on a reply inside a thread: the id of the thread's root message in the
 		// same conversation. Roots are never replies themselves (one level only), so
 		// this never chains. Cascades with the root.
@@ -985,6 +1252,13 @@ export const messages = pgTable(
 			.on(t.threadRootId, t.id)
 			.where(sql`${t.threadRootId} IS NOT NULL`),
 		index('messages_session_id_idx').on(t.sessionId),
+		// Chat id + trigram index for the chat message-text search (services/search.ts, deepHit).
+		// Migrations 0122 and 0123 (extensions), 0124 (this index, built CONCURRENTLY).
+		index('messages_conv_content_trgm_idx').using(
+			'gin',
+			t.conversationId,
+			t.content.op('gin_trgm_ops'),
+		),
 		// Idempotency guard for auto-posted end-of-turn agent output. Load-bearing:
 		// the Docker log stream replays a live session's ENTIRE log on first
 		// connect (`tail: 'all'`), so without this an apps/dev restart would
@@ -1059,6 +1333,9 @@ export const conversationPendingTurns = pgTable(
 		messageId: bigint('message_id', { mode: 'number' })
 			.references(() => messages.id, { onDelete: 'cascade' })
 			.notNull(),
+		// The thread the turn belongs to, as sessions.thread_root_id; NULL = the main
+		// chat. A session drains only the turns of its own thread. Migration 0119.
+		threadRootId: bigint('thread_root_id', { mode: 'number' }),
 		// The exact stream-json user envelope to deliver via writeInput.
 		payload: jsonb('payload').notNull(),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -1205,6 +1482,48 @@ export const voiceSessions = pgTable('voice_sessions', {
 export type VoiceSession = typeof voiceSessions.$inferSelect
 export type NewVoiceSession = typeof voiceSessions.$inferInsert
 
+// ── Voice tool call log ─────────────────────────────────────────────────────
+//
+// One row per tool call the voice model made during a call: what it asked for
+// (redacted, size-capped), whether it worked, and the first part of what the
+// model was told back. An internal diagnostic log, not an entity: rows are never
+// edited, so there is no events row, and they are swept after 30 days
+// (services/voice-tool-call-log-cleaner.ts). Written best-effort; a missing row
+// never means the call failed.
+export const voiceToolCalls = pgTable(
+	'voice_tool_calls',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		voiceSessionId: uuid('voice_session_id')
+			.notNull()
+			.references(() => voiceSessions.id, { onDelete: 'cascade' }),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		// The id the realtime model gave the call; ties a row to the transcript.
+		callId: text('call_id'),
+		startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
+		toolName: text('tool_name').notNull(),
+		// Redacted and capped; see lib/voice-tool-call-redaction.ts.
+		argsSummary: jsonb('args_summary').$type<unknown>(),
+		success: boolean('success').notNull(),
+		errorCode: text('error_code'),
+		errorMessage: text('error_message'),
+		// Length of the tool's output before voice's cap, and whether the cap cut it.
+		outputChars: integer('output_chars').notNull(),
+		outputTruncated: boolean('output_truncated').notNull().default(false),
+		latencyMs: integer('latency_ms').notNull(),
+		outputPreview: text('output_preview'),
+	},
+	(t) => [
+		index('voice_tool_calls_session_started_idx').on(t.voiceSessionId, t.startedAt),
+		index('voice_tool_calls_started_at_idx').on(t.startedAt),
+	],
+)
+
+export type VoiceToolCall = typeof voiceToolCalls.$inferSelect
+export type NewVoiceToolCall = typeof voiceToolCalls.$inferInsert
+
 // ── Imports ───────────────────────────────────────────────────────────
 
 export const imports = pgTable(
@@ -1276,6 +1595,10 @@ export const mcpTelemetry = pgTable(
 		durationMs: integer('duration_ms'),
 		objectType: text('object_type'),
 		mutationKind: text('mutation_kind'),
+		// tool_call rows of the six list-family tools only: whether the call carried a
+		// cursor or offset. Null for every other row. `object_type` on those rows is the
+		// type the call listed (see listCallObjectType in @maskin/shared).
+		hasCursor: boolean('has_cursor'),
 		data: jsonb('data'),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	},
@@ -1905,6 +2228,43 @@ export const userDisplaySettings = pgTable(
 export type UserDisplaySettings = typeof userDisplaySettings.$inferSelect
 export type NewUserDisplaySettings = typeof userDisplaySettings.$inferInsert
 
+// ── Saved Views ─────────────────────────────────────────────────────────────
+//
+// A named, shared way to look at a list: which tags (and, for flows, which driver) to keep and
+// what to group by. One per workspace and kind, shared by every member. Unlike
+// user_display_settings these are not per person. `filter` holds { tags?, driverId? } and is
+// checked at the route (savedViewFilterSchema), `group_by` is null, 'tag' or 'driver'.
+
+export const savedViews = pgTable(
+	'saved_views',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		kind: text('kind').notNull(),
+		name: text('name').notNull(),
+		filter: jsonb('filter').notNull().default({}),
+		groupBy: text('group_by'),
+		// Kept when the author is deleted, so a shared view outlives the person who made it.
+		createdBy: uuid('created_by').references(() => actors.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		// One name per kind in a workspace, whatever the capitalisation.
+		uniqueIndex('saved_views_ws_kind_name_uniq').on(t.workspaceId, t.kind, sql`lower(${t.name})`),
+		check('saved_views_kind_check', sql`${t.kind} IN ('flow', 'agent', 'chat')`),
+		check(
+			'saved_views_group_by_check',
+			sql`${t.groupBy} IS NULL OR ${t.groupBy} IN ('tag', 'driver')`,
+		),
+	],
+)
+
+export type SavedView = typeof savedViews.$inferSelect
+export type NewSavedView = typeof savedViews.$inferInsert
+
 // ── Workspace Onboarding Prompts ──────────────────────────────────────────────
 //
 // One row per prompt type per workspace. Written when onboarding is enabled;
@@ -1967,6 +2327,10 @@ export const marketplaceLoops = pgTable('marketplace_loops', {
 	description: text('description').notNull(),
 	version: text('version').notNull(),
 	useCase: text('use_case'),
+	// Set by seedMarketplaceLoops when the slug is no longer in the code-defined seed list.
+	// A retired loop is hidden from the marketplace and refused for new installs, but the
+	// row stays so existing installs (installed_loops.source_loop_id) keep updating.
+	retiredAt: timestamp('retired_at', { withTimezone: true }),
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })
@@ -2291,6 +2655,71 @@ export const fileComments = pgTable(
 export type FileComment = typeof fileComments.$inferSelect
 export type NewFileComment = typeof fileComments.$inferInsert
 
+// ── File Proposals ──────────────────────────────────────────────────────────
+// An agent's proposed text changes to a markdown file. Two tables, not objects
+// or events: proposals are high volume and short lived, and event payloads are
+// capped at 8 KB. Whether a change is stale is NOT stored; it is computed on
+// every read from the file's current bytes (see lib/file-proposals.ts).
+
+export const fileProposals = pgTable(
+	'file_proposals',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		fileId: uuid('file_id')
+			.notNull()
+			.references(() => files.id, { onDelete: 'cascade' }),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		authorId: uuid('author_id')
+			.notNull()
+			.references(() => actors.id),
+		// From the X-Maskin-Session-Id header file writes already use.
+		sessionId: uuid('session_id'),
+		summary: text('summary'),
+		// SHA-256 (hex) of the file at submit time. Audit and a softer "file
+		// changed since this was proposed" hint only; staleness is per change.
+		baseSha256: text('base_sha256').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index('file_proposals_file_created_at_idx').on(t.fileId, t.createdAt)],
+)
+
+export const fileProposalChanges = pgTable(
+	'file_proposal_changes',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		proposalId: uuid('proposal_id')
+			.notNull()
+			.references(() => fileProposals.id, { onDelete: 'cascade' }),
+		ordinal: integer('ordinal').notNull(),
+		oldText: text('old_text').notNull(),
+		newText: text('new_text').notNull(),
+		reason: text('reason'),
+		// About 40 characters of the file on each side of old_text, taken at submit.
+		contextBefore: text('context_before').notNull().default(''),
+		contextAfter: text('context_after').notNull().default(''),
+		// pending | accepted | rejected
+		status: text('status').notNull().default('pending'),
+		decidedBy: uuid('decided_by').references(() => actors.id),
+		decidedAt: timestamp('decided_at', { withTimezone: true }),
+		// What was actually written; differs from new_text when the human edited it.
+		appliedText: text('applied_text'),
+	},
+	(t) => [
+		unique('file_proposal_changes_proposal_ordinal_unique').on(t.proposalId, t.ordinal),
+		check(
+			'file_proposal_changes_status_check',
+			sql`${t.status} IN ('pending', 'accepted', 'rejected')`,
+		),
+	],
+)
+
+export type FileProposal = typeof fileProposals.$inferSelect
+export type NewFileProposal = typeof fileProposals.$inferInsert
+export type FileProposalChange = typeof fileProposalChanges.$inferSelect
+export type NewFileProposalChange = typeof fileProposalChanges.$inferInsert
+
 // ── Google Meet — create_space idempotency ─────────────────────────────────
 // Maskin-side dedup ledger for `google_meet__create_space`. Meet's spaces.create
 // endpoint does NOT accept a client-side idempotency key (unlike GCal's
@@ -2515,7 +2944,41 @@ export const liveActivityCards = pgTable(
 	],
 )
 
+// The runs a person chose to follow from an agent's working banner (opt-in "Following an agent"
+// Live Activity). The app starts the card itself and registers the card's own push token here, so
+// the backend can push the agent's latest step and its end. One row per device and session; the
+// row goes when the person stops following or the run ends. Rows cascade with the actor, device,
+// workspace and session.
+export const liveActivityFollows = pgTable(
+	'live_activity_follows',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		actorId: uuid('actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		deviceId: uuid('device_id')
+			.notNull()
+			.references(() => deviceTokens.id, { onDelete: 'cascade' }),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		sessionId: uuid('session_id')
+			.notNull()
+			.references(() => sessions.id, { onDelete: 'cascade' }),
+		token: text('token').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex('live_activity_follows_device_session_uniq').on(t.deviceId, t.sessionId),
+		index('live_activity_follows_workspace_idx').on(t.workspaceId),
+		index('live_activity_follows_actor_idx').on(t.actorId),
+		index('live_activity_follows_session_idx').on(t.sessionId),
+	],
+)
+
 export type LiveActivityToken = typeof liveActivityTokens.$inferSelect
+export type LiveActivityFollow = typeof liveActivityFollows.$inferSelect
 export type NewLiveActivityToken = typeof liveActivityTokens.$inferInsert
 
 export type DeviceToken = typeof deviceTokens.$inferSelect
@@ -2579,10 +3042,8 @@ export type NewWorkspaceSuppressionRow = typeof workspaceSuppressions.$inferInse
 // same event, exactly one INSERT claims — the loser's returning() is empty
 // and the dispatch is skipped.
 //
-// Ships unconditional (NOT gated by trigger_engine_v2 per tech spec §3.4 +
-// §7.3): if this sat behind the flag, a kill-switch flip would re-open the
-// double-fire window the table exists to prevent. The v1 code path simply
-// never writes to this table, so having it live pre-flag is safe.
+// Ships unconditional (tech spec §3.4 + §7.3): the table exists to prevent the
+// double-fire window during a rolling deploy.
 //
 // session_id is diagnostic only. If the UPDATE that stamps it after
 // createSession() fails, the row still guards against double-fire — its
@@ -2620,8 +3081,7 @@ export type NewTriggerDispatch = typeof triggerDispatches.$inferInsert
 // three indexes are partial on replayed_at IS NULL so they only ever cover
 // the pending backlog.
 //
-// The table ships unconditional (additive, nothing reads it with the flag
-// off); only ENQUEUE and REPLAY sit behind trigger_engine_v2.
+// The table ships unconditional (additive).
 
 export const triggerEventQueue = pgTable(
 	'trigger_event_queue',
@@ -2692,3 +3152,33 @@ export const deviceAuthCodes = pgTable(
 
 export type DeviceAuthCode = typeof deviceAuthCodes.$inferSelect
 export type NewDeviceAuthCode = typeof deviceAuthCodes.$inferInsert
+
+// ── API route timing counts ─────────────────────────────────────────────────
+// One row per minute, per route, per server build, per sender: how many requests the API answered and how long
+// they took. Counts and sums only. No actor, workspace, URL or header is stored; the route is the
+// pattern (`/api/objects/:id`). Written by the once-a-minute timing flush
+// (apps/dev/src/lib/route-timing-store.ts) and deleted after 30 days, so the load per route can be
+// read over a week. `minute` is the minute the flush ran in; two replicas (or two flushes in one
+// minute) add into the same row.
+export const apiRouteTimingMinutes = pgTable(
+	'api_route_timing_minutes',
+	{
+		minute: timestamp('minute', { withTimezone: true }).notNull(),
+		build: text('build').notNull(),
+		method: text('method').notNull(),
+		route: text('route').notNull(),
+		stream: boolean('stream').notNull(),
+		// Who sent the requests: ui, ios, mcp, other or none (no header). '' on rows written before
+		// this column existed, which stay in the all-traffic sum.
+		clientSource: text('client_source').notNull().default(''),
+		requests: integer('requests').notNull(),
+		slowRequests: integer('slow_requests').notNull(),
+		errors5xx: integer('errors_5xx').notNull(),
+		totalMsSum: doublePrecision('total_ms_sum').notNull(),
+		dbMsSum: doublePrecision('db_ms_sum').notNull(),
+		dbQueries: integer('db_queries').notNull(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.minute, t.build, t.method, t.route, t.stream, t.clientSource] }),
+	],
+)

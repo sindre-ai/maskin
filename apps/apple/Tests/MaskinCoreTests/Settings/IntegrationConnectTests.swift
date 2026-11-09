@@ -123,7 +123,11 @@ struct IntegrationsConnectStoreTests {
 		#expect(auth.opened.first?.url == fake.connectStart.installURL)
 		#expect(store.connectNotice == IntegrationConnectCopy.connected("Slack"))
 		#expect(store.connectPhase == .idle)
-		#expect(fake.calls == ["start-connect:slack", "providers", "connected"])
+		// The list refresh asks for the providers and the connections side by side (`async let`),
+		// so which of the two the fake sees first is not defined.
+		#expect(fake.calls.first == "start-connect:slack")
+		#expect(Set(fake.calls.dropFirst()) == ["providers", "connected"])
+		#expect(fake.calls.count == 3)
 		#expect(fake.idempotencyKeys.count == 1)
 	}
 

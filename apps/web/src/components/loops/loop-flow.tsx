@@ -1,178 +1,124 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
-import { TypeBadge } from '@/components/shared/type-badge'
-import type { ActorListItem, LoopSummary, ObjectResponse, TriggerResponse } from '@/lib/api'
-import { api } from '@/lib/api'
+import { describeTrigger } from '@/components/triggers/trigger-row'
+import { Switch } from '@/components/ui/switch'
+import { useCanWrite } from '@/hooks/use-can-write'
+import { useUpdateTrigger } from '@/hooks/use-triggers'
+import type { ActorListItem, LoopSummary, TriggerResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { getStatusColor } from '@/lib/constants'
-import { queryKeys } from '@/lib/query-keys'
-import { useWorkspace } from '@/lib/workspace-context'
-import { useQueries } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
+import { toast } from 'sonner'
 
-// Relationship lookups are one request per object shown in the pipeline
-// board (no bulk-by-many-ids endpoint exists yet) — capped so a very active
-// loop can't fan out into a request storm.
-const MAX_COMPANION_LOOKUPS = 30
-
-interface StageColumn {
-	value: string
-	label: string
-	total: number
-	objects: ObjectResponse[]
-}
-
-function primaryChildType(children: ObjectResponse[]): string | null {
-	const counts = new Map<string, number>()
-	for (const child of children) {
-		counts.set(child.type, (counts.get(child.type) ?? 0) + 1)
-	}
-	let best: string | null = null
-	let bestCount = 0
-	for (const [type, count] of counts) {
-		if (count > bestCount) {
-			best = type
-			bestCount = count
-		}
-	}
-	return best
-}
-
-/** Groups this type's objects into ordered status columns — same shape the
- * board endpoint used to return, computed client-side now that loop
- * membership is a relationship rather than a `metadata.loop_id` filter the
- * board's query builder could key off. Column order follows the workspace's
- * configured statuses for the type; any status seen on an object but not in
- * that list is appended (mirrors the board endpoint's own fallback so a
- * custom/unlisted status never gets silently dropped). */
-function buildStageColumns(
-	primaryObjects: ObjectResponse[],
-	configuredStatuses: string[],
-): StageColumn[] {
-	const byStatus = new Map<string, ObjectResponse[]>()
-	for (const obj of primaryObjects) {
-		const list = byStatus.get(obj.status) ?? []
-		list.push(obj)
-		byStatus.set(obj.status, list)
-	}
-	const order = [...configuredStatuses]
-	for (const status of byStatus.keys()) {
-		if (!order.includes(status)) order.push(status)
-	}
-	return order.map((value) => ({
-		value,
-		label: value,
-		total: byStatus.get(value)?.length ?? 0,
-		objects: byStatus.get(value) ?? [],
-	}))
-}
-
-/** Event triggers with an explicit `from_status` that matches a known stage
- * are placed right after that stage instead of in "Comes in" — mirrors the
- * reference design's mid-flow step rows (e.g. "Quill writes the
- * generalisable version" sitting right after the clustered stage). Cron/
- * reminder triggers and event triggers with no (or unrecognised)
- * `from_status` fall back to "Comes in" / "Runs alongside". */
-function triggerFromStatus(trigger: TriggerResponse): string | null {
-	if (trigger.type !== 'event') return null
-	const config = trigger.config as { from_status?: unknown } | null
-	const fromStatus = config?.from_status
-	return typeof fromStatus === 'string' && fromStatus.length > 0 ? fromStatus : null
-}
-
-function formatDuration(ms: number | null | undefined): string | null {
-	if (!ms || ms <= 0 || !Number.isFinite(ms)) return null
-	const days = Math.round(ms / (24 * 60 * 60 * 1000))
-	if (days >= 1) return `${days}d`
-	const hours = Math.round(ms / (60 * 60 * 1000))
-	if (hours >= 1) return `${hours}h`
-	return `${Math.round(ms / (60 * 1000))}m`
-}
-
-function pillClasses(active: boolean) {
+function chipClasses(active: boolean) {
 	return cn(
-		'inline-flex items-center gap-1.5 h-7 px-3 rounded-full text-[11.5px] font-semibold border transition-colors',
+		'inline-flex h-[30px] max-w-full items-center gap-[7px] rounded-full border px-[13px] text-[12.5px] font-semibold transition-colors',
 		active
-			? 'bg-secondary text-foreground border-border-strong'
-			: 'bg-background text-muted-foreground border-border hover:border-border-strong hover:text-foreground',
+			? 'border-primary bg-primary text-primary-foreground'
+			: 'border-border bg-background text-foreground hover:border-border-strong',
 	)
 }
 
-function StepRow({
+/** One agent's step in the pipeline: the agent and the triggers that set it off. */
+interface PipelineStep {
+	agentId: string
+	agent: ActorListItem | undefined
+	triggers: TriggerResponse[]
+}
+
+/**
+ * Steps in the order the flow names its triggers (`LoopSummary.triggerIds` is
+ * the ordered spine); an agent sits where its first trigger does. Without a
+ * spine the steps fall back to A to Z by agent name.
+ */
+function buildSteps(
+	triggers: TriggerResponse[],
+	actorsById: Map<string, ActorListItem>,
+	spine: readonly string[] | undefined,
+	agentIds: readonly string[] = [],
+): PipelineStep[] {
+	const rank = (t: TriggerResponse) => {
+		const at = spine?.indexOf(t.id) ?? -1
+		return at === -1 ? Number.MAX_SAFE_INTEGER : at
+	}
+	const ordered = [...triggers].sort(
+		(a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
+	)
+	const byAgent = new Map<string, TriggerResponse[]>()
+	for (const t of ordered)
+		byAgent.set(t.targetActorId, [...(byAgent.get(t.targetActorId) ?? []), t])
+	const steps = [...byAgent].map(([agentId, list]) => ({
+		agentId,
+		agent: actorsById.get(agentId),
+		triggers: list,
+	}))
+	// An agent the flow names but no trigger sets off is still a step, with none.
+	for (const agentId of agentIds) {
+		if (!byAgent.has(agentId)) steps.push({ agentId, agent: actorsById.get(agentId), triggers: [] })
+	}
+	if (spine && spine.length > 0) return steps
+	return steps.sort((a, b) =>
+		(a.agent?.name ?? '').localeCompare(b.agent?.name ?? '', undefined, {
+			sensitivity: 'base',
+			numeric: true,
+		}),
+	)
+}
+
+function TriggerCard({
 	workspaceId,
 	trigger,
-	agent,
-	asksYou,
 }: {
 	workspaceId: string
 	trigger: TriggerResponse
-	agent: ActorListItem | undefined
-	asksYou?: boolean
 }) {
+	const canWrite = useCanWrite()
+	const update = useUpdateTrigger(workspaceId)
+	const kind = trigger.type === 'cron' ? 'Schedule' : 'Event'
+	// The card reads as what happens: the trigger's name, then the first line of what it asks the
+	// agent to do. A trigger with neither says when it fires, so no card is ever blank.
+	const when = describeTrigger(trigger)
+	const instruction = trigger.actionPrompt?.trim().split('\n')[0]?.slice(0, 160) ?? ''
+	const title = trigger.name?.trim() || instruction || when
+	const detail = instruction && instruction !== title ? instruction : title !== when ? when : ''
 	return (
-		// With `/triggers` folded into Loops, this row is the only route into a
-		// loop-owned trigger's detail page — the second half of the reachability
-		// contract the fold-in depends on.
-		<Link
-			to="/$workspaceId/triggers/$triggerId"
-			params={{ workspaceId, triggerId: trigger.id }}
-			className="flex items-start gap-2.5 rounded-lg px-1 py-0.5 -mx-1 transition-colors duration-150 hover:bg-muted"
+		// The card opens the trigger's own page; the switch sits on top of it and acts
+		// without opening it. With `/triggers` folded into flows, this card is the only
+		// route into a flow-owned trigger's detail page.
+		<div
+			className={cn(
+				'relative rounded-xl bg-muted transition-opacity',
+				!trigger.enabled && 'opacity-55',
+			)}
 		>
-			<ActorAvatar
-				id={trigger.targetActorId}
-				name={agent?.name ?? 'Unknown agent'}
-				type={agent?.type ?? 'agent'}
-				className="mt-0.5"
-			/>
-			<div className="flex-1 min-w-0 break-words text-[12.5px] leading-relaxed">
-				<span className="font-semibold text-foreground">{agent?.name ?? 'Unknown agent'}</span>{' '}
-				<span className="text-muted-foreground">{trigger.actionPrompt}</span>
-			</div>
-			{asksYou && (
-				<span className="shrink-0 inline-flex items-center rounded-full bg-accent px-2 py-0.5 text-[10.5px] font-semibold text-accent-foreground mt-0.5">
-					asks you
-				</span>
-			)}
-			{!trigger.enabled && (
-				<span className="text-[10.5px] font-medium text-muted-foreground shrink-0 mt-0.5">off</span>
-			)}
-		</Link>
-	)
-}
-
-function CycleCard({
-	workspaceId,
-	primary,
-	companions,
-}: {
-	workspaceId: string
-	primary: ObjectResponse
-	companions: ObjectResponse[]
-}) {
-	return (
-		<div className="border border-border rounded-lg bg-background p-2.5">
 			<Link
-				to="/$workspaceId/objects/$objectId"
-				params={{ workspaceId, objectId: primary.id }}
-				className="text-[12px] font-semibold text-foreground truncate hover:underline"
+				to="/$workspaceId/triggers/$triggerId"
+				params={{ workspaceId, triggerId: trigger.id }}
+				className="flex flex-col gap-1 rounded-xl px-3 py-2.5 transition-colors duration-150 hover:bg-border/50"
 			>
-				{primary.title ?? 'Untitled'}
+				<span className="pr-10 text-[10.5px] font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+					{kind}
+				</span>
+				<span className="min-w-0 break-words text-[13px] leading-[1.35] text-foreground">
+					{title}
+				</span>
+				{detail && (
+					<span className="min-w-0 break-words text-[12px] leading-[1.35] text-muted-foreground">
+						{detail}
+					</span>
+				)}
 			</Link>
-			<div className="flex flex-wrap gap-1.5 mt-2">
-				{companions.map((obj) => (
-					<Link
-						key={obj.id}
-						to="/$workspaceId/objects/$objectId"
-						params={{ workspaceId, objectId: obj.id }}
-						className="flex items-center gap-1.5 rounded-md border border-border bg-card px-1.5 py-1 hover:border-foreground/30 transition-colors min-w-0"
-					>
-						<TypeBadge type={obj.type} />
-						<span className="text-[11px] font-medium text-foreground truncate max-w-[160px]">
-							{obj.title ?? 'Untitled'}
-						</span>
-					</Link>
-				))}
-			</div>
+			<Switch
+				checked={trigger.enabled}
+				disabled={!canWrite || update.isPending}
+				aria-label={`${trigger.enabled ? 'Pause' : 'Turn on'} ${title}`}
+				onCheckedChange={(enabled) =>
+					update.mutate(
+						{ id: trigger.id, data: { enabled } },
+						{ onError: () => toast.error('Could not update the trigger') },
+					)
+				}
+				className="absolute right-3 top-2.5 data-[state=checked]:bg-brand"
+			/>
 		</div>
 	)
 }
@@ -181,254 +127,115 @@ export function LoopFlow({
 	workspaceId,
 	triggers,
 	actors,
-	childObjects,
 	loop,
+	onAddTrigger,
+	addingTrigger = false,
 }: {
 	workspaceId: string
 	triggers: TriggerResponse[]
 	actors: ActorListItem[] | undefined
-	childObjects: ObjectResponse[]
 	loop?: LoopSummary
+	/** Adds a trigger to this flow. Omitted for viewers, so the control is not offered. */
+	onAddTrigger?: () => void
+	/** A trigger is being added; the control waits so a double click adds one. */
+	addingTrigger?: boolean
 }) {
 	const [agentFilter, setAgentFilter] = useState<string | null>(null)
-	const { workspace } = useWorkspace()
 	const actorsById = new Map((actors ?? []).map((a) => [a.id, a]))
-	const childrenById = new Map(childObjects.map((c) => [c.id, c]))
-
-	const primaryType = primaryChildType(childObjects)
-	const primaryObjects = primaryType ? childObjects.filter((o) => o.type === primaryType) : []
-	const configuredStatuses =
-		(workspace.settings as { statuses?: Record<string, string[]> }).statuses?.[primaryType ?? ''] ??
-		[]
-	const columns = primaryType ? buildStageColumns(primaryObjects, configuredStatuses) : []
-
-	// One relationship lookup per primary object — merged below into a
-	// "companions" list (any loop child directly linked to it, any type).
-	const lookupTargets = primaryObjects.slice(0, MAX_COMPANION_LOOKUPS)
-	const relationshipQueries = useQueries({
-		queries: lookupTargets.map((obj) => ({
-			queryKey: queryKeys.relationships.byObject(workspaceId, obj.id),
-			queryFn: () => api.relationships.list(workspaceId, { object_id: obj.id }),
-		})),
-	})
-	const companionsByPrimaryId = new Map<string, ObjectResponse[]>()
-	lookupTargets.forEach((obj, i) => {
-		const rels = relationshipQueries[i]?.data ?? []
-		const seen = new Set<string>()
-		const companions: ObjectResponse[] = []
-		for (const rel of rels) {
-			const otherId = rel.sourceId === obj.id ? rel.targetId : rel.sourceId
-			if (otherId === obj.id || seen.has(otherId)) continue
-			const other = childrenById.get(otherId)
-			if (other) {
-				companions.push(other)
-				seen.add(otherId)
-			}
-		}
-		if (companions.length > 0) companionsByPrimaryId.set(obj.id, companions)
-	})
-
-	const cronTriggers = triggers.filter((t) => t.type === 'cron')
-	const gapTriggersByStatus = new Map<string, TriggerResponse[]>()
-	const comesInTriggers: TriggerResponse[] = []
-	for (const t of triggers) {
-		if (t.type === 'cron') continue
-		const fromStatus = triggerFromStatus(t)
-		if (fromStatus && columns.some((c) => c.value === fromStatus)) {
-			const list = gapTriggersByStatus.get(fromStatus) ?? []
-			list.push(t)
-			gapTriggersByStatus.set(fromStatus, list)
-		} else {
-			comesInTriggers.push(t)
-		}
-	}
-
-	const distinctAgentIds = Array.from(new Set(triggers.map((t) => t.targetActorId)))
-	const matchesFilter = (t: TriggerResponse) => !agentFilter || t.targetActorId === agentFilter
-	const shownComesIn = comesInTriggers.filter(matchesFilter)
-	const shownAlongside = cronTriggers.filter(matchesFilter)
-
-	const hasTriggers = triggers.length > 0
-	const hasStages = columns.some((c) => c.total > 0)
-	if (!hasTriggers && !hasStages) return null
-
-	// A pill filter that matches nothing renders the mockup's own line rather
-	// than an empty card (mockup 1943–1945).
-	const shownGapTriggerCount = columns.reduce(
-		(sum, column) =>
-			sum + (gapTriggersByStatus.get(column.value) ?? []).filter(matchesFilter).length,
-		0,
-	)
-	const flowEmpty =
-		agentFilter !== null &&
-		shownComesIn.length === 0 &&
-		shownAlongside.length === 0 &&
-		shownGapTriggerCount === 0
-
-	const asksYou = loop?.pill === 'waiting_on_you'
-
-	// `⟨primitives⟩ · ⟨triggers on⟩ · ⟨cycles⟩` — every part read off real data,
-	// and any part with nothing to say drops out rather than printing a zero.
-	const enabledTriggerCount = triggers.filter((t) => t.enabled).length
-	const objectTypeCount = new Set(childObjects.map((o) => o.type)).size
-	const inProgress = loop?.inProgressCount ?? 0
-	const closed = loop?.closedCount ?? 0
-	const median = formatDuration(loop?.medianTimeToCloseMs)
-	const cycleParts: string[] = []
-	if (inProgress > 0)
-		cycleParts.push(`${inProgress} ${inProgress === 1 ? 'cycle is' : 'cycles are'} running`)
-	if (closed > 0) cycleParts.push(`${closed} ${closed === 1 ? 'cycle has' : 'cycles have'} closed`)
-	if (median) cycleParts.push(`median close ${median}`)
-	const rightNowNote = [
-		objectTypeCount > 0
-			? `${objectTypeCount} object ${objectTypeCount === 1 ? 'type' : 'types'}`
-			: null,
-		`${enabledTriggerCount} of ${triggers.length} ${triggers.length === 1 ? 'trigger' : 'triggers'} on`,
-		`${distinctAgentIds.length} ${distinctAgentIds.length === 1 ? 'agent' : 'agents'}`,
-		...cycleParts,
-	]
-		.filter(Boolean)
-		.join(' · ')
+	const steps = buildSteps(triggers, actorsById, loop?.triggerIds, loop?.agentIds)
+	const shown = agentFilter ? steps.filter((s) => s.agentId === agentFilter) : steps
 
 	return (
-		<div id="loop-flow" data-loop-flow-root>
-			{/* One note line: primitives · triggers on · cycles (mockup 1891). */}
-			<div className="flex items-center gap-2.5 mb-3">
-				<h2 className="shrink-0 text-sm font-semibold text-foreground">The loop, right now</h2>
-				<span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
-					{rightNowNote}
-				</span>
+		<section
+			id="loop-flow"
+			data-loop-flow-root
+			aria-label="Pipeline"
+			className="flex flex-col gap-3.5"
+		>
+			<div className="flex items-baseline gap-3 px-1">
+				<h2 className="flex-1 text-[13px] font-semibold text-muted-foreground">Pipeline</h2>
+				{onAddTrigger && (
+					<button
+						type="button"
+						onClick={onAddTrigger}
+						disabled={addingTrigger}
+						className="text-[12.5px] font-semibold text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+					>
+						+ Add trigger
+					</button>
+				)}
 			</div>
 
-			{distinctAgentIds.length > 1 && (
-				<div className="flex flex-wrap items-center gap-1.5 mb-3">
+			{steps.length > 1 && triggers.length > 0 && (
+				<div className="flex flex-wrap gap-1.5 px-1">
 					<button
 						type="button"
 						onClick={() => setAgentFilter(null)}
-						className={pillClasses(agentFilter === null)}
+						className={chipClasses(agentFilter === null)}
 					>
 						All steps
-						<span className="text-[10.5px] text-border-strong">{triggers.length}</span>
+						<span className="opacity-55">{triggers.length}</span>
 					</button>
-					{distinctAgentIds.map((agentId) => {
-						const agent = actorsById.get(agentId)
-						const count = triggers.filter((t) => t.targetActorId === agentId).length
-						return (
-							<button
-								key={agentId}
-								type="button"
-								onClick={() => setAgentFilter(agentFilter === agentId ? null : agentId)}
-								className={pillClasses(agentFilter === agentId)}
-							>
-								{agent?.name ?? 'Unknown agent'}
-								<span className="text-[10.5px] text-border-strong">{count}</span>
-							</button>
-						)
-					})}
+					{steps.map((step) => (
+						<button
+							key={step.agentId}
+							type="button"
+							onClick={() => setAgentFilter(agentFilter === step.agentId ? null : step.agentId)}
+							className={chipClasses(agentFilter === step.agentId)}
+						>
+							<span className="min-w-0 truncate">{step.agent?.name ?? 'Unknown agent'}</span>
+							<span className="opacity-55">{step.triggers.length}</span>
+						</button>
+					))}
 				</div>
 			)}
 
-			<div className="border border-border rounded-xl bg-card p-3 flex flex-col gap-4 shadow-sm">
-				{shownComesIn.length > 0 && (
-					<div>
-						<div className="flex items-baseline gap-2 mb-2">
-							<span className="eyebrow">Comes in</span>
-							<span className="text-[10.5px] text-muted-foreground/70">
-								how work reaches the loop
-							</span>
-						</div>
-						<div className="flex flex-col gap-2.5">
-							{shownComesIn.map((t) => (
-								<StepRow
-									key={t.id}
-									workspaceId={workspaceId}
-									trigger={t}
-									agent={actorsById.get(t.targetActorId)}
-									asksYou={asksYou}
+			{shown.length > 0 && (
+				<div
+					data-testid="loop-pipeline"
+					className="flex overflow-x-auto rounded-2xl border border-border bg-background shadow-xs"
+				>
+					{shown.map((step, index) => (
+						<div
+							key={step.agentId}
+							className={cn(
+								'flex min-w-48 shrink-0 flex-1 flex-col gap-3.5 px-4 pb-4 pt-[18px]',
+								index > 0 && 'border-l border-border',
+							)}
+						>
+							<Link
+								to="/$workspaceId/agents/$agentId"
+								params={{ workspaceId, agentId: step.agentId }}
+								className="flex items-center gap-[9px] hover:underline"
+							>
+								<ActorAvatar
+									id={step.agentId}
+									name={step.agent?.name ?? 'Unknown agent'}
+									type={step.agent?.type ?? 'agent'}
+									size="md"
+									className="shrink-0"
 								/>
-							))}
-						</div>
-					</div>
-				)}
-
-				{columns.map((column) => {
-					const colors = getStatusColor(column.value)
-					const cardObjects = column.objects.filter((o) => companionsByPrimaryId.has(o.id))
-					const gapTriggers = (gapTriggersByStatus.get(column.value) ?? []).filter(matchesFilter)
-					return (
-						<div key={column.value}>
-							<div className="flex items-center gap-2">
-								<span
-									className={cn('h-2 w-2 rounded-full', column.total > 0 ? colors.bg : 'bg-muted')}
-								/>
-								<span className="eyebrow">{column.label.replace(/_/g, ' ')}</span>
-								<span
-									className={cn(
-										'inline-flex items-center rounded-full px-1.5 text-[10.5px] font-semibold',
-										colors.bg,
-										colors.text,
-									)}
-								>
-									{column.total}
+								<span className="min-w-0 break-words text-[13px] leading-[1.3] text-foreground">
+									{step.agent?.name ?? 'Unknown agent'}
 								</span>
+							</Link>
+							<div className="flex flex-col gap-2">
+								{step.triggers.length === 0 ? (
+									<span className="text-[12.5px] text-muted-foreground">No trigger</span>
+								) : (
+									step.triggers.map((t) => (
+										<TriggerCard key={t.id} workspaceId={workspaceId} trigger={t} />
+									))
+								)}
 							</div>
-							{cardObjects.length > 0 && (
-								<div className="flex flex-col gap-2 mt-2 ml-4">
-									{cardObjects.map((obj) => (
-										<CycleCard
-											key={obj.id}
-											workspaceId={workspaceId}
-											primary={obj}
-											companions={companionsByPrimaryId.get(obj.id) ?? []}
-										/>
-									))}
-								</div>
-							)}
-							{gapTriggers.length > 0 && (
-								<div className="flex flex-col gap-2.5 mt-2 ml-4">
-									{gapTriggers.map((t) => (
-										<StepRow
-											key={t.id}
-											workspaceId={workspaceId}
-											trigger={t}
-											agent={actorsById.get(t.targetActorId)}
-											asksYou={asksYou}
-										/>
-									))}
-								</div>
-							)}
 						</div>
-					)
-				})}
+					))}
+				</div>
+			)}
 
-				{flowEmpty && (
-					<p className="py-2 text-[12.5px] leading-relaxed text-muted-foreground">
-						No step matches that filter.
-					</p>
-				)}
-
-				{shownAlongside.length > 0 && (
-					<div>
-						<div className="flex items-baseline gap-2 mb-2">
-							<span className="eyebrow">Runs alongside</span>
-							<span className="text-[10.5px] text-muted-foreground/70">
-								schedules and safety nets
-							</span>
-						</div>
-						<div className="flex flex-col gap-2.5">
-							{shownAlongside.map((t) => (
-								<StepRow
-									key={t.id}
-									workspaceId={workspaceId}
-									trigger={t}
-									agent={actorsById.get(t.targetActorId)}
-									asksYou={asksYou}
-								/>
-							))}
-						</div>
-					</div>
-				)}
-			</div>
-		</div>
+			{triggers.length === 0 && (
+				<p className="px-1 text-sm text-muted-foreground">This flow runs when you ask.</p>
+			)}
+		</section>
 	)
 }

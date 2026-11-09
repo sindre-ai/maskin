@@ -16,9 +16,9 @@ const CHECK_VISIBLE_MS = 4000
 
 /**
  * Visual indicator for an in-flight or completed file upload. While uploading,
- * shows a thin progress bar driven by `progress`. On success the bar is replaced
- * by a green check that fades out after a few seconds; on failure by short red
- * error text.
+ * shows "Preparing…" until bytes move, then a progress bar with a percentage
+ * driven by `progress`. On success the bar is replaced by a green check that
+ * fades out after a few seconds; on failure by short red error text.
  */
 export function UploadProgress({ progress, status, error, className }: UploadProgressProps) {
 	const [checkVisible, setCheckVisible] = useState(true)
@@ -56,16 +56,34 @@ export function UploadProgress({ progress, status, error, className }: UploadPro
 		)
 	}
 
-	const pct = Math.max(0, Math.min(1, progress)) * 100
+	const fraction = Math.max(0, Math.min(1, progress))
+	const pct = Math.round(fraction * 100)
+	// Nothing has gone over the wire yet: the file is still being read or the upload
+	// is being set up. A bare empty bar looks like nothing is happening.
+	if (fraction === 0) {
+		return (
+			<span
+				aria-label="Preparing upload"
+				className={cn('text-xs text-muted-foreground', className)}
+			>
+				Preparing…
+			</span>
+		)
+	}
 	return (
 		<span
-			aria-label={`Uploading: ${Math.round(pct)}%`}
-			className={cn('block h-1 w-16 overflow-hidden rounded-full bg-muted', className)}
+			aria-label={`Uploading: ${pct}%`}
+			className={cn('inline-flex items-center gap-1.5', className)}
 		>
-			<span
-				className="block h-full bg-accent transition-[width] duration-200"
-				style={{ width: `${pct}%` }}
-			/>
+			<span className="block h-1.5 w-24 overflow-hidden rounded-full bg-muted">
+				<span
+					className="block h-full bg-primary transition-[width] duration-200"
+					style={{ width: `${pct}%` }}
+				/>
+			</span>
+			<span aria-hidden className="w-8 text-right text-xs tabular-nums text-muted-foreground">
+				{pct}%
+			</span>
 		</span>
 	)
 }

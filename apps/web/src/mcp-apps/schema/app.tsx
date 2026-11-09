@@ -121,7 +121,7 @@ function SchemaEditor({ schema }: { schema: WorkspaceSchema }) {
 	if (typeNames.length === 0) {
 		return (
 			<EmptyState
-				title="No object types"
+				title="No item types"
 				description="This workspace has no extensions or types yet"
 			/>
 		)

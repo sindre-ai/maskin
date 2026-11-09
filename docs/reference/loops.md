@@ -82,7 +82,8 @@ state (the event stores the old and new metadata), falling back to `updated_at` 
 
 The MCP server exposes loops as first-class tools (`packages/mcp`):
 
-- **`create_loop`** — one call creates the whole loop: the loop object, inline `steps` (each
+- **`create_loop`** — one call creates the whole loop: the loop object, its required `driver_id`
+  (the agent accountable for the loop, stored as the loop object's `driver`), inline `steps` (each
   becomes a trigger — `when: { cron }` or `when: { object_type, action, filter? }`), attached
   pre-existing `trigger_ids`, `in_loop` edges for `object_ids`, `closed_statuses`, `closed_when` and `targets`. A step and
   a trigger are the same thing; `steps` authors new ones inline, `trigger_ids` attaches existing
@@ -91,7 +92,12 @@ The MCP server exposes loops as first-class tools (`packages/mcp`):
   returns `steps` — each trigger with its resolved agent nested directly under it — rather than a
   flat trigger-id list plus a separate agent-id list. Creating (or updating) a loop with an
   effective status of `paused` starts its triggers disabled.
-- **`update_loop`** — rename/status/conditions, `add_steps`, `add_trigger_ids` /
+  The call fails, before anything is created, when `driver_id` is missing or is not an
+  unpaused agent in the workspace (a human or unknown actor is refused). Pick an agent whose job
+  covers the outcome, preferably the owner of the main target; the first target's `ownerActorId`
+  stays independent of the driver.
+- **`update_loop`** — rename/status/conditions, `driver_id` (change the driver, same checks; it
+  cannot be cleared, and loops that already have no driver are left alone), `add_steps`, `add_trigger_ids` /
   `remove_trigger_ids` (safe read-modify-write of `metadata.trigger_ids`), `add_object_ids` /
   `remove_object_ids` (membership edges), `closed_statuses`, `closed_when`, `targets` (a list of `{ label, source, actual, target }` rows; replaces the current list).
 - **`list_loops`** — wraps `GET /api/loops` with deep links to `/{workspace}/loops/{id}`.
@@ -99,7 +105,11 @@ The MCP server exposes loops as first-class tools (`packages/mcp`):
 Do not author loops through raw `create_objects` — the tools above wire the metadata and edges
 correctly. Marketplace loop *templates* are installed via `get_started` (see
 `apps/dev/src/routes/installed-loops.ts`); installing one provisions its items and creates the
-`type = 'loop'` object automatically.
+`type = 'loop'` object automatically. A locked install follows the catalog: the hourly version
+pusher brings it to the newest version, and `POST /api/installed-loops/{id}/update` ("update
+now") runs that same push for one install right away. Forked installs belong to the workspace and
+are refused (409). An update keeps the workspace's own `llm_config` keys, such as its `apiKey`;
+only `provider` and `model` come from the catalog snapshot.
 
 ## Event steps and dynamic types
 

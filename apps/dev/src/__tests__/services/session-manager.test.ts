@@ -59,6 +59,13 @@ vi.mock('../../lib/claude-oauth', async (importOriginal) => {
 	}
 })
 
+// Wraps the real resolver so every launch test keeps its behaviour; the
+// credential-resolution timeout test swaps in a promise that never settles.
+vi.mock('../../lib/llm-routing', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../lib/llm-routing')>()
+	return { ...actual, resolveLlmRoute: vi.fn(actual.resolveLlmRoute) }
+})
+
 vi.mock('../../lib/crypto', () => ({
 	decrypt: vi.fn().mockReturnValue('decrypted'),
 }))
@@ -119,6 +126,8 @@ const { mockClassifyCreditExhaustion } = vi.hoisted(() => ({
 
 vi.mock('../../lib/credit-classifier', () => ({
 	classifyCreditExhaustion: mockClassifyCreditExhaustion,
+	// Helper close-out only; covered in integration/helper-limit-retry.test.ts.
+	classifyClaudeAuthFailureText: () => null,
 	// Same call the real helper makes for an exit with no final result message,
 	// so the assertions below keep reading the tail + option the classifier got.
 	// The helper's own rule is covered in lib/credit-classifier.test.ts.
@@ -134,6 +143,11 @@ import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import type { StorageProvider } from '@maskin/storage'
 import { getProvider } from '../../lib/integrations/registry'
+import {
+	CREDENTIAL_RESOLUTION_TIMEOUT_MS,
+	CredentialResolutionTimeoutError,
+	resolveLlmRoute,
+} from '../../lib/llm-routing'
 import { logger } from '../../lib/logger'
 import { AgentStorageManager } from '../../services/agent-storage'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
@@ -1379,6 +1393,59 @@ describe('SessionManager', () => {
 			const spec = await launchWith(null)
 
 			expect(Object.keys(spec.env).filter((k) => k.startsWith('AGENT_SECRET_'))).toEqual([])
+		})
+	})
+
+	describe('buildLaunchSpec() — credential resolution timeout', () => {
+		afterEach(() => {
+			vi.useRealTimers()
+		})
+
+		it('rejects with the credential-resolution timeout when resolveLlmRoute never resolves, at the guard time', async () => {
+			vi.useFakeTimers()
+			const session = buildSession({ status: 'pending', interactive: false, config: {} })
+			mockResults.selectQueue = [
+				[
+					{
+						id: session.actorId,
+						type: 'agent',
+						systemPrompt: 'You are a helpful AI agent.',
+						llmProvider: null,
+						llmConfig: null,
+						apiKey: 'ank_test_agent_key',
+						tools: null,
+					},
+				], // buildLaunchSpec: agent lookup
+				[
+					{
+						id: session.workspaceId,
+						enterpriseGranted: false,
+						settings: LAUNCHABLE_WS_SETTINGS,
+					},
+				], // buildLaunchSpec: workspace lookup
+			]
+			vi.mocked(resolveLlmRoute).mockImplementationOnce(() => new Promise(() => {}))
+
+			const outcome = manager
+				.buildLaunchSpec(session as unknown as Parameters<typeof manager.buildLaunchSpec>[0])
+				.then(
+					() => null,
+					(err: unknown) => err,
+				)
+			let settled = false
+			void outcome.then(() => {
+				settled = true
+			})
+
+			await vi.advanceTimersByTimeAsync(CREDENTIAL_RESOLUTION_TIMEOUT_MS - 1)
+			expect(settled).toBe(false)
+			await vi.advanceTimersByTimeAsync(1)
+
+			const err = await outcome
+			expect(err).toBeInstanceOf(CredentialResolutionTimeoutError)
+			expect((err as CredentialResolutionTimeoutError).toFailureReason().human_message).toMatch(
+				/looking up the LLM credentials/i,
+			)
 		})
 	})
 
@@ -3271,7 +3338,7 @@ describe('SessionManager', () => {
 		// visible from app logs alone.
 		it('logs a warning with the dropped exit code and current session state when the session is already terminal', async () => {
 			const session = buildSession({ status: 'completed', result: { exit_code: 0 } })
-			mockResults.selectQueue = [[], [], [], [{ status: 'completed' }], [session]]
+			mockResults.selectQueue = [[], [], [], [], [{ status: 'completed' }], [session]]
 			const warnSpy = vi.spyOn(logger, 'warn')
 
 			await manager.markRemoteSessionComplete(session.id, 1)
@@ -3382,9 +3449,10 @@ describe('SessionManager', () => {
 		it('gives up and returns false when the fallback lookup after the retries also throws', async () => {
 			mockResults.selectQueue = [[]]
 			mockResults.selectErrorQueue = [
-				undefined,
-				undefined,
-				undefined,
+				undefined, // stdout chunks
+				undefined, // usage watermark
+				undefined, // resume marker
+				undefined, // result rows
 				new Error('connection reset'),
 				new Error('connection reset'),
 				new Error('connection reset'),
@@ -3600,6 +3668,24 @@ describe('SessionManager', () => {
 			expect(mockContainerManager.stop).not.toHaveBeenCalled()
 			expect(storageProvider.put).not.toHaveBeenCalled()
 			// Should resolve (not throw) so the auto-pause loop doesn't keep retrying
+		})
+
+		it('refuses to pause a session on an agent server and leaves it running', async () => {
+			const session = buildSession({
+				status: 'running',
+				containerId: 'remote-sandbox',
+				agentServerId: 'agent-server-1',
+			})
+			mockResults.select = [session]
+			// inspect default mock returns { running: false }: local Docker knows nothing of it
+
+			await expect(manager.pauseSession(session.id)).rejects.toThrow('runs on an agent server')
+
+			// Not marked failed, no snapshot work, no status write at all
+			expect(calls.updates).toEqual([])
+			expect(mockContainerManager.inspect).not.toHaveBeenCalled()
+			expect(mockContainerManager.copyFrom).not.toHaveBeenCalled()
+			expect(mockContainerManager.stop).not.toHaveBeenCalled()
 		})
 
 		it('marks session failed when container vanishes mid-pause', async () => {
@@ -4804,9 +4890,9 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // sumSegmentResultUsage: resume marker
-				[], // sumSegmentResultUsage: result rows
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 			]
@@ -4834,9 +4920,9 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // sumSegmentResultUsage: resume marker
-				[], // sumSegmentResultUsage: result rows
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 			]
@@ -4865,9 +4951,9 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // sumSegmentResultUsage: resume marker
-				[], // sumSegmentResultUsage: result rows
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 				[otherSession], // hasOtherActiveSessions: agent still has live work
@@ -4919,9 +5005,9 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // sumSegmentResultUsage: resume marker
-				[], // sumSegmentResultUsage: result rows
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 			]
@@ -5103,9 +5189,9 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // sumSegmentResultUsage: resume marker
-				[], // sumSegmentResultUsage: result rows
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 				[], // hasOtherActiveSessions
@@ -5219,9 +5305,9 @@ describe('SessionManager', () => {
 				const startSpy = vi.spyOn(manager, 'startSession').mockResolvedValue(undefined)
 				mockResults.selectQueue = [
 					[session], // handleCompletion: load session
-					[], // sumSegmentResultUsage: resume marker
-					[], // sumSegmentResultUsage: result rows
-					[], // extractSessionUsage fallback
+					[], // accumulateSessionUsage: usage watermark
+					[], // sumUncountedResultUsage: resume marker
+					[], // sumUncountedResultUsage: result rows
 					[], // sumAssistantUsage fallback
 					[session], // settleSession's own SELECT of the row
 					[], // hasOtherActiveSessions
@@ -5370,9 +5456,9 @@ describe('SessionManager', () => {
 			}
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // sumSegmentResultUsage: resume marker
-				[], // sumSegmentResultUsage: result rows
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 				[], // hasOtherActiveSessions
@@ -5464,9 +5550,9 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // sumSegmentResultUsage: resume marker
-				[], // sumSegmentResultUsage: result rows
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 				[], // hasOtherActiveSessions
@@ -5555,7 +5641,7 @@ describe('SessionManager', () => {
 				'usage exceeded the plan cap and no usage credits are available',
 			)
 
-			// Last entry: settleSession's own SELECT of the row; the CAS update then flips it.
+			// 3rd entry: settleSession's own SELECT of the row; the CAS update then flips it.
 			mockResults.selectQueue = [[session], [], [], [], [], [session]]
 			mockResults.updateQueue = [[{ id: session.id }]]
 
@@ -5615,7 +5701,7 @@ describe('SessionManager', () => {
 				}
 			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
 
-			// Last entry: settleSession's own SELECT of the row; the CAS update then flips it.
+			// 3rd entry: settleSession's own SELECT of the row; the CAS update then flips it.
 			mockResults.selectQueue = [[session], [], [], [], [], [session]]
 			mockResults.updateQueue = [[{ id: session.id }]]
 
@@ -5655,9 +5741,9 @@ describe('SessionManager', () => {
 			internals.activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // sumSegmentResultUsage: resume marker
-				[], // sumSegmentResultUsage: result rows
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 			]

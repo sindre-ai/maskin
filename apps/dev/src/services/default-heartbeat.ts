@@ -63,7 +63,7 @@ export async function addDefaultHeartbeat(
 			workspaceId,
 			name: HEARTBEAT_TRIGGER_NAME,
 			type: 'cron',
-			config: { expression: heartbeatCronExpression(actorId) },
+			config: { expression: heartbeatCronExpression(actorId), skip_when_idle: true },
 			actionPrompt: HEARTBEAT_PROMPT,
 			targetActorId: actorId,
 			enabled: true,

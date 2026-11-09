@@ -88,7 +88,10 @@ extension PushAppDelegate: UNUserNotificationCenterDelegate {
 		}
 		// `userInfo` isn't Sendable; carry only the one string across the actor hop.
 		let link = response.notification.request.content.userInfo["deep_link"] as? String
-		await MainActor.run { receiveTap(deepLink: link) }
+		await MainActor.run {
+			Analytics.shared.track("push_notification_opened")
+			receiveTap(deepLink: link)
+		}
 	}
 }
 
@@ -115,6 +118,20 @@ extension PushAppDelegate: UNUserNotificationCenterDelegate {
 			_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: any Error
 		) {
 			receive(registrationFailure: error)
+		}
+
+		/// A background push (`content-available`). Only the server's clear push is acted on: it
+		/// takes the handled notifications off the lock screen and Notification Center and fixes
+		/// the badge. Needs no runtime or network, so it works from a cold background wake.
+		func application(
+			_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any]
+		) async -> UIBackgroundFetchResult {
+			guard let clear = PushClearPayload(userInfo: userInfo) else { return .noData }
+			let center = SystemDeliveredNotificationCenter()
+			let ids = clear.identifiers(in: await center.delivered())
+			if !ids.isEmpty { await center.remove(identifiers: ids) }
+			if let badge = clear.badge { await center.setBadge(badge) }
+			return ids.isEmpty ? .noData : .newData
 		}
 	}
 #elseif os(macOS)

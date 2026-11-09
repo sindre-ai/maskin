@@ -13,11 +13,15 @@ FROM node:22-slim
 # ffmpeg (with ffprobe) is for the Video Producer cut/subtitle/end-card
 # pipeline; it comes from the Debian repo, so the version follows the
 # node:22-slim base image.
+# python3 (stdlib only, no pip) runs repo scripts that sessions cannot install
+# for themselves, for example the SEO Builder markdown generator in
+# vaerksted-ai/maskin.io (scripts_gen_md.py). Same Debian-repo versioning.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git curl jq ca-certificates openssh-client gettext-base ffmpeg \
+    git curl jq ca-certificates openssh-client gettext-base ffmpeg python3 \
     fontconfig fonts-dejavu-core fonts-liberation \
     && rm -rf /var/lib/apt/lists/* \
-    && ffmpeg -version | head -1 && ffprobe -version | head -1
+    && ffmpeg -version | head -1 && ffprobe -version | head -1 \
+    && python3 --version
 
 # Shared libraries headless Chromium needs to start. Sessions run as a
 # non-root user and cannot apt-get, so a Chromium that a session downloads

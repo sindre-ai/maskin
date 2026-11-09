@@ -1,3 +1,4 @@
+import { outsideChatLinkedCards } from '@/components/chat/linked-object-preview'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import type { ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -34,30 +35,39 @@ export function ObjectDetailBody({
 		// measure (1105–1122); sections below it sit on the same column.
 		<div className="mt-4 flex flex-col gap-3.5">
 			{/* Editable when the host wires a commit handler — an empty body still
-			    renders the editor so a new object can be written into, which a
+			    renders the editor so a new item can be written into, which a
 			    truthy-content guard alone would make impossible. */}
 			{object.content || onContentChange ? (
 				<MarkdownContent
 					content={object.content ?? ''}
 					size="doc"
-					className="max-w-[75ch]"
+					// Trailing ! so the cap beats the editor prose class, which sets max-w-none.
+					className="max-w-[75ch]!"
 					editable={Boolean(onContentChange)}
 					onChange={onContentChange}
 					editorLabel="Description"
 					preserveSource
 					surface="description"
 					objectId={object.id}
+					// Links draw as chips here too; in the live editor the one the cursor touches stays plain text.
+					linkedCards={outsideChatLinkedCards(workspaceId, 'chips')}
 				/>
 			) : null}
 
-			{fold && <DocumentFold fold={fold} />}
+			{fold && <DocumentFold fold={fold} workspaceId={workspaceId} />}
 
 			{evidence.length > 0 && <ObjectEvidenceBlock evidence={evidence} />}
 		</div>
 	)
 }
 
-function DocumentFold({ fold }: { fold: { title: string; markdown: string } }) {
+function DocumentFold({
+	fold,
+	workspaceId,
+}: {
+	fold: { title: string; markdown: string }
+	workspaceId: string
+}) {
 	const [open, setOpen] = useState(false)
 
 	return (
@@ -73,7 +83,10 @@ function DocumentFold({ fold }: { fold: { title: string; markdown: string } }) {
 			</CollapsibleTrigger>
 			<CollapsibleContent>
 				<div className="mt-3">
-					<MarkdownContent content={fold.markdown} />
+					<MarkdownContent
+						content={fold.markdown}
+						linkedCards={outsideChatLinkedCards(workspaceId, 'chips')}
+					/>
 				</div>
 			</CollapsibleContent>
 		</Collapsible>

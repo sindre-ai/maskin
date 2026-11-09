@@ -1,4 +1,8 @@
-import { MetadataFieldAdd } from '@/components/objects/metadata-field-add'
+import {
+	MetadataFieldAdd,
+	coerceValue,
+	parseOptions,
+} from '@/components/objects/metadata-field-add'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { buildObjectResponse } from '../../factories'
@@ -170,5 +174,74 @@ describe('MetadataFieldAdd', () => {
 			id: 'obj-1',
 			data: { metadata: { my_key: 'my_val' } },
 		})
+	})
+})
+
+describe('MetadataFieldAdd custom property', () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+	})
+
+	const obj = buildObjectResponse({ id: 'obj-1', type: 'bet', metadata: { owner: 'sam' } })
+
+	it('shows an error and blocks Add when the name already exists on the item', async () => {
+		const user = userEvent.setup()
+		render(<MetadataFieldAdd object={obj} workspaceId="ws-1" />, { wrapper: TestWrapper })
+		await user.click(screen.getByText('+ add field'))
+		await user.click(screen.getByText('Custom'))
+		await user.type(screen.getByPlaceholderText('key'), 'Owner')
+		expect(screen.getByRole('alert')).toHaveTextContent(/already exists/i)
+		expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled()
+	})
+
+	it('blocks a name already defined for the item type', async () => {
+		const user = userEvent.setup()
+		render(<MetadataFieldAdd object={obj} workspaceId="ws-1" />, { wrapper: TestWrapper })
+		await user.click(screen.getByText('+ add field'))
+		await user.click(screen.getByText('Custom'))
+		await user.type(screen.getByPlaceholderText('key'), 'priority')
+		expect(screen.getByRole('alert')).toBeInTheDocument()
+	})
+
+	it('saves a Number property as a number', async () => {
+		const user = userEvent.setup()
+		render(<MetadataFieldAdd object={obj} workspaceId="ws-1" />, { wrapper: TestWrapper })
+		await user.click(screen.getByText('+ add field'))
+		await user.click(screen.getByText('Custom'))
+		await user.type(screen.getByPlaceholderText('key'), 'score')
+		await user.click(screen.getByRole('radio', { name: 'Number' }))
+		await user.type(screen.getByRole('spinbutton'), '7')
+		await user.click(screen.getByRole('button', { name: 'Add' }))
+		expect(mockMutate).toHaveBeenCalledWith({
+			id: 'obj-1',
+			data: { metadata: { owner: 'sam', score: 7 } },
+		})
+	})
+
+	it('asks for options when the type is Select', async () => {
+		const user = userEvent.setup()
+		render(<MetadataFieldAdd object={obj} workspaceId="ws-1" />, { wrapper: TestWrapper })
+		await user.click(screen.getByText('+ add field'))
+		await user.click(screen.getByText('Custom'))
+		await user.click(screen.getByRole('radio', { name: 'Select' }))
+		expect(screen.getByPlaceholderText('Low, Medium, High')).toBeInTheDocument()
+	})
+})
+
+describe('parseOptions', () => {
+	it('trims, drops blanks and case-insensitive duplicates', () => {
+		expect(parseOptions(' Low, ,medium,Medium , High')).toEqual(['Low', 'medium', 'High'])
+	})
+})
+
+describe('coerceValue', () => {
+	it('rejects an empty or non-numeric number', () => {
+		expect(coerceValue({ name: 'n', type: 'number' }, '')).toBeNull()
+		expect(coerceValue({ name: 'n', type: 'number' }, 'abc')).toBeNull()
+		expect(coerceValue({ name: 'n', type: 'number' }, '3')).toBe(3)
+	})
+
+	it('rejects a select value outside the options', () => {
+		expect(coerceValue({ name: 's', type: 'enum', values: ['a'] }, 'b')).toBeNull()
 	})
 })

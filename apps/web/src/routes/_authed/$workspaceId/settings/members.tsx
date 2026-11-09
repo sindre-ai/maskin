@@ -1,10 +1,12 @@
 import { HumanDetailDialog } from '@/components/settings/human-detail-dialog'
 import { InviteMemberDialog } from '@/components/settings/invite-member-dialog'
 import { PendingInviteRow } from '@/components/settings/pending-invite-row'
+import { SettingsPageTitle } from '@/components/settings/settings-page-title'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import {
 	Dialog,
@@ -27,6 +29,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from '@/components/ui/select'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useResendInvite, useRevokeInvite, useWorkspaceInvites } from '@/hooks/use-invites'
 import {
 	useRemoveWorkspaceMember,
@@ -35,6 +38,7 @@ import {
 } from '@/hooks/use-workspaces'
 import type { MemberResponse, PendingInviteListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { PILL_BUTTON } from '@/lib/pill-button'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { Bot, Plus, Trash2, UserPlus } from 'lucide-react'
@@ -56,6 +60,7 @@ const ROLE_OPTIONS = ['admin', 'member'] as const
 
 function MembersPage() {
 	const { workspaceId, workspace } = useWorkspace()
+	const canWrite = useCanWrite()
 	const { member: memberFromSearch } = Route.useSearch()
 	const { data: allMembers, isLoading } = useWorkspaceMembers(workspaceId)
 	// Connected integrations hold a 'system' member row so they can act in the
@@ -129,34 +134,10 @@ function MembersPage() {
 		}
 	}
 
-	const count = members?.length ?? 0
-
 	return (
-		<div className="max-w-[580px]">
-			<div className="mb-3 flex items-center gap-2">
-				<h2 className="text-sm font-bold text-foreground">Members</h2>
-				<span className="text-xs text-muted-foreground">
-					{count} {count === 1 ? 'person or agent' : 'people & agents'}
-				</span>
-				<DropdownMenu>
-					<DropdownMenuTrigger asChild>
-						<Button variant="outline" size="sm" className="ml-auto">
-							<Plus size={14} className="mr-1" />
-							Add member
-						</Button>
-					</DropdownMenuTrigger>
-					<DropdownMenuContent align="end">
-						<DropdownMenuItem onClick={() => setShowInviteDialog(true)}>
-							<UserPlus size={14} className="mr-2" />
-							Invite member
-						</DropdownMenuItem>
-						<DropdownMenuItem onClick={handleCreateAgent}>
-							<Bot size={14} className="mr-2" />
-							Create agent
-						</DropdownMenuItem>
-					</DropdownMenuContent>
-				</DropdownMenu>
-			</div>
+		<div className="max-w-[760px]">
+			<SettingsPageTitle title="Members" />
+			<h2 className="px-2 pb-1.5 text-[15px] font-semibold text-foreground">People</h2>
 
 			{roleError && (
 				<p className="mb-3 text-sm text-error" role="alert">
@@ -172,13 +153,13 @@ function MembersPage() {
 					description="Invite a teammate or create an agent to get started."
 				/>
 			) : (
-				<div className="flex flex-col">
+				<div className="flex flex-col divide-y divide-border-subtle border-y border-border-subtle">
 					{members.map((member) => {
 						const isOwner = member.role === 'owner'
 						return (
 							<div
 								key={member.actorId}
-								className="flex items-center gap-3 rounded-lg border-b border-border px-2 py-2.5 transition-colors hover:bg-muted"
+								className="flex flex-wrap items-center gap-3 px-2 py-3 transition-colors hover:bg-secondary/60 sm:flex-nowrap"
 							>
 								<button
 									type="button"
@@ -196,8 +177,8 @@ function MembersPage() {
 								>
 									<ActorAvatar name={member.name} type={member.type} size="md" />
 									<span className="min-w-0 flex-1">
-										<span className="block truncate text-sm font-medium">{member.name}</span>
-										<span className="block truncate text-xs capitalize text-muted-foreground">
+										<span className="block truncate text-[15px] font-semibold">{member.name}</span>
+										<span className="block truncate text-[13px] capitalize text-muted-foreground">
 											{member.type}
 										</span>
 									</span>
@@ -209,52 +190,79 @@ function MembersPage() {
 									// (role change wants transfer-ownership; removal wants the billing
 									// owner moved first), so render the role and drop the remove control
 									// rather than offer two buttons that can only fail.
-									<span className="w-28 shrink-0 px-3 text-xs text-muted-foreground">
+									<span className="shrink-0 px-3 text-[13.5px] font-semibold capitalize text-muted-foreground">
 										{member.role}
 									</span>
 								) : (
-									<Select
-										value={member.role}
-										onValueChange={(value) => handleRoleChange(member, value)}
-										disabled={updateRole.isPending}
-									>
-										<SelectTrigger className="w-28 shrink-0" aria-label={`Role for ${member.name}`}>
-											<SelectValue />
-										</SelectTrigger>
-										<SelectContent>
-											{ROLE_OPTIONS.map((role) => (
-												<SelectItem key={role} value={role}>
-													{role}
-												</SelectItem>
-											))}
-										</SelectContent>
-									</Select>
+									<ViewerTooltip>
+										<Select
+											value={member.role}
+											onValueChange={(value) => handleRoleChange(member, value)}
+											disabled={updateRole.isPending || !canWrite}
+										>
+											<SelectTrigger size="pill" aria-label={`Role for ${member.name}`}>
+												<SelectValue />
+											</SelectTrigger>
+											<SelectContent>
+												{ROLE_OPTIONS.map((role) => (
+													<SelectItem key={role} value={role}>
+														{role}
+													</SelectItem>
+												))}
+											</SelectContent>
+										</Select>
+									</ViewerTooltip>
 								)}
-								<Button
-									variant="ghost"
-									size="icon"
-									className={cn('shrink-0', isOwner && 'invisible')}
-									aria-label={`Remove ${member.name}`}
-									disabled={isOwner}
-									onClick={() => {
-										setRemoveError(null)
-										setPendingRemoval(member)
-									}}
-								>
-									<Trash2 size={14} />
-								</Button>
+								<ViewerTooltip>
+									<Button
+										variant="ghost"
+										size="icon"
+										className={cn('shrink-0', isOwner && 'invisible')}
+										aria-label={`Remove ${member.name}`}
+										disabled={isOwner || !canWrite}
+										onClick={() => {
+											setRemoveError(null)
+											setPendingRemoval(member)
+										}}
+									>
+										<Trash2 size={14} />
+									</Button>
+								</ViewerTooltip>
 							</div>
 						)
 					})}
 				</div>
 			)}
 
+			<div className="mt-5 flex px-2">
+				<DropdownMenu>
+					<ViewerTooltip className="inline-flex">
+						<DropdownMenuTrigger asChild>
+							<Button className={PILL_BUTTON} disabled={!canWrite}>
+								<Plus size={14} className="mr-1" />
+								Add member
+							</Button>
+						</DropdownMenuTrigger>
+					</ViewerTooltip>
+					<DropdownMenuContent align="start">
+						<DropdownMenuItem onClick={() => setShowInviteDialog(true)}>
+							<UserPlus size={14} className="mr-2" />
+							Invite member
+						</DropdownMenuItem>
+						<DropdownMenuItem onClick={handleCreateAgent}>
+							<Bot size={14} className="mr-2" />
+							Create agent
+						</DropdownMenuItem>
+					</DropdownMenuContent>
+				</DropdownMenu>
+			</div>
+
 			{!!pendingInvites?.length && (
 				<section className="mt-6" aria-label="Pending invites">
-					<h3 className="mb-1 px-2 text-xs font-medium text-muted-foreground">
+					<h3 className="mb-1 px-2 text-[15px] font-semibold text-foreground">
 						Pending — {pendingInvites.length}
 					</h3>
-					<div className="flex flex-col">
+					<div className="flex flex-col divide-y divide-border-subtle border-y border-border-subtle">
 						{pendingInvites.map((invite) => (
 							<PendingInviteRow
 								key={invite.id}

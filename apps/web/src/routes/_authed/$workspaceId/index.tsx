@@ -1,19 +1,33 @@
 import { BriefingRow } from '@/components/foryou/briefing-row'
 import type { DraftAction } from '@/components/foryou/draft-stack'
 import { type DecidedOption, FeedCard } from '@/components/foryou/feed-card'
+import { ForYouDisplay, ForYouLive } from '@/components/foryou/foryou-display'
 import {
 	type FeedMode,
 	type ForYouBulkAction,
+	ForYouBulkMenu,
 	ForYouHeader,
 } from '@/components/foryou/foryou-header'
 import { OnboardingPromptCard } from '@/components/foryou/onboarding-prompt-card'
+import { TakeSuggestedDialog } from '@/components/foryou/take-suggested-dialog'
 import { PageHeader } from '@/components/layout/page-header'
+import { EmptyState } from '@/components/shared/empty-state'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
+import { Button } from '@/components/ui/button'
+import {
+	ResponsiveDialog,
+	ResponsiveDialogContent,
+	ResponsiveDialogDescription,
+	ResponsiveDialogFooter,
+	ResponsiveDialogHeader,
+	ResponsiveDialogTitle,
+} from '@/components/ui/responsive-dialog'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import { useForYou } from '@/hooks/use-for-you'
-import { useMarkRead, useMarkUnread } from '@/hooks/use-subscriptions'
+import { dismissBodyFor, useDismissForYou, useForYou } from '@/hooks/use-for-you'
+import { useMediaQuery } from '@/hooks/use-media-query'
+import { useMarkRead } from '@/hooks/use-subscriptions'
 import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
@@ -21,19 +35,39 @@ import {
 import { trackForyouCardMarkedRead } from '@/lib/analytics'
 import {
 	type CreateCommentInput,
+	type CreateCommentResponse,
 	type DisplaySettingsBody,
 	type LatestMentionDecisionDraft,
 	type UnreadItem,
 	api,
 } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
-import { classifyCardKind, recommendedAction } from '@/lib/foryou-card-kind'
-import { type FeedBucket, bucketRank, feedItemKey, feedTailLabel } from '@/lib/foryou-feed'
+import { DraftChangedError, approveDraftText } from '@/lib/draft-edits'
+import {
+	cardHeadline,
+	classifyCardKind,
+	isInformational,
+	isSendingOption,
+	recommendedAction,
+} from '@/lib/foryou-card-kind'
+import {
+	FEED_KIND_LABEL,
+	type FeedBucket,
+	bucketRank,
+	dismissableItems,
+	feedItemKey,
+	feedKindFilter,
+	feedKindOf,
+	feedTailLabel,
+	isObjectlessCard,
+} from '@/lib/foryou-feed'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
+import { CheckCircle2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -73,9 +107,10 @@ function ForYouFeed() {
 	const { data, isLoading, isError, error, refetch } = useForYou(workspaceId)
 	const items = data?.items ?? []
 	const markRead = useMarkRead(workspaceId)
-	const markUnread = useMarkUnread(workspaceId)
+	const dismiss = useDismissForYou(workspaceId)
 
-	const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined)
+	const [filterValue, setTypeFilter] = useState<string | undefined>(undefined)
+	const typeFilter = feedKindFilter(filterValue)
 	const [filterPills, setFilterPills] = useState(false)
 	// Cards opened by hand in List view, threads answered in this sitting, and
 	// options taken in this sitting.
@@ -88,6 +123,19 @@ function ForYouFeed() {
 	const [decided, setDecided] = useState<Map<string, { item: UnreadItem; option: DecidedOption }>>(
 		() => new Map(),
 	)
+	// Taking an option is a real write, and the handlers can be reached twice
+	// before a render lands (the `···` menu fires onSelect twice for one click;
+	// a bulk list is read from the last render). These refs are read in the same
+	// tick, so a second call for the same thing is dropped instead of posting again.
+	// Decisions are keyed by card and the ask they answer, so a newer ask on the
+	// same thread can still be taken. Stack messages hold the call itself, so a
+	// repeat joins the one already sent — from the stack or from the card's own bar.
+	const decidingRef = useRef<Set<string>>(new Set())
+	const draftCallsRef = useRef<Map<string, Promise<unknown>>>(new Map())
+	const [bulkConfirm, setBulkConfirm] = useState<UnreadItem[] | null>(null)
+	// The `···` menu's "Dismiss all" asks first (prototype: "Dismiss everything in For you?");
+	// the Alt+U shortcut stays direct, and the Undo toast follows either way.
+	const [dismissAllConfirm, setDismissAllConfirm] = useState(false)
 	const [pendingKeys, setPendingKeys] = useState<Set<string>>(() => new Set())
 	// Cards hidden because the reader typed an answer, keyed to the
 	// `latest_event_id` they answered. Unlike `pendingKeys`, this hide ends on
@@ -171,16 +219,15 @@ function ForYouFeed() {
 	const typeCounts = useMemo(() => {
 		const counts = new Map<string, number>()
 		for (const item of unreadRegular) {
-			const type = item.object?.type
-			if (!type) continue
-			counts.set(type, (counts.get(type) ?? 0) + 1)
+			const kind = feedKindOf(item)
+			counts.set(kind, (counts.get(kind) ?? 0) + 1)
 		}
 		return counts
 	}, [unreadRegular])
 
 	const filteredRegular = useMemo(
 		() =>
-			typeFilter ? unreadRegular.filter((item) => item.object?.type === typeFilter) : unreadRegular,
+			typeFilter ? unreadRegular.filter((item) => feedKindOf(item) === typeFilter) : unreadRegular,
 		[unreadRegular, typeFilter],
 	)
 
@@ -189,14 +236,16 @@ function ForYouFeed() {
 			const key = feedItemKey(item)
 			if (decided.has(key)) return 'done'
 			if (repliedKeys.has(key)) return 'waiting'
-			return 'needs'
+			// A mention that may be a question stays under the decisions; only a card that
+			// asks nothing of the person is an update.
+			return isInformational(item) ? 'fyi' : 'needs'
 		},
 		[decided, repliedKeys],
 	)
 
 	// The feed is one flat column ordered by bucket — decisions first, then
-	// what is waiting on an agent, then FYIs, then what has been handled. The
-	// mockup renders those buckets without headings; the order is the grouping.
+	// what is waiting on an agent, then FYIs, then what has been handled. Each
+	// non-empty bucket gets a heading with its count (see `sections`).
 	// Cards decided in this sitting are folded back in, since the unread query
 	// has already dropped them.
 	const orderedCards = useMemo(() => {
@@ -205,7 +254,7 @@ function ForYouFeed() {
 		const handled = [...decided.values()]
 			.map((entry) => entry.item)
 			.filter((item) => !seen.has(feedItemKey(item)))
-			.filter((item) => !typeFilter || item.object?.type === typeFilter)
+			.filter((item) => !typeFilter || feedKindOf(item) === typeFilter)
 		return [...live, ...handled]
 			.map((item, index) => ({ item, index }))
 			.sort(
@@ -213,6 +262,25 @@ function ForYouFeed() {
 			)
 			.map((entry) => entry.item)
 	}, [filteredRegular, decided, typeFilter, bucketOf])
+
+	// The ordered column cut into its buckets, so each non-empty one can be headed.
+	const sections = useMemo(() => {
+		const out: Array<{ bucket: FeedBucket; items: UnreadItem[] }> = []
+		for (const item of orderedCards) {
+			const bucket = bucketOf(item)
+			const last = out[out.length - 1]
+			if (last && last.bucket === bucket) last.items.push(item)
+			else out.push({ bucket, items: [item] })
+		}
+		return out
+	}, [orderedCards, bucketOf])
+
+	const countOf = (bucket: FeedBucket) =>
+		sections.find((section) => section.bucket === bucket)?.items.length ?? 0
+	// Below 1024px the nav row is too short for the greeting beside Live, Display and New.
+	const isMobile = useMediaQuery('(max-width: 1023px)')
+	const greeting = greetingFor(getStoredActor()?.name, new Date())
+	const lead = leadLine(countOf('needs'), countOf('fyi'))
 
 	// Posting the reply a taken option stands for. It goes out the moment the
 	// option is taken — there is no delete-comment endpoint, so a deferred
@@ -259,7 +327,8 @@ function ForYouFeed() {
 	// neither `decided` nor the unread list and disappears for good.
 	const markItemRead = useCallback(
 		(item: UnreadItem, onFailed?: () => void) => {
-			const eventId = item.latest_event_id ?? 0
+			// A card with no object has no read position; dismissing resolves its notification.
+			const eventId = isObjectlessCard(item) ? 1 : (item.latest_event_id ?? 0)
 			if (eventId <= 0) return false
 			// `mutateAsync`, not `mutate` with an `onError` callback: these hooks
 			// hold ONE mutation observer for the whole feed, and every
@@ -284,15 +353,66 @@ function ForYouFeed() {
 		[markRead, restorePending],
 	)
 
-	// Same shared-observer hazard as `markItemRead` — Undo marks a whole batch
-	// unread in a loop, so per-call handling has to hang off the promise.
-	const markItemUnread = useCallback(
-		(item: UnreadItem) => {
-			markUnread
-				.mutateAsync({ entityType: item.entity_type, entityId: item.entity_id })
-				.catch(() => toast.error("Couldn't undo that — the thread stayed read."))
+	// Dismiss is its own record on the server, separate from the read position that opening
+	// a page moves. Returns whether a dismissal was dispatched; a card with nothing to name
+	// (no notification, no source comment) cannot be dismissed, so callers must not hide it.
+	// Same per-call `mutateAsync` as `markItemRead`, for the same shared-observer reason.
+	const dismissItem = useCallback(
+		(item: UnreadItem, onFailed?: () => void) => {
+			const body = dismissBodyFor(item)
+			if (!body) return false
+			dismiss.mutateAsync({ body }).catch(() => {
+				restorePending(feedItemKey(item))
+				onFailed?.()
+				toast.error("Couldn't dismiss that — it's back in your feed.")
+			})
+			return true
 		},
-		[markUnread],
+		[dismiss, restorePending],
+	)
+
+	// Undo of a dismissal. A batch loops over this, so per-call handling hangs off the promise.
+	const undismissItem = useCallback(
+		(item: UnreadItem) => {
+			const body = dismissBodyFor(item)
+			if (!body) return
+			dismiss
+				.mutateAsync({ body, undo: true })
+				.catch(() => toast.error("Couldn't undo that — the card stayed dismissed."))
+		},
+		[dismiss],
+	)
+
+	// One message of a stacked card. The reply names the message by the agent's own
+	// key, so the agent can tell which one was sent and which was skipped. It goes
+	// under the question like any other answer. Rejects when the reply fails, so the
+	// card keeps that message open instead of showing it as dealt with. A message
+	// already sent or skipped (or on its way) is not posted again: the repeat gets
+	// the first call back.
+	const handleDraftAction = useCallback(
+		(item: UnreadItem, draft: LatestMentionDecisionDraft, action: DraftAction) => {
+			const callKey = draftCallKey(item, draft)
+			const existing = draftCallsRef.current.get(callKey)
+			if (existing) return existing
+			const what = [draft.label ?? 'Message', draft.to ? `to ${draft.to}` : null]
+				.filter(Boolean)
+				.join(' ')
+			const approval = action === 'send' ? approveDraft(draft) : Promise.resolve()
+			const call = approval.then(() =>
+				postReply.mutateAsync({
+					entity_id: item.entity_id,
+					content: `${action === 'send' ? 'Send' : 'Skip'}: ${what}${draft.id ? ` (${draft.id})` : ''}`,
+					...(item.latest_mention ? { parent_event_id: item.latest_mention.event_id } : {}),
+				}),
+			)
+			draftCallsRef.current.set(callKey, call)
+			// A failed call must not block the retry.
+			call.catch(() => {
+				if (draftCallsRef.current.get(callKey) === call) draftCallsRef.current.delete(callKey)
+			})
+			return call
+		},
+		[postReply],
 	)
 
 	// Taking an option posts the reply and marks the thread read, which drops
@@ -301,29 +421,52 @@ function ForYouFeed() {
 	const handleDecide = useCallback(
 		(item: UnreadItem, option: DecidedOption) => {
 			const key = feedItemKey(item)
+			const decideKey = `${key}:${item.latest_mention?.event_id ?? item.latest_event_id ?? 0}`
+			if (decidingRef.current.has(decideKey)) return
+			decidingRef.current.add(decideKey)
 			setDecided((prev) => new Map(prev).set(key, { item, option }))
 			// Choosing the option that sends is the person's approval of the draft behind the
 			// card. It is recorded first, bound to the text they saw, so the agent's send
 			// tool can check it. A draft that changed since refuses here and the card reopens.
 			const decision = item.latest_mention?.decision
-			const sends = decision?.options.some((o) => o.label === option.label && o.destructive)
-			const approval = sends ? approveDraft(decision?.draft) : Promise.resolve()
+			const sends = isSendingOption(item, option.label)
+			// A stacked card may already have had messages sent or skipped one by one.
+			// The bar then settles the rest the same way, message by message, so one
+			// already sent is not told to send again.
+			const stacked = decision?.drafts ?? []
+			const settleByMessage =
+				sends && stacked.some((draft) => draftCallsRef.current.has(draftCallKey(item, draft)))
+			const approval: Promise<unknown> = sends ? approveDraft(decision?.draft) : Promise.resolve()
 			// `mutateAsync` for the same reason as `markItemRead`: "Take every
 			// suggested option" calls this in a loop over one shared observer,
 			// and with call-site callbacks every reply but the last would fail
 			// silently behind a green receipt claiming it was sent.
 			approval
-				.then(() =>
-					postReply.mutateAsync({
-						entity_id: item.entity_id,
-						content: option.label,
-						// The answer belongs under the question. Without this it lands as
-						// a loose comment on the object, and the agent that asked has to
-						// infer from timing which of its asks was just answered.
-						...(item.latest_mention ? { parent_event_id: item.latest_mention.event_id } : {}),
-					}),
+				.then<unknown>(() =>
+					settleByMessage
+						? Promise.all(stacked.map((draft) => handleDraftAction(item, draft, 'send')))
+						: postReply.mutateAsync({
+								entity_id: item.entity_id,
+								content: option.label,
+								// The answer belongs under the question. Without this it lands as
+								// a loose comment on the object, and the agent that asked has to
+								// infer from timing which of its asks was just answered.
+								...(item.latest_mention ? { parent_event_id: item.latest_mention.event_id } : {}),
+							}),
 				)
-				.then(() => {
+				.then((result) => {
+					// The tap was a status button and the status did not change: say so, or the
+					// card disappears and the person thinks it went through.
+					const statusAction = (
+						result as { status_action?: CreateCommentResponse['status_action'] }
+					)?.status_action
+					if (statusAction && !statusAction.applied) {
+						toast.warning(
+							statusAction.reason === 'moved_on'
+								? `Not changed: it is already ${statusAction.current_status ?? 'in another status'}.`
+								: "Couldn't change the status. Open the item to change it.",
+						)
+					}
 					// A thread with no high-water mark can't be marked read, so the
 					// reply would go out and the card would come back on the next
 					// refetch carrying the reader's own answer. Say so rather than
@@ -332,33 +475,17 @@ function ForYouFeed() {
 						toast.warning('Reply sent, but the thread stayed unread.')
 					}
 				})
-				.catch(() => {
+				.catch((error: unknown) => {
+					decidingRef.current.delete(decideKey)
 					undoDecision(key)
-					toast.error("Couldn't send your reply — try again.")
+					toast.error(
+						error instanceof DraftChangedError
+							? 'The draft changed while you were editing it. Nothing was sent; check the new text.'
+							: "Couldn't send your reply — try again.",
+					)
 				})
 		},
-		[markItemRead, postReply, undoDecision],
-	)
-
-	// One message of a stacked card. The reply names the message by the agent's own
-	// key, so the agent can tell which one was sent and which was skipped. It goes
-	// under the question like any other answer. Rejects when the reply fails, so the
-	// card keeps that message open instead of showing it as dealt with.
-	const handleDraftAction = useCallback(
-		(item: UnreadItem, draft: LatestMentionDecisionDraft, action: DraftAction) => {
-			const what = [draft.label ?? 'Message', draft.to ? `to ${draft.to}` : null]
-				.filter(Boolean)
-				.join(' ')
-			const approval = action === 'send' ? approveDraft(draft) : Promise.resolve()
-			return approval.then(() =>
-				postReply.mutateAsync({
-					entity_id: item.entity_id,
-					content: `${action === 'send' ? 'Send' : 'Skip'}: ${what}${draft.id ? ` (${draft.id})` : ''}`,
-					...(item.latest_mention ? { parent_event_id: item.latest_mention.event_id } : {}),
-				}),
-			)
-		},
-		[postReply],
+		[handleDraftAction, markItemRead, postReply, undoDecision],
 	)
 
 	// The last message has been dealt with: the card settles the way a taken option
@@ -420,34 +547,34 @@ function ForYouFeed() {
 		[markItemRead],
 	)
 
-	// Dismissing is marking read: the high-water mark moves and the card leaves
-	// the column. The mutation fires immediately — waiting for the Undo toast to
-	// close before mutating meant navigating away during that window silently
-	// dropped the mark-read — and Undo reverses it with a real mark-unread.
+	// Dismissing records a dismissal, not a read: the card leaves the column and stays gone,
+	// while opening its page leaves it standing. The mutation fires immediately — waiting
+	// for the Undo toast to close before mutating meant navigating away during that window
+	// silently dropped the dismissal — and Undo reverses it with a real undismiss.
 	// Cards already answered in this sitting go too, receipt and all, so
 	// "Dismiss all" always empties what the reader can see.
 	const dismissAll = useCallback(
 		(targets: UnreadItem[], label: string) => {
 			if (targets.length === 0) return
-			// Only cards whose mark-read actually went out may be hidden. A card
-			// that couldn't be marked stays in the column rather than vanishing
+			// Only cards whose dismissal actually went out may be hidden. A card
+			// that couldn't be dismissed stays in the column rather than vanishing
 			// and reappearing on the next refetch.
 			//
 			// A dismissed card that already carried a receipt is cleared out of
-			// `decided` below, and the server has already dropped it from unread
-			// — so if the mark-read then fails, nothing else would bring it back.
+			// `decided` below, and the server has already dropped it from the list
+			// — so if the dismissal then fails, nothing else would bring it back.
 			// Restore its receipt alongside the un-hide.
 			const decidedBefore = decided
 			const dismissed = targets.filter((item) => {
-				const marked = markItemRead(item, () => {
+				const marked = dismissItem(item, () => {
 					const key = feedItemKey(item)
 					const decision = decidedBefore.get(key)
 					if (!decision) return
 					setDecided((prev) => (prev.has(key) ? prev : new Map(prev).set(key, decision)))
 				})
-				// One `foryou_card_marked_read` per successfully-marked item —
+				// One `foryou_card_marked_read` per successfully-dismissed item —
 				// bulk dismiss is the reader saying "read" for every card that
-				// actually leaves the column. Skips items that couldn't be marked
+				// actually leaves the column. Skips items that couldn't be dismissed
 				// so the analytics volume matches what the reader actually cleared.
 				if (marked) {
 					trackForyouCardMarkedRead({
@@ -480,7 +607,7 @@ function ForYouFeed() {
 				action: {
 					label: 'Undo',
 					onClick: () => {
-						for (const item of dismissed) markItemUnread(item)
+						for (const item of dismissed) undismissItem(item)
 						setPendingKeys((prev) => {
 							const next = new Set(prev)
 							for (const key of keys) next.delete(key)
@@ -496,27 +623,16 @@ function ForYouFeed() {
 				},
 			})
 		},
-		[decided, repliedKeys, markItemRead, markItemUnread],
+		[decided, repliedKeys, dismissItem, undismissItem],
 	)
 
 	// "Take every suggested option" — the recommended answer on every card that
 	// still has one open, taken in one go through the same reverse window a
-	// single card gets.
-	const takeSuggested = useCallback(
-		(targets: UnreadItem[]) => {
-			for (const item of targets) {
-				// Only cards where the agent actually named a recommendation. A
-				// plain mention has nothing to take, and a decision without one
-				// cannot be posted (the API rejects it), so there is nothing to
-				// guess at here.
-				const option = recommendedAction(item)
-				if (!option) continue
-				handleDecide(item, { id: option.id, label: option.label })
-			}
-		},
-		[handleDecide],
-	)
-
+	// single card gets. Only cards where the agent actually named a
+	// recommendation: a plain mention has nothing to take, and a decision without
+	// one cannot be posted (the API rejects it). An option that sends a message is
+	// never part of the bulk path: it is approved on its own card, where the
+	// real recipient is visible.
 	const openCards = useMemo(
 		() =>
 			filteredRegular.filter(
@@ -524,18 +640,52 @@ function ForYouFeed() {
 			),
 		[filteredRegular, bucketOf],
 	)
+	const suggested = useMemo(() => {
+		const targets: Array<{
+			item: UnreadItem
+			option: NonNullable<ReturnType<typeof recommendedAction>>
+		}> = []
+		let leftOut = 0
+		for (const item of openCards) {
+			const option = recommendedAction(item)
+			if (!option) continue
+			if (isSendingOption(item, option.label)) leftOut += 1
+			else targets.push({ item, option })
+		}
+		return { targets, leftOut }
+	}, [openCards])
+
+	const takeSuggested = useCallback(() => {
+		const confirmed = bulkConfirm ?? []
+		setBulkConfirm(null)
+		for (const item of confirmed) {
+			const option = recommendedAction(item)
+			if (!option || isSendingOption(item, option.label) || bucketOf(item) !== 'needs') continue
+			handleDecide(item, { id: option.id, label: option.label })
+		}
+	}, [bulkConfirm, bucketOf, handleDecide])
+
+	// A bulk dismiss never takes a card that is waiting on the person.
+	const dismissable = useMemo(
+		() => dismissableItems(orderedCards, bucketOf),
+		[orderedCards, bucketOf],
+	)
+
 	const bulkActions: ForYouBulkAction[] = [
 		{
 			id: 'suggested',
 			label: 'Take every suggested option',
-			count: openCards.length,
-			onSelect: () => takeSuggested(openCards),
+			count: suggested.targets.length,
+			onSelect: () => {
+				if (suggested.targets.length > 0) setBulkConfirm(suggested.targets.map((t) => t.item))
+			},
 		},
 		{
 			id: 'all',
 			label: 'Dismiss all',
-			count: orderedCards.length,
-			onSelect: () => dismissAll(orderedCards, 'All caught up'),
+			count: dismissable.length,
+			destructive: true,
+			onSelect: () => setDismissAllConfirm(true),
 		},
 	]
 
@@ -545,15 +695,43 @@ function ForYouFeed() {
 		function onKeydown(event: KeyboardEvent) {
 			if (!isMarkAllReadShortcut(event)) return
 			event.preventDefault()
-			dismissAll(orderedCards, 'All caught up')
+			dismissAll(dismissable, 'All caught up')
 		}
 		window.addEventListener('keydown', onKeydown)
 		return () => window.removeEventListener('keydown', onKeydown)
-	}, [dismissAll, orderedCards])
+	}, [dismissAll, dismissable])
+
+	// One header for the loading skeleton and the loaded feed: the shell reads its gutter and
+	// actions from it, so a header that arrives late shifts the whole page sideways.
+	const pageHeader = (
+		<PageHeader
+			gutter="wide"
+			title={greeting}
+			// On a phone or tablet the Live and Display buttons take the nav row, so the greeting moves into the page.
+			hideTitle={isMobile}
+			scrollLocked
+			actions={
+				<>
+					<ForYouLive />
+					<ForYouDisplay
+						mode={mode}
+						onModeChange={handleModeChange}
+						typeFilter={typeFilter}
+						onTypeFilterChange={setTypeFilter}
+						unreadCount={unreadRegular.length}
+						typeCounts={typeCounts}
+						filterPills={filterPills}
+						onFilterPillsChange={setFilterPills}
+					/>
+				</>
+			}
+		/>
+	)
 
 	if (isLoading) {
 		return (
 			<div className="flex flex-1 min-w-0 flex-col space-y-4" data-testid="foryou-feed-root">
+				{pageHeader}
 				<CardSkeleton />
 				<CardSkeleton />
 				<CardSkeleton />
@@ -562,7 +740,7 @@ function ForYouFeed() {
 	}
 
 	// A failed unread fetch must never fall through to the empty-feed tail —
-	// "Feed cleared" would tell the reader nothing is waiting when the feed
+	// "You're caught up" would tell the reader nothing is waiting when the feed
 	// simply didn't load.
 	if (isError) {
 		return (
@@ -579,34 +757,77 @@ function ForYouFeed() {
 	// The tail rule closes an *empty* column — it says why there is nothing to
 	// read. With cards on the page it is noise, so it isn't drawn at all.
 	const feedIsEmpty = orderedCards.length === 0 && onboardingItems.length === 0
-	const tail = feedIsEmpty ? feedTailLabel({ filtered: Boolean(typeFilter) }) : null
+	const tail = feedIsEmpty
+		? feedTailLabel({
+				filtered: Boolean(typeFilter),
+				kindLabel: typeFilter ? FEED_KIND_LABEL[typeFilter] : undefined,
+			})
+		: null
 
 	return (
 		<div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2" data-testid="foryou-feed-root">
-			<PageHeader
-				title="For you"
-				subtitle={
-					unreadRegular.length === 0
-						? 'All caught up'
-						: `${unreadRegular.length} ${unreadRegular.length === 1 ? 'needs' : 'need'} you`
-				}
-				scrollLocked
-			/>
+			{pageHeader}
 
 			<ForYouHeader
 				unreadCount={unreadRegular.length}
 				typeFilter={typeFilter}
 				onTypeFilterChange={setTypeFilter}
 				typeCounts={typeCounts}
-				mode={mode}
-				onModeChange={handleModeChange}
 				filterPills={filterPills}
-				onFilterPillsChange={setFilterPills}
 				bulkActions={bulkActions}
+				hideMenu={sections.length > 0 || feedIsEmpty}
 			/>
 
+			{bulkConfirm && (
+				<TakeSuggestedDialog
+					targets={bulkConfirm.flatMap((item) => {
+						const option = recommendedAction(item)
+						return option
+							? [{ key: feedItemKey(item), title: cardHeadline(item), optionLabel: option.label }]
+							: []
+					})}
+					leftOut={suggested.leftOut}
+					onConfirm={takeSuggested}
+					onCancel={() => setBulkConfirm(null)}
+				/>
+			)}
+
+			{dismissAllConfirm && (
+				<ResponsiveDialog open onOpenChange={(open) => !open && setDismissAllConfirm(false)}>
+					<ResponsiveDialogContent>
+						<ResponsiveDialogHeader>
+							<ResponsiveDialogTitle>Dismiss everything in For you?</ResponsiveDialogTitle>
+							<ResponsiveDialogDescription>
+								Every open card leaves the feed. You can undo from the toast that follows.
+							</ResponsiveDialogDescription>
+						</ResponsiveDialogHeader>
+						<ResponsiveDialogFooter>
+							<Button variant="outline" onClick={() => setDismissAllConfirm(false)}>
+								Cancel
+							</Button>
+							<Button
+								onClick={() => {
+									setDismissAllConfirm(false)
+									dismissAll(dismissable, 'All caught up')
+								}}
+							>
+								Dismiss all
+							</Button>
+						</ResponsiveDialogFooter>
+					</ResponsiveDialogContent>
+				</ResponsiveDialog>
+			)}
+
 			<div className="-ml-1 min-h-0 w-[calc(100%+0.25rem)] flex-1 overflow-y-auto px-1 pb-14">
-				<div className="mx-auto flex w-full max-w-[700px] flex-col">
+				<div className="flex w-full max-w-280 flex-col">
+					{isMobile ? <h1 className="page-title pb-2">{greeting}</h1> : null}
+					<p
+						className="max-w-[520px] pb-6 text-[17px] leading-[1.5] text-muted-foreground"
+						data-testid="foryou-greeting"
+					>
+						{lead}
+					</p>
+
 					<BriefingRow workspaceId={workspaceId} />
 
 					{onboardingItems.length > 0 && (
@@ -621,45 +842,82 @@ function ForYouFeed() {
 						</div>
 					)}
 
-					<div className={cn('flex flex-col', mode === 'cards' ? 'gap-3' : 'gap-[7px]')}>
-						<div className="h-1.5" />
-						{orderedCards.map((item) => {
-							const key = feedItemKey(item)
-							return (
-								<FeedCard
-									key={key}
-									workspaceId={workspaceId}
-									item={item}
-									expanded={mode === 'cards' || openKeys.has(key)}
-									onToggleExpanded={
-										mode === 'cards'
-											? undefined
-											: () =>
-													setOpenKeys((prev) => {
-														const next = new Set(prev)
-														if (next.has(key)) next.delete(key)
-														else next.add(key)
-														return next
-													})
-									}
-									decided={decided.get(key)?.option ?? null}
-									onDecide={(option) => handleDecide(item, option)}
-									onDraftAction={(draft, action) => handleDraftAction(item, draft, action)}
-									onDraftsDone={() => handleDraftsDone(item)}
-									replied={repliedKeys.has(key)}
-									onReplied={() => handleReplied(item)}
-									onMarkRead={() => dismissAll([item], 'Marked as read')}
-								/>
-							)
-						})}
+					<div className="flex flex-col gap-8 pt-1.5">
+						{sections.map(({ bucket, items: sectionItems }, sectionIndex) => (
+							<section
+								key={bucket}
+								aria-labelledby={`foryou-section-${bucket}`}
+								data-testid={`foryou-section-${bucket}`}
+								className="flex flex-col gap-2"
+							>
+								<div className="flex items-center justify-between gap-2 pb-1.5">
+									<h2
+										id={`foryou-section-${bucket}`}
+										className="whitespace-nowrap text-[20px] font-bold tracking-[-0.03em] text-foreground"
+									>
+										{SECTION_LABEL[bucket]}
+									</h2>
+									{sectionIndex === 0 && <ForYouBulkMenu bulkActions={bulkActions} />}
+									{bucket === 'fyi' && (
+										<Button
+											variant="ghost"
+											size="sm"
+											onClick={() => dismissAll(sectionItems, 'Marked as read')}
+										>
+											Mark all read
+										</Button>
+									)}
+								</div>
+								<div className={cn('flex flex-col', mode === 'cards' ? 'gap-4' : 'gap-[7px]')}>
+									{sectionItems.map((item) => {
+										const key = feedItemKey(item)
+										return (
+											<FeedCard
+												key={key}
+												workspaceId={workspaceId}
+												item={item}
+												expanded={mode === 'cards' || openKeys.has(key)}
+												onToggleExpanded={
+													mode === 'cards'
+														? undefined
+														: () =>
+																setOpenKeys((prev) => {
+																	const next = new Set(prev)
+																	if (next.has(key)) next.delete(key)
+																	else next.add(key)
+																	return next
+																})
+												}
+												decided={decided.get(key)?.option ?? null}
+												onDecide={(option) => handleDecide(item, option)}
+												onDraftAction={(draft, action) => handleDraftAction(item, draft, action)}
+												onDraftsDone={() => handleDraftsDone(item)}
+												replied={repliedKeys.has(key)}
+												onReplied={() => handleReplied(item)}
+												onMarkRead={() => dismissAll([item], 'Marked as read')}
+											/>
+										)
+									})}
+								</div>
+							</section>
+						))}
 					</div>
 
 					{tail && (
-						<div className="flex items-center justify-center gap-2 pb-2.5 pt-[34px] text-[11.5px] text-muted-foreground">
-							<span className="h-px w-10 bg-border" />
-							{tail}
-							<span className="h-px w-10 bg-border" />
-						</div>
+						<EmptyState
+							icon={<CheckCircle2 size={24} aria-hidden="true" />}
+							title={tail}
+							description={
+								typeFilter ? 'Nothing matches this filter.' : 'Nothing needs you right now.'
+							}
+							action={
+								typeFilter ? (
+									<Button variant="outline" size="sm" onClick={() => setTypeFilter(undefined)}>
+										Show everything
+									</Button>
+								) : undefined
+							}
+						/>
 					)}
 				</div>
 			</div>
@@ -667,12 +925,48 @@ function ForYouFeed() {
 	)
 }
 
+const SECTION_LABEL: Record<FeedBucket, string> = {
+	needs: 'Decisions',
+	waiting: 'Waiting on an agent',
+	fyi: 'Updates for you',
+	done: 'Handled today',
+}
+
+export function greetingFor(name: string | undefined, now: Date): string {
+	const hour = now.getHours()
+	const part =
+		hour < 5
+			? 'Good night'
+			: hour < 12
+				? 'Good morning'
+				: hour < 18
+					? 'Good afternoon'
+					: 'Good evening'
+	const first = name?.trim().split(/\s+/)[0]
+	return first ? `${part}, ${first}` : part
+}
+
+export function leadLine(decisions: number, updates: number): string {
+	if (decisions === 1) return 'One decision is waiting on you'
+	if (decisions > 1) return `${decisions} decisions are waiting on you`
+	if (updates > 0)
+		return `Nothing to decide, ${updates} ${updates === 1 ? 'update' : 'updates'} for you`
+	return 'You are clear'
+}
+
+// One message of a stacked card, per ask: the key the stack and the card's own bar share.
+function draftCallKey(item: UnreadItem, draft: LatestMentionDecisionDraft): string {
+	const ask = item.latest_mention?.event_id ?? item.latest_event_id ?? 0
+	return `${feedItemKey(item)}:${ask}:${draft.id ?? draft.object_id ?? draft.label ?? draft.to ?? ''}`
+}
+
 // Records the person's approval of the object behind a draft, bound to the text the card
-// showed. A draft without a preview (plain text on the card) has nothing to approve and
-// resolves at once; the reply to the agent is what carries the decision for those.
-function approveDraft(draft: LatestMentionDecisionDraft | undefined): Promise<unknown> {
-	if (!draft?.preview || !draft.object_id) return Promise.resolve()
-	return api.objects.approve(draft.object_id, draft.preview.content_hash)
+// showed. A text the person edited on the card is saved first and approved by the hash of the
+// saved text, in the same step (the step the chat card takes too: see `approveDraftText`).
+// A draft without a preview (plain text on the card) has nothing to approve and resolves
+// once saved; the reply to the agent is what carries the decision for those.
+async function approveDraft(draft: LatestMentionDecisionDraft | undefined): Promise<void> {
+	if (draft) await approveDraftText(draft)
 }
 
 // Shared keydown guard for the `Alt+U` For You bulk-dismiss shortcut. Alt on

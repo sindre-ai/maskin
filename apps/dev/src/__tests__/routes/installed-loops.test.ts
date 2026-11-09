@@ -466,7 +466,32 @@ describe('POST /api/installed-loops', () => {
 		})
 	})
 
-	it('rejects a source value other than detail', async () => {
+	it('passes a public_site source through to the emit when the install starts from the public marketplace', async () => {
+		const { app, mockResults } = setup()
+		const workspaceId = randomUUID()
+		const loopId = randomUUID()
+		const install = installRow({ workspaceId, sourceLoopId: loopId })
+
+		mockResults.selectQueue = [
+			[buildWorkspaceMember({ workspaceId, actorId: ACTOR_ID })],
+			[loop({ id: loopId, slug: 'market-competitor-watch-loop', version: '1.0.0' })],
+			[],
+			[],
+		]
+		mockResults.insertQueue = [[install], [loopObjectRow()], [], [], []]
+
+		const res = await app.request(
+			jsonRequest('POST', '/api/installed-loops', { loopId, workspaceId, source: 'public_site' }),
+		)
+
+		expect(res.status).toBe(201)
+		await Promise.resolve()
+		expect(trackLoopInstalledMock).toHaveBeenCalledWith(
+			expect.objectContaining({ loopSlug: 'market-competitor-watch-loop', source: 'public_site' }),
+		)
+	})
+
+	it('rejects a source value that is not a known marketplace surface', async () => {
 		const { app } = setup()
 		const res = await app.request(
 			jsonRequest('POST', '/api/installed-loops', {

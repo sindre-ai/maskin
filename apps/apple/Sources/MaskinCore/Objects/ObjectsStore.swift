@@ -42,6 +42,9 @@ public final class ObjectsStore {
 	/// loaded; while it is on the list keeps paging until the starred ones surface.
 	public var starredOnly = false
 	public private(set) var searchText = ""
+	/// The chips under the tabs (Starred, New last 7 days, Working now). The API has no filter for
+	/// them, so they narrow the rows loaded so far. Not remembered across launches.
+	public var quickFilters: Set<ObjectsQuickFilter> = []
 	/// Kept for callers that only know about grouping; persisted through `display`.
 	public var grouping: ObjectsGrouping {
 		get { display.groupBy }
@@ -129,7 +132,7 @@ public final class ObjectsStore {
 	// MARK: Derived
 
 	/// The cached head is the newest-updated page; another server order must not be stored as it.
-	private var cachesHead: Bool { display.sort.serverField == "updatedAt" }
+	private var cachesHead: Bool { display.serverOrder == ServerOrder(field: "updatedAt", ascending: false) }
 
 	/// A saved view resolves to the scope it narrows to.
 	public var effectiveScope: ObjectsScope {
@@ -166,6 +169,7 @@ public final class ObjectsStore {
 		var visible = needsYouOnly && typeFilter == nil && effectiveScope == .needsYou ? known : objects
 		if starredOnly { visible = visible.filter(\.isStarred) }
 		if needsYouOnly { visible = visible.filter(needsYou) }
+		for filter in quickFilters { visible = visible.filter { filter.matches($0, now: Date()) } }
 		return visible
 	}
 
@@ -211,7 +215,8 @@ public final class ObjectsStore {
 
 	public var groups: [ObjectGroup] {
 		ObjectsGrouper.group(
-			visibleObjects, by: display.groupBy, schema: directory.schema, type: typeFilter, sort: display.sort)
+			visibleObjects, by: display.groupBy, schema: directory.schema, type: typeFilter, sort: display.sort,
+			reversed: display.isReversed)
 	}
 
 	/// Statuses offered by the status filter for the current type filter.
@@ -225,7 +230,8 @@ public final class ObjectsStore {
 		ObjectsQuery(
 			type: typeFilter, status: statusFilter,
 			search: searchText.trimmingCharacters(in: .whitespacesAndNewlines),
-			limit: Self.pageSize, offset: 0, sort: display.sort)
+			limit: Self.pageSize, offset: 0, sort: display.sort,
+			reversed: display.isReversed)
 	}
 
 	// MARK: Loading
@@ -262,6 +268,7 @@ public final class ObjectsStore {
 		typeFilter = nil
 		statusFilter = nil
 		starredOnly = false
+		quickFilters = []
 		searchText = ""
 		actionError = nil
 		hydratedFromCache = false
@@ -373,17 +380,48 @@ public final class ObjectsStore {
 
 	public func setSort(_ sort: ObjectsSort) async {
 		guard sort != display.sort else { return }
-		let reorders = sort.serverField != display.sort.serverField
+		let before = display.serverOrder
 		display.sort = sort
-		// A different server order (name) needs its own first page; the tiers are local.
-		if reorders { await fetchFirstPage(showSpinner: false) }
+		// A different server order (name, or the opposite direction) needs its own first page; the
+		// tiers are local.
+		if display.serverOrder != before { await fetchFirstPage(showSpinner: false) }
+	}
+
+	/// The Order chip. A different server direction needs its own first page.
+	public func setReversed(_ on: Bool) async {
+		guard on != display.reversed else { return }
+		let before = display.serverOrder
+		display.reversed = on
+		if display.serverOrder != before { await fetchFirstPage(showSpinner: false) }
 	}
 
 	public func setNeedsYouOnly(_ on: Bool) { display.needsYouOnly = on }
 
+	/// Whether Reset has anything to undo: a display choice off its default, or a status or type filter.
+	public var canResetDisplay: Bool { display.isCustomised || statusFilter != nil || typeFilter != nil }
+
+	/// Display's Reset: every display choice and the status and type filters back to their defaults.
+	/// Where the person is (favourites, a saved view) stays.
+	public func resetDisplay() async {
+		display.needsYouOnly = false
+		display.groupBy = .status
+		display.shown = Set(ObjectsProperty.allCases)
+		display.reversed = false
+		await setSort(.needsYou)
+		await setLayout(.list)
+		if statusFilter != nil { await setStatus(nil) }
+		if typeFilter != nil { await setScope(.all) }
+	}
+
 	public func toggleProperty(_ property: ObjectsProperty) { display.toggle(property) }
 
 	public func setGrouping(_ grouping: ObjectsGrouping) { display.groupBy = grouping }
+
+	public func setShowsTypeTabs(_ on: Bool) {
+		display.showsTypeTabs = on
+		// Without the tabs the scope has nothing to show it, so a scope-only filter folds back to All.
+		if !on, scope == .needsYou || scope == .favourites { Task { await setScope(.all) } }
+	}
 
 	public func toggleGroup(_ id: String) { display.toggleCollapsed(id) }
 
@@ -824,6 +862,7 @@ public final class ObjectsStore {
 				objects.insert(created, at: 0)
 			}
 			if !inventory.contains(where: { $0.id == created.id }) { inventory.insert(created, at: 0) }
+			Analytics.shared.objectCreated(id: created.id, type: created.type)
 			return created
 		} catch {
 			actionError = Self.message(error)
@@ -866,5 +905,31 @@ public final class ObjectsStore {
 
 	static func message(_ error: Error) -> String {
 		(error as? ObjectsError)?.message ?? error.localizedDescription
+	}
+}
+
+/// A chip under the Items tabs. Each is a plain test on a row, so it works on what is loaded.
+public enum ObjectsQuickFilter: String, CaseIterable, Identifiable, Sendable {
+	case starred, newThisWeek, working
+
+	public var id: String { rawValue }
+
+	public var label: String {
+		switch self {
+		case .starred: "Starred"
+		case .newThisWeek: "New last 7 days"
+		case .working: "Working now"
+		}
+	}
+
+	public var symbol: String? { self == .starred ? "star.fill" : nil }
+
+	public func matches(_ object: WorkObject, now: Date) -> Bool {
+		switch self {
+		case .starred: object.isStarred
+		case .newThisWeek:
+			object.createdAt.map { now.timeIntervalSince($0) <= 7 * 24 * 3600 && $0 <= now } ?? false
+		case .working: object.hasActiveSession
+		}
 	}
 }

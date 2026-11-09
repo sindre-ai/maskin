@@ -97,7 +97,8 @@ describe('createMcpServer', () => {
 		expect(registeredNames).toContain('list_objects')
 		expect(registeredNames).toContain('create_actor')
 		expect(registeredNames).toContain('create_session')
-		expect(registeredNames).not.toContain('run_agent')
+		// Restored as a listed, deprecated alias of create_session (see tool-aliases.ts).
+		expect(registeredNames).toContain('run_agent')
 		expect(registeredNames).toContain('create_trigger')
 	})
 
@@ -1419,7 +1420,7 @@ describe('tool handlers', () => {
 			expect(requests.filter((r) => r.url.includes('/members'))).toHaveLength(0)
 		})
 
-		it('still signs a human up without a key and adds them with the add-member call', async () => {
+		it('still signs a human up without a key and invites them instead of adding them by id', async () => {
 			const requests = recordRequests()
 
 			const handler = getHandler('create_actor')
@@ -1428,13 +1429,19 @@ describe('tool handlers', () => {
 				name: 'Pat',
 				email: 'pat@example.com',
 				workspace_id: 'ws-123',
-				role: 'admin',
+				role: 'member',
 			})
 
 			const create = requests.find((r) => r.url === 'http://localhost:3000/api/actors')
 			expect(create?.body).not.toHaveProperty('workspace_id')
-			const add = requests.find((r) => r.url.endsWith('/api/workspaces/ws-123/members'))
-			expect(add?.body).toEqual({ actor_id: 'actor-new', role: 'admin' })
+			expect(requests.filter((r) => r.url.includes('/members'))).toHaveLength(0)
+			const invite = requests.find((r) => r.url === 'http://localhost:3000/api/invites')
+			expect(invite?.method).toBe('POST')
+			expect(invite?.body).toEqual({
+				workspaceId: 'ws-123',
+				email: 'pat@example.com',
+				role: 'member',
+			})
 		})
 
 		it('splits the merged llm_config into llm_provider + llm_config on the POST body', async () => {
@@ -1810,6 +1817,151 @@ describe('tool handlers', () => {
 		})
 	})
 
+	describe('get_objects handler (wait_for_status)', () => {
+		// The status the object has at each poll of GET /api/objects/:id, in order; the last repeats.
+		const objectStatuses = (statuses: Array<string | 404>) => {
+			let polls = 0
+			return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.endsWith('/graph')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								object: {
+									id: 'bet-1',
+									type: 'bet',
+									title: 'Bet',
+									status: 'done',
+									workspaceId: 'ws',
+								},
+							}),
+					} as Response
+				}
+				if (urlStr.endsWith('/api/objects/bet-1')) {
+					const next = statuses[Math.min(polls++, statuses.length - 1)]
+					if (next === 404) {
+						return { ok: false, status: 404, text: () => Promise.resolve('Not found') } as Response
+					}
+					return {
+						ok: true,
+						json: () => Promise.resolve({ id: 'bet-1', status: next }),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+		}
+		const pollCount = (spy: { mock: { calls: unknown[][] } }) =>
+			spy.mock.calls.filter(([url]) => (url as string).endsWith('/api/objects/bet-1')).length
+
+		afterEach(() => vi.useRealTimers())
+
+		it('without wait_for_status: no polling and no wait block', async () => {
+			const spy = objectStatuses(['active'])
+			const result = (await getHandler('get_objects')({ ids: ['bet-1'] })) as {
+				content: Array<{ text: string }>
+				structuredContent: Record<string, unknown>
+			}
+			expect(pollCount(spy)).toBe(0)
+			expect(result.content).toHaveLength(1)
+			expect(result.structuredContent).not.toHaveProperty('wait')
+		})
+
+		it('returns settled once the object reaches a wanted status', async () => {
+			vi.useFakeTimers()
+			const spy = objectStatuses(['active', 'active', 'done'])
+			const promise = getHandler('get_objects')({
+				ids: ['bet-1'],
+				wait_for_status: ['done', 'cancelled'],
+			}) as Promise<{ content: Array<{ text: string }>; structuredContent: { wait: unknown } }>
+			await vi.advanceTimersByTimeAsync(10_000)
+			const result = await promise
+
+			expect(pollCount(spy)).toBe(3)
+			expect(result.structuredContent.wait).toEqual({ settled: true, waited_seconds: 10 })
+			expect(JSON.parse(result.content[1].text)).toEqual({ wait: result.structuredContent.wait })
+		})
+
+		it('checks once before sleeping, so an object already there returns at once', async () => {
+			const spy = objectStatuses(['done'])
+			const result = (await getHandler('get_objects')({
+				ids: ['bet-1'],
+				wait_for_status: ['done'],
+			})) as { structuredContent: { wait: { settled: boolean } } }
+			expect(pollCount(spy)).toBe(1)
+			expect(result.structuredContent.wait.settled).toBe(true)
+		})
+
+		it('stops with settled false and reason timeout when the status never comes', async () => {
+			vi.useFakeTimers()
+			objectStatuses(['active'])
+			const promise = getHandler('get_objects')({
+				ids: ['bet-1'],
+				wait_for_status: ['done'],
+				wait_timeout_seconds: 12,
+			}) as Promise<{ structuredContent: { wait: unknown } }>
+			await vi.advanceTimersByTimeAsync(20_000)
+			const result = await promise
+			expect(result.structuredContent.wait).toEqual({
+				settled: false,
+				waited_seconds: 12,
+				reason: 'timeout',
+			})
+		})
+
+		it('stops at once with reason not_found when the object does not exist', async () => {
+			const spy = objectStatuses([404])
+			const result = (await getHandler('get_objects')({
+				ids: ['bet-1'],
+				wait_for_status: ['done'],
+			})) as { structuredContent: { wait: { settled: boolean; reason?: string } } }
+			expect(pollCount(spy)).toBe(1)
+			expect(result.structuredContent.wait).toMatchObject({
+				settled: false,
+				reason: 'not_found',
+				missing_ids: ['bet-1'],
+			})
+		})
+
+		it('gives up with reason status_check_failed after repeated failed checks', async () => {
+			vi.useFakeTimers()
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				if ((url as string).endsWith('/api/objects/bet-1')) {
+					return { ok: false, status: 502, text: () => Promise.resolve('Bad gateway') } as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			vi.spyOn(console, 'error').mockImplementation(() => {})
+			const promise = getHandler('get_objects')({
+				ids: ['bet-1'],
+				wait_for_status: ['done'],
+			}) as Promise<{ structuredContent: { wait: { reason?: string } } }>
+			await vi.advanceTimersByTimeAsync(60_000)
+			const result = await promise
+			expect(result.structuredContent.wait.reason).toBe('status_check_failed')
+		})
+
+		it('stops at the deadline even when a status check never answers', async () => {
+			vi.useFakeTimers()
+			vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+				if ((url as string).endsWith('/api/objects/bet-1')) return new Promise<Response>(() => {})
+				return Promise.resolve({ ok: true, json: () => Promise.resolve([]) } as Response)
+			})
+			const promise = getHandler('get_objects')({
+				ids: ['bet-1'],
+				wait_for_status: ['done'],
+				wait_timeout_seconds: 8,
+			}) as Promise<{ structuredContent: { wait: unknown } }>
+			await vi.advanceTimersByTimeAsync(9_000)
+			const result = await promise
+			expect(result.structuredContent.wait).toEqual({
+				settled: false,
+				waited_seconds: 8,
+				reason: 'timeout',
+			})
+		})
+	})
+
 	describe('get_objects handler (partial failure)', () => {
 		it('returns a structured error for failed IDs without rejecting', async () => {
 			vi.spyOn(globalThis, 'fetch')
@@ -1928,7 +2080,7 @@ describe('tool handlers', () => {
 									id: 'loop-1',
 									workspaceId: 'ws-default-123',
 									type: 'loop',
-									driver: null,
+									driver: 'agent-1',
 									activeSessionId: null,
 								},
 							],
@@ -1941,6 +2093,7 @@ describe('tool handlers', () => {
 				const handler = getHandler('create_loop')
 				const result = (await handler({
 					name: 'Lead qualification',
+					driver_id: 'agent-1',
 					content: 'Every lead gets an answer',
 					status: 'learning',
 					entry_condition: 'A lead is created',
@@ -2010,6 +2163,7 @@ describe('tool handlers', () => {
 					title: 'Lead qualification',
 					content: 'Every lead gets an answer',
 					status: 'learning',
+					driver: 'agent-1',
 				})
 				expect(graphBody.nodes[0].metadata.trigger_ids).toEqual(['trig-1', 'trig-2'])
 				expect(graphBody.nodes[0].metadata.entry_condition).toBe('A lead is created')
@@ -2020,7 +2174,7 @@ describe('tool handlers', () => {
 
 				const parsed = JSON.parse(result.content[0].text)
 				expect(parsed.loop.id).toBe('loop-1')
-				expect(parsed.loop.driver).toBeUndefined()
+				expect(parsed.loop.driver).toBe('agent-1')
 				expect(parsed.loop.activeSessionId).toBeUndefined()
 				expect(parsed.created_step_trigger_ids).toEqual(['trig-1', 'trig-2'])
 				expect(parsed.steps).toEqual([
@@ -2048,6 +2202,7 @@ describe('tool handlers', () => {
 			it('rejects unknown trigger ids before creating anything', async () => {
 				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 					const u = String(url)
+					if (u.includes('/api/actors?ids=')) return okJson([{ id: 'agent-1', type: 'agent' }])
 					if (u.endsWith('/api/triggers')) return okJson([{ id: 'trig-known' }])
 					throw new Error(`Unexpected fetch: ${u}`)
 				})
@@ -2056,6 +2211,7 @@ describe('tool handlers', () => {
 				await expect(
 					handler({
 						name: 'Broken loop',
+						driver_id: 'agent-1',
 						trigger_ids: ['trig-unknown'],
 						steps: [],
 						object_ids: [],
@@ -2073,6 +2229,7 @@ describe('tool handlers', () => {
 				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 					const u = String(url)
 					if (u.endsWith('/api/workspaces')) return okJson([workspaceRow])
+					if (u.includes('/api/actors?ids=')) return okJson([{ id: 'agent-1', type: 'agent' }])
 					throw new Error(`Unexpected fetch: ${u}`)
 				})
 
@@ -2080,6 +2237,7 @@ describe('tool handlers', () => {
 				await expect(
 					handler({
 						name: 'Bad statuses',
+						driver_id: 'agent-1',
 						closed_statuses: { lead: ['exploded'] },
 						steps: [],
 						trigger_ids: [],
@@ -2092,6 +2250,7 @@ describe('tool handlers', () => {
 				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 					const u = String(url)
 					if (u.endsWith('/api/workspaces')) return okJson([workspaceRow])
+					if (u.includes('/api/actors?ids=')) return okJson([{ id: 'agent-1', type: 'agent' }])
 					throw new Error(`Unexpected fetch: ${u}`)
 				})
 
@@ -2099,6 +2258,7 @@ describe('tool handlers', () => {
 				await expect(
 					handler({
 						name: 'Bad type',
+						driver_id: 'agent-1',
 						closed_when: { nonexistent: ['loop_stage=live'] },
 						steps: [],
 						trigger_ids: [],
@@ -2132,6 +2292,7 @@ describe('tool handlers', () => {
 				await expect(
 					handler({
 						name: 'Rollback loop',
+						driver_id: 'agent-1',
 						steps: [
 							{
 								name: 'Step',
@@ -2147,6 +2308,60 @@ describe('tool handlers', () => {
 
 				expect(deleted).toEqual(['trig-orphan'])
 			})
+
+			describe('driver_id', () => {
+				function mockActors(rows: Array<Record<string, unknown>>) {
+					vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+						const u = String(url)
+						const method = (init as RequestInit | undefined)?.method
+						if (u.endsWith('/api/workspaces')) return okJson([workspaceRow])
+						if (u.includes('/api/actors?ids=')) return okJson(rows)
+						throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
+					})
+				}
+
+				async function expectRejectedBeforeCreate(args: Record<string, unknown>, message: RegExp) {
+					await expect(
+						getHandler('create_loop')({
+							name: 'No driver',
+							steps: [],
+							trigger_ids: [],
+							object_ids: [],
+							...args,
+						}),
+					).rejects.toThrow(message)
+					const graphCalls = vi
+						.mocked(fetch)
+						.mock.calls.filter((c) => String(c[0]).endsWith('/api/graph'))
+					expect(graphCalls).toHaveLength(0)
+				}
+
+				it('fails with a readable error when driver_id is missing', async () => {
+					mockActors([])
+					await expectRejectedBeforeCreate(
+						{},
+						/driver_id is required.*list_actors.*Chief of Staff/s,
+					)
+				})
+
+				it('rejects a driver that is not in this workspace', async () => {
+					mockActors([])
+					await expectRejectedBeforeCreate(
+						{ driver_id: 'ghost' },
+						/not found or not a member of this workspace.*Chief of Staff/s,
+					)
+				})
+
+				it('rejects a human driver', async () => {
+					mockActors([{ id: 'human-1', type: 'human', agentState: 'idle' }])
+					await expectRejectedBeforeCreate({ driver_id: 'human-1' }, /it is a human, not an agent/)
+				})
+
+				it('rejects a paused agent', async () => {
+					mockActors([{ id: 'agent-1', type: 'agent', agentState: 'paused' }])
+					await expectRejectedBeforeCreate({ driver_id: 'agent-1' }, /that agent is paused/)
+				})
+			})
 		})
 
 		describe('update_loop', () => {
@@ -2160,6 +2375,68 @@ describe('tool handlers', () => {
 
 				const handler = getHandler('update_loop')
 				await expect(handler({ id: 'obj-7', name: 'New name' })).rejects.toThrow(/not 'loop'/)
+			})
+
+			it('changes the driver to a valid agent', async () => {
+				const patches: Array<Record<string, unknown>> = []
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+					const u = String(url)
+					const method = (init as RequestInit | undefined)?.method
+					if (u.includes('/api/actors?ids='))
+						return okJson([{ id: 'agent-2', type: 'agent', agentState: 'idle' }])
+					if (u.endsWith('/api/objects/loop-1') && method === 'GET')
+						return okJson({
+							id: 'loop-1',
+							type: 'loop',
+							workspaceId: 'ws-default-123',
+							driver: 'agent-1',
+							metadata: {},
+						})
+					if (u.endsWith('/api/objects/loop-1') && method === 'PATCH') {
+						const body = JSON.parse((init as RequestInit).body as string)
+						patches.push(body)
+						return okJson({
+							id: 'loop-1',
+							type: 'loop',
+							workspaceId: 'ws-default-123',
+							driver: body.driver,
+						})
+					}
+					throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
+				})
+
+				const result = (await getHandler('update_loop')({
+					id: 'loop-1',
+					driver_id: 'agent-2',
+				})) as { content: Array<{ text: string }> }
+
+				expect(patches).toEqual([{ driver: 'agent-2' }])
+				expect(JSON.parse(result.content[0].text).loop.driver).toBe('agent-2')
+			})
+
+			it('rejects a human driver and leaves the loop untouched', async () => {
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+					const u = String(url)
+					const method = (init as RequestInit | undefined)?.method
+					if (u.includes('/api/actors?ids='))
+						return okJson([{ id: 'human-1', type: 'human', agentState: 'idle' }])
+					if (u.endsWith('/api/objects/loop-1') && method === 'GET')
+						return okJson({
+							id: 'loop-1',
+							type: 'loop',
+							workspaceId: 'ws-default-123',
+							metadata: {},
+						})
+					throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
+				})
+
+				await expect(
+					getHandler('update_loop')({ id: 'loop-1', driver_id: 'human-1' }),
+				).rejects.toThrow(/it is a human, not an agent/)
+				const patches = vi
+					.mocked(fetch)
+					.mock.calls.filter((c) => (c[1] as RequestInit | undefined)?.method === 'PATCH')
+				expect(patches).toHaveLength(0)
 			})
 
 			it('sets metadata.tags, replacing the previous ones, and clears them with []', async () => {
@@ -2490,16 +2767,15 @@ describe('tool handlers', () => {
 			)
 		})
 
-		it('without wait: tells the caller what to quote when it says the work was handed over', async () => {
+		it('without wait: with no web app url the note still carries no session id', async () => {
 			mockFetchSuccess({ id: 'session-1', status: 'queued' })
 			const result = (await getHandler('create_session')({
 				actor_id: 'actor-1',
 				action_prompt: 'Fix bugs',
 			})) as { content: Array<{ text: string }> }
 			const parsed = JSON.parse(result.content[0].text)
-			expect(parsed.id).toBe('session-1')
-			expect(parsed.handoff).toContain('session session-1 is queued')
-			expect(parsed.handoff).toContain('quote this session id')
+			expect(parsed.handoff).toContain('is queued')
+			expect(parsed.handoff).not.toContain('session-1')
 		})
 
 		it('without wait: a failed start says nothing was handed over', async () => {
@@ -3220,7 +3496,7 @@ describe('tool handlers', () => {
 				expect(parsed.session_id).toBe('sess-w1')
 				expect(parsed.session.status).toBe('waiting_for_input')
 				expect(parsed.logs).toEqual([{ message: 'first line' }])
-				expect(parsed.message).toContain('sess-w1')
+				expect(parsed.message).not.toContain('sess-w1')
 				expect(parsed.message).toContain('not finished')
 				expect(parsed.message).toContain('get_session_logs')
 				// The session is not finished, so its result is registered to come back.
@@ -3282,7 +3558,7 @@ describe('tool handlers', () => {
 				const parsed = parseResult(await resultPromise)
 				expect(parsed.stopped_because).toBe('waiting_for_input')
 				expect(parsed.notify_on_complete).toBe('failed')
-				expect(parsed.message).toContain('sess-w3')
+				expect(parsed.message).not.toContain('sess-w3')
 				expect(parsed.message).not.toContain('Its result will come back')
 			})
 
@@ -4055,8 +4331,8 @@ describe('tool handlers', () => {
 
 				const call = vi.mocked(fetch).mock.calls[0]
 				const calledUrl = call[0] as string
-				expect(calledUrl).toContain('http://localhost:3000/api/workspaces/ws-default-123/skills?')
-				expect(calledUrl).toContain('snapshot_at=')
+				// No limit on the wire: the route returns every skill and the page is cut here.
+				expect(calledUrl).toBe('http://localhost:3000/api/workspaces/ws-default-123/skills')
 				expect(call[1]).toEqual(
 					expect.objectContaining({
 						method: 'GET',
@@ -4068,8 +4344,38 @@ describe('tool handlers', () => {
 				)
 
 				const parsed = JSON.parse(result.content[0].text)
-				expect(parsed).toHaveLength(1)
-				expect(parsed[0].name).toBe('bug-fix')
+				expect(parsed.skills).toHaveLength(1)
+				expect(parsed.skills[0].name).toBe('bug-fix')
+				expect(parsed.page).toEqual({ limit: 25, returned: 1, total: 1, has_more: false })
+			})
+
+			it('filters by q on the name or the description and counts only the matches', async () => {
+				mockFetchSuccess([
+					{
+						id: 's1',
+						name: 'bug-fix',
+						description: 'Fix a bug',
+						createdAt: '2026-01-01T00:00:00.000Z',
+					},
+					{
+						id: 's2',
+						name: 'release',
+						description: 'Cut a BUG-free release',
+						createdAt: '2026-01-02T00:00:00.000Z',
+					},
+					{
+						id: 's3',
+						name: 'voice',
+						description: 'Write copy',
+						createdAt: '2026-01-03T00:00:00.000Z',
+					},
+				])
+				const handler = getHandler('list_workspace_skills')
+				const result = (await handler({ q: 'BUG' })) as { content: Array<{ text: string }> }
+
+				const parsed = JSON.parse(result.content[0].text)
+				expect(parsed.skills.map((r: { id: string }) => r.id)).toEqual(['s2', 's1'])
+				expect(parsed.page).toEqual({ limit: 25, returned: 2, total: 2, has_more: false })
 			})
 
 			it('uses workspace_id from args over default', async () => {
@@ -4079,7 +4385,7 @@ describe('tool handlers', () => {
 
 				const call = vi.mocked(fetch).mock.calls[0]
 				const calledUrl = call[0] as string
-				expect(calledUrl).toContain('http://localhost:3000/api/workspaces/ws-custom/skills?')
+				expect(calledUrl).toBe('http://localhost:3000/api/workspaces/ws-custom/skills')
 				expect(call[1]).toEqual(
 					expect.objectContaining({
 						headers: expect.objectContaining({ 'X-Workspace-Id': 'ws-custom' }),
@@ -6251,6 +6557,114 @@ describe('tool handlers', () => {
 			expect(result.structuredContent.heroCard.totalCount).toBe(987)
 		})
 
+		it('list_triggers sends agent_id, status and q as API filters and keeps them on the next page', async () => {
+			const agentId = '11111111-1111-4111-8111-111111111111'
+			const calls: string[] = []
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				calls.push(urlStr)
+				if (urlStr.includes('/api/triggers')) {
+					return {
+						ok: true,
+						headers: new Headers({ 'X-Total-Count': '3' }),
+						json: () =>
+							Promise.resolve(
+								['t-1', 't-2'].map((id, i) => ({
+									id,
+									type: 'cron',
+									name: `PR merge sweep ${id}`,
+									enabled: true,
+									targetActorId: agentId,
+									createdAt: new Date(2026, 0, 1, 0, 0, 10 - i).toISOString(),
+								})),
+							),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('list_triggers')
+			const first = (await handler({
+				workspace_id: 'ws-1',
+				limit: 1,
+				agent_id: agentId,
+				status: 'disabled',
+				q: 'merge sweep',
+			})) as { structuredContent: { next_cursor?: string } }
+			const next = first.structuredContent.next_cursor
+			expect(next).toBeDefined()
+			await handler({
+				workspace_id: 'ws-1',
+				limit: 1,
+				cursor: next,
+				agent_id: agentId,
+				status: 'disabled',
+				q: 'merge sweep',
+			})
+			const triggerCalls = calls.filter((u) => u.includes('/api/triggers'))
+			expect(triggerCalls).toHaveLength(2)
+			for (const u of triggerCalls) {
+				const params = new URL(u, 'http://x').searchParams
+				expect(params.get('target_actor_id')).toBe(agentId)
+				expect(params.get('enabled')).toBe('false')
+				expect(params.get('q')).toBe('merge sweep')
+			}
+			expect(new URL(triggerCalls[1], 'http://x').searchParams.get('cursor_id')).toBe('t-1')
+		})
+
+		it('list_triggers sends no filter params when none are given', async () => {
+			const calls: string[] = []
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				calls.push(url as string)
+				return {
+					ok: true,
+					headers: new Headers({ 'X-Total-Count': '0' }),
+					json: () => Promise.resolve([]),
+				} as Response
+			})
+			await getHandler('list_triggers')({ workspace_id: 'ws-1' })
+			const params = new URL(calls.find((u) => u.includes('/api/triggers')) as string, 'http://x')
+				.searchParams
+			for (const key of ['target_actor_id', 'enabled', 'q']) expect(params.has(key)).toBe(false)
+		})
+
+		it('list_triggers compact leaves the action prompt out of the rows and the card', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				if ((url as string).includes('/api/triggers')) {
+					return {
+						ok: true,
+						headers: new Headers({ 'X-Total-Count': '2' }),
+						json: () =>
+							Promise.resolve(
+								['t-1', 't-2'].map((id) => ({
+									id,
+									type: 'cron',
+									name: `Trigger ${id}`,
+									enabled: true,
+									targetActorId: null,
+									actionPrompt: 'A very long prompt',
+								})),
+							),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('list_triggers')
+			type Result = {
+				content: Array<{ text: string }>
+				structuredContent: { heroCard: { objects: Array<Record<string, unknown>> } }
+			}
+			const full = (await handler({ workspace_id: 'ws-1' })) as Result
+			expect(full.content[0].text).toContain('A very long prompt')
+			expect(full.structuredContent.heroCard.objects[0].actionPrompt).toBe('A very long prompt')
+
+			const compact = (await handler({ workspace_id: 'ws-1', compact: true })) as Result
+			expect(compact.content[0].text).not.toContain('A very long prompt')
+			expect(compact.content[0].text).toContain('t-1')
+			for (const object of compact.structuredContent.heroCard.objects) {
+				expect(object).not.toHaveProperty('actionPrompt')
+			}
+		})
+
 		// Regression: same bug as `list_actors returns every row…` above. See
 		// that test for the fuller comment; both tools share the fix.
 		it('list_triggers returns every row when paged with limit > 25 (no silent 25-row clamp)', async () => {
@@ -6864,7 +7278,11 @@ describe('tool handlers', () => {
 							status: 'proposed',
 							content: bigDraft,
 						},
-			latest_mention: { content: `${'ask '.repeat(100)}`, decision: { draft: { body: bigDraft } } },
+			latest_mention: {
+				event_id: 100 + n,
+				content: `${'ask '.repeat(100)}`,
+				decision: { draft: { body: bigDraft } },
+			},
 		})
 
 		it('asks the For You route for that person and returns a slim card per item', async () => {
@@ -6886,6 +7304,7 @@ describe('tool handlers', () => {
 				source: 'curated',
 				headline: 'Card 1',
 				notification_id: 'n-1',
+				comment_id: 101,
 				object_id: 'obj-1',
 				title: 'Obj 1',
 				type: 'bet',
@@ -6941,6 +7360,33 @@ describe('tool handlers', () => {
 			expect(ranks).toEqual(Array.from({ length: 76 }, (_, i) => i + 1))
 		})
 
+		it('pages through 120 cards by following next_offset, no gaps or repeats', async () => {
+			const cards = Array.from({ length: 120 }, (_, i) => route(i + 1))
+			const ranks: number[] = []
+			const nextOffsets: Array<number | null> = []
+			let offset: number | null = 0
+			while (offset !== null) {
+				mockFetchSuccess({ items: cards })
+				const page: Page & { next_offset: number | null } = (await readPage({
+					limit: 50,
+					offset,
+				})) as Page & { next_offset: number | null }
+				ranks.push(...page.items.map((i) => i.rank))
+				nextOffsets.push(page.next_offset)
+				offset = page.next_offset
+			}
+
+			expect(ranks).toEqual(Array.from({ length: 120 }, (_, i) => i + 1))
+			expect(nextOffsets).toEqual([50, 100, null])
+		})
+
+		it('gives no next_offset when the page ends exactly at the end of the list', async () => {
+			mockFetchSuccess({ items: Array.from({ length: 50 }, (_, i) => route(i + 1)) })
+			const page = (await readPage({ limit: 50 })) as Page & { next_offset: number | null }
+			expect(page.items).toHaveLength(50)
+			expect(page.next_offset).toBeNull()
+		})
+
 		it('treats a missing offset as 0', async () => {
 			mockFetchSuccess({ items: [1, 2, 3].map(route) })
 			const page = await readPage({ limit: 2 })
@@ -6968,6 +7414,30 @@ describe('tool handlers', () => {
 				offset: 10,
 			})) as { content: Array<{ text: string }> }
 			expect(result.content[0].text.length).toBeLessThan(20_000)
+		})
+	})
+
+	describe('withdraw_decision_card handler', () => {
+		it('posts the comment id and reason to the withdrawals route and returns its answer', async () => {
+			mockFetchSuccess({ ok: true, comment_id: 4242, reason: 'Deadline passed' })
+
+			const result = (await getHandler('withdraw_decision_card')({
+				comment_id: 4242,
+				reason: 'Deadline passed',
+			})) as { content: Array<{ text: string }> }
+
+			expect(fetch).toHaveBeenCalledWith(
+				'http://localhost:3000/api/for-you/withdrawals',
+				expect.objectContaining({
+					method: 'POST',
+					body: JSON.stringify({ comment_id: 4242, reason: 'Deadline passed' }),
+				}),
+			)
+			expect(JSON.parse(result.content[0].text)).toEqual({
+				ok: true,
+				comment_id: 4242,
+				reason: 'Deadline passed',
+			})
 		})
 	})
 
@@ -7303,6 +7773,9 @@ describe('tool handlers', () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
 				const u = String(url)
 				const method = (init as RequestInit | undefined)?.method
+				if (u.includes('/api/actors?ids=')) {
+					return setupOkJson([{ id: 'agent-1', type: 'agent', agentState: 'idle' }])
+				}
 				if (u.endsWith('/api/graph')) {
 					return setupOkJson({
 						nodes: [{ $id: 'loop', id: 'loop-1', workspaceId: 'ws-default-123', type: 'loop' }],
@@ -7321,6 +7794,7 @@ describe('tool handlers', () => {
 			const handler = getHandler('create_loop')
 			const result = (await handler({
 				name: 'Test loop',
+				driver_id: 'agent-1',
 				steps: [],
 				trigger_ids: [],
 				object_ids: [],
@@ -7887,13 +8361,17 @@ describe('url field injection', () => {
 			const handler = getUrlHandler('list_triggers')
 			const result = (await handler({})) as { content: Array<{ text: string }> }
 
-			const parsed = JSON.parse(result.content[0].text) as Array<{ id: string; url: string }>
-			expect(parsed[0].url).toBe('https://maskin.example.com/ws-default-123/triggers/trig-2')
+			const parsed = JSON.parse(result.content[0].text) as {
+				triggers: Array<{ id: string; url: string }>
+			}
+			expect(parsed.triggers[0].url).toBe(
+				'https://maskin.example.com/ws-default-123/triggers/trig-2',
+			)
 		})
 	})
 
 	describe('session url', () => {
-		it('create_session — url links to actor page when actorId present', async () => {
+		it('create_session — url links to the chat route for the session', async () => {
 			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
 				ok: true,
 				headers: new Headers(),
@@ -7906,11 +8384,19 @@ describe('url field injection', () => {
 				action_prompt: 'Fix bugs',
 			})) as { content: Array<{ text: string }> }
 
-			const parsed = JSON.parse(result.content[0].text) as { id: string; url: string }
-			expect(parsed.url).toBe('https://maskin.example.com/ws-default-123/agents/actor-9')
+			const parsed = JSON.parse(result.content[0].text) as {
+				id: string
+				url: string
+				handoff: string
+			}
+			expect(parsed.url).toBe('https://maskin.example.com/ws-default-123/sessions/sess-1')
+			// The note gives the person the chat link and never the session id.
+			expect(parsed.handoff).toContain(parsed.url)
+			expect(parsed.handoff.replace(parsed.url, '')).not.toContain('sess-1')
+			expect(parsed.handoff).toContain('Never show the person a session id')
 		})
 
-		it('create_session — url falls back to agents list when actorId absent', async () => {
+		it('create_session — url does not need an actorId', async () => {
 			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
 				ok: true,
 				headers: new Headers(),
@@ -7924,7 +8410,7 @@ describe('url field injection', () => {
 			})) as { content: Array<{ text: string }> }
 
 			const parsed = JSON.parse(result.content[0].text) as { id: string; url: string }
-			expect(parsed.url).toBe('https://maskin.example.com/ws-default-123/agents')
+			expect(parsed.url).toBe('https://maskin.example.com/ws-default-123/sessions/sess-2')
 		})
 
 		it('list_sessions — url added to each session', async () => {
@@ -7944,7 +8430,7 @@ describe('url field injection', () => {
 			const result = (await handler({})) as { content: Array<{ text: string }> }
 
 			const parsed = JSON.parse(result.content[0].text) as Array<{ id: string; url: string }>
-			expect(parsed[0].url).toBe('https://maskin.example.com/ws-default-123/agents/actor-8')
+			expect(parsed[0].url).toBe('https://maskin.example.com/ws-default-123/sessions/sess-3')
 		})
 
 		it('create_session (wait: true) — url added to session in response', async () => {
@@ -7979,7 +8465,7 @@ describe('url field injection', () => {
 			const parsed = JSON.parse(result.content[0].text) as {
 				session: { id: string; url: string }
 			}
-			expect(parsed.session.url).toBe('https://maskin.example.com/ws-default-123/agents/actor-7')
+			expect(parsed.session.url).toBe('https://maskin.example.com/ws-default-123/sessions/sess-4')
 		})
 	})
 })
@@ -8069,6 +8555,88 @@ describe('X-Maskin-Session-Id source', () => {
 		expect((await postMessageBody()).session_id).toBe(hostSession)
 	})
 
+	// Threads: the handlers bypass the SDK's zod layer, so the schema assertion is
+	// what proves a real client's `thread_root_id` is not stripped before it gets here.
+	it('post_conversation_message accepts thread_root_id and also_in_channel in its schema', () => {
+		const parsed = tools.post_conversation_message.inputSchema.parse({
+			conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+			content: 'in the thread',
+			thread_root_id: 42,
+			also_in_channel: true,
+		})
+		expect(parsed.thread_root_id).toBe(42)
+		expect(parsed.also_in_channel).toBe(true)
+	})
+
+	it('post_conversation_message sends thread_root_id and also_in_channel to the API', async () => {
+		build({})
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			headers: new Headers(),
+			json: () => Promise.resolve({ id: 'msg-1' }),
+		} as Response)
+		const handler = handlers.get('post_conversation_message')
+		if (!handler) throw new Error('post_conversation_message handler not registered')
+		await handler({
+			conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+			content: 'in the thread',
+			thread_root_id: 42,
+			also_in_channel: true,
+		})
+		const call = vi.mocked(fetch).mock.calls.find((c) => String(c[0]).endsWith('/messages'))
+		const sent = JSON.parse((call?.[1] as RequestInit).body as string)
+		expect(sent.thread_root_id).toBe(42)
+		expect(sent.also_in_channel).toBe(true)
+	})
+
+	// The opt-out from the server-side thread default: the schema must keep it and the handler must send it.
+	it('post_conversation_message accepts top_level in its schema and sends it to the API', async () => {
+		const input = {
+			conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+			content: 'for the whole chat',
+			top_level: true,
+		}
+		expect(tools.post_conversation_message.inputSchema.parse(input).top_level).toBe(true)
+
+		build({})
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			headers: new Headers(),
+			json: () => Promise.resolve({ id: 'msg-1' }),
+		} as Response)
+		const handler = handlers.get('post_conversation_message')
+		if (!handler) throw new Error('post_conversation_message handler not registered')
+		await handler(input)
+		const call = vi.mocked(fetch).mock.calls.find((c) => String(c[0]).endsWith('/messages'))
+		const sent = JSON.parse((call?.[1] as RequestInit).body as string)
+		expect(sent.top_level).toBe(true)
+		expect(sent.thread_root_id).toBeUndefined()
+	})
+
+	it('list_conversation_messages passes thread_root_id as a query param', async () => {
+		build({})
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			headers: new Headers(),
+			json: () => Promise.resolve([]),
+		} as Response)
+		const handler = handlers.get('list_conversation_messages')
+		if (!handler) throw new Error('list_conversation_messages handler not registered')
+		await handler({
+			conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+			thread_root_id: 42,
+			limit: 50,
+		})
+		const url = new URL(String(vi.mocked(fetch).mock.calls[0]?.[0]))
+		expect(url.searchParams.get('thread_root_id')).toBe('42')
+		expect(
+			tools.list_conversation_messages.inputSchema.parse({
+				conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+				thread_root_id: 42,
+			}).thread_root_id,
+		).toBe(42)
+	})
+
 	// POST /api/actors reads this header to find the person behind the creating
 	// session, so the new agent can introduce itself to them.
 	async function createActorHeaders(): Promise<Record<string, string>> {
@@ -8079,7 +8647,12 @@ describe('X-Maskin-Session-Id source', () => {
 		} as Response)
 		const handler = handlers.get('create_actor')
 		if (!handler) throw new Error('create_actor handler not registered')
-		await handler({ type: 'agent', name: 'Bot', workspace_id: 'ws-123', description: 'Helper' })
+		await handler({
+			type: 'agent',
+			name: 'Bot',
+			workspace_id: 'ws-default-123',
+			description: 'Helper',
+		})
 		const call = vi
 			.mocked(fetch)
 			.mock.calls.find(

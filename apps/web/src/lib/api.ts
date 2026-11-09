@@ -4,13 +4,19 @@ import type {
 	ActorResponse,
 	AgentState,
 	CreateFileCommentInput,
+	DataQueryResult,
+	DataQuerySpec,
 	DisplaySettingsBody,
 	FileCommentDto,
+	FileProposalDto,
 	FileUploadSession,
 	FromSuggestedStep,
 	ListLoopsResponse,
 	LoopSummary,
 	NeededTool,
+	OauthAuthorizeParams,
+	OauthGrantRow,
+	OauthPreviewResponse,
 	ObjectFacetsResponse,
 	SafeMetadata,
 	SearchResponse,
@@ -30,8 +36,12 @@ export type {
 	CreateFileCommentInput,
 	DisplaySettingsBody,
 	FileCommentDto,
+	FileProposalDto,
 	ListLoopsResponse,
 	LoopSummary,
+	OauthAuthorizeParams,
+	OauthGrantRow,
+	OauthPreviewResponse,
 	SendRoundInput,
 	SendRoundResponse,
 	TriggerResponse,
@@ -42,7 +52,16 @@ import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 import { reportApiFailure } from './faro'
 
-import type { ObjectPreview, TeachRequest, TeachResponse } from '@maskin/shared'
+import type {
+	DailyBudget,
+	DailyBudgetResponse,
+	NotificationPreferencesResponse,
+	ObjectPreview,
+	SessionStatsRow,
+	TeachRequest,
+	TeachResponse,
+	UpdateNotificationPreferencesInput,
+} from '@maskin/shared'
 
 export interface DesktopConnectResponse {
 	ticket: string
@@ -70,6 +89,10 @@ export class ApiError extends Error {
 	retryAfterMs?: number
 	/** Seconds from the response's `Retry-After` header, when the server sent one (429s). */
 	retryAfter?: number
+	/** The verified return link on an OAuth authorize refusal, when the server sent one. Never built in the browser. */
+	redirectUrl?: string
+	/** On a 409 from accepting proposed changes: the changes that no longer match the file. */
+	staleChangeIds?: string[]
 
 	constructor(
 		public status: number,
@@ -100,10 +123,20 @@ type RequestOptions = {
 	credentials?: RequestCredentials
 	/** Lets the caller cancel the request (TanStack Query passes its abort signal here). */
 	signal?: AbortSignal
+	/** Keep the message of a structured 502/503/504 from our own API instead of the generic service text. */
+	keepServerErrorMessage?: boolean
 }
 
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-	const { method = 'GET', body, headers = {}, workspaceId, credentials, signal } = opts
+	const {
+		method = 'GET',
+		body,
+		headers = {},
+		workspaceId,
+		credentials,
+		signal,
+		keepServerErrorMessage,
+	} = opts
 	const apiKey = getApiKey()
 
 	const reqHeaders: Record<string, string> = {
@@ -155,6 +188,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		let code: string | undefined
 		let planCapContext: PlanCapContext | undefined
 		let retryAfterMs: number | undefined
+		let redirectUrl: string | undefined
 
 		if (typeof data.code === 'string' && typeof data.message === 'string') {
 			// Flat format used by the file-comments round route: { code, message, retryAfterMs? }
@@ -181,6 +215,11 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 					period_end: data.error.period_end ?? null,
 				}
 			}
+		} else if (typeof data.error === 'string' && typeof data.error_description === 'string') {
+			// OAuth authorize refusals: { error: <fixed code>, error_description, redirect_url? }
+			message = data.error_description
+			code = data.error
+			if (typeof data.redirect_url === 'string') redirectUrl = data.redirect_url
 		} else if (typeof data.error === 'string') {
 			// TODO: Remove legacy string format fallback once all API responses use structured errors
 			message = data.error
@@ -190,8 +229,10 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 
 		// A gateway answering for a down backend (502/503/504) usually carries an
 		// HTML or empty body and, over HTTP/2, no statusText — which surfaced as a
-		// blank toast. Those statuses always get the friendly message.
-		if (SERVICE_UNAVAILABLE_STATUSES.has(res.status) || !message?.trim()) {
+		// blank toast. Those statuses always get the friendly message, unless the
+		// caller asked to keep a message our own API wrote (it sends a code).
+		const ownMessage = keepServerErrorMessage && code !== undefined
+		if ((SERVICE_UNAVAILABLE_STATUSES.has(res.status) && !ownMessage) || !message?.trim()) {
 			message = SERVICE_UNAVAILABLE_MESSAGE
 		}
 
@@ -202,6 +243,8 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 			err.retryAfterSeconds = data.retry_after_seconds
 		}
 		err.retryAfterMs = retryAfterMs
+		err.redirectUrl = redirectUrl
+		if (Array.isArray(data.staleChangeIds)) err.staleChangeIds = data.staleChangeIds
 		const retryAfter = Number(res.headers.get('Retry-After'))
 		if (Number.isFinite(retryAfter) && retryAfter > 0) err.retryAfter = retryAfter
 		// This is the single chokepoint for every /api call the UI makes, so a
@@ -341,7 +384,7 @@ export interface ExtensionAttempted {
 	agents: { agentId: string; tools: string[]; lastAttemptedAt: string }[]
 }
 
-export type ExtensionSignatureScheme = 'hmac-sha256' | 'hmac-sha1' | 'timestamp'
+export type ExtensionSignatureScheme = 'hmac-sha256' | 'hmac-sha1' | 'timestamp' | 'ed25519'
 
 export type LiteralOrPath = { literal: string } | { path: string }
 
@@ -692,6 +735,19 @@ export const api = {
 			request<{ events: EventResponse[] }>(`/loops/${id}/activity`, { workspaceId }),
 	},
 
+	data: {
+		query: (workspaceId: string, spec: DataQuerySpec, opts?: { signal?: AbortSignal }) =>
+			request<DataQueryResult>(`/data/query?spec=${encodeURIComponent(JSON.stringify(spec))}`, {
+				workspaceId,
+				signal: opts?.signal,
+			}),
+		nextChange: (workspaceId: string, spec: DataQuerySpec) =>
+			request<{ in_ms: number | null }>(
+				`/data/next-change?spec=${encodeURIComponent(JSON.stringify(spec))}`,
+				{ workspaceId },
+			),
+	},
+
 	triggers: {
 		list: (workspaceId: string) => request<TriggerResponse[]>('/triggers', { workspaceId }),
 		get: (id: string, workspaceId: string) =>
@@ -748,7 +804,7 @@ export const api = {
 			}),
 		createByoLogin: (
 			workspaceId: string,
-			body: { displayName: string; username: string; password: string },
+			body: { displayName: string; username: string; password: string; email?: string },
 		) =>
 			request<{ integrationId: string }>('/integrations/byo-login', {
 				method: 'POST',
@@ -763,6 +819,7 @@ export const api = {
 				rawSecret?: string
 				username?: string
 				password?: string
+				email?: string
 			},
 		) =>
 			request<{ id: string; renamed: boolean; secretReplaced: boolean }>(
@@ -841,7 +898,12 @@ export const api = {
 		connect: (
 			workspaceId: string,
 			provider: string,
-			body?: { api_key?: string; receive_subdomain?: string; install_new_org?: boolean },
+			body?: {
+				api_key?: string
+				receive_subdomain?: string
+				install_new_org?: boolean
+				origin?: string
+			},
 		) =>
 			request<{
 				install_url?: string
@@ -891,6 +953,14 @@ export const api = {
 				method: 'DELETE',
 				workspaceId,
 			}),
+		disconnectGoogle: (
+			workspaceId: string,
+			body: { email: string; scope: 'drive' | 'drive-meet' | 'google' },
+		) =>
+			request<{ disconnected: { id: string; provider: string }[] }>(
+				'/integrations/google/disconnect',
+				{ method: 'POST', body, workspaceId },
+			),
 		githubLinkable: (workspaceId: string) =>
 			request<LinkableGithubInstallation[]>('/integrations/github/linkable', { workspaceId }),
 		githubLink: (workspaceId: string, installationId: string) =>
@@ -925,6 +995,13 @@ export const api = {
 			request<LinkedInIdentitySummary[]>('/integrations/linkedin-unipile/identities', {
 				workspaceId,
 			}),
+		driveWatches: (workspaceId: string) =>
+			request<DriveWatch[]>('/integrations/google-drive/watched-folders', { workspaceId }),
+		stopDriveWatch: (workspaceId: string, folderId: string) =>
+			request<{ ok: true; folderId: string }>(
+				`/integrations/google-drive/watched-folders/${encodeURIComponent(folderId)}`,
+				{ method: 'DELETE', workspaceId },
+			),
 	},
 
 	notifications: {
@@ -943,6 +1020,16 @@ export const api = {
 			}),
 		delete: (id: string) =>
 			request<{ deleted: boolean }>(`/notifications/${id}`, { method: 'DELETE' }),
+	},
+
+	/** The caller's own push preferences — per actor, not per workspace. */
+	notificationPreferences: {
+		get: () => request<NotificationPreferencesResponse>('/notification-preferences'),
+		update: (data: UpdateNotificationPreferencesInput) =>
+			request<NotificationPreferencesResponse>('/notification-preferences', {
+				method: 'PUT',
+				body: data,
+			}),
 	},
 
 	skills: {
@@ -1007,6 +1094,7 @@ export const api = {
 			const qs = new URLSearchParams(params).toString()
 			return request<SessionUsageResponse>(`/sessions/usage?${qs}`, { workspaceId })
 		},
+		stats: (workspaceId: string) => request<SessionStatsRow[]>('/sessions/stats', { workspaceId }),
 	},
 
 	events: {
@@ -1035,7 +1123,7 @@ export const api = {
 			return all
 		},
 		create: (workspaceId: string, data: CreateCommentInput, idempotencyKey?: string) =>
-			request<EventResponse>('/events', {
+			request<CreateCommentResponse>('/events', {
 				method: 'POST',
 				body: data,
 				workspaceId,
@@ -1080,6 +1168,22 @@ export const api = {
 			request<ImportResponse>(`/imports/${id}/confirm`, { method: 'POST', workspaceId }),
 	},
 
+	/** The Claude connector: the consent page's check, approve and deny, and the person's own connections. */
+	oauth: {
+		preview: (params: OauthAuthorizeParams) =>
+			request<OauthPreviewResponse>(
+				`/oauth/authorize/preview?${new URLSearchParams(
+					Object.entries(params).filter((entry): entry is [string, string] => !!entry[1]),
+				)}`,
+			),
+		approve: (body: OauthAuthorizeParams & { workspace_id: string }) =>
+			request<{ redirect_url: string }>('/oauth/authorize/approve', { method: 'POST', body }),
+		deny: (body: OauthAuthorizeParams & { workspace_id?: string }) =>
+			request<{ redirect_url: string }>('/oauth/authorize/deny', { method: 'POST', body }),
+		listGrants: () => request<OauthGrantRow[]>('/oauth/grants'),
+		revokeGrant: (id: string) =>
+			request<{ revoked: true }>(`/oauth/grants/${id}`, { method: 'DELETE' }),
+	},
 	claudeOauth: {
 		import: (workspaceId: string, tokens: ClaudeOAuthImportInput) =>
 			request<ClaudeOAuthExchangeResponse>('/claude-oauth/import', {
@@ -1130,6 +1234,14 @@ export const api = {
 			request<BillingUsageResponse>('/billing/usage', { workspaceId }),
 		cancel: (workspaceId: string) =>
 			request<{ ok: true }>('/billing/cancel', { method: 'POST', workspaceId }),
+		dailyBudget: (workspaceId: string) =>
+			request<DailyBudgetResponse>('/billing/daily-budget', { workspaceId }),
+		setDailyBudget: (workspaceId: string, daily_budget: DailyBudget | null) =>
+			request<DailyBudgetResponse>('/billing/daily-budget', {
+				method: 'PUT',
+				body: { daily_budget },
+				workspaceId,
+			}),
 	},
 
 	marketplaceLoops: {
@@ -1173,7 +1285,7 @@ export const api = {
 				`/installed-loops?workspaceId=${encodeURIComponent(workspaceId)}`,
 				{ workspaceId },
 			),
-		install: (workspaceId: string, loopId: string, source?: 'detail') =>
+		install: (workspaceId: string, loopId: string, source?: InstallSource) =>
 			request<InstalledLoopInstallResponse>('/installed-loops', {
 				method: 'POST',
 				body: { loopId, workspaceId, ...(source ? { source } : {}) },
@@ -1273,6 +1385,13 @@ export const api = {
 
 	forYou: {
 		list: (workspaceId: string) => request<ForYouResponse>('/for-you', { workspaceId }),
+		// Dismiss is its own record, separate from the read position: opening a page does not
+		// retire a card, this does. Curated cards go by notification id, decision cards by the
+		// comment that raised them.
+		dismiss: (workspaceId: string, body: ForYouDismissBody) =>
+			request<{ ok: true }>('/for-you/dismissals', { method: 'POST', body, workspaceId }),
+		undismiss: (workspaceId: string, body: ForYouDismissBody) =>
+			request<{ ok: true }>('/for-you/dismissals/undo', { method: 'POST', body, workspaceId }),
 	},
 
 	webPush: {
@@ -1298,14 +1417,20 @@ export const api = {
 		// Chat dictation: base64 WAV in, text out. Billed to the operator account,
 		// so the workspace header is required (a read-only viewer is refused).
 		create: (workspaceId: string, body: { audio: string; language?: string }) =>
-			request<{ text: string }>('/transcriptions', { method: 'POST', body, workspaceId }),
+			request<{ text: string }>('/transcriptions', {
+				method: 'POST',
+				body,
+				workspaceId,
+				// The route says which upstream failed (busy, account or key, timeout).
+				keepServerErrorMessage: true,
+			}),
 	},
 
 	voiceSessions: {
 		// Reserves the caller's live-call slot for the caller-agent pair. No vendor
 		// credential comes back: the connection to the vendor is made by the
 		// server when the offer below is posted.
-		create: (workspaceId: string, body: { agent_actor_id: string }) =>
+		create: (workspaceId: string, body: { agent_actor_id: string; conversation_id?: string }) =>
 			request<{ voice_session_id: string }>('/voice-sessions', {
 				method: 'POST',
 				body,
@@ -1314,10 +1439,19 @@ export const api = {
 		// Hands the browser's WebRTC offer to the server, which connects it to the
 		// vendor and attaches its own tool connection. tools_available is false when
 		// that attach failed; the call still runs, and the agent says tools are down.
-		offer: (workspaceId: string, voiceSessionId: string, sdp: string) =>
+		offer: (
+			workspaceId: string,
+			voiceSessionId: string,
+			sdp: string,
+			noiseReduction?: 'near_field' | 'far_field',
+		) =>
 			request<{ sdp: string; tools_available: boolean; persist_transcripts: boolean }>(
 				`/voice-sessions/${voiceSessionId}/offer`,
-				{ method: 'POST', body: { sdp }, workspaceId },
+				{
+					method: 'POST',
+					body: { sdp, ...(noiseReduction ? { noise_reduction: noiseReduction } : {}) },
+					workspaceId,
+				},
 			),
 		// Ends the call server-side: row status, ended_at, cost, voice_session_ended.
 		// Idempotent, so a double hangup (End button then dialog close) is harmless.
@@ -1568,6 +1702,20 @@ export const api = {
 				body: data,
 				workspaceId,
 			}),
+		// Threads the caller started or replied in, across their conversations.
+		replyThreads: (workspaceId: string, params?: { limit?: number }) => {
+			const qs = params?.limit ? `?limit=${params.limit}` : ''
+			return request<ReplyThreadListResponse>(`/conversations/threads${qs}`, { workspaceId })
+		},
+		markThreadRead: (id: string, workspaceId: string, rootId: number, lastReadMessageId: number) =>
+			request<{ last_read_message_id: number }>(
+				`/conversations/${id}/messages/${rootId}/thread/read`,
+				{
+					method: 'PUT',
+					body: { last_read_message_id: lastReadMessageId },
+					workspaceId,
+				},
+			),
 	},
 
 	files: {
@@ -1618,6 +1766,43 @@ export const api = {
 			request<FileDetail>(`/files/${id}`, { method: 'PATCH', body: data, workspaceId }),
 		delete: (workspaceId: string, id: string) =>
 			request<{ deleted: boolean }>(`/files/${id}`, { method: 'DELETE', workspaceId }),
+	},
+
+	fileProposals: {
+		listOpen: (workspaceId: string, fileId: string) =>
+			request<{ proposals: FileProposalDto[] }>(`/files/${fileId}/proposals?status=open`, {
+				workspaceId,
+			}),
+		accept: (
+			workspaceId: string,
+			fileId: string,
+			proposalId: string,
+			changeId: string,
+			appliedText?: string,
+		) =>
+			request<unknown>(`/files/${fileId}/proposals/${proposalId}/changes/${changeId}/accept`, {
+				method: 'POST',
+				body: appliedText === undefined ? {} : { applied_text: appliedText },
+				workspaceId,
+			}),
+		reject: (workspaceId: string, fileId: string, proposalId: string, changeId: string) =>
+			request<unknown>(`/files/${fileId}/proposals/${proposalId}/changes/${changeId}/reject`, {
+				method: 'POST',
+				workspaceId,
+			}),
+		// All or nothing on the server: a stale change refuses the whole accept with a 409.
+		acceptAll: (workspaceId: string, fileId: string, proposalId: string, changeIds: string[]) =>
+			request<unknown>(`/files/${fileId}/proposals/${proposalId}/changes/accept`, {
+				method: 'POST',
+				body: { change_ids: changeIds },
+				workspaceId,
+			}),
+		rejectAll: (workspaceId: string, fileId: string, proposalId: string, changeIds: string[]) =>
+			request<unknown>(`/files/${fileId}/proposals/${proposalId}/changes/reject`, {
+				method: 'POST',
+				body: { change_ids: changeIds },
+				workspaceId,
+			}),
 	},
 
 	fileComments: {
@@ -1835,7 +2020,9 @@ export interface UnreadItem {
 	latest_mention?: LatestMention
 	// Set for an item the Chief of Staff curated. Its headline and rationale are what the card
 	// shows when there is no source comment to lead with.
-	curated?: { headline: string; rationale: string | null }
+	// notification_id is what Dismiss names for it; absent for a decision card, which is dismissed
+	// by its comment instead.
+	curated?: { headline: string; rationale: string | null; notification_id?: string | null }
 }
 
 export interface LatestMentionDecisionOption {
@@ -1844,6 +2031,8 @@ export interface LatestMentionDecisionOption {
 	recommended?: boolean
 	/** The option that sends or otherwise reaches real people. */
 	destructive?: boolean
+	/** Tapping this option changes the status of an object (the one the card is on by default). */
+	set_status?: { status: string; object_id?: string }
 }
 
 /**
@@ -1907,6 +2096,11 @@ export interface ForYouItem {
 	session_id: string | null
 	object?: ObjectResponse
 	latest_mention?: LatestMention
+}
+
+export interface ForYouDismissBody {
+	notification_id?: string
+	source_comment_id?: number
 }
 
 export interface ForYouResponse {
@@ -2059,6 +2253,10 @@ export interface WorkspaceResponse {
 	id: string
 	name: string
 	settings: Record<string, unknown>
+	/** Whether a BYO key is stored. The keys themselves are never returned. */
+	llm_configured?: { anthropic: boolean; openai: boolean; custom_llm: boolean }
+	/** Last four characters of each stored key, for a workspace admin or owner only. */
+	llm_key_hints?: { anthropic: string | null; openai: string | null; custom_llm: string | null }
 	enterprise: boolean
 	// Single accountable human payer for this workspace's plan — read-only,
 	// server-set. See apps/dev/src/lib/workspace-capacity.ts.
@@ -2074,6 +2272,8 @@ export interface WorkspaceWithRole extends WorkspaceResponse {
 	memberCount: number
 	/** True for the workspace the caller chose as their default in Settings. */
 	isDefault: boolean
+	/** Whether the caller is on our own team. Only used to mark analytics events. */
+	isTeam: boolean
 }
 
 export interface UpdateWorkspaceInput {
@@ -2100,9 +2300,7 @@ export interface CreateInviteInput {
 	role: 'member' | 'viewer'
 }
 
-export type CreateInviteResponse =
-	| { status: 'linked'; member: { workspaceId: string; actorId: string; role: string } }
-	| { status: 'pending'; invite: InviteSummary }
+export type CreateInviteResponse = { status: 'pending'; invite: InviteSummary }
 
 export interface DeviceAuthPreview {
 	client: 'tvos'
@@ -2245,6 +2443,8 @@ export interface IntegrationResponse {
 	missingScopes?: string[]
 	/** True when `missingScopes` is non-empty — reconnecting re-consents and fixes it. */
 	needsReconnect?: boolean
+	/** Scopes the install's token response carried. Names only, never the token. */
+	grantedScopes?: string[]
 	/** Keychain: where the credential came from. Never the value. */
 	source?: string
 	/** Keychain: for source chat_capture, the session the key was pasted into. */
@@ -2326,6 +2526,21 @@ export interface ChatCaptureResponse {
 	undoUrl: string | null
 	/** stopped: the old session is gone, post the marker message to respawn it. failed: it may still be running. */
 	relaunch: 'stopped' | 'failed'
+}
+
+/** One watched Drive folder, as the Folder watches section lists it. Optional
+ *  fields are null when the watch has no stored value for them. */
+export interface DriveWatch {
+	folderId: string
+	name: string
+	path: string | null
+	addedAt: string | null
+	lastFiredAt: string | null
+	integrationId: string
+	/** Google account (email) of the Drive connection the watch lives on. */
+	account: string | null
+	/** Enabled triggers whose filter names this folder; empty when none do. */
+	triggers: Array<{ id: string; name: string }>
 }
 
 /** A GitHub App installation the current actor can bind to this workspace,
@@ -2568,6 +2783,8 @@ export interface ConversationListItemResponse {
 	snippet_actor_id: string | null
 	snippet_actor_name: string | null
 	participants: ConversationParticipantResponse[]
+	/** Agents with an open turn in this chat right now — a chat session stays running between turns. */
+	working_actor_ids: string[]
 }
 
 export interface ConversationListResponse {
@@ -2698,6 +2915,8 @@ export interface MessageKeychainRequest {
 	kind: 'api_key' | 'login'
 	suggested_name?: string
 	hint?: string
+	/** Agents the asker said will use it; ticked on the card even when not in the chat. */
+	target_agents?: Array<{ id: string; name: string }>
 }
 
 /** An agent's request to use an existing credential, surfaced into chat as an Allow card. */
@@ -2756,6 +2975,25 @@ export interface MessageIntegrationAccessRequest {
 	reason?: string
 }
 
+/** An agent asking the person to add a tool (MCP) server, surfaced as a card. Holds no secret. */
+export interface MessageMcpServerRequest {
+	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
+	name: string
+	hint?: string
+	type?: 'stdio' | 'http'
+	command?: string
+	args?: string[]
+	url?: string
+	/** Values the agent may know (not secret): a region, or a Keychain reference. */
+	env?: Record<string, string>
+	headers?: Record<string, string>
+	/** Names the person types the value for in the card. */
+	secret_env?: string[]
+	secret_headers?: string[]
+}
+
 /** An agent asking the person to act on its own computer (the card opens it). */
 export interface MessageComputerRequest {
 	session_id: string
@@ -2809,6 +3047,8 @@ export interface MessageMetadata {
 	keychain_access_request?: MessageKeychainAccessRequest
 	/** Backend-owned: an agent's request for access to a connected integration, rendered as a card. */
 	integration_access_request?: MessageIntegrationAccessRequest
+	/** Backend-owned: an agent's request to add a tool (MCP) server, rendered as a card. */
+	mcp_server_request?: MessageMcpServerRequest
 	computer_request?: MessageComputerRequest
 	/** Backend-owned: a helper's result handed to its sender; hidden from the chat. */
 	helper_return?: string
@@ -2844,6 +3084,39 @@ export interface MessageResponse {
 	 * and for callers that are not participants of the conversation.
 	 */
 	spawned_sessions?: SpawnedSession[]
+	/** The root this message replies under; null or absent on a top-level message. */
+	threadRootId?: number | null
+	/** A reply that was also sent to the main timeline. */
+	threadAlsoInChannel?: boolean
+	/** Reply summary on a top-level message that has replies; null when it has none. */
+	thread?: ReplyThreadSummary | null
+}
+
+export interface ReplyThreadParticipant {
+	actorId: string
+	actorName: string
+	actorType: string
+}
+
+export interface ReplyThreadSummary {
+	replyCount: number
+	lastReplyId: number
+	lastReplyAt: string | null
+	/** Replies by others newer than the caller's thread read cursor. */
+	unreadCount: number
+	participants: ReplyThreadParticipant[]
+}
+
+export interface ReplyThreadListItem {
+	conversationId: string
+	conversationTitle: string
+	root: MessageResponse
+	thread: ReplyThreadSummary
+	lastReply: MessageResponse | null
+}
+
+export interface ReplyThreadListResponse {
+	threads: ReplyThreadListItem[]
 }
 
 /**
@@ -2887,6 +3160,8 @@ export interface SessionStateChangedPayload {
 
 export interface EditMessageInput {
 	content: string
+	/** Tagged ids after the edit. Left out: the message keeps the ids it has. */
+	metadata?: { mentions: string[] }
 }
 
 export interface MessagesListResponse {
@@ -2899,6 +3174,8 @@ export interface MessagesListResponse {
 export interface CreateConversationInput {
 	title: string
 	participant_actor_ids: string[]
+	/** Open the pair's one direct message instead of a new topical chat. */
+	direct?: boolean
 	initial_message?: string
 	initial_message_metadata?: MessageMetadata
 }
@@ -2918,6 +3195,10 @@ export interface PostMessageInput {
 	content: string
 	metadata?: MessageMetadata
 	session_id?: string
+	/** Post as a reply under this top-level message. */
+	thread_root_id?: number
+	/** With thread_root_id: also show the reply in the main timeline. */
+	also_in_channel?: boolean
 }
 
 export interface SessionConfigInput {
@@ -2960,6 +3241,10 @@ export interface SessionResponse {
 	createdAt: string | null
 	updatedAt: string | null
 	currentActivity: string | null
+	/** The agent server the session runs on; null or absent for a session on the local host. Those on a server cannot be paused. */
+	agentServerId?: string | null
+	/** The thread (its root message id) a chat session answers in; null or absent for the main chat. */
+	threadRootId?: number | null
 	// Postgres `numeric` — serialized as a string; null until the session reports a cost.
 	totalCostUsd?: string | number | null
 }
@@ -3018,6 +3303,17 @@ export interface EventResponse {
 	createdAt: string | null
 	/** Pre-formatted human-readable sentence (populated by /api/objects/:id/graph; absent on other event endpoints). */
 	description?: string
+}
+
+/** `POST /events`: the comment, plus what happened when the reply was a tap on a status button. */
+export interface CreateCommentResponse extends EventResponse {
+	status_action?: {
+		applied: boolean
+		object_id: string
+		status?: string
+		reason?: 'moved_on' | 'not_found' | 'invalid_status'
+		current_status?: string | null
+	}
 }
 
 export interface CreateCommentInput {
@@ -3106,6 +3402,9 @@ export interface ImportMappingInput {
 	/** What happens to a row that matches an existing object. Absent means `skip`. */
 	onMatch?: 'skip' | 'update'
 }
+
+/** Which surface started an install; absent means the catalogue card. */
+export type InstallSource = 'detail' | 'public_site'
 
 export type MarketplaceItemType = 'actor' | 'trigger' | 'skill' | 'integration'
 

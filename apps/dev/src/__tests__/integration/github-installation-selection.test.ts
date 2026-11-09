@@ -34,7 +34,12 @@ function newInstallationId(): string {
 async function seedPendingSelection(
 	workspaceId: string,
 	actorId: string,
-	choices: Array<{ installationId: string; ownerLogin: string | null }>,
+	choices: Array<{
+		installationId: string
+		ownerLogin: string | null
+		ownerType?: 'organization' | 'personal' | null
+		ownerAvatarUrl?: string | null
+	}>,
 ) {
 	const [row] = await db
 		.insert(integrations)
@@ -140,6 +145,54 @@ describe('GitHub installation selection after user authorization', () => {
 		// The pending row existed only to carry the candidate list.
 		const [leftover] = await db.select().from(integrations).where(eq(integrations.id, pending.id))
 		expect(leftover).toBeUndefined()
+	})
+
+	it('saves the account type and avatar GitHub reported for the chosen installation', async () => {
+		const actorId = getTestActorId()
+		const workspaceId = (await insertWorkspace(db, actorId)).id
+		const chosen = newInstallationId()
+		const pending = await seedPendingSelection(workspaceId, actorId, [
+			{
+				installationId: chosen,
+				ownerLogin: 'sindre-ai',
+				ownerType: 'organization',
+				ownerAvatarUrl: 'https://avatars.githubusercontent.com/u/1',
+			},
+		])
+
+		const res = await buildApp().request(selectRequest(workspaceId, pending.id, chosen))
+		expect(res.status).toBe(200)
+
+		const [active] = await db
+			.select()
+			.from(integrations)
+			.where(and(eq(integrations.workspaceId, workspaceId), eq(integrations.externalId, chosen)))
+		expect(active?.config).toMatchObject({
+			owner_login: 'sindre-ai',
+			owner_type: 'organization',
+			owner_avatar_url: 'https://avatars.githubusercontent.com/u/1',
+		})
+	})
+
+	it('leaves account type and avatar unset when the parked choice predates them', async () => {
+		const actorId = getTestActorId()
+		const workspaceId = (await insertWorkspace(db, actorId)).id
+		const chosen = newInstallationId()
+		const pending = await seedPendingSelection(workspaceId, actorId, [
+			{ installationId: chosen, ownerLogin: 'sindre-ai' },
+		])
+
+		const res = await buildApp().request(selectRequest(workspaceId, pending.id, chosen))
+		expect(res.status).toBe(200)
+
+		const [active] = await db
+			.select()
+			.from(integrations)
+			.where(and(eq(integrations.workspaceId, workspaceId), eq(integrations.externalId, chosen)))
+		const config = active?.config as Record<string, unknown>
+		expect(config.owner_login).toBe('sindre-ai')
+		expect(config).not.toHaveProperty('owner_type')
+		expect(config).not.toHaveProperty('owner_avatar_url')
 	})
 
 	// The authorization boundary: the parked list is GitHub's own answer to

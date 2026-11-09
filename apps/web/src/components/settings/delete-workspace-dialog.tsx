@@ -12,6 +12,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Spinner } from '@/components/ui/spinner'
+import { useCanWrite } from '@/hooks/use-can-write'
 import {
 	removeDeletedWorkspaceQueries,
 	useDeleteWorkspace,
@@ -35,6 +36,7 @@ export function DeleteWorkspaceDialog({
 	onOpenChange: (open: boolean) => void
 }) {
 	const navigate = useNavigate()
+	const canWrite = useCanWrite()
 	const queryClient = useQueryClient()
 	const { data: workspaces } = useWorkspaces()
 	// Deleting the only workspace leaves the person with nothing to open, so we offer to delete the
@@ -73,10 +75,13 @@ export function DeleteWorkspaceDialog({
 
 	const handleDelete = (e?: React.FormEvent) => {
 		e?.preventDefault()
-		if (!canDelete || !nameMatches || deleteWorkspace.isPending) return
+		if (!canWrite || !canDelete || !nameMatches || deleteWorkspace.isPending) return
+		// The delete runs on in the background: hide the dialog now and report through a toast.
+		const toastId = `delete-workspace-${workspaceId}`
+		toast.loading(`Deleting ${workspaceName}...`, { id: toastId })
 		deleteWorkspace.mutate(confirmName, {
 			onSuccess: () => {
-				toast.success(`Deleted ${workspaceName}`)
+				toast.success(`Deleted ${workspaceName}`, { id: toastId })
 				if (isLastWorkspace) {
 					setStep('no-workspaces-left')
 					return
@@ -84,8 +89,14 @@ export function DeleteWorkspaceDialog({
 				// The index route lands on the last-opened remaining workspace.
 				navigate({ to: '/' })
 			},
+			onError: () => {
+				// Bring the dialog back so the error shows next to the confirm field.
+				toast.error(`${workspaceName} was not deleted`, { id: toastId })
+			},
 		})
 	}
+
+	const hidden = deleteWorkspace.isPending
 
 	if (accountOpen) {
 		return (
@@ -122,7 +133,7 @@ export function DeleteWorkspaceDialog({
 	}
 
 	return (
-		<Dialog open={open} onOpenChange={handleOpenChange}>
+		<Dialog open={open && !hidden} onOpenChange={handleOpenChange}>
 			<DialogContent>
 				<form onSubmit={handleDelete} className="contents">
 					<DialogHeader>
@@ -198,7 +209,7 @@ export function DeleteWorkspaceDialog({
 						<Button
 							type="submit"
 							variant="destructive"
-							disabled={!canDelete || !nameMatches || deleteWorkspace.isPending}
+							disabled={!canWrite || !canDelete || !nameMatches || deleteWorkspace.isPending}
 						>
 							{deleteWorkspace.isPending ? 'Deleting…' : 'Delete workspace'}
 						</Button>

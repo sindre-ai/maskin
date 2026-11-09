@@ -2,6 +2,11 @@ import type { Database } from '@maskin/db'
 import { sessions } from '@maskin/db/schema'
 import type { SessionResultFailureReason } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
+import {
+	API_KEY_CREDIT_MARK_WINDOW_MS,
+	checkApiKeyCreditMark,
+	clearStaleApiKeyCreditMark,
+} from './api-key-credit-mark'
 import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from './billing-defaults'
 import {
 	type SubscriptionProbe,
@@ -168,18 +173,19 @@ export const DEFAULT_TEXT_ONLY_MODEL_PATTERNS = ['deepseek']
  * may serve a funded request. Chosen on measured time to first token and tok/s:
  * most other hosts of the fallback model were 10-30s to first token at 5-25
  * tok/s. MASKIN_FALLBACK_PROVIDER_ONLY (comma separated) overrides it; empty or
- * "none" lifts the restriction. A model neither host serves fails with a 404
- * ("no endpoints found") instead of falling back to a slow host.
+ * "none" lifts the restriction. A model the host does not serve fails with a 404
+ * ("no endpoints found") instead of falling back to a slow host. GMICloud was
+ * dropped in November 2026: the OpenRouter account now enforces zero data
+ * retention and GMICloud is not on that list, so it always 404'd.
  */
-export const DEFAULT_ONLY_PROVIDERS = ['digitalocean', 'gmicloud']
+export const DEFAULT_ONLY_PROVIDERS = ['digitalocean']
 
 /**
  * A funded request that has produced no token after this long is cancelled and
- * retried once, then sent to the other allowed provider (two tries there). The
- * last try has no timeout, so a request that is slow everywhere is still served.
- * Measured first tokens on the allowed providers:
- * DigitalOcean 1-3s, GMICloud 3-4.5s (one 69s outlier in 20 large requests), so
- * 8s leaves headroom for both and still catches the stalls.
+ * retried once, then sent to the other allowed provider if there is more than one
+ * (two tries there). The last try has no timeout, so a request that is slow
+ * everywhere is still served. Measured first tokens on DigitalOcean: 1-3s, so
+ * 8s leaves headroom and still catches the stalls.
  */
 export const DEFAULT_TTFT_TIMEOUT_MS = 8000
 
@@ -275,6 +281,39 @@ export function ceilCents(cents: number): number {
 }
 
 /**
+ * The rows the plan usage total is built from: the workspace's maskin_plan
+ * sessions since `periodStartMs` (all-time when undefined). Shared by the
+ * total and by the per-model/agent/flow breakdown so the parts are cut from
+ * exactly the rows the total sums.
+ */
+export function planUsageConds(workspaceId: string, periodStartMs?: number) {
+	const conds = [
+		eq(sessions.workspaceId, workspaceId),
+		// Inlined as a literal rather than a bind parameter: sessions_ws_plan_usage_idx
+		// is a partial index on this exact predicate. A per-execution plan can match a
+		// bound value, but a generic (cached) plan can only prove a match against a
+		// literal. LLM_ROUTE_MASKIN_PLAN is a code constant, never user input.
+		sql`${sessions.config}->>'llm_route' = ${sql.raw(`'${LLM_ROUTE_MASKIN_PLAN}'`)}`,
+	]
+	if (periodStartMs !== undefined) {
+		conds.push(gte(sessions.createdAt, new Date(periodStartMs)))
+	}
+	return and(...conds)
+}
+
+/** One session's cost in (fractional) USD cents: its reported cost, else the token-rate estimate. */
+export function sessionUsageCents(row: {
+	totalCostUsd: string | null
+	inputTokens: number | null
+	outputTokens: number | null
+}): number {
+	const reportedUsd = row.totalCostUsd !== null ? Number(row.totalCostUsd) : Number.NaN
+	if (Number.isFinite(reportedUsd) && reportedUsd > 0) return reportedUsd * 100
+	const tokens = (row.inputTokens ?? 0) + (row.outputTokens ?? 0)
+	return tokens / LEGACY_TOKENS_PER_USD_CENT
+}
+
+/**
  * Sums actual dollar cost (in USD cents, rounded up) across the workspace's
  * maskin_plan sessions since `periodStart` (or all-time when undefined — used
  * for trial buckets that don't have a billing period yet). Prefers each
@@ -296,17 +335,6 @@ export async function getWorkspacePlanUsdCentsUsage(
 	workspaceId: string,
 	periodStartMs?: number,
 ): Promise<number> {
-	const conds = [
-		eq(sessions.workspaceId, workspaceId),
-		// Inlined as a literal rather than a bind parameter: sessions_ws_plan_usage_idx
-		// is a partial index on this exact predicate. A per-execution plan can match a
-		// bound value, but a generic (cached) plan can only prove a match against a
-		// literal. LLM_ROUTE_MASKIN_PLAN is a code constant, never user input.
-		sql`${sessions.config}->>'llm_route' = ${sql.raw(`'${LLM_ROUTE_MASKIN_PLAN}'`)}`,
-	]
-	if (periodStartMs !== undefined) {
-		conds.push(gte(sessions.createdAt, new Date(periodStartMs)))
-	}
 	const rows = await db
 		.select({
 			totalCostUsd: sessions.totalCostUsd,
@@ -314,18 +342,10 @@ export async function getWorkspacePlanUsdCentsUsage(
 			outputTokens: sessions.outputTokens,
 		})
 		.from(sessions)
-		.where(and(...conds))
+		.where(planUsageConds(workspaceId, periodStartMs))
 
 	let totalCents = 0
-	for (const row of rows) {
-		const reportedUsd = row.totalCostUsd !== null ? Number(row.totalCostUsd) : Number.NaN
-		if (Number.isFinite(reportedUsd) && reportedUsd > 0) {
-			totalCents += reportedUsd * 100
-			continue
-		}
-		const tokens = (row.inputTokens ?? 0) + (row.outputTokens ?? 0)
-		totalCents += tokens / LEGACY_TOKENS_PER_USD_CENT
-	}
+	for (const row of rows) totalCents += sessionUsageCents(row)
 	// Round once on the aggregate, not per-row, so small per-session fractions
 	// of a cent don't compound into meaningfully over-counted usage.
 	return ceilCents(totalCents)
@@ -667,6 +687,9 @@ export async function resolveLlmRoute(params: {
 	 */
 	let oauthFailureTransient = false
 
+	/** Set when route #4's key was left out because it is marked out of credit. */
+	let apiKeyOutOfCredit = false
+
 	// 1. Agent-level override — only handled here for anthropic; non-anthropic
 	//    providers fall through to caller (matches existing behavior). The
 	//    anthropic branch is a BYO credential, so it's gated like routes 2-4.
@@ -794,14 +817,28 @@ export async function resolveLlmRoute(params: {
 				return { route: LLM_ROUTE_CUSTOM, envVars: customEnv }
 			}
 
-			// 4. Workspace anthropic api key
+			// 4. Workspace anthropic api key — left out while it is marked out of
+			//    credit (see api-key-credit-mark.ts), so a key with no credit does
+			//    not take every session the other routes passed over.
 			const storedAnthropic = wsSettings.llm_keys?.anthropic
 			if (storedAnthropic) {
-				const envVars: Record<string, string> = {
-					ANTHROPIC_API_KEY: openSecret(storedAnthropic, 'llm_keys.anthropic'),
-					ANTHROPIC_MODEL: agent.model || CLAUDE_SUBSCRIPTION_MODEL,
+				const mark = checkApiKeyCreditMark(wsSettings, storedAnthropic)
+				if (mark.stale) {
+					void clearStaleApiKeyCreditMark({ db, workspaceId, mark: mark.stale })
 				}
-				return { route: LLM_ROUTE_API_KEY, envVars }
+				if (mark.outOfCredit) {
+					apiKeyOutOfCredit = true
+					logger.warn('Workspace Anthropic API key skipped: marked out of credit', {
+						workspaceId,
+						actorId,
+					})
+				} else {
+					const envVars: Record<string, string> = {
+						ANTHROPIC_API_KEY: openSecret(storedAnthropic, 'llm_keys.anthropic'),
+						ANTHROPIC_MODEL: agent.model || CLAUDE_SUBSCRIPTION_MODEL,
+					}
+					return { route: LLM_ROUTE_API_KEY, envVars }
+				}
 			}
 		} catch (err) {
 			if (err instanceof SecretUnreadableError) throw unreadableKeyError(err)
@@ -823,6 +860,19 @@ export async function resolveLlmRoute(params: {
 			envVars: maskinPlanEnv,
 			modelName: fallback.model ?? 'deepseek/deepseek-v4.1-flash',
 		}
+	}
+
+	if (apiKeyOutOfCredit) {
+		// The key was the one route left and it has no credit. Failing here puts
+		// a clear reason on the session instead of launching it into the same
+		// "Credit balance is too low" on every turn.
+		throw new LlmCredentialsUnavailableError(
+			oauthFailure
+				? `${API_KEY_OUT_OF_CREDIT_DETAIL} Claude subscription: ${oauthFailure}`
+				: API_KEY_OUT_OF_CREDIT_DETAIL,
+			false,
+			{ apiKeyOutOfCredit: true },
+		)
 	}
 
 	if (oauthFailure) {
@@ -870,12 +920,43 @@ export class LlmCredentialsUnavailableError extends Error {
 	 */
 	readonly storedKeyUnreadable: boolean
 
-	constructor(detail: string, transient = false, options?: { storedKeyUnreadable?: boolean }) {
+	/** Name of the workspace that has no working credentials, so the message can say which one. */
+	readonly workspaceName: string | null
+
+	/**
+	 * True when the workspace has nothing configured at all (no subscription,
+	 * endpoint or key), as opposed to a credential that exists but was rejected.
+	 * Only this case has no retry worth making: nothing changes until someone
+	 * connects a credential, so the trigger runner pauses it for longer.
+	 */
+	readonly noCredentialsConfigured: boolean
+
+	/**
+	 * True when the workspace's own Anthropic key was left out because it just
+	 * failed with "Credit balance is too low" and nothing else could carry the
+	 * session. The fix is a top-up (or a Claude subscription), not entering the
+	 * key again.
+	 */
+	readonly apiKeyOutOfCredit: boolean
+
+	constructor(
+		detail: string,
+		transient = false,
+		options?: {
+			storedKeyUnreadable?: boolean
+			workspaceName?: string | null
+			noCredentialsConfigured?: boolean
+			apiKeyOutOfCredit?: boolean
+		},
+	) {
 		super(detail)
 		this.name = 'LlmCredentialsUnavailableError'
 		this.detail = detail
 		this.transient = transient
 		this.storedKeyUnreadable = options?.storedKeyUnreadable ?? false
+		this.workspaceName = options?.workspaceName?.trim() || null
+		this.noCredentialsConfigured = options?.noCredentialsConfigured ?? false
+		this.apiKeyOutOfCredit = options?.apiKeyOutOfCredit ?? false
 	}
 
 	/** What the user and any agent reading `get_session` see. */
@@ -896,6 +977,16 @@ export class LlmCredentialsUnavailableError extends Error {
 		'This session could not start because the LLM key saved for this workspace cannot be read. Enter the key again in Settings → Keys, then start a new session.'
 
 	toFailureReason(): SessionResultFailureReason {
+		if (this.apiKeyOutOfCredit) {
+			return {
+				provider: 'anthropic',
+				reason_code: 'credit_balance_low',
+				human_message: API_KEY_OUT_OF_CREDIT_HUMAN_MESSAGE,
+				http_status: null,
+				reset_at: null,
+				verbatim_output: this.detail,
+			}
+		}
 		return {
 			provider: 'maskin',
 			reason_code: 'not_logged_in',
@@ -903,13 +994,88 @@ export class LlmCredentialsUnavailableError extends Error {
 				? LlmCredentialsUnavailableError.unreadableKeyHumanMessage
 				: this.transient
 					? LlmCredentialsUnavailableError.transientHumanMessage
-					: LlmCredentialsUnavailableError.humanMessage,
+					: this.workspaceName
+						? `This session could not start because no working LLM credentials are connected for the workspace "${this.workspaceName}". Connect a Claude subscription in that workspace's Settings → Keys, then start a new session.`
+						: LlmCredentialsUnavailableError.humanMessage,
 			http_status: null,
 			reset_at: null,
 			verbatim_output: this.detail,
 		}
 	}
 }
+
+/**
+ * Wall-clock ceiling for the whole `resolveLlmRoute` call at session launch.
+ * The 15s fetch timeout (`CLAUDE_CREDENTIAL_TIMEOUT_MS`) only covers sockets;
+ * a stuck database step (pool wait, a held row lock on `workspaces`) is not
+ * bounded by it. Two network calls can legitimately take 15s each on the
+ * refresh + probe path, so 30s leaves a slow-but-working launch alone and still
+ * fails a hung one in seconds instead of waiting for the 10 minute reaper.
+ */
+export const CREDENTIAL_RESOLUTION_TIMEOUT_MS = 30_000
+
+/**
+ * Credential resolution did not return in time. A subclass so every existing
+ * `instanceof LlmCredentialsUnavailableError` launch-failure path (the local
+ * catch in `launchContainer`, the dispatcher's permanent failure) treats it
+ * the same way. Not transient on purpose: the dispatcher must fail the row now,
+ * not requeue it behind the same stuck step.
+ *
+ * It is not a verdict on the credentials, so `toFailureReason` does not say
+ * `not_logged_in` (which pauses a workspace's triggers for an hour) and does
+ * not tell the user to reconnect anything.
+ */
+export class CredentialResolutionTimeoutError extends LlmCredentialsUnavailableError {
+	readonly timeoutMs: number
+
+	constructor(timeoutMs: number = CREDENTIAL_RESOLUTION_TIMEOUT_MS) {
+		super(
+			`Credential resolution (resolveLlmRoute) did not finish within ${timeoutMs}ms; the launch was failed instead of waiting for the startup reaper.`,
+		)
+		this.name = 'CredentialResolutionTimeoutError'
+		this.timeoutMs = timeoutMs
+	}
+
+	override toFailureReason(): SessionResultFailureReason {
+		return {
+			provider: 'maskin',
+			reason_code: 'startup_stalled',
+			human_message: `This session could not start because looking up the LLM credentials for this workspace took longer than ${Math.round(this.timeoutMs / 1000)} seconds. Your credentials were not rejected. Start a new session; if it keeps happening, tell the Maskin team.`,
+			http_status: null,
+			reset_at: null,
+			verbatim_output: this.detail,
+		}
+	}
+}
+
+/**
+ * Race `work` against a wall-clock timer. On expiry rejects with
+ * `CredentialResolutionTimeoutError`; the underlying promise cannot be
+ * cancelled, so it is left to settle on its own (its late result or rejection
+ * is swallowed here so it never becomes an unhandled rejection).
+ */
+export async function withCredentialResolutionTimeout<T>(
+	work: Promise<T>,
+	timeoutMs: number = CREDENTIAL_RESOLUTION_TIMEOUT_MS,
+): Promise<T> {
+	let timer: ReturnType<typeof setTimeout> | undefined
+	const timeout = new Promise<never>((_, reject) => {
+		timer = setTimeout(() => reject(new CredentialResolutionTimeoutError(timeoutMs)), timeoutMs)
+	})
+	work.catch(() => {})
+	try {
+		return await Promise.race([work, timeout])
+	} finally {
+		clearTimeout(timer)
+	}
+}
+
+/** Shown when the workspace's Anthropic key is the only route and it has no credit left. */
+const API_KEY_OUT_OF_CREDIT_HUMAN_MESSAGE =
+	"This session could not start because the workspace's Anthropic API key has run out of credit. Add credit to the key or connect a Claude subscription in Settings → Keys, then start a new session. The key is tried again after a short pause."
+
+/** Operator detail for the same case. */
+const API_KEY_OUT_OF_CREDIT_DETAIL = `The workspace Anthropic API key failed with "Credit balance is too low" in the last ${API_KEY_CREDIT_MARK_WINDOW_MS / 60_000} minutes and no other LLM route is configured, so it was left out.`
 
 /** The terminal error for a saved key that cannot be opened. Names the field, never the value. */
 export function unreadableKeyError(err: SecretUnreadableError): LlmCredentialsUnavailableError {

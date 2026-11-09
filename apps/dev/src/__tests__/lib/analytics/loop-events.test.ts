@@ -122,6 +122,21 @@ describe('trackLoopInstalled', () => {
 		expect(props.source).toBe('detail')
 	})
 
+	it('carries public_site on the wire when the install starts from the public marketplace page', async () => {
+		await trackLoopInstalled({
+			loopId: 'loop-1',
+			loopSlug: 'market-competitor-watch-loop',
+			loopVersion: '1.0.0',
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+			provisioned: { actors: 1, triggers: 0, skills: 0, integrations: 0 },
+			source: 'public_site',
+		})
+
+		const props = capturePosthogEventMock.mock.calls[0]?.[2] as Record<string, unknown>
+		expect(props.source).toBe('public_site')
+	})
+
 	it("defaults source to 'catalogue' when it is not set (catalog installs stay distinguishable)", async () => {
 		await trackLoopInstalled({
 			loopId: 'loop-1',
