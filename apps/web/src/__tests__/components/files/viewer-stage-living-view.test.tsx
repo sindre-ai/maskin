@@ -186,12 +186,13 @@ describe('ViewerStage: living view', () => {
 			const before = screen.getByTitle(TITLE)
 
 			fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
-			await waitFor(() => expect(screen.getByText(/Refreshed just now/)).toBeInTheDocument())
+			// The bar already reads "Refreshed just now" from the file's own time, so wait for the
+			// frame itself to be replaced: that happens only once the fetch has finished.
+			await waitFor(() => expect(screen.getByTitle(TITLE)).not.toBe(before))
 
 			expect(api.objects.list).toHaveBeenCalledTimes(1)
 			expect(vi.mocked(api.objects.list).mock.calls[0]?.[0]).toBe('ws-1')
 			// The new frame asks again and is told the rows.
-			expect(screen.getByTitle(TITLE)).not.toBe(before)
 			const view = viewWindow()
 			const answers = await ask(view, 'opps', 2)
 			expect(answers).toHaveLength(1)
