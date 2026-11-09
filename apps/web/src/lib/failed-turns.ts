@@ -2,7 +2,7 @@ import type { MessageTurnActivity } from '@/hooks/use-conversation-activity'
 import type { MessageResponse } from '@/lib/api'
 
 /** An agent's end-of-turn notice for a turn that failed (model API error, empty or unanswered turn). */
-function isFailedReply(message: MessageResponse): boolean {
+export function isFailedReply(message: MessageResponse): boolean {
 	if (message.actorType !== 'agent' || message.kind !== 'message') return false
 	const output = message.metadata?.final_output
 	return Boolean(output && (output.is_error || output.error_kind))
