@@ -311,26 +311,21 @@ struct ChatThreadView: View {
 		// One group so iOS keeps everything in the bar instead of folding into a "More" overflow.
 		ToolbarItemGroup(placement: .primaryAction) {
 			if let call { LiveCallHeaderControls(session: call) { liveCalls?.end() } }
-			if !linkedEntries.isEmpty {
-				Button { showingLinked = true } label: {
-					HStack(spacing: MaskinSpace.s1) {
-						Image(systemName: "link")
-						Text("\(linkedEntries.count)").maskinText(.caption).fontWeight(.semibold)
-					}
-					.foregroundStyle(MaskinColor.ink)
-				}
-				.accessibilityLabel("Linked")
-				.accessibilityValue("\(linkedEntries.count)")
-				.accessibilityHint("Shows the drafts, pages and objects this chat links to")
-			}
-			if flow != nil, let conversations, let row = conversations.conversation(id: store.conversationID) {
-				Button {
-					Task { await conversations.setPinned(row.id, !row.pinned) }
-				} label: {
-					Label(row.pinned ? "Unpin" : "Pin", systemImage: row.pinned ? "pin.fill" : "pin")
-				}
-			}
 			Menu {
+				// The bar holds only this menu and Live (v3); what used to sit beside them lives here.
+				if !linkedEntries.isEmpty {
+					Button { showingLinked = true } label: {
+						Label("Linked · \(linkedEntries.count)", systemImage: "link")
+					}
+					.accessibilityHint("Shows the drafts, pages and objects this chat links to")
+				}
+				if flow != nil, let conversations, let row = conversations.conversation(id: store.conversationID) {
+					Button {
+						Task { await conversations.setPinned(row.id, !row.pinned) }
+					} label: {
+						Label(row.pinned ? "Unpin" : "Pin", systemImage: row.pinned ? "pin.fill" : "pin")
+					}
+				}
 				Button {
 					searching.toggle()
 					if !searching { searchText = "" }
