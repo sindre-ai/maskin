@@ -2,22 +2,25 @@ import { Hono } from 'hono'
 import { describe, expect, it, vi } from 'vitest'
 import { SHED_RETRY_AFTER_S, dbLoadShed } from '../../middleware/db-load-shed'
 
-function buildApp(load: { count: number }, limit = 100, onShed = vi.fn()) {
+function buildApp(backedUp: { value: boolean }, onShed = vi.fn()) {
 	const app = new Hono()
-	app.use('/api/*', dbLoadShed(load, limit, onShed))
+	app.use(
+		'/api/*',
+		dbLoadShed(() => backedUp.value, onShed),
+	)
 	app.all('/api/*', (c) => c.json({ ok: true }))
 	return { app, onShed }
 }
 
 describe('dbLoadShed', () => {
-	it('lets reads through while the backlog is within the limit', async () => {
-		const { app, onShed } = buildApp({ count: 100 })
+	it('lets reads through while the database is not backed up', async () => {
+		const { app, onShed } = buildApp({ value: false })
 		expect((await app.request('/api/objects')).status).toBe(200)
 		expect(onShed).not.toHaveBeenCalled()
 	})
 
-	it('refuses reads with a 503 and Retry-After once the backlog passes the limit', async () => {
-		const { app, onShed } = buildApp({ count: 101 })
+	it('refuses reads with a 503 and Retry-After while it is backed up', async () => {
+		const { app, onShed } = buildApp({ value: true })
 		const res = await app.request('/api/objects')
 		expect(res.status).toBe(503)
 		expect(res.headers.get('Retry-After')).toBe(String(SHED_RETRY_AFTER_S))
@@ -25,7 +28,7 @@ describe('dbLoadShed', () => {
 	})
 
 	it('still lets writes through', async () => {
-		const { app } = buildApp({ count: 5_000 })
+		const { app } = buildApp({ value: true })
 		expect((await app.request('/api/objects', { method: 'POST' })).status).toBe(200)
 		expect((await app.request('/api/objects/1', { method: 'PATCH' })).status).toBe(200)
 	})
@@ -37,16 +40,16 @@ describe('dbLoadShed', () => {
 		'/api/events',
 		'/api/sessions/1/logs/stream',
 	])('never refuses %s', async (path) => {
-		const { app, onShed } = buildApp({ count: 5_000 })
+		const { app, onShed } = buildApp({ value: true })
 		expect((await app.request(path)).status).toBe(200)
 		expect(onShed).not.toHaveBeenCalled()
 	})
 
-	it('reads the backlog on every request, so it recovers when the backlog clears', async () => {
-		const load = { count: 5_000 }
-		const { app } = buildApp(load)
+	it('asks on every request, so it recovers when the database clears', async () => {
+		const state = { value: true }
+		const { app } = buildApp(state)
 		expect((await app.request('/api/objects')).status).toBe(503)
-		load.count = 3
+		state.value = false
 		expect((await app.request('/api/objects')).status).toBe(200)
 	})
 })

@@ -1,4 +1,3 @@
-import type { InFlight } from '@maskin/db'
 import { createApiError } from '@maskin/shared'
 import type { MiddlewareHandler } from 'hono'
 
@@ -18,15 +17,18 @@ function isExempt(path: string) {
 }
 
 /**
- * Once more than `limit` database queries are waiting, refuses new reads at once with a 503
- * instead of queueing them. Left to queue, a burst of page loads waits up to 45 s per query,
- * the clients give up and retry, and the backlog (about 1,500 queries in the 2026-11-09
- * incidents) never drains until the server is redeployed. Refusing reads early keeps the wait
- * short, and the web app and other clients retry them. Writes and everything else go through.
+ * While the database is backed up, refuses new reads at once with a 503 instead of queueing
+ * them. Left to queue, a burst of page loads waits up to 45 s per query, the clients give up and
+ * retry, and the backlog does not drain until the server is redeployed. Refusing reads early
+ * keeps the wait short, and the web app and other clients retry them. Writes and everything
+ * else go through.
+ *
+ * `isBackedUp` must come from how long queries have really waited, not from a count: a count
+ * that is wrong turns this into refusing reads from a healthy server.
  */
-export function dbLoadShed(load: InFlight, limit: number, onShed?: () => void): MiddlewareHandler {
+export function dbLoadShed(isBackedUp: () => boolean, onShed?: () => void): MiddlewareHandler {
 	return async (c, next) => {
-		if (c.req.method !== 'GET' || load.count <= limit || isExempt(c.req.path)) return next()
+		if (c.req.method !== 'GET' || isExempt(c.req.path) || !isBackedUp()) return next()
 		onShed?.()
 		c.header('Retry-After', String(SHED_RETRY_AFTER_S))
 		return c.json(
