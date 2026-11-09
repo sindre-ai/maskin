@@ -1,4 +1,4 @@
-import { sql } from 'drizzle-orm'
+import { TransactionRollbackError, sql } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { db } from './global-setup'
 
@@ -21,20 +21,28 @@ describe('events_commented_mentions_idx (migration 0142)', () => {
 	})
 
 	it('is what the planner picks for the predicate the unread feed and decision cards send', async () => {
-		// The index only helps if the query's expression matches it. A tiny test table would
-		// otherwise be read with a sequential scan, so rule that out and see what the planner
-		// can reach for.
-		const plan = await db.transaction(async (tx) => {
-			await tx.execute(sql`SET LOCAL enable_seqscan = off`)
-			const rows = await tx.execute<{ 'QUERY PLAN': string }>(
-				sql.raw(`EXPLAIN SELECT id FROM events
+		// The index only helps if the query's expression matches it. On a tiny test table the planner
+		// would rather read the whole comments-only partial index events_ws_entity_commented_idx (or
+		// scan the table), so rule both out inside a transaction that is rolled back, and see
+		// whether the mentions index is what is left to reach for.
+		let plan = ''
+		await db
+			.transaction(async (tx) => {
+				await tx.execute(sql`SET LOCAL enable_seqscan = off`)
+				await tx.execute(sql`DROP INDEX events_ws_entity_commented_idx`)
+				const rows = await tx.execute<{ 'QUERY PLAN': string }>(
+					sql.raw(`EXPLAIN SELECT id FROM events
 					WHERE action = 'commented'
 					AND data->'mentions' @> jsonb_build_array('00000000-0000-0000-0000-000000000000'::text)`),
-			)
-			return Array.from(rows)
-				.map((r) => r['QUERY PLAN'])
-				.join('\n')
-		})
+				)
+				plan = Array.from(rows)
+					.map((r) => r['QUERY PLAN'])
+					.join('\n')
+				tx.rollback()
+			})
+			.catch((err) => {
+				if (!(err instanceof TransactionRollbackError)) throw err
+			})
 		expect(plan).toContain(INDEX_NAME)
 	})
 })
