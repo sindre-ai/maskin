@@ -5,9 +5,10 @@ import path from 'node:path'
 import { serve } from '@hono/node-server'
 import type { NodeWebSocket } from '@hono/node-ws'
 import {
-	type InFlight,
 	captureConnectionSnapshot,
+	countStalledQueries,
 	createDb,
+	createInFlight,
 	syncAgentServersFromEnv,
 } from '@maskin/db'
 import { actors, sessions } from '@maskin/db/schema'
@@ -25,7 +26,7 @@ import { ViesSchedulerJob } from './jobs/vies-scheduler'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
 import { configurePosthogPrivacy, warnIfPosthogKeyUnset } from './lib/analytics/posthog'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
-import { resolveDbPoolConfig } from './lib/db-pool-config'
+import { STALLED_QUERY_AFTER_MS, resolveDbPoolConfig } from './lib/db-pool-config'
 import { runDefaultHeartbeatBackfillOnBoot } from './lib/default-heartbeat-boot'
 import { canAccessDesktop } from './lib/desktop-access'
 import {
@@ -96,8 +97,8 @@ let lastPoolSaturatedLogAt = 0
 const STALL_SNAPSHOT_INTERVAL_MS = 60_000
 let lastStallSnapshotAt = 0
 const { poolSize: dbPoolSize, shedAt: dbShedAt } = resolveDbPoolConfig(process.env)
-/** Queries sent and not yet answered; the load-shedding middleware reads it. */
-const dbLoad: InFlight = { count: 0 }
+/** Queries sent and not yet answered, with when each was sent; the load-shedding check reads it. */
+const dbLoad = createInFlight()
 const db = createDb(databaseUrl, {
 	poolSize: dbPoolSize,
 	inFlight: dbLoad,
@@ -246,7 +247,14 @@ const port = Number(process.env.PORT) || 3000
 // attach it to the server once serve() returns it, below.
 let nodeWebSocket: NodeWebSocket | undefined
 const app = createApp(
-	{ db, notifyBridge, sessionManager, agentStorage, storageProvider, dbLoad, dbShedAt },
+	{
+		db,
+		notifyBridge,
+		sessionManager,
+		agentStorage,
+		storageProvider,
+		dbBackedUp: () => countStalledQueries(dbLoad, STALLED_QUERY_AFTER_MS, dbShedAt) >= dbShedAt,
+	},
 	{
 		port,
 		onNodeWebSocket: (ws) => {

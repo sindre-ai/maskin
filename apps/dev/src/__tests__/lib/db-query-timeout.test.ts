@@ -1,5 +1,11 @@
 import { type Server, type Socket, createServer } from 'node:net'
-import { QueryTimeoutError, createDb, timeQueries } from '@maskin/db'
+import {
+	QueryTimeoutError,
+	countStalledQueries,
+	createDb,
+	createInFlight,
+	timeQueries,
+} from '@maskin/db'
 import { sql } from 'drizzle-orm'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -109,6 +115,56 @@ describe('timeQueries pool diagnostics', () => {
 		})
 		for (let i = 0; i < 5; i++) await client.unsafe()
 		expect(saturated).toEqual([])
+	})
+})
+
+describe('timeQueries waiting-time tracking', () => {
+	it('counts a query once however many times it is awaited, caught or finally-ed', async () => {
+		const load = createInFlight()
+		const client = timeQueries({ unsafe: () => fakeQuery(10) }, undefined, { inFlight: load })
+		const query = client.unsafe()
+		await query
+		await query
+		await Promise.resolve(query).catch(() => {})
+		await Promise.resolve(query).finally(() => {})
+		expect(load.count).toBe(0)
+		expect(load.pending.size).toBe(0)
+	})
+
+	it('does not count a query again when something awaits it after it finished', async () => {
+		const load = createInFlight()
+		const client = timeQueries({ unsafe: () => fakeQuery(5) }, undefined, { inFlight: load })
+		const query = client.unsafe()
+		await query
+		for (let i = 0; i < 5; i++) await query
+		expect(load.count).toBe(0)
+	})
+
+	it('returns to zero after queries that fail or time out', async () => {
+		const load = createInFlight()
+		const client = timeQueries({ unsafe: () => fakeQuery(5_000) }, undefined, {
+			inFlight: load,
+			queryTimeoutMs: 20,
+		})
+		await Promise.allSettled([client.unsafe(), client.unsafe()])
+		expect(load.count).toBe(0)
+		expect(load.pending.size).toBe(0)
+	})
+
+	it('counts only the queries that have waited longer than the limit', async () => {
+		const load = createInFlight()
+		const client = timeQueries({ unsafe: () => fakeQuery(300) }, undefined, { inFlight: load })
+		const first = client.unsafe()
+		const firstDone = Promise.resolve(first).then(() => {})
+		await new Promise((r) => setTimeout(r, 150))
+		const second = client.unsafe()
+		const secondDone = Promise.resolve(second).then(() => {})
+		await Promise.resolve()
+		expect(countStalledQueries(load, 100, 10)).toBe(1)
+		expect(countStalledQueries(load, 0, 10)).toBe(2)
+		expect(countStalledQueries(load, 0, 1)).toBe(1)
+		await Promise.all([firstDone, secondDone])
+		expect(countStalledQueries(load, 0, 10)).toBe(0)
 	})
 })
 

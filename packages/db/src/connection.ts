@@ -28,8 +28,38 @@ export type QueryTimeoutInfo = {
 	sql: string
 }
 
-/** Queries sent and not yet answered, shared by a client and the transactions opened on it. */
-export type InFlight = { count: number }
+/**
+ * Queries sent and not yet answered, shared by a client and the transactions opened on it.
+ * `pending` maps each unanswered query to when it was sent, oldest first, so how long queries
+ * have really been waiting can be read off it. `count` is only for logging: a counter that is
+ * bumped and dropped by separate calls can drift, and the incident logs showed it reading
+ * 1,371 while the health check still answered in 25 ms.
+ */
+export type InFlight = { count: number; pending: Map<object, number> }
+
+export function createInFlight(): InFlight {
+	return { count: 0, pending: new Map() }
+}
+
+/**
+ * How many queries have been waiting longer than `olderThanMs`, counted up to `upTo`. A queue
+ * of them means the pool is backed up; one long query (a nightly sweep) does not.
+ */
+export function countStalledQueries(
+	load: InFlight,
+	olderThanMs: number,
+	upTo: number,
+	now = performance.now(),
+): number {
+	let n = 0
+	// The map is in the order queries were sent, so the first one younger than the limit ends it.
+	for (const startedAt of load.pending.values()) {
+		if (now - startedAt < olderThanMs) break
+		n += 1
+		if (n >= upTo) break
+	}
+	return n
+}
 
 type QueryGuards = {
 	onQuery?: QueryTimer
@@ -52,19 +82,20 @@ function timeQuery<T extends PromiseLike<unknown>>(
 	sqlText: string,
 ): T {
 	const originalThen = query.then.bind(query)
-	let recorded = false
-	// biome-ignore lint/suspicious/noThenProperty: wrapping the lazy thenable postgres.js returns
-	query.then = ((onFulfilled, onRejected) => {
+	// A query can be awaited, caught and finally-ed, and each of those reaches `then`. It is sent,
+	// timed and counted once, on the first of them; the rest share that result.
+	let guarded: PromiseLike<unknown> | undefined
+	const begin = (): PromiseLike<unknown> => {
 		const start = performance.now()
 		inFlight.count += 1
+		inFlight.pending.set(query, start)
 		if (saturationAt && inFlight.count === saturationAt) onSaturated?.(inFlight.count)
 		const record = () => {
-			if (recorded) return
-			recorded = true
+			if (!inFlight.pending.delete(query)) return
 			inFlight.count -= 1
 			onQuery?.(performance.now() - start)
 		}
-		let guarded: PromiseLike<unknown> = originalThen()
+		let result: PromiseLike<unknown> = originalThen()
 		if (queryTimeoutMs && queryTimeoutMs > 0) {
 			let timer: NodeJS.Timeout | undefined
 			const deadline = new Promise<never>((_, reject) => {
@@ -84,19 +115,23 @@ function timeQuery<T extends PromiseLike<unknown>>(
 				}, queryTimeoutMs)
 				timer.unref?.()
 			})
-			guarded = Promise.race([guarded, deadline]).finally(() => clearTimeout(timer))
+			result = Promise.race([result, deadline]).finally(() => clearTimeout(timer))
 		}
-		return guarded.then(
+		return result.then(
 			(value) => {
 				record()
-				return onFulfilled ? onFulfilled(value) : value
+				return value
 			},
 			(err) => {
 				record()
-				if (onRejected) return onRejected(err)
 				throw err
 			},
 		)
+	}
+	// biome-ignore lint/suspicious/noThenProperty: wrapping the lazy thenable postgres.js returns
+	query.then = ((onFulfilled, onRejected) => {
+		guarded ??= begin()
+		return guarded.then(onFulfilled, onRejected)
 	}) as T['then']
 	return query
 }
@@ -122,7 +157,7 @@ export function timeQueries<C extends object>(
 	onQuery?: QueryTimer,
 	options: TimeQueriesOptions = {},
 ): C {
-	const inFlight = options.inFlight ?? { count: 0 }
+	const inFlight = options.inFlight ?? createInFlight()
 	const shared = { ...options, inFlight }
 	const guards: QueryGuards = { onQuery, ...shared }
 	return new Proxy(client, {
