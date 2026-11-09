@@ -22,7 +22,7 @@
  * failed send releases the claim. For a person with no saved choice the claim creates or fills the
  * row (email on, step 3) so the stop link has something to switch off.
  *
- * Production without a Resend key (or APP_URL): log and skip, nothing is claimed.
+ * Production without a Resend key, APP_URL or stop-link secret: log and skip, nothing is claimed.
  * Killswitch env FEATURE_BRIEFING_EMAIL=0 skips the tick. The push is not affected.
  */
 import type { Database } from '@maskin/db'
@@ -30,6 +30,7 @@ import { EmailSendError, isEmailConfigured, sendEmail } from '@maskin/email'
 import { sql } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { buildEmailStopUrl } from '../lib/email-stop-link'
+import { isEmailStopConfigured } from '../lib/email-stop-token'
 import { localClock, localTimeReached } from '../lib/local-time'
 import { logger } from '../lib/logger'
 import { buildSummaryEmail } from './briefing-email-text'
@@ -247,11 +248,13 @@ export class BriefingEmailScheduler {
 
 	/** In production a missing key or app address means skip and log, never claim a day. */
 	private productionReady(now: Date): boolean {
-		if (isEmailConfigured(this.env) && this.appUrl()) return true
+		if (isEmailConfigured(this.env) && this.appUrl() && isEmailStopConfigured()) return true
 		// Once an hour, not once a minute.
 		if (now.getTime() - this.warnedUnconfigured >= 60 * 60_000) {
 			this.warnedUnconfigured = now.getTime()
-			logger.warn('Summary email skipped: RESEND_API_KEY or APP_URL is not set in production')
+			logger.warn(
+				'Summary email skipped: RESEND_API_KEY, APP_URL or EMAIL_STOP_LINK_SECRET is not set in production',
+			)
 		}
 		return false
 	}
