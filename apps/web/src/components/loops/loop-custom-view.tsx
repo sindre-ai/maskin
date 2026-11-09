@@ -134,7 +134,7 @@ function ViewFrame({
 			setRefreshing(true)
 			try {
 				const result = await api.data.query(workspaceId, spec, {
-					signal: AbortSignal.timeout(QUERY_TIMEOUT_MS),
+					timeoutMs: QUERY_TIMEOUT_MS,
 				})
 				if (result.rows_truncated || result.groups_truncated) setPartial(true)
 				answeredAtRef.current.set(key, writeCachedResult(workspaceId, key, result))
