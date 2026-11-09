@@ -130,6 +130,7 @@ private struct CallControl: View {
 }
 
 private struct CallControlLabel: View {
+	@Environment(\.horizontalSizeClass) private var sizeClass
 	let title: String
 	let symbol: String
 	let emphasis: CallControl.Emphasis
@@ -139,13 +140,18 @@ private struct CallControlLabel: View {
 			Image(systemName: symbol)
 				.maskinSymbol(MaskinFontSize.t16, weight: .medium)
 				.foregroundStyle(foreground)
-				.frame(width: dockControlSize, height: dockControlSize)
+				.frame(width: controlSize, height: controlSize)
 				.background(fill, in: Circle())
 			Text(title).maskinText(.caption).foregroundStyle(MaskinColor.ink3)
 				.multilineTextAlignment(.center).lineLimit(1)
 		}
 		.frame(maxWidth: .infinity)
 		.accessibilityElement(children: .combine)
+	}
+
+	/// 64 pt in regular width, the phone's size otherwise.
+	private var controlSize: CGFloat {
+		sizeClass == .regular ? LiveMeetingMetrics.controlSize(regularWidth: true) : dockControlSize
 	}
 
 	private var foreground: Color {
@@ -178,6 +184,9 @@ struct LiveCallPanel: View {
 	let onOpenObject: (MentionedObject) -> Void
 	let onEnd: () -> Void
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
+	@Environment(\.horizontalSizeClass) private var sizeClass
+
+	private var regular: Bool { sizeClass == .regular }
 
 	var body: some View {
 		Group {
@@ -188,6 +197,9 @@ struct LiveCallPanel: View {
 			}
 		}
 		.animation(MaskinMotion.standard, value: session.isMinimized)
+		// Regular width: the call card is a centred cluster, not a bar across the window.
+		.frame(maxWidth: LiveMeetingMetrics.captionsMaxWidth(regularWidth: regular) ?? .infinity)
+		.frame(maxWidth: .infinity)
 	}
 
 	private var orbState: CallOrbState {
@@ -290,13 +302,19 @@ struct LiveCallPanel: View {
 		Text(session.latestAgentLine ?? "Captions appear here when \(session.lead.name) speaks.")
 			.maskinText(.subhead).foregroundStyle(MaskinColor.ink2)
 			.lineLimit(3).multilineTextAlignment(.leading)
-			.frame(maxWidth: .infinity, alignment: .leading)
+			.frame(maxWidth: LiveMeetingMetrics.captionsMaxWidth(regularWidth: regular) ?? .infinity, alignment: .leading)
 			.padding(.horizontal, MaskinSpace.s7).padding(.vertical, MaskinSpace.s5)
 			.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
 			.accessibilityLabel("Caption")
 	}
 
 	private var controls: some View {
+		controlsRow
+			.frame(maxWidth: LiveMeetingMetrics.controlsMaxWidth(regularWidth: regular) ?? .infinity)
+			.frame(maxWidth: .infinity)
+	}
+
+	private var controlsRow: some View {
 		HStack(alignment: .top, spacing: MaskinSpace.s2) {
 			CallControl(
 				title: session.voice.isMuted ? "Muted" : "Mic",
