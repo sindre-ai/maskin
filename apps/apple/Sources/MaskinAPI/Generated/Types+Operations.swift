@@ -69534,6 +69534,54 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/categories`.
                         public var categories: Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.categoriesPayload
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_categories`.
+                        public struct browser_categoriesPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_categories/needs_you`.
+                            public var needs_you: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_categories/conversation`.
+                            public var conversation: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_categories/digest`.
+                            public var digest: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_categories/tips`.
+                            public var tips: Swift.Bool
+                            /// Creates a new `browser_categoriesPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - needs_you:
+                            ///   - conversation:
+                            ///   - digest:
+                            ///   - tips:
+                            public init(
+                                needs_you: Swift.Bool,
+                                conversation: Swift.Bool,
+                                digest: Swift.Bool,
+                                tips: Swift.Bool
+                            ) {
+                                self.needs_you = needs_you
+                                self.conversation = conversation
+                                self.digest = digest
+                                self.tips = tips
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case needs_you
+                                case conversation
+                                case digest
+                                case tips
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_categories`.
+                        public var browser_categories: Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_categoriesPayload
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_not_askedPayload`.
+                        @frozen public enum browser_not_askedPayloadPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                            case needs_you = "needs_you"
+                            case conversation = "conversation"
+                            case digest = "digest"
+                            case tips = "tips"
+                        }
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_not_asked`.
+                        public typealias browser_not_askedPayload = [Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_not_askedPayloadPayload]
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_not_asked`.
+                        public var browser_not_asked: Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_not_askedPayload
                         /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/briefing_enabled`.
                         public var briefing_enabled: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/briefing_time`.
@@ -69551,6 +69599,8 @@ public enum Operations {
                         ///   - quiet_hours_start:
                         ///   - quiet_hours_end:
                         ///   - categories:
+                        ///   - browser_categories:
+                        ///   - browser_not_asked:
                         ///   - briefing_enabled:
                         ///   - briefing_time:
                         ///   - email_digest_enabled:
@@ -69561,6 +69611,8 @@ public enum Operations {
                             quiet_hours_start: Swift.Int? = nil,
                             quiet_hours_end: Swift.Int? = nil,
                             categories: Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.categoriesPayload,
+                            browser_categories: Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_categoriesPayload,
+                            browser_not_asked: Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_not_askedPayload,
                             briefing_enabled: Swift.Bool,
                             briefing_time: Swift.Int,
                             email_digest_enabled: Swift.Bool,
@@ -69571,6 +69623,8 @@ public enum Operations {
                             self.quiet_hours_start = quiet_hours_start
                             self.quiet_hours_end = quiet_hours_end
                             self.categories = categories
+                            self.browser_categories = browser_categories
+                            self.browser_not_asked = browser_not_asked
                             self.briefing_enabled = briefing_enabled
                             self.briefing_time = briefing_time
                             self.email_digest_enabled = email_digest_enabled
@@ -69582,6 +69636,8 @@ public enum Operations {
                             case quiet_hours_start
                             case quiet_hours_end
                             case categories
+                            case browser_categories
+                            case browser_not_asked
                             case briefing_enabled
                             case briefing_time
                             case email_digest_enabled
@@ -69736,6 +69792,43 @@ public enum Operations {
                     }
                     /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/categories`.
                     public var categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Input.Body.jsonPayload.categoriesPayload?
+                    /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/browser_categories`.
+                    public struct browser_categoriesPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/browser_categories/needs_you`.
+                        public var needs_you: Swift.Bool?
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/browser_categories/conversation`.
+                        public var conversation: Swift.Bool?
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/browser_categories/digest`.
+                        public var digest: Swift.Bool?
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/browser_categories/tips`.
+                        public var tips: Swift.Bool?
+                        /// Creates a new `browser_categoriesPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - needs_you:
+                        ///   - conversation:
+                        ///   - digest:
+                        ///   - tips:
+                        public init(
+                            needs_you: Swift.Bool? = nil,
+                            conversation: Swift.Bool? = nil,
+                            digest: Swift.Bool? = nil,
+                            tips: Swift.Bool? = nil
+                        ) {
+                            self.needs_you = needs_you
+                            self.conversation = conversation
+                            self.digest = digest
+                            self.tips = tips
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case needs_you
+                            case conversation
+                            case digest
+                            case tips
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/browser_categories`.
+                    public var browser_categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Input.Body.jsonPayload.browser_categoriesPayload?
                     /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/briefing_enabled`.
                     public var briefing_enabled: Swift.Bool?
                     /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/briefing_time`.
@@ -69751,6 +69844,7 @@ public enum Operations {
                     ///   - quiet_hours_start:
                     ///   - quiet_hours_end:
                     ///   - categories:
+                    ///   - browser_categories:
                     ///   - briefing_enabled:
                     ///   - briefing_time:
                     ///   - email_digest_enabled:
@@ -69760,6 +69854,7 @@ public enum Operations {
                         quiet_hours_start: Swift.Int? = nil,
                         quiet_hours_end: Swift.Int? = nil,
                         categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Input.Body.jsonPayload.categoriesPayload? = nil,
+                        browser_categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Input.Body.jsonPayload.browser_categoriesPayload? = nil,
                         briefing_enabled: Swift.Bool? = nil,
                         briefing_time: Swift.Int? = nil,
                         email_digest_enabled: Swift.Bool? = nil,
@@ -69769,6 +69864,7 @@ public enum Operations {
                         self.quiet_hours_start = quiet_hours_start
                         self.quiet_hours_end = quiet_hours_end
                         self.categories = categories
+                        self.browser_categories = browser_categories
                         self.briefing_enabled = briefing_enabled
                         self.briefing_time = briefing_time
                         self.email_digest_enabled = email_digest_enabled
@@ -69779,6 +69875,7 @@ public enum Operations {
                         case quiet_hours_start
                         case quiet_hours_end
                         case categories
+                        case browser_categories
                         case briefing_enabled
                         case briefing_time
                         case email_digest_enabled
@@ -69851,6 +69948,54 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/categories`.
                         public var categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.categoriesPayload
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_categories`.
+                        public struct browser_categoriesPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_categories/needs_you`.
+                            public var needs_you: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_categories/conversation`.
+                            public var conversation: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_categories/digest`.
+                            public var digest: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_categories/tips`.
+                            public var tips: Swift.Bool
+                            /// Creates a new `browser_categoriesPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - needs_you:
+                            ///   - conversation:
+                            ///   - digest:
+                            ///   - tips:
+                            public init(
+                                needs_you: Swift.Bool,
+                                conversation: Swift.Bool,
+                                digest: Swift.Bool,
+                                tips: Swift.Bool
+                            ) {
+                                self.needs_you = needs_you
+                                self.conversation = conversation
+                                self.digest = digest
+                                self.tips = tips
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case needs_you
+                                case conversation
+                                case digest
+                                case tips
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_categories`.
+                        public var browser_categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_categoriesPayload
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_not_askedPayload`.
+                        @frozen public enum browser_not_askedPayloadPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                            case needs_you = "needs_you"
+                            case conversation = "conversation"
+                            case digest = "digest"
+                            case tips = "tips"
+                        }
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_not_asked`.
+                        public typealias browser_not_askedPayload = [Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_not_askedPayloadPayload]
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_not_asked`.
+                        public var browser_not_asked: Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_not_askedPayload
                         /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/briefing_enabled`.
                         public var briefing_enabled: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/briefing_time`.
@@ -69868,6 +70013,8 @@ public enum Operations {
                         ///   - quiet_hours_start:
                         ///   - quiet_hours_end:
                         ///   - categories:
+                        ///   - browser_categories:
+                        ///   - browser_not_asked:
                         ///   - briefing_enabled:
                         ///   - briefing_time:
                         ///   - email_digest_enabled:
@@ -69878,6 +70025,8 @@ public enum Operations {
                             quiet_hours_start: Swift.Int? = nil,
                             quiet_hours_end: Swift.Int? = nil,
                             categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.categoriesPayload,
+                            browser_categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_categoriesPayload,
+                            browser_not_asked: Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_not_askedPayload,
                             briefing_enabled: Swift.Bool,
                             briefing_time: Swift.Int,
                             email_digest_enabled: Swift.Bool,
@@ -69888,6 +70037,8 @@ public enum Operations {
                             self.quiet_hours_start = quiet_hours_start
                             self.quiet_hours_end = quiet_hours_end
                             self.categories = categories
+                            self.browser_categories = browser_categories
+                            self.browser_not_asked = browser_not_asked
                             self.briefing_enabled = briefing_enabled
                             self.briefing_time = briefing_time
                             self.email_digest_enabled = email_digest_enabled
@@ -69899,6 +70050,8 @@ public enum Operations {
                             case quiet_hours_start
                             case quiet_hours_end
                             case categories
+                            case browser_categories
+                            case browser_not_asked
                             case briefing_enabled
                             case briefing_time
                             case email_digest_enabled

@@ -4,7 +4,9 @@ import { type NotificationPreferencesRow, notificationPreferences } from '@maski
 import {
 	NOTIFICATION_PREFERENCES_DEFAULTS,
 	type NotificationPreferencesResponse,
+	PUSH_CATEGORIES,
 	notificationPreferencesResponseSchema,
+	resolveBrowserCategories,
 	updateNotificationPreferencesSchema,
 } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
@@ -31,11 +33,14 @@ function serialize(
 ): NotificationPreferencesResponse {
 	const d = NOTIFICATION_PREFERENCES_DEFAULTS
 	if (!row) {
+		const { browser, notAsked } = resolveBrowserCategories(d.categories, null)
 		return {
 			timezone: d.timezone,
 			quiet_hours_start: d.quiet_hours_start,
 			quiet_hours_end: d.quiet_hours_end,
 			categories: { ...d.categories },
+			browser_categories: browser,
+			browser_not_asked: notAsked,
 			briefing_enabled: d.briefing_enabled,
 			briefing_time: d.briefing_time,
 			email_digest_enabled: emailDigestEnabled,
@@ -43,11 +48,15 @@ function serialize(
 			updated_at: null,
 		}
 	}
+	const categories = { ...d.categories, ...row.categories }
+	const { browser, notAsked } = resolveBrowserCategories(categories, row.browserCategories)
 	return {
 		timezone: row.timezone,
 		quiet_hours_start: row.quietHoursStart,
 		quiet_hours_end: row.quietHoursEnd,
-		categories: { ...d.categories, ...row.categories },
+		categories,
+		browser_categories: browser,
+		browser_not_asked: notAsked,
 		briefing_enabled: row.briefingEnabled,
 		briefing_time: row.briefingTime,
 		email_digest_enabled: emailDigestEnabled,
@@ -119,6 +128,18 @@ app.openapi(putRoute, async (c) => {
 	// Only the push fields are read from `current`; the email state is not needed here.
 	const current = serialize(existing, false)
 
+	// A kind never asked about follows its push switch. Changing that push switch must not drag the
+	// browser along, so the browser value it had is saved first.
+	const browserCategories: Record<string, boolean> = {
+		...existing?.browserCategories,
+		...body.browser_categories,
+	}
+	for (const kind of PUSH_CATEGORIES) {
+		if (body.categories?.[kind] !== undefined && browserCategories[kind] === undefined) {
+			browserCategories[kind] = current.browser_categories[kind]
+		}
+	}
+
 	const now = new Date()
 	const values = {
 		timezone: body.timezone !== undefined ? body.timezone : current.timezone,
@@ -127,6 +148,7 @@ app.openapi(putRoute, async (c) => {
 		quietHoursEnd:
 			body.quiet_hours_end !== undefined ? body.quiet_hours_end : current.quiet_hours_end,
 		categories: { ...current.categories, ...body.categories },
+		browserCategories: Object.keys(browserCategories).length > 0 ? browserCategories : null,
 		briefingEnabled: body.briefing_enabled ?? current.briefing_enabled,
 		briefingTime: body.briefing_time ?? current.briefing_time,
 		mutedWorkspaceIds: [...new Set(body.muted_workspace_ids ?? current.muted_workspace_ids)],

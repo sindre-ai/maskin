@@ -91,3 +91,58 @@ test('A saved-off "Needs you" stays editable so it can be turned back on', async
 	// Once on it is locked again.
 	await expect(needsYou).toBeDisabled()
 })
+
+for (const vp of SHIP_GATE_VIEWPORTS) {
+	test(`Each kind has a Browser switch next to Push, and a new sign-up starts with Tips off @ ${vp.label}`, async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize({ width: vp.width, height: vp.height })
+		await page.goto(`/${account.workspaceId}/settings/notifications`)
+
+		const browser = (name: string) =>
+			page.getByRole('switch', { name: `${name} in the browser`, exact: true })
+		await expect(browser('Chat replies')).toBeVisible({ timeout: 15_000 })
+
+		// Every kind has one, and it can be turned on for any kind.
+		for (const kind of ['Needs you', 'Chat replies', 'Digests', 'Tips and updates']) {
+			await expect(browser(kind)).toBeVisible()
+		}
+		await expect(page.getByText('Not asked').first()).toBeVisible()
+
+		// Browser is its own switch: turning it off leaves Push on.
+		await browser('Chat replies').click()
+		await expect(browser('Chat replies')).not.toBeChecked()
+		await expect(page.getByRole('switch', { name: 'Chat replies', exact: true })).toBeChecked()
+
+		await page.reload()
+		await expect(browser('Chat replies')).not.toBeChecked({ timeout: 15_000 })
+		await expect(page.getByRole('switch', { name: 'Chat replies', exact: true })).toBeChecked()
+
+		expect(
+			await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth),
+		).toBe(false)
+	})
+}
+
+test('A new sign-up starts with Tips off for push and the browser, the rest on', async ({
+	page,
+	account,
+}) => {
+	await page.goto(`/${account.workspaceId}/settings/notifications`)
+	await expect(page.getByRole('switch', { name: 'Chat replies', exact: true })).toBeChecked({
+		timeout: 15_000,
+	})
+	for (const name of ['Needs you', 'Chat replies', 'Digests']) {
+		await expect(page.getByRole('switch', { name, exact: true })).toBeChecked()
+		await expect(
+			page.getByRole('switch', { name: `${name} in the browser`, exact: true }),
+		).toBeChecked()
+	}
+	await expect(
+		page.getByRole('switch', { name: 'Tips and updates', exact: true }),
+	).not.toBeChecked()
+	await expect(
+		page.getByRole('switch', { name: 'Tips and updates in the browser', exact: true }),
+	).not.toBeChecked()
+})

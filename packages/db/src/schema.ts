@@ -2795,6 +2795,9 @@ export const notificationPreferences = pgTable(
 			.$type<Record<string, boolean>>()
 			.notNull()
 			.default(sql`'{"needs_you":true,"conversation":true,"digest":true,"tips":true}'::jsonb`),
+		// Browser switch per kind, e.g. { conversation: false }. null or a missing kind means never
+		// asked: it follows that kind's push switch. Empty on every existing row. Migration 0139.
+		browserCategories: jsonb('browser_categories').$type<Record<string, boolean>>(),
 		briefingEnabled: boolean('briefing_enabled').notNull().default(true),
 		briefingTime: smallint('briefing_time').notNull().default(510),
 		mutedWorkspaceIds: uuid('muted_workspace_ids').array().notNull().default(sql`'{}'::uuid[]`),

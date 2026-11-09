@@ -58924,6 +58924,41 @@
 												"tips"
 											]
 										},
+										"browser_categories": {
+											"type": "object",
+											"properties": {
+												"needs_you": {
+													"type": "boolean"
+												},
+												"conversation": {
+													"type": "boolean"
+												},
+												"digest": {
+													"type": "boolean"
+												},
+												"tips": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"needs_you",
+												"conversation",
+												"digest",
+												"tips"
+											]
+										},
+										"browser_not_asked": {
+											"type": "array",
+											"items": {
+												"type": "string",
+												"enum": [
+													"needs_you",
+													"conversation",
+													"digest",
+													"tips"
+												]
+											}
+										},
 										"briefing_enabled": {
 											"type": "boolean"
 										},
@@ -58954,6 +58989,8 @@
 										"quiet_hours_start",
 										"quiet_hours_end",
 										"categories",
+										"browser_categories",
+										"browser_not_asked",
 										"briefing_enabled",
 										"briefing_time",
 										"email_digest_enabled",
@@ -59003,6 +59040,23 @@
 										"maximum": 1439
 									},
 									"categories": {
+										"type": "object",
+										"properties": {
+											"needs_you": {
+												"type": "boolean"
+											},
+											"conversation": {
+												"type": "boolean"
+											},
+											"digest": {
+												"type": "boolean"
+											},
+											"tips": {
+												"type": "boolean"
+											}
+										}
+									},
+									"browser_categories": {
 										"type": "object",
 										"properties": {
 											"needs_you": {
@@ -59098,6 +59152,41 @@
 												"tips"
 											]
 										},
+										"browser_categories": {
+											"type": "object",
+											"properties": {
+												"needs_you": {
+													"type": "boolean"
+												},
+												"conversation": {
+													"type": "boolean"
+												},
+												"digest": {
+													"type": "boolean"
+												},
+												"tips": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"needs_you",
+												"conversation",
+												"digest",
+												"tips"
+											]
+										},
+										"browser_not_asked": {
+											"type": "array",
+											"items": {
+												"type": "string",
+												"enum": [
+													"needs_you",
+													"conversation",
+													"digest",
+													"tips"
+												]
+											}
+										},
 										"briefing_enabled": {
 											"type": "boolean"
 										},
@@ -59128,6 +59217,8 @@
 										"quiet_hours_start",
 										"quiet_hours_end",
 										"categories",
+										"browser_categories",
+										"browser_not_asked",
 										"briefing_enabled",
 										"briefing_time",
 										"email_digest_enabled",
