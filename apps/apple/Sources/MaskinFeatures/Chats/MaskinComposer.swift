@@ -161,6 +161,13 @@ struct MaskinComposer: View {
 					.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, MaskinSpace.s5)
 					.onTapGesture { model.notice = nil }
 			}
+			#if os(iOS)
+			// Server dictation gave way to the phone's recogniser by itself: say why, not only that.
+			if let note = dictation.fallbackNote {
+				Text(note).maskinText(.caption).foregroundStyle(MaskinColor.ink2)
+					.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, MaskinSpace.s5)
+			}
+			#endif
 		}
 		.animation(MaskinMotion.quick, value: lastSlot)
 		.animation(MaskinMotion.quick, value: isDictating)

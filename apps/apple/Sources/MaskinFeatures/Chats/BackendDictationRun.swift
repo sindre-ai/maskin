@@ -14,9 +14,11 @@ final class BackendDictationRun {
 	/// How long Done waits for the last phrases before giving up on them.
 	static let finishTimeout: Duration = .seconds(10)
 
-	private let engine = AVAudioEngine()
+	/// Built in `start()`, once the audio session is active, like the phone recogniser's engine: one made
+	/// earlier is set up for whatever the session was before and can report a configuration change at once.
+	private var engine: AVAudioEngine?
 	private let queue: PhraseTranscriptionQueue
-	private let onFailure: @MainActor () -> Void
+	private let onFailure: @MainActor (DictationFallback) -> Void
 	private let onInterrupted: @MainActor () -> Void
 	private let onLimit: @MainActor () -> Void
 	private var capture: PhraseCapture?
@@ -30,12 +32,12 @@ final class BackendDictationRun {
 	init(
 		service: any SpeechTranscribing, language: String?,
 		onText: @escaping @MainActor (String) -> Void,
-		onFailure: @escaping @MainActor () -> Void,
+		onFailure: @escaping @MainActor (DictationFallback) -> Void,
 		onInterrupted: @escaping @MainActor () -> Void,
 		onLimit: @escaping @MainActor () -> Void
 	) {
 		queue = PhraseTranscriptionQueue(
-			transcriber: service, language: language, onText: onText, onFailure: { _ in onFailure() })
+			transcriber: service, language: language, onText: onText, onFailure: { onFailure(.failed($0)) })
 		self.onFailure = onFailure
 		self.onInterrupted = onInterrupted
 		self.onLimit = onLimit
@@ -46,6 +48,8 @@ final class BackendDictationRun {
 		let session = AVAudioSession.sharedInstance()
 		try session.setCategory(.record, mode: .measurement, options: .duckOthers)
 		try session.setActive(true, options: .notifyOthersOnDeactivation)
+		let engine = AVAudioEngine()
+		self.engine = engine
 		let input = engine.inputNode
 		let format = input.outputFormat(forBus: 0)
 		guard format.sampleRate > 0, format.channelCount > 0 else { throw CaptureError.noInput }
@@ -64,13 +68,12 @@ final class BackendDictationRun {
 			guard !Task.isCancelled else { return }
 			self?.onLimit()
 		}
-		let engine = self.engine
 		watchers = [
 			Task { @MainActor [weak self] in
 				for await _ in NotificationCenter.default.notifications(
 					named: .AVAudioEngineConfigurationChange, object: engine
 				).map({ _ in () }) {
-					self?.onFailure()
+					self?.onFailure(.engineChanged)
 				}
 			},
 			Task { @MainActor [weak self] in
@@ -102,8 +105,11 @@ final class BackendDictationRun {
 		timer?.cancel()
 		watchers.forEach { $0.cancel() }
 		watchers = []
-		if engine.isRunning { engine.stop() }
-		engine.inputNode.removeTap(onBus: 0)
+		if let engine {
+			if engine.isRunning { engine.stop() }
+			engine.inputNode.removeTap(onBus: 0)
+		}
+		engine = nil
 		capture?.finish()
 	}
 
