@@ -354,7 +354,7 @@ function ChatConversationList({
 						<>
 							{groups.map((group) => (
 								<div key={group.key} className="flex flex-col gap-px">
-									<div className="flex items-center gap-2 px-2 pt-3 pb-1.5 text-[13px]">
+									<div className="flex items-center gap-2 px-2 pt-3.5 pb-3 text-[15px]">
 										<button
 											type="button"
 											aria-expanded={!collapsed.has(group.key)}

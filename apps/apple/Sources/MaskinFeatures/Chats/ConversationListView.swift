@@ -527,8 +527,8 @@ struct TeamSectionHeader<Trailing: View>: View {
 	var body: some View {
 		HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s4) {
 			Text(label)
-				.maskinText(.subhead).fontWeight(.semibold)
-				.foregroundStyle(MaskinColor.ink3)
+				.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold, relativeTo: .subheadline))
+				.foregroundStyle(MaskinColor.ink)
 			if let count {
 				Text("\(count)")
 					.maskinText(.subhead)
@@ -539,7 +539,7 @@ struct TeamSectionHeader<Trailing: View>: View {
 			trailing
 		}
 		.textCase(nil)
-		.padding(.top, MaskinSpace.s3)
+		.padding(.top, MaskinSpace.s12)
 		.accessibilityElement(children: .combine)
 		.accessibilityAddTraits(.isHeader)
 	}
