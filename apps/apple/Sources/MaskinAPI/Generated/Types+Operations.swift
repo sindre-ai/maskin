@@ -46287,6 +46287,1016 @@ public enum Operations {
             }
         }
     }
+    /// The auto top-up rule and whether the last automatic charge failed
+    ///
+    /// - Remark: HTTP `GET /api/billing/auto-top-up`.
+    /// - Remark: Generated from `#/paths//api/billing/auto-top-up/get`.
+    public enum get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up {
+        public static let id: Swift.String = "get/api/billing/auto-top-up"
+        public struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/header`.
+            public struct Headers: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/header/x-workspace-id`.
+                public var x_hyphen_workspace_hyphen_id: Swift.String
+                public var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - x_hyphen_workspace_hyphen_id:
+                ///   - accept:
+                public init(
+                    x_hyphen_workspace_hyphen_id: Swift.String,
+                    accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.AcceptableContentType>] = .defaultValues()
+                ) {
+                    self.x_hyphen_workspace_hyphen_id = x_hyphen_workspace_hyphen_id
+                    self.accept = accept
+                }
+            }
+            public var headers: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Input.Headers
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - headers:
+            public init(headers: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Input.Headers) {
+                self.headers = headers
+            }
+        }
+        @frozen public enum Output: Sendable, Hashable {
+            public struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content/json/auto_top_up`.
+                        public struct auto_top_upPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content/json/auto_top_up/enabled`.
+                            public var enabled: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content/json/auto_top_up/threshold_cents`.
+                            public var threshold_cents: Swift.Int
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content/json/auto_top_up/amount_cents`.
+                            public var amount_cents: Swift.Int
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content/json/auto_top_up/threshold_dkk_approx`.
+                            public var threshold_dkk_approx: Swift.Int
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content/json/auto_top_up/amount_dkk_approx`.
+                            public var amount_dkk_approx: Swift.Int
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content/json/auto_top_up/status`.
+                            @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case ok = "ok"
+                                case failed = "failed"
+                            }
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content/json/auto_top_up/status`.
+                            public var status: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload.auto_top_upPayload.statusPayload
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content/json/auto_top_up/failure_reason`.
+                            @frozen public enum failure_reasonPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case card_declined = "card_declined"
+                                case no_payment_method = "no_payment_method"
+                                case authentication_required = "authentication_required"
+                                case charge_error = "charge_error"
+                            }
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content/json/auto_top_up/failure_reason`.
+                            public var failure_reason: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload.auto_top_upPayload.failure_reasonPayload?
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content/json/auto_top_up/failed_at`.
+                            public var failed_at: Swift.Int?
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content/json/auto_top_up/last_charged_at`.
+                            public var last_charged_at: Swift.Int?
+                            /// Creates a new `auto_top_upPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - enabled:
+                            ///   - threshold_cents:
+                            ///   - amount_cents:
+                            ///   - threshold_dkk_approx:
+                            ///   - amount_dkk_approx:
+                            ///   - status:
+                            ///   - failure_reason:
+                            ///   - failed_at:
+                            ///   - last_charged_at:
+                            public init(
+                                enabled: Swift.Bool,
+                                threshold_cents: Swift.Int,
+                                amount_cents: Swift.Int,
+                                threshold_dkk_approx: Swift.Int,
+                                amount_dkk_approx: Swift.Int,
+                                status: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload.auto_top_upPayload.statusPayload,
+                                failure_reason: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload.auto_top_upPayload.failure_reasonPayload? = nil,
+                                failed_at: Swift.Int? = nil,
+                                last_charged_at: Swift.Int? = nil
+                            ) {
+                                self.enabled = enabled
+                                self.threshold_cents = threshold_cents
+                                self.amount_cents = amount_cents
+                                self.threshold_dkk_approx = threshold_dkk_approx
+                                self.amount_dkk_approx = amount_dkk_approx
+                                self.status = status
+                                self.failure_reason = failure_reason
+                                self.failed_at = failed_at
+                                self.last_charged_at = last_charged_at
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case enabled
+                                case threshold_cents
+                                case amount_cents
+                                case threshold_dkk_approx
+                                case amount_dkk_approx
+                                case status
+                                case failure_reason
+                                case failed_at
+                                case last_charged_at
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content/json/auto_top_up`.
+                        public var auto_top_up: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload.auto_top_upPayload?
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - auto_top_up:
+                        public init(auto_top_up: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload.auto_top_upPayload? = nil) {
+                            self.auto_top_up = auto_top_up
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case auto_top_up
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content/application\/json`.
+                    case json(Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// The rule (null until one has been saved)
+            ///
+            /// - Remark: Generated from `#/paths//api/billing/auto-top-up/get/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            public var ok: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct NotFound: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/404/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/404/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/404/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/404/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/404/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/404/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/404/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/404/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/404/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/404/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/404/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/404/content/json/error/details`.
+                            public var details: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/404/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/404/content/json/error`.
+                        public var error: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/404/content/application\/json`.
+                    case json(Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body
+                /// Creates a new `NotFound`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body) {
+                    self.body = body
+                }
+            }
+            /// Workspace not found
+            ///
+            /// - Remark: Generated from `#/paths//api/billing/auto-top-up/get/responses/404`.
+            ///
+            /// HTTP response code: `404 notFound`.
+            case notFound(Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound)
+            /// The associated value of the enum case if `self` is `.notFound`.
+            ///
+            /// - Throws: An error if `self` is not `.notFound`.
+            /// - SeeAlso: `.notFound`.
+            public var notFound: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound {
+                get throws {
+                    switch self {
+                    case let .notFound(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Undocumented response.
+            ///
+            /// A response with a code that is not documented in the OpenAPI document.
+            case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
+        }
+        @frozen public enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            public init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            public var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            public static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
+    /// Save the auto top-up rule (also clears a failed state and retries on the next debit)
+    ///
+    /// - Remark: HTTP `PUT /api/billing/auto-top-up`.
+    /// - Remark: Generated from `#/paths//api/billing/auto-top-up/put`.
+    public enum put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up {
+        public static let id: Swift.String = "put/api/billing/auto-top-up"
+        public struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/header`.
+            public struct Headers: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/header/x-workspace-id`.
+                public var x_hyphen_workspace_hyphen_id: Swift.String
+                public var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - x_hyphen_workspace_hyphen_id:
+                ///   - accept:
+                public init(
+                    x_hyphen_workspace_hyphen_id: Swift.String,
+                    accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.AcceptableContentType>] = .defaultValues()
+                ) {
+                    self.x_hyphen_workspace_hyphen_id = x_hyphen_workspace_hyphen_id
+                    self.accept = accept
+                }
+            }
+            public var headers: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Input.Headers
+            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/requestBody`.
+            @frozen public enum Body: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/requestBody/json`.
+                public struct jsonPayload: Codable, Hashable, Sendable {
+                    /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/requestBody/json/enabled`.
+                    public var enabled: Swift.Bool
+                    /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/requestBody/json/threshold_cents`.
+                    public var threshold_cents: Swift.Int
+                    /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/requestBody/json/amount_cents`.
+                    public var amount_cents: Swift.Int
+                    /// Creates a new `jsonPayload`.
+                    ///
+                    /// - Parameters:
+                    ///   - enabled:
+                    ///   - threshold_cents:
+                    ///   - amount_cents:
+                    public init(
+                        enabled: Swift.Bool,
+                        threshold_cents: Swift.Int,
+                        amount_cents: Swift.Int
+                    ) {
+                        self.enabled = enabled
+                        self.threshold_cents = threshold_cents
+                        self.amount_cents = amount_cents
+                    }
+                    public enum CodingKeys: String, CodingKey {
+                        case enabled
+                        case threshold_cents
+                        case amount_cents
+                    }
+                }
+                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/requestBody/content/application\/json`.
+                case json(Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Input.Body.jsonPayload)
+            }
+            public var body: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Input.Body
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - headers:
+            ///   - body:
+            public init(
+                headers: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Input.Headers,
+                body: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Input.Body
+            ) {
+                self.headers = headers
+                self.body = body
+            }
+        }
+        @frozen public enum Output: Sendable, Hashable {
+            public struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content/json/auto_top_up`.
+                        public struct auto_top_upPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content/json/auto_top_up/enabled`.
+                            public var enabled: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content/json/auto_top_up/threshold_cents`.
+                            public var threshold_cents: Swift.Int
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content/json/auto_top_up/amount_cents`.
+                            public var amount_cents: Swift.Int
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content/json/auto_top_up/threshold_dkk_approx`.
+                            public var threshold_dkk_approx: Swift.Int
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content/json/auto_top_up/amount_dkk_approx`.
+                            public var amount_dkk_approx: Swift.Int
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content/json/auto_top_up/status`.
+                            @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case ok = "ok"
+                                case failed = "failed"
+                            }
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content/json/auto_top_up/status`.
+                            public var status: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload.auto_top_upPayload.statusPayload
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content/json/auto_top_up/failure_reason`.
+                            @frozen public enum failure_reasonPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case card_declined = "card_declined"
+                                case no_payment_method = "no_payment_method"
+                                case authentication_required = "authentication_required"
+                                case charge_error = "charge_error"
+                            }
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content/json/auto_top_up/failure_reason`.
+                            public var failure_reason: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload.auto_top_upPayload.failure_reasonPayload?
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content/json/auto_top_up/failed_at`.
+                            public var failed_at: Swift.Int?
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content/json/auto_top_up/last_charged_at`.
+                            public var last_charged_at: Swift.Int?
+                            /// Creates a new `auto_top_upPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - enabled:
+                            ///   - threshold_cents:
+                            ///   - amount_cents:
+                            ///   - threshold_dkk_approx:
+                            ///   - amount_dkk_approx:
+                            ///   - status:
+                            ///   - failure_reason:
+                            ///   - failed_at:
+                            ///   - last_charged_at:
+                            public init(
+                                enabled: Swift.Bool,
+                                threshold_cents: Swift.Int,
+                                amount_cents: Swift.Int,
+                                threshold_dkk_approx: Swift.Int,
+                                amount_dkk_approx: Swift.Int,
+                                status: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload.auto_top_upPayload.statusPayload,
+                                failure_reason: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload.auto_top_upPayload.failure_reasonPayload? = nil,
+                                failed_at: Swift.Int? = nil,
+                                last_charged_at: Swift.Int? = nil
+                            ) {
+                                self.enabled = enabled
+                                self.threshold_cents = threshold_cents
+                                self.amount_cents = amount_cents
+                                self.threshold_dkk_approx = threshold_dkk_approx
+                                self.amount_dkk_approx = amount_dkk_approx
+                                self.status = status
+                                self.failure_reason = failure_reason
+                                self.failed_at = failed_at
+                                self.last_charged_at = last_charged_at
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case enabled
+                                case threshold_cents
+                                case amount_cents
+                                case threshold_dkk_approx
+                                case amount_dkk_approx
+                                case status
+                                case failure_reason
+                                case failed_at
+                                case last_charged_at
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content/json/auto_top_up`.
+                        public var auto_top_up: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload.auto_top_upPayload?
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - auto_top_up:
+                        public init(auto_top_up: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload.auto_top_upPayload? = nil) {
+                            self.auto_top_up = auto_top_up
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case auto_top_up
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content/application\/json`.
+                    case json(Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// Rule saved
+            ///
+            /// - Remark: Generated from `#/paths//api/billing/auto-top-up/put/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            public var ok: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct BadRequest: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/400/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/400/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/400/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/400/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/400/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/400/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/400/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/400/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/400/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/400/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/400/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.BadRequest.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/400/content/json/error/details`.
+                            public var details: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.BadRequest.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/400/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.BadRequest.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/400/content/json/error`.
+                        public var error: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.BadRequest.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.BadRequest.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/400/content/application\/json`.
+                    case json(Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.BadRequest.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.BadRequest.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.BadRequest.Body
+                /// Creates a new `BadRequest`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.BadRequest.Body) {
+                    self.body = body
+                }
+            }
+            /// Workspace cannot be charged automatically yet
+            ///
+            /// - Remark: Generated from `#/paths//api/billing/auto-top-up/put/responses/400`.
+            ///
+            /// HTTP response code: `400 badRequest`.
+            case badRequest(Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.BadRequest)
+            /// The associated value of the enum case if `self` is `.badRequest`.
+            ///
+            /// - Throws: An error if `self` is not `.badRequest`.
+            /// - SeeAlso: `.badRequest`.
+            public var badRequest: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.BadRequest {
+                get throws {
+                    switch self {
+                    case let .badRequest(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "badRequest",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct Forbidden: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/403/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/403/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/403/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/403/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/403/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/403/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/403/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/403/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/403/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/403/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/403/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Forbidden.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/403/content/json/error/details`.
+                            public var details: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Forbidden.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/403/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Forbidden.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/403/content/json/error`.
+                        public var error: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Forbidden.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Forbidden.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/403/content/application\/json`.
+                    case json(Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Forbidden.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Forbidden.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Forbidden.Body
+                /// Creates a new `Forbidden`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Forbidden.Body) {
+                    self.body = body
+                }
+            }
+            /// Caller is not a human workspace admin or owner
+            ///
+            /// - Remark: Generated from `#/paths//api/billing/auto-top-up/put/responses/403`.
+            ///
+            /// HTTP response code: `403 forbidden`.
+            case forbidden(Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Forbidden)
+            /// The associated value of the enum case if `self` is `.forbidden`.
+            ///
+            /// - Throws: An error if `self` is not `.forbidden`.
+            /// - SeeAlso: `.forbidden`.
+            public var forbidden: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Forbidden {
+                get throws {
+                    switch self {
+                    case let .forbidden(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "forbidden",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct NotFound: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/404/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/404/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/404/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/404/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/404/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/404/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/404/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/404/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/404/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/404/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/404/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/404/content/json/error/details`.
+                            public var details: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/404/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/404/content/json/error`.
+                        public var error: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/404/content/application\/json`.
+                    case json(Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body
+                /// Creates a new `NotFound`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body) {
+                    self.body = body
+                }
+            }
+            /// Workspace not found
+            ///
+            /// - Remark: Generated from `#/paths//api/billing/auto-top-up/put/responses/404`.
+            ///
+            /// HTTP response code: `404 notFound`.
+            case notFound(Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound)
+            /// The associated value of the enum case if `self` is `.notFound`.
+            ///
+            /// - Throws: An error if `self` is not `.notFound`.
+            /// - SeeAlso: `.notFound`.
+            public var notFound: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound {
+                get throws {
+                    switch self {
+                    case let .notFound(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Undocumented response.
+            ///
+            /// A response with a code that is not documented in the OpenAPI document.
+            case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
+        }
+        @frozen public enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            public init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            public var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            public static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
     /// Paginated event history
     ///
     /// - Remark: HTTP `GET /api/events/history`.
