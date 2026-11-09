@@ -141,6 +141,24 @@ struct ChatThreadCacheTests {
 		#expect(again.messages.last?.isErrorReply == true)
 		#expect(again.hasEarlier)
 	}
+
+	@Test("a Connect card survives the cache: the reopened thread still has its metadata")
+	func cardKeysKept() async throws {
+		let rig = Rig()
+		defer { rig.cleanUp() }
+		let card = chatMsg(
+			2, by: "cto", agent: true, "Connect **Miro** to continue.",
+			metadata: .object([
+				"integration_connect": .object(["session_id": .string("s"), "provider": .string("miro")]),
+				"source": .string("final_output"),
+			]))
+		let store = thread(rig, FakeChatAPI(server: [chatMsg(1), card]))
+		await store.load()
+		let again = thread(rig, FakeChatAPI())
+		let cached = try #require(again.messages.last)
+		#expect(IntegrationConnectRequest(message: cached)?.provider == "miro")
+		#expect(cached.metadata?["source"] == nil, "stream envelope keys are still dropped")
+	}
 }
 
 @Suite("Chat cache: list")
