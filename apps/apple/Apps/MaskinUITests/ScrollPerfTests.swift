@@ -9,9 +9,12 @@ import XCTest
 ///   DEMO_PERF=1 PORT=3010 node scripts/demo-server/server.mjs
 ///   xcodebuild ... MASKIN_API_BASE_URL=http://localhost:3010 test -only-testing:MaskinUITests/ScrollPerfTests
 ///
-/// Each test runs the same scroll `iterations` times and reports hitch time ratio, hitch count,
-/// peak and average physical memory, and wall time for the scroll itself. Simulator numbers are
-/// useful for comparing two builds on one machine, not as device numbers.
+/// Each screen has two tests that run the same scroll `iterations` times: one reports peak and average
+/// physical memory and wall time for the scroll itself, the other reports hitch time ratio and hitch
+/// count. They are separate because the hitch metric crashes the test process on the simulator, and
+/// that would take the memory and clock numbers with it. On the simulator the hitch tests skip with a
+/// message; they run on a device. Simulator numbers are useful for comparing two builds on one
+/// machine, not as device numbers.
 @MainActor
 final class ScrollPerfTests: XCTestCase {
 	private static let session =
@@ -34,10 +37,19 @@ final class ScrollPerfTests: XCTestCase {
 		return o
 	}
 
-	private func metrics() -> [XCTMetric] {
-		var all: [XCTMetric] = [XCTMemoryMetric(application: app), XCTClockMetric()]
-		if #available(iOS 26.0, *) { all.insert(XCTHitchMetric(application: app), at: 0) }
-		return all
+	private func memoryAndClock() -> [XCTMetric] {
+		[XCTMemoryMetric(application: app), XCTClockMetric()]
+	}
+
+	/// The hitch metric asserts inside MetricKit on the simulator, which ends the whole test process,
+	/// so it is skipped there instead of run.
+	private func hitch() throws -> [XCTMetric] {
+		#if targetEnvironment(simulator)
+			throw XCTSkip("XCTHitchMetric crashes on the simulator (MXMOSSignpostMetric harvestData); hitch needs a device.")
+		#else
+			guard #available(iOS 26.0, *) else { throw XCTSkip("XCTHitchMetric needs iOS 26.") }
+			return [XCTHitchMetric(application: app)]
+		#endif
 	}
 
 	/// Scrolls `swipes` times in `direction` with a fast flick, then puts the screen back.
@@ -48,14 +60,30 @@ final class ScrollPerfTests: XCTestCase {
 		for _ in 0..<swipes { back() }
 	}
 
-	func testChatThreadScroll() throws {
+	/// Waits for the thread row to exist and be tappable. A loaded runner can take well over 20 seconds
+	/// to draw the Team list.
+	private func openChatThread() {
 		app.tabBars.buttons["Chats"].tap()
 		let row = app.staticTexts["Brand shoot"].firstMatch
-		XCTAssertTrue(row.waitForExistence(timeout: 20), "long thread in the Team list")
+		XCTAssertTrue(row.waitForExistence(timeout: 90), "long thread in the Team list")
+		let hittable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isHittable == true"), object: row)
+		XCTAssertEqual(XCTWaiter().wait(for: [hittable], timeout: 90), .completed, "long thread row is tappable")
 		row.tap()
 		// Let the newest page and its first photos arrive before measuring.
 		sleep(6)
-		measure(metrics: metrics(), options: options) {
+	}
+
+	private func openForYou() {
+		app.tabBars.buttons["For you"].tap()
+		// 40 cards and 12 drafts arrive in one response.
+		XCTAssertTrue(
+			app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS 'Contoso renewal terms'"))
+				.firstMatch.waitForExistence(timeout: 30), "feed cards")
+		sleep(3)
+	}
+
+	private func scrollChatThread(metrics: [XCTMetric]) {
+		measure(metrics: metrics, options: options) {
 			scrollRound(
 				swipes: 12,
 				away: { app.swipeDown(velocity: .fast) },
@@ -63,18 +91,34 @@ final class ScrollPerfTests: XCTestCase {
 		}
 	}
 
-	func testForYouScroll() throws {
-		app.tabBars.buttons["For you"].tap()
-		// 40 cards and 12 drafts arrive in one response.
-		XCTAssertTrue(
-			app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS 'Contoso renewal terms'"))
-				.firstMatch.waitForExistence(timeout: 30), "feed cards")
-		sleep(3)
-		measure(metrics: metrics(), options: options) {
+	private func scrollForYou(metrics: [XCTMetric]) {
+		measure(metrics: metrics, options: options) {
 			scrollRound(
 				swipes: 12,
 				away: { app.swipeUp(velocity: .fast) },
 				back: { app.swipeDown(velocity: .fast) })
 		}
+	}
+
+	func testChatThreadScroll() throws {
+		openChatThread()
+		scrollChatThread(metrics: memoryAndClock())
+	}
+
+	func testChatThreadHitch() throws {
+		let metrics = try hitch()
+		openChatThread()
+		scrollChatThread(metrics: metrics)
+	}
+
+	func testForYouScroll() throws {
+		openForYou()
+		scrollForYou(metrics: memoryAndClock())
+	}
+
+	func testForYouHitch() throws {
+		let metrics = try hitch()
+		openForYou()
+		scrollForYou(metrics: metrics)
 	}
 }
