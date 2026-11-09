@@ -586,6 +586,13 @@ async function applyEvent(
 				break
 			}
 			case 'invoice.payment_failed': {
+				const invoice = event.data.object as Stripe.Invoice
+				if (invoice.metadata?.kind === AUTO_TOP_UP_INVOICE_KIND) {
+					// A declined auto top-up is not a plan problem: the charge path
+					// already fails the rule and voids the invoice. Marking the plan
+					// past due here would lock a healthy subscription over a top-up.
+					return
+				}
 				planMutated = true
 				next = { ...next, status: 'past_due' }
 				break
