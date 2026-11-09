@@ -1,5 +1,6 @@
 import type { Database, Transaction } from '@maskin/db'
 import { events, notificationPreferences, workspaceMembers } from '@maskin/db/schema'
+import { NEW_SIGNUP_PUSH_CATEGORIES } from '@maskin/shared'
 import { and, eq, gt, inArray, ne, or } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 
@@ -58,8 +59,8 @@ export async function resolveEmailDigestEnabled(
 }
 
 /**
- * Gives a new human account a saved settings row with email on. Runs in the sign-up transaction.
- * An existing row is left alone: a saved choice always wins.
+ * Gives a new human account a saved settings row with email on and the calmer push start (Tips
+ * off). Runs in the sign-up transaction. An existing row is left alone: a saved choice always wins.
  */
 export async function createEmailOnPreferences(
 	writer: Database | Transaction,
@@ -67,7 +68,7 @@ export async function createEmailOnPreferences(
 ): Promise<void> {
 	await writer
 		.insert(notificationPreferences)
-		.values({ actorId, emailDigestEnabled: true })
+		.values({ actorId, emailDigestEnabled: true, categories: { ...NEW_SIGNUP_PUSH_CATEGORIES } })
 		.onConflictDoNothing({ target: notificationPreferences.actorId })
 }
 

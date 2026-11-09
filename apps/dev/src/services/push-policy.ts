@@ -39,7 +39,18 @@ export interface PushPrefs {
 	quietHoursStart: number | null
 	quietHoursEnd: number | null
 	categories: Record<PushCategory, boolean>
+	/** The Browser switch per kind. A kind left out (not asked) follows `categories`. */
+	browserCategories?: Partial<Record<PushCategory, boolean>>
 	mutedWorkspaceIds: string[]
+}
+
+/** Which channel families a kind may reach: the phone apps ("push") and the browser. */
+export function channelsWanted(
+	prefs: Pick<PushPrefs, 'categories' | 'browserCategories'>,
+	category: PushCategory,
+): { push: boolean; browser: boolean } {
+	const push = prefs.categories[category] !== false
+	return { push, browser: prefs.browserCategories?.[category] ?? push }
 }
 
 export const DEFAULT_PUSH_PREFS: PushPrefs = {
@@ -229,7 +240,8 @@ export function evaluatePush({
 	const collapseKey = collapseKeyOf(meta) ?? undefined
 	const skip = (reason: string): PushVerdict => ({ action: 'skip', interruption: 'active', reason })
 
-	if (prefs.categories[category] === false) return skip('category-disabled')
+	const wanted = channelsWanted(prefs, category)
+	if (!wanted.push && !wanted.browser) return skip('category-disabled')
 
 	// An agent's plain @mention is context, not a decision: it stays in the app. A mention a
 	// person wrote, one that carries a decision block, and every card or chat question still push.

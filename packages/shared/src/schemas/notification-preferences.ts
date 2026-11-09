@@ -16,6 +16,35 @@ export const NOTIFICATION_PREFERENCES_DEFAULTS = {
 	muted_workspace_ids: [] as string[],
 } as const
 
+/**
+ * What a new sign-up starts with: Needs you, Chat replies and Digests on, Tips off. Stored on the
+ * sign-up row only. A person with no row, or a row from before, keeps everything on.
+ */
+export const NEW_SIGNUP_PUSH_CATEGORIES = {
+	needs_you: true,
+	conversation: true,
+	digest: true,
+	tips: false,
+} as const
+
+/**
+ * The Browser switch per kind. A kind that was never saved is "not asked": it follows that kind's
+ * Push switch, so the person gets the same as before the Browser column existed.
+ */
+export function resolveBrowserCategories(
+	push: Record<PushCategory, boolean>,
+	saved: Partial<Record<PushCategory, boolean>> | null | undefined,
+): { browser: Record<PushCategory, boolean>; notAsked: PushCategory[] } {
+	const browser = { ...push }
+	const notAsked: PushCategory[] = []
+	for (const kind of PUSH_CATEGORIES) {
+		const value = saved?.[kind]
+		if (typeof value === 'boolean') browser[kind] = value
+		else notAsked.push(kind)
+	}
+	return { browser, notAsked }
+}
+
 /** True when `tz` is a timezone the runtime's Intl database knows (IANA names, `UTC`). */
 export function isValidTimezone(tz: string): boolean {
 	if (!/^[A-Za-z][A-Za-z0-9_+\-]*(\/[A-Za-z0-9_+\-]+)*$/.test(tz)) return false
@@ -47,6 +76,9 @@ export const notificationPreferencesResponseSchema = z.object({
 	quiet_hours_start: minuteOfDay.nullable(),
 	quiet_hours_end: minuteOfDay.nullable(),
 	categories: notificationCategoriesSchema,
+	/** The Browser switch per kind; a kind listed in `browser_not_asked` follows its Push switch. */
+	browser_categories: notificationCategoriesSchema,
+	browser_not_asked: z.array(pushCategorySchema),
 	briefing_enabled: z.boolean(),
 	briefing_time: minuteOfDay,
 	/**
@@ -71,6 +103,7 @@ export const updateNotificationPreferencesSchema = z
 		quiet_hours_start: minuteOfDay.nullable(),
 		quiet_hours_end: minuteOfDay.nullable(),
 		categories: notificationCategoriesSchema.partial(),
+		browser_categories: notificationCategoriesSchema.partial(),
 		briefing_enabled: z.boolean(),
 		briefing_time: minuteOfDay,
 		email_digest_enabled: z.boolean(),

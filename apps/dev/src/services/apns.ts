@@ -385,6 +385,7 @@ export interface ApnsSenderOptions {
 }
 
 export class ApnsSender implements PushChannel {
+	readonly channelKind = 'push' as const
 	private config: ApnsConfig | null
 	private transport: ApnsTransport
 	private now: () => number

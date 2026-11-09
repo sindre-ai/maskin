@@ -15,6 +15,8 @@ describe('GET /api/notification-preferences', () => {
 			quiet_hours_start: null,
 			quiet_hours_end: null,
 			categories: { needs_you: true, conversation: true, digest: true, tips: true },
+			browser_categories: { needs_you: true, conversation: true, digest: true, tips: true },
+			browser_not_asked: ['needs_you', 'conversation', 'digest', 'tips'],
 			briefing_enabled: true,
 			briefing_time: 510,
 			email_digest_enabled: false,

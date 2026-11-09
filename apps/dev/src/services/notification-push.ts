@@ -17,6 +17,7 @@ import {
 	type PushPrefs,
 	type PushVerdict,
 	type RecentPush,
+	channelsWanted,
 	collapseKeyOf,
 	delaySecondsOf,
 	dueAtOf,
@@ -344,7 +345,9 @@ export class NotificationPushFanout {
 
 		this.record(n, meta, category, verdict, nowMs)
 		// allSettled: a channel that throws (sendToActor should not) must not starve the others.
-		await Promise.allSettled(channels.map((c) => c.sendToActor(targetActorId, message)))
+		const wanted = channelsWanted(prefs, category)
+		const targets = channels.filter((c) => c.channelKind === undefined || wanted[c.channelKind])
+		await Promise.allSettled(targets.map((c) => c.sendToActor(targetActorId, message)))
 	}
 
 	private record(
@@ -467,6 +470,7 @@ export class NotificationPushFanout {
 				quietHoursStart: row.quietHoursStart,
 				quietHoursEnd: row.quietHoursEnd,
 				categories: { ...DEFAULT_PUSH_PREFS.categories, ...row.categories },
+				browserCategories: row.browserCategories ?? undefined,
 				mutedWorkspaceIds: row.mutedWorkspaceIds ?? [],
 			}
 		} catch (err) {
