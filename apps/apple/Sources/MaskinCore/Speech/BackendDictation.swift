@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Speech to text on the Maskin server (`POST /api/transcriptions`), as a seam so dictation logic
 /// tests without a network.
@@ -25,6 +26,55 @@ public enum DictationLanguage {
 		guard (2...3).contains(code.count), code.allSatisfy({ $0 >= "a" && $0 <= "z" }) else { return nil }
 		return code
 	}
+}
+
+/// Why server dictation handed over to the phone's recogniser when the person did not ask for it.
+/// `note` is the plain-words line shown under the composer; `detail` goes in the log for a
+/// TestFlight session (a status code or a system error, never audio or text).
+public enum DictationFallback: Equatable, Sendable {
+	/// The microphone would not open for the server session.
+	case microphoneStart(String)
+	/// The audio engine reported a configuration change, which the server session treats as a loss.
+	case engineChanged
+	/// A transcription request failed: the HTTP status when the server answered, else the system error.
+	case request(status: Int?, detail: String)
+
+	public static func failed(_ error: Error) -> DictationFallback {
+		if let error = error as? BackendDictationError {
+			return .request(status: error.status, detail: "HTTP \(error.status.map(String.init) ?? "unknown")")
+		}
+		let ns = error as NSError
+		return .request(status: nil, detail: "\(ns.domain) \(ns.code)")
+	}
+
+	public var note: String {
+		"Server dictation unavailable (\(reason)), using the phone."
+	}
+
+	public var detail: String {
+		switch self {
+		case .microphoneStart(let message): return "microphone did not start: \(message)"
+		case .engineChanged: return "audio engine configuration changed"
+		case .request(_, let detail): return "request failed: \(detail)"
+		}
+	}
+
+	private var reason: String {
+		switch self {
+		case .microphoneStart: return "the microphone didn't start"
+		case .engineChanged: return "the audio changed"
+		case .request(let status, _):
+			guard let status else { return "no answer from the server" }
+			switch status {
+			case 429: return "the speech service is busy, \(status)"
+			case 400, 413: return "the recording was refused, \(status)"
+			case 500, 502, 503, 504: return "the speech service isn't answering, \(status)"
+			default: return "the server answered \(status)"
+			}
+		}
+	}
+
+	public static let log = Logger(subsystem: "io.maskin.app", category: "dictation")
 }
 
 /// Sends dictated phrases to the server as they close and hands the text back in speaking order,
