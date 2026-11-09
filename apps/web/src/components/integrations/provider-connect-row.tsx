@@ -173,7 +173,6 @@ export function ProviderRow({
 			: undefined
 	const introNeedsReconnect = introState === 'needs_reconnect' || reconnect
 	const connectLabel = reconnect ? 'Reconnect' : 'Connect'
-
 	const disconnectAccount = integration?.externalId
 		? provider.externalIdDisplay === 'email'
 			? integration.externalId
@@ -181,76 +180,74 @@ export function ProviderRow({
 		: undefined
 
 	return (
-		<>
-			<ProviderCard
-				name={provider.displayName}
-				badge={isDrive && <StatusPill tone="new">{DRIVE_COPY.providerCard.pill}</StatusPill>}
-				compact={introState !== undefined}
-				chat={variant === 'chat'}
-				subtitle={introSubtitle ?? connectedLabel}
-				tone={
-					needsReconnect || (introState && introNeedsReconnect)
-						? 'warning'
-						: isConnected
-							? 'connected'
-							: 'available'
-				}
-				subtitleTitle={needsReconnect ? integration?.missingScopes?.join(', ') : undefined}
-				status={
-					isConnected
-						? needsReconnect
-							? { tone: 'warn', label: 'Reconnect needed' }
-							: { tone: 'ok', label: 'Connected' }
-						: undefined
-				}
-				notes={
-					<>
-						{isDrive && (
+		<ProviderCard
+			name={provider.displayName}
+			badge={isDrive && <StatusPill tone="new">{DRIVE_COPY.providerCard.pill}</StatusPill>}
+			compact={introState !== undefined}
+			chat={variant === 'chat'}
+			subtitle={introSubtitle ?? connectedLabel}
+			tone={
+				needsReconnect || (introState && introNeedsReconnect)
+					? 'warning'
+					: isConnected
+						? 'connected'
+						: 'available'
+			}
+			subtitleTitle={needsReconnect ? integration?.missingScopes?.join(', ') : undefined}
+			status={
+				isConnected
+					? needsReconnect
+						? { tone: 'warn', label: 'Reconnect needed' }
+						: { tone: 'ok', label: 'Connected' }
+					: undefined
+			}
+			notes={
+				<>
+					{isDrive && (
+						<>
+							<p className="text-xs text-muted-foreground">{DRIVE_COPY.providerCard.description}</p>
+							<p className="text-xs text-muted-foreground">{DRIVE_COPY.providerCard.meta}</p>
+						</>
+					)}
+					{isFreeIdentityAddon && (
+						<p className="text-xs text-muted-foreground">
+							Included in your enterprise plan — no per-identity charge.
+						</p>
+					)}
+					{isPaidIdentityAddon && (
+						<p className="text-xs text-muted-foreground">
+							{isConnected
+								? '$49/month per connected identity, billed on your Maskin subscription. Disconnecting stops the charge at the end of the current period.'
+								: '$49/month per connected identity, added to your Maskin subscription.'}
+						</p>
+					)}
+				</>
+			}
+			actions={
+				isConnected ? (
+					<div className="flex shrink-0 items-center gap-2">
+						{driveDetailsLink}
+						{needsReconnect && (
+							<ViewerTooltip>
+								<Button
+									variant="outline"
+									size="sm"
+									className={PILL_BUTTON}
+									onClick={handleConnect}
+									disabled={connect.isPending || !canWrite}
+								>
+									Reconnect
+								</Button>
+							</ViewerTooltip>
+						)}
+						{variant === 'chat' ? (
+							// The intro's row already warns and offers Reconnect; a disabled
+							// "Connected" beside it would say the opposite.
+							introState && needsReconnect ? null : (
+								<ConnectedButton />
+							)
+						) : (
 							<>
-								<p className="text-xs text-muted-foreground">
-									{DRIVE_COPY.providerCard.description}
-								</p>
-								<p className="text-xs text-muted-foreground">{DRIVE_COPY.providerCard.meta}</p>
-							</>
-						)}
-						{isFreeIdentityAddon && (
-							<p className="text-xs text-muted-foreground">
-								Included in your enterprise plan — no per-identity charge.
-							</p>
-						)}
-						{isPaidIdentityAddon && (
-							<p className="text-xs text-muted-foreground">
-								{isConnected
-									? '$49/month per connected identity, billed on your Maskin subscription. Disconnecting stops the charge at the end of the current period.'
-									: '$49/month per connected identity, added to your Maskin subscription.'}
-							</p>
-						)}
-					</>
-				}
-				actions={
-					isConnected ? (
-						<div className="flex shrink-0 items-center gap-2">
-							{driveDetailsLink}
-							{needsReconnect && (
-								<ViewerTooltip>
-									<Button
-										variant="outline"
-										size="sm"
-										className={PILL_BUTTON}
-										onClick={handleConnect}
-										disabled={connect.isPending || !canWrite}
-									>
-										Reconnect
-									</Button>
-								</ViewerTooltip>
-							)}
-							{variant === 'chat' ? (
-								// The intro's row already warns and offers Reconnect; a disabled
-								// "Connected" beside it would say the opposite.
-								introState && needsReconnect ? null : (
-									<ConnectedButton />
-								)
-							) : (
 								<ViewerTooltip>
 									<Button
 										variant="ghost"
@@ -262,71 +259,71 @@ export function ProviderRow({
 										Disconnect
 									</Button>
 								</ViewerTooltip>
-							)}
-						</div>
-					) : (
-						<div className="flex shrink-0 items-center gap-2">
-							{driveDetailsLink}
-							{linkableCount > 0 && (
-								<ViewerTooltip>
-									<Button
-										variant="outline"
-										size="sm"
-										className={PILL_BUTTON}
-										onClick={onRequestLink}
-										disabled={!canWrite}
-									>
-										<Link2 className="mr-1 h-3.5 w-3.5" />
-										Add existing
-									</Button>
-								</ViewerTooltip>
-							)}
+								<DisconnectConfirmDialog
+									open={confirmingDisconnect}
+									onClose={() => setConfirmingDisconnect(false)}
+									name={provider.displayName}
+									account={disconnectAccount}
+									billingNote={isPaidIdentityAddon}
+									pending={disconnect.isPending}
+									onConfirm={() =>
+										disconnect.mutate(integration.id, {
+											onSettled: () => setConfirmingDisconnect(false),
+										})
+									}
+								/>
+							</>
+						)}
+					</div>
+				) : (
+					<div className="flex shrink-0 items-center gap-2">
+						{driveDetailsLink}
+						{linkableCount > 0 && (
 							<ViewerTooltip>
 								<Button
+									variant="outline"
 									size="sm"
-									className={cn(
-										PILL_BUTTON,
-										!introState && variant === 'settings' && 'text-brand hover:text-brand-hover',
-									)}
-									variant={introState ? 'outline' : variant === 'settings' ? 'ghost' : undefined}
-									onClick={handleConnect}
-									disabled={connect.isPending || !canWrite}
-									aria-label={introState ? `${connectLabel} ${provider.displayName}` : undefined}
+									className={PILL_BUTTON}
+									onClick={onRequestLink}
+									disabled={!canWrite}
 								>
-									{introState && connect.isPending ? (
-										<>
-											<Spinner className="mr-1" />
-											Connecting…
-										</>
-									) : (
-										connectLabel
-									)}
+									<Link2 className="mr-1 h-3.5 w-3.5" />
+									Add existing
 								</Button>
 							</ViewerTooltip>
-						</div>
-					)
-				}
-				footer={
-					// Who can use it is managed in Settings, not from the chat card.
-					isConnected && variant === 'settings' ? (
-						<AgentAccess integration={integration} workspaceId={workspaceId} />
-					) : undefined
-				}
-			/>
-			{integration && (
-				<DisconnectConfirmDialog
-					open={confirmingDisconnect}
-					onClose={() => setConfirmingDisconnect(false)}
-					name={provider.displayName}
-					account={disconnectAccount}
-					billingNote={isPaidIdentityAddon}
-					pending={disconnect.isPending}
-					onConfirm={() =>
-						disconnect.mutate(integration.id, { onSettled: () => setConfirmingDisconnect(false) })
-					}
-				/>
-			)}
-		</>
+						)}
+						<ViewerTooltip>
+							<Button
+								size="sm"
+								className={cn(
+									PILL_BUTTON,
+									!introState && variant === 'settings' && 'text-brand hover:text-brand-hover',
+								)}
+								variant={introState ? 'outline' : variant === 'settings' ? 'ghost' : undefined}
+								onClick={handleConnect}
+								disabled={connect.isPending || !canWrite}
+								aria-label={introState ? `${connectLabel} ${provider.displayName}` : undefined}
+							>
+								{introState && connect.isPending ? (
+									<>
+										<Spinner className="mr-1" />
+										Connecting…
+									</>
+								) : (
+									connectLabel
+								)}
+							</Button>
+						</ViewerTooltip>
+					</div>
+				)
+			}
+			footer={
+				// Who can use it is managed in Settings, not from the chat card.
+				isConnected && variant === 'settings' ? (
+					<AgentAccess integration={integration} workspaceId={workspaceId} />
+				) : undefined
+			}
+		/>
 	)
 }
 
