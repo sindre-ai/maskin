@@ -13,15 +13,21 @@ Stub — content pending. See parent bet.
 
 ### Reading a file: `get_file`
 
-`get_file` returns the stored bytes as `content` by default (`format: "raw"`). An
-HTML page written by an agent, a briefing deck above all, can be mostly embedded
-base64 fonts, so its raw `content` is hundreds of kilobytes of noise. Pass
-`format: "text"` to read the words instead:
+`get_file` returns the stored bytes as `content` by default (`format: "raw"`). Any
+HTML page an agent writes (a deck, a website, a dashboard, a custom view) can be
+mostly embedded base64 fonts and inline CSS or script, so its raw `content` is
+hundreds of kilobytes of noise. Pass `format: "text"` to read the words instead:
 
-- `content_text` is markdown: one block per slide (`Slide N`, the `<h2>` as a
-  heading), bullets, tables, links and the speaker notes held in `data-notes`.
-  Styles, scripts, SVG, buttons and `data:` URIs are left out. If the page carries a
+- `content_text` is markdown: headings, paragraphs, bullets, tables, links and code,
+  plus the labels of buttons, fields and menus (`[button: Save]`,
+  `[input text: Search]`, `[select Status: Open, Done]`). A deck
+  (`<section class="slide">`) gets one block per slide (`Slide N`) and its speaker
+  notes held in `data-notes`; a deck's own buttons are navigation chrome and are
+  left out. Styles, scripts, SVG and `data:` URIs are left out. If the page carries a
   `<script type="text/markdown" id="deck-source">`, that source is returned as is.
+- `note` appears when the page shows almost no text in its markup but carries
+  script, which means a person sees what the script draws. The extract is then not
+  what they see: read the raw file for the logic and data.
 - Also returned: `title`, `meta_description`, `json_ld` (when present),
   `source_object_id` (when a `derived_from` or `relates_to` edge ties the file to an
   object), `contentHash`, `annotations`, `url` and `extracted: true`.

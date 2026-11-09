@@ -417,7 +417,7 @@ const getFileRoute = createRoute({
 			// instead (content_text in place of content). It is not declared as a
 			// union here so the generated native clients keep one response type.
 			description:
-				'File detail. With format=text on a text file: content_text, extracted, title, meta_description, json_ld and source_object_id instead of content and encoding.',
+				'File detail. With format=text on a text file: content_text, extracted, title, meta_description, note (when the page is drawn by script), json_ld and source_object_id instead of content and encoding.',
 		},
 		400: {
 			content: { 'application/json': { schema: errorSchema } },
@@ -524,6 +524,7 @@ app.openapi(getFileRoute, (async (c) => {
 				extracted: true,
 				title: extracted.title,
 				meta_description: extracted.description,
+				...(extracted.note ? { note: extracted.note } : {}),
 				...(extracted.jsonLd.length > 0 ? { json_ld: extracted.jsonLd } : {}),
 				...(sourceObjectId ? { source_object_id: sourceObjectId } : {}),
 			} as z.infer<typeof fileTextDetailSchema>,

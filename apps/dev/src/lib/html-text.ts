@@ -1,11 +1,13 @@
 import { type DefaultTreeAdapterMap, parse } from 'parse5'
 
 /**
- * Reads an HTML file as text. Agent-authored briefing decks are mostly embedded
- * base64 fonts (about 95% of a 550 KB deck), so the raw bytes are unreadable to
+ * Reads any agent-authored HTML file as text: a deck, a website, a dashboard, a
+ * custom view. Such files are often mostly embedded base64 fonts and inline
+ * CSS or script (about 95% of a 550 KB deck), so the raw bytes are unreadable to
  * a model; the words a human sees are a few kilobytes. This pulls those out as
- * markdown: one block per slide, headings, bullets, tables, links, and the
- * speaker notes kept in `data-notes`.
+ * markdown: headings, paragraphs, bullets, tables, links, control labels, and,
+ * for a deck (`<section class="slide">`), one block per slide with the speaker
+ * notes kept in `data-notes`.
  *
  * Pure function of the bytes, so callers can compute it on every read. Nothing
  * here is stored.
@@ -25,6 +27,12 @@ export interface HtmlText {
 	jsonLd: unknown[]
 	/** True when `contentText` is the file's own embedded markdown source. */
 	fromDeckSource: boolean
+	/**
+	 * Set when the page shows little or no text in its markup but carries script,
+	 * so what a person sees is probably drawn by that script. The extract is then
+	 * not what they see; read the raw file for the logic.
+	 */
+	note: string | null
 }
 
 /** Beyond this the parse is not worth its memory; callers fall back to a clear error. */
@@ -42,9 +50,6 @@ const SKIP_TAGS = new Set([
 	'iframe',
 	'object',
 	'embed',
-	'button',
-	'select',
-	'option',
 	'audio',
 	'video',
 	'link',
@@ -134,6 +139,47 @@ function isSkipped(el: Element): boolean {
 
 const collapse = (s: string) => s.replace(/\s+/g, ' ')
 
+/**
+ * Buttons on a deck are previous/next/fullscreen chrome, so they stay out of a
+ * deck's text. On any other page a button, field or menu is part of what the
+ * page does, so its label is kept.
+ */
+let keepControls = true
+
+function controlText(el: Element): string | null {
+	const tag = el.tagName
+	if (!keepControls) return tag === 'button' || tag === 'select' || tag === 'option' ? '' : null
+	if (tag === 'button') {
+		const label = collapse(textOf(el)).trim() || attr(el, 'aria-label')?.trim()
+		return label ? `[button: ${label}]` : ''
+	}
+	if (tag === 'select') {
+		const options = findAll(el, (e) => e.tagName === 'option')
+			.map((o) => collapse(textOf(o)).trim())
+			.filter(Boolean)
+		const label = attr(el, 'aria-label')?.trim()
+		return `[select${label ? ` ${label}` : ''}: ${options.join(', ')}]`
+	}
+	if (tag === 'input') {
+		const type = (attr(el, 'type') ?? 'text').toLowerCase()
+		if (type === 'hidden') return ''
+		const label =
+			attr(el, 'aria-label')?.trim() ||
+			attr(el, 'placeholder')?.trim() ||
+			attr(el, 'title')?.trim() ||
+			(type === 'submit' || type === 'button' ? attr(el, 'value')?.trim() : '') ||
+			attr(el, 'name')?.trim()
+		return `[${type === 'submit' || type === 'button' ? 'button' : `input ${type}`}${label ? `: ${label}` : ''}]`
+	}
+	if (tag === 'textarea') {
+		const label = attr(el, 'aria-label')?.trim() || attr(el, 'placeholder')?.trim()
+		return `[textarea${label ? `: ${label}` : ''}]`
+	}
+	return null
+}
+
+const CONTROL_TAGS = new Set(['button', 'select', 'input', 'textarea'])
+
 /** Link target worth printing: http(s), mailto, tel and relative paths. Never data: or javascript:. */
 function printableHref(href: string | undefined): string | null {
 	if (!href) return null
@@ -149,6 +195,7 @@ function inlineText(n: Node): string {
 	if (!isElement(n)) return children(n).map(inlineText).join('')
 	if (isSkipped(n)) return ''
 	const tag = n.tagName
+	if (CONTROL_TAGS.has(tag)) return controlText(n) ?? ''
 	if (tag === 'br') return '\n'
 	if (tag === 'img') {
 		const alt = attr(n, 'alt')?.trim()
@@ -394,6 +441,24 @@ function parseJsonLd(root: Node): unknown[] {
 	return out
 }
 
+/** Fewer visible characters than this, with script on the page, reads as drawn by the script. */
+const SCRIPT_RENDERED_MAX_TEXT_CHARS = 200
+const SCRIPT_RENDERED_MIN_SCRIPT_CHARS = 500
+
+const SCRIPT_RENDERED_NOTE =
+	'This page shows little text in its markup and carries script, so what a person sees is likely drawn by that script. Read the raw file (get_file format=raw) for its logic and data.'
+
+/** Executable script, not data blocks such as JSON-LD or a deck's markdown source. */
+function scriptWeight(root: Node): number {
+	let weight = 0
+	for (const s of findAll(root, (e) => e.tagName === 'script')) {
+		const type = (attr(s, 'type') ?? '').toLowerCase()
+		if (type && !/javascript|module|babel|jsx|text\/typescript/.test(type)) continue
+		weight += attr(s, 'src') ? SCRIPT_RENDERED_MIN_SCRIPT_CHARS : textOf(s).length
+	}
+	return weight
+}
+
 export function extractHtmlText(html: string): HtmlText {
 	const doc = parse(html) as Node
 
@@ -408,9 +473,10 @@ export function extractHtmlText(html: string): HtmlText {
 
 	const source = findDeckSource(doc)
 	if (source) {
-		return { contentText: source, title, description, jsonLd, fromDeckSource: true }
+		return { contentText: source, title, description, jsonLd, fromDeckSource: true, note: null }
 	}
 
+	keepControls = findAll(doc, isSlide).length === 0
 	const w = new Writer()
 	const body = findAll(doc, (e) => e.tagName === 'body')[0]
 	walk(body ?? doc, w, { listDepth: 0, slide: 0 })
@@ -420,7 +486,17 @@ export function extractHtmlText(html: string): HtmlText {
 		.join('\n')
 		.replace(/\n{3,}/g, '\n\n')
 		.trim()
-	return { contentText, title, description, jsonLd, fromDeckSource: false }
+	const scriptRendered =
+		contentText.length < SCRIPT_RENDERED_MAX_TEXT_CHARS &&
+		scriptWeight(doc) >= SCRIPT_RENDERED_MIN_SCRIPT_CHARS
+	return {
+		contentText,
+		title,
+		description,
+		jsonLd,
+		fromDeckSource: false,
+		note: scriptRendered ? SCRIPT_RENDERED_NOTE : null,
+	}
 }
 
 /** Raw reads above this size get a pointer to the text format. */

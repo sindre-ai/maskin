@@ -99,3 +99,82 @@ describe('readableWithHint', () => {
 		expect(readableWithHint(html, Buffer.byteLength(html))).toBeNull()
 	})
 })
+
+describe('extractHtmlText on pages that are not decks', () => {
+	const website = `<!doctype html><html><head><title>Acme pricing</title>
+		<style>body{font-family:x}</style>
+		<script>window.dataLayer=[];</script></head>
+		<body><header><nav><a href="/">Home</a> <a href="/pricing">Pricing</a></nav></header>
+		<main><h1>Simple pricing</h1><p>Start free, then pay <strong>$12</strong> per seat.</p>
+		<ul><li>Unlimited chats</li><li>Agents that run on their own</li></ul>
+		<img src="data:image/png;base64,AAAA" alt="Product screenshot">
+		<a class="cta" href="/signup">Start free</a></main>
+		<footer>Acme Inc, Oslo</footer></body></html>`
+
+	const dashboard = `<!doctype html><html><head><title>Pipeline</title></head><body>
+		<h1>Pipeline</h1>
+		<label>Status</label>
+		<select aria-label="Status"><option>Open</option><option>Done</option></select>
+		<input type="text" placeholder="Search deals">
+		<input type="hidden" name="csrf" value="x">
+		<textarea placeholder="Add a note"></textarea>
+		<button>Export CSV</button>
+		<button aria-label="Refresh"><svg></svg></button>
+		<div class="grid"><span>Acme</span><span>$12k</span><span>Won</span></div>
+		</body></html>`
+
+	const scriptView = `<!doctype html><html><head><title>Live view</title></head>
+		<body><div id="root"></div>
+		<script>${'const render = () => { document.getElementById("root").innerHTML = "x" };'.repeat(20)}</script>
+		</body></html>`
+
+	it('reads a website as headings, paragraphs, lists, links and image alt text', () => {
+		const r = extractHtmlText(website)
+		expect(r.title).toBe('Acme pricing')
+		expect(r.contentText).toContain('# Simple pricing')
+		expect(r.contentText).toContain('**$12**')
+		expect(r.contentText).toContain('- Unlimited chats')
+		expect(r.contentText).toContain('[image: Product screenshot]')
+		expect(r.contentText).toContain('[Start free](/signup)')
+		expect(r.contentText).not.toContain('dataLayer')
+		expect(r.contentText).not.toContain('Slide')
+		expect(r.note).toBeNull()
+	})
+
+	it('keeps button, field and menu labels on a page that is not a deck', () => {
+		const r = extractHtmlText(dashboard)
+		expect(r.contentText).toContain('[button: Export CSV]')
+		expect(r.contentText).toContain('[button: Refresh]')
+		expect(r.contentText).toContain('[select Status: Open, Done]')
+		expect(r.contentText).toContain('[input text: Search deals]')
+		expect(r.contentText).toContain('[textarea: Add a note]')
+		expect(r.contentText).not.toContain('csrf')
+		expect(r.contentText).toContain('Acme | $12k | Won')
+	})
+
+	it('leaves a deck’s navigation buttons out', () => {
+		const r = extractHtmlText(
+			'<body><button>Previous</button><section class="slide"><h2>One</h2></section><button>Next</button></body>',
+		)
+		expect(r.contentText).toContain('## One')
+		expect(r.contentText).not.toContain('Previous')
+		expect(r.contentText).not.toContain('Next')
+	})
+
+	it('says so when a page is drawn by script and shows almost no text', () => {
+		const r = extractHtmlText(scriptView)
+		expect(r.note).toMatch(/drawn by that script/)
+		expect(r.note).toMatch(/format=raw/)
+	})
+
+	it('does not flag a page with real text, or one whose only script is data', () => {
+		const withText = extractHtmlText(
+			`<body><p>${'Words a person reads. '.repeat(20)}</p><script>${'a=1;'.repeat(300)}</script></body>`,
+		)
+		expect(withText.note).toBeNull()
+		const dataOnly = extractHtmlText(
+			`<body><script type="application/ld+json">${JSON.stringify({ a: 'x'.repeat(900) })}</script></body>`,
+		)
+		expect(dataOnly.note).toBeNull()
+	})
+})
