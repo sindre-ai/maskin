@@ -1,4 +1,4 @@
-import { type DefaultTreeAdapterMap, parse } from 'parse5'
+import { type DefaultTreeAdapterMap, type TreeAdapter, defaultTreeAdapter, parse } from 'parse5'
 
 /**
  * Reads any agent-authored HTML file as text: a deck, a website, a dashboard, a
@@ -16,6 +16,7 @@ import { type DefaultTreeAdapterMap, parse } from 'parse5'
 type Node = DefaultTreeAdapterMap['node']
 type Element = DefaultTreeAdapterMap['element']
 type TextNode = DefaultTreeAdapterMap['textNode']
+type Template = DefaultTreeAdapterMap['template']
 
 export interface HtmlText {
 	/** Markdown. When the file carries a deck-source script, that source verbatim. */
@@ -42,7 +43,9 @@ const MAX_JSON_LD_CHARS = 20_000
 /**
  * Deeper than this is not a page a person wrote. parse5 grows with the square of
  * the depth (about 3 s at 20,000 levels) and the walk below is recursive, so a
- * small file of nested tags would otherwise block the API process.
+ * small file of nested tags would otherwise block the API process. Enforced
+ * inside the parse (see depthLimitedAdapter), so a refusal costs about as much
+ * as parsing 1,000 levels.
  */
 export const MAX_HTML_NESTING_DEPTH = 1_000
 
@@ -53,182 +56,41 @@ export class HtmlTooDeepError extends Error {
 	}
 }
 
-const VOID_TAGS = new Set([
-	'area',
-	'base',
-	'br',
-	'col',
-	'embed',
-	'hr',
-	'img',
-	'input',
-	'link',
-	'meta',
-	'source',
-	'track',
-	'wbr',
-])
-
-/** Tags whose end tag may be left out, so open and close tags do not pair up. Not counted. */
-const OPTIONAL_END_TAGS = new Set([
-	'p',
-	'li',
-	'dt',
-	'dd',
-	'tr',
-	'td',
-	'th',
-	'thead',
-	'tbody',
-	'tfoot',
-	'colgroup',
-	'option',
-	'optgroup',
-	'rt',
-	'rp',
-	'html',
-	'head',
-	'body',
-])
-
-/** HTML tags that end svg or math content and open as plain HTML elements. */
-const HTML_BREAKOUT_TAGS = new Set([
-	'b',
-	'big',
-	'blockquote',
-	'br',
-	'center',
-	'code',
-	'dd',
-	'div',
-	'dl',
-	'dt',
-	'em',
-	'embed',
-	'h1',
-	'h2',
-	'h3',
-	'h4',
-	'h5',
-	'h6',
-	'hr',
-	'i',
-	'img',
-	'li',
-	'listing',
-	'menu',
-	'meta',
-	'nobr',
-	'ol',
-	'p',
-	'pre',
-	'ruby',
-	's',
-	'small',
-	'span',
-	'strike',
-	'strong',
-	'sub',
-	'sup',
-	'table',
-	'tt',
-	'u',
-	'ul',
-	'var',
-])
-
-/** Content of these is text, not markup, up to the matching end tag. */
-const RAW_TEXT_TAGS = new Set(['script', 'style', 'textarea', 'title'])
-
-const isTagNameChar = (code: number) =>
-	(code >= 97 && code <= 122) ||
-	(code >= 65 && code <= 90) ||
-	(code >= 48 && code <= 57) ||
-	code === 45 ||
-	code === 58 ||
-	code === 95
-
-/** A quote opens an attribute value only right after `=`; anywhere else it is part of a name. */
-function startsAttributeValue(html: string, quoteAt: number): boolean {
-	let k = quoteAt - 1
-	while (k >= 0 && /\s/.test(html[k] as string)) k--
-	return html.charCodeAt(k) === 61
-}
-
 /**
- * Whether tags nest deeper than `max` levels. A single linear scan, so it is
- * cheap next to the parse it guards. An approximation of the parser's tree:
- * stray end tags are ignored and tags with optional end tags are not counted,
- * which is fine for a cap set far above any real page.
+ * Counts depth as the parser places each node, so a file cannot hide depth from
+ * it: stray end tags, unclosed tags and the rest are all settled by the parser
+ * itself. Aborts the parse as soon as a node lands past the cap. When the parser
+ * moves a node that already has children (it does so to repair mis-nested
+ * formatting tags), their depths are brought up to date too.
  */
-export function exceedsNestingDepth(html: string, max: number = MAX_HTML_NESTING_DEPTH): boolean {
-	const n = html.length
-	let depth = 0
-	// Depth at which an svg or math element was opened; `/>` only self-closes inside one.
-	let foreignAt = -1
-	let lower: string | undefined
-	let i = html.indexOf('<')
-	while (i !== -1 && i < n - 1) {
-		if (html.startsWith('<!--', i)) {
-			const end = html.indexOf('-->', i + 4)
-			if (end === -1) return false
-			i = html.indexOf('<', end + 3)
-			continue
-		}
-		const closing = html.charCodeAt(i + 1) === 47
-		let j = i + (closing ? 2 : 1)
-		const nameStart = j
-		while (j < n && isTagNameChar(html.charCodeAt(j))) j++
-		const first = html.charCodeAt(nameStart)
-		const startsWithLetter = (first >= 97 && first <= 122) || (first >= 65 && first <= 90)
-		if (j === nameStart || !startsWithLetter) {
-			i = html.indexOf('<', i + 1)
-			continue
-		}
-		const name = html.slice(nameStart, j).toLowerCase()
-		// Find the end of the tag, skipping over quoted attribute values.
-		let quote = 0
-		let selfClosing = false
-		while (j < n) {
-			const code = html.charCodeAt(j)
-			if (quote) {
-				if (code === quote) quote = 0
-			} else if ((code === 34 || code === 39) && startsAttributeValue(html, j)) {
-				quote = code
-			} else if (code === 62) {
-				selfClosing = html.charCodeAt(j - 1) === 47
-				break
-			}
-			j++
-		}
-		if (j >= n) return false
-		if (closing) {
-			if (!OPTIONAL_END_TAGS.has(name) && depth > 0) {
-				depth--
-				if (depth <= foreignAt) foreignAt = -1
-			}
-		} else if (!VOID_TAGS.has(name) && !OPTIONAL_END_TAGS.has(name)) {
-			if (RAW_TEXT_TAGS.has(name)) {
-				lower ??= html.toLowerCase()
-				const end = lower.indexOf(`</${name}`, j)
-				if (end === -1) return false
-				i = html.indexOf('<', end)
-				continue
-			}
-			// In HTML, `<div/>` still opens a div, so a slash only counts on svg and math
-			// elements. An HTML tag inside them breaks out of them and opens as usual.
-			const selfCloses =
-				selfClosing &&
-				(name === 'svg' || name === 'math' || (foreignAt !== -1 && !HTML_BREAKOUT_TAGS.has(name)))
-			if (!selfCloses) {
-				if ((name === 'svg' || name === 'math') && foreignAt === -1) foreignAt = depth
-				depth++
-				if (depth > max) return true
+function depthLimitedAdapter(max: number): TreeAdapter<DefaultTreeAdapterMap> {
+	const depths = new WeakMap<object, number>()
+	const place = (parent: Node, child: Node) => {
+		const stack: Array<[Node, number]> = [[child, (depths.get(parent) ?? 0) + 1]]
+		for (let next = stack.pop(); next; next = stack.pop()) {
+			const [node, depth] = next
+			if (depth > max) throw new HtmlTooDeepError(max)
+			depths.set(node, depth)
+			// A template's children hang off its content fragment, which sits at the template's own level.
+			const content =
+				isElement(node) && node.tagName === 'template' ? (node as Template).content : undefined
+			if (content) stack.push([content, depth])
+			for (const c of children(node)) {
+				if (isElement(c) && depths.get(c) !== depth + 1) stack.push([c, depth + 1])
 			}
 		}
-		i = html.indexOf('<', j)
 	}
-	return false
+	return {
+		...defaultTreeAdapter,
+		appendChild(parent, child) {
+			place(parent, child)
+			defaultTreeAdapter.appendChild(parent, child)
+		},
+		insertBefore(parent, child, reference) {
+			place(parent, child)
+			defaultTreeAdapter.insertBefore(parent, child, reference)
+		},
+	}
 }
 
 const SKIP_TAGS = new Set([
@@ -652,8 +514,7 @@ function scriptWeight(root: Node): number {
 }
 
 export function extractHtmlText(html: string): HtmlText {
-	if (exceedsNestingDepth(html)) throw new HtmlTooDeepError()
-	const doc = parse(html) as Node
+	const doc = parse(html, { treeAdapter: depthLimitedAdapter(MAX_HTML_NESTING_DEPTH) }) as Node
 
 	const titleEl = findAll(doc, (e) => e.tagName === 'title')[0]
 	const title = titleEl ? collapse(textOf(titleEl)).trim() || null : null

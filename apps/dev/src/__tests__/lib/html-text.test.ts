@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import {
 	HtmlTooDeepError,
 	MAX_HTML_NESTING_DEPTH,
-	exceedsNestingDepth,
 	extractHtmlText,
 	readableWithHint,
 } from '../../lib/html-text'
@@ -203,27 +202,37 @@ describe('nesting depth guard', () => {
 	})
 
 	it('still extracts a page right at the cap', () => {
-		const result = extractHtmlText(nested('<div>', '</div>', MAX_HTML_NESTING_DEPTH))
+		// The html and body elements take the first two levels.
+		const result = extractHtmlText(nested('<div>', '</div>', MAX_HTML_NESTING_DEPTH - 2))
 		expect(result.contentText).toBe('hi')
 	})
 
-	it('counts unclosed and self-closed tags, which HTML still opens', () => {
-		expect(exceedsNestingDepth(nested('<div>', '', 1_500))).toBe(true)
-		expect(exceedsNestingDepth(nested('<div/>', '', 1_500))).toBe(true)
-		expect(exceedsNestingDepth(`<svg>${'<div/>'.repeat(1_500)}</svg>`)).toBe(true)
+	it('refuses a div followed by a stray end tag, repeated 60,000 times', () => {
+		const started = performance.now()
+		expect(() => extractHtmlText('<div></i>'.repeat(60_000))).toThrow(HtmlTooDeepError)
+		expect(performance.now() - started).toBeLessThan(500)
 	})
 
-	it('is not fooled by stray quotes in a tag', () => {
-		expect(exceedsNestingDepth(`<div ">${'<div >'.repeat(1_500)}<div ">`)).toBe(true)
+	it('refuses depth built from unclosed tags, templates and mis-nested formatting', () => {
+		for (const html of [
+			nested('<div>', '', 1_500),
+			nested('<div/>', '', 1_500),
+			`<svg>${'<g>'.repeat(1_500)}`,
+			'<template><div>'.repeat(1_500),
+			'<b><i><div></b>'.repeat(1_500),
+			'<div><object></div>'.repeat(1_500),
+		]) {
+			expect(() => extractHtmlText(html)).toThrow(HtmlTooDeepError)
+		}
 	})
 
 	it('does not count text inside comments, scripts or attribute values', () => {
 		const html = `<!-- ${'<div>'.repeat(2_000)} --><script>var a = "${'<div>'.repeat(2_000)}"</script><p title="${'<div>'.repeat(2_000)}">ok</p>`
-		expect(exceedsNestingDepth(html)).toBe(false)
+		expect(extractHtmlText(html).contentText).toBe('ok')
 	})
 
 	it('lets a wide page, void tags, optional end tags and many svg paths through', () => {
 		const html = `<ul>${'<li>item<br>'.repeat(5_000)}</ul><svg>${'<path d="M0 0"/>'.repeat(5_000)}</svg>${'<p>para'.repeat(3_000)}`
-		expect(exceedsNestingDepth(html)).toBe(false)
+		expect(extractHtmlText(html).contentText).toContain('item')
 	})
 })
