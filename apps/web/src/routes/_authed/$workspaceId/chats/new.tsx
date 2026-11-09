@@ -1,8 +1,6 @@
+import { Composer } from '@/components/chat/chat'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
-import { FormError } from '@/components/shared/form-error'
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Switch } from '@/components/ui/switch'
 import { useActors, useDefaultChatAgent } from '@/hooks/use-actors'
 import { useCreateConversation } from '@/hooks/use-conversations'
 import { useDocumentTitle } from '@/hooks/use-document-title'
@@ -12,15 +10,27 @@ import { deriveEntryAgentRole, trackChatSessionStarted } from '@/lib/analytics'
 import type { MessageMetadata } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import {
+	type ChatSelectionAction,
+	type ChatSelectionFile,
 	EMPTY_CHAT_SELECTION,
 	MAX_CHAT_OBJECT_REFERENCES,
 	chatSelectionReducer,
 } from '@/lib/chat-selection'
+import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { deriveConversationTitle } from '@maskin/shared'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
-import { ChevronLeft } from 'lucide-react'
-import { type FormEvent, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { ChevronLeft, X } from 'lucide-react'
+import {
+	type KeyboardEvent,
+	useCallback,
+	useEffect,
+	useId,
+	useMemo,
+	useReducer,
+	useRef,
+	useState,
+} from 'react'
 import { toast } from 'sonner'
 
 interface NewChatSearch {
@@ -59,11 +69,7 @@ interface Recipient {
 	type: string
 }
 
-function GroupLabel({ children }: { children: string }) {
-	return <h2 className="px-1.5 pb-2 text-[13px] font-medium text-muted-foreground">{children}</h2>
-}
-
-const ROW = 'flex items-center gap-3 border-t border-border px-1.5 py-3.5'
+const MAX_SUGGESTIONS = 6
 
 function NewChatRoute() {
 	useDocumentTitle('New chat')
@@ -79,6 +85,15 @@ function NewChatRoute() {
 	const [pickedIds, setPickedIds] = useState<string[]>([])
 	const [selection, dispatchSelection] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
 	const [error, setError] = useState<string | null>(null)
+	const [query, setQuery] = useState('')
+	const [toFocused, setToFocused] = useState(false)
+	const [activeIndex, setActiveIndex] = useState(0)
+	const listboxId = useId()
+	const toInputRef = useRef<HTMLInputElement>(null)
+	// The box takes focus on open: bumping the nonce after mount is what the composer treats as
+	// a request (a nonce already present on mount never fires).
+	const [focusNonce, setFocusNonce] = useState(0)
+	useEffect(() => setFocusNonce(1), [])
 	const [draft, setDraft] = useState(search.text ?? '')
 	// The page stays mounted when the launcher opens /chats/new?text=... from
 	// here, so a new text has to replace the box; the initial value covers mount.
@@ -196,24 +211,78 @@ function NewChatRoute() {
 
 	const picked = useMemo(() => rows.filter((r) => pickedIds.includes(r.id)), [rows, pickedIds])
 
-	const toggle = (id: string, on: boolean) => {
+	const add = useCallback((id: string) => {
 		setError(null)
-		setPickedIds((prev) =>
-			on ? (prev.includes(id) ? prev : [...prev, id]) : prev.filter((p) => p !== id),
-		)
+		setPickedIds((prev) => (prev.includes(id) ? prev : [...prev, id]))
+		setQuery('')
+		setActiveIndex(0)
+	}, [])
+	const remove = useCallback((id: string) => {
+		setError(null)
+		setPickedIds((prev) => prev.filter((p) => p !== id))
+	}, [])
+
+	// Suggested while the field is empty, matches once the person types. Everyone not already a
+	// chip, A→Z (the candidates are sorted once above).
+	const trimmedQuery = query.trim().toLowerCase()
+	const suggestions = useMemo(
+		() =>
+			rows
+				.filter((r) => !pickedIds.includes(r.id))
+				.filter((r) => !trimmedQuery || r.name.toLowerCase().includes(trimmedQuery))
+				.slice(0, MAX_SUGGESTIONS),
+		[rows, pickedIds, trimmedQuery],
+	)
+	const listOpen = toFocused && suggestions.length > 0
+	const activeSuggestion = suggestions[Math.min(activeIndex, suggestions.length - 1)]
+
+	const onToKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+		if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+			if (suggestions.length === 0) return
+			e.preventDefault()
+			const delta = e.key === 'ArrowDown' ? 1 : -1
+			setActiveIndex((i) => (i + delta + suggestions.length) % suggestions.length)
+		} else if (e.key === 'Enter' || e.key === 'Tab' || e.key === ',') {
+			// Tab and comma only pick when something was typed, so Tab still leaves the field.
+			if (!activeSuggestion || (e.key !== 'Enter' && !trimmedQuery)) return
+			e.preventDefault()
+			add(activeSuggestion.id)
+		} else if (e.key === 'Backspace' && query === '' && picked.length > 0) {
+			remove(picked[picked.length - 1].id)
+		} else if (e.key === 'Escape') {
+			toInputRef.current?.blur()
+		}
 	}
 
-	const handleSubmit = async (e: FormEvent) => {
-		e.preventDefault()
+	// A mention picked in the box is another recipient; everything else is the box's own selection.
+	const onDispatchSelection = useCallback((action: ChatSelectionAction) => {
+		if (action.type === 'add_agent') {
+			setPickedIds((prev) => (prev.includes(action.agent.id) ? prev : [...prev, action.agent.id]))
+			return
+		}
+		if (action.type === 'remove_agent') return
+		dispatchSelection(action)
+	}, [])
+
+	const handleSend = async (content: string, extras?: { files: ChatSelectionFile[] }) => {
 		if (createConversation.isPending) return
 		if (picked.length === 0) {
-			setError('Pick at least one person or agent to start the conversation')
-			return
+			const message = 'Pick at least one person or agent to start the conversation'
+			setError(message)
+			throw new Error(message)
 		}
 		setError(null)
 
-		const content = draft.trim()
 		const metadata: MessageMetadata = {}
+		const files = [...selection.files, ...(extras?.files ?? [])]
+		if (files.length > 0) {
+			metadata.attachments = files.map((f) => ({
+				file_id: f.fileId,
+				name: f.name,
+				mime_type: f.mimeType ?? 'application/octet-stream',
+				size_bytes: f.sizeBytes,
+			}))
+		}
 		if (selection.objects.length > 0) {
 			metadata.context_objects = selection.objects.map((o) => ({
 				id: o.id,
@@ -252,14 +321,12 @@ function NewChatRoute() {
 			})
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Failed to create conversation')
+			throw err
 		}
 	}
 
 	return (
-		<form
-			onSubmit={handleSubmit}
-			className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pb-10 md:overflow-hidden md:px-8 lg:px-7"
-		>
+		<div className="flex min-h-0 flex-1 flex-col px-4 pb-6 md:px-8 lg:px-7">
 			<div>
 				<Link
 					to="/$workspaceId/chats"
@@ -272,99 +339,130 @@ function NewChatRoute() {
 			</div>
 			<h1 className="page-title mt-2 max-md:sr-only">New chat</h1>
 
-			<section aria-label="To" className="mt-16 flex flex-col md:min-h-0">
-				<GroupLabel>To</GroupLabel>
-				<ul className="m-0 flex list-none flex-col p-0 md:min-h-0 md:overflow-y-auto">
-					{rows.map((r) => {
-						const on = pickedIds.includes(r.id)
-						return (
-							<li key={r.id} className={ROW}>
-								<ActorAvatar id={r.id} name={r.name} type={r.type} size="md" />
-								<span className="min-w-0 flex-1 truncate text-[14.5px] text-foreground">
-									{r.name}
-								</span>
-								<Switch
-									checked={on}
-									onCheckedChange={(next) => toggle(r.id, next)}
-									aria-label={`Add ${r.name}`}
-								/>
-							</li>
-						)
-					})}
-				</ul>
-			</section>
-
-			{selection.objects.length > 0 || selection.notifications.length > 0 ? (
-				<section aria-label="Context" className="mt-16">
-					<GroupLabel>Context</GroupLabel>
-					<ul className="m-0 flex list-none flex-col p-0">
-						{selection.objects.map((o) => (
-							<li key={o.id} className={ROW}>
-								<span className="min-w-0 flex-1 truncate text-[14.5px] text-foreground">
-									{o.title ?? 'Untitled item'}
-								</span>
-								<Button
-									type="button"
-									variant="ghost"
-									size="sm"
-									className="rounded-full text-muted-foreground"
-									onClick={() => dispatchSelection({ type: 'remove_object', id: o.id })}
-								>
-									Remove
-								</Button>
-							</li>
-						))}
-						{selection.notifications.map((n) => (
-							<li key={n.id} className={ROW}>
-								<span className="min-w-0 flex-1 truncate text-[14.5px] text-foreground">
-									{n.title ?? 'Notification'}
-								</span>
-								<Button
-									type="button"
-									variant="ghost"
-									size="sm"
-									className="rounded-full text-muted-foreground"
-									onClick={() => dispatchSelection({ type: 'remove_notification', id: n.id })}
-								>
-									Remove
-								</Button>
-							</li>
-						))}
-					</ul>
-				</section>
-			) : null}
-
-			<section aria-label="Message" className="mt-16">
-				<GroupLabel>Message</GroupLabel>
-				<div className={ROW}>
-					<label
-						htmlFor="new-chat-first-message"
-						className="shrink-0 text-[14.5px] text-foreground"
-					>
-						First message
-					</label>
+			<section aria-label="To" className="relative mt-8 flex flex-col">
+				{/* biome-ignore lint/a11y/useKeyWithClickEvents: a click anywhere in the field focuses its input; the input itself is the keyboard path */}
+				<div
+					onClick={() => toInputRef.current?.focus()}
+					className="flex min-h-12 flex-wrap items-center gap-1.5 border-b border-border py-2.5"
+				>
+					<span className="pr-1 text-sm text-muted-foreground">To:</span>
+					{picked.map((r) => (
+						<span
+							key={r.id}
+							className="flex h-7 items-center gap-1.5 rounded-full bg-secondary pr-1 pl-1 text-sm font-semibold text-foreground"
+						>
+							<ActorAvatar id={r.id} name={r.name} type={r.type} size="sm" />
+							{r.name}
+							<button
+								type="button"
+								aria-label={`Remove ${r.name}`}
+								onClick={(e) => {
+									e.stopPropagation()
+									remove(r.id)
+								}}
+								className="flex size-5 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-border hover:text-foreground"
+							>
+								<X size={12} strokeWidth={2.4} aria-hidden />
+							</button>
+						</span>
+					))}
 					<Input
-						id="new-chat-first-message"
-						value={draft}
-						onChange={(e) => setDraft(e.target.value)}
-						placeholder="What do you need?"
+						ref={toInputRef}
+						role="combobox"
+						aria-label="Add a person or agent"
+						aria-expanded={listOpen}
+						aria-controls={listboxId}
+						aria-activedescendant={
+							listOpen && activeSuggestion ? `${listboxId}-${activeSuggestion.id}` : undefined
+						}
+						aria-autocomplete="list"
+						value={query}
+						onChange={(e) => {
+							setQuery(e.target.value)
+							setActiveIndex(0)
+						}}
+						onKeyDown={onToKeyDown}
+						onFocus={() => setToFocused(true)}
+						onBlur={() => setToFocused(false)}
+						placeholder={picked.length > 0 ? 'Add another' : 'Type a name'}
 						autoComplete="off"
-						className="ml-auto h-9 min-w-0 flex-1 rounded-full border-0 bg-secondary px-4 md:w-75 md:flex-none"
+						className="h-7 min-w-36 flex-1 border-0 bg-transparent px-0 text-[15px] shadow-none focus-visible:ring-0"
 					/>
 				</div>
+				{listOpen ? (
+					<div className="absolute top-full right-0 left-0 z-10 flex flex-col gap-0.5 rounded-b-xl bg-popover p-1.5 shadow-lg ring-1 ring-border">
+						<div className="px-2.5 pt-1.5 pb-0.5 text-[11px] font-semibold tracking-[0.06em] text-muted-foreground uppercase">
+							{trimmedQuery ? 'Matches' : 'Suggested'}
+						</div>
+						{/* biome-ignore lint/a11y/useFocusableInteractive: focus stays in the To input, the listbox is never tabbed to */}
+						<div
+							id={listboxId}
+							// biome-ignore lint/a11y/useSemanticElements: an ARIA listbox the To input controls (aria-activedescendant); <select> is for form values
+							role="listbox"
+							aria-label="Suggested"
+						>
+							{suggestions.map((r) => (
+								<div
+									key={r.id}
+									id={`${listboxId}-${r.id}`}
+									// biome-ignore lint/a11y/useSemanticElements: an option of an ARIA listbox the To input controls; <option> belongs to <select>
+									role="option"
+									tabIndex={-1}
+									aria-selected={r.id === activeSuggestion?.id}
+									// mousedown, not click: the input's blur would close the list first.
+									onMouseDown={(e) => {
+										e.preventDefault()
+										add(r.id)
+									}}
+									onMouseMove={() => setActiveIndex(suggestions.indexOf(r))}
+									className={cn(
+										'flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 hover:bg-secondary',
+										r.id === activeSuggestion?.id && 'bg-secondary',
+									)}
+								>
+									<ActorAvatar id={r.id} name={r.name} type={r.type} size="md" />
+									<span className="min-w-0 flex-1 truncate text-[14.5px] font-semibold text-foreground">
+										{r.name}
+									</span>
+									<span className="text-[12.5px] text-muted-foreground">
+										{r.type === 'agent' ? 'Agent' : 'Person'}
+									</span>
+								</div>
+							))}
+						</div>
+					</div>
+				) : null}
 			</section>
 
-			<FormError error={error ?? undefined} className="px-1.5" />
+			<div className="min-h-8 flex-1" />
 
-			<div className="mt-6">
-				<Button
-					type="submit"
-					className="h-11 rounded-full px-6 font-semibold"
-					disabled={createConversation.isPending}
-				>
-					Start chat
-				</Button>
-			</div>
-		</form>
+			<Composer
+				workspaceId={workspaceId}
+				onSend={handleSend}
+				allowAttachmentOnly
+				longTextAsFile
+				disabled={false}
+				pending={createConversation.isPending}
+				surface="sheet"
+				placeholder={
+					picked.length > 0
+						? 'Write your first message'
+						: 'Pick an agent, then write your first message'
+				}
+				selection={selection}
+				onDispatchSelection={onDispatchSelection}
+				conversationParticipantIds={[]}
+				onRemoveAgent={() => {}}
+				onRemoveObject={(id) => dispatchSelection({ type: 'remove_object', id })}
+				onRemoveNotification={(id) => dispatchSelection({ type: 'remove_notification', id })}
+				onRemoveFile={(fileId) => dispatchSelection({ type: 'remove_file', fileId })}
+				externalError={error}
+				onDismissExternalError={() => setError(null)}
+				textareaLabel="First message"
+				value={draft}
+				onValueChange={setDraft}
+				fillRequest={{ nonce: focusNonce }}
+			/>
+		</div>
 	)
 }

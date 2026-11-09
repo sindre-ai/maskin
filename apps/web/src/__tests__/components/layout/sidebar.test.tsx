@@ -157,6 +157,12 @@ describe('AppSidebar', () => {
 		expect(screen.getByText('Chats')).toBeInTheDocument()
 	})
 
+	it('has a New chat button under the nav that opens the new chat page', () => {
+		vi.mocked(useEnabledModules).mockReturnValue(['work'])
+		render(<AppSidebar />)
+		expect(screen.getByRole('link', { name: 'New chat' })).toBeInTheDocument()
+	})
+
 	it('shows a chat unread count next to Chats, capped with a + when the page overflows', () => {
 		vi.mocked(useEnabledModules).mockReturnValue(['work'])
 		vi.mocked(useChatUnreadCount).mockReturnValue({ count: 50, hasMore: true })
