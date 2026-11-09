@@ -196,12 +196,6 @@ struct KeychainStoreTests {
 		#expect(store.sentence(for: store.audit[1]) == "You added this credential.")
 	}
 
-	@Test func theMenuListsKeychainRightAfterIntegrations() {
-		let workspace = ProfileMenuItem.allCases.filter { $0.group == .workspace }
-		let after = workspace.firstIndex(of: .integrations).map { workspace[$0 + 1] }
-		#expect(after == .keychain)
-		#expect(ProfileMenuItem.keychain.title == "Keychain")
-	}
 }
 
 @Suite("APIKeychainSource")

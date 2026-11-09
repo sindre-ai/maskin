@@ -21,9 +21,18 @@ import type { RouteTimingSink } from './route-timing-store'
  * while it was open (the Last-Event-ID replay and per-frame reads). Frames sent for events that
  * arrive from the live bridge run outside the request and are not attributed.
  *
+ * Each bucket is also split by who sent the request, read from `X-Client-Source` and mapped onto a
+ * fixed list (`resolveClientSourceLabel`): ui (web), ios, mcp (agents), other, none (no header).
+ * The raw header is never stored or logged.
+ *
  * Each bucket is also split by the app build that sent the request (`X-Client-Build`, the iOS
  * build number). Only 1 to 12 digits are kept; anything else, and every request without the
  * header (web, agents), counts under an empty build. The raw header is never stored or logged.
+ *
+ * Open streams are counted next to that (`api_open_streams`): one line when a stream connects and
+ * one when it disconnects, each with the number open afterwards, plus one `window` line per route
+ * per minute with the open count at the flush and the peak seen during that minute. Counts only,
+ * keyed by the route pattern, never by person, workspace or URL.
  *
  * The same numbers can also be handed to a sink on each flush (`setRouteTimingSink`), which keeps
  * them in the database. The sink never blocks or fails a request.
@@ -34,6 +43,21 @@ const SLOW_REQUEST_MS = 1_000
 const SLOW_DB_MS = 500
 const SKIPPED_PATHS = new Set(['/api/health'])
 const CLIENT_BUILD_PATTERN = /^\d{1,12}$/
+
+/** Who sent a request, as kept in the counts. `none` is a request with no `X-Client-Source`. */
+export type ClientSourceLabel = 'ui' | 'ios' | 'mcp' | 'other' | 'none'
+
+/**
+ * Maps the self-reported `X-Client-Source` header onto the fixed list above. The web app sends
+ * 'ui', the iOS app 'ios' and the MCP client 'mcp'. Anything else the caller typed collapses to
+ * 'other', so the stored value never carries caller text and the label stays at five values.
+ */
+export function resolveClientSourceLabel(header: string | undefined | null): ClientSourceLabel {
+	const source = header?.trim().toLowerCase()
+	if (!source) return 'none'
+	if (source === 'ui' || source === 'ios' || source === 'mcp') return source
+	return 'other'
+}
 
 interface RequestTiming {
 	dbMs: number
@@ -51,11 +75,28 @@ interface Bucket {
 	slow: number
 }
 
+interface StreamGauge {
+	method: string
+	route: string
+	open: number
+	/** Highest `open` since the last flush. Starts each window at the number still open. */
+	peak: number
+	connects: number
+	disconnects: number
+}
+
 const requestStore = new AsyncLocalStorage<RequestTiming>()
 const buckets = new Map<
 	string,
-	Bucket & { method: string; route: string; stream: boolean; clientBuild: string }
+	Bucket & {
+		method: string
+		route: string
+		stream: boolean
+		clientSource: ClientSourceLabel
+		clientBuild: string
+	}
 >()
+const streamGauges = new Map<string, StreamGauge>()
 let flushTimer: ReturnType<typeof setInterval> | undefined
 let sink: RouteTimingSink | undefined
 
@@ -79,22 +120,30 @@ export function recordDbTime(ms: number): void {
 
 const round = (n: number) => Math.round(n * 10) / 10
 
+function ensureFlushTimer() {
+	if (flushTimer) return
+	flushTimer = setInterval(flushRouteTiming, FLUSH_INTERVAL_MS)
+	flushTimer.unref()
+}
+
 function record(
 	method: string,
 	route: string,
 	status: number,
 	stream: boolean,
+	clientSource: ClientSourceLabel,
 	clientBuild: string,
 	totalMs: number,
 	timing: RequestTiming,
 ) {
-	const key = `${method} ${route} ${stream} ${clientBuild}`
+	const key = `${method} ${route} ${stream} ${clientSource} ${clientBuild}`
 	let bucket = buckets.get(key)
 	if (!bucket) {
 		bucket = {
 			method,
 			route,
 			stream,
+			clientSource,
 			clientBuild,
 			requests: 0,
 			errors5xx: 0,
@@ -129,13 +178,35 @@ function record(
 		})
 	}
 
-	if (!flushTimer) {
-		flushTimer = setInterval(flushRouteTiming, FLUSH_INTERVAL_MS)
-		flushTimer.unref()
-	}
+	ensureFlushTimer()
 }
 
-/** Writes one `api_route_timing` line per route seen since the last flush. */
+function streamConnected(method: string, route: string) {
+	const key = `${method} ${route}`
+	let gauge = streamGauges.get(key)
+	if (!gauge) {
+		gauge = { method, route, open: 0, peak: 0, connects: 0, disconnects: 0 }
+		streamGauges.set(key, gauge)
+	}
+	gauge.open++
+	gauge.connects++
+	gauge.peak = Math.max(gauge.peak, gauge.open)
+	logger.info('api_open_streams', { method, route, event: 'connect', open: gauge.open })
+	ensureFlushTimer()
+}
+
+function streamDisconnected(method: string, route: string) {
+	const gauge = streamGauges.get(`${method} ${route}`)
+	if (!gauge) return
+	gauge.open = Math.max(0, gauge.open - 1)
+	gauge.disconnects++
+	logger.info('api_open_streams', { method, route, event: 'disconnect', open: gauge.open })
+}
+
+/**
+ * Writes one `api_route_timing` line per route seen since the last flush, and one
+ * `api_open_streams` window line per stream route that had a stream open or moving.
+ */
 export function flushRouteTiming(): void {
 	for (const b of buckets.values()) {
 		logger.info('api_route_timing', {
@@ -161,6 +232,7 @@ export function flushRouteTiming(): void {
 					method: b.method,
 					route: b.route,
 					stream: b.stream,
+					clientSource: b.clientSource,
 					clientBuild: b.clientBuild,
 					requests: b.requests,
 					slowRequests: b.slow,
@@ -177,6 +249,29 @@ export function flushRouteTiming(): void {
 		}
 	}
 	buckets.clear()
+
+	for (const [key, g] of streamGauges) {
+		if (g.open > 0 || g.connects > 0 || g.disconnects > 0) {
+			logger.info('api_open_streams', {
+				method: g.method,
+				route: g.route,
+				event: 'window',
+				window_s: FLUSH_INTERVAL_MS / 1000,
+				open: g.open,
+				peak: g.peak,
+				connects: g.connects,
+				disconnects: g.disconnects,
+			})
+		}
+		// The next window starts from what is still open. A route with nothing open and nothing
+		// moving is dropped, so the map cannot grow past the stream routes in use.
+		if (g.open === 0) streamGauges.delete(key)
+		else {
+			g.peak = g.open
+			g.connects = 0
+			g.disconnects = 0
+		}
+	}
 }
 
 export function requestTiming(): MiddlewareHandler {
@@ -184,6 +279,7 @@ export function requestTiming(): MiddlewareHandler {
 		if (SKIPPED_PATHS.has(c.req.path)) return next()
 
 		const timing: RequestTiming = { dbMs: 0, dbQueries: 0 }
+		const clientSource = resolveClientSourceLabel(c.req.header('x-client-source'))
 		const clientBuild = parseClientBuild(c.req.header('x-client-build'))
 		const start = performance.now()
 		await requestStore.run(timing, next)
@@ -195,14 +291,43 @@ export function requestTiming(): MiddlewareHandler {
 		const status = c.res.status
 		const stream = c.res.headers.get('content-type')?.startsWith('text/event-stream') ?? false
 		if (!stream) {
-			record(method, route, status, false, clientBuild, performance.now() - start, timing)
+			record(
+				method,
+				route,
+				status,
+				false,
+				clientSource,
+				clientBuild,
+				performance.now() - start,
+				timing,
+			)
 			return
 		}
 
 		const signal = c.req.raw.signal
 		const finish = () =>
-			record(method, route, status, true, clientBuild, performance.now() - start, timing)
-		if (signal.aborted) finish()
-		else signal.addEventListener('abort', finish, { once: true })
+			record(
+				method,
+				route,
+				status,
+				true,
+				clientSource,
+				clientBuild,
+				performance.now() - start,
+				timing,
+			)
+		if (signal.aborted) {
+			finish()
+			return
+		}
+		streamConnected(method, route)
+		signal.addEventListener(
+			'abort',
+			() => {
+				streamDisconnected(method, route)
+				finish()
+			},
+			{ once: true },
+		)
 	}
 }

@@ -78,6 +78,7 @@ export function subscribeToSessionLogs(
 			headers: () => ({
 				Authorization: `Bearer ${getApiKey()}`,
 				'X-Workspace-Id': workspaceId,
+				'X-Client-Source': 'ui',
 			}),
 			cursor: {
 				get: () => getCursor(sessionId),

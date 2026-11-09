@@ -36,6 +36,8 @@ private let onRuntimeReady: (AppRuntime) -> Void
 	@State private var appLock: AppLockController
 	/// The short confirmation ("Copied") any screen can ask for through the environment.
 	@State private var toast: String?
+	/// Follow device (default), Light or Dark, set from the account menu's Appearance row.
+	@AppStorage(AppearancePreference.storageKey) private var appearance: AppearancePreference = .system
 	#if os(iOS)
 		/// Covers sheets too, which a SwiftUI overlay on this view cannot.
 		@State private var appLockWindow: AppLockWindowPresenter
@@ -87,6 +89,7 @@ private let onRuntimeReady: (AppRuntime) -> Void
 				AuthView(environment: environment)
 			}
 		}
+		.preferredColorScheme(appearance.colorScheme)
 		.animation(reduceMotion ? nil : .default, value: auth.session != nil)
 		.animation(reduceMotion ? nil : .snappy, value: toast)
 		.appLockCover(appLock, workspaceName: lockWorkspaceName)

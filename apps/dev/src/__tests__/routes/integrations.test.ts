@@ -22,7 +22,7 @@ vi.mock('../../lib/integrations/registry', async () => {
 	}
 })
 
-// Stub fetchInstallationOwnerLogin so the github callback path doesn't make a
+// Stub fetchInstallationAccount so the github callback path doesn't make a
 // live api.github.com call during unit tests. Keep `githubAuth` as-is so the
 // registry's customAuth handler still works.
 vi.mock('../../lib/integrations/providers/github/auth', async () => {
@@ -31,13 +31,17 @@ vi.mock('../../lib/integrations/providers/github/auth', async () => {
 	>('../../lib/integrations/providers/github/auth')
 	return {
 		...actual,
-		fetchInstallationOwnerLogin: vi.fn(async (installationId: string) => `owner-${installationId}`),
+		fetchInstallationAccount: vi.fn(async (installationId: string) => ({
+			login: `owner-${installationId}`,
+			type: 'organization' as const,
+			avatarUrl: `https://avatars.githubusercontent.com/u/${installationId}`,
+		})),
 	}
 })
 
 const { getProvider } = await import('../../lib/integrations/registry')
 const { default: integrationsRoutes, webhookApp } = await import('../../routes/integrations')
-const { fetchInstallationOwnerLogin } = await import('../../lib/integrations/providers/github/auth')
+const { fetchInstallationAccount } = await import('../../lib/integrations/providers/github/auth')
 
 const wsId = '00000000-0000-0000-0000-000000000001'
 
@@ -1179,7 +1183,7 @@ describe('Integrations Routes', () => {
 			)
 
 			expect(res.status).toBe(302)
-			expect(fetchInstallationOwnerLogin).toHaveBeenCalledWith('42')
+			expect(fetchInstallationAccount).toHaveBeenCalledWith('42')
 
 			const activateCall = calls.updates.find(
 				(u): u is { status?: string; externalId?: string; config?: { owner_login?: string } } =>
@@ -1190,6 +1194,8 @@ describe('Integrations Routes', () => {
 			expect(activateCall?.config).toEqual({
 				system_actor_id: 'system-actor-id',
 				owner_login: 'owner-42',
+				owner_type: 'organization',
+				owner_avatar_url: 'https://avatars.githubusercontent.com/u/42',
 			})
 		})
 
@@ -1315,6 +1321,8 @@ describe('Integrations Routes', () => {
 			expect(refreshCall?.config).toEqual({
 				system_actor_id: 'system-actor-id',
 				owner_login: 'owner-300',
+				owner_type: 'organization',
+				owner_avatar_url: 'https://avatars.githubusercontent.com/u/300',
 			})
 
 			// No promote-shaped update — the pending row was deleted, not rewritten

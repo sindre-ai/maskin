@@ -11,6 +11,7 @@ import {
 	unsubscribeBrowser,
 } from '@/lib/web-push'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useReducer } from 'react'
 
 const SUBSCRIPTION_KEY = ['web-push', 'browser-subscription'] as const
 
@@ -27,6 +28,23 @@ export type WebPushState =
 export function useWebPush() {
 	const queryClient = useQueryClient()
 	const supported = isWebPushSupported()
+
+	// The permission is read from the browser at render time, so a change made in site settings is
+	// only seen after a re-render. Re-read it when the tab regains focus, so "blocked" clears
+	// without a reload.
+	const [, rereadPermission] = useReducer((n: number) => n + 1, 0)
+	useEffect(() => {
+		if (!supported) return
+		const onVisible = () => {
+			if (document.visibilityState === 'visible') rereadPermission()
+		}
+		window.addEventListener('focus', rereadPermission)
+		document.addEventListener('visibilitychange', onVisible)
+		return () => {
+			window.removeEventListener('focus', rereadPermission)
+			document.removeEventListener('visibilitychange', onVisible)
+		}
+	}, [supported])
 
 	const config = useQuery({
 		queryKey: queryKeys.webPush.config(),
@@ -49,6 +67,7 @@ export function useWebPush() {
 			if (!publicKey) throw new Error('Browser notifications are not configured')
 			const outcome = await subscribeBrowser(publicKey)
 			if (outcome.status === 'denied') return 'denied' as const
+			if (outcome.status === 'dismissed') return 'dismissed' as const
 			const saved = await api.webPush.subscribe(toSubscribeBody(outcome.subscription))
 			storeSubscriptionId(saved.id)
 			return 'subscribed' as const

@@ -75,7 +75,7 @@ export function LoopCard({
 	return (
 		<div
 			data-testid="loop-card"
-			className="relative flex flex-col gap-3 rounded-xl bg-card px-[18px] py-4 shadow-sm ring-1 ring-border transition-shadow duration-150 hover:ring-border-strong"
+			className="relative flex flex-col gap-3 rounded-[20px] bg-muted px-[22px] py-5 transition-colors duration-150 hover:bg-border"
 		>
 			<div className="flex items-center justify-between gap-3">
 				<div className="flex min-w-0 items-center gap-2">
@@ -90,7 +90,7 @@ export function LoopCard({
 					<Link
 						to="/$workspaceId/loops/$loopId"
 						params={{ workspaceId: loop.workspaceId, loopId: loop.id }}
-						className="truncate text-[13px] font-semibold text-foreground after:absolute after:inset-0 after:rounded-xl after:content-['']"
+						className="truncate text-[13px] font-semibold text-foreground after:absolute after:inset-0 after:rounded-[20px] after:content-['']"
 					>
 						{loop.name ?? 'Untitled flow'}
 					</Link>
@@ -121,7 +121,7 @@ export function LoopCard({
 								'aria-valuemax': 100,
 							}
 						: { 'aria-hidden': true })}
-					className="h-1.5 overflow-hidden rounded-full bg-muted"
+					className="h-1.5 overflow-hidden rounded-full bg-border"
 				>
 					<div
 						className={cn('h-full rounded-full', metric.missed ? 'bg-destructive' : 'bg-brand')}
@@ -135,7 +135,7 @@ export function LoopCard({
 			{failed && (
 				<div
 					role="alert"
-					className="relative z-10 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-xl bg-muted px-3 py-2.5"
+					className="relative z-10 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-3.5 py-2.5"
 				>
 					<span className="min-w-0 text-[12.5px] font-semibold text-foreground">
 						{failed.agent.name} stopped on its last run

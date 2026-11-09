@@ -262,6 +262,35 @@ describe('POST /integrations/:id/allow-from-chat (Integration)', () => {
 			jsonRequest('POST', `/api/integrations/${integrationId}/allow-from-chat`, body, H(s.ws.id)),
 		)
 
+	it('records when and by whom on the card, once, and a second Allow does not rewrite it', async () => {
+		const s = await setup()
+		const stripe = await s.key('Stripe')
+		await appFor(s.agent.id, 'agent').request(
+			jsonRequest(
+				'POST',
+				`/api/sessions/${s.session.id}/keychain-access-card`,
+				{ credential_name: 'Stripe' },
+				H(s.ws.id),
+			),
+		)
+		const read = async () => {
+			const [row] = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.conversationId, s.conversation.id))
+			return (row.metadata as { card_resolved?: Record<string, string> }).card_resolved
+		}
+		expect(await read()).toBeUndefined()
+
+		expect((await allow(s, stripe.id)).status).toBe(200)
+		const first = await read()
+		expect(first).toMatchObject({ by_actor_id: s.human, outcome: 'done' })
+		expect(Number.isNaN(new Date(first?.at ?? '').getTime())).toBe(false)
+
+		expect((await allow(s, stripe.id)).status).toBe(200)
+		expect(await read()).toEqual(first)
+	})
+
 	it('grants the agent whose session asked, audits it, and restarts that session', async () => {
 		const s = await setup()
 		const stripe = await s.key('Stripe')

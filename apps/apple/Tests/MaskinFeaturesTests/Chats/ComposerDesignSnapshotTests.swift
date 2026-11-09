@@ -203,6 +203,21 @@ struct MaskinComposerSnapshotTests {
 		#expect(height <= visible, "all six rows must sit inside the visible area, got \(height)pt of \(visible)pt")
 	}
 
+	@Test("the + menu card ends 8pt above the bar for every row count and cap")
+	func attachMenuSitsAboveBar() {
+		let barTop: CGFloat = 0
+		for rows in 1...ComposerAttachAction.allCases.count {
+			for cap in [CGFloat.infinity, 300, 150] {
+				let height = min(ComposerAttachMenu.contentHeight(rows: rows), cap)
+				// Overlaid at the bar's top-leading corner, the card's top is the offset and its bottom is that plus its height.
+				let cardTop = barTop + ComposerAttachMenu.offsetY(height: height)
+				let cardBottom = cardTop + height
+				#expect(cardBottom == barTop - MaskinSpace.s4, "\(rows) rows, cap \(cap): bottom \(cardBottom)")
+				#expect(cardTop < barTop, "the card must start above the bar, so the + stays uncovered")
+			}
+		}
+	}
+
 	@Test("the + menu caps its height and scrolls when the room above the bar is short")
 	func attachMenuCapped() throws {
 		let all = ComposerAttachAction.allCases

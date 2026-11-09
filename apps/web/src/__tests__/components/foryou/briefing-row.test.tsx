@@ -79,10 +79,11 @@ describe('BriefingRow', () => {
 		expect(screen.queryByRole('heading', { name: /briefings/i })).toBeNull()
 	})
 
-	it('marks an unseen tile with a NEW pill and draws no kind label', () => {
+	it('marks an unseen tile as new without a pill and draws no kind label', () => {
 		renderRow()
 		const tiles = screen.getAllByTestId('briefing-card')
-		expect(within(tiles[0]).getByText('New')).toBeInTheDocument()
+		expect(tiles[0]).toHaveAccessibleName(/, new$/)
+		expect(within(tiles[0]).queryByText('New')).not.toBeInTheDocument()
 		expect(within(tiles[0]).queryByText('Briefing')).toBeNull()
 	})
 
