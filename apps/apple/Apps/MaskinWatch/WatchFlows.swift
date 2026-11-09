@@ -24,7 +24,17 @@ struct WatchFlows: View {
 	/// What a complication or the wearer asked to open, cleared once it is showing.
 	@Binding var route: WatchFlowsRoute?
 
-	@State private var index = 0
+	@State private var index = WatchFlows.startingIndex
+
+	/// Design review only: `MASKIN_DEMO_CARD=1` opens that card, because a simulator cannot swipe.
+	/// Always the first card in Release.
+	private static var startingIndex: Int {
+		#if DEBUG
+			return max(0, ProcessInfo.processInfo.environment["MASKIN_DEMO_CARD"].flatMap(Int.init) ?? 0)
+		#else
+			return 0
+		#endif
+	}
 
 	private var tiles: [WatchFlowsLayout.Tile] {
 		WatchFlowsLayout.tiles(flows: flows, needsCount: needsCount)
