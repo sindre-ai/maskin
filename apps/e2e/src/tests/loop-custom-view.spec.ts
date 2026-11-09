@@ -167,14 +167,11 @@ test.describe('Loop page — custom view tabs', () => {
 		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
 
 		await expect(page.getByRole('tab', { name: 'Setup' })).toBeVisible({ timeout: 15_000 })
-		expect(await page.getByRole('tab').allTextContents()).toEqual([
-			'Overview',
-			'Results',
-			'Pipeline view',
-			'Items',
-			'Activity',
-			'Setup',
-		])
+		// Items carries a count badge ("Items3"); the order is what this checks.
+		const tabNames = (await page.getByRole('tab').allTextContents()).map((t) =>
+			t.replace(/\d+$/, ''),
+		)
+		expect(tabNames).toEqual(['Overview', 'Results', 'Pipeline view', 'Items', 'Activity', 'Setup'])
 
 		await openTab(page, 'Pipeline view')
 		await expect(viewFrame(page).getByText('Second view heading')).toBeVisible({

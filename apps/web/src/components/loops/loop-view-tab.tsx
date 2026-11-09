@@ -7,14 +7,13 @@ import { useState } from 'react'
  */
 export function LoopViewTab({ workspaceId, fileId }: { workspaceId: string; fileId: string }) {
 	const [failure, setFailure] = useState<string | null>(null)
-	return (
-		<>
-			{failure && (
-				<p role="alert" className="text-sm text-muted-foreground">
-					This view can't be shown: {failure}
-				</p>
-			)}
-			<LoopCustomView workspaceId={workspaceId} fileId={fileId} onFailure={setFailure} />
-		</>
-	)
+	// A failed view is unmounted, not just annotated, so its frame is gone from the page.
+	if (failure) {
+		return (
+			<p role="alert" className="text-sm text-muted-foreground">
+				This view can't be shown: {failure}
+			</p>
+		)
+	}
+	return <LoopCustomView workspaceId={workspaceId} fileId={fileId} onFailure={setFailure} />
 }

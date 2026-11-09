@@ -27,5 +27,6 @@ describe('LoopViewTab', () => {
 		expect(screen.getByRole('alert')).toHaveTextContent(
 			"This view can't be shown: The view file is not an HTML file.",
 		)
+		expect(screen.queryByTestId('view')).toBeNull()
 	})
 })
