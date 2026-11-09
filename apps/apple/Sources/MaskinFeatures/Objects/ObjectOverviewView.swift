@@ -3,7 +3,7 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// The Overview page body, under the pinned header: the description (always, with a quiet
+/// The Overview page body, under the pinned header: the description (always in full, never folded, with a quiet
 /// placeholder when empty), the evidence (pages and PDFs this object produced), the properties
 /// (always: status, owner, priority, due, dates, then any workspace fields), the ask (decision
 /// card, when one waits on the reader) below them, and a "Latest" row that jumps to
@@ -11,8 +11,6 @@ import SwiftUI
 struct ObjectOverviewView<Decision: View>: View {
 	let store: ObjectDetailStore
 	let object: WorkObject
-	/// The description starts unfolded (snapshots).
-	var descriptionExpanded = false
 	var onShowActivity: () -> Void = {}
 	var sessionActions = ObjectSessionActions.none
 	@ViewBuilder var decision: () -> Decision
@@ -23,7 +21,11 @@ struct ObjectOverviewView<Decision: View>: View {
 				SectionHeader("Description")
 				Group {
 					if let content = object.content, !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-						CollapsibleDescription(content: content, initiallyExpanded: descriptionExpanded)
+						MarkdownContent(content, style: .description)
+							#if os(iOS) || os(macOS)
+							.textSelection(.enabled)
+							#endif
+							.fixedSize(horizontal: false, vertical: true)
 					} else {
 						Text("No description yet.")
 							.maskinText(.subhead)

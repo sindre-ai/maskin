@@ -173,39 +173,18 @@ struct ObjectDetailSnapshotTests {
 		}
 	}
 
-	@Test("overview: ask slot, folded description with Read all, outcomes, properties, Latest row")
-	func overviewCollapsed() async throws {
+	@Test("overview: ask slot, the whole description, outcomes, properties, Latest row")
+	func overview() async throws {
 		let store = await makeStore()
-		#expect(DescriptionCollapse.collapses(longDescription))
 		for (width, dark) in sizes {
-			let image = try snapshot("overview-collapsed", width: width, dark: dark) {
+			_ = try snapshot("overview", width: width, dark: dark) {
 				ObjectDetailContent(store: store, part: .overview, now: now) {
 					Text("Ask card").maskinText(.subhead).padding(MaskinSpace.s9)
 						.frame(maxWidth: .infinity)
 						.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.brief))
 				}
 			}
-			_ = image
 		}
-	}
-
-	@Test("overview: the description expanded is taller than folded and never truncates a line")
-	func overviewExpanded() async throws {
-		let store = await makeStore()
-		let folded = try snapshot("description-folded", width: 402, dark: false) {
-			CollapsibleDescription(content: longDescription)
-		}
-		var expandedHeight = 0
-		for (width, dark) in sizes {
-			let image = try snapshot("description-expanded", width: width, dark: dark) {
-				CollapsibleDescription(content: longDescription, initiallyExpanded: true)
-			}
-			if width == 402, !dark { expandedHeight = image.height }
-		}
-		#expect(expandedHeight > folded.height)
-		// Folded: 240pt of content plus the Read all button, at 2x.
-		#expect(folded.height <= Int((CollapsibleDescription.collapsedHeight + MaskinSpace.touchMin + MaskinSpace.s9 * 2) * 2) + 4)
-		_ = store
 	}
 
 	@Test("related: In flow first, glyph tiles, resolved titles, status words, Link an object")
