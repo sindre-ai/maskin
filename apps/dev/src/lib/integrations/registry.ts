@@ -40,6 +40,7 @@ import { config as miroConfig } from './providers/miro/config'
 import { config as notionConfig } from './providers/notion/config'
 import { config as posthogConfig } from './providers/posthog/config'
 import { config as resendConfig } from './providers/resend/config'
+import { config as sentryConfig } from './providers/sentry/config'
 import { config as skjaldConfig } from './providers/skjald/config'
 import { reapSlackUserLinks } from './providers/slack/account-link'
 import {
@@ -182,6 +183,10 @@ providers.set('atlassian', {
 
 providers.set('attio', {
 	config: attioConfig,
+})
+
+providers.set('sentry', {
+	config: sentryConfig,
 })
 
 // resend — bring-your-own integration for customer-domain email send+receive

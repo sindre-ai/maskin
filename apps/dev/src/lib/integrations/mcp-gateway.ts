@@ -42,6 +42,7 @@ export const GATEWAY_PROVIDERS: ReadonlySet<string> = new Set([
 	'notion',
 	'posthog',
 	'resend',
+	'sentry',
 	'ubersuggest',
 ])
 
