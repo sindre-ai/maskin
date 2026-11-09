@@ -13,8 +13,8 @@ import { z } from 'zod'
  * comments.
  */
 
-const TITLE_MIN_WORDS = 3
-const TITLE_MAX_WORDS = 7
+const TITLE_MIN_WORDS = 2
+const TITLE_MAX_WORDS = 9
 const OPTION_LABEL_MAX_WORDS = 4
 const SUMMARY_MAX_SENTENCES = 2
 
@@ -83,7 +83,7 @@ export const decisionOptionSchema = z.object({
 		.min(CONSEQUENCES_MIN)
 		.max(CONSEQUENCES_MAX)
 		.describe(
-			`${CONSEQUENCES_MIN}-${CONSEQUENCES_MAX} lines, present tense, one clause each: "Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one". Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no ", and" — that is two lines, not one.`,
+			`${CONSEQUENCES_MIN}-${CONSEQUENCES_MAX} lines, present tense, one clause each: "Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one". Put the guardrails here ("Nothing is published without your go"). Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no ", and" — that is two lines, not one.`,
 		),
 	recommended: z
 		.boolean()
@@ -196,19 +196,20 @@ export const commentDecisionSchema = z
 			.string()
 			.min(1)
 			.describe(
-				`${TITLE_MIN_WORDS}-${TITLE_MAX_WORDS} words. The decision itself, not a status. A question if it is a judgment call ("Is the onboarding bet worth running?"), a noun phrase if it is an artifact ("Acme's note before Thursday"). No agent name, and no verb-ing: "Reviewing the funnel" is a status, not a decision.`,
+				`${TITLE_MAX_WORDS} words or fewer, ending in "?". The question the human is being asked ("Is the onboarding bet worth running?"), not a status. No agent name, and no verb-ing: "Reviewing the funnel" is a status, not a decision.`,
 			),
 		summary: z
 			.string()
 			.min(1)
 			.describe(
-				`1-${SUMMARY_MAX_SENTENCES} sentences. Sentence 1: the state of the world and the cost of the status quo, with one real number you actually looked up. Sentence 2: what is already done, so the human knows they are only deciding, not working. Never restate the title.`,
+				`At most ${SUMMARY_MAX_SENTENCES} sentences. State what is done and what is still open, so the human knows they are only deciding, not working. Use a real number only when you looked one up. No source paths or file names. Do not name the object: the card shows it. Never restate the title.`,
 			),
 		ask: z
 			.string()
 			.min(1)
+			.optional()
 			.describe(
-				'First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: "Notices go to real households, so I will not send this alone." No hedging, no apologising, no offering to help.',
+				'Leave out when the title is already the question; the card then shows the title and the options. Otherwise first person, one sentence: name the single call you cannot make alone and why it belongs to the human ("Notices go to real households, so I will not send this alone."). No hedging, no apologising, no offering to help.',
 			),
 		options: z
 			.array(decisionOptionSchema)
@@ -272,8 +273,8 @@ export const commentDecisionSchema = z
 			'To ask whether an object should move to a new status ("flip this bet to active"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.',
 			'',
 			'The API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:',
-			'title 3-7 words and not opening with a status verb ("Reviewing the funnel"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;',
-			'ask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;',
+			'title 9 words or fewer, ending in "?", and not opening with a status verb ("Reviewing the funnel"); summary at most 2 sentences, with no source paths, and not a restatement of the title;',
+			'ask omitted when the title is the question, otherwise exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;',
 			'2-3 consequence lines per option, one clause each (no semicolons, no ", and"); and nowhere in the block an em-dash, an en-dash, an emoji,',
 			'or a hedge word standing in for a number ("significantly", "substantially", "several", "many", and the like).',
 			'',
@@ -283,8 +284,7 @@ export const commentDecisionSchema = z
 			'',
 			'Example:',
 			'{ "title": "Is the onboarding bet worth running?",',
-			'  "summary": "3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.",',
-			'  "ask": "This changes what every new customer sees first, so I will not ship it alone.",',
+			'  "summary": "3 of 5 signups stall on step 2, costing about 40 activations a week. The replacement copy and the migration are drafted; shipping is open.",',
 			'  "options": [',
 			'    { "label": "7-day window", "recommended": true, "consequences": ["Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one"] },',
 			'    { "label": "Hold", "consequences": ["Nothing ships this cycle", "Keeps losing 40 activations a week"] } ] }',
@@ -337,7 +337,7 @@ export function validateDecisionProse(
 	const fields: Array<[string, string]> = [
 		['title', decision.title],
 		['summary', decision.summary],
-		['ask', decision.ask],
+		...(decision.ask === undefined ? [] : ([['ask', decision.ask]] as Array<[string, string]>)),
 		...decision.options.flatMap<[string, string]>((option, index) => [
 			[`options.${index}.label`, option.label],
 			...option.consequences.map<[string, string]>((line, lineIndex) => [
@@ -394,10 +394,10 @@ export function validateDecisionProse(
 			`Summary must be at most ${SUMMARY_MAX_SENTENCES} sentences, got ${summarySentences.length}: "${decision.summary}"`,
 		)
 	}
-	if (!/\d/.test(decision.summary)) {
+	if (/(?:^|\s)(?:[\w.-]+\/)+[\w.-]+\.[a-z]{1,5}\b/i.test(decision.summary)) {
 		add(
 			'summary',
-			`Summary must carry one real number for the cost of the status quo. Got no digits: "${decision.summary}"`,
+			`Summary must not carry a source path or file name. Say what changed in words. Got: "${decision.summary}"`,
 		)
 	}
 	const titleTokens = contentTokens(decision.title)
@@ -412,15 +412,21 @@ export function validateDecisionProse(
 		}
 	}
 
-	const askSentences = sentences(decision.ask)
-	if (askSentences.length > 1) {
-		add('ask', `Ask must be one sentence, got ${askSentences.length}: "${decision.ask}"`)
+	if (!decision.title.trim().endsWith('?')) {
+		add('title', `Title must be the question and end in "?". Got: "${decision.title}"`)
 	}
-	if (!/\bI\b|\bI'|\bmy\b/.test(decision.ask)) {
-		add(
-			'ask',
-			`Ask must be first person, naming the call you cannot make alone. Got: "${decision.ask}"`,
-		)
+
+	if (decision.ask !== undefined) {
+		const askSentences = sentences(decision.ask)
+		if (askSentences.length > 1) {
+			add('ask', `Ask must be one sentence, got ${askSentences.length}: "${decision.ask}"`)
+		}
+		if (!/\bI\b|\bI'|\bmy\b/.test(decision.ask)) {
+			add(
+				'ask',
+				`Ask must be first person, naming the call you cannot make alone. Got: "${decision.ask}"`,
+			)
+		}
 	}
 
 	const recommended = decision.options.filter((option) => option.recommended).length
@@ -473,7 +479,7 @@ export function findStatusActionViolations(
 	const names = statuses.map((status) => status.toLowerCase().replace(/_/g, ' '))
 	const fields: Array<[string, string]> = [
 		['title', decision.title],
-		['ask', decision.ask],
+		...(decision.ask === undefined ? [] : ([['ask', decision.ask]] as Array<[string, string]>)),
 		...decision.options.map<[string, string]>((option, index) => [
 			`options.${index}.label`,
 			option.label,

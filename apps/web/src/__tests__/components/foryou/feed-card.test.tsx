@@ -252,9 +252,10 @@ describe('FeedCard — full state', () => {
 		// the decision the agent asked for.
 		expect(screen.getByRole('link', { name: /Trigger settings rewrite/ })).toBeInTheDocument()
 		expect(screen.getByText(/A page 200 people use every day was rewritten/)).toBeInTheDocument()
+		// The row draws the summary in its box and leaves the question line out.
 		expect(
-			screen.getByText('This ships to every workspace at once, so I will not merge it alone.'),
-		).toBeInTheDocument()
+			screen.queryByText('This ships to every workspace at once, so I will not merge it alone.'),
+		).not.toBeInTheDocument()
 		// The object's description no longer appears on the card at all.
 		expect(
 			screen.queryByText('A page people use every day was rewritten, and no human has opened it.'),
@@ -263,11 +264,8 @@ describe('FeedCard — full state', () => {
 		// beneath them as one line, not as a box of bullets per option.
 		expect(screen.getByRole('button', { name: 'Merge now' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Send back' })).toBeInTheDocument()
-		expect(
-			screen.getByText(
-				'Suggested: Merge now. Ships with tonight deploy. No rollback once migrations run.',
-			),
-		).toBeInTheDocument()
+		expect(screen.queryByText(/^Suggested:/)).not.toBeInTheDocument()
+		expect(screen.getByText('Ships with tonight deploy')).toBeInTheDocument()
 		// The composer renders stacked with its default placeholder until the
 		// Object detail split lands `variant`/`placeholder` on the v2 composer —
 		// see the TODO in feed-card.tsx. Assert it is wired to the object, not
@@ -455,8 +453,8 @@ describe('FeedCard — mention author vs object driver', () => {
 
 	it('attributes the expanded meta line to the mention author, not the object driver', () => {
 		renderCard({ item: magnusDriven })
-		expect(screen.getByText(/Code Reviewer ·/)).toBeInTheDocument()
-		expect(screen.queryByText(/Magnus ·/)).not.toBeInTheDocument()
+		expect(screen.getByText('Code Reviewer')).toBeInTheDocument()
+		expect(screen.queryByText('Magnus')).not.toBeInTheDocument()
 	})
 
 	it('threads the receipt back to the mention author, not the object driver', () => {

@@ -67,10 +67,11 @@ struct ForYouCardTests {
 		#expect(ForYouFormat.heldNote(since: now.addingTimeInterval(-9 * 86_400), now: now) == "held 7d+")
 	}
 
-	@Test func waitingNoteSaysNothingUntilADayHasPassed() {
+	@Test func waitingNoteSaysNothingUntilTwoDaysHavePassed() {
 		let now = Date()
 		#expect(ForYouFormat.waitingNote(since: now.addingTimeInterval(-3600), now: now) == nil)
-		#expect(ForYouFormat.waitingNote(since: now.addingTimeInterval(-86_400), now: now) == "Asked yesterday")
+		#expect(ForYouFormat.waitingNote(since: now.addingTimeInterval(-86_400), now: now) == nil)
+		#expect(ForYouFormat.waitingNote(since: now.addingTimeInterval(-2 * 86_400), now: now) == "Asked 2 days ago")
 		#expect(ForYouFormat.waitingNote(since: now.addingTimeInterval(-3 * 86_400), now: now) == "Asked 3 days ago")
 		#expect(ForYouFormat.waitingNote(since: now.addingTimeInterval(-9 * 86_400), now: now) == "Asked over a week ago")
 	}

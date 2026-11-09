@@ -185,6 +185,7 @@ struct ForYouFeedView: View {
 				.environment(\.defaultMinListRowHeight, 0)
 				.scrollDismissesKeyboard(.interactively)
 				.scrollContentBackground(.hidden)
+				.contentMargins(.bottom, MaskinSpace.s12, for: .scrollContent)
 				.ambientBackground()
 				.background(
 					GeometryReader { geometry in
