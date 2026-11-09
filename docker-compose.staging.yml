@@ -13,7 +13,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # Internal only: no host port, no metrics port, keys come from env (no default).
+  # Internal only: no host port, keys come from env (no default).
   seaweedfs:
     image: chrislusf/seaweedfs
     entrypoint: ["/bin/sh", "-c"]
@@ -26,16 +26,22 @@ services:
     volumes:
       - seaweed_data:/data
 
-  # Staging for bet/dbe5-claude-oauth-connect. Differences from docker-compose.prod.yml:
-  # no /var/run/docker.sock mount (so no agent sessions here), no agent-base build,
-  # no GitHub App, no Resend, no prod PostHog. Do not add them back.
+  # Staging for the model-choice bet (PR 3092). Same shape as the agent-server-test staging:
+  # no /var/run/docker.sock mount (no local agent sessions), no agent-base build, no GitHub App,
+  # no Resend. Sessions run on the separate test agent server, registered through AGENT_SERVERS.
+  # This shares a host with prod: do not add the other prod pieces back.
+  # Staging only, never merge.
   app:
     build:
       context: .
       dockerfile: apps/dev/Dockerfile
       args:
         VITE_MASKIN_COMMIT_SHA: ${SOURCE_COMMIT:-}
-    command: ["sh", "-c", "node packages/db/dist/migrate.js && pnpm --filter @maskin/dev exec tsx scripts/seed-marketplace.ts && node apps/dev/dist/index.js"]
+    command:
+      - sh
+      - -c
+      - |
+        node packages/db/dist/migrate.js && pnpm --filter @maskin/dev exec tsx scripts/seed-marketplace.ts && node apps/dev/dist/index.js
     healthcheck:
       test:
         [
@@ -59,15 +65,20 @@ services:
       S3_SECRET_KEY: ${S3_SECRET_KEY}
       S3_REGION: ${S3_REGION:-us-east-1}
       INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-}
-      APP_URL: https://staging.maskin.sindre.ai
-      # Claude sign-in (MCP OAuth) test. Listed explicitly: compose only passes
-      # what is named here.
-      MASKIN_MCP_OAUTH_ENABLED: ${MASKIN_MCP_OAUTH_ENABLED:-true}
-      MASKIN_OAUTH_ISSUER: ${MASKIN_OAUTH_ISSUER:-https://staging.maskin.sindre.ai}
-      # Tester flag vars (see .claude/rules/feature-flags.md). Unregistered flag ids
-      # resolve to false. Leave actor ids empty until a staging user exists.
       FF_TESTER_ACTOR_IDS: ${FF_TESTER_ACTOR_IDS:-}
-      FF_TESTER_FEATURES: ${FF_TESTER_FEATURES:-mcp-oauth-consent}
+      FF_TESTER_FEATURES: ${FF_TESTER_FEATURES:-}
+      POSTHOG_API_KEY: ${POSTHOG_API_KEY:-}
+      POSTHOG_HOST: ${POSTHOG_HOST:-}
+      APP_URL: ${SERVICE_URL_APP}
+      FRONTEND_URL: ${SERVICE_URL_APP}
+      MASKIN_BACKEND_URL: ${SERVICE_URL_APP}
+      AGENT_BASE_IMAGE: magnusnoeddegaard/agent-base:latest
+      AGENT_SERVERS: ${AGENT_SERVERS:-}
+      AGENT_SERVER_SECRET: ${AGENT_SERVER_SECRET:-}
+      MASKIN_ENTERPRISE_ACTOR_IDS: ${MASKIN_ENTERPRISE_ACTOR_IDS:-}
+      # Funded OpenRouter route test. Both stay empty until a capped test key is set.
+      MASKIN_FALLBACK_OPENROUTER_KEY: ${MASKIN_FALLBACK_OPENROUTER_KEY:-}
+      MASKIN_FALLBACK_MODEL: ${MASKIN_FALLBACK_MODEL:-}
     depends_on:
       postgres:
         condition: service_healthy
