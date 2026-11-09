@@ -41,6 +41,7 @@ struct LoopViewsTests {
 		#expect(LoopViews.read(metadata: .object([:])).isEmpty)
 	}
 
+	@MainActor
 	@Test("the loop screen keeps its views when a later read fails")
 	func store() async {
 		let row = loopRow("l1")
