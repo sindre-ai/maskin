@@ -52,6 +52,7 @@ struct WatchNeedsYou: View {
 						store: store, entry: entry, workspaceId: workspaceId,
 						position: WatchDecisionOptions.position(index, of: entries.count),
 						next: index + 1 < entries.count ? { selection = entries[index + 1].id } : nil,
+						cycle: entries.count > 1 ? { selection = entries[(index + 1) % entries.count].id } : nil,
 						finish: finish)
 					.tag(Optional(entry.id))
 				}
@@ -63,7 +64,7 @@ struct WatchNeedsYou: View {
 				ForEach(Array(watch.cards.enumerated()), id: \.element.id) { index, card in
 					WatchSnapshotPage(
 						card: card, position: WatchDecisionOptions.position(index, of: watch.cards.count),
-						updatedAt: watch.snapshot?.updatedAt, offline: watch.isOffline)
+						updatedAt: watch.snapshot?.updatedAt, offline: watch.isOffline, workspaceId: workspaceId)
 				}
 			}
 			.tabViewStyle(.page)
@@ -94,17 +95,30 @@ private struct WatchCaughtUp: View {
 	}
 }
 
-/// Tile, sender and where this page sits in the pager ("1 of 3").
+/// Tile, sender and where this page sits in the pager ("1/3"). Tapping the place moves to the next one.
 private struct WatchDecisionHeader: View {
 	let sender: String
 	let position: String
+	/// Moves to the next decision; nil when there is only one.
+	var cycle: (() -> Void)?
 
 	var body: some View {
 		HStack(spacing: MaskinSpace.gapDefault) {
 			WatchTile(name: sender)
 			Text(sender).font(WatchType.name()).foregroundStyle(MaskinColor.ink).lineLimit(1)
 			Spacer(minLength: 0)
-			Text(position).font(WatchType.mono()).foregroundStyle(MaskinColor.ink4)
+			if let cycle {
+				Button(action: cycle) {
+					Text(position).font(WatchType.mono()).foregroundStyle(MaskinColor.ink4)
+						.padding(.leading, MaskinSpace.s3)
+						.frame(minHeight: WatchMetrics.target)
+						.contentShape(Rectangle())
+				}
+				.buttonStyle(.plain)
+				.accessibilityLabel("Next decision, \(position)")
+			} else {
+				Text(position).font(WatchType.mono()).foregroundStyle(MaskinColor.ink4)
+			}
 		}
 	}
 }
@@ -114,10 +128,12 @@ struct WatchDecisionPage: View {
 	let store: ForYouStore
 	let entry: FeedEntry
 	let workspaceId: String?
-	/// "1 of 3".
+	/// "1/3".
 	let position: String
 	/// Moves the pager to the next decision; nil on the last one.
 	let next: (() -> Void)?
+	/// Tapping the position moves the pager on, wrapping from the last to the first; nil with one.
+	var cycle: (() -> Void)?
 	/// "Done" on the last receipt.
 	var finish: () -> Void = {}
 
@@ -126,6 +142,8 @@ struct WatchDecisionPage: View {
 		case confirm(String)
 		case hold(String)
 		case all
+		/// "Open on iPhone" was tapped.
+		case opened
 	}
 
 	@State private var route: Route?
@@ -175,11 +193,13 @@ struct WatchDecisionPage: View {
 				}
 			case .all:
 				WatchAllOptions(
-					ask: ask, options: WatchDecisionOptions.listed(options),
-					hold: WatchDecisionOptions.hold(options)
+					options: WatchDecisionOptions.listed(options), hold: WatchDecisionOptions.hold(options),
+					openOnPhone: { self.route = .opened }
 				) { option in
 					choose(option)
 				}
+			case .opened:
+				WatchOpenedOnPhone { self.route = .all }
 			}
 		}
 	}
@@ -188,15 +208,10 @@ struct WatchDecisionPage: View {
 
 	@ViewBuilder
 	private var decision: some View {
-		WatchDecisionHeader(sender: store.senderName(of: card) ?? "Chief of Staff", position: position)
+		WatchDecisionHeader(sender: store.senderName(of: card) ?? "Chief of Staff", position: position, cycle: cycle)
 		Text(ask)
 			.font(WatchType.question()).foregroundStyle(MaskinColor.ink)
 			.lineLimit(3)
-		if let reason = WatchDecisionOptions.reasonLine(card.decision?.summary ?? "") {
-			Text(reason)
-				.font(WatchType.caption()).foregroundStyle(MaskinColor.ink3)
-				.lineLimit(2)
-		}
 		if let primary = WatchDecisionOptions.primary(options) {
 			Button { choose(primary) } label: {
 				WatchCapsule(title: primary.label, prominent: true, font: WatchType.option(recommended: true))
@@ -288,21 +303,18 @@ struct WatchDecisionPage: View {
 	}
 }
 
-/// Every option, one capsule each in the iPhone's order, then Hold. A plain list: the page scrolls
+/// Every option, one capsule each in the iPhone's order, then Hold, and a link to carry on on the
+/// iPhone. No title: the screen before says what is being decided. A plain list: the page scrolls
 /// with the Crown and nothing inside it does.
 private struct WatchAllOptions: View {
-	let ask: String
 	let options: [DecisionOption]
 	let hold: DecisionOption?
+	let openOnPhone: () -> Void
 	let choose: (DecisionOption) -> Void
 
 	var body: some View {
 		ScrollView {
 			VStack(alignment: .leading, spacing: MaskinSpace.gapDefault) {
-				Text("ALL OPTIONS")
-					.font(WatchType.microMono()).tracking(0.8)
-					.foregroundStyle(MaskinColor.ink4)
-				Text(ask).font(WatchType.caption()).foregroundStyle(MaskinColor.ink3).lineLimit(3)
 				ForEach(options) { option in
 					Button { choose(option) } label: {
 						WatchCapsule(
@@ -315,9 +327,39 @@ private struct WatchAllOptions: View {
 					Button { choose(hold) } label: { WatchCapsule(title: "Hold") }
 						.buttonStyle(.plain)
 				}
+				Button(action: openOnPhone) {
+					Text("Open on iPhone").font(WatchType.row()).foregroundStyle(MaskinColor.sigHi)
+						.frame(maxWidth: .infinity, minHeight: WatchMetrics.target)
+						.contentShape(Rectangle())
+				}
+				.buttonStyle(.plain)
 			}
 			.frame(maxWidth: .infinity, alignment: .leading)
 		}
+		.containerBackground(for: .navigation) { WatchBackdrop() }
+		.navigationBarBackButtonHidden()
+	}
+}
+
+/// The decision is waiting on the iPhone's Handoff: the page that is showing is the one the phone
+/// offers to continue.
+private struct WatchOpenedOnPhone: View {
+	/// Where Done goes; back one screen when not given.
+	var done: (() -> Void)?
+	@Environment(\.dismiss) private var dismiss
+
+	var body: some View {
+		VStack(spacing: MaskinSpace.gapLoose) {
+			Image(systemName: "checkmark")
+				.font(.system(size: MaskinFontSize.t26, weight: .regular))
+				.foregroundStyle(MaskinColor.sigHi)
+				.accessibilityHidden(true)
+			Text("Opened on iPhone").font(WatchType.action()).foregroundStyle(MaskinColor.ink)
+			Text("Continue there.").font(WatchType.caption()).foregroundStyle(MaskinColor.ink3)
+			Button { done?() ?? dismiss() } label: { WatchCapsule(title: "Done") }.buttonStyle(.plain)
+		}
+		.frame(maxWidth: .infinity, maxHeight: .infinity)
+		.padding(.horizontal, MaskinSpace.s1)
 		.containerBackground(for: .navigation) { WatchBackdrop() }
 		.navigationBarBackButtonHidden()
 	}
@@ -329,6 +371,7 @@ private struct WatchSnapshotPage: View {
 	let position: String
 	let updatedAt: Date?
 	let offline: Bool
+	let workspaceId: String?
 
 	private var header: String? {
 		guard let updatedAt else { return offline ? "OFFLINE" : nil }
@@ -347,19 +390,27 @@ private struct WatchSnapshotPage: View {
 				Text(card.ask.nonEmpty ?? card.headline)
 					.font(WatchType.question()).foregroundStyle(MaskinColor.ink)
 					.lineLimit(3)
-				if let reason = WatchDecisionOptions.reasonLine(card.summary) {
-					Text(reason).font(WatchType.caption()).foregroundStyle(MaskinColor.ink3).lineLimit(2)
-				}
 				if let primary = WatchDecisionOptions.primary(card.options) {
 					Text(primary.label).font(WatchType.row()).foregroundStyle(MaskinColor.ink2)
 				}
-				Label(offline ? "Decide on your iPhone." : "Open on iPhone", systemImage: "iphone")
-					.font(WatchType.caption())
-					.foregroundStyle(MaskinColor.ink4)
-					.frame(minHeight: WatchMetrics.target)
+				if offline {
+					Label("Decide on your iPhone.", systemImage: "iphone")
+						.font(WatchType.caption())
+						.foregroundStyle(MaskinColor.ink4)
+				}
+				NavigationLink {
+					WatchOpenedOnPhone()
+				} label: { WatchCapsule(title: "Open on iPhone", font: WatchType.row()) }
+					.buttonStyle(.plain)
 			}
 			.frame(maxWidth: .infinity, alignment: .leading)
 			.padding(.horizontal, MaskinSpace.s1)
+		}
+		.userActivity(HandoffActivity.type, isActive: workspaceId != nil) { activity in
+			guard let workspaceId else { return }
+			activity.isEligibleForHandoff = true
+			activity.title = card.headline
+			activity.userInfo = HandoffActivity.userInfo(workspaceId: workspaceId, objectId: card.id)
 		}
 	}
 }

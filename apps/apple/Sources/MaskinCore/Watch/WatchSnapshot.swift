@@ -43,10 +43,15 @@ public struct WatchSnapshot: Codable, Sendable, Equatable {
 		public var target: String?
 		/// One sentence on the latest update.
 		public var latest: String?
+		/// The big figure on the flow's card ("3", "0 of 10") and what it counts. Absent in snapshots
+		/// written before the cards existed; the card then falls back to the progress.
+		public var figure: String?
+		public var caption: String?
 
 		public init(
 			id: String, name: String, progress: Double, paused: Bool, needsYou: Bool,
-			cycleStage: String, target: String? = nil, latest: String? = nil
+			cycleStage: String, target: String? = nil, latest: String? = nil,
+			figure: String? = nil, caption: String? = nil
 		) {
 			self.id = id
 			self.name = name
@@ -56,6 +61,8 @@ public struct WatchSnapshot: Codable, Sendable, Equatable {
 			self.cycleStage = cycleStage
 			self.target = target
 			self.latest = latest
+			self.figure = figure
+			self.caption = caption
 		}
 	}
 
@@ -139,10 +146,15 @@ public enum WatchSnapshotBuilder {
 		let target = loop.targets?.first.map {
 			"\($0.label) \(format($0.actual)) of \(format($0.target))"
 		}
+		let counted = WatchFlowsLayout.figure(
+			waiting: loop.waitingCount,
+			target: loop.targets?.first.map { (format($0.actual), format($0.target), $0.label) },
+			progress: loop.ringProgress)
 		return WatchSnapshot.Flow(
 			id: loop.id, name: loop.displayName, progress: loop.ringProgress, paused: loop.isPaused,
 			needsYou: loop.waitingCount > 0, cycleStage: "Cycle \(cycle) \u{00B7} \(loop.status.label)",
-			target: target, latest: loop.content.flatMap(latestSentence))
+			target: target, latest: loop.content.flatMap(latestSentence),
+			figure: counted.big, caption: counted.caption)
 	}
 
 	/// The first sentence of the flow's description: a watch has room for one.
