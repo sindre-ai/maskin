@@ -75,6 +75,7 @@ import { introduceAgentToRecipient } from '../services/agent-intro'
 import { createIntroScanRunner } from '../services/agent-intro-scan'
 import type { AgentStorageManager } from '../services/agent-storage'
 import { addDefaultHeartbeat } from '../services/default-heartbeat'
+import { createEmailOnPreferences } from '../services/email-preferences'
 import { stopSessionsForActors } from '../services/session-cleanup'
 import { startSession } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
@@ -357,6 +358,7 @@ app.openapi(createActorRoute, async (c) => {
 		const [inserted] = await insertActor(tx)
 		if (!inserted) return undefined
 		key = (await issueApiKey(tx, { actorId: inserted.id, kind: 'primary' })).key
+		if (inserted.type === 'human') await createEmailOnPreferences(tx, inserted.id)
 		return inserted
 	}
 

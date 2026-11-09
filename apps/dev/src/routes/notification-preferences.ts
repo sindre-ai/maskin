@@ -12,6 +12,7 @@ import { validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { errorSchema } from '../lib/openapi-schemas'
+import { resolveEmailDigestEnabled, trackEmailSwitchedOff } from '../services/email-preferences'
 import { resolveAuditWorkspace } from './devices'
 
 type Env = {
@@ -24,7 +25,10 @@ type Env = {
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
-function serialize(row: NotificationPreferencesRow | undefined): NotificationPreferencesResponse {
+function serialize(
+	row: NotificationPreferencesRow | undefined,
+	emailDigestEnabled: boolean,
+): NotificationPreferencesResponse {
 	const d = NOTIFICATION_PREFERENCES_DEFAULTS
 	if (!row) {
 		return {
@@ -34,6 +38,7 @@ function serialize(row: NotificationPreferencesRow | undefined): NotificationPre
 			categories: { ...d.categories },
 			briefing_enabled: d.briefing_enabled,
 			briefing_time: d.briefing_time,
+			email_digest_enabled: emailDigestEnabled,
 			muted_workspace_ids: [],
 			updated_at: null,
 		}
@@ -45,6 +50,7 @@ function serialize(row: NotificationPreferencesRow | undefined): NotificationPre
 		categories: { ...d.categories, ...row.categories },
 		briefing_enabled: row.briefingEnabled,
 		briefing_time: row.briefingTime,
+		email_digest_enabled: emailDigestEnabled,
 		muted_workspace_ids: row.mutedWorkspaceIds,
 		updated_at: row.updatedAt.toISOString(),
 	}
@@ -73,7 +79,8 @@ app.openapi(getRoute, async (c) => {
 		.from(notificationPreferences)
 		.where(eq(notificationPreferences.actorId, actorId))
 		.limit(1)
-	return c.json(serialize(row), 200)
+	const email = await resolveEmailDigestEnabled(db, actorId, row?.emailDigestEnabled)
+	return c.json(serialize(row, email), 200)
 })
 
 // PUT /api/notification-preferences
@@ -109,7 +116,8 @@ app.openapi(putRoute, async (c) => {
 		.from(notificationPreferences)
 		.where(eq(notificationPreferences.actorId, actorId))
 		.limit(1)
-	const current = serialize(existing)
+	// Only the push fields are read from `current`; the email state is not needed here.
+	const current = serialize(existing, false)
 
 	const now = new Date()
 	const values = {
@@ -122,6 +130,10 @@ app.openapi(putRoute, async (c) => {
 		briefingEnabled: body.briefing_enabled ?? current.briefing_enabled,
 		briefingTime: body.briefing_time ?? current.briefing_time,
 		mutedWorkspaceIds: [...new Set(body.muted_workspace_ids ?? current.muted_workspace_ids)],
+		// Only a choice sent in this call is saved; an empty choice stays empty.
+		...(body.email_digest_enabled !== undefined && {
+			emailDigestEnabled: body.email_digest_enabled,
+		}),
 	}
 
 	const [row] = await db
@@ -132,6 +144,10 @@ app.openapi(putRoute, async (c) => {
 			set: { ...values, updatedAt: now },
 		})
 		.returning()
+
+	if (body.email_digest_enabled === false && existing?.emailDigestEnabled !== false) {
+		trackEmailSwitchedOff(actorId, 'settings')
+	}
 
 	try {
 		const workspaceId = await resolveAuditWorkspace(db, actorId, c.req.header('X-Workspace-Id'))
@@ -149,7 +165,8 @@ app.openapi(putRoute, async (c) => {
 		logger.warn('notification preferences audit event failed', { error: String(err) })
 	}
 
-	return c.json(serialize(row), 200)
+	const email = await resolveEmailDigestEnabled(db, actorId, row?.emailDigestEnabled)
+	return c.json(serialize(row, email), 200)
 })
 
 export default app

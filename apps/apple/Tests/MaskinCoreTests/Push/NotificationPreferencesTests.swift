@@ -11,7 +11,8 @@ private final class CannedTransport: ClientTransport, @unchecked Sendable {
 	static let body = """
 		{"timezone":"Europe/Oslo","quiet_hours_start":1320,"quiet_hours_end":420,
 		"categories":{"needs_you":true,"conversation":false,"digest":true,"tips":false},
-		"briefing_enabled":false,"briefing_time":480,"muted_workspace_ids":["00000000-0000-4000-8000-000000000001"],
+		"briefing_enabled":false,"briefing_time":480,"email_digest_enabled":true,
+		"muted_workspace_ids":["00000000-0000-4000-8000-000000000001"],
 		"updated_at":null}
 		"""
 	private let lock = NSLock()
@@ -272,6 +273,17 @@ struct PreferencesWireTests {
 		#expect(json["muted_workspace_ids"] as? [String] == ["a"])
 		#expect(json["briefing_time"] as? Int == 510)
 		#expect(json["briefing_enabled"] == nil)
+		#expect(json["email_digest_enabled"] == nil)
+	}
+
+	@Test("the email switch is sent as a top-level field and applied optimistically")
+	func emailSwitch() throws {
+		var patch = NotificationPreferencesPatch()
+		patch.emailDigestEnabled = false
+		let json = try object(patch)
+		#expect(json["email_digest_enabled"] as? Bool == false)
+		#expect(json["categories"] == nil)
+		#expect(patch.applied(to: NotificationPreferences(emailDigestEnabled: true)).emailDigestEnabled == false)
 	}
 
 	@Test("minute and Date conversion round-trips")
@@ -307,10 +319,12 @@ struct PreferencesWireTests {
 		let json = """
 			{"timezone":null,"quiet_hours_start":1320,"quiet_hours_end":420,
 			"categories":{"needs_you":true,"conversation":false,"digest":true,"tips":false},
-			"briefing_enabled":true,"briefing_time":510,"muted_workspace_ids":["w"],"updated_at":null}
+			"briefing_enabled":true,"briefing_time":510,"email_digest_enabled":true,
+			"muted_workspace_ids":["w"],"updated_at":null}
 			"""
 		let wire = try JSONDecoder().decode(APINotificationPreferencesSource.Wire.self, from: Data(json.utf8))
 		let model = wire.model
+		#expect(model.emailDigestEnabled == true)
 		#expect(model.timezone == nil)
 		#expect(model.quietHours == .init(start: 1320, end: 420))
 		#expect(model.categories == .init(needsYou: true, conversation: false, digest: true, tips: false))
@@ -332,6 +346,7 @@ struct PreferencesLoadTests {
 		#expect(prefs.quietHours == .init(start: 1320, end: 420))
 		#expect(prefs.categories == .init(needsYou: true, conversation: false, digest: true, tips: false))
 		#expect(prefs.briefingEnabled == false && prefs.briefingTime == 480)
+		#expect(prefs.emailDigestEnabled == true)
 		#expect(prefs.mutedWorkspaceIds.count == 1)
 	}
 }

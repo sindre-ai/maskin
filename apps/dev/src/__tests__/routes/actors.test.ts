@@ -301,6 +301,7 @@ describe('Actors Routes', () => {
 			mockResults.insertQueue = [
 				[actor], // human actor insert
 				[{}], // human primary api_keys insert
+				[{}], // human email-on notification_preferences insert
 				[{ id: randomUUID(), name: 'ws' }], // workspaces insert
 				[{}], // owner workspaceMembers insert
 				[coach], // workspace_coach actor insert
@@ -324,8 +325,8 @@ describe('Actors Routes', () => {
 			}
 			expect(body.workspace_id).toBeDefined()
 			expect(body.workspace_provisioning_failed).toBeUndefined()
-			// inserts: [actor, api key, workspace, owner-member, coach, coach-member]
-			const coachInsert = calls.inserts[4] as { apiKey?: string; isSystem?: boolean }
+			// inserts: [actor, api key, email prefs, workspace, owner-member, coach, coach-member]
+			const coachInsert = calls.inserts[5] as { apiKey?: string; isSystem?: boolean }
 			expect(coachInsert.isSystem).toBe(true)
 			// Seeded agents get a key per session launch, never a stored one.
 			expect(coachInsert).not.toHaveProperty('apiKey')

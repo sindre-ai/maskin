@@ -17,6 +17,7 @@ describe('GET /api/notification-preferences', () => {
 			categories: { needs_you: true, conversation: true, digest: true, tips: true },
 			briefing_enabled: true,
 			briefing_time: 510,
+			email_digest_enabled: false,
 			muted_workspace_ids: [],
 			updated_at: null,
 		})

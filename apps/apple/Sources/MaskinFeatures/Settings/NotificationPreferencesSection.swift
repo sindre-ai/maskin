@@ -57,6 +57,11 @@ struct NotificationPreferencesSection: View {
 					accessory: .state(PageState("Always on", .active))),
 				toggleRow(.conversation, "Chat replies", "When someone answers you in a chat"),
 				toggleRow(.digest, "Digests", "Summaries of what your agents got done"),
+				PageRowModel(
+					id: "email_digest", title: "Digests by email",
+					subtitle: "Summaries of what your agents got done",
+					accessory: .toggle(
+						isOn: store.preferences.emailDigestEnabled, set: { store.setEmailDigest(enabled: $0) })),
 				toggleRow(.tips, "Tips and updates", "What\u{2019}s new in Maskin"),
 			])
 			PageFootnote(

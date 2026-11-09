@@ -69538,6 +69538,8 @@ public enum Operations {
                         public var briefing_enabled: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/briefing_time`.
                         public var briefing_time: Swift.Int
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/email_digest_enabled`.
+                        public var email_digest_enabled: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/muted_workspace_ids`.
                         public var muted_workspace_ids: [Swift.String]
                         /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/updated_at`.
@@ -69551,6 +69553,7 @@ public enum Operations {
                         ///   - categories:
                         ///   - briefing_enabled:
                         ///   - briefing_time:
+                        ///   - email_digest_enabled:
                         ///   - muted_workspace_ids:
                         ///   - updated_at:
                         public init(
@@ -69560,6 +69563,7 @@ public enum Operations {
                             categories: Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.categoriesPayload,
                             briefing_enabled: Swift.Bool,
                             briefing_time: Swift.Int,
+                            email_digest_enabled: Swift.Bool,
                             muted_workspace_ids: [Swift.String],
                             updated_at: Swift.String? = nil
                         ) {
@@ -69569,6 +69573,7 @@ public enum Operations {
                             self.categories = categories
                             self.briefing_enabled = briefing_enabled
                             self.briefing_time = briefing_time
+                            self.email_digest_enabled = email_digest_enabled
                             self.muted_workspace_ids = muted_workspace_ids
                             self.updated_at = updated_at
                         }
@@ -69579,6 +69584,7 @@ public enum Operations {
                             case categories
                             case briefing_enabled
                             case briefing_time
+                            case email_digest_enabled
                             case muted_workspace_ids
                             case updated_at
                         }
@@ -69734,6 +69740,8 @@ public enum Operations {
                     public var briefing_enabled: Swift.Bool?
                     /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/briefing_time`.
                     public var briefing_time: Swift.Int?
+                    /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/email_digest_enabled`.
+                    public var email_digest_enabled: Swift.Bool?
                     /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/muted_workspace_ids`.
                     public var muted_workspace_ids: [Swift.String]?
                     /// Creates a new `jsonPayload`.
@@ -69745,6 +69753,7 @@ public enum Operations {
                     ///   - categories:
                     ///   - briefing_enabled:
                     ///   - briefing_time:
+                    ///   - email_digest_enabled:
                     ///   - muted_workspace_ids:
                     public init(
                         timezone: Swift.String? = nil,
@@ -69753,6 +69762,7 @@ public enum Operations {
                         categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Input.Body.jsonPayload.categoriesPayload? = nil,
                         briefing_enabled: Swift.Bool? = nil,
                         briefing_time: Swift.Int? = nil,
+                        email_digest_enabled: Swift.Bool? = nil,
                         muted_workspace_ids: [Swift.String]? = nil
                     ) {
                         self.timezone = timezone
@@ -69761,6 +69771,7 @@ public enum Operations {
                         self.categories = categories
                         self.briefing_enabled = briefing_enabled
                         self.briefing_time = briefing_time
+                        self.email_digest_enabled = email_digest_enabled
                         self.muted_workspace_ids = muted_workspace_ids
                     }
                     public enum CodingKeys: String, CodingKey {
@@ -69770,6 +69781,7 @@ public enum Operations {
                         case categories
                         case briefing_enabled
                         case briefing_time
+                        case email_digest_enabled
                         case muted_workspace_ids
                     }
                 }
@@ -69843,6 +69855,8 @@ public enum Operations {
                         public var briefing_enabled: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/briefing_time`.
                         public var briefing_time: Swift.Int
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/email_digest_enabled`.
+                        public var email_digest_enabled: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/muted_workspace_ids`.
                         public var muted_workspace_ids: [Swift.String]
                         /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/updated_at`.
@@ -69856,6 +69870,7 @@ public enum Operations {
                         ///   - categories:
                         ///   - briefing_enabled:
                         ///   - briefing_time:
+                        ///   - email_digest_enabled:
                         ///   - muted_workspace_ids:
                         ///   - updated_at:
                         public init(
@@ -69865,6 +69880,7 @@ public enum Operations {
                             categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.categoriesPayload,
                             briefing_enabled: Swift.Bool,
                             briefing_time: Swift.Int,
+                            email_digest_enabled: Swift.Bool,
                             muted_workspace_ids: [Swift.String],
                             updated_at: Swift.String? = nil
                         ) {
@@ -69874,6 +69890,7 @@ public enum Operations {
                             self.categories = categories
                             self.briefing_enabled = briefing_enabled
                             self.briefing_time = briefing_time
+                            self.email_digest_enabled = email_digest_enabled
                             self.muted_workspace_ids = muted_workspace_ids
                             self.updated_at = updated_at
                         }
@@ -69884,6 +69901,7 @@ public enum Operations {
                             case categories
                             case briefing_enabled
                             case briefing_time
+                            case email_digest_enabled
                             case muted_workspace_ids
                             case updated_at
                         }
