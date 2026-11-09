@@ -306,6 +306,21 @@ export function trackMiniAppFileViewed(p: BaseProps & { entity_type: 'file' }): 
 	trackEvent('mini_app_file_viewed', fillBase(p))
 }
 
+// A person clicked Refresh on a view in the file viewer (bet Customizable app). It
+// counts clicks and scores nothing. `entity_id` is the file id; `list_names` are the
+// app's own list names (a fixed allow-list, never text from the file) joined with a
+// comma; ids, counts and booleans only.
+export function trackViewRefreshed(
+	p: BaseProps & { entity_type: 'file'; list_names: string; row_count: number; ok: boolean },
+): void {
+	trackEvent('view_refreshed', {
+		...fillBase(p),
+		list_names: p.list_names,
+		row_count: p.row_count,
+		ok: p.ok,
+	})
+}
+
 // Usage questions the weekly data pack could not answer. Each fires once per
 // open, with `workspace_id` / `actor_id` riding as super-properties, and carries
 // ids only: no titles, names or text.

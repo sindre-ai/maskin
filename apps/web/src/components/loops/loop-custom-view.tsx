@@ -11,6 +11,7 @@ import {
 } from '@/lib/loop-view-cache'
 import { ISOLATION_LOAD_MESSAGE, prepareIsolatedViewHtml, readViewSources } from '@/lib/mini-app'
 import { subscribeToSSE } from '@/lib/sse-invalidation'
+import type { ListSourceEntry } from '@/lib/view-lists'
 import type { DataQueryResult, DataQuerySpec } from '@maskin/shared'
 import { RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -59,6 +60,7 @@ export function LoopCustomView({ workspaceId, fileId, onFailure }: LoopCustomVie
 		<ViewFrame
 			html={html}
 			sources={sources.sources}
+			lists={sources.lists}
 			workspaceId={workspaceId}
 			onFailure={onFailure}
 		/>
@@ -68,11 +70,13 @@ export function LoopCustomView({ workspaceId, fileId, onFailure }: LoopCustomVie
 function ViewFrame({
 	html,
 	sources,
+	lists,
 	workspaceId,
 	onFailure,
 }: {
 	html: string
 	sources: ReadonlyMap<string, DataQuerySpec>
+	lists: ReadonlyMap<string, ListSourceEntry>
 	workspaceId: string
 	onFailure: (reason: string) => void
 }) {
@@ -107,6 +111,9 @@ function ViewFrame({
 	// and failure callback through refs so a re-render never drops a message.
 	const sourcesRef = useRef(sources)
 	sourcesRef.current = sources
+	// List sources are only ever refused here: rows are for the file viewer (allowLists below).
+	const listsRef = useRef(lists)
+	listsRef.current = lists
 	const onFailureRef = useRef(onFailure)
 	onFailureRef.current = onFailure
 
@@ -203,6 +210,8 @@ function ViewFrame({
 					frameWindow: viewWindow,
 					isBlocked: () => blockedRef.current,
 					sources: () => sourcesRef.current,
+					allowLists: false,
+					listSources: () => listsRef.current,
 					run: async (spec) => {
 						const key = JSON.stringify(spec)
 						const given = (result: DataQueryResult) => {
