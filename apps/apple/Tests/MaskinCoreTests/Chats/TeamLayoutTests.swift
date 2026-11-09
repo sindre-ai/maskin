@@ -264,23 +264,44 @@ struct TeamLayoutTests {
 struct ConversationRowStatusTests {
 	private let convo = chatConvo("c", snippet: "Done. PR is **up**", participants: [chatMe, chatRelay])
 
-	@Test("a group preview is led by who wrote it")
-	func plain() {
-		var c = chatConvo("c", snippet: "Done. PR is **up**", participants: [chatMe, chatRelay, chatSam])
-		c.snippetActorName = "Relay"
-		let status = ConversationRowStatus.make(conversation: c)
+	private func preview(
+		title: String, by: String = "Relay", participants: [ChatParticipant], tick: ConversationRowStatus.Tick? = nil
+	) -> ConversationRowStatus {
+		var c = chatConvo("c", title: title, snippet: "Done. PR is **up**", participants: participants)
+		c.snippetActorName = by
+		return ConversationRowStatus.make(conversation: c, tick: tick)
+	}
+
+	@Test("a custom-titled one-to-one keeps the name: nothing else says who wrote it")
+	func customTitledOneToOneKeepsName() {
+		let status = preview(title: "Q3 planning", participants: [chatMe, chatRelay])
 		#expect(status.prefix == nil)
 		#expect(status.preview == "Relay: Done. PR is up")
 		#expect(!status.isDraft)
 	}
 
-	@Test("a one-to-one preview does not repeat the title's name")
-	func oneToOneHasNoLead() {
-		var c = convo
-		c.snippetActorName = "Relay"
-		let status = ConversationRowStatus.make(conversation: c)
-		#expect(status.preview == "Done. PR is up")
-		#expect(status.previewPieces == nil)
+	@Test("a one-to-one titled with the author drops the name, ignoring case and spaces")
+	func titleEqualsNameDropsLead() {
+		#expect(preview(title: "Relay", participants: [chatMe, chatRelay]).preview == "Done. PR is up")
+		#expect(preview(title: "  relay ", participants: [chatMe, chatRelay]).preview == "Done. PR is up")
+		#expect(preview(title: "Relay", participants: [chatMe, chatRelay]).previewPieces == nil)
+	}
+
+	@Test("three people keep the name even when the title matches")
+	func groupKeepsName() {
+		let status = preview(title: "Relay", participants: [chatMe, chatRelay, chatSam])
+		#expect(status.preview == "Relay: Done. PR is up")
+	}
+
+	@Test("an empty participant list is not guessed to be a one-to-one: the name stays")
+	func emptyParticipantsKeepName() {
+		#expect(preview(title: "Relay", participants: []).preview == "Relay: Done. PR is up")
+	}
+
+	@Test("your own message still reads You, whatever the title")
+	func ownMessageStillYou() {
+		let status = preview(title: "Me", by: "Me", participants: [chatMe, chatRelay], tick: .sent)
+		#expect(status.preview == "You: Done. PR is up")
 	}
 
 	@Test("typing replaces everything, a draft beats working, working beats the tick")

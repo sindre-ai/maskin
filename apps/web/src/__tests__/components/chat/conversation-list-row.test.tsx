@@ -174,9 +174,20 @@ describe('ConversationListRow', () => {
 		expect(screen.getByText('You:')).toBeInTheDocument()
 	})
 
-	it('does not name the author in a one-to-one chat, where the title already does', () => {
+	it('names the author in a custom-titled one-to-one chat, where nothing else says who wrote it', () => {
 		renderRow(
 			buildConversation({ snippet_actor_id: 'agent-1', snippet_actor_name: 'Billing Agent' }),
+		)
+		expect(screen.getByText('Billing Agent:')).toBeInTheDocument()
+	})
+
+	it('drops the name when the chat is titled with the one who wrote the preview', () => {
+		renderRow(
+			buildConversation({
+				title: 'Billing Agent',
+				snippet_actor_id: 'agent-1',
+				snippet_actor_name: 'Billing Agent',
+			}),
 		)
 		expect(screen.queryByText('Billing Agent:')).not.toBeInTheDocument()
 		expect(

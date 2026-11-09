@@ -38,10 +38,22 @@ extension ConversationGrouping {
 }
 
 extension ConversationSummary {
-	/// A preview names its author only where the title doesn't already: with three or more people
-	/// in the chat. In a 1:1 the other person is the title, so "Bookkeeper: …" just repeats it.
-	/// Your own lines still read "You: …" (a tick or "You:", handled by the row).
-	public var namesSnippetAuthor: Bool { participants.count > 2 }
+	/// The "Name: " that leads a preview line, or nil when the row should not say who wrote it.
+	/// The one place this is decided: the status line and the row's inline preview both call it.
+	///
+	/// The lead is dropped only when it would repeat the row title, which is the case in a
+	/// two-person chat titled with the other person's name ("Bookkeeper" / "Bookkeeper: Hey…").
+	/// A custom title ("Q3 planning"), three or more people, or no participant list at all keep it:
+	/// attribution is the harmless side to err on. Your own lines read "You: …" elsewhere.
+	public var snippetAuthorLead: String? {
+		guard let who = snippetActorName?.trimmingCharacters(in: .whitespacesAndNewlines), !who.isEmpty else {
+			return nil
+		}
+		let repeatsTitle =
+			participants.count == 2
+			&& who.caseInsensitiveCompare(title.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
+		return repeatsTitle ? nil : "\(who): "
+	}
 
 	/// The people and agents other than the signed-in person; everyone when that leaves no one.
 	public func others(excluding actorID: String?) -> [ChatParticipant] {

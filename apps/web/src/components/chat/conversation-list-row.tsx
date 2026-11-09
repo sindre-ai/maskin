@@ -10,6 +10,7 @@ import { useUpdateConversationMe } from '@/hooks/use-conversations'
 import type { ConversationListItemResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
+import { snippetAuthorLabel } from '@/lib/conversation-snippet'
 import { plainPreview } from '@/lib/linked-objects'
 import { Link } from '@tanstack/react-router'
 import { MoreHorizontal } from 'lucide-react'
@@ -57,14 +58,7 @@ export function ConversationListRow({
 			: workingNames.length === 1
 				? `${workingNames[0]} is working…`
 				: `${workingNames.length} agents are working…`
-	const snippetAuthor = conversation.snippet_actor_id
-		? conversation.snippet_actor_id === self?.id
-			? 'You'
-			: // Named only where the title doesn't already: with three or more people in the chat.
-				conversation.participants.length > 2
-				? conversation.snippet_actor_name
-				: null
-		: null
+	const snippetAuthor = snippetAuthorLabel(conversation, self?.id)
 
 	return (
 		<div className="group/row relative border-t border-border first:border-t-0">
