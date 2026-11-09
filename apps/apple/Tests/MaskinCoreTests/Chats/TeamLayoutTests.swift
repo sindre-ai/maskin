@@ -563,6 +563,14 @@ struct SnippetAuthorLeadTests {
 		#expect(chat(title: "Relay").snippetAuthorLead(displayedTitle: "Relay", me: "me") == nil)
 	}
 
+	// Same case as "keeps a name that arrives without an author id" in the web tests.
+	@Test("a name with no author id is still shown")
+	func nameWithoutAuthorIDKeepsName() {
+		var c = chat(title: "Q3 planning")
+		c.snippetActorID = nil
+		#expect(c.snippetAuthorLead(displayedTitle: "Q3 planning", me: "me") == "Relay: ")
+	}
+
 	@Test("the sub-row reads You for your own message, like the status line and web")
 	func subRowReadsYou() {
 		#expect(chat(by: chatMe).snippetAuthorLead(displayedTitle: "Chat c", me: "me") == "You: ")

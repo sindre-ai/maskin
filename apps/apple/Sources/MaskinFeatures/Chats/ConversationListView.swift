@@ -204,7 +204,9 @@ struct ConversationListView: View {
 				displayedTitle: TeamLayout.displayedTitle(of: row.kind, me: currentActorID), me: currentActorID)
 		case .person(let p):
 			if p.hasSeveral {
-				var status = store.status(for: p.latest)
+				var status = store.status(
+					for: p.latest, displayedTitle: TeamLayout.displayedTitle(of: row.kind, me: currentActorID),
+					me: currentActorID)
 				status.preview = "\(p.conversations.count) conversations · \(ChatPreviewText.plain(p.latest.title))"
 				return status
 			}

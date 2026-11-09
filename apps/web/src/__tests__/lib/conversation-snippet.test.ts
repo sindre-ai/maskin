@@ -88,4 +88,14 @@ describe('snippetAuthorLabel', () => {
 	it('says nothing when nobody wrote the latest message', () => {
 		expect(snippetAuthorLabel(chat([me, bookkeeper], null), 'Bookkeeper', 'me')).toBeNull()
 	})
+
+	// Same case as `nameWithoutAuthorIDKeepsName` in the Swift tests.
+	it('keeps a name that arrives without an author id', () => {
+		const noId = {
+			participants: [me, bookkeeper],
+			snippet_actor_id: null,
+			snippet_actor_name: 'Bookkeeper',
+		}
+		expect(snippetAuthorLabel(noId, 'Q3 planning', 'me')).toBe('Bookkeeper')
+	})
 })

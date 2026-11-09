@@ -27,14 +27,14 @@ export function sameName(a: string, b: string): boolean {
  * title the row *displays* (`displayedTitle`, which the caller passes). That is only allowed when
  * the chat is provably a direct one: exactly two participants, the viewer among them. Without the
  * viewer's id, or with a participant list that leaves the viewer out or runs short, the name
- * stays. Attribution is the harmless side to err on.
+ * stays. Attribution is the harmless side to err on. A name with no author id is still shown
+ * (iOS does the same); with no name there is nothing to say.
  */
 export function snippetAuthorLabel(
 	conversation: SnippetFields,
 	displayedTitle: string,
 	selfId: string | undefined,
 ): string | null {
-	if (!conversation.snippet_actor_id) return null
 	if (selfId && conversation.snippet_actor_id === selfId) return 'You'
 	const who = conversation.snippet_actor_name?.trim()
 	if (!who) return null
