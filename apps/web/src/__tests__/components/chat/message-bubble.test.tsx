@@ -68,6 +68,11 @@ vi.mock('@/hooks/use-objects', () => ({
 	useApproveObject: () => ({ mutate: vi.fn(), isPending: false, error: null }),
 }))
 
+const reactMutate = vi.fn()
+vi.mock('@/hooks/use-message-reactions', () => ({
+	useToggleReaction: () => ({ mutate: reactMutate, isPending: false }),
+}))
+
 const retryMutate = vi.fn()
 vi.mock('@/hooks/use-conversation', () => ({
 	useConversation: () => ({ data: { participants: [] } }),
@@ -141,6 +146,58 @@ const CHART_MESSAGE = [
 	}),
 	'```',
 ].join('\n')
+
+describe('MessageBubble reactions', () => {
+	beforeEach(() => reactMutate.mockClear())
+
+	it("offers an Add reaction button on another author's message", () => {
+		renderBubble(buildMessage())
+		expect(screen.getByRole('button', { name: 'Add reaction' })).toBeInTheDocument()
+	})
+
+	it('offers an Add reaction button on your own message', () => {
+		renderBubble(buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human' }))
+		expect(screen.getByRole('button', { name: 'Add reaction' })).toBeInTheDocument()
+	})
+
+	it('reacts to the message with the picked emoji', () => {
+		renderBubble(buildMessage({ id: 7 }))
+		fireEvent.click(screen.getByRole('button', { name: 'Add reaction' }))
+		fireEvent.click(screen.getByRole('button', { name: 'React with 👀' }))
+		expect(reactMutate).toHaveBeenCalledWith({ messageId: 7, emoji: '👀', adding: true })
+	})
+
+	it('shows the reactions under the message and takes yours back when pressed', () => {
+		renderBubble(
+			buildMessage({
+				id: 7,
+				reactions: [
+					{
+						emoji: '👍',
+						count: 2,
+						reactedByMe: true,
+						actors: [
+							{ actorId: 'me', actorName: 'Me' },
+							{ actorId: 'magnus', actorName: 'Magnus' },
+						],
+					},
+				],
+			}),
+		)
+		fireEvent.click(screen.getByRole('button', { name: /You and Magnus reacted with 👍/ }))
+		expect(reactMutate).toHaveBeenCalledWith({ messageId: 7, emoji: '👍', adding: false })
+	})
+
+	it('offers no reaction on a message that is not saved yet', () => {
+		renderBubble(buildMessage({ id: -1 }))
+		expect(screen.queryByRole('button', { name: 'Add reaction' })).not.toBeInTheDocument()
+	})
+
+	it('offers no reaction on a system row', () => {
+		renderBubble(buildMessage({ kind: 'system' }))
+		expect(screen.queryByRole('button', { name: 'Add reaction' })).not.toBeInTheDocument()
+	})
+})
 
 describe('MessageBubble', () => {
 	it('shows the card of a linked object right after the paragraph that links it', () => {

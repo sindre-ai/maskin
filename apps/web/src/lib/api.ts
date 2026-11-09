@@ -1696,6 +1696,18 @@ export const api = {
 					workspaceId,
 				},
 			),
+		// Idempotent: reacting with an emoji you already used changes nothing.
+		reactToMessage: (id: string, workspaceId: string, messageId: number, emoji: string) =>
+			request<void>(`/conversations/${id}/messages/${messageId}/reactions`, {
+				method: 'PUT',
+				body: { emoji },
+				workspaceId,
+			}),
+		unreactToMessage: (id: string, workspaceId: string, messageId: number, emoji: string) =>
+			request<void>(
+				`/conversations/${id}/messages/${messageId}/reactions?emoji=${encodeURIComponent(emoji)}`,
+				{ method: 'DELETE', workspaceId },
+			),
 		updateMe: (id: string, workspaceId: string, data: UpdateConversationParticipantStateInput) =>
 			request<ConversationParticipantStateResponse>(`/conversations/${id}/me`, {
 				method: 'PATCH',
@@ -3090,6 +3102,16 @@ export interface MessageResponse {
 	threadAlsoInChannel?: boolean
 	/** Reply summary on a top-level message that has replies; null when it has none. */
 	thread?: ReplyThreadSummary | null
+	/** Emoji reactions grouped by emoji, in the order each was first used. Present on list responses. */
+	reactions?: MessageReaction[]
+}
+
+export interface MessageReaction {
+	emoji: string
+	count: number
+	/** The caller is one of the people who reacted. */
+	reactedByMe: boolean
+	actors: { actorId: string; actorName: string }[]
 }
 
 export interface ReplyThreadParticipant {
