@@ -48284,6 +48284,76 @@
 											],
 											"additionalProperties": {}
 										},
+										"plan": {
+											"type": "object",
+											"properties": {
+												"version": {
+													"type": "number",
+													"enum": [
+														1
+													]
+												},
+												"steps": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"title": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 300
+															},
+															"status": {
+																"type": "string",
+																"enum": [
+																	"pending",
+																	"in_progress",
+																	"done",
+																	"skipped"
+																]
+															}
+														},
+														"required": [
+															"title"
+														]
+													},
+													"minItems": 1,
+													"maxItems": 20
+												}
+											},
+											"required": [
+												"version",
+												"steps"
+											]
+										},
+										"proposed_edit": {
+											"type": "object",
+											"properties": {
+												"version": {
+													"type": "number",
+													"enum": [
+														1
+													]
+												},
+												"object_id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"field": {
+													"type": "string",
+													"pattern": "^(title|content|status|metadata\\.[A-Za-z0-9_]{1,64})$"
+												},
+												"before": {},
+												"after": {}
+											},
+											"required": [
+												"version",
+												"object_id",
+												"field",
+												"before",
+												"after"
+											]
+										},
 										"sessionId": {
 											"type": [
 												"string",
