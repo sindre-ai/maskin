@@ -511,6 +511,7 @@ describe('IntegrationsPage', () => {
 			mockUseProviders.mockReturnValue({ data: [googleCalendarProvider], isLoading: false })
 
 			render(<IntegrationsPage />)
+			await expandCard('Google Calendar')
 
 			await user.click(screen.getByRole('button', { name: 'Disconnect' }))
 			await user.click(screen.getByRole('button', { name: 'Cancel' }))
