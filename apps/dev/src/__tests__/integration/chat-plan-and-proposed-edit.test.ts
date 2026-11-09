@@ -1,6 +1,6 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, workspaceMembers } from '@maskin/db/schema'
+import { events, conversationParticipants, workspaceMembers } from '@maskin/db/schema'
 import { proposedEditToUpdate } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
 import { describe, expect, it, vi } from 'vitest'
@@ -47,6 +47,10 @@ async function setup() {
 		.values({ workspaceId: workspace.id, actorId: agent.id, role: 'member' })
 	const conversation = await insertConversation(db, workspace.id, human)
 	if (!conversation) throw new Error('conversation was not inserted')
+	await db.insert(conversationParticipants).values([
+		{ conversationId: conversation.id, actorId: human },
+		{ conversationId: conversation.id, actorId: agent.id },
+	])
 	const loop = await insertObject(db, workspace.id, human, {
 		type: 'task',
 		title: 'Weekly digest',
