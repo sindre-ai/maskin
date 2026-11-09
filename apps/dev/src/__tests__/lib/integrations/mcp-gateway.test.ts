@@ -31,6 +31,7 @@ describe('GATEWAY_PROVIDERS', () => {
 			'posthog',
 			'resend',
 			'sentry',
+			'stripe',
 			'ubersuggest',
 		])
 		for (const other of ['slack', 'github', 'linkedin-unipile', 'google-meet']) {
