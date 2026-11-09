@@ -1,7 +1,7 @@
 // A session that completes while its task is still in progress gets restarted (twice at most);
 // a task that moved on, or has a live session, is left alone.
 
-import { events, sessions } from '@maskin/db/schema'
+import { events, objects, sessions } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -194,6 +194,8 @@ describe('TaskSessionRestarter', () => {
 					completedAt: new Date(now.getTime() - 5 * MINUTE),
 				})
 				.where(eq(sessions.id, live.id))
+			// Settling a session clears the task's live-session link; do the same here.
+			await db.update(objects).set({ activeSessionId: null }).where(eq(objects.id, task.id))
 		}
 
 		await sweep()
