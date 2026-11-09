@@ -176,14 +176,22 @@ struct ObjectDetailSnapshotTests {
 	@Test("overview: ask slot, the whole description, outcomes, properties, Latest row")
 	func overview() async throws {
 		let store = await makeStore()
+		// The description is never clipped: its own height is past the old 240 pt fold, and the
+		// whole Overview is taller than the description alone.
+		let description = try snapshot("description-full", width: 402, dark: false) {
+			MarkdownContent(longDescription, style: .description)
+				.fixedSize(horizontal: false, vertical: true)
+		}
+		#expect(description.height > 240 * 2)
 		for (width, dark) in sizes {
-			_ = try snapshot("overview", width: width, dark: dark) {
+			let image = try snapshot("overview", width: width, dark: dark) {
 				ObjectDetailContent(store: store, part: .overview, now: now) {
 					Text("Ask card").maskinText(.subhead).padding(MaskinSpace.s9)
 						.frame(maxWidth: .infinity)
 						.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.brief))
 				}
 			}
+			if width == 402, !dark { #expect(image.height > description.height) }
 		}
 	}
 

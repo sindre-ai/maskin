@@ -3,8 +3,8 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// The Overview page body, under the pinned header: the description (always in full, never folded, with a quiet
-/// placeholder when empty), the evidence (pages and PDFs this object produced), the properties
+/// The Overview page body, under the pinned header: the description (always in full, never
+/// folded, with a quiet placeholder when empty), the evidence (pages and PDFs this object produced), the properties
 /// (always: status, owner, priority, due, dates, then any workspace fields), the ask (decision
 /// card, when one waits on the reader) below them, and a "Latest" row that jumps to
 /// Activity. Stateless apart from the store it reads.
