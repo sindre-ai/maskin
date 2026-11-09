@@ -394,7 +394,7 @@ export function installMetadata(
 	return {
 		installed_loop_id: installId,
 		source_item_id: sourceItemId,
-		snapshot,
+		snapshot: sanitizeSnapshotLlmConfig(snapshot),
 	}
 }
 
@@ -449,6 +449,25 @@ function pickLlmConfig(llmConfig: unknown): Record<string, unknown> | null {
 		if (key in source) picked[key] = source[key]
 	}
 	return picked
+}
+
+/**
+ * Copy of a snapshot with its llmConfig (either spelling) cut down to the
+ * allowlisted keys, so the snapshot stored on an installed row never holds a
+ * publisher's key either. Returns the snapshot itself when it has no llmConfig.
+ */
+export function sanitizeSnapshotLlmConfig(
+	snapshot: Record<string, unknown>,
+): Record<string, unknown> {
+	const out = { ...snapshot }
+	let changed = false
+	for (const key of ['llmConfig', 'llm_config']) {
+		if (key in out) {
+			out[key] = pickLlmConfig(out[key])
+			changed = true
+		}
+	}
+	return changed ? out : snapshot
 }
 
 /**

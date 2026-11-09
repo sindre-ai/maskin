@@ -355,7 +355,7 @@ export class LoopVersionPusher {
 					}
 				}
 				if (existing) {
-					if (snapshotsEqual(existing.snapshot, rewritten)) continue
+					if (snapshotsEqual(existing.snapshot, metadata.snapshot)) continue
 					switch (item.itemType) {
 						case 'actor':
 							await tx

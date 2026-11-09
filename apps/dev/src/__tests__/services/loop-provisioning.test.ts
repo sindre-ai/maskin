@@ -16,6 +16,37 @@ describe('installMetadata', () => {
 			snapshot: { name: 'X' },
 		})
 	})
+
+	it('keeps only provider and model from the stored snapshot llmConfig', () => {
+		for (const key of ['llmConfig', 'llm_config']) {
+			const out = installMetadata('inst-1', 'src-1', {
+				name: 'A',
+				[key]: {
+					provider: 'anthropic',
+					model: 'fake-model',
+					apiKey: 'fake-publisher-key',
+					baseUrl: 'https://fake.example.test',
+				},
+			})
+			expect(out.snapshot).toEqual({
+				name: 'A',
+				[key]: { provider: 'anthropic', model: 'fake-model' },
+			})
+			expect(JSON.stringify(out)).not.toContain('fake-publisher-key')
+		}
+	})
+
+	it('leaves the input snapshot untouched and is stable when applied twice', () => {
+		const input = { name: 'A', llmConfig: { provider: 'anthropic', apiKey: 'fake-publisher-key' } }
+		const once = installMetadata('i', 's', input).snapshot
+		expect(input.llmConfig.apiKey).toBe('fake-publisher-key')
+		expect(installMetadata('i', 's', once).snapshot).toEqual(once)
+	})
+
+	it('keeps a null llmConfig as null', () => {
+		const out = installMetadata('i', 's', { name: 'A', llmConfig: null })
+		expect(out.snapshot).toEqual({ name: 'A', llmConfig: null })
+	})
 })
 
 // UUID-format IDs used across rewriteWiring tests.
