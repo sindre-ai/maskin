@@ -153,6 +153,7 @@ describe('Integrations Routes', () => {
 			).toEqual([
 				'atlassian',
 				'attio',
+				'canva',
 				'github',
 				'gmail',
 				'google-calendar',

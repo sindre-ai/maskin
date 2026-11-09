@@ -2,6 +2,7 @@ import type { ResolvedProvider } from './types'
 
 import { config as atlassianConfig } from './providers/atlassian/config'
 import { config as attioConfig } from './providers/attio/config'
+import { config as canvaConfig } from './providers/canva/config'
 import { config as customMcpConfig } from './providers/custom-mcp/config'
 import { githubAuth } from './providers/github/auth'
 // Import provider configs
@@ -172,6 +173,10 @@ providers.set('posthog', {
 
 providers.set('miro', {
 	config: miroConfig,
+})
+
+providers.set('canva', {
+	config: canvaConfig,
 })
 
 providers.set('notion', {

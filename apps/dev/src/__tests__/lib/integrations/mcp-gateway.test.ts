@@ -23,6 +23,7 @@ describe('GATEWAY_PROVIDERS', () => {
 		expect([...GATEWAY_PROVIDERS].sort()).toEqual([
 			'atlassian',
 			'attio',
+			'canva',
 			'gmail',
 			'google-calendar',
 			'linear',
