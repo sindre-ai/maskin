@@ -2,6 +2,8 @@ import { z } from '@hono/zod-openapi'
 import {
 	actorListItemSchema,
 	agentStateSchema,
+	messagePlanSchema,
+	messageProposedEditSchema,
 	objectPreviewSchema,
 	providerMcpInfoSchema,
 	triggerResponseSchema,
@@ -447,6 +449,10 @@ export const messageResponseSchema = z.object({
 	kind: z.string(),
 	content: z.string(),
 	metadata: jsonbField,
+	/** The plan the message carries, typed. Absent when it has none or the version is unknown. */
+	plan: messagePlanSchema.optional(),
+	/** The edit the message proposes, typed. Absent when it has none or the version is unknown. */
+	proposed_edit: messageProposedEditSchema.optional(),
 	sessionId: z.string().uuid().nullable(),
 	createdAt: z.string().nullable(),
 	editedAt: z.string().nullable(),

@@ -43802,6 +43802,78 @@
 													"task"
 												]
 											},
+											"plan": {
+												"type": "object",
+												"properties": {
+													"version": {
+														"type": "number",
+														"enum": [
+															1
+														]
+													},
+													"steps": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"title": {
+																	"type": "string",
+																	"minLength": 1,
+																	"maxLength": 300
+																},
+																"status": {
+																	"type": "string",
+																	"enum": [
+																		"pending",
+																		"in_progress",
+																		"done",
+																		"skipped"
+																	]
+																}
+															},
+															"required": [
+																"title"
+															]
+														},
+														"minItems": 1,
+														"maxItems": 20
+													}
+												},
+												"required": [
+													"version",
+													"steps"
+												],
+												"description": "Steps you plan, shown as a plan card. Also write the steps in the message text. Set version to 1."
+											},
+											"proposed_edit": {
+												"type": "object",
+												"properties": {
+													"version": {
+														"type": "number",
+														"enum": [
+															1
+														]
+													},
+													"object_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"field": {
+														"type": "string",
+														"pattern": "^(title|content|status|metadata\\.[A-Za-z0-9_]{1,64})$"
+													},
+													"before": {},
+													"after": {}
+												},
+												"required": [
+													"version",
+													"object_id",
+													"field",
+													"before",
+													"after"
+												],
+												"description": "A change you propose to one field of one object, shown with Apply and Dismiss. Also describe it in the message text. Set version to 1."
+											},
 											"card_answer": {
 												"type": "object",
 												"properties": {
@@ -44670,6 +44742,76 @@
 																],
 																"additionalProperties": {}
 															},
+															"plan": {
+																"type": "object",
+																"properties": {
+																	"version": {
+																		"type": "number",
+																		"enum": [
+																			1
+																		]
+																	},
+																	"steps": {
+																		"type": "array",
+																		"items": {
+																			"type": "object",
+																			"properties": {
+																				"title": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 300
+																				},
+																				"status": {
+																					"type": "string",
+																					"enum": [
+																						"pending",
+																						"in_progress",
+																						"done",
+																						"skipped"
+																					]
+																				}
+																			},
+																			"required": [
+																				"title"
+																			]
+																		},
+																		"minItems": 1,
+																		"maxItems": 20
+																	}
+																},
+																"required": [
+																	"version",
+																	"steps"
+																]
+															},
+															"proposed_edit": {
+																"type": "object",
+																"properties": {
+																	"version": {
+																		"type": "number",
+																		"enum": [
+																			1
+																		]
+																	},
+																	"object_id": {
+																		"type": "string",
+																		"format": "uuid"
+																	},
+																	"field": {
+																		"type": "string",
+																		"pattern": "^(title|content|status|metadata\\.[A-Za-z0-9_]{1,64})$"
+																	},
+																	"before": {},
+																	"after": {}
+																},
+																"required": [
+																	"version",
+																	"object_id",
+																	"field",
+																	"before",
+																	"after"
+																]
+															},
 															"sessionId": {
 																"type": [
 																	"string",
@@ -44807,6 +44949,76 @@
 																	"null"
 																],
 																"additionalProperties": {}
+															},
+															"plan": {
+																"type": "object",
+																"properties": {
+																	"version": {
+																		"type": "number",
+																		"enum": [
+																			1
+																		]
+																	},
+																	"steps": {
+																		"type": "array",
+																		"items": {
+																			"type": "object",
+																			"properties": {
+																				"title": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 300
+																				},
+																				"status": {
+																					"type": "string",
+																					"enum": [
+																						"pending",
+																						"in_progress",
+																						"done",
+																						"skipped"
+																					]
+																				}
+																			},
+																			"required": [
+																				"title"
+																			]
+																		},
+																		"minItems": 1,
+																		"maxItems": 20
+																	}
+																},
+																"required": [
+																	"version",
+																	"steps"
+																]
+															},
+															"proposed_edit": {
+																"type": "object",
+																"properties": {
+																	"version": {
+																		"type": "number",
+																		"enum": [
+																			1
+																		]
+																	},
+																	"object_id": {
+																		"type": "string",
+																		"format": "uuid"
+																	},
+																	"field": {
+																		"type": "string",
+																		"pattern": "^(title|content|status|metadata\\.[A-Za-z0-9_]{1,64})$"
+																	},
+																	"before": {},
+																	"after": {}
+																},
+																"required": [
+																	"version",
+																	"object_id",
+																	"field",
+																	"before",
+																	"after"
+																]
 															},
 															"sessionId": {
 																"type": [
@@ -45894,6 +46106,76 @@
 														],
 														"additionalProperties": {}
 													},
+													"plan": {
+														"type": "object",
+														"properties": {
+															"version": {
+																"type": "number",
+																"enum": [
+																	1
+																]
+															},
+															"steps": {
+																"type": "array",
+																"items": {
+																	"type": "object",
+																	"properties": {
+																		"title": {
+																			"type": "string",
+																			"minLength": 1,
+																			"maxLength": 300
+																		},
+																		"status": {
+																			"type": "string",
+																			"enum": [
+																				"pending",
+																				"in_progress",
+																				"done",
+																				"skipped"
+																			]
+																		}
+																	},
+																	"required": [
+																		"title"
+																	]
+																},
+																"minItems": 1,
+																"maxItems": 20
+															}
+														},
+														"required": [
+															"version",
+															"steps"
+														]
+													},
+													"proposed_edit": {
+														"type": "object",
+														"properties": {
+															"version": {
+																"type": "number",
+																"enum": [
+																	1
+																]
+															},
+															"object_id": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"field": {
+																"type": "string",
+																"pattern": "^(title|content|status|metadata\\.[A-Za-z0-9_]{1,64})$"
+															},
+															"before": {},
+															"after": {}
+														},
+														"required": [
+															"version",
+															"object_id",
+															"field",
+															"before",
+															"after"
+														]
+													},
 													"sessionId": {
 														"type": [
 															"string",
@@ -46932,6 +47214,78 @@
 													"task"
 												]
 											},
+											"plan": {
+												"type": "object",
+												"properties": {
+													"version": {
+														"type": "number",
+														"enum": [
+															1
+														]
+													},
+													"steps": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"title": {
+																	"type": "string",
+																	"minLength": 1,
+																	"maxLength": 300
+																},
+																"status": {
+																	"type": "string",
+																	"enum": [
+																		"pending",
+																		"in_progress",
+																		"done",
+																		"skipped"
+																	]
+																}
+															},
+															"required": [
+																"title"
+															]
+														},
+														"minItems": 1,
+														"maxItems": 20
+													}
+												},
+												"required": [
+													"version",
+													"steps"
+												],
+												"description": "Steps you plan, shown as a plan card. Also write the steps in the message text. Set version to 1."
+											},
+											"proposed_edit": {
+												"type": "object",
+												"properties": {
+													"version": {
+														"type": "number",
+														"enum": [
+															1
+														]
+													},
+													"object_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"field": {
+														"type": "string",
+														"pattern": "^(title|content|status|metadata\\.[A-Za-z0-9_]{1,64})$"
+													},
+													"before": {},
+													"after": {}
+												},
+												"required": [
+													"version",
+													"object_id",
+													"field",
+													"before",
+													"after"
+												],
+												"description": "A change you propose to one field of one object, shown with Apply and Dismiss. Also describe it in the message text. Set version to 1."
+											},
 											"card_answer": {
 												"type": "object",
 												"properties": {
@@ -47133,6 +47487,76 @@
 												"null"
 											],
 											"additionalProperties": {}
+										},
+										"plan": {
+											"type": "object",
+											"properties": {
+												"version": {
+													"type": "number",
+													"enum": [
+														1
+													]
+												},
+												"steps": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"title": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 300
+															},
+															"status": {
+																"type": "string",
+																"enum": [
+																	"pending",
+																	"in_progress",
+																	"done",
+																	"skipped"
+																]
+															}
+														},
+														"required": [
+															"title"
+														]
+													},
+													"minItems": 1,
+													"maxItems": 20
+												}
+											},
+											"required": [
+												"version",
+												"steps"
+											]
+										},
+										"proposed_edit": {
+											"type": "object",
+											"properties": {
+												"version": {
+													"type": "number",
+													"enum": [
+														1
+													]
+												},
+												"object_id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"field": {
+													"type": "string",
+													"pattern": "^(title|content|status|metadata\\.[A-Za-z0-9_]{1,64})$"
+												},
+												"before": {},
+												"after": {}
+											},
+											"required": [
+												"version",
+												"object_id",
+												"field",
+												"before",
+												"after"
+											]
 										},
 										"sessionId": {
 											"type": [
@@ -47489,6 +47913,76 @@
 											],
 											"additionalProperties": {}
 										},
+										"plan": {
+											"type": "object",
+											"properties": {
+												"version": {
+													"type": "number",
+													"enum": [
+														1
+													]
+												},
+												"steps": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"title": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 300
+															},
+															"status": {
+																"type": "string",
+																"enum": [
+																	"pending",
+																	"in_progress",
+																	"done",
+																	"skipped"
+																]
+															}
+														},
+														"required": [
+															"title"
+														]
+													},
+													"minItems": 1,
+													"maxItems": 20
+												}
+											},
+											"required": [
+												"version",
+												"steps"
+											]
+										},
+										"proposed_edit": {
+											"type": "object",
+											"properties": {
+												"version": {
+													"type": "number",
+													"enum": [
+														1
+													]
+												},
+												"object_id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"field": {
+													"type": "string",
+													"pattern": "^(title|content|status|metadata\\.[A-Za-z0-9_]{1,64})$"
+												},
+												"before": {},
+												"after": {}
+											},
+											"required": [
+												"version",
+												"object_id",
+												"field",
+												"before",
+												"after"
+											]
+										},
 										"sessionId": {
 											"type": [
 												"string",
@@ -47789,6 +48283,76 @@
 												"null"
 											],
 											"additionalProperties": {}
+										},
+										"plan": {
+											"type": "object",
+											"properties": {
+												"version": {
+													"type": "number",
+													"enum": [
+														1
+													]
+												},
+												"steps": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"title": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 300
+															},
+															"status": {
+																"type": "string",
+																"enum": [
+																	"pending",
+																	"in_progress",
+																	"done",
+																	"skipped"
+																]
+															}
+														},
+														"required": [
+															"title"
+														]
+													},
+													"minItems": 1,
+													"maxItems": 20
+												}
+											},
+											"required": [
+												"version",
+												"steps"
+											]
+										},
+										"proposed_edit": {
+											"type": "object",
+											"properties": {
+												"version": {
+													"type": "number",
+													"enum": [
+														1
+													]
+												},
+												"object_id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"field": {
+													"type": "string",
+													"pattern": "^(title|content|status|metadata\\.[A-Za-z0-9_]{1,64})$"
+												},
+												"before": {},
+												"after": {}
+											},
+											"required": [
+												"version",
+												"object_id",
+												"field",
+												"before",
+												"after"
+											]
 										},
 										"sessionId": {
 											"type": [
