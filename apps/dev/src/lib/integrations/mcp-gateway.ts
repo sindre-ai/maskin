@@ -35,6 +35,7 @@ import {
 export const GATEWAY_PROVIDERS: ReadonlySet<string> = new Set([
 	'gmail',
 	'google-calendar',
+	'intercom',
 	'linear',
 	'miro',
 	'notion',

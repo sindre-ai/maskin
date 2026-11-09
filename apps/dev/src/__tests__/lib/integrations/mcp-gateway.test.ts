@@ -23,6 +23,7 @@ describe('GATEWAY_PROVIDERS', () => {
 		expect([...GATEWAY_PROVIDERS].sort()).toEqual([
 			'gmail',
 			'google-calendar',
+			'intercom',
 			'linear',
 			'miro',
 			'notion',

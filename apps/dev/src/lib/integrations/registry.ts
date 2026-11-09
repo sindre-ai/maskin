@@ -27,6 +27,7 @@ import {
 } from './providers/google-meet/webhooks'
 import { config as googleSearchConsoleConfig } from './providers/google-search-console/config'
 import { startGscBackfill } from './providers/google-search-console/sync'
+import { config as intercomConfig } from './providers/intercom/config'
 import {
 	config as linearConfig,
 	resolveExternalId as linearResolveExternalId,
@@ -172,6 +173,10 @@ providers.set('miro', {
 
 providers.set('notion', {
 	config: notionConfig,
+})
+
+providers.set('intercom', {
+	config: intercomConfig,
 })
 
 // resend — bring-your-own integration for customer-domain email send+receive

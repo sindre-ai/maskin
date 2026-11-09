@@ -157,6 +157,7 @@ describe('Integrations Routes', () => {
 				'google-drive',
 				'google-meet',
 				'google-search-console',
+				'intercom',
 				'linear',
 				'linkedin-unipile',
 				'miro',
