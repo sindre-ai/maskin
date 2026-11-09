@@ -315,16 +315,9 @@ struct ChatThreadView: View {
 				// The bar holds only this menu and Live (v3); what used to sit beside them lives here.
 				if !linkedEntries.isEmpty {
 					Button { showingLinked = true } label: {
-						Label("Linked · \(linkedEntries.count)", systemImage: "link")
+						Label("Linked items · \(linkedEntries.count)", systemImage: "square.stack")
 					}
 					.accessibilityHint("Shows the drafts, pages and objects this chat links to")
-				}
-				if flow != nil, let conversations, let row = conversations.conversation(id: store.conversationID) {
-					Button {
-						Task { await conversations.setPinned(row.id, !row.pinned) }
-					} label: {
-						Label(row.pinned ? "Unpin" : "Pin", systemImage: row.pinned ? "pin.fill" : "pin")
-					}
 				}
 				Button {
 					searching.toggle()
@@ -334,7 +327,7 @@ struct ChatThreadView: View {
 				}
 				Button(action: onShowParticipants) { Label("People", systemImage: "person.2") }
 				Button(action: onInvite) { Label("Invite people", systemImage: "person.badge.plus") }
-				if flow == nil, let conversations, let row = conversations.conversation(id: store.conversationID) {
+				if let conversations, let row = conversations.conversation(id: store.conversationID) {
 					Button {
 						Task { await conversations.setPinned(row.id, !row.pinned) }
 					} label: {
@@ -388,6 +381,14 @@ struct ChatThreadView: View {
 			} label: {
 				Label("Chat options", systemImage: "ellipsis")
 					.foregroundStyle(MaskinColor.ink)
+					// The only cue left that this chat links drafts, pages or objects; the count is in the menu.
+					.overlay(alignment: .topTrailing) {
+						if !linkedEntries.isEmpty {
+							Circle().fill(MaskinColor.sigInk).frame(width: MaskinSpace.s3, height: MaskinSpace.s3)
+								.offset(x: MaskinSpace.s2, y: -MaskinSpace.s2)
+						}
+					}
+					.accessibilityValue(linkedEntries.isEmpty ? "" : "\(linkedEntries.count) linked items")
 			}
 			// The iOS prototype keeps Live in the header; the composer keeps the mic for dictation.
 			if let lead = liveLead, !isRoom, call == nil {
