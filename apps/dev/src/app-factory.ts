@@ -332,7 +332,12 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		await next()
 	})
 
-	app.get('/api/health', createHealthHandler(db))
+	// Liveness: the process is up and answering. It never touches the database, so a database
+	// stall cannot make Docker/Coolify mark the container unhealthy and drop the whole site
+	// (a stalled pool is shed by dbLoadShed, and the site keeps answering). The database-aware
+	// check is /api/health/db, for monitoring.
+	app.get('/api/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISOString() }))
+	app.get('/api/health/db', createHealthHandler(db))
 
 	// Auth allowlist — each exemption has a distinct reason; do not tighten
 	// without checking the corresponding flow:
@@ -365,7 +370,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.use('/api/*', async (c, next) => {
 		const path = c.req.path
 		const method = c.req.method
-		if (path === '/api/health' || path === '/api/openapi.json') return next()
+		if (path === '/api/health' || path === '/api/health/db' || path === '/api/openapi.json')
+			return next()
 		if (path === '/api/actors' && method === 'POST') return next()
 		// Profile pictures load through <img>, which cannot send an API key. Image bytes only, and only with the current ?v= (routes/actor-avatar.ts).
 		if (method === 'GET' && /^\/api\/actors\/[0-9a-f-]{36}\/avatar$/i.test(path)) return next()

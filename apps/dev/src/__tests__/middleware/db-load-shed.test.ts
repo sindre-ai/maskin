@@ -35,6 +35,7 @@ describe('dbLoadShed', () => {
 
 	it.each([
 		'/api/health',
+		'/api/health/db',
 		'/api/webhooks/resend/abc',
 		'/api/internal/agent-servers/sessions/1/logs',
 		'/api/events',

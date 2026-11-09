@@ -9,6 +9,7 @@ export const SHED_RETRY_AFTER_S = 5
 function isExempt(path: string) {
 	return (
 		path === '/api/health' ||
+		path === '/api/health/db' ||
 		path.startsWith('/api/webhooks/') ||
 		path.startsWith('/api/internal/') ||
 		path === '/api/events' ||
