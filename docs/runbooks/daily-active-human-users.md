@@ -49,8 +49,31 @@ database number to differ from app_active in both directions: app_active counts 
 non-browser clients (app_active misses them). Anonymised workspaces cannot be matched person by
 person.
 
-## Verification status
+## Sample-day comparison (2026-11-08, UTC)
 
-Not yet run against production and not yet compared with PostHog. See the task and PR notes for the
-sample-day comparison and the tolerance, once someone with database and PostHog read access has run
-it.
+Run on production by Infra & DevOps on 2026-11-09. Database numbers are read-only selects.
+
+| Measure | Count |
+|---|---|
+| Database dau, all workspaces | 4 |
+| Database dau, shared-usage and non-anonymised workspaces only (the comparison variant) | 4 |
+| PostHog app_active, distinct actors (all web, all flagged is_team) | 2 |
+| Database wau (7 days ending that day) | 12 |
+| Database signups that day | 1 |
+
+Both PostHog actors were also in the database set. The two extra database humans had writes only
+(updates and one create) and sent no web heartbeat that day, so the gap came from people acting
+without a browser heartbeat, not from the filter.
+
+## Tolerance
+
+Judgment from one day with very small numbers, not a guarantee. 2026-11-08 was a Sunday.
+
+- The database dau should be equal to or higher than app_active, and by no more than 2 people
+  while daily counts stay under about 10. Database below app_active by more than 1 person means
+  something is wrong (a filter, a missing actor type, or a broken heartbeat), so investigate.
+- Once daily counts pass about 10, switch to a relative check: database within -10% and +50% of
+  app_active.
+- Re-check the tolerance after a week of daily samples, since one Sunday can be unrepresentative.
+- Direction differs by design (see above), so a read-only-heavy day can push app_active above the
+  database. That is why the lower bound is not zero.
