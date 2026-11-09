@@ -101,6 +101,34 @@ describe('buildActorInsert', () => {
 		expect(JSON.stringify(fromPublisherKey)).not.toContain('ank_publisherleak')
 	})
 
+	it('keeps only provider and model from the snapshot llmConfig', () => {
+		for (const key of ['llmConfig', 'llm_config']) {
+			const out = buildActorInsert(
+				{
+					name: 'A',
+					[key]: {
+						provider: 'anthropic',
+						model: 'fake-model',
+						apiKey: 'fake-publisher-key',
+						baseUrl: 'https://fake.example.test',
+						headers: { 'x-fake': 'fake-header' },
+					},
+				},
+				{ installed_loop_id: 'i' },
+				null,
+			)
+			expect(out.llmConfig).toEqual({ provider: 'anthropic', model: 'fake-model' })
+			expect(JSON.stringify(out)).not.toContain('fake-publisher-key')
+		}
+	})
+
+	it('installs with a missing or null llmConfig', () => {
+		expect(buildActorInsert({ name: 'A' }, { installed_loop_id: 'i' }, null).llmConfig).toBeNull()
+		expect(
+			buildActorInsert({ name: 'A', llmConfig: null }, { installed_loop_id: 'i' }, null).llmConfig,
+		).toBeNull()
+	})
+
 	it('drops the legacy tools.browser flag from an old snapshot', () => {
 		const out = buildActorInsert(
 			{ name: 'Event Producer', tools: { browser: true } },
