@@ -125,7 +125,7 @@ describe('POST /api/integrations/:provider/gateway (Integration)', () => {
 		expect(init.redirect).toBe('manual')
 	})
 
-	it('counts a call let through, with the tool and kind but no arguments, and not a refused one', async () => {
+	it('counts a call let through, with the tool and outcome but no arguments, and not a refused one', async () => {
 		const s = await setup()
 		await post(appFor(s.reader.id), s.ws.id, call('list_issues'))
 		await post(appFor(s.reader.id), s.ws.id, call('create_issue'))
@@ -133,12 +133,12 @@ describe('POST /api/integrations/:provider/gateway (Integration)', () => {
 		expect(toolCalledMock).toHaveBeenCalledOnce()
 		expect(toolCalledMock).toHaveBeenCalledWith({
 			provider: 'linear',
-			workspaceId: s.ws.id,
+			tool: 'list_issues',
+			outcome: 'success',
+			errorCode: null,
 			actorId: s.reader.id,
-			integrationId: s.linear.id,
-			toolName: 'list_issues',
-			kind: 'read',
-			ok: true,
+			sessionId: null,
+			workspaceId: s.ws.id,
 		})
 	})
 

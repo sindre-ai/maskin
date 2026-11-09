@@ -170,25 +170,25 @@ describe('trackIntegrationConnectStarted', () => {
 })
 
 describe('trackIntegrationToolCalled', () => {
-	it('captures one call with the tool name, kind and outcome, and nothing from the arguments', async () => {
+	it('carries exactly provider, tool, outcome, error_code and ids, nothing from the call', async () => {
 		await trackIntegrationToolCalled({
-			provider: 'notion',
+			provider: 'deepdots',
+			tool: 'deepdots_list_issues',
+			outcome: 'error',
+			errorCode: 'NEEDS_ATTENTION',
+			actorId: 'actor-1',
+			sessionId: null,
 			workspaceId: 'ws-1',
-			actorId: 'agent-1',
-			integrationId: 'int-1',
-			toolName: 'notion-search',
-			kind: 'read',
-			ok: true,
 		})
 
-		expect(capturePosthogEventMock).toHaveBeenCalledWith(INTEGRATION_TOOL_CALLED, 'agent-1', {
-			provider: 'notion',
+		expect(capturePosthogEventMock).toHaveBeenCalledWith(INTEGRATION_TOOL_CALLED, 'actor-1', {
+			provider: 'deepdots',
+			tool: 'deepdots_list_issues',
+			outcome: 'error',
+			error_code: 'NEEDS_ATTENTION',
+			actor_id: 'actor-1',
+			session_id: null,
 			workspace_id: 'ws-1',
-			actor_id: 'agent-1',
-			integration_id: 'int-1',
-			tool_name: 'notion-search',
-			kind: 'read',
-			ok: true,
 		})
 		expect(INTEGRATION_TOOL_CALLED).toBe('integration_tool_called')
 	})

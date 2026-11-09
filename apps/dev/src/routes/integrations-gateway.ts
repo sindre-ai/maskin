@@ -218,7 +218,7 @@ export async function proxyMcp(
 	// upstream. So what goes upstream is the re-serialized message that was judged, for every
 	// provider and custom server.
 	const forwardBody = rpc ? JSON.stringify(rpc) : bodyText
-	let allowedKind: 'read' | 'write' | undefined
+	let allowed = false
 
 	if (toolName) {
 		const decision = decideToolCall({
@@ -261,19 +261,19 @@ export async function proxyMcp(
 				},
 			)
 		}
-		allowedKind = decision.kind
+		allowed = true
 	}
 	// One count per call let through, with the vendor's answer. Never the arguments or result.
-	const countToolCall = (ok: boolean) => {
-		if (!toolName || !allowedKind) return
+	const countToolCall = (errorCode: string | null) => {
+		if (!toolName || !allowed) return
 		void trackIntegrationToolCalled({
 			provider,
-			workspaceId,
+			tool: toolName,
+			outcome: errorCode ? 'error' : 'success',
+			errorCode,
 			actorId,
-			integrationId: integration.id,
-			toolName,
-			kind: allowedKind,
-			ok,
+			sessionId: null,
+			workspaceId,
 		})
 	}
 
@@ -311,10 +311,10 @@ export async function proxyMcp(
 			provider,
 			error: err instanceof Error ? err.name : 'unknown',
 		})
-		countToolCall(false)
+		countToolCall('UNREACHABLE')
 		return jsonRpcError(502, -32002, `${label} could not be reached. Try again shortly.`)
 	}
-	countToolCall(upstream.ok)
+	countToolCall(upstream.ok ? null : `HTTP_${upstream.status}`)
 
 	const responseHeaders = new Headers()
 	for (const name of FORWARDED_RESPONSE_HEADERS) {
