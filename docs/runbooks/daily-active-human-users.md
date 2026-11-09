@@ -82,7 +82,7 @@ Judgment from one day with very small numbers, not a guarantee. 2026-11-08 was a
 
 Checked against production for UTC 2026-11-08: the main query and the comparison variant both ran
 in a read-only transaction and returned dau 4, wau 12, signups 1. PostHog showed 2 distinct people
-with app_active that day. The numbers were produced twice, independently, and agree.
+with app_active that day. The same numbers came out of two separate runs.
 
 Matched by actor id, both PostHog people are among the 4 database people, and PostHog has no one
 the database lacks. Of the 2 database-only people, one wrote 18 updates spread across the whole day
