@@ -11,6 +11,12 @@ const openRef = vi.hoisted(() => ({ current: true }))
 const actorsRef = vi.hoisted(() => ({ current: [] as unknown[] }))
 const chatsRef = vi.hoisted(() => ({ current: [] as unknown[] }))
 const loopsRef = vi.hoisted(() => ({ current: [] as unknown[] }))
+const themeRef = vi.hoisted(() => ({
+	theme: 'light' as 'light' | 'dark' | 'system',
+	resolved: 'light' as 'light' | 'dark',
+	setTheme: vi.fn(),
+}))
+const toastMock = vi.hoisted(() => vi.fn())
 
 vi.mock('@tanstack/react-router', () => ({
 	useNavigate: () => navigateMock,
@@ -21,6 +27,16 @@ vi.mock('@tanstack/react-router', () => ({
 vi.mock('@/lib/command-palette-context', () => ({
 	useCommandPalette: () => ({ open: openRef.current, setOpen: setOpenMock }),
 }))
+
+vi.mock('@/lib/theme', () => ({
+	useTheme: () => ({
+		theme: themeRef.theme,
+		resolvedTheme: themeRef.resolved,
+		setTheme: themeRef.setTheme,
+	}),
+}))
+
+vi.mock('sonner', () => ({ toast: toastMock }))
 
 vi.mock('@/lib/api', () => ({
 	api: { search: { query: vi.fn() } },
@@ -133,6 +149,10 @@ const field = () => screen.getByRole('combobox', { name: 'Search or run a comman
 beforeEach(() => {
 	navigateMock.mockClear()
 	setOpenMock.mockClear()
+	themeRef.theme = 'light'
+	themeRef.resolved = 'light'
+	themeRef.setTheme.mockClear()
+	toastMock.mockClear()
 	pathnameRef.current = '/ws-1/objects'
 	openRef.current = true
 	objectsRef.current = []
@@ -159,7 +179,7 @@ const groupLabels = () =>
 	screen.getAllByRole('group').map((group) => group.getAttribute('aria-label'))
 
 describe('launcher with an empty field', () => {
-	it('lists Needs you, Recent, Commands, Go to, then Search, and no Jump to', async () => {
+	it('lists Needs you, Recent, Commands, Settings, Go to, then Search, and no Jump to', async () => {
 		localStorage.setItem('maskin-recent-objects-ws-1', JSON.stringify([IDS.recent]))
 		objectsRef.current = [
 			{ id: IDS.recent, type: 'bet', title: 'Recent bet', status: 'active' } as unknown,
@@ -167,7 +187,14 @@ describe('launcher with an empty field', () => {
 		renderLauncher()
 
 		await screen.findByRole('option', { name: /Review the launcher/ })
-		expect(groupLabels()).toEqual(['Needs you', 'Recent', 'Commands', 'Go to', 'Search'])
+		expect(groupLabels()).toEqual([
+			'Needs you',
+			'Recent',
+			'Commands',
+			'Settings',
+			'Go to',
+			'Search',
+		])
 		expect(screen.getByRole('option', { name: /Recent bet/ })).toBeInTheDocument()
 		// Needs you leads with the For you decisions, tagged DECISION, then the shared status group
 		// (three rows at most).
@@ -187,6 +214,78 @@ describe('launcher with an empty field', () => {
 		await screen.findByRole('option', { name: /Review the launcher/ })
 		const calls = vi.mocked(api.search.query).mock.calls
 		expect(calls.every(([, params]) => params?.statuses === 'needs_you')).toBe(true)
+	})
+})
+
+describe('launcher Settings group', () => {
+	const settingsGroup = () => screen.getByRole('group', { name: 'Settings' })
+
+	it('offers only the dark mode toggle before anything is typed', async () => {
+		renderLauncher()
+		await screen.findByRole('option', { name: /Review the launcher/ })
+		const rows = within(settingsGroup()).getAllByRole('option')
+		expect(rows).toHaveLength(1)
+		expect(rows[0]).toHaveTextContent('Turn on dark mode')
+		expect(rows[0]).toHaveTextContent('Currently light')
+		expect(rows[0]).toHaveTextContent('SETTING')
+	})
+
+	it('reads Turn off dark mode, and names the system theme, when the page is dark', async () => {
+		themeRef.theme = 'system'
+		themeRef.resolved = 'dark'
+		renderLauncher()
+		const row = await screen.findByRole('option', { name: /Turn off dark mode/ })
+		expect(row).toHaveTextContent('Currently dark (system)')
+	})
+
+	it('finds the theme rows by typing, and marks the current one', async () => {
+		const user = userEvent.setup()
+		themeRef.theme = 'dark'
+		renderLauncher()
+		await user.type(field(), 'theme')
+		const group = await screen.findByRole('group', { name: 'Settings' })
+		const titles = within(group)
+			.getAllByRole('option')
+			.map((o) => o.textContent ?? '')
+		expect(titles.some((t) => /Theme\s*:\s*Light/.test(t))).toBe(true)
+		expect(titles.some((t) => /Theme\s*:\s*System/.test(t))).toBe(true)
+		expect(within(group).getByRole('option', { name: /Theme\s*:\s*Dark/ })).toHaveTextContent(
+			'Current',
+		)
+	})
+
+	it('flips the theme, closes and says so when the toggle runs', async () => {
+		const user = userEvent.setup()
+		renderLauncher()
+		await user.click(await screen.findByRole('option', { name: /Turn on dark mode/ }))
+		expect(themeRef.setTheme).toHaveBeenCalledWith('dark')
+		expect(toastMock).toHaveBeenCalledWith('Dark mode on')
+		expect(setOpenMock).toHaveBeenCalledWith(false)
+	})
+
+	it('sets the chosen theme from its row', async () => {
+		const user = userEvent.setup()
+		renderLauncher()
+		await user.type(field(), 'theme')
+		await user.click(await screen.findByRole('option', { name: /Theme\s*:\s*System/ }))
+		expect(themeRef.setTheme).toHaveBeenCalledWith('system')
+		expect(toastMock).toHaveBeenCalledWith('Theme follows your device')
+	})
+
+	it('opens settings from its row', async () => {
+		const user = userEvent.setup()
+		renderLauncher()
+		await user.type(field(), 'preferences')
+		await user.click(await screen.findByRole('option', { name: /Open settings/ }))
+		expect(navigateMock).toHaveBeenCalledWith({ to: '/ws-1/settings' })
+	})
+
+	it('has no quiet hours row', async () => {
+		const user = userEvent.setup()
+		renderLauncher()
+		await user.type(field(), 'quiet')
+		await screen.findByRole('option', { name: /Search everything/ })
+		expect(screen.queryByRole('option', { name: /quiet hours/i })).not.toBeInTheDocument()
 	})
 })
 
