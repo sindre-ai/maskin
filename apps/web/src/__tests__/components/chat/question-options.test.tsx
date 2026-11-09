@@ -88,10 +88,44 @@ describe('QuestionOptions', () => {
 		expect(payload.metadata.question_answer.question_message_id).toBe(7)
 	})
 
-	it('offers no dismiss on a helper question, which has no chat to post into', () => {
+	it('records every question of a card when dismissing, not just the first', async () => {
+		sendMutate.mockClear()
+		const user = userEvent.setup()
+		renderOptions({
+			...QUESTION,
+			questions: [
+				...QUESTION.questions,
+				{
+					question: 'Which city is the office in?',
+					header: 'City',
+					multi_select: false,
+					options: [{ label: 'Oslo' }, { label: 'Bergen' }],
+				},
+			],
+		})
+
+		await user.click(screen.getByRole('button', { name: 'Dismiss question' }))
+
+		expect(sendMutate.mock.calls[0]?.[0].metadata.question_answer.answers).toEqual([
+			{ header: 'Spotify access', selected: ['Dismissed'] },
+			{ header: 'City', selected: ['Dismissed'] },
+		])
+	})
+
+	it('dismisses a helper question through the session, the way its answer goes', async () => {
+		sendMutate.mockClear()
+		inputMutate.mockClear()
+		const user = userEvent.setup()
 		renderOptions({ ...QUESTION, reply_to_session: true })
 
-		expect(screen.queryByRole('button', { name: 'Dismiss question' })).not.toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: 'Dismiss question' }))
+
+		expect(sendMutate).not.toHaveBeenCalled()
+		expect(inputMutate).toHaveBeenCalledTimes(1)
+		const payload = inputMutate.mock.calls[0]?.[0]
+		expect(payload.id).toBe(QUESTION.session_id)
+		expect(payload.question_answer.question_message_id).toBe(7)
+		expect(payload.question_answer.answers[0].selected).toEqual(['Dismissed'])
 	})
 
 	it('cannot send until every question has a pick', async () => {

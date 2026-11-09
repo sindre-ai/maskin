@@ -107,22 +107,29 @@ export function QuestionOptions({
 		})
 	}
 
-	// Closing the card without answering. It posts a hidden answer so every device
-	// sees the card gone, and tells the agent no answer is coming. A helper's
-	// question has no chat to post into, so it can only be answered.
+	// Closing the card without answering. It goes the way an answer does, so the waiting agent or
+	// helper session hears that no answer is coming, and it records every question's header so
+	// every device sees the card gone. In the chat it is hidden, like a card button's nudge.
 	const dismiss = () => {
 		if (isPending) return
+		const content =
+			'I dismissed this question. No answer needed, carry on with your best judgement.'
+		const questionAnswer: MessageQuestionAnswer = {
+			question_message_id: questionMessageId,
+			answers: question.questions.map((q) => ({ header: q.header, selected: ['Dismissed'] })),
+		}
+		if (question.reply_to_session) {
+			sendInput.mutate({
+				id: question.session_id,
+				content,
+				question_answer: questionAnswer,
+				conversationId,
+			})
+			return
+		}
 		sendMessage.mutate({
-			content: 'I dismissed this question. No answer needed, carry on with your best judgement.',
-			metadata: {
-				hidden_from_chat: true,
-				question_answer: {
-					question_message_id: questionMessageId,
-					answers: [
-						{ header: question.questions[0]?.header ?? 'Question', selected: ['Dismissed'] },
-					],
-				},
-			},
+			content,
+			metadata: { hidden_from_chat: true, question_answer: questionAnswer },
 		})
 	}
 
@@ -234,19 +241,17 @@ export function QuestionOptions({
 					)}
 				</ViewerTooltip>
 				<div className="ml-auto flex items-center gap-1">
-					{question.reply_to_session ? null : (
-						<Button
-							type="button"
-							variant="ghost"
-							size="icon"
-							className="size-7 text-muted-foreground hover:text-foreground"
-							aria-label="Dismiss question"
-							onClick={dismiss}
-							disabled={!canWrite || isPending}
-						>
-							<X size={14} aria-hidden />
-						</Button>
-					)}
+					<Button
+						type="button"
+						variant="ghost"
+						size="icon"
+						className="size-7 text-muted-foreground hover:text-foreground"
+						aria-label="Dismiss question"
+						onClick={dismiss}
+						disabled={!canWrite || isPending}
+					>
+						<X size={14} aria-hidden />
+					</Button>
 					{/* Read-only (opens the thread), so it stays usable for viewers. */}
 					{trailingAction}
 				</div>

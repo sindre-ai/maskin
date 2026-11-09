@@ -33,6 +33,7 @@ import {
 import { groupHandoffsByNextMessage } from '@/lib/handed-off-strip'
 import { extractLinkedObjectIds, splitOwnLinks } from '@/lib/linked-objects'
 import { isTimelineMessage } from '@/lib/message-threads'
+import { answeredQuestionIds as answeredQuestionIdsFor } from '@/lib/question-answers'
 import { parseVoiceReceipt } from '@/lib/voice-receipts'
 import {
 	buildVoiceTranscript,
@@ -163,32 +164,9 @@ export function ThreadMessages({
 				m.metadata?.voice_session_id === voiceSessionId && isSpokenVoiceLine(m) && m.content.trim(),
 		)
 
-	// Which agent questions already have a human answer, so an answered set of
-	// options collapses instead of inviting a second, contradictory pick.
-	const answeredQuestionIds = new Set(
-		messages
-			.map((m) => m.metadata?.question_answer?.question_message_id)
-			.filter((id): id is number => typeof id === 'number'),
-	)
-	// Typing a normal message instead of picking an option also answers the card:
-	// the person has moved on, so the options go away rather than waiting beside a
-	// disabled button. Helper questions are excluded, their answers live in the
-	// helper's own thread.
-	const lastTypedHumanId = messages.reduce(
-		(latest, m) =>
-			m.actorType === 'human' &&
-			m.kind === 'message' &&
-			!m.metadata?.hidden_from_chat &&
-			!m.metadata?.helper_return
-				? Math.max(latest, m.id)
-				: latest,
-		-1,
-	)
-	for (const m of messages) {
-		if (m.metadata?.question && !m.metadata.question.reply_to_session && m.id < lastTypedHumanId) {
-			answeredQuestionIds.add(m.id)
-		}
-	}
+	// Which agent questions are answered (picked, dismissed, or replied to by typing instead),
+	// so an answered set of options collapses instead of inviting a second, contradictory pick.
+	const answeredQuestionIds = answeredQuestionIdsFor(messages, getStoredActor()?.id)
 
 	// A helper's question and the person's answer are a conversation with that
 	// helper, which lives in its thread. Until it is answered the question stays

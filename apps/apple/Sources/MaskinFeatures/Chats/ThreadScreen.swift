@@ -135,9 +135,12 @@ struct ThreadScreen: View {
 			mentions: message.mentionIDs.compactMap { id in
 				store.displayName(for: id).map { (id: id, name: $0) }
 			},
+			questionAnswers: message.questions.isEmpty ? nil : message.serverID.flatMap { store.questionAnswerIndex[$0] },
 			sendStatus: message.isPending ? MessageSendStatus.of(message, readBy: nil) : nil,
 			actions: actions, onRetrySend: { store.retrySend(message.id) },
 			onToggleReaction: { emoji in Task { await store.toggleReaction(emoji, on: message) } },
+			onAnswer: { picks in _ = store.answer(question: message, picks: picks) },
+			onDismissQuestion: { _ = store.dismiss(question: message) },
 			onKeychainReply: { text, metadata in
 				// The allow or save goes back into this thread, to the agent that asked.
 				guard let rootID else { return }

@@ -22,6 +22,7 @@ import { ApiError } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { defaultReplyRecipient } from '@/lib/message-threads'
+import { answeredQuestionIds } from '@/lib/question-answers'
 import { X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
@@ -68,6 +69,11 @@ export function MessageThreadPane({
 		for (const m of replyMessages) byId.set(m.id, m)
 		return [...byId.values()].sort((a, b) => a.id - b.id)
 	}, [mainMessages, replyMessages])
+	// Which questions in this thread are answered, so a picked or dismissed card collapses here too.
+	const answeredQuestions = useMemo(
+		() => answeredQuestionIds(everything, self?.id),
+		[everything, self?.id],
+	)
 	const { byReplyMessageId, byTriggerMessageId, fallback } = useConversationActivity(
 		workspaceId,
 		conversationId,
@@ -197,6 +203,7 @@ export function MessageThreadPane({
 						<MessageBubble
 							workspaceId={workspaceId}
 							message={root}
+							questionAnswered={answeredQuestions.has(root.id)}
 							activity={(byReplyMessageId.get(root.id) ?? []).map((turn, i) => (
 								<MessageActivity
 									key={`${turn.sessionId}-above-${i}`}
@@ -236,6 +243,7 @@ export function MessageThreadPane({
 								<MessageBubble
 									workspaceId={workspaceId}
 									message={reply}
+									questionAnswered={answeredQuestions.has(reply.id)}
 									activity={(byReplyMessageId.get(reply.id) ?? []).map((turn, i) => (
 										<MessageActivity
 											key={`${turn.sessionId}-above-${i}`}

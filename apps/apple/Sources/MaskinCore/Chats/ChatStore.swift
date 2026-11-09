@@ -257,37 +257,19 @@ public final class ChatStore {
 		}?.serverID
 	}
 
-	/// Question messages a later human message already answered: by picking, or by writing a
-	/// normal message instead (the person has moved on, so the card goes). A hidden card nudge
-	/// is not a reply, and a helper's question is answered in the helper's own thread.
-	public var answeredQuestionIDs: Set<Int> {
-		// Every row, hidden ones too: a dismissed question's answer is hidden from the timeline.
-		var ids = Set(allMessages.compactMap(\.answeredQuestionID))
-		var typedReplyFollows = false
-		for message in allMessages.reversed() {
-			if message.author == .human && !message.isHiddenFromChat { typedReplyFollows = true }
-			if typedReplyFollows, !message.questions.isEmpty, !message.isHelperQuestion,
-				let id = message.serverID
-			{
-				ids.insert(id)
-			}
-		}
-		return ids
+	/// Which questions are answered and what was picked, in one pass over every row (hidden ones
+	/// too: a dismissed question's answer is hidden from the timeline). Read it once per redraw.
+	public var questionState: ChatQuestionState {
+		ChatQuestionState(messages: allMessages, viewerID: currentActorID)
 	}
 
-	/// For each answered question (by its message id): what was picked.
-	public var questionAnswerIndex: [Int: [ChatQuestionAnswer.Answer]] {
-		var index: [Int: [ChatQuestionAnswer.Answer]] = [:]
-		for message in allMessages {
-			if let id = message.answeredQuestionID, index[id] == nil {
-				// A dismissed question leaves no summary behind, like one answered by typing.
-				index[id] = message.dismissedQuestion ? [] : message.questionAnswers
-			}
-		}
-		// Answered by typing: no picks to summarise.
-		for id in answeredQuestionIDs where index[id] == nil { index[id] = [] }
-		return index
-	}
+	/// Question messages that are answered: picked or dismissed by anyone, or followed by a normal
+	/// message from this person (see `ChatQuestionState`).
+	public var answeredQuestionIDs: Set<Int> { questionState.answered }
+
+	/// For each answered question (by its message id): what was picked. Empty for one closed by
+	/// typing or dismissed, which leave no summary behind.
+	public var questionAnswerIndex: [Int: [ChatQuestionAnswer.Answer]] { questionState.answers }
 
 	/// For each card a person answered (by the card's message id): how. Read from every message,
 	/// since the answer itself is hidden from the timeline.
@@ -973,19 +955,22 @@ public final class ChatStore {
 				questionAnswer: ChatQuestionAnswer(questionMessageID: questionID, answers: answers)))
 	}
 
-	/// Close a question without answering it (the X on the card). Posts a hidden answer, so the
-	/// card goes on every device and the agent is told no answer is coming.
+	/// Close a question without answering it (the X on the card). Posts a hidden answer the way
+	/// `answer` posts a pick, with every question's header, so the card goes on every device and
+	/// the agent is told no answer is coming.
 	@discardableResult
 	public func dismiss(question message: ChatMessage) -> String? {
 		guard let questionID = message.serverID, !answeredQuestionIDs.contains(questionID),
-			!message.isHelperQuestion, let first = message.questions.first
+			!message.questions.isEmpty
 		else { return nil }
 		return send(
 			"I dismissed this question. No answer needed, carry on with your best judgement.",
 			metadata: ChatSendMetadata(
 				questionAnswer: ChatQuestionAnswer(
 					questionMessageID: questionID,
-					answers: [.init(header: first.header, selected: [ChatQuestionAnswer.dismissedPick])]),
+					answers: message.questions.map {
+						.init(header: $0.header, selected: [ChatQuestionAnswer.dismissedPick])
+					}),
 				hiddenFromChat: true))
 	}
 

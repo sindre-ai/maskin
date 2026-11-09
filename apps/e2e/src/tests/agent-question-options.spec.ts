@@ -162,7 +162,7 @@ test.describe('Agent question options', () => {
 							...QUESTION_MESSAGE,
 							id: 9002,
 							conversationId: conversation.id,
-							actorId: 'me',
+							actorId: account.actorId,
 							actorName: 'Me',
 							actorType: 'human',
 							content: 'Skip the token, just curate a link.',

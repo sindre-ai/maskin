@@ -492,7 +492,7 @@ struct MessageRow: View {
 			if !message.questions.isEmpty {
 				QuestionOptionsView(
 					questions: message.questions, answers: questionAnswers, onSubmit: onAnswer,
-					onDismiss: message.isHelperQuestion ? nil : onDismissQuestion)
+					onDismiss: onDismissQuestion)
 			}
 			if let access = KeychainAccessRequest(message: message) {
 				KeychainAccessCard(

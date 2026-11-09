@@ -93,6 +93,21 @@ describe('ThreadMessages — an agent question the person answered by typing', (
 		expect(screen.queryByRole('button', { name: 'Publish Sunday' })).not.toBeInTheDocument()
 	})
 
+	it("keeps the options when the later message is someone else's", async () => {
+		vi.mocked(api.conversations.messages).mockResolvedValue({
+			messages: [
+				buildMessage(2, { actorId: 'sam', actorName: 'Sam', content: 'I think Sunday.' }),
+				agentQuestion,
+			],
+			has_more: false,
+		} as never)
+
+		render(<ThreadMessages conversationId="conv-1" workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+		expect(await screen.findByText('I think Sunday.')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Publish Sunday' })).toBeInTheDocument()
+	})
+
 	it('keeps the options when the later message is only a hidden card nudge', async () => {
 		vi.mocked(api.conversations.messages).mockResolvedValue({
 			messages: [buildMessage(2, { metadata: { hidden_from_chat: true } }), agentQuestion],
