@@ -43,7 +43,7 @@ type Candidate = {
 	actorId: string
 	triggerId: string | null
 	taskId: string
-	taskTitle: string
+	taskTitle: string | null
 }
 
 export class TaskSessionRestarter {
@@ -100,10 +100,10 @@ export class TaskSessionRestarter {
 		// One instance handles a session at a time (blue-green deploys run two). The lock is held
 		// to the end of this transaction, and the recheck inside it sees whatever the winner started.
 		await this.db.transaction(async (tx) => {
-			const [{ locked }] = (await tx.execute(
+			const [lockRow] = (await tx.execute(
 				drizzleSql`SELECT pg_try_advisory_xact_lock(hashtext(${`task-session-restart:${candidate.id}`})) AS locked`,
-			)) as unknown as Array<{ locked: boolean }>
-			if (!locked) return
+			)) as unknown as Array<{ locked: boolean } | undefined>
+			if (!lockRow?.locked) return
 
 			const [row] = await tx
 				.select({ status: objects.status, activeSessionId: objects.activeSessionId })
@@ -112,21 +112,23 @@ export class TaskSessionRestarter {
 				.limit(1)
 			if (!row || row.status !== 'in_progress' || row.activeSessionId) return
 
-			const [{ owned }] = (await tx.execute(
+			const [ownedRow] = (await tx.execute(
 				drizzleSql`SELECT NOT (${noNewerOrLiveSession(
 					drizzleSql`${candidate.id}::uuid`,
 					drizzleSql`(SELECT created_at FROM sessions WHERE id = ${candidate.id})`,
 					drizzleSql`${candidate.actorId}::uuid`,
 					drizzleSql`${candidate.taskId}::uuid`,
 				)}) AS owned`,
-			)) as unknown as Array<{ owned: boolean }>
-			if (owned) return
+			)) as unknown as Array<{ owned: boolean } | undefined>
+			if (!ownedRow || ownedRow.owned) return
 
-			const [{ restarts }] = (await tx.execute(
+			const [restartsRow] = (await tx.execute(
 				drizzleSql`SELECT count(*)::int AS restarts FROM sessions
 					WHERE initiated_from_object_id = ${candidate.taskId}
 					AND config -> 'task_restart' IS NOT NULL`,
-			)) as unknown as Array<{ restarts: number }>
+			)) as unknown as Array<{ restarts: number } | undefined>
+			if (!restartsRow) return
+			const restarts = restartsRow.restarts
 
 			if (restarts >= MAX_TASK_RESTARTS) {
 				await this.reportCap(tx, candidate, restarts)
@@ -240,7 +242,7 @@ function noNewerOrLiveSession(
 }
 
 function restartPrompt(candidate: Candidate, attempt: number): string {
-	return `Your earlier session on the task "${candidate.taskTitle}" (${candidate.taskId}) ended while the task is still in progress. This is automatic restart ${attempt} of ${MAX_TASK_RESTARTS}.
+	return `Your earlier session on the task "${candidate.taskTitle ?? 'untitled'}" (${candidate.taskId}) ended while the task is still in progress. This is automatic restart ${attempt} of ${MAX_TASK_RESTARTS}.
 
 Read the task and its comments, find what already exists (branch, pull request, last comment), and continue from there instead of starting over. Do not end your turn on a promise: finish the work and move the task to in_review, or move it to blocked with a comment saying what you need.`
 }
