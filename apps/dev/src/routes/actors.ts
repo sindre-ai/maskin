@@ -29,6 +29,7 @@ import {
 	PLATFORM_MCP_PRESET,
 	WORKSPACE_COACH_DEFAULT,
 	createActorSchema,
+	normalizeStarterPrompts,
 	normalizeTags,
 	updateActorSchema,
 } from '@maskin/shared'
@@ -127,6 +128,11 @@ const actorAvatarUrlSql = sql<
 const actorTagsSql = sql<
 	string[]
 >`CASE WHEN jsonb_typeof(${actors.metadata}->'tags') = 'array' THEN ${actors.metadata}->'tags' ELSE '[]'::jsonb END`
+
+/** The agent's starter prompts off its metadata. Anything that is not an array reads as none. Writes go through PATCH, which stores a clean list. */
+const actorStarterPromptsSql = sql<
+	string[]
+>`CASE WHEN jsonb_typeof(${actors.metadata}->'starter_prompts') = 'array' THEN ${actors.metadata}->'starter_prompts' ELSE '[]'::jsonb END`
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
@@ -776,6 +782,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 					avatar_url: actorAvatarUrlSql,
 					tags: actorTagsSql,
+					starter_prompts: actorStarterPromptsSql,
 				})
 				.from(workspaceMembers)
 				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
@@ -832,6 +839,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 					avatar_url: actorAvatarUrlSql,
 					tags: actorTagsSql,
+					starter_prompts: actorStarterPromptsSql,
 				})
 				.from(workspaceMembers)
 				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
@@ -1064,6 +1072,7 @@ app.openapi(getActorRoute, (async (c) => {
 				voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 				avatar_url: actorAvatarUrlSql,
 				tags: actorTagsSql,
+				starter_prompts: actorStarterPromptsSql,
 			})
 			.from(actors)
 			.where(eq(actors.id, id))
@@ -1466,6 +1475,22 @@ app.openapi(updateActorRoute, (async (c) => {
 		tags = normalizeTags(body.tags)
 	}
 
+	// Starter prompts are one-tap openers an agent offers in a new chat. Only agents carry them.
+	// Same home as the tags (the actor's metadata), and the whole list is replaced.
+	let starterPrompts: string[] | undefined
+	if (body.starter_prompts !== undefined) {
+		if (existing.type !== 'agent') {
+			return c.json(createApiError('BAD_REQUEST', 'Only an agent carries starter prompts'), 400)
+		}
+		if (!workspaceId) {
+			return c.json(
+				createApiError('BAD_REQUEST', 'Starter prompts need the X-Workspace-Id header'),
+				400,
+			)
+		}
+		starterPrompts = normalizeStarterPrompts(body.starter_prompts)
+	}
+
 	// A config read back masked must not overwrite the stored secrets with the mask.
 	let tools = body.tools
 	if (tools !== undefined) {
@@ -1526,12 +1551,13 @@ app.openapi(updateActorRoute, (async (c) => {
 			...(body.default_workspace_id !== undefined && {
 				defaultWorkspaceId: body.default_workspace_id,
 			}),
-			...((mailbox !== undefined || tags !== undefined) && {
-				// One metadata write for both keys, so sending a mailbox and tags together keeps both.
+			...((mailbox !== undefined || tags !== undefined || starterPrompts !== undefined) && {
+				// One metadata write for every key, so sending a mailbox, tags and starters together keeps all.
 				metadata: sql`${mailbox === null ? sql`coalesce(${actors.metadata}, '{}'::jsonb) - 'mailbox'` : sql`coalesce(${actors.metadata}, '{}'::jsonb)`} || ${JSON.stringify(
 					{
 						...(mailbox ? { mailbox } : {}),
 						...(tags !== undefined ? { tags } : {}),
+						...(starterPrompts !== undefined ? { starter_prompts: starterPrompts } : {}),
 					},
 				)}::jsonb`,
 			}),
@@ -1557,6 +1583,7 @@ app.openapi(updateActorRoute, (async (c) => {
 			voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 			avatar_url: actorAvatarUrlSql,
 			tags: actorTagsSql,
+			starter_prompts: actorStarterPromptsSql,
 			default_workspace_id: actors.defaultWorkspaceId,
 		})
 
@@ -1572,6 +1599,17 @@ app.openapi(updateActorRoute, (async (c) => {
 			entityType: 'actor',
 			entityId: id,
 			data: { ...actorEventData(updated), tags },
+		})
+	}
+
+	if (starterPrompts !== undefined && workspaceId) {
+		await recordEvent(db, {
+			workspaceId,
+			actorId,
+			action: 'actor_starter_prompts_updated',
+			entityType: 'actor',
+			entityId: id,
+			data: { ...actorEventData(updated), starter_prompts: starterPrompts },
 		})
 	}
 
@@ -1729,6 +1767,7 @@ app.openapi(resetActorRoute, (async (c) => {
 			voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 			avatar_url: actorAvatarUrlSql,
 			tags: actorTagsSql,
+			starter_prompts: actorStarterPromptsSql,
 		})
 
 	if (!updated) {

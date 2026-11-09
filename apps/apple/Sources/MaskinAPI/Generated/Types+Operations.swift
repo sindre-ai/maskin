@@ -8584,6 +8584,8 @@ public enum Operations {
                         public var avatar_url: Swift.String?
                         /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/tags`.
                         public var tags: [Swift.String]?
+                        /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/starter_prompts`.
+                        public var starter_prompts: [Swift.String]?
                         /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/workspacesPayload`.
                         public struct workspacesPayloadPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/workspacesPayload/id`.
@@ -8634,6 +8636,7 @@ public enum Operations {
                         ///   - voice_enabled:
                         ///   - avatar_url:
                         ///   - tags:
+                        ///   - starter_prompts:
                         ///   - workspaces:
                         ///   - skills:
                         public init(
@@ -8649,6 +8652,7 @@ public enum Operations {
                             voice_enabled: Swift.Bool? = nil,
                             avatar_url: Swift.String? = nil,
                             tags: [Swift.String]? = nil,
+                            starter_prompts: [Swift.String]? = nil,
                             workspaces: Operations.get_sol_api_sol_actors.Output.Ok.Body.jsonPayloadPayload.workspacesPayload? = nil,
                             skills: [Swift.String]? = nil
                         ) {
@@ -8664,6 +8668,7 @@ public enum Operations {
                             self.voice_enabled = voice_enabled
                             self.avatar_url = avatar_url
                             self.tags = tags
+                            self.starter_prompts = starter_prompts
                             self.workspaces = workspaces
                             self.skills = skills
                         }
@@ -8680,6 +8685,7 @@ public enum Operations {
                             case voice_enabled
                             case avatar_url
                             case tags
+                            case starter_prompts
                             case workspaces
                             case skills
                         }
@@ -11225,6 +11231,8 @@ public enum Operations {
                     public var default_workspace_id: Swift.String?
                     /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/json/tags`.
                     public var tags: [Swift.String]?
+                    /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/json/starter_prompts`.
+                    public var starter_prompts: [Swift.String]?
                     /// Creates a new `jsonPayload`.
                     ///
                     /// - Parameters:
@@ -11239,6 +11247,7 @@ public enum Operations {
                     ///   - mailbox:
                     ///   - default_workspace_id:
                     ///   - tags:
+                    ///   - starter_prompts:
                     public init(
                         name: Swift.String? = nil,
                         email: Swift.String? = nil,
@@ -11250,7 +11259,8 @@ public enum Operations {
                         llm_config: Operations.patch_sol_api_sol_actors_sol__lcub_id_rcub_.Input.Body.jsonPayload.llm_configPayload? = nil,
                         mailbox: Swift.String? = nil,
                         default_workspace_id: Swift.String? = nil,
-                        tags: [Swift.String]? = nil
+                        tags: [Swift.String]? = nil,
+                        starter_prompts: [Swift.String]? = nil
                     ) {
                         self.name = name
                         self.email = email
@@ -11263,6 +11273,7 @@ public enum Operations {
                         self.mailbox = mailbox
                         self.default_workspace_id = default_workspace_id
                         self.tags = tags
+                        self.starter_prompts = starter_prompts
                     }
                     public enum CodingKeys: String, CodingKey {
                         case name
@@ -11276,6 +11287,7 @@ public enum Operations {
                         case mailbox
                         case default_workspace_id
                         case tags
+                        case starter_prompts
                     }
                 }
                 /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/content/application\/json`.

@@ -1,3 +1,4 @@
+import { StarterPrompts } from '@/components/chat/starter-prompts'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { FormError } from '@/components/shared/form-error'
 import { Button } from '@/components/ui/button'
@@ -16,6 +17,7 @@ import {
 	MAX_CHAT_OBJECT_REFERENCES,
 	chatSelectionReducer,
 } from '@/lib/chat-selection'
+import { starterPromptsForAgents } from '@/lib/starter-prompts'
 import { useWorkspace } from '@/lib/workspace-context'
 import { deriveConversationTitle } from '@maskin/shared'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
@@ -196,6 +198,21 @@ function NewChatRoute() {
 
 	const picked = useMemo(() => rows.filter((r) => pickedIds.includes(r.id)), [rows, pickedIds])
 
+	// One agent picked and nobody else: its own openers. Several people, or only people, have none.
+	const starters = useMemo(
+		() =>
+			picked.length === 1 && picked[0]?.type === 'agent'
+				? starterPromptsForAgents([picked[0].id], actors)
+				: [],
+		[picked, actors],
+	)
+	const messageInputRef = useRef<HTMLInputElement>(null)
+	const pickStarter = (prompt: string) => {
+		setDraft(prompt)
+		// Keep the keyboard open: the message box takes focus after a starter is chosen.
+		messageInputRef.current?.focus()
+	}
+
 	const toggle = (id: string, on: boolean) => {
 		setError(null)
 		setPickedIds((prev) =>
@@ -336,6 +353,7 @@ function NewChatRoute() {
 
 			<section aria-label="Message" className="mt-16">
 				<GroupLabel>Message</GroupLabel>
+				<StarterPrompts prompts={starters} onPick={pickStarter} className="px-1.5 pb-3" />
 				<div className={ROW}>
 					<label
 						htmlFor="new-chat-first-message"
@@ -344,6 +362,7 @@ function NewChatRoute() {
 						First message
 					</label>
 					<Input
+						ref={messageInputRef}
 						id="new-chat-first-message"
 						value={draft}
 						onChange={(e) => setDraft(e.target.value)}

@@ -33,6 +33,7 @@ import {
 import { groupHandoffsByNextMessage } from '@/lib/handed-off-strip'
 import { extractLinkedObjectIds, splitOwnLinks } from '@/lib/linked-objects'
 import { isTimelineMessage } from '@/lib/message-threads'
+import { starterPromptsForAgents } from '@/lib/starter-prompts'
 import { answeredQuestionIds as answeredQuestionIdsFor } from '@/lib/question-answers'
 import { parseVoiceReceipt } from '@/lib/voice-receipts'
 import {
@@ -49,6 +50,7 @@ import { NeededTools } from './needed-tools'
 import { MessageThreadPill } from './replies/message-thread-pill'
 import { ResumeBanner } from './resume-banner'
 import { type MessageSpawnInfo, deriveMessageSpawnMap } from './spawn-indicator'
+import { StarterPrompts } from './starter-prompts'
 import { SuggestedSteps } from './suggested-steps'
 import { VoiceCallBoundary, deriveVoiceCallBoundaries } from './voice-call-boundary'
 import { VoiceEventRow, VoiceSummaryCard } from './voice-receipts'
@@ -378,6 +380,12 @@ export function ThreadMessages({
 	// Replies are not in `timeline`, so a loaded page of only replies is not an empty chat:
 	// older pages may still hold top-level messages.
 	if (timeline.length === 0 && !hasNextPage) {
+		// A chat with exactly one agent and nobody else: offer that agent's own openers. A tap
+		// fills the composer; nothing is sent until the person sends it.
+		const others = (conversation?.participants ?? []).filter((p) => p.actorId !== ownActorId)
+		const only = others.length === 1 ? others[0] : undefined
+		const starters =
+			only?.actorType === 'agent' ? starterPromptsForAgents([only.actorId], actors.data) : []
 		return (
 			<div className={cn('flex flex-1 flex-col', className)}>
 				<EmptyState
@@ -385,6 +393,13 @@ export function ThreadMessages({
 					title="No messages yet"
 					description="Send the first message to get the conversation started."
 				/>
+				{onPickStep ? (
+					<StarterPrompts
+						prompts={starters}
+						onPick={onPickStep}
+						className="px-[var(--chat-gut)] pb-3"
+					/>
+				) : null}
 			</div>
 		)
 	}

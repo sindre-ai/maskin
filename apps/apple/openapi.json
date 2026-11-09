@@ -8903,6 +8903,12 @@
 													"type": "string"
 												}
 											},
+											"starter_prompts": {
+												"type": "array",
+												"items": {
+													"type": "string"
+												}
+											},
 											"workspaces": {
 												"type": "array",
 												"items": {
@@ -9408,6 +9414,15 @@
 											"maxLength": 40
 										},
 										"maxItems": 10
+									},
+									"starter_prompts": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 60
+										},
+										"maxItems": 4
 									}
 								}
 							}
