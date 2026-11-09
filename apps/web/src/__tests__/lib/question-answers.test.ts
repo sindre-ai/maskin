@@ -79,9 +79,52 @@ describe('answeredQuestionIds', () => {
 	it('counts a pick from anyone, and a dismissal, as an answer', () => {
 		const pick = msg(2, {
 			actorId: 'sam',
-			metadata: { question_answer: { question_message_id: 1, answers: [] } },
+			metadata: {
+				question_answer: {
+					question_message_id: 1,
+					answers: [{ header: 'Date', selected: ['Now'] }],
+				},
+			},
 		})
 		expect(answeredQuestionIds([ask(1), pick], 'me')).toEqual(new Set([1]))
+	})
+
+	it('closes only the newest open question, so an older one stays open', () => {
+		expect(answeredQuestionIds([ask(1), ask(2), msg(3)], 'me')).toEqual(new Set([2]))
+	})
+
+	it('each later reply closes the next newest open question', () => {
+		const state = answeredQuestionIds([ask(1), ask(2), msg(3), ask(4), msg(5)], 'me')
+		expect(state).toEqual(new Set([2, 4]))
+	})
+
+	it('skips a question already picked when choosing the newest open one', () => {
+		const pick = msg(3, {
+			metadata: {
+				question_answer: {
+					question_message_id: 2,
+					answers: [{ header: 'Date', selected: ['Now'] }],
+				},
+			},
+		})
+		expect(answeredQuestionIds([ask(1), ask(2), pick, msg(4)], 'me')).toEqual(new Set([2, 1]))
+	})
+
+	it('does not treat a pick with no chosen option as an answer', () => {
+		const empty = msg(2, {
+			actorId: 'sam',
+			metadata: { question_answer: { question_message_id: 1, answers: [] } },
+		})
+		const noneSelected = msg(3, {
+			actorId: 'sam',
+			metadata: {
+				question_answer: {
+					question_message_id: 1,
+					answers: [{ header: 'Date', selected: [] }],
+				},
+			},
+		})
+		expect(answeredQuestionIds([ask(1), empty, noneSelected], 'me').size).toBe(0)
 	})
 
 	it('decides nothing without a known viewer', () => {

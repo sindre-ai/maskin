@@ -261,6 +261,12 @@ extension ChatMessage {
 	/// For a human reply to a question: the message it answers.
 	public var answeredQuestionID: Int? { metadata?["question_answer"]?["question_message_id"]?.intValue }
 
+	/// The question this message answers, only when its answers hold at least one chosen option.
+	/// An empty or malformed pick answers nothing, so its card is not hidden with no summary.
+	public var usableAnsweredQuestionID: Int? {
+		questionAnswers.contains { $0.selected.contains { !$0.isEmpty } } ? answeredQuestionID : nil
+	}
+
 	/// What the human picked, when this message answers a question.
 	public var questionAnswers: [ChatQuestionAnswer.Answer] {
 		guard case .array(let items)? = metadata?["question_answer"]?["answers"] else { return [] }

@@ -257,10 +257,27 @@ public final class ChatStore {
 		}?.serverID
 	}
 
-	/// Which questions are answered and what was picked, in one pass over every row (hidden ones
-	/// too: a dismissed question's answer is hidden from the timeline). Read it once per redraw.
+	/// What the question state was last built from, so reading it again costs nothing until the
+	/// confirmed rows change.
+	@ObservationIgnored private var questionCache: (key: [Int], state: ChatQuestionState)?
+	/// How many times the question state was rebuilt; read by tests.
+	@ObservationIgnored private(set) var questionStateBuilds = 0
+
+	/// Which questions are answered and what was picked, over every row (hidden ones too: a
+	/// dismissed question's answer is hidden from the timeline). Built from the confirmed rows
+	/// and rebuilt only when they change. While a send is unconfirmed its pick still counts, so
+	/// that short window is built fresh from every row.
 	public var questionState: ChatQuestionState {
-		ChatQuestionState(messages: allMessages, viewerID: currentActorID)
+		if queue.queuedCount > 0 || !queue.failed.isEmpty || !sentRows.isEmpty {
+			questionStateBuilds += 1
+			return ChatQuestionState(messages: allMessages, viewerID: currentActorID)
+		}
+		let key = [confirmed.count, confirmed.first?.serverID ?? 0, confirmed.last?.serverID ?? 0]
+		if let cache = questionCache, cache.key == key { return cache.state }
+		questionStateBuilds += 1
+		let state = ChatQuestionState(messages: confirmed, viewerID: currentActorID)
+		questionCache = (key, state)
+		return state
 	}
 
 	/// Question messages that are answered: picked or dismissed by anyone, or followed by a normal
@@ -957,11 +974,12 @@ public final class ChatStore {
 
 	/// Close a question without answering it (the X on the card). Posts a hidden answer the way
 	/// `answer` posts a pick, with every question's header, so the card goes on every device and
-	/// the agent is told no answer is coming.
+	/// the agent is told no answer is coming. Never for a helper's question: iOS has no
+	/// session-input path, so a chat message would leave the helper session blocked.
 	@discardableResult
 	public func dismiss(question message: ChatMessage) -> String? {
 		guard let questionID = message.serverID, !answeredQuestionIDs.contains(questionID),
-			!message.questions.isEmpty
+			!message.questions.isEmpty, !message.isHelperQuestion
 		else { return nil }
 		return send(
 			"I dismissed this question. No answer needed, carry on with your best judgement.",

@@ -492,7 +492,9 @@ struct MessageRow: View {
 			if !message.questions.isEmpty {
 				QuestionOptionsView(
 					questions: message.questions, answers: questionAnswers, onSubmit: onAnswer,
-					onDismiss: onDismissQuestion)
+					// Not on a helper's question: iOS has no session-input path, so a chat message
+					// would leave the helper session blocked.
+					onDismiss: message.isHelperQuestion ? nil : onDismissQuestion)
 			}
 			if let access = KeychainAccessRequest(message: message) {
 				KeychainAccessCard(

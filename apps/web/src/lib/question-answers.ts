@@ -5,16 +5,33 @@ type QuestionStateMessage = Pick<
 	'id' | 'actorId' | 'actorType' | 'kind' | 'metadata' | 'threadRootId' | 'threadAlsoInChannel'
 >
 
+/** A pick counts only when it names at least one chosen option; an empty one answers nothing. */
+function hasUsablePick(pick: { answers?: unknown }): boolean {
+	const answers = pick.answers
+	return (
+		Array.isArray(answers) &&
+		answers.some(
+			(a) =>
+				typeof a?.header === 'string' &&
+				Array.isArray(a.selected) &&
+				a.selected.some((label: unknown) => typeof label === 'string' && label !== ''),
+		)
+	)
+}
+
 /**
  * Which agent questions are answered, so their card collapses instead of inviting a second,
  * contradictory pick. A question is answered when:
  *
- * - any later message carries a pick for it (`metadata.question_answer`, whoever sent it, a
- *   dismissal included), or
+ * - any message carries a usable pick for it (`metadata.question_answer` with at least one chosen
+ *   option, whoever sent it, a dismissal included). An empty or malformed one answers nothing, so
+ *   the card is not hidden with no summary, or
  * - the viewer wrote a normal message after it, in the same place (the main chat, or the same
- *   thread). Only the viewer's own message counts: in a chat with several people, someone else
- *   typing does not decide for you. A reply still sending (negative temporary id), a hidden card
- *   nudge, a helper's result and a system line are not replies.
+ *   thread), and it is the newest question still open at that moment. One reply closes one card:
+ *   when an agent asks Q1 then Q2 and you answer Q2, Q1 stays open. Only the viewer's own message
+ *   counts: in a chat with several people, someone else typing does not decide for you. A reply
+ *   still sending (negative temporary id), a hidden card nudge, a helper's result and a system line
+ *   are not replies.
  *
  * Helper questions (`reply_to_session`) are only ever answered by a pick: that conversation lives
  * in the helper's own thread.
@@ -29,14 +46,22 @@ export function answeredQuestionIds(
 ): Set<number> {
 	const answered = new Set<number>()
 	for (const m of messages) {
-		const picked = m.metadata?.question_answer?.question_message_id
-		if (typeof picked === 'number') answered.add(picked)
+		const pick = m.metadata?.question_answer
+		if (pick && typeof pick.question_message_id === 'number' && hasUsablePick(pick)) {
+			answered.add(pick.question_message_id)
+		}
 	}
 	if (!viewerId) return answered
 
-	// Newest typed reply by the viewer in each place; null is the main chat.
-	const newestTyped = new Map<number | null, number>()
+	const replies: { id: number; place: number | null }[] = []
+	const questions: { id: number; place: number | null }[] = []
 	for (const m of messages) {
+		const place = m.threadRootId ?? null
+		const question = m.metadata?.question
+		if (question) {
+			if (!question.reply_to_session) questions.push({ id: m.id, place })
+			continue
+		}
 		const isTypedReply =
 			m.id > 0 &&
 			m.actorType === 'human' &&
@@ -45,16 +70,18 @@ export function answeredQuestionIds(
 			!m.metadata?.hidden_from_chat &&
 			!m.metadata?.helper_return &&
 			!m.metadata?.question_answer
-		if (!isTypedReply) continue
-		const place = m.threadRootId ?? null
-		if (m.id > (newestTyped.get(place) ?? 0)) newestTyped.set(place, m.id)
+		if (isTypedReply) replies.push({ id: m.id, place })
 	}
 
-	for (const m of messages) {
-		const question = m.metadata?.question
-		if (!question || question.reply_to_session) continue
-		const reply = newestTyped.get(m.threadRootId ?? null)
-		if (reply !== undefined && m.id < reply) answered.add(m.id)
+	// Oldest reply first, each closing the newest question in its place that is still open.
+	replies.sort((a, b) => a.id - b.id)
+	for (const reply of replies) {
+		let target: number | null = null
+		for (const q of questions) {
+			if (q.place !== reply.place || q.id >= reply.id || answered.has(q.id)) continue
+			if (target === null || q.id > target) target = q.id
+		}
+		if (target !== null) answered.add(target)
 	}
 	return answered
 }

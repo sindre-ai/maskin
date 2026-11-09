@@ -3,11 +3,14 @@ import Foundation
 /// Which agent questions are answered, and what was picked: the web's `answeredQuestionIds`.
 ///
 /// A question is answered when
-/// - any message carries a pick for it (`question_answer`, whoever sent it, a dismissal included), or
+/// - any message carries a usable pick for it (`question_answer` with at least one chosen option,
+///   whoever sent it, a dismissal included; an empty or malformed one answers nothing), or
 /// - this person wrote a normal message after it, in the same place (the main chat, or the same
-///   thread). Only their own, confirmed message counts: in a chat with several people someone
-///   else typing does not decide for you, and a reply still sending or failed to send has not
-///   happened yet. A hidden card nudge, a system line and an agent's message are not replies.
+///   thread), and it is the newest question still open at that moment: one reply closes one card,
+///   so with Q1 then Q2 asked and Q2 answered, Q1 stays open. Only their own, confirmed message
+///   counts: in a chat with several people someone else typing does not decide for you, and a
+///   reply still sending or failed to send has not happened yet. A hidden card nudge, a system
+///   line and an agent's message are not replies.
 ///
 /// A helper's question (`reply_to_session`) is only ever answered by a pick.
 ///
@@ -20,25 +23,31 @@ public struct ChatQuestionState: Sendable, Equatable {
 
 	public init(messages: [ChatMessage], viewerID: String) {
 		for message in messages {
-			guard let id = message.answeredQuestionID else { continue }
+			guard let id = message.usableAnsweredQuestionID else { continue }
 			answered.insert(id)
 			if answers[id] == nil || answers[id]?.isEmpty == true {
 				answers[id] = message.dismissedQuestion ? [] : message.questionAnswers
 			}
 		}
-		// Newest typed reply of this person in each place; nil is the main chat.
-		var newestTyped: [Int?: Int] = [:]
-		for message in messages where Self.isTypedReply(message, by: viewerID) {
+		var replies: [(id: Int, place: Int?)] = []
+		var questions: [(id: Int, place: Int?)] = []
+		for message in messages {
 			guard let id = message.serverID else { continue }
-			let place = message.threadRootID
-			if id > (newestTyped[place] ?? 0) { newestTyped[place] = id }
-		}
-		for message in messages where !message.questions.isEmpty && !message.isHelperQuestion {
-			guard let id = message.serverID, let reply = newestTyped[message.threadRootID], id < reply else {
-				continue
+			if !message.questions.isEmpty {
+				if !message.isHelperQuestion { questions.append((id, message.threadRootID)) }
+			} else if Self.isTypedReply(message, by: viewerID) {
+				replies.append((id, message.threadRootID))
 			}
-			answered.insert(id)
-			if answers[id] == nil { answers[id] = [] }
+		}
+		// Oldest reply first, each closing the newest question in its place that is still open.
+		for reply in replies.sorted(by: { $0.id < $1.id }) {
+			let target =
+				questions
+				.filter { $0.place == reply.place && $0.id < reply.id && !answered.contains($0.id) }
+				.map(\.id).max()
+			guard let target else { continue }
+			answered.insert(target)
+			if answers[target] == nil { answers[target] = [] }
 		}
 	}
 

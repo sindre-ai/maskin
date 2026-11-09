@@ -756,6 +756,43 @@ struct ChatStoreTests {
 		#expect(sent?.questionAnswers.map(\.header) == ["Env", "Region"])
 	}
 
+	@Test("a helper's question cannot be dismissed on iOS: there is no session path to tell the helper")
+	func helperQuestionCannotBeDismissed() async {
+		let helper: JSONValue = .object([
+			"question": .object([
+				"session_id": .string("s1"), "reply_to_session": .bool(true),
+				"questions": .array([
+					.object([
+						"question": .string("Which environment?"), "header": .string("Env"),
+						"multi_select": .bool(false), "options": .array([.object(["label": .string("Prod")])]),
+					])
+				]),
+			])
+		])
+		let q = chatMsg(7, by: "relay", agent: true, "Which environment?", metadata: helper)
+		let h = ChatHarness(server: [q], online: false)
+		await h.store.start()
+		#expect(h.store.dismiss(question: q) == nil)
+		#expect(h.store.allMessages.count == 1)
+	}
+
+	@Test("the question state is rebuilt only when the confirmed rows change")
+	func questionStateIsCached() async {
+		let q = chatMsg(7, by: "relay", agent: true, "Which environment?", metadata: questionMeta)
+		let h = ChatHarness(server: [q], online: true)
+		await h.store.start()
+		let before = h.store.questionStateBuilds
+		for _ in 0..<5 { _ = h.store.questionState }
+		_ = h.store.answeredQuestionIDs
+		_ = h.store.questionAnswerIndex
+		#expect(h.store.questionStateBuilds - before <= 1)
+		#expect(h.store.answeredQuestionIDs.isEmpty)
+		// A new confirmed row invalidates it.
+		await h.api.append(chatMsg(9, by: "me", "Prod please"))
+		await h.store.refresh()
+		#expect(h.store.answeredQuestionIDs == [7])
+	}
+
 	@Test("a reply from someone else in the chat does not close the question for you")
 	func otherPersonsReplyKeepsQuestionOpen() async {
 		let q = chatMsg(7, by: "relay", agent: true, "Which environment?", metadata: questionMeta)

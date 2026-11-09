@@ -97,6 +97,47 @@ struct ChatQuestionStateTests {
 		#expect(ChatQuestionState(messages: [inThread, said(4)], viewerID: "me").answered.isEmpty)
 	}
 
+	@Test("one reply closes only the newest open question, so an older one stays open")
+	func closesOnlyTheNewestOpenQuestion() {
+		#expect(ChatQuestionState(messages: [ask(1), ask(2), said(3)], viewerID: "me").answered == [2])
+	}
+
+	@Test("each later reply closes the next newest open question")
+	func eachReplyClosesOne() {
+		let state = ChatQuestionState(
+			messages: [ask(1), ask(2), said(3), ask(4), said(5)], viewerID: "me")
+		#expect(state.answered == [2, 4])
+	}
+
+	@Test("a question already picked is skipped when choosing the newest open one")
+	func skipsPickedQuestion() {
+		let pick = chatMsg(
+			3, by: "me", "Now",
+			metadata: .object([
+				"question_answer": .object([
+					"question_message_id": .number(2),
+					"answers": .array([.object(["header": .string("Date"), "selected": .array([.string("Now")])])]),
+				])
+			]))
+		let state = ChatQuestionState(messages: [ask(1), ask(2), pick, said(4)], viewerID: "me")
+		#expect(state.answered == [1, 2])
+	}
+
+	@Test("a pick with no chosen option answers nothing, so the card stays")
+	func emptyPickDoesNotAnswer() {
+		func pick(_ id: Int, answers: JSONValue) -> ChatMessage {
+			chatMsg(
+				id, by: "sam", "x",
+				metadata: .object([
+					"question_answer": .object(["question_message_id": .number(1), "answers": answers])
+				]))
+		}
+		let none = pick(2, answers: .array([]))
+		let noneSelected = pick(3, answers: .array([.object(["header": .string("Date"), "selected": .array([])])]))
+		let malformed = pick(4, answers: .string("nope"))
+		#expect(ChatQuestionState(messages: [ask(1), none, noneSelected, malformed], viewerID: "me").answered.isEmpty)
+	}
+
 	@Test("a pick that lands after a typed close wins the summary, whatever the row order")
 	func pickWinsOverTypedClose() {
 		let pick = chatMsg(
