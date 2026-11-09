@@ -63,7 +63,7 @@ function GroupLabel({ children }: { children: string }) {
 	return <h2 className="px-1.5 pb-2 text-[13px] font-medium text-muted-foreground">{children}</h2>
 }
 
-const ROW = 'flex items-center gap-3 border-t border-border px-1.5 py-3.5 last:border-b'
+const ROW = 'flex items-center gap-3 border-t border-border px-1.5 py-3.5'
 
 function NewChatRoute() {
 	useDocumentTitle('New chat')
@@ -258,7 +258,7 @@ function NewChatRoute() {
 	return (
 		<form
 			onSubmit={handleSubmit}
-			className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pb-10 md:px-8 lg:px-7"
+			className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pb-10 md:overflow-hidden md:px-8 lg:px-7"
 		>
 			<div>
 				<Link
@@ -272,9 +272,9 @@ function NewChatRoute() {
 			</div>
 			<h1 className="page-title mt-2 max-md:sr-only">New chat</h1>
 
-			<section aria-label="To" className="mt-16">
+			<section aria-label="To" className="mt-16 flex flex-col md:min-h-0">
 				<GroupLabel>To</GroupLabel>
-				<ul className="m-0 flex list-none flex-col p-0">
+				<ul className="m-0 flex list-none flex-col p-0 md:min-h-0 md:overflow-y-auto">
 					{rows.map((r) => {
 						const on = pickedIds.includes(r.id)
 						return (
@@ -359,7 +359,7 @@ function NewChatRoute() {
 			<div className="mt-6">
 				<Button
 					type="submit"
-					className="h-10 rounded-full px-5"
+					className="h-11 rounded-full px-6 font-semibold"
 					disabled={createConversation.isPending}
 				>
 					Start chat
