@@ -83,16 +83,33 @@ describe('ThreadMessages starter prompts in an empty thread', () => {
 		expect(screen.queryByTestId('starter-prompts')).not.toBeInTheDocument()
 	})
 
-	it('holds the empty state until the actor list has answered, so nothing pops in', async () => {
+	it('draws "No messages yet" at once, and the chips appear when the actor list arrives', async () => {
 		conversation([me, relay])
+		let resolveActors: (value: unknown) => void = () => {}
+		vi.mocked(api.actors.list).mockReturnValue(
+			new Promise((resolve) => {
+				resolveActors = resolve
+			}) as never,
+		)
+		render(<ThreadMessages workspaceId="ws-1" conversationId="conv-1" onPickStarter={vi.fn()} />, {
+			wrapper: TestWrapper,
+		})
+		// The actor list is still out: the empty state is already there, with no chips yet.
+		await waitFor(() => expect(screen.getByText('No messages yet')).toBeInTheDocument())
+		expect(screen.queryByTestId('starter-prompts')).not.toBeInTheDocument()
+
+		resolveActors(agents)
+		expect(await screen.findByRole('button', { name: 'What needs me today?' })).toBeInTheDocument()
+		expect(screen.getByText('No messages yet')).toBeInTheDocument()
+	})
+
+	it('a query that never answers never blocks the empty state', async () => {
+		vi.mocked(api.conversations.get).mockReturnValue(new Promise(() => {}) as never)
 		vi.mocked(api.actors.list).mockReturnValue(new Promise(() => {}) as never)
 		render(<ThreadMessages workspaceId="ws-1" conversationId="conv-1" onPickStarter={vi.fn()} />, {
 			wrapper: TestWrapper,
 		})
-		// Give the messages and the conversation time to settle; the actors never do.
-		await waitFor(() => expect(api.conversations.get).toHaveBeenCalled())
-		await new Promise((resolve) => setTimeout(resolve, 50))
-		expect(screen.queryByText('No messages yet')).not.toBeInTheDocument()
+		await waitFor(() => expect(screen.getByText('No messages yet')).toBeInTheDocument())
 		expect(screen.queryByTestId('starter-prompts')).not.toBeInTheDocument()
 	})
 

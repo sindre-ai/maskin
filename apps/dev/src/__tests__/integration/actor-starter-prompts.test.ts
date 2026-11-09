@@ -220,6 +220,52 @@ describe('Starter prompts on agents', () => {
 			.from(actors)
 			.where(eq(actors.id, coach.id))
 		expect(row.metadata).toEqual({ tags: ['Sales'], avatar_version: 3, voice_enabled: true })
+
+		// The reset cleared starters someone could see, so it is audited like the PATCH that set them.
+		const rows = await db
+			.select({ data: events.data, workspaceId: events.workspaceId })
+			.from(events)
+			.where(and(eq(events.entityId, coach.id), eq(events.action, 'actor_starter_prompts_updated')))
+		expect(rows).toHaveLength(1)
+		expect(rows[0].workspaceId).toBe(workspace.id)
+		expect((rows[0].data as { starter_prompts: string[] }).starter_prompts).toEqual([])
+	})
+
+	it('reset records no starter event when there was nothing to clear', async () => {
+		const app = createApp()
+		const workspace = await insertWorkspace(db, getTestActorId())
+		const none = await insertActor(db, { type: 'agent', name: 'Plain Coach', isSystem: true })
+		const hollow = await insertActor(db, { type: 'agent', name: 'Hollow Coach', isSystem: true })
+		for (const coach of [none, hollow]) {
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId: workspace.id, actorId: coach.id, role: 'member' })
+		}
+		// A stored value that reads as no starters at all (empty list) changes nothing visible.
+		await db
+			.update(actors)
+			.set({ metadata: { starter_prompts: [] } })
+			.where(eq(actors.id, hollow.id))
+
+		for (const coach of [none, hollow]) {
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${coach.id}/reset`, undefined, ws(workspace.id)),
+			)
+			expect(res.status).toBe(200)
+			const rows = await db
+				.select({ id: events.id })
+				.from(events)
+				.where(
+					and(eq(events.entityId, coach.id), eq(events.action, 'actor_starter_prompts_updated')),
+				)
+			expect(rows).toHaveLength(0)
+			// The reset itself is still audited.
+			const reset = await db
+				.select({ id: events.id })
+				.from(events)
+				.where(and(eq(events.entityId, coach.id), eq(events.action, 'reset')))
+			expect(reset).toHaveLength(1)
+		}
 	})
 
 	it('reset on an actor with no metadata at all still works', async () => {
@@ -263,6 +309,72 @@ describe('Starter prompts on agents', () => {
 		for (const id of [none.id, broken.id]) {
 			const get = await app.request(jsonGet(`/api/actors/${id}`, ws(workspace.id)))
 			expect(((await get.json()) as { starter_prompts: string[] }).starter_prompts).toEqual([])
+		}
+	})
+
+	it('returns only a clean list when the stored one is hand-edited, in the detail and in the list', async () => {
+		const app = createApp()
+		const workspace = await insertWorkspace(db, getTestActorId())
+		const messy = await addMember(workspace.id, 'Messy')
+		const tidy = await addMember(workspace.id, 'Tidy')
+		const objectOnly = await addMember(workspace.id, 'Objects')
+		const tooMany = await addMember(workspace.id, 'Too many')
+		await db
+			.update(actors)
+			.set({
+				metadata: {
+					starter_prompts: [
+						1,
+						null,
+						{},
+						['nested'],
+						true,
+						'  Keep me  ',
+						'keep ME',
+						'two\nlines',
+						'x'.repeat(61),
+						'   ',
+						'Second one',
+					],
+				},
+			})
+			.where(eq(actors.id, messy.id))
+		await db
+			.update(actors)
+			.set({ metadata: { starter_prompts: ['Fine'] } })
+			.where(eq(actors.id, tidy.id))
+		await db
+			.update(actors)
+			.set({ metadata: { starter_prompts: { 0: 'not', 1: 'a list' } } })
+			.where(eq(actors.id, objectOnly.id))
+		await db
+			.update(actors)
+			.set({ metadata: { starter_prompts: ['a', 'b', 'c', 'd', 'e', 'f'] } })
+			.where(eq(actors.id, tooMany.id))
+
+		const expected: Record<string, string[]> = {
+			[messy.id]: ['Keep me', 'Second one'],
+			[tidy.id]: ['Fine'],
+			[objectOnly.id]: [],
+			[tooMany.id]: ['a', 'b', 'c', 'd'],
+		}
+
+		for (const [id, list] of Object.entries(expected)) {
+			const get = await app.request(jsonGet(`/api/actors/${id}`, ws(workspace.id)))
+			expect(get.status).toBe(200)
+			expect(((await get.json()) as { starter_prompts: string[] }).starter_prompts).toEqual(list)
+		}
+
+		const list = await app.request(jsonGet('/api/actors', ws(workspace.id)))
+		expect(list.status).toBe(200)
+		const rows = (await list.json()) as Array<{ id: string; starter_prompts: unknown }>
+		for (const [id, want] of Object.entries(expected)) {
+			expect(rows.find((r) => r.id === id)?.starter_prompts).toEqual(want)
+		}
+		// Every row, not only these, is a list of strings: one bad value cannot break the whole list.
+		for (const row of rows) {
+			expect(Array.isArray(row.starter_prompts)).toBe(true)
+			expect((row.starter_prompts as unknown[]).every((p) => typeof p === 'string')).toBe(true)
 		}
 	})
 })

@@ -98,10 +98,7 @@ export function ThreadMessages({
 }: ThreadMessagesProps) {
 	const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
 		useConversationMessages(conversationId, workspaceId)
-	const { data: conversation, isPending: conversationPending } = useConversation(
-		conversationId,
-		workspaceId,
-	)
+	const { data: conversation } = useConversation(conversationId, workspaceId)
 	const threadsPane = useThreadsPane()
 	// `messages` is everything the pages hold, replies included: activity pairing, answered
 	// questions and failed-turn logic need the full list. `timeline` is what the main chat draws.
@@ -395,19 +392,9 @@ export function ThreadMessages({
 		const only = others.length === 1 ? others[0] : undefined
 		const starters =
 			only?.actorType === 'agent' ? starterPromptsForAgents([only.actorId], actors.data) : []
-		// The chips can only be known once the chat and the actor list have answered. Holding the
-		// empty state until then keeps it from popping in under "No messages yet". A failed load
-		// settles too (isPending is false), and then the thread shows with no chips.
-		const waitingForStarters =
-			onPickStarter != null &&
-			(conversationPending || (only?.actorType === 'agent' && actors.isPending))
-		if (waitingForStarters) {
-			return (
-				<div className={cn('flex flex-1 items-center justify-center', className)}>
-					<Spinner />
-				</div>
-			)
-		}
+		// "No messages yet" draws at once. The chips need the chat and the actor list, so they
+		// appear when those arrive; a slow or hung query only means no chips, never a blocked
+		// empty state.
 		return (
 			<div className={cn('flex flex-1 flex-col', className)}>
 				<EmptyState

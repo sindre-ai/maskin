@@ -129,10 +129,26 @@ const actorTagsSql = sql<
 	string[]
 >`CASE WHEN jsonb_typeof(${actors.metadata}->'tags') = 'array' THEN ${actors.metadata}->'tags' ELSE '[]'::jsonb END`
 
-/** The agent's starter prompts off its metadata. Anything that is not an array reads as none. Writes go through PATCH, which stores a clean list. */
+/**
+ * The agent's starter prompts off its metadata, cleaned on the way out. Writes go through PATCH,
+ * which stores a clean list, but the column is free-form JSON: a hand-edited value ([1, null, {}],
+ * repeats, a line break, a string instead of a list) must never reach a client, where one bad
+ * entry could fail the decode of the whole actors list. The decoder keeps the strings the write
+ * rules would accept, drops repeats and caps the list, so the API only ever returns a clean one.
+ */
 const actorStarterPromptsSql = sql<
 	string[]
->`CASE WHEN jsonb_typeof(${actors.metadata}->'starter_prompts') = 'array' THEN ${actors.metadata}->'starter_prompts' ELSE '[]'::jsonb END`
+>`CASE WHEN jsonb_typeof(${actors.metadata}->'starter_prompts') = 'array' THEN ${actors.metadata}->'starter_prompts' ELSE '[]'::jsonb END`.mapWith(
+	(value: unknown) => normalizeStarterPrompts(typeof value === 'string' ? parseJson(value) : value),
+)
+
+function parseJson(text: string): unknown {
+	try {
+		return JSON.parse(text)
+	} catch {
+		return null
+	}
+}
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
@@ -1731,6 +1747,12 @@ app.openapi(resetActorRoute, (async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Only system actors can be reset to defaults'), 403)
 	}
 
+	// Whether the reset is about to clear starters someone could see, so it can be audited like the
+	// PATCH that set them. Read before the update, from the row as it was.
+	const hadStarters =
+		normalizeStarterPrompts((existing.metadata as Record<string, unknown> | null)?.starter_prompts)
+			.length > 0
+
 	const [updated] = await db
 		.update(actors)
 		.set({
@@ -1782,6 +1804,19 @@ app.openapi(resetActorRoute, (async (c) => {
 		entityId: id,
 		data: actorEventData(updated),
 	})
+
+	// Only when the reset actually cleared starters; a reset of an agent with none changed nothing
+	// here. The workspace is always known on this route (the header is required).
+	if (hadStarters) {
+		await recordEvent(db, {
+			workspaceId,
+			actorId,
+			action: 'actor_starter_prompts_updated',
+			entityType: 'actor',
+			entityId: id,
+			data: { ...actorEventData(updated), starter_prompts: [] },
+		})
+	}
 
 	updated.llm_config = maskLlmConfigSecrets(updated.llm_config)
 	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)

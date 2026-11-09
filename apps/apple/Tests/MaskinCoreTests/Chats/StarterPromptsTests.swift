@@ -86,8 +86,13 @@ struct StarterPromptsTests {
 	func threadStore() async {
 		let h = ChatHarness(detail: chatConvo("c1", participants: [chatMe, chatRelay]))
 		await h.api.setActors([relayWithStarters])
+		// Nothing is offered before the workspace actors are loaded: the chips are read from that
+		// list, so they cannot appear ahead of it (the empty thread also waits for the server).
+		#expect(h.store.workspaceActors.isEmpty)
+		#expect(h.store.starterPrompts.isEmpty)
 		await h.store.start()
 		await h.store.refreshAgentStates()
+		#expect(h.store.workspaceActors.count == 1)
 		#expect(h.store.starterPrompts == ["What needs me today?", "Summarise the open decisions"])
 	}
 
