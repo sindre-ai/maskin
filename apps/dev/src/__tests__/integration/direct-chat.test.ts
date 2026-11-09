@@ -336,6 +336,185 @@ describe('Direct chat primitive', () => {
 		})
 	})
 
+	describe('the 0142 clean direct messages migration', () => {
+		const migration = readFileSync(
+			join(__dirname, '../../../../../packages/db/drizzle/0142_clean_direct_messages.sql'),
+			'utf-8',
+		)
+
+		type Row = { id: string; title: string; key: string | null; messages: number }
+
+		/** Runs the migration `times` times in one transaction, then reads every chat. Rolled back. */
+		async function runMigration(times = 1) {
+			let rows: Row[] = []
+			const rollback = new Error('rollback')
+			await db
+				.transaction(async (tx) => {
+					for (let i = 0; i < times; i++) await tx.execute(sql.raw(migration))
+					rows = (await tx.execute(sql`
+						SELECT c.id, c.title, c.direct_pair_key AS key,
+							(SELECT count(*)::int FROM messages m WHERE m.conversation_id = c.id) AS messages
+						FROM conversations c
+						WHERE c.workspace_id = ${workspaceId}
+					`)) as unknown as Row[]
+					throw rollback
+				})
+				.catch((err) => {
+					if (err !== rollback) throw err
+				})
+			return rows
+		}
+
+		async function say(conversationId: string, actorId: string, metadata: object | null) {
+			await db.insert(messages).values({ conversationId, actorId, content: 'hi', metadata })
+		}
+
+		it('opens a new DM for a pair whose marked chat is topical and unmarks the old one', async () => {
+			const old = await chatBetween(humanId, agentId)
+			await say(old.id, humanId, null)
+			await say(old.id, agentId, null)
+
+			const rows = await runMigration()
+
+			const oldRow = rows.find((r) => r.id === old.id)
+			expect(oldRow).toMatchObject({ key: null, messages: 2 })
+			const marked = rows.filter((r) => r.key === directPairKey(humanId, agentId))
+			expect(marked).toHaveLength(1)
+			expect(marked[0]).toMatchObject({ messages: 0 })
+			expect(marked[0]?.id).not.toBe(old.id)
+		})
+
+		it('titles the new DM with the agent name and puts both in it', async () => {
+			const agent = await insertActor(db, { type: 'agent', name: 'Forge' })
+			const old = await chatBetween(humanId, agent.id)
+			await say(old.id, humanId, null)
+
+			const rows = await runMigration()
+			const fresh = rows.find((r) => r.key === directPairKey(humanId, agent.id))
+
+			expect(fresh?.title).toBe('Forge')
+		})
+
+		it('leaves a marked chat alone when it only holds intro-style messages', async () => {
+			const chat = await chatBetween(humanId, agentId)
+			await say(chat.id, agentId, { delivery: { kind: 'agent_intro', version: 1 } })
+			await say(chat.id, agentId, { delivery: { kind: 'agent_intro_steps', version: 1 } })
+			await say(chat.id, agentId, { delivery: { kind: 'proactive', version: 1 } })
+
+			const rows = await runMigration()
+
+			expect(rows.filter((r) => r.key === directPairKey(humanId, agentId))).toEqual([
+				expect.objectContaining({ id: chat.id, messages: 3 }),
+			])
+		})
+
+		it('leaves an empty marked chat alone', async () => {
+			const chat = await chatBetween(humanId, agentId)
+
+			const rows = await runMigration()
+
+			expect(rows.find((r) => r.key === directPairKey(humanId, agentId))?.id).toBe(chat.id)
+		})
+
+		it('counts a person writing in the chat as a topic, but not a deleted message', async () => {
+			const topicalAgent = await insertActor(db, { type: 'agent' })
+			const withReply = await chatBetween(humanId, topicalAgent.id)
+			await say(withReply.id, topicalAgent.id, { delivery: { kind: 'agent_intro', version: 1 } })
+			await say(withReply.id, humanId, null)
+
+			const deletedAgent = await insertActor(db, { type: 'agent' })
+			const withDeleted = await chatBetween(humanId, deletedAgent.id)
+			await say(withDeleted.id, deletedAgent.id, { delivery: { kind: 'agent_intro', version: 1 } })
+			await db.insert(messages).values({
+				conversationId: withDeleted.id,
+				actorId: humanId,
+				content: '',
+				metadata: null,
+				deletedAt: new Date(),
+			})
+
+			const rows = await runMigration()
+
+			expect(rows.find((r) => r.id === withReply.id)?.key).toBeNull()
+			expect(rows.find((r) => r.id === withDeleted.id)?.key).toBe(
+				directPairKey(humanId, deletedAgent.id),
+			)
+		})
+
+		it('gives a pair that only has a topical one-to-one a DM', async () => {
+			const topical = await chatBetween(humanId, agentId, { topical: true })
+			await say(topical.id, humanId, null)
+
+			const rows = await runMigration()
+
+			expect(rows.find((r) => r.id === topical.id)?.key).toBeNull()
+			expect(rows.filter((r) => r.key === directPairKey(humanId, agentId))).toHaveLength(1)
+		})
+
+		it('does not mark group chats, subject chats or person to person chats', async () => {
+			const colleague = await insertActor(db, { type: 'human' })
+			const personToPerson = await chatBetween(humanId, colleague.id, { topical: true })
+			const group = await chatBetween(humanId, agentId, { topical: true })
+			await addParticipant(group.id, colleague.id)
+
+			const rows = await runMigration()
+
+			expect(rows.find((r) => r.id === personToPerson.id)?.key).toBeNull()
+			expect(rows.find((r) => r.id === group.id)?.key).toBeNull()
+			expect(rows.filter((r) => r.key !== null)).toHaveLength(0)
+		})
+
+		it('is idempotent: a second run changes nothing', async () => {
+			const old = await chatBetween(humanId, agentId)
+			await say(old.id, humanId, null)
+			const otherAgent = await insertActor(db, { type: 'agent' })
+			await chatBetween(humanId, otherAgent.id, { topical: true })
+
+			const once = await runMigration(1)
+			const twice = await runMigration(2)
+
+			const shape = (rows: Row[]) =>
+				rows
+					.map((r) => `${r.title}|${r.key}|${r.messages}`)
+					.sort()
+					.join('\n')
+			expect(shape(twice)).toBe(shape(once))
+			const keys = twice.map((r) => r.key).filter((k): k is string => k !== null)
+			expect(new Set(keys).size).toBe(keys.length)
+		})
+
+		it('leaves the new DM findable by the app, and get-or-create returns it', async () => {
+			const old = await chatBetween(humanId, agentId)
+			await say(old.id, humanId, null)
+
+			const result: {
+				found?: { id: string } | null
+				again?: { id: string; created: boolean }
+			} = {}
+			const rollback = new Error('rollback')
+			await db
+				.transaction(async (tx) => {
+					await tx.execute(sql.raw(migration))
+					result.found = await findDirectChat(tx, { workspaceId, humanId, agentId })
+					result.again = await findOrCreateDirectChat(tx, {
+						workspaceId,
+						humanId,
+						agentId,
+						title: 'x',
+						createdBy: humanId,
+					})
+					throw rollback
+				})
+				.catch((err) => {
+					if (err !== rollback) throw err
+				})
+
+			expect(result.found).not.toBeNull()
+			expect(result.found?.id).not.toBe(old.id)
+			expect(result.again).toEqual({ id: result.found?.id, created: false })
+		})
+	})
+
 	describe('insertConversationMessage inside a transaction', () => {
 		it('leaves no message row when the transaction is rolled back', async () => {
 			const chat = await chatBetween(humanId, agentId)
