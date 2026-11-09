@@ -9,6 +9,7 @@ import {
 	countStalledQueries,
 	createDb,
 	createInFlight,
+	describeInFlight,
 	syncAgentServersFromEnv,
 } from '@maskin/db'
 import { actors, sessions } from '@maskin/db/schema'
@@ -130,6 +131,8 @@ const db = createDb(databaseUrl, {
 		logger.warn('DB pool saturated: new queries wait for a connection', {
 			inFlight,
 			poolSize: dbPoolSize,
+			// What is in the pool right now, so the log names the holder instead of just the count.
+			queries: describeInFlight(dbLoad),
 		})
 	},
 })
