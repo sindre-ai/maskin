@@ -260,7 +260,13 @@ async function charge(p: {
 				automatic_tax: { enabled: true },
 				default_payment_method: paymentMethod,
 				pending_invoice_items_behavior: 'exclude',
-				metadata: { workspace_id: workspaceId, kind: AUTO_TOP_UP_INVOICE_KIND, claim: token },
+				metadata: {
+					workspace_id: workspaceId,
+					kind: AUTO_TOP_UP_INVOICE_KIND,
+					claim: token,
+					// The paid-invoice webhook credits exactly this, even if the rule is edited later.
+					amount_cents: String(p.amountCents),
+				},
 			},
 			{ idempotencyKey: key('invoice') },
 		)

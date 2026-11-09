@@ -44,6 +44,12 @@ const fakeStripe = {
 		create: async (params: Record<string, unknown>) => {
 			calls.push('invoices.create')
 			expect(params.automatic_tax).toEqual({ enabled: true })
+			// The paid-invoice webhook needs these to credit a charge the process never credited.
+			expect(params.metadata).toMatchObject({
+				workspace_id: currentWorkspaceId,
+				kind: 'auto_top_up',
+				amount_cents: '5000',
+			})
 			return { id: 'in_test_1' }
 		},
 		finalizeInvoice: async () => {
