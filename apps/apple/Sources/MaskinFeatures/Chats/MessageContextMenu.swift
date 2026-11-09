@@ -17,6 +17,10 @@ struct MessageMenuActions {
 	var onCopy: (() -> Void)?
 	/// Opens the message's text in a sheet where single words can be selected.
 	var onSelectText: (() -> Void)?
+	/// Opens the agent that wrote this message. An agent's words have no avatar or name row to
+	/// tap, so the long-press menu is how every one of them reaches the agent's page.
+	var onOpenAgent: (() -> Void)?
+	var openAgentTitle = "Open agent"
 	var onPin: (() -> Void)?
 	var isPinned = false
 	var onEdit: (() -> Void)?
@@ -37,6 +41,7 @@ struct MessageMenuActions {
 		if onThread != nil { out.append("Reply in thread") }
 		if onCopy != nil { out.append("Copy") }
 		if onSelectText != nil { out.append("Select text") }
+		if onOpenAgent != nil { out.append(openAgentTitle) }
 		if onPin != nil { out.append(isPinned ? "Unpin" : "Pin") }
 		if onEdit != nil { out.append("Edit") }
 		if onTryAgain != nil { out.append("Try again") }
@@ -76,6 +81,9 @@ struct MessageMenuItems: View {
 		}
 		if let onSelectText = actions.onSelectText {
 			Button(action: onSelectText) { Label("Select text", systemImage: "text.cursor") }
+		}
+		if let onOpenAgent = actions.onOpenAgent {
+			Button(action: onOpenAgent) { Label(actions.openAgentTitle, systemImage: "person.crop.circle") }
 		}
 		if let onPin = actions.onPin {
 			Button(action: onPin) {

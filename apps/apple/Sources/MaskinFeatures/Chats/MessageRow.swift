@@ -194,13 +194,27 @@ struct MessageRow: View {
 		.onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { rowWidth = $0 }
 		.accessibilityElement(children: .contain)
 		.accessibilityActions {
-			ForEach(Array(zip(actions.titles.indices, actions.titles)), id: \.0) { _, title in
+			ForEach(Array(zip(menuActions.titles.indices, menuActions.titles)), id: \.0) { _, title in
 				Button(title) { perform(title) }
 			}
 		}
 	}
 
+	/// The long-press actions. An agent's plain words have no avatar or name row to tap, so every
+	/// one of them (1:1 or group, first of a run or not) also offers "Open <agent>" here.
+	private var menuActions: MessageMenuActions {
+		guard plainAgent, let runtime else { return actions }
+		var menu = actions
+		menu.onOpenAgent = { runtime.openAgent(message.actorID) }
+		menu.openAgentTitle = "Open \(message.actorName)"
+		return menu
+	}
+
 	private func perform(_ title: String) {
+		if title == menuActions.openAgentTitle, let open = menuActions.onOpenAgent {
+			open()
+			return
+		}
 		switch title {
 		case "Reply": actions.onReply?()
 		case "Reply in thread": actions.onThread?()
@@ -219,7 +233,10 @@ struct MessageRow: View {
 	}
 
 	/// An agent's message is plain text on the page; a person's other than yours keeps the bubble.
-	private var plainAgent: Bool { message.author == .agent }
+	private var shape: AgentRowStyle.Row {
+		AgentRowStyle.row(author: message.author, showsAuthor: showsAuthor, namesAgent: namesAgent)
+	}
+	private var plainAgent: Bool { !shape.bubble }
 
 	private var shownText: String { messageOverride.text(original: message.contentWithoutIntroTail) }
 	private var quote: QuotedReply? { QuotedReply.parse(shownText) }
@@ -453,21 +470,17 @@ struct MessageRow: View {
 		let targets = linkedTargets
 		let layout = linkedLayout(for: targets)
 		return VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-			if showsAuthor {
-				if plainAgent {
-					// v3: an agent's words are plain text. Its name is only needed where more than one
-					// agent can speak, so it is shown there and nowhere else.
-					if namesAgent {
-						AgentNameLabel(
-							name: message.actorName,
-							onOpen: runtime != nil ? { runtime?.openAgent(message.actorID) } : nil)
-					}
-				} else {
-					MessageHeader(
-						name: message.actorName, kind: message.author, seed: message.actorID, time: message.createdAt,
-						working: working,
-						onOpen: message.author == .agent && runtime != nil ? { runtime?.openAgent(message.actorID) } : nil)
-				}
+			// v3: an agent's words are plain text; its name is shown only where more than one agent can
+			// speak. A person's message keeps the avatar header. `AgentRowStyle` decides both.
+			if shape.nameLabel {
+				AgentNameLabel(
+					name: message.actorName, working: working,
+					onOpen: runtime != nil ? { runtime?.openAgent(message.actorID) } : nil)
+			} else if shape.header {
+				MessageHeader(
+					name: message.actorName, kind: message.author, seed: message.actorID, time: message.createdAt,
+					working: working,
+					onOpen: message.author == .agent && runtime != nil ? { runtime?.openAgent(message.actorID) } : nil)
 			}
 			VStack(alignment: .leading, spacing: AttachmentLayout.gap) {
 				MessageAttachments(attachments: message.attachments, threadWidth: rowWidth, caption: attachmentCaption)
@@ -502,7 +515,7 @@ struct MessageRow: View {
 				}
 			}
 			.swipeToReply(onReply)
-			.messageContextMenu(message, isOwn: false, actions: actions)
+			.messageContextMenu(message, isOwn: false, actions: menuActions)
 			if let appended = layout?.appended {
 				ForEach(appended) { LinkedTargetCard(target: $0, onApproved: onApprovedDraft) }
 			}

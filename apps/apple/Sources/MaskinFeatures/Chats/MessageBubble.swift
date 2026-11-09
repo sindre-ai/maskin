@@ -74,17 +74,24 @@ struct MessageHeader: View {
 }
 
 /// An agent's name above its plain words in a chat with several agents: 13pt semibold `ink4`, no
-/// avatar and no time. Opens the agent's page when the app can.
+/// avatar and no time, with the working bars beside it while that agent is running. Opens the
+/// agent's page when the app can. The gap under it (`gap`) is shared with `StreamingReplyBubble`,
+/// so a streaming reply and the finished message put their text in the same place.
 struct AgentNameLabel: View {
 	let name: String
+	var working = false
 	var onOpen: (() -> Void)?
+
+	/// The spacing a row stacks the label and the words with (`MessageRow.theirs` uses the same
+	/// token), on top of the label's own bottom padding.
+	static let gap: CGFloat = MaskinSpace.s2
 
 	var body: some View {
 		Group {
 			if let onOpen {
 				Button(action: onOpen) { label.contentShape(Rectangle()) }
 					.buttonStyle(.maskinPressed)
-					.accessibilityLabel("\(name), open agent")
+					.accessibilityLabel(working ? "\(name), working, open agent" : "\(name), open agent")
 			} else {
 				label
 			}
@@ -93,10 +100,13 @@ struct AgentNameLabel: View {
 	}
 
 	private var label: some View {
-		Text(name)
-			.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold, relativeTo: .footnote))
-			.foregroundStyle(MaskinColor.ink4)
-			.lineLimit(1)
+		HStack(spacing: MaskinSpace.s3) {
+			Text(name)
+				.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold, relativeTo: .footnote))
+				.foregroundStyle(MaskinColor.ink4)
+				.lineLimit(1)
+			if working { WorkingBars().accessibilityHidden(true) }
+		}
 	}
 }
 
@@ -272,10 +282,14 @@ struct StreamingReplyBubble: View {
 	var namesAgent = false
 
 	private var hasText: Bool { !(text ?? "").isEmpty }
+	/// One line of the 16pt reply text, following Dynamic Type like the text does.
+	@ScaledMetric(relativeTo: .body) private var lineHeight: CGFloat = MaskinFontSize.t16 + BubbleShape.lineSpacing
 
 	var body: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
-			if namesAgent { AgentNameLabel(name: agent.name) }
+		VStack(alignment: .leading, spacing: AgentNameLabel.gap) {
+			if AgentRowStyle.streamingRow(namesAgent: namesAgent).nameLabel {
+				AgentNameLabel(name: agent.name, working: !stopped)
+			}
 			Group {
 				if hasText, let text {
 					HStack(alignment: .lastTextBaseline, spacing: MaskinSpace.s1) {
@@ -288,11 +302,10 @@ struct StreamingReplyBubble: View {
 					Text("—").font(MaskinTypeface.sans(MaskinFontSize.t16, relativeTo: .body)).foregroundStyle(MaskinColor.ink5)
 						.accessibilityHidden(true)
 				} else {
+					// Dots on the page, one text line tall: the first words replace them without
+					// the row growing or the text moving.
 					TypingDots()
-						.padding(.vertical, BubbleShape.theirVertical)
-						.padding(.horizontal, BubbleShape.horizontal)
-						.frame(minHeight: MaskinSpace.touchMin + MaskinSpace.s2, alignment: .leading)
-						.background(MaskinSurface.card, in: BubbleShape.agent)
+						.frame(maxWidth: .infinity, minHeight: lineHeight, alignment: .leading)
 				}
 			}
 			if stopped { StoppedLabel() }

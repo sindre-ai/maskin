@@ -1051,8 +1051,11 @@ struct ThreadTranscript: View {
 	var call: LiveMeetingSession?
 
 	/// Agents carry their name above their words only where more than one can speak.
+	/// Read once per transcript update, never per row.
 	private var namesAgents: Bool {
-		AgentRowStyle.namesAgents(participants: store.participants, currentActorID: store.currentActorID)
+		AgentRowStyle.namesAgents(
+			participants: store.participants, currentActorID: store.currentActorID,
+			agentAuthorIDs: store.allMessages.filter { $0.author == .agent }.map(\.actorID))
 	}
 
 	/// Each tagged person under your message with where they stand (Working, Replied, Waiting for X).
@@ -1106,10 +1109,11 @@ struct ThreadTranscript: View {
 		let latestOwn = ThreadLayout.latestOwnMessageID(in: messages, currentActorID: store.currentActorID)
 		let cardOwners = LinkedConversationItems.firstMentions(in: messages)
 		let statusIDs = ThreadLayout.statusLineIDs(in: messages, currentActorID: store.currentActorID)
+		let namesAgents = namesAgents
 		ForEach(items) { item in
 			row(
 				item, answers: answers, anchors: anchors, latestOwnID: latestOwn, statusIDs: statusIDs,
-				cardOwners: cardOwners)
+				cardOwners: cardOwners, namesAgents: namesAgents)
 				.padding(.top, ThreadLayout.gap(before: item) == .grouped ? Self.groupedGap : Self.listGap)
 		}
 		TimelineView(.periodic(from: now, by: 15)) { context in
@@ -1244,7 +1248,7 @@ struct ThreadTranscript: View {
 	@ViewBuilder
 	private func row(
 		_ item: ThreadItem, answers: [Int: [ChatQuestionAnswer.Answer]], anchors: ActivityAnchors, latestOwnID: String?,
-		statusIDs: Set<String>, cardOwners: [String: String]
+		statusIDs: Set<String>, cardOwners: [String: String], namesAgents: Bool
 	) -> some View {
 		switch item {
 		case .daySeparator(let day):
