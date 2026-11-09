@@ -80,7 +80,9 @@ test.describe('Chat — agent starter prompts', () => {
 				})
 
 				await page.goto(`/${ws}/chats/${conv.id}`)
-				await expect(page.locator('p').filter({ hasText: 'No messages yet' })).toBeVisible({ timeout: 10_000 })
+				await expect(page.locator('p').filter({ hasText: 'No messages yet' })).toBeVisible({
+					timeout: 10_000,
+				})
 				const chip = page.getByRole('button', { name: FIRST })
 				await expect(chip).toBeVisible()
 				const box = page.getByRole('textbox').last()
