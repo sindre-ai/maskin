@@ -33,8 +33,8 @@ import {
 import { groupHandoffsByNextMessage } from '@/lib/handed-off-strip'
 import { extractLinkedObjectIds, splitOwnLinks } from '@/lib/linked-objects'
 import { isTimelineMessage } from '@/lib/message-threads'
-import { starterPromptsForAgents } from '@/lib/starter-prompts'
 import { answeredQuestionIds as answeredQuestionIdsFor } from '@/lib/question-answers'
+import { starterPromptsForAgents } from '@/lib/starter-prompts'
 import { parseVoiceReceipt } from '@/lib/voice-receipts'
 import {
 	buildVoiceTranscript,
