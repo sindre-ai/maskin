@@ -37,6 +37,10 @@ const BILLING_REFETCH_MS = 15_000
 // queries on the server. A burst of relationship events (an agent wiring up a loop) used to
 // refetch every open graph once per event, so one trailing refetch per window is enough.
 const GRAPH_REFETCH_MS = 5_000
+// Every comment event used to refetch the unread list and the For You list at once, in every open
+// tab. Both are heavy on the server, and agents comment all day, so a burst of comments now
+// refetches each list once per window. Short, because a new mention should show up promptly.
+const COMMENT_FEED_REFETCH_MS = 3_000
 const trailingRefetchTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 const isTabHidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden'
@@ -164,11 +168,19 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 	// and the subscriber list for the entity that was commented on (the latter
 	// because the commenter auto-subscribes server-side).
 	if (event.action === 'commented') {
-		invalidate(queryClient, {
-			queryKey: ['subscriptions', 'unread', workspaceId],
-		})
+		scheduleTrailingRefetch(
+			queryClient,
+			`unread:${workspaceId}`,
+			{ queryKey: ['subscriptions', 'unread', workspaceId] },
+			COMMENT_FEED_REFETCH_MS,
+		)
 		// A reply on a thread can settle a curated For You item.
-		invalidate(queryClient, { queryKey: queryKeys.forYou.list(workspaceId) })
+		scheduleTrailingRefetch(
+			queryClient,
+			`for-you:${workspaceId}`,
+			{ queryKey: queryKeys.forYou.list(workspaceId) },
+			COMMENT_FEED_REFETCH_MS,
+		)
 		invalidate(queryClient, {
 			queryKey: queryKeys.subscriptions.subscribers(event.entity_type, event.entity_id),
 		})

@@ -311,26 +311,14 @@ struct ChatThreadView: View {
 		// One group so iOS keeps everything in the bar instead of folding into a "More" overflow.
 		ToolbarItemGroup(placement: .primaryAction) {
 			if let call { LiveCallHeaderControls(session: call) { liveCalls?.end() } }
-			if !linkedEntries.isEmpty {
-				Button { showingLinked = true } label: {
-					HStack(spacing: MaskinSpace.s1) {
-						Image(systemName: "link")
-						Text("\(linkedEntries.count)").maskinText(.caption).fontWeight(.semibold)
-					}
-					.foregroundStyle(MaskinColor.ink)
-				}
-				.accessibilityLabel("Linked")
-				.accessibilityValue("\(linkedEntries.count)")
-				.accessibilityHint("Shows the drafts, pages and objects this chat links to")
-			}
-			if flow != nil, let conversations, let row = conversations.conversation(id: store.conversationID) {
-				Button {
-					Task { await conversations.setPinned(row.id, !row.pinned) }
-				} label: {
-					Label(row.pinned ? "Unpin" : "Pin", systemImage: row.pinned ? "pin.fill" : "pin")
-				}
-			}
 			Menu {
+				// The bar holds only this menu and Live (v3); what used to sit beside them lives here.
+				if !linkedEntries.isEmpty {
+					Button { showingLinked = true } label: {
+						Label("Linked items · \(linkedEntries.count)", systemImage: "square.stack")
+					}
+					.accessibilityHint("Shows the drafts, pages and objects this chat links to")
+				}
 				Button {
 					searching.toggle()
 					if !searching { searchText = "" }
@@ -339,7 +327,7 @@ struct ChatThreadView: View {
 				}
 				Button(action: onShowParticipants) { Label("People", systemImage: "person.2") }
 				Button(action: onInvite) { Label("Invite people", systemImage: "person.badge.plus") }
-				if flow == nil, let conversations, let row = conversations.conversation(id: store.conversationID) {
+				if let conversations, let row = conversations.conversation(id: store.conversationID) {
 					Button {
 						Task { await conversations.setPinned(row.id, !row.pinned) }
 					} label: {
@@ -393,6 +381,14 @@ struct ChatThreadView: View {
 			} label: {
 				Label("Chat options", systemImage: "ellipsis")
 					.foregroundStyle(MaskinColor.ink)
+					// The only cue left that this chat links drafts, pages or objects; the count is in the menu.
+					.overlay(alignment: .topTrailing) {
+						if !linkedEntries.isEmpty {
+							Circle().fill(MaskinColor.sigInk).frame(width: MaskinSpace.s3, height: MaskinSpace.s3)
+								.offset(x: MaskinSpace.s2, y: -MaskinSpace.s2)
+						}
+					}
+					.accessibilityValue(linkedEntries.isEmpty ? "" : "\(linkedEntries.count) linked items")
 			}
 			// The iOS prototype keeps Live in the header; the composer keeps the mic for dictation.
 			if let lead = liveLead, !isRoom, call == nil {
