@@ -47,6 +47,7 @@ import { ArrowUp, AtSign, FileText, Hash, Image, Info, Mic, Plus, X } from 'luci
 import {
 	type ChangeEvent,
 	type ClipboardEvent,
+	type DragEvent,
 	type FormEvent,
 	type KeyboardEvent,
 	useCallback,
@@ -1243,6 +1244,28 @@ export function Composer({
 		[attachFiles],
 	)
 
+	// Dropping files on the composer attaches them through the same path as the picker and a
+	// paste. Only a drag that carries files counts; dragging text or a link is left alone.
+	const [dropTargeted, setDropTargeted] = useState(false)
+	const dragCarriesFiles = (e: DragEvent<HTMLElement>) => e.dataTransfer.types.includes('Files')
+	const handleDragOver = (e: DragEvent<HTMLElement>) => {
+		if (!canWrite || !dragCarriesFiles(e)) return
+		e.preventDefault()
+		e.dataTransfer.dropEffect = 'copy'
+		setDropTargeted(true)
+	}
+	const handleDragLeave = (e: DragEvent<HTMLElement>) => {
+		// Moving over a child fires dragleave on the composer; only clear when truly leaving.
+		if (e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget)) return
+		setDropTargeted(false)
+	}
+	const handleDrop = (e: DragEvent<HTMLElement>) => {
+		setDropTargeted(false)
+		if (!canWrite || !dragCarriesFiles(e)) return
+		e.preventDefault()
+		attachFiles(Array.from(e.dataTransfer.files))
+	}
+
 	// A paste that starts with the prefix and has no whitespace, into an empty composer,
 	// goes straight to the vault field. Intercepted before the textarea takes it, so the
 	// secret is never in the composer's value, not even for a frame.
@@ -1493,7 +1516,15 @@ export function Composer({
 			    state is untouched when the user comes back to it. */}
 			<ViewerTooltip className="block">
 				<form onSubmit={handleSubmit} hidden={vaultFlow?.blocking === true}>
-					<div className="flex items-end gap-1.5 rounded-3xl bg-card p-1.5 inset-ring inset-ring-input max-md:p-1">
+					<div
+						onDragOver={handleDragOver}
+						onDragLeave={handleDragLeave}
+						onDrop={handleDrop}
+						className={cn(
+							'flex items-end gap-1.5 rounded-3xl bg-card p-1.5 inset-ring inset-ring-input max-md:p-1',
+							dropTargeted && 'outline-2 outline-dashed outline-ring',
+						)}
+					>
 						{/* + opens the attach menu. It keeps a 44 px target on touch widths. */}
 						<DropdownMenu>
 							<DropdownMenuTrigger asChild>
