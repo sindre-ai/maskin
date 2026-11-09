@@ -567,9 +567,10 @@ public struct TeamLayout: Equatable, Sendable {
 	}
 
 	/// A 1:1 conversation with its own title ("Q3 planning") keeps it; one titled after the other
-	/// person, or with the default "Alex, Relay" title, is shown as that person's name.
+	/// person, or with the default "Alex, Relay" title, is shown as that person's name. A direct
+	/// message has no topic, so it is always shown as the other party's name.
 	public static func hasCustomTitle(_ c: ConversationSummary, me: String?) -> Bool {
-		guard !c.isGroupChat(excluding: me) else { return false }
+		guard !c.isGroupChat(excluding: me), !c.isDirect else { return false }
 		let names = c.others(excluding: me).map(\.name)
 		let title = c.title.trimmingCharacters(in: .whitespacesAndNewlines)
 		return !title.isEmpty && title != ThreadLayout.defaultTitle(for: names) && !names.contains(title)

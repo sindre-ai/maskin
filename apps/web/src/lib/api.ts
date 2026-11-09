@@ -2804,6 +2804,8 @@ export interface ConversationListItemResponse {
 	workspaceId: string
 	title: string
 	createdBy: string
+	/** Set on the direct message (DM) of a pair, null on every topical chat. The list tells the two apart by this alone. */
+	directPairKey?: string | null
 	lastMessageAt: string | null
 	createdAt: string | null
 	updatedAt: string | null
