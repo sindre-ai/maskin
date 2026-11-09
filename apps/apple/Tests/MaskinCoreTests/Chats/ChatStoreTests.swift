@@ -35,6 +35,17 @@ struct ChatStoreTests {
 		#expect(!h.store.hasEarlier)
 	}
 
+	@Test("the agents that have spoken are kept as a set, not found by scanning the messages")
+	func agentAuthorIDs() async {
+		let h = ChatHarness(server: [
+			chatMsg(1, by: "me"), chatMsg(2, by: "relay", agent: true), chatMsg(3, by: "forge", agent: true),
+			chatMsg(4, by: "relay", agent: true), chatMsg(5, by: "sam"),
+		])
+		#expect(h.store.agentAuthorIDs.isEmpty)
+		await h.store.start()
+		#expect(h.store.agentAuthorIDs == ["relay", "forge"])
+	}
+
 	@Test("page sizes never exceed the server's message cap")
 	func pageCap() async {
 		let h = ChatHarness(server: [chatMsg(1)], pageSize: 5000)

@@ -43,7 +43,7 @@ struct ThreadScreen: View {
 	private var namesAgents: Bool {
 		AgentRowStyle.namesAgents(
 			participants: store.participants, currentActorID: store.currentActorID,
-			agentAuthorIDs: store.allMessages.filter { $0.author == .agent }.map(\.actorID))
+			agentAuthorIDs: store.agentAuthorIDs)
 	}
 
 	var body: some View {
@@ -52,12 +52,15 @@ struct ThreadScreen: View {
 			ScrollViewReader { proxy in
 				ScrollView {
 					LazyVStack(alignment: .leading, spacing: MaskinSpace.s5) {
-						row(shownRoot, showsAuthor: true, namesAgents: namesAgents)
+						row(
+							shownRoot, showsAuthor: true, namesAgents: namesAgents,
+							endsRun: replies.first.map { $0.actorID != shownRoot.actorID } ?? true)
 						repliesDivider
 						ForEach(Array(replies.enumerated()), id: \.element.id) { index, reply in
 							row(
 								reply, showsAuthor: index == 0 || replies[index - 1].actorID != reply.actorID,
-								namesAgents: namesAgents)
+								namesAgents: namesAgents,
+								endsRun: index == replies.count - 1 || replies[index + 1].actorID != reply.actorID)
 								.id(reply.id)
 						}
 						Color.clear.frame(height: 1).id("end")
@@ -123,7 +126,7 @@ struct ThreadScreen: View {
 		.accessibilityAddTraits(.isHeader)
 	}
 
-	private func row(_ message: ChatMessage, showsAuthor: Bool, namesAgents: Bool) -> some View {
+	private func row(_ message: ChatMessage, showsAuthor: Bool, namesAgents: Bool, endsRun: Bool) -> some View {
 		var actions = MessageMenuActions()
 		if !message.content.isEmpty {
 			actions.onCopy = {
@@ -142,7 +145,7 @@ struct ThreadScreen: View {
 		}
 		return MessageRow(
 			message: message, isOwn: message.actorID == store.currentActorID, showsAuthor: showsAuthor,
-			namesAgent: namesAgents,
+			namesAgent: namesAgents, endsRun: endsRun,
 			mentions: message.mentionIDs.compactMap { id in
 				store.displayName(for: id).map { (id: id, name: $0) }
 			},

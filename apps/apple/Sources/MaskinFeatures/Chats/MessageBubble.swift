@@ -82,8 +82,8 @@ struct AgentNameLabel: View {
 	var working = false
 	var onOpen: (() -> Void)?
 
-	/// The spacing a row stacks the label and the words with (`MessageRow.theirs` uses the same
-	/// token), on top of the label's own bottom padding.
+	/// The spacing a row stacks the label and the words with. `MessageRow.theirs` and
+	/// `StreamingReplyBubble` both read this constant, on top of the label's own bottom padding.
 	static let gap: CGFloat = MaskinSpace.s2
 
 	var body: some View {

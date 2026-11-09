@@ -130,6 +130,8 @@ struct MessageRow: View {
 	/// More than one agent can speak here (`AgentRowStyle.namesAgents`): an agent's first message
 	/// of a run carries its name. In a one-to-one chat the title already says who it is.
 	var namesAgent = false
+	/// The last message of a run by its author: an agent's carries its time under the words.
+	var endsRun = true
 	var mentionNames: [String] = []
 	/// Where each tagged person stands; shown under your own message in place of the caption.
 	var mentionChips: [MentionStateChip] = []
@@ -193,9 +195,13 @@ struct MessageRow: View {
 		}
 		.onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { rowWidth = $0 }
 		.accessibilityElement(children: .contain)
+		// The plain agent row draws no avatar or time, so VoiceOver reads who wrote it and when.
+		.accessibilityLabelIf(
+			plainAgent ? AgentRowStyle.spokenSender(name: message.actorName, date: message.createdAt) : nil
+		)
 		.accessibilityActions {
-			ForEach(Array(zip(menuActions.titles.indices, menuActions.titles)), id: \.0) { _, title in
-				Button(title) { perform(title) }
+			ForEach(menuActions.entries, id: \.item) { entry in
+				Button(entry.title) { menuActions.run(entry.item) }
 			}
 		}
 	}
@@ -210,31 +216,9 @@ struct MessageRow: View {
 		return menu
 	}
 
-	private func perform(_ title: String) {
-		if title == menuActions.openAgentTitle, let open = menuActions.onOpenAgent {
-			open()
-			return
-		}
-		switch title {
-		case "Reply": actions.onReply?()
-		case "Reply in thread": actions.onThread?()
-		case "Copy": actions.onCopy?()
-		case "Select text": actions.onSelectText?()
-		case "Pin", "Unpin": actions.onPin?()
-		case "Edit": actions.onEdit?()
-		case "Try again": actions.onTryAgain?()
-		case "Make it shorter": actions.onShorter?()
-		case "Good answer": actions.onGoodAnswer?()
-		case "Not right": actions.onNotRight?()
-		case "Retry": actions.onRetrySend?()
-		case "Delete": actions.onDiscard?()
-		default: actions.onReadAloud?()
-		}
-	}
-
 	/// An agent's message is plain text on the page; a person's other than yours keeps the bubble.
 	private var shape: AgentRowStyle.Row {
-		AgentRowStyle.row(author: message.author, showsAuthor: showsAuthor, namesAgent: namesAgent)
+		AgentRowStyle.row(author: message.author, showsAuthor: showsAuthor, namesAgent: namesAgent, endsRun: endsRun)
 	}
 	private var plainAgent: Bool { !shape.bubble }
 
@@ -469,7 +453,8 @@ struct MessageRow: View {
 		// Read once per evaluation: finding the links costs a scan of the text.
 		let targets = linkedTargets
 		let layout = linkedLayout(for: targets)
-		return VStack(alignment: .leading, spacing: MaskinSpace.s2) {
+		// The same gap `StreamingReplyBubble` stacks its name and words with, from one constant.
+		return VStack(alignment: .leading, spacing: AgentNameLabel.gap) {
 			// v3: an agent's words are plain text; its name is shown only where more than one agent can
 			// speak. A person's message keeps the avatar header. `AgentRowStyle` decides both.
 			if shape.nameLabel {
@@ -563,6 +548,14 @@ struct MessageRow: View {
 			}
 			footer
 			MentionLine(names: untaggedNames, isOwn: false)
+			// An agent's time: quiet, under the last message of its run, in the clock style the other
+			// rows use. Below the words so a streaming reply landing never moves the text. VoiceOver
+			// already hears it in the row's label, so it is hidden here.
+			if shape.time, let time = message.createdAt {
+				RelativeTime(time, style: .clock)
+					.font(MaskinTypeface.sans(MaskinFontSize.t12, relativeTo: .caption)).foregroundStyle(MaskinColor.ink5)
+					.accessibilityHidden(true)
+			}
 		}
 		.frame(maxWidth: .infinity, alignment: .leading)
 		.environment(\.markdownStandaloneLink, standaloneStyle(placingCards: layout != nil))
@@ -599,6 +592,14 @@ struct MessageRow: View {
 				}
 			}
 		}
+	}
+}
+
+extension View {
+	/// Sets an accessibility label only when there is one; otherwise the view reads as it did.
+	@ViewBuilder
+	func accessibilityLabelIf(_ label: String?) -> some View {
+		if let label { accessibilityLabel(label) } else { self }
 	}
 }
 

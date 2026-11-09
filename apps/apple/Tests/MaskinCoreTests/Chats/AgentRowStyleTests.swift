@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import MaskinCore
@@ -17,13 +18,20 @@ struct AgentRowStyleTests {
 	func rowShape() {
 		#expect(
 			AgentRowStyle.row(author: .agent, showsAuthor: true, namesAgent: false)
-				== .init(bubble: false, header: false, nameLabel: false))
+				== .init(bubble: false, header: false, nameLabel: false, time: true))
 		#expect(
 			AgentRowStyle.row(author: .human, showsAuthor: true, namesAgent: true)
-				== .init(bubble: true, header: true, nameLabel: false))
+				== .init(bubble: true, header: true, nameLabel: false, time: false))
 		#expect(
 			AgentRowStyle.row(author: .human, showsAuthor: false, namesAgent: false)
-				== .init(bubble: true, header: false, nameLabel: false))
+				== .init(bubble: true, header: false, nameLabel: false, time: false))
+	}
+
+	@Test("an agent's time sits under the last message of a run, never on the others or on a person's")
+	func timeUnderRunEnd() {
+		#expect(AgentRowStyle.row(author: .agent, showsAuthor: true, namesAgent: false, endsRun: true).time)
+		#expect(!AgentRowStyle.row(author: .agent, showsAuthor: true, namesAgent: false, endsRun: false).time)
+		#expect(!AgentRowStyle.row(author: .human, showsAuthor: true, namesAgent: false, endsRun: true).time)
 	}
 
 	@Test("the name label is on the first message of a run, and only where agents are named")
@@ -33,13 +41,27 @@ struct AgentRowStyleTests {
 		#expect(!AgentRowStyle.row(author: .agent, showsAuthor: true, namesAgent: false).nameLabel)
 	}
 
-	@Test("a streaming reply is the same shape as the message it becomes")
+	@Test("a streaming reply matches the message it becomes everywhere above the words")
 	func streamingMatchesFinished() {
 		for names in [false, true] {
-			#expect(
-				AgentRowStyle.streamingRow(namesAgent: names)
-					== AgentRowStyle.row(author: .agent, showsAuthor: true, namesAgent: names))
+			let streaming = AgentRowStyle.streamingRow(namesAgent: names)
+			let finished = AgentRowStyle.row(author: .agent, showsAuthor: true, namesAgent: names, endsRun: true)
+			#expect(streaming.bubble == finished.bubble)
+			#expect(streaming.header == finished.header)
+			#expect(streaming.nameLabel == finished.nameLabel)
+			// Only the time, below the words, is added once the message lands.
+			#expect(!streaming.time && finished.time)
 		}
+	}
+
+	@Test("VoiceOver hears who wrote an agent's words and when, in one label")
+	func spokenSender() {
+		let noon = Date(timeIntervalSince1970: 1_794_228_300)  // 9 Nov 2026, 12:45 UTC
+		let said = AgentRowStyle.spokenSender(
+			name: "Relay", date: noon, locale: Locale(identifier: "en_GB"), timeZone: TimeZone(identifier: "UTC")!)
+		#expect(said.hasPrefix("Relay, "))
+		#expect(said.contains("12:45"))
+		#expect(AgentRowStyle.spokenSender(name: "Relay", date: nil) == "Relay")
 	}
 
 	@Test("a chat with two agents names each one")
