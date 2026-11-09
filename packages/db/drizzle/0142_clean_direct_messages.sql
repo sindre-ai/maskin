@@ -7,9 +7,15 @@
 -- title and every message and becomes an ordinary topical chat, and the pair gets a new
 -- empty DM (titled with the agent's name, as findOrCreateDirectChat titles it).
 --
--- A marked chat is left alone when it is already clean: no messages, or only the ones the
--- app itself puts into a DM (the agent intro and its steps, a proactive note from the
--- agent). Deleted messages do not count.
+-- Only a chat created before the 0117 backfill was merged (29 Oct 2026, 20:31 UTC) can
+-- have been marked by it: the column did not exist before, so every marked chat made
+-- before that moment was marked by the backfill. A marked chat made after it was created
+-- by the app as a DM (agent page, agent questions), so a real back and forth in it is a
+-- live DM and stays marked.
+--
+-- Among those backfilled chats, one is left alone when it is already clean: no messages,
+-- or only the ones the app itself puts into a DM (the agent intro and its steps, a
+-- proactive note from the agent). Deleted messages do not count.
 --
 -- Pairs that have a one-to-one chat but no DM at all also get one, so every pair has
 -- exactly one marked chat. A pair with no chat yet gets its DM when it is first needed.
@@ -28,7 +34,7 @@ DECLARE
 	r record;
 	new_id uuid;
 BEGIN
-	-- 1. Marked chats that carry a real conversation: unmark, then open a fresh DM.
+	-- 1. Backfilled chats that carry a real conversation: unmark, then open a fresh DM.
 	FOR r IN
 		SELECT
 			c.id AS old_id,
@@ -45,6 +51,7 @@ BEGIN
 			ON ag.type = 'agent'
 			AND ag.id::text IN (split_part(c.direct_pair_key, ':', 1), split_part(c.direct_pair_key, ':', 2))
 		WHERE c.direct_pair_key IS NOT NULL
+			AND c.created_at < timestamptz '2026-10-29 20:31:58+00'
 			AND EXISTS (
 				SELECT 1 FROM "messages" m
 				WHERE m.conversation_id = c.id

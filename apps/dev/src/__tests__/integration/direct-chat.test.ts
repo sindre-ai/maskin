@@ -38,11 +38,12 @@ describe('Direct chat primitive', () => {
 	async function chatBetween(
 		a: string,
 		b: string,
-		opts: { topical?: boolean; lastMessageAt?: Date } = {},
+		opts: { topical?: boolean; lastMessageAt?: Date; createdAt?: Date } = {},
 	) {
 		const chat = await insertConversation(db, workspaceId, a, {
 			directPairKey: opts.topical ? null : directPairKey(a, b),
 			...(opts.lastMessageAt ? { lastMessageAt: opts.lastMessageAt } : {}),
+			...(opts.createdAt ? { createdAt: opts.createdAt } : {}),
 		})
 		await addParticipant(chat.id, a)
 		await addParticipant(chat.id, b)
@@ -344,6 +345,9 @@ describe('Direct chat primitive', () => {
 
 		type Row = { id: string; title: string; key: string | null; messages: number }
 
+		// The 0117 backfill marked chats created before it was merged (29 Oct 2026, 20:31 UTC).
+		const beforeBackfill = new Date('2026-10-01T00:00:00Z')
+
 		/** Runs the migration `times` times in one transaction, then reads every chat. Rolled back. */
 		async function runMigration(times = 1) {
 			let rows: Row[] = []
@@ -370,7 +374,7 @@ describe('Direct chat primitive', () => {
 		}
 
 		it('opens a new DM for a pair whose marked chat is topical and unmarks the old one', async () => {
-			const old = await chatBetween(humanId, agentId)
+			const old = await chatBetween(humanId, agentId, { createdAt: beforeBackfill })
 			await say(old.id, humanId, null)
 			await say(old.id, agentId, null)
 
@@ -384,9 +388,21 @@ describe('Direct chat primitive', () => {
 			expect(marked[0]?.id).not.toBe(old.id)
 		})
 
+		it('keeps an app-made DM marked when people have been talking in it', async () => {
+			const live = await chatBetween(humanId, agentId)
+			await say(live.id, humanId, null)
+			await say(live.id, agentId, null)
+
+			const rows = await runMigration()
+
+			expect(rows.filter((r) => r.key === directPairKey(humanId, agentId))).toEqual([
+				expect.objectContaining({ id: live.id, messages: 2 }),
+			])
+		})
+
 		it('titles the new DM with the agent name and puts both in it', async () => {
 			const agent = await insertActor(db, { type: 'agent', name: 'Forge' })
-			const old = await chatBetween(humanId, agent.id)
+			const old = await chatBetween(humanId, agent.id, { createdAt: beforeBackfill })
 			await say(old.id, humanId, null)
 
 			const rows = await runMigration()
@@ -396,7 +412,7 @@ describe('Direct chat primitive', () => {
 		})
 
 		it('leaves a marked chat alone when it only holds intro-style messages', async () => {
-			const chat = await chatBetween(humanId, agentId)
+			const chat = await chatBetween(humanId, agentId, { createdAt: beforeBackfill })
 			await say(chat.id, agentId, { delivery: { kind: 'agent_intro', version: 1 } })
 			await say(chat.id, agentId, { delivery: { kind: 'agent_intro_steps', version: 1 } })
 			await say(chat.id, agentId, { delivery: { kind: 'proactive', version: 1 } })
@@ -409,21 +425,21 @@ describe('Direct chat primitive', () => {
 		})
 
 		it('leaves an empty marked chat alone', async () => {
-			const chat = await chatBetween(humanId, agentId)
+			const chat = await chatBetween(humanId, agentId, { createdAt: beforeBackfill })
 
 			const rows = await runMigration()
 
 			expect(rows.find((r) => r.key === directPairKey(humanId, agentId))?.id).toBe(chat.id)
 		})
 
-		it('counts a person writing in the chat as a topic, but not a deleted message', async () => {
+		it('counts a person writing in an old chat as a topic, but not a deleted message', async () => {
 			const topicalAgent = await insertActor(db, { type: 'agent' })
-			const withReply = await chatBetween(humanId, topicalAgent.id)
+			const withReply = await chatBetween(humanId, topicalAgent.id, { createdAt: beforeBackfill })
 			await say(withReply.id, topicalAgent.id, { delivery: { kind: 'agent_intro', version: 1 } })
 			await say(withReply.id, humanId, null)
 
 			const deletedAgent = await insertActor(db, { type: 'agent' })
-			const withDeleted = await chatBetween(humanId, deletedAgent.id)
+			const withDeleted = await chatBetween(humanId, deletedAgent.id, { createdAt: beforeBackfill })
 			await say(withDeleted.id, deletedAgent.id, { delivery: { kind: 'agent_intro', version: 1 } })
 			await db.insert(messages).values({
 				conversationId: withDeleted.id,
@@ -465,7 +481,7 @@ describe('Direct chat primitive', () => {
 		})
 
 		it('is idempotent: a second run changes nothing', async () => {
-			const old = await chatBetween(humanId, agentId)
+			const old = await chatBetween(humanId, agentId, { createdAt: beforeBackfill })
 			await say(old.id, humanId, null)
 			const otherAgent = await insertActor(db, { type: 'agent' })
 			await chatBetween(humanId, otherAgent.id, { topical: true })
@@ -484,7 +500,7 @@ describe('Direct chat primitive', () => {
 		})
 
 		it('leaves the new DM findable by the app, and get-or-create returns it', async () => {
-			const old = await chatBetween(humanId, agentId)
+			const old = await chatBetween(humanId, agentId, { createdAt: beforeBackfill })
 			await say(old.id, humanId, null)
 
 			const result: {
