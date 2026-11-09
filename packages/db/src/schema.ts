@@ -394,6 +394,13 @@ export const events = pgTable(
 		index('events_ws_entity_commented_idx')
 			.on(t.workspaceId, t.entityId, t.id)
 			.where(sql`${t.action} = 'commented'`),
+		// "Which comments mention this actor?", behind the unread feed (GET /api/subscriptions/unread)
+		// and the For You decision cards. Without it both read every comment in the workspace to
+		// find a few (144 ms and 500 ms on production data; 3 ms and 41 ms with it). Holds only
+		// comment rows. Built CONCURRENTLY in migration 0142.
+		index('events_commented_mentions_idx')
+			.using('gin', sql`(${t.data} -> 'mentions')`)
+			.where(sql`${t.action} = 'commented'`),
 	],
 )
 
