@@ -243,6 +243,7 @@ extension ChatsContainer {
 			let created = try await store.create(
 				title: ThreadLayout.defaultTitle(for: [chief.participant.name]),
 				participantIDs: [chief.id], firstMessage: text)
+			Analytics.shared.chatSessionStarted(conversationId: created.id, participants: [chief.participant])
 			MaskinHaptics.play(.success)
 			selection = created.id
 		} catch {
