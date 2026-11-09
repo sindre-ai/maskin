@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { extractHtmlText, readableWithHint } from '../../lib/html-text'
+import {
+	HtmlTooDeepError,
+	MAX_HTML_NESTING_DEPTH,
+	exceedsNestingDepth,
+	extractHtmlText,
+	readableWithHint,
+} from '../../lib/html-text'
 import { buildBriefingDeck } from '../fixtures/briefing-deck'
 
 describe('extractHtmlText', () => {
@@ -176,5 +182,48 @@ describe('extractHtmlText on pages that are not decks', () => {
 			`<body><script type="application/ld+json">${JSON.stringify({ a: 'x'.repeat(900) })}</script></body>`,
 		)
 		expect(dataOnly.note).toBeNull()
+	})
+})
+
+describe('nesting depth guard', () => {
+	const nested = (open: string, close: string, levels: number) =>
+		`<html><body>${open.repeat(levels)}hi${close.repeat(levels)}</body></html>`
+
+	it('refuses a 60,000-level file fast, without parsing it', () => {
+		const html = nested('<div>', '</div>', 60_000)
+		const started = performance.now()
+		expect(() => extractHtmlText(html)).toThrow(HtmlTooDeepError)
+		expect(performance.now() - started).toBeLessThan(500)
+	})
+
+	it('refuses 5,000 levels fast', () => {
+		const started = performance.now()
+		expect(() => extractHtmlText(nested('<div>', '</div>', 5_000))).toThrow(HtmlTooDeepError)
+		expect(performance.now() - started).toBeLessThan(500)
+	})
+
+	it('still extracts a page right at the cap', () => {
+		const result = extractHtmlText(nested('<div>', '</div>', MAX_HTML_NESTING_DEPTH))
+		expect(result.contentText).toBe('hi')
+	})
+
+	it('counts unclosed and self-closed tags, which HTML still opens', () => {
+		expect(exceedsNestingDepth(nested('<div>', '', 1_500))).toBe(true)
+		expect(exceedsNestingDepth(nested('<div/>', '', 1_500))).toBe(true)
+		expect(exceedsNestingDepth(`<svg>${'<div/>'.repeat(1_500)}</svg>`)).toBe(true)
+	})
+
+	it('is not fooled by stray quotes in a tag', () => {
+		expect(exceedsNestingDepth(`<div ">${'<div >'.repeat(1_500)}<div ">`)).toBe(true)
+	})
+
+	it('does not count text inside comments, scripts or attribute values', () => {
+		const html = `<!-- ${'<div>'.repeat(2_000)} --><script>var a = "${'<div>'.repeat(2_000)}"</script><p title="${'<div>'.repeat(2_000)}">ok</p>`
+		expect(exceedsNestingDepth(html)).toBe(false)
+	})
+
+	it('lets a wide page, void tags, optional end tags and many svg paths through', () => {
+		const html = `<ul>${'<li>item<br>'.repeat(5_000)}</ul><svg>${'<path d="M0 0"/>'.repeat(5_000)}</svg>${'<p>para'.repeat(3_000)}`
+		expect(exceedsNestingDepth(html)).toBe(false)
 	})
 })
