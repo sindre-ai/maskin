@@ -58,7 +58,8 @@ export function ConversationListRow({
 			: workingNames.length === 1
 				? `${workingNames[0]} is working…`
 				: `${workingNames.length} agents are working…`
-	const snippetAuthor = snippetAuthorLabel(conversation, self?.id)
+	// The title rendered below is `conversation.title`; compare against exactly that.
+	const snippetAuthor = snippetAuthorLabel(conversation, conversation.title, self?.id)
 
 	return (
 		<div className="group/row relative border-t border-border first:border-t-0">

@@ -566,6 +566,25 @@ public struct TeamLayout: Equatable, Sendable {
 		return conversation.others(excluding: me).first?.name ?? ChatPreviewText.plain(conversation.title)
 	}
 
+	/// A 1:1 conversation with its own title ("Q3 planning") keeps it; one titled after the other
+	/// person, or with the default "Alex, Relay" title, is shown as that person's name.
+	public static func hasCustomTitle(_ c: ConversationSummary, me: String?) -> Bool {
+		guard !c.isGroupChat(excluding: me) else { return false }
+		let names = c.others(excluding: me).map(\.name)
+		let title = c.title.trimmingCharacters(in: .whitespacesAndNewlines)
+		return !title.isEmpty && title != ThreadLayout.defaultTitle(for: names) && !names.contains(title)
+	}
+
+	/// The title a team-list row actually shows. Previews compare the author against this.
+	public static func displayedTitle(of kind: RowKind, me: String?) -> String {
+		switch kind {
+		case .conversation(let c):
+			return hasCustomTitle(c, me: me) ? ChatPreviewText.plain(c.title) : title(of: c, me: me)
+		case .person(let p): return p.name
+		case .flow(let f): return f.name
+		}
+	}
+
 	private static func tileTitle(_ c: ConversationSummary, me: String?) -> String { title(of: c, me: me) }
 
 	private static func conversationRow(_ c: ConversationSummary) -> Row { Row(id: c.id, kind: .conversation(c)) }

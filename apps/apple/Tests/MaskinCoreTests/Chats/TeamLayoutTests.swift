@@ -264,27 +264,39 @@ struct TeamLayoutTests {
 struct ConversationRowStatusTests {
 	private let convo = chatConvo("c", snippet: "Done. PR is **up**", participants: [chatMe, chatRelay])
 
+	/// `displayed` is the title the row shows; it defaults to the stored one.
 	private func preview(
-		title: String, by: String = "Relay", participants: [ChatParticipant], tick: ConversationRowStatus.Tick? = nil
+		title: String = "Chat c", displayed: String? = nil, by: ChatParticipant? = chatRelay,
+		participants: [ChatParticipant] = [chatMe, chatRelay], tick: ConversationRowStatus.Tick? = nil,
+		me: String? = "me"
 	) -> ConversationRowStatus {
 		var c = chatConvo("c", title: title, snippet: "Done. PR is **up**", participants: participants)
-		c.snippetActorName = by
-		return ConversationRowStatus.make(conversation: c, tick: tick)
+		c.snippetActorName = by?.name
+		c.snippetActorID = by?.id
+		return ConversationRowStatus.make(conversation: c, tick: tick, displayedTitle: displayed, me: me)
 	}
 
 	@Test("a custom-titled one-to-one keeps the name: nothing else says who wrote it")
 	func customTitledOneToOneKeepsName() {
-		let status = preview(title: "Q3 planning", participants: [chatMe, chatRelay])
+		let status = preview(title: "Q3 planning")
 		#expect(status.prefix == nil)
 		#expect(status.preview == "Relay: Done. PR is up")
 		#expect(!status.isDraft)
 	}
 
-	@Test("a one-to-one titled with the author drops the name, ignoring case and spaces")
+	@Test("a one-to-one whose displayed title is the author drops the name, folded")
 	func titleEqualsNameDropsLead() {
-		#expect(preview(title: "Relay", participants: [chatMe, chatRelay]).preview == "Done. PR is up")
-		#expect(preview(title: "  relay ", participants: [chatMe, chatRelay]).preview == "Done. PR is up")
-		#expect(preview(title: "Relay", participants: [chatMe, chatRelay]).previewPieces == nil)
+		#expect(preview(title: "Relay").preview == "Done. PR is up")
+		#expect(preview(title: "  relay ").preview == "Done. PR is up")
+		#expect(preview(title: "Relay").previewPieces == nil)
+	}
+
+	@Test("the comparison is with the displayed title, not the stored one")
+	func displayedTitleDecides() {
+		// Stored title is custom but the team list shows the person's name: drop it.
+		#expect(preview(title: "Q3 planning", displayed: "Relay").preview == "Done. PR is up")
+		// Stored title is the person's name but the row shows a custom title: keep it.
+		#expect(preview(title: "Relay", displayed: "Month-end close").preview == "Relay: Done. PR is up")
 	}
 
 	@Test("three people keep the name even when the title matches")
@@ -298,10 +310,16 @@ struct ConversationRowStatusTests {
 		#expect(preview(title: "Relay", participants: []).preview == "Relay: Done. PR is up")
 	}
 
-	@Test("your own message still reads You, whatever the title")
+	@Test("a list that leaves you out, or an unknown you, keeps the name even with two people")
+	func listWithoutYouKeepsName() {
+		#expect(preview(title: "Relay", participants: [chatRelay, chatSam]).preview == "Relay: Done. PR is up")
+		#expect(preview(title: "Relay", me: nil).preview == "Relay: Done. PR is up")
+	}
+
+	@Test("your own message reads You, with or without a send tick, whatever the title")
 	func ownMessageStillYou() {
-		let status = preview(title: "Me", by: "Me", participants: [chatMe, chatRelay], tick: .sent)
-		#expect(status.preview == "You: Done. PR is up")
+		#expect(preview(title: "Me", by: chatMe, tick: .sent).preview == "You: Done. PR is up")
+		#expect(preview(title: "Me", by: chatMe).preview == "You: Done. PR is up")
 	}
 
 	@Test("typing replaces everything, a draft beats working, working beats the tick")
@@ -502,5 +520,63 @@ struct WorkingTextTests {
 		var status = ConversationRowStatus.make(conversation: convo("https://x.io/a"))
 		status.preview = "2 conversations · Title"
 		#expect(status.previewPieces == nil)
+	}
+}
+
+@Suite("NameMatch")
+struct NameMatchTests {
+	/// The same table is in the web tests (`conversation-snippet.test.ts`). Keep the two in step.
+	@Test(
+		"compares names the way the web client does",
+		arguments: [
+			("José", "jose", true),
+			("Straße", "STRASSE", true),
+			("İlker", "ilker", true),
+			("  Bookkeeper ", "bookkeeper", true),
+			("Bookkeeper", "Bookkeeper 2", false),
+			("Zoë", "Zoe Lee", false),
+		])
+	func table(a: String, b: String, expected: Bool) {
+		#expect(NameMatch.same(a, b) == expected)
+	}
+
+	@Test("folds to the same text the web side does")
+	func folded() {
+		#expect(NameMatch.folded(" Straße ") == "strasse")
+		#expect(NameMatch.folded("İlker") == "ilker")
+		#expect(NameMatch.folded("José") == "jose")
+	}
+}
+
+@Suite("ConversationSummary.snippetAuthorLead")
+struct SnippetAuthorLeadTests {
+	private func chat(title: String = "Chat c", by: ChatParticipant = chatRelay) -> ConversationSummary {
+		var c = chatConvo("c", title: title, snippet: "Hi", participants: [chatMe, chatRelay])
+		c.snippetActorName = by.name
+		c.snippetActorID = by.id
+		return c
+	}
+
+	@Test("the person sub-row compares with the conversation's own title")
+	func subRowUsesItsOwnTitle() {
+		#expect(chat(title: "Q3 planning").snippetAuthorLead(displayedTitle: "Q3 planning", me: "me") == "Relay: ")
+		#expect(chat(title: "Relay").snippetAuthorLead(displayedTitle: "Relay", me: "me") == nil)
+	}
+
+	@Test("the sub-row reads You for your own message, like the status line and web")
+	func subRowReadsYou() {
+		#expect(chat(by: chatMe).snippetAuthorLead(displayedTitle: "Chat c", me: "me") == "You: ")
+	}
+
+	@Test("a team-list row compares with the title it shows: custom stays, default becomes the person")
+	func teamListDisplayedTitle() {
+		let custom = chat(title: "Q3 planning")
+		let customShown = TeamLayout.displayedTitle(of: .conversation(custom), me: "me")
+		#expect(customShown == "Q3 planning")
+		#expect(custom.snippetAuthorLead(displayedTitle: customShown, me: "me") == "Relay: ")
+		let plain = chat(title: "Relay")
+		let plainShown = TeamLayout.displayedTitle(of: .conversation(plain), me: "me")
+		#expect(plainShown == "Relay")
+		#expect(plain.snippetAuthorLead(displayedTitle: plainShown, me: "me") == nil)
 	}
 }

@@ -71,9 +71,12 @@ public struct ConversationRowStatus: Equatable, Sendable {
 	///   - workingAgents: agents in this conversation that are running.
 	///   - tick: the state of your latest message when the last message is yours.
 	///   - mentionsYou: an unread message mentions you.
+	///   - displayedTitle: the title the row shows (defaults to the conversation's own title).
+	///   - me: the signed-in actor; without it the author's name is always kept.
 	public static func make(
 		conversation: ConversationSummary, draft: String? = nil, typing: Bool = false,
-		workingAgents: Int = 0, workingNames: [String] = [], tick: Tick? = nil, mentionsYou: Bool = false
+		workingAgents: Int = 0, workingNames: [String] = [], tick: Tick? = nil, mentionsYou: Bool = false,
+		displayedTitle: String? = nil, me: String? = nil
 	) -> ConversationRowStatus {
 		let mention = mentionsYou && conversation.isUnread
 		if typing { return ConversationRowStatus(prefix: .typing, preview: "", mentionsYou: mention) }
@@ -92,7 +95,8 @@ public struct ConversationRowStatus: Equatable, Sendable {
 			lead = "You: "
 		} else if let tick {
 			prefix = .tick(tick)
-		} else if !text.isEmpty, let authorLead = conversation.snippetAuthorLead {
+		} else if !text.isEmpty, let authorLead = conversation.snippetAuthorLead(displayedTitle: displayedTitle ?? conversation.title, me: me)
+		{
 			lead = authorLead
 		}
 		var previewPieces: [ChatPreviewText.Piece]?
