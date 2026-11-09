@@ -77,3 +77,17 @@ Judgment from one day with very small numbers, not a guarantee. 2026-11-08 was a
 - Re-check the tolerance after a week of daily samples, since one Sunday can be unrepresentative.
 - Direction differs by design (see above), so a read-only-heavy day can push app_active above the
   database. That is why the lower bound is not zero.
+
+## Verification status
+
+Checked against production for UTC 2026-11-08: the main query and the comparison variant both ran
+in a read-only transaction and returned dau 4, wau 12, signups 1. PostHog showed 2 distinct people
+with app_active that day. The numbers were produced twice, independently, and agree.
+
+Matched by actor id, both PostHog people are among the 4 database people, and PostHog has no one
+the database lacks. Of the 2 database-only people, one wrote 18 updates spread across the whole day
+and never sent app_active, which fits non-browser use. The other signed up at 19:09 UTC, wrote 3
+events within seconds and sent no app_active that day. The database cannot say which client wrote
+the events, so the first is plausible and the second is not proven: if new sign-ups regularly show
+no heartbeat on their first day, that is a gap in the heartbeat, not a reason to distrust the
+database count. Watch for it during the week of daily samples.
