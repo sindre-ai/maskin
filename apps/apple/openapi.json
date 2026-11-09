@@ -41280,6 +41280,464 @@
 				}
 			}
 		},
+		"/api/billing/auto-top-up": {
+			"get": {
+				"tags": [
+					"billing"
+				],
+				"summary": "The auto top-up rule and whether the last automatic charge failed",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "The rule (null until one has been saved)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"auto_top_up": {
+											"type": [
+												"object",
+												"null"
+											],
+											"properties": {
+												"enabled": {
+													"type": "boolean"
+												},
+												"threshold_cents": {
+													"type": "integer"
+												},
+												"amount_cents": {
+													"type": "integer"
+												},
+												"threshold_dkk_approx": {
+													"type": "integer"
+												},
+												"amount_dkk_approx": {
+													"type": "integer"
+												},
+												"status": {
+													"type": "string",
+													"enum": [
+														"ok",
+														"failed"
+													]
+												},
+												"failure_reason": {
+													"type": [
+														"string",
+														"null"
+													],
+													"enum": [
+														"card_declined",
+														"no_payment_method",
+														"authentication_required",
+														"charge_error"
+													]
+												},
+												"failed_at": {
+													"type": [
+														"integer",
+														"null"
+													]
+												},
+												"last_charged_at": {
+													"type": [
+														"integer",
+														"null"
+													]
+												}
+											},
+											"required": [
+												"enabled",
+												"threshold_cents",
+												"amount_cents",
+												"threshold_dkk_approx",
+												"amount_dkk_approx",
+												"status",
+												"failure_reason",
+												"failed_at",
+												"last_charged_at"
+											]
+										}
+									},
+									"required": [
+										"auto_top_up"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Workspace not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"put": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"billing"
+				],
+				"summary": "Save the auto top-up rule (also clears a failed state and retries on the next debit)",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"enabled": {
+										"type": "boolean"
+									},
+									"threshold_cents": {
+										"type": "integer",
+										"minimum": 500
+									},
+									"amount_cents": {
+										"type": "integer",
+										"minimum": 2500,
+										"maximum": 24900
+									}
+								},
+								"required": [
+									"enabled",
+									"threshold_cents",
+									"amount_cents"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Rule saved",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"auto_top_up": {
+											"type": [
+												"object",
+												"null"
+											],
+											"properties": {
+												"enabled": {
+													"type": "boolean"
+												},
+												"threshold_cents": {
+													"type": "integer"
+												},
+												"amount_cents": {
+													"type": "integer"
+												},
+												"threshold_dkk_approx": {
+													"type": "integer"
+												},
+												"amount_dkk_approx": {
+													"type": "integer"
+												},
+												"status": {
+													"type": "string",
+													"enum": [
+														"ok",
+														"failed"
+													]
+												},
+												"failure_reason": {
+													"type": [
+														"string",
+														"null"
+													],
+													"enum": [
+														"card_declined",
+														"no_payment_method",
+														"authentication_required",
+														"charge_error"
+													]
+												},
+												"failed_at": {
+													"type": [
+														"integer",
+														"null"
+													]
+												},
+												"last_charged_at": {
+													"type": [
+														"integer",
+														"null"
+													]
+												}
+											},
+											"required": [
+												"enabled",
+												"threshold_cents",
+												"amount_cents",
+												"threshold_dkk_approx",
+												"amount_dkk_approx",
+												"status",
+												"failure_reason",
+												"failed_at",
+												"last_charged_at"
+											]
+										}
+									},
+									"required": [
+										"auto_top_up"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Workspace cannot be charged automatically yet",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Caller is not a human workspace admin or owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Workspace not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/internal/agent-servers/reconcile": {
 			"post": {
 				"tags": [
