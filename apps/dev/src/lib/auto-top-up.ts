@@ -119,14 +119,33 @@ export async function maybeAutoTopUp(params: {
 			})
 			return
 		}
-		await creditCharged(db, {
-			workspaceId,
-			actorId,
-			token,
-			invoiceId: outcome.invoiceId,
-			amountCents: claimed.rule.amount_cents,
-			nowMs,
-		})
+		try {
+			await creditCharged(db, {
+				workspaceId,
+				actorId,
+				token,
+				invoiceId: outcome.invoiceId,
+				amountCents: claimed.rule.amount_cents,
+				nowMs,
+			})
+		} catch (err) {
+			// The card is charged but the balance is not credited. Leaving the claim
+			// to expire would let the next debit charge the card a second time, so
+			// fail the rule instead: no more automatic charges until the owner
+			// saves it again, and the event carries the invoice id for a manual fix.
+			logger.error('auto top-up charged but credit failed', {
+				workspaceId,
+				invoiceId: outcome.invoiceId,
+				error: err instanceof Error ? err.message : String(err),
+			})
+			await recordFailure(db, {
+				workspaceId,
+				actorId,
+				token,
+				reason: 'charge_error',
+				detail: `charged_not_credited ${outcome.invoiceId}`,
+			})
+		}
 	} catch (err) {
 		logger.error('auto top-up failed unexpectedly', {
 			workspaceId,
