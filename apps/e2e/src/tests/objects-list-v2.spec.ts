@@ -135,11 +135,11 @@ test.describe('Objects list — v2 control row', () => {
 				await expect(chips.getByRole('button', { name: /^Tasks \(\d+\)$/ })).toBeVisible()
 				await expect(chips.getByRole('button', { name: /^Bets \(\d+\)$/ })).toBeVisible()
 				if (vp.width < 1024) {
-					// The trailing Files chip is the one that no longer fits beside the
-					// sidebar at iPad portrait, so it alone sits behind More.
+					// The trailing chips (Knowledge, Files) no longer fit beside the sidebar
+					// at iPad portrait, so they sit behind More; Files must be among them.
 					await expect(more).toHaveText(/^More/)
 					await more.click()
-					await expect(page.getByRole('menuitemradio')).toHaveText([/^Files/])
+					await expect(page.getByRole('menuitemradio', { name: /^Files/ })).toBeVisible()
 					await page.keyboard.press('Escape')
 				} else {
 					await expect(more).toHaveCount(0)
