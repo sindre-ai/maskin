@@ -48,10 +48,12 @@ import { useRelationships } from '@/hooks/use-relationships'
 import { useCreateTrigger, useTriggers } from '@/hooks/use-triggers'
 import { trackAskBannerDecideClicked, trackLoopViewed } from '@/lib/analytics'
 import { api } from '@/lib/api'
+import type { LoopSummary } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { nextFireAt, nextFireLabel } from '@/lib/loop-next-fire'
 import { type LoopPlan, parseLoopDescription } from '@/lib/loop-plan'
+import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import {
 	type LoopStatus,
@@ -60,6 +62,7 @@ import {
 	toLoopViewsMetadata,
 	useWaitingOnViewer,
 } from '@maskin/shared'
+import { useQueryClient } from '@tanstack/react-query'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { Check, ChevronDown, MoreHorizontal, Pause, Play, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -160,6 +163,7 @@ function LoopDetailRoute() {
 	const activityFailed = useLoadFailed(activityQuery)
 	// How the flow runs needs only its triggers and agents.
 	const flowFailed = triggersFailed || actorsFailed
+	const queryClient = useQueryClient()
 	const updateObject = useUpdateObject(workspaceId)
 	const deleteObject = useDeleteObject(workspaceId)
 	const navigate = useNavigate()
@@ -395,13 +399,25 @@ function LoopDetailRoute() {
 
 	const handleUpdateTags = useCallback(
 		async (tags: string[]) => {
+			// Show the tag at once: the page reads it from the flows list, which only
+			// refreshes after the save and the reload that follows it.
+			const key = queryKeys.loops.all(workspaceId)
+			await queryClient.cancelQueries({ queryKey: key })
+			const previous = queryClient.getQueryData<{ loops: LoopSummary[] }>(key)
+			if (previous) {
+				queryClient.setQueryData(key, {
+					...previous,
+					loops: previous.loops.map((l) => (l.id === loopId ? { ...l, tags } : l)),
+				})
+			}
 			try {
 				await updateObject.mutateAsync({ id: loopId, data: { metadata: { tags } } })
 			} catch {
+				if (previous) queryClient.setQueryData(key, previous)
 				toast.error('Could not save your changes')
 			}
 		},
-		[loopId, updateObject],
+		[loopId, updateObject, queryClient, workspaceId],
 	)
 
 	const handleUpdateContent = useCallback(
