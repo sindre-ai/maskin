@@ -39,6 +39,7 @@ describe('GATEWAY_PROVIDERS', () => {
 			'stripe',
 			'ubersuggest',
 			'webflow',
+			'zapier',
 		])
 		for (const other of ['slack', 'github', 'linkedin-unipile', 'google-meet']) {
 			expect(GATEWAY_PROVIDERS.has(other)).toBe(false)
