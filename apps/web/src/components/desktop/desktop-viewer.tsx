@@ -173,6 +173,8 @@ export function DesktopViewer({
 				const rfb = new RFB(target, url.toString(), { credentials: { password } })
 				rfb.scaleViewport = true
 				rfb.resizeSession = false
+				// noVNC defaults to JPEG quality 6, which smears text once the picture is scaled to fit.
+				rfb.qualityLevel = 9
 				rfb.viewOnly = true
 				rfb.addEventListener('connect', () => {
 					if (!cancelled) setPhase('connected')
