@@ -39,6 +39,10 @@ const BILLING_REFETCH_MS = 15_000
 // is one refetch per window however many events land in it. The open chat, the open session
 // and the open object's own history are not here: they are invalidated per event, immediately.
 const LIST_REFETCH_MS = 5_000
+// A relationship event marks every open object graph stale, and each graph is a dozen database
+// queries on the server. A burst of relationship events (an agent wiring up a loop) used to
+// refetch every open graph once per event, so one trailing refetch per window is enough.
+const GRAPH_REFETCH_MS = 5_000
 const trailingRefetchTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 const isTabHidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden'
@@ -258,7 +262,12 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			break
 		case 'relationship':
 			invalidate(queryClient, { queryKey: queryKeys.relationships.all(workspaceId) })
-			invalidate(queryClient, { queryKey: ['objects', 'graph'] })
+			scheduleTrailingRefetch(
+				queryClient,
+				`graphs:${workspaceId}`,
+				{ queryKey: ['objects', 'graph'] },
+				GRAPH_REFETCH_MS,
+			)
 			break
 		case 'trigger':
 			invalidate(queryClient, { queryKey: queryKeys.triggers.all(workspaceId) })

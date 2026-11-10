@@ -65,6 +65,8 @@ public enum ObjectsScope: Hashable, Sendable, Codable {
 	case type(String)
 	/// A locally saved view (`SavedView.id`).
 	case saved(String)
+	/// The workspace's files rather than its objects (the web's Files tab).
+	case files
 
 	/// The large title: "Objects", "Insights", "Needs you"…
 	public func title(schema: ObjectsSchema, savedViewName: (String) -> String? = { _ in nil }) -> String {
@@ -75,6 +77,7 @@ public enum ObjectsScope: Hashable, Sendable, Codable {
 		case .type(let type):
 			ObjectTypeCatalog.pluralLabel(for: type, displayName: schema.displayName(for: type))
 		case .saved(let id): savedViewName(id) ?? "Saved view"
+		case .files: "Files"
 		}
 	}
 

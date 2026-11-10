@@ -252,4 +252,48 @@ struct ChatInteractionSnapshotTests {
 		#expect(SwipeToReply.offset(for: 200) == SwipeToReply.cap)
 		#expect(SwipeToReply.offset(for: -30) == 0)
 	}
+
+	@Test("an agent's words are plain text on the page, with quotes, files and code legible", arguments: [false, true])
+	func plainAgentRows(dark: Bool) throws {
+		let text = "Three things moved since Friday. The importer is green and the dedup fix is on main."
+		let agent = agentMessage(text)
+		let person = ChatMessage.confirmed(
+			serverID: 8, conversationID: "c1", actorID: "sam", actorName: "Sam Berg", author: .human, content: text,
+			createdAt: Date(), metadata: nil)
+		// A reply with a quote, a code block and a table, and a message that carries a file: the
+		// surfaces that used to sit on the card now sit on the page, so look at them in both modes.
+		// (ImageRenderer cannot draw a table, in a bubble or on the page, so the table is not checked here.)
+		let rich = agentMessage(
+			"""
+			> **Sam Berg**
+			> Can you check the dedup fix?
+
+			Checked. The importer now skips repeats:
+
+			```swift
+			let seen = Set(rows.map(\\.id))
+			```
+
+			| Step | State |
+			| --- | --- |
+			| Import | green |
+			| Dedup | on main |
+			""")
+		let file = ChatSendMetadata(
+			attachments: [ChatAttachmentRef(fileID: "f", name: "Q4-pipeline.pdf", mimeType: "application/pdf", sizeBytes: 482_000)]
+		).jsonValue
+		let withFile = agentMessage("The brief is attached.", metadata: file)
+		for width in Self.widths {
+			let view = VStack(alignment: .leading, spacing: MaskinSpace.s9) {
+				MessageRow(message: agent, isOwn: false, showsAuthor: true)
+				MessageRow(message: agent, isOwn: false, showsAuthor: true, namesAgent: true)
+				MessageRow(message: rich, isOwn: false, showsAuthor: true, namesAgent: true)
+				MessageRow(message: withFile, isOwn: false, showsAuthor: true, namesAgent: true)
+				MessageRow(message: person, isOwn: false, showsAuthor: true)
+				StreamingReplyBubble(agent: forge, text: "Streaming reply stays plain", namesAgent: true)
+				StreamingReplyBubble(agent: forge, namesAgent: true)
+			}
+			try render(view, width: width, dark: dark, name: "plain-agent-rows")
+		}
+	}
 }

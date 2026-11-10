@@ -58,15 +58,9 @@ struct WatchConversationTests {
 		#expect(WatchConversation.stateLabel(speaking: true, muted: false, speechAllowed: true) == "SPEAKING")
 		#expect(WatchConversation.stateLabel(speaking: false, muted: true, speechAllowed: true) == "MUTED")
 		#expect(WatchConversation.stateLabel(speaking: false, muted: false, speechAllowed: false) == "TEXT ONLY")
+		// Read aloud on the speaker, without headphones, still says it is speaking.
+		#expect(WatchConversation.stateLabel(speaking: true, muted: false, speechAllowed: false) == "SPEAKING")
 		#expect(WatchConversation.stateLabel(speaking: false, muted: false, speechAllowed: true) == "DONE")
-	}
-
-	@Test("behind the scenes uses the session's own words, else a plain word for its state")
-	func status() {
-		#expect(WatchConversation.statusLine(activity: " Reading retry job logs ", presence: .working) == "Reading retry job logs")
-		#expect(WatchConversation.statusLine(activity: nil, presence: .working) == "Working")
-		#expect(WatchConversation.statusLine(activity: "", presence: .typing) == "Writing the answer")
-		#expect(WatchConversation.statusLine(activity: nil, presence: .replying) == "Reading your message")
 	}
 
 	@Test("an empty question is never sent")

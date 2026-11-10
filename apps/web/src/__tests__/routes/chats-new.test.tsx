@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -56,6 +56,75 @@ vi.mock('@/lib/analytics', () => ({
 	trackChatSessionStarted: trackChatSessionStartedMock,
 }))
 
+// The shared composer has its own tests; here it is a box that reports what the route gives it.
+vi.mock('@/components/chat/chat', () => ({
+	Composer: (props: {
+		value?: string
+		onValueChange?: (v: string) => void
+		onSend: (
+			content: string,
+			extras?: { files: { fileId: string; name: string; sizeBytes: number }[] },
+		) => Promise<void>
+		onDispatchSelection?: (action: {
+			type: 'add_agent' | 'remove_agent'
+			[k: string]: unknown
+		}) => void
+		placeholder: string
+		textareaLabel?: string
+		externalError?: string | null
+		selection: { objects: { id: string; title: string | null }[] }
+		onRemoveObject: (id: string) => void
+	}) => (
+		<div>
+			<textarea
+				aria-label={props.textareaLabel}
+				placeholder={props.placeholder}
+				value={props.value ?? ''}
+				onChange={(e) => props.onValueChange?.(e.target.value)}
+			/>
+			{props.selection.objects.map((o) => (
+				<button key={o.id} type="button" onClick={() => props.onRemoveObject(o.id)}>
+					{`Remove ${o.title}`}
+				</button>
+			))}
+			<button
+				type="button"
+				onClick={() =>
+					props
+						.onSend('', { files: [{ fileId: 'f-1', name: 'plan.pdf', sizeBytes: 12 }] })
+						.catch(() => {})
+				}
+			>
+				Send file only
+			</button>
+			<button
+				type="button"
+				onClick={() =>
+					props.onDispatchSelection?.({
+						type: 'add_agent',
+						agent: { id: 'forge-1', name: 'Forge' },
+					})
+				}
+			>
+				Mention Forge
+			</button>
+			<button
+				type="button"
+				onClick={() => props.onDispatchSelection?.({ type: 'remove_agent', id: 'forge-1' })}
+			>
+				Unmention Forge
+			</button>
+			{props.externalError ? <p role="alert">{props.externalError}</p> : null}
+			<button
+				type="button"
+				onClick={() => props.onSend((props.value ?? '').trim()).catch(() => {})}
+			>
+				Send
+			</button>
+		</div>
+	),
+}))
+
 import { Route } from '@/routes/_authed/$workspaceId/chats/new'
 
 const NewChatPage = (Route as unknown as { component: React.FC }).component
@@ -64,10 +133,10 @@ const CHIEF = { id: 'cos-1', name: 'Chief of Staff', type: 'agent' }
 const FORGE = { id: 'forge-1', name: 'Forge', type: 'agent' }
 const SENTINEL = { id: 'sentinel-1', name: 'Sentinel', type: 'agent' }
 
+const toField = () => screen.getByRole('combobox', { name: 'Add a person or agent' })
+
 async function waitForDefaultPick() {
-	await waitFor(() =>
-		expect(screen.getByRole('switch', { name: 'Add Chief of Staff' })).toBeChecked(),
-	)
+	await waitFor(() => expect(screen.getByRole('button', { name: 'Remove Chief of Staff' })))
 }
 
 describe('New chat', () => {
@@ -80,35 +149,104 @@ describe('New chat', () => {
 		mockCreateConversation.mockResolvedValue({ id: 'conv-1' })
 	})
 
-	it('lists every agent A to Z with a toggle each, under a back link to Chats', () => {
+	it('has a back link to Chats, a To field and the composer', () => {
 		render(<NewChatPage />)
 		expect(screen.getByRole('link', { name: 'Chats' })).toBeInTheDocument()
 		expect(screen.getByRole('heading', { name: 'New chat' })).toBeInTheDocument()
-		const names = screen.getAllByRole('switch').map((s) => s.getAttribute('aria-label'))
-		expect(names).toEqual(['Add Chief of Staff', 'Add Forge', 'Add Sentinel'])
+		expect(toField()).toBeInTheDocument()
+		expect(screen.getByLabelText('First message')).toBeInTheDocument()
 	})
 
-	it('turns the workspace default chat agent on to start with', async () => {
+	it('preselects the workspace default chat agent as a removable chip', async () => {
 		render(<NewChatPage />)
 		await waitForDefaultPick()
-		expect(screen.getByRole('switch', { name: 'Add Forge' })).not.toBeChecked()
+		expect(screen.queryByRole('button', { name: 'Remove Forge' })).not.toBeInTheDocument()
 	})
 
-	it('turns the ?agentId= agent on instead of the default', async () => {
+	it('preselects the ?agentId= agent instead of the default', async () => {
 		mockSearch.mockReturnValue({ agentId: 'forge-1' })
 		render(<NewChatPage />)
-		await waitFor(() => expect(screen.getByRole('switch', { name: 'Add Forge' })).toBeChecked())
-		expect(screen.getByRole('switch', { name: 'Add Chief of Staff' })).not.toBeChecked()
+		await screen.findByRole('button', { name: 'Remove Forge' })
+		expect(screen.queryByRole('button', { name: 'Remove Chief of Staff' })).not.toBeInTheDocument()
 	})
 
-	it('never offers integration system members', () => {
+	it('shows Suggested only while the To field is focused, A to Z, without the chips already added', async () => {
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+		await waitForDefaultPick()
+		expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+		await user.click(toField())
+		const list = screen.getByRole('listbox')
+		const names = within(list)
+			.getAllByRole('option')
+			.map((o) => o.textContent ?? '')
+		expect(names).toHaveLength(2)
+		expect(names[0]).toContain('Forge')
+		expect(names[1]).toContain('Sentinel')
+		await user.tab()
+		expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+	})
+
+	it('filters the list as you type and adds the match on Enter', async () => {
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+		await waitForDefaultPick()
+		await user.type(toField(), 'sen')
+		expect(screen.getAllByRole('option')).toHaveLength(1)
+		await user.keyboard('{Enter}')
+		expect(screen.getByRole('button', { name: 'Remove Sentinel' })).toBeInTheDocument()
+		expect(toField()).toHaveValue('')
+	})
+
+	it('does not pick a recipient on Enter while an IME composition is open', async () => {
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+		await waitForDefaultPick()
+		await user.type(toField(), 'sen')
+		fireEvent.keyDown(toField(), { key: 'Enter', isComposing: true })
+		expect(screen.queryByRole('button', { name: 'Remove Sentinel' })).not.toBeInTheDocument()
+	})
+
+	it('does not add the first suggestion on Enter in an empty field, but does after arrowing', async () => {
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+		await waitForDefaultPick()
+		await user.click(toField())
+		await user.keyboard('{Enter}')
+		expect(screen.queryByRole('button', { name: 'Remove Forge' })).not.toBeInTheDocument()
+		await user.keyboard('{ArrowDown}{Enter}')
+		expect(screen.getByRole('button', { name: 'Remove Sentinel' })).toBeInTheDocument()
+	})
+
+	it('adds a mentioned agent as a recipient and drops it when the mention is removed', async () => {
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+		await waitForDefaultPick()
+		await user.click(screen.getByRole('button', { name: 'Mention Forge' }))
+		expect(screen.getByRole('button', { name: 'Remove Forge' })).toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: 'Unmention Forge' }))
+		expect(screen.queryByRole('button', { name: 'Remove Forge' })).not.toBeInTheDocument()
+	})
+
+	it('removes the last chip on Backspace in an empty field', async () => {
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+		await waitForDefaultPick()
+		await user.click(toField())
+		await user.keyboard('{Backspace}')
+		expect(screen.queryByRole('button', { name: 'Remove Chief of Staff' })).not.toBeInTheDocument()
+	})
+
+	it('never offers integration system members', async () => {
+		const user = userEvent.setup()
 		mockMembers.mockReturnValue([
 			{ actorId: 'sys-1', name: 'GitHub bot', type: 'system', role: 'member' },
 			{ actorId: 'h-1', name: 'Bente', type: 'human', role: 'member' },
 		])
 		render(<NewChatPage />)
-		expect(screen.queryByRole('switch', { name: 'Add GitHub bot' })).not.toBeInTheDocument()
-		expect(screen.getByRole('switch', { name: 'Add Bente' })).toBeInTheDocument()
+		await user.click(toField())
+		expect(screen.queryByRole('option', { name: /GitHub bot/ })).not.toBeInTheDocument()
+		expect(screen.getByRole('option', { name: /Bente/ })).toBeInTheDocument()
 	})
 
 	it('puts the ?text= param in the message box and sends nothing', () => {
@@ -122,17 +260,17 @@ describe('New chat', () => {
 		const user = userEvent.setup()
 		render(<NewChatPage />)
 		await waitForDefaultPick()
+		await user.type(toField(), 'forge{Enter}')
 		expect(screen.queryByText(/Pick one agent for a direct chat/)).not.toBeInTheDocument()
-		await user.click(screen.getByRole('switch', { name: 'Add Forge' }))
 		expect(screen.queryByText(/This starts a group chat/)).not.toBeInTheDocument()
 	})
 
-	it('asks for at least one pick and creates nothing when none is on', async () => {
+	it('asks for at least one recipient and creates nothing when none is left', async () => {
 		const user = userEvent.setup()
 		render(<NewChatPage />)
 		await waitForDefaultPick()
-		await user.click(screen.getByRole('switch', { name: 'Add Chief of Staff' }))
-		await user.click(screen.getByRole('button', { name: 'Start chat' }))
+		await user.click(screen.getByRole('button', { name: 'Remove Chief of Staff' }))
+		await user.click(screen.getByRole('button', { name: 'Send' }))
 		expect(screen.getByText(/Pick at least one person or agent/)).toBeInTheDocument()
 		expect(mockCreateConversation).not.toHaveBeenCalled()
 	})
@@ -142,7 +280,7 @@ describe('New chat', () => {
 		render(<NewChatPage />)
 		await waitForDefaultPick()
 		await user.type(screen.getByLabelText('First message'), 'Plan the launch')
-		await user.click(screen.getByRole('button', { name: 'Start chat' }))
+		await user.click(screen.getByRole('button', { name: 'Send' }))
 		await waitFor(() => expect(mockCreateConversation).toHaveBeenCalledTimes(1))
 		expect(mockCreateConversation).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -159,21 +297,25 @@ describe('New chat', () => {
 		})
 	})
 
-	it('starts a chat without a first message and sends no initial message', async () => {
+	it('keeps the attachments when only files are sent, with no text', async () => {
 		const user = userEvent.setup()
 		render(<NewChatPage />)
 		await waitForDefaultPick()
-		await user.click(screen.getByRole('button', { name: 'Start chat' }))
+		await user.click(screen.getByRole('button', { name: 'Send file only' }))
 		await waitFor(() => expect(mockCreateConversation).toHaveBeenCalledTimes(1))
-		expect(mockCreateConversation.mock.calls[0]?.[0]).not.toHaveProperty('initial_message')
+		const payload = mockCreateConversation.mock.calls[0]?.[0]
+		expect(payload.initial_message).toBe('')
+		expect(payload.initial_message_metadata.attachments).toEqual([
+			expect.objectContaining({ file_id: 'f-1', name: 'plan.pdf', size_bytes: 12 }),
+		])
 	})
 
-	it('starts a group chat with every pick', async () => {
+	it('starts a group chat with every chip', async () => {
 		const user = userEvent.setup()
 		render(<NewChatPage />)
 		await waitForDefaultPick()
-		await user.click(screen.getByRole('switch', { name: 'Add Forge' }))
-		await user.click(screen.getByRole('button', { name: 'Start chat' }))
+		await user.type(toField(), 'forge{Enter}')
+		await user.click(screen.getByRole('button', { name: 'Send' }))
 		await waitFor(() => expect(mockCreateConversation).toHaveBeenCalledTimes(1))
 		expect(mockCreateConversation.mock.calls[0]?.[0].participant_actor_ids).toEqual([
 			'cos-1',
@@ -185,7 +327,7 @@ describe('New chat', () => {
 	})
 
 	describe('objects handed over from "Ask an agent"', () => {
-		it('lists them as removable context rows and sends the rest with the message', async () => {
+		it('carries them as removable context and sends the rest with the message', async () => {
 			const user = userEvent.setup()
 			mockSearch.mockReturnValue({ objectIds: 'o-1,o-2' })
 			mockReferencedObjects.mockReturnValue([
@@ -193,14 +335,13 @@ describe('New chat', () => {
 				{ id: 'o-2', title: 'Churn insight', type: 'insight' },
 			])
 			render(<NewChatPage />)
-			expect(await screen.findByText('Pricing bet')).toBeInTheDocument()
-			expect(screen.getByText('Churn insight')).toBeInTheDocument()
+			await screen.findByRole('button', { name: 'Remove Pricing bet' })
+			await user.click(screen.getByRole('button', { name: 'Remove Churn insight' }))
+			expect(screen.queryByRole('button', { name: 'Remove Churn insight' })).not.toBeInTheDocument()
 
-			await user.click(screen.getAllByRole('button', { name: 'Remove' })[1] as HTMLElement)
-			expect(screen.queryByText('Churn insight')).not.toBeInTheDocument()
-
+			await waitForDefaultPick()
 			await user.type(screen.getByLabelText('First message'), 'Look at these')
-			await user.click(screen.getByRole('button', { name: 'Start chat' }))
+			await user.click(screen.getByRole('button', { name: 'Send' }))
 			await waitFor(() => expect(mockCreateConversation).toHaveBeenCalledTimes(1))
 			expect(
 				mockCreateConversation.mock.calls[0]?.[0].initial_message_metadata.context_objects,

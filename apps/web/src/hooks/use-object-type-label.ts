@@ -1,3 +1,4 @@
+import { TYPE_LABELS } from '@/lib/constants'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useCallback } from 'react'
 
@@ -23,5 +24,8 @@ export function useObjectTypeLabel(): (type: string) => string {
 		workspace.settings as { display_names?: Record<string, string> } | undefined
 	)?.display_names
 
-	return useCallback((type: string) => displayNames?.[type] ?? titleCase(type), [displayNames])
+	return useCallback(
+		(type: string) => displayNames?.[type] ?? TYPE_LABELS[type] ?? titleCase(type),
+		[displayNames],
+	)
 }

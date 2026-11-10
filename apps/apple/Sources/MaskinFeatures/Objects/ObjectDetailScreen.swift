@@ -249,6 +249,8 @@ public struct ObjectDetailScreen<Decision: View>: View {
 					}
 					MaskinComposer(model: composer, config: composerConfig, onSend: sendComment)
 				}
+				.frame(maxWidth: ReadingColumn.maxWidth)
+				.frame(maxWidth: .infinity)
 				.animation(MaskinMotion.quick, value: ReferenceTrigger.find(in: composer.text) != nil)
 				.task(id: ReferenceTrigger.find(in: composer.text)?.query) { await searchReferences() }
 				// Clearing the quote strip in the composer also drops the thread target.
@@ -460,6 +462,9 @@ public struct ObjectDetailScreen<Decision: View>: View {
 							.overlay(alignment: .bottom) { Rectangle().fill(MaskinSurface.separator).frame(height: 1) }
 					}
 				}
+				// A 720 pt reading column, centred, in regular width; full width on iPhone.
+				.frame(maxWidth: ReadingColumn.maxWidth)
+				.frame(maxWidth: .infinity)
 			}
 			.scrollDismissesKeyboard(.interactively)
 			.refreshable { await store.refresh() }

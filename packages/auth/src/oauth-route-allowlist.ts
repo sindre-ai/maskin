@@ -145,6 +145,8 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'GET /api/integrations/slack/mcp',
 	'POST /api/integrations/slack/mcp',
 	'GET /api/loops/:id/activity',
+	'GET /api/loops/:id/briefings',
+	'GET /api/loops/:id/next-steps',
 	'GET /api/loops/:id/steps',
 	'POST /api/marketplace/items/:id/install',
 	'DELETE /api/marketplace/items/:id/uninstall',
@@ -210,6 +212,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	// Skip authMiddleware (public, provider-signed or self-authenticating). A mat_ token never reaches the OAuth branch on these.
 	'POST /api/auth/login',
 	'GET /api/health',
+	'GET /api/health/db',
 	'GET /api/integrations/:provider/callback',
 	'GET /api/integrations/linkedin-unipile/callback',
 	'POST /api/integrations/linkedin-unipile/webhook',
@@ -256,6 +259,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	// workspace_members query to the token's pin. Refused until someone does, including the ones a
 	// newer MCP tool calls (those tools answer 403 insufficient_scope under a Claude connector token).
 	'ALL /api/transcriptions',
+	'DELETE /api/account/api-keys/:id',
 	'DELETE /api/conversations/:id/messages/:messageId/reactions',
 	'DELETE /api/custom-mcp-servers/:id/gateway',
 	'DELETE /api/desktop',
@@ -271,6 +275,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'DELETE /api/live-activities/follows/:session_id',
 	'DELETE /api/live-activities/tokens/:id',
 	'DELETE /api/web-push/subscriptions/:id',
+	'GET /api/account/api-keys',
 	'GET /api/account/deletion-preview',
 	'GET /api/actors/:id/access',
 	'GET /api/actors/:id/avatar',
@@ -295,6 +300,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'GET /api/extensions/recipes',
 	'GET /api/files/:id/proposals',
 	'GET /api/for-you',
+	'GET /api/guardrails',
 	'GET /api/integrations/:id/audit-log',
 	'GET /api/integrations/:id/grants',
 	'GET /api/integrations/:provider/gateway',
@@ -314,6 +320,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'GET /api/workspaces/:id/deletion-preview',
 	'GET /api/workspaces/counts',
 	'PATCH /api/extensions/:id',
+	'POST /api/account/api-keys',
 	'POST /api/account/delete',
 	'POST /api/actors/:id/avatar',
 	'POST /api/actors/:id/enable',

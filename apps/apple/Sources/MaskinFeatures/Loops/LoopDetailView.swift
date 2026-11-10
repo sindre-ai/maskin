@@ -3,8 +3,8 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// One loop (v19): status and stage, then the Overview, Performance, Briefings, Items, Activity
-/// and Setup tabs, with the flow's composer pinned at the bottom.
+/// One loop (v19): status and stage, then the Overview, any custom views, Performance, Briefings,
+/// Items, Activity and Setup tabs, with the flow's composer pinned at the bottom.
 struct LoopDetailView: View {
 	let store: LoopDetailStore
 	var install: LoopInstall?
@@ -108,15 +108,47 @@ struct LoopDetailView: View {
 	}
 }
 
-/// The loop page's tabs.
-enum LoopDetailTab: String, CaseIterable, Identifiable {
-	case overview = "Overview"
-	case performance = "Performance"
-	case briefings = "Briefings"
-	case items = "Items"
-	case activity = "Activity"
-	case setup = "Setup"
-	var id: String { rawValue }
+/// The loop page's tabs. Each custom view pinned to the loop is a tab of its own, right after
+/// Overview, named by whoever pinned it (same order and names as the web loop page).
+enum LoopDetailTab: Hashable, Identifiable {
+	case overview, performance, briefings, items, activity, setup
+	/// The index keeps two views that share a name apart.
+	case view(index: Int, LoopView)
+
+	var id: String {
+		switch self {
+		case .overview: "overview"
+		case .performance: "performance"
+		case .briefings: "briefings"
+		case .items: "items"
+		case .activity: "activity"
+		case .setup: "setup"
+		case .view(let index, let view): "view-\(index)-\(view.fileID)"
+		}
+	}
+
+	var title: String {
+		switch self {
+		case .overview: "Overview"
+		case .performance: "Performance"
+		case .briefings: "Briefings"
+		case .items: "Items"
+		case .activity: "Activity"
+		case .setup: "Setup"
+		case .view(_, let view): view.name
+		}
+	}
+
+	/// Overview, the loop's views, then the rest. Briefings appears only once the flow has
+	/// published one; no views means no extra tab.
+	static func tabs(views: [LoopView], hasBriefings: Bool) -> [LoopDetailTab] {
+		var tabs: [LoopDetailTab] = [.overview]
+		tabs += views.enumerated().map { .view(index: $0.offset, $0.element) }
+		tabs += [.performance]
+		if hasBriefings { tabs.append(.briefings) }
+		tabs += [.items, .activity, .setup]
+		return tabs
+	}
 }
 
 /// The loop detail body without its scroll view (so it can be rendered offscreen in tests): the
@@ -151,8 +183,11 @@ struct LoopDetailContent: View {
 	}
 
 	private var tabs: [LoopDetailTab] {
-		LoopDetailTab.allCases.filter { $0 != .briefings || hasBriefings }
+		LoopDetailTab.tabs(views: store.views, hasBriefings: hasBriefings)
 	}
+
+	/// The open tab, or Overview when it no longer exists (a view was unpinned or the briefing went).
+	private var openTab: LoopDetailTab { tabs.contains(tab) ? tab : .overview }
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s10) {
@@ -167,8 +202,9 @@ struct LoopDetailContent: View {
 
 	@ViewBuilder
 	private var content: some View {
-		switch tab {
+		switch openTab {
 		case .overview: overview
+		case .view(_, let view): LoopCustomViewTab(view: view).id(view.fileID)
 		case .performance: performance
 		case .briefings: LoopBriefingsSection(loopID: store.loop.id)
 		case .items: LoopInMotionSection(store: store)
@@ -300,8 +336,8 @@ struct LoopDetailContent: View {
 	}
 }
 
-/// Overview, Performance, Briefings, Items, Activity, Setup: text tabs with an ink underline under
-/// the open one, scrolling sideways when they don't fit.
+/// Overview, the loop's views, Performance, Briefings, Items, Activity, Setup: text tabs with an
+/// ink underline under the open one, scrolling sideways when they don't fit.
 struct FlowTabBar: View {
 	let tabs: [LoopDetailTab]
 	@Binding var selection: LoopDetailTab
@@ -315,7 +351,7 @@ struct FlowTabBar: View {
 						MaskinHaptics.play(.selection)
 						withAnimation(MaskinMotion.quick) { selection = tab }
 					} label: {
-						Text(tab.rawValue)
+						Text(tab.title)
 							.font(MaskinTypeface.sans(MaskinFontSize.t17, weight: selected ? .bold : .medium, relativeTo: .headline))
 							.foregroundStyle(selected ? MaskinColor.ink : MaskinColor.ink4)
 							.frame(minHeight: MaskinSpace.touchMin)

@@ -304,6 +304,9 @@ const BACKEND_OWNED_KEYS = [
 	'comment_event_id',
 ]
 
+// Keys an agent writes through the post tool: kept for an agent caller, dropped for anyone else.
+const AGENT_WRITTEN_KEYS = ['plan', 'proposed_edit']
+
 // Keys the schema comments mark "Client-supplied", or that a client sets by design.
 const CLIENT_SUPPLIED_KEYS = [
 	'attachments',
@@ -320,16 +323,30 @@ describe('stripServerOwnedMetadata covers every backend-owned key', () => {
 	it('has every message metadata key classified as backend-owned or client-supplied', () => {
 		const schemaKeys = Object.keys(messageMetadataSchema.shape).sort()
 
-		expect([...BACKEND_OWNED_KEYS, ...CLIENT_SUPPLIED_KEYS].sort()).toEqual(schemaKeys)
+		expect([...BACKEND_OWNED_KEYS, ...AGENT_WRITTEN_KEYS, ...CLIENT_SUPPLIED_KEYS].sort()).toEqual(
+			schemaKeys,
+		)
 	})
 
 	it('removes each backend-owned key and keeps each client-supplied key', () => {
 		const forged = Object.fromEntries(
-			[...BACKEND_OWNED_KEYS, ...CLIENT_SUPPLIED_KEYS].map((key) => [key, 'forged']),
+			[...BACKEND_OWNED_KEYS, ...AGENT_WRITTEN_KEYS, ...CLIENT_SUPPLIED_KEYS].map((key) => [
+				key,
+				'forged',
+			]),
 		)
 
 		const stripped = stripServerOwnedMetadata(forged)
 
 		expect(Object.keys(stripped).sort()).toEqual([...CLIENT_SUPPLIED_KEYS].sort())
+	})
+
+	it('keeps the agent-written keys only for an agent caller', () => {
+		const forged = Object.fromEntries(AGENT_WRITTEN_KEYS.map((key) => [key, 'x']))
+
+		expect(Object.keys(stripServerOwnedMetadata(forged, { callerType: 'agent' })).sort()).toEqual(
+			[...AGENT_WRITTEN_KEYS].sort(),
+		)
+		expect(stripServerOwnedMetadata(forged, { callerType: 'human' })).toEqual({})
 	})
 })

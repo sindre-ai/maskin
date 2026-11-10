@@ -1,3 +1,4 @@
+import type { ApiKeyKind } from '@maskin/db/schema'
 import type { OauthAccessTokenContext } from '@maskin/shared'
 
 /**
@@ -96,7 +97,7 @@ export class TtlPromiseCache<T> {
 }
 
 export interface AuthCaches {
-	apiKeys: TtlPromiseCache<{ actorId: string; type: string } | null>
+	apiKeys: TtlPromiseCache<{ actorId: string; type: string; keyKind?: ApiKeyKind } | null>
 	// Role of the actor in the workspace, or null for a non-member. The ank_ and mat_ branches
 	// share this cache under the same key, so both must store the role.
 	memberships: TtlPromiseCache<string | null>

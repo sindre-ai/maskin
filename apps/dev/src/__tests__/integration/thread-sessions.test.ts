@@ -138,21 +138,14 @@ describe('thread sessions (Integration)', () => {
 		expect(spawnedThreads()).toEqual([a.rootId, b.rootId])
 	})
 
-	it('sends a fourth thread to the main session, at most 3 thread sessions per agent', async () => {
-		const threads = [
-			await startThread('a'),
-			await startThread('b'),
-			await startThread('c'),
-			await startThread('d'),
-		]
-		for (const t of threads.slice(0, 3)) await respond(t.replyId)
-
-		await respond((threads[3] as (typeof threads)[number]).replyId)
+	it('gives every thread its own session, with no limit per agent', async () => {
+		const threads = []
+		for (const label of ['a', 'b', 'c', 'd', 'e']) threads.push(await startThread(label))
+		for (const t of threads) await respond(t.replyId)
 
 		const rows = await liveSessions()
-		expect(rows.filter((r) => r.threadRootId !== null)).toHaveLength(3)
-		expect(rows.filter((r) => r.threadRootId === null)).toHaveLength(1)
-		expect(spawnedThreads()[3]).toBeNull()
+		expect(rows.filter((r) => r.threadRootId !== null)).toHaveLength(5)
+		expect(spawnedThreads()).toEqual(threads.map((t) => t.rootId))
 	})
 
 	it('uses the single-session path, without queueing, when the workspace has no chat capacity', async () => {

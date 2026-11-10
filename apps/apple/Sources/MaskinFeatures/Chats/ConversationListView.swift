@@ -97,7 +97,6 @@ struct ConversationListView: View {
 			}
 		}
 		.overlay { overlay }
-		.refreshable { await store.refresh() }
 		.animation(.snappy, value: picking.isActive)
 		.onChange(of: allIDs) { picking.prune(toVisible: allIDs) }
 		.selectionToolbar(picking, allIDs: allIDs, noun: "chat") { bulkActions(allIDs: allIDs) }
@@ -161,7 +160,8 @@ struct ConversationListView: View {
 			base.tag(p.latest.id)
 			if isOpen {
 				ForEach(p.conversations) { conversation in
-					TeamConversationRow(conversation: conversation, now: now, draft: draft(conversation.id))
+					TeamConversationRow(
+						conversation: conversation, currentActorID: currentActorID, now: now, draft: draft(conversation.id))
 						.tag(conversation.id)
 						.rowChrome()
 						.teamRowActions(actions(for: conversation), enabled: !picking.isActive)
@@ -198,14 +198,20 @@ struct ConversationListView: View {
 	private func rawStatus(for row: TeamLayout.Row) -> ConversationRowStatus {
 		switch row.kind {
 		case .conversation(let c):
-			return store.status(for: c, draft: draft(c.id), tick: sendTick(c))
+			return store.status(
+				for: c, draft: draft(c.id), tick: sendTick(c),
+				displayedTitle: TeamLayout.displayedTitle(of: row.kind, me: currentActorID), me: currentActorID)
 		case .person(let p):
 			if p.hasSeveral {
-				var status = store.status(for: p.latest)
+				var status = store.status(
+					for: p.latest, displayedTitle: TeamLayout.displayedTitle(of: row.kind, me: currentActorID),
+					me: currentActorID)
 				status.preview = "\(p.conversations.count) conversations · \(ChatPreviewText.plain(p.latest.title))"
 				return status
 			}
-			return store.status(for: p.latest, draft: draft(p.latest.id), tick: sendTick(p.latest))
+			return store.status(
+				for: p.latest, draft: draft(p.latest.id), tick: sendTick(p.latest),
+				displayedTitle: TeamLayout.displayedTitle(of: row.kind, me: currentActorID), me: currentActorID)
 		case .flow(let f):
 			return ConversationRowStatus.make(flow: f)
 		}
@@ -520,8 +526,8 @@ struct TeamSectionHeader<Trailing: View>: View {
 	var body: some View {
 		HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s4) {
 			Text(label)
-				.maskinText(.subhead).fontWeight(.semibold)
-				.foregroundStyle(MaskinColor.ink3)
+				.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold, relativeTo: .subheadline))
+				.foregroundStyle(MaskinColor.ink)
 			if let count {
 				Text("\(count)")
 					.maskinText(.subhead)
@@ -532,7 +538,7 @@ struct TeamSectionHeader<Trailing: View>: View {
 			trailing
 		}
 		.textCase(nil)
-		.padding(.top, MaskinSpace.s3)
+		.padding(.top, MaskinSpace.s12)
 		.accessibilityElement(children: .combine)
 		.accessibilityAddTraits(.isHeader)
 	}
@@ -548,6 +554,8 @@ extension TeamSectionHeader where Trailing == EmptyView {
 /// the time and the unread count, indented under the person's name.
 struct TeamConversationRow: View {
 	let conversation: ConversationSummary
+	/// Who "You:" is, and which participant a preview may leave unnamed.
+	var currentActorID: String?
 	var now = Date()
 	var draft: String?
 
@@ -580,7 +588,9 @@ struct TeamConversationRow: View {
 		if let draft, !draft.isEmpty { return Text(verbatim: "Draft: \(draft)") }
 		let pieces = conversation.snippet.map(ChatPreviewText.linePieces) ?? []
 		guard !pieces.isEmpty else { return Text(ConversationRowStatus.noMessages) }
-		let lead = conversation.snippetActorName.flatMap { who in who.isEmpty ? nil : "\(who): " }
+		// This row shows the conversation's own title, so that is what the author is compared with.
+		let lead = conversation.snippetAuthorLead(
+			displayedTitle: ChatPreviewText.plain(conversation.title), me: currentActorID)
 		return ChatPreviewLine.text("", pieces: (lead.map { [ChatPreviewText.Piece($0)] } ?? []) + pieces)
 	}
 }

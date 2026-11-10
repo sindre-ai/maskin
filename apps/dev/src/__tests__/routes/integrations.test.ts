@@ -151,6 +151,10 @@ describe('Integrations Routes', () => {
 					.map((p) => p.name)
 					.sort(),
 			).toEqual([
+				'airtable',
+				'atlassian',
+				'attio',
+				'canva',
 				'github',
 				'gmail',
 				'google-calendar',
@@ -160,9 +164,12 @@ describe('Integrations Routes', () => {
 				'linear',
 				'linkedin-unipile',
 				'miro',
+				'notion',
 				'posthog',
 				'resend',
+				'sentry',
 				'slack',
+				'stripe',
 				'ubersuggest',
 			])
 

@@ -8903,6 +8903,12 @@
 													"type": "string"
 												}
 											},
+											"starter_prompts": {
+												"type": "array",
+												"items": {
+													"type": "string"
+												}
+											},
 											"workspaces": {
 												"type": "array",
 												"items": {
@@ -9408,6 +9414,15 @@
 											"maxLength": 40
 										},
 										"maxItems": 10
+									},
+									"starter_prompts": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 60
+										},
+										"maxItems": 4
 									}
 								}
 							}
@@ -9783,7 +9798,7 @@
 						}
 					},
 					"403": {
-						"description": "Cannot delete human actors",
+						"description": "Cannot delete human actors or system agents, and an agent caller needs a person’s approval (a delete_agent option tapped on a decision card)",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -13535,6 +13550,564 @@
 					},
 					"409": {
 						"description": "Blocked: transfer ownership or cancel the plan first",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/account/api-keys": {
+			"get": {
+				"tags": [
+					"Account"
+				],
+				"summary": "My API keys",
+				"description": "The signed-in person’s live keys, newest first: name, last four characters, created, last used and what holds the key. Never the key itself.",
+				"responses": {
+					"200": {
+						"description": "The keys",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"keys": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"kind": {
+														"type": "string",
+														"enum": [
+															"primary",
+															"login",
+															"login_ios",
+															"session",
+															"personal"
+														]
+													},
+													"name": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"hint": {
+														"type": "string"
+													},
+													"created_at": {
+														"type": "string",
+														"format": "date-time"
+													},
+													"last_used_at": {
+														"type": [
+															"string",
+															"null"
+														],
+														"format": "date-time"
+													},
+													"expires_at": {
+														"type": [
+															"string",
+															"null"
+														],
+														"format": "date-time"
+													},
+													"used_by": {
+														"type": [
+															"object",
+															"null"
+														],
+														"properties": {
+															"type": {
+																"type": "string",
+																"enum": [
+																	"connection"
+																]
+															},
+															"name": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"type",
+															"name"
+														]
+													}
+												},
+												"required": [
+													"id",
+													"kind",
+													"name",
+													"hint",
+													"created_at",
+													"last_used_at",
+													"expires_at",
+													"used_by"
+												]
+											}
+										}
+									},
+									"required": [
+										"keys"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not a person",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"post": {
+				"tags": [
+					"Account"
+				],
+				"summary": "Make a named API key",
+				"description": "Makes a personal key with the given name. The secret is in this response and nowhere else: only its hash is stored, so it cannot be shown again. A person may hold 20 personal keys at once. Refused from an MCP client and from a personal key, because there a model holds the person’s key and could otherwise make itself more.",
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"name": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 60
+									}
+								},
+								"required": [
+									"name"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "The new key, with its secret shown once",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"key": {
+											"type": "object",
+											"properties": {
+												"id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"kind": {
+													"type": "string",
+													"enum": [
+														"primary",
+														"login",
+														"login_ios",
+														"session",
+														"personal"
+													]
+												},
+												"name": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"hint": {
+													"type": "string"
+												},
+												"created_at": {
+													"type": "string",
+													"format": "date-time"
+												},
+												"last_used_at": {
+													"type": [
+														"string",
+														"null"
+													],
+													"format": "date-time"
+												},
+												"expires_at": {
+													"type": [
+														"string",
+														"null"
+													],
+													"format": "date-time"
+												},
+												"used_by": {
+													"type": [
+														"object",
+														"null"
+													],
+													"properties": {
+														"type": {
+															"type": "string",
+															"enum": [
+																"connection"
+															]
+														},
+														"name": {
+															"type": "string"
+														}
+													},
+													"required": [
+														"type",
+														"name"
+													]
+												}
+											},
+											"required": [
+												"id",
+												"kind",
+												"name",
+												"hint",
+												"created_at",
+												"last_used_at",
+												"expires_at",
+												"used_by"
+											]
+										},
+										"secret": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"key",
+										"secret"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not a person, called from an MCP client, or called with a personal key",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Already at the limit of personal keys",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/account/api-keys/{id}": {
+			"delete": {
+				"tags": [
+					"Account"
+				],
+				"summary": "Revoke one of my API keys",
+				"description": "Revokes a live key of the signed-in person. It stops working on the next request. Another person’s key id, or one already revoked, is a 404.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Revoked",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"revoked": {
+											"type": "boolean",
+											"enum": [
+												true
+											]
+										}
+									},
+									"required": [
+										"revoked"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not a person",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "No such key",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -26182,13 +26755,344 @@
 				}
 			}
 		},
+		"/api/loops/{id}/next-steps": {
+			"get": {
+				"tags": [
+					"loops"
+				],
+				"summary": "Next steps for one loop: asks waiting first, then open members",
+				"description": "Returns `asks` (steps with sessions waiting on a person, most waiting first) and `items` (the newest open members of the loop, capped at 10). Both are empty for a loop with nothing to do, no steps, or an unknown id (a foreign loop returns empty without leaking existence).",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Next steps (may be empty)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"asks": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"triggerId": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"triggerName": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"agent": {
+														"type": [
+															"object",
+															"null"
+														],
+														"properties": {
+															"id": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"name": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"description": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															}
+														},
+														"required": [
+															"id"
+														]
+													},
+													"pendingCount": {
+														"type": "integer",
+														"exclusiveMinimum": 0
+													}
+												},
+												"required": [
+													"triggerId",
+													"triggerName",
+													"agent",
+													"pendingCount"
+												]
+											}
+										},
+										"items": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"type": {
+														"type": "string"
+													},
+													"title": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"status": {
+														"type": "string"
+													}
+												},
+												"required": [
+													"id",
+													"type",
+													"title",
+													"status"
+												]
+											}
+										}
+									},
+									"required": [
+										"asks",
+										"items"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Missing workspace ID or malformed loop id",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/loops/{id}/briefings": {
+			"get": {
+				"tags": [
+					"loops"
+				],
+				"summary": "Briefing pages attached to one loop or its members",
+				"description": "Returns the loop's briefing pages (files of kind \"briefing\" attached to the loop or to one of its members), newest first, each page once, capped at 24. Empty for a loop with none or an unknown id (a foreign loop returns empty without leaking existence).",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Briefing pages (may be empty)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"briefings": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"name": {
+														"type": "string"
+													},
+													"mimeType": {
+														"type": "string"
+													},
+													"updatedAt": {
+														"type": "string"
+													},
+													"sourceId": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"sourceTitle": {
+														"type": [
+															"string",
+															"null"
+														]
+													}
+												},
+												"required": [
+													"id",
+													"name",
+													"mimeType",
+													"updatedAt",
+													"sourceId",
+													"sourceTitle"
+												]
+											}
+										}
+									},
+									"required": [
+										"briefings"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Missing workspace ID or malformed loop id",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/data/query": {
 			"get": {
 				"tags": [
 					"data"
 				],
 				"summary": "Read-only grouped aggregation over objects",
-				"description": "Counts, sums or averages objects of one type, optionally grouped by status, type or a metadata field and scoped to the workspace or one loop. Aggregation runs in the database; scanned rows and returned groups are capped and flagged when the cap is hit.",
+				"description": "Counts, sums or averages objects of one type, optionally grouped by status, type or a metadata field and scoped to the workspace or one loop. Aggregation runs in the database over every matching object. Groups come back a page at a time: while `next_cursor` is set, pass it back as `cursor` to read the next page. Totals always cover every group.",
 				"parameters": [
 					{
 						"schema": {
@@ -26199,6 +27103,27 @@
 						},
 						"required": true,
 						"name": "spec",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"maxLength": 80,
+							"description": "The previous page's `next_cursor`, to read the next page of groups."
+						},
+						"required": false,
+						"name": "cursor",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"minimum": 1,
+							"maximum": 1000,
+							"description": "Groups per page (default 50, at most 1000)."
+						},
+						"required": false,
+						"name": "limit",
 						"in": "query"
 					},
 					{
@@ -26265,6 +27190,12 @@
 												"value"
 											]
 										},
+										"next_cursor": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
 										"rows_truncated": {
 											"type": "boolean"
 										},
@@ -26275,6 +27206,7 @@
 									"required": [
 										"groups",
 										"total",
+										"next_cursor",
 										"rows_truncated",
 										"groups_truncated"
 									]
@@ -37655,6 +38587,256 @@
 				}
 			}
 		},
+		"/api/guardrails": {
+			"get": {
+				"tags": [
+					"Agents"
+				],
+				"summary": "What each agent may do without asking",
+				"description": "The workspace’s send defaults and daily target, and for each agent its send mode per kind of draft and how many integrations it has at each access level. Any member can read it. Read only: change a send mode with PUT /api/send-permissions and access on the Integrations page.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "The limits in force",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"workspace": {
+											"type": "object",
+											"properties": {
+												"daily_budget": {
+													"type": [
+														"object",
+														"null"
+													],
+													"properties": {
+														"unit": {
+															"type": "string",
+															"enum": [
+																"tokens",
+																"dollars"
+															]
+														},
+														"amount": {
+															"type": "number"
+														},
+														"stop_share": {
+															"type": "integer"
+														},
+														"timezone": {
+															"type": "string"
+														}
+													},
+													"required": [
+														"unit",
+														"amount",
+														"stop_share",
+														"timezone"
+													]
+												},
+												"daily_budget_enforced": {
+													"type": "boolean"
+												},
+												"send_defaults": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"kind": {
+																"type": "string"
+															},
+															"mode": {
+																"type": "string",
+																"enum": [
+																	"always_allow",
+																	"ask_first",
+																	"deny"
+																]
+															},
+															"source": {
+																"type": "string",
+																"enum": [
+																	"agent",
+																	"workspace",
+																	"starting"
+																]
+															}
+														},
+														"required": [
+															"kind",
+															"mode",
+															"source"
+														]
+													}
+												}
+											},
+											"required": [
+												"daily_budget",
+												"daily_budget_enforced",
+												"send_defaults"
+											]
+										},
+										"agents": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"agent_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"name": {
+														"type": "string"
+													},
+													"send": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"kind": {
+																	"type": "string"
+																},
+																"mode": {
+																	"type": "string",
+																	"enum": [
+																		"always_allow",
+																		"ask_first",
+																		"deny"
+																	]
+																},
+																"source": {
+																	"type": "string",
+																	"enum": [
+																		"agent",
+																		"workspace",
+																		"starting"
+																	]
+																}
+															},
+															"required": [
+																"kind",
+																"mode",
+																"source"
+															]
+														}
+													},
+													"access": {
+														"type": "object",
+														"properties": {
+															"read_write": {
+																"type": "integer",
+																"minimum": 0
+															},
+															"read": {
+																"type": "integer",
+																"minimum": 0
+															},
+															"none": {
+																"type": "integer",
+																"minimum": 0
+															},
+															"credentials": {
+																"type": "integer",
+																"minimum": 0
+															}
+														},
+														"required": [
+															"read_write",
+															"read",
+															"none",
+															"credentials"
+														]
+													}
+												},
+												"required": [
+													"agent_id",
+													"name",
+													"send",
+													"access"
+												]
+											}
+										}
+									},
+									"required": [
+										"workspace",
+										"agents"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "No workspace",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/marketplace/loops": {
 			"get": {
 				"tags": [
@@ -42775,17 +43957,17 @@
 											"title": {
 												"type": "string",
 												"minLength": 1,
-												"description": "3-7 words. The decision itself, not a status. A question if it is a judgment call (\"Is the onboarding bet worth running?\"), a noun phrase if it is an artifact (\"Acme's note before Thursday\"). No agent name, and no verb-ing: \"Reviewing the funnel\" is a status, not a decision."
+												"description": "9 words or fewer, ending in \"?\". The question the human is being asked (\"Is the onboarding bet worth running?\"), not a status. No agent name, and no verb-ing: \"Reviewing the funnel\" is a status, not a decision."
 											},
 											"summary": {
 												"type": "string",
 												"minLength": 1,
-												"description": "1-2 sentences. Sentence 1: the state of the world and the cost of the status quo, with one real number you actually looked up. Sentence 2: what is already done, so the human knows they are only deciding, not working. Never restate the title."
+												"description": "At most 2 sentences. State what is done and what is still open, so the human knows they are only deciding, not working. Use a real number only when you looked one up. No source paths or file names. Do not name the object: the card shows it. Never restate the title."
 											},
 											"ask": {
 												"type": "string",
 												"minLength": 1,
-												"description": "First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: \"Notices go to real households, so I will not send this alone.\" No hedging, no apologising, no offering to help."
+												"description": "Leave out when the title is already the question; the card then shows the title and the options. Otherwise first person, one sentence: name the single call you cannot make alone and why it belongs to the human (\"Notices go to real households, so I will not send this alone.\"). No hedging, no apologising, no offering to help."
 											},
 											"options": {
 												"type": "array",
@@ -42805,7 +43987,7 @@
 															},
 															"minItems": 2,
 															"maxItems": 3,
-															"description": "2-3 lines, present tense, one clause each: \"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\". Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no \", and\" — that is two lines, not one."
+															"description": "2-3 lines, present tense, one clause each: \"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\". Put the guardrails here (\"Nothing is published without your go\"). Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no \", and\" — that is two lines, not one."
 														},
 														"recommended": {
 															"type": "boolean",
@@ -42833,6 +44015,20 @@
 																"status"
 															],
 															"description": "Use on the option that moves an object to a new status (\"Go\" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted."
+														},
+														"delete_agent": {
+															"type": "object",
+															"properties": {
+																"actor_id": {
+																	"type": "string",
+																	"format": "uuid",
+																	"description": "The agent to delete: its id from list_actors."
+																}
+															},
+															"required": [
+																"actor_id"
+															],
+															"description": "Use on the option that approves deleting another agent (\"Delete Scout\"), and mark it destructive. A person tapping it records their approval and nothing is deleted yet: the reply wakes you, and you then call delete_agent with the same id. The approval is for you only, for that one agent, and lapses after 24 hours. Without a tap, delete_agent is refused. All delete_agent options on one card must name the same agent. You cannot ask to delete yourself or a system agent."
 														}
 													},
 													"required": [
@@ -42973,10 +44169,9 @@
 										"required": [
 											"title",
 											"summary",
-											"ask",
 											"options"
 										],
-										"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\nTo ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.\nPosting a new card withdraws your earlier cards on the same object, so you do not need to withdraw them yourself. Another agent's cards, and your cards on other objects, stay. A card with `drafts` is still one card.\nTo ask whether an object should move to a new status (\"flip this bet to active\"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
+										"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\nTo ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.\nPosting a new card withdraws your earlier cards on the same object, so you do not need to withdraw them yourself. Another agent's cards, and your cards on other objects, stay. A card with `drafts` is still one card.\nTo ask whether an object should move to a new status (\"flip this bet to active\"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 9 words or fewer, ending in \"?\", and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, with no source paths, and not a restatement of the title;\nask omitted when the title is the question, otherwise exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. The replacement copy and the migration are drafted; shipping is open.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
 									},
 									"attention": {
 										"type": "integer",
@@ -43802,6 +44997,78 @@
 													"task"
 												]
 											},
+											"plan": {
+												"type": "object",
+												"properties": {
+													"version": {
+														"type": "number",
+														"enum": [
+															1
+														]
+													},
+													"steps": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"title": {
+																	"type": "string",
+																	"minLength": 1,
+																	"maxLength": 300
+																},
+																"status": {
+																	"type": "string",
+																	"enum": [
+																		"pending",
+																		"in_progress",
+																		"done",
+																		"skipped"
+																	]
+																}
+															},
+															"required": [
+																"title"
+															]
+														},
+														"minItems": 1,
+														"maxItems": 20
+													}
+												},
+												"required": [
+													"version",
+													"steps"
+												],
+												"description": "Steps you plan, shown as a plan card. Also write the steps in the message text. Set version to 1."
+											},
+											"proposed_edit": {
+												"type": "object",
+												"properties": {
+													"version": {
+														"type": "number",
+														"enum": [
+															1
+														]
+													},
+													"object_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"field": {
+														"type": "string",
+														"pattern": "^(title|content|status|metadata\\.[A-Za-z0-9_]{1,64})$"
+													},
+													"before": {},
+													"after": {}
+												},
+												"required": [
+													"version",
+													"object_id",
+													"field",
+													"before",
+													"after"
+												],
+												"description": "A change you propose to one field of one object, shown with Apply and Dismiss. Also describe it in the message text. Set version to 1."
+											},
 											"card_answer": {
 												"type": "object",
 												"properties": {
@@ -44456,6 +45723,12 @@
 															"type": "string"
 														}
 													},
+													"directPairKey": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
 													"lastMessageAt": {
 														"type": [
 															"string",
@@ -44559,6 +45832,7 @@
 													"subjectId",
 													"createdBy",
 													"tags",
+													"directPairKey",
 													"lastMessageAt",
 													"createdAt",
 													"updatedAt",
@@ -44669,6 +45943,76 @@
 																	"null"
 																],
 																"additionalProperties": {}
+															},
+															"plan": {
+																"type": "object",
+																"properties": {
+																	"version": {
+																		"type": "number",
+																		"enum": [
+																			1
+																		]
+																	},
+																	"steps": {
+																		"type": "array",
+																		"items": {
+																			"type": "object",
+																			"properties": {
+																				"title": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 300
+																				},
+																				"status": {
+																					"type": "string",
+																					"enum": [
+																						"pending",
+																						"in_progress",
+																						"done",
+																						"skipped"
+																					]
+																				}
+																			},
+																			"required": [
+																				"title"
+																			]
+																		},
+																		"minItems": 1,
+																		"maxItems": 20
+																	}
+																},
+																"required": [
+																	"version",
+																	"steps"
+																]
+															},
+															"proposed_edit": {
+																"type": "object",
+																"properties": {
+																	"version": {
+																		"type": "number",
+																		"enum": [
+																			1
+																		]
+																	},
+																	"object_id": {
+																		"type": "string",
+																		"format": "uuid"
+																	},
+																	"field": {
+																		"type": "string",
+																		"pattern": "^(title|content|status|metadata\\.[A-Za-z0-9_]{1,64})$"
+																	},
+																	"before": {},
+																	"after": {}
+																},
+																"required": [
+																	"version",
+																	"object_id",
+																	"field",
+																	"before",
+																	"after"
+																]
 															},
 															"sessionId": {
 																"type": [
@@ -44807,6 +46151,76 @@
 																	"null"
 																],
 																"additionalProperties": {}
+															},
+															"plan": {
+																"type": "object",
+																"properties": {
+																	"version": {
+																		"type": "number",
+																		"enum": [
+																			1
+																		]
+																	},
+																	"steps": {
+																		"type": "array",
+																		"items": {
+																			"type": "object",
+																			"properties": {
+																				"title": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 300
+																				},
+																				"status": {
+																					"type": "string",
+																					"enum": [
+																						"pending",
+																						"in_progress",
+																						"done",
+																						"skipped"
+																					]
+																				}
+																			},
+																			"required": [
+																				"title"
+																			]
+																		},
+																		"minItems": 1,
+																		"maxItems": 20
+																	}
+																},
+																"required": [
+																	"version",
+																	"steps"
+																]
+															},
+															"proposed_edit": {
+																"type": "object",
+																"properties": {
+																	"version": {
+																		"type": "number",
+																		"enum": [
+																			1
+																		]
+																	},
+																	"object_id": {
+																		"type": "string",
+																		"format": "uuid"
+																	},
+																	"field": {
+																		"type": "string",
+																		"pattern": "^(title|content|status|metadata\\.[A-Za-z0-9_]{1,64})$"
+																	},
+																	"before": {},
+																	"after": {}
+																},
+																"required": [
+																	"version",
+																	"object_id",
+																	"field",
+																	"before",
+																	"after"
+																]
 															},
 															"sessionId": {
 																"type": [
@@ -45894,6 +47308,76 @@
 														],
 														"additionalProperties": {}
 													},
+													"plan": {
+														"type": "object",
+														"properties": {
+															"version": {
+																"type": "number",
+																"enum": [
+																	1
+																]
+															},
+															"steps": {
+																"type": "array",
+																"items": {
+																	"type": "object",
+																	"properties": {
+																		"title": {
+																			"type": "string",
+																			"minLength": 1,
+																			"maxLength": 300
+																		},
+																		"status": {
+																			"type": "string",
+																			"enum": [
+																				"pending",
+																				"in_progress",
+																				"done",
+																				"skipped"
+																			]
+																		}
+																	},
+																	"required": [
+																		"title"
+																	]
+																},
+																"minItems": 1,
+																"maxItems": 20
+															}
+														},
+														"required": [
+															"version",
+															"steps"
+														]
+													},
+													"proposed_edit": {
+														"type": "object",
+														"properties": {
+															"version": {
+																"type": "number",
+																"enum": [
+																	1
+																]
+															},
+															"object_id": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"field": {
+																"type": "string",
+																"pattern": "^(title|content|status|metadata\\.[A-Za-z0-9_]{1,64})$"
+															},
+															"before": {},
+															"after": {}
+														},
+														"required": [
+															"version",
+															"object_id",
+															"field",
+															"before",
+															"after"
+														]
+													},
 													"sessionId": {
 														"type": [
 															"string",
@@ -46932,6 +48416,78 @@
 													"task"
 												]
 											},
+											"plan": {
+												"type": "object",
+												"properties": {
+													"version": {
+														"type": "number",
+														"enum": [
+															1
+														]
+													},
+													"steps": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"title": {
+																	"type": "string",
+																	"minLength": 1,
+																	"maxLength": 300
+																},
+																"status": {
+																	"type": "string",
+																	"enum": [
+																		"pending",
+																		"in_progress",
+																		"done",
+																		"skipped"
+																	]
+																}
+															},
+															"required": [
+																"title"
+															]
+														},
+														"minItems": 1,
+														"maxItems": 20
+													}
+												},
+												"required": [
+													"version",
+													"steps"
+												],
+												"description": "Steps you plan, shown as a plan card. Also write the steps in the message text. Set version to 1."
+											},
+											"proposed_edit": {
+												"type": "object",
+												"properties": {
+													"version": {
+														"type": "number",
+														"enum": [
+															1
+														]
+													},
+													"object_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"field": {
+														"type": "string",
+														"pattern": "^(title|content|status|metadata\\.[A-Za-z0-9_]{1,64})$"
+													},
+													"before": {},
+													"after": {}
+												},
+												"required": [
+													"version",
+													"object_id",
+													"field",
+													"before",
+													"after"
+												],
+												"description": "A change you propose to one field of one object, shown with Apply and Dismiss. Also describe it in the message text. Set version to 1."
+											},
 											"card_answer": {
 												"type": "object",
 												"properties": {
@@ -47133,6 +48689,76 @@
 												"null"
 											],
 											"additionalProperties": {}
+										},
+										"plan": {
+											"type": "object",
+											"properties": {
+												"version": {
+													"type": "number",
+													"enum": [
+														1
+													]
+												},
+												"steps": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"title": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 300
+															},
+															"status": {
+																"type": "string",
+																"enum": [
+																	"pending",
+																	"in_progress",
+																	"done",
+																	"skipped"
+																]
+															}
+														},
+														"required": [
+															"title"
+														]
+													},
+													"minItems": 1,
+													"maxItems": 20
+												}
+											},
+											"required": [
+												"version",
+												"steps"
+											]
+										},
+										"proposed_edit": {
+											"type": "object",
+											"properties": {
+												"version": {
+													"type": "number",
+													"enum": [
+														1
+													]
+												},
+												"object_id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"field": {
+													"type": "string",
+													"pattern": "^(title|content|status|metadata\\.[A-Za-z0-9_]{1,64})$"
+												},
+												"before": {},
+												"after": {}
+											},
+											"required": [
+												"version",
+												"object_id",
+												"field",
+												"before",
+												"after"
+											]
 										},
 										"sessionId": {
 											"type": [
@@ -47489,6 +49115,76 @@
 											],
 											"additionalProperties": {}
 										},
+										"plan": {
+											"type": "object",
+											"properties": {
+												"version": {
+													"type": "number",
+													"enum": [
+														1
+													]
+												},
+												"steps": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"title": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 300
+															},
+															"status": {
+																"type": "string",
+																"enum": [
+																	"pending",
+																	"in_progress",
+																	"done",
+																	"skipped"
+																]
+															}
+														},
+														"required": [
+															"title"
+														]
+													},
+													"minItems": 1,
+													"maxItems": 20
+												}
+											},
+											"required": [
+												"version",
+												"steps"
+											]
+										},
+										"proposed_edit": {
+											"type": "object",
+											"properties": {
+												"version": {
+													"type": "number",
+													"enum": [
+														1
+													]
+												},
+												"object_id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"field": {
+													"type": "string",
+													"pattern": "^(title|content|status|metadata\\.[A-Za-z0-9_]{1,64})$"
+												},
+												"before": {},
+												"after": {}
+											},
+											"required": [
+												"version",
+												"object_id",
+												"field",
+												"before",
+												"after"
+											]
+										},
 										"sessionId": {
 											"type": [
 												"string",
@@ -47789,6 +49485,76 @@
 												"null"
 											],
 											"additionalProperties": {}
+										},
+										"plan": {
+											"type": "object",
+											"properties": {
+												"version": {
+													"type": "number",
+													"enum": [
+														1
+													]
+												},
+												"steps": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"title": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 300
+															},
+															"status": {
+																"type": "string",
+																"enum": [
+																	"pending",
+																	"in_progress",
+																	"done",
+																	"skipped"
+																]
+															}
+														},
+														"required": [
+															"title"
+														]
+													},
+													"minItems": 1,
+													"maxItems": 20
+												}
+											},
+											"required": [
+												"version",
+												"steps"
+											]
+										},
+										"proposed_edit": {
+											"type": "object",
+											"properties": {
+												"version": {
+													"type": "number",
+													"enum": [
+														1
+													]
+												},
+												"object_id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"field": {
+													"type": "string",
+													"pattern": "^(title|content|status|metadata\\.[A-Za-z0-9_]{1,64})$"
+												},
+												"before": {},
+												"after": {}
+											},
+											"required": [
+												"version",
+												"object_id",
+												"field",
+												"before",
+												"after"
+											]
 										},
 										"sessionId": {
 											"type": [
@@ -58133,17 +59899,17 @@
 																	"title": {
 																		"type": "string",
 																		"minLength": 1,
-																		"description": "3-7 words. The decision itself, not a status. A question if it is a judgment call (\"Is the onboarding bet worth running?\"), a noun phrase if it is an artifact (\"Acme's note before Thursday\"). No agent name, and no verb-ing: \"Reviewing the funnel\" is a status, not a decision."
+																		"description": "9 words or fewer, ending in \"?\". The question the human is being asked (\"Is the onboarding bet worth running?\"), not a status. No agent name, and no verb-ing: \"Reviewing the funnel\" is a status, not a decision."
 																	},
 																	"summary": {
 																		"type": "string",
 																		"minLength": 1,
-																		"description": "1-2 sentences. Sentence 1: the state of the world and the cost of the status quo, with one real number you actually looked up. Sentence 2: what is already done, so the human knows they are only deciding, not working. Never restate the title."
+																		"description": "At most 2 sentences. State what is done and what is still open, so the human knows they are only deciding, not working. Use a real number only when you looked one up. No source paths or file names. Do not name the object: the card shows it. Never restate the title."
 																	},
 																	"ask": {
 																		"type": "string",
 																		"minLength": 1,
-																		"description": "First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: \"Notices go to real households, so I will not send this alone.\" No hedging, no apologising, no offering to help."
+																		"description": "Leave out when the title is already the question; the card then shows the title and the options. Otherwise first person, one sentence: name the single call you cannot make alone and why it belongs to the human (\"Notices go to real households, so I will not send this alone.\"). No hedging, no apologising, no offering to help."
 																	},
 																	"options": {
 																		"type": "array",
@@ -58163,7 +59929,7 @@
 																					},
 																					"minItems": 2,
 																					"maxItems": 3,
-																					"description": "2-3 lines, present tense, one clause each: \"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\". Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no \", and\" — that is two lines, not one."
+																					"description": "2-3 lines, present tense, one clause each: \"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\". Put the guardrails here (\"Nothing is published without your go\"). Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no \", and\" — that is two lines, not one."
 																				},
 																				"recommended": {
 																					"type": "boolean",
@@ -58191,6 +59957,20 @@
 																						"status"
 																					],
 																					"description": "Use on the option that moves an object to a new status (\"Go\" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted."
+																				},
+																				"delete_agent": {
+																					"type": "object",
+																					"properties": {
+																						"actor_id": {
+																							"type": "string",
+																							"format": "uuid",
+																							"description": "The agent to delete: its id from list_actors."
+																						}
+																					},
+																					"required": [
+																						"actor_id"
+																					],
+																					"description": "Use on the option that approves deleting another agent (\"Delete Scout\"), and mark it destructive. A person tapping it records their approval and nothing is deleted yet: the reply wakes you, and you then call delete_agent with the same id. The approval is for you only, for that one agent, and lapses after 24 hours. Without a tap, delete_agent is refused. All delete_agent options on one card must name the same agent. You cannot ask to delete yourself or a system agent."
 																				}
 																			},
 																			"required": [
@@ -58623,10 +60403,9 @@
 																"required": [
 																	"title",
 																	"summary",
-																	"ask",
 																	"options"
 																],
-																"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\nTo ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.\nPosting a new card withdraws your earlier cards on the same object, so you do not need to withdraw them yourself. Another agent's cards, and your cards on other objects, stay. A card with `drafts` is still one card.\nTo ask whether an object should move to a new status (\"flip this bet to active\"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
+																"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\nTo ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.\nPosting a new card withdraws your earlier cards on the same object, so you do not need to withdraw them yourself. Another agent's cards, and your cards on other objects, stay. A card with `drafts` is still one card.\nTo ask whether an object should move to a new status (\"flip this bet to active\"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 9 words or fewer, ending in \"?\", and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, with no source paths, and not a restatement of the title;\nask omitted when the title is the question, otherwise exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. The replacement copy and the migration are drafted; shipping is open.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
 															}
 														},
 														"required": [
@@ -62037,17 +63816,17 @@
 																	"title": {
 																		"type": "string",
 																		"minLength": 1,
-																		"description": "3-7 words. The decision itself, not a status. A question if it is a judgment call (\"Is the onboarding bet worth running?\"), a noun phrase if it is an artifact (\"Acme's note before Thursday\"). No agent name, and no verb-ing: \"Reviewing the funnel\" is a status, not a decision."
+																		"description": "9 words or fewer, ending in \"?\". The question the human is being asked (\"Is the onboarding bet worth running?\"), not a status. No agent name, and no verb-ing: \"Reviewing the funnel\" is a status, not a decision."
 																	},
 																	"summary": {
 																		"type": "string",
 																		"minLength": 1,
-																		"description": "1-2 sentences. Sentence 1: the state of the world and the cost of the status quo, with one real number you actually looked up. Sentence 2: what is already done, so the human knows they are only deciding, not working. Never restate the title."
+																		"description": "At most 2 sentences. State what is done and what is still open, so the human knows they are only deciding, not working. Use a real number only when you looked one up. No source paths or file names. Do not name the object: the card shows it. Never restate the title."
 																	},
 																	"ask": {
 																		"type": "string",
 																		"minLength": 1,
-																		"description": "First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: \"Notices go to real households, so I will not send this alone.\" No hedging, no apologising, no offering to help."
+																		"description": "Leave out when the title is already the question; the card then shows the title and the options. Otherwise first person, one sentence: name the single call you cannot make alone and why it belongs to the human (\"Notices go to real households, so I will not send this alone.\"). No hedging, no apologising, no offering to help."
 																	},
 																	"options": {
 																		"type": "array",
@@ -62067,7 +63846,7 @@
 																					},
 																					"minItems": 2,
 																					"maxItems": 3,
-																					"description": "2-3 lines, present tense, one clause each: \"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\". Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no \", and\" — that is two lines, not one."
+																					"description": "2-3 lines, present tense, one clause each: \"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\". Put the guardrails here (\"Nothing is published without your go\"). Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no \", and\" — that is two lines, not one."
 																				},
 																				"recommended": {
 																					"type": "boolean",
@@ -62095,6 +63874,20 @@
 																						"status"
 																					],
 																					"description": "Use on the option that moves an object to a new status (\"Go\" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted."
+																				},
+																				"delete_agent": {
+																					"type": "object",
+																					"properties": {
+																						"actor_id": {
+																							"type": "string",
+																							"format": "uuid",
+																							"description": "The agent to delete: its id from list_actors."
+																						}
+																					},
+																					"required": [
+																						"actor_id"
+																					],
+																					"description": "Use on the option that approves deleting another agent (\"Delete Scout\"), and mark it destructive. A person tapping it records their approval and nothing is deleted yet: the reply wakes you, and you then call delete_agent with the same id. The approval is for you only, for that one agent, and lapses after 24 hours. Without a tap, delete_agent is refused. All delete_agent options on one card must name the same agent. You cannot ask to delete yourself or a system agent."
 																				}
 																			},
 																			"required": [
@@ -62527,10 +64320,9 @@
 																"required": [
 																	"title",
 																	"summary",
-																	"ask",
 																	"options"
 																],
-																"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\nTo ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.\nPosting a new card withdraws your earlier cards on the same object, so you do not need to withdraw them yourself. Another agent's cards, and your cards on other objects, stay. A card with `drafts` is still one card.\nTo ask whether an object should move to a new status (\"flip this bet to active\"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
+																"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\nTo ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.\nPosting a new card withdraws your earlier cards on the same object, so you do not need to withdraw them yourself. Another agent's cards, and your cards on other objects, stay. A card with `drafts` is still one card.\nTo ask whether an object should move to a new status (\"flip this bet to active\"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 9 words or fewer, ending in \"?\", and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, with no source paths, and not a restatement of the title;\nask omitted when the title is the question, otherwise exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. The replacement copy and the migration are drafted; shipping is open.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
 															}
 														},
 														"required": [
@@ -66707,6 +68499,9 @@
 											"maxItems": 200,
 											"default": []
 										},
+										"readable_with": {
+											"type": "string"
+										},
 										"contentHash": {
 											"type": [
 												"string",
@@ -67110,11 +68905,24 @@
 						"required": true,
 						"name": "id",
 						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"enum": [
+								"raw",
+								"text"
+							],
+							"description": "raw (default) returns the stored bytes. text returns the words in a text file: for HTML, markdown extracted from the page (no styles, scripts or embedded fonts) as content_text; other text files unchanged. Non-text files ignore it."
+						},
+						"required": false,
+						"name": "format",
+						"in": "query"
 					}
 				],
 				"responses": {
 					"200": {
-						"description": "File detail",
+						"description": "File detail. With format=text on a text file: content_text, extracted, title, meta_description, note (when the page is drawn by script), json_ld and source_object_id instead of content and encoding.",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -67250,6 +69058,9 @@
 											"maxItems": 200,
 											"default": []
 										},
+										"readable_with": {
+											"type": "string"
+										},
 										"contentHash": {
 											"type": [
 												"string",
@@ -67276,6 +69087,63 @@
 										"content",
 										"encoding",
 										"url"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid format, or an HTML file too large to extract text from",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
 									]
 								}
 							}
@@ -67399,6 +69267,35 @@
 											"base64",
 											"utf8"
 										]
+									},
+									"edits": {
+										"type": "array",
+										"items": {
+											"type": "object",
+											"properties": {
+												"old": {
+													"type": "string",
+													"minLength": 1,
+													"maxLength": 200000,
+													"description": "Exact text to replace. Must occur exactly once unless replace_all is true."
+												},
+												"new": {
+													"type": "string",
+													"maxLength": 200000,
+													"description": "Replacement text. May be empty."
+												},
+												"replace_all": {
+													"type": "boolean",
+													"description": "Replace every occurrence of old. Default false: old must match exactly once."
+												}
+											},
+											"required": [
+												"old",
+												"new"
+											]
+										},
+										"minItems": 1,
+										"maxItems": 50
 									},
 									"annotations": {
 										"type": "array",
@@ -67616,6 +69513,9 @@
 											"maxItems": 200,
 											"default": []
 										},
+										"readable_with": {
+											"type": "string"
+										},
 										"contentHash": {
 											"type": [
 												"string",
@@ -67648,7 +69548,7 @@
 						}
 					},
 					"400": {
-						"description": "Invalid request",
+						"description": "Invalid request, or an edit that cannot be applied (text not found, found more than once without replace_all, file is not text)",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -68408,6 +70308,9 @@
 											},
 											"maxItems": 200,
 											"default": []
+										},
+										"readable_with": {
+											"type": "string"
 										},
 										"contentHash": {
 											"type": [

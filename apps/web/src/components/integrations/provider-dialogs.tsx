@@ -89,6 +89,54 @@ export function ApiKeyDialog({
 	)
 }
 
+/** Asks before a Disconnect goes through: it stops agents using the tool at once. */
+export function DisconnectConfirmDialog({
+	open,
+	onClose,
+	name,
+	account,
+	billingNote = false,
+	pending,
+	onConfirm,
+}: {
+	open: boolean
+	onClose: () => void
+	/** The tool, e.g. "LinkedIn". */
+	name: string
+	/** The account or installation being removed, when the row shows one. */
+	account?: string
+	/** The card states a per-identity charge; repeat that disconnecting stops it. */
+	billingNote?: boolean
+	pending: boolean
+	onConfirm: () => void
+}) {
+	return (
+		<Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+			<DialogContent>
+				<DialogHeader>
+					<DialogTitle>Disconnect {name}?</DialogTitle>
+					<DialogDescription>
+						{account ? `This removes ${account}. ` : ''}
+						Agents using {name} lose access straight away, and you will need to sign in again to
+						bring it back.
+						{billingNote
+							? ' Disconnecting stops the $49/month charge at the end of the current period.'
+							: ''}
+					</DialogDescription>
+				</DialogHeader>
+				<div className="flex justify-end gap-2">
+					<Button variant="ghost" onClick={onClose}>
+						Cancel
+					</Button>
+					<Button variant="destructive" onClick={onConfirm} disabled={pending}>
+						Disconnect
+					</Button>
+				</div>
+			</DialogContent>
+		</Dialog>
+	)
+}
+
 // Skjald connects from the Skjald app: its "Connect with Maskin" opens the page that picks a
 // workspace (routes/connect.skjald.tsx) and hands the app its webhook URL and secret. Maskin cannot
 // start that flow itself (the app holds the PKCE verifier), so the dialog says where to tap. The

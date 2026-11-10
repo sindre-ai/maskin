@@ -1,6 +1,6 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, files, objects } from '@maskin/db/schema'
+import { events, files, objects, subscriptions } from '@maskin/db/schema'
 import {
 	type DecisionDraft,
 	commentDecisionSchema,
@@ -13,7 +13,7 @@ import {
 	unreadQuerySchema,
 	unsubscribeBodySchema,
 } from '@maskin/shared'
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, count, desc, eq, gt, inArray, max, ne, or, sql } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { findFinishedDraftCards } from '../lib/for-you-visibility'
 import { withDeliveryState } from '../lib/object-delivery'
@@ -528,119 +528,165 @@ const listUnreadRoute = createRoute({
 	},
 })
 
+/**
+ * Past this many candidate entities the narrowing below is skipped and the query runs over every
+ * subscription, as it did before. Keeps the id list well under the driver's parameter limit.
+ */
+const MAX_UNREAD_CANDIDATE_ENTITIES = 5_000
+
+/**
+ * The entities that can have an unread item for this actor at all: those with a comment that
+ * mentions them, and the workspace's onboarding coach threads (which count without a mention).
+ * Both are cheap to list (a mentions index, and a handful of onboarding objects), whereas the
+ * aggregate below probes `events` and `read_state` once per subscription, which cost 500 ms for a
+ * person with 2,800 subscriptions when only one of them had anything unread. Null means the list
+ * was too long to be worth passing on.
+ */
+async function unreadCandidateEntityIds(
+	db: Database,
+	workspaceId: string,
+	actorId: string,
+): Promise<string[] | null> {
+	const [mentioned, onboarding] = await Promise.all([
+		db
+			.selectDistinct({ entityId: events.entityId })
+			.from(events)
+			.where(
+				and(
+					eq(events.workspaceId, workspaceId),
+					eq(events.action, 'commented'),
+					ne(events.actorId, actorId),
+					sql`${events.data}->'mentions' @> jsonb_build_array(${actorId}::text)`,
+				),
+			),
+		db
+			.select({ id: objects.id })
+			.from(objects)
+			.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, 'onboarding_session'))),
+	])
+	const ids = new Set([...mentioned.map((r) => r.entityId), ...onboarding.map((r) => r.id)])
+	return ids.size > MAX_UNREAD_CANDIDATE_ENTITIES ? null : [...ids]
+}
+
 app.openapi(listUnreadRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const { entity_type, include_recently_read: includeRecentlyRead } = c.req.valid('query')
 
-	// One round trip: for each (entity_type, entity_id) the actor is subscribed to
-	// in this workspace, aggregate the comments that count as unread (id > the
-	// actor's read high-water-mark and not by the viewer) plus, when the caller
-	// opted in, any read ones still within the recently-read window. `unread_count`
-	// uses FILTER so a recently-read card returns unread_count = 0 while still
-	// appearing in the feed. A comment that is not unread and older than the
-	// window never reaches the aggregate, so hot threads are not scanned whole.
-	//
-	// Shape matters for cost (see the plan in the task for the numbers):
-	// - read_state is joined once per subscription. Written as a per-row
-	//   subquery it was re-run for every event and for every aggregate, and
-	//   Postgres could not use "id > last read" as an index range.
-	// - the @-mention test is its own UNION ALL branch, so the partial index on
-	//   comment mentions (migration 0136) can drive it; inside a join OR it
-	//   cannot, and every comment of every subscribed entity was fetched.
-	// Literal, table-qualified SQL: interpolating Drizzle column objects into a
-	// correlated template renders unqualified (see .claude/rules/known-pitfalls.md).
-	const entityTypeFilter = entity_type ? sql`AND s.entity_type = ${entity_type}` : sql``
-	// Window of events that may contribute a row: unread ones, plus (when opted
-	// in) read events still inside a 48h window. 48h covers the Today and
-	// Yesterday buckets the ForYouDashboard renders (mirrors iOS Mail's
-	// mark-unread horizon).
-	const eventWindow = includeRecentlyRead
-		? sql`(e.id > subs.last_read OR e.created_at >= now() - interval '48 hours')`
-		: sql`e.id > subs.last_read`
-	const mentionsActor = sql`e.data->'mentions' @> jsonb_build_array(${actorId}::text)`
+	// Single query: for each (entity_type, entity_id) the actor is subscribed to
+	// in this workspace, join the events that count as unread (id > last_read
+	// and not by the viewer) plus, when the caller opted in, any read events
+	// still within the recently-read window. `unread_count` is computed via
+	// FILTER so a recently-read card returns unread_count = 0 while still
+	// appearing in the feed.
+	const lastReadExpr = sql<number>`coalesce(
+		(select last_read_event_id from read_state
+			where actor_id = ${actorId}
+				and entity_type = ${subscriptions.entityType}
+				and entity_id = ${subscriptions.entityId}),
+		0
+	)`
 
-	const rawRows = (await db.execute(sql`
-		WITH subs AS (
-			SELECT s.workspace_id, s.entity_type, s.entity_id,
-				COALESCE(rs.last_read_event_id, 0) AS last_read,
-				(s.entity_type = 'object' AND o.type = 'onboarding_session') AS is_onboarding
-			FROM subscriptions s
-			LEFT JOIN objects o ON s.entity_type = 'object' AND o.id = s.entity_id
-			LEFT JOIN read_state rs ON rs.actor_id = s.actor_id
-				AND rs.entity_type = s.entity_type AND rs.entity_id = s.entity_id
-			WHERE s.workspace_id = ${workspaceId} AND s.actor_id = ${actorId} ${entityTypeFilter}
-		),
-		matched AS (
-			-- (1) a comment that actually @-mentions this actor. data.mentions is the
-			--     per-comment array of actor ids passed on POST /api/events, checked
-			--     with @> containment against this actor's own id so a comment that
-			--     mentions a different actor in the same workspace never counts.
-			SELECT subs.entity_type, subs.entity_id, subs.last_read,
-				e.id, e.created_at, e.data
-			FROM subs
-			JOIN events e ON e.workspace_id = subs.workspace_id
-				AND e.entity_id = subs.entity_id
-				AND e.entity_type = subs.entity_type
-				AND e.action = 'commented'
-				AND e.actor_id <> ${actorId}
-				AND ${mentionsActor}
-				AND ${eventWindow}
-			UNION ALL
-			-- (2) the onboarding coach conversation: any comment on an
-			--     onboarding_session object the actor owns counts as unread regardless
-			--     of mention, since the coach doesn't @-mention the human on every
-			--     turn. Carve-out for a pre-existing, unrelated feature; everything
-			--     else in the feed is mentions-only. Comments that mention the actor
-			--     are already in branch (1), so they are skipped here.
-			SELECT subs.entity_type, subs.entity_id, subs.last_read,
-				e.id, e.created_at, e.data
-			FROM subs
-			JOIN events e ON e.workspace_id = subs.workspace_id
-				AND e.entity_id = subs.entity_id
-				AND e.entity_type = 'object'
-				AND e.action = 'commented'
-				AND e.actor_id <> ${actorId}
-				AND ${eventWindow}
-			WHERE subs.is_onboarding
-				AND NOT COALESCE(${mentionsActor}, false)
+	const subConditions = [
+		eq(subscriptions.workspaceId, workspaceId),
+		eq(subscriptions.actorId, actorId),
+	]
+	if (entity_type) subConditions.push(eq(subscriptions.entityType, entity_type))
+
+	// Only subscriptions that could produce an unread item are worth aggregating over; the join
+	// below can match nothing else, so this changes the cost, never the answer.
+	const candidateEntityIds = await unreadCandidateEntityIds(db, workspaceId, actorId)
+	if (candidateEntityIds !== null) {
+		if (candidateEntityIds.length === 0) return c.json({ items: [] })
+		subConditions.push(inArray(subscriptions.entityId, candidateEntityIds))
+	}
+
+	// Restricts the join to events that could contribute a row: unread ones,
+	// plus (when opted in) read events still inside a 48h window. Read events
+	// outside the window drop here so aggregates don't scan the whole entity
+	// history on hot threads. 48h covers the Today and Yesterday buckets the
+	// ForYouDashboard renders (mirrors iOS Mail's mark-unread horizon).
+	const readOrRecentPredicate = includeRecentlyRead
+		? sql`(${events.id} > ${lastReadExpr} or ${events.createdAt} >= now() - interval '48 hours')`
+		: sql`${events.id} > ${lastReadExpr}`
+
+	// Per-event mention count: how many of the *unread* events on this entity
+	// actually @-mention the current actor. Recently-read events never count
+	// toward the mention pill even when they're joined.
+	const mentioningUnreadCountExpr = sql<number>`coalesce(count(*) filter (where ${events.id} > ${lastReadExpr} and ${events.data}->'mentions' @> jsonb_build_array(${actorId}::text)), 0)::int`
+
+	// True unread count regardless of whether recently-read events are joined.
+	const unreadCountExpr = sql<number>`coalesce(count(${events.id}) filter (where ${events.id} > ${lastReadExpr}), 0)::int`
+
+	// Highest attention score among this entity's *joined* unread comments, for
+	// the Priority sort on For You — same join scope as unread_count (mentioning
+	// comments, plus any onboarding_session coach reply regardless of mention;
+	// see the join predicate below), not the narrower mentioning_unread_count
+	// scope. Comments without an attention score don't contribute a value —
+	// max() over an all-null filtered set returns null, which the frontend
+	// sorts below any scored comment.
+	const maxUnreadAttentionExpr = sql<
+		number | null
+	>`max((${events.data}->>'attention')::int) filter (where ${events.id} > ${lastReadExpr})`
+
+	const rows = await db
+		.select({
+			entityType: subscriptions.entityType,
+			entityId: subscriptions.entityId,
+			unreadCount: unreadCountExpr,
+			mentioningUnreadCount: mentioningUnreadCountExpr,
+			maxUnreadAttention: maxUnreadAttentionExpr,
+			latestEventId: max(events.id),
+			latestActivityAt: max(events.createdAt),
+		})
+		.from(subscriptions)
+		.leftJoin(
+			objects,
+			and(eq(subscriptions.entityType, 'object'), eq(objects.id, subscriptions.entityId)),
 		)
-		SELECT entity_type, entity_id,
-			COALESCE(count(id) FILTER (WHERE id > last_read), 0)::int AS unread_count,
-			COALESCE(count(*) FILTER (WHERE id > last_read
-				AND data->'mentions' @> jsonb_build_array(${actorId}::text)), 0)::int AS mentioning_unread_count,
-			-- Highest attention score among this entity's joined unread comments, for
-			-- the Priority sort on For You. Comments without a score don't contribute
-			-- a value: max() over an all-null filtered set returns null, which the
-			-- frontend sorts below any scored comment.
-			max((data->>'attention')::int) FILTER (WHERE id > last_read) AS max_unread_attention,
-			max(id) AS latest_event_id,
-			max(created_at) AS latest_activity_at
-		FROM matched
-		GROUP BY entity_type, entity_id
-		ORDER BY max(id) DESC
-	`)) as unknown as Array<{
-		entity_type: string
-		entity_id: string
-		unread_count: number
-		mentioning_unread_count: number
-		max_unread_attention: number | string | null
-		latest_event_id: number | string
-		latest_activity_at: Date | string
-	}>
-	// bigint comes back from the driver as a string; the rest of the handler wants numbers.
-	// The raw query also returns max(created_at) as database text ("2026-11-08 09:00:00.123+00"),
-	// not a Date; the old builder query returned a Date. Always hand the app an ISO string.
-	const rows = rawRows.map((r) => ({
-		entityType: r.entity_type,
-		entityId: r.entity_id,
-		unreadCount: r.unread_count,
-		mentioningUnreadCount: r.mentioning_unread_count,
-		maxUnreadAttention: r.max_unread_attention,
-		latestEventId: Number(r.latest_event_id),
-		latestActivityAt: new Date(r.latest_activity_at).toISOString(),
-	}))
+		.leftJoin(
+			events,
+			and(
+				eq(events.workspaceId, subscriptions.workspaceId),
+				eq(events.entityId, subscriptions.entityId),
+				ne(events.actorId, actorId),
+				// Implied by both branches below; stated outright so the planner can use
+				// the comments-only partial index events_ws_entity_commented_idx.
+				eq(events.action, 'commented'),
+				readOrRecentPredicate,
+				// Two surfaces land in the unread feed, both scoped to comments only
+				// (status-change/terminal-bet/commitment-attention signals were
+				// dropped from For You — mentions are the only trigger now):
+				// (1) a comment that actually @-mentions this actor specifically —
+				//     `data.mentions` is the per-comment array of actor ids passed on
+				//     POST /api/events, checked with `@>` containment against this
+				//     actor's own id so a comment that mentions a different actor in
+				//     the same workspace never counts.
+				// (2) the onboarding coach conversation — any comment on an
+				//     onboarding_session object the actor owns counts as unread
+				//     regardless of mention, since the coach doesn't @-mention the
+				//     human on every turn. Carve-out for a pre-existing, unrelated
+				//     feature; everything else in the feed is mentions-only.
+				or(
+					and(
+						eq(events.entityType, subscriptions.entityType),
+						eq(events.action, 'commented'),
+						sql`${events.data}->'mentions' @> jsonb_build_array(${actorId}::text)`,
+					),
+					and(
+						eq(subscriptions.entityType, 'object'),
+						eq(events.entityType, 'object'),
+						eq(events.action, 'commented'),
+						eq(objects.type, 'onboarding_session'),
+					),
+				),
+			),
+		)
+		.where(and(...subConditions))
+		.groupBy(subscriptions.entityType, subscriptions.entityId)
+		.having(gt(count(events.id), 0))
+		.orderBy(desc(max(events.id)))
 
 	// Hydrate object summaries for entity_type='object'. Other entity types just
 	// return the raw counts in v1 — UI consumers add their own loader when they
@@ -700,7 +746,8 @@ app.openapi(listUnreadRoute, (async (c) => {
 			mentioning_unread_count: Number(r.mentioningUnreadCount),
 			max_unread_attention: r.maxUnreadAttention == null ? null : Number(r.maxUnreadAttention),
 			latest_event_id: r.latestEventId,
-			latest_activity_at: r.latestActivityAt,
+			latest_activity_at:
+				r.latestActivityAt instanceof Date ? r.latestActivityAt.toISOString() : r.latestActivityAt,
 			...(obj ? { object: serialize(obj) as z.infer<typeof objectResponseSchema> } : {}),
 			...(mentionEvent ? { latest_mention: mentions.get(Number(mentionEvent.id)) } : {}),
 		}

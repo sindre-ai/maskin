@@ -1,6 +1,6 @@
 import type { Database, Transaction } from '@maskin/db'
 import { actors, conversationParticipants, messages, workspaceMembers } from '@maskin/db/schema'
-import { and, desc, eq, gte, sql } from 'drizzle-orm'
+import { and, desc, eq, sql } from 'drizzle-orm'
 import {
 	trackAgentChatMessageRefused,
 	trackAgentChatStartedMessage,
@@ -13,25 +13,13 @@ import { findDirectChat, postToDirectChat } from './direct-chat'
 /**
  * The only way an agent-authored message reaches a human it was not replying
  * to. Every rule is enforced here, in code, not in a prompt. In v1 nothing but
- * the capability digest calls it and only Chief of Staff may send.
+ * the capability digest calls it and only Chief of Staff may send. There is no
+ * limit on how many messages an agent may send.
  */
-
-/** Fixed in v1. No workspace setting overrides them and there is no per-week person cap. */
-export const PROACTIVE_LIMITS = {
-	/** From one agent to one person, per 24 hours. */
-	agentPerDay: 1,
-	/** To one person from all agents together, per 24 hours. */
-	personPerDay: 2,
-	/** To one person for one reason, per 7 days. */
-	reasonPerWeek: 1,
-} as const
 
 export const PROACTIVE_CONTENT_MAX = 1500
 export const PROACTIVE_DELIVERY_KIND = 'proactive'
 export const PROACTIVE_DELIVERY_VERSION = 1
-
-const DAY_MS = 24 * 60 * 60 * 1000
-const WEEK_MS = 7 * DAY_MS
 
 /**
  * A person's reply that switches proactive notes off or back on. Exact word,
@@ -46,9 +34,6 @@ export type ProactiveRefusal =
 	| 'no_direct_chat'
 	| 'opted_out'
 	| 'duplicate'
-	| 'cap_agent_day'
-	| 'cap_person_day'
-	| 'cap_reason_week'
 	| 'unread_backlog'
 	| 'invalid_content'
 
@@ -139,33 +124,8 @@ export async function isOptedOut(
 	return rows[0]?.content.trim().toLowerCase().startsWith('stop') ?? false
 }
 
-/** Counts proactive messages as the caps define them. Reads the delivery marker, never content. */
+/** Matches proactive messages by their delivery marker, never by content. */
 const isProactive = sql`${messages.metadata}->'delivery'->>'kind' = ${PROACTIVE_DELIVERY_KIND}`
-
-/**
- * Proactive messages that reached this person from any agent in the workspace
- * since a time, optionally for one reason. Joins through the person's active
- * participant rows (conversation_participants_actor_active_idx).
- */
-async function countProactiveToPerson(
-	tx: Tx,
-	p: { workspaceId: string; recipientHumanId: string; since: Date; reason?: string },
-): Promise<number> {
-	const rows = (await tx.execute(sql`
-		SELECT count(*)::int AS n
-		FROM messages m
-		JOIN conversations c ON c.id = m.conversation_id AND c.workspace_id = ${p.workspaceId}
-		JOIN conversation_participants cp
-			ON cp.conversation_id = m.conversation_id
-			AND cp.actor_id = ${p.recipientHumanId}
-			AND cp.left_at IS NULL
-		WHERE m.metadata->'delivery'->>'kind' = ${PROACTIVE_DELIVERY_KIND}
-			AND m.actor_id <> ${p.recipientHumanId}
-			AND m.created_at >= ${p.since.toISOString()}::timestamptz
-			${p.reason ? sql`AND m.metadata->'delivery'->>'reason' = ${p.reason}` : sql``}
-	`)) as unknown as Array<{ n: number }>
-	return rows[0]?.n ?? 0
-}
 
 async function runChecksAndSend(
 	tx: Tx,
@@ -229,38 +189,7 @@ async function runChecksAndSend(
 		.limit(1)
 	if (dup) return refuse('duplicate')
 
-	// 7. Caps. One from this sender per day.
-	const dayAgo = new Date(now - DAY_MS)
-	const [fromAgent] = await tx
-		.select({ n: sql<number>`count(*)::int` })
-		.from(messages)
-		.where(
-			and(
-				eq(messages.conversationId, chat.id),
-				eq(messages.actorId, senderAgentId),
-				isProactive,
-				gte(messages.createdAt, dayAgo),
-			),
-		)
-	if ((fromAgent?.n ?? 0) >= PROACTIVE_LIMITS.agentPerDay) return refuse('cap_agent_day')
-
-	// 8. Two per person per day from all agents, one per reason per week.
-	const person = { workspaceId, recipientHumanId }
-	if (
-		(await countProactiveToPerson(tx, { ...person, since: dayAgo })) >=
-		PROACTIVE_LIMITS.personPerDay
-	) {
-		return refuse('cap_person_day')
-	}
-	const weekAgo = new Date(now - WEEK_MS)
-	if (
-		(await countProactiveToPerson(tx, { ...person, since: weekAgo, reason })) >=
-		PROACTIVE_LIMITS.reasonPerWeek
-	) {
-		return refuse('cap_reason_week')
-	}
-
-	// 10. The sender's last proactive message to this person must have been read.
+	// 7. The sender's last proactive message to this person must have been read.
 	const [lastProactive] = await tx
 		.select({ id: messages.id })
 		.from(messages)
@@ -283,12 +212,12 @@ async function runChecksAndSend(
 		if ((state?.lastRead ?? 0) < lastProactive.id) return refuse('unread_backlog')
 	}
 
-	// 11. 1 to 1,500 characters. No mentions metadata is ever attached below.
+	// 8. 1 to 1,500 characters. No mentions metadata is ever attached below.
 	if (content.length < 1 || content.length > PROACTIVE_CONTENT_MAX) {
 		return refuse('invalid_content')
 	}
 
-	// 12. Store it through the shared chat port. evaluateAndRespond is never called.
+	// 9. Store it through the shared chat port. evaluateAndRespond is never called.
 	const [latest] = await tx
 		.select({ createdAt: messages.createdAt })
 		.from(messages)

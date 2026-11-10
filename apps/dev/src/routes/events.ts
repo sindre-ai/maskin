@@ -5,6 +5,11 @@ import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { createCommentSchema, eventQuerySchema, validateDecisionProse } from '@maskin/shared'
 import { and, asc, desc, eq, gt, gte, inArray, lt, lte, or, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
+import {
+	findAgentDeletionViolations,
+	recordAgentDeletionApproval,
+	resolveAgentDeletionTap,
+} from '../lib/agent-deletion-approval'
 import { isActorHumanPaused } from '../lib/agent-pause'
 import { trackAgentCommentPosted } from '../lib/analytics/comment-events'
 import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
@@ -319,6 +324,16 @@ app.openapi(createCommentRoute, (async (c) => {
 				: undefined
 		if (statusCheck && 'decision' in statusCheck) decision = statusCheck.decision
 		violations.push(...(statusCheck && 'violations' in statusCheck ? statusCheck.violations : []))
+		// A delete_agent option names an agent that must exist here. Checked here for the same reason.
+		if (violations.length === 0) {
+			violations.push(
+				...(await findAgentDeletionViolations(db, {
+					workspaceId,
+					authorId: actorId,
+					decision: body.decision,
+				})),
+			)
+		}
 		if (violations.length > 0) {
 			return c.json(
 				createApiError(
@@ -427,6 +442,17 @@ app.openapi(createCommentRoute, (async (c) => {
 		: null
 	let statusAction = undefined as Awaited<ReturnType<typeof applyStatusTap>> | undefined
 
+	// A person tapping a delete_agent option approves the deleting agent's request. It only records
+	// the yes; the agent deletes after it is woken by this reply.
+	const deletionTap = mayApprove
+		? await resolveAgentDeletionTap(db, {
+				workspaceId,
+				entityId: body.entity_id,
+				parentEventId: body.parent_event_id,
+				content: body.content,
+			})
+		: null
+
 	const post = (writer: typeof db) =>
 		postComment(writer, {
 			workspaceId,
@@ -444,9 +470,16 @@ app.openapi(createCommentRoute, (async (c) => {
 		})
 	const delivery = routing?.delivery
 	const { comment, unresolvedMentions } =
-		replyApprovals.length === 0 && !delivery && !statusTap
+		replyApprovals.length === 0 && !delivery && !statusTap && !deletionTap
 			? await post(db)
 			: await db.transaction(async (tx) => {
+					if (deletionTap) {
+						await recordAgentDeletionApproval(tx, {
+							workspaceId,
+							approverId: actorId,
+							tap: deletionTap,
+						})
+					}
 					if (statusTap) {
 						statusAction = await applyStatusTap(tx, {
 							tap: statusTap,

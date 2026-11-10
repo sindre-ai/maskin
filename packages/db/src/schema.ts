@@ -348,6 +348,9 @@ export const relationships = pgTable(
 	},
 	(t) => [
 		unique('relationships_src_tgt_type_uniq').on(t.sourceId, t.targetId, t.type),
+		// Target-side edge lookups (graph, relationships list, spawned-session lookup); the unique
+		// above leads with source_id. Built CONCURRENTLY in migration 0143.
+		index('relationships_target_type_idx').on(t.targetId, t.type),
 		// S2 · widened to admit `conversation` and `session` endpoint kinds so
 		// the writer hook can persist automatic provenance edges
 		// (conversation→session `spawned`, session→object|file `produced_by`).
@@ -397,11 +400,19 @@ export const events = pgTable(
 		index('events_ws_entity_commented_idx')
 			.on(t.workspaceId, t.entityId, t.id)
 			.where(sql`${t.action} = 'commented'`),
-		// For You unread feed: which comments @-mention a given actor, from the index instead of a
-		// per-comment test. Comments only. Built CONCURRENTLY in migration 0136.
-		index('events_comment_mentions_gin_idx')
-			.using('gin', sql`((${t.data} -> 'mentions')) jsonb_path_ops`)
+		// "Which comments mention this actor?", behind the unread feed (GET /api/subscriptions/unread)
+		// and the For You decision cards. Without it both read every comment in the workspace to
+		// find a few (144 ms and 500 ms on production data; 3 ms and 41 ms with it). Holds only
+		// comment rows. Built CONCURRENTLY in migration 0142.
+		index('events_commented_mentions_idx')
+			.using('gin', sql`(${t.data} -> 'mentions')`)
 			.where(sql`${t.action} = 'commented'`),
+		// The daily-budget summary scheduler's "already posted for this day?" check, once per
+		// workspace per tick (services/daily-budget-events.ts). Holds one entry per workspace per
+		// day. Built CONCURRENTLY in migration 0143.
+		index('events_daily_budget_summary_day_idx')
+			.on(t.workspaceId, sql`(${t.data} ->> 'day')`)
+			.where(sql`${t.action} = 'daily_budget_summary'`),
 	],
 )
 
@@ -910,6 +921,11 @@ export const sessions = pgTable(
 		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0044.
 		index('sessions_ws_updated_at_idx').on(t.workspaceId, t.updatedAt),
 		index('sessions_actor_idx').on(t.actorId),
+		// Sessions spawned by a chat message, and the ON DELETE SET NULL FK. Built CONCURRENTLY in
+		// migration 0144.
+		index('sessions_spawned_by_message_id_idx')
+			.on(t.spawnedByMessageId)
+			.where(sql`${t.spawnedByMessageId} IS NOT NULL`),
 		// "Does this agent have another live session?" on every completion. Built
 		// CONCURRENTLY in migration 0087.
 		index('sessions_actor_status_idx').on(t.actorId, t.status),
@@ -980,11 +996,12 @@ export const sessions = pgTable(
 
 // ── API Keys ───────────────────────────────────────────────────────────────
 
-export type ApiKeyKind = 'primary' | 'login' | 'login_ios' | 'session'
+export type ApiKeyKind = 'primary' | 'login' | 'login_ios' | 'session' | 'personal'
 
 /**
  * Hashed API keys. One actor holds many: a primary key (shown once at creation or rotation),
- * one per web or iOS login, and one per agent session launch. key_hash is the hex SHA-256 of
+ * one per web or iOS login, one per agent session launch, and any number of named personal keys a
+ * person makes by hand (capped in lib/api-keys). key_hash is the hex SHA-256 of
  * the full ank_ token, so a lookup is one indexed equality and a database leak yields no
  * usable keys. A key authenticates while revoked_at is null and expires_at is null or future.
  */
@@ -998,6 +1015,8 @@ export const apiKeys = pgTable(
 		keyHash: text('key_hash').notNull().unique(),
 		last4: text('last4').notNull(),
 		kind: text('kind').$type<ApiKeyKind>().notNull(),
+		/** Set only on personal keys: the label the person gave it. */
+		name: text('name'),
 		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'cascade' }),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		expiresAt: timestamp('expires_at', { withTimezone: true }),
@@ -1007,7 +1026,10 @@ export const apiKeys = pgTable(
 	(t) => [
 		index('api_keys_actor_kind_idx').on(t.actorId, t.kind),
 		index('api_keys_session_idx').on(t.sessionId).where(sql`${t.sessionId} IS NOT NULL`),
-		check('api_keys_kind_enum', sql`${t.kind} IN ('primary', 'login', 'login_ios', 'session')`),
+		check(
+			'api_keys_kind_enum',
+			sql`${t.kind} IN ('primary', 'login', 'login_ios', 'session', 'personal')`,
+		),
 	],
 )
 export type ApiKey = typeof apiKeys.$inferSelect

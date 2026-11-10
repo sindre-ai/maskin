@@ -24,6 +24,8 @@ const MAX_TIMER_MS = 2_000_000_000
 /** Times a view that navigates away from its srcdoc is reset before we give up on it. */
 const MAX_FRAME_RESETS = 3
 const MIN_HEIGHT = 160
+/** A replacement frame that has not reported its size by now takes over anyway. */
+const SWAP_TIMEOUT_MS = 3_000
 /** A failed live-refresh check or next-change lookup is retried this many times, backing off, before the view is flagged as possibly out of date. */
 const MAX_REFRESH_RETRIES = 5
 const REFRESH_RETRY_MS = 5_000
@@ -96,6 +98,13 @@ function ViewFrame({
 	// The last attempt to bring the view up to date failed; the header says so and offers Refresh.
 	const [refreshFailed, setRefreshFailed] = useState(false)
 	const [frameKey, setFrameKey] = useState(0)
+	// The frame on screen. A replacement frame loads hidden next to it and takes over once it
+	// has drawn, so a refresh never shows a blank or half-built view.
+	const [shownKey, setShownKey] = useState(0)
+	const frameKeyRef = useRef(frameKey)
+	frameKeyRef.current = frameKey
+	// Set when the frame on screen must go at once (it navigated away), not wait for its successor.
+	const swapNowRef = useRef(false)
 	const loadsRef = useRef(0)
 	const resetsRef = useRef(0)
 	const blockedRef = useRef(false)
@@ -134,7 +143,7 @@ function ViewFrame({
 			setRefreshing(true)
 			try {
 				const result = await api.data.query(workspaceId, spec, {
-					signal: AbortSignal.timeout(QUERY_TIMEOUT_MS),
+					timeoutMs: QUERY_TIMEOUT_MS,
 				})
 				if (result.rows_truncated || result.groups_truncated) setPartial(true)
 				answeredAtRef.current.set(key, writeCachedResult(workspaceId, key, result))
@@ -186,6 +195,7 @@ function ViewFrame({
 				return
 			}
 			resetsRef.current += 1
+			swapNowRef.current = true
 			setFrameKey((k) => k + 1)
 		}
 
@@ -245,7 +255,11 @@ function ViewFrame({
 						return given(await queryAndStore(spec))
 					},
 					post: (message) => viewWindow()?.postMessage(message, '*'),
-					onDocHeight: (h) => setHeight(Math.max(MIN_HEIGHT, Math.ceil(h))),
+					onDocHeight: (h) => {
+						setHeight(Math.max(MIN_HEIGHT, Math.ceil(h)))
+						// The newest frame has drawn; it replaces the one on screen.
+						setShownKey(frameKeyRef.current)
+					},
 					// A view wider than its box takes the width it needs and the box scrolls
 					// sideways, rather than the view clipping or the page overflowing.
 					onDocOverflow: (w) => setContentWidth(Math.ceil(w)),
@@ -402,6 +416,17 @@ function ViewFrame({
 		return () => observer.disconnect()
 	}, [])
 
+	// A view that never reports its size must not leave the old frame up forever.
+	useEffect(() => {
+		if (swapNowRef.current) {
+			swapNowRef.current = false
+			setShownKey(frameKey)
+			return
+		}
+		const timer = setTimeout(() => setShownKey(frameKey), SWAP_TIMEOUT_MS)
+		return () => clearTimeout(timer)
+	}, [frameKey])
+
 	// A fresh frame (first mount, new document, or a reset) starts with no loads.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: srcDoc and frameKey are the triggers
 	useEffect(() => {
@@ -445,16 +470,21 @@ function ViewFrame({
 					{(stale || timerStale) && 'Live updates are failing, so this view may be out of date.'}
 				</p>
 			)}
-			<div ref={boxRef} className="overflow-x-auto">
-				<iframe
-					key={frameKey}
-					ref={iframeRef}
-					title="Custom loop view"
-					srcDoc={srcDoc}
-					sandbox="allow-scripts"
-					style={{ height, width: contentWidth ?? '100%' }}
-					className="block max-w-none rounded-md border border-border bg-background"
-				/>
+			<div ref={boxRef} className="relative overflow-x-auto">
+				{(shownKey === frameKey ? [frameKey] : [shownKey, frameKey]).map((key) => (
+					<iframe
+						key={key}
+						ref={key === frameKey ? iframeRef : undefined}
+						title="Custom flow view"
+						srcDoc={srcDoc}
+						sandbox="allow-scripts"
+						style={{ height, width: contentWidth ?? '100%' }}
+						className={`block max-w-none rounded-md border border-border bg-background${
+							key === shownKey ? '' : ' invisible absolute top-0 left-0'
+						}`}
+						aria-hidden={key === shownKey ? undefined : true}
+					/>
+				))}
 			</div>
 		</>
 	)

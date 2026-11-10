@@ -37,6 +37,7 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 						createdAt: ChatDates.parse(row.createdAt), pinned: row.pinned,
 						archived: row.archived, unreadCount: Int(row.unread_count), snippet: row.snippet,
 						snippetActorName: row.snippet_actor_name, snippetActorID: row.snippet_actor_id,
+						directPairKey: row.directPairKey,
 						participants: row.participants.map {
 							ChatParticipant(id: $0.actorId, name: $0.actorName, actorType: $0.actorType)
 						})
@@ -146,7 +147,8 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 				ChatActor(
 					participant: ChatParticipant(id: row.id, name: row.name, actorType: row._type),
 					agentState: ChatActor.AgentState(rawValue: row.agentState.rawValue) ?? .unknown,
-					summary: row.description, isSystem: row.isSystem)
+					summary: row.description, isSystem: row.isSystem,
+					starterPrompts: StarterPrompts.normalize(row.starter_prompts))
 			}
 			if rows.count < pageSize { break }
 			offset += pageSize

@@ -136,6 +136,8 @@ interface MessageResponse {
 	threadRootId?: number | null
 	threadAlsoInChannel?: boolean
 	thread?: { replyCount: number; unreadCount: number } | null
+	/** Present on list responses: emoji reactions grouped by emoji. */
+	reactions?: { emoji: string; count: number; reactedByMe: boolean }[]
 }
 
 interface SessionResponse {
@@ -379,11 +381,14 @@ export class TestAPI {
 			tools?: Record<string, unknown> | null
 			llm_provider?: string | null
 			llm_config?: Record<string, unknown> | null
+			/** Agents only; needs `workspaceId`. */
+			starter_prompts?: string[]
 		},
+		workspaceId?: string,
 	): Promise<ActorResponse> {
 		const res = await fetch(`${this.baseURL}/api/actors/${id}`, {
 			method: 'PATCH',
-			headers: this.headers(),
+			headers: this.headers(workspaceId),
 			body: JSON.stringify(data),
 		})
 		if (!res.ok) throw new Error(`updateActor failed: ${res.status}`)

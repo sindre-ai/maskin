@@ -54,13 +54,18 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
+import { serializeMessage } from '../lib/serialize-message'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import { reportChatReply } from '../services/chat-reply-tracking'
 import { shareReplyDigest } from '../services/chat-session-context'
 import { insertConversationMessage, mirrorAsObjectComment } from '../services/conversation-messages'
 import { evaluateAndRespond } from '../services/conversation-responder'
 import { maybeGenerateConversationTitle } from '../services/conversation-titler'
-import { findOrCreateDirectChat } from '../services/direct-chat'
+import {
+	directChatTitleForViewer,
+	ensureHumanDirectChats,
+	findOrCreateDirectChat,
+} from '../services/direct-chat'
 import { LIVE_STATUSES, openInteractiveTurnsByLog } from '../services/live-activity-push'
 import { loadReactionsByMessage } from '../services/message-reactions'
 import { listCallerThreadRootIds, loadThreadSummaries } from '../services/message-threads'
@@ -492,14 +497,17 @@ async function conversationDetailForCaller(
 				eq(conversationParticipants.actorId, callerId),
 			),
 		)
-	const participants = await loadParticipantsByConversation(db, [conversation.id])
+	const participants = (await loadParticipantsByConversation(db, [conversation.id])).get(
+		conversation.id,
+	)
 	return {
 		...serialize(conversation),
+		title: directChatTitleForViewer(conversation, participants ?? [], callerId),
 		pinned: mine?.pinned ?? false,
 		archived: mine?.archived ?? false,
 		unread_count: 0,
 		last_read_message_id: mine?.lastReadMessageId ?? null,
-		participants: participants.get(conversation.id) ?? [],
+		participants: participants ?? [],
 	} as z.infer<typeof conversationDetailResponseSchema>
 }
 
@@ -755,14 +763,16 @@ app.openapi(createConversationRoute, (async (c) => {
 	if (reused) return c.json(await conversationDetailForCaller(db, conversation, callerId), 200)
 
 	const participantsByConversation = await loadParticipantsByConversation(db, [conversation.id])
+	const createdParticipants = participantsByConversation.get(conversation.id) ?? []
 	return c.json(
 		{
 			...serialize(conversation),
+			title: directChatTitleForViewer(conversation, createdParticipants, callerId),
 			pinned: false,
 			archived: false,
 			unread_count: 0,
 			last_read_message_id: null,
-			participants: participantsByConversation.get(conversation.id) ?? [],
+			participants: createdParticipants,
 		} as z.infer<typeof conversationDetailResponseSchema>,
 		201,
 	)
@@ -795,6 +805,13 @@ app.openapi(listConversationsRoute, (async (c) => {
 	const callerId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const query = c.req.valid('query')
+
+	// Every pair of people has a direct message, like an agent has with each person.
+	// They are made here, on the plain first page of the list, so they appear for
+	// both people without a hook on every way a member can join a workspace.
+	if (query.offset === 0 && !query.archived && !query.subject_type && !query.subject_id) {
+		await ensureHumanDirectChats(db, { workspaceId, actorId: callerId })
+	}
 
 	const conditions = [
 		eq(conversations.workspaceId, workspaceId),
@@ -890,6 +907,11 @@ app.openapi(listConversationsRoute, (async (c) => {
 	return c.json({
 		conversations: page.map((r) => ({
 			...serialize(r.conversation),
+			title: directChatTitleForViewer(
+				r.conversation,
+				participantsByConversation.get(r.conversation.id) ?? [],
+				callerId,
+			),
 			pinned: r.participant.pinned,
 			archived: r.participant.archived,
 			unread_count: unreadByConversation.get(r.conversation.id) ?? 0,
@@ -961,9 +983,9 @@ app.openapi(listThreadsRoute, (async (c) => {
 				{
 					conversationId: root.conversationId,
 					conversationTitle,
-					root: serialize(rootMessage),
+					root: serializeMessage(rootMessage),
 					thread,
-					lastReply: reply ? serialize(reply) : null,
+					lastReply: reply ? serializeMessage(reply) : null,
 				},
 			]
 		}),
@@ -1061,6 +1083,11 @@ app.openapi(getConversationRoute, (async (c) => {
 	])
 	return c.json({
 		...serialize(row.conversation),
+		title: directChatTitleForViewer(
+			row.conversation,
+			participantsByConversation.get(id) ?? [],
+			callerId,
+		),
 		pinned: row.participant.pinned,
 		archived: row.participant.archived,
 		unread_count: unreadByConversation.get(id) ?? 0,
@@ -1365,7 +1392,7 @@ app.openapi(listMessagesRoute, (async (c) => {
 		messages: page.map(
 			(m) =>
 				({
-					...serialize(m),
+					...serializeMessage(m),
 					spawned_sessions: spawned.get(m.id) ?? [],
 					reactions: reactions.get(m.id) ?? [],
 					thread: summaries.get(m.id) ?? null,
@@ -1502,7 +1529,7 @@ app.openapi(postMessageRoute, (async (c) => {
 	// end-of-turn output. A client (or an agent via the MCP tool) must not be
 	// able to claim them — the frontend reconciles its optimistic bubble
 	// against `source`, so a forged one would strand that bubble forever.
-	const metadata = stripServerOwnedMetadata(body.metadata) ?? null
+	const metadata = stripServerOwnedMetadata(body.metadata, { callerType }) ?? null
 
 	const created = await insertConversationMessage(db, {
 		conversationId: id,
@@ -1669,7 +1696,7 @@ app.openapi(postMessageRoute, (async (c) => {
 	)
 
 	return c.json(
-		serialize({
+		serializeMessage({
 			...created,
 			actorName: caller?.name ?? 'Unknown',
 			actorType: caller?.type ?? 'human',
@@ -1849,7 +1876,7 @@ app.openapi(editMessageRoute, (async (c) => {
 		.limit(1)
 
 	return c.json(
-		serialize({
+		serializeMessage({
 			...updated,
 			actorName: caller?.name ?? 'Unknown',
 			actorType: caller?.type ?? 'human',

@@ -52,7 +52,7 @@ struct NewChatSheet: View {
 				NewConversationForm(
 					store: store, currentActorID: currentActorID, initialRecipient: initialRecipient, error: error,
 					draft: $draft, query: $query, highlightedChip: $highlightedChip,
-					toFocused: $toFocused)
+					toFocused: $toFocused, onRecipientPicked: { composer.requestFocus() })
 			}
 			// Dragging the open list must not drop the keyboard: that would blur To and close the list.
 			.scrollDismissesKeyboard(toFocused ? .never : .interactively)
@@ -74,6 +74,13 @@ struct NewChatSheet: View {
 				if !prefill.isEmpty { composer.text = prefill }
 				composer.bind(conversationID: Self.draftKey)
 				toFocused = draft.recipientIDs.isEmpty
+				// Someone is already in To (Chief of Staff, or a person the sheet was opened for), or a
+				// starter filled the message: the message is next. The request waits for the sheet to
+				// finish appearing, or the system ignores it.
+				if !draft.recipientIDs.isEmpty || !prefill.isEmpty {
+					try? await Task.sleep(for: .milliseconds(450))
+					composer.requestFocus()
+				}
 			}
 		}
 	}
@@ -85,8 +92,12 @@ struct NewChatSheet: View {
 		recipients.count == 1 && recipients[0].kind == .agent && !isCreating ? recipients[0] : nil
 	}
 
+	/// One agent and nobody else: its own openers. Several people, or only people, have none.
+	private var starters: [String] { StarterPrompts.forChat(others: recipients, actors: store.actors) }
+
 	private var bottomBar: some View {
 		VStack(alignment: .trailing, spacing: MaskinSpace.s5) {
+			StarterPromptsView(prompts: starters) { composer.addStarter($0) }
 			if !composer.trimmedText.isEmpty, restoredDraft {
 				Text("Draft saved · ⌘↩ to send")
 					.font(MaskinTypeface.sans(MaskinFontSize.t12, relativeTo: .caption))
@@ -179,10 +190,6 @@ struct NewConversationForm: View {
 			Text("New conversation")
 				.maskinText(.sheetTitle)
 				.foregroundStyle(MaskinColor.ink)
-			Text("Choose who's in it, then say what you need.")
-				.font(MaskinTypeface.sans(MaskinFontSize.t15, relativeTo: .subheadline))
-				.foregroundStyle(MaskinColor.ink4)
-				.padding(.top, MaskinSpace.s3)
 			toCard.padding(.top, MaskinSpace.s9)
 			if let error { FormError(error).padding(.top, MaskinSpace.s7) }
 			// The list only exists while To has focus, so no person row sits under the message box.
@@ -247,7 +254,7 @@ struct NewConversationForm: View {
 				card(rows: matches)
 			}
 		} else if !matches.isEmpty {
-			sectionLabel("Suggested")
+			sectionLabel("Recent")
 			card(rows: matches)
 		}
 	}

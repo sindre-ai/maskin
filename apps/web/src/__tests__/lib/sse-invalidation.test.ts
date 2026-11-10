@@ -163,6 +163,44 @@ describe('invalidateFromSSE', () => {
 		})
 	})
 
+	it('refetches the object graphs once for a burst of relationship events', () => {
+		const qc = createMockQueryClient()
+		const graphCalls = () =>
+			qc.invalidateQueries.mock.calls.filter(
+				([filters]) => JSON.stringify(filters.queryKey) === JSON.stringify(['objects', 'graph']),
+			)
+		for (let i = 0; i < 5; i++) {
+			invalidateFromSSE(qc as never, workspaceId, {
+				entity_type: 'relationship',
+				entity_id: `rel-${i}`,
+				action: 'created',
+			} as never)
+		}
+		expect(graphCalls()).toHaveLength(0)
+		vi.advanceTimersByTime(5_000)
+		expect(graphCalls()).toHaveLength(1)
+	})
+
+	it('refetches the unread and For You lists once for a burst of comments', () => {
+		const qc = createMockQueryClient()
+		const calls = (key: readonly unknown[]) =>
+			qc.invalidateQueries.mock.calls.filter(
+				([filters]) => JSON.stringify(filters.queryKey) === JSON.stringify(key),
+			)
+		for (let i = 0; i < 5; i++) {
+			invalidateFromSSE(qc as never, workspaceId, {
+				entity_type: 'task',
+				entity_id: `task-${i}`,
+				action: 'commented',
+			} as never)
+		}
+		expect(calls(['subscriptions', 'unread', workspaceId])).toHaveLength(0)
+		expect(calls(queryKeys.forYou.list(workspaceId))).toHaveLength(0)
+		vi.advanceTimersByTime(5_000)
+		expect(calls(['subscriptions', 'unread', workspaceId])).toHaveLength(1)
+		expect(calls(queryKeys.forYou.list(workspaceId))).toHaveLength(1)
+	})
+
 	it('invalidates triggers for trigger entity', () => {
 		const qc = createMockQueryClient()
 		invalidateFromSSE(qc as never, workspaceId, {
