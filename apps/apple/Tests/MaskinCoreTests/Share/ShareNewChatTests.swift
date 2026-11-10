@@ -35,7 +35,7 @@ struct SharePosterNewChatTests {
 				.upload(name: "Brief.pdf", mime: "application/pdf", key: "base-file-\(file.id.uuidString)"),
 				.createChat(
 					agent: "agent-cpo", title: "A page", content: "Thoughts?\n\n<https://example.com>",
-					files: ["file-1"], key: "base-chat"),
+					files: ["file-1"], key: "share-chat-base"),
 			])
 	}
 
@@ -57,7 +57,7 @@ struct SharePosterNewChatTests {
 			if case .createChat(_, _, _, _, let key) = call { key } else { nil }
 		}
 		#expect(uploads.count == 1)
-		#expect(keys == ["base-chat", "base-chat"])
+		#expect(keys == ["share-chat-base", "share-chat-base"])
 	}
 
 	@Test("a finished share does not start a second chat when posted again")
@@ -283,6 +283,6 @@ struct ShareSheetModelNewChatTests {
 		let keys = remote.calls.compactMap { call -> String? in
 			if case .createChat(_, _, _, _, let key) = call { key } else { nil }
 		}
-		#expect(keys == ["base-chat"])
+		#expect(keys == ["share-chat-base"])
 	}
 }

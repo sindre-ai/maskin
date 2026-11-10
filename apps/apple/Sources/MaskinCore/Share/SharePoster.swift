@@ -111,7 +111,7 @@ public actor SharePoster {
 				progress.chatID = try await remote.createChat(
 					agentID: agentID, title: ShareComposer.chatTitle(request.title, content: request.content),
 					content: ShareComposer.chatMessage(note: request.note, content: request.content),
-					attachments: refs, idempotencyKey: "\(base)-chat")
+					attachments: refs, idempotencyKey: Self.chatKey(base: base))
 			}
 			return Outcome(conversationID: progress.chatID, fileIDs: refs.map(\.fileID))
 		case .filesOnly:
@@ -123,6 +123,11 @@ public actor SharePoster {
 			return Outcome(fileIDs: attachments.compactMap { progress.fileIDs[$0.id] })
 		}
 	}
+
+	/// The Idempotency-Key of the create-chat call. The prefix is how a chat started from a share is
+	/// told apart on the server (the key ledger), since the create call has no field for it.
+	static func chatKey(base: String) -> String { "\(chatKeyPrefix)\(base)" }
+	static let chatKeyPrefix = "share-chat-"
 
 	private func upload(_ attachment: ShareAttachment) async throws -> String {
 		if let existing = progress.fileIDs[attachment.id] { return existing }
