@@ -38,6 +38,7 @@ describe('GATEWAY_PROVIDERS', () => {
 			'sentry',
 			'stripe',
 			'ubersuggest',
+			'vercel',
 			'webflow',
 		])
 		for (const other of ['slack', 'github', 'linkedin-unipile', 'google-meet']) {

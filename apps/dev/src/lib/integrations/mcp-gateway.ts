@@ -50,6 +50,7 @@ export const GATEWAY_PROVIDERS: ReadonlySet<string> = new Set([
 	'sentry',
 	'stripe',
 	'ubersuggest',
+	'vercel',
 	'webflow',
 ])
 

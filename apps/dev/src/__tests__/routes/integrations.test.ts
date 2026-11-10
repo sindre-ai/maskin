@@ -174,6 +174,7 @@ describe('Integrations Routes', () => {
 				'slack',
 				'stripe',
 				'ubersuggest',
+				'vercel',
 				'webflow',
 			])
 
