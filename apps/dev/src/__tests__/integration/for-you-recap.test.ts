@@ -109,13 +109,17 @@ describe('GET /api/for-you/recap', () => {
 		const moved = await insertObject(db, workspaceId, me, { type: 'task', status: 'done' })
 		const old = await insertObject(db, workspaceId, me, { type: 'task', status: 'done' })
 		const mine = await insertObject(db, workspaceId, me, { type: 'task', status: 'done' })
-		const move = (entityId: string, actorId: string, at: Date) =>
-			event({ actorId, action: 'status_changed', entityType: 'object', entityId, at })
+		const note = await insertObject(db, workspaceId, me, { type: 'knowledge', status: 'done' })
+		// Object events are logged under the object's own type (task, bet, insight ...).
+		const move = (entityId: string, actorId: string, at: Date, entityType = 'task') =>
+			event({ actorId, action: 'status_changed', entityType, entityId, at })
 
 		await move(moved.id, agentId, ago(3 * HOUR))
 		await move(moved.id, colleague, ago(2 * HOUR))
 		await move(old.id, agentId, ago(10 * HOUR))
 		await move(mine.id, me, ago(HOUR))
+		// Only insights, bets and tasks are part of the recap.
+		await move(note.id, agentId, ago(HOUR), 'knowledge')
 
 		const body = await recap(ago(6 * HOUR))
 		expect(body.items_moved.count).toBe(1)
@@ -195,7 +199,7 @@ describe('GET /api/for-you/recap', () => {
 			workspaceId: elsewhere,
 			actorId: agentId,
 			action: 'status_changed',
-			entityType: 'object',
+			entityType: 'task',
 			entityId: foreign.id,
 			at: ago(HOUR),
 		})
@@ -218,7 +222,7 @@ describe('GET /api/for-you/recap', () => {
 		await event({
 			actorId: agentId,
 			action: 'status_changed',
-			entityType: 'object',
+			entityType: 'task',
 			entityId: stale.id,
 			at: ago(9 * DAY),
 		})
