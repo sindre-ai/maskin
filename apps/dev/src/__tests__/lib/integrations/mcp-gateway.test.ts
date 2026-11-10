@@ -29,6 +29,7 @@ describe('GATEWAY_PROVIDERS', () => {
 			'google-calendar',
 			'linear',
 			'miro',
+			'mixpanel',
 			'notion',
 			'posthog',
 			'resend',

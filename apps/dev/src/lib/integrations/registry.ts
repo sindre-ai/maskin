@@ -39,6 +39,7 @@ import { linearEventNormalizer } from './providers/linear/webhooks'
 import { config as linkedinConfig } from './providers/linkedin-unipile/config'
 import { deleteUnipileAccountOnDisconnect } from './providers/linkedin-unipile/disconnect'
 import { config as miroConfig } from './providers/miro/config'
+import { config as mixpanelConfig } from './providers/mixpanel/config'
 import { config as notionConfig } from './providers/notion/config'
 import { config as posthogConfig } from './providers/posthog/config'
 import { config as resendConfig } from './providers/resend/config'
@@ -174,6 +175,10 @@ providers.set('posthog', {
 
 providers.set('miro', {
 	config: miroConfig,
+})
+
+providers.set('mixpanel', {
+	config: mixpanelConfig,
 })
 
 providers.set('canva', {
