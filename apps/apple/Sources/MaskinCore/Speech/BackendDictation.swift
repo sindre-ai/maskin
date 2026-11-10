@@ -53,6 +53,10 @@ public enum DictationFallback: Equatable, Sendable {
 
 	/// The line shown under the composer while the server is doing the transcription.
 	public static let serverNote = "Dictating with the Maskin server"
+	/// The server answered for a phrase but found no words in it.
+	public static let emptyAnswerNote = "Dictating with the Maskin server (it heard no words in the last phrase)"
+	/// Done was pressed and nothing had been sent: no phrase ever sounded like speech.
+	public static let nothingSentNote = "No speech was picked up, so nothing was sent. Try speaking closer to the microphone."
 
 	public static func failed(_ error: Error) -> DictationFallback {
 		if error is TranscriptionTimeout { return .requestTimedOut }
@@ -107,6 +111,10 @@ public final class PhraseTranscriptionQueue {
 	/// What has been delivered so far, phrases joined with spaces.
 	public private(set) var text = ""
 	public private(set) var hasFailed = false
+	/// How many phrases have been sent to the server.
+	public private(set) var submitted = 0
+	/// Whether the server's latest answer had no words in it. Set before `onPhraseDelivered` fires.
+	public private(set) var lastAnswerWasEmpty = false
 	/// Fires once per phrase the server answered for, in order, also when the answer was empty.
 	public var onPhraseDelivered: (@MainActor () -> Void)?
 
@@ -138,7 +146,17 @@ public final class PhraseTranscriptionQueue {
 		let transcriber = transcriber
 		let language = language
 		let timeout = requestTimeout
-		let request = Task { try await Self.transcribe(transcriber, wav: wav, language: language, timeout: timeout) }
+		submitted += 1
+		DictationFallback.log.info("dictation phrase \(self.submitted) sent: \(wav.count) bytes")
+		let number = submitted
+		let request = Task<String, Error> {
+			let started = ContinuousClock.now
+			let text = try await Self.transcribe(transcriber, wav: wav, language: language, timeout: timeout)
+			let took = started.duration(to: .now).description
+			DictationFallback.log.info(
+				"dictation phrase \(number) answered: \(text.count) characters after \(took, privacy: .public)")
+			return text
+		}
 		requests.append(request)
 		let previous = tail
 		tail = Task { [weak self] in
@@ -187,6 +205,7 @@ public final class PhraseTranscriptionQueue {
 		guard !cancelled, !hasFailed else { return }
 		switch result {
 		case .success(let phrase):
+			lastAnswerWasEmpty = phrase.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 			onPhraseDelivered?()
 			let merged = DictationText.merge(base: text, transcript: phrase)
 			guard merged != text else { return }

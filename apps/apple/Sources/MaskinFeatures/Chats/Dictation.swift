@@ -118,7 +118,11 @@ final class Dictation {
 			onInterrupted: { [weak self] in
 				self?.fail("Dictation was interrupted. Tap the microphone to continue.")
 			},
-			onLimit: { [weak self] in self?.backendLimitReached() })
+			onLimit: { [weak self] in self?.backendLimitReached() },
+			onAnswer: { [weak self] empty in
+				guard let self, backendRun != nil else { return }
+				engineNote = empty ? DictationFallback.emptyAnswerNote : DictationFallback.serverNote
+			})
 		SpeechReader.shared.inputDidBegin()
 		do {
 			try run.start()
@@ -420,6 +424,7 @@ final class Dictation {
 		}
 		let task = Task { [self] in
 			await run.finish()
+			if run.phrasesSent == 0 { engineNote = DictationFallback.nothingSentNote }
 			stop()
 		}
 		finishing = task

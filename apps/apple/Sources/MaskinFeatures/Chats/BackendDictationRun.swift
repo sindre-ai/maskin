@@ -25,6 +25,7 @@ final class BackendDictationRun {
 	private let onFailure: @MainActor (DictationFallback) -> Void
 	private let onInterrupted: @MainActor () -> Void
 	private let onLimit: @MainActor () -> Void
+	private let onAnswer: @MainActor (_ empty: Bool) -> Void
 	private var capture: PhraseCapture?
 	private var consumer: Task<Void, Never>?
 	private var timer: Task<Void, Never>?
@@ -37,6 +38,8 @@ final class BackendDictationRun {
 
 	/// What the server has transcribed so far.
 	var text: String { queue.text }
+	/// How many phrases have gone to the server.
+	var phrasesSent: Int { queue.submitted }
 	/// The grey words still waiting for the server's text.
 	var previewText: String { previews.text }
 
@@ -47,18 +50,22 @@ final class BackendDictationRun {
 		onPreview: @escaping @MainActor (String) -> Void,
 		onFailure: @escaping @MainActor (DictationFallback) -> Void,
 		onInterrupted: @escaping @MainActor () -> Void,
-		onLimit: @escaping @MainActor () -> Void
+		onLimit: @escaping @MainActor () -> Void,
+		onAnswer: @escaping @MainActor (_ empty: Bool) -> Void
 	) {
 		queue = PhraseTranscriptionQueue(
 			transcriber: service, language: language, onText: onText, onFailure: { onFailure(.failed($0)) })
 		self.onFailure = onFailure
 		self.onInterrupted = onInterrupted
 		self.onLimit = onLimit
+		self.onAnswer = onAnswer
 		self.previewRecognizer = previewRecognizer
 		self.onPreview = onPreview
 		queue.onPhraseDelivered = { [weak self] in
-			self?.previews.serverDelivered()
-			self?.reportPreview()
+			guard let self else { return }
+			previews.serverDelivered()
+			reportPreview()
+			onAnswer(queue.lastAnswerWasEmpty)
 		}
 	}
 
@@ -210,10 +217,12 @@ final class BackendDictationRun {
 				case .cut:
 					phrase = samples
 					closedPhrase = true
+					Self.log("closed and sent", segmenter, samples.count)
 					samples = []
 					segmenter.reset(atMs: clockMs)
 				case .discard:
 					closedPhrase = true
+					Self.log("dropped as silence", segmenter, samples.count)
 					samples = []
 					segmenter.reset(atMs: clockMs)
 				case nil:
@@ -235,6 +244,15 @@ final class BackendDictationRun {
 			if !tail.isEmpty { phrases.yield(Self.wav(tail)) }
 			preview?.finish(sent: !tail.isEmpty)
 			phrases.finish()
+		}
+
+		/// One line per phrase the microphone closes: why the server did or did not get it, with the levels
+		/// that decided it (numbers only, never audio or text).
+		private static func log(_ what: String, _ segmenter: PhraseSegmenter, _ sampleCount: Int) {
+			let seconds = Double(sampleCount) / Double(WAVEncoding.sampleRate)
+			DictationFallback.log.info(
+				"dictation phrase \(what, privacy: .public): \(seconds) s, loudest \(segmenter.peakRMS), speech level \(segmenter.threshold)"
+			)
 		}
 
 		private static func wav(_ samples: [Float]) -> Data {
