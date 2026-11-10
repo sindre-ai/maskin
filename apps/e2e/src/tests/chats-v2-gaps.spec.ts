@@ -6,7 +6,7 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
  * The Chats gaps closed against the v2 mockup:
  *  - 545–549 the older-conversations affordance stops claiming to be loading
  *  - 660–679 an agent message carrying a ```chart block renders as a data-viz card
- *  - 761–771 `/` opens the "TURN THIS INTO AN OBJECT" type list
+ *  - `/` in the composer is a plain slash: no picker opens
  *
  * `chats-v2.spec.ts` owns the archived empty-state fix (542–544) alongside the
  * rest of the filter-menu coverage. Everything here runs against the real
@@ -96,9 +96,9 @@ test.describe('Chats v2 — agent data-viz card', () => {
 	}
 })
 
-test.describe('Chats v2 — turn this into an object', () => {
+test.describe('Chats v2 — the / key', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
-		test(`typing / opens the create list @ ${vp.label}`, async ({ page, account }) => {
+		test(`typing / is a plain slash and opens no list @ ${vp.label}`, async ({ page, account }) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 			const conversation = await account.api.createConversation(account.workspaceId, {
 				title: `Slash chat ${Date.now()}`,
@@ -113,15 +113,8 @@ test.describe('Chats v2 — turn this into an object', () => {
 			await composer.click()
 			await composer.pressSequentially('/')
 
-			// getByRole, not getByLabel: the picker carries its accessible name as
-			// `aria-label`, and getByLabel does not match a role="listbox" element.
-			const menu = page.getByRole('listbox', { name: 'Reference or create' })
-			await expect(menu).toBeVisible({ timeout: 10_000 })
-			await expect(menu.getByRole('option', { name: /^Bet A shaped/ })).toBeVisible()
-			await expect(menu.getByRole('option', { name: /^Insight A signal/ })).toBeVisible()
-
-			await page.keyboard.press('Escape')
-			await expect(menu).toHaveCount(0)
+			await expect(composer).toHaveText('/')
+			await expect(page.getByRole('listbox')).toHaveCount(0)
 		})
 	}
 })
