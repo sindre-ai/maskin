@@ -15,7 +15,7 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
  * GET /api/data/query against the real database. The aggregation SQL itself is covered
  * against real Postgres in apps/dev's data-query integration test.
  */
-const FRAME = 'iframe[title="Custom loop view"]'
+const FRAME = 'iframe[title="Custom flow view"]'
 
 // The view runs in a frame inside the frame the page renders (the isolation frame).
 const viewFrame = (page: Page) => page.frameLocator(FRAME).frameLocator('iframe')

@@ -1,4 +1,5 @@
 import { Composer } from '@/components/chat/chat'
+import { StarterPrompts } from '@/components/chat/starter-prompts'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { Input } from '@/components/ui/input'
 import { useActors, useDefaultChatAgent } from '@/hooks/use-actors'
@@ -17,6 +18,7 @@ import {
 	chatSelectionReducer,
 } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
+import { starterPromptsForAgents } from '@/lib/starter-prompts'
 import { useWorkspace } from '@/lib/workspace-context'
 import { deriveConversationTitle } from '@maskin/shared'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
@@ -93,9 +95,16 @@ function NewChatRoute() {
 	// True once the person arrowed through the list, so Enter on an empty field picks the row they chose.
 	const arrowedRef = useRef(false)
 	// The box takes focus on open: bumping the nonce after mount is what the composer treats as
-	// a request (a nonce already present on mount never fires).
-	const [focusNonce, setFocusNonce] = useState(0)
-	useEffect(() => setFocusNonce(1), [])
+	// a request (a nonce already present on mount never fires). A starter prompt is the same
+	// request with text to append, so what the person already typed is kept.
+	const [fillRequest, setFillRequest] = useState<{
+		text?: string
+		append?: boolean
+		nonce: number
+	} | null>(null)
+	useEffect(() => setFillRequest({ nonce: 1 }), [])
+	const pickStarter = (prompt: string) =>
+		setFillRequest((prev) => ({ text: prompt, append: true, nonce: (prev?.nonce ?? 0) + 1 }))
 	const [draft, setDraft] = useState(search.text ?? '')
 	// The page stays mounted when the launcher opens /chats/new?text=... from
 	// here, so a new text has to replace the box; the initial value covers mount.
@@ -212,6 +221,15 @@ function NewChatRoute() {
 	}, [candidates, pickedIds, search.agentId, search.agentName, defaultAgent])
 
 	const picked = useMemo(() => rows.filter((r) => pickedIds.includes(r.id)), [rows, pickedIds])
+
+	// One agent picked and nobody else: its own openers. Several people, or only people, have none.
+	const starters = useMemo(
+		() =>
+			picked.length === 1 && picked[0]?.type === 'agent'
+				? starterPromptsForAgents([picked[0].id], actors)
+				: [],
+		[picked, actors],
+	)
 
 	const add = useCallback((id: string) => {
 		setError(null)
@@ -447,6 +465,7 @@ function NewChatRoute() {
 
 			<div className="min-h-8 flex-1" />
 
+			<StarterPrompts prompts={starters} onPick={pickStarter} className="pb-3" />
 			<Composer
 				workspaceId={workspaceId}
 				onSend={handleSend}
@@ -472,7 +491,7 @@ function NewChatRoute() {
 				textareaLabel="First message"
 				value={draft}
 				onValueChange={setDraft}
-				fillRequest={{ nonce: focusNonce }}
+				fillRequest={fillRequest}
 			/>
 		</div>
 	)

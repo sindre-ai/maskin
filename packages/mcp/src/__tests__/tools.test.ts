@@ -37,6 +37,7 @@ const ALL_TOOL_NAMES = [
 	'update_actor',
 	'list_actors',
 	'get_actor',
+	'delete_agent',
 	'create_workspace',
 	'update_workspace',
 	'list_workspaces',

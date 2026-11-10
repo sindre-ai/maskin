@@ -112,6 +112,14 @@ export const decisionOptionSchema = z.object({
 		.describe(
 			'Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.',
 		),
+	delete_agent: z
+		.object({
+			actor_id: z.string().uuid().describe('The agent to delete: its id from list_actors.'),
+		})
+		.optional()
+		.describe(
+			'Use on the option that approves deleting another agent ("Delete Scout"), and mark it destructive. A person tapping it records their approval and nothing is deleted yet: the reply wakes you, and you then call delete_agent with the same id. The approval is for you only, for that one agent, and lapses after 24 hours. Without a tap, delete_agent is refused. All delete_agent options on one card must name the same agent. You cannot ask to delete yourself or a system agent.',
+		),
 })
 
 /**

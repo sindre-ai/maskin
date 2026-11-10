@@ -1,4 +1,5 @@
 import { Composer } from '@/components/chat/chat'
+import { FLOATING_CONTROLS } from '@/components/shared/floating-footer'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { useCanWrite } from '@/hooks/use-can-write'
@@ -62,11 +63,11 @@ export const LoopUtteranceInput = forwardRef<
 	)
 
 	return (
-		<div ref={ref} className="sticky bottom-0 z-10 mt-6 bg-background">
-			<div
-				aria-hidden="true"
-				className="pointer-events-none h-5 bg-gradient-to-b from-transparent to-background"
-			/>
+		// No background: the content shows through around the composer, and only the composer takes clicks.
+		<div
+			ref={ref}
+			className={`pointer-events-none sticky bottom-0 z-10 mt-6 pt-4 ${FLOATING_CONTROLS}`}
+		>
 			<div className="pb-[max(0.625rem,env(safe-area-inset-bottom))]">
 				{children}
 				{showSuggestions && (

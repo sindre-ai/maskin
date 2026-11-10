@@ -1,3 +1,4 @@
+import { FLOATING_CONTROLS } from '@/components/shared/floating-footer'
 import { NewMenu } from '@/components/shared/new-menu'
 import {
 	Breadcrumb,
@@ -15,7 +16,7 @@ import { usePageHeader } from '@/lib/page-header-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, useMatches, useNavigate, useRouter } from '@tanstack/react-router'
 import { ArrowLeft } from 'lucide-react'
-import { Fragment } from 'react'
+import { Fragment, useLayoutEffect, useRef } from 'react'
 
 interface RouteConfig {
 	label: string
@@ -123,6 +124,12 @@ const routeConfig: Record<string, RouteConfig> = {
 const OBJECT_DETAIL_ROUTE_ID = '/_authed/$workspaceId/objects/$objectId'
 
 /**
+ * The bar floats over the page instead of sitting above it: it has no background at all, and
+ * clicks pass through it except on its own controls.
+ */
+const FLOATING_BAR = `pointer-events-none absolute inset-x-0 top-[var(--app-banner-h,0px)] z-20 ${FLOATING_CONTROLS}`
+
+/**
  * The shared top nav — mockup lines 155–279.
  *
  * One row per screen (34px title from `md:`, 28px side margin from `lg:`): the screen's <h1> and muted count on the left, then
@@ -203,6 +210,39 @@ export function ScrollingPageTitle() {
 	)
 }
 
+/**
+ * Tells the scroll area how much room the floating bar needs at rest, through two CSS
+ * variables on the bar's parent: its height (0 where it takes none, as on a screen whose
+ * title scrolls away) and the gap that then separates it from the first row of content.
+ */
+function useReportBarSpace(
+	ref: React.RefObject<HTMLElement | null>,
+	takesNoHeightAtMd: boolean,
+	gaps: { md: number; mobile: number },
+) {
+	useLayoutEffect(() => {
+		const bar = ref.current
+		const shell = bar?.parentElement
+		if (!bar || !shell) return
+		const wide = window.matchMedia('(min-width: 768px)')
+		const apply = () => {
+			const height = wide.matches && takesNoHeightAtMd ? 0 : bar.getBoundingClientRect().height
+			shell.style.setProperty('--app-header-h', `${height}px`)
+			shell.style.setProperty('--app-header-gap', `${wide.matches ? gaps.md : gaps.mobile}px`)
+		}
+		apply()
+		const observer = new ResizeObserver(apply)
+		observer.observe(bar)
+		wide.addEventListener('change', apply)
+		return () => {
+			observer.disconnect()
+			wide.removeEventListener('change', apply)
+			shell.style.removeProperty('--app-header-h')
+			shell.style.removeProperty('--app-header-gap')
+		}
+	}, [ref, takesNoHeightAtMd, gaps.md, gaps.mobile])
+}
+
 export function Header() {
 	const {
 		subtitle,
@@ -221,6 +261,15 @@ export function Header() {
 	const navigate = useNavigate()
 	const router = useRouter()
 	const { leafMatch, crumbs, isDetail, headingText, scrollsAway } = useHeaderModel()
+	const barRef = useRef<HTMLElement>(null)
+	// From md a standard screen's title scrolls away and a hideBar page draws its own top edge,
+	// so the bar reserves nothing there and the first row sits 32px down. Otherwise the gaps keep
+	// the first row where the bar's old in-flow layout put it.
+	const floatsAtMd = scrollsAway || !!hideBar
+	useReportBarSpace(barRef, floatsAtMd, {
+		md: floatsAtMd ? 32 : crumb ? 10 : 6,
+		mobile: crumb ? 16 : 10,
+	})
 
 	// Object-detail pages drop the "Create an object" section from the New
 	// menu — landing users on the generic object picker is disorienting when
@@ -232,9 +281,14 @@ export function Header() {
 	// search, split New button or back arrow competing for the row.
 	if (crumb) {
 		return (
-			<header // v16: no rule under the bar; from md the content sits 22px under the buttons (the shell
-				// pads it 32px, so the bar pulls 10px back).
-				className="relative z-10 flex flex-none flex-wrap items-center gap-2 bg-background px-4 pt-[calc(env(safe-area-inset-top)+13px)] pb-[13px] md:-mb-2.5 md:flex-nowrap md:px-8 md:pt-5 md:pb-0 lg:px-7"
+			<header
+				ref={barRef}
+				// v16: no rule under the bar. It floats over the page (see FLOATING_BAR); the scroll area
+				// reserves its height, so nothing sits under it at rest.
+				className={cn(
+					FLOATING_BAR,
+					'flex flex-wrap items-center gap-2 px-4 pt-[calc(env(safe-area-inset-top)+13px)] pb-[13px] md:flex-nowrap md:px-8 md:pt-5 md:pb-3 lg:px-7',
+				)}
 			>
 				<SidebarTrigger className="md:hidden -ml-0.5 h-[30px] w-[30px] shrink-0" />
 				<Link
@@ -285,19 +339,17 @@ export function Header() {
 
 	return (
 		<header
+			ref={barRef}
 			className={cn(
-				// z-10 + bg: the negative bottom margin below tucks the scroll area 20px under this row, so
-				// without its own layer scrolled content painted over the title and buttons.
-				'relative z-10 flex flex-none flex-wrap items-center gap-2 gap-y-1.5 bg-background px-4 pt-[calc(env(safe-area-inset-top)+1.25rem)] pb-1.5 md:px-8',
-				// v16: the first content row sits 16px under the title (the shell pads it 32px).
-				'md:-mb-5',
+				// Floats over the page (see FLOATING_BAR); the scroll area reserves its height.
+				FLOATING_BAR,
+				'flex flex-wrap items-center gap-2 gap-y-1.5 px-4 pt-[calc(env(safe-area-inset-top)+1.25rem)] pb-3 md:px-8',
 				// Standard screens (design): from md the title scrolls away with the page, so the header
 				// takes no height and keeps only the buttons, floating over the content with no
 				// background. Only the buttons take clicks; the rest of the strip lets them through.
 				// hideBar: the page owns its whole top edge from md, so nothing draws here.
 				hideBar && 'md:hidden',
-				scrollsAway &&
-					'md:pointer-events-none md:absolute md:inset-x-0 md:top-0 md:mb-0 md:justify-end md:bg-transparent md:pt-6 md:pb-0',
+				scrollsAway && 'md:justify-end md:pt-6 md:pb-0',
 				gutter === 'wide' ? 'lg:px-12' : 'lg:px-7',
 			)}
 		>

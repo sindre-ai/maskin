@@ -348,6 +348,9 @@ export const relationships = pgTable(
 	},
 	(t) => [
 		unique('relationships_src_tgt_type_uniq').on(t.sourceId, t.targetId, t.type),
+		// Target-side edge lookups (graph, relationships list, spawned-session lookup); the unique
+		// above leads with source_id. Built CONCURRENTLY in migration 0143.
+		index('relationships_target_type_idx').on(t.targetId, t.type),
 		// S2 · widened to admit `conversation` and `session` endpoint kinds so
 		// the writer hook can persist automatic provenance edges
 		// (conversation→session `spawned`, session→object|file `produced_by`).
@@ -915,6 +918,11 @@ export const sessions = pgTable(
 		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0044.
 		index('sessions_ws_updated_at_idx').on(t.workspaceId, t.updatedAt),
 		index('sessions_actor_idx').on(t.actorId),
+		// Sessions spawned by a chat message, and the ON DELETE SET NULL FK. Built CONCURRENTLY in
+		// migration 0144.
+		index('sessions_spawned_by_message_id_idx')
+			.on(t.spawnedByMessageId)
+			.where(sql`${t.spawnedByMessageId} IS NOT NULL`),
 		// "Does this agent have another live session?" on every completion. Built
 		// CONCURRENTLY in migration 0087.
 		index('sessions_actor_status_idx').on(t.actorId, t.status),

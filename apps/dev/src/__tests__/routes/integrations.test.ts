@@ -151,6 +151,7 @@ describe('Integrations Routes', () => {
 					.map((p) => p.name)
 					.sort(),
 			).toEqual([
+				'atlassian',
 				'attio',
 				'github',
 				'gmail',
@@ -164,7 +165,9 @@ describe('Integrations Routes', () => {
 				'notion',
 				'posthog',
 				'resend',
+				'sentry',
 				'slack',
+				'stripe',
 				'ubersuggest',
 			])
 

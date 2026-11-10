@@ -98,6 +98,7 @@ export const TYPE_LABELS: Record<string, string> = {
 	insight: 'Insight',
 	bet: 'Bet',
 	task: 'Task',
+	loop: 'Flow',
 	file: 'File',
 	conversation: 'Chat',
 	session: 'Session',

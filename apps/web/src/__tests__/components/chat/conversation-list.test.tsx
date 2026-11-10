@@ -314,3 +314,87 @@ describe('ConversationList', () => {
 		expect(api.conversations.messages).not.toHaveBeenCalledWith('pin', expect.anything())
 	})
 })
+
+describe('ConversationList collapse', () => {
+	it('hides every direct message row when the Direct messages group is collapsed', async () => {
+		vi.mocked(api.conversations.replyThreads).mockResolvedValue({ threads: [] } as never)
+		vi.mocked(api.conversations.list).mockResolvedValue({
+			conversations: Array.from({ length: 21 }, (_, i) =>
+				buildConversation({ id: `dm-${i}`, title: `Agent ${i}`, directPairKey: `pair-${i}` }),
+			),
+			has_more: false,
+		})
+		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
+		const header = await screen.findByRole('button', { name: /Direct messages/ })
+		expect(screen.getAllByRole('link')).toHaveLength(21)
+		await userEvent.click(header)
+		expect(screen.queryAllByRole('link')).toHaveLength(0)
+	})
+
+	it('keeps rows hidden and stops paging while every group is collapsed', async () => {
+		const live = new Set<() => void>()
+		vi.stubGlobal(
+			'IntersectionObserver',
+			class {
+				constructor(cb: (e: Array<{ isIntersecting: boolean }>) => void) {
+					this.fire = () => cb([{ isIntersecting: true }])
+				}
+				fire: () => void
+				observe() {
+					live.add(this.fire)
+				}
+				disconnect() {
+					live.delete(this.fire)
+				}
+			},
+		)
+		const dm = (i: number) =>
+			buildConversation({ id: `dm-${i}`, title: `Agent ${i}`, directPairKey: `pair-${i}` })
+		vi.mocked(api.conversations.list).mockResolvedValue({
+			conversations: Array.from({ length: 13 }, (_, i) => dm(i)),
+			has_more: true,
+		})
+		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
+		await userEvent.click(await screen.findByRole('button', { name: /Direct messages/ }))
+		for (const fire of live) fire()
+		expect(vi.mocked(api.conversations.list).mock.calls.some(([, q]) => q?.offset === '30')).toBe(
+			false,
+		)
+		expect(screen.queryAllByRole('link')).toHaveLength(0)
+		vi.unstubAllGlobals()
+	})
+
+	it('lists a chat once when a later page repeats it', async () => {
+		const dm = (i: number) =>
+			buildConversation({ id: `dm-${i}`, title: `Agent ${i}`, directPairKey: `pair-${i}` })
+		vi.mocked(api.conversations.list)
+			.mockResolvedValueOnce({ conversations: [dm(0), dm(1)], has_more: true })
+			.mockResolvedValue({ conversations: [dm(1), dm(2)], has_more: false })
+		const live = new Set<() => void>()
+		vi.stubGlobal(
+			'IntersectionObserver',
+			class {
+				fire: () => void
+				constructor(cb: (e: Array<{ isIntersecting: boolean }>) => void) {
+					this.fire = () => cb([{ isIntersecting: true }])
+				}
+				observe() {
+					live.add(this.fire)
+				}
+				disconnect() {
+					live.delete(this.fire)
+				}
+			},
+		)
+		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
+		const header = await screen.findByRole('button', { name: /Direct messages/ })
+		await act(async () => {
+			for (const fire of live) fire()
+		})
+		await waitFor(() => expect(screen.getAllByRole('link')).toHaveLength(3))
+		expect(header).toHaveTextContent('3')
+		await userEvent.click(header)
+		expect(screen.queryAllByRole('link')).toHaveLength(0)
+		vi.unstubAllGlobals()
+	})
+})

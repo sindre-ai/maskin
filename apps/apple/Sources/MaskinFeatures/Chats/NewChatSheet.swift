@@ -92,8 +92,12 @@ struct NewChatSheet: View {
 		recipients.count == 1 && recipients[0].kind == .agent && !isCreating ? recipients[0] : nil
 	}
 
+	/// One agent and nobody else: its own openers. Several people, or only people, have none.
+	private var starters: [String] { StarterPrompts.forChat(others: recipients, actors: store.actors) }
+
 	private var bottomBar: some View {
 		VStack(alignment: .trailing, spacing: MaskinSpace.s5) {
+			StarterPromptsView(prompts: starters) { composer.addStarter($0) }
 			if !composer.trimmedText.isEmpty, restoredDraft {
 				Text("Draft saved · ⌘↩ to send")
 					.font(MaskinTypeface.sans(MaskinFontSize.t12, relativeTo: .caption))

@@ -101,8 +101,8 @@ struct WatchListeningScreen: View {
 				listeningBody
 			case .sending:
 				WatchSpinner().frame(maxWidth: .infinity, maxHeight: .infinity)
-			case .tapToTalk:
-				tapToTalkBody
+			case .tapToTalk(let reason):
+				tapToTalkBody(reason)
 			}
 		}
 		.containerBackground(for: .navigation) { WatchBackdrop() }
@@ -116,7 +116,7 @@ struct WatchListeningScreen: View {
 		VStack(spacing: MaskinSpace.gapLoose) {
 			Text("LISTENING").font(WatchType.microMono()).tracking(0.8).foregroundStyle(MaskinColor.sigHi)
 			ScrollView {
-				Text(listening.text)
+				Text(listening.text.isEmpty ? "Say your question" : listening.text)
 					.font(WatchType.question()).foregroundStyle(MaskinColor.ink)
 					.multilineTextAlignment(.center).frame(maxWidth: .infinity)
 			}
@@ -129,13 +129,13 @@ struct WatchListeningScreen: View {
 		.padding(.horizontal, MaskinSpace.s1)
 	}
 
-	private var tapToTalkBody: some View {
+	private func tapToTalkBody(_ reason: WatchListeningStore.Reason) -> some View {
 		VStack(spacing: MaskinSpace.gapLoose) {
 			Text("TAP TO TALK").font(WatchType.microMono()).tracking(0.8).foregroundStyle(MaskinColor.ink4)
 			WatchDictate(accessibility: "Ask Chief of Staff", send: ask) {
 				WatchMicGlyph(size: WatchMetrics.mic)
 			}
-			Text("Tap to start. Tap again, or pause, to send.")
+			Text(reason == .noSpeech ? "Didn't hear anything. Tap to talk instead." : "Tap to start. Tap again, or pause, to send.")
 				.font(WatchType.caption()).foregroundStyle(MaskinColor.ink3).multilineTextAlignment(.center)
 			WatchQuietButton(title: "Cancel") { listening.cancel() }
 		}
@@ -215,8 +215,8 @@ private struct WatchAnswer: View {
 	let answer: ChatMessage
 	@State private var speaker = BriefingSpeaker(title: "Chief of Staff")
 	@State private var muted = false
-	/// Speech is only for headphones: a reply read out loud on a wrist speaker is read out loud to
-	/// the room.
+	/// Speech starts by itself only for headphones: a reply read out loud on a wrist speaker is read
+	/// out loud to the room. Read aloud is always there for the wearer to ask for it.
 	@State private var speechAllowed = BriefingSpeaker.outputIsHeadphones
 
 	private var text: String { WatchBriefingText.plain(answer.content) }
@@ -250,20 +250,18 @@ private struct WatchAnswer: View {
 		WatchDictate(accessibility: "Reply to Chief of Staff", send: conversation.ask) {
 			WatchCapsule(title: "Reply", prominent: true, font: WatchType.action())
 		}
-		if speechAllowed {
-			Button {
-				if speaker.isSpeaking {
-					speaker.stop()
-					muted = true
-				} else {
-					muted = false
-					speaker.speak(text)
-				}
-			} label: {
-				WatchCapsule(title: speaker.isSpeaking ? "Stop" : (muted ? "Resume" : "Read aloud"))
+		Button {
+			if speaker.isSpeaking {
+				speaker.stop()
+				muted = true
+			} else {
+				muted = false
+				speaker.speak(text)
 			}
-			.buttonStyle(.plain)
+		} label: {
+			WatchCapsule(title: speaker.isSpeaking ? "Stop" : (muted ? "Resume" : "Read aloud"))
 		}
+		.buttonStyle(.plain)
 		if WatchConversation.asksQuestion(answer.content) {
 			NavigationLink {
 				WatchQuickReplies(question: text, conversation: conversation)

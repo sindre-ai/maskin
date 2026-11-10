@@ -127,14 +127,15 @@ struct PhraseTranscriptionQueueTests {
 		var failures = 0
 	}
 
-	private func makeQueue(_ replies: [ScriptedTranscriber.Reply], language: String? = nil)
-		-> (PhraseTranscriptionQueue, Sink, ScriptedTranscriber)
-	{
+	private func makeQueue(
+		_ replies: [ScriptedTranscriber.Reply], language: String? = nil, requestTimeout: Duration = .seconds(20)
+	) -> (PhraseTranscriptionQueue, Sink, ScriptedTranscriber) {
 		let sink = Sink()
 		let transcriber = ScriptedTranscriber(replies)
 		let queue = PhraseTranscriptionQueue(
 			transcriber: transcriber, language: language,
-			onText: { sink.texts.append($0) }, onFailure: { _ in sink.failures += 1 })
+			onText: { sink.texts.append($0) }, onFailure: { _ in sink.failures += 1 },
+			requestTimeout: requestTimeout)
 		return (queue, sink, transcriber)
 	}
 
@@ -167,6 +168,17 @@ struct PhraseTranscriptionQueueTests {
 		#expect(sink.texts == ["hello"])
 	}
 
+	@Test func tellsWhenEachPhraseWasAnsweredEvenWithNoText() async {
+		let (queue, _, _) = makeQueue([.init(text: "  "), .init(text: "hello"), .init(text: "", fails: true)])
+		var answered = 0
+		queue.onPhraseDelivered = { answered += 1 }
+		queue.submit(wav: Data([1]))
+		queue.submit(wav: Data([2]))
+		queue.submit(wav: Data([3]))
+		await queue.drain(timeout: .seconds(300))
+		#expect(answered == 2)
+	}
+
 	@Test func aFailureStopsDeliveryAndReportsOnce() async {
 		let (queue, sink, _) = makeQueue([
 			.init(text: "ok"), .init(text: "", fails: true), .init(text: "never seen"),
@@ -192,6 +204,23 @@ struct PhraseTranscriptionQueueTests {
 		#expect(sink.failures == 0)
 	}
 
+	@Test func aRequestThatHangsFailsAfterTheRequestTimeout() async {
+		let (queue, sink, _) = makeQueue([.init(text: "stuck", delay: .seconds(60))], requestTimeout: .milliseconds(100))
+		queue.submit(wav: Data([1]))
+		await queue.drain(timeout: .seconds(300))
+		#expect(sink.texts.isEmpty)
+		#expect(sink.failures == 1)
+		#expect(queue.hasFailed)
+	}
+
+	@Test func aRequestThatAnswersInTimeIsNotTimedOut() async {
+		let (queue, sink, _) = makeQueue([.init(text: "hej", delay: .milliseconds(20))], requestTimeout: .seconds(30))
+		queue.submit(wav: Data([1]))
+		await queue.drain(timeout: .seconds(300))
+		#expect(sink.texts == ["hej"])
+		#expect(sink.failures == 0)
+	}
+
 	@Test func drainGivesUpOnARequestThatNeverReturns() async {
 		let (queue, sink, _) = makeQueue([.init(text: "stuck", delay: .seconds(60))])
 		queue.submit(wav: Data([1]))
@@ -204,7 +233,7 @@ struct PhraseTranscriptionQueueTests {
 struct DictationFallbackTests {
 	@Test func aServerStatusIsNamedInThePlainNote() {
 		let note = DictationFallback.failed(BackendDictationError(status: 503)).note
-		#expect(note == "Server dictation unavailable (the speech service isn't answering, 503), using the phone.")
+		#expect(note == "Dictating on the phone (the speech service isn't answering, 503)")
 		#expect(DictationFallback.failed(BackendDictationError(status: 429)).note.contains("busy"))
 		#expect(DictationFallback.failed(BackendDictationError(status: 418)).note.contains("418"))
 	}
@@ -213,6 +242,20 @@ struct DictationFallbackTests {
 		let offline = DictationFallback.failed(URLError(.notConnectedToInternet))
 		#expect(offline.note.contains("no answer from the server"))
 		#expect(offline.detail.contains("NSURLErrorDomain"))
+	}
+
+	@Test func aTimeoutAndTheTimeLimitHaveTheirOwnReasons() {
+		let timedOut = DictationFallback.failed(TranscriptionTimeout())
+		#expect(timedOut == .requestTimedOut)
+		#expect(timedOut.note == "Dictating on the phone (the server took too long)")
+		#expect(timedOut.detail == "request timed out")
+		#expect(DictationFallback.timeLimit.note.hasPrefix("Dictating on the phone ("))
+		#expect(DictationFallback.serverNote == "Dictating with the Maskin server")
+	}
+
+	@Test func aMissingServiceIsNamedNotSilent() {
+		#expect(DictationFallback.serviceMissing.note == "Dictating on the phone (the app isn't connected to the server)")
+		#expect(DictationFallback.serviceMissing.detail == "no server dictation service configured")
 	}
 
 	@Test func theLogDetailKeepsTheStatusAndNoText() {

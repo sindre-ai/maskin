@@ -31,9 +31,10 @@ public enum WatchConversation {
 
 	/// The label over the answer: what the speaker is doing, or why it is not.
 	public static func stateLabel(speaking: Bool, muted: Bool, speechAllowed: Bool) -> String {
+		// Read aloud works on the speaker too, when the wearer asks for it.
+		if speaking { return "SPEAKING" }
 		if !speechAllowed { return "TEXT ONLY" }
-		if muted { return "MUTED" }
-		return speaking ? "SPEAKING" : "DONE"
+		return muted ? "MUTED" : "DONE"
 	}
 }
 

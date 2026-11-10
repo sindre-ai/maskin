@@ -1,5 +1,6 @@
 import type { ResolvedProvider } from './types'
 
+import { config as atlassianConfig } from './providers/atlassian/config'
 import { config as attioConfig } from './providers/attio/config'
 import { config as customMcpConfig } from './providers/custom-mcp/config'
 import { githubAuth } from './providers/github/auth'
@@ -39,6 +40,7 @@ import { config as miroConfig } from './providers/miro/config'
 import { config as notionConfig } from './providers/notion/config'
 import { config as posthogConfig } from './providers/posthog/config'
 import { config as resendConfig } from './providers/resend/config'
+import { config as sentryConfig } from './providers/sentry/config'
 import { config as skjaldConfig } from './providers/skjald/config'
 import { reapSlackUserLinks } from './providers/slack/account-link'
 import {
@@ -55,6 +57,7 @@ import {
 import { slackWebhookFanOut } from './providers/slack/fan-out'
 import { probeSlackTierOnInstall } from './providers/slack/tier-cache'
 import { slackEventNormalizer } from './providers/slack/webhooks'
+import { config as stripeConfig } from './providers/stripe/config'
 import { ubersuggestAuth } from './providers/ubersuggest/auth'
 import { config as ubersuggestConfig } from './providers/ubersuggest/config'
 
@@ -175,8 +178,20 @@ providers.set('notion', {
 	config: notionConfig,
 })
 
+providers.set('atlassian', {
+	config: atlassianConfig,
+})
+
 providers.set('attio', {
 	config: attioConfig,
+})
+
+providers.set('sentry', {
+	config: sentryConfig,
+})
+
+providers.set('stripe', {
+	config: stripeConfig,
 })
 
 // resend — bring-your-own integration for customer-domain email send+receive

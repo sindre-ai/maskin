@@ -145,6 +145,8 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'GET /api/integrations/slack/mcp',
 	'POST /api/integrations/slack/mcp',
 	'GET /api/loops/:id/activity',
+	'GET /api/loops/:id/briefings',
+	'GET /api/loops/:id/next-steps',
 	'GET /api/loops/:id/steps',
 	'POST /api/marketplace/items/:id/install',
 	'DELETE /api/marketplace/items/:id/uninstall',
@@ -210,6 +212,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	// Skip authMiddleware (public, provider-signed or self-authenticating). A mat_ token never reaches the OAuth branch on these.
 	'POST /api/auth/login',
 	'GET /api/health',
+	'GET /api/health/db',
 	'GET /api/integrations/:provider/callback',
 	'GET /api/integrations/linkedin-unipile/callback',
 	'POST /api/integrations/linkedin-unipile/webhook',

@@ -8903,6 +8903,12 @@
 													"type": "string"
 												}
 											},
+											"starter_prompts": {
+												"type": "array",
+												"items": {
+													"type": "string"
+												}
+											},
 											"workspaces": {
 												"type": "array",
 												"items": {
@@ -9408,6 +9414,15 @@
 											"maxLength": 40
 										},
 										"maxItems": 10
+									},
+									"starter_prompts": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 60
+										},
+										"maxItems": 4
 									}
 								}
 							}
@@ -9783,7 +9798,7 @@
 						}
 					},
 					"403": {
-						"description": "Cannot delete human actors",
+						"description": "Cannot delete human actors or system agents, and an agent caller needs a person’s approval (a delete_agent option tapped on a decision card)",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -26117,6 +26132,337 @@
 									},
 									"required": [
 										"steps"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Missing workspace ID or malformed loop id",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/loops/{id}/next-steps": {
+			"get": {
+				"tags": [
+					"loops"
+				],
+				"summary": "Next steps for one loop: asks waiting first, then open members",
+				"description": "Returns `asks` (steps with sessions waiting on a person, most waiting first) and `items` (the newest open members of the loop, capped at 10). Both are empty for a loop with nothing to do, no steps, or an unknown id (a foreign loop returns empty without leaking existence).",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Next steps (may be empty)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"asks": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"triggerId": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"triggerName": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"agent": {
+														"type": [
+															"object",
+															"null"
+														],
+														"properties": {
+															"id": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"name": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"description": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															}
+														},
+														"required": [
+															"id"
+														]
+													},
+													"pendingCount": {
+														"type": "integer",
+														"exclusiveMinimum": 0
+													}
+												},
+												"required": [
+													"triggerId",
+													"triggerName",
+													"agent",
+													"pendingCount"
+												]
+											}
+										},
+										"items": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"type": {
+														"type": "string"
+													},
+													"title": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"status": {
+														"type": "string"
+													}
+												},
+												"required": [
+													"id",
+													"type",
+													"title",
+													"status"
+												]
+											}
+										}
+									},
+									"required": [
+										"asks",
+										"items"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Missing workspace ID or malformed loop id",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/loops/{id}/briefings": {
+			"get": {
+				"tags": [
+					"loops"
+				],
+				"summary": "Briefing pages attached to one loop or its members",
+				"description": "Returns the loop's briefing pages (files of kind \"briefing\" attached to the loop or to one of its members), newest first, each page once, capped at 24. Empty for a loop with none or an unknown id (a foreign loop returns empty without leaking existence).",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Briefing pages (may be empty)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"briefings": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"name": {
+														"type": "string"
+													},
+													"mimeType": {
+														"type": "string"
+													},
+													"updatedAt": {
+														"type": "string"
+													},
+													"sourceId": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"sourceTitle": {
+														"type": [
+															"string",
+															"null"
+														]
+													}
+												},
+												"required": [
+													"id",
+													"name",
+													"mimeType",
+													"updatedAt",
+													"sourceId",
+													"sourceTitle"
+												]
+											}
+										}
+									},
+									"required": [
+										"briefings"
 									]
 								}
 							}
@@ -42861,6 +43207,20 @@
 																"status"
 															],
 															"description": "Use on the option that moves an object to a new status (\"Go\" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted."
+														},
+														"delete_agent": {
+															"type": "object",
+															"properties": {
+																"actor_id": {
+																	"type": "string",
+																	"format": "uuid",
+																	"description": "The agent to delete: its id from list_actors."
+																}
+															},
+															"required": [
+																"actor_id"
+															],
+															"description": "Use on the option that approves deleting another agent (\"Delete Scout\"), and mark it destructive. A person tapping it records their approval and nothing is deleted yet: the reply wakes you, and you then call delete_agent with the same id. The approval is for you only, for that one agent, and lapses after 24 hours. Without a tap, delete_agent is refused. All delete_agent options on one card must name the same agent. You cannot ask to delete yourself or a system agent."
 														}
 													},
 													"required": [
@@ -58789,6 +59149,20 @@
 																						"status"
 																					],
 																					"description": "Use on the option that moves an object to a new status (\"Go\" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted."
+																				},
+																				"delete_agent": {
+																					"type": "object",
+																					"properties": {
+																						"actor_id": {
+																							"type": "string",
+																							"format": "uuid",
+																							"description": "The agent to delete: its id from list_actors."
+																						}
+																					},
+																					"required": [
+																						"actor_id"
+																					],
+																					"description": "Use on the option that approves deleting another agent (\"Delete Scout\"), and mark it destructive. A person tapping it records their approval and nothing is deleted yet: the reply wakes you, and you then call delete_agent with the same id. The approval is for you only, for that one agent, and lapses after 24 hours. Without a tap, delete_agent is refused. All delete_agent options on one card must name the same agent. You cannot ask to delete yourself or a system agent."
 																				}
 																			},
 																			"required": [
@@ -62692,6 +63066,20 @@
 																						"status"
 																					],
 																					"description": "Use on the option that moves an object to a new status (\"Go\" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted."
+																				},
+																				"delete_agent": {
+																					"type": "object",
+																					"properties": {
+																						"actor_id": {
+																							"type": "string",
+																							"format": "uuid",
+																							"description": "The agent to delete: its id from list_actors."
+																						}
+																					},
+																					"required": [
+																						"actor_id"
+																					],
+																					"description": "Use on the option that approves deleting another agent (\"Delete Scout\"), and mark it destructive. A person tapping it records their approval and nothing is deleted yet: the reply wakes you, and you then call delete_agent with the same id. The approval is for you only, for that one agent, and lapses after 24 hours. Without a tap, delete_agent is refused. All delete_agent options on one card must name the same agent. You cannot ask to delete yourself or a system agent."
 																				}
 																			},
 																			"required": [

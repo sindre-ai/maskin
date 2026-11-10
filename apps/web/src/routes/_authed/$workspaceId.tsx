@@ -271,7 +271,9 @@ function MainScrollArea({ children }: { children: ReactNode }) {
 	return (
 		<div
 			className={cn(
-				'flex flex-col flex-1 min-w-0 px-4 pb-4 pt-4 md:px-8 md:py-8',
+				// The top edge is the floating bar's height plus its gap (the Header reports both), so the
+				// first row sits clear of the bar at rest and scrolls up under it afterwards.
+				'flex flex-col flex-1 min-w-0 px-4 pb-4 pt-[calc(var(--app-header-h,0px)+var(--app-header-gap,1rem))] md:px-8 md:pb-8',
 				gutter === 'wide' ? 'lg:px-12' : 'lg:px-7',
 				scrollLocked ? 'overflow-hidden' : 'overflow-auto',
 			)}

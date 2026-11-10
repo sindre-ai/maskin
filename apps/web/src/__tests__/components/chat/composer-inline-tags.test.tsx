@@ -28,7 +28,6 @@ vi.mock('@/lib/analytics', () => ({
 	deriveEntryAgentRole: () => 'coach',
 	trackSpecialistSummonedManually: () => {},
 	trackChatMentionInserted: () => {},
-	trackChatObjectReferenceCreated: () => {},
 }))
 
 type Sent = { content: string; mentions: string[] }
@@ -42,7 +41,7 @@ function Harness({
 }: {
 	sent: Sent[]
 	draftKey?: string
-	fillRequest?: { text?: string; nonce: number } | null
+	fillRequest?: { text?: string; append?: boolean; nonce: number } | null
 }) {
 	const [selection, dispatch] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
 	const latest = (s: ChatSelection) => s.agents
@@ -210,5 +209,45 @@ describe('Composer with inline tags', () => {
 		typeAtEnd('half')
 		rerender(<Harness sent={[]} fillRequest={{ text: 'Here is a task: ', nonce: 1 }} />)
 		await waitFor(() => expect(box().textContent).toBe('Here is a task: '))
+	})
+
+	// The thread route uses this composer (thread-composer passes inlineTags), so a starter prompt
+	// has to reach the visible draft here too, after the text and any chip already in it.
+	it('puts a starter after the typed text on an append request', async () => {
+		const { rerender } = render(<Harness sent={[]} fillRequest={null} />, { wrapper })
+		typeAtEnd('Quick one:')
+		rerender(
+			<Harness sent={[]} fillRequest={{ text: 'What needs me today?', append: true, nonce: 1 }} />,
+		)
+		await waitFor(() => expect(box().textContent).toBe('Quick one: What needs me today?'))
+	})
+
+	it('puts a starter in an empty box on an append request', async () => {
+		const { rerender } = render(<Harness sent={[]} fillRequest={null} />, { wrapper })
+		rerender(
+			<Harness sent={[]} fillRequest={{ text: 'What needs me today?', append: true, nonce: 1 }} />,
+		)
+		await waitFor(() => expect(box().textContent).toBe('What needs me today?'))
+	})
+
+	it('keeps a tag chip that is already in the draft when a starter is appended', async () => {
+		sessionStorage.setItem('composer-draft:conv-starter', 'hi @CTO ')
+		sessionStorage.setItem(
+			'composer-draft:conv-starter:tags',
+			JSON.stringify([{ id: 'a-cto', label: 'CTO' }]),
+		)
+		const { rerender } = render(<Harness sent={[]} draftKey="conv-starter" fillRequest={null} />, {
+			wrapper,
+		})
+		expect(chips()).toHaveLength(1)
+		rerender(
+			<Harness
+				sent={[]}
+				draftKey="conv-starter"
+				fillRequest={{ text: 'What needs me today?', append: true, nonce: 1 }}
+			/>,
+		)
+		await waitFor(() => expect(box().textContent).toBe('hi @CTO What needs me today?'))
+		expect(chips()).toHaveLength(1)
 	})
 })

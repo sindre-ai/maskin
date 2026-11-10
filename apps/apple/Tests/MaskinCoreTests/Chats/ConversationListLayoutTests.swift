@@ -74,6 +74,14 @@ import Testing
 		#expect(TeamLayout.hasCustomTitle(chatConvo("t", title: "Old topic"), me: "me"))
 	}
 
+	@Test func directMessageBetweenTwoPeopleIsADirectMessageNamedAfterTheOtherPerson() {
+		var dm = chatConvo("dm", title: chatSam.name, participants: [chatMe, chatSam])
+		dm.directPairKey = "me:sam"
+		let groups = ConversationGrouping.group([dm], now: now, calendar: calendar)
+		#expect(groups.map(\.key) == [.direct])
+		#expect(TeamLayout.title(of: dm, me: "me") == chatSam.name)
+	}
+
 	@Test func groupChatNeedsMoreThanOneOtherParty() {
 		#expect(!chatConvo("a").isGroupChat(excluding: "me"))
 		#expect(chatConvo("b", participants: [chatMe, chatRelay, chatSam]).isGroupChat(excluding: "me"))
