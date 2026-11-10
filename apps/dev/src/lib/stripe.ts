@@ -1,5 +1,5 @@
-import Stripe from 'stripe'
 import { PAID_PLANS, type PaidPlan } from '@maskin/shared'
+import Stripe from 'stripe'
 import {
 	LEGACY_USD_PRO_HARD_CAP_USD_CENTS,
 	LEGACY_USD_TEAM_HARD_CAP_USD_CENTS,

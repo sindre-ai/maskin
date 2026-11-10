@@ -516,8 +516,9 @@ async function applyEvent(
 					// with the add-on's — silently changing what the workspace is
 					// entitled to because it connected LinkedIn.
 					const addonItem =
-						sub.items?.data?.find((item) => isLinkedInAddonPrice(item.price?.id ?? null, stripeEnv)) ??
-						sub.items?.data?.[0]
+						sub.items?.data?.find((item) =>
+							isLinkedInAddonPrice(item.price?.id ?? null, stripeEnv),
+						) ?? sub.items?.data?.[0]
 					next = {
 						...next,
 						linkedin_addon_subscription_id: sub.id,
