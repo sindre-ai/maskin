@@ -1,6 +1,7 @@
 import { PageHeader } from '@/components/layout/page-header'
 import { AskBanner } from '@/components/loops/ask-banner'
 import { LoopBlockError } from '@/components/loops/loop-block-error'
+import { LoopBriefingStage } from '@/components/loops/loop-briefing-stage'
 import { itemsNeedingYou } from '@/components/loops/loop-counters'
 import { LoopDecisions } from '@/components/loops/loop-decisions'
 import { LoopDetailTabs } from '@/components/loops/loop-detail-tabs'
@@ -911,7 +912,7 @@ function LoopDetailRoute() {
 								))}
 							</div>
 						)}
-						<LoopViewTab
+						<LoopBriefingStage
 							key={activeBriefing.id}
 							workspaceId={workspaceId}
 							fileId={activeBriefing.id}
