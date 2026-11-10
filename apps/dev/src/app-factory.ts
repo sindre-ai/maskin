@@ -38,6 +38,7 @@ import adminLinkedinUnipileRoutes from './routes/admin-linkedin-unipile'
 import agentServerReconcileRoutes from './routes/agent-server-reconcile'
 import agentSkillAttachmentsRoutes from './routes/agent-skill-attachments'
 import agentSkillsRoutes from './routes/agent-skills'
+import apiKeysRoutes from './routes/api-keys'
 import authRoutes from './routes/auth'
 import billingRoutes from './routes/billing'
 import briefingRoutes from './routes/briefing'
@@ -57,6 +58,7 @@ import fileProposalsRoutes from './routes/file-proposals'
 import filesRoutes from './routes/files'
 import forYouRoutes from './routes/for-you'
 import graphRoutes from './routes/graph'
+import guardrailsRoutes from './routes/guardrails'
 import importsRoutes from './routes/imports'
 import installedLoopsRoutes from './routes/installed-loops'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
@@ -518,6 +520,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/auth', authRoutes)
 	app.route('/api/device-auth', deviceAuthRoutes)
 	app.route('/api/account', accountRoutes)
+	app.route('/api/account/api-keys', apiKeysRoutes)
 	app.route('/api/actors', actorAvatarRoutes)
 	app.route('/api/actors', agentSkillsRoutes)
 	app.route('/api/actors', agentSkillAttachmentsRoutes)
@@ -564,6 +567,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/integrations/slack/direct-post-channels', integrationsSlackDirectChannelsRoutes)
 	// Who may send what without a person approving it; human admins and owners write.
 	app.route('/api/send-permissions', sendPermissionsRoutes)
+	app.route('/api/guardrails', guardrailsRoutes)
 	// Stripe webhook mounted at /api/webhooks/stripe BEFORE the integrations
 	// catchall (`/api/webhooks/:provider`) so the more-specific match wins.
 	// Stripe is billing, not an integration provider.

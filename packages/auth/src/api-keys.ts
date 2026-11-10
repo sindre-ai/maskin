@@ -1,6 +1,6 @@
 import type { Database, Transaction } from '@maskin/db'
 import { type ApiKeyKind, actors, apiKeys } from '@maskin/db/schema'
-import { and, desc, eq, gt, inArray, isNull, ne, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, isNull, ne, or, sql } from 'drizzle-orm'
 import { evictApiKeyHash } from './auth-cache'
 import { hashApiKey } from './key-hash'
 
@@ -8,6 +8,9 @@ type Executor = Database | Transaction
 
 /** Live login keys kept per actor and per login kind; a newer login revokes the oldest. */
 export const LOGIN_KEY_CAP = 10
+
+/** Live personal keys one person may hold. A new one is refused at the cap; nothing is revoked for them. */
+export const PERSONAL_KEY_CAP = 20
 
 export function generateApiKey(): { key: string } {
 	const key = `ank_${crypto.randomUUID().replace(/-/g, '')}`
@@ -52,7 +55,7 @@ export async function validateApiKey(
  */
 export async function issueApiKey(
 	db: Executor,
-	input: { actorId: string; kind: ApiKeyKind; sessionId?: string; expiresAt?: Date },
+	input: { actorId: string; kind: ApiKeyKind; sessionId?: string; expiresAt?: Date; name?: string },
 ): Promise<{ key: string; keyHash: string }> {
 	const { key } = generateApiKey()
 	const keyHash = hashApiKey(key)
@@ -61,6 +64,7 @@ export async function issueApiKey(
 		keyHash,
 		last4: key.slice(-4),
 		kind: input.kind,
+		name: input.name ?? null,
 		sessionId: input.sessionId ?? null,
 		expiresAt: input.expiresAt ?? null,
 	})
@@ -142,4 +146,80 @@ export async function issueLoginKey(
 		for (const o of overflow) evictApiKeyHash(o.keyHash)
 	}
 	return key
+}
+
+/** A key as a person sees it: never the hash, never the secret, only the last four characters. */
+export interface ActorKeySummary {
+	id: string
+	kind: ApiKeyKind
+	name: string | null
+	last4: string
+	createdAt: Date
+	lastUsedAt: Date | null
+	expiresAt: Date | null
+}
+
+/** The actor's live keys (not revoked, not expired), newest first. */
+export async function listActorKeys(db: Executor, actorId: string): Promise<ActorKeySummary[]> {
+	return db
+		.select({
+			id: apiKeys.id,
+			kind: apiKeys.kind,
+			name: apiKeys.name,
+			last4: apiKeys.last4,
+			createdAt: apiKeys.createdAt,
+			lastUsedAt: apiKeys.lastUsedAt,
+			expiresAt: apiKeys.expiresAt,
+		})
+		.from(apiKeys)
+		.where(
+			and(
+				eq(apiKeys.actorId, actorId),
+				isNull(apiKeys.revokedAt),
+				or(isNull(apiKeys.expiresAt), gt(apiKeys.expiresAt, sql`now()`)),
+			),
+		)
+		.orderBy(desc(apiKeys.createdAt), asc(apiKeys.id))
+}
+
+/**
+ * Mints a named personal key unless the actor already holds PERSONAL_KEY_CAP live ones, in which
+ * case it returns null. The count and the insert share a per-actor lock, so two requests cannot
+ * both slip under the cap. The plaintext is the only copy: hand it back once, never store it.
+ */
+export async function issuePersonalKey(
+	db: Database,
+	actorId: string,
+	name: string,
+): Promise<{ id: string; key: string } | null> {
+	return db.transaction(async (tx) => {
+		await tx.execute(
+			sql`SELECT pg_advisory_xact_lock(hashtextextended(${`personal-key:${actorId}`}::text, 0))`,
+		)
+		const [counted] = await tx
+			.select({ live: sql<number>`count(*)::int` })
+			.from(apiKeys)
+			.where(
+				and(eq(apiKeys.actorId, actorId), eq(apiKeys.kind, 'personal'), isNull(apiKeys.revokedAt)),
+			)
+		if ((counted?.live ?? 0) >= PERSONAL_KEY_CAP) return null
+		const { key, keyHash } = await issueApiKey(tx, { actorId, kind: 'personal', name })
+		const [row] = await tx
+			.select({ id: apiKeys.id })
+			.from(apiKeys)
+			.where(eq(apiKeys.keyHash, keyHash))
+			.limit(1)
+		if (!row) throw new Error('A personal key was inserted but could not be read back')
+		return { id: row.id, key }
+	})
+}
+
+/**
+ * Revokes one live key, only if it belongs to the actor. Returns false when there is no such
+ * live key for them (another person's key id looks the same as an unknown one). The key is
+ * dropped from the auth cache, so it stops working on the next request.
+ */
+export async function revokeOwnKey(db: Executor, actorId: string, keyId: string): Promise<boolean> {
+	const hashes = await revokeWhere(db, and(eq(apiKeys.actorId, actorId), eq(apiKeys.id, keyId)))
+	return hashes.length > 0
 }

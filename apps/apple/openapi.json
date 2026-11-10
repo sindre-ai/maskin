@@ -13608,6 +13608,564 @@
 				}
 			}
 		},
+		"/api/account/api-keys": {
+			"get": {
+				"tags": [
+					"Account"
+				],
+				"summary": "My API keys",
+				"description": "The signed-in person’s live keys, newest first: name, last four characters, created, last used and what holds the key. Never the key itself.",
+				"responses": {
+					"200": {
+						"description": "The keys",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"keys": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"kind": {
+														"type": "string",
+														"enum": [
+															"primary",
+															"login",
+															"login_ios",
+															"session",
+															"personal"
+														]
+													},
+													"name": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"hint": {
+														"type": "string"
+													},
+													"created_at": {
+														"type": "string",
+														"format": "date-time"
+													},
+													"last_used_at": {
+														"type": [
+															"string",
+															"null"
+														],
+														"format": "date-time"
+													},
+													"expires_at": {
+														"type": [
+															"string",
+															"null"
+														],
+														"format": "date-time"
+													},
+													"used_by": {
+														"type": [
+															"object",
+															"null"
+														],
+														"properties": {
+															"type": {
+																"type": "string",
+																"enum": [
+																	"connection"
+																]
+															},
+															"name": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"type",
+															"name"
+														]
+													}
+												},
+												"required": [
+													"id",
+													"kind",
+													"name",
+													"hint",
+													"created_at",
+													"last_used_at",
+													"expires_at",
+													"used_by"
+												]
+											}
+										}
+									},
+									"required": [
+										"keys"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not a person",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"post": {
+				"tags": [
+					"Account"
+				],
+				"summary": "Make a named API key",
+				"description": "Makes a personal key with the given name. The secret is in this response and nowhere else: only its hash is stored, so it cannot be shown again. A person may hold 20 personal keys at once. Refused from an MCP client, because there a model holds the person’s key and could otherwise make itself more.",
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"name": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 60
+									}
+								},
+								"required": [
+									"name"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "The new key, with its secret shown once",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"key": {
+											"type": "object",
+											"properties": {
+												"id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"kind": {
+													"type": "string",
+													"enum": [
+														"primary",
+														"login",
+														"login_ios",
+														"session",
+														"personal"
+													]
+												},
+												"name": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"hint": {
+													"type": "string"
+												},
+												"created_at": {
+													"type": "string",
+													"format": "date-time"
+												},
+												"last_used_at": {
+													"type": [
+														"string",
+														"null"
+													],
+													"format": "date-time"
+												},
+												"expires_at": {
+													"type": [
+														"string",
+														"null"
+													],
+													"format": "date-time"
+												},
+												"used_by": {
+													"type": [
+														"object",
+														"null"
+													],
+													"properties": {
+														"type": {
+															"type": "string",
+															"enum": [
+																"connection"
+															]
+														},
+														"name": {
+															"type": "string"
+														}
+													},
+													"required": [
+														"type",
+														"name"
+													]
+												}
+											},
+											"required": [
+												"id",
+												"kind",
+												"name",
+												"hint",
+												"created_at",
+												"last_used_at",
+												"expires_at",
+												"used_by"
+											]
+										},
+										"secret": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"key",
+										"secret"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not a person, or called from an MCP client",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Already at the limit of personal keys",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/account/api-keys/{id}": {
+			"delete": {
+				"tags": [
+					"Account"
+				],
+				"summary": "Revoke one of my API keys",
+				"description": "Revokes a live key of the signed-in person. It stops working on the next request. Another person’s key id, or one already revoked, is a 404.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Revoked",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"revoked": {
+											"type": "boolean",
+											"enum": [
+												true
+											]
+										}
+									},
+									"required": [
+										"revoked"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not a person",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "No such key",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/actors/{id}/avatar": {
 			"post": {
 				"tags": [
@@ -37971,6 +38529,256 @@
 					},
 					"404": {
 						"description": "Integration not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/guardrails": {
+			"get": {
+				"tags": [
+					"Agents"
+				],
+				"summary": "What each agent may do without asking",
+				"description": "The workspace’s send defaults and daily target, and for each agent its send mode per kind of draft and how many integrations it has at each access level. Any member can read it. Read only: change a send mode with PUT /api/send-permissions and access on the Integrations page.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "The limits in force",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"workspace": {
+											"type": "object",
+											"properties": {
+												"daily_budget": {
+													"type": [
+														"object",
+														"null"
+													],
+													"properties": {
+														"unit": {
+															"type": "string",
+															"enum": [
+																"tokens",
+																"dollars"
+															]
+														},
+														"amount": {
+															"type": "number"
+														},
+														"stop_share": {
+															"type": "integer"
+														},
+														"timezone": {
+															"type": "string"
+														}
+													},
+													"required": [
+														"unit",
+														"amount",
+														"stop_share",
+														"timezone"
+													]
+												},
+												"daily_budget_enforced": {
+													"type": "boolean"
+												},
+												"send_defaults": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"kind": {
+																"type": "string"
+															},
+															"mode": {
+																"type": "string",
+																"enum": [
+																	"always_allow",
+																	"ask_first",
+																	"deny"
+																]
+															},
+															"source": {
+																"type": "string",
+																"enum": [
+																	"agent",
+																	"workspace",
+																	"starting"
+																]
+															}
+														},
+														"required": [
+															"kind",
+															"mode",
+															"source"
+														]
+													}
+												}
+											},
+											"required": [
+												"daily_budget",
+												"daily_budget_enforced",
+												"send_defaults"
+											]
+										},
+										"agents": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"agent_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"name": {
+														"type": "string"
+													},
+													"send": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"kind": {
+																	"type": "string"
+																},
+																"mode": {
+																	"type": "string",
+																	"enum": [
+																		"always_allow",
+																		"ask_first",
+																		"deny"
+																	]
+																},
+																"source": {
+																	"type": "string",
+																	"enum": [
+																		"agent",
+																		"workspace",
+																		"starting"
+																	]
+																}
+															},
+															"required": [
+																"kind",
+																"mode",
+																"source"
+															]
+														}
+													},
+													"access": {
+														"type": "object",
+														"properties": {
+															"read_write": {
+																"type": "integer",
+																"minimum": 0
+															},
+															"read": {
+																"type": "integer",
+																"minimum": 0
+															},
+															"none": {
+																"type": "integer",
+																"minimum": 0
+															},
+															"credentials": {
+																"type": "integer",
+																"minimum": 0
+															}
+														},
+														"required": [
+															"read_write",
+															"read",
+															"none",
+															"credentials"
+														]
+													}
+												},
+												"required": [
+													"agent_id",
+													"name",
+													"send",
+													"access"
+												]
+											}
+										}
+									},
+									"required": [
+										"workspace",
+										"agents"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "No workspace",
 						"content": {
 							"application/json": {
 								"schema": {

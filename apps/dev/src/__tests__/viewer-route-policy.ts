@@ -184,6 +184,16 @@ export const OPEN_ROUTES: OpenRoute[] = [
 		'/api/account/delete',
 		'deleting your own account (App Store 5.1.1(v)) must work for every role, viewers included; it acts only on the caller, behind a password re-entry',
 	],
+	[
+		'POST',
+		'/api/account/api-keys',
+		'a person’s own keys are account-level, not workspace data: every role, viewers included, may make one; it acts only on the caller',
+	],
+	[
+		'DELETE',
+		'/api/account/api-keys/:id',
+		'revoking your own key must work for every role, viewers included; it acts only on the caller’s own keys',
+	],
 	// Group D leftovers: the two routes that are not gated on a human admin or owner.
 	[
 		'POST',
