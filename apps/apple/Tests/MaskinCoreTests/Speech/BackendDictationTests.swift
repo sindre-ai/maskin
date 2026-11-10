@@ -39,6 +39,28 @@ struct PhraseSegmenterTests {
 		#expect(now == 6_000)
 	}
 
+	@Test func aQuietMicrophoneIsSentRatherThanDiscarded() {
+		var segmenter = PhraseSegmenter()
+		#expect(segmenter.push(rms: 0.008, atMs: 500) == nil)
+		#expect(!segmenter.hasVoice)
+		#expect(segmenter.hasSignal)
+		#expect(segmenter.push(rms: 0.001, atMs: 6_000) == .cut)
+	}
+
+	@Test func roomNoiseBelowTheFloorIsStillDiscarded() {
+		var segmenter = PhraseSegmenter()
+		#expect(segmenter.push(rms: 0.002, atMs: 500) == nil)
+		#expect(!segmenter.hasSignal)
+		#expect(segmenter.push(rms: 0.002, atMs: 6_000) == .discard)
+	}
+
+	@Test func resetClearsTheQuietSignal() {
+		var segmenter = PhraseSegmenter()
+		_ = segmenter.push(rms: 0.008, atMs: 100)
+		segmenter.reset(atMs: 1_000)
+		#expect(!segmenter.hasSignal)
+	}
+
 	@Test func resetStartsAFreshSegment() {
 		var segmenter = PhraseSegmenter()
 		_ = segmenter.push(rms: 0.1, atMs: 100)

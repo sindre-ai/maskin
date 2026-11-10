@@ -46,7 +46,9 @@ final class BackendDictationRun {
 	/// Opens the microphone. Throws when there is no input or the engine won't start.
 	func start() throws {
 		let session = AVAudioSession.sharedInstance()
-		try session.setCategory(.record, mode: .measurement, options: .duckOthers)
+		// Not `.measurement`: it switches off the microphone's gain, which leaves a phone's built-in
+		// mic too quiet for the pause detector (the browser records with auto-gain on).
+		try session.setCategory(.record, mode: .default, options: .duckOthers)
 		try session.setActive(true, options: .notifyOthersOnDeactivation)
 		let engine = AVAudioEngine()
 		self.engine = engine
@@ -173,7 +175,7 @@ final class BackendDictationRun {
 		/// The microphone is closed: sends what was said since the last pause, then ends the stream.
 		func finish() {
 			lock.lock()
-			let tail = !finished && segmenter.hasVoice ? samples : []
+			let tail = !finished && segmenter.hasSignal ? samples : []
 			finished = true
 			samples = []
 			lock.unlock()

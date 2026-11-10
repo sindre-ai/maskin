@@ -394,7 +394,10 @@ final class Dictation {
 		}
 		let task = Task { [self] in
 			await run.finish()
+			// Only while this run is still the session: a hand-over to the phone's recogniser has its own text.
+			let heardNothing = backendRun === run && run.text.isEmpty && backendText.isEmpty
 			stop()
+			if heardNothing { state = .unavailable("No speech detected") }
 		}
 		finishing = task
 		await task.value

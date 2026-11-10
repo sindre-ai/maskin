@@ -23,6 +23,10 @@ public struct PhraseSegmenter: Sendable {
 		public var softSilenceMs: Double = 150
 		/// Hard cap on one phrase, so a speaker who never pauses still streams.
 		public var maxSegmentMs: Double = 6_000
+		/// A segment that never reached `voiceRMS` but peaked at or above this is still sent. A quiet
+		/// phone microphone can sit under the voice threshold the whole time; dropping that audio
+		/// made dictation do nothing, with no error. The server answers empty for real silence.
+		public var quietFloorRMS: Double = 0.004
 
 		public init() {}
 	}
@@ -30,7 +34,12 @@ public struct PhraseSegmenter: Sendable {
 	private let options: Options
 	private var segmentStart: Double
 	private var lastVoiceAt: Double
+	private var peak = 0.0
 	public private(set) var hasVoice = false
+
+	/// Whether the segment so far holds speech, or a signal quiet enough to be speech from a weak
+	/// microphone. This, not `hasVoice`, decides whether the last phrase is sent on Done.
+	public var hasSignal: Bool { hasVoice || peak >= options.quietFloorRMS }
 
 	public init(startedAtMs: Double = 0, options: Options = Options()) {
 		self.options = options
@@ -41,13 +50,14 @@ public struct PhraseSegmenter: Sendable {
 	/// Feeds one level reading taken at `nowMs`. A cut or discard ends the segment: call `reset`
 	/// before the next reading.
 	public mutating func push(rms: Double, atMs nowMs: Double) -> Action? {
+		peak = max(peak, rms)
 		if rms >= options.voiceRMS {
 			hasVoice = true
 			lastVoiceAt = nowMs
 		}
 		let needed = nowMs - segmentStart >= options.softCutMs ? options.softSilenceMs : options.silenceMs
 		if hasVoice, nowMs - lastVoiceAt >= needed { return .cut }
-		if nowMs - segmentStart >= options.maxSegmentMs { return hasVoice ? .cut : .discard }
+		if nowMs - segmentStart >= options.maxSegmentMs { return hasSignal ? .cut : .discard }
 		return nil
 	}
 
@@ -55,6 +65,7 @@ public struct PhraseSegmenter: Sendable {
 	public mutating func reset(atMs nowMs: Double) {
 		segmentStart = nowMs
 		lastVoiceAt = nowMs
+		peak = 0
 		hasVoice = false
 	}
 }
