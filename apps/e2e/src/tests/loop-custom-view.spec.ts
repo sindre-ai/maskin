@@ -34,7 +34,8 @@ async function openTab(page: Page, name: string) {
 		await tab.click()
 		return
 	}
-	await page.getByRole('button', { name: /^More/ }).click()
+	// The strip's own button reads "More (n)"; the page has other buttons that start with More.
+	await page.getByRole('button', { name: /^More \(\d+\)$/ }).click()
 	await page.getByRole('menuitemradio', { name, exact: true }).click()
 }
 
@@ -215,8 +216,9 @@ test.describe('Loop page — custom view tabs', () => {
 
 			await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
 
-			// Overview keeps the triggers; the view sits in its own tab, inside its own box.
+			// Setup keeps the triggers; the view sits in its own tab, inside its own box.
 			const frame = page.locator(FRAME)
+			await openTab(page, 'Setup')
 			await expect(page.getByText('Triage feedback', { exact: true })).toBeVisible({
 				timeout: 15_000,
 			})
