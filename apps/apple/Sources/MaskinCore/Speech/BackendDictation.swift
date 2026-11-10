@@ -37,6 +37,9 @@ public struct TranscriptionTimeout: Error, Equatable, Sendable {
 /// `note` is the plain-words line shown under the composer; `detail` goes in the log for a
 /// TestFlight session (a status code or a system error, never audio or text).
 public enum DictationFallback: Equatable, Sendable {
+	/// The app has no server dictation service wired in (`DictationBackend.service` is nil), so the
+	/// server was never tried. The real app sets it when its environment is built; previews and tests don't.
+	case serviceMissing
 	/// The microphone would not open for the server session.
 	case microphoneStart(String)
 	/// The audio engine reported a configuration change, which the server session treats as a loss.
@@ -66,6 +69,7 @@ public enum DictationFallback: Equatable, Sendable {
 
 	public var detail: String {
 		switch self {
+		case .serviceMissing: return "no server dictation service configured"
 		case .microphoneStart(let message): return "microphone did not start: \(message)"
 		case .engineChanged: return "audio engine configuration changed"
 		case .request(_, let detail): return "request failed: \(detail)"
@@ -76,6 +80,7 @@ public enum DictationFallback: Equatable, Sendable {
 
 	private var reason: String {
 		switch self {
+		case .serviceMissing: return "the app isn't connected to the server"
 		case .microphoneStart: return "the microphone didn't start"
 		case .engineChanged: return "the audio changed"
 		case .requestTimedOut: return "the server took too long"

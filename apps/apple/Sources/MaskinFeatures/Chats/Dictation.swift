@@ -96,9 +96,12 @@ final class Dictation {
 	}
 
 	/// Starts dictating through the server. False means use the phone's recogniser: there is no
-	/// server service (previews, tests) or the microphone wouldn't open.
+	/// server service (previews, tests) or the microphone wouldn't open. Either way a note says why.
 	private func startBackend() async -> Bool {
-		guard let service = DictationBackend.service else { return false }
+		guard let service = DictationBackend.service else {
+			noteFallback(.serviceMissing)
+			return false
+		}
 		let run = BackendDictationRun(
 			service: service, language: DictationLanguage.hint(preferredLanguages: Locale.preferredLanguages),
 			onText: { [weak self] text in

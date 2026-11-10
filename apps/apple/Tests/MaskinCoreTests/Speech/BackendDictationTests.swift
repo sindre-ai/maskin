@@ -242,6 +242,11 @@ struct DictationFallbackTests {
 		#expect(DictationFallback.serverNote == "Dictating with the Maskin server")
 	}
 
+	@Test func aMissingServiceIsNamedNotSilent() {
+		#expect(DictationFallback.serviceMissing.note == "Dictating on the phone (the app isn't connected to the server)")
+		#expect(DictationFallback.serviceMissing.detail == "no server dictation service configured")
+	}
+
 	@Test func theLogDetailKeepsTheStatusAndNoText() {
 		#expect(DictationFallback.failed(BackendDictationError(status: 402)).detail == "request failed: HTTP 402")
 		#expect(DictationFallback.engineChanged.detail == "audio engine configuration changed")
