@@ -105,7 +105,7 @@ export function ToolsSection({
 	if (!showServers) return null
 
 	return (
-		<section className="space-y-3">
+		<section aria-label="Tool servers" className="space-y-3">
 			{maskinRowMatches(needle) && (
 				<ProviderCard
 					logo={<ProviderLogo name="Maskin" />}
@@ -156,7 +156,7 @@ export function ToolsSection({
 							type="button"
 							disabled={!canWrite}
 							onClick={() => setAdding(true)}
-							className="flex w-full items-center gap-3.5 text-left disabled:opacity-60"
+							className="flex min-h-11 w-full items-center gap-3.5 text-left disabled:opacity-60"
 						>
 							<span className="flex size-[38px] shrink-0 items-center justify-center rounded-[10px] bg-muted">
 								<Plus className="size-4" aria-hidden="true" />
