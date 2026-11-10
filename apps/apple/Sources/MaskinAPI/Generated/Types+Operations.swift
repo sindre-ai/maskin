@@ -69507,6 +69507,8 @@ public enum Operations {
                             public var digest: Swift.Bool
                             /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/categories/tips`.
                             public var tips: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/categories/flow_activity`.
+                            public var flow_activity: Swift.Bool
                             /// Creates a new `categoriesPayload`.
                             ///
                             /// - Parameters:
@@ -69514,22 +69516,26 @@ public enum Operations {
                             ///   - conversation:
                             ///   - digest:
                             ///   - tips:
+                            ///   - flow_activity:
                             public init(
                                 needs_you: Swift.Bool,
                                 conversation: Swift.Bool,
                                 digest: Swift.Bool,
-                                tips: Swift.Bool
+                                tips: Swift.Bool,
+                                flow_activity: Swift.Bool
                             ) {
                                 self.needs_you = needs_you
                                 self.conversation = conversation
                                 self.digest = digest
                                 self.tips = tips
+                                self.flow_activity = flow_activity
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case needs_you
                                 case conversation
                                 case digest
                                 case tips
+                                case flow_activity
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/categories`.
@@ -69544,6 +69550,8 @@ public enum Operations {
                             public var digest: Swift.Bool
                             /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_categories/tips`.
                             public var tips: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_categories/flow_activity`.
+                            public var flow_activity: Swift.Bool
                             /// Creates a new `browser_categoriesPayload`.
                             ///
                             /// - Parameters:
@@ -69551,22 +69559,26 @@ public enum Operations {
                             ///   - conversation:
                             ///   - digest:
                             ///   - tips:
+                            ///   - flow_activity:
                             public init(
                                 needs_you: Swift.Bool,
                                 conversation: Swift.Bool,
                                 digest: Swift.Bool,
-                                tips: Swift.Bool
+                                tips: Swift.Bool,
+                                flow_activity: Swift.Bool
                             ) {
                                 self.needs_you = needs_you
                                 self.conversation = conversation
                                 self.digest = digest
                                 self.tips = tips
+                                self.flow_activity = flow_activity
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case needs_you
                                 case conversation
                                 case digest
                                 case tips
+                                case flow_activity
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_categories`.
@@ -69577,6 +69589,7 @@ public enum Operations {
                             case conversation = "conversation"
                             case digest = "digest"
                             case tips = "tips"
+                            case flow_activity = "flow_activity"
                         }
                         /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_not_asked`.
                         public typealias browser_not_askedPayload = [Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_not_askedPayloadPayload]
@@ -69765,6 +69778,8 @@ public enum Operations {
                         public var digest: Swift.Bool?
                         /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/categories/tips`.
                         public var tips: Swift.Bool?
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/categories/flow_activity`.
+                        public var flow_activity: Swift.Bool?
                         /// Creates a new `categoriesPayload`.
                         ///
                         /// - Parameters:
@@ -69772,22 +69787,26 @@ public enum Operations {
                         ///   - conversation:
                         ///   - digest:
                         ///   - tips:
+                        ///   - flow_activity:
                         public init(
                             needs_you: Swift.Bool? = nil,
                             conversation: Swift.Bool? = nil,
                             digest: Swift.Bool? = nil,
-                            tips: Swift.Bool? = nil
+                            tips: Swift.Bool? = nil,
+                            flow_activity: Swift.Bool? = nil
                         ) {
                             self.needs_you = needs_you
                             self.conversation = conversation
                             self.digest = digest
                             self.tips = tips
+                            self.flow_activity = flow_activity
                         }
                         public enum CodingKeys: String, CodingKey {
                             case needs_you
                             case conversation
                             case digest
                             case tips
+                            case flow_activity
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/categories`.
@@ -69802,6 +69821,8 @@ public enum Operations {
                         public var digest: Swift.Bool?
                         /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/browser_categories/tips`.
                         public var tips: Swift.Bool?
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/browser_categories/flow_activity`.
+                        public var flow_activity: Swift.Bool?
                         /// Creates a new `browser_categoriesPayload`.
                         ///
                         /// - Parameters:
@@ -69809,22 +69830,26 @@ public enum Operations {
                         ///   - conversation:
                         ///   - digest:
                         ///   - tips:
+                        ///   - flow_activity:
                         public init(
                             needs_you: Swift.Bool? = nil,
                             conversation: Swift.Bool? = nil,
                             digest: Swift.Bool? = nil,
-                            tips: Swift.Bool? = nil
+                            tips: Swift.Bool? = nil,
+                            flow_activity: Swift.Bool? = nil
                         ) {
                             self.needs_you = needs_you
                             self.conversation = conversation
                             self.digest = digest
                             self.tips = tips
+                            self.flow_activity = flow_activity
                         }
                         public enum CodingKeys: String, CodingKey {
                             case needs_you
                             case conversation
                             case digest
                             case tips
+                            case flow_activity
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/browser_categories`.
@@ -69921,6 +69946,8 @@ public enum Operations {
                             public var digest: Swift.Bool
                             /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/categories/tips`.
                             public var tips: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/categories/flow_activity`.
+                            public var flow_activity: Swift.Bool
                             /// Creates a new `categoriesPayload`.
                             ///
                             /// - Parameters:
@@ -69928,22 +69955,26 @@ public enum Operations {
                             ///   - conversation:
                             ///   - digest:
                             ///   - tips:
+                            ///   - flow_activity:
                             public init(
                                 needs_you: Swift.Bool,
                                 conversation: Swift.Bool,
                                 digest: Swift.Bool,
-                                tips: Swift.Bool
+                                tips: Swift.Bool,
+                                flow_activity: Swift.Bool
                             ) {
                                 self.needs_you = needs_you
                                 self.conversation = conversation
                                 self.digest = digest
                                 self.tips = tips
+                                self.flow_activity = flow_activity
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case needs_you
                                 case conversation
                                 case digest
                                 case tips
+                                case flow_activity
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/categories`.
@@ -69958,6 +69989,8 @@ public enum Operations {
                             public var digest: Swift.Bool
                             /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_categories/tips`.
                             public var tips: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_categories/flow_activity`.
+                            public var flow_activity: Swift.Bool
                             /// Creates a new `browser_categoriesPayload`.
                             ///
                             /// - Parameters:
@@ -69965,22 +69998,26 @@ public enum Operations {
                             ///   - conversation:
                             ///   - digest:
                             ///   - tips:
+                            ///   - flow_activity:
                             public init(
                                 needs_you: Swift.Bool,
                                 conversation: Swift.Bool,
                                 digest: Swift.Bool,
-                                tips: Swift.Bool
+                                tips: Swift.Bool,
+                                flow_activity: Swift.Bool
                             ) {
                                 self.needs_you = needs_you
                                 self.conversation = conversation
                                 self.digest = digest
                                 self.tips = tips
+                                self.flow_activity = flow_activity
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case needs_you
                                 case conversation
                                 case digest
                                 case tips
+                                case flow_activity
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_categories`.
@@ -69991,6 +70028,7 @@ public enum Operations {
                             case conversation = "conversation"
                             case digest = "digest"
                             case tips = "tips"
+                            case flow_activity = "flow_activity"
                         }
                         /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_not_asked`.
                         public typealias browser_not_askedPayload = [Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_not_askedPayloadPayload]
