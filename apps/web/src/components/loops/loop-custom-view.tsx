@@ -475,7 +475,7 @@ function ViewFrame({
 					<iframe
 						key={key}
 						ref={key === frameKey ? iframeRef : undefined}
-						title="Custom loop view"
+						title="Custom flow view"
 						srcDoc={srcDoc}
 						sandbox="allow-scripts"
 						style={{ height, width: contentWidth ?? '100%' }}
