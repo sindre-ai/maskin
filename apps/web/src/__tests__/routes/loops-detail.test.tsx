@@ -38,6 +38,14 @@ vi.mock('@/hooks/use-actors', () => ({
 }))
 
 const mockUseTriggers = vi.fn()
+vi.mock('@tanstack/react-query', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@tanstack/react-query')>()),
+	useQueryClient: () => ({
+		cancelQueries: vi.fn(),
+		getQueryData: vi.fn(),
+		setQueryData: vi.fn(),
+	}),
+}))
 vi.mock('@/hooks/use-notifications', () => ({
 	useNotifications: () => ({ data: [] }),
 }))

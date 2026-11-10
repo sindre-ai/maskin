@@ -1,4 +1,4 @@
-import { TargetsAndOwners } from '@/components/loops/targets-and-owners'
+import { TargetsAndOwners, targetIds } from '@/components/loops/targets-and-owners'
 import type { ActorListItem, LoopSummary } from '@maskin/shared'
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
@@ -176,5 +176,35 @@ describe('TargetsAndOwners', () => {
 		expect(above).toContain('text-success')
 		expect(behind).toContain('text-warning')
 		expect(missed).toContain('text-destructive')
+	})
+})
+
+describe('TargetsAndOwners reordering', () => {
+	const targets = [
+		{ label: 'Calls', source: 'plain', actual: 1, target: 2 },
+		{ label: 'Meetings', source: 'plain', actual: 0, target: 3 },
+	]
+
+	it('offers a move handle on each card only when it can reorder', () => {
+		const loop = buildLoop({ targets })
+		const { rerender } = render(<TargetsAndOwners loop={loop} actors={[OWNER]} />)
+		expect(screen.queryByRole('button', { name: /^Move / })).not.toBeInTheDocument()
+
+		rerender(<TargetsAndOwners loop={loop} actors={[OWNER]} onReorder={() => {}} />)
+		expect(screen.getByRole('button', { name: 'Move Calls' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Move Meetings' })).toBeInTheDocument()
+	})
+})
+
+describe('targetIds', () => {
+	it('keeps ids unique when two targets share a label', () => {
+		const row = { source: 'plain', actual: 0, target: 1 }
+		expect(
+			targetIds([
+				{ label: 'A', ...row },
+				{ label: 'B', ...row },
+				{ label: 'A', ...row },
+			]),
+		).toEqual(['A', 'B', 'A#2'])
 	})
 })

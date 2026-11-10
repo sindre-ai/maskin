@@ -146,3 +146,52 @@ test.describe('Flow page — Decisions and Targets', () => {
 			.toBe('supervised')
 	})
 })
+
+test.describe('Flow page — reorder Targets', () => {
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`a target moves with its handle and keeps its place after a reload @ ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			const loop = await seedFlow(account, { title: 'Reorder targets', targets: 3 })
+			await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
+
+			const labels = () =>
+				page.getByTestId('target-card').locator('.line-clamp-2').allTextContents()
+			await expect(page.getByTestId('target-card')).toHaveCount(3, { timeout: 15_000 })
+			expect(await labels()).toEqual([
+				'Pages in the top 10',
+				'Terms in the top 20',
+				'Customers closed',
+			])
+
+			// The handle is on the card itself, not behind a hover, so a touch screen reaches it.
+			const handle = page.getByRole('button', { name: 'Move Pages in the top 10' })
+			await expect(handle).toBeVisible()
+			expect(
+				await page.evaluate(
+					() => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+				),
+			).toBeLessThanOrEqual(0)
+
+			// Lift with Space, move one place, drop with Space. The cards sit in one column on a phone.
+			await handle.focus()
+			await page.keyboard.press('Space')
+			await page.keyboard.press(vp.width < 768 ? 'ArrowDown' : 'ArrowRight')
+			await page.keyboard.press('Space')
+
+			await expect
+				.poll(labels)
+				.toEqual(['Terms in the top 20', 'Pages in the top 10', 'Customers closed'])
+
+			await page.reload()
+			await expect(page.getByTestId('target-card')).toHaveCount(3, { timeout: 15_000 })
+			expect(await labels()).toEqual([
+				'Terms in the top 20',
+				'Pages in the top 10',
+				'Customers closed',
+			])
+		})
+	}
+})
