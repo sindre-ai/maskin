@@ -60,9 +60,9 @@ describe('invalidateFromSSE', () => {
 			entity_id: entityId,
 			action: 'created',
 		} as never)
-		expect(qc.invalidateQueries).toHaveBeenCalledWith({
-			queryKey: queryKeys.objects.all(workspaceId),
-		})
+		expect(qc.invalidateQueries).toHaveBeenCalledWith(
+			expect.objectContaining({ queryKey: queryKeys.objects.all(workspaceId) }),
+		)
 		expect(qc.invalidateQueries).toHaveBeenCalledWith({
 			queryKey: queryKeys.objects.detail(entityId),
 		})
@@ -78,9 +78,9 @@ describe('invalidateFromSSE', () => {
 		expect(qc.invalidateQueries).toHaveBeenCalledWith({
 			queryKey: queryKeys.bets.all(workspaceId),
 		})
-		expect(qc.invalidateQueries).toHaveBeenCalledWith({
-			queryKey: queryKeys.objects.all(workspaceId),
-		})
+		expect(qc.invalidateQueries).toHaveBeenCalledWith(
+			expect.objectContaining({ queryKey: queryKeys.objects.all(workspaceId) }),
+		)
 	})
 
 	it('invalidates objects for insight entity', () => {
@@ -90,9 +90,9 @@ describe('invalidateFromSSE', () => {
 			entity_id: entityId,
 			action: 'created',
 		} as never)
-		expect(qc.invalidateQueries).toHaveBeenCalledWith({
-			queryKey: queryKeys.objects.all(workspaceId),
-		})
+		expect(qc.invalidateQueries).toHaveBeenCalledWith(
+			expect.objectContaining({ queryKey: queryKeys.objects.all(workspaceId) }),
+		)
 	})
 
 	it('invalidates objects for loop entity', () => {
@@ -102,9 +102,9 @@ describe('invalidateFromSSE', () => {
 			entity_id: entityId,
 			action: 'status_changed',
 		} as never)
-		expect(qc.invalidateQueries).toHaveBeenCalledWith({
-			queryKey: queryKeys.objects.all(workspaceId),
-		})
+		expect(qc.invalidateQueries).toHaveBeenCalledWith(
+			expect.objectContaining({ queryKey: queryKeys.objects.all(workspaceId) }),
+		)
 		expect(qc.invalidateQueries).toHaveBeenCalledWith({
 			queryKey: queryKeys.objects.detail(entityId),
 		})
@@ -123,9 +123,9 @@ describe('invalidateFromSSE', () => {
 			entity_id: entityId,
 			action: 'updated',
 		} as never)
-		expect(qc.invalidateQueries).toHaveBeenCalledWith({
-			queryKey: queryKeys.objects.all(workspaceId),
-		})
+		expect(qc.invalidateQueries).toHaveBeenCalledWith(
+			expect.objectContaining({ queryKey: queryKeys.objects.all(workspaceId) }),
+		)
 		expect(qc.invalidateQueries).toHaveBeenCalledWith({
 			queryKey: queryKeys.objects.detail(entityId),
 		})
@@ -595,5 +595,85 @@ describe('invalidateFromSSE in a background tab', () => {
 		setVisibility('visible')
 		await vi.advanceTimersByTimeAsync(1_000)
 		expect(list.n).toBe(0)
+	})
+})
+
+describe('invalidateFromSSE throttled refetches', () => {
+	const keyCalls = (qc: ReturnType<typeof createMockQueryClient>, key: readonly unknown[]) =>
+		qc.invalidateQueries.mock.calls.filter(
+			([filters]) => JSON.stringify(filters.queryKey) === JSON.stringify(key),
+		)
+	const facetsKey = ['objects', workspaceId, 'facets']
+	const burst = (
+		qc: ReturnType<typeof createMockQueryClient>,
+		event: (i: number) => Record<string, unknown>,
+		n = 6,
+	) => {
+		for (let i = 0; i < n; i++) invalidateFromSSE(qc as never, workspaceId, event(i) as never)
+	}
+
+	it('keeps the objects facets out of the immediate objects invalidation', () => {
+		const qc = createMockQueryClient()
+		burst(qc, (i) => ({ entity_type: 'task', entity_id: `t-${i}`, action: 'updated' }), 1)
+		const call = keyCalls(qc, queryKeys.objects.all(workspaceId))[0]?.[0]
+		expect(call.predicate({ queryKey: ['objects', workspaceId, 'facets', {}] })).toBe(false)
+		expect(call.predicate({ queryKey: ['objects', workspaceId, 'listInfinite', {}] })).toBe(true)
+		expect(call.predicate({ queryKey: ['objects', workspaceId, 'board', {}] })).toBe(true)
+	})
+
+	it('refetches facets once, on the trailing edge, for a burst of object events', () => {
+		const qc = createMockQueryClient()
+		burst(qc, (i) => ({ entity_type: 'bet', entity_id: `b-${i}`, action: 'updated' }))
+		expect(keyCalls(qc, facetsKey)).toHaveLength(0)
+		vi.advanceTimersByTime(4_999)
+		expect(keyCalls(qc, facetsKey)).toHaveLength(0)
+		vi.advanceTimersByTime(1)
+		expect(keyCalls(qc, facetsKey)).toHaveLength(1)
+		// A later event opens a new window.
+		burst(qc, (i) => ({ entity_type: 'bet', entity_id: `c-${i}`, action: 'updated' }), 2)
+		vi.advanceTimersByTime(5_000)
+		expect(keyCalls(qc, facetsKey)).toHaveLength(2)
+	})
+
+	it('refetches open conversation messages once per 2.5s window for session events', () => {
+		const qc = createMockQueryClient()
+		const messageCalls = () =>
+			keyCalls(qc, ['conversations', 'detail']).filter(([f]) => typeof f.predicate === 'function')
+		burst(qc, (i) => ({ entity_type: 'session', entity_id: `s-${i}`, action: 'session_updated' }))
+		expect(messageCalls()).toHaveLength(0)
+		vi.advanceTimersByTime(2_500)
+		expect(messageCalls()).toHaveLength(1)
+		expect(
+			messageCalls()[0]?.[0].predicate({ queryKey: ['conversations', 'detail', 'c', 'messages'] }),
+		).toBe(true)
+	})
+
+	it('refetches conversation messages once for a burst of session.state_changed frames', () => {
+		const qc = createMockQueryClient()
+		const calls = () => keyCalls(qc, ['conversations', 'detail'])
+		burst(qc, () => ({ action: 'session.state_changed' }))
+		expect(calls()).toHaveLength(0)
+		vi.advanceTimersByTime(2_500)
+		expect(calls()).toHaveLength(1)
+	})
+
+	it('refetches the conversation list once per 3s window but the open thread at once', () => {
+		const qc = createMockQueryClient()
+		burst(qc, () => ({ entity_type: 'conversation', entity_id: 'conv-1', action: 'created' }))
+		expect(keyCalls(qc, queryKeys.conversations.all(workspaceId))).toHaveLength(0)
+		// The open thread still updates promptly: one immediate call per event.
+		expect(keyCalls(qc, queryKeys.conversations.detail('conv-1'))).toHaveLength(6)
+		vi.advanceTimersByTime(3_000)
+		expect(keyCalls(qc, queryKeys.conversations.all(workspaceId))).toHaveLength(1)
+	})
+
+	it('refetches the For You list once per 3s window for notification events', () => {
+		const qc = createMockQueryClient()
+		burst(qc, (i) => ({ entity_type: 'notification', entity_id: `n-${i}`, action: 'created' }))
+		// The notification list itself stays immediate.
+		expect(keyCalls(qc, queryKeys.notifications.all(workspaceId))).toHaveLength(6)
+		expect(keyCalls(qc, queryKeys.forYou.list(workspaceId))).toHaveLength(0)
+		vi.advanceTimersByTime(3_000)
+		expect(keyCalls(qc, queryKeys.forYou.list(workspaceId))).toHaveLength(1)
 	})
 })

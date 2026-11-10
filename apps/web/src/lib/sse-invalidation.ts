@@ -41,6 +41,16 @@ const GRAPH_REFETCH_MS = 5_000
 // tab. Both are heavy on the server, and agents comment all day, so a burst of comments now
 // refetches each list once per window. Short, because a new mention should show up promptly.
 const COMMENT_FEED_REFETCH_MS = 3_000
+// The Objects page facets are ~10 count queries on the server, and any object event used to
+// refetch them. Our own edits still refresh them at once (mutation onSuccess hooks invalidate
+// the whole objects prefix); only the SSE-driven path waits for the window to end.
+const FACETS_REFETCH_MS = 5_000
+// Open conversation threads refetch their message list on every session event (an agent's
+// current_activity patches arrive many times a minute). Posting a message invalidates the
+// thread from the mutation and from its own conversation event, which stays immediate.
+const CONVERSATION_MESSAGES_REFETCH_MS = 2_500
+// Every message in any conversation used to refetch the whole conversation list.
+const CONVERSATION_LIST_REFETCH_MS = 3_000
 const trailingRefetchTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 const isTabHidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden'
@@ -142,7 +152,12 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 		// invalidation would have to walk cached pages to find the strip that
 		// owns the sub-session. The prefix here matches `queryKeys.conversations`
 		// so a future refactor of the key shape keeps the invalidation in step.
-		invalidate(queryClient, { queryKey: ['conversations', 'detail'] })
+		scheduleTrailingRefetch(
+			queryClient,
+			`conversation-messages:${workspaceId}`,
+			{ queryKey: ['conversations', 'detail'] },
+			CONVERSATION_MESSAGES_REFETCH_MS,
+		)
 		return
 	}
 
@@ -196,7 +211,17 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 		case 'task':
 		case 'loop':
 		case 'knowledge':
-			invalidate(queryClient, { queryKey: queryKeys.objects.all(workspaceId) })
+			// Everything under the objects prefix except the facets, which trail below.
+			invalidate(queryClient, {
+				queryKey: queryKeys.objects.all(workspaceId),
+				predicate: (query) => query.queryKey[2] !== 'facets',
+			})
+			scheduleTrailingRefetch(
+				queryClient,
+				`facets:${workspaceId}`,
+				{ queryKey: [...queryKeys.objects.all(workspaceId), 'facets'] },
+				FACETS_REFETCH_MS,
+			)
 			invalidate(queryClient, { queryKey: queryKeys.objects.detail(event.entity_id) })
 			invalidate(queryClient, { queryKey: queryKeys.objects.graph(event.entity_id) })
 			if (event.entity_type === 'bet') {
@@ -227,10 +252,15 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 		case 'session': {
 			// A handoff exists from the moment `create_session` runs, before any message
 			// carries it; the messages list returns it as `pending_handoffs`.
-			invalidate(queryClient, {
-				queryKey: ['conversations', 'detail'],
-				predicate: (query) => query.queryKey[3] === 'messages',
-			})
+			scheduleTrailingRefetch(
+				queryClient,
+				`conversation-session-messages:${workspaceId}`,
+				{
+					queryKey: ['conversations', 'detail'],
+					predicate: (query) => query.queryKey[3] === 'messages',
+				},
+				CONVERSATION_MESSAGES_REFETCH_MS,
+			)
 			// Broad prefix invalidation covers all session queries including byActor,
 			// detail and logs — except the workspace list (exactly ['sessions', ws]),
 			// which is coalesced below, and the per-agent stats
@@ -295,7 +325,12 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			break
 		case 'notification':
 			invalidate(queryClient, { queryKey: queryKeys.notifications.all(workspaceId) })
-			invalidate(queryClient, { queryKey: queryKeys.forYou.list(workspaceId) })
+			scheduleTrailingRefetch(
+				queryClient,
+				`for-you:${workspaceId}`,
+				{ queryKey: queryKeys.forYou.list(workspaceId) },
+				COMMENT_FEED_REFETCH_MS,
+			)
 			break
 		case 'actor':
 			invalidate(queryClient, { queryKey: queryKeys.actors.all(workspaceId) })
@@ -326,7 +361,12 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			// conversation, not the message) — detail(id) is a prefix of
 			// messages(id, ...) so this one invalidation covers the thread's
 			// detail, participants, and message pages too.
-			invalidate(queryClient, { queryKey: queryKeys.conversations.all(workspaceId) })
+			scheduleTrailingRefetch(
+				queryClient,
+				`conversation-list:${workspaceId}`,
+				{ queryKey: queryKeys.conversations.all(workspaceId) },
+				CONVERSATION_LIST_REFETCH_MS,
+			)
 			invalidate(queryClient, { queryKey: queryKeys.conversations.detail(event.entity_id) })
 			break
 	}

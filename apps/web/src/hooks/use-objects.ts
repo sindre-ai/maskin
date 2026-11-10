@@ -127,6 +127,9 @@ export function useObjectFacets(workspaceId: string, params: Record<string, stri
 		queryFn: () => api.objects.facets(workspaceId, params),
 		enabled: !!workspaceId,
 		placeholderData: keepPreviousData,
+		// Remounts and refocus within 10s reuse the counts. Mutations and SSE still
+		// refresh them: invalidateQueries ignores staleTime on active queries.
+		staleTime: 10_000,
 	})
 }
 
