@@ -84,6 +84,7 @@ export const LoopUtteranceInput = forwardRef<
 						onRemoveObject={() => {}}
 						onRemoveNotification={() => {}}
 						onRemoveFile={() => {}}
+						alignStart
 						textareaLabel="Say what should change about this flow"
 					/>
 				</ViewerTooltip>
