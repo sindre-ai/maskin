@@ -22,11 +22,13 @@ import { useFiles } from '@/hooks/use-files'
 import { useFitTextWidth } from '@/hooks/use-fit-text-width'
 import { useLinkedChat } from '@/hooks/use-linked-chat'
 import { useLoop } from '@/hooks/use-loops'
+import { useToggleReaction } from '@/hooks/use-message-reactions'
 import { useObject } from '@/hooks/use-objects'
 import { useTrigger } from '@/hooks/use-triggers'
 import type { MessageContextNotification, MessageContextObject, MessageResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
+import { isFailedReply } from '@/lib/failed-turns'
 import {
 	type GithubTarget,
 	type OwnCard,
@@ -70,6 +72,7 @@ import { KeychainRequestCard } from './keychain-request-card'
 import { McpServerRequestCard } from './mcp-server-request-card'
 import { type MessageAttachmentItem, MessageAttachments } from './message-attachments'
 import { MessageDivider } from './message-divider'
+import { ReactButton, ReactionChips } from './message-reactions'
 import { QuestionOptions } from './question-options'
 import { type MessageSpawnInfo, SpawnBar, SpawnChip } from './spawn-indicator'
 import { TagChip } from './tag-chip'
@@ -167,6 +170,18 @@ export function MessageBubble({
 		wasEditing.current = editing
 	}, [editing])
 	const retryMessage = useRetryMessage(message.conversationId, workspaceId)
+	// Reacting is a write; a viewer keeps the button and the chips, switched off. Only a real,
+	// persisted message can be reacted to (not an optimistic bubble, not a system row).
+	const { toggle: toggleReaction } = useToggleReaction(message.conversationId, workspaceId)
+	// Not an optimistic bubble, a system row, a deleted message or an agent's failed-turn notice.
+	const canReact =
+		message.id > 0 && message.kind === 'message' && !message.deletedAt && !isFailedReply(message)
+	// A deleted message keeps no chips.
+	const reactions = message.deletedAt ? undefined : message.reactions
+	const onToggleReaction = (emoji: string) => toggleReaction(message.id, emoji)
+	// The picker is portaled out of the action row, so the row cannot count on focus-within or
+	// hover to stay visible while it is open.
+	const [reactionPickerOpen, setReactionPickerOpen] = useState(false)
 	const attachments = message.metadata?.attachments ?? []
 	// Resolve the file record for each attachment so the bubble renders the real
 	// filename — the metadata `name` is best-effort and older / MCP-posted
@@ -402,6 +417,13 @@ export function MessageBubble({
 					) : null}
 				</div>
 				{spawnInfo ? <SpawnChip info={spawnInfo} /> : null}
+				<ReactionChips
+					reactions={reactions}
+					meId={actor?.id}
+					onToggle={onToggleReaction}
+					disabled={!canWrite}
+					className="justify-end"
+				/>
 				{/* The actions sit permanently in the timestamp row rather than
 				    revealing on hover — a touch viewport has no hover, and the
 				    ship gate asserts plain visibility at 375px. */}
@@ -435,6 +457,16 @@ export function MessageBubble({
 						>
 							<MessageSquareReply size={12} aria-hidden />
 						</button>
+					) : null}
+					{canReact && !editing ? (
+						<ViewerTooltip>
+							<ReactButton
+								reactions={reactions}
+								onToggle={onToggleReaction}
+								disabled={!canWrite}
+								onOpenChange={setReactionPickerOpen}
+							/>
+						</ViewerTooltip>
 					) : null}
 					{canAct && !editing ? (
 						<>
@@ -677,9 +709,19 @@ export function MessageBubble({
 					</div>
 				) : null}
 				{spawnInfo ? <SpawnChip info={spawnInfo} className="mt-1.5" /> : null}
-				{canCopy || canReply ? (
+				<ReactionChips
+					reactions={reactions}
+					meId={actor?.id}
+					onToggle={onToggleReaction}
+					disabled={!canWrite}
+					className="mt-1.5"
+				/>
+				{canCopy || canReply || canReact ? (
 					<div
-						className="mt-1.5 flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100 any-pointer-coarse:opacity-100"
+						className={cn(
+							'mt-1.5 flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100 any-pointer-coarse:opacity-100',
+							reactionPickerOpen && 'opacity-100',
+						)}
 						aria-label="Message actions"
 					>
 						{canCopy ? (
@@ -701,6 +743,16 @@ export function MessageBubble({
 							>
 								<MessageSquareReply size={12} aria-hidden />
 							</button>
+						) : null}
+						{canReact ? (
+							<ViewerTooltip>
+								<ReactButton
+									reactions={reactions}
+									onToggle={onToggleReaction}
+									disabled={!canWrite}
+									onOpenChange={setReactionPickerOpen}
+								/>
+							</ViewerTooltip>
 						) : null}
 						{canRetryAgent ? (
 							<ViewerTooltip>

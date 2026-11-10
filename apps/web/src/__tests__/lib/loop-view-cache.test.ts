@@ -9,12 +9,27 @@ import { beforeEach, describe, expect, it } from 'vitest'
 const RESULT = {
 	groups: [{ key: 'open', count: 2, value: 2 }],
 	total: { count: 2, value: 2 },
+	next_cursor: null,
 	rows_truncated: false,
 	groups_truncated: false,
 }
 
 describe('loop view cache', () => {
 	beforeEach(() => localStorage.clear())
+
+	it('does not keep an answer too big for a browser store, and drops the older one', () => {
+		writeCachedResult('ws-1', 'q', RESULT)
+		const huge = {
+			...RESULT,
+			groups: Array.from({ length: 20_000 }, (_, i) => ({
+				key: `person-${i}`,
+				count: 1,
+				value: 1,
+			})),
+		}
+		writeCachedResult('ws-1', 'q', huge)
+		expect(readCachedResult('ws-1', 'q')).toBeNull()
+	})
 
 	it('returns what was written, with the time it was written', () => {
 		const at = writeCachedResult('ws-1', 'q', RESULT)

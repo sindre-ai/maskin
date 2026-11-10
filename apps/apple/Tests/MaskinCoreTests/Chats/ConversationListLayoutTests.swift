@@ -51,6 +51,37 @@ import Testing
 		#expect(sections.groups.flatMap(\.items).map(\.id) == ["a"])
 	}
 
+	@Test func directMessagesLeadTheGroupsAndAreNotRepeated() {
+		var dm = chatConvo("dm", last: ago(days: 5))
+		dm.directPairKey = "a:b"
+		let all = [chatConvo("a", last: ago(days: 0, hours: 1)), dm]
+		let groups = ConversationGrouping.group(all, now: now, calendar: calendar)
+		#expect(groups.first?.key == .direct)
+		#expect(groups.first?.label == "Direct messages")
+		#expect(groups.first?.items.map(\.id) == ["dm"])
+		#expect(groups.dropFirst().flatMap(\.items).map(\.id) == ["a"])
+	}
+
+	@Test func aChatWithoutTheMarkerIsNeverADirectMessage() {
+		let groups = ConversationGrouping.group([chatConvo("a")], now: now, calendar: calendar)
+		#expect(!groups.contains { $0.key == .direct })
+	}
+
+	@Test func directMessageIsShownAsTheOtherPartyNotItsStoredTitle() {
+		var dm = chatConvo("dm", title: "Old topic")
+		dm.directPairKey = "a:b"
+		#expect(!TeamLayout.hasCustomTitle(dm, me: "me"))
+		#expect(TeamLayout.hasCustomTitle(chatConvo("t", title: "Old topic"), me: "me"))
+	}
+
+	@Test func directMessageBetweenTwoPeopleIsADirectMessageNamedAfterTheOtherPerson() {
+		var dm = chatConvo("dm", title: chatSam.name, participants: [chatMe, chatSam])
+		dm.directPairKey = "me:sam"
+		let groups = ConversationGrouping.group([dm], now: now, calendar: calendar)
+		#expect(groups.map(\.key) == [.direct])
+		#expect(TeamLayout.title(of: dm, me: "me") == chatSam.name)
+	}
+
 	@Test func groupChatNeedsMoreThanOneOtherParty() {
 		#expect(!chatConvo("a").isGroupChat(excluding: "me"))
 		#expect(chatConvo("b", participants: [chatMe, chatRelay, chatSam]).isGroupChat(excluding: "me"))

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { serveStatic } from '@hono/node-server/serve-static'
@@ -26,8 +27,9 @@ import {
 	ownershipCapErrorBody,
 	seatCapErrorBody,
 } from './lib/workspace-capacity'
-import { dbLoadShed } from './middleware/db-load-shed'
+import { dbLoadShed, isExempt as isLoadSheddingExempt } from './middleware/db-load-shed'
 import { createIdempotencyMiddleware } from './middleware/idempotency'
+import { inFlightCap } from './middleware/in-flight-cap'
 import accountRoutes from './routes/account'
 import actorAvatarRoutes from './routes/actor-avatar'
 import actorsRoutes from './routes/actors'
@@ -130,6 +132,16 @@ export type Env = {
 		maskinSessionId?: string
 	}
 }
+
+/**
+ * Per client (a hash of its credential), reads that run at once, reads allowed to wait, and how
+ * long they wait. The pool is 20 (DB_POOL_SIZE) and auth alone takes a connection per request, so
+ * 8 leaves room for others; a page that fires more than 8 reads at once just queues the rest for
+ * a moment.
+ */
+const CLIENT_MAX_IN_FLIGHT = 8
+const CLIENT_MAX_WAITING = 60
+const CLIENT_MAX_WAIT_MS = 10_000
 
 export interface AppDeps {
 	db: Database
@@ -323,6 +335,35 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		)
 	}
 
+	let capRefusedSinceLog = 0
+	let lastCapLogAt = 0
+	// One client may not hold the whole database pool. Reads only: a refused write is lost data.
+	// Keyed on a hash of the credential, read before auth so a capped request costs no lookup.
+	app.use(
+		'/api/*',
+		inFlightCap({
+			max: CLIENT_MAX_IN_FLIGHT,
+			maxWaiting: CLIENT_MAX_WAITING,
+			maxWaitMs: CLIENT_MAX_WAIT_MS,
+			skip: (c) => c.req.method !== 'GET' || isLoadSheddingExempt(c.req.path),
+			keyOf: (c) => {
+				const credential = c.req.header('Authorization') ?? c.req.header('Cookie')
+				if (!credential) return undefined
+				return createHash('sha256').update(credential).digest('hex').slice(0, 16)
+			},
+			onRefuse: () => {
+				capRefusedSinceLog += 1
+				const now = Date.now()
+				if (now - lastCapLogAt < 10_000) return
+				logger.warn('Client at its in-flight limit: refusing reads', {
+					refusedSinceLastLog: capRefusedSinceLog,
+				})
+				lastCapLogAt = now
+				capRefusedSinceLog = 0
+			},
+		}),
+	)
+
 	app.use('*', async (c, next) => {
 		c.set('db', db)
 		c.set('notifyBridge', notifyBridge)
@@ -332,7 +373,12 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		await next()
 	})
 
-	app.get('/api/health', createHealthHandler(db))
+	// Liveness: the process is up and answering. It never touches the database, so a database
+	// stall cannot make Docker/Coolify mark the container unhealthy and drop the whole site
+	// (a stalled pool is shed by dbLoadShed, and the site keeps answering). The database-aware
+	// check is /api/health/db, for monitoring.
+	app.get('/api/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISOString() }))
+	app.get('/api/health/db', createHealthHandler(db))
 
 	// Auth allowlist — each exemption has a distinct reason; do not tighten
 	// without checking the corresponding flow:
@@ -365,7 +411,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.use('/api/*', async (c, next) => {
 		const path = c.req.path
 		const method = c.req.method
-		if (path === '/api/health' || path === '/api/openapi.json') return next()
+		if (path === '/api/health' || path === '/api/health/db' || path === '/api/openapi.json')
+			return next()
 		if (path === '/api/actors' && method === 'POST') return next()
 		// Profile pictures load through <img>, which cannot send an API key. Image bytes only, and only with the current ?v= (routes/actor-avatar.ts).
 		if (method === 'GET' && /^\/api\/actors\/[0-9a-f-]{36}\/avatar$/i.test(path)) return next()

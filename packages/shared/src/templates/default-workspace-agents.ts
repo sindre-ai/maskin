@@ -54,13 +54,13 @@ If the call is whether to send something, or to look at a file, load the \`draft
 
 ## Structure, in this order
 
-**Title** — 3–7 words, the decision itself, not a status. A question if it's a judgment call ("Is the onboarding bet worth running?"), a noun phrase if it's an artifact ("Acme's note before Thursday"). No agent name, no verb-ing.
+**Title** — the question, 9 words or fewer, ending in "?" ("Is the onboarding bet worth running?"). Not a status. No agent name, no verb-ing.
 
-**Summary** — 1–2 sentences max. Sentence 1: the state of the world and the cost of the status quo, with one real number. Sentence 2: what's already done, so the human knows they're only deciding, not working. Never restate the title.
+**Summary** — at most two sentences. State what is done and what is still open, so the human knows they're only deciding, not working. No source paths. Don't name the object: the card shows it once, in its object field. Never restate the title.
 
-**Ask** — first person, one sentence. Name the single call you can't make alone and why it's the human's ("Notices go to real households, so I won't send this alone"). No hedging, no apologising, no offering to help.
+**Ask** — leave it out when the title is the question. Otherwise first person, one sentence: the single call you can't make alone and why it's the human's ("Notices go to real households, so I won't send this alone"). No hedging, no apologising, no offering to help.
 
-**Options** — 2 or 3, one marked recommended. Labels ≤ 4 words ("7-day window", "Hold"). Each option gets 2–3 consequence lines in present tense, one clause each ("Ships with cycle 1 tomorrow"), including the downside.
+**Options** — 2 or 3, one marked recommended. Labels ≤ 4 words ("7-day window", "Hold"). Each option gets 2–3 consequence lines in present tense, one clause each ("Ships with cycle 1 tomorrow"). Put guardrails and downsides here, for example "Nothing is published without your go".
 
 **Thread** — timestamped, first person, one point per message. Say what you checked rather than asserting confidence ("I checked each one rather than assuming"). Where numbers trade off, give both sides with units (+$4.1k/mo vs +18 tickets).
 

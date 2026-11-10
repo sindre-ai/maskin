@@ -37,7 +37,12 @@ import {
 } from '../lib/file-save'
 import { abortStoredUpload, classifyCompleteFailure, deleteStoredObject } from '../lib/file-uploads'
 import { fileStorageKey, fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
-import { MAX_HTML_TEXT_INPUT_BYTES, extractHtmlText, readableWithHint } from '../lib/html-text'
+import {
+	HtmlTooDeepError,
+	MAX_HTML_TEXT_INPUT_BYTES,
+	extractHtmlText,
+	readableWithHint,
+} from '../lib/html-text'
 import { htmlViewerWarning } from '../lib/html-viewer-warning'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceIdHeader } from '../lib/openapi-schemas'
@@ -505,6 +510,15 @@ app.openapi(getFileRoute, (async (c) => {
 		try {
 			extracted = extractHtmlText(text)
 		} catch (err) {
+			if (err instanceof HtmlTooDeepError) {
+				return c.json(
+					createApiError(
+						'VALIDATION_ERROR',
+						`This HTML file is nested more than ${err.maxDepth} levels deep, too deep to extract text from. Read it with format=raw.`,
+					),
+					400,
+				)
+			}
 			logger.error('Failed to extract text from HTML file', { fileId: row.id, error: String(err) })
 			return c.json(createApiError('INTERNAL_ERROR', 'Failed to extract text from the file'), 500)
 		}

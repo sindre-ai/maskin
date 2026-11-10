@@ -66,7 +66,7 @@ public struct DecisionPrompt: Sendable, Equatable, Codable {
 	public var title: String
 	/// State of the world and what is already done.
 	public var summary: String
-	/// The single call that belongs to the human, first person.
+	/// The single call that belongs to the human, first person. Empty when the title is the question.
 	public var ask: String
 	public var options: [DecisionOption]
 	public var draft: DecisionDraft?
@@ -90,7 +90,7 @@ public struct DecisionPrompt: Sendable, Equatable, Codable {
 		let c = try decoder.container(keyedBy: CodingKeys.self)
 		title = try c.decode(String.self, forKey: .title)
 		summary = try c.decode(String.self, forKey: .summary)
-		ask = try c.decode(String.self, forKey: .ask)
+		ask = try c.decodeIfPresent(String.self, forKey: .ask) ?? ""
 		options = try c.decode([DecisionOption].self, forKey: .options)
 		draft = try c.decodeIfPresent(DecisionDraft.self, forKey: .draft)
 		drafts = try c.decodeIfPresent([DecisionDraft].self, forKey: .drafts) ?? []

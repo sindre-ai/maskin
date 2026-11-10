@@ -85,12 +85,12 @@ public enum ForYouFormat {
 		return "held \(days)d"
 	}
 
-	/// "Asked 2 days ago": a card that has sat for a full day. Nothing earlier, so a fresh ask has no chip.
+	/// "Asked 2 days ago": a card that has sat for two full days. Nothing earlier, so a fresh ask has no chip.
 	public static func waitingNote(since date: Date?, now: Date = Date()) -> String? {
 		guard let date else { return nil }
 		let days = Int(now.timeIntervalSince(date) / 86_400)
-		if days < 1 { return nil }
+		if days < 2 { return nil }
 		if days >= 7 { return "Asked over a week ago" }
-		return days == 1 ? "Asked yesterday" : "Asked \(days) days ago"
+		return "Asked \(days) days ago"
 	}
 }

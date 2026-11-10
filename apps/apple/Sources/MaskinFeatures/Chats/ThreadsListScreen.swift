@@ -40,7 +40,7 @@ struct ThreadsListScreen: View {
 	private func section(_ title: String, items: [ThreadListItem]) -> some View {
 		if !items.isEmpty {
 			VStack(alignment: .leading, spacing: MaskinSpace.s4) {
-				TeamSectionHeader(label: title.uppercased(), count: nil).padding(.horizontal, MaskinSpace.s2)
+				TeamSectionHeader(label: title, count: nil).padding(.horizontal, MaskinSpace.s2)
 				VStack(spacing: 0) {
 					ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
 						if index > 0 { Divider().overlay(MaskinSurface.separator) }

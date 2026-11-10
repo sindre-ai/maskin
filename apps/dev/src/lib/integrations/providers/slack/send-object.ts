@@ -9,11 +9,9 @@ import { type SendClosure, recordSendOutcome } from '../../../send-closure'
  * Slack posts that go out without a person's approval: channels on the workspace's allowlist,
  * by Slack id. Everything else (every DM, every customer or shared channel) is held for
  * approval. The list is stored on the Slack connection (`config.slack_direct_post_channels`) and
- * only a human admin or owner can change it. Until one has saved a list, this built-in default
- * applies (#development only), so the pages that tell a person the merge seat or main is red
- * still reach them. A saved list replaces the default, including an empty one.
+ * only a human admin or owner can change it. There is no built-in channel: until a list is
+ * saved, every post is held for approval, the same as an empty list.
  */
-export const DEFAULT_DIRECT_POST_CHANNEL_IDS: readonly string[] = ['C06LC37JJCS']
 
 /** Key on the Slack integration's `config` jsonb that holds the allowlist. */
 export const DIRECT_POST_CHANNELS_CONFIG_KEY = 'slack_direct_post_channels'
@@ -57,12 +55,12 @@ export function directPostChannelsFromConfig(config: unknown): string[] | undefi
 }
 
 /**
- * True when a post to this channel id may go without approval: it is on the saved allowlist,
- * or, when no list was saved, on the built-in default. A DM id never qualifies.
+ * True when a post to this channel id may go without approval: it is on the saved allowlist.
+ * With no list saved, nothing qualifies. A DM id never qualifies.
  */
 export function isDirectPostChannel(channelId: string, configured?: readonly string[]): boolean {
 	if (!SLACK_CHANNEL_ID_PATTERN.test(channelId)) return false
-	return (configured ?? DEFAULT_DIRECT_POST_CHANNEL_IDS).includes(channelId)
+	return configured?.includes(channelId) ?? false
 }
 
 /**

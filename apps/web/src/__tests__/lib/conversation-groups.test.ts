@@ -69,6 +69,70 @@ describe('groupConversations', () => {
 		expect(groups[4].items[0].title).toBe('old')
 	})
 
+	it('lists direct messages first, in their own group, by the marker and not the title', () => {
+		const groups = groupConversations(
+			[
+				buildConversation({ title: 'today', lastMessageAt: daysAgo(0) }),
+				buildConversation({ title: 'pinned', pinned: true, lastMessageAt: daysAgo(0) }),
+				buildConversation({ title: 'Forge', lastMessageAt: daysAgo(40), directPairKey: 'a:b' }),
+				// Titled like an agent but not marked: topical.
+				buildConversation({ title: 'Relay', lastMessageAt: daysAgo(1) }),
+			],
+			{ now: NOW },
+		)
+		expect(groups.map((g) => g.label)).toEqual(['Direct messages', 'Pinned', 'Today', 'Yesterday'])
+		expect(groups[0].items.map((c) => c.title)).toEqual(['Forge'])
+		expect(groups[3].items.map((c) => c.title)).toEqual(['Relay'])
+	})
+
+	it('puts a direct message between two people in the direct group, named after the other person', () => {
+		const person = { actorId: 'me', actorName: 'Ada', actorType: 'human' }
+		const other = { actorId: 'bo', actorName: 'Bo', actorType: 'human' }
+		const groups = groupConversations(
+			[
+				buildConversation({
+					title: 'Bo',
+					directPairKey: 'bo:me',
+					participants: [person, other] as ConversationListItemResponse['participants'],
+				}),
+			],
+			{ now: NOW },
+		)
+		expect(groups.map((g) => g.key)).toEqual(['direct'])
+		expect(groups[0].items.map((c) => c.title)).toEqual(['Bo'])
+	})
+
+	it('keeps a pinned direct message in the direct group only', () => {
+		const groups = groupConversations(
+			[buildConversation({ title: 'Forge', pinned: true, directPairKey: 'a:b' })],
+			{ now: NOW },
+		)
+		expect(groups.map((g) => g.key)).toEqual(['direct'])
+	})
+
+	it('lists direct messages first in the unread view too, and leaves them out of Unread and Earlier', () => {
+		const groups = groupConversations(
+			[
+				buildConversation({ title: 'Forge', unread_count: 2, directPairKey: 'a:b' }),
+				buildConversation({ title: 'topic', unread_count: 1 }),
+				buildConversation({ title: 'quiet' }),
+			],
+			{ mode: 'unread', now: NOW },
+		)
+		expect(groups.map((g) => g.key)).toEqual(['direct', 'unread', 'earlier'])
+		expect(groups[1].items.map((c) => c.title)).toEqual(['topic'])
+		expect(groups[2].items.map((c) => c.title)).toEqual(['quiet'])
+	})
+
+	it('keeps the archived list flat, direct messages included', () => {
+		const groups = groupConversations(
+			[buildConversation({ directPairKey: 'a:b' }), buildConversation()],
+			{ mode: 'archived', now: NOW },
+		)
+		expect(groups.map((g) => g.key)).toEqual(['archived'])
+		expect(groups[0].items).toHaveLength(2)
+	})
+
 	it('omits groups that have no conversations', () => {
 		const groups = groupConversations([buildConversation({ lastMessageAt: daysAgo(0) })], {
 			now: NOW,
