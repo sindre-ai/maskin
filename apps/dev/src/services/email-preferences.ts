@@ -90,7 +90,38 @@ export async function switchEmailOff(db: Database, actorId: string): Promise<boo
 	return before?.enabled !== false
 }
 
-/** Product event: only where the switch-off came from. No address, no text. */
-export function trackEmailSwitchedOff(actorId: string, from: 'link' | 'settings'): void {
-	void capturePosthogEvent('email_switched_off', actorId, { from })
+/**
+ * Turns the Email switch of one kind (today only flow_activity) off, creating the settings row if
+ * there was none. Leaves the summary email and every other kind alone. Returns false when it was
+ * already off.
+ */
+export async function switchEmailKindOff(
+	db: Database,
+	actorId: string,
+	kind: string,
+): Promise<boolean> {
+	const now = new Date()
+	const [before] = await db
+		.select({ saved: notificationPreferences.emailCategories })
+		.from(notificationPreferences)
+		.where(eq(notificationPreferences.actorId, actorId))
+		.limit(1)
+	const next = { ...before?.saved, [kind]: false }
+	await db
+		.insert(notificationPreferences)
+		.values({ actorId, emailCategories: next, createdAt: now, updatedAt: now })
+		.onConflictDoUpdate({
+			target: notificationPreferences.actorId,
+			set: { emailCategories: next, updatedAt: now },
+		})
+	return before?.saved?.[kind] === true
+}
+
+/** Product event: only where the switch-off came from (and which kind, when not the summary). No address, no text. */
+export function trackEmailSwitchedOff(
+	actorId: string,
+	from: 'link' | 'settings',
+	kind?: string,
+): void {
+	void capturePosthogEvent('email_switched_off', actorId, { from, ...(kind ? { kind } : {}) })
 }

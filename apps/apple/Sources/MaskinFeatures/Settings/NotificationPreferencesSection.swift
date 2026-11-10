@@ -62,6 +62,13 @@ struct NotificationPreferencesSection: View {
 					subtitle: "Summaries of what your agents got done",
 					accessory: .toggle(
 						isOn: store.preferences.emailDigestEnabled, set: { store.setEmailDigest(enabled: $0) })),
+				toggleRow(.flowActivity, "Flow activity", "When one of your flows finishes a run"),
+				PageRowModel(
+					id: "email_flow_activity", title: "Flow activity by email",
+					subtitle: "When one of your flows finishes a run",
+					accessory: .toggle(
+						isOn: store.preferences.emailFlowActivity,
+						set: { store.setEmailFlowActivity(enabled: $0) })),
 				toggleRow(.tips, "Tips and updates", "What\u{2019}s new in Maskin"),
 			])
 			PageFootnote(

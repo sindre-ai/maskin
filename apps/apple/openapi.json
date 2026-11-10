@@ -58915,13 +58915,17 @@
 												},
 												"tips": {
 													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
 												}
 											},
 											"required": [
 												"needs_you",
 												"conversation",
 												"digest",
-												"tips"
+												"tips",
+												"flow_activity"
 											]
 										},
 										"browser_categories": {
@@ -58938,13 +58942,17 @@
 												},
 												"tips": {
 													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
 												}
 											},
 											"required": [
 												"needs_you",
 												"conversation",
 												"digest",
-												"tips"
+												"tips",
+												"flow_activity"
 											]
 										},
 										"browser_not_asked": {
@@ -58955,7 +58963,8 @@
 													"needs_you",
 													"conversation",
 													"digest",
-													"tips"
+													"tips",
+													"flow_activity"
 												]
 											}
 										},
@@ -59053,6 +59062,9 @@
 											},
 											"tips": {
 												"type": "boolean"
+											},
+											"flow_activity": {
+												"type": "boolean"
 											}
 										}
 									},
@@ -59069,6 +59081,9 @@
 												"type": "boolean"
 											},
 											"tips": {
+												"type": "boolean"
+											},
+											"flow_activity": {
 												"type": "boolean"
 											}
 										}
@@ -59143,13 +59158,17 @@
 												},
 												"tips": {
 													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
 												}
 											},
 											"required": [
 												"needs_you",
 												"conversation",
 												"digest",
-												"tips"
+												"tips",
+												"flow_activity"
 											]
 										},
 										"browser_categories": {
@@ -59166,13 +59185,17 @@
 												},
 												"tips": {
 													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
 												}
 											},
 											"required": [
 												"needs_you",
 												"conversation",
 												"digest",
-												"tips"
+												"tips",
+												"flow_activity"
 											]
 										},
 										"browser_not_asked": {
@@ -59183,7 +59206,8 @@
 													"needs_you",
 													"conversation",
 													"digest",
-													"tips"
+													"tips",
+													"flow_activity"
 												]
 											}
 										},

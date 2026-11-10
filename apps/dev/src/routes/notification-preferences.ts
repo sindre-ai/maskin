@@ -44,6 +44,7 @@ function serialize(
 			briefing_enabled: d.briefing_enabled,
 			briefing_time: d.briefing_time,
 			email_digest_enabled: emailDigestEnabled,
+			email_categories: { flow_activity: false },
 			muted_workspace_ids: [],
 			updated_at: null,
 		}
@@ -60,6 +61,7 @@ function serialize(
 		briefing_enabled: row.briefingEnabled,
 		briefing_time: row.briefingTime,
 		email_digest_enabled: emailDigestEnabled,
+		email_categories: { flow_activity: row.emailCategories?.flow_activity === true },
 		muted_workspace_ids: row.mutedWorkspaceIds,
 		updated_at: row.updatedAt.toISOString(),
 	}
@@ -152,6 +154,10 @@ app.openapi(putRoute, async (c) => {
 		briefingEnabled: body.briefing_enabled ?? current.briefing_enabled,
 		briefingTime: body.briefing_time ?? current.briefing_time,
 		mutedWorkspaceIds: [...new Set(body.muted_workspace_ids ?? current.muted_workspace_ids)],
+		// Only the kinds sent in this call change; every other kind keeps what is saved.
+		...(body.email_categories !== undefined && {
+			emailCategories: { ...existing?.emailCategories, ...body.email_categories },
+		}),
 		// Only a choice sent in this call is saved; an empty choice stays empty.
 		...(body.email_digest_enabled !== undefined && {
 			emailDigestEnabled: body.email_digest_enabled,
@@ -169,6 +175,9 @@ app.openapi(putRoute, async (c) => {
 
 	if (body.email_digest_enabled === false && existing?.emailDigestEnabled !== false) {
 		trackEmailSwitchedOff(actorId, 'settings')
+	}
+	if (body.email_categories?.flow_activity === false && existing?.emailCategories?.flow_activity) {
+		trackEmailSwitchedOff(actorId, 'settings', 'flow_activity')
 	}
 
 	try {

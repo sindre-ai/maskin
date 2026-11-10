@@ -236,6 +236,18 @@ function NotificationsPage() {
 					columns
 				/>
 				<PreferenceRow
+					title="Flow activity"
+					description="When one of your flows finishes a run. Off until you switch it on."
+					checked={prefs.categories.flow_activity}
+					onChange={(next) => save({ categories: { flow_activity: next } })}
+					email={{
+						checked: prefs.email_categories.flow_activity,
+						onChange: (next) => save({ email_categories: { flow_activity: next } }),
+					}}
+					browser={browserSwitch('flow_activity')}
+					columns
+				/>
+				<PreferenceRow
 					title="Tips and updates"
 					description="What is new in Maskin."
 					checked={prefs.categories.tips}

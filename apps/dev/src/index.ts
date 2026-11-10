@@ -48,6 +48,7 @@ import { DailyBudgetCardScheduler } from './services/daily-budget-card-scheduler
 import { DailyBudgetSummaryScheduler } from './services/daily-budget-events'
 import { handleDesktopStreamUpgrade, isDesktopStreamRequest } from './services/desktop-relay'
 import { DriveWatchRenewer } from './services/drive-watch-renewer'
+import { FlowActivityNotifier } from './services/flow-activity'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { GscSyncScheduler } from './services/gsc-sync-scheduler'
 import { LifecyclePushScheduler } from './services/lifecycle-push-scheduler'
@@ -256,6 +257,9 @@ const apnsSender = new ApnsSender(db)
 const webPushSender = new WebPushSender(db)
 const notificationPush = new NotificationPushFanout(db, notifyBridge, [apnsSender, webPushSender])
 notificationPush.start()
+
+const flowActivity = new FlowActivityNotifier(db, notifyBridge)
+flowActivity.start()
 
 const liveActivityPush = new LiveActivityFanout(db, notifyBridge, apnsSender, {
 	turns: sessionManager,
@@ -542,6 +546,7 @@ const shutdown = async (signal: string) => {
 	rotateDeksJob.stop()
 	chainSnapshotJob.stop()
 	notificationPush.stop()
+	flowActivity.stop()
 	briefingPushScheduler.stop()
 	briefingEmailScheduler.stop()
 	lifecyclePushScheduler.stop()

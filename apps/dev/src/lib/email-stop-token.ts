@@ -23,38 +23,51 @@ export function isEmailStopConfigured(): boolean {
 	return secret() !== null
 }
 
-function sign(key: string, actorId: string, expiresAt: number): string {
-	return createHmac('sha256', key)
-		.update(`${EMAIL_STOP_PURPOSE}:${actorId}:${expiresAt}`)
-		.digest('base64url')
+// A link can be scoped to one kind of email (today: flow_activity). It then carries the kind as a
+// fourth part and the kind is part of what is signed, so it cannot be swapped for the summary
+// stop or the other way round. A link without a kind stops the summary, as before.
+const KIND_RE = /^[a-z_]{1,32}$/
+
+function sign(key: string, actorId: string, expiresAt: number, kind?: string): string {
+	const purpose = kind ? `${EMAIL_STOP_PURPOSE}:${kind}` : EMAIL_STOP_PURPOSE
+	return createHmac('sha256', key).update(`${purpose}:${actorId}:${expiresAt}`).digest('base64url')
 }
 
-/** `<account id>.<expiry in ms>.<signature>`. Throws when the secret is not set. */
-export function signEmailStopToken(actorId: string, now = Date.now()): string {
+/**
+ * `<account id>.<expiry in ms>.<signature>`, or `<account id>.<expiry in ms>.<kind>.<signature>` for
+ * a link that stops one kind of email. Throws when the secret is not set.
+ */
+export function signEmailStopToken(actorId: string, now = Date.now(), kind?: string): string {
 	const key = secret()
 	if (!key) throw new Error('EMAIL_STOP_LINK_SECRET is not set')
+	if (kind !== undefined && !KIND_RE.test(kind)) throw new Error('Invalid email kind')
 	const id = actorId.toLowerCase()
 	const expiresAt = now + EMAIL_STOP_TTL_MS
-	return `${id}.${expiresAt}.${sign(key, id, expiresAt)}`
+	const signature = sign(key, id, expiresAt, kind)
+	return kind ? `${id}.${expiresAt}.${kind}.${signature}` : `${id}.${expiresAt}.${signature}`
 }
 
 export type EmailStopVerdict =
-	| { ok: true; actorId: string }
+	| { ok: true; actorId: string; kind: string | null }
 	| { ok: false; reason: 'unconfigured' | 'invalid' | 'expired' }
 
 export function verifyEmailStopToken(token: string, now = Date.now()): EmailStopVerdict {
 	const key = secret()
 	if (!key) return { ok: false, reason: 'unconfigured' }
 	const parts = token.split('.')
-	if (parts.length !== 3) return { ok: false, reason: 'invalid' }
-	const [actorId, expiry, given] = parts as [string, string, string]
+	if (parts.length !== 3 && parts.length !== 4) return { ok: false, reason: 'invalid' }
+	const actorId = parts[0] as string
+	const expiry = parts[1] as string
+	const kind = parts.length === 4 ? (parts[2] as string) : null
+	const given = parts[parts.length - 1] as string
 	if (!UUID_RE.test(actorId) || !/^\d{1,16}$/.test(expiry)) return { ok: false, reason: 'invalid' }
+	if (kind !== null && !KIND_RE.test(kind)) return { ok: false, reason: 'invalid' }
 	const expiresAt = Number(expiry)
-	const expected = Buffer.from(sign(key, actorId, expiresAt))
+	const expected = Buffer.from(sign(key, actorId, expiresAt, kind ?? undefined))
 	const actual = Buffer.from(given)
 	if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
 		return { ok: false, reason: 'invalid' }
 	}
 	if (expiresAt <= now) return { ok: false, reason: 'expired' }
-	return { ok: true, actorId }
+	return { ok: true, actorId, kind }
 }

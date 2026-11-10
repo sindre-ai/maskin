@@ -71,11 +71,12 @@ public final class NotificationPreferencesStore {
 		case .conversation: patch.conversation = enabled
 		case .digest: patch.digest = enabled
 		case .tips: patch.tips = enabled
+		case .flowActivity: patch.flowActivity = enabled
 		}
 		submit(patch)
 	}
 
-	public enum Category: String, CaseIterable, Sendable { case needsYou, conversation, digest, tips }
+	public enum Category: String, CaseIterable, Sendable { case needsYou, conversation, digest, tips, flowActivity }
 
 	public func isEnabled(_ category: Category) -> Bool {
 		switch category {
@@ -83,6 +84,7 @@ public final class NotificationPreferencesStore {
 		case .conversation: preferences.categories.conversation
 		case .digest: preferences.categories.digest
 		case .tips: preferences.categories.tips
+		case .flowActivity: preferences.categories.flowActivity
 		}
 	}
 
@@ -114,6 +116,12 @@ public final class NotificationPreferencesStore {
 	public func setEmailDigest(enabled: Bool) {
 		var patch = NotificationPreferencesPatch()
 		patch.emailDigestEnabled = enabled
+		submit(patch)
+	}
+
+	public func setEmailFlowActivity(enabled: Bool) {
+		var patch = NotificationPreferencesPatch()
+		patch.emailFlowActivity = enabled
 		submit(patch)
 	}
 

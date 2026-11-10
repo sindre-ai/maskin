@@ -1,7 +1,13 @@
 import { z } from 'zod'
 
 /** Push categories a notification can carry in `metadata.push_category`. */
-export const PUSH_CATEGORIES = ['needs_you', 'conversation', 'digest', 'tips'] as const
+export const PUSH_CATEGORIES = [
+	'needs_you',
+	'conversation',
+	'digest',
+	'tips',
+	'flow_activity',
+] as const
 export const pushCategorySchema = z.enum(PUSH_CATEGORIES)
 export type PushCategory = z.infer<typeof pushCategorySchema>
 
@@ -9,7 +15,14 @@ export const NOTIFICATION_PREFERENCES_DEFAULTS = {
 	timezone: null,
 	quiet_hours_start: null,
 	quiet_hours_end: null,
-	categories: { needs_you: true, conversation: true, digest: true, tips: true },
+	categories: {
+		needs_you: true,
+		conversation: true,
+		digest: true,
+		tips: true,
+		/** Opt-in: off for everyone until chosen. */
+		flow_activity: false,
+	},
 	briefing_enabled: true,
 	/** Minutes from local midnight: 08:30. */
 	briefing_time: 510,
@@ -25,6 +38,7 @@ export const NEW_SIGNUP_PUSH_CATEGORIES = {
 	conversation: true,
 	digest: true,
 	tips: false,
+	flow_activity: false,
 } as const
 
 /**
@@ -69,7 +83,12 @@ export const notificationCategoriesSchema = z.object({
 	conversation: z.boolean(),
 	digest: z.boolean(),
 	tips: z.boolean(),
+	flow_activity: z.boolean(),
 })
+
+/** The kinds that can also arrive as their own email. Only Flow activity so far; empty means off. */
+export const EMAIL_KINDS = ['flow_activity'] as const
+export const emailCategoriesSchema = z.object({ flow_activity: z.boolean() })
 
 export const notificationPreferencesResponseSchema = z.object({
 	timezone: timezoneSchema.nullable(),

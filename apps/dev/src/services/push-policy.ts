@@ -6,7 +6,7 @@
  * gathers the inputs (preferences row, recent pushes) and acts on the verdict.
  *
  * Producers steer it through `notifications.metadata`:
- *   push_category       'needs_you' | 'conversation' | 'digest' | 'tips'. Absent => inferred:
+ *   push_category       'needs_you' | 'conversation' | 'digest' | 'tips' | 'flow_activity'. Absent => inferred:
  *                       type needs_input => needs_you, anything else => digest.
  *   push_collapse_key   string; a newer push with the same key replaces an older one.
  *   push_delay_seconds  hold the push this long; the fan-out re-checks read state afterwards.
@@ -57,7 +57,14 @@ export const DEFAULT_PUSH_PREFS: PushPrefs = {
 	timezone: null,
 	quietHoursStart: null,
 	quietHoursEnd: null,
-	categories: { needs_you: true, conversation: true, digest: true, tips: true },
+	// Flow activity is opt-in: off until the person switches it on.
+	categories: {
+		needs_you: true,
+		conversation: true,
+		digest: true,
+		tips: true,
+		flow_activity: false,
+	},
 	mutedWorkspaceIds: [],
 }
 
@@ -117,7 +124,13 @@ export const LIMITS = {
 const HOUR_MS = 60 * 60_000
 const DAY_MS = 24 * HOUR_MS
 
-const CATEGORIES: readonly PushCategory[] = ['needs_you', 'conversation', 'digest', 'tips']
+const CATEGORIES: readonly PushCategory[] = [
+	'needs_you',
+	'conversation',
+	'digest',
+	'tips',
+	'flow_activity',
+]
 
 export function pushCategoryOf(n: Pick<PolicyNotification, 'type' | 'metadata'>): PushCategory {
 	const c = n.metadata.push_category

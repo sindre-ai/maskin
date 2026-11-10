@@ -90,19 +90,21 @@ describe('browser switch per kind (Integration)', () => {
 			conversation: false,
 			digest: true,
 			tips: true,
+			flow_activity: false,
 		})
 		expect(first.categories.conversation).toBe(true)
-		expect(first.browser_not_asked).toEqual(['needs_you', 'digest', 'tips'])
+		expect(first.browser_not_asked).toEqual(['needs_you', 'digest', 'tips', 'flow_activity'])
 
 		// Any kind can be turned on for the browser, and push stays as it was.
 		const second = await put(app, { browser_categories: { tips: true, conversation: true } })
 		expect(second.browser_categories.conversation).toBe(true)
-		expect(second.browser_not_asked).toEqual(['needs_you', 'digest'])
+		expect(second.browser_not_asked).toEqual(['needs_you', 'digest', 'flow_activity'])
 		expect(second.categories).toEqual({
 			needs_you: true,
 			conversation: true,
 			digest: true,
 			tips: true,
+			flow_activity: false,
 		})
 		expect(await get(app)).toMatchObject({ browser_categories: second.browser_categories })
 	})
@@ -133,17 +135,37 @@ describe('browser switch per kind (Integration)', () => {
 		expect(res.status).toBe(201)
 		const { id } = await res.json()
 		const body = await get(prefsApp(id))
-		const calm = { needs_you: true, conversation: true, digest: true, tips: false }
+		const calm = {
+			needs_you: true,
+			conversation: true,
+			digest: true,
+			tips: false,
+			flow_activity: false,
+		}
 		expect(body.categories).toEqual(calm)
 		expect(body.browser_categories).toEqual(calm)
-		expect(body.browser_not_asked).toEqual(['needs_you', 'conversation', 'digest', 'tips'])
+		expect(body.browser_not_asked).toEqual([
+			'needs_you',
+			'conversation',
+			'digest',
+			'tips',
+			'flow_activity',
+		])
 		expect(body.email_digest_enabled).toBe(true)
+		expect(body.email_categories).toEqual({ flow_activity: false })
 	})
 
 	it('keeps everything on for a person with no saved row', async () => {
 		const actor = (await insertActor(db))?.id as string
 		const body = await get(prefsApp(actor))
-		const allOn = { needs_you: true, conversation: true, digest: true, tips: true }
+		// Flow activity is opt-in: off for everyone, with or without a saved row.
+		const allOn = {
+			needs_you: true,
+			conversation: true,
+			digest: true,
+			tips: true,
+			flow_activity: false,
+		}
 		expect(body.categories).toEqual(allOn)
 		expect(body.browser_categories).toEqual(allOn)
 	})
