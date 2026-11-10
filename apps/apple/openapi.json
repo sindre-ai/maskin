@@ -26188,7 +26188,7 @@
 					"data"
 				],
 				"summary": "Read-only grouped aggregation over objects",
-				"description": "Counts, sums or averages objects of one type, optionally grouped by status, type or a metadata field and scoped to the workspace or one loop. Aggregation runs in the database; scanned rows and returned groups are capped and flagged when the cap is hit.",
+				"description": "Counts, sums or averages objects of one type, optionally grouped by status, type or a metadata field and scoped to the workspace or one loop. Aggregation runs in the database over every matching object. Groups come back a page at a time: while `next_cursor` is set, pass it back as `cursor` to read the next page. Totals always cover every group.",
 				"parameters": [
 					{
 						"schema": {
@@ -26199,6 +26199,27 @@
 						},
 						"required": true,
 						"name": "spec",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"maxLength": 80,
+							"description": "The previous page's `next_cursor`, to read the next page of groups."
+						},
+						"required": false,
+						"name": "cursor",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"minimum": 1,
+							"maximum": 1000,
+							"description": "Groups per page (default 50, at most 1000)."
+						},
+						"required": false,
+						"name": "limit",
 						"in": "query"
 					},
 					{
@@ -26265,6 +26286,12 @@
 												"value"
 											]
 										},
+										"next_cursor": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
 										"rows_truncated": {
 											"type": "boolean"
 										},
@@ -26275,6 +26302,7 @@
 									"required": [
 										"groups",
 										"total",
+										"next_cursor",
 										"rows_truncated",
 										"groups_truncated"
 									]
