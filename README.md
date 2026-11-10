@@ -185,7 +185,8 @@ All endpoints are under `/api`. Most require `Authorization: Bearer <api-key>` a
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/health` | Health check (no auth) |
+| GET | `/api/health` | Liveness check (no auth, no database) |
+| GET | `/api/health/db` | Database readiness check (no auth) |
 | GET | `/api/openapi.json` | OpenAPI spec (no auth) |
 
 ### Objects (Insights, Bets, Tasks)
