@@ -98,13 +98,19 @@ describe('direct messages between people', () => {
 		await list(a.id)
 		await list(b.id)
 		// A+B and A+C from A's list, B+C from B's: three chats, none twice.
-		expect(await pairRows()).toHaveLength(3)
+		const pairs = await pairRows()
+		expect(pairs).toHaveLength(3)
 		const participants = await db
 			.select({ id: conversationParticipants.conversationId })
 			.from(conversationParticipants)
-			.where(inArray(conversationParticipants.actorId, [a.id, b.id]))
-		// A is in A+B and A+C, B is in A+B and B+C: four rows, so no pair got a second chat.
-		expect(participants).toHaveLength(4)
+			.where(
+				inArray(
+					conversationParticipants.conversationId,
+					pairs.map((p) => p.id),
+				),
+			)
+		// Each of the three chats holds exactly its two people.
+		expect(participants).toHaveLength(6)
 	})
 
 	it('names the direct message after the other person when it is opened by id', async () => {
