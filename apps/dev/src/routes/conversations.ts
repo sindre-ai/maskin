@@ -16,6 +16,7 @@ import {
 	addConversationParticipantsSchema,
 	addReactionSchema,
 	conversationListQuerySchema,
+	conversationUnreadCountResponseSchema,
 	createConversationSchema,
 	editMessageSchema,
 	markThreadReadSchema,
@@ -904,6 +905,56 @@ app.openapi(listConversationsRoute, (async (c) => {
 	})
 }) as RouteHandler<typeof listConversationsRoute, Env>)
 
+// GET /unread-count - How many of the caller's chats are unread. Registered before
+// every `/{id}` route so the literal path is never read as a conversation id.
+const unreadCountRoute = createRoute({
+	method: 'get',
+	path: '/unread-count',
+	tags: ['Conversations'],
+	summary: "Count the caller's unread chats",
+	description:
+		"Same visibility rules as `GET /` with `unread_only=true` (active, non-archived chats with a message from someone else past the caller's read cursor), but one count query and no hydration. Used for the sidebar badge.",
+	request: { headers: workspaceIdHeader },
+	responses: {
+		200: {
+			content: { 'application/json': { schema: conversationUnreadCountResponseSchema } },
+			description: 'Unread chat count',
+		},
+	},
+})
+
+app.openapi(unreadCountRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	// Literal, table-qualified SQL inside the correlated subquery, identical to the
+	// list's `unread_only` filter (see known-pitfalls.md's correlated-subquery entry).
+	const [row] = await db
+		.select({ count: sql<number>`count(*)::int` })
+		.from(conversations)
+		.innerJoin(
+			conversationParticipants,
+			eq(conversationParticipants.conversationId, conversations.id),
+		)
+		.where(
+			and(
+				eq(conversations.workspaceId, workspaceId),
+				eq(conversationParticipants.actorId, callerId),
+				isNull(conversationParticipants.leftAt),
+				eq(conversationParticipants.archived, false),
+				sql`EXISTS (
+					SELECT 1 FROM messages m
+					WHERE m.conversation_id = conversations.id
+						AND m.actor_id != ${callerId}
+						AND m.id > COALESCE(conversation_participants.last_read_message_id, 0)
+				)`,
+			),
+		)
+
+	return c.json({ count: row?.count ?? 0 })
+}) as RouteHandler<typeof unreadCountRoute, Env>)
+
 // GET /threads - Threads the caller is in, across their conversations
 const listThreadsRoute = createRoute({
 	method: 'get',
@@ -1328,36 +1379,37 @@ app.openapi(listMessagesRoute, (async (c) => {
 	const hasMore = rows.length > query.limit
 	const page = rows.slice(0, query.limit)
 
-	// Participant-scoped delegation strip. `loadSpawnedSessionsByMessage` returns
-	// empty buckets for a caller who is not a participant, so a non-member sees the
-	// message list with no sub-agent prompts attached.
-	const spawned = await loadSpawnedSessionsByMessage(db, {
-		conversationId: id,
-		workspaceId,
-		messageIds: page.map((m) => m.id),
-		actorId: callerId,
-	})
-
-	const reactions = await loadReactionsByMessage(
-		db,
-		callerId,
-		page.map((m) => m.id),
-	)
-
-	const summaries = await loadThreadSummaries(
-		db,
-		callerId,
-		page.filter((m) => m.threadRootId === null),
-	)
-
-	// Handoffs no message carries yet ride on the newest page only.
-	const pendingHandoffs = query.before_id
-		? undefined
-		: await loadPendingSpawnedSessions(db, {
-				conversationId: id,
-				workspaceId,
-				actorId: callerId,
-			})
+	// `loadConversationWithAuth` already proved the caller is an active participant,
+	// so the participant-scoped loaders skip their own check. The four loaders are
+	// independent of each other and run together (at most four queries in flight).
+	const [spawned, reactions, summaries, pendingHandoffs] = await Promise.all([
+		loadSpawnedSessionsByMessage(db, {
+			conversationId: id,
+			workspaceId,
+			messageIds: page.map((m) => m.id),
+			actorId: callerId,
+			participantVerified: true,
+		}),
+		loadReactionsByMessage(
+			db,
+			callerId,
+			page.map((m) => m.id),
+		),
+		loadThreadSummaries(
+			db,
+			callerId,
+			page.filter((m) => m.threadRootId === null),
+		),
+		// Handoffs no message carries yet ride on the newest page only.
+		query.before_id
+			? Promise.resolve(undefined)
+			: loadPendingSpawnedSessions(db, {
+					conversationId: id,
+					workspaceId,
+					actorId: callerId,
+					participantVerified: true,
+				}),
+	])
 
 	return c.json({
 		messages: page.map(

@@ -1,6 +1,7 @@
 import {
 	formatActiveSessionsNote,
 	isConversationParticipant,
+	loadPendingSpawnedSessions,
 	loadSessionStateChangeFrame,
 	loadSpawnedSessionsByMessage,
 } from '../../services/spawned-sessions'
@@ -238,5 +239,49 @@ describe('formatActiveSessionsNote', () => {
 		)
 		expect(note).toContain('…')
 		expect(note).not.toContain('x'.repeat(150))
+	})
+})
+
+describe('participantVerified', () => {
+	it('skips the participant lookup: one select instead of two', async () => {
+		const { db, mockResults } = createTestContext()
+		mockResults.selectQueue = [[], []]
+
+		await loadSpawnedSessionsByMessage(db, {
+			conversationId: 'conv-1',
+			workspaceId: 'ws-1',
+			messageIds: [10],
+			actorId: 'actor-1',
+			participantVerified: true,
+		})
+
+		expect(mockResults.selectQueue).toHaveLength(1)
+	})
+
+	it('runs the lookup by default: a participant costs two selects', async () => {
+		const { db, mockResults } = createTestContext()
+		mockResults.selectQueue = [[{ conversationId: 'conv-1' }], []]
+
+		await loadSpawnedSessionsByMessage(db, {
+			conversationId: 'conv-1',
+			workspaceId: 'ws-1',
+			messageIds: [10],
+			actorId: 'actor-1',
+		})
+
+		expect(mockResults.selectQueue).toHaveLength(0)
+	})
+
+	it('pending handoffs still return nothing for an outsider by default', async () => {
+		const { db, mockResults } = createTestContext()
+		mockResults.selectQueue = [[]]
+
+		const rows = await loadPendingSpawnedSessions(db, {
+			conversationId: 'conv-1',
+			workspaceId: 'ws-1',
+			actorId: 'outsider',
+		})
+
+		expect(rows).toEqual([])
 	})
 })

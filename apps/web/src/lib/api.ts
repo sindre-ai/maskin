@@ -1677,6 +1677,8 @@ export const api = {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<ConversationListResponse>(`/conversations${qs}`, { workspaceId })
 		},
+		unreadCount: (workspaceId: string) =>
+			request<ConversationUnreadCountResponse>('/conversations/unread-count', { workspaceId }),
 		get: (id: string, workspaceId: string) =>
 			request<ConversationDetailResponse>(`/conversations/${id}`, { workspaceId }),
 		create: (workspaceId: string, data: CreateConversationInput) =>
@@ -2834,6 +2836,10 @@ export interface ConversationListItemResponse {
 export interface ConversationListResponse {
 	conversations: ConversationListItemResponse[]
 	has_more: boolean
+}
+
+export interface ConversationUnreadCountResponse {
+	count: number
 }
 
 export interface ConversationDetailResponse {

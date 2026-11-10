@@ -126,14 +126,23 @@ function toEmbed(row: {
  */
 export async function loadSpawnedSessionsByMessage(
 	db: Database,
-	opts: { conversationId: string; workspaceId: string; messageIds: number[]; actorId: string },
+	opts: {
+		conversationId: string
+		workspaceId: string
+		messageIds: number[]
+		actorId: string
+		/** The caller already proved they are an active participant; skip the re-check. */
+		participantVerified?: boolean
+	},
 ): Promise<Map<number, SpawnedSessionEmbed[]>> {
 	const byMessage = new Map<number, SpawnedSessionEmbed[]>()
 	for (const id of opts.messageIds) byMessage.set(id, [])
 
 	if (opts.messageIds.length === 0) return byMessage
 
-	const entitled = await isConversationParticipant(db, opts.conversationId, opts.actorId)
+	const entitled =
+		opts.participantVerified === true ||
+		(await isConversationParticipant(db, opts.conversationId, opts.actorId))
 	if (!entitled) return byMessage
 
 	const rows = await db
@@ -320,9 +329,17 @@ export async function anchorSpawnedSessionsToMessage(
  */
 export async function loadPendingSpawnedSessions(
 	db: Database,
-	opts: { conversationId: string; workspaceId: string; actorId: string },
+	opts: {
+		conversationId: string
+		workspaceId: string
+		actorId: string
+		/** The caller already proved they are an active participant; skip the re-check. */
+		participantVerified?: boolean
+	},
 ): Promise<SpawnedSessionEmbed[]> {
-	const entitled = await isConversationParticipant(db, opts.conversationId, opts.actorId)
+	const entitled =
+		opts.participantVerified === true ||
+		(await isConversationParticipant(db, opts.conversationId, opts.actorId))
 	if (!entitled) return []
 
 	const chatSessionIds = db
