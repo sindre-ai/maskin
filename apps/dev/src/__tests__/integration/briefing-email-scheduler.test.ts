@@ -505,9 +505,9 @@ describe('summary email: weekly rhythm', () => {
 
 		const texts = sentTo(p.email).map(([m]) => m.text as string)
 		expect(texts).toHaveLength(3)
-		expect(texts[0]).toContain('A card is one thing waiting on you.')
-		expect(texts[1]).toContain('A loop is a routine')
-		expect(texts[2]).toContain('What you can do next')
+		expect(texts[0]).toContain(STEP_LESSON[1])
+		expect(texts[1]).toContain(STEP_LESSON[2])
+		expect(texts[2]).toContain(STEP_LESSON[3])
 		// The first weekly mail reaches back 7 days, past the daily 24 hours.
 		expect(texts[0]).toContain("Researcher finished 'Report from 5 days ago'")
 		expect(await prefsRow(p.actorId)).toMatchObject({ emailOnboardingStep: 3 })
