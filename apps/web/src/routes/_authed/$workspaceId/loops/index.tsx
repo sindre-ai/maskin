@@ -1,3 +1,4 @@
+import { usePlanPercentEnabled } from '@/components/billing/plan-percent-context'
 import { PageHeader } from '@/components/layout/page-header'
 import {
 	type FailedAgent,
@@ -26,6 +27,7 @@ import { useCanWrite } from '@/hooks/use-can-write'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useLoops } from '@/hooks/use-loops'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { usePlanUsage } from '@/hooks/use-plan-usage'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import { useTriggers } from '@/hooks/use-triggers'
 import { useUpdateTrigger } from '@/hooks/use-triggers'
@@ -36,7 +38,7 @@ import {
 import { getActiveAgentSessions } from '@/lib/agent-status'
 import type { DisplaySettingsBody, LoopSummary } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
-import { Link, createFileRoute } from '@tanstack/react-router'
+import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { ChevronRight, LayoutList, RefreshCw, Rows3 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
@@ -134,8 +136,14 @@ function LoopsRoute() {
 	}, [])
 
 	const { data: billingUsage } = useBillingUsage(workspaceId)
-	const showNoCreditsPill =
-		typeof billingUsage?.credit_balance_cents === 'number'
+	// With the percent display on there is no top-up: the pill says the plan is
+	// used up, follows the 100% rule, and opens Billing to pick a plan.
+	const planPercentOn = usePlanPercentEnabled()
+	const { state: planUsage } = usePlanUsage(workspaceId)
+	const navigate = useNavigate()
+	const showNoCreditsPill = planPercentOn
+		? planUsage?.paused === true
+		: typeof billingUsage?.credit_balance_cents === 'number'
 			? billingUsage.credit_balance_cents <= 0
 			: false
 
@@ -370,7 +378,14 @@ function LoopsRoute() {
 													loop.agentIds.filter((id) => workingAgentIds.has(id)).length
 												}
 												showNoCreditsPill={showNoCreditsPill}
-												onNoCreditsClick={() => setBuyCreditsOpen(true)}
+												onNoCreditsClick={() =>
+													planPercentOn
+														? navigate({
+																to: '/$workspaceId/settings/billing',
+																params: { workspaceId },
+															})
+														: setBuyCreditsOpen(true)
+												}
 											/>
 										))
 									)}

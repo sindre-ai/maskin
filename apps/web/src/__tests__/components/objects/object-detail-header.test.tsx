@@ -1,3 +1,4 @@
+import { PlanPercentProvider } from '@/components/billing/plan-percent-context'
 import {
 	ObjectDetailBarActions,
 	ObjectDetailIdentity,
@@ -249,6 +250,24 @@ describe('ObjectDetailIdentity', () => {
 		expect(chip).toHaveTextContent('PAUSED · NO CREDITS')
 		expect(chip.className).toMatch(/bg-warning/)
 		expect(chip.className).not.toMatch(/border-(?!transparent)/)
+	})
+})
+
+describe('ObjectDetailIdentity plan used up chip', () => {
+	it('reads PAUSED · PLAN USED UP and links to Billing with the percent display on', () => {
+		const object = buildObjectResponse({ type: 'bet', status: 'active' })
+		const Wrapper = makeWrapper()
+		render(
+			<PlanPercentProvider value>
+				<ObjectDetailIdentity {...identityProps} object={object} creditsState="empty" />
+			</PlanPercentProvider>,
+			{ wrapper: Wrapper },
+		)
+		const chip = screen.getByRole('status', { name: /plan is used up/i })
+		expect(chip).toHaveTextContent('PAUSED · PLAN USED UP')
+		expect(chip).toHaveAttribute('href', '/$workspaceId/settings/billing')
+		expect(screen.queryByText(/no credits/i)).toBeNull()
+		expect(chip.getAttribute('title')).not.toMatch(/credit/i)
 	})
 })
 

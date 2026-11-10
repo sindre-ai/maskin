@@ -1,3 +1,4 @@
+import { PlanPercentProvider } from '@/components/billing/plan-percent-context'
 import { LoopRow, loopProgress } from '@/components/loops/loop-row'
 import type { ActorListItem, LoopSummary } from '@/lib/api'
 import { fireEvent, render, screen } from '@testing-library/react'
@@ -184,6 +185,20 @@ describe('LoopRow', () => {
 			expect(overlay.textContent).toContain('NO CR.')
 			// A11y — full state name announced regardless of viewport.
 			expect(overlay).toHaveAttribute('aria-label', 'Paused — no credits')
+		})
+
+		it('reads Plan used up with the percent display on, and no top-up wording', () => {
+			render(
+				<PlanPercentProvider value>
+					<LoopRow loop={buildLoop({ pill: 'paused' })} actors={[]} showNoCreditsPill />
+				</PlanPercentProvider>,
+			)
+
+			const overlay = screen.getByTestId('loop-pill-no-credits')
+			expect(overlay.textContent).toContain('Plan used up')
+			expect(overlay.textContent).toContain('Used up')
+			expect(overlay.textContent).not.toMatch(/NO CR/)
+			expect(overlay).toHaveAttribute('aria-label', 'Paused. Your plan is used up.')
 		})
 
 		it('does not render the overlay when the composite flag is off', () => {

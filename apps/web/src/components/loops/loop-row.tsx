@@ -1,10 +1,11 @@
+import { usePlanPercentEnabled } from '@/components/billing/plan-percent-context'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { ActorListItem, LoopSummary } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
-import { LOOP_PILL_STYLES, NO_CREDITS_PILL, isLiveLoopPill } from './loop-pill'
+import { LOOP_PILL_STYLES, NO_CREDITS_PILL, PLAN_USED_UP_PILL, isLiveLoopPill } from './loop-pill'
 import { paceVerdict } from './target-card'
 
 // Plain-language "what happened last" line, derived purely from the loop's live
@@ -87,6 +88,7 @@ export function LoopRow({
 	// live and draft rows. Keeping it here (rather than in the parent) means the
 	// route hands one boolean per workspace, not one per row.
 	const noCreditsVisible = showNoCreditsPill && loop.pill === 'paused'
+	const pillCopy = usePlanPercentEnabled() ? PLAN_USED_UP_PILL : NO_CREDITS_PILL
 	const progress = loopProgress(loop)
 
 	return (
@@ -156,7 +158,7 @@ export function LoopRow({
 								<button
 									type="button"
 									data-testid="loop-pill-no-credits"
-									aria-label={NO_CREDITS_PILL.ariaLabel}
+									aria-label={pillCopy.ariaLabel}
 									onClick={(event) => {
 										// Stop the row-level <Link> from swallowing the click — the
 										// pill's job is to open the billing drawer, not navigate.
@@ -171,11 +173,11 @@ export function LoopRow({
 									// `text-warning` actually paints amber in both themes.
 									className="inline-flex shrink-0 items-center rounded-md bg-warning/15 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-[0.05em] text-warning transition-colors hover:bg-warning/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/40"
 								>
-									<span className="hidden sm:inline">{NO_CREDITS_PILL.label}</span>
-									<span className="sm:hidden">{NO_CREDITS_PILL.mobileLabel}</span>
+									<span className="hidden sm:inline">{pillCopy.label}</span>
+									<span className="sm:hidden">{pillCopy.mobileLabel}</span>
 								</button>
 							</TooltipTrigger>
-							<TooltipContent side="top">{NO_CREDITS_PILL.tooltip}</TooltipContent>
+							<TooltipContent side="top">{pillCopy.tooltip}</TooltipContent>
 						</Tooltip>
 					</TooltipProvider>
 				)}

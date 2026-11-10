@@ -52,6 +52,18 @@ export const NO_CREDITS_PILL = {
 } as const
 
 /**
+ * The same overlay once usage is shown as a percent of the plan (the
+ * `trial-card-percent` flag). Top-up is closed there, so the words say the plan
+ * is used up, like the 100% banner, and point at Billing for the plan picker.
+ */
+export const PLAN_USED_UP_PILL = {
+	label: 'Plan used up',
+	mobileLabel: 'Used up',
+	ariaLabel: 'Paused. Your plan is used up.',
+	tooltip: 'Paused. Your plan is used up. See plans in Billing.',
+} as const
+
+/**
  * Predicate for whether the NO CREDITS pill should render alongside a row's
  * state label. Kept as a pure function so LoopRow and any future consumer
  * (Objects list already ships its own PAUSED · NO CREDITS pill; a loop detail

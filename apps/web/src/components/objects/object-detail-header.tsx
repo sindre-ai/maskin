@@ -1,3 +1,4 @@
+import { usePlanPercentEnabled } from '@/components/billing/plan-percent-context'
 import { EditableTitle } from '@/components/shared/editable-title'
 import { Button } from '@/components/ui/button'
 import type { MemberResponse, ObjectResponse } from '@/lib/api'
@@ -106,17 +107,28 @@ function StatusPill({ status }: { status: string }) {
  * subsequent re-renders without a page reload.
  */
 export function PausedNoCreditsChip({ workspaceId }: { workspaceId: string }) {
+	// With the percent display on there is no top-up: say the plan is used up and
+	// send people to Billing, where the plan picker is.
+	const planUsedUp = usePlanPercentEnabled()
 	return (
 		<Link
-			to="/$workspaceId/settings/keys"
+			to={planUsedUp ? '/$workspaceId/settings/billing' : '/$workspaceId/settings/keys'}
 			params={{ workspaceId }}
 			// biome-ignore lint/a11y/useSemanticElements: the chip is also a link,
 			// so it must remain an <a>; role=status carries the D6 accessibility
 			// contract without changing the element.
 			role="status"
 			aria-live="polite"
-			aria-label="Paused — no credits. Open billing to add credit."
-			title="No credits — new sessions are paused. Open billing to add credit."
+			aria-label={
+				planUsedUp
+					? 'Paused. Your plan is used up. Open billing to choose a plan.'
+					: 'Paused — no credits. Open billing to add credit.'
+			}
+			title={
+				planUsedUp
+					? 'Plan used up. New sessions are paused. Open billing to choose a plan.'
+					: 'No credits — new sessions are paused. Open billing to add credit.'
+			}
 			className={cn(
 				'inline-flex items-center gap-1 rounded-[7px] px-2 py-[3px] font-semibold',
 				// Amber chip, no border — matches the retired trial-expired banner
@@ -129,7 +141,7 @@ export function PausedNoCreditsChip({ workspaceId }: { workspaceId: string }) {
 			    stays inline with the label so screen readers announce
 			    "PAUSED · NO CREDITS" via aria-label rather than the glyph. */}
 			<span aria-hidden="true">⏸</span>
-			<span>PAUSED · NO CREDITS</span>
+			<span>{planUsedUp ? 'PAUSED · PLAN USED UP' : 'PAUSED · NO CREDITS'}</span>
 		</Link>
 	)
 }
