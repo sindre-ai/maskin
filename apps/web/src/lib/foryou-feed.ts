@@ -30,13 +30,19 @@ export function compactTime(iso: string | null | undefined, now: number = Date.n
 
 // The amber "held 3 days" note beside the status word: how long a card that
 // still needs a person has been sitting in the feed (mockup's `c.waitNote`).
-// Nothing is said until a card has been waiting a full day.
+// Nothing is said until a card has been waiting two full days.
+/** A long sender name shrinks to its first name so the byline stays on one line. */
+export function bylineName(name: string | null | undefined): string {
+	if (!name) return ''
+	return name.length > 18 ? (name.split(' ')[0] ?? name) : name
+}
+
 export function heldNote(iso: string | null | undefined, now: number = Date.now()): string {
 	if (!iso) return ''
 	const then = new Date(iso).getTime()
 	if (!Number.isFinite(then)) return ''
 	const days = Math.floor((now - then) / 86_400_000)
-	if (days < 1) return ''
+	if (days < 2) return ''
 	if (days >= 7) return 'held over a week'
 	return `held ${days} ${days === 1 ? 'day' : 'days'}`
 }

@@ -2101,7 +2101,7 @@ export interface LatestMentionDecisionDraft {
 export interface LatestMentionDecision {
 	title: string
 	summary: string
-	ask: string
+	ask?: string
 	options: LatestMentionDecisionOption[]
 	draft?: LatestMentionDecisionDraft
 	/** One card, several messages: each shows as its own preview with Send and Skip. */
