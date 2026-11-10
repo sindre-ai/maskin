@@ -203,6 +203,92 @@ describe('POST /sessions happy path', () => {
 	})
 })
 
+describe('POST /sessions after a pause (same session id)', () => {
+	// A paused session is started again under its own id while the run before it may
+	// still be removing its folder and sandbox. The new run must wait for that, or it
+	// restores into a folder that is being deleted and finds its sandbox name taken.
+	function setup(opts: { previousRunWaitMs?: number } = {}) {
+		let sandboxRunning = true
+		const calls: Array<{ args: readonly string[] }> = []
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			calls.push({ args })
+			if (args[0] === 'list') {
+				// The first sandbox runs until the test ends it; the one created for the
+				// start after the pause is listed as running as soon as it exists.
+				const restarted = calls.filter((c) => c.args[0] === 'create').length > 1
+				return {
+					stdout: JSON.stringify(
+						sandboxRunning || restarted ? [{ name: 'sess-resume', status: 'Running' }] : [],
+					),
+					stderr: '',
+				}
+			}
+			return { stdout: '', stderr: '' }
+		}
+		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		const app = buildApp({
+			env,
+			storage: null,
+			msb: {
+				msbBin: '/usr/local/bin/msb',
+				run,
+				sleep: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 5))),
+				now: () => Date.now(),
+			},
+			...(opts.previousRunWaitMs !== undefined && { previousRunWaitMs: opts.previousRunWaitMs }),
+		})
+		const start = () =>
+			app.request('/sessions', {
+				method: 'POST',
+				headers: {
+					'content-type': 'application/json',
+					authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+				},
+				body: JSON.stringify({ sessionId: 'sess-resume', image: 'maskin/agent-base:latest' }),
+			})
+		const creates = () => calls.filter((c) => c.args[0] === 'create').length
+		return {
+			start,
+			creates,
+			endSandbox: () => {
+				sandboxRunning = false
+			},
+		}
+	}
+
+	it('waits for the previous run to finish its cleanup, then starts', async () => {
+		const t = setup()
+		expect((await t.start()).status).toBe(201)
+		expect(t.creates()).toBe(1)
+
+		// The first run is still going: its sandbox is listed as running, so its
+		// monitor has not got to the cleanup yet.
+		const second = t.start()
+		await new Promise((r) => setTimeout(r, 200))
+		expect(t.creates()).toBe(1)
+
+		// The sandbox ends, the monitor notices on its next poll (every few seconds),
+		// cleans up, and the waiting start goes ahead.
+		t.endSandbox()
+		expect((await second).status).toBe(201)
+		expect(t.creates()).toBe(2)
+	}, 20_000)
+
+	it('answers 409 when the previous run is still ending after the wait', async () => {
+		const t = setup({ previousRunWaitMs: 50 })
+		expect((await t.start()).status).toBe(201)
+
+		const res = await t.start()
+		expect(res.status).toBe(409)
+		expect(await res.json()).toEqual({ error: 'previous_run_still_ending' })
+		// Nothing was created for the refused start.
+		expect(t.creates()).toBe(1)
+	})
+})
+
 describe('POST /sessions image warmer integration', () => {
 	it('uses --pull missing and reports warm_hit:true when the warmer has the image', async () => {
 		const { run, calls } = makeRunner()
