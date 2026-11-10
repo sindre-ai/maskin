@@ -16204,8 +16204,10 @@
 														"type": "string",
 														"enum": [
 															"trial",
+															"starter",
 															"pro",
 															"team",
+															"ultra",
 															"enterprise"
 														]
 													},
@@ -17374,8 +17376,10 @@
 														"type": "string",
 														"enum": [
 															"trial",
+															"starter",
 															"pro",
 															"team",
+															"ultra",
 															"enterprise"
 														]
 													},
@@ -39241,8 +39245,10 @@
 											"type": "string",
 											"enum": [
 												"trial",
+												"starter",
 												"pro",
 												"team",
+												"ultra",
 												"enterprise"
 											]
 										},
@@ -39917,8 +39923,10 @@
 									"plan": {
 										"type": "string",
 										"enum": [
+											"starter",
 											"pro",
-											"team"
+											"team",
+											"ultra"
 										]
 									},
 									"success_url": {
