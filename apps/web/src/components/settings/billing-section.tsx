@@ -678,6 +678,7 @@ function DowngradeDialog({
 	enterprise: boolean
 }) {
 	const cancel = useBillingCancel(workspaceId)
+	const percentOn = usePlanPercentEnabled()
 
 	const handleConfirm = () => {
 		cancel.mutate(undefined, { onSuccess: () => onOpenChange(false) })
@@ -690,7 +691,7 @@ function DowngradeDialog({
 					<DialogTitle>{enterprise ? 'Downgrade to Free?' : 'Cancel subscription?'}</DialogTitle>
 					<DialogDescription>
 						{enterprise
-							? "You'll lose access to Maskin's hosted LLM and your remaining token credits for this period. You won't be charged again."
+							? `You'll lose access to Maskin's hosted LLM and your remaining ${percentOn ? 'usage' : 'token credits'} for this period. You won't be charged again.`
 							: "You'll go back to the free trial plan with Maskin's hosted LLM, on the trial's lower usage cap. You won't be charged again."}
 					</DialogDescription>
 				</DialogHeader>
