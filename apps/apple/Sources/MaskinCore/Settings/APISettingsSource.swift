@@ -388,7 +388,8 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 			return BillingUsage(
 				plan: row.plan.rawValue, status: BillingUsage.Status(rawValue: row.status.rawValue) ?? .active,
 				usedCents: row.usd_cents_used, capCents: row.hard_cap_usd_cents,
-				creditBalanceCents: row.credit_balance_cents, resetsInMs: row.period_resets_in_ms)
+				creditBalanceCents: row.credit_balance_cents, resetsInMs: row.period_resets_in_ms,
+				trialState: row.trial_state.flatMap { BillingUsage.TrialState(rawValue: $0.rawValue) })
 		default:
 			throw SettingsError("Couldn't load your plan.")
 		}

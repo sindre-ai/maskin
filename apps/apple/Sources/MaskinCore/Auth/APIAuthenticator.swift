@@ -70,7 +70,10 @@ public struct APIAuthenticator: Authenticating {
 						body: .json(
 							.init(
 								_type: .human, name: name, email: email, password: password,
-								auto_create_workspace: true))))
+								auto_create_workspace: true,
+								// Asks for the card step, as the web sign-up does. The server holds the
+								// workspace for a card only while its flag is on; off, this is ignored.
+								card_step: true))))
 			}
 		} catch {
 			throw SignUpError.network(error.localizedDescription)
