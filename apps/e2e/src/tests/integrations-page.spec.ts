@@ -32,12 +32,18 @@ test.describe('Settings → Integrations (v3 layout)', () => {
 			await search.fill('crm')
 			await expect(addCard).toBeHidden()
 			await expect(card).toBeVisible()
+
+			// A search that matches nothing says so on Connected, not a blank page.
+			await search.fill('zzzz')
+			await expect(page.getByText('Nothing connected here')).toBeVisible()
 			await search.fill('')
 
 			// Discover lists unconnected providers; a category chip narrows them.
 			await discoverTab.click()
 			await expect(discoverTab).toHaveAttribute('aria-pressed', 'true')
 			await expect(page.getByRole('button', { name: 'Connect' }).first()).toBeVisible()
+			await page.getByRole('button', { name: 'Custom' }).click()
+			await expect(page.getByText('No integration matches that filter')).toBeVisible()
 			await page.getByRole('button', { name: 'Code' }).click()
 			await expect(page.getByText('GitHub')).toBeVisible()
 			await expect(page.getByText('Gmail')).toBeHidden()
