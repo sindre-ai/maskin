@@ -27,7 +27,11 @@ function bannerText(plan: BillingPlan): string {
 	return `Your ${planName(plan)} plan period has ended. Renew to continue.`
 }
 
-function dialogTitle(plan: BillingPlan): string {
+/** Why the plan picker was opened: the period ended, or the plan is used up (100%). */
+export type PlanDialogReason = 'expired' | 'limit'
+
+function dialogTitle(plan: BillingPlan, reason: PlanDialogReason): string {
+	if (reason === 'limit') return plan === 'trial' ? 'Choose a plan' : 'Change plan'
 	if (plan === 'trial') return 'Your trial has expired'
 	return `Your ${planName(plan)} plan period has ended`
 }
@@ -90,16 +94,18 @@ export function TrialExpiredBanner({ workspaceId }: { workspaceId: string }) {
 	)
 }
 
-function PlanExpiredDialog({
+export function PlanExpiredDialog({
 	workspaceId,
 	plan,
 	open,
 	onOpenChange,
+	reason = 'expired',
 }: {
 	workspaceId: string
 	plan: BillingPlan
 	open: boolean
 	onOpenChange: (open: boolean) => void
+	reason?: PlanDialogReason
 }) {
 	const checkout = useStripeCheckout(workspaceId)
 	const cancel = useBillingCancel(workspaceId)
@@ -131,11 +137,13 @@ function PlanExpiredDialog({
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent>
 				<DialogHeader>
-					<DialogTitle>{dialogTitle(plan)}</DialogTitle>
+					<DialogTitle>{dialogTitle(plan, reason)}</DialogTitle>
 					<DialogDescription>
-						{plan === 'trial'
-							? "Choose a plan to keep using Maskin's hosted LLM."
-							: "Choose a plan to keep using Maskin's hosted LLM, or downgrade to Free and connect your own."}
+						{reason === 'limit'
+							? 'Your plan is used up. Pick a plan to start work again.'
+							: plan === 'trial'
+								? "Choose a plan to keep using Maskin's hosted LLM."
+								: "Choose a plan to keep using Maskin's hosted LLM, or downgrade to Free and connect your own."}
 					</DialogDescription>
 				</DialogHeader>
 
@@ -144,7 +152,7 @@ function PlanExpiredDialog({
 				{/* Trial IS the free tier — there is no subscription to cancel and
 				    nothing to downgrade to, so the action is hidden rather than
 				    offered as a no-op. */}
-				{plan !== 'trial' && (
+				{plan !== 'trial' && reason === 'expired' && (
 					<Button
 						className="w-full justify-start"
 						variant="ghost"

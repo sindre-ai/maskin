@@ -1,6 +1,7 @@
 import { render, renderHook, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { PlanPercentProvider } from '@/components/billing/plan-percent-context'
 import type { SessionUsageResponse } from '@/lib/api'
 import { TestWrapper } from '../../setup'
 
@@ -11,6 +12,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
 		api: {
 			actors: { list: vi.fn() },
 			sessions: { usage: vi.fn() },
+			billing: { usage: vi.fn() },
 		},
 	}
 })
@@ -23,6 +25,8 @@ import {
 	useWorkspaceModelUsage,
 } from '@/components/settings/billing-usage'
 import { api } from '@/lib/api'
+
+const billingUsage = vi.mocked(api.billing.usage)
 
 function buildUsage(overrides: Partial<WorkspaceModelUsage> = {}): WorkspaceModelUsage {
 	return {
@@ -60,7 +64,7 @@ describe('BillingUsageSummary', () => {
 	// Mockup 2803-2813 — the figure, the period, the reset. No meter: nothing in
 	// the API says how much usage is included, so there is no denominator.
 	it('renders the month total without a usage meter', () => {
-		const { container } = render(<BillingUsageSummary usage={buildUsage()} />)
+		const { container } = render(<BillingUsageSummary usage={buildUsage()} workspaceId="ws-1" />)
 
 		expect(screen.getByText('$12.50')).toBeInTheDocument()
 		expect(screen.getByText('Model usage this month')).toBeInTheDocument()
@@ -71,6 +75,7 @@ describe('BillingUsageSummary', () => {
 	it('says nothing was recorded rather than showing $0.00', () => {
 		render(
 			<BillingUsageSummary
+				workspaceId="ws-1"
 				usage={buildUsage({ hasUsage: false, totalCostUsd: 0, totalSessions: 0, rows: [] })}
 			/>,
 		)
@@ -82,7 +87,7 @@ describe('BillingUsageSummary', () => {
 	// A failed usage query contributes 0, so the total silently under-reports the
 	// bill. The figure may still be shown, but never as if it were complete.
 	it('warns that the total is partial when some agents failed to load', () => {
-		render(<BillingUsageSummary usage={buildUsage({ failedAgentCount: 2 })} />)
+		render(<BillingUsageSummary usage={buildUsage({ failedAgentCount: 2 })} workspaceId="ws-1" />)
 
 		expect(screen.getByText('$12.50')).toBeInTheDocument()
 		expect(screen.getByRole('status')).toHaveTextContent(
@@ -93,6 +98,7 @@ describe('BillingUsageSummary', () => {
 	it('shows no total at all when every usage query failed', () => {
 		render(
 			<BillingUsageSummary
+				workspaceId="ws-1"
 				usage={buildUsage({
 					isError: true,
 					failedAgentCount: 2,
@@ -114,7 +120,7 @@ describe('BillingUsageSummary', () => {
 describe('BillingUsageDetails', () => {
 	// Mockup 2841-2858 / v3 3l — per-agent rows and the workspace total, always shown.
 	it('lists each agent with its sessions and cost', () => {
-		render(<BillingUsageDetails usage={buildUsage()} />)
+		render(<BillingUsageDetails usage={buildUsage()} workspaceId="ws-1" />)
 
 		expect(screen.getByText('By agent')).toBeInTheDocument()
 		expect(screen.getByText('Research Agent')).toBeInTheDocument()
@@ -128,6 +134,7 @@ describe('BillingUsageDetails', () => {
 	it('explains the empty case instead of rendering an empty table', () => {
 		render(
 			<BillingUsageDetails
+				workspaceId="ws-1"
 				usage={buildUsage({ hasUsage: false, totalCostUsd: 0, totalSessions: 0, rows: [] })}
 			/>,
 		)
@@ -138,6 +145,7 @@ describe('BillingUsageDetails', () => {
 	it('distinguishes a load failure from an absence of usage', () => {
 		render(
 			<BillingUsageDetails
+				workspaceId="ws-1"
 				usage={buildUsage({
 					isError: true,
 					failedAgentCount: 2,
@@ -153,6 +161,64 @@ describe('BillingUsageDetails', () => {
 			screen.getByText(/This is a loading failure, not an absence of usage/),
 		).toBeInTheDocument()
 		expect(screen.queryByText(/No agent has finished a session this month/)).not.toBeInTheDocument()
+	})
+})
+
+describe('percent display', () => {
+	function withBilling(used: number) {
+		vi.mocked(billingUsage).mockResolvedValue({
+			plan: 'trial',
+			status: 'active',
+			usd_cents_used: used,
+			hard_cap_usd_cents: 286,
+			credit_balance_cents: 0,
+			period_resets_in_ms: 3 * 86_400_000,
+		} as never)
+	}
+
+	it('headlines the percent with a meter and no dollar figure', async () => {
+		withBilling(143)
+		render(
+			<PlanPercentProvider value>
+				<BillingUsageSummary usage={buildUsage()} workspaceId="ws-1" />
+			</PlanPercentProvider>,
+			{ wrapper: TestWrapper },
+		)
+
+		expect(await screen.findByText('50%')).toBeInTheDocument()
+		expect(screen.getByText('of your plan used')).toBeInTheDocument()
+		expect(screen.getByText('Resets when your trial ends.')).toBeInTheDocument()
+		expect(screen.queryByText('$12.50')).not.toBeInTheDocument()
+	})
+
+	it('adds the 80% line once the warning colour starts', async () => {
+		withBilling(250)
+		render(
+			<PlanPercentProvider value>
+				<BillingUsageSummary usage={buildUsage()} workspaceId="ws-1" />
+			</PlanPercentProvider>,
+			{ wrapper: TestWrapper },
+		)
+
+		expect(
+			await screen.findByText('Work will wait at 100%. Choose a plan to keep going.'),
+		).toBeInTheDocument()
+	})
+
+	it('lists each agent by percent and sessions, with no cost and no tokens', async () => {
+		withBilling(143)
+		render(
+			<PlanPercentProvider value>
+				<BillingUsageDetails usage={buildUsage()} workspaceId="ws-1" />
+			</PlanPercentProvider>,
+			{ wrapper: TestWrapper },
+		)
+
+		expect(screen.getByText('80%')).toBeInTheDocument()
+		expect(screen.getByText('20%')).toBeInTheDocument()
+		expect(screen.getByText('4 sessions')).toBeInTheDocument()
+		expect(await screen.findByText('50% of plan used')).toBeInTheDocument()
+		expect(screen.queryByText(/\$|tokens/)).not.toBeInTheDocument()
 	})
 })
 

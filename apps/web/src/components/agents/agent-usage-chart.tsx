@@ -1,10 +1,13 @@
+import { usePlanPercentEnabled } from '@/components/billing/plan-percent-context'
 import { DateRangePicker, type DateRangeValue } from '@/components/shared/date-range-picker'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useBillingUsage } from '@/hooks/use-billing'
 import { pickBucket, useSessionUsage } from '@/hooks/use-session-usage'
 import type { ActorResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { costPercentOfPlan, formatPlanPercent } from '@/lib/plan-usage'
 import { useMemo, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
@@ -75,6 +78,10 @@ export function AgentUsageChart({
 	}, [preset, customRange, agent.createdAt])
 
 	const { data, isLoading, error } = useSessionUsage(workspaceId, agent.id, range.from, range.to)
+	// With the percent display on, the cost is shown as a share of the plan's limit, never in dollars.
+	const percentOn = usePlanPercentEnabled()
+	const { data: billing } = useBillingUsage(workspaceId)
+	const capCents = billing?.hard_cap_usd_cents ?? null
 
 	const chartBucket = useMemo(() => pickBucket(range.from.getTime(), range.to.getTime()), [range])
 
@@ -83,9 +90,11 @@ export function AgentUsageChart({
 		return data.buckets.map((b) => ({
 			bucket: b.bucket,
 			label: formatBucketLabel(b.bucket, chartBucket),
-			cost: b.total_cost_usd,
+			cost: percentOn
+				? Math.round((costPercentOfPlan(b.total_cost_usd, capCents) ?? 0) * 10) / 10
+				: b.total_cost_usd,
 		}))
-	}, [data, chartBucket])
+	}, [data, chartBucket, percentOn, capCents])
 
 	const totals = data?.totals
 
@@ -120,8 +129,14 @@ export function AgentUsageChart({
 
 			<div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
 				<Stat
-					label="Total cost"
-					value={totals ? currency.format(totals.total_cost_usd) : '—'}
+					label={percentOn ? 'Plan used' : 'Total cost'}
+					value={
+						totals
+							? percentOn
+								? formatPlanPercent(costPercentOfPlan(totals.total_cost_usd, capCents))
+								: currency.format(totals.total_cost_usd)
+							: '—'
+					}
 					loading={isLoading}
 				/>
 				<Stat
@@ -141,7 +156,11 @@ export function AgentUsageChart({
 			) : chartData.length === 0 ? (
 				<EmptyState
 					title="No usage in this range"
-					description="Once this agent runs sessions, cost will appear here."
+					description={
+						percentOn
+							? 'Once this agent runs sessions, its share of the plan will appear here.'
+							: 'Once this agent runs sessions, cost will appear here.'
+					}
 				/>
 			) : (
 				<div className="h-56 w-full">
@@ -158,7 +177,7 @@ export function AgentUsageChart({
 								tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }}
 								tickLine={false}
 								axisLine={false}
-								tickFormatter={(v: number) => compactCurrency.format(v)}
+								tickFormatter={(v: number) => (percentOn ? `${v}%` : compactCurrency.format(v))}
 								width={48}
 							/>
 							<Tooltip
@@ -170,7 +189,11 @@ export function AgentUsageChart({
 									fontSize: 12,
 								}}
 								labelStyle={{ color: 'var(--muted-foreground)', fontSize: 11 }}
-								formatter={(value) => [currency.format(Number(value)), 'Cost']}
+								formatter={(value) =>
+									percentOn
+										? [`${Number(value)}%`, 'Plan used']
+										: [currency.format(Number(value)), 'Cost']
+								}
 							/>
 							<Bar dataKey="cost" fill="var(--primary)" radius={[3, 3, 0, 0]} maxBarSize={32} />
 						</BarChart>

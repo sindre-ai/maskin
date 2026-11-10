@@ -568,7 +568,7 @@ export class TriggerRunner {
 					reason:
 						err instanceof TrialNotStartedError
 							? 'trial not started (waiting for a card)'
-							: `${err.plan} plan cap exceeded ($${(err.used / 100).toFixed(2)} of $${(err.cap / 100).toFixed(2)})`,
+							: `${err.plan} plan used up`,
 				},
 				triggerName,
 			)

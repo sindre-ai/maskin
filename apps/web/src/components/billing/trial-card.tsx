@@ -1,5 +1,8 @@
+import { PlanMeter } from '@/components/billing/plan-meter'
+import { usePlanPercentEnabled } from '@/components/billing/plan-percent-context'
 import { Button } from '@/components/ui/button'
 import { useBillingUsage } from '@/hooks/use-billing'
+import { planUsageState } from '@/lib/plan-usage'
 import { trialCardState } from '@/lib/trial'
 import { Link } from '@tanstack/react-router'
 import { useEffect } from 'react'
@@ -24,6 +27,9 @@ function readNotTrial(workspaceId: string): boolean {
 export function TrialCard({ workspaceId }: { workspaceId: string }) {
 	const { data: usage, isPending, isSuccess } = useBillingUsage(workspaceId)
 	const state = trialCardState(usage)
+	const showPercent = usePlanPercentEnabled()
+	// Unknown usage (no stored cap) shows no figure rather than 0%.
+	const percent = showPercent ? planUsageState(usage) : null
 
 	useEffect(() => {
 		// A failed read says nothing about the plan, so it must not flip the flag.
@@ -48,19 +54,31 @@ export function TrialCard({ workspaceId }: { workspaceId: string }) {
 	return (
 		<section
 			aria-label="Trial"
-			className="flex min-h-16 items-center gap-3.5 rounded-2xl bg-sidebar-accent py-3.5 pr-3 pl-[18px] group-data-[collapsible=icon]:hidden"
+			className={
+				percent
+					? 'rounded-2xl bg-sidebar-accent py-3.5 pr-3 pl-[18px] group-data-[collapsible=icon]:hidden'
+					: 'flex min-h-16 items-center gap-3.5 rounded-2xl bg-sidebar-accent py-3.5 pr-3 pl-[18px] group-data-[collapsible=icon]:hidden'
+			}
 		>
-			<p className="min-w-0 flex-1 text-[15px] font-semibold leading-snug text-sidebar-foreground">
-				Trial
-				<span className="mt-px block text-[13px] font-normal text-muted-foreground">
-					{state.left}
-				</span>
-			</p>
-			<Button asChild size="sm" className="shrink-0 rounded-full px-4 max-md:h-11">
-				<Link to="/$workspaceId/settings/billing" params={{ workspaceId }}>
-					Upgrade
-				</Link>
-			</Button>
+			<div className={percent ? 'flex items-center gap-3.5' : 'contents'}>
+				<p className="min-w-0 flex-1 text-[15px] font-semibold leading-snug text-sidebar-foreground">
+					Trial
+					<span className="mt-px block text-[13px] font-normal text-muted-foreground">
+						{state.left}
+					</span>
+				</p>
+				<Button asChild size="sm" className="shrink-0 rounded-full px-4 max-md:h-11">
+					<Link to="/$workspaceId/settings/billing" params={{ workspaceId }}>
+						Upgrade
+					</Link>
+				</Button>
+			</div>
+			{percent && (
+				<div className="mt-2.5 pr-1">
+					<p className="mb-1 text-[13px] text-muted-foreground">{percent.percent}% of plan used</p>
+					<PlanMeter percent={percent.percent} tone={percent.tone} />
+				</div>
+			)}
 		</section>
 	)
 }
