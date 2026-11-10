@@ -10,15 +10,18 @@ import {
 	fileKindSchema,
 	fileListItemSchema,
 	fileReadFormatSchema,
+	fileTagCountSchema,
+	fileTagMatchSchema,
 	type fileTextDetailSchema,
 	fileUploadSessionSchema,
 	isTextMimeType,
+	parseFileTagFilter,
 	planFileUploadParts,
 	startFileUploadSchema,
 	updateFileSchema,
 } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { and, asc, desc, eq, ilike, inArray, or } from 'drizzle-orm'
+import { and, asc, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
 import { trackFileSaved } from '../lib/analytics/file-events'
 import {
 	buildCreatedAtCursorConditions,
@@ -174,6 +177,9 @@ const listQuerySchema = z.object({
 	q: z.string().trim().min(1).max(255).optional(),
 	ids: z.string().optional(),
 	kind: fileKindSchema.optional(),
+	// Comma-separated; trimmed and lowercased like tags on write.
+	tags: z.string().optional(),
+	tags_match: fileTagMatchSchema.optional(),
 	limit: z.coerce.number().int().positive().max(200).optional(),
 	offset: z.coerce.number().int().nonnegative().optional(),
 	order: z.enum(['asc', 'desc']).optional(),
@@ -248,6 +254,7 @@ app.openapi(createFileRoute, (async (c) => {
 			name: body.name,
 			description: body.description ?? null,
 			kind: body.kind ?? null,
+			tags: body.tags ?? [],
 			mimeType: body.mime_type,
 			sizeBytes,
 			storageKey,
@@ -361,6 +368,18 @@ app.openapi(listFilesRoute, (async (c) => {
 	if (query.q) conditions.push(ilike(files.name, `%${query.q}%`))
 	if (ids?.length) conditions.push(inArray(files.id, ids))
 	if (query.kind) conditions.push(eq(files.kind, query.kind))
+	const filterTags = parseFileTagFilter(query.tags)
+	if (filterTags.length > 0) {
+		const wanted = sql`ARRAY[${sql.join(
+			filterTags.map((t) => sql`${t}`),
+			sql`, `,
+		)}]::text[]`
+		conditions.push(
+			query.tags_match === 'any'
+				? sql`${files.tags} && ${wanted}`
+				: sql`${files.tags} @> ${wanted}`,
+		)
+	}
 	conditions.push(
 		...buildCreatedAtCursorConditions({ createdAt: files.createdAt, id: files.id }, query),
 	)
@@ -383,6 +402,7 @@ app.openapi(listFilesRoute, (async (c) => {
 			name: files.name,
 			description: files.description,
 			kind: files.kind,
+			tags: files.tags,
 			mimeType: files.mimeType,
 			sizeBytes: files.sizeBytes,
 			storageKey: files.storageKey,
@@ -398,6 +418,48 @@ app.openapi(listFilesRoute, (async (c) => {
 
 	return c.json(serializeArray(rows) as z.infer<typeof fileListItemSchema>[], 200)
 }) as RouteHandler<typeof listFilesRoute, Env>)
+
+// -- GET /tags — Tags in use, with file counts ----------------------------------
+
+// Plenty for a workspace's vocabulary; a longer tail than this is a sign tags are being
+// used as free text.
+const MAX_TAG_COUNT_ROWS = 500
+
+const listTagsRoute = createRoute({
+	method: 'get',
+	path: '/tags',
+	tags: ['Files'],
+	summary: 'List the tags in use in the workspace and how many files carry each',
+	request: { headers: workspaceIdHeader },
+	responses: {
+		200: {
+			content: { 'application/json': { schema: z.array(fileTagCountSchema) } },
+			description: 'Tags, most-used first (ties in alphabetical order)',
+		},
+	},
+})
+
+app.openapi(listTagsRoute, (async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const rows = (await db.execute(sql`
+		SELECT t.tag AS tag, count(*)::int AS count
+		FROM files f
+		CROSS JOIN LATERAL unnest(f.tags) AS t(tag)
+		WHERE f.workspace_id = ${workspaceId}
+		GROUP BY t.tag
+		ORDER BY count(*) DESC, t.tag ASC
+		LIMIT ${MAX_TAG_COUNT_ROWS}
+	`)) as unknown as Array<{ tag: string; count: number }>
+
+	return c.json(
+		Array.from(rows, (row) => ({ tag: row.tag, count: row.count })) as z.infer<
+			typeof fileTagCountSchema
+		>[],
+		200,
+	)
+}) as RouteHandler<typeof listTagsRoute, Env>)
 
 // -- GET /:id — Get file detail -----------------------------------------------
 
@@ -659,6 +721,7 @@ app.openapi(updateFileRoute, (async (c) => {
 				name: body.name,
 				description: body.description,
 				kind: body.kind,
+				tags: body.tags,
 				mimeType: body.mime_type,
 				annotations: body.annotations,
 			},
@@ -941,6 +1004,7 @@ app.openapi(startUploadRoute, (async (c) => {
 				name: body.name,
 				description: body.description ?? null,
 				kind: body.kind ?? null,
+				tags: body.tags ?? [],
 				mimeType: body.mime_type,
 				sizeBytes: body.size_bytes,
 				storageKey,
@@ -1209,6 +1273,7 @@ app.openapi(completeUploadRoute, (async (c) => {
 				name: upload.name,
 				description: upload.description,
 				kind: upload.kind,
+				tags: upload.tags,
 				mimeType: upload.mimeType,
 				sizeBytes: stored.size,
 				storageKey: upload.storageKey,

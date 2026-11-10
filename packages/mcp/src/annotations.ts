@@ -66,6 +66,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
 	'list_for_you',
 	'list_keychain_credentials',
 	'desktop_list_ports',
+	'list_file_tags',
 ])
 
 interface Row {
@@ -126,6 +127,7 @@ const ROWS: Record<string, Row> = {
 	// Files
 	create_file: row('Create file'),
 	list_files: row('List files'),
+	list_file_tags: row('List file tags'),
 	get_file: row('Get file'),
 	update_file: row('Update file', { idempotent: true }),
 	propose_file_changes: row('Propose file changes'),

@@ -1207,6 +1207,13 @@ export const tools = {
 				.describe(
 					'What the file is for. Set `"briefing"` on an HTML page written to be read in the For you tab (the Chief of Staff\'s daily briefing, a loop\'s briefing). Only files with kind "briefing" appear there — every other file a loop produces stays out of it. Omit for ordinary files.',
 				),
+			tags: z
+				.array(z.string())
+				.max(20)
+				.optional()
+				.describe(
+					'Labels for finding this file later, such as "b-roll" or "clip_type:b_roll" (a colon marks a structured tag). Trimmed and lowercased on save, so "B-roll" and "b-roll" are one tag. Up to 20 per file, 60 characters each, no commas. Call list_file_tags first and reuse a tag that already exists instead of inventing a near copy. Keep longer notes in `description`.',
+				),
 			mime_type: z
 				.string()
 				.describe(
@@ -1227,11 +1234,24 @@ export const tools = {
 	},
 	list_files: {
 		description:
-			'List files in the workspace, newest first. Pass `q` to filter by name substring, or `kind: "briefing"` to list only the briefings shown in For you. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List files in the workspace, newest first. Pass `q` to filter by name substring, `kind: "briefing"` to list only the briefings shown in For you, or `tags` to find files by tag (`tags_match: "all"`, the default, keeps files that carry every listed tag; "any" keeps files that carry at least one). Each file in the result shows its `tags`. Call list_file_tags to see which tags exist. Any file in the workspace is listed, including ones attached to a chat message; when a name search finds nothing, narrow by tag or page on with `next_cursor` rather than asking for a re-upload. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			q: z.string().optional().describe('Case-insensitive substring match on file name.'),
 			kind: z.enum(['briefing']).optional().describe('Only files of this kind.'),
+			tags: z
+				.array(z.string())
+				.max(20)
+				.optional()
+				.describe(
+					'Only files carrying these tags (see tags_match). Trimmed and lowercased like tags on save.',
+				),
+			tags_match: z
+				.enum(['all', 'any'])
+				.optional()
+				.describe(
+					'"all" (default): the file has every tag in `tags`. "any": the file has at least one of them.',
+				),
 			limit: z
 				.number()
 				.int()
@@ -1245,6 +1265,13 @@ export const tools = {
 				.describe(
 					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
 				),
+		}),
+	},
+	list_file_tags: {
+		description:
+			'List the tags in use on files in the workspace and how many files carry each, most-used first. Call this before tagging a file or searching by tag, so you pick a tag that already exists instead of inventing a near copy (for example "b-roll" and "broll"). Returns `[{ tag, count }]`. Use a tag with list_files `tags` to find the files, and with create_file or update_file `tags` to put it on one.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
 		}),
 	},
 	get_file: {
@@ -1276,6 +1303,13 @@ export const tools = {
 				.describe(
 					'What the file is for. Set `"briefing"` on an HTML page written to be read in the For you tab (the Chief of Staff\'s daily briefing, a loop\'s briefing). Only files with kind "briefing" appear there — every other file a loop produces stays out of it. Omit for ordinary files.' +
 						' Pass null to clear.',
+				),
+			tags: z
+				.array(z.string())
+				.max(20)
+				.optional()
+				.describe(
+					'Replaces the whole tag list: send every tag the file should have, or [] to clear them. Omit to leave the tags as they are. Trimmed and lowercased on save. Up to 20 per file, 60 characters each, no commas. Call list_file_tags first and reuse an existing tag.',
 				),
 			mime_type: z.string().optional(),
 			content: z

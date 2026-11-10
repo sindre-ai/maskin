@@ -86,6 +86,7 @@
 			"kind",
 			"mime_type",
 			"name",
+			"tags",
 			"workspace_id"
 		],
 		"create_loop": [
@@ -239,7 +240,8 @@
 			"workspace_id"
 		],
 		"list_extensions": ["cursor", "limit", "workspace_id"],
-		"list_files": ["cursor", "kind", "limit", "q", "workspace_id"],
+		"list_file_tags": ["workspace_id"],
+		"list_files": ["cursor", "kind", "limit", "q", "tags", "tags_match", "workspace_id"],
 		"list_integration_providers": [],
 		"list_integrations": ["cursor", "limit", "workspace_id"],
 		"list_keychain_credentials": ["workspace_id"],
@@ -448,6 +450,7 @@
 			"kind",
 			"mime_type",
 			"name",
+			"tags",
 			"workspace_id"
 		],
 		"update_integration_access": [

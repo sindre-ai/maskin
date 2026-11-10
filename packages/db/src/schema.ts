@@ -1795,6 +1795,9 @@ export const files = pgTable(
 		// there, so a loop's incidental output files stay out of the row. Null for
 		// ordinary files.
 		kind: text('kind'),
+		// Free-form labels, trimmed and lowercased on write (see fileTagsSchema). Empty for
+		// a file nobody tagged. GIN-indexed for the "has all" (@>) and "has any" (&&) filters.
+		tags: text('tags').array().notNull().default(sql`'{}'::text[]`),
 		// Pinned review annotations (humans pin comments on rendered HTML files).
 		// Stored on the row so they round-trip with the file for every reader —
 		// UI and MCP get_file — without an extra S3 fetch.
@@ -1809,6 +1812,7 @@ export const files = pgTable(
 		index('files_ws_created_at_idx').on(t.workspaceId, t.createdAt),
 		index('files_ws_name_idx').on(t.workspaceId, t.name),
 		index('files_ws_kind_created_at_idx').on(t.workspaceId, t.kind, t.createdAt),
+		index('files_tags_gin_idx').using('gin', t.tags),
 	],
 )
 
@@ -1831,6 +1835,8 @@ export const fileUploads = pgTable(
 		name: text('name').notNull(),
 		description: text('description'),
 		kind: text('kind'),
+		// Copied onto the file row when the upload completes.
+		tags: text('tags').array().notNull().default(sql`'{}'::text[]`),
 		mimeType: text('mime_type').notNull(),
 		sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
 		storageKey: text('storage_key').notNull(),
