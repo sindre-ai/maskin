@@ -23,6 +23,7 @@ import type { SessionManager } from '../services/session-manager'
 
 // Tools that call these routes answer a 403 under a Claude connector token in v1, on purpose.
 const UNAVAILABLE_UNDER_OAUTH = [
+	'DELETE /api/actors/x', // delete_agent: irreversible, and a person's own AI tool must not stand in for the approval card
 	'DELETE /api/conversations/x/participants/x', // newer MCP tool, route not yet checked for the token's workspace pin
 	'DELETE /api/integrations/x', // disconnect_integration: third-party credentials
 	'GET /api/actors/x/access', // newer MCP tool, route not yet checked for the token's workspace pin
