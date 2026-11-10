@@ -82,7 +82,7 @@ jobs:
 
       # --- Package tests ---
       - name: Cache SwiftPM and the generated-client build
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             apps/apple/.build

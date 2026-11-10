@@ -313,7 +313,7 @@ jobs:
           echo "weed=$(sed -n 's/^MASKIN_WEED_VERSION="${MASKIN_WEED_VERSION:-\(.*\)}"$/\1/p' scripts/bootstrap-local-devstack.sh)" >> "$GITHUB_OUTPUT"
 
       - name: Cache devstack downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cache/maskin-devstack/postgres-*
@@ -501,7 +501,7 @@ jobs:
       - name: Cache Playwright browsers
         if: needs.changes.outputs.e2e == 'true'
         id: playwright-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
@@ -512,7 +512,7 @@ jobs:
       # only fetches what is missing. Fonts stay installed, so screenshot baselines are unchanged.
       - name: Cache Playwright apt packages
         if: needs.changes.outputs.e2e == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cache/playwright-apt
