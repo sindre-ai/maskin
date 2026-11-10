@@ -167,6 +167,7 @@ describe('Integrations Routes', () => {
 				'resend',
 				'sentry',
 				'slack',
+				'stripe',
 				'ubersuggest',
 			])
 

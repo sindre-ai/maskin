@@ -57,6 +57,7 @@ import {
 import { slackWebhookFanOut } from './providers/slack/fan-out'
 import { probeSlackTierOnInstall } from './providers/slack/tier-cache'
 import { slackEventNormalizer } from './providers/slack/webhooks'
+import { config as stripeConfig } from './providers/stripe/config'
 import { ubersuggestAuth } from './providers/ubersuggest/auth'
 import { config as ubersuggestConfig } from './providers/ubersuggest/config'
 
@@ -187,6 +188,10 @@ providers.set('attio', {
 
 providers.set('sentry', {
 	config: sentryConfig,
+})
+
+providers.set('stripe', {
+	config: stripeConfig,
 })
 
 // resend — bring-your-own integration for customer-domain email send+receive

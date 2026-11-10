@@ -6,13 +6,15 @@
  *   node scripts/register-oauth-client.mjs <vendor> <metadata-url> [--origin https://maskin.io]...
  *
  *   node scripts/register-oauth-client.mjs notion https://mcp.notion.com/.well-known/oauth-authorization-server
+ *   node scripts/register-oauth-client.mjs stripe https://access.stripe.com/.well-known/oauth-authorization-server/mcp
  *
  * <vendor> is the provider name in the registry (notion). <metadata-url> is the vendor's published
  * sign-in details (RFC 8414). Each --origin is a public origin Maskin runs on; the callback
  * `{origin}/api/integrations/{vendor}/callback` is registered for every one, in one registration.
  * With no --origin, https://maskin.io.
  *
- * Output: the two settings lines, NAME_CLIENT_ID=... and NAME_CLIENT_SECRET=..., on stdout. Run it in a
+ * Output: the settings lines, NAME_CLIENT_ID=... and NAME_CLIENT_SECRET=... (only the id line for a
+ * vendor that offers just no-secret clients, like Stripe), on stdout. Run it in a
  * terminal and set the values on the server by hand. Never put the output in a log, comment, task or
  * file. Everything else it says goes to stderr and holds no secret.
  *
@@ -81,15 +83,17 @@ export function checkMetadata(metadataUrl, metadata) {
 	return endpoint.toString()
 }
 
-/** client_secret_post, which the sign-in handler sends; refuses a vendor that offers only no-secret clients. */
+/**
+ * client_secret_post when the vendor offers it, else 'none' (a public client with PKCE and no
+ * secret, which the sign-in handler supports with tokenAuthMethod 'none'). Refuses anything else.
+ */
 export function chooseAuthMethod(metadata) {
 	const offered = metadata?.token_endpoint_auth_methods_supported
-	if (Array.isArray(offered) && !offered.includes('client_secret_post')) {
-		throw new Error(
-			`the vendor does not offer client_secret_post (offers: ${offered.join(', ')}); the sign-in handler needs a secret`,
-		)
-	}
-	return 'client_secret_post'
+	if (!Array.isArray(offered) || offered.includes('client_secret_post')) return 'client_secret_post'
+	if (offered.includes('none')) return 'none'
+	throw new Error(
+		`the vendor offers neither client_secret_post nor none (offers: ${offered.join(', ')}); the sign-in handler supports only those`,
+	)
 }
 
 export function registrationBody(redirectUris, authMethod) {
@@ -102,10 +106,11 @@ export function registrationBody(redirectUris, authMethod) {
 	}
 }
 
-export function settingsLines(vendor, registration) {
+export function settingsLines(vendor, registration, authMethod = 'client_secret_post') {
 	if (typeof registration?.client_id !== 'string' || !registration.client_id) {
 		throw new Error('the registration answered without a client id')
 	}
+	if (authMethod === 'none') return `${envPrefix(vendor)}_CLIENT_ID=${registration.client_id}\n`
 	if (typeof registration.client_secret !== 'string' || !registration.client_secret) {
 		throw new Error(
 			'the registration answered without a client secret; the sign-in handler needs one',
@@ -150,8 +155,10 @@ export async function main(argv, io = {}) {
 			'the registration address',
 			fetchImpl,
 		)
-		out(settingsLines(vendor, registration))
-		err('Registered. Set the two values on the server; do not paste them anywhere else.\n')
+		out(settingsLines(vendor, registration, authMethod))
+		err(
+			`Registered. Set the ${authMethod === 'none' ? 'value' : 'two values'} on the server; do not paste ${authMethod === 'none' ? 'it' : 'them'} anywhere else.\n`,
+		)
 		return 0
 	} catch (e) {
 		err(`register-oauth-client failed: ${e instanceof Error ? e.message : e}\n`)
