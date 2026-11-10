@@ -21,11 +21,11 @@ vi.mock('@/lib/analytics', async () => ({
 }))
 vi.mock('@/lib/api', async (importOriginal) => ({
 	...(await importOriginal<typeof import('@/lib/api')>()),
-	api: { objects: { list: vi.fn() }, data: { query: vi.fn() } },
+	api: { objects: { list: vi.fn() }, actors: { list: vi.fn() }, data: { query: vi.fn() } },
 }))
 
 const LIST_VIEW = `<html><head></head><body>
-<script id="maskin-sources" type="application/json">{"opps":{"list":"opportunities","params":{"status":["opportunity"]}},"loose":{"list":"people"}}</script>
+<script id="maskin-sources" type="application/json">{"opps":{"list":"opportunities","params":{"status":["opportunity"]}},"loose":{"list":"companies"},"folks":{"list":"people","params":{"status":["new_lead"]}}}</script>
 <h1>Opportunities</h1></body></html>`
 
 function htmlFile(content: string, overrides: Partial<FileDetail> = {}): FileDetail {
@@ -65,6 +65,19 @@ function bet(i: number): ObjectResponse {
 	}
 }
 
+function person(i: number, driver: string | null = null): ObjectResponse {
+	return {
+		...bet(i),
+		id: `person-${i}`,
+		type: 'contact',
+		title: `Person ${i}`,
+		content: 'long body',
+		status: 'new_lead',
+		metadata: { email: `p${i}@example.com`, secret: 'x', owner: 'sebk' },
+		driver,
+	}
+}
+
 const TITLE = 'Preview of opportunities.html'
 
 /** Gives the stage a view window, as it would find inside the isolation frame. */
@@ -91,6 +104,7 @@ describe('ViewerStage: living view', () => {
 	beforeEach(() => {
 		flagOn.value = true
 		vi.mocked(api.objects.list).mockReset()
+		vi.mocked(api.actors.list).mockReset()
 		vi.mocked(api.data.query).mockReset()
 		vi.mocked(trackViewRefreshed).mockClear()
 	})
@@ -181,7 +195,12 @@ describe('ViewerStage: living view', () => {
 		})
 
 		it('after a click, fetches as the viewer, replaces the frame and answers with contract fields only', async () => {
-			vi.mocked(api.objects.list).mockResolvedValueOnce([bet(1), bet(2)])
+			vi.mocked(api.objects.list).mockImplementation(async (_ws, params) =>
+				params?.type === 'contact' ? [person(1, 'actor-9'), person(2)] : [bet(1), bet(2)],
+			)
+			vi.mocked(api.actors.list).mockResolvedValue([
+				{ id: 'actor-9', name: 'Rune', type: 'human' },
+			] as Awaited<ReturnType<typeof api.actors.list>>)
 			render(<ViewerStage file={htmlFile(LIST_VIEW)} />)
 			const before = screen.getByTitle(TITLE)
 
@@ -190,8 +209,9 @@ describe('ViewerStage: living view', () => {
 			// frame itself to be replaced: that happens only once the fetch has finished.
 			await waitFor(() => expect(screen.getByTitle(TITLE)).not.toBe(before))
 
-			expect(api.objects.list).toHaveBeenCalledTimes(1)
+			expect(api.objects.list).toHaveBeenCalledTimes(2)
 			expect(vi.mocked(api.objects.list).mock.calls[0]?.[0]).toBe('ws-1')
+			expect(api.actors.list).toHaveBeenCalledTimes(1)
 			// The new frame asks again and is told the rows.
 			const view = viewWindow()
 			const answers = await ask(view, 'opps', 2)
@@ -211,17 +231,39 @@ describe('ViewerStage: living view', () => {
 			})
 			expect(JSON.stringify(answers)).not.toContain('long body')
 			expect(JSON.stringify(answers)).not.toContain('secret')
+
+			// A people row comes out with the People contract fields and nothing else.
+			const folks = await ask(view, 'folks', 3)
+			expect(folks).toHaveLength(1)
+			expect(folks[0].data.rows).toHaveLength(2)
+			expect(folks[0].data.rows[0]).toEqual({
+				id: 'person-1',
+				title: 'Person 1',
+				status: 'new_lead',
+				driver: 'actor-9',
+				driver_name: 'Rune',
+				email: 'p1@example.com',
+				linkedin_url: null,
+				location: null,
+				summary: null,
+				next_step: null,
+				next_step_date: null,
+				updatedAt: '2026-11-01T00:00:00.000Z',
+			})
+			expect(JSON.stringify(folks)).not.toContain('long body')
+			expect(JSON.stringify(folks)).not.toContain('secret')
+			expect(JSON.stringify(folks)).not.toContain('sebk')
 			expect(trackViewRefreshed).toHaveBeenCalledWith({
 				entity_id: 'file-1',
 				entity_type: 'file',
-				list_names: 'opportunities',
-				row_count: 2,
+				list_names: 'opportunities,people',
+				row_count: 4,
 				ok: true,
 			})
 		})
 
 		it('says it could not refresh, keeps the time of the data on screen and offers Try again', async () => {
-			vi.mocked(api.objects.list).mockRejectedValueOnce(new Error('boom'))
+			vi.mocked(api.objects.list).mockRejectedValue(new Error('boom'))
 			vi.spyOn(console, 'error').mockImplementation(() => {})
 			render(<ViewerStage file={htmlFile(LIST_VIEW)} />)
 

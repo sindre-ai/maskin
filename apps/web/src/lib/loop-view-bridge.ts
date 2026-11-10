@@ -3,8 +3,8 @@ import { BRIDGE_QUERY_MESSAGE, BRIDGE_RESULT_MESSAGE, VIEWER_DOC_SIZE_MESSAGE } 
 import {
 	LIST_REFUSED_MESSAGE,
 	type ListAnswer,
+	type ListSource,
 	type ListSourceEntry,
-	type OpportunitiesListSource,
 } from './view-lists'
 
 // Host side of the loop-view data bridge (see the bridge section in mini-app.ts
@@ -33,7 +33,7 @@ export interface BridgeHost {
 	/** The list sources the view declared, by name. A `null` entry asked for something the app does not offer. */
 	listSources?: () => ReadonlyMap<string, ListSourceEntry>
 	/** What a list source is answered with right now. Must not fetch: rows exist only after the user's Refresh click. */
-	listAnswer?: (name: string, source: OpportunitiesListSource) => ListAnswer
+	listAnswer?: (name: string, source: ListSource) => ListAnswer
 	post: (message: Record<string, unknown>) => void
 	onDocHeight: (height: number) => void
 	/** The view's content is wider than its frame: the width it needs. Optional; hosts that never scroll sideways skip it. */

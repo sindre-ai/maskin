@@ -551,11 +551,11 @@ describe('readViewSources', () => {
 
 	it('marks a list the app does not offer as refused instead of failing the whole view', () => {
 		const result = readViewSources(
-			doc('{"people":{"list":"people"},"by_status":{"type":"task","group_by":"status"}}'),
+			doc('{"loose":{"list":"companies"},"by_status":{"type":"task","group_by":"status"}}'),
 		)
 		expect(result.ok).toBe(true)
 		if (!result.ok) return
-		expect(result.lists.get('people')).toBeNull()
+		expect(result.lists.get('loose')).toBeNull()
 		expect(result.sources.has('by_status')).toBe(true)
 	})
 
