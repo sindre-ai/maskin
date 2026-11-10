@@ -348,7 +348,7 @@ test.describe('Chats v2 — participants popover', () => {
 
 test.describe('Chats v2 — new chat form', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
-		test(`the new chat page lists agents, a first message and Start chat at ${vp.label}`, async ({
+		test(`the new chat page has a To field with chips, suggestions and the composer at ${vp.label}`, async ({
 			page,
 			account,
 		}) => {
@@ -360,16 +360,26 @@ test.describe('Chats v2 — new chat form', () => {
 			await expect(page.getByRole('region', { name: 'To' })).toBeVisible({ timeout: 15_000 })
 			await expectNoHorizontalOverflow(page)
 
+			// The message box takes focus on open, and nothing is suggested until To is focused.
 			const first = page.getByLabel('First message')
 			await expect(first).toHaveValue('')
+			await expect(first).toBeFocused()
+			await expect(page.getByRole('listbox')).toHaveCount(0)
 
-			// Draft route stays put — nothing has been sent yet.
+			// Focusing To shows Suggested; picking an agent turns it into a chip.
+			const to = page.getByRole('combobox', { name: 'Add a person or agent' })
+			await to.click()
+			await expect(page.getByRole('listbox')).toBeVisible()
+			await to.fill(agent.name)
+			await page.getByRole('option', { name: new RegExp(agent.name) }).click()
+			const chip = page.getByRole('button', { name: `Remove ${agent.name}` })
+			await expect(chip).toBeVisible()
+			await expectNoHorizontalOverflow(page)
+
+			// Removing the chip takes the recipient back out; the route stays put, nothing is sent.
+			await chip.click()
+			await expect(chip).toHaveCount(0)
 			await expect(page).toHaveURL(/\/chats\/new/)
-
-			// Picking an agent flips its switch on; the note counts a group from two.
-			const toggle = page.getByRole('switch', { name: `Add ${agent.name}` })
-			await toggle.click()
-			await expect(toggle).toBeChecked()
 		})
 	}
 })
