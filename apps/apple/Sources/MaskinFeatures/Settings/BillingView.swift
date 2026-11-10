@@ -27,17 +27,12 @@ struct BillingView: View {
 				}
 				PageGroupLabel(text: "Plan")
 				PageCard(rows: rows(usage))
-				// The percent is shown to everyone: the app does not read the web's percent flag, and
-				// there are no dollar or token figures to fall back to.
-				if let percent = usage.usedPercent {
-					UsageMeter(percent: percent)
-					if percent >= Self.warnPercent {
-						Text("Work will wait at 100%. Choose a plan to keep going.")
-							.font(MaskinTypeface.sans(MaskinFontSize.t13))
-							.foregroundStyle(MaskinColor.ink3)
-					}
+				if let cap = usage.capCents, let fraction = usage.usedFraction {
+					UsageMeter(
+						title: "Credits this month", used: BillingUsage.dollars(usage.usedCents),
+						of: BillingUsage.dollars(cap), fraction: fraction)
 					if let manageURL {
-						Button("Upgrade") { openURL(manageURL) }.buttonStyle(.secondaryAction)
+						Button("Buy credits") { openURL(manageURL) }.buttonStyle(.secondaryAction)
 					}
 				}
 				PageFootnote(
@@ -64,24 +59,26 @@ struct BillingView: View {
 				subtitle: [usage.statusLabel, usage.resetsText].compactMap { $0 }.joined(separator: " · "),
 				accessory: .state(PageState(usage.planLabel, healthy ? .active : .muted)))
 		]
-		if let percent = usage.usedPercent {
+		let spent = BillingUsage.dollars(usage.usedCents)
+		if let fraction = usage.usedFraction, let cap = usage.capCents {
 			rows.append(
 				PageRowModel(
-					id: "usage", title: "Agent usage", subtitle: "\(percent)% of plan used",
-					accessory: .state(PageState("\(percent)%", .plain))))
+					id: "usage", title: "Agent usage",
+					subtitle: "\(spent) of \(BillingUsage.dollars(cap)) this period",
+					accessory: .state(PageState("\(Int(fraction * 100))%", .plain))))
 		} else {
-			rows.append(PageRowModel(id: "usage", title: "Agent usage", subtitle: "This period"))
+			rows.append(
+				PageRowModel(
+					id: "usage", title: "Agent usage", subtitle: "This period",
+					accessory: .state(PageState(spent, .plain))))
 		}
-		// Invoices, auto top-up and the credit balance are not shown: top-up is closed and the web
-		// shows usage as a percent of the plan only.
+		// Invoices, auto top-up and the credit balance have no usable API field yet (the balance has
+		// no currency), so those rows stay hidden.
 		return rows
 	}
 }
 
 extension BillingView {
-	/// The meter turns to the warning colour here and says work will wait at 100% (the web's 80%).
-	static let warnPercent = 80
-
 	/// "Trial ends in 5 days" while on a trial; nil on any paid plan.
 	static func trialBanner(_ usage: BillingUsage) -> (title: String, detail: String)? {
 		guard usage.plan == "trial", usage.status == .active else { return nil }
@@ -122,35 +119,31 @@ private struct TrialBanner: View {
 	}
 }
 
-/// "N% of plan used" with a bar underneath: the same words as the web billing page. Warning colour
-/// from 80%, danger at 100%.
+/// A used-of-total line with a bar underneath.
 private struct UsageMeter: View {
-	let percent: Int
+	let title: String
+	let used: String
+	let of: String
+	let fraction: Double
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s7) {
-			Text("Plan usage").maskinText(.microLabelLarge).textCase(.uppercase).foregroundStyle(MaskinColor.ink4)
+			Text(title).maskinText(.microLabelLarge).textCase(.uppercase).foregroundStyle(MaskinColor.ink4)
 			HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s3) {
-				Text("\(percent)%")
+				Text(used)
 					.font(MaskinTypeface.sans(MaskinFontSize.t20, weight: MaskinFontWeight.semibold))
 					.foregroundStyle(MaskinColor.ink)
-				Text("of plan used")
+				Text("of \(of)")
 					.font(MaskinTypeface.sans(MaskinFontSize.t14))
 					.foregroundStyle(MaskinColor.ink4)
 			}
-			ProgressView(value: Double(percent) / 100)
-				.tint(tint)
+			ProgressView(value: fraction)
+				.tint(fraction >= 0.9 ? MaskinColor.noticeFg3 : MaskinColor.sig)
 		}
 		.padding(MaskinSpace.s9)
 		.frame(maxWidth: .infinity, alignment: .leading)
 		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.tile, style: .continuous))
 		.accessibilityElement(children: .combine)
-		.accessibilityValue("\(percent) percent of plan used")
-	}
-
-	private var tint: Color {
-		if percent >= 100 { return MaskinColor.danger }
-		if percent >= BillingView.warnPercent { return MaskinColor.noticeFg3 }
-		return MaskinColor.sig
+		.accessibilityValue("\(Int(fraction * 100)) percent used")
 	}
 }

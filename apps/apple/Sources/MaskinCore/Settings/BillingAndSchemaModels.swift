@@ -51,13 +51,11 @@ public struct BillingUsage: Sendable, Equatable {
 		return min(1, Double(usedCents) / Double(capCents))
 	}
 
-	/// Whole percent of the plan used, 0...100, rounded down, 100 once the cap is reached. The same
-	/// rule as the web's `usagePercent`, so the number matches on both. nil when no cap is known: no
-	/// figure is made up.
-	public var usedPercent: Int? {
-		guard let capCents, capCents > 0 else { return nil }
-		if usedCents >= capCents { return 100 }
-		return max(0, Int((Double(usedCents) / Double(capCents) * 100).rounded(.down)))
+	public static func dollars(_ cents: Int, locale: Locale = .current) -> String {
+		let value = Double(cents) / 100
+		let whole = cents % 100 == 0
+		return value.formatted(
+			.currency(code: "USD").locale(locale).precision(.fractionLength(whole ? 0 : 2)))
 	}
 
 	/// "Resets in 5 days", "Resets in 3 hours", or nil.

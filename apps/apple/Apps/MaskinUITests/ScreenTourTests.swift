@@ -279,7 +279,7 @@ final class ScreenTourTests: XCTestCase {
 
 		section("billing") {
 			guard openSettings(), tapRow("Billing", label: "settings-billing") else { return }
-			capture("11-04-billing", expect: ["Trial ends", "of plan used", "Loading your plan"])
+			capture("11-04-billing", expect: ["Trial ends", "Credits this month", "Loading your plan"])
 		}
 
 		section("app-lock") {
