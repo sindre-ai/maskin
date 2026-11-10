@@ -53,12 +53,13 @@ struct WatchPlayer: View {
 			Text("DAILY").font(WatchType.microMono()).tracking(0.8).foregroundStyle(MaskinColor.ink4)
 			Button {
 				switch speaker.phase {
-				case .idle: speaker.speak(script)
+				case .idle, .failed: speaker.speak(script)
 				case .paused: speaker.resume()
 				case .speaking: speaker.pause()
+				case .starting: speaker.stop()
 				}
 			} label: {
-				Image(systemName: speaker.phase == .paused || speaker.phase == .idle ? "play.fill" : "pause.fill")
+				Image(systemName: speaker.phase == .speaking ? "pause.fill" : "play.fill")
 					.font(.system(size: MaskinFontSize.t26, weight: .bold))
 					.foregroundStyle(MaskinSurface.onInverse)
 					.frame(width: WatchMetrics.player - MaskinSpace.s5 * 2, height: WatchMetrics.player - MaskinSpace.s5 * 2)
@@ -73,8 +74,15 @@ struct WatchPlayer: View {
 			}
 			.buttonStyle(.plain)
 			.accessibilityLabel(speaker.phase == .speaking ? "Pause briefing" : "Play briefing")
-			Text("\(WatchBriefingText.clock(elapsed)) / \(WatchBriefingText.clock(total))")
-				.font(WatchType.mono()).foregroundStyle(MaskinColor.ink)
+			if speaker.phase == .failed {
+				Text("Couldn't start the sound. Tap play to try again.")
+					.font(WatchType.caption()).foregroundStyle(MaskinColor.ink3).multilineTextAlignment(.center)
+			} else {
+				Text(speaker.phase == .starting
+					? "Starting..."
+					: "\(WatchBriefingText.clock(elapsed)) / \(WatchBriefingText.clock(total))")
+					.font(WatchType.mono()).foregroundStyle(MaskinColor.ink)
+			}
 		}
 		.frame(maxWidth: .infinity, maxHeight: .infinity)
 	}
@@ -98,10 +106,12 @@ private struct SystemSpeechSession: SpeechAudioSession {
 @MainActor
 @Observable
 final class BriefingSpeaker: NSObject, AVSpeechSynthesizerDelegate {
-	enum Phase: Equatable { case idle, speaking, paused }
+	typealias Phase = SpeechPlayback.Phase
 
 	private let synthesizer = AVSpeechSynthesizer()
-	private(set) var phase: Phase = .idle
+	private var playback = SpeechPlayback()
+	/// `starting` until the synthesizer makes its first sound, `failed` if it never does.
+	var phase: Phase { playback.phase }
 	/// How much of the script has been spoken, 0 to 1, for the player's ring.
 	private(set) var fraction: Double = 0
 	/// Speech has begun at least once since the last `stop()`, so a player that was paused does not
@@ -109,6 +119,7 @@ final class BriefingSpeaker: NSObject, AVSpeechSynthesizerDelegate {
 	private(set) var wasStarted = false
 	@ObservationIgnored private var commandsInstalled = false
 	@ObservationIgnored private var scriptLength = 0
+	@ObservationIgnored private var startWatchdog: Task<Void, Never>?
 
 	/// Whether the sound goes to AirPods or other headphones rather than the watch speaker.
 	static var outputIsHeadphones: Bool {
@@ -117,7 +128,7 @@ final class BriefingSpeaker: NSObject, AVSpeechSynthesizerDelegate {
 		}
 	}
 
-	var isSpeaking: Bool { phase != .idle }
+	var isSpeaking: Bool { playback.isActive }
 
 	/// What Now Playing calls it.
 	private let title: String
@@ -131,27 +142,41 @@ final class BriefingSpeaker: NSObject, AVSpeechSynthesizerDelegate {
 	func speak(_ text: String) {
 		wasStarted = true
 		installCommands()
+		playback.begin()
+		fraction = 0
+		startWatchdog?.cancel()
+		startWatchdog = Task { [weak self] in
+			try? await Task.sleep(for: SpeechPlayback.startTimeout)
+			guard !Task.isCancelled else { return }
+			self?.startFailed()
+		}
 		Task {
 			await WatchSpeech.prepare(SystemSpeechSession())
+			// Stopped, or timed out, while the session was starting.
+			guard playback.phase == .starting else { return }
 			scriptLength = text.utf16.count
-			fraction = 0
 			synthesizer.speak(AVSpeechUtterance(string: text))
-			phase = .speaking
-			updateNowPlaying()
 		}
+	}
+
+	/// No sound came in time: say so instead of showing a player that plays nothing.
+	private func startFailed() {
+		guard playback.startTimedOut() else { return }
+		wasStarted = false
+		synthesizer.stopSpeaking(at: .immediate)
 	}
 
 	func pause() {
 		guard phase == .speaking else { return }
 		synthesizer.pauseSpeaking(at: .immediate)
-		phase = .paused
+		playback.pause()
 		updateNowPlaying()
 	}
 
 	func resume() {
 		guard phase == .paused else { return }
 		synthesizer.continueSpeaking()
-		phase = .speaking
+		playback.resume()
 		updateNowPlaying()
 	}
 
@@ -162,7 +187,8 @@ final class BriefingSpeaker: NSObject, AVSpeechSynthesizerDelegate {
 	}
 
 	private func finish() {
-		phase = .idle
+		startWatchdog?.cancel()
+		playback.finish()
 		fraction = 0
 		MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
 	}
@@ -207,11 +233,24 @@ final class BriefingSpeaker: NSObject, AVSpeechSynthesizerDelegate {
 		}
 	}
 
+	nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, didStart u: AVSpeechUtterance) {
+		Task { @MainActor in
+			self.startWatchdog?.cancel()
+			self.playback.audioStarted()
+			self.updateNowPlaying()
+		}
+	}
+
 	nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, didFinish u: AVSpeechUtterance) {
-		Task { @MainActor in self.finish() }
+		Task { @MainActor in self.utteranceEnded() }
 	}
 
 	nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, didCancel u: AVSpeechUtterance) {
-		Task { @MainActor in self.finish() }
+		Task { @MainActor in self.utteranceEnded() }
+	}
+
+	/// The cancel that follows a failed start must not wipe the failure the player is showing.
+	private func utteranceEnded() {
+		if playback.phase != .failed { finish() }
 	}
 }

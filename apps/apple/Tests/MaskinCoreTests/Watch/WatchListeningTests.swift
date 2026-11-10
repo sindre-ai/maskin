@@ -60,10 +60,11 @@ private final class Sink {
 @MainActor
 private func makeStore(
 	mic: FakeMicrophone, transcriber: (any SpeechTranscribing)?, sink: Sink,
-	settle: Duration = .milliseconds(60)
+	settle: Duration = .milliseconds(60), noSpeechTimeout: Duration = .seconds(600)
 ) -> WatchListeningStore {
 	WatchListeningStore(
 		transcriber: transcriber, settle: settle, maxDuration: .seconds(600), drainTimeout: .seconds(30),
+		noSpeechTimeout: noSpeechTimeout,
 		makeMicrophone: { mic }, deliver: { sink.sent.append($0) })
 }
 
@@ -204,6 +205,32 @@ struct WatchListeningTests {
 		try? await Task.sleep(for: .milliseconds(300))
 		#expect(mic.starts == 0)
 		#expect(store.phase == .idle)
+	}
+
+	@Test func nothingHeardGoesToTapToTalkAndClosesTheMicrophone() async {
+		let mic = FakeMicrophone()
+		let store = makeStore(
+			mic: mic, transcriber: FakeTranscriber(words: [:]), sink: Sink(), noSpeechTimeout: .milliseconds(80))
+		store.begin()
+		#expect(store.phase == .listening)
+		await waitUntil { store.phase == .tapToTalk(.noSpeech) }
+		#expect(store.phase == .tapToTalk(.noSpeech))
+		#expect(mic.stops >= 1)
+	}
+
+	@Test func speechBeforeTheTimeoutKeepsListening() async {
+		let mic = FakeMicrophone()
+		let sink = Sink()
+		let store = makeStore(
+			mic: mic, transcriber: FakeTranscriber(words: [1: "Hello"]), sink: sink, settle: .milliseconds(400),
+			noSpeechTimeout: .milliseconds(150))
+		store.begin()
+		await waitUntil { mic.starts == 1 }
+		mic.say(1)
+		try? await Task.sleep(for: .milliseconds(300))
+		#expect(store.phase != .tapToTalk(.noSpeech))
+		await waitUntil { !sink.sent.isEmpty }
+		#expect(sink.sent == ["Hello"])
 	}
 
 	@Test func tapToTalkCanListenAgain() async {

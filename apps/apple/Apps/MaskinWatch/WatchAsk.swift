@@ -101,8 +101,8 @@ struct WatchListeningScreen: View {
 				listeningBody
 			case .sending:
 				WatchSpinner().frame(maxWidth: .infinity, maxHeight: .infinity)
-			case .tapToTalk:
-				tapToTalkBody
+			case .tapToTalk(let reason):
+				tapToTalkBody(reason)
 			}
 		}
 		.containerBackground(for: .navigation) { WatchBackdrop() }
@@ -116,7 +116,7 @@ struct WatchListeningScreen: View {
 		VStack(spacing: MaskinSpace.gapLoose) {
 			Text("LISTENING").font(WatchType.microMono()).tracking(0.8).foregroundStyle(MaskinColor.sigHi)
 			ScrollView {
-				Text(listening.text)
+				Text(listening.text.isEmpty ? "Say your question" : listening.text)
 					.font(WatchType.question()).foregroundStyle(MaskinColor.ink)
 					.multilineTextAlignment(.center).frame(maxWidth: .infinity)
 			}
@@ -129,13 +129,13 @@ struct WatchListeningScreen: View {
 		.padding(.horizontal, MaskinSpace.s1)
 	}
 
-	private var tapToTalkBody: some View {
+	private func tapToTalkBody(_ reason: WatchListeningStore.Reason) -> some View {
 		VStack(spacing: MaskinSpace.gapLoose) {
 			Text("TAP TO TALK").font(WatchType.microMono()).tracking(0.8).foregroundStyle(MaskinColor.ink4)
 			WatchDictate(accessibility: "Ask Chief of Staff", send: ask) {
 				WatchMicGlyph(size: WatchMetrics.mic)
 			}
-			Text("Tap to start. Tap again, or pause, to send.")
+			Text(reason == .noSpeech ? "Didn't hear anything. Tap to talk instead." : "Tap to start. Tap again, or pause, to send.")
 				.font(WatchType.caption()).foregroundStyle(MaskinColor.ink3).multilineTextAlignment(.center)
 			WatchQuietButton(title: "Cancel") { listening.cancel() }
 		}

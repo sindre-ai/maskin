@@ -41,3 +41,50 @@ struct WatchSpeechSessionTests {
 		#expect(session.activations == [true, false])
 	}
 }
+
+struct SpeechPlaybackTests {
+	@Test func startingIsNotSpeakingUntilSoundStarts() {
+		var playback = SpeechPlayback()
+		playback.begin()
+		#expect(playback.phase == .starting)
+		#expect(playback.isActive)
+		playback.audioStarted()
+		#expect(playback.phase == .speaking)
+	}
+
+	@Test func aStartThatNeverMakesSoundFails() {
+		var playback = SpeechPlayback()
+		playback.begin()
+		#expect(playback.startTimedOut())
+		#expect(playback.phase == .failed)
+		#expect(!playback.isActive)
+	}
+
+	@Test func aTimeoutAfterSoundStartedChangesNothing() {
+		var playback = SpeechPlayback()
+		playback.begin()
+		playback.audioStarted()
+		#expect(!playback.startTimedOut())
+		#expect(playback.phase == .speaking)
+	}
+
+	@Test func pauseAndResumeOnlyApplyToSound() {
+		var playback = SpeechPlayback()
+		playback.begin()
+		playback.pause()
+		#expect(playback.phase == .starting)
+		playback.audioStarted()
+		playback.pause()
+		#expect(playback.phase == .paused)
+		playback.resume()
+		#expect(playback.phase == .speaking)
+	}
+
+	@Test func aFailedStartCanBeTriedAgain() {
+		var playback = SpeechPlayback()
+		playback.begin()
+		playback.startTimedOut()
+		playback.begin()
+		#expect(playback.phase == .starting)
+	}
+}

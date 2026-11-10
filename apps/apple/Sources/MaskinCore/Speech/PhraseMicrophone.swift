@@ -27,9 +27,14 @@ extension PhraseMicrophone {
 	@MainActor
 	public final class EnginePhraseMicrophone: PhraseMicrophone {
 		private let engine = AVAudioEngine()
+		private let options: PhraseSegmenter.Options
 		private var capture: PhraseCapture?
 
-		public init() {}
+		/// - Parameter options: when a reading counts as speech. The watch's microphone sits a wrist
+		///   away from the mouth and is quiet next to a phone's, so it passes a lower level.
+		public init(options: PhraseSegmenter.Options = PhraseSegmenter.Options()) {
+			self.options = options
+		}
 
 		/// The engine only gets samples once access is granted; asking first means the first tap on
 		/// the mic shows the prompt instead of opening a microphone that hears nothing.
@@ -40,14 +45,20 @@ extension PhraseMicrophone {
 		public func start() throws -> AsyncStream<Data> {
 			#if os(iOS) || os(watchOS)
 				let session = AVAudioSession.sharedInstance()
-				try session.setCategory(.record, mode: .measurement, options: .duckOthers)
+				// Measurement mode switches off the automatic gain; on a watch that leaves speech too
+				// quiet to ever count as a voice.
+				#if os(watchOS)
+					try session.setCategory(.record, mode: .default, options: .duckOthers)
+				#else
+					try session.setCategory(.record, mode: .measurement, options: .duckOthers)
+				#endif
 				try session.setActive(true, options: .notifyOthersOnDeactivation)
 			#endif
 			let input = engine.inputNode
 			let format = input.outputFormat(forBus: 0)
 			guard format.sampleRate > 0, format.channelCount > 0 else { throw MicrophoneError.noInput }
 			let (phrases, continuation) = AsyncStream.makeStream(of: Data.self)
-			let capture = try PhraseCapture(inputFormat: format, phrases: continuation)
+			let capture = try PhraseCapture(inputFormat: format, phrases: continuation, options: options)
 			self.capture = capture
 			input.installTap(onBus: 0, bufferSize: 1024, format: format, block: Self.makeTap(capture))
 			engine.prepare()
@@ -81,13 +92,13 @@ extension PhraseMicrophone {
 		private let converter: AVAudioConverter
 		private let outputFormat: AVAudioFormat
 		private let phrases: AsyncStream<Data>.Continuation
-		private var segmenter = PhraseSegmenter()
+		private var segmenter: PhraseSegmenter
 		private var samples: [Float] = []
 		/// Milliseconds of audio seen, so pauses are measured in recorded time, not wall time.
 		private var clockMs = 0.0
 		private var finished = false
 
-		init(inputFormat: AVAudioFormat, phrases: AsyncStream<Data>.Continuation) throws {
+		init(inputFormat: AVAudioFormat, phrases: AsyncStream<Data>.Continuation, options: PhraseSegmenter.Options) throws {
 			guard
 				let output = AVAudioFormat(
 					commonFormat: .pcmFormatFloat32, sampleRate: Double(WAVEncoding.sampleRate), channels: 1,
@@ -97,6 +108,7 @@ extension PhraseMicrophone {
 			self.outputFormat = output
 			self.converter = converter
 			self.phrases = phrases
+			segmenter = PhraseSegmenter(options: options)
 		}
 
 		func append(_ buffer: AVAudioPCMBuffer) {
