@@ -192,7 +192,17 @@ function ChatConversationList({
 		...(filter === 'unread' ? { unread_only: true } : {}),
 	})
 
-	const fetched = useMemo(() => data?.pages.flatMap((page) => page.conversations) ?? [], [data])
+	// Pages are fetched by offset, so a chat created or bumped while the list is open shifts the
+	// next page and returns a chat already seen. Two rows with one id share a React key, and
+	// React then leaves one behind when its group folds. Keep the first copy of each chat.
+	const fetched = useMemo(() => {
+		const seen = new Set<string>()
+		return (data?.pages.flatMap((page) => page.conversations) ?? []).filter((c) => {
+			if (seen.has(c.id)) return false
+			seen.add(c.id)
+			return true
+		})
+	}, [data])
 	// Reading a chat opened from the Unread filter would drop its row on the
 	// next refetch and shift everything below it. Keep rows that were shown in
 	// place (as read) until the filter or workspace changes.
