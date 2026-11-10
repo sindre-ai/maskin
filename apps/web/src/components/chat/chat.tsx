@@ -35,7 +35,7 @@ import { cn } from '@/lib/cn'
 import { toUploadInput } from '@/lib/large-file-upload'
 import { splitLongMessage } from '@/lib/long-message'
 import { hasHighConfidenceSecret, scanComposerText } from '@/lib/secret-scanner'
-import { type TagValue, splitTextByTags, tagLabel } from '@/lib/tag-input-model'
+import { type TagValue, isTaggable, splitTextByTags, tagLabel } from '@/lib/tag-input-model'
 import { VIEWER_READ_ONLY_MESSAGE, isViewerRefusal } from '@/lib/workspace-role'
 import { type SecretMatch, withStarterPrompt, withoutSecrets } from '@maskin/shared'
 import { ArrowUp, AtSign, FileText, Image, Info, Mic, Plus, X } from 'lucide-react'
@@ -344,8 +344,8 @@ export function Composer({
 	const mentionActors = useMemo<MentionPickerActor[]>(
 		() =>
 			(workspaceActors ?? [])
-				// role !== "system" — filter out Google Calendar / Gmail / Slack / GitHub / Ubersuggest.
-				.filter((a) => !a.isSystem)
+				// Filters out Google Calendar / Gmail / Slack / GitHub / Ubersuggest (type "system").
+				.filter(isTaggable)
 				.map((a) => ({
 					id: a.id,
 					name: a.name,
