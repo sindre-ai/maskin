@@ -18,14 +18,17 @@ export function useHeightVar(
 		const el = ref.current
 		const host = el?.parentElement
 		if (!el || !host) return
+		let first = true
 		const apply = () => {
-			const scroller = keepAtBottom ? host.querySelector<HTMLElement>(keepAtBottom) : null
+			// The first measurement only publishes the height: the scroller has not been placed yet.
+			const scroller = !first && keepAtBottom ? host.querySelector<HTMLElement>(keepAtBottom) : null
 			const wasAtBottom =
 				!!scroller && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 24
 			host.style.setProperty(name, `${el.getBoundingClientRect().height}px`)
 			if (scroller && wasAtBottom) scroller.scrollTop = scroller.scrollHeight
 		}
 		apply()
+		first = false
 		const observer = new ResizeObserver(apply)
 		observer.observe(el)
 		return () => {

@@ -357,7 +357,7 @@ function ConversationThreadPage() {
 							/>
 						</div>
 						<ThreadMessages
-							className="pt-[calc(var(--thread-header-h,4.5rem)+18px)] pb-[calc(var(--thread-composer-h,6.75rem)+6px)] scroll-pt-[calc(var(--thread-header-h,4.5rem)+6px)] scroll-pb-[calc(var(--thread-composer-h,6.75rem)+6px)]"
+							className="pt-[calc(var(--thread-header-h,4.5rem)+18px)] pb-[calc(var(--thread-composer-h,6.75rem)+6px)] scroll-pt-[max(0px,calc(var(--thread-header-h,4.5rem)-54px))] scroll-pb-[calc(var(--thread-composer-h,6.75rem)+6px)]"
 							workspaceId={workspaceId}
 							conversationId={conversationId}
 							onPickStep={requestComposer}

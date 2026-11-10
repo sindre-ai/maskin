@@ -1,5 +1,6 @@
 import { Composer } from '@/components/chat/chat'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { FLOATING_CONTROLS } from '@/components/shared/floating-footer'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
@@ -1411,7 +1412,7 @@ export function TriggerForm({
 			)}
 
 			{/* Sticky language edit bar (mockup 1818–1837) */}
-			<div className="pointer-events-none sticky bottom-0 z-10 mt-7 [&_:is(a,button,input,textarea,form,[role=button],[contenteditable=true])]:pointer-events-auto">
+			<div className={`pointer-events-none sticky bottom-0 z-10 mt-7 ${FLOATING_CONTROLS}`}>
 				<div className="pb-[max(0.625rem,env(safe-area-inset-bottom))]">
 					{isCreated && !hasChanges && (
 						<div className="flex flex-wrap gap-1.5 pb-2.5" aria-label="Suggested changes">

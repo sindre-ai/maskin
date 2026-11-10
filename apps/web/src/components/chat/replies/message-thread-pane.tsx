@@ -275,6 +275,7 @@ export function MessageThreadPane({
 					</div>
 					<FloatingFooter
 						name="--reply-composer-h"
+						keepAtBottom
 						className="flex flex-col gap-2 px-4 pt-2 pb-3.5"
 					>
 						<div className="flex items-center gap-2">

@@ -1,4 +1,5 @@
 import { Composer } from '@/components/chat/chat'
+import { FLOATING_CONTROLS } from '@/components/shared/floating-footer'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { useCanWrite } from '@/hooks/use-can-write'
@@ -62,11 +63,10 @@ export const LoopUtteranceInput = forwardRef<
 	)
 
 	return (
-		// A fade of the page colour, not a block: the content shows through above the composer, and
-		// only the composer and its chips take clicks.
+		// No background: the content shows through around the composer, and only the composer takes clicks.
 		<div
 			ref={ref}
-			className="pointer-events-none sticky bottom-0 z-10 mt-6 pt-4 [&_:is(a,button,input,textarea,[role=button],[contenteditable=true])]:pointer-events-auto [&_form]:pointer-events-auto"
+			className={`pointer-events-none sticky bottom-0 z-10 mt-6 pt-4 ${FLOATING_CONTROLS}`}
 		>
 			<div className="pb-[max(0.625rem,env(safe-area-inset-bottom))]">
 				{children}

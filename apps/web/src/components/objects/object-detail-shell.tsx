@@ -3,6 +3,7 @@ import { AgentComposer } from '@/components/agents/agent-composer'
 import type { TagInputHandle } from '@/components/chat/tag-input'
 import { PageHeader } from '@/components/layout/page-header'
 import { AgentWorkingBadge } from '@/components/shared/agent-working-badge'
+import { FLOATING_CONTROLS } from '@/components/shared/floating-footer'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useActor, useActors } from '@/hooks/use-actors'
 import { useIsMobile } from '@/hooks/use-mobile'
@@ -660,7 +661,7 @@ export function ObjectDetailShell({
 							    composer at a time, switched Comment / Message <agent>. */}
 							<div
 								ref={composerRef}
-								className="pointer-events-none sticky bottom-0 z-[6] mt-1.5 pb-4 pt-[22px] [&_:is(a,button,input,textarea,form,[role=button],[contenteditable=true])]:pointer-events-auto"
+								className={`pointer-events-none sticky bottom-0 z-[6] mt-1.5 pb-4 pt-[22px] ${FLOATING_CONTROLS}`}
 							>
 								<ItemComposer
 									object={object}

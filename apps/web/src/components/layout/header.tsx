@@ -1,3 +1,4 @@
+import { FLOATING_CONTROLS } from '@/components/shared/floating-footer'
 import { NewMenu } from '@/components/shared/new-menu'
 import {
 	Breadcrumb,
@@ -123,6 +124,12 @@ const routeConfig: Record<string, RouteConfig> = {
 const OBJECT_DETAIL_ROUTE_ID = '/_authed/$workspaceId/objects/$objectId'
 
 /**
+ * The bar floats over the page instead of sitting above it: it has no background at all, and
+ * clicks pass through it except on its own controls.
+ */
+const FLOATING_BAR = `pointer-events-none absolute inset-x-0 top-[var(--app-banner-h,0px)] z-20 ${FLOATING_CONTROLS}`
+
+/**
  * The shared top nav — mockup lines 155–279.
  *
  * One row per screen (34px title from `md:`, 28px side margin from `lg:`): the screen's <h1> and muted count on the left, then
@@ -143,13 +150,6 @@ const OBJECT_DETAIL_ROUTE_ID = '/_authed/$workspaceId/objects/$objectId'
  * identity or title tabs). From `md:` its <h1> is drawn in the page content and scrolls
  * away with it, while the header keeps only the buttons, floating over the content.
  */
-/**
- * The bar floats over the page instead of sitting above it: it has no background at all, and
- * clicks pass through it except on its own controls.
- */
-const FLOATING_BAR =
-	'pointer-events-none absolute inset-x-0 top-[var(--app-banner-h,0px)] z-20 [&_:is(a,button,input,select,textarea,[role=button],[role=tab],[role=combobox])]:pointer-events-auto'
-
 function useHeaderModel() {
 	const matches = useMatches()
 	const { title, crumb, stickyIdentity, titleTabs } = usePageHeader()

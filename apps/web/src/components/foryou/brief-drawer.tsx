@@ -204,7 +204,7 @@ export function BriefDrawer({ workspaceId, open, onOpenChange }: BriefDrawerProp
 		<Sheet open={open} onOpenChange={onOpenChange}>
 			<SheetContent
 				side="right"
-				className="relative flex w-full flex-col gap-0 p-0 sm:max-w-md"
+				className="flex w-full flex-col gap-0 p-0 sm:max-w-md"
 				data-testid="brief-drawer"
 			>
 				<div className="flex shrink-0 items-center gap-3 border-b border-border px-5 py-4 pr-14">

@@ -524,7 +524,7 @@ describe('ListView', () => {
 	})
 
 	// Mockup 995: the group a row belongs to stays readable while its rows scroll.
-	it('pins the group header to the top of the scroller', () => {
+	it('pins the group header to the top of the scroller, below the floating bar', () => {
 		renderListView({
 			data: [
 				buildObjectResponse({ id: 'o1', status: 'active' }),
@@ -535,7 +535,7 @@ describe('ListView', () => {
 		const header = indexAt(groupHeaders(), 0).parentElement
 		expect(header).not.toBeNull()
 		expect(header?.className).toContain('sticky')
-		expect(header?.className).toContain('top-0')
+		expect(header?.className).toContain('top-[var(--app-header-h,0px)]')
 	})
 	// Mockup fixture 6655 (`nyOf`): rows blocking the user float to the top of
 	// the pool rather than getting a synthetic group of their own.

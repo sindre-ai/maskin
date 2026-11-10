@@ -448,7 +448,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 								<li key={group.key}>
 									{/* Sticky so the group a row belongs to stays readable while
 									    its rows scroll past (mockup 995). */}
-									<div className="sticky top-0 z-[2] flex w-full items-center gap-2 bg-background px-2 pt-3.5 pb-1.5">
+									<div className="sticky top-[var(--app-header-h,0px)] z-[2] flex w-full items-center gap-2 bg-background px-2 pt-3.5 pb-1.5">
 										<button
 											type="button"
 											onClick={() => toggleGroup(group)}

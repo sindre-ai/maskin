@@ -259,7 +259,7 @@ function SessionComposer({
 	const carryOn = useContinueSession(workspaceId, conversationId)
 
 	return (
-		<FloatingFooter name="--session-composer-h" className="px-3 pt-2.5 pb-3.5">
+		<FloatingFooter name="--session-composer-h" keepAtBottom className="px-3 pt-2.5 pb-3.5">
 			<Composer
 				workspaceId={workspaceId}
 				onSend={async (content) => {
