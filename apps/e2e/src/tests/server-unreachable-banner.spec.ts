@@ -82,7 +82,10 @@ test.describe('Server unreachable banner', () => {
 			return route.fulfill(GATEWAY_DOWN)
 		})
 		await page.goto(`/${account.workspaceId}`)
-		await page.waitForLoadState('networkidle')
+		// `load`, not `networkidle`: the app holds an SSE connection to /api/events,
+		// so networkidle never fires. A short settle lets the failed request be handled.
+		await page.waitForLoadState('load')
+		await page.waitForTimeout(2_000)
 		await expect(page.getByRole('status').filter({ hasText: BANNER })).toHaveCount(0)
 	})
 })
