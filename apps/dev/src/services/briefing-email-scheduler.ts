@@ -21,7 +21,8 @@
  * and the step is not used up.
  *
  * Each mail has three parts (see briefing-email-text.ts): runs finished since the last mail, what
- * waits, and one next-step line. "Since the last mail" is the days since the last send, at least
+ * waits, and one next-step line chosen by plain rules from the person's role in the anchor
+ * workspace (the `email_sent` event carries it as `role`: owner_admin or member). "Since the last mail" is the days since the last send, at least
  * 24 hours, at most MAX_LOOKBACK_DAYS.
  *
  * Exactly once: the step is claimed with one conditional UPDATE on the step counter and
@@ -33,7 +34,7 @@
  * Killswitch env FEATURE_BRIEFING_EMAIL=0 skips the tick. The push is not affected.
  */
 import type { Database } from '@maskin/db'
-import { objects } from '@maskin/db/schema'
+import { actors, objects, workspaceMembers } from '@maskin/db/schema'
 import { EmailSendError, isEmailConfigured, sendEmail } from '@maskin/email'
 import { and, eq, sql } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
@@ -41,8 +42,8 @@ import { buildEmailStopUrl } from '../lib/email-stop-link'
 import { isEmailStopConfigured } from '../lib/email-stop-token'
 import { localClock, localTimeReached } from '../lib/local-time'
 import { logger } from '../lib/logger'
-import { buildSummaryEmail, pickNextStep } from './briefing-email-text'
-import type { EmailStep } from './briefing-email-text'
+import { buildSummaryEmail, emailRole, pickNextStep } from './briefing-email-text'
+import type { EmailRole, EmailStep } from './briefing-email-text'
 import { buildBriefingText, loadBriefingFacts } from './briefing-push-scheduler'
 
 const TICK_MS = 60_000
@@ -314,12 +315,15 @@ export class BriefingEmailScheduler {
 		const buttonPath = topObjectId
 			? `/${summary.workspaceId}/objects/${topObjectId}`
 			: `/${summary.workspaceId}`
-		// Only look for a loop when nothing waits: a waiting card comes first in the next-step order.
-		const hasLoop = summary.waiting > 0 || (await this.workspaceHasLoop(summary.workspaceId))
+		const { role, nextStep } = await this.nextStepFor(
+			row.actorId,
+			summary.workspaceId,
+			summary.waiting,
+		)
 		const mail = buildSummaryEmail({
 			summary,
 			step: due.step,
-			nextStep: pickNextStep({ waiting: summary.waiting, hasLoop }),
+			nextStep,
 			buttonUrl: `${appUrl}${buttonPath}?surface=email`,
 			stopUrl: buildEmailStopUrl(row.actorId, this.env),
 		})
@@ -342,18 +346,53 @@ export class BriefingEmailScheduler {
 			actor_id: row.actorId,
 			actor_type: 'human',
 			step: String(due.step),
+			role,
 			account_age_days: Math.max(ageDays, 0),
 		})
 		return true
 	}
 
-	private async workspaceHasLoop(workspaceId: string): Promise<boolean> {
+	/**
+	 * The person's role in the anchor workspace and the one next-step line for it. Facts are read
+	 * in the order the rules need them, so a card that waits, or a plain member, costs one query.
+	 */
+	private async nextStepFor(
+		actorId: string,
+		workspaceId: string,
+		waiting: number,
+	): Promise<{ role: EmailRole; nextStep: string | null }> {
+		const [membership] = await this.db
+			.select({ role: workspaceMembers.role })
+			.from(workspaceMembers)
+			.where(
+				and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.actorId, actorId)),
+			)
+			.limit(1)
+		const role = emailRole(membership?.role)
+		const needsSetupFacts = role === 'owner_admin' && waiting === 0
+		const hasFlow = needsSetupFacts ? await this.workspaceHasFlow(workspaceId) : true
+		const onlyMember = needsSetupFacts && hasFlow ? await this.isOnlyHuman(workspaceId) : false
+		return { role, nextStep: pickNextStep({ role, waiting, hasFlow, onlyMember }) }
+	}
+
+	private async workspaceHasFlow(workspaceId: string): Promise<boolean> {
 		const rows = await this.db
 			.select({ id: objects.id })
 			.from(objects)
 			.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, 'loop')))
 			.limit(1)
 		return rows.length > 0
+	}
+
+	/** True when no other human (agents do not count) is a member of the workspace. */
+	private async isOnlyHuman(workspaceId: string): Promise<boolean> {
+		const rows = await this.db
+			.select({ id: workspaceMembers.actorId })
+			.from(workspaceMembers)
+			.innerJoin(actors, eq(actors.id, workspaceMembers.actorId))
+			.where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(actors.type, 'human')))
+			.limit(2)
+		return rows.length < 2
 	}
 
 	/**
