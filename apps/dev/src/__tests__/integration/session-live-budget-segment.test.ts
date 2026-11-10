@@ -96,4 +96,47 @@ describe('SessionManager.enforceRunningSessionBudget — live usage (Integration
 		// 200 saved + 400 over two turns of the live segment = 600 cents, over the cap.
 		expect(await check(row)).toHaveBeenCalledWith(row.id)
 	})
+
+	// The mid-run stop used to cover only Pro and Team. Every plan the Maskin-funded route
+	// serves has the same 100% rule as the start check.
+	it.each(['trial', 'starter', 'ultra'])(
+		'stops a %s workspace that goes over its cap',
+		async (plan) => {
+			const ws = await insertWorkspace(db, actorId, {
+				settings: { billing: { plan, hard_cap_usd_cents: 300 } },
+			})
+			workspaceId = ws.id
+			const row = await runningSession()
+			// Two turns of 200 cents each: 400, over the 300 cent cap.
+			await insertSessionLog(db, row.id, { content: turn(2) })
+			await insertSessionLog(db, row.id, { content: turn(4) })
+
+			expect(await check(row)).toHaveBeenCalledWith(row.id)
+		},
+	)
+
+	it('stops a workspace with no billing block (a trial) at the trial cap', async () => {
+		const ws = await insertWorkspace(db, actorId, { settings: {} })
+		workspaceId = ws.id
+		const row = await runningSession()
+		// 40M tokens are 200 cents on the legacy rate, 3 turns are 600: over the 286 cent trial cap.
+		await insertSessionLog(db, row.id, { content: turn(2) })
+		await insertSessionLog(db, row.id, { content: turn(4) })
+		await insertSessionLog(db, row.id, { content: turn(6) })
+
+		expect(await check(row)).toHaveBeenCalledWith(row.id)
+	})
+
+	it('keeps a session running while a credit balance covers the overage', async () => {
+		const ws = await insertWorkspace(db, actorId, {
+			settings: { billing: { plan: 'trial', hard_cap_usd_cents: 300, credit_balance_cents: 5000 } },
+		})
+		workspaceId = ws.id
+		const row = await runningSession()
+		// Two turns of 200 cents each: 400, over the 300 cent cap.
+		await insertSessionLog(db, row.id, { content: turn(2) })
+		await insertSessionLog(db, row.id, { content: turn(4) })
+
+		expect(await check(row)).not.toHaveBeenCalled()
+	})
 })

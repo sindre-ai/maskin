@@ -2,6 +2,7 @@ import type { Database } from '@maskin/db'
 import { sessions } from '@maskin/db/schema'
 import { PAID_PLANS, type PaidPlan, type SessionResultFailureReason } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
+import { trackPlanLimitReached } from './analytics/plan-limit-events'
 import {
 	API_KEY_CREDIT_MARK_WINDOW_MS,
 	checkApiKeyCreditMark,
@@ -382,9 +383,7 @@ export class PlanCapExceededError extends Error {
 	readonly periodEnd: number | null
 
 	constructor(ctx: PlanCapContext) {
-		super(
-			`${ctx.plan} plan cap exceeded: $${(ctx.used / 100).toFixed(2)} of $${(ctx.cap / 100).toFixed(2)} used this period.`,
-		)
+		super(`The ${ctx.plan} plan is used up for this period.`)
 		this.name = 'PlanCapExceededError'
 		this.plan = ctx.plan
 		this.used = ctx.used
@@ -512,11 +511,17 @@ export async function checkPlanCap(params: {
 	if (used < cap) return
 	if (canUseCreditBalance(maskinPlan, billing)) return
 
+	const periodEnd = effectivePeriodEnd(periodStartMs, periodEndMs)
+	void trackPlanLimitReached({
+		workspaceId: params.workspaceId,
+		plan: maskinPlan,
+		periodEnd,
+	})
 	throw new PlanCapExceededError({
 		plan: maskinPlan,
 		used,
 		cap,
-		periodEnd: effectivePeriodEnd(periodStartMs, periodEndMs),
+		periodEnd,
 	})
 }
 

@@ -24,3 +24,15 @@ export function trialCardState(
 	}
 	return { title: `Trial ends in ${days} days`, left: `${days} days left` }
 }
+
+/**
+ * The trial as a category for analytics: `active` while the trial period runs, `ended`
+ * once it is over, `none` on any other plan. Null when billing has not loaded.
+ */
+export function trialStateOf(
+	usage: Pick<BillingUsageResponse, 'plan' | 'period_resets_in_ms'> | undefined,
+): 'active' | 'ended' | 'none' | null {
+	if (!usage) return null
+	if (usage.plan !== 'trial') return 'none'
+	return usage.period_resets_in_ms === 0 ? 'ended' : 'active'
+}

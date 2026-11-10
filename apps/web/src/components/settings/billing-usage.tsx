@@ -1,11 +1,15 @@
+import { PlanMeter } from '@/components/billing/plan-meter'
+import { usePlanPercentEnabled } from '@/components/billing/plan-percent-context'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { Skeleton } from '@/components/shared/loading-skeleton'
+import { usePlanUsage } from '@/hooks/use-plan-usage'
 import {
 	type WorkspaceModelUsage,
 	type WorkspaceUsageRow,
 	useWorkspaceModelUsage,
 } from '@/hooks/use-workspace-model-usage'
 import { cn } from '@/lib/cn'
+import { periodEndLabel } from '@/lib/plan-usage'
 
 /**
  * Model usage for the billing page (mockup 2803–2813 and 2841–2858).
@@ -57,7 +61,12 @@ function IncompleteUsageNotice({ usage }: { usage: WorkspaceModelUsage }) {
  * The headline figure inside the plan banner (mockup 2803–2813) — total, period
  * and reset date. No meter: the "of $X included" denominator has no API field.
  */
-export function BillingUsageSummary({ usage }: { usage: WorkspaceModelUsage }) {
+export function BillingUsageSummary({
+	usage,
+	workspaceId,
+}: { usage: WorkspaceModelUsage; workspaceId: string }) {
+	const percentOn = usePlanPercentEnabled()
+	if (percentOn) return <PlanPercentSummary workspaceId={workspaceId} />
 	if (usage.isLoading) {
 		return <Skeleton className="h-12 w-48" />
 	}
@@ -81,6 +90,48 @@ export function BillingUsageSummary({ usage }: { usage: WorkspaceModelUsage }) {
 	)
 }
 
+/**
+ * The percent headline: how much of the plan is used, a meter, and what happens at 100%.
+ * The number is the stored cap the server stops on, so it reads 100 exactly when work stops.
+ */
+function PlanPercentSummary({ workspaceId }: { workspaceId: string }) {
+	const { state, usage, isPending } = usePlanUsage(workspaceId)
+	if (isPending) return <Skeleton className="h-12 w-48" />
+	if (!state || !usage) {
+		return (
+			<p className="text-xs text-muted-foreground">
+				Usage is unavailable right now. We do not show a figure because none is known.
+			</p>
+		)
+	}
+	const resets = periodEndLabel(usage.period_resets_in_ms)
+	const isTrial = usage.plan === 'trial'
+	return (
+		<div className="max-w-xs">
+			<p className="text-[27px] font-bold tabular-nums leading-tight tracking-tight text-foreground">
+				{state.percent}%
+			</p>
+			<p className="mb-2 text-[13px] text-muted-foreground">of your plan used</p>
+			<PlanMeter percent={state.percent} tone={state.tone} />
+			<p className="mt-2 text-xs text-muted-foreground">
+				{state.warn
+					? 'Work will wait at 100%. Choose a plan to keep going.'
+					: isTrial
+						? 'Resets when your trial ends.'
+						: resets
+							? `Resets ${resets}`
+							: null}
+			</p>
+		</div>
+	)
+}
+
+/** "N% of plan used" for the footer of the usage details. Nothing when no figure is known. */
+function PlanPercentTotal({ workspaceId }: { workspaceId: string }) {
+	const { state } = usePlanUsage(workspaceId)
+	return state ? <>{state.percent}% of plan used</> : null
+}
+
 /** "since 1 Oct · resets 1 Nov" — the billing period the usage figures cover. */
 export function billingPeriodLabel(usage: WorkspaceModelUsage): string {
 	return `since ${DAY_FORMAT.format(usage.periodStart)} · resets ${DAY_FORMAT.format(usage.resetsAt)}`
@@ -92,7 +143,11 @@ export function billingPeriodLabel(usage: WorkspaceModelUsage): string {
  * mockup's usage-limit control below the rows has no endpoint to write to, so
  * it is not rendered.
  */
-export function BillingUsageDetails({ usage }: { usage: WorkspaceModelUsage }) {
+export function BillingUsageDetails({
+	usage,
+	workspaceId,
+}: { usage: WorkspaceModelUsage; workspaceId: string }) {
+	const percentOn = usePlanPercentEnabled()
 	const summary = usage.isLoading
 		? 'loading…'
 		: usage.isError
@@ -123,14 +178,20 @@ export function BillingUsageDetails({ usage }: { usage: WorkspaceModelUsage }) {
 				{usage.hasUsage ? (
 					<div className="rounded-xl border border-border px-4">
 						{usage.rows.map((row) => (
-							<UsageRow key={row.id} row={row} total={usage.totalCostUsd} />
+							<UsageRow key={row.id} row={row} total={usage.totalCostUsd} percentOnly={percentOn} />
 						))}
 						<div className="flex items-center gap-3 py-3">
 							<span className="min-w-0 flex-1 text-xs text-muted-foreground">
-								Model usage as agents run · the cost each session reported
+								{percentOn
+									? 'Share of this month’s usage, by agent'
+									: 'Model usage as agents run · the cost each session reported'}
 							</span>
 							<span className="shrink-0 text-[12.5px] font-bold tabular-nums text-foreground">
-								{formatUsd(usage.totalCostUsd)}
+								{percentOn ? (
+									<PlanPercentTotal workspaceId={workspaceId} />
+								) : (
+									formatUsd(usage.totalCostUsd)
+								)}
 							</span>
 						</div>
 					</div>
@@ -146,7 +207,11 @@ export function BillingUsageDetails({ usage }: { usage: WorkspaceModelUsage }) {
 	)
 }
 
-function UsageRow({ row, total }: { row: WorkspaceUsageRow; total: number }) {
+function UsageRow({
+	row,
+	total,
+	percentOnly,
+}: { row: WorkspaceUsageRow; total: number; percentOnly: boolean }) {
 	const share = total > 0 ? Math.min(1, row.costUsd / total) : 0
 	const pct = Math.round(share * 100)
 
@@ -159,12 +224,12 @@ function UsageRow({ row, total }: { row: WorkspaceUsageRow; total: number }) {
 						{row.name}
 					</span>
 					<span className="shrink-0 text-[13px] font-semibold tabular-nums text-foreground">
-						{formatUsd(row.costUsd)}
+						{percentOnly ? `${pct}%` : formatUsd(row.costUsd)}
 					</span>
 				</div>
 				<span className="block text-[11px] text-muted-foreground">
-					{row.sessions} session{row.sessions === 1 ? '' : 's'} · {compactTokens.format(row.tokens)}{' '}
-					tokens
+					{row.sessions} session{row.sessions === 1 ? '' : 's'}
+					{percentOnly ? '' : ` · ${compactTokens.format(row.tokens)} tokens`}
 				</span>
 				<span
 					className="mt-1.5 block h-1 overflow-hidden rounded-full bg-muted"

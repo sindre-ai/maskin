@@ -1,9 +1,12 @@
+import { usePlanPercentEnabled } from '@/components/billing/plan-percent-context'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { MiniBarChart } from '@/components/shared/mini-bar-chart'
 import { Button } from '@/components/ui/button'
+import { useBillingUsage } from '@/hooks/use-billing'
 import { pickBucket, useSessionUsage } from '@/hooks/use-session-usage'
 import type { ActorResponse, SessionUsageResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { costPercentOfPlan, formatPlanPercent } from '@/lib/plan-usage'
 import { useMemo, useState } from 'react'
 
 type Preset = '24h' | '7d' | '30d' | '90d' | 'all'
@@ -23,6 +26,14 @@ const CHART_LABEL_BY_PRESET: Record<Preset, string> = {
 	'30d': 'TOKENS / MONTH',
 	'90d': 'TOKENS / QUARTER',
 	all: 'TOKENS / RANGE',
+}
+
+const PERCENT_CHART_LABEL_BY_PRESET: Record<Preset, string> = {
+	'24h': 'PLAN USED / DAY',
+	'7d': 'PLAN USED / WEEK',
+	'30d': 'PLAN USED / MONTH',
+	'90d': 'PLAN USED / QUARTER',
+	all: 'PLAN USED / RANGE',
 }
 
 /** Trailing-30-day window the budget reads, independent of the selected period. */
@@ -133,7 +144,14 @@ export function AgentUsageBlock({
 	const priorQuery = useSessionUsage(workspaceId, agent.id, prior.from, prior.to)
 	const budgetQuery = useSessionUsage(workspaceId, agent.id, budgetRange.from, budgetRange.to)
 
-	const budget = readTokenBudget(agent.llm_config)
+	// With the percent display on, the agent's usage reads as a share of the plan's limit.
+	// No token count and no token budget row appear anywhere in that view.
+	const percentOn = usePlanPercentEnabled()
+	const { data: billing } = useBillingUsage(workspaceId)
+	const capCents = billing?.hard_cap_usd_cents ?? null
+	const planPercent = (costUsd: number) => costPercentOfPlan(costUsd, capCents)
+
+	const budget = percentOn ? null : readTokenBudget(agent.llm_config)
 	const monthTokens = totalTokens(budgetQuery.data?.totals)
 
 	const currentTokens = totalTokens(currentQuery.data?.totals)
@@ -141,20 +159,32 @@ export function AgentUsageBlock({
 	const currentSessions = currentQuery.data?.totals.session_count ?? 0
 	const priorSessions = priorQuery.data?.totals.session_count ?? 0
 
-	const tokenDelta = formatDelta(currentTokens, priorTokens)
+	const currentCost = currentQuery.data?.totals.total_cost_usd ?? 0
+	const priorCost = priorQuery.data?.totals.total_cost_usd ?? 0
+	const tokenDelta = percentOn
+		? formatDelta(currentCost, priorCost)
+		: formatDelta(currentTokens, priorTokens)
 	const sessionDelta = formatDelta(currentSessions, priorSessions)
 
 	const bucketCount = Math.max(1, Math.round((range.to.getTime() - range.from.getTime()) / DAY_MS))
 
 	const tokenBars = useMemo(() => {
 		const buckets = currentQuery.data?.buckets ?? []
+		if (percentOn) {
+			return buckets.map((b) => ({
+				value: b.total_cost_usd,
+				label: `${new Date(b.bucket).toLocaleDateString()}: ${formatPlanPercent(
+					costPercentOfPlan(b.total_cost_usd, capCents),
+				)} of plan`,
+			}))
+		}
 		return buckets.map((b) => ({
 			value: b.input_tokens + b.output_tokens + b.cache_tokens,
 			label: `${new Date(b.bucket).toLocaleDateString()}: ${full.format(
 				b.input_tokens + b.output_tokens + b.cache_tokens,
 			)} tokens`,
 		}))
-	}, [currentQuery.data])
+	}, [currentQuery.data, percentOn, capCents])
 
 	const sessionBars = useMemo(() => {
 		const buckets = currentQuery.data?.buckets ?? []
@@ -190,15 +220,20 @@ export function AgentUsageBlock({
 
 			<div className="grid grid-cols-1 md:grid-cols-2">
 				<UsageColumn
-					title="tokens used"
+					title={percentOn ? 'of plan used' : 'tokens used'}
 					isLoading={isLoading}
 					total={currentTokens}
+					totalText={percentOn ? formatPlanPercent(planPercent(currentCost)) : undefined}
 					delta={tokenDelta}
 					bars={tokenBars}
-					chartLabel={CHART_LABEL_BY_PRESET[preset]}
+					chartLabel={(percentOn ? PERCENT_CHART_LABEL_BY_PRESET : CHART_LABEL_BY_PRESET)[preset]}
 					periodStart={periodStart}
-					averageLine={formatAverage(currentTokens, bucketCount, 'tokens')}
-					budget={{ cap: budget, monthTokens }}
+					averageLine={
+						percentOn
+							? `${formatPlanPercent(planPercent(currentCost / bucketCount))}/day avg`
+							: formatAverage(currentTokens, bucketCount, 'tokens')
+					}
+					budget={percentOn ? undefined : { cap: budget, monthTokens }}
 					className="border-b border-border md:border-b-0 md:border-r"
 				/>
 				<UsageColumn
@@ -220,6 +255,7 @@ function UsageColumn({
 	title,
 	isLoading,
 	total,
+	totalText,
 	delta,
 	bars,
 	chartLabel,
@@ -231,6 +267,8 @@ function UsageColumn({
 	title: string
 	isLoading: boolean
 	total: number
+	/** Replaces the formatted total when the column shows something other than a count. */
+	totalText?: string
 	delta: { text: string; tone: 'up' | 'down' | 'flat' }
 	bars: { value: number; label: string }[]
 	chartLabel: string
@@ -246,7 +284,7 @@ function UsageColumn({
 					<Skeleton className="h-6 w-20" />
 				) : (
 					<span className="text-xl font-semibold tabular-nums tracking-tight text-foreground">
-						{full.format(total)}
+						{totalText ?? full.format(total)}
 					</span>
 				)}
 				<span className="text-xs text-muted-foreground">{title}</span>

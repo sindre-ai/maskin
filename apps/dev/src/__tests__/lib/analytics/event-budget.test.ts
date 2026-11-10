@@ -37,6 +37,7 @@ describe('admitPosthogEvent', () => {
 	it('never caps tier 1 events', () => {
 		for (const event of [
 			'agent_session_started',
+			'plan_limit_reached',
 			'chat_session_started',
 			'integration_connect_started',
 			'integration_tool_called',

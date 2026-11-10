@@ -42,3 +42,20 @@ export function dkkToUsdCents(dkk: number): number {
 export function formatKroner(dkk: number): string {
 	return `${String(Math.round(dkk)).replace(/\B(?=(\d{3})+(?!\d))/g, '.')} kr`
 }
+
+/**
+ * How much of the plan is used, as a whole percent. The one division behind the
+ * meter, the banner and the 100% stop: `capCents` is the same stored cap that
+ * `checkPlanCap` compares against, so the number shown reaches 100 exactly when
+ * work stops. It rounds down (99.6% shows 99%) and is never above 100.
+ * Null when no cap is known: a figure is not made up.
+ */
+export function usagePercent(
+	usedCents: number | null | undefined,
+	capCents: number | null | undefined,
+): number | null {
+	if (typeof usedCents !== 'number' || typeof capCents !== 'number') return null
+	if (!Number.isFinite(usedCents) || !Number.isFinite(capCents) || capCents <= 0) return null
+	if (usedCents >= capCents) return 100
+	return Math.max(0, Math.floor((usedCents / capCents) * 100))
+}

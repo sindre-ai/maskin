@@ -564,7 +564,7 @@ export class TriggerRunner {
 				workspaceId,
 				{
 					until,
-					reason: `${err.plan} plan cap exceeded ($${(err.used / 100).toFixed(2)} of $${(err.cap / 100).toFixed(2)})`,
+					reason: `${err.plan} plan used up`,
 				},
 				triggerName,
 			)
