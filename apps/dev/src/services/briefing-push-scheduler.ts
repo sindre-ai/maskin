@@ -46,6 +46,7 @@ import { and, asc, eq, gt, inArray, isNotNull, lte, sql } from 'drizzle-orm'
 import { loadVisibleForYou } from '../lib/for-you-visibility'
 import { localTimeReached } from '../lib/local-time'
 import { logger } from '../lib/logger'
+import { loadFlowLookup } from '../lib/session-flow'
 import { hasPushDevice, insertPushNotification, resolveSourceActor } from './push-schedule-shared'
 
 const TICK_MS = 60_000
@@ -71,13 +72,26 @@ export interface BriefingWorkspaceFacts {
 	/** Set when exactly one run finished: the agent and (if known) the object it worked on. */
 	finishedAgentName: string | null
 	finishedObjectTitle: string | null
-	/** The finished runs, newest first, up to MAX_FINISHED_RUNS. The summary email lists them. */
+	/**
+	 * The finished runs that tie to no flow, newest first, up to MAX_FINISHED_RUNS. The summary
+	 * email lists them. Runs that tie to a flow are counted in `finishedFlows` instead.
+	 */
 	finishedRuns?: FinishedRun[]
+	/** Finished runs grouped by the flow they belong to, most runs first. All flows, uncapped. */
+	finishedFlows?: FinishedFlow[]
 }
 
 export interface FinishedRun {
 	agentName: string
 	objectTitle: string | null
+}
+
+export interface FinishedFlow {
+	flowName: string
+	/** Runs of this flow that finished in the window. */
+	runs: number
+	/** Title of the item the newest of those runs worked on, when it has one. */
+	latestTitle: string | null
 }
 
 export interface BriefingText {
@@ -92,6 +106,7 @@ export interface BriefingText {
 	workspaceName?: string
 	topHeadline?: string | null
 	finishedRuns?: FinishedRun[]
+	finishedFlows?: FinishedFlow[]
 	/** Waiting in the person's other workspaces. */
 	waitingElsewhere?: number
 	multiWorkspace?: boolean
@@ -156,6 +171,7 @@ export function buildBriefingText(workspaces: BriefingWorkspaceFacts[]): Briefin
 		workspaceName: anchor.workspaceName,
 		topHeadline: anchor.topHeadline,
 		finishedRuns: anchor.finishedRuns ?? [],
+		finishedFlows: anchor.finishedFlows ?? [],
 		waitingElsewhere: elsewhere,
 		multiWorkspace: multi,
 	}
@@ -324,6 +340,56 @@ export class BriefingPushScheduler {
 	}
 }
 
+type FinishedRow = {
+	agentName: string
+	objectTitle: string | null
+	completedAt: Date | null
+	triggerId: string | null
+	initiatedFromObjectId: string | null
+}
+
+/**
+ * Split one workspace's finished runs (oldest first) into the ones that tie to a flow, grouped per
+ * flow, and the ones that tie to none. Uses the same flow rule as the billing usage breakdown.
+ */
+async function groupByFlow<T extends FinishedRow>(
+	db: Database,
+	workspaceId: string,
+	finished: T[],
+): Promise<{ flows: FinishedFlow[]; untied: T[] }> {
+	const lookup = await loadFlowLookup(db, workspaceId, finished)
+	const byFlow = new Map<string, FinishedFlow & { latestAt: number }>()
+	const untied: T[] = []
+	for (const run of finished) {
+		const flowId = lookup.flowIdOf(run)
+		if (!flowId) {
+			untied.push(run)
+			continue
+		}
+		const existing = byFlow.get(flowId)
+		const at = run.completedAt?.getTime() ?? 0
+		if (!existing) {
+			byFlow.set(flowId, {
+				flowName: lookup.titles.get(flowId) ?? 'A flow',
+				runs: 1,
+				latestTitle: run.objectTitle,
+				latestAt: at,
+			})
+		} else {
+			existing.runs += 1
+			// Oldest first, so a later row is the newer run.
+			if (at >= existing.latestAt) {
+				existing.latestTitle = run.objectTitle
+				existing.latestAt = at
+			}
+		}
+	}
+	const flows = [...byFlow.entries()]
+		.sort(([ai, a], [bi, b]) => b.runs - a.runs || b.latestAt - a.latestAt || ai.localeCompare(bi))
+		.map(([, f]) => ({ flowName: f.flowName, runs: f.runs, latestTitle: f.latestTitle }))
+	return { flows, untied }
+}
+
 /**
  * Per-workspace facts for one actor across the workspaces they belong to (muted ones left out):
  * things waiting, counted with the For You rules, and agent runs finished in the last 24 h.
@@ -354,6 +420,8 @@ export async function loadBriefingFacts(
 			agentName: actors.name,
 			objectTitle: objects.title,
 			completedAt: sessions.completedAt,
+			triggerId: sessions.triggerId,
+			initiatedFromObjectId: sessions.initiatedFromObjectId,
 		})
 		.from(sessions)
 		.innerJoin(actors, eq(actors.id, sessions.actorId))
@@ -381,6 +449,8 @@ export async function loadBriefingFacts(
 		const visible = await loadVisibleForYou(db, w.id, actorId)
 		const finished = finishedRows.filter((f) => f.workspaceId === w.id)
 		const only = finished.length === 1 ? finished[0] : undefined
+		const { flows, untied } =
+			finished.length > 0 ? await groupByFlow(db, w.id, finished) : { flows: [], untied: finished }
 		facts.push({
 			workspaceId: w.id,
 			workspaceName: w.name,
@@ -390,10 +460,11 @@ export async function loadBriefingFacts(
 			finished: finished.length,
 			finishedAgentName: only?.agentName ?? null,
 			finishedObjectTitle: only?.objectTitle ?? null,
-			finishedRuns: [...finished]
+			finishedRuns: [...untied]
 				.reverse()
 				.slice(0, MAX_FINISHED_RUNS)
 				.map((f) => ({ agentName: f.agentName, objectTitle: f.objectTitle })),
+			finishedFlows: flows,
 		})
 	}
 	return facts
