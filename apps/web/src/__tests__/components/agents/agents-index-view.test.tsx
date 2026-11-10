@@ -1,4 +1,4 @@
-import { AgentsIndexView, type AgentsLoop } from '@/components/agents/agents-index-view'
+import { AgentsIndexView } from '@/components/agents/agents-index-view'
 import { PageHeaderProvider, usePageHeader } from '@/lib/page-header-context'
 import { queryKeys } from '@/lib/query-keys'
 import type { SessionStatsRow } from '@maskin/shared'
@@ -20,6 +20,9 @@ vi.mock('@/lib/workspace-context', async (importOriginal) => ({
 	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
+
+// Tags by agent id: an agent's team is its first tag A to Z.
+type TagsById = Record<string, string[]>
 
 type DisplaySettingsBody = Record<string, unknown>
 type MockState = {
@@ -108,7 +111,7 @@ function mount(
 	agents: ReturnType<typeof buildActorListItem>[],
 	sessions: ReturnType<typeof buildSessionResponse>[],
 	stats?: SessionStatsRow[],
-	loops?: AgentsLoop[],
+	tags?: TagsById,
 	// 'api' leaves the cache empty so hydration reads the mocked API.
 	saved: SavedDisplay | 'api' = SAVED_STATUS_GROUPING,
 ) {
@@ -127,7 +130,11 @@ function mount(
 		<QueryClientProvider client={queryClient}>
 			<PageHeaderProvider>
 				<TitleRow />
-				<WithQuery agents={agents} sessions={sessions} stats={stats} loops={loops} />
+				<WithQuery
+					agents={agents.map((a) => ({ ...a, tags: tags?.[a.id] ?? a.tags }))}
+					sessions={sessions}
+					stats={stats}
+				/>
 			</PageHeaderProvider>
 		</QueryClientProvider>,
 	)
@@ -151,7 +158,6 @@ function WithQuery(props: {
 	agents: ReturnType<typeof buildActorListItem>[]
 	sessions: ReturnType<typeof buildSessionResponse>[]
 	stats?: SessionStatsRow[]
-	loops?: AgentsLoop[]
 }) {
 	const [query, setQuery] = useState('')
 	return <AgentsIndexView workspaceId="ws-1" {...props} query={query} onQueryChange={setQuery} />
@@ -226,12 +232,12 @@ describe('AgentsIndexView', () => {
 	})
 
 	describe('team', () => {
-		const loops: AgentsLoop[] = [
-			{ name: 'Zeta flow', agentIds: ['agent-ada', 'agent-brian'] },
-			{ name: 'Alpha flow', agentIds: ['agent-brian'] },
-		]
+		const loops: TagsById = {
+			'agent-ada': ['Zeta flow'],
+			'agent-brian': ['Zeta flow', 'Alpha flow'],
+		}
 
-		it('shows the first flow A to Z as the team, else No team', () => {
+		it('shows the first tag A to Z as the team, else No team', () => {
 			mount([agentAda(), agentBrian(), agentCy()], [], undefined, loops)
 			// Each name is on its chip and in the Team column.
 			expect(screen.getAllByText('Alpha flow').length).toBeGreaterThan(1)
@@ -243,7 +249,7 @@ describe('AgentsIndexView', () => {
 			mount([agentCy(), agentBrian(), agentAda()], [], undefined, loops, null)
 			const headings = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent)
 			expect(headings).toEqual(['Alpha flow', 'Zeta flow', 'No team'])
-			// Zeta flow holds Ada only (Brian's first flow is Alpha); No team holds Cy.
+			// Zeta flow holds Ada only (Brian's first tag is Alpha); No team holds Cy.
 			const links = screen.getAllByRole('link').map((l) => l.textContent ?? '')
 			expect(links[0]).toContain('Brian')
 			expect(links[1]).toContain('Ada')
@@ -266,10 +272,10 @@ describe('AgentsIndexView', () => {
 	})
 
 	describe('team chips and pills', () => {
-		const loops: AgentsLoop[] = [
-			{ name: 'Zeta flow', agentIds: ['agent-ada', 'agent-brian'] },
-			{ name: 'Alpha flow', agentIds: ['agent-brian'] },
-		]
+		const loops: TagsById = {
+			'agent-ada': ['Zeta flow'],
+			'agent-brian': ['Zeta flow', 'Alpha flow'],
+		}
 		const strip = () => screen.getByRole('group', { name: 'Filter agents by team' })
 
 		it('draws one chip per team with counts, the catch-all last', () => {
@@ -280,12 +286,9 @@ describe('AgentsIndexView', () => {
 			expect(names).toEqual(['Alpha flow (1)', 'Zeta flow (1)', 'No team (1)'])
 		})
 
-		it('draws only the catch-all chip when no flow has an agent', () => {
-			mount([agentAda()], [], undefined, [])
-			const names = within(strip())
-				.getAllByRole('button')
-				.map((b) => b.getAttribute('aria-label'))
-			expect(names).toEqual(['No team (1)'])
+		it('draws no team chips when no agent is tagged', () => {
+			mount([agentAda()], [], undefined, {})
+			expect(screen.queryByRole('group', { name: 'Filter agents by team' })).not.toBeInTheDocument()
 		})
 
 		it('filters by a team chip, shows a pill and removes it with its x', async () => {

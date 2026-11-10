@@ -70,24 +70,13 @@ public final class AgentsStore {
 
 	// MARK: - Teams
 
-	/// The workspace's flows, from which each agent's team is read. Set by the screen after its
-	/// own best-effort load; empty until then (every agent reads "No team", and no team chip
-	/// shows).
-	public private(set) var flows: [LoopSummary] = []
-
-	public func setFlows(_ flows: [LoopSummary]) { self.flows = flows }
-
-	/// Every flow that lists the agent, A to Z.
-	public func teams(of agentID: String) -> [String] {
-		flows.filter { $0.agentIDs.contains(agentID) }.map(AgentTeams.name(of:))
-			.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+	/// The agent's team: its first tag A to Z, or "No team".
+	public func team(of agentID: String) -> String {
+		agent(id: agentID)?.tags.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+			.min { $0.localizedStandardCompare($1) == .orderedAscending } ?? AgentTeams.none
 	}
 
-	/// The agent's team: its first flow A to Z, or "No team".
-	public func team(of agentID: String) -> String { teams(of: agentID).first ?? AgentTeams.none }
-
-	/// The team chips: each team with its agent count, A to Z, "No team" last. Teams nobody
-	/// belongs to are left out.
+	/// The team chips: each team with its agent count, A to Z, "No team" last.
 	public func teamChips() -> [AgentChipCount] {
 		var counts: [String: Int] = [:]
 		for agent in agents { counts[team(of: agent.id), default: 0] += 1 }

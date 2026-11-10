@@ -103,7 +103,7 @@ extension AgentStatus {
 	var groupTitle: String { self == .failed ? "Needs attention" : label }
 }
 
-/// Where an agent works: the flows that list it. The first one (A to Z) is its team.
+/// An agent's team is its first tag (A to Z); an untagged agent has none.
 public enum AgentTeams {
 	public static let none = "No team"
 

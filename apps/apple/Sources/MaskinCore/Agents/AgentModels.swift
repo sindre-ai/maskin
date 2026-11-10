@@ -96,12 +96,15 @@ public struct AgentSummary: Identifiable, Hashable, Sendable, Codable {
 	public var latestSession: AgentSession?
 	public var sessionCount: Int
 	public var createdAt: Date?
+	/// The agent's tags; the first one (A to Z) is its team.
+	public var tags: [String]
 
 	public init(
 		id: String, name: String, description: String? = nil, isSystem: Bool = false,
 		storedState: AgentStatus = .idle, latestSession: AgentSession? = nil, sessionCount: Int = 0,
-		createdAt: Date? = nil
+		createdAt: Date? = nil, tags: [String] = []
 	) {
+		self.tags = tags
 		self.id = id
 		self.name = name
 		self.description = description

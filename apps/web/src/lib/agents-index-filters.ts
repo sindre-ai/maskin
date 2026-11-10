@@ -1,4 +1,4 @@
-/** The catch-all team for an agent that works in no flow. */
+/** The catch-all team for an agent with no tags. */
 export const NO_TEAM = 'No team'
 
 export interface TeamChip {
@@ -8,8 +8,8 @@ export interface TeamChip {
 
 /**
  * One chip per team that has agents, A to Z with the catch-all last. A team is
- * the first flow an agent works in, so a flow whose agents all sit in an
- * earlier flow has no chip: a chip with a zero beside it filters to nothing.
+ * the first tag an agent carries, so a tag whose agents all sit under an
+ * earlier tag has no chip: a chip with a zero beside it filters to nothing.
  */
 export function buildTeamChips(teams: string[]): TeamChip[] {
 	const counts = new Map<string, number>()

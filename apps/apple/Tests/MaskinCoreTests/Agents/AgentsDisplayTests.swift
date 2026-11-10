@@ -6,12 +6,13 @@ import Testing
 @Suite("AgentsStore display, teams and chips")
 @MainActor
 struct AgentsDisplayTests {
-	/// Four agents: two in "Product Delivery" (one failed), one in "SEO Content", one in no flow.
+	/// Four agents: two in "Product Delivery" (one failed), one in "SEO Content", one untagged.
 	private func make() async -> AgentsStore {
 		let api = FakeAgentsAPI(
 			[
-				agentRow("dev", name: "Developer"), agentRow("rev", name: "Code Reviewer"),
-				agentRow("seo", name: "SEO Writer"), agentRow("solo", name: "Chief of Staff"),
+				agentRow("dev", name: "Developer", tags: ["Product Delivery"]),
+				agentRow("rev", name: "Code Reviewer", tags: ["Product Delivery"]),
+				agentRow("seo", name: "SEO Writer", tags: ["SEO Content"]), agentRow("solo", name: "Chief of Staff"),
 			],
 			sessions: [
 				agentSession("s1", actor: "dev", status: "running", at: 20),
@@ -20,14 +21,10 @@ struct AgentsDisplayTests {
 			])
 		let store = AgentsStore(api: api, events: nil)
 		await store.refresh()
-		store.setFlows([
-			LoopSummary(id: "f1", name: "Product Delivery: bets to PRs", agentIDs: ["dev", "rev"]),
-			LoopSummary(id: "f2", name: "SEO Content", agentIDs: ["seo"]),
-		])
 		return store
 	}
 
-	@Test("a team is the flow's name before its colon; no flow means No team")
+	@Test("a team is the agent's first tag; no tag means No team")
 	func teams() async {
 		let store = await make()
 		#expect(store.team(of: "dev") == "Product Delivery")
