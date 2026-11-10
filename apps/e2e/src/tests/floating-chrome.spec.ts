@@ -90,6 +90,8 @@ for (const scheme of ['light', 'dark'] as const) {
 					(barBox?.y ?? 0) + (barBox?.height ?? 0) - 1,
 				)
 
+				// The long pipeline lives on Setup now, so scroll there.
+				await page.getByRole('tab', { name: 'Setup' }).click()
 				// Scrolled, the tab row runs up under the bar: it takes the room the bar no longer holds.
 				await page.locator('[data-scroll-root]').evaluate((el) => el.scrollTo(0, 400))
 				const tabsBox = await page.getByRole('tab', { name: 'Overview' }).boundingBox()
