@@ -209,6 +209,11 @@ public final class ChatStore {
 	}
 
 	public var participants: [ChatParticipant] { detail?.participants ?? [] }
+	/// The one agent's own openers in a chat with just it, for an empty thread. Nothing for a group.
+	public var starterPrompts: [String] {
+		StarterPrompts.forChat(
+			others: participants.filter { $0.id != currentActorID }, actors: workspaceActors)
+	}
 	public var title: String { detail?.title ?? "Chat" }
 	public var lastServerID: Int? { confirmed.last?.serverID }
 
