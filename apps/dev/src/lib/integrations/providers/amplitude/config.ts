@@ -8,9 +8,10 @@ import type { ProviderConfig } from '../../types'
  *
  * The client is registered once for Maskin's callback (`/api/integrations/amplitude/callback` on
  * each public origin) through Amplitude's open registration (RFC 7591,
- * scripts/register-oauth-client.mjs); its id and secret live in AMPLITUDE_CLIENT_ID and
- * AMPLITUDE_CLIENT_SECRET. Its token endpoint offers client_secret_post or none; the default
- * (post) is used. PKCE is S256 only.
+ * scripts/register-oauth-client.mjs); its id lives in AMPLITUDE_CLIENT_ID. Amplitude's token
+ * endpoint offers client_secret_post or none, but its registration issues a public client
+ * (token_endpoint_auth_method none, no secret) even when post is asked for, so the client uses
+ * PKCE with no secret and only AMPLITUDE_CLIENT_ID is set. PKCE is S256 only.
  *
  * Scopes are the three Amplitude publishes: all:read, all:write and offline_access (for a refresh
  * token). A read-only agent stays read-only at the MCP gateway (GATEWAY_PROVIDERS), not through a
@@ -30,8 +31,8 @@ export const config: ProviderConfig = {
 			tokenUrl: 'https://mcp.amplitude.com/token',
 			scopes: ['all:read', 'all:write', 'offline_access'],
 			pkce: true,
+			tokenAuthMethod: 'none',
 			clientIdEnv: 'AMPLITUDE_CLIENT_ID',
-			clientSecretEnv: 'AMPLITUDE_CLIENT_SECRET',
 		},
 	},
 
