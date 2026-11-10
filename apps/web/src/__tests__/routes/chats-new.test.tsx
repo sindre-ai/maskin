@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -61,7 +61,14 @@ vi.mock('@/components/chat/chat', () => ({
 	Composer: (props: {
 		value?: string
 		onValueChange?: (v: string) => void
-		onSend: (content: string) => Promise<void>
+		onSend: (
+			content: string,
+			extras?: { files: { fileId: string; name: string; sizeBytes: number }[] },
+		) => Promise<void>
+		onDispatchSelection?: (action: {
+			type: 'add_agent' | 'remove_agent'
+			[k: string]: unknown
+		}) => void
 		placeholder: string
 		textareaLabel?: string
 		externalError?: string | null
@@ -80,6 +87,33 @@ vi.mock('@/components/chat/chat', () => ({
 					{`Remove ${o.title}`}
 				</button>
 			))}
+			<button
+				type="button"
+				onClick={() =>
+					props
+						.onSend('', { files: [{ fileId: 'f-1', name: 'plan.pdf', sizeBytes: 12 }] })
+						.catch(() => {})
+				}
+			>
+				Send file only
+			</button>
+			<button
+				type="button"
+				onClick={() =>
+					props.onDispatchSelection?.({
+						type: 'add_agent',
+						agent: { id: 'forge-1', name: 'Forge' },
+					})
+				}
+			>
+				Mention Forge
+			</button>
+			<button
+				type="button"
+				onClick={() => props.onDispatchSelection?.({ type: 'remove_agent', id: 'forge-1' })}
+			>
+				Unmention Forge
+			</button>
 			{props.externalError ? <p role="alert">{props.externalError}</p> : null}
 			<button
 				type="button"
@@ -164,6 +198,36 @@ describe('New chat', () => {
 		expect(toField()).toHaveValue('')
 	})
 
+	it('does not pick a recipient on Enter while an IME composition is open', async () => {
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+		await waitForDefaultPick()
+		await user.type(toField(), 'sen')
+		fireEvent.keyDown(toField(), { key: 'Enter', isComposing: true })
+		expect(screen.queryByRole('button', { name: 'Remove Sentinel' })).not.toBeInTheDocument()
+	})
+
+	it('does not add the first suggestion on Enter in an empty field, but does after arrowing', async () => {
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+		await waitForDefaultPick()
+		await user.click(toField())
+		await user.keyboard('{Enter}')
+		expect(screen.queryByRole('button', { name: 'Remove Forge' })).not.toBeInTheDocument()
+		await user.keyboard('{ArrowDown}{Enter}')
+		expect(screen.getByRole('button', { name: 'Remove Sentinel' })).toBeInTheDocument()
+	})
+
+	it('adds a mentioned agent as a recipient and drops it when the mention is removed', async () => {
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+		await waitForDefaultPick()
+		await user.click(screen.getByRole('button', { name: 'Mention Forge' }))
+		expect(screen.getByRole('button', { name: 'Remove Forge' })).toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: 'Unmention Forge' }))
+		expect(screen.queryByRole('button', { name: 'Remove Forge' })).not.toBeInTheDocument()
+	})
+
 	it('removes the last chip on Backspace in an empty field', async () => {
 		const user = userEvent.setup()
 		render(<NewChatPage />)
@@ -231,6 +295,19 @@ describe('New chat', () => {
 			to: '/$workspaceId/chats/$conversationId',
 			params: { workspaceId: 'ws-1', conversationId: 'conv-1' },
 		})
+	})
+
+	it('keeps the attachments when only files are sent, with no text', async () => {
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+		await waitForDefaultPick()
+		await user.click(screen.getByRole('button', { name: 'Send file only' }))
+		await waitFor(() => expect(mockCreateConversation).toHaveBeenCalledTimes(1))
+		const payload = mockCreateConversation.mock.calls[0]?.[0]
+		expect(payload.initial_message).toBe('')
+		expect(payload.initial_message_metadata.attachments).toEqual([
+			expect.objectContaining({ file_id: 'f-1', name: 'plan.pdf', size_bytes: 12 }),
+		])
 	})
 
 	it('starts a group chat with every chip', async () => {

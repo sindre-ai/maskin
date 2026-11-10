@@ -90,6 +90,8 @@ function NewChatRoute() {
 	const [activeIndex, setActiveIndex] = useState(0)
 	const listboxId = useId()
 	const toInputRef = useRef<HTMLInputElement>(null)
+	// True once the person arrowed through the list, so Enter on an empty field picks the row they chose.
+	const arrowedRef = useRef(false)
 	// The box takes focus on open: bumping the nonce after mount is what the composer treats as
 	// a request (a nonce already present on mount never fires).
 	const [focusNonce, setFocusNonce] = useState(0)
@@ -216,6 +218,7 @@ function NewChatRoute() {
 		setPickedIds((prev) => (prev.includes(id) ? prev : [...prev, id]))
 		setQuery('')
 		setActiveIndex(0)
+		arrowedRef.current = false
 	}, [])
 	const remove = useCallback((id: string) => {
 		setError(null)
@@ -237,14 +240,17 @@ function NewChatRoute() {
 	const activeSuggestion = suggestions[Math.min(activeIndex, suggestions.length - 1)]
 
 	const onToKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+		// Enter that confirms an IME composition (CJK input) must not pick a recipient.
+		if (e.nativeEvent.isComposing) return
 		if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
 			if (suggestions.length === 0) return
 			e.preventDefault()
+			arrowedRef.current = true
 			const delta = e.key === 'ArrowDown' ? 1 : -1
 			setActiveIndex((i) => (i + delta + suggestions.length) % suggestions.length)
 		} else if (e.key === 'Enter' || e.key === 'Tab' || e.key === ',') {
-			// Tab and comma only pick when something was typed, so Tab still leaves the field.
-			if (!activeSuggestion || (e.key !== 'Enter' && !trimmedQuery)) return
+			// Nothing typed: Tab still leaves the field, and Enter only picks after arrowing to a row.
+			if (!activeSuggestion || (!trimmedQuery && !(e.key === 'Enter' && arrowedRef.current))) return
 			e.preventDefault()
 			add(activeSuggestion.id)
 		} else if (e.key === 'Backspace' && query === '' && picked.length > 0) {
@@ -260,7 +266,10 @@ function NewChatRoute() {
 			setPickedIds((prev) => (prev.includes(action.agent.id) ? prev : [...prev, action.agent.id]))
 			return
 		}
-		if (action.type === 'remove_agent') return
+		if (action.type === 'remove_agent') {
+			setPickedIds((prev) => prev.filter((id) => id !== action.id))
+			return
+		}
 		dispatchSelection(action)
 	}, [])
 
@@ -301,8 +310,9 @@ function NewChatRoute() {
 			const conversation = await createConversation.mutateAsync({
 				title: deriveConversationTitle(content, picked[0]?.name ?? 'New chat'),
 				participant_actor_ids: picked.map((r) => r.id),
-				...(content ? { initial_message: content } : {}),
-				...(content && Object.keys(metadata).length > 0
+				// An attachments-only send has empty text; the API accepts that when attachments ride along.
+				...(content || metadata.attachments ? { initial_message: content } : {}),
+				...((content || metadata.attachments) && Object.keys(metadata).length > 0
 					? { initial_message_metadata: metadata }
 					: {}),
 			})
@@ -380,6 +390,7 @@ function NewChatRoute() {
 						onChange={(e) => {
 							setQuery(e.target.value)
 							setActiveIndex(0)
+							arrowedRef.current = false
 						}}
 						onKeyDown={onToKeyDown}
 						onFocus={() => setToFocused(true)}
