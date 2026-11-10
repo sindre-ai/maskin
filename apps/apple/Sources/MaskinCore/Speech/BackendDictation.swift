@@ -107,6 +107,8 @@ public final class PhraseTranscriptionQueue {
 	/// What has been delivered so far, phrases joined with spaces.
 	public private(set) var text = ""
 	public private(set) var hasFailed = false
+	/// Fires once per phrase the server answered for, in order, also when the answer was empty.
+	public var onPhraseDelivered: (@MainActor () -> Void)?
 
 	private let transcriber: any SpeechTranscribing
 	private let language: String?
@@ -185,6 +187,7 @@ public final class PhraseTranscriptionQueue {
 		guard !cancelled, !hasFailed else { return }
 		switch result {
 		case .success(let phrase):
+			onPhraseDelivered?()
 			let merged = DictationText.merge(base: text, transcript: phrase)
 			guard merged != text else { return }
 			text = merged

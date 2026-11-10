@@ -168,6 +168,17 @@ struct PhraseTranscriptionQueueTests {
 		#expect(sink.texts == ["hello"])
 	}
 
+	@Test func tellsWhenEachPhraseWasAnsweredEvenWithNoText() async {
+		let (queue, _, _) = makeQueue([.init(text: "  "), .init(text: "hello"), .init(text: "", fails: true)])
+		var answered = 0
+		queue.onPhraseDelivered = { answered += 1 }
+		queue.submit(wav: Data([1]))
+		queue.submit(wav: Data([2]))
+		queue.submit(wav: Data([3]))
+		await queue.drain(timeout: .seconds(300))
+		#expect(answered == 2)
+	}
+
 	@Test func aFailureStopsDeliveryAndReportsOnce() async {
 		let (queue, sink, _) = makeQueue([
 			.init(text: "ok"), .init(text: "", fails: true), .init(text: "never seen"),

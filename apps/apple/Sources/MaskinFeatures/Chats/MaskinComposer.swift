@@ -167,6 +167,12 @@ struct MaskinComposer: View {
 				Text(note).maskinText(.caption).foregroundStyle(MaskinColor.ink2)
 					.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, MaskinSpace.s5)
 			}
+			// The words the server hasn't returned yet, as the phone hears them; the server's text replaces them.
+			if !dictation.previewText.isEmpty {
+				Text(dictation.previewText).maskinText(.caption).foregroundStyle(MaskinColor.ink3)
+					.lineLimit(2).truncationMode(.head)
+					.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, MaskinSpace.s5)
+			}
 			#endif
 		}
 		.animation(MaskinMotion.quick, value: lastSlot)
