@@ -104,6 +104,12 @@ const db = createDb(databaseUrl, {
 	poolSize: dbPoolSize,
 	inFlight: dbLoad,
 	onQuery: recordDbTime,
+	onPoolRecycled: ({ runningQueries, sql }) => {
+		logger.warn('DB pool replaced: a query got no answer and the database was not busy', {
+			runningQueries,
+			sql,
+		})
+	},
 	onQueryTimeout: ({ timeoutMs, inFlight, sql }) => {
 		logger.error('DB query got no response', {
 			timeoutMs,
