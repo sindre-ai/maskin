@@ -1,6 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { type CreateFileInput, type FileDetail, type UpdateFileInput, api } from '../lib/api'
+import {
+	type CreateFileInput,
+	type FileDetail,
+	type FileListItem,
+	type UpdateFileInput,
+	api,
+} from '../lib/api'
 import { type LargeFileUpload, uploadLargeFile } from '../lib/large-file-upload'
+import { fetchAllPages } from '../lib/pagination'
 import { queryKeys } from '../lib/query-keys'
 
 export function useFile(workspaceId: string, fileId: string | null) {
@@ -20,6 +27,27 @@ export function useFiles(workspaceId: string, params?: { q?: string; ids?: strin
 		// attachments yet, and we don't want to fetch all workspace files in that case.
 		// Equivalent to: params?.ids === undefined || params.ids.length > 0
 		enabled: !!workspaceId && !(params?.ids !== undefined && params.ids.length === 0),
+	})
+}
+
+/**
+ * Every file in the workspace, A→Z by name (the app's list default), optionally narrowed by a
+ * name search. Pages through the endpoint so the sort is over the whole set, not one page.
+ */
+export function useAllFiles(workspaceId: string, q?: string) {
+	return useQuery({
+		queryKey: [...queryKeys.files.all(workspaceId), 'all', q ?? ''],
+		queryFn: async () => {
+			const rows = await fetchAllPages<FileListItem>(({ limit, offset }) =>
+				api.files.list(workspaceId, { q, limit, offset }),
+			)
+			return rows.sort(
+				(a, b) =>
+					a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }) ||
+					a.id.localeCompare(b.id),
+			)
+		},
+		enabled: !!workspaceId,
 	})
 }
 
