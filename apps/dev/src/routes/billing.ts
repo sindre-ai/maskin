@@ -2,8 +2,10 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { workspaces } from '@maskin/db/schema'
 import {
+	type BillingPlan,
 	CREDIT_TOPUP_MAX_USD,
 	CREDIT_TOPUP_MIN_USD,
+	PAID_PLANS,
 	dailyBudgetResponseSchema,
 	setDailyBudgetSchema,
 	workspaceSettingsSchema,
@@ -13,7 +15,7 @@ import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from '../lib/billing-de
 import { USAGE_BREAKDOWN_MAX_ROWS, readUsageBreakdown } from '../lib/billing-usage-breakdown'
 import { cachedBillingUsage, evictBillingUsage } from '../lib/billing-usage-cache'
 import { evaluateDollarUnit, readZeroCostDays } from '../lib/daily-budget'
-import { isEnterprise, isEnterpriseWorkspace } from '../lib/enterprise'
+import { isEnterprise } from '../lib/enterprise'
 import { createApiError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import {
@@ -30,9 +32,7 @@ import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import {
 	CREDIT_TOPUP_BOUNDS_MINOR,
-	type MaskinCreditsCurrency,
 	createCheckoutSession,
-	createCreditCheckoutSession,
 	getStripeClient,
 	readStripeEnv,
 } from '../lib/stripe'
@@ -51,21 +51,8 @@ import { assertWorkspaceWriterRole, isWorkspaceHumanAdminOrOwner } from '../lib/
  * `readStripeEnv`, which throws when Stripe is unconfigured) because
  * `/api/billing/usage` must keep serving usage regardless.
  */
-function planHardCapFallback(plan: 'trial' | 'pro' | 'team' | 'enterprise'): number | null {
+function planHardCapFallback(plan: BillingPlan): number | null {
 	return resolvePlanCapCents(plan)
-}
-
-/**
- * Whether POST /credits/checkout can succeed. Mirrors the route's own gates
- * (Stripe configured, top-up Price set) but reads defensively, since
- * `/api/billing/usage` must keep serving usage when Stripe is unconfigured.
- */
-function isCreditTopupAvailable(): boolean {
-	try {
-		return readStripeEnv().priceCreditsCustom !== null
-	} catch {
-		return false
-	}
 }
 
 type Env = {
@@ -81,7 +68,7 @@ type Env = {
 const app = new OpenAPIHono<Env>()
 
 const checkoutBodySchema = z.object({
-	plan: z.enum(['pro', 'team']),
+	plan: z.enum(PAID_PLANS),
 	success_url: z.string().url(),
 	cancel_url: z.string().url(),
 })
@@ -140,7 +127,7 @@ const linkedinIdentityAddonSchema = z
 	.nullable()
 
 const usageResponseSchema = z.object({
-	plan: z.enum(['trial', 'pro', 'team', 'enterprise']),
+	plan: z.enum(['trial', ...PAID_PLANS, 'enterprise']),
 	status: z.enum(['active', 'past_due', 'canceled', 'incomplete']),
 	// Actual dollar cost incurred this period, in USD cents — not a token
 	// count, since different agents can run different models with different
@@ -152,10 +139,10 @@ const usageResponseSchema = z.object({
 	stripe_customer_id: z.string().nullable(),
 	stripe_subscription_id: z.string().nullable(),
 	// Prepaid usage-credits balance, in USD cents. Only meaningful for
-	// pro/team — see `lib/credit-billing.ts`.
+	// paid plans — see `lib/credit-billing.ts`. No new balance can be bought.
 	credit_balance_cents: z.number().int().nonnegative(),
-	// True only when the top-up Price env is set and Stripe is configured, i.e. when
-	// POST /credits/checkout can succeed. The web app hides Buy usage credits otherwise.
+	// Always false now: the top-up is closed (see POST /credits/checkout). Kept so
+	// older clients, which hide Buy usage credits on false, keep working.
 	credit_topup_available: z.boolean(),
 	linkedin_identity_addon: linkedinIdentityAddonSchema,
 })
@@ -394,7 +381,7 @@ async function readBillingUsage(db: Database, workspaceId: string) {
 		stripe_customer_id: billing?.stripe_customer_id ?? null,
 		stripe_subscription_id: billing?.stripe_subscription_id ?? null,
 		credit_balance_cents: creditBalanceCents,
-		credit_topup_available: isCreditTopupAvailable(),
+		credit_topup_available: false,
 		linkedin_identity_addon: linkedinIdentityAddon,
 	}
 }
@@ -653,121 +640,13 @@ const buyCreditsRoute = createRoute({
 	},
 })
 
+// Closed: the pricing bet (Magnus, 9 Nov 2026) has no top-up. At 100% of a plan
+// work waits for the next period. Existing balances are still honoured when
+// spending (`canUseCreditBalance`) and credited by the webhook if a checkout
+// opened earlier still completes; only starting a new one is shut. The route and
+// its schema stay so older clients get this 404 and not an unknown-route error.
 app.openapi(buyCreditsRoute, async (c) => {
-	const db = c.get('db')
-	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-	const { amount_usd_cents, success_url, cancel_url, currency } = c.req.valid('json')
-
-	// Delta 1b currency-scoped bounds. The body schema only enforces the widest
-	// range across currencies; USD (or no currency) keeps $10 to $500 and
-	// EUR/DKK use their own table entry.
-	const bounds =
-		currency && currency !== 'usd'
-			? CREDIT_TOPUP_BOUNDS_MINOR[currency as MaskinCreditsCurrency]
-			: { min: CREDIT_TOPUP_MIN_USD * 100, max: CREDIT_TOPUP_MAX_USD * 100 }
-	if (amount_usd_cents < bounds.min || amount_usd_cents > bounds.max) {
-		return c.json(
-			createApiError(
-				'BAD_REQUEST',
-				`amount_usd_cents must be between ${bounds.min} and ${bounds.max}${
-					currency ? ` for currency=${currency}` : ''
-				}`,
-			),
-			400,
-		)
-	}
-
-	const [workspace] = await db
-		.select({ id: workspaces.id, settings: workspaces.settings })
-		.from(workspaces)
-		.where(eq(workspaces.id, workspaceId))
-		.limit(1)
-
-	if (!workspace) {
-		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
-	}
-
-	// Spends against the workspace's card - same gate as `checkoutRoute`.
-	if (!(await isWorkspaceHumanAdminOrOwner(db, c.get('actorId'), workspaceId))) {
-		return c.json(
-			createApiError('FORBIDDEN', 'Only workspace owners/admins can manage billing'),
-			403,
-		)
-	}
-
-	const settingsParse = workspaceSettingsSchema.partial().safeParse(workspace.settings ?? {})
-	const billing = settingsParse.success ? settingsParse.data.billing : undefined
-
-	// Same eligibility as spending a balance (`canUseCreditBalance`), minus
-	// the balance>0 check since we're about to add to it. Any maskin-plan
-	// workspace may top up, trial included — a trial that hits its cap and
-	// wants to pay to keep running is the case this button exists for, and
-	// gating it to pro/team meant the NO CREDITS prompt led to a dead end.
-	//
-	// A Stripe customer is NOT required up front: a first-time buyer has none,
-	// and Stripe Checkout creates one when `customer` is undefined (the
-	// webhook then persists it, same as the subscription path). Requiring it
-	// here made the first purchase impossible, which is the only purchase a
-	// trial workspace can make.
-	//
-	// `past_due`/`canceled` still block, matching the spend gate: a workspace
-	// that can't be billed for its base plan shouldn't be taking on more.
-	const blockedStatus = billing?.status === 'past_due' || billing?.status === 'canceled'
-	// Enterprise workspaces fund their own LLM usage and never draw on a
-	// credit balance, so there is nothing for them to top up. Uses the
-	// db-reading helper because this route's workspace select carries only
-	// `id`/`settings`, not the enterprise-grant columns `isEnterprise` needs.
-	const eligible = !blockedStatus && !(await isEnterpriseWorkspace(db, workspaceId))
-	if (!eligible) {
-		return c.json(
-			createApiError('BAD_REQUEST', 'Workspace is not eligible to buy usage credits'),
-			400,
-		)
-	}
-
-	let stripeEnv: ReturnType<typeof readStripeEnv>
-	try {
-		stripeEnv = readStripeEnv()
-	} catch (err) {
-		logger.error('Stripe is not configured', {
-			error: err instanceof Error ? err.message : String(err),
-		})
-		return c.json(createApiError('INTERNAL_ERROR', 'Stripe is not configured'), 500)
-	}
-
-	// The top-up Price is optional config: without it there is nothing to
-	// charge against, so the endpoint is unavailable rather than misconfigured.
-	if (!stripeEnv.priceCreditsCustom) {
-		return c.json(createApiError('NOT_FOUND', 'Credit top-up is not available'), 404)
-	}
-
-	const stripe = getStripeClient(stripeEnv)
-	try {
-		const session = await createCreditCheckoutSession(
-			stripe,
-			{
-				workspaceId,
-				amountUsdCents: amount_usd_cents,
-				successUrl: success_url,
-				cancelUrl: cancel_url,
-				existingCustomerId: billing?.stripe_customer_id ?? undefined,
-				currency: currency as MaskinCreditsCurrency | undefined,
-			},
-			stripeEnv,
-		)
-		if (!session.url) {
-			logger.error('Stripe credit top-up checkout session missing url', { sessionId: session.id })
-			return c.json(createApiError('INTERNAL_ERROR', 'Stripe returned no checkout url'), 500)
-		}
-		return c.json({ url: session.url, session_id: session.id }, 200)
-	} catch (err) {
-		logger.error('Stripe credit top-up checkout session creation failed', {
-			workspaceId,
-			amountUsdCents: amount_usd_cents,
-			error: err instanceof Error ? err.message : String(err),
-		})
-		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create checkout session'), 500)
-	}
+	return c.json(createApiError('NOT_FOUND', 'Credit top-up is not available'), 404)
 })
 
 const cancelRoute = createRoute({

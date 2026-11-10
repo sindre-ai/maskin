@@ -45,6 +45,7 @@ import {
 	type SessionResultFailureReason,
 	buildSetModelRequest,
 	githubOwnerLoginToEnvKey,
+	isPaidPlan,
 	splitLines,
 } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
@@ -4805,7 +4806,7 @@ ${cont.continues_prompt}
 		const wsSettings = (ws?.settings as WorkspaceSettings) ?? {}
 		const billing = wsSettings.billing
 		const plan = billing?.plan
-		if (plan !== 'pro' && plan !== 'team') return
+		if (!isPaidPlan(plan)) return
 
 		const capCents = getWorkspacePlanCap(wsSettings)
 		if (capCents === null) return

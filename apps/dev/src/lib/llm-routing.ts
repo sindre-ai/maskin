@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { sessions } from '@maskin/db/schema'
-import type { SessionResultFailureReason } from '@maskin/shared'
+import { PAID_PLANS, type PaidPlan, type SessionResultFailureReason } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
 import {
 	API_KEY_CREDIT_MARK_WINDOW_MS,
@@ -67,7 +67,7 @@ export type LlmRoute =
  * Trial is included so BYO-LLM-less users can try the product without their
  * own credentials — capped low via `MASKIN_TRIAL_HARD_CAP_USD_CENTS`.
  */
-const MASKIN_PLAN_ROUTED_PLANS = new Set(['pro', 'team', 'trial'])
+const MASKIN_PLAN_ROUTED_PLANS = new Set<string>(['trial', ...PAID_PLANS])
 
 /**
  * True when Maskin funds this workspace's LLM usage. Every route that reaches
@@ -351,7 +351,7 @@ export async function getWorkspacePlanUsdCentsUsage(
 	return ceilCents(totalCents)
 }
 
-export type MaskinPlan = 'trial' | 'pro' | 'team'
+export type MaskinPlan = 'trial' | PaidPlan
 
 interface PlanCapContext {
 	plan: MaskinPlan

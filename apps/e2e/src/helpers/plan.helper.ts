@@ -13,7 +13,7 @@ const TEST_GRANT_TOKEN = process.env.MASKIN_TEST_GRANT_TOKEN
 async function testGrant(
 	apiKey: string,
 	workspaceId: string,
-	body: { plan?: 'trial' | 'pro' | 'team'; enterprise_granted?: boolean },
+	body: { plan?: 'trial' | 'starter' | 'pro' | 'team' | 'ultra'; enterprise_granted?: boolean },
 	what: string,
 ) {
 	if (!TEST_GRANT_TOKEN) {
@@ -45,7 +45,7 @@ async function testGrant(
 export async function grantPlanHeadroom(
 	apiKey: string,
 	workspaceId: string,
-	plan: 'pro' | 'team' = 'team',
+	plan: 'starter' | 'pro' | 'team' | 'ultra' = 'team',
 ) {
 	await testGrant(apiKey, workspaceId, { plan }, 'Grant plan headroom')
 }

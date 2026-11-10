@@ -1,8 +1,13 @@
 import Stripe from 'stripe'
-import { PRO_HARD_CAP_DEFAULT_USD_CENTS, TEAM_HARD_CAP_DEFAULT_USD_CENTS } from './billing-defaults'
+import { PAID_PLANS, type PaidPlan } from '@maskin/shared'
+import {
+	LEGACY_USD_PRO_HARD_CAP_USD_CENTS,
+	LEGACY_USD_TEAM_HARD_CAP_USD_CENTS,
+	resolvePlanCapCents,
+} from './billing-defaults'
 import { logger } from './logger'
 
-type PaidMaskinPlan = 'pro' | 'team'
+export type PaidMaskinPlan = PaidPlan
 
 // ── Delta 1c — Adaptive Pricing note ───────────────────────────────────────
 //
@@ -115,12 +120,16 @@ export function vatCheckoutSessionParams(opts: { hasCustomer: boolean }): Pick<
 export interface StripeEnv {
 	secretKey: string
 	webhookSecret: string
+	/** The old dollar Pro price ($49). Still mapped so a subscription on it keeps its plan; never sold. */
 	pricePro: string
+	/** The old dollar Team price ($200). Still mapped so a subscription on it keeps its plan; never sold. */
 	priceTeam: string
-	/** USD cents. From billing-defaults.ts, not env: a stale prod env once pinned Pro at $20. */
-	proHardCapUsdCents: number
-	/** USD cents. From billing-defaults.ts, not env. */
-	teamHardCapUsdCents: number
+	/**
+	 * The kroner prices checkout sells (tax exclusive), one per paid plan. Null
+	 * when the id is not set in this environment: checkout for that plan then
+	 * fails with a clear message, and the webhook cannot recognise the price.
+	 */
+	priceDkk: Record<PaidMaskinPlan, string | null>
 	/**
 	 * Recurring $49/month price for one connected LinkedIn identity. Optional,
 	 * unlike the plan prices: a deployment that has not created the Stripe
@@ -190,8 +199,12 @@ export function readStripeEnv(env: NodeJS.ProcessEnv = process.env): StripeEnv {
 		webhookSecret: env.STRIPE_WEBHOOK_SECRET as string,
 		pricePro: env.STRIPE_PRICE_PRO as string,
 		priceTeam: env.STRIPE_PRICE_TEAM as string,
-		proHardCapUsdCents: PRO_HARD_CAP_DEFAULT_USD_CENTS,
-		teamHardCapUsdCents: TEAM_HARD_CAP_DEFAULT_USD_CENTS,
+		priceDkk: {
+			starter: env.STRIPE_PRICE_STARTER_DKK || null,
+			pro: env.STRIPE_PRICE_PRO_DKK || null,
+			team: env.STRIPE_PRICE_TEAM_DKK || null,
+			ultra: env.STRIPE_PRICE_ULTRA_DKK || null,
+		},
 		priceLinkedinIdentity: env.STRIPE_PRICE_LINKEDIN_IDENTITY || null,
 		priceCreditsCustom: env.STRIPE_PRICE_CREDITS_CUSTOM || null,
 	}
@@ -218,8 +231,13 @@ export function resetStripeClientForTests() {
 	cachedClient = null
 }
 
+/** The kroner price checkout sells for a plan. Throws when this environment has no id for it. */
 export function priceIdForPlan(plan: PaidMaskinPlan, env: StripeEnv): string {
-	return plan === 'pro' ? env.pricePro : env.priceTeam
+	const priceId = env.priceDkk[plan]
+	if (!priceId) {
+		throw new Error(`STRIPE_PRICE_${plan.toUpperCase()}_DKK is not configured`)
+	}
+	return priceId
 }
 
 /**
@@ -235,15 +253,34 @@ export function isLinkedInAddonPrice(priceId: string | null, env: StripeEnv): bo
 	return priceId === env.priceLinkedinIdentity
 }
 
+/**
+ * Which plan a Stripe price id stands for: the four kroner prices, plus the two
+ * old dollar prices (Pro, Team) that exist until the paying customer is moved.
+ */
 export function planForPriceId(priceId: string, env: StripeEnv): PaidMaskinPlan | null {
+	for (const plan of PAID_PLANS) {
+		if (env.priceDkk[plan] === priceId) return plan
+	}
 	if (priceId === env.pricePro) return 'pro'
 	if (priceId === env.priceTeam) return 'team'
 	return null
 }
 
-/** Returns the plan's hard cap in USD cents. */
-export function hardCapForPlan(plan: PaidMaskinPlan, env: StripeEnv): number {
-	return plan === 'pro' ? env.proHardCapUsdCents : env.teamHardCapUsdCents
+/** True for the old dollar Pro and Team prices, which keep their old dollar caps. */
+export function isLegacyUsdPrice(priceId: string, env: StripeEnv): boolean {
+	return priceId === env.pricePro || priceId === env.priceTeam
+}
+
+/**
+ * The hard cap (USD cents) to store when a subscription sits on this price.
+ * The old dollar prices keep their old dollar caps; every kroner price gets the
+ * plan's included amount from the one resolver.
+ */
+export function hardCapForPrice(plan: PaidMaskinPlan, priceId: string, env: StripeEnv): number {
+	if (isLegacyUsdPrice(priceId, env)) {
+		return plan === 'team' ? LEGACY_USD_TEAM_HARD_CAP_USD_CENTS : LEGACY_USD_PRO_HARD_CAP_USD_CENTS
+	}
+	return resolvePlanCapCents(plan)
 }
 
 /**
@@ -450,10 +487,30 @@ export function mapSubscriptionStatus(
 	}
 }
 
-/** Extract the price id off the first subscription item — Stripe nests it deeply. */
-export function priceIdFromSubscription(subscription: Stripe.Subscription): string | null {
-	const item = subscription.items?.data?.[0]
-	return item?.price?.id ?? null
+/** Every price id on a subscription, in item order. A plan subscription can carry the LinkedIn add-on as a second item. */
+export function priceIdsFromSubscription(subscription: Stripe.Subscription): string[] {
+	const ids: string[] = []
+	for (const item of subscription.items?.data ?? []) {
+		if (item?.price?.id) ids.push(item.price.id)
+	}
+	return ids
+}
+
+/**
+ * Find the plan on a subscription by matching price ids on ANY item, not only
+ * the first: the add-on item can sit before the plan item, and reading just the
+ * first one used to mistake a plan subscription for the add-on's. Returns null
+ * when no item carries a known plan price.
+ */
+export function planFromSubscription(
+	subscription: Stripe.Subscription,
+	env: StripeEnv,
+): { plan: PaidMaskinPlan; priceId: string } | null {
+	for (const priceId of priceIdsFromSubscription(subscription)) {
+		const plan = planForPriceId(priceId, env)
+		if (plan) return { plan, priceId }
+	}
+	return null
 }
 
 /**
