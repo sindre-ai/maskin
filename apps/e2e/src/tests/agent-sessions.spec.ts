@@ -170,7 +170,7 @@ test.describe('Agent detail — Sessions section', () => {
 				},
 			])
 
-			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
+			await page.goto(`/${account.workspaceId}/agents/${agent.id}?tab=sessions`)
 			const section = page.getByRole('region', { name: 'Sessions', exact: true })
 			await expect(section).toBeVisible({ timeout: 10_000 })
 
