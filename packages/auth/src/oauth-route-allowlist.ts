@@ -145,6 +145,8 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'GET /api/integrations/slack/mcp',
 	'POST /api/integrations/slack/mcp',
 	'GET /api/loops/:id/activity',
+	'GET /api/loops/:id/briefings',
+	'GET /api/loops/:id/next-steps',
 	'GET /api/loops/:id/steps',
 	'POST /api/marketplace/items/:id/install',
 	'DELETE /api/marketplace/items/:id/uninstall',
