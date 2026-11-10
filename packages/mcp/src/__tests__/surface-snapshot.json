@@ -179,6 +179,7 @@
 		"create_workspace_field": ["field_type", "name", "required", "type", "values", "workspace_id"],
 		"create_workspace_skill": ["content", "name", "workspace_id"],
 		"delete_extension": ["id", "workspace_id"],
+		"delete_agent": ["id", "workspace_id"],
 		"delete_file": ["id", "workspace_id"],
 		"delete_loop": ["id", "workspace_id"],
 		"delete_object": ["id", "workspace_id"],

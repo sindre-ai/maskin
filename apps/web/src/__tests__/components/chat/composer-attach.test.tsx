@@ -76,13 +76,24 @@ describe('Composer file-attach input', () => {
 		expect(input.multiple).toBe(true)
 	})
 
-	it('offers one + menu with Photo, File, Item and Person or agent', async () => {
+	it('offers one + menu with Photo, File and Person or agent', async () => {
 		const user = userEvent.setup()
 		renderComposer()
 		await user.click(screen.getByRole('button', { name: 'Attach file' }))
-		for (const name of ['Photo', 'File', 'Item', 'Person or agent']) {
+		for (const name of ['Photo', 'File', 'Person or agent']) {
 			expect(await screen.findByRole('menuitem', { name })).toBeInTheDocument()
 		}
+		expect(screen.queryByRole('menuitem', { name: 'Item' })).not.toBeInTheDocument()
+	})
+
+	it('treats / as plain text and sends it', async () => {
+		const user = userEvent.setup()
+		const { props } = renderComposer()
+		await user.type(screen.getByRole('textbox'), 'a/b /')
+		expect(screen.getByRole('textbox')).toHaveValue('a/b /')
+		expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: 'Send message' }))
+		await waitFor(() => expect(props.onSend).toHaveBeenCalledWith('a/b /'))
 	})
 
 	it('starts a mention from the Person or agent row', async () => {

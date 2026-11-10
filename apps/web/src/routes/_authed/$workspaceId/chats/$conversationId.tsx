@@ -86,11 +86,20 @@ function ConversationThreadPage() {
 	// A fill step asks the composer to take its prompt; a send step asks it only to
 	// take focus, so the person can follow up (the tapped button is gone by then).
 	// The nonce makes the same request twice a new one; it is dropped with the chat.
-	const [fillRequest, setFillRequest] = useState<{ text?: string; nonce: number } | null>(null)
+	const [fillRequest, setFillRequest] = useState<{
+		text?: string
+		append?: boolean
+		nonce: number
+	} | null>(null)
 	const fillNonceRef = useRef(0)
 	const requestComposer = useCallback((text?: string) => {
 		fillNonceRef.current += 1
 		setFillRequest({ text, nonce: fillNonceRef.current })
+	}, [])
+	// A starter prompt goes after whatever is already in the box, so a tap never erases a draft.
+	const requestStarter = useCallback((text: string) => {
+		fillNonceRef.current += 1
+		setFillRequest({ text, append: true, nonce: fillNonceRef.current })
 	}, [])
 	const sendStep = useCallback(
 		(content: string, metadata: MessageMetadata) => {
@@ -347,6 +356,7 @@ function ConversationThreadPage() {
 							workspaceId={workspaceId}
 							conversationId={conversationId}
 							onPickStep={requestComposer}
+							onPickStarter={requestStarter}
 							onSendStep={sendStep}
 							sendingStep={sendMessage.isPending}
 							onOpenReplies={openReplies}

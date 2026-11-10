@@ -64,7 +64,7 @@ export interface SlackPostContext {
 	db?: Database
 	/**
 	 * Channel ids that may be posted to without approval, from the Slack integration's saved
-	 * allowlist. Absent means none was saved, and the built-in default applies.
+	 * allowlist. Absent means none was saved, and every direct post is held.
 	 */
 	directPostChannels?: readonly string[]
 }

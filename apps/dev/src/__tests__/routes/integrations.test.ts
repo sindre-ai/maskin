@@ -152,6 +152,7 @@ describe('Integrations Routes', () => {
 					.sort(),
 			).toEqual([
 				'airtable',
+				'atlassian',
 				'attio',
 				'github',
 				'gmail',

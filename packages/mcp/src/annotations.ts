@@ -107,6 +107,7 @@ const ROWS: Record<string, Row> = {
 	create_actor: row('Create actor'),
 	list_actors: row('List actors'),
 	get_actor: row('Get actor'),
+	delete_agent: row('Delete agent', { destructive: true, idempotent: true }),
 	update_actor: row('Update actor', { idempotent: true }),
 	// Workspaces
 	create_workspace: row('Create workspace'),

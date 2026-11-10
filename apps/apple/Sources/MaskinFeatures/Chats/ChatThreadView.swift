@@ -567,7 +567,14 @@ struct ChatThreadView: View {
 				.padding(.bottom, MaskinSpace.s9)
 		}
 		if store.messages.isEmpty, call?.lines.isEmpty ?? true {
-			if let call { LiveCallEmptyState(session: call) }
+			if let call {
+				LiveCallEmptyState(session: call)
+			} else if store.serverConfirmed {
+				// The server says the thread is empty: offer the one agent's own openers. A tap
+				// fills the composer; nothing is sent until the person sends it.
+				StarterPromptsView(prompts: store.starterPrompts) { composer.addStarter($0) }
+					.padding(.top, MaskinSpace.s9)
+			}
 		}
 		ThreadTranscript(
 			store: store, lazy: lazy, onEdit: beginEdit(_:), onReply: reply(to:), onFillStep: { composer.fill($0) },

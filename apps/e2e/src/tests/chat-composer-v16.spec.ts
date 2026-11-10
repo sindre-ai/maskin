@@ -93,14 +93,14 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 				await expect(dictate).toBeVisible()
 			})
 
-			test('the + menu is reachable and lists Photo, File, Item, Person or agent', async ({
+			test('the + menu is reachable and lists Photo, File, Person or agent', async ({
 				page,
 				account,
 			}) => {
 				await page.goto(`/${account.workspaceId}/chats/${await openThread(account)}`)
 				await expect(page.getByRole('textbox').last()).toBeVisible({ timeout: 10_000 })
 				await page.getByRole('button', { name: 'Attach file' }).click()
-				for (const name of ['Photo', 'File', 'Item', 'Person or agent']) {
+				for (const name of ['Photo', 'File', 'Person or agent']) {
 					await expect(page.getByRole('menuitem', { name })).toBeVisible()
 				}
 				if (SHOTS)

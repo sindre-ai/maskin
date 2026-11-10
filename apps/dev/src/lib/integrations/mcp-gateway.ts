@@ -34,6 +34,7 @@ import {
  */
 export const GATEWAY_PROVIDERS: ReadonlySet<string> = new Set([
 	'airtable',
+	'atlassian',
 	'attio',
 	'gmail',
 	'google-calendar',

@@ -192,7 +192,17 @@ function ChatConversationList({
 		...(filter === 'unread' ? { unread_only: true } : {}),
 	})
 
-	const fetched = useMemo(() => data?.pages.flatMap((page) => page.conversations) ?? [], [data])
+	// Pages are fetched by offset, so a chat created or bumped while the list is open shifts the
+	// next page and returns a chat already seen. Two rows with one id share a React key, and
+	// React then leaves one behind when its group folds. Keep the first copy of each chat.
+	const fetched = useMemo(() => {
+		const seen = new Set<string>()
+		return (data?.pages.flatMap((page) => page.conversations) ?? []).filter((c) => {
+			if (seen.has(c.id)) return false
+			seen.add(c.id)
+			return true
+		})
+	}, [data])
 	// Reading a chat opened from the Unread filter would drop its row on the
 	// next refetch and shift everything below it. Keep rows that were shown in
 	// place (as read) until the filter or workspace changes.
@@ -252,6 +262,7 @@ function ChatConversationList({
 		mode: filter === 'archived' ? 'archived' : 'unread',
 	})
 	const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+	const allCollapsed = groups.length > 0 && groups.every((g) => collapsed.has(g.key))
 	const updateMe = useUpdateConversationMe(workspaceId)
 	const markAllRead = async () => {
 		// Exactly the chats the Unread group lists (pinned chats sit in their own group).
@@ -288,6 +299,9 @@ function ChatConversationList({
 		// re-observing would refire the same request in a tight loop. The manual
 		// "Try again" below is the only way back in.
 		if (!el || !hasNextPage || isFetchingNextPage || isFetchNextPageError) return
+		// With every group folded the list is a few header rows, so the sentinel is always on
+		// screen and would pull in the whole history behind the reader's back.
+		if (allCollapsed) return
 		if (typeof IntersectionObserver === 'undefined') return
 		const observer = new IntersectionObserver(
 			(entries) => {
@@ -297,7 +311,7 @@ function ChatConversationList({
 		)
 		observer.observe(el)
 		return () => observer.disconnect()
-	}, [hasNextPage, isFetchingNextPage, isFetchNextPageError, loadNextPage])
+	}, [hasNextPage, isFetchingNextPage, isFetchNextPageError, loadNextPage, allCollapsed])
 
 	return (
 		<div data-testid="conversation-list" className={cn('flex min-h-0 flex-1 flex-col', className)}>

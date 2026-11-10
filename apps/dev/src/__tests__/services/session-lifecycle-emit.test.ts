@@ -130,8 +130,10 @@ describe('emitCompletion — agent_session_completed', () => {
 			baseSession({
 				agentServerId: 'srv-9',
 				triggerId: 'trig-42',
+				modelName: 'claude-opus-5-5',
 				config: {
 					llm_route: LLM_ROUTE_OAUTH,
+					llm_model_source: 'agent',
 					trigger_source: 'cron',
 					skill_staging: { manifest_skills: 3, staged: 2 },
 				},
@@ -178,6 +180,9 @@ describe('emitCompletion — agent_session_completed', () => {
 			cost_usd: 0.12,
 			skills_attached: 3,
 			skills_staged: 2,
+			model: 'claude-opus-5-5',
+			model_source: 'agent',
+			route: LLM_ROUTE_OAUTH,
 		})
 	})
 
