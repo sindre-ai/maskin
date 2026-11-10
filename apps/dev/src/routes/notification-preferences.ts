@@ -2,6 +2,7 @@ import { OpenAPIHono, createRoute } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { type NotificationPreferencesRow, notificationPreferences } from '@maskin/db/schema'
 import {
+	EMAIL_KINDS,
 	NOTIFICATION_PREFERENCES_DEFAULTS,
 	type NotificationPreferencesResponse,
 	PUSH_CATEGORIES,
@@ -44,7 +45,12 @@ function serialize(
 			briefing_enabled: d.briefing_enabled,
 			briefing_time: d.briefing_time,
 			email_digest_enabled: emailDigestEnabled,
-			email_categories: { flow_activity: false },
+			email_categories: {
+				needs_you: false,
+				conversation: false,
+				tips: false,
+				flow_activity: false,
+			},
 			muted_workspace_ids: [],
 			updated_at: null,
 		}
@@ -61,7 +67,12 @@ function serialize(
 		briefing_enabled: row.briefingEnabled,
 		briefing_time: row.briefingTime,
 		email_digest_enabled: emailDigestEnabled,
-		email_categories: { flow_activity: row.emailCategories?.flow_activity === true },
+		email_categories: {
+			needs_you: row.emailCategories?.needs_you === true,
+			conversation: row.emailCategories?.conversation === true,
+			tips: row.emailCategories?.tips === true,
+			flow_activity: row.emailCategories?.flow_activity === true,
+		},
 		muted_workspace_ids: row.mutedWorkspaceIds,
 		updated_at: row.updatedAt.toISOString(),
 	}
@@ -176,8 +187,10 @@ app.openapi(putRoute, async (c) => {
 	if (body.email_digest_enabled === false && existing?.emailDigestEnabled !== false) {
 		trackEmailSwitchedOff(actorId, 'settings')
 	}
-	if (body.email_categories?.flow_activity === false && existing?.emailCategories?.flow_activity) {
-		trackEmailSwitchedOff(actorId, 'settings', 'flow_activity')
+	for (const kind of EMAIL_KINDS) {
+		if (body.email_categories?.[kind] === false && existing?.emailCategories?.[kind]) {
+			trackEmailSwitchedOff(actorId, 'settings', kind)
+		}
 	}
 
 	try {

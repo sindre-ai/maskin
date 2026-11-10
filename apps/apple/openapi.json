@@ -58982,11 +58982,23 @@
 										"email_categories": {
 											"type": "object",
 											"properties": {
+												"needs_you": {
+													"type": "boolean"
+												},
+												"conversation": {
+													"type": "boolean"
+												},
+												"tips": {
+													"type": "boolean"
+												},
 												"flow_activity": {
 													"type": "boolean"
 												}
 											},
 											"required": [
+												"needs_you",
+												"conversation",
+												"tips",
 												"flow_activity"
 											]
 										},
@@ -59114,6 +59126,15 @@
 									"email_categories": {
 										"type": "object",
 										"properties": {
+											"needs_you": {
+												"type": "boolean"
+											},
+											"conversation": {
+												"type": "boolean"
+											},
+											"tips": {
+												"type": "boolean"
+											},
 											"flow_activity": {
 												"type": "boolean"
 											}
@@ -59245,11 +59266,23 @@
 										"email_categories": {
 											"type": "object",
 											"properties": {
+												"needs_you": {
+													"type": "boolean"
+												},
+												"conversation": {
+													"type": "boolean"
+												},
+												"tips": {
+													"type": "boolean"
+												},
 												"flow_activity": {
 													"type": "boolean"
 												}
 											},
 											"required": [
+												"needs_you",
+												"conversation",
+												"tips",
 												"flow_activity"
 											]
 										},

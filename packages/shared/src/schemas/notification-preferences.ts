@@ -86,9 +86,18 @@ export const notificationCategoriesSchema = z.object({
 	flow_activity: z.boolean(),
 })
 
-/** The kinds that can also arrive as their own email. Only Flow activity so far; empty means off. */
-export const EMAIL_KINDS = ['flow_activity'] as const
-export const emailCategoriesSchema = z.object({ flow_activity: z.boolean() })
+/**
+ * The kinds that can also arrive as their own email, as it happens. Off for everyone until the
+ * person switches one on. Digests are not here: the summary email has its own switch.
+ */
+export const EMAIL_KINDS = ['needs_you', 'conversation', 'tips', 'flow_activity'] as const
+export type EmailKind = (typeof EMAIL_KINDS)[number]
+export const emailCategoriesSchema = z.object({
+	needs_you: z.boolean(),
+	conversation: z.boolean(),
+	tips: z.boolean(),
+	flow_activity: z.boolean(),
+})
 
 export const notificationPreferencesResponseSchema = z.object({
 	timezone: timezoneSchema.nullable(),

@@ -67,6 +67,9 @@ function refusal(reason: 'unconfigured' | 'invalid' | 'expired') {
 /** What the link stops, in the words of the confirm page. A kind-scoped link names only that kind. */
 const KIND_WORDS: Record<string, { what: string; title: string }> = {
 	flow_activity: { what: 'flow activity emails', title: 'Stop flow activity emails?' },
+	needs_you: { what: 'emails about things that need you', title: 'Stop these emails?' },
+	conversation: { what: 'emails about chat replies', title: 'Stop chat reply emails?' },
+	tips: { what: 'tips and updates emails', title: 'Stop tips emails?' },
 }
 
 app.get('/', (c) => {

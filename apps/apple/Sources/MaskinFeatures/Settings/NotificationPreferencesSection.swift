@@ -55,7 +55,18 @@ struct NotificationPreferencesSection: View {
 					id: "needs_you", title: "Needs you",
 					subtitle: "Decisions and questions from your agents",
 					accessory: .state(PageState("Always on", .active))),
+				PageRowModel(
+					id: "email_needs_you", title: "Needs you by email",
+					subtitle: "Decisions and questions from your agents",
+					accessory: .toggle(
+						isOn: store.preferences.emailNeedsYou, set: { store.setEmailNeedsYou(enabled: $0) })),
 				toggleRow(.conversation, "Chat replies", "When someone answers you in a chat"),
+				PageRowModel(
+					id: "email_conversation", title: "Chat replies by email",
+					subtitle: "When someone answers you in a chat",
+					accessory: .toggle(
+						isOn: store.preferences.emailConversation,
+						set: { store.setEmailConversation(enabled: $0) })),
 				toggleRow(.digest, "Digests", "Summaries of what your agents got done"),
 				PageRowModel(
 					id: "email_digest", title: "Digests by email",
@@ -70,6 +81,11 @@ struct NotificationPreferencesSection: View {
 						isOn: store.preferences.emailFlowActivity,
 						set: { store.setEmailFlowActivity(enabled: $0) })),
 				toggleRow(.tips, "Tips and updates", "What\u{2019}s new in Maskin"),
+				PageRowModel(
+					id: "email_tips", title: "Tips and updates by email",
+					subtitle: "What\u{2019}s new in Maskin",
+					accessory: .toggle(
+						isOn: store.preferences.emailTips, set: { store.setEmailTips(enabled: $0) })),
 			])
 			PageFootnote(
 				text: "Needs you is always delivered, even in quiet hours. To quiet a workspace, mute it below. Its decisions still arrive, but don\u{2019}t break through Focus.")
