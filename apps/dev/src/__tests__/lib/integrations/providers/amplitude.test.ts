@@ -18,7 +18,8 @@ describe('Amplitude provider config', () => {
 			expect(config.auth.config.pkce).toBe(true)
 			expect(config.auth.config.scopes).toEqual(expect.arrayContaining(['all:read', 'all:write']))
 			expect(config.auth.config.clientIdEnv).toBe('AMPLITUDE_CLIENT_ID')
-			expect(config.auth.config.clientSecretEnv).toBe('AMPLITUDE_CLIENT_SECRET')
+			expect(config.auth.config.tokenAuthMethod).toBe('none')
+			expect(config.auth.config.clientSecretEnv).toBeUndefined()
 			expect(config.auth.config.revokeUrl).toBeUndefined()
 		}
 	})
