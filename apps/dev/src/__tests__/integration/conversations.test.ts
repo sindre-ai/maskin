@@ -298,29 +298,35 @@ describe('Conversations Integration', () => {
 			const list = (await listRes.json()) as {
 				conversations: Array<{
 					id: string
+					directPairKey: string | null
 					unread_count: number
 					snippet: string | null
 					snippet_actor_id: string | null
 					snippet_actor_name: string | null
 				}>
 			}
-			expect(list.conversations).toHaveLength(1)
-			expect(list.conversations[0]?.id).toBe(conversation.id)
-			expect(list.conversations[0]?.unread_count).toBe(1)
-			expect(list.conversations[0]?.snippet).toBe('first message')
+			// People in a workspace also have a direct message with each other, so only
+			// the topical chats are compared here.
+			const topical = list.conversations.filter((c) => c.directPairKey === null)
+			expect(topical).toHaveLength(1)
+			expect(topical[0]?.id).toBe(conversation.id)
+			expect(topical[0]?.unread_count).toBe(1)
+			expect(topical[0]?.snippet).toBe('first message')
 			// The preview carries its author across the actors join, so the list
 			// row can say "Owner: first message" rather than attributing every
 			// preview to whoever is reading it.
-			expect(list.conversations[0]?.snippet_actor_id).toBe(ownerId)
-			expect(list.conversations[0]?.snippet_actor_name).toBeTruthy()
+			expect(topical[0]?.snippet_actor_id).toBe(ownerId)
+			expect(topical[0]?.snippet_actor_name).toBeTruthy()
 
 			// Stranger (workspace member, not a conversation participant) sees nothing.
 			const { app: strangerApp } = createConversationsApp(stranger.id)
 			const strangerList = await strangerApp.request(
 				jsonGet('/api/conversations', { 'x-workspace-id': workspaceId }),
 			)
-			const strangerBody = (await strangerList.json()) as { conversations: unknown[] }
-			expect(strangerBody.conversations).toHaveLength(0)
+			const strangerBody = (await strangerList.json()) as {
+				conversations: Array<{ directPairKey: string | null }>
+			}
+			expect(strangerBody.conversations.filter((c) => c.directPairKey === null)).toHaveLength(0)
 
 			// And a 404 on direct detail access.
 			const strangerDetail = await strangerApp.request(
@@ -664,8 +670,11 @@ describe('Conversations Integration', () => {
 			const unfiltered = await otherApp.request(
 				jsonGet('/api/conversations', { 'x-workspace-id': workspaceId }),
 			)
-			const unfilteredBody = (await unfiltered.json()) as { conversations: Array<{ id: string }> }
-			expect(unfilteredBody.conversations).toHaveLength(2)
+			const unfilteredBody = (await unfiltered.json()) as {
+				conversations: Array<{ id: string; directPairKey: string | null }>
+			}
+			// The direct messages between people are not part of what this test made.
+			expect(unfilteredBody.conversations.filter((c) => c.directPairKey === null)).toHaveLength(2)
 		})
 
 		it('logs an events row when updating pin/archive/read state via PATCH /:id/me', async () => {
