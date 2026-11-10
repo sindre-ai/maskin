@@ -164,6 +164,7 @@ final class Dictation {
 			await run.finish()
 			guard backendRun === run, finishing == nil, state == .listening else { return }
 			noteFallback(.timeLimit)
+			run.dropPreview()
 			backendText = run.text
 			backendRun = nil
 			previewText = ""

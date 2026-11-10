@@ -124,6 +124,13 @@ final class BackendDictationRun {
 		queue.cancel()
 	}
 
+	/// The session is over but the run is kept to read its text (the time-limit handover): no more grey
+	/// words, however late the recogniser answers.
+	func dropPreview() {
+		cancelled = true
+		preview?.cancel()
+	}
+
 	private func closeMicrophone() {
 		timer?.cancel()
 		watchers.forEach { $0.cancel() }
@@ -343,6 +350,8 @@ final class BackendDictationRun {
 
 		/// Called with the lock held.
 		private func startTask() -> SFSpeechAudioBufferRecognitionRequest {
+			// One task per phrase adds up over a long session: let go of the ones that are done.
+			tasks.removeAll { $0.state == .completed || $0.state == .canceling }
 			let request = SFSpeechAudioBufferRecognitionRequest()
 			request.shouldReportPartialResults = true
 			request.taskHint = .dictation
