@@ -5990,6 +5990,25 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'delete_agent',
+		{
+			description: tools.delete_agent.description,
+			inputSchema: tools.delete_agent.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(config, 'DELETE', `/api/actors/${args.id}`, undefined, {
+				workspaceId: args.workspace_id,
+			})
+			return {
+				_meta: meta('delete_agent', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'delete_workspace_skill',
 		{
 			description: tools.delete_workspace_skill.description,
