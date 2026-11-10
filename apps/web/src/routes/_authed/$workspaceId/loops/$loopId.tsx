@@ -158,7 +158,8 @@ function LoopDetailRoute() {
 	const edgesFailed = useLoadFailed(edgesQuery)
 	const childrenFailed = useLoadFailed(childrenQuery)
 	const activityFailed = useLoadFailed(activityQuery)
-	const flowFailed = triggersFailed || actorsFailed || edgesFailed || childrenFailed
+	// How the flow runs needs only its triggers and agents.
+	const flowFailed = triggersFailed || actorsFailed
 	const updateObject = useUpdateObject(workspaceId)
 	const deleteObject = useDeleteObject(workspaceId)
 	const navigate = useNavigate()
@@ -211,9 +212,9 @@ function LoopDetailRoute() {
 	const pendingCount = askBannerVisible ? (loop?.waitingCount ?? 0) : 0
 	const handleDecideClick = useCallback(() => {
 		const targetEl = document.getElementById('loop-decisions')
-		if (targetEl) {
-			targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' })
-		}
+		// The banner can show before the Decisions card has rows; fall back to the composer.
+		const target = targetEl ?? composerRef.current
+		target?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
 		trackAskBannerDecideClicked({ loopId: loopIdForBanner, pendingCount })
 	}, [loopIdForBanner, pendingCount])
 
@@ -279,64 +280,97 @@ function LoopDetailRoute() {
 		}
 	}, [createTrigger, updateObject, loopId, loopTriggerIds, loopAgentIds, navigate, workspaceId])
 
-	// Renaming or removing a view rewrites the flow's `metadata.views`, leaving the file itself alone.
+	// Renaming or removing a view rewrites the flow's `metadata.views`, leaving the file itself
+	// alone. The list is re-read first: an agent may have pinned a view since the page loaded,
+	// and the server replaces the array wholesale.
 	const saveViews = useCallback(
-		async (next: typeof views, failure: string) => {
+		async (
+			change: (current: typeof views) => typeof views | null,
+			failure: string,
+		): Promise<typeof views | null> => {
 			try {
+				const fresh = await objectQuery.refetch?.()
+				const current = readLoopViews(fresh?.data?.metadata ?? object?.metadata)
+				const next = change(current)
+				if (!next) return null
 				await updateObject.mutateAsync({
 					id: loopId,
 					// The API takes `{ name, file_id }` rows here; the client's metadata type is narrower.
 					data: { metadata: { views: toLoopViewsMetadata(next) as never } },
 				})
-				return true
+				return current
 			} catch {
 				toast.error(failure)
-				return false
+				return null
 			}
 		},
-		[loopId, updateObject],
+		[loopId, updateObject, objectQuery, object?.metadata],
 	)
+	// Resolves true once saved, so the rename field stays open (with the typed name) otherwise.
 	const handleRenameView = useCallback(
-		(index: number, name: string) => {
-			const taken = views.some((v, i) => i !== index && v.name.toLowerCase() === name.toLowerCase())
-			if (taken) {
-				toast.error('Another view already has that name')
-				return
-			}
-			void saveViews(
-				views.map((v, i) => (i === index ? { ...v, name } : v)),
-				'Could not rename the view',
-			)
+		async (fileId: string, name: string) => {
+			const saved = await saveViews((current) => {
+				if (
+					current.some((v) => v.fileId !== fileId && v.name.toLowerCase() === name.toLowerCase())
+				) {
+					toast.error('Another view already has that name')
+					return null
+				}
+				return current.map((v) => (v.fileId === fileId ? { ...v, name } : v))
+			}, 'Could not rename the view')
+			return saved !== null
 		},
-		[views, saveViews],
+		[saveViews],
 	)
 	const handleRemoveView = useCallback(
-		async (index: number) => {
-			const target = views[index]
-			if (!target) return
-			if (await saveViews(applyLoopView(views, target.name, null), 'Could not remove the view'))
-				setTab('overview')
+		async (fileId: string) => {
+			const previous = await saveViews(
+				(current) => current.filter((v) => v.fileId !== fileId),
+				'Could not remove the view',
+			)
+			if (!previous) return
+			setTab('overview')
+			toast.success('View removed', {
+				duration: 15_000,
+				action: {
+					label: 'Undo',
+					onClick: () =>
+						updateObject.mutate(
+							{ id: loopId, data: { metadata: { views: toLoopViewsMetadata(previous) as never } } },
+							{ onError: () => toast.error('Could not restore the view') },
+						),
+				},
+			})
 		},
-		[views, saveViews],
+		[saveViews, updateObject, loopId],
 	)
+
+	// The first agent among the flow's driver and agents: only an agent can build a view.
+	const viewBuilder = useMemo(() => {
+		const candidates = [driverId, ...(loopAgentIds ?? [])]
+		for (const id of candidates) {
+			const actor = id ? actors?.find((a) => a.id === id) : undefined
+			if (actor?.type === 'agent') return actor
+		}
+		return undefined
+	}, [driverId, loopAgentIds, actors])
 
 	// "+" next to the views: ask the flow's driver for a new one, in a chat about this flow.
 	const handleNewView = useCallback(() => {
-		const agentId = driverId ?? loopAgentIds?.[0]
-		const agentName = agentId ? actors?.find((a) => a.id === agentId)?.name : undefined
+		if (!viewBuilder) return
 		navigate({
 			to: '/$workspaceId/chats/new',
 			params: { workspaceId },
 			search: {
-				agentId,
-				agentName,
+				agentId: viewBuilder.id,
+				agentName: viewBuilder.name,
 				objectId: loopId,
 				objectTitle: loop?.name ?? undefined,
 				objectType: 'loop',
 				text: `New view for ${loop?.name ?? 'this flow'}: `,
 			},
 		})
-	}, [driverId, loopAgentIds, actors, navigate, workspaceId, loopId, loop?.name])
+	}, [viewBuilder, navigate, workspaceId, loopId, loop?.name])
 
 	// "Message" on the Decisions card: bring the flow's own composer into reach and focus it.
 	const handleMessageDriver = useCallback(() => {
@@ -758,7 +792,7 @@ function LoopDetailRoute() {
 						]}
 						value={activeTab}
 						onChange={setTab}
-						onAdd={canWrite && object ? handleNewView : undefined}
+						onAdd={canWrite && object && viewBuilder ? handleNewView : undefined}
 						addLabel="Ask for a new view"
 					/>
 				</div>
@@ -822,10 +856,10 @@ function LoopDetailRoute() {
 							fileId={activeView.fileId}
 							name={activeView.name}
 							onRename={
-								canWrite && object ? (name) => handleRenameView(activeViewIndex, name) : undefined
+								canWrite && object ? (name) => handleRenameView(activeView.fileId, name) : undefined
 							}
 							onRemove={
-								canWrite && object ? () => void handleRemoveView(activeViewIndex) : undefined
+								canWrite && object ? () => void handleRemoveView(activeView.fileId) : undefined
 							}
 							busy={updateObject.isPending}
 						/>
@@ -918,8 +952,6 @@ function LoopDetailRoute() {
 										for (const [failed, query] of [
 											[triggersFailed, triggersQuery],
 											[actorsFailed, actorsQuery],
-											[edgesFailed, edgesQuery],
-											[childrenFailed, childrenQuery],
 										] as const) {
 											if (failed) query.refetch?.()
 										}

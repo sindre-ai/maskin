@@ -11,6 +11,15 @@ import { queryKeys } from '@/lib/query-keys'
 import { useQueries, useQuery } from '@tanstack/react-query'
 import { useMemo } from 'react'
 
+/** One definition of the briefing list so every reader shares a cache entry. */
+function briefingListQuery(workspaceId: string) {
+	return {
+		queryKey: [...queryKeys.files.all(workspaceId), 'briefings'],
+		queryFn: () => api.files.list(workspaceId, { kind: 'briefing' as const, limit: 24 }),
+		enabled: !!workspaceId,
+	}
+}
+
 export interface BriefingCard {
 	id: string
 	name: string
@@ -32,11 +41,7 @@ export interface BriefingCard {
  * is left out of the row rather than shown under its file name.
  */
 export function useBriefings(workspaceId: string) {
-	const list = useQuery({
-		queryKey: [...queryKeys.files.all(workspaceId), 'briefings'],
-		queryFn: () => api.files.list(workspaceId, { kind: 'briefing', limit: 24 }),
-		enabled: !!workspaceId,
-	})
+	const list = useQuery(briefingListQuery(workspaceId))
 	const { data: actors } = useActors(workspaceId)
 
 	const pages = useMemo(() => pickBriefingPages(list.data ?? []), [list.data])
@@ -83,11 +88,7 @@ export function useBriefings(workspaceId: string) {
  * row is already loaded.
  */
 export function useLoopBriefingPages(workspaceId: string, agentIds: readonly string[] | undefined) {
-	const list = useQuery({
-		queryKey: [...queryKeys.files.all(workspaceId), 'briefings'],
-		queryFn: () => api.files.list(workspaceId, { kind: 'briefing', limit: 24 }),
-		enabled: !!workspaceId,
-	})
+	const list = useQuery(briefingListQuery(workspaceId))
 	return useMemo(() => {
 		const mine = new Set(agentIds ?? [])
 		return pickBriefingPages(

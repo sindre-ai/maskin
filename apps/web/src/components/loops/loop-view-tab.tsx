@@ -30,7 +30,8 @@ export function LoopViewTab({
 	workspaceId: string
 	fileId: string
 	name?: string
-	onRename?: (name: string) => void
+	/** Resolves true once saved; the rename field stays open on false. */
+	onRename?: (name: string) => Promise<boolean> | boolean
 	onRemove?: () => void
 	busy?: boolean
 }) {
@@ -46,11 +47,10 @@ export function LoopViewTab({
 				{renaming ? (
 					<form
 						className="flex items-center gap-2"
-						onSubmit={(e) => {
+						onSubmit={async (e) => {
 							e.preventDefault()
 							if (!trimmed || !onRename) return
-							onRename(trimmed)
-							setRenaming(false)
+							if (await onRename(trimmed)) setRenaming(false)
 						}}
 					>
 						<Input
