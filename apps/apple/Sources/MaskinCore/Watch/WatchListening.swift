@@ -79,7 +79,20 @@ public final class WatchListeningStore {
 		run += 1
 		let current = run
 		text = ""
+		phase = .listening
 		let mic = makeMicrophone()
+		Task { await open(mic, transcriber: transcriber, run: current) }
+	}
+
+	/// Asks for access, then opens the microphone. Cancel or Done while the prompt is up leaves it
+	/// closed.
+	private func open(_ mic: any PhraseMicrophone, transcriber: any SpeechTranscribing, run current: Int) async {
+		let allowed = await mic.requestAccess()
+		guard current == run, phase == .listening else { return }
+		guard allowed else {
+			phase = .tapToTalk(.microphone)
+			return
+		}
 		let phrases: AsyncStream<Data>
 		do {
 			phrases = try mic.start()
@@ -99,7 +112,6 @@ public final class WatchListeningStore {
 			guard !Task.isCancelled else { return }
 			await self?.finish(run: current)
 		}
-		phase = .listening
 	}
 
 	/// Done: stops listening and sends what was heard.

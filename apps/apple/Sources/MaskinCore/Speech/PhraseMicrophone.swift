@@ -5,11 +5,17 @@ import Foundation
 /// tests without audio hardware.
 @MainActor
 public protocol PhraseMicrophone: AnyObject {
+	/// Asks for microphone access (the system prompt the first time). False when it is refused.
+	func requestAccess() async -> Bool
 	/// Opens the microphone. Throws when there is no input or it cannot start. The stream ends after
 	/// `stop()`, with the last unfinished phrase delivered first.
 	func start() throws -> AsyncStream<Data>
 	/// Closes the microphone.
 	func stop()
+}
+
+extension PhraseMicrophone {
+	public func requestAccess() async -> Bool { true }
 }
 
 #if canImport(AVFoundation) && (os(iOS) || os(watchOS) || os(macOS))
@@ -24,6 +30,12 @@ public protocol PhraseMicrophone: AnyObject {
 		private var capture: PhraseCapture?
 
 		public init() {}
+
+		/// The engine only gets samples once access is granted; asking first means the first tap on
+		/// the mic shows the prompt instead of opening a microphone that hears nothing.
+		public func requestAccess() async -> Bool {
+			await AVAudioApplication.requestRecordPermission()
+		}
 
 		public func start() throws -> AsyncStream<Data> {
 			#if os(iOS) || os(watchOS)

@@ -215,8 +215,8 @@ private struct WatchAnswer: View {
 	let answer: ChatMessage
 	@State private var speaker = BriefingSpeaker(title: "Chief of Staff")
 	@State private var muted = false
-	/// Speech is only for headphones: a reply read out loud on a wrist speaker is read out loud to
-	/// the room.
+	/// Speech starts by itself only for headphones: a reply read out loud on a wrist speaker is read
+	/// out loud to the room. Read aloud is always there for the wearer to ask for it.
 	@State private var speechAllowed = BriefingSpeaker.outputIsHeadphones
 
 	private var text: String { WatchBriefingText.plain(answer.content) }
@@ -250,20 +250,18 @@ private struct WatchAnswer: View {
 		WatchDictate(accessibility: "Reply to Chief of Staff", send: conversation.ask) {
 			WatchCapsule(title: "Reply", prominent: true, font: WatchType.action())
 		}
-		if speechAllowed {
-			Button {
-				if speaker.isSpeaking {
-					speaker.stop()
-					muted = true
-				} else {
-					muted = false
-					speaker.speak(text)
-				}
-			} label: {
-				WatchCapsule(title: speaker.isSpeaking ? "Stop" : (muted ? "Resume" : "Read aloud"))
+		Button {
+			if speaker.isSpeaking {
+				speaker.stop()
+				muted = true
+			} else {
+				muted = false
+				speaker.speak(text)
 			}
-			.buttonStyle(.plain)
+		} label: {
+			WatchCapsule(title: speaker.isSpeaking ? "Stop" : (muted ? "Resume" : "Read aloud"))
 		}
+		.buttonStyle(.plain)
 		if WatchConversation.asksQuestion(answer.content) {
 			NavigationLink {
 				WatchQuickReplies(question: text, conversation: conversation)

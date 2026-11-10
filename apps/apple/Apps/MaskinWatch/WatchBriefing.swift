@@ -80,8 +80,20 @@ struct WatchPlayer: View {
 	}
 }
 
-/// Speaks the briefing through the watch speaker or connected AirPods. It plays as long-form
-/// spoken audio, so it routes to AirPods, keeps going with the wrist down, and shows up in Now
+/// The watch's real audio session.
+@MainActor
+private struct SystemSpeechSession: SpeechAudioSession {
+	var outputIsHeadphones: Bool { BriefingSpeaker.outputIsHeadphones }
+
+	func activate(longForm: Bool) async throws {
+		let session = AVAudioSession.sharedInstance()
+		try session.setCategory(.playback, mode: .spokenAudio, policy: longForm ? .longFormAudio : .default)
+		_ = try await session.activate()
+	}
+}
+
+/// Speaks the briefing through the watch speaker or connected AirPods. With headphones it plays as
+/// long-form spoken audio, so it routes to AirPods, keeps going with the wrist down, and shows up in Now
 /// Playing, where the Crown sets the volume and the transport buttons pause and resume it.
 @MainActor
 @Observable
@@ -120,9 +132,7 @@ final class BriefingSpeaker: NSObject, AVSpeechSynthesizerDelegate {
 		wasStarted = true
 		installCommands()
 		Task {
-			let session = AVAudioSession.sharedInstance()
-			try? session.setCategory(.playback, mode: .spokenAudio, policy: .longFormAudio)
-			_ = try? await session.activate()
+			await WatchSpeech.prepare(SystemSpeechSession())
 			scriptLength = text.utf16.count
 			fraction = 0
 			synthesizer.speak(AVSpeechUtterance(string: text))
