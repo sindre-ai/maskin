@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/responsive-dialog'
 import { useCreateWorkspace } from '@/hooks/use-workspaces'
 import { ApiError } from '@/lib/api'
+import { workspaceAwaitsCard } from '@/lib/welcome-landing'
 import { useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 
@@ -65,6 +66,10 @@ export function NewWorkspaceDialog({
 			{
 				onSuccess: (workspace) => {
 					handleOpenChange(false)
+					if (workspaceAwaitsCard(workspace)) {
+						navigate({ to: '/start-trial/$workspaceId', params: { workspaceId: workspace.id } })
+						return
+					}
 					navigate({ to: '/$workspaceId', params: { workspaceId: workspace.id } })
 				},
 			},
