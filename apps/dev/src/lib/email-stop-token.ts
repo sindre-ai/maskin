@@ -14,7 +14,7 @@ const MIN_SECRET_LENGTH = 32
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 /** The signing secret, or null when it is missing or too short. A missing secret never signs or accepts. */
-function secret(): string | null {
+export function secret(): string | null {
 	const raw = process.env.EMAIL_STOP_LINK_SECRET?.trim()
 	return raw && raw.length >= MIN_SECRET_LENGTH ? raw : null
 }

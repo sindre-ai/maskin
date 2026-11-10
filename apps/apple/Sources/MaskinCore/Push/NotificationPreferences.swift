@@ -43,12 +43,15 @@ public struct NotificationPreferences: Equatable, Sendable {
 	/// The summary email switch. When the person never chose, the server sends what the sending
 	/// rule would give them, so this is always the state to show.
 	public var emailDigestEnabled: Bool
+	/// The Marketplace picks switch for the summary email. Off until the person turns it on.
+	public var marketplacePicksEnabled: Bool
 	public var mutedWorkspaceIds: [String]
 
 	public init(
 		timezone: String? = nil, quietHours: QuietHours? = nil, categories: Categories = .init(),
 		briefingEnabled: Bool = true, briefingTime: Int = NotificationPreferences.defaultBriefingTime,
-		emailDigestEnabled: Bool = false, mutedWorkspaceIds: [String] = []
+		emailDigestEnabled: Bool = false, marketplacePicksEnabled: Bool = false,
+		mutedWorkspaceIds: [String] = []
 	) {
 		self.timezone = timezone
 		self.quietHours = quietHours
@@ -56,6 +59,7 @@ public struct NotificationPreferences: Equatable, Sendable {
 		self.briefingEnabled = briefingEnabled
 		self.briefingTime = briefingTime
 		self.emailDigestEnabled = emailDigestEnabled
+		self.marketplacePicksEnabled = marketplacePicksEnabled
 		self.mutedWorkspaceIds = mutedWorkspaceIds
 	}
 
@@ -86,6 +90,7 @@ public struct NotificationPreferencesPatch: Equatable, Sendable {
 	public var briefingEnabled: Bool?
 	public var briefingTime: Int?
 	public var emailDigestEnabled: Bool?
+	public var marketplacePicksEnabled: Bool?
 	public var mutedWorkspaceIds: [String]?
 
 	public init() {}
@@ -112,6 +117,7 @@ public struct NotificationPreferencesPatch: Equatable, Sendable {
 		if let briefingEnabled { next.briefingEnabled = briefingEnabled }
 		if let briefingTime { next.briefingTime = briefingTime }
 		if let emailDigestEnabled { next.emailDigestEnabled = emailDigestEnabled }
+		if let marketplacePicksEnabled { next.marketplacePicksEnabled = marketplacePicksEnabled }
 		if let mutedWorkspaceIds { next.mutedWorkspaceIds = mutedWorkspaceIds }
 		return next
 	}
@@ -128,7 +134,8 @@ public struct NotificationPreferencesPatch: Equatable, Sendable {
 		enum Key: String, CodingKey {
 			case timezone, quietStart = "quiet_hours_start", quietEnd = "quiet_hours_end"
 			case categories, briefingEnabled = "briefing_enabled", briefingTime = "briefing_time"
-			case emailDigest = "email_digest_enabled", muted = "muted_workspace_ids"
+			case emailDigest = "email_digest_enabled", marketplacePicks = "marketplace_picks_enabled"
+			case muted = "muted_workspace_ids"
 		}
 		enum CategoryKey: String, CodingKey { case needsYou = "needs_you", conversation, digest, tips }
 
@@ -159,6 +166,7 @@ public struct NotificationPreferencesPatch: Equatable, Sendable {
 			try c.encodeIfPresent(patch.briefingEnabled, forKey: .briefingEnabled)
 			try c.encodeIfPresent(patch.briefingTime.map(NotificationPreferences.clamp(minutes:)), forKey: .briefingTime)
 			try c.encodeIfPresent(patch.emailDigestEnabled, forKey: .emailDigest)
+			try c.encodeIfPresent(patch.marketplacePicksEnabled, forKey: .marketplacePicks)
 			try c.encodeIfPresent(patch.mutedWorkspaceIds, forKey: .muted)
 		}
 	}

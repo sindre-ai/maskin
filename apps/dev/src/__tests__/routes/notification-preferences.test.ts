@@ -20,6 +20,7 @@ describe('GET /api/notification-preferences', () => {
 			briefing_enabled: true,
 			briefing_time: 510,
 			email_digest_enabled: false,
+			marketplace_picks_enabled: false,
 			muted_workspace_ids: [],
 			updated_at: null,
 		})

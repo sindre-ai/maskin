@@ -60,6 +60,32 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 	})
 }
 
+for (const vp of SHIP_GATE_VIEWPORTS) {
+	test(`The Marketplace picks switch is off for a new sign-up, saves, and survives a reload @ ${vp.label}`, async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize({ width: vp.width, height: vp.height })
+		await page.goto(`/${account.workspaceId}/settings/notifications`)
+
+		const picks = page.getByRole('switch', { name: 'Marketplace picks by email', exact: true })
+		await expect(picks).toBeVisible({ timeout: 15_000 })
+		await expect(picks).not.toBeChecked()
+		await picks.click()
+		await expect(picks).toBeChecked()
+
+		await page.reload()
+		await expect(
+			page.getByRole('switch', { name: 'Marketplace picks by email', exact: true }),
+		).toBeChecked({ timeout: 15_000 })
+		// The email switch on the Digests row is a separate setting.
+		await expect(page.getByRole('switch', { name: 'Digests by email', exact: true })).toBeChecked()
+		expect(
+			await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth),
+		).toBe(false)
+	})
+}
+
 test('Notifications reads in light and dark', async ({ page, account }) => {
 	for (const scheme of ['light', 'dark'] as const) {
 		await page.emulateMedia({ colorScheme: scheme })

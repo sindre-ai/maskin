@@ -41,7 +41,9 @@ public struct APINotificationPreferencesSource: NotificationPreferencesAPI {
 				needsYou: body.categories.needs_you, conversation: body.categories.conversation,
 				digest: body.categories.digest, tips: body.categories.tips),
 			briefingEnabled: body.briefing_enabled, briefingTime: body.briefing_time,
-			emailDigestEnabled: body.email_digest_enabled, mutedWorkspaceIds: body.muted_workspace_ids)
+			emailDigestEnabled: body.email_digest_enabled,
+			marketplacePicksEnabled: body.marketplace_picks_enabled,
+			mutedWorkspaceIds: body.muted_workspace_ids)
 	}
 
 	public func save(_ patch: NotificationPreferencesPatch, idempotencyKey: String) async throws
@@ -100,6 +102,8 @@ public struct APINotificationPreferencesSource: NotificationPreferencesAPI {
 		var briefing_time: Int
 		/// Absent from a server that predates the email switch.
 		var email_digest_enabled: Bool?
+		/// Absent from a server that predates Marketplace picks.
+		var marketplace_picks_enabled: Bool?
 		var muted_workspace_ids: [String]
 
 		var model: NotificationPreferences {
@@ -110,7 +114,9 @@ public struct APINotificationPreferencesSource: NotificationPreferencesAPI {
 					needsYou: categories.needs_you, conversation: categories.conversation,
 					digest: categories.digest, tips: categories.tips),
 				briefingEnabled: briefing_enabled, briefingTime: briefing_time,
-				emailDigestEnabled: email_digest_enabled ?? false, mutedWorkspaceIds: muted_workspace_ids)
+				emailDigestEnabled: email_digest_enabled ?? false,
+				marketplacePicksEnabled: marketplace_picks_enabled ?? false,
+				mutedWorkspaceIds: muted_workspace_ids)
 		}
 	}
 }
