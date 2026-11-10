@@ -1,14 +1,22 @@
+import { PlanPicker } from '@/components/billing/plan-picker'
 import { Button } from '@/components/ui/button'
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogHeader,
+	DialogTitle,
+} from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { Spinner } from '@/components/ui/spinner'
-import { useBillingUsage } from '@/hooks/use-billing'
+import { useBillingUsage, useStripeCheckout } from '@/hooks/use-billing'
 import { ApiError, api } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import { welcomeLandingPath } from '@/lib/welcome-landing'
 import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js'
 import { type Stripe, loadStripe } from '@stripe/stripe-js'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link, createFileRoute } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useMemo, useState } from 'react'
 
 // The card step of sign-up (bet "A card to start a 7-day trial"). A workspace made through it
@@ -33,6 +41,7 @@ function StartTrialPage() {
 	// Bumped for a new card form: a finished card setup cannot be reused, so trying another card
 	// needs a fresh one.
 	const [attempt, setAttempt] = useState(0)
+	const [pickerOpen, setPickerOpen] = useState(false)
 
 	const waiting = usage?.trial_state === 'awaiting_card'
 	const setup = useQuery({
@@ -96,10 +105,8 @@ function StartTrialPage() {
 							>
 								<p className="font-semibold">This card has already started a free trial.</p>
 								<p>Choose a plan to keep going, or add a different card.</p>
-								<Button asChild size="sm" variant="outline">
-									<Link to="/$workspaceId/settings/billing" params={{ workspaceId }}>
-										Choose a plan
-									</Link>
+								<Button size="sm" variant="outline" onClick={() => setPickerOpen(true)}>
+									Choose a plan
 								</Button>
 							</div>
 						)}
@@ -142,7 +149,52 @@ function StartTrialPage() {
 					</>
 				)}
 			</div>
+			<ChoosePlanDialog workspaceId={workspaceId} open={pickerOpen} onOpenChange={setPickerOpen} />
 		</div>
+	)
+}
+
+// "Choose a plan" from the card already used notice: the person keeps their account and can pay
+// for a plan instead of using another card. Checkout returns to Billing.
+function ChoosePlanDialog({
+	workspaceId,
+	open,
+	onOpenChange,
+}: {
+	workspaceId: string
+	open: boolean
+	onOpenChange: (open: boolean) => void
+}) {
+	const checkout = useStripeCheckout(workspaceId)
+	return (
+		<Dialog open={open} onOpenChange={onOpenChange}>
+			<DialogContent>
+				<DialogHeader>
+					<DialogTitle>Choose a plan</DialogTitle>
+					<DialogDescription>Pick a plan to keep going without a free trial.</DialogDescription>
+				</DialogHeader>
+				<PlanPicker
+					current="trial"
+					pending={checkout.isPending}
+					onContinue={(plan) => {
+						const base = `${window.location.origin}/${workspaceId}/settings/billing`
+						checkout.mutate(
+							{
+								plan,
+								success_url: `${base}?billing=success`,
+								cancel_url: `${base}?billing=cancel`,
+							},
+							{
+								onSuccess: ({ url }) => {
+									window.location.href = url
+								},
+							},
+						)
+					}}
+				/>
+				{checkout.isError && <p className="text-xs text-error">{checkout.error.message}</p>}
+			</DialogContent>
+		</Dialog>
 	)
 }
 
