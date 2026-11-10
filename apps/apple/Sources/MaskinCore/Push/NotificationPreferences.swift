@@ -39,6 +39,16 @@ public struct NotificationPreferences: Equatable, Sendable {
 		public static let evening = QuietHours(start: 22 * 60, end: 7 * 60)
 	}
 
+	/// How often the summary email comes. Off is `emailDigestEnabled == false`, not a case here.
+	public enum EmailRhythm: String, Codable, CaseIterable, Sendable {
+		case daily, weekly
+	}
+
+	/// What the Summary email row shows: Off when the email switch is off, else the saved rhythm.
+	public enum EmailChoice: String, CaseIterable, Sendable {
+		case daily, weekly, off
+	}
+
 	/// IANA name; nil means the server has never been told (it then uses UTC).
 	public var timezone: String?
 	public var quietHours: QuietHours?
@@ -53,13 +63,20 @@ public struct NotificationPreferences: Equatable, Sendable {
 	public var emailFlowActivity: Bool
 	/// The Marketplace picks switch for the summary email. Off until the person turns it on.
 	public var marketplacePicksEnabled: Bool
+	/// Daily when the person never chose.
+	public var emailRhythm: EmailRhythm
 	public var mutedWorkspaceIds: [String]
+
+	public var emailChoice: EmailChoice {
+		emailDigestEnabled ? (emailRhythm == .weekly ? .weekly : .daily) : .off
+	}
 
 	public init(
 		timezone: String? = nil, quietHours: QuietHours? = nil, categories: Categories = .init(),
 		briefingEnabled: Bool = true, briefingTime: Int = NotificationPreferences.defaultBriefingTime,
 		emailDigestEnabled: Bool = false, emailFlowActivity: Bool = false,
-		marketplacePicksEnabled: Bool = false, mutedWorkspaceIds: [String] = []
+		marketplacePicksEnabled: Bool = false, emailRhythm: EmailRhythm = .daily,
+		mutedWorkspaceIds: [String] = []
 	) {
 		self.timezone = timezone
 		self.quietHours = quietHours
@@ -69,6 +86,7 @@ public struct NotificationPreferences: Equatable, Sendable {
 		self.emailDigestEnabled = emailDigestEnabled
 		self.emailFlowActivity = emailFlowActivity
 		self.marketplacePicksEnabled = marketplacePicksEnabled
+		self.emailRhythm = emailRhythm
 		self.mutedWorkspaceIds = mutedWorkspaceIds
 	}
 
@@ -102,6 +120,7 @@ public struct NotificationPreferencesPatch: Equatable, Sendable {
 	public var emailDigestEnabled: Bool?
 	public var emailFlowActivity: Bool?
 	public var marketplacePicksEnabled: Bool?
+	public var emailRhythm: NotificationPreferences.EmailRhythm?
 	public var mutedWorkspaceIds: [String]?
 
 	public init() {}
@@ -131,6 +150,7 @@ public struct NotificationPreferencesPatch: Equatable, Sendable {
 		if let emailDigestEnabled { next.emailDigestEnabled = emailDigestEnabled }
 		if let emailFlowActivity { next.emailFlowActivity = emailFlowActivity }
 		if let marketplacePicksEnabled { next.marketplacePicksEnabled = marketplacePicksEnabled }
+		if let emailRhythm { next.emailRhythm = emailRhythm }
 		if let mutedWorkspaceIds { next.mutedWorkspaceIds = mutedWorkspaceIds }
 		return next
 	}
@@ -148,6 +168,7 @@ public struct NotificationPreferencesPatch: Equatable, Sendable {
 			case timezone, quietStart = "quiet_hours_start", quietEnd = "quiet_hours_end"
 			case categories, briefingEnabled = "briefing_enabled", briefingTime = "briefing_time"
 			case emailDigest = "email_digest_enabled", marketplacePicks = "marketplace_picks_enabled"
+			case emailRhythm = "email_rhythm"
 			case muted = "muted_workspace_ids"
 			case emailCategories = "email_categories"
 		}
@@ -191,6 +212,7 @@ public struct NotificationPreferencesPatch: Equatable, Sendable {
 			try c.encodeIfPresent(patch.briefingTime.map(NotificationPreferences.clamp(minutes:)), forKey: .briefingTime)
 			try c.encodeIfPresent(patch.emailDigestEnabled, forKey: .emailDigest)
 			try c.encodeIfPresent(patch.marketplacePicksEnabled, forKey: .marketplacePicks)
+			try c.encodeIfPresent(patch.emailRhythm, forKey: .emailRhythm)
 			try c.encodeIfPresent(patch.mutedWorkspaceIds, forKey: .muted)
 		}
 	}
