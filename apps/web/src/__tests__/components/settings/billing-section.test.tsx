@@ -672,6 +672,38 @@ describe('BillingSection', () => {
 		expect(screen.getByText(/\$49\/month covers connectivity to LinkedIn/)).toBeInTheDocument()
 	})
 
+	it('uses the approved usage wording on the LinkedIn Identity line when the percent display is on', async () => {
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'pro',
+			status: 'active',
+			hard_cap_usd_cents: 714,
+			stripe_customer_id: 'cus_x',
+			stripe_subscription_id: 'sub_x',
+			linkedin_identity_addon: {
+				count: 2,
+				unit_price_usd_cents: 4900,
+				monthly_total_usd_cents: 9800,
+			},
+		})
+
+		render(
+			<TestWrapper>
+				<PlanPercentProvider value>
+					<BillingSection workspaceId="ws-1" enterprise />
+				</PlanPercentProvider>
+			</TestWrapper>,
+		)
+
+		await screen.findByText('LinkedIn Identity')
+		expect(
+			screen.getByText(
+				'The add-on covers the LinkedIn connection. Your plan usage continues to cover only what the model reasons through.',
+			),
+		).toBeInTheDocument()
+		expect(screen.queryByText(/token bucket/)).not.toBeInTheDocument()
+	})
+
 	describe('returning from Stripe Checkout', () => {
 		afterEach(() => {
 			vi.useRealTimers()
