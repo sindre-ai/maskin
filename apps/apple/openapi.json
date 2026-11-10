@@ -16272,53 +16272,106 @@
 												]
 											},
 											"daily_budget": {
-												"type": "object",
-												"properties": {
-													"unit": {
-														"type": "string",
-														"enum": [
-															"tokens",
-															"dollars"
+												"anyOf": [
+													{
+														"type": "object",
+														"properties": {
+															"unit": {
+																"type": "string",
+																"enum": [
+																	"percent"
+																]
+															},
+															"amount": {
+																"type": "number",
+																"exclusiveMinimum": 0,
+																"maximum": 100
+															},
+															"stop_share": {
+																"anyOf": [
+																	{
+																		"type": "number",
+																		"enum": [
+																			80
+																		]
+																	},
+																	{
+																		"type": "number",
+																		"enum": [
+																			90
+																		]
+																	},
+																	{
+																		"type": "number",
+																		"enum": [
+																			100
+																		]
+																	}
+																],
+																"default": 100
+															},
+															"timezone": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 64,
+																"default": "UTC"
+															}
+														},
+														"required": [
+															"unit",
+															"amount"
 														]
 													},
-													"amount": {
-														"type": "number",
-														"exclusiveMinimum": 0,
-														"maximum": 1000000000000
-													},
-													"stop_share": {
-														"anyOf": [
-															{
-																"type": "number",
+													{
+														"type": "object",
+														"properties": {
+															"unit": {
+																"type": "string",
 																"enum": [
-																	80
+																	"tokens",
+																	"dollars"
 																]
 															},
-															{
+															"amount": {
 																"type": "number",
-																"enum": [
-																	90
-																]
+																"exclusiveMinimum": 0,
+																"maximum": 1000000000000
 															},
-															{
-																"type": "number",
-																"enum": [
-																	100
-																]
+															"stop_share": {
+																"anyOf": [
+																	{
+																		"type": "number",
+																		"enum": [
+																			80
+																		]
+																	},
+																	{
+																		"type": "number",
+																		"enum": [
+																			90
+																		]
+																	},
+																	{
+																		"type": "number",
+																		"enum": [
+																			100
+																		]
+																	}
+																],
+																"default": 100
+															},
+															"timezone": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 64,
+																"default": "UTC"
 															}
-														],
-														"default": 100
-													},
-													"timezone": {
-														"type": "string",
-														"minLength": 1,
-														"maxLength": 64,
-														"default": "UTC"
+														},
+														"required": [
+															"unit",
+															"amount"
+														]
 													}
-												},
-												"required": [
-													"unit",
-													"amount"
 												]
 											},
 											"voice": {
@@ -17444,53 +17497,106 @@
 												]
 											},
 											"daily_budget": {
-												"type": "object",
-												"properties": {
-													"unit": {
-														"type": "string",
-														"enum": [
-															"tokens",
-															"dollars"
+												"anyOf": [
+													{
+														"type": "object",
+														"properties": {
+															"unit": {
+																"type": "string",
+																"enum": [
+																	"percent"
+																]
+															},
+															"amount": {
+																"type": "number",
+																"exclusiveMinimum": 0,
+																"maximum": 100
+															},
+															"stop_share": {
+																"anyOf": [
+																	{
+																		"type": "number",
+																		"enum": [
+																			80
+																		]
+																	},
+																	{
+																		"type": "number",
+																		"enum": [
+																			90
+																		]
+																	},
+																	{
+																		"type": "number",
+																		"enum": [
+																			100
+																		]
+																	}
+																],
+																"default": 100
+															},
+															"timezone": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 64,
+																"default": "UTC"
+															}
+														},
+														"required": [
+															"unit",
+															"amount"
 														]
 													},
-													"amount": {
-														"type": "number",
-														"exclusiveMinimum": 0,
-														"maximum": 1000000000000
-													},
-													"stop_share": {
-														"anyOf": [
-															{
-																"type": "number",
+													{
+														"type": "object",
+														"properties": {
+															"unit": {
+																"type": "string",
 																"enum": [
-																	80
+																	"tokens",
+																	"dollars"
 																]
 															},
-															{
+															"amount": {
 																"type": "number",
-																"enum": [
-																	90
-																]
+																"exclusiveMinimum": 0,
+																"maximum": 1000000000000
 															},
-															{
-																"type": "number",
-																"enum": [
-																	100
-																]
+															"stop_share": {
+																"anyOf": [
+																	{
+																		"type": "number",
+																		"enum": [
+																			80
+																		]
+																	},
+																	{
+																		"type": "number",
+																		"enum": [
+																			90
+																		]
+																	},
+																	{
+																		"type": "number",
+																		"enum": [
+																			100
+																		]
+																	}
+																],
+																"default": 100
+															},
+															"timezone": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 64,
+																"default": "UTC"
 															}
-														],
-														"default": 100
-													},
-													"timezone": {
-														"type": "string",
-														"minLength": 1,
-														"maxLength": 64,
-														"default": "UTC"
+														},
+														"required": [
+															"unit",
+															"amount"
+														]
 													}
-												},
-												"required": [
-													"unit",
-													"amount"
 												]
 											},
 											"voice": {
@@ -40732,7 +40838,7 @@
 				"tags": [
 					"billing"
 				],
-				"summary": "The workspace daily target and whether the dollar unit can be used",
+				"summary": "The workspace daily target, as a percent of the plan",
 				"parameters": [
 					{
 						"schema": {
@@ -40746,7 +40852,7 @@
 				],
 				"responses": {
 					"200": {
-						"description": "Current daily target (null when off) and the dollar-unit check",
+						"description": "Current daily target (null when off), in percent of the plan",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -40761,14 +40867,13 @@
 												"unit": {
 													"type": "string",
 													"enum": [
-														"tokens",
-														"dollars"
+														"percent"
 													]
 												},
 												"amount": {
 													"type": "number",
 													"exclusiveMinimum": 0,
-													"maximum": 1000000000000
+													"maximum": 100
 												},
 												"stop_share": {
 													"anyOf": [
@@ -40805,53 +40910,36 @@
 												"amount"
 											]
 										},
-										"dollar_unit": {
-											"type": "object",
+										"earlier_target": {
+											"type": [
+												"object",
+												"null"
+											],
 											"properties": {
-												"available": {
-													"type": "boolean"
-												},
-												"reason": {
-													"type": [
-														"string",
-														"null"
+												"unit": {
+													"type": "string",
+													"enum": [
+														"tokens",
+														"dollars"
 													]
 												},
-												"days": {
-													"type": "array",
-													"items": {
-														"type": "object",
-														"properties": {
-															"date": {
-																"type": "string"
-															},
-															"ended_sessions": {
-																"type": "integer",
-																"minimum": 0
-															},
-															"zero_cost_sessions": {
-																"type": "integer",
-																"minimum": 0
-															}
-														},
-														"required": [
-															"date",
-															"ended_sessions",
-															"zero_cost_sessions"
-														]
-													}
+												"converted": {
+													"type": "boolean"
 												}
 											},
 											"required": [
-												"available",
-												"reason",
-												"days"
+												"unit",
+												"converted"
 											]
+										},
+										"plan_limit_known": {
+											"type": "boolean"
 										}
 									},
 									"required": [
 										"daily_budget",
-										"dollar_unit"
+										"earlier_target",
+										"plan_limit_known"
 									]
 								}
 							}
@@ -40949,14 +41037,13 @@
 											"unit": {
 												"type": "string",
 												"enum": [
-													"tokens",
-													"dollars"
+													"percent"
 												]
 											},
 											"amount": {
 												"type": "number",
 												"exclusiveMinimum": 0,
-												"maximum": 1000000000000
+												"maximum": 100
 											},
 											"stop_share": {
 												"anyOf": [
@@ -41018,14 +41105,13 @@
 												"unit": {
 													"type": "string",
 													"enum": [
-														"tokens",
-														"dollars"
+														"percent"
 													]
 												},
 												"amount": {
 													"type": "number",
 													"exclusiveMinimum": 0,
-													"maximum": 1000000000000
+													"maximum": 100
 												},
 												"stop_share": {
 													"anyOf": [
@@ -41062,53 +41148,36 @@
 												"amount"
 											]
 										},
-										"dollar_unit": {
-											"type": "object",
+										"earlier_target": {
+											"type": [
+												"object",
+												"null"
+											],
 											"properties": {
-												"available": {
-													"type": "boolean"
-												},
-												"reason": {
-													"type": [
-														"string",
-														"null"
+												"unit": {
+													"type": "string",
+													"enum": [
+														"tokens",
+														"dollars"
 													]
 												},
-												"days": {
-													"type": "array",
-													"items": {
-														"type": "object",
-														"properties": {
-															"date": {
-																"type": "string"
-															},
-															"ended_sessions": {
-																"type": "integer",
-																"minimum": 0
-															},
-															"zero_cost_sessions": {
-																"type": "integer",
-																"minimum": 0
-															}
-														},
-														"required": [
-															"date",
-															"ended_sessions",
-															"zero_cost_sessions"
-														]
-													}
+												"converted": {
+													"type": "boolean"
 												}
 											},
 											"required": [
-												"available",
-												"reason",
-												"days"
+												"unit",
+												"converted"
 											]
+										},
+										"plan_limit_known": {
+											"type": "boolean"
 										}
 									},
 									"required": [
 										"daily_budget",
-										"dollar_unit"
+										"earlier_target",
+										"plan_limit_known"
 									]
 								}
 							}
@@ -41173,63 +41242,6 @@
 					},
 					"404": {
 						"description": "Workspace not found",
-						"content": {
-							"application/json": {
-								"schema": {
-									"type": "object",
-									"properties": {
-										"error": {
-											"type": "object",
-											"properties": {
-												"code": {
-													"type": "string"
-												},
-												"message": {
-													"type": "string"
-												},
-												"details": {
-													"type": "array",
-													"items": {
-														"type": "object",
-														"properties": {
-															"field": {
-																"type": "string"
-															},
-															"message": {
-																"type": "string"
-															},
-															"expected": {
-																"type": "string"
-															},
-															"received": {
-																"type": "string"
-															}
-														},
-														"required": [
-															"field",
-															"message"
-														]
-													}
-												},
-												"suggestion": {
-													"type": "string"
-												}
-											},
-											"required": [
-												"code",
-												"message"
-											]
-										}
-									},
-									"required": [
-										"error"
-									]
-								}
-							}
-						}
-					},
-					"409": {
-						"description": "The dollar unit is locked until cost numbers are reliable",
 						"content": {
 							"application/json": {
 								"schema": {
