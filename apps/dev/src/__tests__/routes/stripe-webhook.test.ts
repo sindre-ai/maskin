@@ -2,6 +2,13 @@ import { randomUUID } from 'node:crypto'
 import type Stripe from 'stripe'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('../../lib/analytics/posthog', async () => {
+	const actual = await vi.importActual<typeof import('../../lib/analytics/posthog')>(
+		'../../lib/analytics/posthog',
+	)
+	return { ...actual, capturePosthogEvent: vi.fn(async () => {}) }
+})
+
 vi.mock('../../lib/stripe', async () => {
 	const actual = await vi.importActual<typeof import('../../lib/stripe')>('../../lib/stripe')
 	return {
@@ -11,6 +18,8 @@ vi.mock('../../lib/stripe', async () => {
 	}
 })
 
+import { capturePosthogEvent } from '../../lib/analytics/posthog'
+import { logger } from '../../lib/logger'
 import { verifyStripeWebhook } from '../../lib/stripe'
 import stripeWebhookRoutes from '../../routes/stripe-webhook'
 import { createTestApp } from '../setup'
@@ -27,6 +36,10 @@ const VALID_ENV = {
 	STRIPE_WEBHOOK_SECRET: 'whsec_x',
 	STRIPE_PRICE_PRO: 'price_pro',
 	STRIPE_PRICE_TEAM: 'price_team',
+	STRIPE_PRICE_STARTER_DKK: 'price_starter_dkk',
+	STRIPE_PRICE_PRO_DKK: 'price_pro_dkk',
+	STRIPE_PRICE_TEAM_DKK: 'price_team_dkk',
+	STRIPE_PRICE_ULTRA_DKK: 'price_ultra_dkk',
 	STRIPE_PRICE_CREDITS_CUSTOM: 'price_credits_custom_test',
 	STRIPE_PRICE_LINKEDIN_IDENTITY: 'price_linkedin',
 }
@@ -40,6 +53,7 @@ const clearEnv = () => {
 
 beforeEach(() => {
 	vi.mocked(verifyStripeWebhook).mockReset()
+	vi.mocked(capturePosthogEvent).mockClear()
 	clearEnv()
 	setupEnv()
 })
@@ -1081,5 +1095,274 @@ describe('POST /api/webhooks/stripe', () => {
 		const billing = findWorkspaceUpdate(calls.updates).settings.billing
 		expect(billing.plan).toBe('pro')
 		expect(billing.stripe_subscription_id).toBe('sub_plan')
+	})
+
+	// ── Five plans in kroner ─────────────────────────────────────────────
+	// The kroner prices (STRIPE_PRICE_*_DKK) are the ones checkout sells and get
+	// the plan's included amount at 7 kr per dollar. The two old dollar prices
+	// (STRIPE_PRICE_PRO / STRIPE_PRICE_TEAM) stay mapped, with their old dollar
+	// caps, until the one paying customer is moved by hand.
+	function subscriptionEvent(
+		workspaceId: string,
+		type: 'customer.subscription.created' | 'customer.subscription.updated',
+		items: Array<{ id?: string; price: { id: string } }>,
+	) {
+		return {
+			id: `evt_${type}_${items.map((i) => i.price.id).join('_')}`,
+			type,
+			data: {
+				object: {
+					id: 'sub_dkk',
+					customer: 'cus_dkk',
+					status: 'active',
+					current_period_start: 1_700_000_000,
+					current_period_end: 1_702_592_000,
+					metadata: { workspace_id: workspaceId },
+					items: { data: items },
+				},
+			},
+		} as unknown as Stripe.Event
+	}
+
+	it.each([
+		['price_starter_dkk', 'starter', 286],
+		['price_pro_dkk', 'pro', 714],
+		['price_team_dkk', 'team', 1_571],
+		['price_ultra_dkk', 'ultra', 4_286],
+	])('maps the kroner price %s to %s with the new stored cap %i', async (priceId, plan, cap) => {
+		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+		mockResults.insertQueue = [[{ id: `claim-dkk-${plan}` }]]
+		mockResults.select = STRIPE_SYSTEM_ACTOR
+		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }]]
+
+		vi.mocked(verifyStripeWebhook).mockReturnValue(
+			subscriptionEvent(workspaceId, 'customer.subscription.updated', [{ price: { id: priceId } }]),
+		)
+
+		const res = await postWebhook(app, {})
+		expect(res.status).toBe(200)
+		const update = findWorkspaceUpdate(calls.updates)
+		expect(update.settings.billing).toMatchObject({
+			plan,
+			status: 'active',
+			hard_cap_usd_cents: cap,
+			stripe_subscription_id: 'sub_dkk',
+		})
+	})
+
+	it.each([
+		['price_pro', 'pro', 4_900],
+		['price_team', 'team', 20_000],
+	])(
+		'keeps the old dollar cap for the old dollar price %s (%s, %i)',
+		async (priceId, plan, cap) => {
+			const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+			const workspaceId = randomUUID()
+			mockResults.insertQueue = [[{ id: `claim-usd-${plan}` }]]
+			mockResults.select = STRIPE_SYSTEM_ACTOR
+			mockResults.selectQueue = [[{ id: workspaceId, settings: {} }]]
+
+			vi.mocked(verifyStripeWebhook).mockReturnValue(
+				subscriptionEvent(workspaceId, 'customer.subscription.updated', [
+					{ price: { id: priceId } },
+				]),
+			)
+
+			const res = await postWebhook(app, {})
+			expect(res.status).toBe(200)
+			const update = findWorkspaceUpdate(calls.updates)
+			expect(update.settings.billing).toMatchObject({ plan, hard_cap_usd_cents: cap })
+		},
+	)
+
+	it('rewrites the stored cap when a subscription moves from the old dollar price to a kroner price', async () => {
+		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+		mockResults.insertQueue = [[{ id: 'claim-usd-to-dkk' }]]
+		mockResults.select = STRIPE_SYSTEM_ACTOR
+		mockResults.selectQueue = [
+			[
+				{
+					id: workspaceId,
+					settings: { billing: { plan: 'pro', status: 'active', hard_cap_usd_cents: 4_900 } },
+				},
+			],
+		]
+
+		vi.mocked(verifyStripeWebhook).mockReturnValue(
+			subscriptionEvent(workspaceId, 'customer.subscription.updated', [
+				{ price: { id: 'price_pro_dkk' } },
+			]),
+		)
+
+		const res = await postWebhook(app, {})
+		expect(res.status).toBe(200)
+		const update = findWorkspaceUpdate(calls.updates)
+		expect(update.settings.billing).toMatchObject({ plan: 'pro', hard_cap_usd_cents: 714 })
+	})
+
+	it('finds the plan item when it is the second item and the LinkedIn add-on comes first', async () => {
+		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+		mockResults.insertQueue = [[{ id: 'claim-second-item' }]]
+		mockResults.select = STRIPE_SYSTEM_ACTOR
+		mockResults.selectQueue = [[{ id: workspaceId, settings: { billing: { plan: 'trial' } } }]]
+
+		vi.mocked(verifyStripeWebhook).mockReturnValue(
+			subscriptionEvent(workspaceId, 'customer.subscription.updated', [
+				{ id: 'si_addon', price: { id: 'price_linkedin' } },
+				{ id: 'si_plan', price: { id: 'price_ultra_dkk' } },
+			]),
+		)
+
+		const res = await postWebhook(app, {})
+		expect(res.status).toBe(200)
+		const billing = findWorkspaceUpdate(calls.updates).settings.billing
+		// Read as the plan's subscription (not the add-on's): plan, cap and
+		// subscription id are all written, and the add-on id is not.
+		expect(billing).toMatchObject({
+			plan: 'ultra',
+			hard_cap_usd_cents: 4_286,
+			stripe_subscription_id: 'sub_dkk',
+		})
+		expect(billing.linkedin_addon_subscription_id).toBeUndefined()
+	})
+
+	it('logs a loud error and leaves the plan and cap unchanged for an unknown price', async () => {
+		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+		mockResults.insertQueue = [[{ id: 'claim-unknown-price' }]]
+		mockResults.select = STRIPE_SYSTEM_ACTOR
+		mockResults.selectQueue = [
+			[
+				{
+					id: workspaceId,
+					settings: { billing: { plan: 'pro', status: 'active', hard_cap_usd_cents: 714 } },
+				},
+			],
+		]
+		const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {})
+
+		vi.mocked(verifyStripeWebhook).mockReturnValue(
+			subscriptionEvent(workspaceId, 'customer.subscription.updated', [
+				{ price: { id: 'price_mystery' } },
+			]),
+		)
+
+		try {
+			const res = await postWebhook(app, {})
+			expect(res.status).toBe(200)
+			expect(errorSpy).toHaveBeenCalledWith(
+				'Stripe subscription has no known plan price - plan left unchanged',
+				expect.objectContaining({
+					workspaceId,
+					subscriptionId: 'sub_dkk',
+					priceIds: ['price_mystery'],
+				}),
+			)
+			const update = findWorkspaceUpdate(calls.updates)
+			expect(update.settings.billing).toMatchObject({ plan: 'pro', hard_cap_usd_cents: 714 })
+		} finally {
+			errorSpy.mockRestore()
+		}
+	})
+
+	it('captures checkout_completed with plan, currency and from_trial for a first purchase', async () => {
+		const { app, mockResults } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+		mockResults.insertQueue = [[{ id: 'claim-checkout-trial' }]]
+		mockResults.select = STRIPE_SYSTEM_ACTOR
+		mockResults.selectQueue = [
+			[{ id: workspaceId, settings: { billing: { plan: 'trial', status: 'active' } } }],
+		]
+
+		vi.mocked(verifyStripeWebhook).mockReturnValue({
+			id: 'evt_checkout_completed_trial',
+			type: 'checkout.session.completed',
+			data: {
+				object: {
+					id: 'cs_starter_1',
+					mode: 'subscription',
+					currency: 'dkk',
+					client_reference_id: workspaceId,
+					customer: 'cus_42',
+					subscription: 'sub_42',
+					metadata: { workspace_id: workspaceId, plan: 'starter' },
+				},
+			},
+		} as unknown as Stripe.Event)
+
+		const res = await postWebhook(app, {})
+		expect(res.status).toBe(200)
+		expect(capturePosthogEvent).toHaveBeenCalledWith('checkout_completed', 'cus_42', {
+			plan: 'starter',
+			currency: 'dkk',
+			from_trial: true,
+		})
+	})
+
+	it('captures checkout_completed with from_trial false when the workspace is already on a paid plan', async () => {
+		const { app, mockResults } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+		mockResults.insertQueue = [[{ id: 'claim-checkout-upgrade' }]]
+		mockResults.select = STRIPE_SYSTEM_ACTOR
+		mockResults.selectQueue = [
+			[{ id: workspaceId, settings: { billing: { plan: 'pro', status: 'active' } } }],
+		]
+
+		vi.mocked(verifyStripeWebhook).mockReturnValue({
+			id: 'evt_checkout_completed_upgrade',
+			type: 'checkout.session.completed',
+			data: {
+				object: {
+					id: 'cs_ultra_1',
+					mode: 'subscription',
+					currency: 'dkk',
+					client_reference_id: workspaceId,
+					customer: 'cus_42',
+					subscription: 'sub_42',
+					metadata: { workspace_id: workspaceId, plan: 'ultra' },
+				},
+			},
+		} as unknown as Stripe.Event)
+
+		const res = await postWebhook(app, {})
+		expect(res.status).toBe(200)
+		expect(capturePosthogEvent).toHaveBeenCalledWith('checkout_completed', 'cus_42', {
+			plan: 'ultra',
+			currency: 'dkk',
+			from_trial: false,
+		})
+	})
+
+	it('does not capture checkout_completed for the LinkedIn add-on checkout', async () => {
+		const { app, mockResults } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+		mockResults.insertQueue = [[{ id: 'claim-checkout-addon-event' }]]
+		mockResults.select = STRIPE_SYSTEM_ACTOR
+		mockResults.selectQueue = [
+			[{ id: workspaceId, settings: { billing: { plan: 'trial', status: 'active' } } }],
+		]
+
+		vi.mocked(verifyStripeWebhook).mockReturnValue({
+			id: 'evt_checkout_addon_no_capture',
+			type: 'checkout.session.completed',
+			data: {
+				object: {
+					id: 'cs_addon_1',
+					mode: 'subscription',
+					currency: 'usd',
+					client_reference_id: workspaceId,
+					customer: 'cus_1',
+					subscription: 'sub_addon',
+					metadata: { kind: 'linkedin_identity_addon', workspace_id: workspaceId },
+				},
+			},
+		} as unknown as Stripe.Event)
+
+		expect((await postWebhook(app, {})).status).toBe(200)
+		const names = vi.mocked(capturePosthogEvent).mock.calls.map((c) => c[0])
+		expect(names).not.toContain('checkout_completed')
 	})
 })
