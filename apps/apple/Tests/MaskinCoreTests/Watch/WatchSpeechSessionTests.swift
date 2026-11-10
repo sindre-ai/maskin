@@ -55,7 +55,8 @@ struct SpeechPlaybackTests {
 	@Test func aStartThatNeverMakesSoundFails() {
 		var playback = SpeechPlayback()
 		playback.begin()
-		#expect(playback.startTimedOut())
+		let failed = playback.startTimedOut()
+		#expect(failed)
 		#expect(playback.phase == .failed)
 		#expect(!playback.isActive)
 	}
@@ -64,7 +65,8 @@ struct SpeechPlaybackTests {
 		var playback = SpeechPlayback()
 		playback.begin()
 		playback.audioStarted()
-		#expect(!playback.startTimedOut())
+		let failed = playback.startTimedOut()
+		#expect(!failed)
 		#expect(playback.phase == .speaking)
 	}
 
