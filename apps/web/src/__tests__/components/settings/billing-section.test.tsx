@@ -494,7 +494,8 @@ describe('BillingSection', () => {
 
 		await screen.findByText('Pro — 249 kr/mo')
 		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
-		expect(screen.getAllByText(/of usage included each month/).length).toBeGreaterThan(0)
+		expect(screen.getAllByText('Usage included each month').length).toBeGreaterThan(0)
+		expect(screen.queryByText(/kr of usage|on the house/)).not.toBeInTheDocument()
 		expect(screen.queryByText(/Buy usage credits any time/)).not.toBeInTheDocument()
 	})
 

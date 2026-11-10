@@ -16,8 +16,8 @@
  *      billing-section.test.tsx                        (frontend pinned literals)
  *   5. apps/web/src/components/settings/
  *      billing-section.tsx and
- *      apps/web/src/components/billing/plan-picker.tsx (must read prices and included usage from
- *                                                       the shared file, not carry a copy)
+ *      apps/web/src/components/billing/plan-picker.tsx (must read prices from the shared
+ *                                                       file, not carry a copy)
  *
  * A bumper who edits one but forgets to grep the others silently drifts prod
  * away from `.env.example` and the frontend tests. JSDoc cross-references are
@@ -175,8 +175,8 @@ const expected = {}
 	observed.push({ path, pinned: [...seen].sort((a, b) => a - b) })
 }
 
-// Site 5 — web files that show prices and included usage must read them from
-// the shared file instead of carrying their own copy.
+// Site 5 — web files that show prices must read them from the shared file
+// instead of carrying their own copy. Plan cards show no usage amount.
 for (const path of [
 	'apps/web/src/components/settings/billing-section.tsx',
 	'apps/web/src/components/billing/plan-picker.tsx',
@@ -187,12 +187,6 @@ for (const path of [
 	}
 	if (/CAP_DEFAULTS/.test(source)) {
 		errors.push(`${path}: CAP_DEFAULTS is gone — included usage comes from INCLUDED_USAGE_DKK`)
-	}
-}
-{
-	const path = 'apps/web/src/components/settings/billing-section.tsx'
-	if (!read(path).includes('INCLUDED_USAGE_DKK')) {
-		errors.push(`${path}: must read included usage from INCLUDED_USAGE_DKK in @maskin/shared`)
 	}
 }
 
