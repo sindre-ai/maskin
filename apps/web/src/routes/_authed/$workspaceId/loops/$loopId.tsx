@@ -43,7 +43,13 @@ import { useLoopBriefingPages } from '@/hooks/use-briefings'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useLoadFailed } from '@/hooks/use-load-failed'
-import { useLoop, useLoopActivity, useLoopMembership, useObjectsByIds } from '@/hooks/use-loops'
+import {
+	useLoop,
+	useLoopActivity,
+	useLoopMembership,
+	useLoops,
+	useObjectsByIds,
+} from '@/hooks/use-loops'
 import { useNotifications } from '@/hooks/use-notifications'
 import { useDeleteObject, useObject, useUpdateObject } from '@/hooks/use-objects'
 import { useCreateTrigger, useTriggers } from '@/hooks/use-triggers'
@@ -399,6 +405,17 @@ function LoopDetailRoute() {
 		},
 		[loopId, updateObject],
 	)
+
+	// Tags other flows already use, A to Z, so a new tag can be picked instead of retyped.
+	const allLoops = useLoops(workspaceId)
+	const tagSuggestions = useMemo(() => {
+		const seen = new Map<string, string>()
+		for (const l of allLoops.data ?? [])
+			for (const t of l.tags) if (!seen.has(t.toLowerCase())) seen.set(t.toLowerCase(), t)
+		return [...seen.values()].sort((a, b) =>
+			a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }),
+		)
+	}, [allLoops.data])
 
 	const handleUpdateTags = useCallback(
 		async (tags: string[]) => {
@@ -803,7 +820,12 @@ function LoopDetailRoute() {
 								: `${needsYouRows.length} decisions needed`}
 						</span>
 					)}
-					<LoopTags tags={loop.tags} canWrite={canWrite && !!object} onChange={handleUpdateTags} />
+					<LoopTags
+						tags={loop.tags}
+						canWrite={canWrite && !!object}
+						onChange={handleUpdateTags}
+						suggestions={tagSuggestions}
+					/>
 				</div>
 
 				<div className="mt-6">
