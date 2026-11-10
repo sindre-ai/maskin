@@ -138,6 +138,8 @@ public enum ShareDestination: Sendable, Equatable, Hashable {
 	case filesOnly
 	/// A message in an existing conversation, with any files attached to it.
 	case chat(id: String)
+	/// A new chat with this agent; the share is its first message, files attached.
+	case newChat(agentID: String)
 }
 
 /// What the user decided in the sheet.
@@ -185,6 +187,13 @@ public enum ShareComposer {
 		let body = objectContent(note: note, content: content)
 		if !body.isEmpty { return body }
 		return content.suggestedTitle
+	}
+
+	/// The title of a chat started from a share: the user's, else the suggestion, else the app's
+	/// default new-chat title. The app renames chats later anyway.
+	public static func chatTitle(_ title: String, content: ShareContent) -> String {
+		let chosen = objectTitle(title, content: content)
+		return chosen.isEmpty ? ThreadLayout.defaultTitle(for: []) : chosen
 	}
 
 	/// The title sent to the server: the user's, else the suggestion. Trimmed and capped.

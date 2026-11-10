@@ -11,11 +11,14 @@ public actor SharePoster {
 		public var fileIDs: [UUID: String] = [:]
 		public var attached: Set<UUID> = []
 		public var messageSent = false
+		/// The chat a new-chat share created.
+		public var chatID: String?
 	}
 
 	public enum Step: Sendable, Equatable {
 		case creatingObject
 		case sendingMessage
+		case startingChat
 		case uploading(index: Int, of: Int)
 	}
 
@@ -91,6 +94,26 @@ public actor SharePoster {
 				progress.messageSent = true
 			}
 			return Outcome(conversationID: conversationID, fileIDs: refs.map(\.fileID))
+		case .newChat(let agentID):
+			var refs: [ChatAttachmentRef] = []
+			for (index, attachment) in attachments.enumerated() {
+				onStep(.uploading(index: index + 1, of: attachments.count))
+				let fileID = try await upload(attachment)
+				refs.append(
+					ChatAttachmentRef(
+						fileID: fileID, name: attachment.name, mimeType: attachment.mimeType,
+						sizeBytes: attachment.sizeBytes))
+			}
+			// The chat and its first message go out in one request, under their own key, so a
+			// retry can never start a second chat or leave an empty one.
+			if progress.chatID == nil {
+				onStep(.startingChat)
+				progress.chatID = try await remote.createChat(
+					agentID: agentID, title: ShareComposer.chatTitle(request.title, content: request.content),
+					content: ShareComposer.chatMessage(note: request.note, content: request.content),
+					attachments: refs, idempotencyKey: "\(base)-chat")
+			}
+			return Outcome(conversationID: progress.chatID, fileIDs: refs.map(\.fileID))
 		case .filesOnly:
 			guard !attachments.isEmpty else { throw ShareError.nothingToShare }
 			for (index, attachment) in attachments.enumerated() {

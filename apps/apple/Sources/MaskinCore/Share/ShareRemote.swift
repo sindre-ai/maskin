@@ -25,6 +25,22 @@ public struct ShareConversation: Sendable, Equatable, Identifiable {
 	}
 }
 
+/// An agent a share can start a chat with.
+public struct ShareAgent: Sendable, Equatable, Identifiable {
+	public var id: String
+	public var name: String
+	/// The agent's role line (its description), when it has one.
+	public var role: String?
+	public var isChiefOfStaff: Bool
+
+	public init(id: String, name: String, role: String? = nil, isChiefOfStaff: Bool = false) {
+		self.id = id
+		self.name = name
+		self.role = role
+		self.isChiefOfStaff = isChiefOfStaff
+	}
+}
+
 /// What the share needs from the server. A protocol so posting is tested without one; the
 /// production implementation wraps the generated client.
 public protocol ShareRemote: Sendable {
@@ -35,6 +51,14 @@ public protocol ShareRemote: Sendable {
 	func workspaces() async throws -> [ShareWorkspace]
 	/// Recent, unarchived conversations of the workspace, newest first.
 	func conversations() async throws -> [ShareConversation]
+	/// The workspace's agents (`GET /api/actors`, agents only): Chief of Staff first, then by name.
+	func agents() async throws -> [ShareAgent]
+	/// `POST /api/conversations`: a new chat with `agentID`, the first message and its files in one
+	/// call. Returns the chat's id. Failures carry the real status: a hiccup or no connection is
+	/// transient, content the server refuses is `rejected`, and nothing here is ever `unknown`.
+	func createChat(
+		agentID: String, title: String, content: String, attachments: [ChatAttachmentRef], idempotencyKey: String
+	) async throws -> String
 	/// `POST /api/conversations/{id}/messages`.
 	func sendChatMessage(
 		conversationID: String, content: String, attachments: [ChatAttachmentRef], idempotencyKey: String
@@ -52,6 +76,10 @@ public protocol ShareRemote: Sendable {
 extension ShareRemote {
 	public func workspaces() async throws -> [ShareWorkspace] { try await [workspace()] }
 	public func conversations() async throws -> [ShareConversation] { [] }
+	public func agents() async throws -> [ShareAgent] { [] }
+	public func createChat(
+		agentID: String, title: String, content: String, attachments: [ChatAttachmentRef], idempotencyKey: String
+	) async throws -> String { throw ShareError.rejected }
 	public func sendChatMessage(
 		conversationID: String, content: String, attachments: [ChatAttachmentRef], idempotencyKey: String
 	) async throws { throw ShareError.rejected }
@@ -102,6 +130,35 @@ public struct APIShareRemote: ShareRemote {
 				.list(archived: false, limit: 25, offset: 0)
 			return page.conversations.map { ShareConversation(id: $0.id, title: $0.title) }
 		} catch { throw Self.map(error) }
+	}
+
+	public func agents() async throws -> [ShareAgent] {
+		do {
+			let actors = try await APIChatsSource(client: client, workspaceID: workspaceID).actors()
+			return actors.filter { $0.participant.kind == .agent }
+				.map {
+					ShareAgent(
+						id: $0.id, name: $0.participant.name, role: $0.summary, isChiefOfStaff: $0.isChiefOfStaff)
+				}
+				.sorted { ($0.isChiefOfStaff ? 0 : 1, $0.name) < ($1.isChiefOfStaff ? 0 : 1, $1.name) }
+		} catch { throw Self.map(error) }
+	}
+
+	public func createChat(
+		agentID: String, title: String, content: String, attachments: [ChatAttachmentRef], idempotencyKey: String
+	) async throws -> String {
+		do {
+			let created = try await APIChatsSource(client: client, workspaceID: workspaceID).create(
+				title: title, participantIDs: [agentID], initialMessage: content,
+				initialMetadata: ChatSendMetadata(attachments: attachments), idempotencyKey: idempotencyKey)
+			return created.id
+		} catch {
+			// The saved-share cleanup deletes what it can't name, and a share must never be lost to
+			// a failure nobody understood: anything unnamed here counts as a server problem to retry.
+			if let chats = error as? ChatsError, let status = chats.status { throw Self.failure(status: status) }
+			let mapped = Self.map(error)
+			throw mapped == .unknown ? ShareError.server : mapped
+		}
 	}
 
 	public func sendChatMessage(
