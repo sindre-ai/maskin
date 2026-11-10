@@ -155,6 +155,7 @@ describe('Integrations Routes', () => {
 				'atlassian',
 				'attio',
 				'canva',
+				'clickup',
 				'github',
 				'gmail',
 				'google-calendar',

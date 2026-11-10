@@ -37,6 +37,7 @@ export const GATEWAY_PROVIDERS: ReadonlySet<string> = new Set([
 	'atlassian',
 	'attio',
 	'canva',
+	'clickup',
 	'gmail',
 	'google-calendar',
 	'linear',
