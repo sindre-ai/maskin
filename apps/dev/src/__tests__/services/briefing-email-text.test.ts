@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSummaryEmail, pickNextStep } from '../../services/briefing-email-text'
+import { STEP_LESSON, buildSummaryEmail, pickNextStep } from '../../services/briefing-email-text'
 import type { BriefingText } from '../../services/briefing-push-scheduler'
 
 const summary = (over: Partial<BriefingText> = {}): BriefingText => ({
@@ -46,16 +46,26 @@ describe('buildSummaryEmail', () => {
 		})
 	})
 
-	it('adds a teaching block on steps 1 to 3 and none on the daily mail', () => {
+	it('gives steps 1, 2 and 3 their own lesson and the daily mail none', () => {
 		const text = (step: 1 | 2 | 3 | 'daily') =>
 			buildSummaryEmail({ summary: summary(), step, ...urls }).text
-		expect(text(1)).toContain('A card is one thing waiting on you.')
-		expect(text(2)).toContain('A loop is a routine')
-		expect(text(3)).toContain('What you can do next')
+		const lessons = Object.values(STEP_LESSON)
+		expect(new Set(lessons).size).toBe(3)
+		expect(text(1)).toContain(STEP_LESSON[1])
+		expect(text(2)).toContain(STEP_LESSON[2])
+		expect(text(3)).toContain(STEP_LESSON[3])
+		for (const step of [1, 2, 3] as const) {
+			const others = lessons.filter((l) => l !== STEP_LESSON[step])
+			for (const other of others) expect(text(step)).not.toContain(other)
+		}
 		const daily = text('daily')
-		expect(daily).not.toContain('A card is')
-		expect(daily).not.toContain('A loop is')
-		expect(daily).not.toContain('What you can do next')
+		for (const lesson of lessons) expect(daily).not.toContain(lesson)
+	})
+
+	it('carries the same lesson in the html part', () => {
+		const html = buildSummaryEmail({ summary: summary(), step: 2, ...urls }).html
+		expect(html).toContain('A flow is a team of agents')
+		expect(html).not.toContain('A card is something')
 	})
 
 	it('has the three parts: done for you, waiting on you, next step', () => {

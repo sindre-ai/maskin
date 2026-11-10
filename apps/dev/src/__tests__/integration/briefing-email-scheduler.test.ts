@@ -25,6 +25,7 @@ import {
 	emailRecipientRuleSql,
 	selectEmailRecipients,
 } from '../../services/briefing-email-scheduler'
+import { STEP_LESSON } from '../../services/briefing-email-text'
 import {
 	insertActor,
 	insertNotification,
@@ -147,7 +148,7 @@ describe('summary email: who gets it', () => {
 
 		for (const p of [noRow, emptyRow]) {
 			expect(sentTo(p.email)).toHaveLength(1)
-			expect(sentTo(p.email)[0]?.[0].text).toContain('A card is one thing waiting on you.')
+			expect(sentTo(p.email)[0]?.[0].text).toContain(STEP_LESSON[1])
 			expect(await prefsRow(p.actorId)).toMatchObject({
 				emailDigestEnabled: true,
 				emailOnboardingStep: 1,
@@ -161,10 +162,10 @@ describe('summary email: who gets it', () => {
 		}
 		expect(await sends(1)).toBe(1)
 		expect(await sends(2)).toBe(2)
-		expect(sentTo(noRow.email)[1]?.[0].text).toContain('A loop is a routine')
+		expect(sentTo(noRow.email)[1]?.[0].text).toContain(STEP_LESSON[2])
 		expect(await sends(5)).toBe(2)
 		expect(await sends(6)).toBe(3)
-		expect(sentTo(noRow.email)[2]?.[0].text).toContain('What you can do next')
+		expect(sentTo(noRow.email)[2]?.[0].text).toContain(STEP_LESSON[3])
 	})
 
 	it('after step 3 it is one mail every day, and none on a day with nothing to say', async () => {
@@ -180,7 +181,7 @@ describe('summary email: who gets it', () => {
 		await new BriefingEmailScheduler(db, ENV).tick(new Date(NOW.getTime() + 60_000))
 		expect(sentTo(p.email)).toHaveLength(1)
 		const text = sentTo(p.email)[0]?.[0].text as string
-		expect(text).not.toContain('A card is one thing')
+		for (const lesson of Object.values(STEP_LESSON)) expect(text).not.toContain(lesson)
 		expect(text).toContain('Waiting on you')
 		expect(text).toContain('Next step')
 

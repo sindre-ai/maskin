@@ -7,19 +7,22 @@
  * different number than the push or the For You screen. No AI call, no message bodies: only the
  * titles the push already shows.
  *
- * Steps 1 to 3 (the first three mails anyone gets, new or existing) also carry a short teaching
- * block of plain how-to and no offers. After that the mail is the plain daily summary.
+ * Steps 1 to 3 (the first three mails anyone gets, new or existing) also carry one short lesson
+ * each (a card, a flow, your results), plain how-to and no offers. After that the mail is the plain daily summary.
  */
 import { MAX_FINISHED_RUNS, clip } from './briefing-push-scheduler'
 import type { BriefingText } from './briefing-push-scheduler'
 
 export type EmailStep = 1 | 2 | 3 | 'daily'
 
-/** The teaching block per onboarding step. Plain help; nothing here may promise an unbuilt feature. */
-export const STEP_INTRO: Record<1 | 2 | 3, string> = {
-	1: 'A card is one thing waiting on you. Open it, pick an option, and the agent carries on.',
-	2: 'A loop is a routine your agents repeat on their own. You only see what needs you.',
-	3: 'What you can do next: open a card and pick an option, or start a chat with an agent and ask it for something.',
+/**
+ * The lesson per onboarding step: step 1 a card, step 2 a flow, step 3 your results. Plain help for
+ * every role; nothing here may promise an unbuilt feature. The daily mail carries none.
+ */
+export const STEP_LESSON: Record<1 | 2 | 3, string> = {
+	1: 'A card is something an agent needs from you: a decision, a draft to check or an answer. When one is waiting, the button below opens it.',
+	2: 'A flow is a team of agents that keeps working on a job for you, on a schedule or when something happens. The Flows page shows what yours are doing.',
+	3: 'Open any result you have not seen yet. You can reply to the agent in chat.',
 }
 
 /**
@@ -110,14 +113,14 @@ export function summarySections(summary: BriefingText, nextStep: string | null):
 
 export function buildSummaryEmail(input: SummaryEmailInput): SummaryEmail {
 	const { summary, step, buttonUrl, stopUrl, nextStep } = input
-	const intro = step === 'daily' ? null : STEP_INTRO[step]
+	const lesson = step === 'daily' ? null : STEP_LESSON[step]
 	const label = buttonLabel(summary)
 	const sections = summarySections(summary, nextStep)
 
 	const text = [
 		summary.title,
 		...sections.flatMap((s) => ['', s.heading, ...s.lines.map((l) => `- ${l}`)]),
-		...(intro ? ['', intro] : []),
+		...(lesson ? ['', lesson] : []),
 		'',
 		`${label}: ${buttonUrl}`,
 		'',
@@ -133,7 +136,7 @@ export function buildSummaryEmail(input: SummaryEmailInput): SummaryEmail {
 			(s) =>
 				`<p style="margin: 16px 0 4px; font-weight: 600;">${escapeHtml(s.heading)}</p><ul style="margin: 0; padding-left: 20px;">${s.lines.map((l) => `<li>${escapeHtml(l)}</li>`).join('')}</ul>`,
 		),
-		...(intro ? [`<p style="color: #444; margin: 16px 0;">${escapeHtml(intro)}</p>`] : []),
+		...(lesson ? [`<p style="color: #444; margin: 16px 0;">${escapeHtml(lesson)}</p>`] : []),
 		`<p><a href="${escapeHtml(buttonUrl)}" style="display: inline-block; background: #111; color: #fff; padding: 12px 20px; border-radius: 6px; text-decoration: none;">${escapeHtml(label)}</a></p>`,
 		`<p style="color: #666; font-size: 13px;"><a href="${escapeHtml(stopUrl)}" style="color: #666;">Stop these emails</a></p>`,
 		'</body>',
