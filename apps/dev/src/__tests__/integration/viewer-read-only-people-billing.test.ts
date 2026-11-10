@@ -106,12 +106,6 @@ describe('Viewer role is read-only on people and billing (Group D)', () => {
 			['invites resend', 'POST', `/api/invites/${inviteId}/resend`, undefined],
 			['invites revoke', 'DELETE', `/api/invites/${inviteId}`, undefined],
 			['billing checkout', 'POST', '/api/billing/checkout', { plan: 'pro', ...urls }],
-			[
-				'billing credits checkout',
-				'POST',
-				'/api/billing/credits/checkout',
-				{ amount_usd_cents: 2000, ...urls },
-			],
 			['billing cancel', 'POST', '/api/billing/cancel', undefined],
 		]
 	}

@@ -18626,8 +18626,10 @@ public enum Operations {
                             /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/billing/plan`.
                             @frozen public enum planPayload: String, Codable, Hashable, Sendable, CaseIterable {
                                 case trial = "trial"
+                                case starter = "starter"
                                 case pro = "pro"
                                 case team = "team"
+                                case ultra = "ultra"
                                 case enterprise = "enterprise"
                             }
                             /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/billing/plan`.
@@ -20655,8 +20657,10 @@ public enum Operations {
                             /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/billing/plan`.
                             @frozen public enum planPayload: String, Codable, Hashable, Sendable, CaseIterable {
                                 case trial = "trial"
+                                case starter = "starter"
                                 case pro = "pro"
                                 case team = "team"
+                                case ultra = "ultra"
                                 case enterprise = "enterprise"
                             }
                             /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/billing/plan`.
@@ -45955,8 +45959,10 @@ public enum Operations {
                         /// - Remark: Generated from `#/paths/api/billing/usage/GET/responses/200/content/json/plan`.
                         @frozen public enum planPayload: String, Codable, Hashable, Sendable, CaseIterable {
                             case trial = "trial"
+                            case starter = "starter"
                             case pro = "pro"
                             case team = "team"
+                            case ultra = "ultra"
                             case enterprise = "enterprise"
                         }
                         /// - Remark: Generated from `#/paths/api/billing/usage/GET/responses/200/content/json/plan`.

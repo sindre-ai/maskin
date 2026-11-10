@@ -1937,11 +1937,11 @@ export interface ClaudeOAuthImportInput {
 	nickname?: string
 }
 
-export type BillingPlan = 'trial' | 'pro' | 'team' | 'enterprise'
+export type BillingPlan = 'trial' | 'starter' | 'pro' | 'team' | 'ultra' | 'enterprise'
 export type BillingStatus = 'active' | 'past_due' | 'canceled' | 'incomplete'
 
 export interface BillingCheckoutInput {
-	plan: 'pro' | 'team'
+	plan: 'starter' | 'pro' | 'team' | 'ultra'
 	success_url: string
 	cancel_url: string
 }
@@ -1975,8 +1975,8 @@ export interface BillingUsageResponse {
 	stripe_customer_id: string | null
 	stripe_subscription_id: string | null
 	credit_balance_cents: number
-	// False when the credit top-up Price isn't configured on the server; the
-	// "Buy usage credits" entry points are hidden in that case.
+	// Always false now that the top-up is closed; the "Buy usage credits" entry
+	// points are hidden on false.
 	credit_topup_available: boolean
 	// $49/connected LinkedIn identity/month, shown as its own SKU on the plan
 	// surface — see apps/dev/src/lib/linkedin-addon.ts. Null when the workspace has no

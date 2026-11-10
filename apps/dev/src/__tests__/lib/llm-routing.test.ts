@@ -18,7 +18,9 @@ vi.mock('../../lib/crypto', () => ({
 import { API_KEY_CREDIT_MARK_WINDOW_MS, fingerprintStoredKey } from '../../lib/api-key-credit-mark'
 import {
 	PRO_HARD_CAP_DEFAULT_USD_CENTS,
+	STARTER_HARD_CAP_DEFAULT_USD_CENTS,
 	TEAM_HARD_CAP_DEFAULT_USD_CENTS,
+	ULTRA_HARD_CAP_DEFAULT_USD_CENTS,
 } from '../../lib/billing-defaults'
 import { preflightLlmCredentials } from '../../lib/llm-routing'
 import {
@@ -388,7 +390,7 @@ describe('resolveLlmRoute priority order', () => {
 			process.env.MASKIN_FALLBACK_MODEL = 'deepseek/deepseek-v4-flash'
 		})
 
-		it.each(['pro', 'team', 'trial'] as const)(
+		it.each(['starter', 'pro', 'team', 'ultra', 'trial'] as const)(
 			'%s plan routes through Maskin OR + Deepseek v4 Flash',
 			async (plan) => {
 				const settings = emptySettings()
@@ -718,8 +720,8 @@ describe('checkPlanCap', () => {
 	})
 
 	it('treats missing billing as trial — enforces cap when over limit', async () => {
-		// Trial default is $10.00 (1,000 cents); $10.01 of reported cost is over.
-		const db = dbWithSessionUsage([{ totalCostUsd: '10.01', inputTokens: 0, outputTokens: 0 }])
+		// Trial default is 20 kr, 286 cents at the fixed rate; $2.87 of reported cost is over.
+		const db = dbWithSessionUsage([{ totalCostUsd: '2.87', inputTokens: 0, outputTokens: 0 }])
 		const err = await checkPlanCap({
 			db,
 			workspaceId: 'ws-1',
@@ -728,7 +730,7 @@ describe('checkPlanCap', () => {
 		}).catch((e) => e)
 		expect(err).toBeInstanceOf(PlanCapExceededError)
 		expect(err.plan).toBe('trial')
-		expect(err.cap).toBe(1_000)
+		expect(err.cap).toBe(286)
 	})
 
 	it('is a no-op for enterprise — explicit opt-out', async () => {
@@ -746,8 +748,10 @@ describe('checkPlanCap', () => {
 	// bound on Maskin's OpenRouter account. The cap now falls back to the
 	// plan's published default instead of to infinity.
 	it.each([
+		['starter', STARTER_HARD_CAP_DEFAULT_USD_CENTS],
 		['pro', PRO_HARD_CAP_DEFAULT_USD_CENTS],
 		['team', TEAM_HARD_CAP_DEFAULT_USD_CENTS],
+		['ultra', ULTRA_HARD_CAP_DEFAULT_USD_CENTS],
 	] as const)(
 		'falls back to the %s default cap when Stripe has not written hard_cap_usd_cents',
 		async (plan, capCents) => {
@@ -763,8 +767,10 @@ describe('checkPlanCap', () => {
 	)
 
 	it.each([
+		['starter', STARTER_HARD_CAP_DEFAULT_USD_CENTS],
 		['pro', PRO_HARD_CAP_DEFAULT_USD_CENTS],
 		['team', TEAM_HARD_CAP_DEFAULT_USD_CENTS],
+		['ultra', ULTRA_HARD_CAP_DEFAULT_USD_CENTS],
 	] as const)(
 		'stays under the %s default cap when usage has not reached it',
 		async (plan, capCents) => {
