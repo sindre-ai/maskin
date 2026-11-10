@@ -108,7 +108,7 @@ test.describe('Loop page — custom view tabs', () => {
 
 			// Overview is the default page and carries no view or switch.
 			const frame = page.locator(FRAME)
-			await expect(page.getByRole('heading', { name: 'Pipeline' })).toBeVisible({
+			await expect(page.getByRole('tab', { name: 'Overview' })).toBeVisible({
 				timeout: 15_000,
 			})
 			await expect(frame).toHaveCount(0)
@@ -171,7 +171,7 @@ test.describe('Loop page — custom view tabs', () => {
 		const tabNames = (await page.getByRole('tab').allTextContents()).map((t) =>
 			t.replace(/\d+$/, ''),
 		)
-		expect(tabNames).toEqual(['Overview', 'Results', 'Pipeline view', 'Items', 'Activity', 'Setup'])
+		expect(tabNames).toEqual(['Overview', 'Items', 'Activity', 'Setup', 'Results', 'Pipeline view'])
 
 		await openTab(page, 'Pipeline view')
 		await expect(viewFrame(page).getByText('Second view heading')).toBeVisible({
@@ -243,10 +243,10 @@ test.describe('Loop page — custom view tabs', () => {
 				)
 			expect(await overflow()).toBeLessThanOrEqual(0)
 
-			// Overview brings back the triggers section.
-			await openTab(page, 'Overview')
+			// Setup brings back how the flow runs.
+			await openTab(page, 'Setup')
 			await expect(frame).toHaveCount(0)
-			await expect(page.getByRole('heading', { name: 'Pipeline' })).toBeVisible()
+			await expect(page.getByRole('heading', { name: 'How it runs' })).toBeVisible()
 			await expect(page.getByText('Triage feedback', { exact: true })).toBeVisible()
 			expect(await overflow()).toBeLessThanOrEqual(0)
 		})
@@ -341,8 +341,8 @@ test.describe('Loop page — custom view tabs', () => {
 		await openTab(page, 'Custom view')
 		await expect(page.getByText(/This view can't be shown/)).toBeVisible({ timeout: 15_000 })
 		await expect(page.locator(FRAME)).toHaveCount(0)
-		await openTab(page, 'Overview')
-		await expect(page.getByRole('heading', { name: 'Pipeline' })).toBeVisible()
+		await openTab(page, 'Setup')
+		await expect(page.getByRole('heading', { name: 'How it runs' })).toBeVisible()
 	})
 })
 

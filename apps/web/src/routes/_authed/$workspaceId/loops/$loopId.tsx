@@ -37,6 +37,7 @@ import {
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useActors } from '@/hooks/use-actors'
+import { useLoopBriefingPages } from '@/hooks/use-briefings'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useLoadFailed } from '@/hooks/use-load-failed'
@@ -52,7 +53,13 @@ import { cn } from '@/lib/cn'
 import { nextFireAt, nextFireLabel } from '@/lib/loop-next-fire'
 import { type LoopPlan, parseLoopDescription } from '@/lib/loop-plan'
 import { useWorkspace } from '@/lib/workspace-context'
-import { type LoopStatus, readLoopViews, useWaitingOnViewer } from '@maskin/shared'
+import {
+	type LoopStatus,
+	applyLoopView,
+	readLoopViews,
+	toLoopViewsMetadata,
+	useWaitingOnViewer,
+} from '@maskin/shared'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { Check, ChevronDown, MoreHorizontal, Pause, Play, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -166,9 +173,17 @@ function LoopDetailRoute() {
 	// that is no longer there falls back to Overview.
 	const views = useMemo(() => readLoopViews(object?.metadata), [object?.metadata])
 	const viewTabs = useMemo(() => views.map((view, i) => ({ ...view, value: `view-${i}` })), [views])
-	const activeView = viewTabs.find((v) => v.value === tab)
+	const activeViewIndex = viewTabs.findIndex((v) => v.value === tab)
+	const activeView = viewTabs[activeViewIndex]
+	// Briefings the flow's own agents wrote show as one more view, after the pinned ones.
+	const briefingPages = useLoopBriefingPages(workspaceId, loop?.agentIds)
+	const [briefingId, setBriefingId] = useState<string | null>(null)
+	const activeBriefing = briefingPages.find((b) => b.id === briefingId) ?? briefingPages[0]
 	const activeTab =
-		tab === 'overview' || ['items', 'activity', 'setup'].includes(tab) || activeView
+		tab === 'overview' ||
+		['items', 'activity', 'setup'].includes(tab) ||
+		activeView ||
+		(tab === 'briefings' && activeBriefing)
 			? tab
 			: 'overview'
 
@@ -195,7 +210,7 @@ function LoopDetailRoute() {
 	// identical in PostHog. Uses the loop-level waitingCount.
 	const pendingCount = askBannerVisible ? (loop?.waitingCount ?? 0) : 0
 	const handleDecideClick = useCallback(() => {
-		const targetEl = document.getElementById('loop-flow')
+		const targetEl = document.getElementById('loop-decisions')
 		if (targetEl) {
 			targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' })
 		}
@@ -219,6 +234,7 @@ function LoopDetailRoute() {
 	const createTrigger = useCreateTrigger(workspaceId)
 	const loopTriggerIds = loop?.triggerIds
 	const loopAgentIds = loop?.agentIds
+	const driverId = object?.driver ?? undefined
 	const addingTriggerRef = useRef(false)
 	const [addingTrigger, setAddingTrigger] = useState(false)
 	// A new trigger starts paused with placeholder settings, tied to this flow, and opens on
@@ -262,6 +278,65 @@ function LoopDetailRoute() {
 			setAddingTrigger(false)
 		}
 	}, [createTrigger, updateObject, loopId, loopTriggerIds, loopAgentIds, navigate, workspaceId])
+
+	// Renaming or removing a view rewrites the flow's `metadata.views`, leaving the file itself alone.
+	const saveViews = useCallback(
+		async (next: typeof views, failure: string) => {
+			try {
+				await updateObject.mutateAsync({
+					id: loopId,
+					// The API takes `{ name, file_id }` rows here; the client's metadata type is narrower.
+					data: { metadata: { views: toLoopViewsMetadata(next) as never } },
+				})
+				return true
+			} catch {
+				toast.error(failure)
+				return false
+			}
+		},
+		[loopId, updateObject],
+	)
+	const handleRenameView = useCallback(
+		(index: number, name: string) => {
+			const taken = views.some((v, i) => i !== index && v.name.toLowerCase() === name.toLowerCase())
+			if (taken) {
+				toast.error('Another view already has that name')
+				return
+			}
+			void saveViews(
+				views.map((v, i) => (i === index ? { ...v, name } : v)),
+				'Could not rename the view',
+			)
+		},
+		[views, saveViews],
+	)
+	const handleRemoveView = useCallback(
+		async (index: number) => {
+			const target = views[index]
+			if (!target) return
+			if (await saveViews(applyLoopView(views, target.name, null), 'Could not remove the view'))
+				setTab('overview')
+		},
+		[views, saveViews],
+	)
+
+	// "+" next to the views: ask the flow's driver for a new one, in a chat about this flow.
+	const handleNewView = useCallback(() => {
+		const agentId = driverId ?? loopAgentIds?.[0]
+		const agentName = agentId ? actors?.find((a) => a.id === agentId)?.name : undefined
+		navigate({
+			to: '/$workspaceId/chats/new',
+			params: { workspaceId },
+			search: {
+				agentId,
+				agentName,
+				objectId: loopId,
+				objectTitle: loop?.name ?? undefined,
+				objectType: 'loop',
+				text: `New view for ${loop?.name ?? 'this flow'}: `,
+			},
+		})
+	}, [driverId, loopAgentIds, actors, navigate, workspaceId, loopId, loop?.name])
 
 	// "Message" on the Decisions card: bring the flow's own composer into reach and focus it.
 	const handleMessageDriver = useCallback(() => {
@@ -444,7 +519,7 @@ function LoopDetailRoute() {
 	// Copy pattern per SPEC: `{agentName} asks — {askText}`.
 	const askText = 'is waiting on your input.'
 	const askAvatarType = firstAgentActor?.type
-	const decideJumpHref = '#loop-flow'
+	const decideJumpHref = '#loop-decisions'
 
 	const installedFromMarketplaceLoopId = object?.metadata?.installed_from_marketplace_loop_id
 	const isInstalledFromMarketplace = typeof installedFromMarketplaceLoopId === 'string'
@@ -672,13 +747,19 @@ function LoopDetailRoute() {
 					<LoopDetailTabs
 						tabs={[
 							{ value: 'overview', label: 'Overview', count: needsYouRows.length },
-							...viewTabs.map((v) => ({ value: v.value, label: v.name })),
 							{ value: 'items', label: 'Items', count: childIds.length },
 							{ value: 'activity', label: 'Activity' },
 							{ value: 'setup', label: 'Setup' },
+							// Custom views sit after the fixed tabs, set apart by a hairline.
+							...viewTabs.map((v, i) => ({ value: v.value, label: v.name, startsGroup: i === 0 })),
+							...(activeBriefing
+								? [{ value: 'briefings', label: 'Briefings', startsGroup: viewTabs.length === 0 }]
+								: []),
 						]}
 						value={activeTab}
 						onChange={setTab}
+						onAdd={canWrite && object ? handleNewView : undefined}
+						addLabel="Ask for a new view"
 					/>
 				</div>
 
@@ -730,33 +811,6 @@ function LoopDetailRoute() {
 							messageLabel={driver?.name}
 							onMessage={handleMessageDriver}
 						/>
-
-						<div>
-							{flowFailed ? (
-								<LoopBlockError
-									message={`Couldn't load the steps of this flow. ${SLOW_LOAD_MESSAGE}`}
-									onRetry={() => {
-										for (const [failed, query] of [
-											[triggersFailed, triggersQuery],
-											[actorsFailed, actorsQuery],
-											[edgesFailed, edgesQuery],
-											[childrenFailed, childrenQuery],
-										] as const) {
-											if (failed) query.refetch?.()
-										}
-									}}
-								/>
-							) : (
-								<LoopFlow
-									workspaceId={workspaceId}
-									triggers={loopTriggers}
-									actors={actors}
-									loop={loop}
-									onAddTrigger={canWrite && object ? handleAddTrigger : undefined}
-									addingTrigger={addingTrigger}
-								/>
-							)}
-						</div>
 					</div>
 				)}
 
@@ -766,6 +820,39 @@ function LoopDetailRoute() {
 							key={activeView.value}
 							workspaceId={workspaceId}
 							fileId={activeView.fileId}
+							name={activeView.name}
+							onRename={
+								canWrite && object ? (name) => handleRenameView(activeViewIndex, name) : undefined
+							}
+							onRemove={
+								canWrite && object ? () => void handleRemoveView(activeViewIndex) : undefined
+							}
+							busy={updateObject.isPending}
+						/>
+					</div>
+				)}
+
+				{activeTab === 'briefings' && activeBriefing && (
+					<div role="tabpanel" className="mt-8 min-w-0">
+						{briefingPages.length > 1 && (
+							<div className="mb-4 flex flex-wrap gap-1.5 px-1">
+								{briefingPages.map((b) => (
+									<Button
+										key={b.id}
+										size="sm"
+										variant={b.id === activeBriefing.id ? 'default' : 'outline'}
+										className="rounded-full"
+										onClick={() => setBriefingId(b.id)}
+									>
+										{b.name.replace(/\.html?$/i, '')}
+									</Button>
+								))}
+							</div>
+						)}
+						<LoopViewTab
+							key={activeBriefing.id}
+							workspaceId={workspaceId}
+							fileId={activeBriefing.id}
 						/>
 					</div>
 				)}
@@ -823,30 +910,32 @@ function LoopDetailRoute() {
 						/>
 						<SetupBlock label="Starts when" text={loop.entryCondition} />
 						<SetupBlock label="Ends when" text={loop.closeCondition} />
-						<section className="flex flex-col gap-3">
-							<span className="font-mono text-[10px] font-bold uppercase tracking-[0.11em] text-muted-foreground">
-								Agents
-							</span>
-							{loop.agentIds.length === 0 ? (
-								<p className="text-[13px] text-muted-foreground">No agents are attached yet.</p>
+						<div>
+							{flowFailed ? (
+								<LoopBlockError
+									message={`Couldn't load how this flow runs. ${SLOW_LOAD_MESSAGE}`}
+									onRetry={() => {
+										for (const [failed, query] of [
+											[triggersFailed, triggersQuery],
+											[actorsFailed, actorsQuery],
+											[edgesFailed, edgesQuery],
+											[childrenFailed, childrenQuery],
+										] as const) {
+											if (failed) query.refetch?.()
+										}
+									}}
+								/>
 							) : (
-								loop.agentIds.map((id) => {
-									const agent = actors?.find((a) => a.id === id)
-									if (!agent) return null
-									return (
-										<Link
-											key={id}
-											to="/$workspaceId/agents/$agentId"
-											params={{ workspaceId, agentId: id }}
-											className="flex items-center gap-2.5 text-[14px] font-semibold text-foreground hover:underline"
-										>
-											<ActorAvatar id={agent.id} name={agent.name} type={agent.type} />
-											{agent.name}
-										</Link>
-									)
-								})
+								<LoopFlow
+									workspaceId={workspaceId}
+									triggers={loopTriggers}
+									actors={actors}
+									loop={loop}
+									onAddTrigger={canWrite && object ? handleAddTrigger : undefined}
+									addingTrigger={addingTrigger}
+								/>
 							)}
-						</section>
+						</div>
 					</div>
 				)}
 
@@ -856,7 +945,6 @@ function LoopDetailRoute() {
 					placeholder={
 						driver ? `Message ${driver.name}, who drives ${loop.name ?? 'this flow'}` : undefined
 					}
-					showSuggestions={!proposedEdit}
 					onUtterance={handleUtterance}
 				>
 					{proposedEdit && (

@@ -1,7 +1,6 @@
 import { Composer } from '@/components/chat/chat'
 import { FLOATING_CONTROLS } from '@/components/shared/floating-footer'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
-import { Button } from '@/components/ui/button'
 import { useCanWrite } from '@/hooks/use-can-write'
 import type { LoopSummary } from '@/lib/api'
 import { EMPTY_CHAT_SELECTION } from '@/lib/chat-selection'
@@ -9,14 +8,6 @@ import { useWorkspace } from '@/lib/workspace-context'
 import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
 import { useNavigate } from '@tanstack/react-router'
 import { forwardRef, useCallback } from 'react'
-
-// Shown when the loop has no change history yet (mockup 2017–2022) — the
-// operator gets three things they could say instead of a blank bar.
-const SUGGESTIONS = [
-	'Close cycles faster',
-	'Ask me before anything ships',
-	'Hand the review to someone else',
-]
 
 /**
  * "Change by talking" composer, sticky at the bottom of the loop reader column
@@ -30,8 +21,6 @@ export const LoopUtteranceInput = forwardRef<
 		loop: LoopSummary
 		/** Rendered above the composer — the PROPOSED EDIT card, when there is one. */
 		children?: React.ReactNode
-		/** Offer the suggestion chips (no change history yet). */
-		showSuggestions?: boolean
 		/** Idle prompt in the composer; defaults to the change-by-talking line. */
 		placeholder?: string
 		/** True while a voice capture is running — renders the listening indicator. */
@@ -41,10 +30,7 @@ export const LoopUtteranceInput = forwardRef<
 		 *  only path for loops that carry no plan snapshot. */
 		onUtterance?: (utterance: string) => boolean
 	}
->(function LoopUtteranceInput(
-	{ loop, children, showSuggestions, placeholder, listening, onUtterance },
-	ref,
-) {
+>(function LoopUtteranceInput({ loop, children, placeholder, listening, onUtterance }, ref) {
 	const { workspaceId } = useWorkspace()
 	const canWrite = useCanWrite()
 	const navigate = useNavigate()
@@ -70,23 +56,6 @@ export const LoopUtteranceInput = forwardRef<
 		>
 			<div className="pb-[max(0.625rem,env(safe-area-inset-bottom))]">
 				{children}
-				{showSuggestions && (
-					<div className="mb-2.5 flex flex-wrap gap-2" aria-label="Suggested changes">
-						{SUGGESTIONS.map((suggestion) => (
-							<ViewerTooltip key={suggestion}>
-								<Button
-									variant="outline"
-									size="sm"
-									className="rounded-full"
-									disabled={!canWrite}
-									onClick={() => void submit(suggestion)}
-								>
-									{suggestion}
-								</Button>
-							</ViewerTooltip>
-						))}
-					</div>
-				)}
 				{listening && (
 					<div className="mb-2.5 flex items-center gap-2">
 						<span

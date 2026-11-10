@@ -61,8 +61,7 @@ test.describe('Loop detail page', () => {
 			await expect(stats.getByText('Median cycle time')).toBeVisible()
 			await expect(stats.getByText('Asks waiting')).toBeVisible()
 			await expect(stats.getByText('Next fire')).toBeVisible()
-			await page.getByRole('tab', { name: 'Overview' }).click()
-			await expect(page.getByRole('heading', { name: 'Pipeline' })).toBeVisible()
+			await expect(page.getByRole('heading', { name: 'How it runs' })).toBeVisible()
 			// AC5 — the utterance input is present on loop detail.
 			await expect(
 				page.getByPlaceholder(
