@@ -144,12 +144,11 @@ const OBJECT_DETAIL_ROUTE_ID = '/_authed/$workspaceId/objects/$objectId'
  * away with it, while the header keeps only the buttons, floating over the content.
  */
 /**
- * The bar floats over the page instead of sitting above it: it has no background of its own
- * (only a fade of the page colour that dies out downward), and clicks pass through it except
- * on its own controls.
+ * The bar floats over the page instead of sitting above it: it has no background at all, and
+ * clicks pass through it except on its own controls.
  */
 const FLOATING_BAR =
-	'pointer-events-none absolute inset-x-0 top-[var(--app-banner-h,0px)] z-20 bg-gradient-to-b from-background from-60% to-transparent [&_:is(a,button,input,select,textarea,[role=button],[role=tab],[role=combobox])]:pointer-events-auto'
+	'pointer-events-none absolute inset-x-0 top-[var(--app-banner-h,0px)] z-20 [&_:is(a,button,input,select,textarea,[role=button],[role=tab],[role=combobox])]:pointer-events-auto'
 
 function useHeaderModel() {
 	const matches = useMatches()
@@ -350,7 +349,7 @@ export function Header() {
 				// background. Only the buttons take clicks; the rest of the strip lets them through.
 				// hideBar: the page owns its whole top edge from md, so nothing draws here.
 				hideBar && 'md:hidden',
-				scrollsAway && 'md:justify-end md:bg-none md:pt-6 md:pb-0',
+				scrollsAway && 'md:justify-end md:pt-6 md:pb-0',
 				gutter === 'wide' ? 'lg:px-12' : 'lg:px-7',
 			)}
 		>

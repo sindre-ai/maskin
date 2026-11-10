@@ -69,7 +69,7 @@ function writeSeenOverview(conversationId: string, signature: string) {
 }
 
 // The thread's header and composer lay over the transcript instead of boxing it in: the bar
-// itself lets clicks through (it is only a fade of the page colour) and just its controls take them.
+// itself has no background and lets clicks through; just its controls take them.
 const FLOATING_EDGE =
 	'pointer-events-none absolute inset-x-0 z-10 [&_:is(a,button,input,select,textarea,form,[role=button],[contenteditable=true])]:pointer-events-auto'
 
@@ -351,13 +351,7 @@ function ConversationThreadPage() {
 					<div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
 						{/* The header and the composer float over the transcript, which fills the whole
 						    column and pads itself by their measured heights (see FLOATING_EDGE). */}
-						<div
-							ref={headerBarRef}
-							className={cn(
-								FLOATING_EDGE,
-								'top-0 bg-gradient-to-b from-background from-60% to-transparent pb-3',
-							)}
-						>
+						<div ref={headerBarRef} className={cn(FLOATING_EDGE, 'top-0 pb-3')}>
 							<ThreadHeader
 								workspaceId={workspaceId}
 								conversationId={conversationId}

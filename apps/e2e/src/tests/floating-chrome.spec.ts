@@ -68,13 +68,19 @@ for (const scheme of ['light', 'dark'] as const) {
 				const newChat = bar.getByRole('button', { name: /New chat/ }).first()
 				await expect(newChat).toBeVisible()
 
-				// The bar is a fade, not a block, and lets clicks through apart from its controls.
+				// The bar has no background and lets clicks through apart from its controls.
 				const barStyle = await bar.evaluate((el) => {
 					const s = getComputedStyle(el)
-					return { image: s.backgroundImage, events: s.pointerEvents, position: s.position }
+					return {
+						image: s.backgroundImage,
+						color: s.backgroundColor,
+						events: s.pointerEvents,
+						position: s.position,
+					}
 				})
 				expect(barStyle.position).toBe('absolute')
-				expect(barStyle.image).toContain('gradient')
+				expect(barStyle.image).toBe('none')
+				expect(barStyle.color).toBe('rgba(0, 0, 0, 0)')
 				expect(barStyle.events).toBe('none')
 
 				// At rest the first row sits clear of the bar.
