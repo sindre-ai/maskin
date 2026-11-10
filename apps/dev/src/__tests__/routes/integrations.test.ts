@@ -165,6 +165,7 @@ describe('Integrations Routes', () => {
 				'notion',
 				'posthog',
 				'resend',
+				'sentry',
 				'slack',
 				'ubersuggest',
 			])
