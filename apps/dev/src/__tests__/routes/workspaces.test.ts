@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { onTestFinished } from 'vitest'
+import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { openSecret } from '../../lib/workspace-secrets'
 import { buildCreateWorkspaceBody, buildWorkspace } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
@@ -41,6 +42,52 @@ describe('Workspaces Routes', () => {
 			// workspace + owner-member + 6 default agents × (actor + member) = 14.
 			expect(calls.inserts).toHaveLength(14)
 			expect(calls.inserts[1]).toMatchObject({ workspaceId: ws.id, role: 'owner' })
+		})
+
+		describe('the card step (flag trial-card-percent)', () => {
+			// Someone who leaves the card step must not get a trial with no card by making another
+			// workspace: while the sign-up switch is on, a person's new workspace waits for a card.
+			async function createAs(actorType: string) {
+				const ws = buildWorkspace()
+				const ctx = createSessionTestApp(
+					workspacesRoutes,
+					'/api/workspaces',
+					'test-actor-id',
+					actorType,
+				)
+				ctx.mockResults.insertQueue = [[ws], [{}]]
+				ctx.mockResults.insert = [defaultAgentInsertFallback]
+				;(ctx.sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({})
+				const res = await ctx.app.request(
+					jsonRequest('POST', '/api/workspaces', buildCreateWorkspaceBody()),
+				)
+				expect(res.status).toBe(201)
+				// calls.inserts[0] is the workspaces row the route wrote.
+				return (ctx.calls.inserts[0] as { settings: { billing?: unknown } }).settings.billing
+			}
+
+			afterEach(() => {
+				vi.unstubAllEnvs()
+				_resetFeatureFlagConfig()
+			})
+
+			it("makes a person's new workspace wait for a card when the switch is on", async () => {
+				vi.stubEnv('FF_SIGNUP_FEATURES', 'trial-card-percent')
+				_resetFeatureFlagConfig()
+				expect(await createAs('human')).toEqual({ plan: 'trial', trial_state: 'awaiting_card' })
+			})
+
+			it('leaves an agent-created workspace alone when the switch is on', async () => {
+				vi.stubEnv('FF_SIGNUP_FEATURES', 'trial-card-percent')
+				_resetFeatureFlagConfig()
+				expect(await createAs('agent')).toBeUndefined()
+			})
+
+			it('changes nothing when the switch is off', async () => {
+				vi.stubEnv('FF_SIGNUP_FEATURES', '')
+				_resetFeatureFlagConfig()
+				expect(await createAs('human')).toBeUndefined()
+			})
 		})
 
 		it('rejects a caller-supplied settings.billing with 400 and creates nothing', async () => {

@@ -22,6 +22,7 @@ import { isTeamActor } from '../lib/analytics/team-member'
 import { isEnterprise, isEnterpriseActor } from '../lib/enterprise'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { FLAGS, isSignupFlagEnabled } from '../lib/feature-flags'
 import {
 	billingAfterByoTransition,
 	cancelActivePaidSubscription,
@@ -205,6 +206,12 @@ app.openapi(createWorkspaceRoute, async (c) => {
 			name: body.name,
 			ownerActorId: actorId,
 			settings: body.settings,
+			// Same rule as sign-up (bet "A card to start a 7-day trial"): while the switch is on, a
+			// person's new workspace waits for a card too. Otherwise leaving the card step and
+			// making another workspace is a way to a trial with no card. Not asked of agents (MCP
+			// create_workspace): a waiting workspace has nobody to open the card step, and they
+			// create under a person's ownership cap. Off, nothing changes.
+			awaitingCard: c.get('actorType') === 'human' && isSignupFlagEnabled(FLAGS.TRIAL_CARD_PERCENT),
 		})
 	} catch (err) {
 		// Returned here rather than thrown to `createApp`'s `onError`: this
