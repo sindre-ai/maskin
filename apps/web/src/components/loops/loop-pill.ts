@@ -31,36 +31,22 @@ export function isLiveLoopPill(pill: LoopSummary['pill']): boolean {
 }
 
 /**
- * Composite "no credits" pill overlay — rendered next to a `paused` loop's
- * state label when the workspace credit balance is empty. Not a member of the
+ * Composite "paused, upgrade" pill overlay — rendered next to a `paused` loop's
+ * state label when the workspace is out of usage. Not a member of the
  * `LoopSummary.pill` enum on purpose: the loop's stored status stays `paused`
- * and the wallet-empty signal comes from workspace billing (`credit_balance_cents`
- * on `BillingUsageResponse`), so the overlay is derived at render time rather
- * than pushed onto the read schema. Amber tokens match the `waiting_on_you`
- * pill family (see `LOOP_PILL_STYLES` above) so paused-by-credits and
- * needs-your-attention share one warning vocabulary.
+ * and the out-of-usage signal comes from workspace billing, so the overlay is
+ * derived at render time rather than pushed onto the read schema. Amber tokens
+ * match the `waiting_on_you` pill family (see `LOOP_PILL_STYLES` above) so
+ * paused-by-usage and needs-your-attention share one warning vocabulary.
+ *
+ * Top-up is closed, so the pill says "Upgrade" like the left-nav trial card and
+ * opens the same place (Billing). Same words with the percent flag on or off.
  */
-export const NO_CREDITS_PILL = {
-	/** Verbatim per SPEC — desktop copy. */
-	label: 'NO CREDITS',
-	/** Verbatim per SPEC — mobile copy at ≤ 640px. */
-	mobileLabel: 'NO CR.',
-	/** Read out on both viewports so the abbreviation never reaches assistive tech. */
-	ariaLabel: 'Paused — no credits',
-	/** Tooltip copy verbatim per SPEC — surfaces the "why" and the fix in one line. */
-	tooltip: 'Paused — the credit balance is empty. Top up in Billing.',
-} as const
-
-/**
- * The same overlay once usage is shown as a percent of the plan (the
- * `trial-card-percent` flag). Top-up is closed there, so the words say the plan
- * is used up, like the 100% banner, and point at Billing for the plan picker.
- */
-export const PLAN_USED_UP_PILL = {
-	label: 'Plan used up',
-	mobileLabel: 'Used up',
-	ariaLabel: 'Paused. Your plan is used up.',
-	tooltip: 'Paused. Your plan is used up. See plans in Billing.',
+export const UPGRADE_PILL = {
+	label: 'Upgrade',
+	mobileLabel: 'Upgrade',
+	ariaLabel: 'Paused. Upgrade your plan.',
+	tooltip: 'Paused. Upgrade your plan in Billing.',
 } as const
 
 /**

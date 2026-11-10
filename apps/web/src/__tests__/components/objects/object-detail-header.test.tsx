@@ -223,51 +223,50 @@ describe('ObjectDetailIdentity', () => {
 		expect(labels.some((l) => l.includes('Bob'))).toBe(true)
 	})
 
-	it('omits the PAUSED · NO CREDITS chip when credits_state is ok', () => {
+	it('omits the PAUSED · UPGRADE chip when credits_state is ok', () => {
 		const object = buildObjectResponse({ type: 'bet', status: 'active' })
 		render(<ObjectDetailIdentity {...identityProps} object={object} creditsState="ok" />, {
 			wrapper: makeWrapper(),
 		})
-		expect(screen.queryByText(/no credits/i)).toBeNull()
+		expect(screen.queryByText(/PAUSED · UPGRADE/)).toBeNull()
 	})
 
-	it('omits the PAUSED · NO CREDITS chip on the unknown loading state', () => {
+	it('omits the PAUSED · UPGRADE chip on the unknown loading state', () => {
 		const object = buildObjectResponse({ type: 'bet', status: 'active' })
 		render(<ObjectDetailIdentity {...identityProps} object={object} creditsState="unknown" />, {
 			wrapper: makeWrapper(),
 		})
-		expect(screen.queryByText(/no credits/i)).toBeNull()
+		expect(screen.queryByText(/PAUSED · UPGRADE/)).toBeNull()
 	})
 
-	it('renders the amber PAUSED · NO CREDITS chip with a polite live region when empty', () => {
+	it('renders the amber PAUSED · UPGRADE chip with a polite live region when empty', () => {
 		const object = buildObjectResponse({ type: 'bet', status: 'active' })
 		render(<ObjectDetailIdentity {...identityProps} object={object} creditsState="empty" />, {
 			wrapper: makeWrapper(),
 		})
-		const chip = screen.getByRole('status', { name: /paused .*no credits/i })
+		const chip = screen.getByRole('status', { name: /paused\. upgrade your plan/i })
 		expect(chip).toBeInTheDocument()
 		expect(chip).toHaveAttribute('aria-live', 'polite')
-		expect(chip).toHaveTextContent('PAUSED · NO CREDITS')
+		expect(chip).toHaveTextContent('PAUSED · UPGRADE')
+		// Top-up is closed: no credit wording, and it opens Billing like the sidebar Upgrade button.
+		expect(chip).toHaveAttribute('href', '/$workspaceId/settings/billing')
+		expect(chip.textContent).not.toMatch(/credit/i)
+		expect(chip.getAttribute('title')).not.toMatch(/credit|top up/i)
 		expect(chip.className).toMatch(/bg-warning/)
 		expect(chip.className).not.toMatch(/border-(?!transparent)/)
 	})
-})
 
-describe('ObjectDetailIdentity plan used up chip', () => {
-	it('reads PAUSED · PLAN USED UP and links to Billing with the percent display on', () => {
+	it('says the same with the percent display on', () => {
 		const object = buildObjectResponse({ type: 'bet', status: 'active' })
-		const Wrapper = makeWrapper()
 		render(
 			<PlanPercentProvider value>
 				<ObjectDetailIdentity {...identityProps} object={object} creditsState="empty" />
 			</PlanPercentProvider>,
-			{ wrapper: Wrapper },
+			{ wrapper: makeWrapper() },
 		)
-		const chip = screen.getByRole('status', { name: /plan is used up/i })
-		expect(chip).toHaveTextContent('PAUSED · PLAN USED UP')
+		const chip = screen.getByRole('status', { name: /paused\. upgrade your plan/i })
+		expect(chip).toHaveTextContent('PAUSED · UPGRADE')
 		expect(chip).toHaveAttribute('href', '/$workspaceId/settings/billing')
-		expect(screen.queryByText(/no credits/i)).toBeNull()
-		expect(chip.getAttribute('title')).not.toMatch(/credit/i)
 	})
 })
 

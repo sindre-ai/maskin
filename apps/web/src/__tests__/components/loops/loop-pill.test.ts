@@ -1,24 +1,16 @@
-import {
-	NO_CREDITS_PILL,
-	PLAN_USED_UP_PILL,
-	shouldShowNoCreditsPill,
-} from '@/components/loops/loop-pill'
+import { UPGRADE_PILL, shouldShowNoCreditsPill } from '@/components/loops/loop-pill'
 import { describe, expect, it } from 'vitest'
 
-describe('NO_CREDITS_PILL tokens', () => {
-	it('carries the verbatim SPEC copy for both viewports and screen readers', () => {
-		expect(NO_CREDITS_PILL.label).toBe('NO CREDITS')
-		expect(NO_CREDITS_PILL.mobileLabel).toBe('NO CR.')
-		expect(NO_CREDITS_PILL.ariaLabel).toBe('Paused — no credits')
-		expect(NO_CREDITS_PILL.tooltip).toBe('Paused — the credit balance is empty. Top up in Billing.')
+describe('UPGRADE_PILL tokens', () => {
+	it('says Upgrade on both viewports, like the left-nav trial card', () => {
+		expect(UPGRADE_PILL.label).toBe('Upgrade')
+		expect(UPGRADE_PILL.mobileLabel).toBe('Upgrade')
+		expect(UPGRADE_PILL.ariaLabel).toBe('Paused. Upgrade your plan.')
+		expect(UPGRADE_PILL.tooltip).toBe('Paused. Upgrade your plan in Billing.')
 	})
-})
 
-describe('PLAN_USED_UP_PILL tokens', () => {
-	it('says the plan is used up, with no top-up or credit wording', () => {
-		expect(PLAN_USED_UP_PILL.label).toBe('Plan used up')
-		expect(PLAN_USED_UP_PILL.mobileLabel).toBe('Used up')
-		const all = Object.values(PLAN_USED_UP_PILL).join(' ')
+	it('has no top-up, credit or NO CREDITS wording', () => {
+		const all = Object.values(UPGRADE_PILL).join(' ')
 		expect(all).not.toMatch(/top up|credit/i)
 	})
 })

@@ -10,7 +10,6 @@ import { isLiveLoopPill } from '@/components/loops/loop-pill'
 import { LoopRow } from '@/components/loops/loop-row'
 import type { DisplayFilterSectionModel } from '@/components/objects/data-table/display-filter-section'
 import { DisplayPanel } from '@/components/objects/data-table/display-panel'
-import { BuyCreditsDialog } from '@/components/settings/buy-credits-dialog'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
@@ -117,7 +116,6 @@ function LoopsRoute() {
 	const { data: sessions } = useWorkspaceSessions(workspaceId)
 	const updateTrigger = useUpdateTrigger(workspaceId)
 	const [createPickerOpen, setCreatePickerOpen] = useState(false)
-	const [buyCreditsOpen, setBuyCreditsOpen] = useState(false)
 	// Collapsed by default: the automations are background plumbing, not what the page is for.
 	const [automationsOpen, setAutomationsOpen] = useState(false)
 	const [tab, setTab] = useState<LoopTab>('all')
@@ -136,8 +134,8 @@ function LoopsRoute() {
 	}, [])
 
 	const { data: billingUsage } = useBillingUsage(workspaceId)
-	// With the percent display on there is no top-up: the pill says the plan is
-	// used up, follows the 100% rule, and opens Billing to pick a plan.
+	// Top-up is closed: the pill says Upgrade and opens Billing to pick a plan. With
+	// the percent display on it follows the 100% rule.
 	const planPercentOn = usePlanPercentEnabled()
 	const { state: planUsage } = usePlanUsage(workspaceId)
 	const navigate = useNavigate()
@@ -379,12 +377,10 @@ function LoopsRoute() {
 												}
 												showNoCreditsPill={showNoCreditsPill}
 												onNoCreditsClick={() =>
-													planPercentOn
-														? navigate({
-																to: '/$workspaceId/settings/billing',
-																params: { workspaceId },
-															})
-														: setBuyCreditsOpen(true)
+													navigate({
+														to: '/$workspaceId/settings/billing',
+														params: { workspaceId },
+													})
 												}
 											/>
 										))
@@ -474,13 +470,6 @@ function LoopsRoute() {
 				</div>
 			)}
 			<CreatePicker open={createPickerOpen} onOpenChange={setCreatePickerOpen} defaultType="loop" />
-			{billingUsage?.credit_topup_available && (
-				<BuyCreditsDialog
-					open={buyCreditsOpen}
-					onOpenChange={setBuyCreditsOpen}
-					workspaceId={workspaceId}
-				/>
-			)}
 		</div>
 	)
 }

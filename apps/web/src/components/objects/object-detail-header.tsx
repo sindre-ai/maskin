@@ -1,4 +1,3 @@
-import { usePlanPercentEnabled } from '@/components/billing/plan-percent-context'
 import { EditableTitle } from '@/components/shared/editable-title'
 import { Button } from '@/components/ui/button'
 import type { MemberResponse, ObjectResponse } from '@/lib/api'
@@ -97,38 +96,26 @@ function StatusPill({ status }: { status: string }) {
 }
 
 /**
- * D6 — the amber `⏸ PAUSED · NO CREDITS` chip on the object-detail meta row.
+ * D6 — the amber `⏸ PAUSED · UPGRADE` chip on the object-detail meta row.
  * Rendered only when the workspace-scoped `useUsageState()` selector returns
- * `credits_state === 'empty'`. Click flows to the same billing anchor the
- * low-credits notice already uses (see `TrialExpiredBanner` and
- * `session-errors.ts`), so operators land on the surface that clears the
- * state. `role="status"` + polite live region reads the flip on first render;
- * SSE-driven billing invalidation (session lifecycle events) drives the
+ * `credits_state === 'empty'`. Top-up is closed, so the chip says Upgrade like
+ * the left-nav trial card and opens the same place (Billing), with the percent
+ * flag on or off. `role="status"` + polite live region reads the flip on first
+ * render; SSE-driven billing invalidation (session lifecycle events) drives the
  * subsequent re-renders without a page reload.
  */
 export function PausedNoCreditsChip({ workspaceId }: { workspaceId: string }) {
-	// With the percent display on there is no top-up: say the plan is used up and
-	// send people to Billing, where the plan picker is.
-	const planUsedUp = usePlanPercentEnabled()
 	return (
 		<Link
-			to={planUsedUp ? '/$workspaceId/settings/billing' : '/$workspaceId/settings/keys'}
+			to="/$workspaceId/settings/billing"
 			params={{ workspaceId }}
 			// biome-ignore lint/a11y/useSemanticElements: the chip is also a link,
 			// so it must remain an <a>; role=status carries the D6 accessibility
 			// contract without changing the element.
 			role="status"
 			aria-live="polite"
-			aria-label={
-				planUsedUp
-					? 'Paused. Your plan is used up. Open billing to choose a plan.'
-					: 'Paused — no credits. Open billing to add credit.'
-			}
-			title={
-				planUsedUp
-					? 'Plan used up. New sessions are paused. Open billing to choose a plan.'
-					: 'No credits — new sessions are paused. Open billing to add credit.'
-			}
+			aria-label="Paused. Upgrade your plan in Billing."
+			title="New sessions are paused. Upgrade your plan in Billing."
 			className={cn(
 				'inline-flex items-center gap-1 rounded-[7px] px-2 py-[3px] font-semibold',
 				// Amber chip, no border — matches the retired trial-expired banner
@@ -137,11 +124,10 @@ export function PausedNoCreditsChip({ workspaceId }: { workspaceId: string }) {
 				'bg-warning/15 text-warning transition-colors hover:bg-warning/25',
 			)}
 		>
-			{/* Copy verbatim per D6 SPEC — the leading U+23F8 double-vertical-bar
-			    stays inline with the label so screen readers announce
-			    "PAUSED · NO CREDITS" via aria-label rather than the glyph. */}
+			{/* The leading U+23F8 double-vertical-bar stays inline with the label so
+			    screen readers announce the aria-label rather than the glyph. */}
 			<span aria-hidden="true">⏸</span>
-			<span>{planUsedUp ? 'PAUSED · PLAN USED UP' : 'PAUSED · NO CREDITS'}</span>
+			<span>PAUSED · UPGRADE</span>
 		</Link>
 	)
 }
@@ -210,7 +196,7 @@ export function ObjectDetailIdentity({
 	members: MemberResponse[]
 	/** Workspace ID the D6 credits chip links back to for the billing anchor. */
 	workspaceId: string
-	/** D6: when `'empty'`, renders the amber `⏸ PAUSED · NO CREDITS` chip
+	/** D6: when `'empty'`, renders the amber `⏸ PAUSED · UPGRADE` chip
 	 *  immediately after the status chip. Any other value renders nothing. */
 	creditsState?: 'empty' | 'ok' | 'unknown'
 	onStatusChange: (status: string) => void
