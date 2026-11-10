@@ -17,7 +17,7 @@ import { LoopStats } from '@/components/loops/loop-stats'
 import { LoopTags } from '@/components/loops/loop-tags'
 import { LoopUtteranceInput } from '@/components/loops/loop-utterance-input'
 import { LoopViewTab } from '@/components/loops/loop-view-tab'
-import { TargetsAndOwners } from '@/components/loops/targets-and-owners'
+import { TargetsAndOwners, targetIds } from '@/components/loops/targets-and-owners'
 import { ObjectDetailBody } from '@/components/objects/object-detail-body'
 import { TimelineTab } from '@/components/objects/timeline-tab'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
@@ -47,12 +47,15 @@ import { useRelationships } from '@/hooks/use-relationships'
 import { useCreateTrigger, useTriggers } from '@/hooks/use-triggers'
 import { trackAskBannerDecideClicked, trackLoopViewed } from '@/lib/analytics'
 import { api } from '@/lib/api'
+import type { LoopSummary } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { nextFireAt, nextFireLabel } from '@/lib/loop-next-fire'
 import { type LoopPlan, parseLoopDescription } from '@/lib/loop-plan'
+import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { type LoopStatus, readLoopViews, useWaitingOnViewer } from '@maskin/shared'
+import { useQueryClient } from '@tanstack/react-query'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { Check, ChevronDown, MoreHorizontal, Pause, Play, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -152,6 +155,7 @@ function LoopDetailRoute() {
 	const childrenFailed = useLoadFailed(childrenQuery)
 	const activityFailed = useLoadFailed(activityQuery)
 	const flowFailed = triggersFailed || actorsFailed || edgesFailed || childrenFailed
+	const queryClient = useQueryClient()
 	const updateObject = useUpdateObject(workspaceId)
 	const deleteObject = useDeleteObject(workspaceId)
 	const navigate = useNavigate()
@@ -282,6 +286,48 @@ function LoopDetailRoute() {
 			}
 		},
 		[loopId, updateObject],
+	)
+
+	// Reordering writes only the order. The rows are re-read first, because an agent keeps the
+	// numbers current and the page may hold older ones; the stored rows are moved, not rebuilt.
+	const handleReorderTargets = useCallback(
+		async (next: NonNullable<LoopSummary['targets']>) => {
+			const key = queryKeys.loops.all(workspaceId)
+			await queryClient.cancelQueries({ queryKey: key })
+			const previous = queryClient.getQueryData<{ loops: LoopSummary[] }>(key)
+			// The cards move at once; the list refreshes after the save.
+			if (previous) {
+				queryClient.setQueryData(key, {
+					...previous,
+					loops: previous.loops.map((l) => (l.id === loopId ? { ...l, targets: next } : l)),
+				})
+			}
+			try {
+				const fresh = await objectQuery.refetch?.()
+				const stored = fresh?.data?.metadata?.targets
+				if (!Array.isArray(stored)) throw new Error('no stored targets')
+				const rows = stored as unknown as NonNullable<LoopSummary['targets']>
+				const wanted = targetIds(next)
+				const have = targetIds(rows)
+				const rank = (i: number) => {
+					const at = wanted.indexOf(have[i] as string)
+					return at === -1 ? Number.MAX_SAFE_INTEGER : at
+				}
+				const reordered = rows
+					.map((row, i) => ({ row, at: rank(i), i }))
+					.sort((a, b) => a.at - b.at || a.i - b.i)
+					.map((x) => x.row)
+				await updateObject.mutateAsync({
+					id: loopId,
+					// The API takes the stored rows as they are; the client's metadata type is narrower.
+					data: { metadata: { targets: reordered as never } },
+				})
+			} catch {
+				if (previous) queryClient.setQueryData(key, previous)
+				toast.error('Could not move the target')
+			}
+		},
+		[loopId, workspaceId, queryClient, objectQuery, updateObject],
 	)
 
 	const handleUpdateTags = useCallback(
@@ -714,7 +760,11 @@ function LoopDetailRoute() {
 							</div>
 						)}
 
-						<TargetsAndOwners loop={loop} actors={actors} />
+						<TargetsAndOwners
+							loop={loop}
+							actors={actors}
+							onReorder={canWrite && object ? handleReorderTargets : undefined}
+						/>
 
 						<LoopDecisions
 							workspaceId={workspaceId}

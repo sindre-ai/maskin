@@ -1,6 +1,7 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { cn } from '@/lib/cn'
 import type { ActorListItem, LoopSummary } from '@maskin/shared'
+import type { ReactNode } from 'react'
 
 /**
  * A single row inside the loop-detail `<TargetsAndOwners>` section
@@ -79,9 +80,11 @@ export interface TargetCardProps {
 	 *  renders with the actor's real name and identity color; missing owners
 	 *  render nothing (the card still shows the pace pill + numbers). */
 	owner?: ActorListItem | null
+	/** A control shown at the card's leading edge (the drag handle when targets can be reordered). */
+	handle?: ReactNode
 }
 
-export function TargetCard({ target, owner }: TargetCardProps) {
+export function TargetCard({ target, owner, handle }: TargetCardProps) {
 	const verdict = paceVerdict(target)
 	const percent =
 		target.target > 0 ? Math.min(100, Math.max(0, (target.actual / target.target) * 100)) : 0
@@ -95,8 +98,11 @@ export function TargetCard({ target, owner }: TargetCardProps) {
 			)}
 		>
 			<div className="flex items-start justify-between gap-3">
-				<span className="line-clamp-2 text-[14px] font-semibold leading-tight text-foreground">
-					{target.label}
+				<span className="flex min-w-0 items-start gap-1.5">
+					{handle}
+					<span className="line-clamp-2 text-[14px] font-semibold leading-tight text-foreground">
+						{target.label}
+					</span>
 				</span>
 				<span className="flex shrink-0 items-center gap-2">
 					{owner && <ActorAvatar id={owner.id} name={owner.name} type={owner.type} size="sm" />}
