@@ -38,9 +38,9 @@ afterEach(() => {
 })
 
 describe('ThemeProvider', () => {
-	it('defaults to light when no stored theme', () => {
+	it('defaults to system when no stored theme', () => {
 		const { result } = renderHook(() => useTheme(), { wrapper })
-		expect(result.current.theme).toBe('light')
+		expect(result.current.theme).toBe('system')
 		expect(result.current.resolvedTheme).toBe('light')
 	})
 

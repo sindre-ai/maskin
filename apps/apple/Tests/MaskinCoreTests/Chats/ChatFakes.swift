@@ -275,7 +275,18 @@ actor FakeListAPI: ConversationsAPI {
 		)
 	}
 
-	func actors() async throws -> [ChatActor] { [ChatActor(participant: chatRelay)] }
+	var actorsCalls = 0
+	var threadsCalls = 0
+
+	func actors() async throws -> [ChatActor] {
+		actorsCalls += 1
+		return [ChatActor(participant: chatRelay)]
+	}
+
+	func threads(limit: Int) async throws -> [ThreadListItem] {
+		threadsCalls += 1
+		return []
+	}
 
 	var latestIDs: [String: Int] = [:]
 	func latestMessageID(conversationID: String) async throws -> Int? { latestIDs[conversationID] ?? 100 }

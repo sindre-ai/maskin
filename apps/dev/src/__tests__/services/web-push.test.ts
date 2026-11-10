@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { logger } from '../../lib/logger'
 import type { PushMessage } from '../../services/push-types'
 import {
 	type WebPushConfig,
@@ -9,6 +10,10 @@ import {
 	loadWebPushConfig,
 	webUrlFor,
 } from '../../services/web-push'
+
+vi.mock('../../lib/logger', () => ({
+	logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}))
 
 const config: WebPushConfig = {
 	publicKey: 'BPublicKeyPublicKeyPublicKeyPublicKeyPublicKey',
@@ -112,6 +117,10 @@ describe('buildWebPushOptions', () => {
 })
 
 describe('WebPushSender', () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+	})
+
 	it('is disabled and sends nothing without config', async () => {
 		const transport = { send: vi.fn() }
 		const { sender } = setup([sub()], transport, null)
@@ -135,6 +144,31 @@ describe('WebPushSender', () => {
 			keys: { p256dh: 'p256dhKey', auth: 'authKey' },
 		})
 		expect(JSON.parse(body)).toMatchObject({ title: 'Bet shipped', url: '/ws-1/notifications' })
+	})
+
+	it('logs one info line with the push service status per accepted send, never the endpoint or keys', async () => {
+		const transport = { send: vi.fn().mockResolvedValue({ status: 201 }) }
+		const { sender } = setup(
+			[sub(), sub({ id: 'sub-2', endpoint: 'https://fcm.googleapis.com/2' })],
+			transport,
+		)
+		await sender.sendToActor('actor-1', msg)
+		expect(logger.info).toHaveBeenCalledTimes(2)
+		expect(logger.info).toHaveBeenCalledWith('Web Push accepted', {
+			subscriptionId: 'sub-1',
+			status: 201,
+		})
+		const logged = JSON.stringify(vi.mocked(logger.info).mock.calls)
+		for (const secret of ['fcm.googleapis.com', 'p256dhKey', 'authKey']) {
+			expect(logged).not.toContain(secret)
+		}
+	})
+
+	it('does not log an accepted send when the push service rejects it', async () => {
+		const transport = { send: vi.fn().mockResolvedValue({ status: 503 }) }
+		const { sender } = setup([sub()], transport)
+		await sender.sendToActor('actor-1', msg)
+		expect(logger.info).not.toHaveBeenCalled()
 	})
 
 	it('never calls a stored endpoint that is not a push service, and removes the row', async () => {

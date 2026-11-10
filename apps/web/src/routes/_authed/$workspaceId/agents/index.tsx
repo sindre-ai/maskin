@@ -3,6 +3,7 @@ import { PageHeader } from '@/components/layout/page-header'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
+import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
@@ -24,7 +25,13 @@ export const Route = createFileRoute('/_authed/$workspaceId/agents/')({
 function AgentsRoute() {
 	useDocumentTitle('Agents')
 	const { workspaceId } = useWorkspace()
-	const { data: actors, isLoading } = useActors(workspaceId)
+	const {
+		data: actors,
+		isLoading,
+		isError: actorsFailed,
+		error: actorsError,
+		refetch: refetchActors,
+	} = useActors(workspaceId)
 	// Live status comes from the 100-newest list the sidebar uses (one request,
 	// coalesced refetches). Counts and cost come from one grouped server query, so
 	// neither grows with the size of the session history.
@@ -56,6 +63,20 @@ function AgentsRoute() {
 					open={createPickerOpen}
 					onOpenChange={setCreatePickerOpen}
 					defaultType="agent"
+				/>
+			</div>
+		)
+	}
+
+	// A failed fetch must not fall through to "Nobody on this team yet".
+	if (actorsFailed && !actors) {
+		return (
+			<div>
+				<PageHeader title="Agents" />
+				<QueryStateError
+					title="Couldn't load agents"
+					error={actorsError}
+					onRetry={() => refetchActors()}
 				/>
 			</div>
 		)

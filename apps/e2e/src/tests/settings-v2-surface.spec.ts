@@ -164,7 +164,7 @@ test.describe('Settings v2 surface', () => {
 /**
  * General's two typographic decisions (mockup 2697–2709).
  *
- * The section labels are 12px sans, not the 8px mono `.eyebrow` used
+ * The section labels are 15px sans, not the 8px mono `.eyebrow` used
  * for the app's other micro-labels; and the selected Appearance option is the
  * solid near-black pill. Both are colour/size choices no structural assertion
  * catches — `--secondary` (#f6f6f7) on a white card renders as no selection at
@@ -172,7 +172,7 @@ test.describe('Settings v2 surface', () => {
  */
 test.describe('Settings > General — labels and Appearance', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
-		test(`section labels use the 13px sans style at ${viewport.label}`, async ({
+		test(`section labels use the 15px sans style at ${viewport.label}`, async ({
 			page,
 			account,
 		}) => {
@@ -186,7 +186,7 @@ test.describe('Settings > General — labels and Appearance', () => {
 					const cs = getComputedStyle(el)
 					return { fontSize: cs.fontSize, fontFamily: cs.fontFamily, weight: cs.fontWeight }
 				})
-				expect(style.fontSize).toBe('13px')
+				expect(style.fontSize).toBe('15px')
 				expect(style.fontFamily).not.toMatch(/mono/i)
 				expect(Number(style.weight)).toBeGreaterThanOrEqual(600)
 			}

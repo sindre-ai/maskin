@@ -222,7 +222,7 @@ describe('ListView', () => {
 			})
 
 			expect(groupHeaders()[0]?.textContent).toContain('19')
-			expect(screen.queryByText('No items found')).toBeNull()
+			expect(screen.queryByText('No items yet')).toBeNull()
 		})
 
 		it('files rows with no value under the empty-string group the server sends', () => {
@@ -459,7 +459,7 @@ describe('ListView', () => {
 
 	it('falls back to the create-your-first copy when no filter is applied', () => {
 		renderListView({ data: [], hasActiveFilters: false })
-		expect(screen.getByText('No items found')).toBeInTheDocument()
+		expect(screen.getByText('No items yet')).toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: 'Clear all filters' })).toBeNull()
 	})
 

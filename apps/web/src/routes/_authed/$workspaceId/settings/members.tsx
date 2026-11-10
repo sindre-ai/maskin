@@ -137,7 +137,7 @@ function MembersPage() {
 	return (
 		<div className="max-w-[760px]">
 			<SettingsPageTitle title="Members" />
-			<h2 className="px-2 pb-1.5 text-[13px] font-semibold text-muted-foreground">People</h2>
+			<h2 className="px-2 pb-1.5 text-[15px] font-semibold text-foreground">People</h2>
 
 			{roleError && (
 				<p className="mb-3 text-sm text-error" role="alert">
@@ -259,7 +259,7 @@ function MembersPage() {
 
 			{!!pendingInvites?.length && (
 				<section className="mt-6" aria-label="Pending invites">
-					<h3 className="mb-1 px-2 text-[13px] font-semibold text-muted-foreground">
+					<h3 className="mb-1 px-2 text-[15px] font-semibold text-foreground">
 						Pending — {pendingInvites.length}
 					</h3>
 					<div className="flex flex-col divide-y divide-border-subtle border-y border-border-subtle">

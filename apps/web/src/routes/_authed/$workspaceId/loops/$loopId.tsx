@@ -1,7 +1,7 @@
 import { PageHeader } from '@/components/layout/page-header'
 import { AskBanner } from '@/components/loops/ask-banner'
 import { LoopBlockError } from '@/components/loops/loop-block-error'
-import { itemsNeedingYou, loopCounters } from '@/components/loops/loop-counters'
+import { itemsNeedingYou } from '@/components/loops/loop-counters'
 import { LoopCustomView } from '@/components/loops/loop-custom-view'
 import { LoopDetailTabs } from '@/components/loops/loop-detail-tabs'
 import { LoopFirstRunBanner } from '@/components/loops/loop-first-run-banner'
@@ -393,7 +393,6 @@ function LoopDetailRoute() {
 	const pill = LOOP_PILL_STYLES[loop.pill]
 	// The flow's driver is the object's own `driver`; no driver, no pill.
 	const driver = object?.driver ? actors?.find((a) => a.id === object.driver) : undefined
-	const counters = loopCounters(children ?? [], statusChains)
 	const needsYouRows = itemsNeedingYou(
 		children ?? [],
 		needsInputNotifications ?? [],
@@ -659,23 +658,6 @@ function LoopDetailRoute() {
 
 						{!showCustomView && (
 							<>
-								{counters.length > 0 && (
-									<section
-										aria-label="Progress"
-										data-testid="loop-counters"
-										className="grid grid-cols-3 gap-3 sm:flex"
-									>
-										{counters.map((c) => (
-											<div key={c.key} className="rounded-2xl bg-muted px-4 py-3.5 sm:w-44">
-												<p className="text-[26px] font-bold leading-none tracking-tight tabular-nums text-foreground">
-													{c.count}
-												</p>
-												<p className="mt-1.5 text-[13px] text-muted-foreground">{c.label}</p>
-											</div>
-										))}
-									</section>
-								)}
-
 								{needsYouRows.length > 0 && (
 									<section
 										aria-label="Needs you"

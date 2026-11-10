@@ -103,7 +103,7 @@ function NotificationsPage() {
 	return (
 		<div className="max-w-[760px]">
 			<SettingsPageTitle title="Notifications" subtitle="Choose what reaches you, and where." />
-			<div className="flex items-center justify-between px-2 pb-1.5 text-[13px] font-semibold text-muted-foreground">
+			<div className="flex items-center justify-between px-2 pb-1.5 text-[15px] font-semibold text-foreground">
 				<span>Notify me about</span>
 				<span>Push</span>
 			</div>

@@ -33,6 +33,18 @@ public struct StoryCard: Identifiable, Equatable, Sendable {
 }
 
 extension StoryCard {
+	/// The two lines of the small briefing card: a big figure and what it counts. A headline that
+	/// opens with a number ("3 decisions this week", "DKK 0 of 992,880 secured") splits there; any
+	/// other headline sits under its unit, so the card still reads as a label and a line.
+	public var figure: (big: String, caption: String) {
+		let text = headline.trimmingCharacters(in: .whitespacesAndNewlines)
+		if let match = text.firstMatch(of: /^((?:[A-Z]{3}\s?)?\d[\d.,]*)\s*(.*)$/) {
+			let caption = String(match.2).trimmingCharacters(in: .whitespacesAndNewlines)
+			if !caption.isEmpty { return (String(match.1), caption) }
+		}
+		return (unit, text)
+	}
+
 	/// The unit of a briefing that no loop produced: the Chief of Staff's own.
 	public static let chiefOfStaffUnit = "Chief of Staff"
 

@@ -21,7 +21,7 @@ test.describe('Loops list page', () => {
 
 			await page.goto(`/${account.workspaceId}/loops`)
 
-			await expect(page.getByText('No flows running here yet')).toBeVisible({ timeout: 10000 })
+			await expect(page.getByText('No flows yet')).toBeVisible({ timeout: 10000 })
 		})
 
 		test(`renders a loop row with derived stats at ${viewport.label}`, async ({
@@ -195,7 +195,7 @@ test.describe('Loops list page', () => {
 			await expect(page.getByText('Unattached watcher', { exact: true })).toBeVisible({
 				timeout: 10000,
 			})
-			await expect(page.getByText('No flows running here yet')).toBeVisible()
+			await expect(page.getByText('No flows yet')).toBeVisible()
 		})
 	}
 
@@ -327,7 +327,7 @@ test.describe('Loops list page', () => {
 			await expect(page.getByText("Couldn't load flows")).toBeVisible({ timeout: 10000 })
 			// The empty state would claim the workspace has no loops — it must not
 			// stand in for a fetch that failed.
-			await expect(page.getByText('No flows running here yet')).toBeHidden()
+			await expect(page.getByText('No flows yet')).toBeHidden()
 
 			// The retry control is reachable on touch and reads in both modes.
 			const retry = page.getByRole('button', { name: /try again|retry/i })

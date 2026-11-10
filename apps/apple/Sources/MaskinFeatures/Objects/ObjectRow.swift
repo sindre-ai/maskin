@@ -234,9 +234,8 @@ struct ObjectGroupHeader: View {
 		} label: {
 			HStack(spacing: MaskinSpace.s4) {
 				Text(group.title ?? "")
-					.maskinText(.subhead)
-					.fontWeight(.semibold)
-					.foregroundStyle(MaskinColor.ink3)
+					.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold, relativeTo: .subheadline))
+					.foregroundStyle(MaskinColor.ink)
 					.lineLimit(1)
 				Text("\(group.objects.count)")
 					.maskinText(.caption)
@@ -251,6 +250,7 @@ struct ObjectGroupHeader: View {
 				}
 			}
 			.padding(.horizontal, MaskinSpace.s4)
+			.padding(.top, MaskinSpace.s12)
 			.frame(minHeight: MaskinSpace.touchMin)
 			.contentShape(Rectangle())
 		}
