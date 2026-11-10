@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-/// The workspace's files, newest first, with name search and paging.
+/// The workspace's files, newest first, with name search, a tag filter and paging.
 @MainActor
 @Observable
 public final class FilesListStore {
@@ -20,6 +20,11 @@ public final class FilesListStore {
 	public private(set) var isLoadingMore = false
 	public private(set) var hasMore = false
 	public private(set) var query = ""
+	/// The tags the list is narrowed to, and whether a file needs all of them or any one.
+	public private(set) var selectedTags: [String] = []
+	public private(set) var match: FileTagMatch = .all
+	/// Every tag in use with its file count, A to Z.
+	public private(set) var availableTags: [FileTagCount] = []
 
 	@ObservationIgnored private let remote: any FilesRemote
 	@ObservationIgnored private var generation = 0
@@ -36,13 +41,46 @@ public final class FilesListStore {
 		await load()
 	}
 
+	/// The tags to offer: those in use plus any picked one no file carries any more (count 0), so it
+	/// can still be unpicked. A to Z.
+	public var tagOptions: [FileTagCount] {
+		let known = Set(availableTags.map(\.tag))
+		let orphaned = selectedTags.filter { !known.contains($0) }.map { FileTagCount(tag: $0, count: 0) }
+		return FileTagRules.sorted(availableTags + orphaned)
+	}
+
+	/// Whether the tag filter is worth showing: some file carries a tag, or one is already picked.
+	public var hasTagFilter: Bool { !availableTags.isEmpty || !selectedTags.isEmpty }
+
+	/// Replaces the picked tags and reloads from the first page.
+	public func setTags(_ tags: [String]) async {
+		guard tags != selectedTags else { return }
+		selectedTags = tags
+		await load()
+	}
+
+	/// Switches between "has all of these" and "has any of these". With no tags picked there is
+	/// nothing to re-run.
+	public func setMatch(_ newMatch: FileTagMatch) async {
+		guard newMatch != match else { return }
+		match = newMatch
+		if !selectedTags.isEmpty { await load() }
+	}
+
+	/// The tags in use. A failure keeps the list already on screen.
+	public func loadTags() async {
+		guard let counts = try? await remote.tagCounts() else { return }
+		availableTags = FileTagRules.sorted(counts)
+	}
+
 	/// First page for the current query. A failed refresh keeps the rows already on screen.
 	public func load() async {
 		generation += 1
 		let mine = generation
 		if files.isEmpty { phase = .loading }
 		do {
-			let page = try await remote.list(query: query, limit: Self.pageSize, offset: 0)
+			let page = try await remote.list(
+				query: query, tags: selectedTags, match: match, limit: Self.pageSize, offset: 0)
 			guard mine == generation else { return }
 			files = page
 			hasMore = page.count >= Self.pageSize
@@ -63,7 +101,8 @@ public final class FilesListStore {
 		let mine = generation
 		defer { isLoadingMore = false }
 		do {
-			let page = try await remote.list(query: query, limit: Self.pageSize, offset: files.count)
+			let page = try await remote.list(
+				query: query, tags: selectedTags, match: match, limit: Self.pageSize, offset: files.count)
 			guard mine == generation else { return }
 			let known = Set(files.map(\.id))
 			files += page.filter { !known.contains($0.id) }

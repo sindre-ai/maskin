@@ -3,6 +3,7 @@ import {
 	type CreateFileInput,
 	type FileDetail,
 	type FileListItem,
+	type FileTagMatch,
 	type UpdateFileInput,
 	api,
 } from '../lib/api'
@@ -34,12 +35,23 @@ export function useFiles(workspaceId: string, params?: { q?: string; ids?: strin
  * Every file in the workspace, A→Z by name (the app's list default), optionally narrowed by a
  * name search. Pages through the endpoint so the sort is over the whole set, not one page.
  */
-export function useAllFiles(workspaceId: string, q?: string) {
+export function useAllFiles(
+	workspaceId: string,
+	q?: string,
+	tagFilter?: { tags: string[]; match: FileTagMatch },
+) {
+	const tags = tagFilter?.tags ?? []
+	const match = tagFilter?.match ?? 'all'
 	return useQuery({
-		queryKey: [...queryKeys.files.all(workspaceId), 'all', q ?? ''],
+		queryKey: [...queryKeys.files.all(workspaceId), 'all', q ?? '', tags.join(','), match],
 		queryFn: async () => {
 			const rows = await fetchAllPages<FileListItem>(({ limit, offset }) =>
-				api.files.list(workspaceId, { q, limit, offset }),
+				api.files.list(workspaceId, {
+					q,
+					limit,
+					offset,
+					...(tags.length > 0 ? { tags, tags_match: match } : {}),
+				}),
 			)
 			return rows.sort(
 				(a, b) =>
@@ -47,6 +59,15 @@ export function useAllFiles(workspaceId: string, q?: string) {
 					a.id.localeCompare(b.id),
 			)
 		},
+		enabled: !!workspaceId,
+	})
+}
+
+/** The tags in use in the workspace with file counts, from the same endpoint the agent tool reads. */
+export function useFileTags(workspaceId: string) {
+	return useQuery({
+		queryKey: queryKeys.files.tags(workspaceId),
+		queryFn: () => api.files.tags(workspaceId),
 		enabled: !!workspaceId,
 	})
 }

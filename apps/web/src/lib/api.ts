@@ -1781,10 +1781,19 @@ export const api = {
 	files: {
 		list: (
 			workspaceId: string,
-			params?: { q?: string; ids?: string[]; kind?: 'briefing'; limit?: number; offset?: number },
+			params?: {
+				q?: string
+				ids?: string[]
+				kind?: 'briefing'
+				/** Narrow to files carrying these tags; `tags_match` picks all (default) or any. */
+				tags?: string[]
+				tags_match?: FileTagMatch
+				limit?: number
+				offset?: number
+			},
 		) => {
 			if (!params) return request<FileListItem[]>('/files', { workspaceId })
-			const { ids, ...rest } = params
+			const { ids, tags, ...rest } = params
 			const searchParams = new URLSearchParams(
 				Object.entries(rest).reduce<Record<string, string>>((acc, [k, v]) => {
 					if (v !== undefined && v !== '') acc[k] = String(v)
@@ -1792,9 +1801,12 @@ export const api = {
 				}, {}),
 			)
 			if (ids?.length) searchParams.set('ids', ids.join(','))
+			if (tags?.length) searchParams.set('tags', tags.join(','))
 			const qs = searchParams.size > 0 ? `?${searchParams}` : ''
 			return request<FileListItem[]>(`/files${qs}`, { workspaceId })
 		},
+		/** Every tag in use in the workspace with how many files carry it, most-used first. */
+		tags: (workspaceId: string) => request<FileTagCount[]>('/files/tags', { workspaceId }),
 		get: (workspaceId: string, id: string) => request<FileDetail>(`/files/${id}`, { workspaceId }),
 		create: (workspaceId: string, data: CreateFileInput) =>
 			request<FileDetail>('/files', { method: 'POST', body: data, workspaceId }),
@@ -2764,12 +2776,21 @@ export interface FileListItem {
 	description: string | null
 	/** What the file is for. `briefing` puts an HTML page in the For you row. */
 	kind?: 'briefing' | null
+	/** Lowercase labels; empty for a file with none. */
+	tags: string[]
 	mimeType: string
 	sizeBytes: number
 	storageKey: string
 	createdBy: string
 	createdAt: string
 	updatedAt: string
+}
+
+export type FileTagMatch = 'all' | 'any'
+
+export interface FileTagCount {
+	tag: string
+	count: number
 }
 
 export interface FileAnnotation {
@@ -2805,6 +2826,8 @@ export interface CreateFileInput {
 export interface UpdateFileInput {
 	name?: string
 	description?: string | null
+	/** Replaces the whole tag list; [] clears it. */
+	tags?: string[]
 	mime_type?: string
 	content?: string
 	encoding?: 'base64' | 'utf8'

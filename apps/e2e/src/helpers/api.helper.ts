@@ -79,6 +79,7 @@ interface FileDetailResponse {
 	workspaceId: string
 	name: string
 	description: string | null
+	tags: string[]
 	mimeType: string
 	sizeBytes: number
 	storageKey: string
@@ -424,6 +425,7 @@ export class TestAPI {
 			content: string
 			encoding?: 'base64' | 'utf8'
 			description?: string | null
+			tags?: string[]
 		},
 	): Promise<FileDetailResponse> {
 		const res = await fetch(`${this.baseURL}/api/files`, {

@@ -1,3 +1,4 @@
+import { FileTagFilter } from '@/components/files/file-tag-filter'
 import { MimeTile, formatBytes } from '@/components/objects/file-tile'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
@@ -5,15 +6,69 @@ import { RelativeTime } from '@/components/shared/relative-time'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useAllFiles } from '@/hooks/use-files'
+import type { FileListItem, FileTagMatch } from '@/lib/api'
 import { Link } from '@tanstack/react-router'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 
 /** The Items page's Files tab: every file in the workspace, each row linking to its viewer. */
 export function FilesList({ workspaceId, q }: { workspaceId: string; q?: string }) {
-	const { data: files, isLoading, isError, error, refetch } = useAllFiles(workspaceId, q)
+	const [tags, setTags] = useState<string[]>([])
+	const [match, setMatch] = useState<FileTagMatch>('all')
+	const {
+		data: files,
+		isLoading,
+		isError,
+		error,
+		refetch,
+	} = useAllFiles(workspaceId, q, { tags, match })
 	const { data: actors } = useActors(workspaceId)
 	const actorNames = useMemo(() => new Map((actors ?? []).map((a) => [a.id, a.name])), [actors])
 
+	return (
+		<>
+			<FileTagFilter
+				workspaceId={workspaceId}
+				tags={tags}
+				match={match}
+				onTagsChange={setTags}
+				onMatchChange={setMatch}
+			/>
+			<FilesRows
+				workspaceId={workspaceId}
+				q={q}
+				filtered={tags.length > 0}
+				files={files}
+				actorNames={actorNames}
+				isLoading={isLoading}
+				isError={isError}
+				error={error}
+				refetch={refetch}
+			/>
+		</>
+	)
+}
+
+function FilesRows({
+	workspaceId,
+	q,
+	filtered,
+	files,
+	actorNames,
+	isLoading,
+	isError,
+	error,
+	refetch,
+}: {
+	workspaceId: string
+	q?: string
+	filtered: boolean
+	files: FileListItem[] | undefined
+	actorNames: Map<string, string>
+	isLoading: boolean
+	isError: boolean
+	error: Error | null
+	refetch: () => void
+}) {
 	if (isLoading) return <ListSkeleton rows={8} />
 	if (isError) {
 		return (
@@ -29,7 +84,13 @@ export function FilesList({ workspaceId, q }: { workspaceId: string; q?: string 
 		)
 	}
 	if (!files || files.length === 0) {
-		return <EmptyState title={q ? `No files match “${q}”.` : 'No files yet'} />
+		return (
+			<EmptyState
+				title={
+					q ? `No files match “${q}”.` : filtered ? 'No files have these tags' : 'No files yet'
+				}
+			/>
+		)
 	}
 
 	return (

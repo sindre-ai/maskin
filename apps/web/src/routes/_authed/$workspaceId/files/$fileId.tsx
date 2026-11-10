@@ -1,6 +1,7 @@
 import { useEditableMarkdown } from '@/components/files/editable-markdown-stage'
 import { isHtml } from '@/components/files/file-body'
 import { FileReadView } from '@/components/files/file-read-view'
+import { FileTagChips, FileTagEditorButton } from '@/components/files/file-tags'
 import { PinFileButton } from '@/components/files/pin-file-button'
 import { ProvenanceStrip } from '@/components/files/provenance-strip'
 import { type ReviewFilter, ReviewPanel } from '@/components/files/review-panel'
@@ -516,7 +517,7 @@ function FileViewerPage() {
 	}
 	const author = actors?.find((a) => a.id === file.createdBy)?.name ?? null
 
-	const strip = readMode ? null : (
+	const provenance = readMode ? null : (
 		<ProvenanceStrip
 			workspaceId={workspaceId}
 			attachers={attachers}
@@ -524,6 +525,16 @@ function FileViewerPage() {
 			onSelectTarget={setSelectedTargetId}
 		/>
 	)
+	// Tags sit under the provenance strip; a file with none adds no band.
+	const strip =
+		file.tags.length > 0 ? (
+			<>
+				{provenance}
+				<FileTagChips file={file} />
+			</>
+		) : (
+			provenance
+		)
 
 	// Both the inline panel (lg+ desktop) and the Sheet-wrapped panel (below lg)
 	// take the same props; the only difference is `layout`. Build the shared
@@ -724,6 +735,7 @@ function TopBarActions({
 	return (
 		<div className="flex flex-wrap md:flex-nowrap items-center gap-1 max-md:min-w-0 max-md:max-w-full">
 			<PinFileButton file={file} isPinned={pinnedFlag} onToggle={onTogglePin} />
+			<FileTagEditorButton file={file} />
 			<Button
 				variant="outline"
 				size="sm"
