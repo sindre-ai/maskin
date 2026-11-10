@@ -252,6 +252,7 @@ function ChatConversationList({
 		mode: filter === 'archived' ? 'archived' : 'unread',
 	})
 	const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+	const allCollapsed = groups.length > 0 && groups.every((g) => collapsed.has(g.key))
 	const updateMe = useUpdateConversationMe(workspaceId)
 	const markAllRead = async () => {
 		// Exactly the chats the Unread group lists (pinned chats sit in their own group).
@@ -288,6 +289,9 @@ function ChatConversationList({
 		// re-observing would refire the same request in a tight loop. The manual
 		// "Try again" below is the only way back in.
 		if (!el || !hasNextPage || isFetchingNextPage || isFetchNextPageError) return
+		// With every group folded the list is a few header rows, so the sentinel is always on
+		// screen and would pull in the whole history behind the reader's back.
+		if (allCollapsed) return
 		if (typeof IntersectionObserver === 'undefined') return
 		const observer = new IntersectionObserver(
 			(entries) => {
@@ -297,7 +301,7 @@ function ChatConversationList({
 		)
 		observer.observe(el)
 		return () => observer.disconnect()
-	}, [hasNextPage, isFetchingNextPage, isFetchNextPageError, loadNextPage])
+	}, [hasNextPage, isFetchingNextPage, isFetchNextPageError, loadNextPage, allCollapsed])
 
 	return (
 		<div data-testid="conversation-list" className={cn('flex min-h-0 flex-1 flex-col', className)}>
