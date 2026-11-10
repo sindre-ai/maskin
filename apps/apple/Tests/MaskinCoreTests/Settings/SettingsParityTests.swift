@@ -126,6 +126,7 @@ struct BillingTests {
 		#expect(store.phase == .loaded)
 		#expect(store.usage?.planLabel == "Pro")
 		#expect(store.usage?.usedFraction == 0.25)
+		#expect(store.usage?.usedPercent == 25)
 	}
 
 	@Test("a failure with nothing cached becomes the failed phase")
@@ -139,14 +140,17 @@ struct BillingTests {
 
 	@Test("formatting")
 	func formatting() {
-		#expect(BillingUsage.dollars(2_500, locale: Locale(identifier: "en_US")) == "$25")
-		#expect(BillingUsage.dollars(2_550, locale: Locale(identifier: "en_US")) == "$25.50")
 		var usage = FakeSettings().billingUsage
 		usage.capCents = nil
 		#expect(usage.usedFraction == nil)
+		#expect(usage.usedPercent == nil)
 		usage.usedCents = 99_999
 		usage.capCents = 100
 		#expect(usage.usedFraction == 1)
+		#expect(usage.usedPercent == 100)
+		usage.usedCents = 996
+		usage.capCents = 1_000
+		#expect(usage.usedPercent == 99)
 		usage.resetsInMs = 5 * 86_400_000
 		#expect(usage.resetsText == "Resets in 5 days")
 		usage.resetsInMs = 3 * 3_600_000

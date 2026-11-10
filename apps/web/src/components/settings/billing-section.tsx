@@ -597,11 +597,13 @@ function UsageBanner({
 }
 
 // Renders the LinkedIn Identity SKU under the plan surface. The buyer-framing
-// paragraph is verbatim from the bet §Pricing so pricing copy stays inside
-// the pricing memo's control — do NOT paraphrase it. Displayed only when the
+// paragraph is verbatim from the pricing memo so pricing copy stays inside
+// its control — do NOT paraphrase it. With the percent display on, the memo's
+// approved usage wording replaces the dollar and token wording. Displayed only when the
 // backend returns a non-null `linkedin_identity_addon` (see
 // apps/dev/src/lib/linkedin-addon.ts).
 function LinkedInIdentityAddonLineRow({ line }: { line: LinkedInIdentityAddonLine }) {
+	const percentOn = usePlanPercentEnabled()
 	const unit = formatDollars(line.unit_price_usd_cents)
 	const total = formatDollars(line.monthly_total_usd_cents, { withCents: true })
 	return (
@@ -613,8 +615,9 @@ function LinkedInIdentityAddonLineRow({ line }: { line: LinkedInIdentityAddonLin
 				</span>
 			</div>
 			<p className="text-xs text-muted-foreground">
-				$49/month covers connectivity to LinkedIn; your token bucket continues to cover only what
-				the model reasons through.
+				{percentOn
+					? 'The add-on covers the LinkedIn connection. Your plan usage continues to cover only what the model reasons through.'
+					: '$49/month covers connectivity to LinkedIn; your token bucket continues to cover only what the model reasons through.'}
 			</p>
 		</div>
 	)
