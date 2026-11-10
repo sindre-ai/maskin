@@ -55,6 +55,7 @@ struct WatchTile: View {
 
 	private var initials: String {
 		if name == "Chief of Staff" { return "Co" }
+		if (2...3).contains(name.count), name.allSatisfy({ $0.isLetter && $0.isUppercase }) { return name }
 		return String(name.split(separator: " ").prefix(2).compactMap(\.first)).uppercased()
 	}
 

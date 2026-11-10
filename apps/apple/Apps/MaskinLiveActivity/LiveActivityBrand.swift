@@ -61,6 +61,7 @@ struct LiveActivityAgentTile: View {
 	static func initials(_ name: String) -> String {
 		let word = name.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? "?"
 		let letters = word.filter { $0.isLetter || $0.isNumber }
+		if name.split(whereSeparator: \.isWhitespace).count == 1, (2...3).contains(letters.count), letters.allSatisfy({ $0.isLetter && $0.isUppercase }) { return letters }
 		guard let first = letters.first else { return "?" }
 		return String(first).uppercased() + letters.dropFirst().prefix(1).lowercased()
 	}

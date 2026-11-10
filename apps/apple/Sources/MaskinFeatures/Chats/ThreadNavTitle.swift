@@ -121,6 +121,7 @@ struct ThreadNavAvatars: View {
 					if p.id == leadID {
 						Text(ActorIdentity.initials(for: p.name))
 							.font(MaskinTypeface.sans(size * 0.38, weight: .semibold, relativeTo: .caption))
+							.minimumScaleFactor(0.6)
 							.foregroundStyle(MaskinSurface.onInverse)
 							.frame(width: size, height: size)
 							.background(MaskinSurface.inverse, in: RoundedRectangle(cornerRadius: size * 0.3, style: .continuous))

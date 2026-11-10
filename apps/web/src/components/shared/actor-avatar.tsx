@@ -37,11 +37,21 @@ const AVATAR_PALETTE_STRONG = [
 	'bg-[var(--st-proposed-text)] text-[var(--st-proposed-bg)]',
 ] as const
 
+// Glyph size for a three-letter acronym ("CTO"); lg and xl are wide enough as they are.
+const THREE_LETTER_TEXT = {
+	sm: 'text-[7.5px]',
+	md: 'text-[10px]',
+	lg: '',
+	xl: '',
+} as const
+
 /** Tint plate (the default everywhere) vs the solid plate v2 uses for a row anchor. */
 export type ActorAvatarTone = 'subtle' | 'strong'
 
 /** Strip everything that is not a letter or digit so a bracketed qualifier
- *  ("Linker (Sigrid)") or a title suffix never lands in the glyph. */
+ *  ("Linker (Sigrid)") or a title suffix never lands in the glyph. A one-word
+ *  all-caps name of 2 or 3 letters ("CTO", "PMM") is a role acronym and keeps
+ *  every letter; everything else is cut to two. */
 export function getActorInitials(name: string): string {
 	const trimmed = (name ?? '').trim()
 	if (!trimmed) return '?'
@@ -57,6 +67,7 @@ export function getActorInitials(name: string): string {
 		return combined || '?'
 	}
 	const word = words[0] ?? ''
+	if (/^\p{Lu}{2,3}$/u.test(word)) return word
 	if (word.length >= 2) return word.slice(0, 2).toUpperCase()
 	return word.toUpperCase() || '?'
 }
@@ -187,6 +198,8 @@ function ActorAvatarView({
 		paletteClass,
 		sizeClasses,
 		tile && 'size-[26px] rounded-lg bg-muted text-[10.5px] font-bold text-foreground',
+		// Three letters need a smaller glyph at the small steps to stay inside the plate.
+		initials.length === 3 && !pictogram && (tile ? 'text-[8.5px]' : THREE_LETTER_TEXT[size]),
 		className,
 		// Last, so the team tint wins over a caller's plain or status fill.
 		pictogram?.tintClass,

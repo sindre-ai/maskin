@@ -67,6 +67,14 @@ import Testing
 		#expect(ActorIdentity.initials(for: "  ") == "?")
 		#expect(ActorIdentity.initials(for: "") == "?")
 		#expect(ActorIdentity.initials(for: "x") == "X")
+		#expect(ActorIdentity.initials(for: "CTO") == "CTO")
+		#expect(ActorIdentity.initials(for: "PMM") == "PMM")
+		#expect(ActorIdentity.initials(for: "PM") == "PM")
+		#expect(ActorIdentity.initials(for: "(CPO)") == "CPO")
+		#expect(ActorIdentity.initials(for: "Cto") == "CT")
+		#expect(ActorIdentity.initials(for: "CTOS") == "CT")
+		#expect(ActorIdentity.initials(for: "Sebastian Krumhausen") == "SK")
+		#expect(ActorIdentity.initials(for: "Chief of Staff") == "CO")
 	}
 
 	@Test("the plate hue follows the mockup's (h * 31 + c) % 360 and is stable")

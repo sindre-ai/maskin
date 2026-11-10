@@ -53,6 +53,32 @@ describe('getActorInitials', () => {
 	it('returns ? when the name is punctuation only', () => {
 		expect(getActorInitials('---')).toBe('?')
 	})
+
+	it('keeps all three letters of a one-word all-caps acronym', () => {
+		expect(getActorInitials('CTO')).toBe('CTO')
+		expect(getActorInitials('PMM')).toBe('PMM')
+	})
+
+	it('keeps both letters of a two-letter all-caps acronym', () => {
+		expect(getActorInitials('PM')).toBe('PM')
+	})
+
+	it('still cuts a one-word name that is not an all-caps acronym to two letters', () => {
+		expect(getActorInitials('Cto')).toBe('CT')
+		expect(getActorInitials('cto')).toBe('CT')
+		expect(getActorInitials('CTOS')).toBe('CT')
+		expect(getActorInitials('Magnus')).toBe('MA')
+	})
+
+	it('reads an acronym through punctuation', () => {
+		expect(getActorInitials('(CPO)')).toBe('CPO')
+	})
+
+	it('keeps two letters for multi-word names', () => {
+		expect(getActorInitials('Sebastian Krumhausen')).toBe('SK')
+		expect(getActorInitials('Chief of Staff')).toBe('CO')
+		expect(getActorInitials('CTO Agent')).toBe('CA')
+	})
 })
 
 describe('getActorAvatarPaletteClass', () => {
@@ -79,6 +105,15 @@ describe('ActorAvatar', () => {
 	it('renders 2-letter initials for multi-word names', () => {
 		render(<ActorAvatar name="Product Marketer" type="human" />)
 		expect(screen.getByText('PM')).toBeInTheDocument()
+	})
+
+	it('shows all three letters of an acronym name in a smaller glyph at small sizes', () => {
+		const { rerender } = render(<ActorAvatar name="CTO" type="human" />)
+		expect(screen.getByText('CTO').closest('span[title]')?.className).toContain('text-[7.5px]')
+		rerender(<ActorAvatar name="CTO" type="human" tile />)
+		expect(screen.getByText('CTO').closest('span[title]')?.className).toContain('text-[8.5px]')
+		rerender(<ActorAvatar name="Magnus" type="human" />)
+		expect(screen.getByText('MA').closest('span[title]')?.className).not.toContain('text-[7.5px]')
 	})
 
 	it('draws an agent as a pictogram tile and keeps its name', () => {

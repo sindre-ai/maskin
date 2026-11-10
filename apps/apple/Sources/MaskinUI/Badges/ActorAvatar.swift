@@ -4,7 +4,8 @@ import SwiftUI
 /// Pure identity logic for avatars, kept apart from the view so it can be tested.
 public enum ActorIdentity {
 	/// Up to two letters: first letters of the first two words, or the first two of a single
-	/// word. Punctuation and bracketed qualifiers never reach the glyph. "?" when empty.
+	/// word. A one-word all-caps name of 2 or 3 letters ("CTO", "PMM") keeps every letter.
+	/// Punctuation and bracketed qualifiers never reach the glyph. "?" when empty.
 	public static func initials(for name: String) -> String {
 		let words = name.split(whereSeparator: \.isWhitespace).map {
 			String($0.filter { $0.isLetter || $0.isNumber })
@@ -13,6 +14,7 @@ public enum ActorIdentity {
 		case 0: return "?"
 		case 1:
 			let word = words[0]
+			if (2...3).contains(word.count), word.allSatisfy({ $0.isLetter && $0.isUppercase }) { return word }
 			return String(word.prefix(2)).uppercased()
 		default:
 			return (String(words[0].prefix(1)) + String(words[1].prefix(1))).uppercased()
