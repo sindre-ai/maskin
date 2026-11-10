@@ -43,6 +43,7 @@ describe('createSlackMcpServer — slack_send_message (internal channel, direct)
 		workspaceId: 'ws-1',
 		actorId: 'actor-1',
 		slackTeamId: 'T123ABC',
+		directPostChannels: ['C06LC37JJCS'],
 	}
 
 	let fetchMock: ReturnType<typeof vi.fn>
@@ -254,6 +255,7 @@ describe('createSlackMcpServer — discovery and membership tools', () => {
 		workspaceId: 'ws-1',
 		actorId: 'actor-1',
 		slackTeamId: 'T123ABC',
+		directPostChannels: ['C06LC37JJCS'],
 	}
 
 	let fetchMock: ReturnType<typeof vi.fn>
@@ -888,8 +890,8 @@ describe('createSlackMcpServer — discovery and membership tools', () => {
 })
 
 describe('direct post allowlist', () => {
-	it('falls back to the built-in default only when no list was saved', () => {
-		expect(isDirectPostChannel('C06LC37JJCS')).toBe(true)
+	it('holds every channel when no list was saved', () => {
+		expect(isDirectPostChannel('C06LC37JJCS')).toBe(false)
 		expect(isDirectPostChannel('C06LC37JJCS', ['C0AAAAAAAAA'])).toBe(false)
 		expect(isDirectPostChannel('C0AAAAAAAAA', ['C0AAAAAAAAA'])).toBe(true)
 		expect(isDirectPostChannel('C06LC37JJCS', [])).toBe(false)
@@ -958,8 +960,14 @@ describe('createSlackMcpServer — slack_send_message with a saved allowlist', (
 		expect(fetchMock).not.toHaveBeenCalled()
 	})
 
-	it('holds the built-in channel once a saved list leaves it out', async () => {
+	it('holds a channel once a saved list leaves it out', async () => {
 		const result = await send(['C0AAAAAAAAA'], 'C06LC37JJCS')
+		expect(result.isError).toBe(true)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('holds everything when no list was saved', async () => {
+		const result = await send(undefined, 'C06LC37JJCS')
 		expect(result.isError).toBe(true)
 		expect(fetchMock).not.toHaveBeenCalled()
 	})

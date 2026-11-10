@@ -1,5 +1,6 @@
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
+import { type ConnectionSnapshotRow, captureConnectionSnapshot } from './connection-snapshot'
 import * as schema from './schema'
 
 type QueryTimer = (ms: number) => void
@@ -238,23 +239,100 @@ export function timeQueries<C extends object>(
 /** postgres.js opens at most this many connections unless told otherwise. */
 export const DEFAULT_POOL_SIZE = 10
 
+/**
+ * A connection the pooler or network dropped without telling us stays in postgres.js's pool with
+ * its query still "in flight", and never answers. The 2026-11-10 logs show it: the database had
+ * 20 connections idle and none running a query, while single queries got no answer every few
+ * minutes (one within 50 s of boot), each permanently using up a connection, until all 20 were
+ * gone about 25 minutes in and every query failed until the server was redeployed. postgres.js
+ * cannot drop one connection, so when a query gets no answer the whole pool is replaced.
+ */
+export type PoolRecycleInfo = {
+	/** Queries the database was running when it was asked; null if it could not be asked. */
+	runningQueries: number | null
+	/** The first characters of the query that got no answer. */
+	sql: string
+}
+
+/** Queries the database is busy with at that moment. A backlog of real work is not a lost connection. */
+export function countRunningQueries(rows: ConnectionSnapshotRow[]): number {
+	return rows
+		.filter((r) => r.state === 'active' && r.wait_event_type !== 'Client')
+		.reduce((sum, r) => sum + r.connections, 0)
+}
+
+/** At least this many queries running at once means the database is busy, so a new pool would not help. */
+export const DATABASE_BUSY_QUERIES = 5
+/** At most one recycle, or one decision not to, in this long. */
+export const POOL_RECYCLE_MIN_INTERVAL_MS = 30_000
+const POOL_RECYCLE_PROBE_TIMEOUT_MS = 5_000
+
 export function createDb(
 	url: string,
 	options: Omit<TimeQueriesOptions, 'saturationAt'> & {
 		onQuery?: QueryTimer
 		/** Connections to open at most. Defaults to DEFAULT_POOL_SIZE. */
 		poolSize?: number
+		/** Called after the pool was replaced because a query got no answer. */
+		onPoolRecycled?: (info: PoolRecycleInfo) => void
+		/** How the database is asked what it is running; replaceable in tests. */
+		probe?: (url: string, timeoutMs: number) => Promise<ConnectionSnapshotRow[]>
+		recycleProbeTimeoutMs?: number
+		recycleMinIntervalMs?: number
 	} = {},
 ) {
 	const poolSize = options.poolSize ?? DEFAULT_POOL_SIZE
 	// connect_timeout, keep_alive and max_lifetime keep postgres.js's defaults (30s, 60s, 30-60min).
 	// idle_timeout retires connections the pooler may have dropped silently.
-	const client = postgres(url, { prepare: false, idle_timeout: 20, max: poolSize })
+	const openClient = () => postgres(url, { prepare: false, idle_timeout: 20, max: poolSize })
+	let client = openClient()
+	// What everything else holds on to, so the client behind it can be swapped.
+	const handle = new Proxy(client, {
+		get(_target, prop) {
+			const value = Reflect.get(client, prop, client)
+			return typeof value === 'function' ? value.bind(client) : value
+		},
+	})
+
+	const probe = options.probe ?? captureConnectionSnapshot
+	const minIntervalMs = options.recycleMinIntervalMs ?? POOL_RECYCLE_MIN_INTERVAL_MS
+	let lastAttemptAt = Number.NEGATIVE_INFINITY
+	let deciding = false
+	const recycleIfLost = async (info: QueryTimeoutInfo) => {
+		if (deciding || Date.now() - lastAttemptAt < minIntervalMs) return
+		deciding = true
+		lastAttemptAt = Date.now()
+		try {
+			let running: number | null = null
+			try {
+				running = countRunningQueries(
+					await probe(url, options.recycleProbeTimeoutMs ?? POOL_RECYCLE_PROBE_TIMEOUT_MS),
+				)
+			} catch {
+				// A fresh connection could not be asked either; a new pool cannot make that worse.
+			}
+			if (running !== null && running >= DATABASE_BUSY_QUERIES) return
+			const next = openClient()
+			// drizzle sets up the client's date and json handling when it is built; do the same here.
+			drizzle(next)
+			const old = client
+			client = next
+			// Give queries that are really running a moment, then close every socket.
+			void old.end({ timeout: 2 }).catch(() => {})
+			options.onPoolRecycled?.({ runningQueries: running, sql: info.sql })
+		} finally {
+			deciding = false
+		}
+	}
+
 	return drizzle(
-		timeQueries(client, options.onQuery, {
+		timeQueries(handle, options.onQuery, {
 			queryTimeoutMs: options.queryTimeoutMs ?? DEFAULT_QUERY_TIMEOUT_MS,
 			queuedQueryTimeoutMs: options.queuedQueryTimeoutMs ?? DEFAULT_QUEUED_QUERY_TIMEOUT_MS,
-			onQueryTimeout: options.onQueryTimeout,
+			onQueryTimeout: (info) => {
+				options.onQueryTimeout?.(info)
+				void recycleIfLost(info)
+			},
 			onSaturated: options.onSaturated,
 			saturationAt: poolSize,
 			// A caller that passes its own counter can read the backlog (to shed load).

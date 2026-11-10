@@ -404,6 +404,12 @@ export const events = pgTable(
 		index('events_commented_mentions_idx')
 			.using('gin', sql`(${t.data} -> 'mentions')`)
 			.where(sql`${t.action} = 'commented'`),
+		// The daily-budget summary scheduler's "already posted for this day?" check, once per
+		// workspace per tick (services/daily-budget-events.ts). Holds one entry per workspace per
+		// day. Built CONCURRENTLY in migration 0143.
+		index('events_daily_budget_summary_day_idx')
+			.on(t.workspaceId, sql`(${t.data} ->> 'day')`)
+			.where(sql`${t.action} = 'daily_budget_summary'`),
 	],
 )
 
