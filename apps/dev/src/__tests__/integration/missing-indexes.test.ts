@@ -12,7 +12,7 @@ async function indexRow(table: string, name: string) {
 	return Array.from(rows)[0]
 }
 
-describe('missing-index migrations 0143-0145', () => {
+describe('missing-index migrations 0143-0144', () => {
 	it('relationships_target_type_idx exists, is valid, and leads with target_id', async () => {
 		const row = await indexRow('relationships', 'relationships_target_type_idx')
 		expect(row).toBeDefined()

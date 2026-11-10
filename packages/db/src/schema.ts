@@ -912,7 +912,6 @@ export const sessions = pgTable(
 		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0044.
 		index('sessions_ws_updated_at_idx').on(t.workspaceId, t.updatedAt),
 		index('sessions_actor_idx').on(t.actorId),
-		// MAX(created_at) per actor for member last-active. Built CONCURRENTLY in migration 0145.
 		// Sessions spawned by a chat message, and the ON DELETE SET NULL FK. Built CONCURRENTLY in
 		// migration 0144.
 		index('sessions_spawned_by_message_id_idx')
