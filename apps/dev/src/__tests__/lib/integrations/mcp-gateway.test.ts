@@ -24,6 +24,7 @@ describe('GATEWAY_PROVIDERS', () => {
 			'airtable',
 			'atlassian',
 			'attio',
+			'canva',
 			'gmail',
 			'google-calendar',
 			'linear',
@@ -31,6 +32,8 @@ describe('GATEWAY_PROVIDERS', () => {
 			'notion',
 			'posthog',
 			'resend',
+			'sentry',
+			'stripe',
 			'ubersuggest',
 		])
 		for (const other of ['slack', 'github', 'linkedin-unipile', 'google-meet']) {

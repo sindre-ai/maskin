@@ -195,3 +195,55 @@ export const listLoopStepsResponseSchema = z.object({
 })
 
 export type ListLoopStepsResponse = z.infer<typeof listLoopStepsResponseSchema>
+
+/**
+ * Response for `GET /api/loops/:id/next-steps` — the flow page's Next steps tile.
+ * Derived on read, nothing stored. Asks come first: a step with sessions waiting on a
+ * person, most waiting first, then the spine order. Items are the newest open members of
+ * the flow. A client reads `asks` then `items` as one list. Both arrays are empty for a
+ * flow with nothing to do, a flow with no steps, or an unknown id.
+ */
+export const loopNextStepAskSchema = z.object({
+	triggerId: z.string().uuid(),
+	triggerName: z.string().nullable(),
+	/** The step's agent, null when none is assigned or it left the workspace. */
+	agent: loopStepAgentSchema.nullable(),
+	/** Sessions on this step currently in `waiting_for_input`; always at least 1. */
+	pendingCount: z.number().int().positive(),
+})
+
+export const loopNextStepItemSchema = z.object({
+	id: z.string().uuid(),
+	type: z.string(),
+	title: z.string().nullable(),
+	status: z.string(),
+})
+
+export const loopNextStepsResponseSchema = z.object({
+	asks: z.array(loopNextStepAskSchema),
+	/** Newest open members first, capped. The full open count is `inProgressCount` on the list. */
+	items: z.array(loopNextStepItemSchema),
+})
+
+export type LoopNextStepsResponse = z.infer<typeof loopNextStepsResponseSchema>
+
+/**
+ * Response for `GET /api/loops/:id/briefings` — the flow page's Briefings tile: the
+ * briefing pages (files of kind `briefing`) attached to the flow itself or to one of its
+ * members, newest first, each file once. Empty for a flow with none or an unknown id.
+ */
+export const loopBriefingSchema = z.object({
+	id: z.string().uuid(),
+	name: z.string(),
+	mimeType: z.string(),
+	updatedAt: z.string(),
+	/** The object the page is attached to: the flow itself, or the member that produced it. */
+	sourceId: z.string().uuid(),
+	sourceTitle: z.string().nullable(),
+})
+
+export const listLoopBriefingsResponseSchema = z.object({
+	briefings: z.array(loopBriefingSchema),
+})
+
+export type ListLoopBriefingsResponse = z.infer<typeof listLoopBriefingsResponseSchema>

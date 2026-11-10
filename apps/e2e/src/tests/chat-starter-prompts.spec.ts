@@ -52,7 +52,7 @@ test.describe('Chat — agent starter prompts', () => {
 				await expect(input).toHaveValue(`Quick one: ${FIRST}`)
 
 				// The person sends it, and it arrives as written.
-				await page.getByRole('button', { name: 'Start chat' }).click()
+				await page.getByRole('button', { name: 'Send message' }).click()
 				await expect(page).toHaveURL(/\/chats\/[0-9a-f-]{36}$/, { timeout: 15_000 })
 				await expect(page.getByText(`Quick one: ${FIRST}`).first()).toBeVisible({
 					timeout: 15_000,

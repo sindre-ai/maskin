@@ -154,6 +154,7 @@ describe('Integrations Routes', () => {
 				'airtable',
 				'atlassian',
 				'attio',
+				'canva',
 				'github',
 				'gmail',
 				'google-calendar',
@@ -166,7 +167,9 @@ describe('Integrations Routes', () => {
 				'notion',
 				'posthog',
 				'resend',
+				'sentry',
 				'slack',
+				'stripe',
 				'ubersuggest',
 			])
 

@@ -1,5 +1,6 @@
 import { TrialCard } from '@/components/billing/trial-card'
 import { UnreadBadge } from '@/components/shared/unread-badge'
+import { Button } from '@/components/ui/button'
 import {
 	Sidebar,
 	SidebarContent,
@@ -22,7 +23,8 @@ import {
 } from '@/lib/nav-items'
 import { PUBLIC_MARKETPLACE_URL } from '@/lib/public-site'
 import { useWorkspace } from '@/lib/workspace-context'
-import { Store } from 'lucide-react'
+import { Link } from '@tanstack/react-router'
+import { Plus, Store } from 'lucide-react'
 import { useMemo } from 'react'
 import { NavUser } from './nav-user'
 import { SidebarActivity } from './sidebar-activity'
@@ -108,6 +110,23 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 							</SidebarNavItem>
 						))}
 					</SidebarMenu>
+					{/* v3: a filled New chat button sits under the nav. On the icon rail it
+					    shrinks to its plus. */}
+					<Button
+						asChild
+						className="mt-2.5 h-9 w-full justify-start gap-2.5 rounded-[9px] px-2.5 text-[13.5px] font-semibold group-data-[collapsible=icon]:size-9 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
+					>
+						<Link
+							to="/$workspaceId/chats/new"
+							params={{ workspaceId }}
+							search={{}}
+							aria-label="New chat"
+							title="New chat"
+						>
+							<Plus size={17} strokeWidth={2.4} aria-hidden />
+							<span className="group-data-[collapsible=icon]:hidden">New chat</span>
+						</Link>
+					</Button>
 				</SidebarGroup>
 			</SidebarContent>
 			<SidebarFooter className="gap-1.5 px-2.5 pt-2.5 pb-5">

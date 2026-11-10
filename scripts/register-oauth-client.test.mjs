@@ -49,13 +49,16 @@ test("refuses a registration address that is not https or not the vendor's own",
 	assert.throws(() => checkMetadata('http://mcp.example.com/x', META))
 })
 
-test('needs a vendor that gives a client a secret', () => {
+test('prefers a client secret, falls back to basic then no-secret, refuses anything else', () => {
 	assert.equal(chooseAuthMethod(META), 'client_secret_post')
 	assert.equal(
 		chooseAuthMethod({ token_endpoint_auth_methods_supported: ['client_secret_basic', 'none'] }),
 		'client_secret_basic',
 	)
-	assert.throws(() => chooseAuthMethod({ token_endpoint_auth_methods_supported: ['none'] }))
+	assert.equal(chooseAuthMethod({ token_endpoint_auth_methods_supported: ['none'] }), 'none')
+	assert.throws(() =>
+		chooseAuthMethod({ token_endpoint_auth_methods_supported: ['private_key_jwt'] }),
+	)
 })
 
 test('prints the two lines, and refuses an answer without an id or secret', () => {
@@ -65,6 +68,11 @@ test('prints the two lines, and refuses an answer without an id or secret', () =
 	)
 	assert.throws(() => settingsLines('notion', { client_secret: 'shh' }))
 	assert.throws(() => settingsLines('notion', { client_id: 'abc' }))
+})
+
+test('a no-secret vendor prints the id line only', () => {
+	assert.equal(settingsLines('stripe', { client_id: 'abc' }, 'none'), 'STRIPE_CLIENT_ID=abc\n')
+	assert.throws(() => settingsLines('stripe', {}, 'none'))
 })
 
 test('end to end with a stub vendor: secret only on stdout', async () => {
@@ -105,4 +113,32 @@ test('a vendor refusal exits 1 and prints no settings', async () => {
 	})
 	assert.equal(code, 1)
 	assert.equal(out, '')
+})
+
+test('end to end with Stripe-shaped details: no-secret client, id only on stdout', async () => {
+	const stripeUrl = 'https://access.stripe.com/.well-known/oauth-authorization-server/mcp'
+	let sent
+	const fetch = async (url, init) => {
+		if (String(url) === stripeUrl) {
+			return Response.json({
+				issuer: 'https://access.stripe.com/mcp',
+				registration_endpoint: 'https://access.stripe.com/mcp/oauth2/register',
+				token_endpoint_auth_methods_supported: ['none'],
+			})
+		}
+		sent = JSON.parse(init.body)
+		return Response.json({ client_id: 'id-2' })
+	}
+	let out = ''
+	const code = await main(['stripe', stripeUrl], {
+		fetch,
+		stdout: (s) => {
+			out += s
+		},
+		stderr: () => {},
+	})
+	assert.equal(code, 0)
+	assert.equal(out, 'STRIPE_CLIENT_ID=id-2\n')
+	assert.equal(sent.token_endpoint_auth_method, 'none')
+	assert.deepEqual(sent.redirect_uris, ['https://maskin.io/api/integrations/stripe/callback'])
 })

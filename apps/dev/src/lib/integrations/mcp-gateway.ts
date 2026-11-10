@@ -36,6 +36,7 @@ export const GATEWAY_PROVIDERS: ReadonlySet<string> = new Set([
 	'airtable',
 	'atlassian',
 	'attio',
+	'canva',
 	'gmail',
 	'google-calendar',
 	'linear',
@@ -43,6 +44,8 @@ export const GATEWAY_PROVIDERS: ReadonlySet<string> = new Set([
 	'notion',
 	'posthog',
 	'resend',
+	'sentry',
+	'stripe',
 	'ubersuggest',
 ])
 
