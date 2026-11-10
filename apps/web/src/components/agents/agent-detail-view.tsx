@@ -292,7 +292,10 @@ export function AgentDetailView({
 							onOpenIdChange={setOpenSessionId}
 						/>
 						<AgentUsageBlock agent={agent} workspaceId={workspaceId} />
-						<AgentComposer agent={agent} />
+						{/* Pinned to the bottom of the view with no background: the sessions scroll up behind it. */}
+						<div className="pointer-events-none sticky bottom-0 z-10 pt-4 [&_:is(a,button,input,textarea,form,[role=button],[contenteditable=true])]:pointer-events-auto">
+							<AgentComposer agent={agent} />
+						</div>
 					</TabsContent>
 					<TabsContent value="computer" className="mt-5">
 						<AgentComputerSection agent={agent} />
