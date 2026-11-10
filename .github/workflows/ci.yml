@@ -157,6 +157,9 @@ jobs:
       - name: GitHub MCP supervisor tests
         run: node --test scripts/checks/github-mcp-supervisor/github-mcp-supervisor.test.cjs
 
+      - name: OAuth client registration script tests
+        run: node --test scripts/register-oauth-client.test.mjs
+
   integration-tests:
     # lint-typecheck is a gate here and on unit-tests and verify-e2e: when it fails they are
     # skipped, so a red lint run reports in about a minute instead of 16 to 22. Their required

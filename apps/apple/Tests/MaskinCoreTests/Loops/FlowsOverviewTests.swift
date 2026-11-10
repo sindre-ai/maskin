@@ -5,24 +5,6 @@ import Testing
 
 @Suite("FlowsOverview")
 struct FlowsOverviewTests {
-	@Test("the banner only exists while decisions wait on a running flow")
-	func banner() {
-		#expect(FlowsOverview.banner(loopRow("a")) == nil)
-		#expect(FlowsOverview.banner(loopRow("a", waiting: 1)) == "1 decision waits on you")
-		#expect(FlowsOverview.banner(loopRow("a", waiting: 3)) == "3 decisions wait on you")
-		#expect(FlowsOverview.banner(loopRow("a", status: .paused, waiting: 3)) == nil)
-	}
-
-	@Test("the banner names the decision when its title is known")
-	func bannerNamesDecision() {
-		#expect(FlowsOverview.banner(loopRow("a", waiting: 1), decisionTitle: "Post text only?") == "Decide: Post text only?")
-		#expect(
-			FlowsOverview.banner(loopRow("a", waiting: 3), decisionTitle: "Post text only?")
-				== "3 decisions waiting: Post text only?")
-		#expect(FlowsOverview.banner(loopRow("a", waiting: 1), decisionTitle: "  ") == "1 decision waits on you")
-		#expect(FlowsOverview.banner(loopRow("a"), decisionTitle: "Post text only?") == nil)
-	}
-
 	@Test("a decision post is called by its title, else the start of its text")
 	func decisionTitle() {
 		let titled = LoopPost(id: 1, actorID: nil, text: "Long body.", isDecision: true, decisionTitle: "Ship it?")

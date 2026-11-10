@@ -1,4 +1,4 @@
-import { type DefaultTreeAdapterMap, parse } from 'parse5'
+import { type DefaultTreeAdapterMap, type TreeAdapter, defaultTreeAdapter, parse } from 'parse5'
 
 /**
  * Reads any agent-authored HTML file as text: a deck, a website, a dashboard, a
@@ -16,6 +16,7 @@ import { type DefaultTreeAdapterMap, parse } from 'parse5'
 type Node = DefaultTreeAdapterMap['node']
 type Element = DefaultTreeAdapterMap['element']
 type TextNode = DefaultTreeAdapterMap['textNode']
+type Template = DefaultTreeAdapterMap['template']
 
 export interface HtmlText {
 	/** Markdown. When the file carries a deck-source script, that source verbatim. */
@@ -38,6 +39,59 @@ export interface HtmlText {
 /** Beyond this the parse is not worth its memory; callers fall back to a clear error. */
 export const MAX_HTML_TEXT_INPUT_BYTES = 8 * 1024 * 1024
 const MAX_JSON_LD_CHARS = 20_000
+
+/**
+ * Deeper than this is not a page a person wrote. parse5 grows with the square of
+ * the depth (about 3 s at 20,000 levels) and the walk below is recursive, so a
+ * small file of nested tags would otherwise block the API process. Enforced
+ * inside the parse (see depthLimitedAdapter), so a refusal costs about as much
+ * as parsing 1,000 levels.
+ */
+export const MAX_HTML_NESTING_DEPTH = 1_000
+
+export class HtmlTooDeepError extends Error {
+	constructor(readonly maxDepth: number = MAX_HTML_NESTING_DEPTH) {
+		super(`HTML is nested more than ${maxDepth} levels deep`)
+		this.name = 'HtmlTooDeepError'
+	}
+}
+
+/**
+ * Counts depth as the parser places each node, so a file cannot hide depth from
+ * it: stray end tags, unclosed tags and the rest are all settled by the parser
+ * itself. Aborts the parse as soon as a node lands past the cap. When the parser
+ * moves a node that already has children (it does so to repair mis-nested
+ * formatting tags), their depths are brought up to date too.
+ */
+function depthLimitedAdapter(max: number): TreeAdapter<DefaultTreeAdapterMap> {
+	const depths = new WeakMap<object, number>()
+	const place = (parent: Node, child: Node) => {
+		const stack: Array<[Node, number]> = [[child, (depths.get(parent) ?? 0) + 1]]
+		for (let next = stack.pop(); next; next = stack.pop()) {
+			const [node, depth] = next
+			if (depth > max) throw new HtmlTooDeepError(max)
+			depths.set(node, depth)
+			// A template's children hang off its content fragment, which sits at the template's own level.
+			const content =
+				isElement(node) && node.tagName === 'template' ? (node as Template).content : undefined
+			if (content) stack.push([content, depth])
+			for (const c of children(node)) {
+				if (isElement(c) && depths.get(c) !== depth + 1) stack.push([c, depth + 1])
+			}
+		}
+	}
+	return {
+		...defaultTreeAdapter,
+		appendChild(parent, child) {
+			place(parent, child)
+			defaultTreeAdapter.appendChild(parent, child)
+		},
+		insertBefore(parent, child, reference) {
+			place(parent, child)
+			defaultTreeAdapter.insertBefore(parent, child, reference)
+		},
+	}
+}
 
 const SKIP_TAGS = new Set([
 	'head',
@@ -460,7 +514,7 @@ function scriptWeight(root: Node): number {
 }
 
 export function extractHtmlText(html: string): HtmlText {
-	const doc = parse(html) as Node
+	const doc = parse(html, { treeAdapter: depthLimitedAdapter(MAX_HTML_NESTING_DEPTH) }) as Node
 
 	const titleEl = findAll(doc, (e) => e.tagName === 'title')[0]
 	const title = titleEl ? collapse(textOf(titleEl)).trim() || null : null

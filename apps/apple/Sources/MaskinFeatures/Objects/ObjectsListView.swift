@@ -294,7 +294,6 @@ struct ObjectsListView: View {
 				header
 				emptyState.padding(MaskinSpace.s9)
 			}
-			.refreshable { await store.reload() }
 		}
 	}
 
@@ -382,7 +381,6 @@ struct ObjectsListView: View {
 		.compactSections()
 		.scrollContentBackground(.hidden)
 		.environment(\.defaultMinListRowHeight, MaskinSpace.touchMin)
-		.refreshable { await store.reload() }
 	}
 
 	/// One inset card per group with hairline separators; the header folds it.

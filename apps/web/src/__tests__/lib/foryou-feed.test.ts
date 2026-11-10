@@ -4,6 +4,7 @@ import type { UnreadItem } from '@/lib/api'
 import {
 	type FeedBucket,
 	bucketRank,
+	bylineName,
 	compactTime,
 	dismissableItems,
 	feedItemKey,
@@ -49,14 +50,23 @@ describe('compactTime', () => {
 })
 
 describe('heldNote', () => {
-	it('says nothing for anything younger than a day', () => {
+	it('says nothing for anything younger than two days', () => {
 		expect(heldNote('2026-08-19T07:00:00.000Z', NOW)).toBe('')
+		expect(heldNote('2026-08-18T09:00:00.000Z', NOW)).toBe('')
 	})
 
 	it('counts whole days, and rounds off past a week', () => {
-		expect(heldNote('2026-08-18T09:00:00.000Z', NOW)).toBe('held 1 day')
+		expect(heldNote('2026-08-17T09:00:00.000Z', NOW)).toBe('held 2 days')
 		expect(heldNote('2026-08-16T09:00:00.000Z', NOW)).toBe('held 3 days')
 		expect(heldNote('2026-08-01T09:00:00.000Z', NOW)).toBe('held over a week')
+	})
+})
+
+describe('bylineName', () => {
+	it('keeps a short name and shrinks a long one to its first name', () => {
+		expect(bylineName('Code Reviewer')).toBe('Code Reviewer')
+		expect(bylineName('Chief of Staff for Vaerksted')).toBe('Chief')
+		expect(bylineName(undefined)).toBe('')
 	})
 })
 

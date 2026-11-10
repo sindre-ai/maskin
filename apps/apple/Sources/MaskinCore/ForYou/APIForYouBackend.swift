@@ -68,7 +68,7 @@ public struct APIForYouBackend: ForYouSource, DecisionBackend {
 					attention: m.attention.map { Int($0) },
 					decision: m.decision.map { d in
 						DecisionPrompt(
-							title: d.title, summary: d.summary, ask: d.ask,
+							title: d.title, summary: d.summary, ask: d.ask ?? "",
 							options: d.options.map {
 								DecisionOption(
 									label: $0.label, consequences: $0.consequences,

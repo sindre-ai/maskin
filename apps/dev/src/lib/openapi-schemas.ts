@@ -399,6 +399,10 @@ export const conversationListItemResponseSchema = z.object({
 	createdBy: z.string().uuid(),
 	// Labels for grouping chats, for example a team name. Shared by every participant.
 	tags: z.array(z.string()),
+	// Marks the direct message (DM) of a pair: the two actor ids, lowest first, joined with ':'.
+	// Null for every topical chat. The chat list tells a DM from a topical chat by this alone,
+	// never by title or participant count.
+	directPairKey: z.string().nullable(),
 	lastMessageAt: z.string().nullable(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
@@ -429,6 +433,7 @@ export const conversationDetailResponseSchema = conversationListItemResponseSche
 		snippet_actor_name: true,
 		snippet_is_caller: true,
 		working_actor_ids: true,
+		directPairKey: true,
 	})
 	.extend({
 		last_read_message_id: z.number().nullable(),

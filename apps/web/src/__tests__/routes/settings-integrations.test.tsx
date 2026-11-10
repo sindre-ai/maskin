@@ -374,9 +374,14 @@ describe('IntegrationsPage', () => {
 
 			const sindreRow = screen.getByText('sindre-ai').closest('div.flex') as HTMLElement
 			await user.click(within(sindreRow).getByRole('button', { name: 'Disconnect' }))
+			expect(mockDisconnect).not.toHaveBeenCalled()
+
+			const dialog = screen.getByRole('dialog', { name: 'Disconnect GitHub?' })
+			expect(within(dialog).getByText(/This removes sindre-ai\./)).toBeInTheDocument()
+			await user.click(within(dialog).getByRole('button', { name: 'Disconnect' }))
 
 			expect(mockDisconnect).toHaveBeenCalledTimes(1)
-			expect(mockDisconnect).toHaveBeenCalledWith('gh-2')
+			expect(mockDisconnect).toHaveBeenCalledWith('gh-2', expect.anything())
 		})
 
 		it('"Add another" triggers the connect flow for github', async () => {
@@ -466,7 +471,34 @@ describe('IntegrationsPage', () => {
 			expect(screen.queryByText(/Installation /)).not.toBeInTheDocument()
 
 			await user.click(screen.getByRole('button', { name: 'Disconnect' }))
-			expect(mockDisconnect).toHaveBeenCalledWith('gc-1')
+			// Nothing is disconnected until the person confirms.
+			expect(mockDisconnect).not.toHaveBeenCalled()
+			const dialog = screen.getByRole('dialog', { name: 'Disconnect Google Calendar?' })
+			expect(within(dialog).getByText(/This removes magnus@example\.com\./)).toBeInTheDocument()
+
+			await user.click(within(dialog).getByRole('button', { name: 'Disconnect' }))
+			expect(mockDisconnect).toHaveBeenCalledTimes(1)
+			expect(mockDisconnect).toHaveBeenCalledWith('gc-1', expect.anything())
+		})
+
+		it('closes the Disconnect confirm on Cancel without disconnecting', async () => {
+			const user = userEvent.setup()
+			const integration = buildIntegrationResponse({
+				id: 'gc-1',
+				provider: 'google-calendar',
+				status: 'active',
+				externalId: 'magnus@example.com',
+			})
+			mockUseIntegrations.mockReturnValue({ data: [integration], isLoading: false })
+			mockUseProviders.mockReturnValue({ data: [googleCalendarProvider], isLoading: false })
+
+			render(<IntegrationsPage />)
+
+			await user.click(screen.getByRole('button', { name: 'Disconnect' }))
+			await user.click(screen.getByRole('button', { name: 'Cancel' }))
+
+			expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+			expect(mockDisconnect).not.toHaveBeenCalled()
 		})
 
 		it('shows "Available to connect" when not connected (no event types defined yet)', () => {
