@@ -70,6 +70,9 @@ services:
       MASKIN_BACKEND_URL: ${SERVICE_URL_APP}
       # The card step is on for every sign-up on this copy only.
       FF_SIGNUP_FEATURES: ${FF_SIGNUP_FEATURES:-trial-card-percent}
+      # The percent display is read per person: on for the listed testers on this copy only.
+      FF_TESTER_FEATURES: ${FF_TESTER_FEATURES:-trial-card-percent}
+      FF_TESTER_ACTOR_IDS: ${FF_TESTER_ACTOR_IDS:-46de6719-5961-40ec-8375-098f928ee2b5}
       # Stripe test mode. The webhook refuses to run without the two old dollar prices
       # (test-mode ids), even though the card step never uses them.
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
