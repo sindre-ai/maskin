@@ -71,6 +71,29 @@ final class MustKeepTests: XCTestCase {
 		assertLiveCallScreen("Live briefing from For you")
 	}
 
+	// MARK: MK-05 A long draft card opens in a chat without freezing
+
+	/// Priya Rao chat (not an agent chat, so a Live call record cannot fold it into a call card): a message links an email draft. Opening the card must leave the screen
+	/// responsive (Approve shows), and scrolling up must offer Jump to latest, which works. A button
+	/// that took room in the bottom inset once made opening a long card loop forever and froze the app.
+	func testMK05_LongDraftCardOpensInChat() throws {
+		openChat("Priya Rao")
+		let notNow = app.buttons["Not now"]
+		if notNow.waitForExistence(timeout: 8) { notNow.tap() }
+		let head = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Email,'")).firstMatch
+		if !head.waitForExistence(timeout: 20) { dumpScreen("mk05-nocard") }
+		XCTAssertTrue(head.exists, "the chat shows the email draft card")
+		head.tap()
+		let approve = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Approve'")).firstMatch
+		if !approve.waitForExistence(timeout: 15) { dumpScreen("mk05-frozen") }
+		XCTAssertTrue(approve.exists, "the opened card shows Approve, so the screen did not freeze")
+		for _ in 0..<3 { app.swipeDown() }
+		let jump = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Jump to latest'")).firstMatch
+		XCTAssertTrue(jump.waitForExistence(timeout: 10), "scrolled up, the chat offers Jump to latest")
+		jump.tap()
+		XCTAssertTrue(jump.waitForNonExistence(timeout: 10), "Jump to latest takes the chat to the bottom, and the button goes away")
+	}
+
 	// MARK: MK-02 Live with an agent from its chat
 
 	/// Chats → an agent chat → a Live button → the live call. Where the button sits (chat header 'Live' or

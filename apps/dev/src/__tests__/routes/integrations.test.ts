@@ -151,6 +151,7 @@ describe('Integrations Routes', () => {
 					.map((p) => p.name)
 					.sort(),
 			).toEqual([
+				'attio',
 				'github',
 				'gmail',
 				'google-calendar',
@@ -160,6 +161,7 @@ describe('Integrations Routes', () => {
 				'linear',
 				'linkedin-unipile',
 				'miro',
+				'notion',
 				'posthog',
 				'resend',
 				'slack',

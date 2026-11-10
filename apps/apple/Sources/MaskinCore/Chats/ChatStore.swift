@@ -29,7 +29,13 @@ public final class ChatStore {
 
 	public private(set) var detail: ConversationSummary?
 	/// What the server has, oldest first by server id.
-	public private(set) var confirmed: [ChatMessage] = []
+	public private(set) var confirmed: [ChatMessage] = [] {
+		didSet { refreshAgentAuthors() }
+	}
+	/// Who has written as an agent in the loaded history (a send of yours is never an agent's, so
+	/// the server's rows are enough). Kept up to date when `confirmed` changes, so a screen asks
+	/// for it per update, not by scanning every message each time it draws.
+	public private(set) var agentAuthorIDs: Set<String> = []
 	public private(set) var phase: Phase = .idle
 	/// Cache vs. network, for an optional "Updated …" line. A failed refresh never blanks the thread.
 	public private(set) var freshness = Freshness()
@@ -196,6 +202,11 @@ public final class ChatStore {
 	}
 
 	// MARK: - Derived
+
+	private func refreshAgentAuthors() {
+		let ids = Set(confirmed.lazy.filter { $0.author == .agent }.map(\.actorID))
+		if ids != agentAuthorIDs { agentAuthorIDs = ids }
+	}
 
 	public var participants: [ChatParticipant] { detail?.participants ?? [] }
 	public var title: String { detail?.title ?? "Chat" }

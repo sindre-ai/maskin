@@ -56,27 +56,10 @@ struct TeamRow: View {
 		.accessibilityLabel(accessibilityLabel)
 	}
 
-	/// The line under the title: who the chat is with (the agent's name), or the live status
-	/// while someone types or works, or the latest message for rows that have no topic.
-	@ViewBuilder
+	/// The line under the title: the live status while someone types or works, otherwise the
+	/// latest message (with who wrote it), the same as the web list.
 	private var secondaryLine: some View {
-		if showsStatus {
-			RowStatusLine(status: status, unread: row.isUnread)
-		} else if let who = subtitle ?? role {
-			Text(who)
-				.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .medium, relativeTo: .footnote))
-				.foregroundStyle(MaskinColor.ink4)
-				.lineLimit(1)
-		} else {
-			RowStatusLine(status: status, unread: row.isUnread)
-		}
-	}
-
-	private var showsStatus: Bool {
-		switch status.prefix {
-		case .typing, .working: true
-		default: false
-		}
+		RowStatusLine(status: status, unread: row.isUnread)
 	}
 
 	// MARK: Pieces

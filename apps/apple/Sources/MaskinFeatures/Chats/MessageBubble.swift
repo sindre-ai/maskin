@@ -73,6 +73,43 @@ struct MessageHeader: View {
 	}
 }
 
+/// An agent's name above its plain words in a chat with several agents: 13pt semibold `ink4`, no
+/// avatar and no time, with the working bars beside it while that agent is running. Opens the
+/// agent's page when the app can. The gap under it (`gap`) is shared with `StreamingReplyBubble`,
+/// so a streaming reply and the finished message put their text in the same place.
+struct AgentNameLabel: View {
+	let name: String
+	var working = false
+	var onOpen: (() -> Void)?
+
+	/// The spacing a row stacks the label and the words with. `MessageRow.theirs` and
+	/// `StreamingReplyBubble` both read this constant, on top of the label's own bottom padding.
+	static let gap: CGFloat = MaskinSpace.s2
+
+	var body: some View {
+		Group {
+			if let onOpen {
+				Button(action: onOpen) { label.contentShape(Rectangle()) }
+					.buttonStyle(.maskinPressed)
+					.accessibilityLabel(working ? "\(name), working, open agent" : "\(name), open agent")
+			} else {
+				label
+			}
+		}
+		.padding(.bottom, MaskinSpace.s1)
+	}
+
+	private var label: some View {
+		HStack(spacing: MaskinSpace.s3) {
+			Text(name)
+				.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold, relativeTo: .footnote))
+				.foregroundStyle(MaskinColor.ink4)
+				.lineLimit(1)
+			if working { WorkingBars().accessibilityHidden(true) }
+		}
+	}
+}
+
 /// The quote at the top of a reply: a 3pt `sigHi` rule, the name in bold 14pt, the quoted text in full.
 struct QuoteBlock: View {
 	let author: String
@@ -234,35 +271,43 @@ struct StoppedLabel: View {
 	}
 }
 
-/// A reply still on its way: the agent header, then the partial text with a blinking caret in an
-/// agent bubble, or — when nothing has streamed yet — the typing dots. Keeps at least the typing
-/// bubble's height so the row doesn't jump when text arrives.
+/// A reply still on its way: the partial text with a blinking caret as plain text on the page,
+/// like the finished message it becomes (so it does not change shape when it lands), or — when
+/// nothing has streamed yet — the typing dots in a small bubble. The agent's name sits above it
+/// only in a chat with several agents (`namesAgent`).
 struct StreamingReplyBubble: View {
 	let agent: ChatParticipant
 	var text: String?
 	var stopped = false
+	var namesAgent = false
+
+	private var hasText: Bool { !(text ?? "").isEmpty }
+	/// One line of the 16pt reply text, following Dynamic Type like the text does.
+	@ScaledMetric(relativeTo: .body) private var lineHeight: CGFloat = MaskinFontSize.t16 + BubbleShape.lineSpacing
 
 	var body: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
-			MessageHeader(name: agent.name, kind: agent.kind, seed: agent.id, time: nil, working: !stopped)
+		VStack(alignment: .leading, spacing: AgentNameLabel.gap) {
+			if AgentRowStyle.streamingRow(namesAgent: namesAgent).nameLabel {
+				AgentNameLabel(name: agent.name, working: !stopped)
+			}
 			Group {
-				if let text, !text.isEmpty {
+				if hasText, let text {
 					HStack(alignment: .lastTextBaseline, spacing: MaskinSpace.s1) {
 						Text(text).font(MaskinTypeface.sans(MaskinFontSize.t16, relativeTo: .body))
 							.lineSpacing(BubbleShape.lineSpacing).foregroundStyle(MaskinColor.ink2)
 						if !stopped { BlinkingCaret() }
 					}
+					.frame(maxWidth: .infinity, alignment: .leading)
 				} else if stopped {
 					Text("—").font(MaskinTypeface.sans(MaskinFontSize.t16, relativeTo: .body)).foregroundStyle(MaskinColor.ink5)
 						.accessibilityHidden(true)
 				} else {
+					// Dots on the page, one text line tall: the first words replace them without
+					// the row growing or the text moving.
 					TypingDots()
+						.frame(maxWidth: .infinity, minHeight: lineHeight, alignment: .leading)
 				}
 			}
-			.padding(.vertical, BubbleShape.theirVertical)
-			.padding(.horizontal, BubbleShape.horizontal)
-			.frame(minHeight: MaskinSpace.touchMin + MaskinSpace.s2, alignment: .leading)
-			.background(MaskinSurface.card, in: BubbleShape.agent)
 			if stopped { StoppedLabel() }
 		}
 		.frame(maxWidth: .infinity, alignment: .leading)

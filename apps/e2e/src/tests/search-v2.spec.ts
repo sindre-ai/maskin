@@ -171,6 +171,46 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 	test.describe(`Search v2 launcher at ${vp.label}`, () => {
 		test.use({ viewport: { width: vp.width, height: vp.height } })
 
+		for (const scheme of ['light', 'dark'] as const) {
+			test(`the Settings group offers dark mode and the theme rows, and switching sticks, from ${scheme} mode`, async ({
+				page,
+				account,
+			}) => {
+				await page.emulateMedia({ colorScheme: scheme })
+				await page.addInitScript((value) => localStorage.setItem('maskin-theme', value), scheme)
+				const panel = await openLauncher(page, account.workspaceId)
+				const field = panel.getByRole('combobox', { name: 'Search or run a command' })
+
+				// Empty field: Settings holds the one dark-mode row, after Commands and before Go to.
+				const settings = panel.getByRole('group', { name: 'Settings' })
+				await expect(settings).toBeVisible({ timeout: 20_000 })
+				await expect(settings.getByRole('option')).toHaveCount(1)
+				const toggle = settings.getByRole('option', {
+					name: scheme === 'dark' ? /Turn off dark mode/ : /Turn on dark mode/,
+				})
+				await expect(toggle).toBeVisible()
+				await expect(toggle).toContainText('SETTING')
+				const labels = await panel
+					.getByRole('group')
+					.evaluateAll((els) => els.map((el) => el.getAttribute('aria-label')))
+				expect(labels.indexOf('Commands')).toBeLessThan(labels.indexOf('Settings'))
+				expect(labels.indexOf('Settings')).toBeLessThan(labels.indexOf('Go to'))
+
+				// Typing finds the theme rows; there is no quiet hours row.
+				await field.fill('theme')
+				await expect(settings.getByRole('option', { name: /Theme\s*:\s*System/ })).toBeVisible()
+				await expect(panel.getByRole('option', { name: /quiet hours/i })).toHaveCount(0)
+
+				// Running the toggle closes the launcher and flips the page.
+				await field.fill('')
+				await toggle.click()
+				await expect(panel).toHaveCount(0)
+				const html = page.locator('html')
+				if (scheme === 'dark') await expect(html).not.toHaveClass(/dark/)
+				else await expect(html).toHaveClass(/dark/)
+			})
+		}
+
 		test('a typed type word becomes a pill in the launcher and lands on the page as the same pill', async ({
 			page,
 			account,

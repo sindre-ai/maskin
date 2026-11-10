@@ -528,6 +528,46 @@ const listUnreadRoute = createRoute({
 	},
 })
 
+/**
+ * Past this many candidate entities the narrowing below is skipped and the query runs over every
+ * subscription, as it did before. Keeps the id list well under the driver's parameter limit.
+ */
+const MAX_UNREAD_CANDIDATE_ENTITIES = 5_000
+
+/**
+ * The entities that can have an unread item for this actor at all: those with a comment that
+ * mentions them, and the workspace's onboarding coach threads (which count without a mention).
+ * Both are cheap to list (a mentions index, and a handful of onboarding objects), whereas the
+ * aggregate below probes `events` and `read_state` once per subscription, which cost 500 ms for a
+ * person with 2,800 subscriptions when only one of them had anything unread. Null means the list
+ * was too long to be worth passing on.
+ */
+async function unreadCandidateEntityIds(
+	db: Database,
+	workspaceId: string,
+	actorId: string,
+): Promise<string[] | null> {
+	const [mentioned, onboarding] = await Promise.all([
+		db
+			.selectDistinct({ entityId: events.entityId })
+			.from(events)
+			.where(
+				and(
+					eq(events.workspaceId, workspaceId),
+					eq(events.action, 'commented'),
+					ne(events.actorId, actorId),
+					sql`${events.data}->'mentions' @> jsonb_build_array(${actorId}::text)`,
+				),
+			),
+		db
+			.select({ id: objects.id })
+			.from(objects)
+			.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, 'onboarding_session'))),
+	])
+	const ids = new Set([...mentioned.map((r) => r.entityId), ...onboarding.map((r) => r.id)])
+	return ids.size > MAX_UNREAD_CANDIDATE_ENTITIES ? null : [...ids]
+}
+
 app.openapi(listUnreadRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
@@ -553,6 +593,14 @@ app.openapi(listUnreadRoute, (async (c) => {
 		eq(subscriptions.actorId, actorId),
 	]
 	if (entity_type) subConditions.push(eq(subscriptions.entityType, entity_type))
+
+	// Only subscriptions that could produce an unread item are worth aggregating over; the join
+	// below can match nothing else, so this changes the cost, never the answer.
+	const candidateEntityIds = await unreadCandidateEntityIds(db, workspaceId, actorId)
+	if (candidateEntityIds !== null) {
+		if (candidateEntityIds.length === 0) return c.json({ items: [] })
+		subConditions.push(inArray(subscriptions.entityId, candidateEntityIds))
+	}
 
 	// Restricts the join to events that could contribute a row: unread ones,
 	// plus (when opted in) read events still inside a 48h window. Read events
