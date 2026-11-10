@@ -1,21 +1,21 @@
 /**
- * daily-budget-card.ts — the text of the morning budget card (daily budget, slice 1a).
+ * daily-budget-card.ts — the text of the morning budget card (daily token budget, slice 1a).
  *
  * Pure: facts in, words out, so the numbers on the card can be tested without a database. The
  * scheduler reads the facts (`services/daily-budget-card-scheduler.ts`); nothing here is stored.
  *
- * Every amount is a percent of the plan's monthly allowance: no tokens and no dollars reach the
- * card. The scheduler turns each session's cost into that percent before it gets here.
- *
  * Cost is "unknown", never zero: a session whose cost the platform did not record is counted
  * apart from the ones that have a number, and a trigger with no known cost reads "Estimate
- * unknown" instead of 0%.
+ * unknown" instead of $0.
  */
 
-import { storedDailyBudgetSchema, toPercentBudget } from '@maskin/shared'
+import { type DailyBudget, dailyBudgetSchema } from '@maskin/shared'
+
+export type BudgetUnit = DailyBudget['unit']
 
 export interface BudgetTarget {
-	/** Percent of the plan's monthly allowance, per day. */
+	unit: BudgetUnit
+	/** Per day, in `unit`. */
 	amount: number
 }
 
@@ -24,9 +24,9 @@ export interface TriggerWindowStats {
 	triggerId: string | null
 	name: string
 	runs: number
-	/** Runs that carry a cost number. */
+	/** Runs that carry a cost number in the target's unit. */
 	knownRuns: number
-	/** Sum of the cost of the known runs, in percent of the plan. */
+	/** Sum of the cost of the known runs, in the target's unit. */
 	spent: number
 }
 
@@ -91,11 +91,12 @@ export function projectMonth(
 	}
 }
 
-/** "3.3%", "12%", "<0.1%" for a small non-zero share so real use never reads as 0%. */
-export function formatPercent(value: number): string {
-	if (!(value > 0)) return '0%'
-	if (value < 0.1) return '<0.1%'
-	return `${Number((Math.round(value * 10) / 10).toFixed(1))}%`
+export function formatAmount(value: number, unit: BudgetUnit): string {
+	if (unit === 'dollars') return `$${value.toFixed(2)}`
+	const abs = Math.abs(value)
+	if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M tokens`
+	if (abs >= 1_000) return `${Math.round(value / 1_000)}k tokens`
+	return `${Math.round(value)} tokens`
 }
 
 /** Ten-cell bar; at least one cell shows once anything is spent, all ten stay full past 100%. */
@@ -116,8 +117,6 @@ export interface BudgetCardInput {
 	forecast: MonthForecast
 	/** True while per-trigger totals from "Show what a session cost" have not shipped. */
 	approximate: boolean
-	/** A line about an older target that could not be converted, when there is one. */
-	note?: string
 }
 
 export interface BudgetCardText {
@@ -125,12 +124,12 @@ export interface BudgetCardText {
 	rationale: string
 }
 
-/** Yesterday's line: what ran and how much of the plan it used, with unknown cost said out loud. */
-export function yesterdayLine(day: DayTotals): string {
+/** Yesterday's line: what ran and what it cost, with unknown cost said out loud. */
+export function yesterdayLine(day: DayTotals, unit: BudgetUnit): string {
 	if (day.runs === 0) return 'Yesterday: nothing ran.'
 	const ran = plural(day.runs, 'run', 'runs')
 	if (day.knownRuns === 0) return `Yesterday: ${ran}. Estimate unknown.`
-	const cost = `${formatPercent(day.spent)} of plan`
+	const cost = formatAmount(day.spent, unit)
 	const missing = day.runs - day.knownRuns
 	return missing > 0
 		? `Yesterday: ${ran}, ${cost} (cost unknown for ${missing}).`
@@ -138,16 +137,23 @@ export function yesterdayLine(day: DayTotals): string {
 }
 
 export function todayLine(day: DayTotals, target: BudgetTarget): string {
-	return `Today: ${bar(day.spent / target.amount)} ${formatPercent(day.spent)} of ${formatPercent(target.amount)} so far.`
+	const goal = formatAmount(target.amount, target.unit)
+	const so = formatAmount(day.spent, target.unit)
+	return `Today: ${bar(day.spent / target.amount)} ${so} of ${goal} so far.`
 }
 
-export function forecastLines(f: MonthForecast, approximate: boolean): string[] {
+export function forecastLines(
+	f: MonthForecast,
+	target: BudgetTarget,
+	approximate: boolean,
+): string[] {
 	const label = approximate ? 'Month forecast (approximate)' : 'Month forecast'
 	if (f.monthly === 0 && f.unknownTriggers > 0) {
 		return [`${label}: Estimate unknown, no trigger has a recorded cost yet.`]
 	}
+	const percent = Math.round(f.share * 100)
 	const lines = [
-		`${label}: ${formatPercent(f.monthly)} of plan. Your daily target adds up to ${formatPercent(f.monthTarget)} over the month.`,
+		`${label}: ${formatAmount(f.monthly, target.unit)} of ${formatAmount(f.monthTarget, target.unit)} (${percent}%).`,
 	]
 	if (f.warn) {
 		lines.push(
@@ -157,7 +163,8 @@ export function forecastLines(f: MonthForecast, approximate: boolean): string[] 
 		)
 	}
 	const named = f.heaviest.map(
-		(p) => `- ${p.name}: ${p.monthly === null ? 'Estimate unknown' : formatPercent(p.monthly)}`,
+		(p) =>
+			`- ${p.name}: ${p.monthly === null ? 'Estimate unknown' : formatAmount(p.monthly, target.unit)}`,
 	)
 	if (named.length > 0) lines.push(`Heaviest triggers:\n${named.join('\n')}`)
 	if (f.unknownTriggers > 0 && f.monthly > 0) {
@@ -169,41 +176,29 @@ export function forecastLines(f: MonthForecast, approximate: boolean): string[] 
 }
 
 export function buildBudgetCard(input: BudgetCardInput): BudgetCardText {
-	const { target, yesterday, today, forecast, approximate, note } = input
+	const { target, yesterday, today, forecast, approximate } = input
 	return {
-		headline: yesterdayLine(yesterday),
-		rationale: [
-			todayLine(today, target),
-			...forecastLines(forecast, approximate),
-			...(note ? [note] : []),
-		].join('\n\n'),
+		headline: yesterdayLine(yesterday, target.unit),
+		rationale: [todayLine(today, target), ...forecastLines(forecast, target, approximate)].join(
+			'\n\n',
+		),
 	}
 }
 
 /**
  * The target as the target-setting task stores it on the workspace: `settings.daily_budget`
- * (`storedDailyBudgetSchema` in @maskin/shared: unit, amount, stop_share, timezone), turned into
- * percent of the plan. `capCents` is the plan limit; an older dollar target is converted with it,
- * and a token target (or an unknown limit) falls back to the default percent, which `note` says
- * on the card. The timezone is an IANA name and lives with the target; there is no general
- * workspace timezone. This is the one place that reads that shape. Off (null) when the key is
- * absent or does not parse, so a workspace with no target gets no card.
+ * (`dailyBudgetSchema` in @maskin/shared: unit, amount, stop_share, timezone). The timezone is
+ * an IANA name and lives with the target; there is no general workspace timezone. This is the
+ * one place that reads that shape. Off (null) when the key is absent or does not parse, so a
+ * workspace with no target gets no card.
  */
 export function readBudgetSettings(
 	settings: unknown,
-	capCents: number | null,
-): { target: BudgetTarget; timezone: string; note: string | null } | null {
-	const parsed = storedDailyBudgetSchema.safeParse(
+): { target: BudgetTarget; timezone: string } | null {
+	const parsed = dailyBudgetSchema.safeParse(
 		(settings as { daily_budget?: unknown } | null)?.daily_budget,
 	)
 	if (!parsed.success) return null
-	const { budget, earlier } = toPercentBudget(parsed.data, capCents)
-	return {
-		target: { amount: budget.amount },
-		timezone: budget.timezone,
-		note:
-			earlier && !earlier.converted
-				? `Your earlier daily target could not be turned into a percent of your plan, so this card uses ${formatPercent(budget.amount)} a day. Set a percent in Settings, Billing.`
-				: null,
-	}
+	const { unit, amount, timezone } = parsed.data
+	return { target: { unit, amount }, timezone }
 }

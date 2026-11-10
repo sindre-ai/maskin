@@ -8,15 +8,13 @@ import {
 	PAID_PLANS,
 	dailyBudgetResponseSchema,
 	setDailyBudgetSchema,
-	storedDailyBudgetSchema,
-	toPercentBudget,
 	workspaceSettingsSchema,
 } from '@maskin/shared'
 import { eq, sql } from 'drizzle-orm'
 import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from '../lib/billing-defaults'
 import { USAGE_BREAKDOWN_MAX_ROWS, readUsageBreakdown } from '../lib/billing-usage-breakdown'
 import { cachedBillingUsage, evictBillingUsage } from '../lib/billing-usage-cache'
-import { resolveWorkspaceCapCents } from '../lib/daily-budget'
+import { evaluateDollarUnit, readZeroCostDays } from '../lib/daily-budget'
 import { isEnterprise } from '../lib/enterprise'
 import { createApiError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -775,11 +773,11 @@ const getDailyBudgetRoute = createRoute({
 	method: 'get',
 	path: '/daily-budget',
 	tags: ['billing'],
-	summary: 'The workspace daily target, as a percent of the plan',
+	summary: 'The workspace daily target and whether the dollar unit can be used',
 	request: { headers: workspaceIdHeader },
 	responses: {
 		200: {
-			description: 'Current daily target (null when off), in percent of the plan',
+			description: 'Current daily target (null when off) and the dollar-unit check',
 			content: { 'application/json': { schema: dailyBudgetResponseSchema } },
 		},
 		404: {
@@ -815,43 +813,24 @@ const setDailyBudgetRoute = createRoute({
 			description: 'Workspace not found',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		409: {
+			description: 'The dollar unit is locked until cost numbers are reliable',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
-/** The stored target (as saved, maybe in an older unit) and the plan limit a percent is a share of. */
 async function readStoredDailyBudget(db: Database, workspaceId: string) {
 	const [workspace] = await db
-		.select({
-			id: workspaces.id,
-			settings: workspaces.settings,
-			enterpriseGranted: workspaces.enterpriseGranted,
-			billingOwnerId: workspaces.billingOwnerId,
-		})
+		.select({ id: workspaces.id, settings: workspaces.settings })
 		.from(workspaces)
 		.where(eq(workspaces.id, workspaceId))
 		.limit(1)
 	if (!workspace) return null
-	const parsed = storedDailyBudgetSchema.safeParse(
+	const parsed = workspaceSettingsSchema.shape.daily_budget.safeParse(
 		(workspace.settings as Record<string, unknown> | null)?.daily_budget,
 	)
-	return {
-		dailyBudget: parsed.success ? parsed.data : null,
-		capCents: resolveWorkspaceCapCents(workspace),
-	}
-}
-
-/** The response both routes return: the target in percent, plus what became of an older one. */
-function dailyBudgetResponse(
-	stored: NonNullable<Awaited<ReturnType<typeof readStoredDailyBudget>>>,
-) {
-	const { budget, earlier } = stored.dailyBudget
-		? toPercentBudget(stored.dailyBudget, stored.capCents)
-		: { budget: null, earlier: null }
-	return {
-		daily_budget: budget,
-		earlier_target: earlier,
-		plan_limit_known: stored.capCents !== null,
-	}
+	return { dailyBudget: parsed.success ? (parsed.data ?? null) : null }
 }
 
 app.openapi(getDailyBudgetRoute, async (c) => {
@@ -859,7 +838,8 @@ app.openapi(getDailyBudgetRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const stored = await readStoredDailyBudget(db, workspaceId)
 	if (!stored) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
-	return c.json(dailyBudgetResponse(stored), 200)
+	const days = await readZeroCostDays(db, workspaceId, stored.dailyBudget?.timezone ?? 'UTC')
+	return c.json({ daily_budget: stored.dailyBudget, dollar_unit: evaluateDollarUnit(days) }, 200)
 })
 
 app.openapi(setDailyBudgetRoute, async (c) => {
@@ -878,6 +858,12 @@ app.openapi(setDailyBudgetRoute, async (c) => {
 			createApiError('FORBIDDEN', 'Only workspace owners/admins can set the daily budget'),
 			403,
 		)
+	}
+
+	const days = await readZeroCostDays(db, workspaceId, next?.timezone ?? 'UTC')
+	const dollarUnit = evaluateDollarUnit(days)
+	if (next?.unit === 'dollars' && !dollarUnit.available) {
+		return c.json(createApiError('CONFLICT', dollarUnit.reason ?? 'Dollar targets are locked'), 409)
 	}
 
 	// Atomic key write: a read-modify-write of the whole settings object could
@@ -901,7 +887,7 @@ app.openapi(setDailyBudgetRoute, async (c) => {
 		data: { before: before.dailyBudget, after: next },
 	})
 
-	return c.json(dailyBudgetResponse({ dailyBudget: next, capCents: before.capCents }), 200)
+	return c.json({ daily_budget: next, dollar_unit: dollarUnit }, 200)
 })
 
 export default app

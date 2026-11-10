@@ -190,24 +190,6 @@ describe('daily budget events (Integration)', () => {
 			expect(row?.data).toMatchObject({ target: 20, unit: 'dollars', spent: 4.5, spent_usd: 4.5 })
 		})
 
-		it('still writes the summary for a percent target, with the spend in both raw units', async () => {
-			await db
-				.update(workspaces)
-				.set({ settings: { daily_budget: { unit: 'percent', amount: 5 } } })
-				.where(eq(workspaces.id, workspaceId))
-			await finishedSession({ totalCostUsd: '4', inputTokens: 1000, outputTokens: 500 })
-
-			await writeDailySummary(db, workspaceId, YESTERDAY)
-			const [row] = await summaries()
-			expect(row?.data).toMatchObject({
-				target: 5,
-				unit: 'percent',
-				spent: null,
-				spent_usd: 4,
-				spent_tokens: 1500,
-			})
-		})
-
 		it("takes the day from the target's timezone, across a clock change", async () => {
 			// Oslo on 2026-10-25 runs 25 hours: 2026-10-24T22:00Z to 2026-10-25T23:00Z.
 			await db
