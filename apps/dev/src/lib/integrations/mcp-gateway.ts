@@ -42,6 +42,7 @@ export const GATEWAY_PROVIDERS: ReadonlySet<string> = new Set([
 	'google-calendar',
 	'linear',
 	'miro',
+	'mixpanel',
 	'notion',
 	'posthog',
 	'resend',

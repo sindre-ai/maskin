@@ -165,6 +165,7 @@ describe('Integrations Routes', () => {
 				'linear',
 				'linkedin-unipile',
 				'miro',
+				'mixpanel',
 				'notion',
 				'posthog',
 				'resend',
