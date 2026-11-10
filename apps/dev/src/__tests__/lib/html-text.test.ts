@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { extractHtmlText, readableWithHint } from '../../lib/html-text'
+import {
+	HtmlTooDeepError,
+	MAX_HTML_NESTING_DEPTH,
+	extractHtmlText,
+	readableWithHint,
+} from '../../lib/html-text'
 import { buildBriefingDeck } from '../fixtures/briefing-deck'
 
 describe('extractHtmlText', () => {
@@ -176,5 +181,58 @@ describe('extractHtmlText on pages that are not decks', () => {
 			`<body><script type="application/ld+json">${JSON.stringify({ a: 'x'.repeat(900) })}</script></body>`,
 		)
 		expect(dataOnly.note).toBeNull()
+	})
+})
+
+describe('nesting depth guard', () => {
+	const nested = (open: string, close: string, levels: number) =>
+		`<html><body>${open.repeat(levels)}hi${close.repeat(levels)}</body></html>`
+
+	it('refuses a 60,000-level file fast, without parsing it', () => {
+		const html = nested('<div>', '</div>', 60_000)
+		const started = performance.now()
+		expect(() => extractHtmlText(html)).toThrow(HtmlTooDeepError)
+		expect(performance.now() - started).toBeLessThan(500)
+	})
+
+	it('refuses 5,000 levels fast', () => {
+		const started = performance.now()
+		expect(() => extractHtmlText(nested('<div>', '</div>', 5_000))).toThrow(HtmlTooDeepError)
+		expect(performance.now() - started).toBeLessThan(500)
+	})
+
+	it('still extracts a page right at the cap', () => {
+		// The html and body elements take the first two levels.
+		const result = extractHtmlText(nested('<div>', '</div>', MAX_HTML_NESTING_DEPTH - 2))
+		expect(result.contentText).toBe('hi')
+	})
+
+	it('refuses a div followed by a stray end tag, repeated 60,000 times', () => {
+		const started = performance.now()
+		expect(() => extractHtmlText('<div></i>'.repeat(60_000))).toThrow(HtmlTooDeepError)
+		expect(performance.now() - started).toBeLessThan(500)
+	})
+
+	it('refuses depth built from unclosed tags, templates and mis-nested formatting', () => {
+		for (const html of [
+			nested('<div>', '', 1_500),
+			nested('<div/>', '', 1_500),
+			`<svg>${'<g>'.repeat(1_500)}`,
+			'<template><div>'.repeat(1_500),
+			'<b><i><div></b>'.repeat(1_500),
+			'<div><object></div>'.repeat(1_500),
+		]) {
+			expect(() => extractHtmlText(html)).toThrow(HtmlTooDeepError)
+		}
+	})
+
+	it('does not count text inside comments, scripts or attribute values', () => {
+		const html = `<!-- ${'<div>'.repeat(2_000)} --><script>var a = "${'<div>'.repeat(2_000)}"</script><p title="${'<div>'.repeat(2_000)}">ok</p>`
+		expect(extractHtmlText(html).contentText).toBe('ok')
+	})
+
+	it('lets a wide page, void tags, optional end tags and many svg paths through', () => {
+		const html = `<ul>${'<li>item<br>'.repeat(5_000)}</ul><svg>${'<path d="M0 0"/>'.repeat(5_000)}</svg>${'<p>para'.repeat(3_000)}`
+		expect(extractHtmlText(html).contentText).toContain('item')
 	})
 })

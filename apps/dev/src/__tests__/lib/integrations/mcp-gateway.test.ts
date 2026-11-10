@@ -22,6 +22,7 @@ describe('GATEWAY_PROVIDERS', () => {
 	it('is exactly the hosted-HTTP providers, not the ones Maskin hosts or that need the token in the container', () => {
 		expect([...GATEWAY_PROVIDERS].sort()).toEqual([
 			'airtable',
+			'attio',
 			'gmail',
 			'google-calendar',
 			'linear',

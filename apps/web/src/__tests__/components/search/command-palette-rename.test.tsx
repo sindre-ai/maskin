@@ -13,6 +13,9 @@ vi.mock('@tanstack/react-router', () => ({
 vi.mock('@/lib/command-palette-context', () => ({
 	useCommandPalette: () => ({ open: true, setOpen: vi.fn() }),
 }))
+vi.mock('@/lib/theme', () => ({
+	useTheme: () => ({ theme: 'light', resolvedTheme: 'light', setTheme: vi.fn() }),
+}))
 vi.mock('@/lib/api', () => ({ api: { search: { query: vi.fn() } } }))
 vi.mock('@/hooks/use-objects', () => ({ useObjects: () => ({ data: [] }) }))
 vi.mock('@/hooks/use-actors', () => ({ useActors: () => ({ data: [] }) }))
