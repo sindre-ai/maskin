@@ -2,12 +2,13 @@
 // PRO_HARD_CAP_DEFAULT_USD_CENTS / TEAM_HARD_CAP_DEFAULT_USD_CENTS in
 // apps/dev/src/lib/billing-defaults.ts and the .env.example
 // MASKIN_*_HARD_CAP_USD_CENTS defaults. Keep in sync when bumping.
+import { PlanPercentProvider } from '@/components/billing/plan-percent-context'
 import {
 	BillingSection,
 	formatCredits,
 	formatResetsIn,
 } from '@/components/settings/billing-section'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { TestWrapper } from '../../setup'
 
@@ -358,6 +359,32 @@ describe('BillingSection', () => {
 		await user.click(screen.getByRole('button', { name: 'Downgrade to Free' }))
 		expect(screen.getByRole('dialog')).toBeInTheDocument()
 		expect(screen.getByText(/lose access to Maskin's hosted LLM/)).toBeInTheDocument()
+	})
+
+	it('says usage, not token credits, in the Switch-to-BYO dialog when the percent display is on', async () => {
+		const user = userEvent.setup()
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'pro',
+			hard_cap_usd_cents: 714,
+			stripe_customer_id: 'cus_x',
+			stripe_subscription_id: 'sub_x',
+		})
+
+		render(
+			<TestWrapper>
+				<PlanPercentProvider value>
+					<BillingSection workspaceId="ws-1" enterprise />
+				</PlanPercentProvider>
+			</TestWrapper>,
+		)
+
+		await screen.findByText('Pro — 249 kr/mo')
+		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
+		await user.click(screen.getByRole('button', { name: 'Downgrade to Free' }))
+		const dialog = screen.getByRole('dialog')
+		expect(within(dialog).getByText(/your remaining usage for this period/)).toBeInTheDocument()
+		expect(within(dialog).queryByText(/token/i)).not.toBeInTheDocument()
 	})
 
 	it('shows Cancel subscription (not Downgrade to Free) on the Trial card when enterprise is false', async () => {
