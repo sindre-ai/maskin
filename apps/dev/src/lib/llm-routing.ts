@@ -416,7 +416,7 @@ export function getWorkspacePlanCap(wsSettings: WorkspaceSettings): number | nul
 	return effectivePlanCap(plan as MaskinPlan, billing?.hard_cap_usd_cents ?? undefined)
 }
 
-function effectivePeriodEnd(
+export function effectivePeriodEnd(
 	periodStartMs: number | undefined,
 	periodEndMs: number | undefined,
 ): number | null {

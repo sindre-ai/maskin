@@ -178,6 +178,7 @@ import {
 	ceilCents,
 	checkPlanCap,
 	creditBalanceCents,
+	effectivePeriodEnd,
 	getWorkspacePlanCap,
 	getWorkspacePlanUsdCentsUsage,
 	preflightLlmCredentials,
@@ -4859,7 +4860,10 @@ ${cont.continues_prompt}
 		void trackPlanLimitReached({
 			workspaceId: session.workspaceId,
 			plan,
-			periodEnd: typeof billing?.period_end === 'number' ? billing.period_end * 1000 : null,
+			periodEnd: effectivePeriodEnd(
+				periodStartMs,
+				typeof billing?.period_end === 'number' ? billing.period_end * 1000 : undefined,
+			),
 		})
 		await this.insertSystemLog(session.id, `Session stopped: ${stopReason}.`).catch((err) =>
 			logger.warn('Failed to write budget-stop system log', {
