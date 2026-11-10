@@ -224,6 +224,51 @@ describe('Composer clipboard paste', () => {
 	})
 })
 
+describe('Composer file drop', () => {
+	const dropZone = () =>
+		screen.getByRole('textbox').closest('form')?.firstElementChild as HTMLElement
+
+	it('attaches dropped files through the same path as the picker', async () => {
+		uploadFileMock.mockReset()
+		uploadFileMock.mockResolvedValueOnce({ id: 'dropped-1' })
+		const onDispatchSelection = vi.fn()
+		renderComposer({ onDispatchSelection })
+
+		const photo = new File(['png'], 'holiday.png', { type: 'image/png' })
+		const notPrevented = fireEvent.drop(dropZone(), {
+			dataTransfer: { types: ['Files'], files: [photo] },
+		})
+
+		expect(notPrevented).toBe(false)
+		await waitFor(() =>
+			expect(onDispatchSelection).toHaveBeenCalledWith({
+				type: 'add_file',
+				file: expect.objectContaining({ fileId: 'dropped-1', name: 'holiday.png' }),
+			}),
+		)
+	})
+
+	it('marks the composer while files are dragged over it and clears when they leave', () => {
+		renderComposer()
+		fireEvent.dragOver(dropZone(), { dataTransfer: { types: ['Files'] } })
+		expect(dropZone().className).toContain('outline-dashed')
+		fireEvent.dragLeave(dropZone(), { relatedTarget: document.body })
+		expect(dropZone().className).not.toContain('outline-dashed')
+	})
+
+	it('ignores a drag that carries no files', () => {
+		uploadFileMock.mockReset()
+		renderComposer()
+		fireEvent.dragOver(dropZone(), { dataTransfer: { types: ['text/plain'] } })
+		expect(dropZone().className).not.toContain('outline-dashed')
+		const notPrevented = fireEvent.drop(dropZone(), {
+			dataTransfer: { types: ['text/plain'], files: [] },
+		})
+		expect(notPrevented).toBe(true)
+		expect(uploadFileMock).not.toHaveBeenCalled()
+	})
+})
+
 describe('nameClipboardImage', () => {
 	const at = new Date(2026, 9, 22, 8, 5, 9)
 

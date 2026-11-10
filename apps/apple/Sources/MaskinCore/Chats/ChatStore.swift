@@ -29,7 +29,13 @@ public final class ChatStore {
 
 	public private(set) var detail: ConversationSummary?
 	/// What the server has, oldest first by server id.
-	public private(set) var confirmed: [ChatMessage] = []
+	public private(set) var confirmed: [ChatMessage] = [] {
+		didSet { refreshAgentAuthors() }
+	}
+	/// Who has written as an agent in the loaded history (a send of yours is never an agent's, so
+	/// the server's rows are enough). Kept up to date when `confirmed` changes, so a screen asks
+	/// for it per update, not by scanning every message each time it draws.
+	public private(set) var agentAuthorIDs: Set<String> = []
 	public private(set) var phase: Phase = .idle
 	/// Cache vs. network, for an optional "Updated …" line. A failed refresh never blanks the thread.
 	public private(set) var freshness = Freshness()
@@ -197,6 +203,11 @@ public final class ChatStore {
 
 	// MARK: - Derived
 
+	private func refreshAgentAuthors() {
+		let ids = Set(confirmed.lazy.filter { $0.author == .agent }.map(\.actorID))
+		if ids != agentAuthorIDs { agentAuthorIDs = ids }
+	}
+
 	public var participants: [ChatParticipant] { detail?.participants ?? [] }
 	public var title: String { detail?.title ?? "Chat" }
 	public var lastServerID: Int? { confirmed.last?.serverID }
@@ -257,19 +268,36 @@ public final class ChatStore {
 		}?.serverID
 	}
 
-	/// Question messages that a later human message already answered.
-	public var answeredQuestionIDs: Set<Int> {
-		Set(messages.compactMap(\.answeredQuestionID))
+	/// What the question state was last built from, so reading it again costs nothing until the
+	/// confirmed rows change.
+	@ObservationIgnored private var questionCache: (key: [Int], state: ChatQuestionState)?
+	/// How many times the question state was rebuilt; read by tests.
+	@ObservationIgnored private(set) var questionStateBuilds = 0
+
+	/// Which questions are answered and what was picked, over every row (hidden ones too: a
+	/// dismissed question's answer is hidden from the timeline). Built from the confirmed rows
+	/// and rebuilt only when they change. While a send is unconfirmed its pick still counts, so
+	/// that short window is built fresh from every row.
+	public var questionState: ChatQuestionState {
+		if queue.queuedCount > 0 || !queue.failed.isEmpty || !sentRows.isEmpty {
+			questionStateBuilds += 1
+			return ChatQuestionState(messages: allMessages, viewerID: currentActorID)
+		}
+		let key = [confirmed.count, confirmed.first?.serverID ?? 0, confirmed.last?.serverID ?? 0]
+		if let cache = questionCache, cache.key == key { return cache.state }
+		questionStateBuilds += 1
+		let state = ChatQuestionState(messages: confirmed, viewerID: currentActorID)
+		questionCache = (key, state)
+		return state
 	}
 
-	/// For each answered question (by its message id): what was picked.
-	public var questionAnswerIndex: [Int: [ChatQuestionAnswer.Answer]] {
-		var index: [Int: [ChatQuestionAnswer.Answer]] = [:]
-		for message in messages {
-			if let id = message.answeredQuestionID, index[id] == nil { index[id] = message.questionAnswers }
-		}
-		return index
-	}
+	/// Question messages that are answered: picked or dismissed by anyone, or followed by a normal
+	/// message from this person (see `ChatQuestionState`).
+	public var answeredQuestionIDs: Set<Int> { questionState.answered }
+
+	/// For each answered question (by its message id): what was picked. Empty for one closed by
+	/// typing or dismissed, which leave no summary behind.
+	public var questionAnswerIndex: [Int: [ChatQuestionAnswer.Answer]] { questionState.answers }
 
 	/// For each card a person answered (by the card's message id): how. Read from every message,
 	/// since the answer itself is hidden from the timeline.
@@ -953,6 +981,26 @@ public final class ChatStore {
 			content,
 			metadata: ChatSendMetadata(
 				questionAnswer: ChatQuestionAnswer(questionMessageID: questionID, answers: answers)))
+	}
+
+	/// Close a question without answering it (the X on the card). Posts a hidden answer the way
+	/// `answer` posts a pick, with every question's header, so the card goes on every device and
+	/// the agent is told no answer is coming. Never for a helper's question: iOS has no
+	/// session-input path, so a chat message would leave the helper session blocked.
+	@discardableResult
+	public func dismiss(question message: ChatMessage) -> String? {
+		guard let questionID = message.serverID, !answeredQuestionIDs.contains(questionID),
+			!message.questions.isEmpty, !message.isHelperQuestion
+		else { return nil }
+		return send(
+			"I dismissed this question. No answer needed, carry on with your best judgement.",
+			metadata: ChatSendMetadata(
+				questionAnswer: ChatQuestionAnswer(
+					questionMessageID: questionID,
+					answers: message.questions.map {
+						.init(header: $0.header, selected: [ChatQuestionAnswer.dismissedPick])
+					}),
+				hiddenFromChat: true))
 	}
 
 	// MARK: - Participants, title, sessions

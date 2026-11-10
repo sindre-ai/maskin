@@ -25,7 +25,10 @@ import type { StorageProvider } from '@maskin/storage'
 import { and, eq, isNotNull, sql } from 'drizzle-orm'
 import type { Context } from 'hono'
 import { getCookie, setCookie } from 'hono/cookie'
-import { trackIntegrationConnected } from '../lib/analytics/integration-events'
+import {
+	trackIntegrationConnectStarted,
+	trackIntegrationConnected,
+} from '../lib/analytics/integration-events'
 import { trackSlackMentionReceived } from '../lib/analytics/loop-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { markSlackMention } from '../lib/analytics/slack-attribution'
@@ -1521,6 +1524,8 @@ app.openapi(connectRoute, (async (c) => {
 			400,
 		)
 	}
+
+	void trackIntegrationConnectStarted({ provider: providerName, workspaceId, actorId })
 
 	// Native: the cookie set above lands in the app's URL session, not in the
 	// web-auth browser that will finish the flow. Route that browser through our

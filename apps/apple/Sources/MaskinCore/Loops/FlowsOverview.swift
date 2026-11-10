@@ -59,19 +59,6 @@ public enum FlowTags {
 
 /// What the Flows list and its cards say, worked out from the loops alone.
 public enum FlowsOverview {
-	/// The card's footer message, specific to the decision: "Decide: <title>" for one, "3 decisions
-	/// waiting: <title>" for several, naming the newest unanswered one. Without a title it counts
-	/// only ("1 decision waits on you"). Nil when none wait on the viewer.
-	public static func banner(_ loop: LoopSummary, decisionTitle: String? = nil) -> String? {
-		guard loop.status.isLive, loop.waitingCount > 0 else { return nil }
-		let n = loop.waitingCount
-		let title = decisionTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard let title, !title.isEmpty else {
-			return n == 1 ? "1 decision waits on you" : "\(n) decisions wait on you"
-		}
-		return n == 1 ? "Decide: \(title)" : "\(n) decisions waiting: \(title)"
-	}
-
 	/// What a decision post is called: its own title, else the first sentence of its text.
 	public static func decisionTitle(from post: LoopPost?) -> String? {
 		guard let post, post.isDecision else { return nil }

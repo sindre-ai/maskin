@@ -32,6 +32,7 @@ import {
 	statusLabel,
 	typeColors,
 } from '@/lib/constants'
+import { snippetAuthorLabel } from '@/lib/conversation-snippet'
 import {
 	type CardFact,
 	type GithubTarget,
@@ -1830,10 +1831,16 @@ export function ChatReferenceCard({
 	const title = chat.title.trim() || 'Untitled chat'
 	// You are named "You" in the summary, as the chat list does, and last in the People row.
 	const selfId = getStoredActor()?.id
-	const author = chat.lastMessage?.authorId
-		? chat.lastMessage.authorId === selfId
-			? 'You'
-			: chat.lastMessage.authorName
+	const author = chat.lastMessage
+		? snippetAuthorLabel(
+				{
+					participants: chat.participants,
+					snippet_actor_id: chat.lastMessage.authorId,
+					snippet_actor_name: chat.lastMessage.authorName,
+				},
+				title,
+				selfId,
+			)
 		: null
 	const summary = chatSummary(author, chat.lastMessage?.text)
 	const others = chat.participants.filter((p) => p.actorId !== selfId)

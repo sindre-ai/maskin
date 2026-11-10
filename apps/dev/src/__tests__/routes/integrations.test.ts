@@ -160,6 +160,7 @@ describe('Integrations Routes', () => {
 				'linear',
 				'linkedin-unipile',
 				'miro',
+				'notion',
 				'posthog',
 				'resend',
 				'slack',

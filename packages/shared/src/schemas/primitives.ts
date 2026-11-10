@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { loopViewRowSchema } from '../loops/loop-views'
 import { loopTargetSchema } from './loop-targets'
 
 // A function, not a shared constant: zod-to-json-schema emits a `$ref` when one
@@ -18,13 +19,39 @@ export type SafeJsonValue = z.infer<typeof safeJsonValue>
 export type SafeMetadata = Record<string, SafeJsonValue>
 
 // `metadata.targets` on a loop is a list of row objects (loopTargetSchema), the
-// one place metadata may hold objects inside an array. The rows are checked one
+// one place metadata may hold objects inside an array, and `metadata.views` is the
+// other (a loop's custom view tabs, { name, file_id } rows). The rows are checked one
 // by one so a bad row is named in the error; every other key stays flat as above.
 const METADATA_TARGETS_KEY = 'targets'
+const METADATA_VIEWS_KEY = 'views'
 const metadataWithTargets = z
 	.record(z.string(), z.union([safeJsonValue, z.array(z.record(z.string(), z.unknown()))]))
 	.superRefine((metadata, ctx) => {
 		for (const [key, value] of Object.entries(metadata)) {
+			if (key === METADATA_VIEWS_KEY) {
+				// null or an empty list clears the views, as for targets.
+				if (value === null || (Array.isArray(value) && value.length === 0)) continue
+				if (!Array.isArray(value)) {
+					ctx.addIssue({
+						code: z.ZodIssueCode.custom,
+						path: [key],
+						message: 'views must be a list of rows: { name, file_id }',
+					})
+					continue
+				}
+				value.forEach((row, index) => {
+					const parsed = loopViewRowSchema.safeParse(row)
+					if (parsed.success) return
+					for (const issue of parsed.error.issues) {
+						ctx.addIssue({
+							code: z.ZodIssueCode.custom,
+							path: [key, index, ...issue.path],
+							message: `views row ${index + 1}${issue.path.length ? ` (${issue.path.join('.')})` : ''}: ${issue.message}`,
+						})
+					}
+				})
+				continue
+			}
 			if (key !== METADATA_TARGETS_KEY) {
 				if (
 					Array.isArray(value) &&

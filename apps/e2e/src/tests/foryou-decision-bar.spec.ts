@@ -126,12 +126,13 @@ test.describe('For You — the decision bar', () => {
 			expect(barBox && editBox && barBox.y < editBox.y).toBe(true)
 			expect(barBox && editBox && barBox.width > editBox.width).toBe(true)
 
-			// What the agent expects is one line, not a box per option.
+			// What the agent expects is one line under the bar, not a box per option, and the
+			// card says it once: no "Suggested" recap and no second question line.
+			await expect(card.getByText('All three replies go out today', { exact: true })).toBeVisible()
+			await expect(card.getByText(/^Suggested:/)).toHaveCount(0)
 			await expect(
-				card.getByText(
-					'Suggested: Send all three. All three replies go out today. The booking link is in each.',
-				),
-			).toBeVisible()
+				card.getByText('I will not send into your own threads without you.'),
+			).toHaveCount(0)
 			await expect(card.getByText('Nothing sends until you edit')).toHaveCount(0)
 
 			// Each reply can still be decided on its own, with a quiet Send.

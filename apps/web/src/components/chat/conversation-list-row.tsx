@@ -10,6 +10,7 @@ import { useUpdateConversationMe } from '@/hooks/use-conversations'
 import type { ConversationListItemResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
+import { snippetAuthorLabel } from '@/lib/conversation-snippet'
 import { plainPreview } from '@/lib/linked-objects'
 import { Link } from '@tanstack/react-router'
 import { MoreHorizontal } from 'lucide-react'
@@ -39,6 +40,9 @@ export function ConversationListRow({
 	const updateMe = useUpdateConversationMe(workspaceId)
 	const others = conversation.participants.filter((p) => p.actorId !== self?.id)
 	const lead = others[0] ?? conversation.participants[0]
+	// A direct message is the pair's own line, so it is named after who is on the other end.
+	// Whatever title it was created with is not a topic.
+	const title = conversation.directPairKey && others[0] ? others[0].actorName : conversation.title
 	const isUnread = conversation.unread_count > 0
 	const workingActorIds = new Set(conversation.working_actor_ids)
 	const workingNames = conversation.participants
@@ -57,11 +61,8 @@ export function ConversationListRow({
 			: workingNames.length === 1
 				? `${workingNames[0]} is working…`
 				: `${workingNames.length} agents are working…`
-	const snippetAuthor = conversation.snippet_actor_id
-		? conversation.snippet_actor_id === self?.id
-			? 'You'
-			: conversation.snippet_actor_name
-		: null
+	// The title rendered below is `title`; compare against exactly that.
+	const snippetAuthor = snippetAuthorLabel(conversation, title, self?.id)
 
 	return (
 		<div className="group/row relative border-t border-border first:border-t-0">
@@ -94,7 +95,7 @@ export function ConversationListRow({
 								isUnread ? 'font-bold' : 'font-semibold',
 							)}
 						>
-							{conversation.title}
+							{title}
 						</span>
 					</div>
 					<div className="mt-0.5 flex items-center gap-1.5 text-[13px] text-muted-foreground">
@@ -145,7 +146,7 @@ export function ConversationListRow({
 				<DropdownMenuTrigger asChild>
 					<button
 						type="button"
-						aria-label={`Actions for ${conversation.title}`}
+						aria-label={`Actions for ${title}`}
 						className="absolute top-[9px] right-2 grid h-[22px] w-6 place-items-center rounded-full text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 					>
 						<MoreHorizontal size={14} aria-hidden />

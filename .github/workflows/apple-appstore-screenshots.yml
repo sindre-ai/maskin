@@ -1,0 +1,541 @@
+name: Apple App Store screenshots (manual)
+
+# Manually triggered, one-off. Takes the raw App Store screenshots for the iOS 1.1 listing on hosted
+# Mac runners, because the agents that need them have no Mac: iPhone 6.9 inch, iPad 13 inch and the
+# Apple Watch (Series 11), all signed in to the fake Northwind workspace served by
+# apps/apple/scripts/demo-server. No real data can end up in a shot: the app is built against
+# http://localhost:3010 and the session is the demo one (MASKIN_DEMO_SESSION).
+#
+# Run it from Actions > "Apple App Store screenshots (manual)" > Run workflow, on main.
+#
+# What it is not:
+#   - Not a pull request, push or schedule check. It runs only when someone dispatches it.
+#   - Not a pipeline. It writes raw PNGs, nothing is framed and nothing goes near App Store Connect.
+#
+# Jobs:
+#   ios    One Debug build for iPhone and iPad (two destinations), then the screen tour
+#          (Apps/MaskinUITests/ScreenTourTests) on each, and the settings tour on the iPhone.
+#   watch  One Debug build of the watch app, then one launch per shot.
+#   publish  Linux, no build. Checks every PNG against its exact App Store size, pushes the ones that
+#          pass to the scratch branch screenshots/ios-1.1-raw (force-pushed, one commit) and uploads
+#          them as the artifact screenshots-ios-1.1-raw. The branch is deleted once the files are
+#          somewhere else; nothing merges it.
+#
+# Cost: macOS minutes are about 10x Linux. Expect roughly 45 to 65 Mac minutes in total for a full
+# run (most of it the two Debug builds; the two jobs run side by side). The 45 minute job limit is
+# a hang guard. For a retake, set "only" to ios or watch so just that job runs. One capture plus at
+# most one retake is the budget for this one-off.
+#
+# A screen the tour cannot reach is skipped and logged, never a failure: the step summary lists
+# every expected shot that is missing, and the skipped-*.txt files in the logs artifacts say why.
+
+on:
+  workflow_dispatch:
+    inputs:
+      only:
+        description: Which job to run. Use ios or watch for a retake, so only the Mac job that is needed is paid for.
+        required: false
+        default: all
+        type: choice
+        options:
+          - all
+          - ios
+          - watch
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apple-appstore-screenshots
+  cancel-in-progress: false
+
+env:
+  PORT: '3010'
+  DEMO_SESSION: '{"apiKey":"ank_demo","actorId":"00000000-0000-4000-8000-000000000002","name":"Sindre Aasen","email":"sindre@northwind.example","workspaceId":"00000000-0000-4000-8000-000000000001"}'
+
+jobs:
+  ios:
+    name: ios (iPhone 6.9 and iPad 13)
+    if: ${{ inputs.only != 'watch' }}
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      OUT: ${{ github.workspace }}/shots-ios
+      LOGS: ${{ github.workspace }}/logs-ios
+      DERIVED: ${{ github.workspace }}/maskin-shots-dd
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Select Xcode 26
+        run: |
+          set -euo pipefail
+          xcode=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)
+          if [ -z "$xcode" ]; then
+            echo "::error::No Xcode 26.x on this runner image (needed for iOS 26 APIs / Swift 6.x). Installed:"
+            ls -d /Applications/Xcode*.app || true
+            exit 1
+          fi
+          sudo xcode-select -s "$xcode/Contents/Developer"
+          xcodebuild -version
+
+      # The demo server uses only Node built-ins, so no pnpm install.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      # The exact App Store sizes decide the device: iPhone 6.9 inch is 1320 x 2868 (16 or 17 Pro
+      # Max), iPad 13 inch is 2064 x 2752 (iPad Pro 13-inch). Picked by name from the runtime's own
+      # device list; the job stops and prints the list if none fits.
+      - name: Create the iPhone and iPad simulators
+        id: sim
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUT" "$LOGS"
+          runtime_id() {
+            xcrun simctl list -j runtimes available |
+              jq -r '[.runtimes[] | select(.platform == "iOS" or (.identifier | test("SimRuntime.iOS")))] | sort_by(.version | split(".") | map(tonumber)) | last | .identifier // empty'
+          }
+          runtime=$(runtime_id)
+          if [ -z "$runtime" ]; then
+            echo "No iOS simulator runtime on this image, downloading one."
+            xcodebuild -downloadPlatform iOS
+            runtime=$(runtime_id)
+          fi
+          if [ -z "$runtime" ]; then
+            echo "::error::No iOS simulator runtime available."
+            exit 1
+          fi
+          pick() {
+            xcrun simctl list -j runtimes available |
+              jq -r --arg rt "$runtime" --arg re "$1" '[.runtimes[] | select(.identifier == $rt) | .supportedDeviceTypes[] | select(.name | test($re))] | last | .identifier // empty'
+          }
+          phone_type=$(pick '^iPhone (16|17) Pro Max$')
+          pad_type=$(pick '^iPad Pro 13-inch')
+          echo "runtime: $runtime"
+          echo "iPhone type: ${phone_type:-none}"
+          echo "iPad type: ${pad_type:-none}"
+          if [ -z "$phone_type" ] || [ -z "$pad_type" ]; then
+            echo "::error::No device type of the right size in this runtime. Available:"
+            xcrun simctl list -j runtimes available |
+              jq -r --arg rt "$runtime" '.runtimes[] | select(.identifier == $rt) | .supportedDeviceTypes[].name'
+            exit 1
+          fi
+          phone=$(xcrun simctl create "shots-iphone" "$phone_type" "$runtime")
+          pad=$(xcrun simctl create "shots-ipad" "$pad_type" "$runtime")
+          {
+            echo "runtime=$runtime"
+            echo "phone=$phone"
+            echo "pad=$pad"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "commit: ${{ github.sha }}"
+            echo "runner image: ${ImageOS:-unknown} ${ImageVersion:-unknown}"
+            xcodebuild -version | tr '\n' ' '; echo
+            echo "simulator runtime: $runtime"
+            echo "iPhone: $phone_type ($phone)"
+            echo "iPad: $pad_type ($pad)"
+          } | tee "$LOGS/environment.txt"
+
+      - name: Start the demo server
+        run: |
+          set -euo pipefail
+          node apps/apple/scripts/demo-server/server.mjs >"$LOGS/server.log" 2>&1 &
+          until curl -sf "localhost:$PORT/api/health" >/dev/null; do sleep 1; done
+          echo "demo server is up"
+
+      # One build for both devices: the two destinations share the iOS Simulator SDK.
+      - name: Build for testing (iPhone and iPad)
+        working-directory: apps/apple
+        run: |
+          set -euo pipefail
+          xcodegen generate >/dev/null
+          xcodebuild -project Maskin.xcodeproj -scheme Maskin \
+            -destination "id=${{ steps.sim.outputs.phone }}" \
+            -destination "id=${{ steps.sim.outputs.pad }}" \
+            -configuration Debug -derivedDataPath "$DERIVED" CODE_SIGNING_ALLOWED=NO \
+            "MASKIN_API_BASE_URL=http://localhost:$PORT" \
+            build-for-testing >"$LOGS/build.log" 2>&1 || { tail -40 "$LOGS/build.log"; exit 1; }
+
+      - name: Boot the simulators with a clean status bar
+        run: |
+          set -euo pipefail
+          for udid in "${{ steps.sim.outputs.phone }}" "${{ steps.sim.outputs.pad }}"; do
+            xcrun simctl boot "$udid" 2>/dev/null || true
+            xcrun simctl bootstatus "$udid" -b >/dev/null
+            # Light mode, 9:41, full battery, full bars: no runner clock or carrier in the shots.
+            xcrun simctl ui "$udid" appearance light
+            xcrun simctl status_bar "$udid" override --time "9:41" --dataNetwork wifi --wifiMode active \
+              --wifiBars 3 --cellularMode active --cellularBars 4 --batteryState charged --batteryLevel 100
+          done
+
+      # Each tour writes PNGs into its own folder (the test runner only sees TEST_RUNNER_ variables).
+      # A tour that ends red is not fatal: the tour is best effort and the file check below decides.
+      - name: Tour on the iPhone
+        working-directory: apps/apple
+        run: |
+          set -uo pipefail
+          mkdir -p /tmp/tour-iphone /tmp/tour-iphone-settings
+          for part in "testTour:/tmp/tour-iphone" "testSettings:/tmp/tour-iphone-settings"; do
+            test=${part%%:*}; dir=${part#*:}
+            TEST_RUNNER_SCREEN_TOUR_DIR="$dir" xcodebuild -project Maskin.xcodeproj -scheme Maskin \
+              -destination "id=${{ steps.sim.outputs.phone }}" -configuration Debug \
+              -derivedDataPath "$DERIVED" CODE_SIGNING_ALLOWED=NO \
+              "MASKIN_API_BASE_URL=http://localhost:$PORT" \
+              -only-testing:MaskinUITests/ScreenTourTests/$test \
+              test-without-building >"$LOGS/test-iphone-$test.log" 2>&1
+            echo "iPhone $test exit code: $?"
+          done
+          ls -l /tmp/tour-iphone /tmp/tour-iphone-settings
+
+      - name: Tour on the iPad
+        working-directory: apps/apple
+        run: |
+          set -uo pipefail
+          mkdir -p /tmp/tour-ipad
+          TEST_RUNNER_SCREEN_TOUR_DIR=/tmp/tour-ipad xcodebuild -project Maskin.xcodeproj -scheme Maskin \
+            -destination "id=${{ steps.sim.outputs.pad }}" -configuration Debug \
+            -derivedDataPath "$DERIVED" CODE_SIGNING_ALLOWED=NO \
+            "MASKIN_API_BASE_URL=http://localhost:$PORT" \
+            -only-testing:MaskinUITests/ScreenTourTests/testTour \
+            test-without-building >"$LOGS/test-ipad-testTour.log" 2>&1
+          echo "iPad testTour exit code: $?"
+          ls -l /tmp/tour-ipad
+
+      # Collects the PNGs under their final names and fails the job on a wrong pixel size. A shot of
+      # the wrong size moves to rejected/ in the logs artifact and never reaches the artifact or the
+      # scratch branch. A missing shot is a warning, not a failure.
+      - name: Check sizes and collect
+        if: always()
+        run: |
+          set -uo pipefail
+          mkdir -p "$OUT" "$LOGS/rejected"
+          bad=0
+          collect() { # <prefix> <width> <height> <dir>...
+            prefix=$1; w=$2; h=$3; shift 3
+            for dir in "$@"; do
+              for f in "$dir"/*.png; do
+                [ -e "$f" ] || continue
+                got="$(sips -g pixelWidth -g pixelHeight "$f" | awk '/pixelWidth/{w=$2} /pixelHeight/{h=$2} END{print w "x" h}')"
+                name="$prefix-$(basename "$f")"
+                if [ "$got" = "${w}x${h}" ]; then
+                  cp "$f" "$OUT/$name"
+                else
+                  echo "::error::$name is $got, expected ${w}x${h}"
+                  cp "$f" "$LOGS/rejected/$name"
+                  bad=1
+                fi
+              done
+            done
+          }
+          collect iphone-6.9in 1320 2868 /tmp/tour-iphone /tmp/tour-iphone-settings
+          collect ipad-13in 2064 2752 /tmp/tour-ipad
+          # The skipped-*.txt files of the three tours share names: keep them apart.
+          for pair in "iphone:/tmp/tour-iphone" "iphone-settings:/tmp/tour-iphone-settings" "ipad:/tmp/tour-ipad"; do
+            for s in "${pair#*:}"/skipped-*.txt; do
+              [ -e "$s" ] && cp "$s" "$LOGS/${pair%%:*}-$(basename "$s")"
+            done
+          done
+          rm -f "$LOGS"/skipped-*.txt
+          missing=""
+          for want in iphone-6.9in-01-foryou iphone-6.9in-02-chats iphone-6.9in-06-items iphone-6.9in-11-01-settings \
+            ipad-13in-01-foryou ipad-13in-03-chat-thread ipad-13in-06-items; do
+            [ -e "$OUT/$want.png" ] || missing="$missing $want"
+          done
+          {
+            echo "### iPhone and iPad shots"
+            echo
+            echo "Collected: $(ls "$OUT" | wc -l | tr -d ' ') PNG"
+            ls "$OUT" | sed 's/^/- /'
+            echo
+            if [ -n "$missing" ]; then echo "**Missing expected shots:**$missing"; else echo "All expected shots are there."; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$missing" ]; then echo "::warning::Missing expected shots:$missing"; fi
+          exit $bad
+
+      - name: Upload shots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shots-ios
+          path: ${{ env.OUT }}
+          if-no-files-found: warn
+          retention-days: 7
+
+      # always(): a timeout cancel is exactly when the logs are needed.
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-ios
+          path: ${{ env.LOGS }}
+          if-no-files-found: warn
+          retention-days: 7
+
+  watch:
+    name: watch (Series 11)
+    if: ${{ inputs.only != 'ios' }}
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      OUT: ${{ github.workspace }}/shots-watch
+      LOGS: ${{ github.workspace }}/logs-watch
+      DERIVED: ${{ github.workspace }}/maskin-watch-dd
+      BUNDLE: io.maskin.app.watchkitapp
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Select Xcode 26
+        run: |
+          set -euo pipefail
+          xcode=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)
+          if [ -z "$xcode" ]; then
+            echo "::error::No Xcode 26.x on this runner image. Installed:"
+            ls -d /Applications/Xcode*.app || true
+            exit 1
+          fi
+          sudo xcode-select -s "$xcode/Contents/Developer"
+          xcodebuild -version
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      # Apple Watch Series 11 (46mm) is 416 x 496, the size the listing wants.
+      - name: Create the watch simulator
+        id: sim
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUT" "$LOGS"
+          runtime_id() {
+            xcrun simctl list -j runtimes available |
+              jq -r '[.runtimes[] | select(.platform == "watchOS" or (.identifier | test("SimRuntime.watchOS")))] | sort_by(.version | split(".") | map(tonumber)) | last | .identifier // empty'
+          }
+          runtime=$(runtime_id)
+          if [ -z "$runtime" ]; then
+            echo "No watchOS simulator runtime on this image, downloading one."
+            xcodebuild -downloadPlatform watchOS
+            runtime=$(runtime_id)
+          fi
+          if [ -z "$runtime" ]; then
+            echo "::error::No watchOS simulator runtime available."
+            exit 1
+          fi
+          devicetype=$(xcrun simctl list -j runtimes available |
+            jq -r --arg rt "$runtime" '[.runtimes[] | select(.identifier == $rt) | .supportedDeviceTypes[] | select(.name | test("^Apple Watch Series 11 \\(46mm\\)$"))] | last | .identifier // empty')
+          echo "runtime: $runtime"
+          echo "device type: ${devicetype:-none}"
+          if [ -z "$devicetype" ]; then
+            echo "::error::No Apple Watch Series 11 (46mm) in this runtime. Available:"
+            xcrun simctl list -j runtimes available |
+              jq -r --arg rt "$runtime" '.runtimes[] | select(.identifier == $rt) | .supportedDeviceTypes[].name'
+            exit 1
+          fi
+          udid=$(xcrun simctl create "shots-watch" "$devicetype" "$runtime")
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+          {
+            echo "date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "commit: ${{ github.sha }}"
+            echo "runner image: ${ImageOS:-unknown} ${ImageVersion:-unknown}"
+            xcodebuild -version | tr '\n' ' '; echo
+            echo "simulator runtime: $runtime"
+            echo "watch: $devicetype ($udid)"
+          } | tee "$LOGS/environment.txt"
+
+      - name: Start the demo server
+        run: |
+          set -euo pipefail
+          node apps/apple/scripts/demo-server/server.mjs >"$LOGS/server.log" 2>&1 &
+          until curl -sf "localhost:$PORT/api/health" >/dev/null; do sleep 1; done
+          echo "demo server is up"
+
+      - name: Build the watch app
+        working-directory: apps/apple
+        run: |
+          set -euo pipefail
+          xcodegen generate >/dev/null
+          xcodebuild -project Maskin.xcodeproj -scheme MaskinWatch \
+            -destination "id=${{ steps.sim.outputs.udid }}" -configuration Debug \
+            -derivedDataPath "$DERIVED" CODE_SIGNING_ALLOWED=NO \
+            "MASKIN_API_BASE_URL=http://localhost:$PORT" \
+            build >"$LOGS/build.log" 2>&1 || { tail -40 "$LOGS/build.log"; exit 1; }
+
+      - name: Install the watch app
+        run: |
+          set -euo pipefail
+          udid="${{ steps.sim.outputs.udid }}"
+          app="$DERIVED/Build/Products/Debug-watchsimulator/Maskin.app"
+          test -d "$app" || { echo "::error::No built watch app at $app"; ls "$DERIVED/Build/Products" || true; exit 1; }
+          xcrun simctl boot "$udid" 2>/dev/null || true
+          xcrun simctl bootstatus "$udid" -b >/dev/null
+          xcrun simctl install "$udid" "$app"
+          # The one-time welcome ("Maskin on your wrist") is not part of the listing: mark it done.
+          # Also passed as a launch argument below, in case defaults is not available on the watch.
+          xcrun simctl spawn "$udid" defaults write "$BUNDLE" maskin.watch.firstRunDone.v1 -bool true || echo "defaults write failed, relying on the launch argument"
+
+      # One cold launch per shot, signed in to the demo workspace through the launch environment.
+      # MASKIN_DEMO_PAGE=flows opens the Flows page and MASKIN_DEMO_CARD picks its card (card 0 is the
+      # daily briefing, then one card per flow), because a simulator has no Digital Crown or swipe.
+      # Home is the screen as it looks before the mic is tapped.
+      - name: Capture the watch shots
+        run: |
+          set -uo pipefail
+          udid="${{ steps.sim.outputs.udid }}"
+          shot() { # <file name> <env assignment>...
+            name=$1; shift
+            xcrun simctl terminate "$udid" "$BUNDLE" 2>/dev/null || true
+            env SIMCTL_CHILD_MASKIN_DEMO_SESSION="$DEMO_SESSION" "$@" xcrun simctl launch "$udid" "$BUNDLE" \
+              -maskin.watch.firstRunDone.v1 YES >/dev/null || { echo "launch failed for $name"; return; }
+            sleep 20
+            xcrun simctl io "$udid" screenshot "$OUT/watch-series11-$name.png" 2>&1 | tail -1
+          }
+          shot 01-home
+          shot 02-flows-card0-briefing SIMCTL_CHILD_MASKIN_DEMO_PAGE=flows
+          shot 03-flows-card1 SIMCTL_CHILD_MASKIN_DEMO_PAGE=flows SIMCTL_CHILD_MASKIN_DEMO_CARD=1
+          shot 04-flows-card2 SIMCTL_CHILD_MASKIN_DEMO_PAGE=flows SIMCTL_CHILD_MASKIN_DEMO_CARD=2
+          # Best effort: the daily briefing screen through the complication link. It may not open
+          # on a simulator; the shot is then simply missing.
+          xcrun simctl terminate "$udid" "$BUNDLE" 2>/dev/null || true
+          env SIMCTL_CHILD_MASKIN_DEMO_SESSION="$DEMO_SESSION" xcrun simctl launch "$udid" "$BUNDLE" \
+            -maskin.watch.firstRunDone.v1 YES >/dev/null || true
+          sleep 20
+          if xcrun simctl openurl "$udid" "maskin-watch://brief"; then
+            sleep 8
+            xcrun simctl io "$udid" screenshot "$OUT/watch-series11-05-briefing-player.png" 2>&1 | tail -1
+          else
+            echo "openurl is not available for the watch simulator, no player shot"
+          fi
+          ls -l "$OUT"
+
+      - name: Check sizes
+        if: always()
+        run: |
+          set -uo pipefail
+          mkdir -p "$OUT" "$LOGS/rejected"
+          bad=0
+          for f in "$OUT"/*.png; do
+            [ -e "$f" ] || continue
+            got="$(sips -g pixelWidth -g pixelHeight "$f" | awk '/pixelWidth/{w=$2} /pixelHeight/{h=$2} END{print w "x" h}')"
+            if [ "$got" != "416x496" ]; then
+              echo "::error::$(basename "$f") is $got, expected 416x496"
+              mv "$f" "$LOGS/rejected/"
+              bad=1
+            fi
+          done
+          missing=""
+          for want in watch-series11-01-home watch-series11-02-flows-card0-briefing watch-series11-03-flows-card1; do
+            [ -e "$OUT/$want.png" ] || missing="$missing $want"
+          done
+          {
+            echo "### Watch shots"
+            echo
+            ls "$OUT" | sed 's/^/- /'
+            echo
+            if [ -n "$missing" ]; then echo "**Missing expected shots:**$missing"; else echo "All expected shots are there."; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$missing" ]; then echo "::warning::Missing expected shots:$missing"; fi
+          exit $bad
+
+      - name: Upload shots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shots-watch
+          path: ${{ env.OUT }}
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-watch
+          path: ${{ env.LOGS }}
+          if-no-files-found: warn
+          retention-days: 7
+
+  # Linux, no build. The only job that writes to the repo, and only to the scratch branch.
+  publish:
+    name: publish (artifact and scratch branch)
+    needs: [ios, watch]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      BRANCH: screenshots/ios-1.1-raw
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: shots-*
+          path: incoming
+          merge-multiple: true
+
+      # The last gate before anything is pushed: the PNG header must say the exact App Store size.
+      - name: Check sizes
+        id: check
+        run: |
+          python3 - <<'EOF'
+          import glob, os, shutil, struct, sys
+          rules = {"iphone-6.9in-": (1320, 2868), "ipad-13in-": (2064, 2752), "watch-series11-": (416, 496)}
+          os.makedirs("raw", exist_ok=True)
+          bad = []
+          for path in sorted(glob.glob("incoming/*.png")):
+              name = os.path.basename(path)
+              size = None
+              with open(path, "rb") as f:
+                  head = f.read(24)
+              if head[:8] == b"\x89PNG\r\n\x1a\n" and head[12:16] == b"IHDR":
+                  size = struct.unpack(">II", head[16:24])
+              want = next((v for k, v in rules.items() if name.startswith(k)), None)
+              if want and size == want:
+                  shutil.copy(path, os.path.join("raw", name))
+              else:
+                  bad.append(f"{name}: {size}, expected {want}")
+          for line in bad:
+              print(f"::error::{line}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write("bad=" + ("true" if bad else "false") + "\n")
+          kept = sorted(os.listdir("raw"))
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as out:
+              out.write("### Published shots\n\n" + "\n".join(f"- {n}" for n in kept) + "\n")
+          if not kept:
+              print("::error::No valid PNG to publish")
+              sys.exit(1)
+          EOF
+
+      - name: Upload the raw set
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots-ios-1.1-raw
+          path: raw
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Push to the scratch branch
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan "$BRANCH"
+          git rm -rf --quiet .
+          cp raw/*.png .
+          git add ./*.png
+          git commit -q -m "Raw iOS 1.1 App Store screenshots from ${GITHUB_SHA::10}"
+          git push --force origin "HEAD:refs/heads/$BRANCH"
+
+      - name: Fail on a wrong size
+        if: ${{ steps.check.outputs.bad == 'true' }}
+        run: |
+          echo "::error::At least one PNG had the wrong pixel size and was left out (see the Check sizes step)."
+          exit 1

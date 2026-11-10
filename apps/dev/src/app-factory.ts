@@ -14,6 +14,7 @@ import { logger as honoLogger } from 'hono/logger'
 import { CLIENT_SOURCE_HEADER } from './lib/analytics/knowledge-events'
 import { buildAppleAppSiteAssociation } from './lib/apple-app-site-association'
 import { ApiErrorCode, createApiError, mapStatusToCode, validationFailureHook } from './lib/errors'
+import { createHealthHandler } from './lib/health'
 import { PlanCapExceededError } from './lib/llm-routing'
 import { logger } from './lib/logger'
 import { redactLogLine } from './lib/redact-path'
@@ -25,6 +26,7 @@ import {
 	ownershipCapErrorBody,
 	seatCapErrorBody,
 } from './lib/workspace-capacity'
+import { dbLoadShed } from './middleware/db-load-shed'
 import { createIdempotencyMiddleware } from './middleware/idempotency'
 import accountRoutes from './routes/account'
 import actorAvatarRoutes from './routes/actor-avatar'
@@ -135,6 +137,8 @@ export interface AppDeps {
 	sessionManager: SessionManager
 	agentStorage: AgentStorageManager
 	storageProvider: StorageProvider
+	/** True while the database is backed up; turns on refusing reads. Omitted, nothing is refused. */
+	dbBackedUp?: () => boolean
 }
 
 export interface CreateAppOptions {
@@ -300,6 +304,25 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 
 	app.use('/api/*', requestTiming())
 
+	// Ahead of auth, so a refused read does not cost the database lookup auth would have made.
+	if (deps.dbBackedUp) {
+		let shedSinceLog = 0
+		let lastShedLogAt = 0
+		app.use(
+			'/api/*',
+			dbLoadShed(deps.dbBackedUp, () => {
+				shedSinceLog += 1
+				const now = Date.now()
+				if (now - lastShedLogAt < 10_000) return
+				logger.warn('Database backed up: refusing reads until it clears', {
+					refusedSinceLastLog: shedSinceLog,
+				})
+				lastShedLogAt = now
+				shedSinceLog = 0
+			}),
+		)
+	}
+
 	app.use('*', async (c, next) => {
 		c.set('db', db)
 		c.set('notifyBridge', notifyBridge)
@@ -309,9 +332,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		await next()
 	})
 
-	app.get('/api/health', (c) => {
-		return c.json({ status: 'ok', timestamp: new Date().toISOString() })
-	})
+	app.get('/api/health', createHealthHandler(db))
 
 	// Auth allowlist — each exemption has a distinct reason; do not tighten
 	// without checking the corresponding flow:

@@ -45,6 +45,7 @@ import { shortcutLabel } from '@/lib/search/platform'
 import { pushRecentSearchEntry } from '@/lib/search/recents'
 import { rowSub, rowTitle } from '@/lib/search/row-display'
 import { serializeSearchState, urlStateFromParts } from '@/lib/search/url-state'
+import { type Theme, useTheme } from '@/lib/theme'
 import { useWorkspace } from '@/lib/workspace-context'
 import type { SearchResultRow } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
@@ -170,6 +171,7 @@ export function CommandPaletteV2() {
 	const objectTypes = useAvailableObjectTypes()
 	const typeLabel = useObjectTypeLabel()
 	const triggerRef = useRef<HTMLElement | null>(null)
+	const { theme, resolvedTheme, setTheme } = useTheme()
 
 	// Mark all read runs the real per-entity mutation over the unread feed.
 	const { data: unread } = useUnread(workspaceId)
@@ -265,6 +267,54 @@ export function CommandPaletteV2() {
 		[markAllRead, navigateTo, objectTypes, openChat, openCreate, typeLabel, workspaceId],
 	)
 
+	// The Settings group: what a person changes without leaving the page. Only the dark-mode
+	// toggle shows before anything is typed; typing a word finds the rest.
+	const settingsCommands = useMemo<PaletteCommand[]>(() => {
+		const dark = resolvedTheme === 'dark'
+		const pick = (next: Theme, message: string) => () => {
+			setTheme(next)
+			setOpen(false)
+			toast(message)
+		}
+		return [
+			{
+				id: 'setting-dark-mode',
+				title: dark ? 'Turn off dark mode' : 'Turn on dark mode',
+				sub: `Currently ${dark ? 'dark' : 'light'}${theme === 'system' ? ' (system)' : ''}`,
+				keywords: ['theme', 'appearance', 'light', 'dark', 'toggle'],
+				run: pick(dark ? 'light' : 'dark', dark ? 'Light mode on' : 'Dark mode on'),
+			},
+			{
+				id: 'setting-theme-light',
+				title: 'Theme: Light',
+				sub: theme === 'light' ? 'Current' : undefined,
+				keywords: ['appearance'],
+				run: pick('light', 'Theme set to Light'),
+			},
+			{
+				id: 'setting-theme-dark',
+				title: 'Theme: Dark',
+				sub: theme === 'dark' ? 'Current' : undefined,
+				keywords: ['appearance'],
+				run: pick('dark', 'Theme set to Dark'),
+			},
+			{
+				id: 'setting-theme-system',
+				title: 'Theme: System',
+				sub: theme === 'system' ? 'Current' : 'Follow your device',
+				keywords: ['appearance'],
+				run: pick('system', 'Theme follows your device'),
+			},
+			{
+				id: 'setting-open-settings',
+				title: 'Open settings',
+				sub: 'General, members, billing',
+				keywords: ['preferences'],
+				run: () => navigateTo(`/${workspaceId}/settings`),
+			},
+		]
+	}, [navigateTo, resolvedTheme, setOpen, setTheme, theme, workspaceId])
+
 	// One `command_palette_opened` per open transition, on any route. The launcher
 	// remembers what had focus (before its own field takes it) so close can give it back.
 	const prevOpen = useRef(open)
@@ -306,6 +356,7 @@ export function CommandPaletteV2() {
 				<LauncherPanel
 					workspaceId={workspaceId}
 					commands={commands}
+					settingsCommands={settingsCommands}
 					onClose={() => setOpen(false)}
 					navigateTo={navigateTo}
 				/>
@@ -327,11 +378,18 @@ export function CommandPaletteV2() {
 interface PanelProps {
 	workspaceId: string
 	commands: PaletteCommand[]
+	settingsCommands: PaletteCommand[]
 	onClose: () => void
 	navigateTo: (path: string) => void
 }
 
-function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProps) {
+function LauncherPanel({
+	workspaceId,
+	commands,
+	settingsCommands,
+	onClose,
+	navigateTo,
+}: PanelProps) {
 	const navigate = useNavigate()
 	const { workspace } = useWorkspace()
 	const typeLabel = useObjectTypeLabel()
@@ -573,6 +631,23 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 					run: c.run,
 				})),
 			})
+			// Before anything is typed only the first Settings row (dark mode) is offered.
+			const settingRows = (
+				isEmpty
+					? settingsCommands.slice(0, 1)
+					: rankTitleMatchesFirst(
+							settingsCommands.filter((c) => matchesRow(query, c.title, 'settings', c.keywords)),
+							query,
+						)
+			).map((c) => ({
+				id: c.id,
+				group: 'Settings',
+				kind: 'SETTING',
+				title: c.title,
+				sub: c.sub,
+				run: c.run,
+			}))
+			groups.push({ label: 'Settings', rows: settingRows })
 			const views = rankTitleMatchesFirst(
 				VIEWS.filter((view) => matchesRow(query, view.title, 'go to', view.keywords)),
 				query,

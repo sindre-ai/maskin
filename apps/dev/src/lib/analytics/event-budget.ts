@@ -12,7 +12,12 @@ import { logger } from '../logger'
 const DEFAULT_DAILY_CAP = 2_500
 
 // Events the product questions depend on. Never sampled, never capped.
-const TIER1_EXACT = new Set(['agent_session_started', 'chat_session_started'])
+const TIER1_EXACT = new Set([
+	'agent_session_started',
+	'chat_session_started',
+	'integration_connect_started',
+	'integration_tool_called',
+])
 const TIER1_PREFIXES = ['foryou_card_', 'signup_', 'workspace_', 'checkout_']
 
 // Fraction of events sent. 0 drops the event. Sampled events carry

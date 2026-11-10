@@ -44,9 +44,8 @@ struct ObjectDetailContent<Decision: View>: View {
 	var onShowActivity: () -> Void = {}
 	var onMessage: (() -> Void)?
 	var sessionActions = ObjectSessionActions.none
-	/// Pins "now" and opens the description (snapshots).
+	/// Pins "now" (snapshots).
 	var now: Date = Date()
-	var descriptionExpanded = false
 	/// False draws the header chips without their menus (snapshots).
 	var interactiveChips = true
 	@ViewBuilder var decision: () -> Decision
@@ -95,7 +94,7 @@ struct ObjectDetailContent<Decision: View>: View {
 
 	private func overview(_ object: WorkObject) -> some View {
 		ObjectOverviewView(
-			store: store, object: object, descriptionExpanded: descriptionExpanded, onShowActivity: onShowActivity,
+			store: store, object: object, onShowActivity: onShowActivity,
 			sessionActions: sessionActions
 		) { decision() }
 	}

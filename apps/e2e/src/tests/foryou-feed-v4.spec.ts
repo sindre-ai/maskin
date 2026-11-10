@@ -351,16 +351,17 @@ test.describe('For You v4 — cards, options and the receipt', () => {
 		const decisionCard = page
 			.getByTestId('foryou-feed-card')
 			.filter({ hasText: 'Merge the trigger settings rewrite?' })
-		// The card leads with the agent's ask, and its buttons are the options the
-		// agent authored — including the consequence lines under each.
+		// The card leads with the question (its title) and its buttons are the options the
+		// agent authored, with the recommended option's first consequence under its button.
+		// There is no second question line.
 		await expect(decisionCard.getByRole('button', { name: 'Merge now' })).toBeVisible()
 		await expect(decisionCard.getByRole('button', { name: 'Send back' })).toBeVisible()
-		await expect(decisionCard.getByText('No rollback once migrations run')).toBeVisible()
+		await expect(decisionCard.getByText('Ships tonight', { exact: true })).toBeVisible()
 		await expect(
 			decisionCard.getByText(
 				'This ships to every workspace at once, so I will not merge it alone.',
 			),
-		).toBeVisible()
+		).toHaveCount(0)
 		// The object's durable spec never reaches the card.
 		await expect(
 			decisionCard.getByText('The durable spec, which the card must not show.'),

@@ -46768,8 +46768,8 @@ public enum Operations {
                     /// To ask whether an object should move to a new status ("flip this bet to active"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.
                     ///
                     /// The API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:
-                    /// title 3-7 words and not opening with a status verb ("Reviewing the funnel"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;
-                    /// ask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;
+                    /// title 9 words or fewer, ending in "?", and not opening with a status verb ("Reviewing the funnel"); summary at most 2 sentences, with no source paths, and not a restatement of the title;
+                    /// ask omitted when the title is the question, otherwise exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;
                     /// 2-3 consequence lines per option, one clause each (no semicolons, no ", and"); and nowhere in the block an em-dash, an en-dash, an emoji,
                     /// or a hedge word standing in for a number ("significantly", "substantially", "several", "many", and the like).
                     ///
@@ -46779,33 +46779,32 @@ public enum Operations {
                     ///
                     /// Example:
                     /// { "title": "Is the onboarding bet worth running?",
-                    ///   "summary": "3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.",
-                    ///   "ask": "This changes what every new customer sees first, so I will not ship it alone.",
+                    ///   "summary": "3 of 5 signups stall on step 2, costing about 40 activations a week. The replacement copy and the migration are drafted; shipping is open.",
                     ///   "options": [
                     ///     { "label": "7-day window", "recommended": true, "consequences": ["Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one"] },
                     ///     { "label": "Hold", "consequences": ["Nothing ships this cycle", "Keeps losing 40 activations a week"] } ] }
                     ///
                     /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision`.
                     public struct decisionPayload: Codable, Hashable, Sendable {
-                        /// 3-7 words. The decision itself, not a status. A question if it is a judgment call ("Is the onboarding bet worth running?"), a noun phrase if it is an artifact ("Acme's note before Thursday"). No agent name, and no verb-ing: "Reviewing the funnel" is a status, not a decision.
+                        /// 9 words or fewer, ending in "?". The question the human is being asked ("Is the onboarding bet worth running?"), not a status. No agent name, and no verb-ing: "Reviewing the funnel" is a status, not a decision.
                         ///
                         /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/title`.
                         public var title: Swift.String
-                        /// 1-2 sentences. Sentence 1: the state of the world and the cost of the status quo, with one real number you actually looked up. Sentence 2: what is already done, so the human knows they are only deciding, not working. Never restate the title.
+                        /// At most 2 sentences. State what is done and what is still open, so the human knows they are only deciding, not working. Use a real number only when you looked one up. No source paths or file names. Do not name the object: the card shows it. Never restate the title.
                         ///
                         /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/summary`.
                         public var summary: Swift.String
-                        /// First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: "Notices go to real households, so I will not send this alone." No hedging, no apologising, no offering to help.
+                        /// Leave out when the title is already the question; the card then shows the title and the options. Otherwise first person, one sentence: name the single call you cannot make alone and why it belongs to the human ("Notices go to real households, so I will not send this alone."). No hedging, no apologising, no offering to help.
                         ///
                         /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/ask`.
-                        public var ask: Swift.String
+                        public var ask: Swift.String?
                         /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/optionsPayload`.
                         public struct optionsPayloadPayload: Codable, Hashable, Sendable {
                             /// 4 words or fewer, sentence case. The choice itself: "7-day window", "Hold", "Ship to 10%". Not a sentence, and not a verb phrase describing what you will do.
                             ///
                             /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/optionsPayload/label`.
                             public var label: Swift.String
-                            /// 2-3 lines, present tense, one clause each: "Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one". Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no ", and" — that is two lines, not one.
+                            /// 2-3 lines, present tense, one clause each: "Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one". Put the guardrails here ("Nothing is published without your go"). Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no ", and" — that is two lines, not one.
                             ///
                             /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/optionsPayload/consequences`.
                             public var consequences: [Swift.String]
@@ -46854,7 +46853,7 @@ public enum Operations {
                             ///
                             /// - Parameters:
                             ///   - label: 4 words or fewer, sentence case. The choice itself: "7-day window", "Hold", "Ship to 10%". Not a sentence, and not a verb phrase describing what you will do.
-                            ///   - consequences: 2-3 lines, present tense, one clause each: "Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one". Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no ", and" — that is two lines, not one.
+                            ///   - consequences: 2-3 lines, present tense, one clause each: "Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one". Put the guardrails here ("Nothing is published without your go"). Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no ", and" — that is two lines, not one.
                             ///   - recommended: Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing.
                             ///   - destructive: Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices.
                             ///   - set_status: Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
@@ -47067,9 +47066,9 @@ public enum Operations {
                         /// Creates a new `decisionPayload`.
                         ///
                         /// - Parameters:
-                        ///   - title: 3-7 words. The decision itself, not a status. A question if it is a judgment call ("Is the onboarding bet worth running?"), a noun phrase if it is an artifact ("Acme's note before Thursday"). No agent name, and no verb-ing: "Reviewing the funnel" is a status, not a decision.
-                        ///   - summary: 1-2 sentences. Sentence 1: the state of the world and the cost of the status quo, with one real number you actually looked up. Sentence 2: what is already done, so the human knows they are only deciding, not working. Never restate the title.
-                        ///   - ask: First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: "Notices go to real households, so I will not send this alone." No hedging, no apologising, no offering to help.
+                        ///   - title: 9 words or fewer, ending in "?". The question the human is being asked ("Is the onboarding bet worth running?"), not a status. No agent name, and no verb-ing: "Reviewing the funnel" is a status, not a decision.
+                        ///   - summary: At most 2 sentences. State what is done and what is still open, so the human knows they are only deciding, not working. Use a real number only when you looked one up. No source paths or file names. Do not name the object: the card shows it. Never restate the title.
+                        ///   - ask: Leave out when the title is already the question; the card then shows the title and the options. Otherwise first person, one sentence: name the single call you cannot make alone and why it belongs to the human ("Notices go to real households, so I will not send this alone."). No hedging, no apologising, no offering to help.
                         ///   - options: 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
                         ///   - drafts: Use this instead of `draft` when one card asks about several messages (up to 10), for example five first DMs. Each message shows as its own preview with its own Send and Skip, and the human's tap on one replies to you as "Send: <label> to <to> (<id>)" or "Skip: ...". Give every message an `id`. The card's options still apply to the whole batch. Never put the text in the summary.
                         ///   - only_while_status: The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status; the card then drops once the object leaves the status it had when you posted it (see keep_on_status_change).
@@ -47081,7 +47080,7 @@ public enum Operations {
                         public init(
                             title: Swift.String,
                             summary: Swift.String,
-                            ask: Swift.String,
+                            ask: Swift.String? = nil,
                             options: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.optionsPayload,
                             drafts: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.draftsPayload? = nil,
                             only_while_status: [Swift.String]? = nil,
@@ -47124,8 +47123,8 @@ public enum Operations {
                     /// To ask whether an object should move to a new status ("flip this bet to active"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.
                     ///
                     /// The API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:
-                    /// title 3-7 words and not opening with a status verb ("Reviewing the funnel"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;
-                    /// ask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;
+                    /// title 9 words or fewer, ending in "?", and not opening with a status verb ("Reviewing the funnel"); summary at most 2 sentences, with no source paths, and not a restatement of the title;
+                    /// ask omitted when the title is the question, otherwise exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;
                     /// 2-3 consequence lines per option, one clause each (no semicolons, no ", and"); and nowhere in the block an em-dash, an en-dash, an emoji,
                     /// or a hedge word standing in for a number ("significantly", "substantially", "several", "many", and the like).
                     ///
@@ -47135,8 +47134,7 @@ public enum Operations {
                     ///
                     /// Example:
                     /// { "title": "Is the onboarding bet worth running?",
-                    ///   "summary": "3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.",
-                    ///   "ask": "This changes what every new customer sees first, so I will not ship it alone.",
+                    ///   "summary": "3 of 5 signups stall on step 2, costing about 40 activations a week. The replacement copy and the migration are drafted; shipping is open.",
                     ///   "options": [
                     ///     { "label": "7-day window", "recommended": true, "consequences": ["Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one"] },
                     ///     { "label": "Hold", "consequences": ["Nothing ships this cycle", "Keeps losing 40 activations a week"] } ] }
@@ -47716,6 +47714,8 @@ public enum Operations {
                             public var createdBy: Swift.String
                             /// - Remark: Generated from `#/paths/api/conversations/GET/responses/200/content/json/conversationsPayload/tags`.
                             public var tags: [Swift.String]
+                            /// - Remark: Generated from `#/paths/api/conversations/GET/responses/200/content/json/conversationsPayload/directPairKey`.
+                            public var directPairKey: Swift.String?
                             /// - Remark: Generated from `#/paths/api/conversations/GET/responses/200/content/json/conversationsPayload/lastMessageAt`.
                             public var lastMessageAt: Swift.String?
                             /// - Remark: Generated from `#/paths/api/conversations/GET/responses/200/content/json/conversationsPayload/createdAt`.
@@ -47793,6 +47793,7 @@ public enum Operations {
                             ///   - subjectId:
                             ///   - createdBy:
                             ///   - tags:
+                            ///   - directPairKey:
                             ///   - lastMessageAt:
                             ///   - createdAt:
                             ///   - updatedAt:
@@ -47813,6 +47814,7 @@ public enum Operations {
                                 subjectId: Swift.String? = nil,
                                 createdBy: Swift.String,
                                 tags: [Swift.String],
+                                directPairKey: Swift.String? = nil,
                                 lastMessageAt: Swift.String? = nil,
                                 createdAt: Swift.String? = nil,
                                 updatedAt: Swift.String? = nil,
@@ -47833,6 +47835,7 @@ public enum Operations {
                                 self.subjectId = subjectId
                                 self.createdBy = createdBy
                                 self.tags = tags
+                                self.directPairKey = directPairKey
                                 self.lastMessageAt = lastMessageAt
                                 self.createdAt = createdAt
                                 self.updatedAt = updatedAt
@@ -47854,6 +47857,7 @@ public enum Operations {
                                 case subjectId
                                 case createdBy
                                 case tags
+                                case directPairKey
                                 case lastMessageAt
                                 case createdAt
                                 case updatedAt
@@ -69566,8 +69570,8 @@ public enum Operations {
                                 /// To ask whether an object should move to a new status ("flip this bet to active"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.
                                 ///
                                 /// The API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:
-                                /// title 3-7 words and not opening with a status verb ("Reviewing the funnel"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;
-                                /// ask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;
+                                /// title 9 words or fewer, ending in "?", and not opening with a status verb ("Reviewing the funnel"); summary at most 2 sentences, with no source paths, and not a restatement of the title;
+                                /// ask omitted when the title is the question, otherwise exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;
                                 /// 2-3 consequence lines per option, one clause each (no semicolons, no ", and"); and nowhere in the block an em-dash, an en-dash, an emoji,
                                 /// or a hedge word standing in for a number ("significantly", "substantially", "several", "many", and the like).
                                 ///
@@ -69577,33 +69581,32 @@ public enum Operations {
                                 ///
                                 /// Example:
                                 /// { "title": "Is the onboarding bet worth running?",
-                                ///   "summary": "3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.",
-                                ///   "ask": "This changes what every new customer sees first, so I will not ship it alone.",
+                                ///   "summary": "3 of 5 signups stall on step 2, costing about 40 activations a week. The replacement copy and the migration are drafted; shipping is open.",
                                 ///   "options": [
                                 ///     { "label": "7-day window", "recommended": true, "consequences": ["Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one"] },
                                 ///     { "label": "Hold", "consequences": ["Nothing ships this cycle", "Keeps losing 40 activations a week"] } ] }
                                 ///
                                 /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision`.
                                 public struct decisionPayload: Codable, Hashable, Sendable {
-                                    /// 3-7 words. The decision itself, not a status. A question if it is a judgment call ("Is the onboarding bet worth running?"), a noun phrase if it is an artifact ("Acme's note before Thursday"). No agent name, and no verb-ing: "Reviewing the funnel" is a status, not a decision.
+                                    /// 9 words or fewer, ending in "?". The question the human is being asked ("Is the onboarding bet worth running?"), not a status. No agent name, and no verb-ing: "Reviewing the funnel" is a status, not a decision.
                                     ///
                                     /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/title`.
                                     public var title: Swift.String
-                                    /// 1-2 sentences. Sentence 1: the state of the world and the cost of the status quo, with one real number you actually looked up. Sentence 2: what is already done, so the human knows they are only deciding, not working. Never restate the title.
+                                    /// At most 2 sentences. State what is done and what is still open, so the human knows they are only deciding, not working. Use a real number only when you looked one up. No source paths or file names. Do not name the object: the card shows it. Never restate the title.
                                     ///
                                     /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/summary`.
                                     public var summary: Swift.String
-                                    /// First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: "Notices go to real households, so I will not send this alone." No hedging, no apologising, no offering to help.
+                                    /// Leave out when the title is already the question; the card then shows the title and the options. Otherwise first person, one sentence: name the single call you cannot make alone and why it belongs to the human ("Notices go to real households, so I will not send this alone."). No hedging, no apologising, no offering to help.
                                     ///
                                     /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/ask`.
-                                    public var ask: Swift.String
+                                    public var ask: Swift.String?
                                     /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload`.
                                     public struct optionsPayloadPayload: Codable, Hashable, Sendable {
                                         /// 4 words or fewer, sentence case. The choice itself: "7-day window", "Hold", "Ship to 10%". Not a sentence, and not a verb phrase describing what you will do.
                                         ///
                                         /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/label`.
                                         public var label: Swift.String
-                                        /// 2-3 lines, present tense, one clause each: "Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one". Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no ", and" — that is two lines, not one.
+                                        /// 2-3 lines, present tense, one clause each: "Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one". Put the guardrails here ("Nothing is published without your go"). Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no ", and" — that is two lines, not one.
                                         ///
                                         /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/consequences`.
                                         public var consequences: [Swift.String]
@@ -69652,7 +69655,7 @@ public enum Operations {
                                         ///
                                         /// - Parameters:
                                         ///   - label: 4 words or fewer, sentence case. The choice itself: "7-day window", "Hold", "Ship to 10%". Not a sentence, and not a verb phrase describing what you will do.
-                                        ///   - consequences: 2-3 lines, present tense, one clause each: "Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one". Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no ", and" — that is two lines, not one.
+                                        ///   - consequences: 2-3 lines, present tense, one clause each: "Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one". Put the guardrails here ("Nothing is published without your go"). Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no ", and" — that is two lines, not one.
                                         ///   - recommended: Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing.
                                         ///   - destructive: Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices.
                                         ///   - set_status: Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
@@ -70285,9 +70288,9 @@ public enum Operations {
                                     /// Creates a new `decisionPayload`.
                                     ///
                                     /// - Parameters:
-                                    ///   - title: 3-7 words. The decision itself, not a status. A question if it is a judgment call ("Is the onboarding bet worth running?"), a noun phrase if it is an artifact ("Acme's note before Thursday"). No agent name, and no verb-ing: "Reviewing the funnel" is a status, not a decision.
-                                    ///   - summary: 1-2 sentences. Sentence 1: the state of the world and the cost of the status quo, with one real number you actually looked up. Sentence 2: what is already done, so the human knows they are only deciding, not working. Never restate the title.
-                                    ///   - ask: First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: "Notices go to real households, so I will not send this alone." No hedging, no apologising, no offering to help.
+                                    ///   - title: 9 words or fewer, ending in "?". The question the human is being asked ("Is the onboarding bet worth running?"), not a status. No agent name, and no verb-ing: "Reviewing the funnel" is a status, not a decision.
+                                    ///   - summary: At most 2 sentences. State what is done and what is still open, so the human knows they are only deciding, not working. Use a real number only when you looked one up. No source paths or file names. Do not name the object: the card shows it. Never restate the title.
+                                    ///   - ask: Leave out when the title is already the question; the card then shows the title and the options. Otherwise first person, one sentence: name the single call you cannot make alone and why it belongs to the human ("Notices go to real households, so I will not send this alone."). No hedging, no apologising, no offering to help.
                                     ///   - options: 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
                                     ///   - drafts:
                                     ///   - only_while_status: The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status; the card then drops once the object leaves the status it had when you posted it (see keep_on_status_change).
@@ -70299,7 +70302,7 @@ public enum Operations {
                                     public init(
                                         title: Swift.String,
                                         summary: Swift.String,
-                                        ask: Swift.String,
+                                        ask: Swift.String? = nil,
                                         options: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayload,
                                         drafts: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayload? = nil,
                                         only_while_status: [Swift.String]? = nil,
@@ -70342,8 +70345,8 @@ public enum Operations {
                                 /// To ask whether an object should move to a new status ("flip this bet to active"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.
                                 ///
                                 /// The API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:
-                                /// title 3-7 words and not opening with a status verb ("Reviewing the funnel"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;
-                                /// ask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;
+                                /// title 9 words or fewer, ending in "?", and not opening with a status verb ("Reviewing the funnel"); summary at most 2 sentences, with no source paths, and not a restatement of the title;
+                                /// ask omitted when the title is the question, otherwise exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;
                                 /// 2-3 consequence lines per option, one clause each (no semicolons, no ", and"); and nowhere in the block an em-dash, an en-dash, an emoji,
                                 /// or a hedge word standing in for a number ("significantly", "substantially", "several", "many", and the like).
                                 ///
@@ -70353,8 +70356,7 @@ public enum Operations {
                                 ///
                                 /// Example:
                                 /// { "title": "Is the onboarding bet worth running?",
-                                ///   "summary": "3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.",
-                                ///   "ask": "This changes what every new customer sees first, so I will not ship it alone.",
+                                ///   "summary": "3 of 5 signups stall on step 2, costing about 40 activations a week. The replacement copy and the migration are drafted; shipping is open.",
                                 ///   "options": [
                                 ///     { "label": "7-day window", "recommended": true, "consequences": ["Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one"] },
                                 ///     { "label": "Hold", "consequences": ["Nothing ships this cycle", "Keeps losing 40 activations a week"] } ] }
@@ -73228,8 +73230,8 @@ public enum Operations {
                                 /// To ask whether an object should move to a new status ("flip this bet to active"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.
                                 ///
                                 /// The API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:
-                                /// title 3-7 words and not opening with a status verb ("Reviewing the funnel"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;
-                                /// ask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;
+                                /// title 9 words or fewer, ending in "?", and not opening with a status verb ("Reviewing the funnel"); summary at most 2 sentences, with no source paths, and not a restatement of the title;
+                                /// ask omitted when the title is the question, otherwise exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;
                                 /// 2-3 consequence lines per option, one clause each (no semicolons, no ", and"); and nowhere in the block an em-dash, an en-dash, an emoji,
                                 /// or a hedge word standing in for a number ("significantly", "substantially", "several", "many", and the like).
                                 ///
@@ -73239,33 +73241,32 @@ public enum Operations {
                                 ///
                                 /// Example:
                                 /// { "title": "Is the onboarding bet worth running?",
-                                ///   "summary": "3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.",
-                                ///   "ask": "This changes what every new customer sees first, so I will not ship it alone.",
+                                ///   "summary": "3 of 5 signups stall on step 2, costing about 40 activations a week. The replacement copy and the migration are drafted; shipping is open.",
                                 ///   "options": [
                                 ///     { "label": "7-day window", "recommended": true, "consequences": ["Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one"] },
                                 ///     { "label": "Hold", "consequences": ["Nothing ships this cycle", "Keeps losing 40 activations a week"] } ] }
                                 ///
                                 /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision`.
                                 public struct decisionPayload: Codable, Hashable, Sendable {
-                                    /// 3-7 words. The decision itself, not a status. A question if it is a judgment call ("Is the onboarding bet worth running?"), a noun phrase if it is an artifact ("Acme's note before Thursday"). No agent name, and no verb-ing: "Reviewing the funnel" is a status, not a decision.
+                                    /// 9 words or fewer, ending in "?". The question the human is being asked ("Is the onboarding bet worth running?"), not a status. No agent name, and no verb-ing: "Reviewing the funnel" is a status, not a decision.
                                     ///
                                     /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/title`.
                                     public var title: Swift.String
-                                    /// 1-2 sentences. Sentence 1: the state of the world and the cost of the status quo, with one real number you actually looked up. Sentence 2: what is already done, so the human knows they are only deciding, not working. Never restate the title.
+                                    /// At most 2 sentences. State what is done and what is still open, so the human knows they are only deciding, not working. Use a real number only when you looked one up. No source paths or file names. Do not name the object: the card shows it. Never restate the title.
                                     ///
                                     /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/summary`.
                                     public var summary: Swift.String
-                                    /// First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: "Notices go to real households, so I will not send this alone." No hedging, no apologising, no offering to help.
+                                    /// Leave out when the title is already the question; the card then shows the title and the options. Otherwise first person, one sentence: name the single call you cannot make alone and why it belongs to the human ("Notices go to real households, so I will not send this alone."). No hedging, no apologising, no offering to help.
                                     ///
                                     /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/ask`.
-                                    public var ask: Swift.String
+                                    public var ask: Swift.String?
                                     /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload`.
                                     public struct optionsPayloadPayload: Codable, Hashable, Sendable {
                                         /// 4 words or fewer, sentence case. The choice itself: "7-day window", "Hold", "Ship to 10%". Not a sentence, and not a verb phrase describing what you will do.
                                         ///
                                         /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/label`.
                                         public var label: Swift.String
-                                        /// 2-3 lines, present tense, one clause each: "Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one". Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no ", and" — that is two lines, not one.
+                                        /// 2-3 lines, present tense, one clause each: "Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one". Put the guardrails here ("Nothing is published without your go"). Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no ", and" — that is two lines, not one.
                                         ///
                                         /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/consequences`.
                                         public var consequences: [Swift.String]
@@ -73314,7 +73315,7 @@ public enum Operations {
                                         ///
                                         /// - Parameters:
                                         ///   - label: 4 words or fewer, sentence case. The choice itself: "7-day window", "Hold", "Ship to 10%". Not a sentence, and not a verb phrase describing what you will do.
-                                        ///   - consequences: 2-3 lines, present tense, one clause each: "Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one". Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no ", and" — that is two lines, not one.
+                                        ///   - consequences: 2-3 lines, present tense, one clause each: "Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one". Put the guardrails here ("Nothing is published without your go"). Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no ", and" — that is two lines, not one.
                                         ///   - recommended: Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing.
                                         ///   - destructive: Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices.
                                         ///   - set_status: Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
@@ -73947,9 +73948,9 @@ public enum Operations {
                                     /// Creates a new `decisionPayload`.
                                     ///
                                     /// - Parameters:
-                                    ///   - title: 3-7 words. The decision itself, not a status. A question if it is a judgment call ("Is the onboarding bet worth running?"), a noun phrase if it is an artifact ("Acme's note before Thursday"). No agent name, and no verb-ing: "Reviewing the funnel" is a status, not a decision.
-                                    ///   - summary: 1-2 sentences. Sentence 1: the state of the world and the cost of the status quo, with one real number you actually looked up. Sentence 2: what is already done, so the human knows they are only deciding, not working. Never restate the title.
-                                    ///   - ask: First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: "Notices go to real households, so I will not send this alone." No hedging, no apologising, no offering to help.
+                                    ///   - title: 9 words or fewer, ending in "?". The question the human is being asked ("Is the onboarding bet worth running?"), not a status. No agent name, and no verb-ing: "Reviewing the funnel" is a status, not a decision.
+                                    ///   - summary: At most 2 sentences. State what is done and what is still open, so the human knows they are only deciding, not working. Use a real number only when you looked one up. No source paths or file names. Do not name the object: the card shows it. Never restate the title.
+                                    ///   - ask: Leave out when the title is already the question; the card then shows the title and the options. Otherwise first person, one sentence: name the single call you cannot make alone and why it belongs to the human ("Notices go to real households, so I will not send this alone."). No hedging, no apologising, no offering to help.
                                     ///   - options: 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
                                     ///   - drafts:
                                     ///   - only_while_status: The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status; the card then drops once the object leaves the status it had when you posted it (see keep_on_status_change).
@@ -73961,7 +73962,7 @@ public enum Operations {
                                     public init(
                                         title: Swift.String,
                                         summary: Swift.String,
-                                        ask: Swift.String,
+                                        ask: Swift.String? = nil,
                                         options: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayload,
                                         drafts: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayload? = nil,
                                         only_while_status: [Swift.String]? = nil,
@@ -74004,8 +74005,8 @@ public enum Operations {
                                 /// To ask whether an object should move to a new status ("flip this bet to active"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.
                                 ///
                                 /// The API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:
-                                /// title 3-7 words and not opening with a status verb ("Reviewing the funnel"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;
-                                /// ask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;
+                                /// title 9 words or fewer, ending in "?", and not opening with a status verb ("Reviewing the funnel"); summary at most 2 sentences, with no source paths, and not a restatement of the title;
+                                /// ask omitted when the title is the question, otherwise exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;
                                 /// 2-3 consequence lines per option, one clause each (no semicolons, no ", and"); and nowhere in the block an em-dash, an en-dash, an emoji,
                                 /// or a hedge word standing in for a number ("significantly", "substantially", "several", "many", and the like).
                                 ///
@@ -74015,8 +74016,7 @@ public enum Operations {
                                 ///
                                 /// Example:
                                 /// { "title": "Is the onboarding bet worth running?",
-                                ///   "summary": "3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.",
-                                ///   "ask": "This changes what every new customer sees first, so I will not ship it alone.",
+                                ///   "summary": "3 of 5 signups stall on step 2, costing about 40 activations a week. The replacement copy and the migration are drafted; shipping is open.",
                                 ///   "options": [
                                 ///     { "label": "7-day window", "recommended": true, "consequences": ["Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one"] },
                                 ///     { "label": "Hold", "consequences": ["Nothing ships this cycle", "Keeps losing 40 activations a week"] } ] }
@@ -78360,6 +78360,8 @@ public enum Operations {
                         public typealias annotationsPayload = [Operations.post_sol_api_sol_files.Output.Created.Body.jsonPayload.annotationsPayloadPayload]
                         /// - Remark: Generated from `#/paths/api/files/POST/responses/201/content/json/annotations`.
                         public var annotations: Operations.post_sol_api_sol_files.Output.Created.Body.jsonPayload.annotationsPayload?
+                        /// - Remark: Generated from `#/paths/api/files/POST/responses/201/content/json/readable_with`.
+                        public var readable_with: Swift.String?
                         /// - Remark: Generated from `#/paths/api/files/POST/responses/201/content/json/contentHash`.
                         public var contentHash: Swift.String?
                         /// - Remark: Generated from `#/paths/api/files/POST/responses/201/content/json/warning`.
@@ -78382,6 +78384,7 @@ public enum Operations {
                         ///   - encoding:
                         ///   - url:
                         ///   - annotations:
+                        ///   - readable_with:
                         ///   - contentHash:
                         ///   - warning:
                         public init(
@@ -78400,6 +78403,7 @@ public enum Operations {
                             encoding: Operations.post_sol_api_sol_files.Output.Created.Body.jsonPayload.encodingPayload,
                             url: Swift.String,
                             annotations: Operations.post_sol_api_sol_files.Output.Created.Body.jsonPayload.annotationsPayload? = nil,
+                            readable_with: Swift.String? = nil,
                             contentHash: Swift.String? = nil,
                             warning: Swift.String? = nil
                         ) {
@@ -78418,6 +78422,7 @@ public enum Operations {
                             self.encoding = encoding
                             self.url = url
                             self.annotations = annotations
+                            self.readable_with = readable_with
                             self.contentHash = contentHash
                             self.warning = warning
                         }
@@ -78437,6 +78442,7 @@ public enum Operations {
                             case encoding
                             case url
                             case annotations
+                            case readable_with
                             case contentHash
                             case warning
                         }
@@ -78816,6 +78822,26 @@ public enum Operations {
                 }
             }
             public var path: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Input.Path
+            /// - Remark: Generated from `#/paths/api/files/{id}/GET/query`.
+            public struct Query: Sendable, Hashable {
+                /// raw (default) returns the stored bytes. text returns the words in a text file: for HTML, markdown extracted from the page (no styles, scripts or embedded fonts) as content_text; other text files unchanged. Non-text files ignore it.
+                ///
+                /// - Remark: Generated from `#/paths/api/files/{id}/GET/query/format`.
+                @frozen public enum formatPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                    case raw = "raw"
+                    case text = "text"
+                }
+                /// - Remark: Generated from `#/paths/api/files/{id}/GET/query/format`.
+                public var format: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Input.Query.formatPayload?
+                /// Creates a new `Query`.
+                ///
+                /// - Parameters:
+                ///   - format:
+                public init(format: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Input.Query.formatPayload? = nil) {
+                    self.format = format
+                }
+            }
+            public var query: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Input.Query
             /// - Remark: Generated from `#/paths/api/files/{id}/GET/header`.
             public struct Headers: Sendable, Hashable {
                 public var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.AcceptableContentType>]
@@ -78832,12 +78858,15 @@ public enum Operations {
             ///
             /// - Parameters:
             ///   - path:
+            ///   - query:
             ///   - headers:
             public init(
                 path: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Input.Path,
+                query: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Input.Query = .init(),
                 headers: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Input.Headers = .init()
             ) {
                 self.path = path
+                self.query = query
                 self.headers = headers
             }
         }
@@ -78993,6 +79022,8 @@ public enum Operations {
                         public typealias annotationsPayload = [Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.annotationsPayloadPayload]
                         /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/200/content/json/annotations`.
                         public var annotations: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.annotationsPayload?
+                        /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/200/content/json/readable_with`.
+                        public var readable_with: Swift.String?
                         /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/200/content/json/contentHash`.
                         public var contentHash: Swift.String?
                         /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/200/content/json/warning`.
@@ -79015,6 +79046,7 @@ public enum Operations {
                         ///   - encoding:
                         ///   - url:
                         ///   - annotations:
+                        ///   - readable_with:
                         ///   - contentHash:
                         ///   - warning:
                         public init(
@@ -79033,6 +79065,7 @@ public enum Operations {
                             encoding: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.encodingPayload,
                             url: Swift.String,
                             annotations: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.annotationsPayload? = nil,
+                            readable_with: Swift.String? = nil,
                             contentHash: Swift.String? = nil,
                             warning: Swift.String? = nil
                         ) {
@@ -79051,6 +79084,7 @@ public enum Operations {
                             self.encoding = encoding
                             self.url = url
                             self.annotations = annotations
+                            self.readable_with = readable_with
                             self.contentHash = contentHash
                             self.warning = warning
                         }
@@ -79070,6 +79104,7 @@ public enum Operations {
                             case encoding
                             case url
                             case annotations
+                            case readable_with
                             case contentHash
                             case warning
                         }
@@ -79099,7 +79134,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// File detail
+            /// File detail. With format=text on a text file: content_text, extracted, title, meta_description, note (when the page is drawn by script), json_ld and source_object_id instead of content and encoding.
             ///
             /// - Remark: Generated from `#/paths//api/files/{id}/get/responses/200`.
             ///
@@ -79117,6 +79152,144 @@ public enum Operations {
                     default:
                         try throwUnexpectedResponseStatus(
                             expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct BadRequest: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/400/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/400/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/400/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/400/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/400/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/400/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/400/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/400/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/400/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/400/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/400/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.BadRequest.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/400/content/json/error/details`.
+                            public var details: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.BadRequest.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/400/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.BadRequest.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/400/content/json/error`.
+                        public var error: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.BadRequest.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.BadRequest.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/400/content/application\/json`.
+                    case json(Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.BadRequest.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.BadRequest.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.BadRequest.Body
+                /// Creates a new `BadRequest`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.BadRequest.Body) {
+                    self.body = body
+                }
+            }
+            /// Invalid format, or an HTML file too large to extract text from
+            ///
+            /// - Remark: Generated from `#/paths//api/files/{id}/get/responses/400`.
+            ///
+            /// HTTP response code: `400 badRequest`.
+            case badRequest(Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.BadRequest)
+            /// The associated value of the enum case if `self` is `.badRequest`.
+            ///
+            /// - Throws: An error if `self` is not `.badRequest`.
+            /// - SeeAlso: `.badRequest`.
+            public var badRequest: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.BadRequest {
+                get throws {
+                    switch self {
+                    case let .badRequest(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "badRequest",
                             response: self
                         )
                     }
@@ -79348,6 +79521,45 @@ public enum Operations {
                     }
                     /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/requestBody/json/encoding`.
                     public var encoding: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Input.Body.jsonPayload.encodingPayload?
+                    /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/requestBody/json/editsPayload`.
+                    public struct editsPayloadPayload: Codable, Hashable, Sendable {
+                        /// Exact text to replace. Must occur exactly once unless replace_all is true.
+                        ///
+                        /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/requestBody/json/editsPayload/old`.
+                        public var old: Swift.String
+                        /// Replacement text. May be empty.
+                        ///
+                        /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/requestBody/json/editsPayload/new`.
+                        public var new: Swift.String
+                        /// Replace every occurrence of old. Default false: old must match exactly once.
+                        ///
+                        /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/requestBody/json/editsPayload/replace_all`.
+                        public var replace_all: Swift.Bool?
+                        /// Creates a new `editsPayloadPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - old: Exact text to replace. Must occur exactly once unless replace_all is true.
+                        ///   - new: Replacement text. May be empty.
+                        ///   - replace_all: Replace every occurrence of old. Default false: old must match exactly once.
+                        public init(
+                            old: Swift.String,
+                            new: Swift.String,
+                            replace_all: Swift.Bool? = nil
+                        ) {
+                            self.old = old
+                            self.new = new
+                            self.replace_all = replace_all
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case old
+                            case new
+                            case replace_all
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/requestBody/json/edits`.
+                    public typealias editsPayload = [Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Input.Body.jsonPayload.editsPayloadPayload]
+                    /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/requestBody/json/edits`.
+                    public var edits: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Input.Body.jsonPayload.editsPayload?
                     /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/requestBody/json/annotationsPayload`.
                     public struct annotationsPayloadPayload: Codable, Hashable, Sendable {
                         /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/requestBody/json/annotationsPayload/id`.
@@ -79468,6 +79680,7 @@ public enum Operations {
                     ///   - mime_type:
                     ///   - content:
                     ///   - encoding:
+                    ///   - edits:
                     ///   - annotations:
                     ///   - if_match:
                     public init(
@@ -79477,6 +79690,7 @@ public enum Operations {
                         mime_type: Swift.String? = nil,
                         content: Swift.String? = nil,
                         encoding: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Input.Body.jsonPayload.encodingPayload? = nil,
+                        edits: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Input.Body.jsonPayload.editsPayload? = nil,
                         annotations: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Input.Body.jsonPayload.annotationsPayload? = nil,
                         if_match: Swift.String? = nil
                     ) {
@@ -79486,6 +79700,7 @@ public enum Operations {
                         self.mime_type = mime_type
                         self.content = content
                         self.encoding = encoding
+                        self.edits = edits
                         self.annotations = annotations
                         self.if_match = if_match
                     }
@@ -79496,6 +79711,7 @@ public enum Operations {
                         case mime_type
                         case content
                         case encoding
+                        case edits
                         case annotations
                         case if_match
                     }
@@ -79672,6 +79888,8 @@ public enum Operations {
                         public typealias annotationsPayload = [Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.annotationsPayloadPayload]
                         /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/200/content/json/annotations`.
                         public var annotations: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.annotationsPayload?
+                        /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/200/content/json/readable_with`.
+                        public var readable_with: Swift.String?
                         /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/200/content/json/contentHash`.
                         public var contentHash: Swift.String?
                         /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/200/content/json/warning`.
@@ -79694,6 +79912,7 @@ public enum Operations {
                         ///   - encoding:
                         ///   - url:
                         ///   - annotations:
+                        ///   - readable_with:
                         ///   - contentHash:
                         ///   - warning:
                         public init(
@@ -79712,6 +79931,7 @@ public enum Operations {
                             encoding: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.encodingPayload,
                             url: Swift.String,
                             annotations: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.annotationsPayload? = nil,
+                            readable_with: Swift.String? = nil,
                             contentHash: Swift.String? = nil,
                             warning: Swift.String? = nil
                         ) {
@@ -79730,6 +79950,7 @@ public enum Operations {
                             self.encoding = encoding
                             self.url = url
                             self.annotations = annotations
+                            self.readable_with = readable_with
                             self.contentHash = contentHash
                             self.warning = warning
                         }
@@ -79749,6 +79970,7 @@ public enum Operations {
                             case encoding
                             case url
                             case annotations
+                            case readable_with
                             case contentHash
                             case warning
                         }
@@ -79916,7 +80138,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// Invalid request
+            /// Invalid request, or an edit that cannot be applied (text not found, found more than once without replace_all, file is not text)
             ///
             /// - Remark: Generated from `#/paths//api/files/{id}/patch/responses/400`.
             ///

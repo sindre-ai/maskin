@@ -35,6 +35,17 @@ struct ChatStoreTests {
 		#expect(!h.store.hasEarlier)
 	}
 
+	@Test("the agents that have spoken are kept as a set, not found by scanning the messages")
+	func agentAuthorIDs() async {
+		let h = ChatHarness(server: [
+			chatMsg(1, by: "me"), chatMsg(2, by: "relay", agent: true), chatMsg(3, by: "forge", agent: true),
+			chatMsg(4, by: "relay", agent: true), chatMsg(5, by: "sam"),
+		])
+		#expect(h.store.agentAuthorIDs.isEmpty)
+		await h.store.start()
+		#expect(h.store.agentAuthorIDs == ["relay", "forge"])
+	}
+
 	@Test("page sizes never exceed the server's message cap")
 	func pageCap() async {
 		let h = ChatHarness(server: [chatMsg(1)], pageSize: 5000)
@@ -692,6 +703,113 @@ struct ChatStoreTests {
 		#expect(await h.settled())
 		let meta = await h.api.sentMetadata.first
 		#expect(meta??.questionAnswer == ChatQuestionAnswer(questionMessageID: 7, answers: [.init(header: "Env", selected: ["Prod"])]))
+	}
+
+	@Test("a typed reply closes the question once the server has it, not while it is still sending")
+	func typedReplyClosesQuestion() async {
+		let q = chatMsg(7, by: "relay", agent: true, "Which environment?", metadata: questionMeta)
+		let nudge = chatMsg(8, by: "me", "Done", metadata: .object(["hidden_from_chat": .bool(true)]))
+		let h = ChatHarness(server: [q, nudge], online: false)
+		await h.store.start()
+		#expect(h.store.answeredQuestionIDs.isEmpty)
+		// Offline: the reply is queued, so nothing has been said yet and the card stays.
+		h.store.send("Let's go with prod.")
+		#expect(h.store.answeredQuestionIDs.isEmpty)
+		#expect(h.store.answer(question: q, picks: [0: ["Prod"]]) != nil)
+	}
+
+	@Test("once the typed reply is confirmed the card goes and leaves no summary")
+	func confirmedTypedReplyClosesQuestion() async {
+		let q = chatMsg(7, by: "relay", agent: true, "Which environment?", metadata: questionMeta)
+		let h = ChatHarness(server: [q, chatMsg(9, by: "me", "Prod please")], online: false)
+		await h.store.start()
+		#expect(h.store.answeredQuestionIDs == [7])
+		#expect(h.store.questionAnswerIndex[7] == [])
+		#expect(h.store.answer(question: q, picks: [0: ["Prod"]]) == nil)
+	}
+
+	@Test("dismissing posts a hidden answer that closes the question")
+	func dismissClosesQuestion() async {
+		let q = chatMsg(7, by: "relay", agent: true, "Which environment?", metadata: questionMeta)
+		let h = ChatHarness(server: [q], online: false)
+		await h.store.start()
+		#expect(h.store.dismiss(question: q) != nil)
+		let sent = h.store.allMessages.last
+		#expect(sent?.isHiddenFromChat == true)
+		#expect(sent?.dismissedQuestion == true)
+		#expect(h.store.answeredQuestionIDs == [7])
+		#expect(h.store.questionAnswerIndex[7] == [])
+		#expect(h.store.dismiss(question: q) == nil)
+	}
+
+	@Test("dismissing a card with several questions records every header")
+	func dismissRecordsEveryHeader() async {
+		let two: JSONValue = .object([
+			"question": .object([
+				"session_id": .string("s1"),
+				"questions": .array([
+					.object([
+						"question": .string("Which environment?"), "header": .string("Env"),
+						"multi_select": .bool(false), "options": .array([.object(["label": .string("Prod")])]),
+					]),
+					.object([
+						"question": .string("Which region?"), "header": .string("Region"),
+						"multi_select": .bool(false), "options": .array([.object(["label": .string("EU")])]),
+					]),
+				]),
+			])
+		])
+		let q = chatMsg(7, by: "relay", agent: true, "Two things", metadata: two)
+		let h = ChatHarness(server: [q], online: false)
+		await h.store.start()
+		#expect(h.store.dismiss(question: q) != nil)
+		let sent = h.store.allMessages.last
+		#expect(sent?.questionAnswers.map(\.header) == ["Env", "Region"])
+	}
+
+	@Test("a helper's question cannot be dismissed on iOS: there is no session path to tell the helper")
+	func helperQuestionCannotBeDismissed() async {
+		let helper: JSONValue = .object([
+			"question": .object([
+				"session_id": .string("s1"), "reply_to_session": .bool(true),
+				"questions": .array([
+					.object([
+						"question": .string("Which environment?"), "header": .string("Env"),
+						"multi_select": .bool(false), "options": .array([.object(["label": .string("Prod")])]),
+					])
+				]),
+			])
+		])
+		let q = chatMsg(7, by: "relay", agent: true, "Which environment?", metadata: helper)
+		let h = ChatHarness(server: [q], online: false)
+		await h.store.start()
+		#expect(h.store.dismiss(question: q) == nil)
+		#expect(h.store.allMessages.count == 1)
+	}
+
+	@Test("the question state is rebuilt only when the confirmed rows change")
+	func questionStateIsCached() async {
+		let q = chatMsg(7, by: "relay", agent: true, "Which environment?", metadata: questionMeta)
+		let h = ChatHarness(server: [q], online: true)
+		await h.store.start()
+		let before = h.store.questionStateBuilds
+		for _ in 0..<5 { _ = h.store.questionState }
+		_ = h.store.answeredQuestionIDs
+		_ = h.store.questionAnswerIndex
+		#expect(h.store.questionStateBuilds - before <= 1)
+		#expect(h.store.answeredQuestionIDs.isEmpty)
+		// A new confirmed row invalidates it.
+		await h.api.append(chatMsg(9, by: "me", "Prod please"))
+		await h.store.refresh()
+		#expect(h.store.answeredQuestionIDs == [7])
+	}
+
+	@Test("a reply from someone else in the chat does not close the question for you")
+	func otherPersonsReplyKeepsQuestionOpen() async {
+		let q = chatMsg(7, by: "relay", agent: true, "Which environment?", metadata: questionMeta)
+		let h = ChatHarness(server: [q, chatMsg(8, by: "sam", "Prod I think")], online: false)
+		await h.store.start()
+		#expect(h.store.answeredQuestionIDs.isEmpty)
 	}
 
 	// MARK: Editing and the unread cursor

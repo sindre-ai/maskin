@@ -206,6 +206,7 @@ describe('LoopCustomView', () => {
 		const answer = (overrides = {}) => ({
 			groups: [],
 			total: { count: 3, value: 3 },
+			next_cursor: null,
 			rows_truncated: false,
 			groups_truncated: false,
 			...overrides,
@@ -229,7 +230,8 @@ describe('LoopCustomView', () => {
 			vi.restoreAllMocks()
 		})
 
-		it('says so, outside the frame, when an answer hit the server cap', async () => {
+		// The server no longer caps anything, so this is only an older server still mid-deploy.
+		it('says so, outside the frame, when an answer comes back flagged partial', async () => {
 			vi.mocked(api.data.query).mockResolvedValue(answer({ rows_truncated: true }))
 			const { container } = renderView()
 			await act(async () => {})

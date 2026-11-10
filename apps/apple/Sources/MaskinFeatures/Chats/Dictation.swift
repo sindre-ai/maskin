@@ -25,6 +25,9 @@ final class Dictation {
 
 	private(set) var state: State = .idle
 	var isListening: Bool { state == .listening }
+	/// Set when a server session handed over to the phone's recogniser by itself; says why in plain
+	/// words. Cleared when the session ends.
+	private(set) var fallbackNote: String?
 
 	/// Built per session: an engine kept across sessions holds a stale input format once the audio
 	/// session has been deactivated or the route changed, and the tap then fails or delivers nothing.
@@ -70,6 +73,7 @@ final class Dictation {
 		accumulator = DictationAccumulator()
 		restartPolicy = DictationRestartPolicy()
 		backendText = ""
+		fallbackNote = nil
 		guard await requestPermissions() else { return }
 		if backend, await startBackend() { return }
 		guard let recognizer = Self.makeRecognizer() else {
@@ -99,7 +103,7 @@ final class Dictation {
 				self?.backendText = text
 				self?.onText?(text)
 			},
-			onFailure: { [weak self] in self?.backendFailed() },
+			onFailure: { [weak self] reason in self?.backendFailed(reason) },
 			onInterrupted: { [weak self] in
 				self?.fail("Dictation was interrupted. Tap the microphone to continue.")
 			},
@@ -110,6 +114,7 @@ final class Dictation {
 		} catch {
 			run.cancel()
 			SpeechReader.shared.inputDidEnd()
+			noteFallback(.microphoneStart(error.localizedDescription))
 			return false
 		}
 		backendRun = run
@@ -119,12 +124,20 @@ final class Dictation {
 
 	/// A request failed or the microphone changed under us: keep the text the server already
 	/// returned and carry on with the phone's recogniser, so dictation never just stops.
-	private func backendFailed() {
+	private func backendFailed(_ reason: DictationFallback) {
 		guard let run = backendRun else { return }
+		noteFallback(reason)
 		backendText = run.text
 		run.cancel()
 		backendRun = nil
 		continueOnDevice()
+	}
+
+	/// Logs why the server was given up on and tells the person, so the phone's recogniser taking
+	/// over is never a silent change.
+	private func noteFallback(_ reason: DictationFallback) {
+		DictationFallback.log.error("server dictation fell back: \(reason.detail, privacy: .public)")
+		fallbackNote = reason.note
 	}
 
 	/// The session hit the server's length limit: let the phrases in flight land, then go on with
@@ -391,6 +404,7 @@ final class Dictation {
 	func stop(flush: Bool = false) {
 		backendRun?.cancel()
 		backendRun = nil
+		fallbackNote = nil
 		if flush, state == .listening, request != nil {
 			watchers.forEach { $0.cancel() }
 			watchers = []
