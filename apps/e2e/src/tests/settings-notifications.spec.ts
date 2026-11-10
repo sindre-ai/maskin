@@ -86,6 +86,46 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 	})
 }
 
+for (const vp of SHIP_GATE_VIEWPORTS) {
+	test(`The Summary email row picks Daily, Weekly or Off and agrees with the email switch @ ${vp.label}`, async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize({ width: vp.width, height: vp.height })
+		await page.goto(`/${account.workspaceId}/settings/notifications`)
+
+		const group = page.getByRole('radiogroup', { name: 'How often the summary email comes' })
+		const radio = (name: string) => group.getByRole('radio', { name, exact: true })
+		await expect(group).toBeVisible({ timeout: 15_000 })
+		for (const name of ['Daily', 'Weekly', 'Off']) await expect(radio(name)).toBeVisible()
+
+		// A new sign-up is on Daily.
+		await expect(radio('Daily')).toBeChecked()
+
+		await radio('Weekly').click()
+		await expect(radio('Weekly')).toBeChecked()
+		const email = page.getByRole('switch', { name: 'Digests by email', exact: true })
+		await expect(email).toBeChecked() // Weekly is not a switch-off
+
+		await page.reload()
+		await expect(radio('Weekly')).toBeChecked({ timeout: 15_000 })
+
+		// Off is the email switch.
+		await radio('Off').click()
+		await expect(email).not.toBeChecked()
+		await page.reload()
+		await expect(radio('Off')).toBeChecked({ timeout: 15_000 })
+
+		// Turning the switch back on returns to the rhythm that was saved.
+		await email.click()
+		await expect(radio('Weekly')).toBeChecked()
+
+		expect(
+			await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth),
+		).toBe(false)
+	})
+}
+
 test('Notifications reads in light and dark', async ({ page, account }) => {
 	for (const scheme of ['light', 'dark'] as const) {
 		await page.emulateMedia({ colorScheme: scheme })

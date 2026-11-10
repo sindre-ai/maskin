@@ -2832,6 +2832,9 @@ export const notificationPreferences = pgTable(
 			.default(sql`'{}'::uuid[]`),
 		// Date of the last summary email that carried a pick; at most one a week. Migration 0146.
 		marketplacePickLastSentOn: date('marketplace_pick_last_sent_on', { mode: 'string' }),
+		// How often the summary email comes: 'daily' or 'weekly'. null means no choice, which is
+		// daily. Off is email_digest_enabled = false, not a value here. Migration 0145.
+		emailRhythm: text('email_rhythm'),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	},
@@ -2851,6 +2854,10 @@ export const notificationPreferences = pgTable(
 		check(
 			'notification_preferences_email_step_chk',
 			sql`${t.emailOnboardingStep} >= 0 AND ${t.emailOnboardingStep} <= 3`,
+		),
+		check(
+			'notification_preferences_email_rhythm_chk',
+			sql`${t.emailRhythm} IS NULL OR ${t.emailRhythm} IN ('daily', 'weekly')`,
 		),
 	],
 )

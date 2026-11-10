@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { dueEmailStep } from '../../services/briefing-email-scheduler'
+import { dueEmailStep, lookbackDays } from '../../services/briefing-email-scheduler'
 
 const row = (over: Partial<Parameters<typeof dueEmailStep>[0]> = {}) => ({
 	emailDigestEnabled: true as boolean | null,
 	emailOnboardingStep: 0,
 	emailLastSentOn: null as string | null,
+	emailRhythm: null as string | null,
 	...over,
 })
 
@@ -69,5 +70,69 @@ describe('dueEmailStep', () => {
 				400,
 			),
 		).toBeNull()
+	})
+})
+
+describe('dueEmailStep: weekly', () => {
+	const weekly = (over: Partial<Parameters<typeof dueEmailStep>[0]> = {}) =>
+		row({ emailRhythm: 'weekly', ...over })
+
+	it('mails a weekly person only when the last send is 6 or more days back', () => {
+		const sent = weekly({ emailOnboardingStep: 3, emailLastSentOn: '2026-11-15' })
+		expect(dueEmailStep(sent, '2026-11-16', 20)).toBeNull()
+		expect(dueEmailStep(sent, '2026-11-20', 20)).toBeNull() // 5 days
+		expect(dueEmailStep(sent, '2026-11-21', 20)).toEqual({ step: 'daily', nextCounter: 3 }) // 6 days
+		expect(dueEmailStep(sent, '2026-11-30', 20)).toEqual({ step: 'daily', nextCounter: 3 })
+	})
+
+	it('a person with an empty or daily rhythm is still mailed the next day', () => {
+		const sent = { emailOnboardingStep: 3, emailLastSentOn: '2026-11-15' }
+		expect(dueEmailStep(row({ ...sent, emailRhythm: null }), '2026-11-16', 20)).toEqual({
+			step: 'daily',
+			nextCounter: 3,
+		})
+		expect(dueEmailStep(row({ ...sent, emailRhythm: 'daily' }), '2026-11-16', 20)).toEqual({
+			step: 'daily',
+			nextCounter: 3,
+		})
+	})
+
+	it('keeps the teaching steps in order, with the age wait and the step gaps on top of the week', () => {
+		// Nothing sent yet: the first mail is not held back by the week, only by the age wait.
+		expect(dueEmailStep(weekly(), '2026-11-08', 0)).toBeNull()
+		expect(dueEmailStep(weekly(), '2026-11-09', 1)).toEqual({ step: 1, nextCounter: 1 })
+		const one = weekly({ emailOnboardingStep: 1, emailLastSentOn: '2026-11-09' })
+		expect(dueEmailStep(one, '2026-11-14', 6)).toBeNull() // 5 days: the week is not up
+		expect(dueEmailStep(one, '2026-11-15', 7)).toEqual({ step: 2, nextCounter: 2 })
+		// A young account: the day 7 wait for step 3 holds even when the week is up.
+		const two = weekly({ emailOnboardingStep: 2, emailLastSentOn: '2026-11-09' })
+		expect(dueEmailStep(two, '2026-11-15', 6)).toBeNull()
+		expect(dueEmailStep(two, '2026-11-15', 7)).toEqual({ step: 3, nextCounter: 3 })
+	})
+
+	it('never mails twice on one day', () => {
+		expect(
+			dueEmailStep(
+				weekly({ emailOnboardingStep: 3, emailLastSentOn: '2026-11-15' }),
+				'2026-11-15',
+				20,
+			),
+		).toBeNull()
+	})
+})
+
+describe('lookbackDays', () => {
+	it('looks back since the last mail, at least a day and at most a week', () => {
+		expect(lookbackDays(null, '2026-11-15', '2026-11-16')).toBe(1)
+		expect(lookbackDays('daily', '2026-11-15', '2026-11-18')).toBe(3)
+		expect(lookbackDays('daily', '2026-10-01', '2026-11-18')).toBe(7)
+		expect(lookbackDays('weekly', '2026-11-15', '2026-11-21')).toBe(6)
+		expect(lookbackDays('weekly', '2026-11-15', '2026-11-30')).toBe(7)
+	})
+
+	it('the first mail looks back a day, or the whole week for a weekly person', () => {
+		expect(lookbackDays(null, null, '2026-11-16')).toBe(1)
+		expect(lookbackDays('daily', null, '2026-11-16')).toBe(1)
+		expect(lookbackDays('weekly', null, '2026-11-16')).toBe(7)
 	})
 })

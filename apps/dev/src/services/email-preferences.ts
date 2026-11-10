@@ -1,6 +1,6 @@
 import type { Database, Transaction } from '@maskin/db'
 import { events, notificationPreferences, workspaceMembers } from '@maskin/db/schema'
-import { NEW_SIGNUP_PUSH_CATEGORIES } from '@maskin/shared'
+import { DEFAULT_EMAIL_RHYTHM, type EmailRhythm, NEW_SIGNUP_PUSH_CATEGORIES } from '@maskin/shared'
 import { and, eq, gt, inArray, ne, or } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 
@@ -124,4 +124,14 @@ export function trackEmailSwitchedOff(
 	kind?: string,
 ): void {
 	void capturePosthogEvent('email_switched_off', actorId, { from, ...(kind ? { kind } : {}) })
+}
+
+/** The rhythm the person gets: the saved one, or daily when they never chose. */
+export function resolveEmailRhythm(saved: string | null | undefined): EmailRhythm {
+	return saved === 'weekly' ? 'weekly' : DEFAULT_EMAIL_RHYTHM
+}
+
+/** Product event: the move between rhythms, never from or to Off. No address, no text. */
+export function trackEmailRhythmChanged(actorId: string, from: EmailRhythm, to: EmailRhythm): void {
+	void capturePosthogEvent('email_rhythm_changed', actorId, { from, to })
 }
