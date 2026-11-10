@@ -97,7 +97,6 @@ struct ConversationListView: View {
 			}
 		}
 		.overlay { overlay }
-		.refreshable { await store.refresh() }
 		.animation(.snappy, value: picking.isActive)
 		.onChange(of: allIDs) { picking.prune(toVisible: allIDs) }
 		.selectionToolbar(picking, allIDs: allIDs, noun: "chat") { bulkActions(allIDs: allIDs) }
