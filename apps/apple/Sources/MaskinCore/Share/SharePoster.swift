@@ -124,8 +124,9 @@ public actor SharePoster {
 		}
 	}
 
-	/// The Idempotency-Key of the create-chat call. The prefix is how a chat started from a share is
-	/// told apart on the server (the key ledger), since the create call has no field for it.
+	/// The Idempotency-Key of the create-chat call. A chat started from a share is counted by the
+	/// `started_from` mark on its first message (`APIShareRemote.createChat`); the prefix only tells
+	/// its key apart from the file and message keys.
 	static func chatKey(base: String) -> String { "\(chatKeyPrefix)\(base)" }
 	static let chatKeyPrefix = "share-chat-"
 

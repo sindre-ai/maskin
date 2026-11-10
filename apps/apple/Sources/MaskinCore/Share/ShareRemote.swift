@@ -150,7 +150,8 @@ public struct APIShareRemote: ShareRemote {
 		do {
 			let created = try await APIChatsSource(client: client, workspaceID: workspaceID).create(
 				title: title, participantIDs: [agentID], initialMessage: content,
-				initialMetadata: ChatSendMetadata(attachments: attachments), idempotencyKey: idempotencyKey)
+				initialMetadata: ChatSendMetadata(attachments: attachments, startedFrom: .share),
+				idempotencyKey: idempotencyKey)
 			return created.id
 		} catch {
 			// The saved-share cleanup deletes what it can't name, and a share must never be lost to

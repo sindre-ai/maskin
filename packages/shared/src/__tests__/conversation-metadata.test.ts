@@ -317,6 +317,7 @@ const CLIENT_SUPPLIED_KEYS = [
 	'card_answer',
 	'hidden_from_chat',
 	'from_suggested_step',
+	'started_from',
 ]
 
 describe('stripServerOwnedMetadata covers every backend-owned key', () => {
