@@ -1,8 +1,9 @@
 /**
  * briefing-email-text.ts — the summary email, as pure functions.
  *
- * Every mail has three parts: what finished for the person since the last mail (up to 5 runs,
- * newest first, then "and N more"), what waits on them, and one next-step line. The facts and
+ * Every mail has three parts: what finished for the person since the last mail (runs of a flow
+ * grouped per flow, up to 3 flows, then up to 5 runs that tie to no flow, newest first, each
+ * list followed by "and N more"), what waits on them, and one next-step line. The facts and
  * their wording come from the daily briefing push (`buildBriefingText`), so an email never says a
  * different number than the push or the For You screen. No AI call, no message bodies: only the
  * titles the push already shows.
@@ -11,7 +12,10 @@
  * each (a card, a flow, your results), plain how-to and no offers. After that the mail is the plain daily summary.
  */
 import { MAX_FINISHED_RUNS, clip } from './briefing-push-scheduler'
-import type { BriefingText } from './briefing-push-scheduler'
+import type { BriefingText, FinishedFlow } from './briefing-push-scheduler'
+
+/** Most flows named in the finished part; the rest fold into "and N more flows". */
+export const MAX_FINISHED_FLOWS = 3
 
 export type EmailStep = 1 | 2 | 3 | 'daily'
 
@@ -80,6 +84,13 @@ function runLine(run: { agentName: string; objectTitle: string | null }): string
 		: `${run.agentName} finished a task`
 }
 
+/** Says only that runs finished; never what they produced or whether they went well. */
+function flowLine(flow: FinishedFlow): string {
+	const count = `${flow.runs} ${flow.runs === 1 ? 'run' : 'runs'} finished`
+	const latest = flow.latestTitle ? `, latest '${clip(flow.latestTitle, 60)}'` : ''
+	return `${clip(flow.flowName, 60)}: ${count}${latest}`
+}
+
 /** The parts that hold content; a part with nothing to say is left out. */
 export function summarySections(summary: BriefingText, nextStep: string | null): Section[] {
 	const sections: Section[] = []
@@ -87,15 +98,22 @@ export function summarySections(summary: BriefingText, nextStep: string | null):
 		summary.multiWorkspace && summary.workspaceName ? ` in ${summary.workspaceName}` : ''
 
 	const runs = summary.finishedRuns ?? []
+	const flows = summary.finishedFlows ?? []
 	if (summary.finished > 0) {
-		const lines = runs.slice(0, MAX_FINISHED_RUNS).map(runLine)
-		const more = summary.finished - lines.length
-		if (lines.length === 0) {
-			lines.push(`${summary.finished} agent ${summary.finished === 1 ? 'run' : 'runs'} finished`)
+		const lines = flows.slice(0, MAX_FINISHED_FLOWS).map(flowLine)
+		const moreFlows = flows.length - lines.length
+		if (moreFlows > 0) lines.push(`and ${moreFlows} more ${moreFlows === 1 ? 'flow' : 'flows'}`)
+
+		// Runs that tie to no flow stay in the plain list.
+		const untied = summary.finished - flows.reduce((sum, f) => sum + f.runs, 0)
+		const runLines = runs.slice(0, MAX_FINISHED_RUNS).map(runLine)
+		const more = untied - runLines.length
+		if (runLines.length === 0 && untied > 0) {
+			runLines.push(`${untied} agent ${untied === 1 ? 'run' : 'runs'} finished`)
 		} else if (more > 0) {
-			lines.push(`and ${more} more`)
+			runLines.push(`and ${more} more`)
 		}
-		sections.push({ heading: `Done for you${where}`, lines })
+		sections.push({ heading: `Done for you${where}`, lines: [...lines, ...runLines] })
 	}
 
 	if (summary.waiting > 0) {

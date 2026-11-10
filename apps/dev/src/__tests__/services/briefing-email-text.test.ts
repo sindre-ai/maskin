@@ -97,6 +97,76 @@ describe('buildSummaryEmail', () => {
 		expect(mail.text).not.toContain('Next step')
 	})
 
+	it('groups finished runs by flow: name, number finished, latest title', () => {
+		const mail = buildSummaryEmail({
+			summary: summary({
+				finished: 4,
+				waiting: 0,
+				topHeadline: null,
+				finishedRuns: [],
+				finishedFlows: [
+					{ flowName: 'Weekly research', runs: 3, latestTitle: 'Competitor update' },
+					{ flowName: 'Support', runs: 1, latestTitle: null },
+				],
+			}),
+			step: 'daily',
+			...urls,
+		})
+		expect(mail.text).toContain("- Weekly research: 3 runs finished, latest 'Competitor update'")
+		expect(mail.text).toContain('- Support: 1 run finished')
+		// Only that runs finished: no result or success wording, and no plain "N agent runs" line.
+		expect(mail.text).not.toMatch(/succe|fail|result/i)
+		expect(mail.text).not.toContain('agent run')
+	})
+
+	it('names up to 3 flows, then "and N more flows"', () => {
+		const flows = [1, 2, 3, 4, 5].map((n) => ({
+			flowName: `Flow ${n}`,
+			runs: 1,
+			latestTitle: null,
+		}))
+		const mail = buildSummaryEmail({
+			summary: summary({ finished: 5, finishedRuns: [], finishedFlows: flows, waiting: 0 }),
+			step: 'daily',
+			...urls,
+		})
+		expect(mail.text).toContain('- Flow 3: 1 run finished')
+		expect(mail.text).not.toContain('Flow 4')
+		expect(mail.text).toContain('- and 2 more flows')
+	})
+
+	it('keeps runs that tie to no flow in the plain list, with their own "and N more"', () => {
+		const mail = buildSummaryEmail({
+			summary: summary({
+				finished: 10,
+				waiting: 0,
+				finishedRuns: [1, 2, 3, 4, 5].map(run),
+				finishedFlows: [{ flowName: 'Weekly research', runs: 3, latestTitle: 'Brief' }],
+			}),
+			step: 'daily',
+			...urls,
+		})
+		expect(mail.text).toContain("- Weekly research: 3 runs finished, latest 'Brief'")
+		expect(mail.text).toContain("- Ada finished 'Task 1'")
+		// 10 finished, 3 in the flow, 5 listed: 2 more, not 5.
+		expect(mail.text).toContain('- and 2 more')
+		expect(mail.text.indexOf('Weekly research')).toBeLessThan(mail.text.indexOf('Task 1'))
+	})
+
+	it('says "N agent runs finished" only for runs that tie to no flow', () => {
+		const mail = buildSummaryEmail({
+			summary: summary({
+				finished: 5,
+				waiting: 0,
+				finishedRuns: [],
+				finishedFlows: [{ flowName: 'Weekly research', runs: 3, latestTitle: null }],
+			}),
+			step: 'daily',
+			...urls,
+		})
+		expect(mail.text).toContain('- 2 agent runs finished')
+	})
+
 	it('names the workspace and the others when the person is in several', () => {
 		const mail = buildSummaryEmail({
 			summary: summary({ multiWorkspace: true, waitingElsewhere: 2 }),
