@@ -70,10 +70,13 @@ services:
       MASKIN_BACKEND_URL: ${SERVICE_URL_APP}
       # The card step is on for every sign-up on this copy only.
       FF_SIGNUP_FEATURES: ${FF_SIGNUP_FEATURES:-trial-card-percent}
-      # Stripe test mode. The webhook secret stays empty until the test one arrives.
+      # Stripe test mode. The webhook refuses to run without the two old dollar prices
+      # (test-mode ids), even though the card step never uses them.
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:-}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PRICE_PRO: ${STRIPE_PRICE_PRO:-}
+      STRIPE_PRICE_TEAM: ${STRIPE_PRICE_TEAM:-}
       MASKIN_TRIAL_HARD_CAP_USD_CENTS: ${MASKIN_TRIAL_HARD_CAP_USD_CENTS:-286}
     depends_on:
       postgres:
