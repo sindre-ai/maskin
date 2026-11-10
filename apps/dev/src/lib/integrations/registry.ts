@@ -62,6 +62,7 @@ import { slackEventNormalizer } from './providers/slack/webhooks'
 import { config as stripeConfig } from './providers/stripe/config'
 import { ubersuggestAuth } from './providers/ubersuggest/auth'
 import { config as ubersuggestConfig } from './providers/ubersuggest/config'
+import { config as webflowConfig } from './providers/webflow/config'
 
 const providers = new Map<string, ResolvedProvider>()
 
@@ -178,6 +179,10 @@ providers.set('miro', {
 
 providers.set('canva', {
 	config: canvaConfig,
+})
+
+providers.set('webflow', {
+	config: webflowConfig,
 })
 
 providers.set('notion', {
