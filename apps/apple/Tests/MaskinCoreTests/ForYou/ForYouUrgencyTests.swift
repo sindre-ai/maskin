@@ -40,6 +40,16 @@ struct ForYouUrgencyTests {
 		#expect(u?.isHot == false)
 	}
 
+	@Test func anAskUnderTwoDaysOldHasNoChip() {
+		#expect(ForYouUrgency.make(for: card(age: 86_400 + 60), agent: "Forge") == nil)
+	}
+
+	@Test func aDecisionWithoutAnAskStillDecodes() throws {
+		let json = #"{"title":"Ship it?","summary":"Done.","options":[]}"#
+		let decoded = try JSONDecoder().decode(DecisionPrompt.self, from: Data(json.utf8))
+		#expect(decoded.ask.isEmpty)
+	}
+
 	@Test func aFreshAskHasNoChip() {
 		#expect(ForYouUrgency.make(for: card(), agent: "Forge") == nil)
 	}

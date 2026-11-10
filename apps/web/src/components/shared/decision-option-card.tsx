@@ -1,6 +1,7 @@
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { useCanWrite } from '@/hooks/use-can-write'
+import { Fragment } from 'react'
 
 /**
  * One option of an agent's decision, as the reader taps it.
@@ -43,7 +44,10 @@ export function DecisionOptions({
 	options,
 	pendingId,
 	onChoose,
+	variant = 'card',
 }: {
+	/** `row` is the For You feed: no "Suggested" line, the recommended option's first consequence sits under its bar. */
+	variant?: 'card' | 'row'
 	options: readonly DecisionOption[]
 	/** The option being posted. Every button is held until it settles, so the question cannot be answered twice. */
 	pendingId: string | null
@@ -53,7 +57,7 @@ export function DecisionOptions({
 	const canWrite = useCanWrite()
 	const primary = options.filter((option) => option.recommended)
 	const others = options.filter((option) => !option.recommended)
-	const line = suggestedLine(options)
+	const line = variant === 'card' ? suggestedLine(options) : null
 	const label = (option: DecisionOption) =>
 		pendingId === option.id ? `${option.label}…` : option.label
 
@@ -61,20 +65,26 @@ export function DecisionOptions({
 		<ViewerTooltip className="flex flex-col gap-2">
 			<div className="flex flex-col gap-2">
 				{primary.map((option) => (
-					<Button
-						key={option.id}
-						type="button"
-						data-action-id={option.id}
-						disabled={pendingId !== null || !canWrite}
-						onClick={() => onChoose(option)}
-						className="h-auto min-h-12 w-full justify-between whitespace-normal rounded-xl px-4 py-3 text-left text-[14px] font-bold"
-					>
-						<span className="min-w-0">{label(option)}</span>
-						{/* Out of the accessible name on purpose: the button is its label. */}
-						<span aria-hidden className="shrink-0 text-[11px] font-semibold opacity-70">
-							Recommended
-						</span>
-					</Button>
+					<Fragment key={option.id}>
+						<Button
+							type="button"
+							data-action-id={option.id}
+							disabled={pendingId !== null || !canWrite}
+							onClick={() => onChoose(option)}
+							className="h-auto min-h-12 w-full justify-between whitespace-normal rounded-xl px-4 py-3 text-left text-[14px] font-bold"
+						>
+							<span className="min-w-0">{label(option)}</span>
+							{/* Out of the accessible name on purpose: the button is its label. */}
+							<span aria-hidden className="shrink-0 text-[11px] font-semibold opacity-70">
+								Recommended
+							</span>
+						</Button>
+						{variant === 'row' && option.consequences[0] && (
+							<p className="text-[13px] leading-[1.45] text-muted-foreground">
+								{option.consequences[0]}
+							</p>
+						)}
+					</Fragment>
 				))}
 				{others.length > 0 && (
 					<div className="flex flex-wrap gap-2">

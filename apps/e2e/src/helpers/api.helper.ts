@@ -136,6 +136,8 @@ interface MessageResponse {
 	threadRootId?: number | null
 	threadAlsoInChannel?: boolean
 	thread?: { replyCount: number; unreadCount: number } | null
+	/** Present on list responses: emoji reactions grouped by emoji. */
+	reactions?: { emoji: string; count: number; reactedByMe: boolean }[]
 }
 
 interface SessionResponse {

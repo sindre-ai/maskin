@@ -97,9 +97,11 @@ export function CommentDecisionBlock({
 
 	return (
 		<div className="mt-2.5 flex flex-col gap-2.5">
-			<p className="text-foreground text-pretty text-[13px] font-semibold leading-[1.5]">
-				{decision.ask}
-			</p>
+			{decision.ask && (
+				<p className="text-foreground text-pretty text-[13px] font-semibold leading-[1.5]">
+					{decision.ask}
+				</p>
+			)}
 			<DecisionOptions options={options} pendingId={pendingId} onChoose={choose} />
 		</div>
 	)

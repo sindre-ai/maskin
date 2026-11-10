@@ -60,6 +60,9 @@ public struct ConversationSummary: Identifiable, Hashable, Sendable, Codable {
 	public var snippetActorName: String?
 	/// Who wrote the latest message (list responses only): a tick before the preview when it is you.
 	public var snippetActorID: String?
+	/// Set on the direct message (DM) of a pair, nil on every topical chat (list responses only).
+	/// The list tells the two apart by this alone, never by title or participant count.
+	public var directPairKey: String?
 	public var participants: [ChatParticipant]
 	/// The caller's read cursor (detail responses only).
 	public var lastReadMessageID: Int?
@@ -67,8 +70,8 @@ public struct ConversationSummary: Identifiable, Hashable, Sendable, Codable {
 	public init(
 		id: String, title: String, lastMessageAt: Date? = nil, createdAt: Date? = nil,
 		pinned: Bool = false, archived: Bool = false, unreadCount: Int = 0, snippet: String? = nil,
-		snippetActorName: String? = nil, snippetActorID: String? = nil, participants: [ChatParticipant] = [],
-		lastReadMessageID: Int? = nil
+		snippetActorName: String? = nil, snippetActorID: String? = nil, directPairKey: String? = nil,
+		participants: [ChatParticipant] = [], lastReadMessageID: Int? = nil
 	) {
 		self.id = id
 		self.title = title
@@ -80,6 +83,7 @@ public struct ConversationSummary: Identifiable, Hashable, Sendable, Codable {
 		self.snippet = snippet
 		self.snippetActorName = snippetActorName
 		self.snippetActorID = snippetActorID
+		self.directPairKey = directPairKey
 		self.participants = participants
 		self.lastReadMessageID = lastReadMessageID
 	}
@@ -87,6 +91,8 @@ public struct ConversationSummary: Identifiable, Hashable, Sendable, Codable {
 	/// The date the list sorts and groups by.
 	public var activityDate: Date? { lastMessageAt ?? createdAt }
 	public var isUnread: Bool { unreadCount > 0 }
+	/// The pair's direct message, as opposed to a topical chat with the same two people.
+	public var isDirect: Bool { directPairKey != nil }
 }
 
 public struct ConversationPage: Sendable, Equatable {

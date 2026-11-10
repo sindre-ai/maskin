@@ -31,6 +31,12 @@ export function readCachedResult(workspaceId: string, queryKey: string): CachedR
 	}
 }
 
+/**
+ * An answer bigger than this is not kept: a query has no group limit, and a browser store holds a
+ * few MB for the whole site. The view just waits for a live answer on the next visit.
+ */
+const MAX_CACHED_CHARS = 500_000
+
 /** Saves a fresh answer and returns the time it was stamped with. A full or blocked store just means no cache. */
 export function writeCachedResult(
 	workspaceId: string,
@@ -39,7 +45,9 @@ export function writeCachedResult(
 ): number {
 	const at = Date.now()
 	try {
-		localStorage.setItem(storageKey(workspaceId, queryKey), JSON.stringify({ at, result }))
+		const raw = JSON.stringify({ at, result })
+		if (raw.length > MAX_CACHED_CHARS) dropCachedResult(workspaceId, queryKey)
+		else localStorage.setItem(storageKey(workspaceId, queryKey), raw)
 	} catch {
 		// Not being able to cache must never break the view.
 	}

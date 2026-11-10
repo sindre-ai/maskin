@@ -27,6 +27,18 @@ describe('GET /api/files/:id?format=text', () => {
 		return { ...ctx, file }
 	}
 
+	it('refuses deeply nested HTML with a 400 that points at format=raw', async () => {
+		const html = `<html><body>${'<div>'.repeat(60_000)}x</body></html>`
+		const { app } = setup('text/html', Buffer.from(html))
+
+		const started = performance.now()
+		const res = await app.request(jsonGet(`/api/files/${fileId}?format=text`))
+
+		expect(res.status).toBe(400)
+		expect(JSON.stringify(await res.json())).toContain('format=raw')
+		expect(performance.now() - started).toBeLessThan(1000)
+	})
+
 	it('returns the readable text of an HTML deck instead of its bytes', async () => {
 		const html = buildBriefingDeck({ fontChars: 200_000 })
 		const { app } = setup('text/html', Buffer.from(html))

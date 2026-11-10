@@ -31,7 +31,7 @@ import {
 	classifyCardKind,
 	decisionOf,
 } from '@/lib/foryou-card-kind'
-import { heldNote, isObjectlessCard } from '@/lib/foryou-feed'
+import { bylineName, heldNote, isObjectlessCard } from '@/lib/foryou-feed'
 import { markImpressed } from '@/lib/foryou-impressions'
 import { Link } from '@tanstack/react-router'
 import { ArrowUpRight, Check, ChevronDown, ChevronUp, X } from 'lucide-react'
@@ -135,6 +135,18 @@ export function FeedCard({
 	const waiting = !decided && replied
 	const held = decided || waiting ? '' : heldNote(item.latest_activity_at)
 
+	// The object the card is about, named once: under the message, not in the header.
+	const objectLine = objectless ? null : (
+		<Link
+			to="/$workspaceId/objects/$objectId"
+			params={{ workspaceId, objectId }}
+			className="text-[13px] text-muted-foreground hover:text-foreground hover:underline"
+		>
+			{objectTitle || 'Open'}
+			<ArrowUpRight size={10} className="ml-0.5 inline" aria-hidden />
+		</Link>
+	)
+
 	const [pendingId, setPendingId] = useState<string | null>(null)
 	// The acknowledgement beat below posts a real reply when it fires, so the
 	// timer has to die with the card. A bulk dismiss ("Dismiss all", Alt+U)
@@ -195,7 +207,7 @@ export function FeedCard({
 							) : (
 								status && <StatusBadge status={status} variant="word" />
 							)}
-							<span className="min-w-0 truncate">{sender?.name ?? ''}</span>
+							<span className="min-w-0 truncate">{bylineName(sender?.name)}</span>
 							{held && <span className="shrink-0 text-warning">{held}</span>}
 						</span>
 					</button>
@@ -222,17 +234,7 @@ export function FeedCard({
 						size="sm"
 					/>
 					<span className="min-w-0 flex-1 truncate text-[12.5px] text-muted-foreground">
-						{sender?.name ? `${sender.name}${objectless ? '' : ' · '}` : ''}
-						{!objectless && (
-							<Link
-								to="/$workspaceId/objects/$objectId"
-								params={{ workspaceId, objectId }}
-								className="hover:text-foreground hover:underline"
-							>
-								{objectTitle || 'Open'}
-								<ArrowUpRight size={10} className="ml-0.5 inline" aria-hidden />
-							</Link>
-						)}
+						{bylineName(sender?.name)}
 					</span>
 					{!objectless && (
 						<TimelineHistory workspaceId={workspaceId} objectId={objectId} item={item} />
@@ -292,13 +294,13 @@ export function FeedCard({
 				    alone (ask), which carries more weight. Anything else renders
 				    the comment as written. */}
 				{decision ? (
-					<div className="-mt-1 flex max-w-[58ch] flex-col gap-2">
-						<p className="text-[13px] leading-[1.55] text-pretty text-muted-foreground">
-							{decision.summary}
-						</p>
-						<p className="text-[13px] font-semibold leading-[1.5] text-pretty text-foreground">
-							{decision.ask}
-						</p>
+					<div className="flex flex-col gap-3">
+						<div className="flex flex-col gap-1.5 rounded-xl bg-muted/60 px-4 py-3">
+							<p className="text-[15px] leading-[1.5] text-pretty text-foreground">
+								{decision.summary}
+							</p>
+							{objectLine}
+						</div>
 						{decision.draft ? (
 							<DraftPreview workspaceId={workspaceId} draft={decision.draft} />
 						) : null}
@@ -311,23 +313,27 @@ export function FeedCard({
 							/>
 						) : null}
 					</div>
+				) : !mentionBody ? (
+					objectLine
 				) : (
 					mentionBody && (
 						// The whole comment, not a preview: the reader answers here, so
 						// nothing about the ask lives behind a second click.
-						<div className="-mt-1 max-w-[58ch] text-[13px] leading-[1.55] text-pretty text-muted-foreground">
+						<div className="flex flex-col gap-1.5 rounded-xl bg-muted/60 px-4 py-3 text-[13px] leading-[1.55] text-pretty text-muted-foreground">
 							<MarkdownContent
 								content={mentionBody}
 								size="sm"
 								mentionActors={actors}
 								linkedCards={outsideChatLinkedCards(workspaceId, 'chips')}
 							/>
+							{objectLine}
 						</div>
 					)
 				)}
 
 				{options.length > 0 && (
 					<DecisionOptions
+						variant="row"
 						options={options}
 						pendingId={pendingId}
 						onChoose={(option) => chooseOption(option)}

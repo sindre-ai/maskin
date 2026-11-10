@@ -26203,7 +26203,7 @@
 					"data"
 				],
 				"summary": "Read-only grouped aggregation over objects",
-				"description": "Counts, sums or averages objects of one type, optionally grouped by status, type or a metadata field and scoped to the workspace or one loop. Aggregation runs in the database; scanned rows and returned groups are capped and flagged when the cap is hit.",
+				"description": "Counts, sums or averages objects of one type, optionally grouped by status, type or a metadata field and scoped to the workspace or one loop. Aggregation runs in the database over every matching object. Groups come back a page at a time: while `next_cursor` is set, pass it back as `cursor` to read the next page. Totals always cover every group.",
 				"parameters": [
 					{
 						"schema": {
@@ -26214,6 +26214,27 @@
 						},
 						"required": true,
 						"name": "spec",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"maxLength": 80,
+							"description": "The previous page's `next_cursor`, to read the next page of groups."
+						},
+						"required": false,
+						"name": "cursor",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"minimum": 1,
+							"maximum": 1000,
+							"description": "Groups per page (default 50, at most 1000)."
+						},
+						"required": false,
+						"name": "limit",
 						"in": "query"
 					},
 					{
@@ -26280,6 +26301,12 @@
 												"value"
 											]
 										},
+										"next_cursor": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
 										"rows_truncated": {
 											"type": "boolean"
 										},
@@ -26290,6 +26317,7 @@
 									"required": [
 										"groups",
 										"total",
+										"next_cursor",
 										"rows_truncated",
 										"groups_truncated"
 									]
@@ -42790,17 +42818,17 @@
 											"title": {
 												"type": "string",
 												"minLength": 1,
-												"description": "3-7 words. The decision itself, not a status. A question if it is a judgment call (\"Is the onboarding bet worth running?\"), a noun phrase if it is an artifact (\"Acme's note before Thursday\"). No agent name, and no verb-ing: \"Reviewing the funnel\" is a status, not a decision."
+												"description": "9 words or fewer, ending in \"?\". The question the human is being asked (\"Is the onboarding bet worth running?\"), not a status. No agent name, and no verb-ing: \"Reviewing the funnel\" is a status, not a decision."
 											},
 											"summary": {
 												"type": "string",
 												"minLength": 1,
-												"description": "1-2 sentences. Sentence 1: the state of the world and the cost of the status quo, with one real number you actually looked up. Sentence 2: what is already done, so the human knows they are only deciding, not working. Never restate the title."
+												"description": "At most 2 sentences. State what is done and what is still open, so the human knows they are only deciding, not working. Use a real number only when you looked one up. No source paths or file names. Do not name the object: the card shows it. Never restate the title."
 											},
 											"ask": {
 												"type": "string",
 												"minLength": 1,
-												"description": "First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: \"Notices go to real households, so I will not send this alone.\" No hedging, no apologising, no offering to help."
+												"description": "Leave out when the title is already the question; the card then shows the title and the options. Otherwise first person, one sentence: name the single call you cannot make alone and why it belongs to the human (\"Notices go to real households, so I will not send this alone.\"). No hedging, no apologising, no offering to help."
 											},
 											"options": {
 												"type": "array",
@@ -42820,7 +42848,7 @@
 															},
 															"minItems": 2,
 															"maxItems": 3,
-															"description": "2-3 lines, present tense, one clause each: \"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\". Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no \", and\" — that is two lines, not one."
+															"description": "2-3 lines, present tense, one clause each: \"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\". Put the guardrails here (\"Nothing is published without your go\"). Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no \", and\" — that is two lines, not one."
 														},
 														"recommended": {
 															"type": "boolean",
@@ -42988,10 +43016,9 @@
 										"required": [
 											"title",
 											"summary",
-											"ask",
 											"options"
 										],
-										"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\nTo ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.\nPosting a new card withdraws your earlier cards on the same object, so you do not need to withdraw them yourself. Another agent's cards, and your cards on other objects, stay. A card with `drafts` is still one card.\nTo ask whether an object should move to a new status (\"flip this bet to active\"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
+										"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\nTo ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.\nPosting a new card withdraws your earlier cards on the same object, so you do not need to withdraw them yourself. Another agent's cards, and your cards on other objects, stay. A card with `drafts` is still one card.\nTo ask whether an object should move to a new status (\"flip this bet to active\"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 9 words or fewer, ending in \"?\", and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, with no source paths, and not a restatement of the title;\nask omitted when the title is the question, otherwise exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. The replacement copy and the migration are drafted; shipping is open.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
 									},
 									"attention": {
 										"type": "integer",
@@ -44543,6 +44570,12 @@
 															"type": "string"
 														}
 													},
+													"directPairKey": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
 													"lastMessageAt": {
 														"type": [
 															"string",
@@ -44646,6 +44679,7 @@
 													"subjectId",
 													"createdBy",
 													"tags",
+													"directPairKey",
 													"lastMessageAt",
 													"createdAt",
 													"updatedAt",
@@ -58712,17 +58746,17 @@
 																	"title": {
 																		"type": "string",
 																		"minLength": 1,
-																		"description": "3-7 words. The decision itself, not a status. A question if it is a judgment call (\"Is the onboarding bet worth running?\"), a noun phrase if it is an artifact (\"Acme's note before Thursday\"). No agent name, and no verb-ing: \"Reviewing the funnel\" is a status, not a decision."
+																		"description": "9 words or fewer, ending in \"?\". The question the human is being asked (\"Is the onboarding bet worth running?\"), not a status. No agent name, and no verb-ing: \"Reviewing the funnel\" is a status, not a decision."
 																	},
 																	"summary": {
 																		"type": "string",
 																		"minLength": 1,
-																		"description": "1-2 sentences. Sentence 1: the state of the world and the cost of the status quo, with one real number you actually looked up. Sentence 2: what is already done, so the human knows they are only deciding, not working. Never restate the title."
+																		"description": "At most 2 sentences. State what is done and what is still open, so the human knows they are only deciding, not working. Use a real number only when you looked one up. No source paths or file names. Do not name the object: the card shows it. Never restate the title."
 																	},
 																	"ask": {
 																		"type": "string",
 																		"minLength": 1,
-																		"description": "First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: \"Notices go to real households, so I will not send this alone.\" No hedging, no apologising, no offering to help."
+																		"description": "Leave out when the title is already the question; the card then shows the title and the options. Otherwise first person, one sentence: name the single call you cannot make alone and why it belongs to the human (\"Notices go to real households, so I will not send this alone.\"). No hedging, no apologising, no offering to help."
 																	},
 																	"options": {
 																		"type": "array",
@@ -58742,7 +58776,7 @@
 																					},
 																					"minItems": 2,
 																					"maxItems": 3,
-																					"description": "2-3 lines, present tense, one clause each: \"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\". Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no \", and\" — that is two lines, not one."
+																					"description": "2-3 lines, present tense, one clause each: \"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\". Put the guardrails here (\"Nothing is published without your go\"). Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no \", and\" — that is two lines, not one."
 																				},
 																				"recommended": {
 																					"type": "boolean",
@@ -59202,10 +59236,9 @@
 																"required": [
 																	"title",
 																	"summary",
-																	"ask",
 																	"options"
 																],
-																"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\nTo ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.\nPosting a new card withdraws your earlier cards on the same object, so you do not need to withdraw them yourself. Another agent's cards, and your cards on other objects, stay. A card with `drafts` is still one card.\nTo ask whether an object should move to a new status (\"flip this bet to active\"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
+																"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\nTo ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.\nPosting a new card withdraws your earlier cards on the same object, so you do not need to withdraw them yourself. Another agent's cards, and your cards on other objects, stay. A card with `drafts` is still one card.\nTo ask whether an object should move to a new status (\"flip this bet to active\"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 9 words or fewer, ending in \"?\", and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, with no source paths, and not a restatement of the title;\nask omitted when the title is the question, otherwise exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. The replacement copy and the migration are drafted; shipping is open.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
 															}
 														},
 														"required": [
@@ -62616,17 +62649,17 @@
 																	"title": {
 																		"type": "string",
 																		"minLength": 1,
-																		"description": "3-7 words. The decision itself, not a status. A question if it is a judgment call (\"Is the onboarding bet worth running?\"), a noun phrase if it is an artifact (\"Acme's note before Thursday\"). No agent name, and no verb-ing: \"Reviewing the funnel\" is a status, not a decision."
+																		"description": "9 words or fewer, ending in \"?\". The question the human is being asked (\"Is the onboarding bet worth running?\"), not a status. No agent name, and no verb-ing: \"Reviewing the funnel\" is a status, not a decision."
 																	},
 																	"summary": {
 																		"type": "string",
 																		"minLength": 1,
-																		"description": "1-2 sentences. Sentence 1: the state of the world and the cost of the status quo, with one real number you actually looked up. Sentence 2: what is already done, so the human knows they are only deciding, not working. Never restate the title."
+																		"description": "At most 2 sentences. State what is done and what is still open, so the human knows they are only deciding, not working. Use a real number only when you looked one up. No source paths or file names. Do not name the object: the card shows it. Never restate the title."
 																	},
 																	"ask": {
 																		"type": "string",
 																		"minLength": 1,
-																		"description": "First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: \"Notices go to real households, so I will not send this alone.\" No hedging, no apologising, no offering to help."
+																		"description": "Leave out when the title is already the question; the card then shows the title and the options. Otherwise first person, one sentence: name the single call you cannot make alone and why it belongs to the human (\"Notices go to real households, so I will not send this alone.\"). No hedging, no apologising, no offering to help."
 																	},
 																	"options": {
 																		"type": "array",
@@ -62646,7 +62679,7 @@
 																					},
 																					"minItems": 2,
 																					"maxItems": 3,
-																					"description": "2-3 lines, present tense, one clause each: \"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\". Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no \", and\" — that is two lines, not one."
+																					"description": "2-3 lines, present tense, one clause each: \"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\". Put the guardrails here (\"Nothing is published without your go\"). Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no \", and\" — that is two lines, not one."
 																				},
 																				"recommended": {
 																					"type": "boolean",
@@ -63106,10 +63139,9 @@
 																"required": [
 																	"title",
 																	"summary",
-																	"ask",
 																	"options"
 																],
-																"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\nTo ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.\nPosting a new card withdraws your earlier cards on the same object, so you do not need to withdraw them yourself. Another agent's cards, and your cards on other objects, stay. A card with `drafts` is still one card.\nTo ask whether an object should move to a new status (\"flip this bet to active\"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
+																"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\nTo ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.\nPosting a new card withdraws your earlier cards on the same object, so you do not need to withdraw them yourself. Another agent's cards, and your cards on other objects, stay. A card with `drafts` is still one card.\nTo ask whether an object should move to a new status (\"flip this bet to active\"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 9 words or fewer, ending in \"?\", and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, with no source paths, and not a restatement of the title;\nask omitted when the title is the question, otherwise exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. The replacement copy and the migration are drafted; shipping is open.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
 															}
 														},
 														"required": [

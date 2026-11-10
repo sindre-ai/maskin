@@ -9,6 +9,7 @@ import {
 	countStalledQueries,
 	createDb,
 	createInFlight,
+	describeInFlight,
 	syncAgentServersFromEnv,
 } from '@maskin/db'
 import { actors, sessions } from '@maskin/db/schema'
@@ -103,6 +104,12 @@ const db = createDb(databaseUrl, {
 	poolSize: dbPoolSize,
 	inFlight: dbLoad,
 	onQuery: recordDbTime,
+	onPoolRecycled: ({ runningQueries, sql }) => {
+		logger.warn('DB pool replaced: a query got no answer and the database was not busy', {
+			runningQueries,
+			sql,
+		})
+	},
 	onQueryTimeout: ({ timeoutMs, inFlight, sql }) => {
 		logger.error('DB query got no response', {
 			timeoutMs,
@@ -130,6 +137,8 @@ const db = createDb(databaseUrl, {
 		logger.warn('DB pool saturated: new queries wait for a connection', {
 			inFlight,
 			poolSize: dbPoolSize,
+			// What is in the pool right now, so the log names the holder instead of just the count.
+			queries: describeInFlight(dbLoad),
 		})
 	},
 })
