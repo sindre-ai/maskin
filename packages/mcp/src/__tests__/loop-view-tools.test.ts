@@ -394,6 +394,32 @@ describe('loop view MCP tools', () => {
 			expect(JSON.parse(out.content[0].text ?? '{}')).toEqual(result)
 		})
 
+		it('passes the page cursor and limit as route params, not inside the spec', async () => {
+			responses['/api/data/query'] = result
+			await handlers.query_data({
+				workspace_id: wsId,
+				type: 'task',
+				group_by: 'metadata.person',
+				limit: 200,
+				cursor: 'abc.200',
+			})
+
+			const url = new URL(`http://x${calls()[0].path}`)
+			expect(url.searchParams.get('limit')).toBe('200')
+			expect(url.searchParams.get('cursor')).toBe('abc.200')
+			expect(JSON.parse(url.searchParams.get('spec') ?? '{}')).toEqual({
+				type: 'task',
+				group_by: 'metadata.person',
+			})
+		})
+
+		it('accepts a page cursor and a bounded limit', () => {
+			const schema = tools.query_data.inputSchema
+			expect(schema.safeParse({ type: 'task', cursor: 'abc.50', limit: 1000 }).success).toBe(true)
+			expect(schema.safeParse({ type: 'task', limit: 0 }).success).toBe(false)
+			expect(schema.safeParse({ type: 'task', limit: 1001 }).success).toBe(false)
+		})
+
 		it('defaults the scope to the workspace', () => {
 			const parsed = tools.query_data.inputSchema.parse({ workspace_id: wsId, type: 'bet' })
 			expect(parsed.scope).toBe('workspace')

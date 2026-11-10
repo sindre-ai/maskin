@@ -446,7 +446,7 @@ const LOOP_VIEW_CHECKLIST = [
 	'Opens with the loop outcome in one plain sentence and where it stands against it.',
 	'Three to five metrics at most, each with a value and unit, a comparison and its source.',
 	'Every number has a declared source in maskin-sources and an empty and an error state that shows the message.',
-	'No query is truncated (rows_truncated and groups_truncated false), or the view says its numbers are partial.',
+	'A table over many rows (every person, every task) scrolls or pages instead of drawing everything at once.',
 	'Says what needs a person now, if anything. Nothing that does not change a decision.',
 	'One self-contained file, no network calls, readable in light and dark.',
 ]
@@ -7867,11 +7867,15 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const { workspace_id, ...spec } = args
+			const { workspace_id, cursor, limit, ...spec } = args
+			const paging = [
+				limit === undefined ? '' : `&limit=${limit}`,
+				cursor === undefined ? '' : `&cursor=${encodeURIComponent(cursor)}`,
+			].join('')
 			const result = await apiCall(
 				config,
 				'GET',
-				`/api/data/query?spec=${encodeURIComponent(JSON.stringify(spec))}`,
+				`/api/data/query?spec=${encodeURIComponent(JSON.stringify(spec))}${paging}`,
 				undefined,
 				{ workspaceId: workspace_id },
 			)

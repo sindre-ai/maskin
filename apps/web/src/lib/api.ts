@@ -48,9 +48,10 @@ export type {
 	UpdateFileCommentInput,
 	WorkspaceDeletionPreview,
 }
-import { parseRelativeBound } from '@maskin/shared'
+import { DATA_QUERY_MAX_PAGE_SIZE, parseRelativeBound } from '@maskin/shared'
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
+import { readEveryPage } from './data-query-pages'
 import { reportApiFailure } from './faro'
 import { limitConcurrency } from './limit-concurrency'
 
@@ -473,13 +474,28 @@ export type ExtensionSampleResult =
  */
 const DATA_REQUESTS_AT_ONCE = 4
 
+/**
+ * Every group of a query. The server sends them a page at a time; this follows the cursors, so a
+ * caller gets one complete answer. A page is cheap (after the first it is cut from a snapshot the
+ * server holds), and the whole read holds one request slot, so a big answer never crowds out the
+ * view's other sources. The timeout is per page: it bounds a stuck request, not the size of the data.
+ */
 const limitedDataQuery = limitConcurrency(
 	DATA_REQUESTS_AT_ONCE,
-	(workspaceId: string, spec: DataQuerySpec, opts?: { timeoutMs?: number }) =>
-		request<DataQueryResult>(`/data/query?spec=${encodeURIComponent(JSON.stringify(spec))}`, {
-			workspaceId,
-			signal: opts?.timeoutMs === undefined ? undefined : AbortSignal.timeout(opts.timeoutMs),
-		}),
+	(workspaceId: string, spec: DataQuerySpec, opts?: { timeoutMs?: number }) => {
+		const specParam = encodeURIComponent(JSON.stringify(spec))
+		return readEveryPage((cursor) =>
+			request<DataQueryResult>(
+				`/data/query?spec=${specParam}&limit=${DATA_QUERY_MAX_PAGE_SIZE}${
+					cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''
+				}`,
+				{
+					workspaceId,
+					signal: opts?.timeoutMs === undefined ? undefined : AbortSignal.timeout(opts.timeoutMs),
+				},
+			),
+		)
+	},
 )
 
 /** Only a moving date (a relative bound or a time bucket) changes an answer with no write. */
