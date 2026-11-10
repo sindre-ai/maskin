@@ -77,22 +77,26 @@ export function checkMetadata(metadataUrl, metadata) {
 		)
 	}
 	const issuer = new URL(String(metadata?.issuer ?? ''))
-	if (issuer.hostname !== source.hostname) {
-		throw new Error(`the issuer (${issuer.hostname}) does not match ${source.hostname}`)
+	if (ownDomain(issuer.hostname) !== ownDomain(source.hostname)) {
+		throw new Error(
+			`the issuer (${issuer.hostname}) is not on the vendor's own domain (${source.hostname})`,
+		)
 	}
 	return endpoint.toString()
 }
 
 /**
- * client_secret_post when the vendor offers it, else 'none' (a public client with PKCE and no
- * secret, which the sign-in handler supports with tokenAuthMethod 'none'). Refuses anything else.
+ * client_secret_post when the vendor offers it, else client_secret_basic (set tokenAuthMethod in
+ * the vendor file to match), else 'none' (a public client with PKCE and no secret, which the
+ * sign-in handler supports with tokenAuthMethod 'none'). Refuses anything else.
  */
 export function chooseAuthMethod(metadata) {
 	const offered = metadata?.token_endpoint_auth_methods_supported
 	if (!Array.isArray(offered) || offered.includes('client_secret_post')) return 'client_secret_post'
+	if (offered.includes('client_secret_basic')) return 'client_secret_basic'
 	if (offered.includes('none')) return 'none'
 	throw new Error(
-		`the vendor offers neither client_secret_post nor none (offers: ${offered.join(', ')}); the sign-in handler supports only those`,
+		`the vendor offers none of client_secret_post, client_secret_basic or none (offers: ${offered.join(', ')}); the sign-in handler supports only those`,
 	)
 }
 
@@ -143,7 +147,7 @@ export async function main(argv, io = {}) {
 		const metadata = await getJson(metadataUrl, {}, 'the sign-in details address', fetchImpl)
 		const registrationUrl = checkMetadata(metadataUrl, metadata)
 		const authMethod = chooseAuthMethod(metadata)
-		err(`Registering Maskin for ${vendor} at ${new URL(registrationUrl).host}\n`)
+		err(`Registering Maskin for ${vendor} at ${new URL(registrationUrl).host} (${authMethod})\n`)
 		for (const uri of redirectUris) err(`  callback ${uri}\n`)
 		const registration = await getJson(
 			registrationUrl,
