@@ -9,7 +9,7 @@ import { type ReactNode, useRef } from 'react'
  * new kind of control here rather than in a copy.
  */
 export const FLOATING_CONTROLS =
-	'[&_:is(a,button,input,select,textarea,form,label,summary,[role=button],[role=tab],[role=combobox],[role=checkbox],[role=switch],[role=link],[contenteditable=true])]:pointer-events-auto'
+	'[&_:is(h1,a,button,input,select,textarea,form,label,summary,[role=button],[role=tab],[role=combobox],[role=checkbox],[role=switch],[role=link],[contenteditable=true])]:pointer-events-auto'
 
 export const FLOATING_EDGE = `pointer-events-none absolute inset-x-0 z-10 ${FLOATING_CONTROLS}`
 
