@@ -4,6 +4,7 @@ import { workspaces } from '@maskin/db/schema'
 import {
 	type Guardrails,
 	SEND_PERMISSION_KINDS,
+	type SendPermissionKind,
 	dailyBudgetSchema,
 	guardrailsSchema,
 } from '@maskin/shared'
@@ -27,7 +28,7 @@ type Env = {
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
-const sendList = (settings: Record<string, EffectiveSendSetting>) =>
+const sendList = (settings: Record<SendPermissionKind, EffectiveSendSetting>) =>
 	SEND_PERMISSION_KINDS.map((kind) => ({ kind, ...settings[kind] }))
 
 const route = createRoute({

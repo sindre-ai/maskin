@@ -2,13 +2,14 @@ import { randomUUID } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { PERSONAL_KEY_CAP, authMiddleware, hashApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
-import { apiKeys } from '@maskin/db/schema'
+import { apiKeys, idempotencyRecords } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { insertActor } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
 import { db } from './global-setup'
 
 const { default: apiKeysRoutes } = await import('../../routes/api-keys')
+const { createIdempotencyMiddleware } = await import('../../middleware/idempotency')
 
 /**
  * A person's own keys, on real Postgres with the auth cache ON (60s), the way production runs it.
@@ -83,6 +84,31 @@ describe('my API keys — real Postgres', () => {
 
 		const listed = await app.request(jsonGet('/api/account/api-keys', auth(person.apiKey)))
 		expect(await listed.text()).not.toContain(secret)
+	})
+
+	it('never writes the secret to the idempotency ledger when the call carries an Idempotency-Key', async () => {
+		const app = new OpenAPIHono<Env>()
+		app.use('*', async (c, next) => {
+			c.set('db', db)
+			await next()
+		})
+		app.use('*', authMiddleware(db, { cacheTtlMs: 60_000 }))
+		app.use('*', createIdempotencyMiddleware(db))
+		app.route('/api/account/api-keys', apiKeysRoutes)
+		const person = await insertActor(db, { type: 'human' })
+
+		const res = await create(app, person.apiKey, 'Retry safe', {
+			'Idempotency-Key': randomUUID(),
+		})
+		expect(res.status).toBe(201)
+		const { secret } = (await res.json()) as { secret: string }
+
+		const rows = await db
+			.select()
+			.from(idempotencyRecords)
+			.where(eq(idempotencyRecords.actorId, person.id))
+		expect(JSON.stringify(rows)).not.toContain(secret)
+		expect(rows).toHaveLength(0)
 	})
 
 	it('lists only my own live keys, with last used and what holds each', async () => {
