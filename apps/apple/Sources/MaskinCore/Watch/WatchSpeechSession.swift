@@ -14,7 +14,7 @@ public enum WatchSpeech {
 	/// Gets the session ready to speak. Long-form audio only with headphones: on a bare watch it
 	/// waits for a route that never comes, so nothing was ever spoken. If long-form fails anyway, it
 	/// falls back to the standard session. Returns whether a session is on.
-	@discardableResult
+	@MainActor @discardableResult
 	public static func prepare(_ session: any SpeechAudioSession) async -> Bool {
 		let longForm = session.outputIsHeadphones
 		do {
