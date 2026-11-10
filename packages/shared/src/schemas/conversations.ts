@@ -523,6 +523,12 @@ export const messageMetadataSchema = z.object({
 	 * card reads as answered whenever the chat is opened again.
 	 */
 	card_answer: messageCardAnswerSchema.optional(),
+	/**
+	 * Client-supplied: the message this one quotes (a message id). Stored and returned as sent, so
+	 * an app can jump to the exact original instead of matching on text and author. The id is
+	 * only echoed, never looked up, so it cannot reach into another conversation.
+	 */
+	quoted_message_id: z.number().int().positive().optional(),
 	/** Backend-owned: the helper session whose result this message hands to its sender. */
 	helper_return: z.string().uuid().optional(),
 	/**

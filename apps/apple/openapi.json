@@ -45089,6 +45089,10 @@
 													"outcome"
 												]
 											},
+											"quoted_message_id": {
+												"type": "integer",
+												"exclusiveMinimum": 0
+											},
 											"helper_return": {
 												"type": "string",
 												"format": "uuid"
@@ -48507,6 +48511,10 @@
 													"message_id",
 													"outcome"
 												]
+											},
+											"quoted_message_id": {
+												"type": "integer",
+												"exclusiveMinimum": 0
 											},
 											"helper_return": {
 												"type": "string",
