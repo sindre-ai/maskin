@@ -969,6 +969,14 @@ export const tools = {
 				),
 		}),
 	},
+	delete_agent: {
+		description:
+			'Delete another agent: its sessions, triggers, files and memory go with it, and it cannot be undone. A person must approve first. Post `create_comment` on a relevant object with a `decision` card, mention the person, and put `delete_agent: { actor_id }` on the destructive option that approves it. When they choose it you are woken by their reply; then call this tool with the same `id`. Without that approval, or after 24 hours, or for a different agent than the one the card named, the call is refused with 403. You cannot delete yourself, a person or a system agent.',
+		inputSchema: z.object({
+			id: z.string().uuid().describe('The agent to delete: its id from list_actors.'),
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
 	create_workspace: {
 		description: 'Create a new workspace. The authenticated actor becomes the owner.',
 		inputSchema: z.object({

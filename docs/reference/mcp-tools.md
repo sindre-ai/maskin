@@ -150,6 +150,16 @@ No registered tool description is over 1,500 characters; **packages/mcp/src/__te
 - Pass **needed_integrations** for the tools the agent cannot do the job without.
 - A new agent is always a member (never admin or owner). Setting **tools** or **llm_config** needs a human admin or owner caller; a member or agent caller gets a 403 and nothing is created.
 
+### delete_agent: a person approves first
+
+An agent may delete another agent only after a person says yes on a decision card.
+
+1. The agent posts **create_comment** on a relevant object with a **decision**, mentions the person, and puts **delete_agent: { actor_id }** on the destructive option that approves it. The API refuses a card that names itself, a person, a system agent, an agent of another workspace, or more than one agent.
+2. The person taps that option. Their reply records a **deletion_approved** event on the agent, naming the asking agent. Nothing is deleted by the tap. Replies from an agent, or sent through MCP, never approve.
+3. The reply wakes the asking agent, which calls **delete_agent** with the same **id**. **DELETE /api/actors/:id** from an agent is allowed only while an approval from the last 24 hours names that agent as the asker and that target. Otherwise it is a 403 that says how to ask. An agent cannot delete itself.
+
+A person deleting an agent from the app is unchanged and needs no approval.
+
 ### gmail_send_email: the two approval routes
 
 1. Preferred: save the email as an object (**metadata.kind** email, **to**, **subject**, optional **cc**, text as **content**), mention the person with create_comment, and call the tool with only **object_id** once they approve. Any edit withdraws the approval. See [drafts.md](./drafts.md).

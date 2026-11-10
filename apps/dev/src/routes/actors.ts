@@ -37,6 +37,7 @@ import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'driz
 import { maskLlmConfigSecrets, restoreMaskedLlmConfig } from '../lib/actor-llm-config-redaction'
 import { toActorWithKeyResponse } from '../lib/actor-response'
 import { redactActorToolsForCaller, restoreMaskedToolValues } from '../lib/actor-tools-redaction'
+import { hasAgentDeletionApproval } from '../lib/agent-deletion-approval'
 import { checkAgentModelForWorkspace } from '../lib/agent-model-check'
 import { withHumanPauseMarker, withoutHumanPauseMarker } from '../lib/agent-pause'
 import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
@@ -1889,7 +1890,8 @@ const deleteActorRoute = createRoute({
 		},
 		403: {
 			content: { 'application/json': { schema: errorSchema } },
-			description: 'Cannot delete human actors',
+			description:
+				'Cannot delete human actors or system agents, and an agent caller needs a person’s approval (a delete_agent option tapped on a decision card)',
 		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
@@ -1929,6 +1931,30 @@ app.openapi(deleteActorRoute, (async (c) => {
 
 	if (existing.type !== 'agent') {
 		return c.json(createApiError('FORBIDDEN', 'Only agent actors can be deleted'), 403)
+	}
+
+	// An agent may delete another agent only after a person said yes on a decision card
+	// (a `delete_agent` option), for this agent and this target. People need no approval.
+	if (c.get('actorType') === 'agent') {
+		if (id === actorId) {
+			return c.json(createApiError('FORBIDDEN', 'An agent cannot delete itself'), 403)
+		}
+		const approved = await hasAgentDeletionApproval(db, {
+			workspaceId,
+			agentId: id,
+			requestedBy: actorId,
+		})
+		if (!approved) {
+			return c.json(
+				createApiError(
+					'FORBIDDEN',
+					'A person has not approved deleting this agent.',
+					undefined,
+					'Post a create_comment decision whose option carries delete_agent: { actor_id }, mention a person, and call delete_agent again after they choose it.',
+				),
+				403,
+			)
+		}
 	}
 
 	// Stop before delete. The cascade below removes this actor's session rows,
