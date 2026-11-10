@@ -16,6 +16,9 @@ public final class LoopDetailStore {
 	public private(set) var overview: LoopOverview = .empty
 	/// The newest runs of the flow's steps; empty until read, and when the read fails.
 	public private(set) var runs: [LoopRun] = []
+	/// The loop's custom views, in tab order; empty until read, and when the loop has none. A failed
+	/// read keeps the views already shown.
+	public private(set) var views: [LoopView] = []
 	/// The phase the viewer tapped; nil follows the busiest one.
 	public var selectedStatus: String?
 	public private(set) var phase: Phase = .idle
@@ -192,10 +195,12 @@ public final class LoopDetailStore {
 			async let feed = Self.bounded(after: limit) { try await reads.activity(loopID: id) }
 			async let extra = Self.bounded(after: limit) { try await reads.overview(loopID: id) }
 			async let runRows = Self.bounded(after: limit) { try await reads.runs(triggerIDs: triggerIDs) }
+			async let viewRows = Self.bounded(after: limit) { try await reads.views(loopID: id) }
 			let (all, newSteps, newFeed) = await (summaries, stepRows, feed)
 			if let fresh = try? await extra.get() { overview = fresh }
 			// A failed read keeps the runs already on screen; the stuck check just has less to go on.
 			if let fresh = try? await runRows.get() { runs = fresh }
+			if let fresh = try? await viewRows.get() { views = fresh }
 
 			// Each block keeps what it already shows when its own read fails.
 			var blocks: Set<Block> = []

@@ -17,6 +17,8 @@ actor FakeLoopsAPI: LoopsAPI {
 	var stepRows: [LoopStep] = []
 	var feed: [LoopActivityEntry] = []
 	var overviewRow: LoopOverview = .empty
+	var viewRows: [LoopView] = []
+	var failViews = false
 	var installRows: [LoopInstall] = []
 	var posts: [String: LoopPost] = [:]
 	var failPosts: Set<String> = []
@@ -42,6 +44,8 @@ actor FakeLoopsAPI: LoopsAPI {
 	func set(_ rows: [LoopSummary]) { self.rows = rows }
 	func setSteps(_ steps: [LoopStep]) { stepRows = steps }
 	func setOverview(_ value: LoopOverview) { overviewRow = value }
+	func setViews(_ value: [LoopView]) { viewRows = value }
+	func setFailViews(_ value: Bool) { failViews = value }
 	func setFeed(_ entries: [LoopActivityEntry]) { feed = entries }
 	func setInstalls(_ rows: [LoopInstall]) { installRows = rows }
 	func setPost(_ post: LoopPost?, for id: String) { posts[id] = post }
@@ -68,6 +72,10 @@ actor FakeLoopsAPI: LoopsAPI {
 		return feed
 	}
 	func overview(loopID: String) async throws -> LoopOverview { overviewRow }
+	func views(loopID: String) async throws -> [LoopView] {
+		if failViews { throw AutomationError("offline") }
+		return viewRows
+	}
 	func latestPost(loopID: String) async throws -> LoopPost? {
 		postCalls.append(loopID)
 		if failPosts.contains(loopID) { throw AutomationError("offline") }
