@@ -328,8 +328,11 @@ const dailyBudgetCardScheduler = new DailyBudgetCardScheduler(db)
 dailyBudgetCardScheduler.start()
 
 // §9.4 — self-heal: back-fills the session_* events row for terminal sessions
-// that never got one. Ticks every 60s; idempotent, so safe on every restart.
-const sessionSelfHealJob = new SessionSelfHealJob(db)
+// that never got one, and settles remote pauses stuck in `snapshotting`. Ticks
+// every 60s; idempotent, so safe on every restart.
+const sessionSelfHealJob = new SessionSelfHealJob(db, undefined, (sessionId) =>
+	sessionManager.recoverStalledRemotePause(sessionId),
+)
 sessionSelfHealJob.start()
 logger.info('Session self-heal job started')
 

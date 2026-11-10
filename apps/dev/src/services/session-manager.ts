@@ -6816,7 +6816,7 @@ ${cont.continues_prompt}
 		for (let attempt = 1; attempt <= SessionManager.CAS_UPDATE_RETRIES; attempt++) {
 			try {
 				const [existing] = await this.db
-					.select({ status: sessions.status })
+					.select({ status: sessions.status, containerId: sessions.containerId })
 					.from(sessions)
 					.where(eq(sessions.id, sessionId))
 					.limit(1)
@@ -6825,14 +6825,30 @@ ${cont.continues_prompt}
 					rowMissing = true
 					break
 				}
-				// The report that follows a pause. The agent-server sends it after the
-				// workspace is in storage, which is what makes the pause safe to settle.
-				// Its exit code is that of a sandbox stopped on purpose, so it must not
-				// be settled as a completion.
 				// stopSession records the request before its RPC and only passes
 				// stoppedByUser after it returns, so a report in between shows as
 				// stopRequested alone.
 				const stopRequestedByUser = stoppedByUser || this.stopRequested.has(sessionId)
+				// A report that finds the row waiting for dispatch belongs to the run
+				// before it: the dispatcher writes containerId only when the sandbox is
+				// up (markDispatched), so a waiting row has no sandbox of its own to
+				// report on. A pause settles on the archive without waiting for the
+				// report, so a resume can already have queued the next run when that
+				// report (retried after an API blip) finally lands, and settling it
+				// would end the new run before it starts. A user's stop of a session
+				// still being dispatched lands here too, and must go through.
+				if (
+					['pending', 'queued', 'starting'].includes(existing.status) &&
+					existing.containerId === null &&
+					!stopRequestedByUser
+				) {
+					alreadyResolved = true
+					break
+				}
+				// The report that follows a pause. The agent-server sends it after the
+				// workspace is in storage, which is what makes the pause safe to settle.
+				// Its exit code is that of a sandbox stopped on purpose, so it must not
+				// be settled as a completion.
 				if (existing.status === 'snapshotting' && !stopRequestedByUser) {
 					pausing = true
 					break

@@ -3,6 +3,7 @@ import type { StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import type { SessionDispatchQueue } from '../../services/session-dispatch-queue'
 import { SessionManager } from '../../services/session-manager'
+import { SessionReconciler } from '../../services/session-reconciler'
 import { insertSession, insertWorkspace } from '../factories'
 import { db, getTestActorId, sql } from './global-setup'
 
@@ -403,5 +404,92 @@ describe('Remote session pause and resume (Integration)', () => {
 		}
 
 		expect(enqueued).toHaveLength(1)
+	})
+
+	it('a late report from the paused run does not settle the resumed run that is waiting for dispatch', async () => {
+		const server = await insertAgentServer()
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'paused',
+			agentServerId: server.id,
+			containerId: null,
+			snapshotPath: archiveKey('placeholder'),
+		})
+		const { storage } = archiveStorage()
+		const manager = new SessionManager(db, storage)
+		manager.setDispatchQueue({
+			enqueue: async () => {},
+		} as unknown as SessionDispatchQueue)
+
+		try {
+			await manager.resumeSession(session.id)
+			// The old run's report, retried after an API blip, lands after the resume.
+			const confirmed = await manager.markRemoteSessionComplete(session.id, 143)
+			expect(confirmed).toBe(true)
+		} finally {
+			await manager.stop()
+		}
+
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+		expect(row?.status).toBe('starting')
+		expect(row?.completedAt).toBeNull()
+		const eventRows = await db.select().from(events).where(eq(events.entityId, session.id))
+		expect(eventRows.some((e) => e.action === 'session_failed')).toBe(false)
+		expect(eventRows.some((e) => e.action === 'session_completed')).toBe(false)
+	})
+
+	describe('sweep of pauses stuck in snapshotting', () => {
+		const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60 * 1000)
+
+		async function insertSnapshotting(serverId: string, updatedAt: Date) {
+			return insertSession(db, workspaceId, actorId, actorId, {
+				status: 'snapshotting',
+				agentServerId: serverId,
+				containerId: 'sandbox-under-test',
+				updatedAt,
+			})
+		}
+
+		it('pauses an old row whose archive reached storage, and leaves a recent one alone', async () => {
+			const server = await insertAgentServer()
+			const old = await insertSnapshotting(server.id, minutesAgo(45))
+			const recent = await insertSnapshotting(server.id, minutesAgo(5))
+			const { storage, present } = archiveStorage()
+			present.add(archiveKey(old.id))
+			present.add(archiveKey(recent.id))
+			const manager = new SessionManager(db, storage)
+
+			try {
+				const reconciler = new SessionReconciler(db, undefined, (id) =>
+					manager.recoverStalledRemotePause(id),
+				)
+				expect(await reconciler.recoverStalledPauses()).toBe(1)
+			} finally {
+				await manager.stop()
+			}
+
+			const [oldRow] = await db.select().from(sessions).where(eq(sessions.id, old.id))
+			const [recentRow] = await db.select().from(sessions).where(eq(sessions.id, recent.id))
+			expect(oldRow?.status).toBe('paused')
+			expect(recentRow?.status).toBe('snapshotting')
+		})
+
+		it('fails an old row whose archive never reached storage', async () => {
+			const server = await insertAgentServer()
+			const old = await insertSnapshotting(server.id, minutesAgo(45))
+			const { storage } = archiveStorage()
+			const manager = new SessionManager(db, storage)
+
+			try {
+				const reconciler = new SessionReconciler(db, undefined, (id) =>
+					manager.recoverStalledRemotePause(id),
+				)
+				await reconciler.recoverStalledPauses()
+			} finally {
+				await manager.stop()
+			}
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, old.id))
+			expect(row?.status).toBe('failed')
+		})
 	})
 })
