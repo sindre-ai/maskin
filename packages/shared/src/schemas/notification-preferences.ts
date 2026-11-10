@@ -106,6 +106,8 @@ export const notificationPreferencesResponseSchema = z.object({
 	 * the last 30 days, otherwise off).
 	 */
 	email_digest_enabled: z.boolean(),
+	/** The Email switch per kind other than the summary; a kind never switched on is false. */
+	email_categories: emailCategoriesSchema,
 	muted_workspace_ids: z.array(z.string().uuid()),
 	/** Null when the actor has never saved preferences (defaults are returned). */
 	updated_at: z.string().nullable(),
@@ -126,6 +128,7 @@ export const updateNotificationPreferencesSchema = z
 		briefing_enabled: z.boolean(),
 		briefing_time: minuteOfDay,
 		email_digest_enabled: z.boolean(),
+		email_categories: emailCategoriesSchema.partial(),
 		muted_workspace_ids: z.array(z.string().uuid()).max(200),
 	})
 	.partial()

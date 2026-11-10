@@ -58979,6 +58979,17 @@
 										"email_digest_enabled": {
 											"type": "boolean"
 										},
+										"email_categories": {
+											"type": "object",
+											"properties": {
+												"flow_activity": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"flow_activity"
+											]
+										},
 										"muted_workspace_ids": {
 											"type": "array",
 											"items": {
@@ -59003,6 +59014,7 @@
 										"briefing_enabled",
 										"briefing_time",
 										"email_digest_enabled",
+										"email_categories",
 										"muted_workspace_ids",
 										"updated_at"
 									]
@@ -59098,6 +59110,14 @@
 									},
 									"email_digest_enabled": {
 										"type": "boolean"
+									},
+									"email_categories": {
+										"type": "object",
+										"properties": {
+											"flow_activity": {
+												"type": "boolean"
+											}
+										}
 									},
 									"muted_workspace_ids": {
 										"type": "array",
@@ -59222,6 +59242,17 @@
 										"email_digest_enabled": {
 											"type": "boolean"
 										},
+										"email_categories": {
+											"type": "object",
+											"properties": {
+												"flow_activity": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"flow_activity"
+											]
+										},
 										"muted_workspace_ids": {
 											"type": "array",
 											"items": {
@@ -59246,6 +59277,7 @@
 										"briefing_enabled",
 										"briefing_time",
 										"email_digest_enabled",
+										"email_categories",
 										"muted_workspace_ids",
 										"updated_at"
 									]
