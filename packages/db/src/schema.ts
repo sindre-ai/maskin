@@ -321,6 +321,11 @@ export const objects = pgTable(
 		// built CONCURRENTLY.
 		index('objects_ws_title_trgm_idx').using('gin', t.workspaceId, t.title.op('gin_trgm_ops')),
 		index('objects_ws_content_trgm_idx').using('gin', t.workspaceId, t.content.op('gin_trgm_ops')),
+		// Plain trigram indexes (migrations 0146 and 0147, CONCURRENTLY) for the object list/search
+		// `q` filter in routes/objects.ts. The workspace-keyed pair above is not picked by the planner
+		// for that query; these are. See 0146 for the EXPLAIN evidence.
+		index('objects_title_trgm_idx').using('gin', t.title.op('gin_trgm_ops')),
+		index('objects_content_trgm_idx').using('gin', t.content.op('gin_trgm_ops')),
 	],
 )
 

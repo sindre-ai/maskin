@@ -400,9 +400,14 @@ const SEARCH_STOPWORDS: ReadonlySet<string> = new Set([
  *   lowercase → replace `[^a-z0-9\s_-]+` with space → split on whitespace →
  *   drop tokens shorter than 3 chars or in the shared stopword set → dedupe
  *   preserving first-seen order.
+ * then keep only the first MAX_SEARCH_TOKENS distinct words (the rest are ignored,
+ * not an error): every word adds an ILIKE pair to the WHERE and to the rank
+ * ORDER BY, so a 10-word query cost 9.5 s on production against 0.8 s for two.
  * Empty / whitespace / punctuation-only / all-stopword inputs collapse to `[]`,
  * which the caller uses to fall through to an unfiltered result set.
  */
+export const MAX_SEARCH_TOKENS = 6
+
 export function tokenizeSearchQuery(q: string): string[] {
 	if (!q) return []
 	const normalized = q.toLowerCase().replace(/[^a-z0-9\s_-]+/g, ' ')
@@ -414,6 +419,7 @@ export function tokenizeSearchQuery(q: string): string[] {
 		if (seen.has(token)) continue
 		seen.add(token)
 		tokens.push(token)
+		if (tokens.length >= MAX_SEARCH_TOKENS) break
 	}
 	return tokens
 }
@@ -1289,6 +1295,8 @@ const searchObjectsRoute = createRoute({
 	path: '/search',
 	tags: ['Objects'],
 	summary: 'Search objects by text',
+	description:
+		'Matches objects whose title or content contains any of the words in `q`, ranked by how many words hit (title hits first). Words shorter than 3 characters and common stopwords are ignored, and only the first 6 distinct words are used; any further words are ignored, not an error.',
 	request: {
 		headers: workspaceIdHeader,
 		query: searchObjectsSchema,
