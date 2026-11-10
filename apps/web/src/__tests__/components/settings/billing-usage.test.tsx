@@ -165,12 +165,12 @@ describe('BillingUsageDetails', () => {
 })
 
 describe('percent display', () => {
-	function withBilling(used: number) {
+	function withBilling(used: number, cap = 286) {
 		vi.mocked(billingUsage).mockResolvedValue({
 			plan: 'trial',
 			status: 'active',
 			usd_cents_used: used,
-			hard_cap_usd_cents: 286,
+			hard_cap_usd_cents: cap,
 			credit_balance_cents: 0,
 			period_resets_in_ms: 3 * 86_400_000,
 		} as never)
@@ -205,8 +205,9 @@ describe('percent display', () => {
 		).toBeInTheDocument()
 	})
 
-	it('lists each agent by percent and sessions, with no cost and no tokens', async () => {
-		withBilling(143)
+	it('lists each agent by its percent of the plan and sessions, with no cost and no tokens', async () => {
+		// A $25 limit with $12.50 used: the agents' $10 and $2.50 are 40% and 10% of the plan.
+		withBilling(1250, 2500)
 		render(
 			<PlanPercentProvider value>
 				<BillingUsageDetails usage={buildUsage()} workspaceId="ws-1" />
@@ -214,11 +215,61 @@ describe('percent display', () => {
 			{ wrapper: TestWrapper },
 		)
 
-		expect(screen.getByText('80%')).toBeInTheDocument()
-		expect(screen.getByText('20%')).toBeInTheDocument()
+		expect(await screen.findByText('40%')).toBeInTheDocument()
+		expect(screen.getByText('10%')).toBeInTheDocument()
 		expect(screen.getByText('4 sessions')).toBeInTheDocument()
 		expect(await screen.findByText('50% of plan used')).toBeInTheDocument()
 		expect(screen.queryByText(/\$|tokens/)).not.toBeInTheDocument()
+	})
+
+	it('writes a small agent share as <1% and shows a dash while the plan limit is unknown', async () => {
+		withBilling(1250, 2500)
+		const { unmount } = render(
+			<PlanPercentProvider value>
+				<BillingUsageDetails
+					workspaceId="ws-1"
+					usage={buildUsage({
+						rows: [
+							{
+								id: 'a-1',
+								name: 'Tiny Agent',
+								type: 'agent',
+								costUsd: 0.01,
+								sessions: 1,
+								tokens: 5,
+							},
+						],
+					})}
+				/>
+			</PlanPercentProvider>,
+			{ wrapper: TestWrapper },
+		)
+		expect(await screen.findByText('<1%')).toBeInTheDocument()
+		unmount()
+
+		vi.mocked(billingUsage).mockResolvedValue({
+			plan: 'trial',
+			status: 'active',
+			usd_cents_used: 0,
+			hard_cap_usd_cents: null,
+			credit_balance_cents: 0,
+			period_resets_in_ms: 0,
+		} as never)
+		render(
+			<PlanPercentProvider value>
+				<BillingUsageDetails usage={buildUsage()} workspaceId="ws-1" />
+			</PlanPercentProvider>,
+			{ wrapper: TestWrapper },
+		)
+		expect(await screen.findAllByText('—')).toHaveLength(2)
+	})
+
+	it('keeps the dollar view when the percent display is off', () => {
+		render(<BillingUsageDetails usage={buildUsage()} workspaceId="ws-1" />, {
+			wrapper: TestWrapper,
+		})
+		expect(screen.getByText('$10.00')).toBeInTheDocument()
+		expect(screen.getByText(/12K tokens/)).toBeInTheDocument()
 	})
 })
 

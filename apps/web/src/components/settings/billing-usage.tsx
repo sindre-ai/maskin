@@ -9,7 +9,7 @@ import {
 	useWorkspaceModelUsage,
 } from '@/hooks/use-workspace-model-usage'
 import { cn } from '@/lib/cn'
-import { periodEndLabel } from '@/lib/plan-usage'
+import { costPercentOfPlan, formatPlanPercent, periodEndLabel } from '@/lib/plan-usage'
 
 /**
  * Model usage for the billing page (mockup 2803–2813 and 2841–2858).
@@ -177,13 +177,22 @@ export function BillingUsageDetails({
 				</div>
 				{usage.hasUsage ? (
 					<div className="rounded-xl border border-border px-4">
-						{usage.rows.map((row) => (
-							<UsageRow key={row.id} row={row} total={usage.totalCostUsd} percentOnly={percentOn} />
-						))}
+						{percentOn ? (
+							<PlanPercentRows usage={usage} workspaceId={workspaceId} />
+						) : (
+							usage.rows.map((row) => (
+								<UsageRow
+									key={row.id}
+									row={row}
+									total={usage.totalCostUsd}
+									planPercent={undefined}
+								/>
+							))
+						)}
 						<div className="flex items-center gap-3 py-3">
 							<span className="min-w-0 flex-1 text-xs text-muted-foreground">
 								{percentOn
-									? 'Share of this month’s usage, by agent'
+									? 'Share of your plan used this month, by agent'
 									: 'Model usage as agents run · the cost each session reported'}
 							</span>
 							<span className="shrink-0 text-[12.5px] font-bold tabular-nums text-foreground">
@@ -207,13 +216,35 @@ export function BillingUsageDetails({
 	)
 }
 
+/** One row per agent with its cost over the plan's limit. Rows stay in cost order (the hook sorts them). */
+function PlanPercentRows({
+	usage,
+	workspaceId,
+}: { usage: WorkspaceModelUsage; workspaceId: string }) {
+	const { usage: billing } = usePlanUsage(workspaceId)
+	const capCents = billing?.hard_cap_usd_cents ?? null
+	return usage.rows.map((row) => (
+		<UsageRow
+			key={row.id}
+			row={row}
+			total={usage.totalCostUsd}
+			planPercent={costPercentOfPlan(row.costUsd, capCents)}
+		/>
+	))
+}
+
+/**
+ * `planPercent` undefined = the dollar view (share of the workspace total, cost and tokens).
+ * A number or null = the percent view: the agent's percent of the plan (null while the limit is unknown).
+ */
 function UsageRow({
 	row,
 	total,
-	percentOnly,
-}: { row: WorkspaceUsageRow; total: number; percentOnly: boolean }) {
+	planPercent,
+}: { row: WorkspaceUsageRow; total: number; planPercent: number | null | undefined }) {
+	const percentOnly = planPercent !== undefined
 	const share = total > 0 ? Math.min(1, row.costUsd / total) : 0
-	const pct = Math.round(share * 100)
+	const pct = percentOnly ? Math.min(100, Math.round(planPercent ?? 0)) : Math.round(share * 100)
 
 	return (
 		<div className="flex items-start gap-3 border-b border-border py-3 last:border-b-0">
@@ -224,7 +255,7 @@ function UsageRow({
 						{row.name}
 					</span>
 					<span className="shrink-0 text-[13px] font-semibold tabular-nums text-foreground">
-						{percentOnly ? `${pct}%` : formatUsd(row.costUsd)}
+						{percentOnly ? formatPlanPercent(planPercent ?? null) : formatUsd(row.costUsd)}
 					</span>
 				</div>
 				<span className="block text-[11px] text-muted-foreground">
@@ -233,7 +264,11 @@ function UsageRow({
 				</span>
 				<span
 					className="mt-1.5 block h-1 overflow-hidden rounded-full bg-muted"
-					title={`${pct}% of this month's model usage`}
+					title={
+						percentOnly
+							? `${formatPlanPercent(planPercent ?? null)} of your plan this month`
+							: `${pct}% of this month's model usage`
+					}
 				>
 					<span
 						aria-hidden
