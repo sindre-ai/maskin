@@ -80,10 +80,10 @@ const expected = {}
 				continue
 			}
 			price[plan] = priceMap[plan]
-			// Included usage is a fifth of the price.
-			if (included[plan] !== price[plan] / 5) {
+			// Included usage is a fifth of the price, in whole kroner (99 kr gives 20).
+			if (included[plan] !== Math.round(price[plan] / 5)) {
 				errors.push(
-					`${path}: ${plan} includes ${included[plan]} kr but a fifth of ${price[plan]} kr is ${price[plan] / 5}`,
+					`${path}: ${plan} includes ${included[plan]} kr but a fifth of ${price[plan]} kr is ${Math.round(price[plan] / 5)}`,
 				)
 			}
 		}
@@ -132,7 +132,9 @@ const expected = {}
 		}
 	}
 	if (/^MASKIN_(STARTER|PRO|TEAM|ULTRA)_HARD_CAP_USD_CENTS=/m.test(source)) {
-		errors.push(`${path}: MASKIN_<PLAN>_HARD_CAP_USD_CENTS must not be set — paid caps are code-only`)
+		errors.push(
+			`${path}: MASKIN_<PLAN>_HARD_CAP_USD_CENTS must not be set — paid caps are code-only`,
+		)
 	}
 }
 

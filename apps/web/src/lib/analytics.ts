@@ -402,7 +402,7 @@ export function trackCreditLowShown(p: {
 // The person clicked an upgrade or renew button. `source` is where the button is.
 export function trackUpgradeClicked(p: {
 	source: 'billing_settings' | 'expired_dialog'
-	target_plan: 'pro' | 'team'
+	target_plan: 'starter' | 'pro' | 'team' | 'ultra'
 	current_plan: string
 }): void {
 	trackEvent('upgrade_clicked', {

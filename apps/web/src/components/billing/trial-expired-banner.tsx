@@ -1,3 +1,4 @@
+import { PLAN_NAME, PlanPicker } from '@/components/billing/plan-picker'
 import { Button } from '@/components/ui/button'
 import {
 	Dialog,
@@ -10,20 +11,25 @@ import {
 import { useBillingCancel, useBillingUsage, useStripeCheckout } from '@/hooks/use-billing'
 import { trackCreditLowShown, trackUpgradeClicked } from '@/lib/analytics'
 import type { BillingPlan } from '@/lib/api'
+import { PAID_PLANS, type PaidPlan } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
 import { AlertTriangle } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
-const EXPIRED_PLANS = new Set<BillingPlan>(['trial', 'pro', 'team'])
+const EXPIRED_PLANS = new Set<BillingPlan>(['trial', ...PAID_PLANS])
+
+function planName(plan: BillingPlan): string {
+	return PLAN_NAME[plan as PaidPlan] ?? plan
+}
 
 function bannerText(plan: BillingPlan): string {
 	if (plan === 'trial') return "Your trial has expired. Upgrade to keep using Maskin's hosted LLM."
-	return `Your ${plan === 'team' ? 'Team' : 'Pro'} plan period has ended. Renew to continue.`
+	return `Your ${planName(plan)} plan period has ended. Renew to continue.`
 }
 
 function dialogTitle(plan: BillingPlan): string {
 	if (plan === 'trial') return 'Your trial has expired'
-	return `Your ${plan === 'team' ? 'Team' : 'Pro'} plan period has ended`
+	return `Your ${planName(plan)} plan period has ended`
 }
 
 export function TrialExpiredBanner({ workspaceId }: { workspaceId: string }) {
@@ -38,7 +44,7 @@ export function TrialExpiredBanner({ workspaceId }: { workspaceId: string }) {
 			return
 		}
 		if (usage.period_resets_in_ms === 0) {
-			// For paid plans (pro/team), suppress the banner while the subscription
+			// For paid plans, suppress the banner while the subscription
 			// is still marked active. After checkout, Stripe webhooks can take several
 			// seconds to update period_end — showing "period ended" during this window
 			// is a false positive. Trial users always have status='active' locally, so
@@ -98,7 +104,7 @@ function PlanExpiredDialog({
 	const checkout = useStripeCheckout(workspaceId)
 	const cancel = useBillingCancel(workspaceId)
 
-	const handleUpgrade = (target: 'pro' | 'team') => {
+	const handleUpgrade = (target: PaidPlan) => {
 		trackUpgradeClicked({ source: 'expired_dialog', target_plan: target, current_plan: plan })
 		const base = window.location.href.split('?')[0]
 		checkout.mutate(
@@ -133,59 +139,21 @@ function PlanExpiredDialog({
 					</DialogDescription>
 				</DialogHeader>
 
-				<div className="flex flex-col gap-2">
-					{plan === 'team' ? (
-						<>
-							<Button
-								className="w-full justify-start"
-								onClick={() => handleUpgrade('team')}
-								disabled={isPending}
-							>
-								Renew Team — $200/mo
-							</Button>
-							<Button
-								className="w-full justify-start"
-								variant="outline"
-								onClick={() => handleUpgrade('pro')}
-								disabled={isPending}
-							>
-								Downgrade to Pro — $49/mo
-							</Button>
-						</>
-					) : (
-						<>
-							<Button
-								className="w-full justify-start"
-								onClick={() => handleUpgrade('pro')}
-								disabled={isPending}
-							>
-								{/* A trial never held Pro, so "Renew" would be false — it upgrades. */}
-								{plan === 'trial' ? 'Upgrade to Pro — $49/mo' : 'Renew Pro — $49/mo'}
-							</Button>
-							<Button
-								className="w-full justify-start"
-								variant="outline"
-								onClick={() => handleUpgrade('team')}
-								disabled={isPending}
-							>
-								Upgrade to Team — $200/mo
-							</Button>
-						</>
-					)}
-					{/* Trial IS the free tier — there is no subscription to cancel and
-					    nothing to downgrade to, so the action is hidden rather than
-					    offered as a no-op. */}
-					{plan !== 'trial' && (
-						<Button
-							className="w-full justify-start"
-							variant="ghost"
-							onClick={handleDowngrade}
-							disabled={isPending}
-						>
-							{cancel.isPending ? 'Downgrading…' : 'Downgrade to Free'}
-						</Button>
-					)}
-				</div>
+				<PlanPicker current={plan} pending={isPending} onContinue={handleUpgrade} />
+
+				{/* Trial IS the free tier — there is no subscription to cancel and
+				    nothing to downgrade to, so the action is hidden rather than
+				    offered as a no-op. */}
+				{plan !== 'trial' && (
+					<Button
+						className="w-full justify-start"
+						variant="ghost"
+						onClick={handleDowngrade}
+						disabled={isPending}
+					>
+						{cancel.isPending ? 'Downgrading…' : 'Downgrade to Free'}
+					</Button>
+				)}
 
 				{(checkout.isError || cancel.isError) && (
 					<p className="text-xs text-error">
