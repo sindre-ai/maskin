@@ -1,7 +1,6 @@
 import type { Page, TestInfo } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 import { TestAPI } from '../helpers/api.helper'
-import { headerMenuItem } from '../helpers/chat-header'
 import { SHIP_GATE_VIEWPORTS, VIEWPORTS } from '../helpers/viewports'
 
 // The picture goes into the HTML report as an attachment (apps/e2e/playwright-report, uploaded by
@@ -111,9 +110,9 @@ test.describe('Chat — a linked agent draws like an object and a loop', () => {
 	}
 })
 
-test.describe('Chat — the title and agent names open the agent page', () => {
+test.describe('Chat — agent names open the agent page, the title renames', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
-		test(`the title of a one-agent chat and the agent's name link to its page @ ${vp.label}`, async ({
+		test(`the agent's name links to its page and the title renames in place @ ${vp.label}`, async ({
 			page,
 			account,
 		}) => {
@@ -138,25 +137,27 @@ test.describe('Chat — the title and agent names open the agent page', () => {
 			await expect(author).toBeVisible({ timeout: 10_000 })
 			await expect(author).toHaveAttribute('href', `/${ws}/agents/${agent.id}`)
 
-			// The title is a link too; renaming is in the header menu.
-			const title = page.getByRole('link', { name: `Open ${agentName} — E2E title link` })
+			// Clicking the title renames it in place; the header menu offers the same.
+			const title = page.getByRole('button', { name: 'Rename conversation: E2E title link' })
 			await expect(title).toBeVisible()
-			await expect(title).toHaveAttribute('href', `/${ws}/agents/${agent.id}`)
-			const rename = await headerMenuItem(page, 'Rename conversation')
-			await expect(rename).toBeVisible()
-			await rename.click()
+			await title.click()
 			const input = page.getByRole('textbox', { name: 'Conversation title' })
-			await input.fill('Renamed by pencil')
+			await input.fill('Renamed by title')
 			await input.press('Enter')
-			const renamed = page.getByRole('link', { name: `Open ${agentName} — Renamed by pencil` })
-			await expect(renamed).toBeVisible()
+			await expect(
+				page.getByRole('button', { name: 'Rename conversation: Renamed by title' }),
+			).toBeVisible()
 
 			const overflow = await page.evaluate(
 				() => document.documentElement.scrollWidth - window.innerWidth,
 			)
 			expect(overflow).toBeLessThanOrEqual(1)
 
-			await renamed.click()
+			// The agent's page opens from its row in the participants list.
+			await page.getByRole('button', { name: /participants — manage/ }).click()
+			const row = page.getByRole('link', { name: new RegExp(agentName) })
+			await expect(row).toHaveAttribute('href', `/${ws}/agents/${agent.id}`)
+			await row.click()
 			await expect(page).toHaveURL(new RegExp(`/agents/${agent.id}`))
 		})
 	}
