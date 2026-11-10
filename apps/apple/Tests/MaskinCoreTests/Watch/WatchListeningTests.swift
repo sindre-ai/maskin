@@ -6,13 +6,27 @@ import Testing
 @MainActor
 private final class FakeMicrophone: PhraseMicrophone {
 	var startError: Error?
+	/// What the permission prompt answers, after `accessDelay`.
+	var access = true
+	var accessDelay: Duration = .zero
+	private(set) var starts = 0
 	private(set) var stops = 0
 	private var continuation: AsyncStream<Data>.Continuation?
+	/// Said before the microphone opened (it opens after the permission answer).
+	private var early: [Data] = []
+
+	func requestAccess() async -> Bool {
+		if accessDelay > .zero { try? await Task.sleep(for: accessDelay) }
+		return access
+	}
 
 	func start() throws -> AsyncStream<Data> {
 		if let startError { throw startError }
+		starts += 1
 		let (stream, continuation) = AsyncStream.makeStream(of: Data.self)
 		self.continuation = continuation
+		for phrase in early { continuation.yield(phrase) }
+		early = []
 		return stream
 	}
 
@@ -23,7 +37,9 @@ private final class FakeMicrophone: PhraseMicrophone {
 	}
 
 	/// One closed phrase; the fake transcriber answers by the byte.
-	func say(_ marker: UInt8) { continuation?.yield(Data([marker])) }
+	func say(_ marker: UInt8) {
+		if let continuation { continuation.yield(Data([marker])) } else { early.append(Data([marker])) }
+	}
 }
 
 private struct FakeTranscriber: SpeechTranscribing {
@@ -44,10 +60,11 @@ private final class Sink {
 @MainActor
 private func makeStore(
 	mic: FakeMicrophone, transcriber: (any SpeechTranscribing)?, sink: Sink,
-	settle: Duration = .milliseconds(60)
+	settle: Duration = .milliseconds(60), noSpeechTimeout: Duration = .seconds(600)
 ) -> WatchListeningStore {
 	WatchListeningStore(
 		transcriber: transcriber, settle: settle, maxDuration: .seconds(600), drainTimeout: .seconds(30),
+		noSpeechTimeout: noSpeechTimeout,
 		makeMicrophone: { mic }, deliver: { sink.sent.append($0) })
 }
 
@@ -147,12 +164,73 @@ struct WatchListeningTests {
 		#expect(store.phase == .tapToTalk(.unavailable))
 	}
 
-	@Test func aMicrophoneThatWillNotOpenGoesToTapToTalk() {
+	@Test func aMicrophoneThatWillNotOpenGoesToTapToTalk() async {
 		let mic = FakeMicrophone()
 		mic.startError = BackendDictationError()
 		let store = makeStore(mic: mic, transcriber: FakeTranscriber(words: [:]), sink: Sink())
 		store.begin()
+		await waitUntil { store.phase == .tapToTalk(.microphone) }
 		#expect(store.phase == .tapToTalk(.microphone))
+	}
+
+	@Test func refusedMicrophoneAccessGoesToTapToTalkWithoutOpeningIt() async {
+		let mic = FakeMicrophone()
+		mic.access = false
+		let store = makeStore(mic: mic, transcriber: FakeTranscriber(words: [:]), sink: Sink())
+		store.begin()
+		await waitUntil { store.phase == .tapToTalk(.microphone) }
+		#expect(store.phase == .tapToTalk(.microphone))
+		#expect(mic.starts == 0)
+	}
+
+	@Test func theMicrophoneOpensOnlyAfterAccessIsGranted() async {
+		let mic = FakeMicrophone()
+		mic.accessDelay = .milliseconds(150)
+		let sink = Sink()
+		let store = makeStore(mic: mic, transcriber: FakeTranscriber(words: [1: "Hello"]), sink: sink)
+		store.begin()
+		#expect(mic.starts == 0)
+		await waitUntil { mic.starts == 1 }
+		mic.say(1)
+		await waitUntil { !sink.sent.isEmpty }
+		#expect(sink.sent == ["Hello"])
+	}
+
+	@Test func cancelWhileThePromptIsUpLeavesTheMicrophoneClosed() async {
+		let mic = FakeMicrophone()
+		mic.accessDelay = .milliseconds(100)
+		let store = makeStore(mic: mic, transcriber: FakeTranscriber(words: [:]), sink: Sink())
+		store.begin()
+		store.cancel()
+		try? await Task.sleep(for: .milliseconds(300))
+		#expect(mic.starts == 0)
+		#expect(store.phase == .idle)
+	}
+
+	@Test func nothingHeardGoesToTapToTalkAndClosesTheMicrophone() async {
+		let mic = FakeMicrophone()
+		let store = makeStore(
+			mic: mic, transcriber: FakeTranscriber(words: [:]), sink: Sink(), noSpeechTimeout: .milliseconds(80))
+		store.begin()
+		#expect(store.phase == .listening)
+		await waitUntil { store.phase == .tapToTalk(.noSpeech) }
+		#expect(store.phase == .tapToTalk(.noSpeech))
+		#expect(mic.stops >= 1)
+	}
+
+	@Test func speechBeforeTheTimeoutKeepsListening() async {
+		let mic = FakeMicrophone()
+		let sink = Sink()
+		let store = makeStore(
+			mic: mic, transcriber: FakeTranscriber(words: [1: "Hello"]), sink: sink, settle: .milliseconds(400),
+			noSpeechTimeout: .milliseconds(150))
+		store.begin()
+		await waitUntil { mic.starts == 1 }
+		mic.say(1)
+		try? await Task.sleep(for: .milliseconds(300))
+		#expect(store.phase != .tapToTalk(.noSpeech))
+		await waitUntil { !sink.sent.isEmpty }
+		#expect(sink.sent == ["Hello"])
 	}
 
 	@Test func tapToTalkCanListenAgain() async {
@@ -161,6 +239,7 @@ struct WatchListeningTests {
 		let store = makeStore(mic: mic, transcriber: FakeTranscriber(words: [1: "Again"]), sink: sink)
 		mic.startError = BackendDictationError()
 		store.begin()
+		await waitUntil { store.phase == .tapToTalk(.microphone) }
 		#expect(store.phase == .tapToTalk(.microphone))
 		mic.startError = nil
 		store.begin()

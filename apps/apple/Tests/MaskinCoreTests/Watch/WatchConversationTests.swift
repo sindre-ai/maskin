@@ -58,6 +58,8 @@ struct WatchConversationTests {
 		#expect(WatchConversation.stateLabel(speaking: true, muted: false, speechAllowed: true) == "SPEAKING")
 		#expect(WatchConversation.stateLabel(speaking: false, muted: true, speechAllowed: true) == "MUTED")
 		#expect(WatchConversation.stateLabel(speaking: false, muted: false, speechAllowed: false) == "TEXT ONLY")
+		// Read aloud on the speaker, without headphones, still says it is speaking.
+		#expect(WatchConversation.stateLabel(speaking: true, muted: false, speechAllowed: false) == "SPEAKING")
 		#expect(WatchConversation.stateLabel(speaking: false, muted: false, speechAllowed: true) == "DONE")
 	}
 
