@@ -1,6 +1,7 @@
 import type { ResolvedProvider } from './types'
 
 import { config as airtableConfig } from './providers/airtable/config'
+import { config as amplitudeConfig } from './providers/amplitude/config'
 import { config as atlassianConfig } from './providers/atlassian/config'
 import { config as attioConfig } from './providers/attio/config'
 import { config as canvaConfig } from './providers/canva/config'
@@ -190,6 +191,10 @@ providers.set('airtable', {
 
 providers.set('atlassian', {
 	config: atlassianConfig,
+})
+
+providers.set('amplitude', {
+	config: amplitudeConfig,
 })
 
 providers.set('attio', {
