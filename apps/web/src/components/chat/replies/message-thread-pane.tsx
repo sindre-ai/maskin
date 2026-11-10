@@ -4,6 +4,7 @@ import { MessageBubble } from '@/components/chat/message-bubble'
 import { MessageDivider } from '@/components/chat/message-divider'
 import { ThreadComposer } from '@/components/chat/thread-composer'
 import { EmptyState } from '@/components/shared/empty-state'
+import { FloatingFooter } from '@/components/shared/floating-footer'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
@@ -161,7 +162,7 @@ export function MessageThreadPane({
 			onKeyDown={(e) => {
 				if (e.key === 'Escape' && !e.defaultPrevented) onClose()
 			}}
-			className={cn('flex h-full min-h-0 w-full flex-col bg-surface-sunken', className)}
+			className={cn('relative flex h-full min-h-0 w-full flex-col bg-surface-sunken', className)}
 		>
 			<div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-2">
 				<h2 className="text-sm font-semibold text-foreground">Thread</h2>
@@ -198,7 +199,8 @@ export function MessageThreadPane({
 						onScroll={handleScroll}
 						// The scroller clips a chip's hover preview, so the preview places itself inside it.
 						{...{ [PREVIEW_BOUNDS_ATTR]: '' }}
-						className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pt-4 pb-2"
+						data-floating-scroller
+						className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pt-4 pb-[calc(var(--reply-composer-h,6rem)+8px)] scroll-pb-[calc(var(--reply-composer-h,6rem)+8px)]"
 					>
 						<MessageBubble
 							workspaceId={workspaceId}
@@ -271,7 +273,11 @@ export function MessageThreadPane({
 						))}
 						<div ref={bottomRef} />
 					</div>
-					<div className="flex shrink-0 flex-col gap-2 px-4 pt-2 pb-3.5">
+					<FloatingFooter
+						name="--reply-composer-h"
+						keepAtBottom
+						className="flex flex-col gap-2 px-4 pt-2 pb-3.5"
+					>
 						<div className="flex items-center gap-2">
 							<Checkbox
 								id={`also-in-channel-${rootId}`}
@@ -290,7 +296,7 @@ export function MessageThreadPane({
 							conversationId={conversationId}
 							reply={reply}
 						/>
-					</div>
+					</FloatingFooter>
 				</>
 			)}
 		</div>
