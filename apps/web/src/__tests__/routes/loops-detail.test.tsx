@@ -30,6 +30,8 @@ vi.mock('@/hooks/use-loops', () => ({
 	},
 	useLoops: () => mockUseLoops(),
 	useLoopActivity: () => mockUseLoopActivity(),
+	useLoopMembership: () => mockUseRelationships(),
+	useObjectsByIds: () => ({ data: [] }),
 }))
 
 const mockUseActors = vi.fn()
@@ -59,15 +61,11 @@ vi.mock('@/hooks/use-triggers', () => ({
 }))
 
 const mockUseRelationships = vi.fn()
-vi.mock('@/hooks/use-relationships', () => ({
-	useRelationships: () => mockUseRelationships(),
-}))
 
 const mockDeleteObject = vi.fn()
 const mockUseObject = vi.fn()
 vi.mock('@/hooks/use-objects', () => ({
 	useObject: () => mockUseObject(),
-	useObjects: () => ({ data: [] }),
 	useUpdateObject: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
 	useDeleteObject: () => ({ mutate: mockDeleteObject, isPending: false }),
 }))
@@ -161,7 +159,7 @@ beforeEach(() => {
 	mockUseLoopActivity.mockReturnValue({ data: [] })
 	mockUseTriggers.mockReturnValue({ data: [] })
 	mockUseActors.mockReturnValue({ data: [] })
-	mockUseRelationships.mockReturnValue({ data: [] })
+	mockUseRelationships.mockReturnValue({ data: { itemIds: [], fileIds: [] } })
 	mockUseObject.mockReturnValue({ data: undefined })
 })
 

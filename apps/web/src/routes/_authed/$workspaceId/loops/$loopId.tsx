@@ -18,6 +18,7 @@ import { LoopTags } from '@/components/loops/loop-tags'
 import { LoopUtteranceInput } from '@/components/loops/loop-utterance-input'
 import { LoopViewTab } from '@/components/loops/loop-view-tab'
 import { TargetsAndOwners } from '@/components/loops/targets-and-owners'
+import { ListView } from '@/components/objects/list/list-view'
 import { ObjectDetailBody } from '@/components/objects/object-detail-body'
 import { TimelineTab } from '@/components/objects/timeline-tab'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
@@ -41,10 +42,9 @@ import { useLoopBriefingPages } from '@/hooks/use-briefings'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useLoadFailed } from '@/hooks/use-load-failed'
-import { useLoop, useLoopActivity } from '@/hooks/use-loops'
+import { useLoop, useLoopActivity, useLoopMembership, useObjectsByIds } from '@/hooks/use-loops'
 import { useNotifications } from '@/hooks/use-notifications'
-import { useDeleteObject, useObject, useObjects, useUpdateObject } from '@/hooks/use-objects'
-import { useRelationships } from '@/hooks/use-relationships'
+import { useDeleteObject, useObject, useUpdateObject } from '@/hooks/use-objects'
 import { useCreateTrigger, useTriggers } from '@/hooks/use-triggers'
 import { trackAskBannerDecideClicked, trackLoopViewed } from '@/lib/analytics'
 import { api } from '@/lib/api'
@@ -64,6 +64,7 @@ import {
 } from '@maskin/shared'
 import { useQueryClient } from '@tanstack/react-query'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
+import type { GroupingState, RowSelectionState, VisibilityState } from '@tanstack/react-table'
 import { Check, ChevronDown, MoreHorizontal, Pause, Play, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -72,6 +73,11 @@ import { toast } from 'sonner'
  * `LOOP_MEMBERSHIP_RELATIONSHIP_TYPE` in `apps/dev/src/routes/loops.ts`.
  * Source is the loop, target is the child object. */
 const LOOP_MEMBERSHIP_RELATIONSHIP_TYPE = 'in_loop'
+
+const NO_IDS: readonly string[] = []
+
+const ITEMS_GROUPING: GroupingState = ['status']
+const ITEMS_COLUMNS: VisibilityState = {}
 
 const SLOW_LOAD_MESSAGE = 'The server may be busy.'
 
@@ -136,17 +142,11 @@ function LoopDetailRoute() {
 	const { data: triggers } = triggersQuery
 	const actorsQuery = useActors(workspaceId)
 	const { data: actors } = actorsQuery
-	const edgesQuery = useRelationships(workspaceId, {
-		source_id: loopId,
-		type: LOOP_MEMBERSHIP_RELATIONSHIP_TYPE,
-	})
-	const { data: membershipEdges } = edgesQuery
-	const childIds = (membershipEdges ?? []).map((r) => r.targetId)
-	const childrenQuery = useObjects(
-		workspaceId,
-		{ ids: childIds.join(',') },
-		{ enabled: childIds.length > 0 },
-	)
+	// Every item in the flow and every file attached to it, not just the first page of each.
+	const edgesQuery = useLoopMembership(workspaceId, loopId)
+	const { data: membership } = edgesQuery
+	const childIds = membership?.itemIds ?? NO_IDS
+	const childrenQuery = useObjectsByIds(workspaceId, childIds)
 	const { data: children } = childrenQuery
 	const activityQuery = useLoopActivity(loopId, workspaceId)
 	const { data: activityEvents } = activityQuery
@@ -171,6 +171,8 @@ function LoopDetailRoute() {
 	const composerRef = useRef<HTMLDivElement>(null)
 	const [proposedEdit, setProposedEdit] = useState<ProposedEdit | null>(null)
 	const [confirmDelete, setConfirmDelete] = useState(false)
+	const [itemSelection, setItemSelection] = useState<RowSelectionState>({})
+	const [itemGroupsOpen, setItemGroupsOpen] = useState<Record<string, boolean>>({})
 	const [tab, setTab] = useState('overview')
 
 	// Custom views: an agent pins HTML files with set_loop_view
@@ -181,7 +183,7 @@ function LoopDetailRoute() {
 	const activeViewIndex = viewTabs.findIndex((v) => v.value === tab)
 	const activeView = viewTabs[activeViewIndex]
 	// Briefings the flow's own agents wrote show as one more view, after the pinned ones.
-	const briefingPages = useLoopBriefingPages(workspaceId, loop?.agentIds)
+	const briefingPages = useLoopBriefingPages(workspaceId, membership?.fileIds ?? NO_IDS)
 	const [briefingId, setBriefingId] = useState<string | null>(null)
 	const activeBriefing = briefingPages.find((b) => b.id === briefingId) ?? briefingPages[0]
 	const activeTab =
@@ -597,8 +599,19 @@ function LoopDetailRoute() {
 		needsInputNotifications ?? [],
 		getStoredActor()?.id,
 	)
-	const sortedChildren = [...(children ?? [])].sort((a, b) =>
-		(a.title ?? '').localeCompare(b.title ?? '', undefined, { sensitivity: 'base', numeric: true }),
+	// Groups follow the workspace's status order; inside a group, A to Z by title.
+	const statusRank = new Map<string, number>()
+	for (const chain of Object.values(statusChains ?? {})) {
+		for (const status of chain) if (!statusRank.has(status)) statusRank.set(status, statusRank.size)
+	}
+	const sortedChildren = [...(children ?? [])].sort(
+		(a, b) =>
+			(statusRank.get(a.status) ?? Number.MAX_SAFE_INTEGER) -
+				(statusRank.get(b.status) ?? Number.MAX_SAFE_INTEGER) ||
+			(a.title ?? '').localeCompare(b.title ?? '', undefined, {
+				sensitivity: 'base',
+				numeric: true,
+			}),
 	)
 	const isPaused = loop.status === 'paused'
 	// Built but never run: no children have entered it and nothing has happened.
@@ -777,7 +790,6 @@ function LoopDetailRoute() {
 						>
 							<ActorAvatar id={driver.id} name={driver.name} type={driver.type} />
 							<span className="font-semibold text-foreground">{driver.name}</span>
-							<span className="text-muted-foreground">drives</span>
 						</span>
 					)}
 					{needsYouRows.length > 0 && (
@@ -908,27 +920,29 @@ function LoopDetailRoute() {
 				)}
 
 				{activeTab === 'items' && (
-					<div role="tabpanel" className="mt-8 flex flex-col">
-						{sortedChildren.length === 0 ? (
+					<div role="tabpanel" className="mt-4 flex min-w-0 flex-col">
+						{childrenFailed ? (
+							<LoopBlockError
+								message={`Couldn't load the items of this flow. ${SLOW_LOAD_MESSAGE}`}
+								onRetry={() => childrenQuery.refetch?.()}
+							/>
+						) : sortedChildren.length === 0 ? (
 							<EmptyState
 								title="No items in this flow yet"
 								description="Items show up here once the flow starts working on them."
 							/>
 						) : (
-							sortedChildren.map((child) => (
-								<Link
-									key={child.id}
-									to="/$workspaceId/objects/$objectId"
-									params={{ workspaceId, objectId: child.id }}
-									className="flex items-center gap-3 border-b border-border px-1 py-3 transition-colors duration-150 hover:bg-muted"
-								>
-									<TypeBadge type={child.type} variant="dot" />
-									<span className="min-w-0 flex-1 truncate text-[14px] font-semibold text-foreground">
-										{child.title ?? 'Untitled'}
-									</span>
-									<StatusBadge status={child.status} variant="word" className="text-[12px]" />
-								</Link>
-							))
+							<ListView
+								data={sortedChildren}
+								workspaceId={workspaceId}
+								actors={actors}
+								grouping={ITEMS_GROUPING}
+								rowSelection={itemSelection}
+								onRowSelectionChange={setItemSelection}
+								columnVisibility={ITEMS_COLUMNS}
+								expanded={itemGroupsOpen}
+								onExpandedChange={setItemGroupsOpen}
+							/>
 						)}
 					</div>
 				)}

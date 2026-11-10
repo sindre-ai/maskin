@@ -12,6 +12,8 @@ import {
 import { ISOLATION_LOAD_MESSAGE, prepareIsolatedViewHtml, readViewSources } from '@/lib/mini-app'
 import { subscribeToSSE } from '@/lib/sse-invalidation'
 import type { ListSourceEntry } from '@/lib/view-lists'
+import { useTheme } from '@/lib/theme'
+import { applyAppTheme } from '@/lib/view-theme'
 import type { DataQueryResult, DataQuerySpec } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
 import { RefreshCw } from 'lucide-react'
@@ -116,7 +118,12 @@ function ViewFrame({
 	const blockedRef = useRef(false)
 	// The last answer given to the frame per source (by its query), to tell whether a change matters.
 	const lastResultsRef = useRef(new Map<string, string>())
-	const srcDoc = useMemo(() => prepareIsolatedViewHtml(html), [html])
+	// The view's light and dark styles follow the app's theme, not the browser's.
+	const { resolvedTheme } = useTheme()
+	const srcDoc = useMemo(
+		() => prepareIsolatedViewHtml(applyAppTheme(html, resolvedTheme)),
+		[html, resolvedTheme],
+	)
 
 	// The handler is installed once per workspace; it reads the latest sources
 	// and failure callback through refs so a re-render never drops a message.

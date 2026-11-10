@@ -83,16 +83,19 @@ export function useBriefings(workspaceId: string) {
 }
 
 /**
- * The briefing pages a flow's own agents wrote, newest first. Shares the list
- * query with the For you row, so opening a flow costs no extra call when that
- * row is already loaded.
+ * The briefing pages attached to a flow (an `in_loop` link from the flow to the file),
+ * newest first. Only the files it is given are asked for, so a flow with none costs no call.
  */
-export function useLoopBriefingPages(workspaceId: string, agentIds: readonly string[] | undefined) {
-	const list = useQuery(briefingListQuery(workspaceId))
-	return useMemo(() => {
-		const mine = new Set(agentIds ?? [])
-		return pickBriefingPages(
-			(list.data ?? []).filter((f) => !!f.createdBy && mine.has(f.createdBy)),
-		)
-	}, [list.data, agentIds])
+export function useLoopBriefingPages(workspaceId: string, fileIds: readonly string[]) {
+	const list = useQuery({
+		queryKey: [
+			...queryKeys.files.all(workspaceId),
+			'loop-briefings',
+			[...fileIds].sort().join(','),
+		],
+		queryFn: () =>
+			api.files.list(workspaceId, { ids: [...fileIds], kind: 'briefing', limit: fileIds.length }),
+		enabled: !!workspaceId && fileIds.length > 0,
+	})
+	return useMemo(() => pickBriefingPages(list.data ?? []), [list.data])
 }
