@@ -38,7 +38,12 @@ import {
 	statsToCounts,
 	summarizeAgentSessions,
 } from '@/lib/agent-status'
-import { NO_TEAM, buildAgentFilterPills, buildTeamChips } from '@/lib/agents-index-filters'
+import {
+	NO_TEAM,
+	buildAgentFilterPills,
+	buildTeamByAgentId,
+	buildTeamChips,
+} from '@/lib/agents-index-filters'
 import type { ActorListItem, DisplaySettingsBody, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import type { SessionStatsRow } from '@maskin/shared'
@@ -90,13 +95,6 @@ interface AgentRow {
 	last30dCostUsd: number
 	/** The agent's first tag (A to Z), or the no-team label. */
 	team: string
-}
-
-/** An agent's team is its first tag, alphabetically. */
-function teamOf(agent: ActorListItem): string {
-	const tags = (agent.tags ?? []).map((t) => t.trim()).filter(Boolean)
-	tags.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }))
-	return tags[0] ?? NO_TEAM
 }
 
 export function AgentsIndexView({
@@ -174,6 +172,8 @@ export function AgentsIndexView({
 
 	const statsByAgent = useMemo(() => new Map((stats ?? []).map((s) => [s.actor_id, s])), [stats])
 
+	const teamByAgent = useMemo(() => buildTeamByAgentId(agents), [agents])
+
 	const rows = useMemo<AgentRow[]>(
 		() =>
 			agents.map((agent) => {
@@ -194,10 +194,10 @@ export function AgentsIndexView({
 					activeCount: counts.active,
 					totalCostUsd: counts.totalCostUsd,
 					last30dCostUsd: counts.last30dCostUsd,
-					team: teamOf(agent),
+					team: teamByAgent.get(agent.id) ?? NO_TEAM,
 				}
 			}),
-		[agents, sessionsByAgent, statsByAgent, stats],
+		[agents, sessionsByAgent, statsByAgent, stats, teamByAgent],
 	)
 
 	const activeStatuses = useMemo(

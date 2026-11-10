@@ -103,9 +103,39 @@ extension AgentStatus {
 	var groupTitle: String { self == .failed ? "Needs attention" : label }
 }
 
-/// An agent's team is its first tag (A to Z); an untagged agent has none.
+/// An agent's team is its first tag (A to Z); an untagged agent has none. Tags that differ only
+/// in case are one team. (The flow chips on the agent page are a different thing: `name(of:)`.)
 public enum AgentTeams {
 	public static let none = "No team"
+
+	/// Tag order, the same on web and iOS: case-insensitive, digits by value, raw text breaks ties.
+	public static func tagsInOrder(_ a: String, _ b: String) -> Bool {
+		switch a.compare(b, options: [.caseInsensitive, .numeric]) {
+		case .orderedAscending: return true
+		case .orderedDescending: return false
+		case .orderedSame: return a < b
+		}
+	}
+
+	/// Each agent's team by id, with tags that differ only in case merged into the spelling that
+	/// sorts first across all agents.
+	public static func teams(of agents: [AgentSummary]) -> [String: String] {
+		var spelling: [String: String] = [:]
+		var cleaned: [String: [String]] = [:]
+		for agent in agents {
+			let tags = agent.tags.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+			cleaned[agent.id] = tags
+			for tag in tags {
+				let key = tag.lowercased()
+				if let known = spelling[key], known <= tag { continue }
+				spelling[key] = tag
+			}
+		}
+		return cleaned.mapValues { tags in
+			guard let first = tags.min(by: tagsInOrder) else { return none }
+			return spelling[first.lowercased()] ?? first
+		}
+	}
 
 	/// A flow's name as a team label: the part before a colon ("Product Delivery: bets to PRs").
 	public static func name(of flow: LoopSummary) -> String {

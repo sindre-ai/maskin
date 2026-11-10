@@ -89,4 +89,16 @@ struct AgentsDisplayTests {
 		#expect(AgentsDisplay().isCustomized == false)
 		#expect(AgentsDisplay(showsLatest: true).isCustomized)
 	}
+
+	@Test("tags that differ only in case are one team; digits sort by value")
+	func caseAndNumbers() {
+		let teams = AgentTeams.teams(of: [
+			agentRow("a", tags: ["alpha"]), agentRow("b", tags: ["Alpha"]),
+			agentRow("c", tags: ["Team 10", "Team 2"]), agentRow("d"),
+		])
+		#expect(teams["a"] == "Alpha")
+		#expect(teams["b"] == "Alpha")
+		#expect(teams["c"] == "Team 2")
+		#expect(teams["d"] == AgentTeams.none)
+	}
 }

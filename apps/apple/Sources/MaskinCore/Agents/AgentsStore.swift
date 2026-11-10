@@ -71,10 +71,9 @@ public final class AgentsStore {
 	// MARK: - Teams
 
 	/// The agent's team: its first tag A to Z, or "No team".
-	public func team(of agentID: String) -> String {
-		agent(id: agentID)?.tags.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-			.min { $0.localizedStandardCompare($1) == .orderedAscending } ?? AgentTeams.none
-	}
+	public func team(of agentID: String) -> String { teamByAgent[agentID] ?? AgentTeams.none }
+
+	private var teamByAgent: [String: String] { AgentTeams.teams(of: agents) }
 
 	/// The team chips: each team with its agent count, A to Z, "No team" last.
 	public func teamChips() -> [AgentChipCount] {
