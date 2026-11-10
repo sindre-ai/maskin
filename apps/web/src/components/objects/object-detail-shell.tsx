@@ -660,7 +660,7 @@ export function ObjectDetailShell({
 							    composer at a time, switched Comment / Message <agent>. */}
 							<div
 								ref={composerRef}
-								className="sticky bottom-0 z-[6] mt-1.5 bg-gradient-to-b from-transparent via-background via-20% to-background pb-4 pt-[22px]"
+								className="pointer-events-none sticky bottom-0 z-[6] mt-1.5 pb-4 pt-[22px] [&_:is(a,button,input,textarea,form,[role=button],[contenteditable=true])]:pointer-events-auto"
 							>
 								<ItemComposer
 									object={object}

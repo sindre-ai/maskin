@@ -94,15 +94,16 @@ for (const scheme of ['light', 'dark'] as const) {
 				await expect(newChat).toBeVisible()
 				await newChat.click({ trial: true })
 
-				// The composer band is a fade too: the pill takes input, the band does not.
+				// The composer band has no background at all: the pill takes input, the band does not.
 				const band = page.locator('div.sticky.bottom-0').filter({
 					has: page.getByPlaceholder(/Say what should change|Message .+, who drives/),
 				})
 				const bandStyle = await band.evaluate((el) => {
 					const s = getComputedStyle(el)
-					return { image: s.backgroundImage, events: s.pointerEvents }
+					return { image: s.backgroundImage, color: s.backgroundColor, events: s.pointerEvents }
 				})
-				expect(bandStyle.image).toContain('gradient')
+				expect(bandStyle.image).toBe('none')
+				expect(bandStyle.color).toBe('rgba(0, 0, 0, 0)')
 				expect(bandStyle.events).toBe('none')
 				const input = page.getByPlaceholder(/Say what should change|Message .+, who drives/)
 				await input.click({ trial: true })

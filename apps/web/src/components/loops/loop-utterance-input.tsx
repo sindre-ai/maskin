@@ -66,7 +66,7 @@ export const LoopUtteranceInput = forwardRef<
 		// only the composer and its chips take clicks.
 		<div
 			ref={ref}
-			className="pointer-events-none sticky bottom-0 z-10 mt-6 bg-gradient-to-b from-transparent to-background to-40% pt-8 [&_:is(a,button,input,textarea,[role=button],[contenteditable=true])]:pointer-events-auto [&_form]:pointer-events-auto"
+			className="pointer-events-none sticky bottom-0 z-10 mt-6 pt-4 [&_:is(a,button,input,textarea,[role=button],[contenteditable=true])]:pointer-events-auto [&_form]:pointer-events-auto"
 		>
 			<div className="pb-[max(0.625rem,env(safe-area-inset-bottom))]">
 				{children}

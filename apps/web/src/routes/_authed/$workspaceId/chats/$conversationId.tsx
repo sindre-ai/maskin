@@ -384,13 +384,7 @@ function ConversationThreadPage() {
 				    border, and a second full-bleed hairline behind it cut the thread in
 				    half. The gutter matches the header's and the transcript's so the
 				    three stack on one vertical edge. */}
-						<div
-							ref={composerBarRef}
-							className={cn(
-								FLOATING_EDGE,
-								'bottom-0 bg-gradient-to-b from-transparent to-background to-40% pt-8',
-							)}
-						>
+						<div ref={composerBarRef} className={cn(FLOATING_EDGE, 'bottom-0 pt-4')}>
 							<LiveCallComposerSlot />
 							<div className="px-[var(--chat-gut)] pt-2.5 pb-[max(0.875rem,env(safe-area-inset-bottom))]">
 								<ThreadComposer
