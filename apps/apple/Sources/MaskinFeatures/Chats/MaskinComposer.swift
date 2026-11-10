@@ -162,8 +162,8 @@ struct MaskinComposer: View {
 					.onTapGesture { model.notice = nil }
 			}
 			#if os(iOS)
-			// Server dictation gave way to the phone's recogniser by itself: say why, not only that.
-			if let note = dictation.fallbackNote {
+			// Which engine is dictating, and why it is the phone when it is: stays after Done.
+			if let note = dictation.engineNote {
 				Text(note).maskinText(.caption).foregroundStyle(MaskinColor.ink2)
 					.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, MaskinSpace.s5)
 			}

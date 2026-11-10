@@ -25,9 +25,10 @@ final class Dictation {
 
 	private(set) var state: State = .idle
 	var isListening: Bool { state == .listening }
-	/// Set when a server session handed over to the phone's recogniser by itself; says why in plain
-	/// words. Cleared when the session ends.
-	private(set) var fallbackNote: String?
+	/// Which engine the composer's dictation is using, in plain words: the server, or the phone with the
+	/// reason it isn't the server. Kept after the session ends (Done, Discard) so the person can still
+	/// read it; cleared when the next one starts.
+	private(set) var engineNote: String?
 
 	/// Built per session: an engine kept across sessions holds a stale input format once the audio
 	/// session has been deactivated or the route changed, and the tap then fails or delivers nothing.
@@ -73,7 +74,7 @@ final class Dictation {
 		accumulator = DictationAccumulator()
 		restartPolicy = DictationRestartPolicy()
 		backendText = ""
-		fallbackNote = nil
+		engineNote = nil
 		guard await requestPermissions() else { return }
 		if backend, await startBackend() { return }
 		guard let recognizer = Self.makeRecognizer() else {
@@ -85,6 +86,7 @@ final class Dictation {
 		do {
 			try launch(recognizer)
 			state = .listening
+			DictationFallback.log.info("dictation engine: phone")
 		} catch {
 			stop()
 			state = .unavailable(
@@ -119,6 +121,8 @@ final class Dictation {
 		}
 		backendRun = run
 		state = .listening
+		engineNote = DictationFallback.serverNote
+		DictationFallback.log.info("dictation engine: server")
 		return true
 	}
 
@@ -137,7 +141,7 @@ final class Dictation {
 	/// over is never a silent change.
 	private func noteFallback(_ reason: DictationFallback) {
 		DictationFallback.log.error("server dictation fell back: \(reason.detail, privacy: .public)")
-		fallbackNote = reason.note
+		engineNote = reason.note
 	}
 
 	/// The session hit the server's length limit: let the phrases in flight land, then go on with
@@ -147,6 +151,7 @@ final class Dictation {
 		Task { [self] in
 			await run.finish()
 			guard backendRun === run, finishing == nil, state == .listening else { return }
+			noteFallback(.timeLimit)
 			backendText = run.text
 			backendRun = nil
 			continueOnDevice()
@@ -404,7 +409,6 @@ final class Dictation {
 	func stop(flush: Bool = false) {
 		backendRun?.cancel()
 		backendRun = nil
-		fallbackNote = nil
 		if flush, state == .listening, request != nil {
 			watchers.forEach { $0.cancel() }
 			watchers = []
