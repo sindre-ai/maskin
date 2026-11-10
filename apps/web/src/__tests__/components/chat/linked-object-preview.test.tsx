@@ -707,10 +707,10 @@ describe('LinkedCardOrLink', () => {
 		}
 	})
 
-	it('draws any other object as a reference card: type, status, title, text and owner', () => {
+	it('draws a contact as a reference card: type, status, title, text and owner', () => {
 		useObject.mockReturnValue({
 			data: objectRow({
-				type: 'insight',
+				type: 'contact',
 				title: 'Ship the card',
 				status: 'in_review',
 				content: '## Plan\n\nDo **the thing** with [a link](https://x.test).',
@@ -727,6 +727,13 @@ describe('LinkedCardOrLink', () => {
 		expect(card).toHaveTextContent('Developer')
 		expect(card).toHaveTextContent('Working now')
 		expect(screen.queryByText('the original link')).not.toBeInTheDocument()
+	})
+
+	it('draws an event with text alone on its own line as a card with its text, with no Approve', () => {
+		useObject.mockReturnValue({ data: objectRow({ type: 'event' }), isLoading: false })
+		renderObject()
+		expect(screen.queryByText('the original link')).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /approve/i })).not.toBeInTheDocument()
 	})
 
 	it('draws a task with text alone on its own line as a card with its text, with no Approve', () => {

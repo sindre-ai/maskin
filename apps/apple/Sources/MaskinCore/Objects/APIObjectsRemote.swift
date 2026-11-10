@@ -141,7 +141,10 @@ public struct APIObjectsRemote: ObjectsRemote {
 						body: .json(
 							.init(
 								title: patch.title, content: patch.content, status: patch.status,
-								metadata: try Self.metadataPatch(patch.metadata), driver: patch.driver))))
+								metadata: try Self.metadataPatch(patch.metadata), driver: patch.driver,
+								chat: patch.chat.map {
+									.init(conversation_id: $0.conversationID, agent_id: $0.agentID)
+								}))))
 			}
 			switch output {
 			case .ok(let ok): return try Self.convert(ok.body.json, as: ObjectDTO.self).model
@@ -501,6 +504,15 @@ extension APIObjectsRemote: ObjectDraftsRemote {
 		} catch {
 			throw Self.wrap(error)
 		}
+	}
+
+	public func linkedUpdate(objectId: String, patch: ObjectPatch, idempotencyKey: String) async throws -> WorkObject {
+		try await update(objectId: objectId, patch: patch, idempotencyKey: idempotencyKey)
+	}
+
+	public func statusOrder(forType type: String, workspaceId: String) async -> [String] {
+		let schema = (try? await schema(workspaceId: workspaceId)) ?? .fallback
+		return schema.statuses[type] ?? []
 	}
 
 	public func save(objectId: String, content: String?, subject: String?, idempotencyKey: String) async throws {

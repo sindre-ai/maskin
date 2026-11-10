@@ -73,21 +73,25 @@ export function showsObjectCard(
 	)
 }
 
+/** Types that are people or organisations to point at, not text to read or change: their link stays a reference. */
+const REFERENCE_ONLY_TYPES = new Set(['contact', 'company'])
+
 /**
- * Whether a task with text, in this workspace, is shown as its text. A task is where an agent puts
- * text for a person to read and edit (a message to paste, a post, a template), whatever channel it
- * is for and whether or not any integration can send it. Only where the link stands alone on its
- * own line in chat, and in the Items drawer: in a sentence, a list or a comment it stays what it
- * was, so a message that mentions many tasks does not grow into many open cards.
+ * Whether an object with text, in this workspace, is shown as its text card (open it to read, edit
+ * the text, move its status). Any work object qualifies: a task (where an agent puts text for a
+ * person to read and edit), an event, a bet, an insight. Contacts and companies stay references.
+ * Where the card appears is decided by the caller: alone on its own line in chat, the first
+ * linked object under a message that mentions it in a sentence, and in the Items drawer. A list
+ * or a comment never grows into many open cards.
  */
-export function showsTaskCard(
+export function showsTextCard(
 	object: { workspaceId: string; content?: string | null; type?: string } | null | undefined,
 	workspaceId: string,
 ): boolean {
 	return Boolean(
 		object &&
 			object.workspaceId === workspaceId &&
-			object.type === 'task' &&
+			!REFERENCE_ONLY_TYPES.has(object.type ?? '') &&
 			object.content?.trim(),
 	)
 }

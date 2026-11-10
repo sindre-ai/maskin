@@ -8,6 +8,10 @@ import SwiftUI
 /// the fold lives in the view only.
 struct LinkedObjectCard: View {
 	let object: LinkedObject
+	/// The chat and agent behind the card, so an edit tells that agent. Nil outside an agent's message.
+	private let chat: ObjectPatchChat?
+	/// The card changes the text and moves the status (see `LinkedObject.isEditable`).
+	private let editable: Bool
 	@Environment(\.linkedItems) private var store
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	@Environment(\.dynamicTypeSize) private var typeSize
@@ -18,10 +22,17 @@ struct LinkedObjectCard: View {
 	private let preview: Bool
 	private let open = LinkedOpener()
 
-	init(object: LinkedObject, defaultFolded: Bool = false, preview: Bool = false) {
+	init(
+		object: LinkedObject, defaultFolded: Bool = false, preview: Bool = false, editable: Bool = false,
+		chat: ObjectPatchChat? = nil
+	) {
 		self.object = object
 		self.preview = preview
-		_folded = State(initialValue: defaultFolded)
+		self.chat = chat
+		let editing = editable && !preview && object.isEditable
+		self.editable = editing
+		// An editable card opens like the web's: a task shows its text, any other object is folded.
+		_folded = State(initialValue: defaultFolded || (editing && !object.startsOpen))
 	}
 
 	private var colors: MaskinColorPair { MaskinStatus.colors(for: object.status) }
@@ -80,7 +91,9 @@ struct LinkedObjectCard: View {
 					.maskinText(.subhead).fontWeight(.semibold)
 					.foregroundStyle(MaskinColor.ink)
 					.lineLimit(2).multilineTextAlignment(.leading)
-				if let summary = object.summary {
+				if editable {
+					LinkedObjectActions(object: object, chat: chat)
+				} else if let summary = object.summary {
 					Text(summary)
 						.font(MaskinTypeface.sans(MaskinFontSize.t13, relativeTo: .footnote))
 						.foregroundStyle(MaskinColor.ink3)

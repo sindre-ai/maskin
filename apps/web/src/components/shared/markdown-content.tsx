@@ -192,6 +192,8 @@ export interface LinkedCardsOptions {
 			after?: boolean
 			/** A draft edited since an earlier message showed it: the card says so. */
 			updated?: boolean
+			/** The first object card under a message: an object with text is drawn though its link is in a sentence. */
+			first?: boolean
 			/** False outside chat: a draft keeps its plain link, no approval card. */
 			draftsAndFiles?: boolean
 		},
@@ -407,11 +409,12 @@ function RenderedMarkdownContent({
 							.filter(Boolean)
 					return (
 						<>
-							{list('objects').map((id) => (
+							{list('objects').map((id, index) => (
 								<Fragment key={`object:${id}`}>
 									{linkedCards.renderCard({ kind: 'object', id }, null, {
 										...linkedCards,
 										after: true,
+										first: index === 0,
 										updated: linkedCards.updatedIds?.has(id),
 									})}
 								</Fragment>
