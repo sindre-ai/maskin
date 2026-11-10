@@ -47714,6 +47714,8 @@ public enum Operations {
                             public var createdBy: Swift.String
                             /// - Remark: Generated from `#/paths/api/conversations/GET/responses/200/content/json/conversationsPayload/tags`.
                             public var tags: [Swift.String]
+                            /// - Remark: Generated from `#/paths/api/conversations/GET/responses/200/content/json/conversationsPayload/directPairKey`.
+                            public var directPairKey: Swift.String?
                             /// - Remark: Generated from `#/paths/api/conversations/GET/responses/200/content/json/conversationsPayload/lastMessageAt`.
                             public var lastMessageAt: Swift.String?
                             /// - Remark: Generated from `#/paths/api/conversations/GET/responses/200/content/json/conversationsPayload/createdAt`.
@@ -47791,6 +47793,7 @@ public enum Operations {
                             ///   - subjectId:
                             ///   - createdBy:
                             ///   - tags:
+                            ///   - directPairKey:
                             ///   - lastMessageAt:
                             ///   - createdAt:
                             ///   - updatedAt:
@@ -47811,6 +47814,7 @@ public enum Operations {
                                 subjectId: Swift.String? = nil,
                                 createdBy: Swift.String,
                                 tags: [Swift.String],
+                                directPairKey: Swift.String? = nil,
                                 lastMessageAt: Swift.String? = nil,
                                 createdAt: Swift.String? = nil,
                                 updatedAt: Swift.String? = nil,
@@ -47831,6 +47835,7 @@ public enum Operations {
                                 self.subjectId = subjectId
                                 self.createdBy = createdBy
                                 self.tags = tags
+                                self.directPairKey = directPairKey
                                 self.lastMessageAt = lastMessageAt
                                 self.createdAt = createdAt
                                 self.updatedAt = updatedAt
@@ -47852,6 +47857,7 @@ public enum Operations {
                                 case subjectId
                                 case createdBy
                                 case tags
+                                case directPairKey
                                 case lastMessageAt
                                 case createdAt
                                 case updatedAt

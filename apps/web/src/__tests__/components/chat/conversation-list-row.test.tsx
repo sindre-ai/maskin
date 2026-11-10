@@ -87,6 +87,17 @@ describe('ConversationListRow', () => {
 		expect(screen.queryByText(/in threads/)).not.toBeInTheDocument()
 	})
 
+	it('names a direct message after who is on the other end, not its stored title', () => {
+		renderRow(buildConversation({ title: 'Some old topic', directPairKey: 'a:me' }))
+		expect(screen.getByText('Billing Agent')).toBeInTheDocument()
+		expect(screen.queryByText('Some old topic')).not.toBeInTheDocument()
+	})
+
+	it('keeps the title of a topical chat with the same two people', () => {
+		renderRow(buildConversation({ title: 'Billing retries', directPairKey: null }))
+		expect(screen.getByText('Billing retries')).toBeInTheDocument()
+	})
+
 	it('plates who the conversation is with, never the viewer', () => {
 		renderRow(buildConversation())
 		// Two participants, one of them the viewer — only the counterpart plates.

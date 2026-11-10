@@ -44527,6 +44527,12 @@
 															"type": "string"
 														}
 													},
+													"directPairKey": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
 													"lastMessageAt": {
 														"type": [
 															"string",
@@ -44630,6 +44636,7 @@
 													"subjectId",
 													"createdBy",
 													"tags",
+													"directPairKey",
 													"lastMessageAt",
 													"createdAt",
 													"updatedAt",
