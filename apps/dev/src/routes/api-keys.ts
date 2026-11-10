@@ -30,6 +30,8 @@ type Env = {
 		db: Database
 		actorId: string
 		actorType: string
+		// Set by the auth middleware for ank_ keys; unset for other credentials.
+		apiKeyKind?: ApiKeyKind
 	}
 }
 
@@ -91,7 +93,7 @@ const createKeyRoute = createRoute({
 	path: '/',
 	tags: ['Account'],
 	summary: 'Make a named API key',
-	description: `Makes a personal key with the given name. The secret is in this response and nowhere else: only its hash is stored, so it cannot be shown again. A person may hold ${PERSONAL_KEY_CAP} personal keys at once. Refused from an MCP client, because there a model holds the person’s key and could otherwise make itself more.`,
+	description: `Makes a personal key with the given name. The secret is in this response and nowhere else: only its hash is stored, so it cannot be shown again. A person may hold ${PERSONAL_KEY_CAP} personal keys at once. Refused from an MCP client and from a personal key, because there a model holds the person’s key and could otherwise make itself more.`,
 	request: {
 		body: { content: { 'application/json': { schema: createApiKeySchema } } },
 	},
@@ -102,7 +104,7 @@ const createKeyRoute = createRoute({
 		},
 		403: {
 			content: { 'application/json': { schema: errorSchema } },
-			description: 'Not a person, or called from an MCP client',
+			description: 'Not a person, called from an MCP client, or called with a personal key',
 		},
 		409: {
 			content: { 'application/json': { schema: errorSchema } },
@@ -115,6 +117,14 @@ app.openapi(createKeyRoute, async (c) => {
 	if (c.get('actorType') !== 'human') return c.json(notAPerson(), 403)
 	if (c.req.header(CLIENT_SOURCE_HEADER) === 'mcp') {
 		return c.json(createApiError('FORBIDDEN', 'API keys are made from the app, not over MCP'), 403)
+	}
+	// The header above is only a label the client sends. This is the real guard: a personal key
+	// is the kind pasted into other tools, so it cannot be used to make more of itself.
+	if (c.get('apiKeyKind') === 'personal') {
+		return c.json(
+			createApiError('FORBIDDEN', 'A personal key cannot make more keys. Use the app to make one.'),
+			403,
+		)
 	}
 	const db = c.get('db')
 	const actorId = c.get('actorId')

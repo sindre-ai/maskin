@@ -13775,7 +13775,7 @@
 					"Account"
 				],
 				"summary": "Make a named API key",
-				"description": "Makes a personal key with the given name. The secret is in this response and nowhere else: only its hash is stored, so it cannot be shown again. A person may hold 20 personal keys at once. Refused from an MCP client, because there a model holds the person’s key and could otherwise make itself more.",
+				"description": "Makes a personal key with the given name. The secret is in this response and nowhere else: only its hash is stored, so it cannot be shown again. A person may hold 20 personal keys at once. Refused from an MCP client and from a personal key, because there a model holds the person’s key and could otherwise make itself more.",
 				"requestBody": {
 					"content": {
 						"application/json": {
@@ -13893,7 +13893,7 @@
 						}
 					},
 					"403": {
-						"description": "Not a person, or called from an MCP client",
+						"description": "Not a person, called from an MCP client, or called with a personal key",
 						"content": {
 							"application/json": {
 								"schema": {

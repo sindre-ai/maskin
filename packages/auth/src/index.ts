@@ -11,6 +11,7 @@ export {
 	revokeOwnKey,
 	revokeSessionKeys,
 	validateApiKey,
+	validateApiKeyWithKind,
 } from './api-keys'
 export { hashApiKey } from './key-hash'
 export { hashPassword, verifyPassword } from './password'

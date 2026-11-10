@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
-import { PERSONAL_KEY_CAP, authMiddleware, hashApiKey } from '@maskin/auth'
+import { PERSONAL_KEY_CAP, authMiddleware, hashApiKey, issueLoginKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { apiKeys, idempotencyRecords } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
@@ -244,6 +244,39 @@ describe('my API keys — real Postgres', () => {
 		const viaMcp = await create(app, person.apiKey, 'From a model', { 'X-Client-Source': 'mcp' })
 		expect(viaMcp.status).toBe(403)
 		expect((await list(app, person.apiKey)).some((k) => k.kind === 'personal')).toBe(false)
+	})
+
+	it('refuses to make a key from a personal key, even when its lookup is cached, and lets sign-in keys make one', async () => {
+		const app = createApp()
+		const person = await insertActor(db, { type: 'human' })
+		const { key: mine, secret } = (await (
+			await create(app, person.apiKey, 'Pasted elsewhere')
+		).json()) as {
+			key: KeyRow
+			secret: string
+		}
+
+		// The first call fills the auth cache with this key's kind, the second is served from it.
+		for (let attempt = 0; attempt < 2; attempt++) {
+			const res = await create(app, secret, 'More of itself')
+			expect(res.status).toBe(403)
+		}
+		expect((await list(app, person.apiKey)).filter((k) => k.kind === 'personal')).toHaveLength(1)
+
+		// The personal key can still see its keys and revoke itself, so a leaked one can be killed.
+		expect((await app.request(jsonGet('/api/account/api-keys', auth(secret)))).status).toBe(200)
+
+		// Sign-in keys (web, iPhone) and the account key still make keys.
+		const login = await issueLoginKey(db, person.id, 'login')
+		const phone = await issueLoginKey(db, person.id, 'login_ios')
+		for (const key of [login, phone, person.apiKey]) {
+			expect((await create(app, key, 'From the app')).status).toBe(201)
+		}
+
+		const revoke = await app.request(
+			jsonRequest('DELETE', `/api/account/api-keys/${mine.id}`, undefined, auth(secret)),
+		)
+		expect(revoke.status).toBe(200)
 	})
 
 	it('only accepts the kinds the check constraint names', async () => {

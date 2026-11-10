@@ -18,16 +18,16 @@ export function generateApiKey(): { key: string } {
 }
 
 /**
- * Resolves a bearer token to its actor. A hit stamps last_used_at on the key row. Callers sit
- * behind the auth cache, so that is at most one write per key per cache window per process.
- * The stamp is best effort: a failed write never fails the request.
+ * Resolves a bearer token to its actor and the kind of key it is. A hit stamps last_used_at on
+ * the key row. Callers sit behind the auth cache, so that is at most one write per key per cache
+ * window per process. The stamp is best effort: a failed write never fails the request.
  */
-export async function validateApiKey(
+export async function validateApiKeyWithKind(
 	db: Executor,
 	apiKey: string,
-): Promise<{ actorId: string; type: string } | null> {
+): Promise<{ actorId: string; type: string; keyKind: ApiKeyKind } | null> {
 	const [actor] = await db
-		.select({ id: actors.id, type: actors.type, keyId: apiKeys.id })
+		.select({ id: actors.id, type: actors.type, keyId: apiKeys.id, keyKind: apiKeys.kind })
 		.from(apiKeys)
 		.innerJoin(actors, eq(actors.id, apiKeys.actorId))
 		.where(
@@ -46,7 +46,16 @@ export async function validateApiKey(
 	} catch {
 		// Usage tracking only informs which old agent keys are still in use; never block a request on it.
 	}
-	return { actorId: actor.id, type: actor.type }
+	return { actorId: actor.id, type: actor.type, keyKind: actor.keyKind }
+}
+
+/** Resolves a bearer token to its actor. See validateApiKeyWithKind. */
+export async function validateApiKey(
+	db: Executor,
+	apiKey: string,
+): Promise<{ actorId: string; type: string } | null> {
+	const found = await validateApiKeyWithKind(db, apiKey)
+	return found ? { actorId: found.actorId, type: found.type } : null
 }
 
 /**
