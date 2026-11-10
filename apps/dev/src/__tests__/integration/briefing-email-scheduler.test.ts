@@ -11,10 +11,14 @@ import { eq, sql } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const sendEmail = vi.fn()
+const capturePosthogEvent = vi.fn(async (..._args: unknown[]) => {})
 
 vi.mock('@maskin/email', async (importOriginal) => ({
 	...(await importOriginal<typeof import('@maskin/email')>()),
 	sendEmail: (...args: unknown[]) => sendEmail(...args),
+}))
+vi.mock('../../lib/analytics/posthog', () => ({
+	capturePosthogEvent: (...args: unknown[]) => capturePosthogEvent(...args),
 }))
 vi.mock('../../lib/email-stop-link', () => ({
 	buildEmailStopUrl: (actorId: string) => `https://maskin.test/email/stop?a=${actorId}`,
@@ -87,6 +91,7 @@ const sentTo = (email: string) => sendEmail.mock.calls.filter(([m]) => m.to === 
 
 beforeEach(() => {
 	sendEmail.mockReset()
+	capturePosthogEvent.mockClear()
 	sendEmail.mockResolvedValue(true)
 })
 
@@ -228,14 +233,70 @@ describe('summary email: who gets it', () => {
 		expect(text).not.toContain('Too old')
 		expect(text).toContain('and 1 more')
 		expect(text).not.toContain('Waiting on you')
-		expect(text).toContain('Create your first loop')
+		expect(text).toContain('Create your first flow')
 
-		// Same person once a loop exists and something new finished: no next-step line.
+		// Once a flow exists the owner is still alone, so the next step is to invite a teammate.
 		await insertObject(db, p.workspaceId, p.actorId, { type: 'loop', title: 'Weekly review' })
 		await finish('Fresh', -20)
 		await new BriefingEmailScheduler(db, ENV).tick(new Date(NOW.getTime() + DAY))
 		expect(sentTo(p.email)).toHaveLength(2)
-		expect(sentTo(p.email)[1]?.[0].text).not.toContain('Next step')
+		expect(sentTo(p.email)[1]?.[0].text).toContain('Invite a teammate')
+
+		// With a second human in the workspace there is no next-step line.
+		const teammate = await insertActor(db, { type: 'human' })
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: p.workspaceId, actorId: teammate.id as string, role: 'member' })
+		await finish('Fresher', -44)
+		await new BriefingEmailScheduler(db, ENV).tick(new Date(NOW.getTime() + 2 * DAY))
+		expect(sentTo(p.email)).toHaveLength(3)
+		expect(sentTo(p.email)[2]?.[0].text).not.toContain('Next step')
+	})
+
+	it('a plain member gets no setup steps, and the mail says which role it was written for', async () => {
+		const owner = await person({ daysOld: 30, card: false })
+		const memberActor = await insertActor(db, {
+			type: 'human',
+			createdAt: new Date(NOW.getTime() - 30 * DAY),
+		})
+		const memberId = memberActor.id as string
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: owner.workspaceId, actorId: memberId, role: 'member' })
+		for (const actorId of [owner.actorId, memberId]) {
+			await db.insert(notificationPreferences).values({
+				actorId,
+				emailDigestEnabled: true,
+				emailOnboardingStep: 3,
+				emailLastSentOn: '2026-03-08',
+			})
+		}
+		const agent = await insertActor(db, { type: 'agent', name: 'Researcher' })
+		for (const actorId of [owner.actorId, memberId]) {
+			const o = await insertObject(db, owner.workspaceId, actorId, { title: 'Report' })
+			await insertSession(db, owner.workspaceId, agent.id as string, actorId, {
+				status: 'completed',
+				interactive: false,
+				initiatedFromObjectId: o?.id,
+				completedAt: new Date(NOW.getTime() - 3600_000),
+			})
+		}
+
+		await new BriefingEmailScheduler(db, ENV).tick(NOW)
+
+		// No flow yet: the owner is told to create one, the plain member gets no next step.
+		expect(sentTo(owner.email)[0]?.[0].text).toContain('Create your first flow')
+		expect(sentTo(memberActor.email as string)[0]?.[0].text).not.toContain('Next step')
+		expect(capturePosthogEvent).toHaveBeenCalledWith(
+			'email_sent',
+			owner.actorId,
+			expect.objectContaining({ role: 'owner_admin' }),
+		)
+		expect(capturePosthogEvent).toHaveBeenCalledWith(
+			'email_sent',
+			memberId,
+			expect.objectContaining({ role: 'member' }),
+		)
 	})
 
 	it('gets nothing: no action, only left-out rows, action older than 30 days, or switched off', async () => {

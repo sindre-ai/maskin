@@ -25,16 +25,38 @@ export const STEP_LESSON: Record<1 | 2 | 3, string> = {
 	3: 'Open any result you have not seen yet. You can reply to the agent in chat.',
 }
 
+/** Owners and admins get the setup steps; everyone else gets the plain ones. */
+export type EmailRole = 'owner_admin' | 'member'
+
+/** The `email_sent` role property value for a workspace role; anything not owner or admin is a member. */
+export function emailRole(workspaceRole: string | null | undefined): EmailRole {
+	return workspaceRole === 'owner' || workspaceRole === 'admin' ? 'owner_admin' : 'member'
+}
+
+export interface NextStepFacts {
+	role: EmailRole
+	/** Cards waiting on the person in the anchor workspace. */
+	waiting: number
+	/** The anchor workspace has at least one flow (a loop object). Only read for owners and admins. */
+	hasFlow: boolean
+	/** The person is the only human in the anchor workspace. Only read for owners and admins. */
+	onlyMember: boolean
+}
+
 /**
- * Pure: the one next-step line, or null. In order: a card waits on you, then open it; else you have
- * no loop yet, then create your first one; else nothing. (A rule for "a finished run you have not
- * opened" is left out: the app does not store whether a run was opened.)
+ * Pure: the one next-step line, or null. Same input, same text, no I/O and no AI call.
+ * Owner or admin, in order: a card waits, then open it; else no flow yet, then create your first;
+ * else you are the only member, then invite a teammate; else nothing. Member: a card waits, then
+ * open it; else nothing. (A rule for "a finished run you have not opened" is left out: the app
+ * does not store whether a run was opened.)
  */
-export function pickNextStep(facts: { waiting: number; hasLoop: boolean }): string | null {
+export function pickNextStep(facts: NextStepFacts): string | null {
 	if (facts.waiting > 0) {
 		return facts.waiting === 1 ? 'Open the card that needs you.' : 'Open the card at the top first.'
 	}
-	if (!facts.hasLoop) return 'Create your first loop, a routine your agents repeat for you.'
+	if (facts.role !== 'owner_admin') return null
+	if (!facts.hasFlow) return 'Create your first flow, a routine your agents repeat for you.'
+	if (facts.onlyMember) return 'Invite a teammate, so your agents can work for more than just you.'
 	return null
 }
 
