@@ -26,6 +26,7 @@ public enum IntegrationCategory: String, CaseIterable, Identifiable, Sendable {
 		"linear": .code,
 		"linkedin-unipile": .chatAndSocial,
 		"miro": .design,
+		"notion": .docsAndData,
 		"posthog": .analytics,
 		"resend": .emailAndCalendar,
 		"skjald": .docsAndData,

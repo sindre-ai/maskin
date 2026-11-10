@@ -16,7 +16,10 @@ const mockNavigate = vi.fn()
 const mockSearch = vi.fn<() => Record<string, string | undefined>>(() => ({}))
 
 // The Tools section has its own tests (components/integrations/tools-section.test.tsx).
-vi.mock('@/components/integrations/tools-section', () => ({ ToolsSection: () => null }))
+vi.mock('@/components/integrations/tools-section', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@/components/integrations/tools-section')>()),
+	ToolsSection: () => null,
+}))
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
@@ -1062,6 +1065,39 @@ describe('IntegrationsPage tabs, search and categories', () => {
 		await openDiscover()
 		await userEvent.type(screen.getByRole('searchbox', { name: /Search integrations/ }), 'zzz')
 		expect(screen.getByText('Nothing to discover')).toBeInTheDocument()
+		expect(screen.getByText('No integration matches that search')).toBeInTheDocument()
+	})
+
+	it('says so on Connected when the search matches nothing', async () => {
+		render(<IntegrationsPage />)
+		await userEvent.type(screen.getByRole('searchbox', { name: /Search integrations/ }), 'zzz')
+		expect(screen.getByText('Nothing connected here')).toBeInTheDocument()
+		expect(screen.getByText('No integration matches that search')).toBeInTheDocument()
+	})
+
+	it('says nothing matches the filter, not that everything is connected, for the Custom chip', async () => {
+		render(<IntegrationsPage />)
+		await openDiscover()
+		await userEvent.click(screen.getByRole('button', { name: 'Custom' }))
+		expect(screen.getByText('No integration matches that filter')).toBeInTheDocument()
+		expect(screen.queryByText('Everything is connected')).not.toBeInTheDocument()
+	})
+
+	it('says nothing matches the filter for a category with no providers in it', async () => {
+		render(<IntegrationsPage />)
+		await openDiscover()
+		await userEvent.click(screen.getByRole('button', { name: 'Sales & payments' }))
+		expect(screen.getByText('No integration matches that filter')).toBeInTheDocument()
+	})
+
+	it('still says everything is connected when nothing is filtered', async () => {
+		mockUseIntegrations.mockReturnValue({
+			data: providers.map((p) => buildIntegrationResponse({ provider: p.name, status: 'active' })),
+			isLoading: false,
+		})
+		render(<IntegrationsPage />)
+		await openDiscover()
+		expect(screen.getByText('Everything is connected')).toBeInTheDocument()
 	})
 })
 

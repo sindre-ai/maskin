@@ -5,7 +5,11 @@ import {
 	ResendConnectDialog,
 	type ResendConnectPrefill,
 } from '@/components/integrations/resend/resend-connect-dialog'
-import { ToolsSection } from '@/components/integrations/tools-section'
+import {
+	ToolsSection,
+	maskinRowMatches,
+	matchingToolServers,
+} from '@/components/integrations/tools-section'
 import { SettingsPageTitle } from '@/components/settings/settings-page-title'
 import { EditorBanner } from '@/components/shared/editor-banner'
 import { EmptyState } from '@/components/shared/empty-state'
@@ -159,6 +163,21 @@ function IntegrationsPage() {
 		allExceptCustom.filter((p) => activeByProvider.has(p.name)).length +
 		(integrations ?? []).filter((i) => i.provider === 'custom-mcp' && i.status === 'active').length
 	const discoverCount = allExceptCustom.filter((p) => !activeByProvider.has(p.name)).length
+	// What the Connected tab will draw under the current search and chip. When none of it
+	// shows, the tab says so instead of rendering a blank page.
+	const showServers = category === 'all' || category === 'Custom'
+	const resendName = visibleProviders.find((p) => p.name === 'resend')?.displayName ?? 'Resend'
+	const showResendAwaiting =
+		resendAwaitingSecret.length > 0 &&
+		(category === 'all' || categoryFor('resend') === category) &&
+		(!needle || resendName.toLowerCase().includes(needle))
+	const showTools =
+		showServers &&
+		(maskinRowMatches(needle) || matchingToolServers(integrations, needle).length > 0)
+	const connectedIsEmpty = connectedProviders.length === 0 && !showResendAwaiting && !showTools
+	const noMatchCopy = needle
+		? 'No integration matches that search'
+		: 'No integration matches that filter'
 
 	return (
 		<div className="max-w-[760px]">
@@ -221,7 +240,9 @@ function IntegrationsPage() {
 						]}
 						className="mb-6 flex-wrap px-2"
 					/>
-					{tab === 'connected' ? (
+					{tab === 'connected' && connectedIsEmpty ? (
+						<EmptyState title="Nothing connected here" description={noMatchCopy} />
+					) : tab === 'connected' ? (
 						<section className="space-y-3 px-2">
 							{connectedProviders.map((provider) => (
 								<ProviderConnectRow
@@ -231,24 +252,18 @@ function IntegrationsPage() {
 									workspaceId={workspaceId}
 								/>
 							))}
-							{resendAwaitingSecret.length > 0 && (
+							{showResendAwaiting && (
 								<ResendResumeSection
 									rows={resendAwaitingSecret}
 									onResume={(prefill) => setResendDialog({ open: true, prefill })}
 								/>
 							)}
-							<ToolsSection
-								workspaceId={workspaceId}
-								query={query}
-								showServers={category === 'all' || category === 'Custom'}
-							/>
+							<ToolsSection workspaceId={workspaceId} query={query} showServers={showServers} />
 						</section>
 					) : discoverProviders.length === 0 ? (
 						<EmptyState
 							title="Nothing to discover"
-							description={
-								needle ? 'No integration matches that search' : 'Everything is connected'
-							}
+							description={needle || category !== 'all' ? noMatchCopy : 'Everything is connected'}
 						/>
 					) : (
 						<section className="space-y-3 px-2">

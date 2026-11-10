@@ -134,4 +134,41 @@ describe('IntegrationsPage — resend', () => {
 		await userEvent.click(screen.getByRole('button', { name: /^Discover/ }))
 		expect(screen.getByText('Resend')).toBeInTheDocument()
 	})
+
+	describe('awaiting-secret block and the Connected filters', () => {
+		beforeEach(() => {
+			mockUseProviders.mockReturnValue({ data: [RESEND_PROVIDER], isLoading: false })
+			mockUseIntegrations.mockReturnValue({
+				data: [AWAITING_SECRET_RESEND_ROW],
+				isLoading: false,
+			})
+		})
+
+		const renderPage = () =>
+			render(
+				<TestWrapper>
+					<IntegrationsPage />
+				</TestWrapper>,
+			)
+
+		it('hides when the search does not match Resend', async () => {
+			renderPage()
+			await userEvent.type(screen.getByRole('searchbox', { name: /Search integrations/ }), 'slack')
+			expect(screen.queryByRole('button', { name: /finish setup/i })).not.toBeInTheDocument()
+		})
+
+		it('stays when the search matches Resend', async () => {
+			renderPage()
+			await userEvent.type(screen.getByRole('searchbox', { name: /Search integrations/ }), 'rese')
+			expect(screen.getByRole('button', { name: /finish setup/i })).toBeInTheDocument()
+		})
+
+		it('hides under a category chip Resend is not in, and shows under its own', async () => {
+			renderPage()
+			await userEvent.click(screen.getByRole('button', { name: 'Code' }))
+			expect(screen.queryByRole('button', { name: /finish setup/i })).not.toBeInTheDocument()
+			await userEvent.click(screen.getByRole('button', { name: 'Email & calendar' }))
+			expect(screen.getByRole('button', { name: /finish setup/i })).toBeInTheDocument()
+		})
+	})
 })

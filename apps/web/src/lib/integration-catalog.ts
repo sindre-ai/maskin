@@ -29,6 +29,7 @@ const CATALOG: Record<string, CatalogEntry> = {
 	linear: { category: 'Code', domain: 'linear.app' },
 	'linkedin-unipile': { category: 'Chat & social', domain: 'linkedin.com' },
 	miro: { category: 'Design', domain: 'miro.com' },
+	notion: { category: 'Docs & data', domain: 'notion.so' },
 	posthog: { category: 'Analytics', domain: 'posthog.com' },
 	resend: { category: 'Email & calendar', domain: 'resend.com' },
 	skjald: { category: 'Docs & data' },

@@ -34,6 +34,24 @@ function describeServer(row: IntegrationResponse): string {
 	return `${summary.transport === 'http' ? 'HTTP' : 'stdio'} · ${summary.target ?? ''}`
 }
 
+/** Active custom MCP servers whose name matches the page search (all of them when it is empty). */
+export function matchingToolServers(
+	integrations: IntegrationResponse[] | undefined,
+	needle: string,
+): IntegrationResponse[] {
+	return (integrations ?? []).filter(
+		(i) =>
+			i.provider === 'custom-mcp' &&
+			i.status === 'active' &&
+			(!needle || (i.displayName ?? 'Tool server').toLowerCase().includes(needle)),
+	)
+}
+
+/** Whether the Maskin row shows for this page search. */
+export function maskinRowMatches(needle: string): boolean {
+	return !needle || 'maskin'.includes(needle)
+}
+
 /**
  * Custom tools: every MCP server the workspace's agents can use that is not a connected integration.
  * Maskin itself is always on, for every agent, and cannot be changed. The rest are added here
@@ -60,12 +78,7 @@ export function ToolsSection({
 	const [importError, setImportError] = useState<string | null>(null)
 
 	const needle = query.trim().toLowerCase()
-	const servers = (integrations ?? []).filter(
-		(i) =>
-			i.provider === 'custom-mcp' &&
-			i.status === 'active' &&
-			(!needle || (i.displayName ?? 'Tool server').toLowerCase().includes(needle)),
-	)
+	const servers = matchingToolServers(integrations, needle)
 	const me = getStoredActor()
 	const isHuman = me?.type === 'human'
 
@@ -93,7 +106,7 @@ export function ToolsSection({
 
 	return (
 		<section className="space-y-3">
-			{(!needle || 'maskin'.includes(needle)) && (
+			{maskinRowMatches(needle) && (
 				<ProviderCard
 					logo={<ProviderLogo name="Maskin" />}
 					name="Maskin"
