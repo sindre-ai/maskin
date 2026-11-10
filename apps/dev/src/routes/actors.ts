@@ -1399,6 +1399,22 @@ app.openapi(updateActorRoute, (async (c) => {
 		)
 	}
 
+	// Starter prompts land in a person's message box, so changing another actor's needs owner/admin,
+	// the same floor as its tools. An agent may still set its own.
+	if (
+		body.starter_prompts !== undefined &&
+		id !== actorId &&
+		!(await isAdminOfSharedWorkspace(db, actorId, id, workspaceId))
+	) {
+		return c.json(
+			createApiError(
+				'FORBIDDEN',
+				"Only workspace admins can change another actor's starter prompts",
+			),
+			403,
+		)
+	}
+
 	// envFrom names which API-service variables get copied into the agent's
 	// sessions, so only a human admin or owner may change it, even on the actor's
 	// own record. Sending the stored list back unchanged stays open.

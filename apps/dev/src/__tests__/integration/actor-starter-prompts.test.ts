@@ -1,3 +1,5 @@
+import { OpenAPIHono } from '@hono/zod-openapi'
+import type { Database } from '@maskin/db'
 import { events, actors, workspaceMembers } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { insertActor, insertWorkspace } from '../factories'
@@ -16,6 +18,21 @@ async function addMember(workspaceId: string, name: string, type: 'agent' | 'hum
 
 function createApp() {
 	return createIntegrationApp({ path: '/api/actors', module: actorsRoutes })
+}
+
+type Env = { Variables: { db: Database; actorId: string; actorType: string } }
+
+// The route as another caller: the shared harness always acts as the test owner.
+function createAppAs(actorId: string, actorType: 'human' | 'agent') {
+	const app = new OpenAPIHono<Env>()
+	app.use('*', async (c, next) => {
+		c.set('db', db)
+		c.set('actorId', actorId)
+		c.set('actorType', actorType)
+		await next()
+	})
+	app.route('/api/actors', actorsRoutes)
+	return app
 }
 
 describe('Starter prompts on agents', () => {
@@ -186,6 +203,48 @@ describe('Starter prompts on agents', () => {
 			.from(events)
 			.where(and(eq(events.entityId, agent.id), eq(events.action, 'actor_starter_prompts_updated')))
 		expect(rows).toHaveLength(0)
+	})
+
+	it('refuses a viewer and a plain member, lets the agent set its own, and writes nothing otherwise', async () => {
+		const workspace = await insertWorkspace(db, getTestActorId())
+		const agent = await addMember(workspace.id, 'Guarded')
+		const viewer = await insertActor(db, { type: 'human', name: 'Viewer' })
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: workspace.id, actorId: viewer.id, role: 'viewer' })
+		const otherAgent = await addMember(workspace.id, 'Other agent')
+
+		for (const [callerId, callerType] of [
+			[viewer.id, 'human'],
+			[otherAgent.id, 'agent'],
+		] as const) {
+			const app = createAppAs(callerId, callerType)
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/actors/${agent.id}`,
+					{ starter_prompts: ['Hijack'] },
+					ws(workspace.id),
+				),
+			)
+			expect(res.status).toBe(403)
+		}
+		const [row] = await db
+			.select({ metadata: actors.metadata })
+			.from(actors)
+			.where(eq(actors.id, agent.id))
+		expect(row.metadata ?? {}).not.toHaveProperty('starter_prompts')
+
+		const own = createAppAs(agent.id, 'agent')
+		const ownRes = await own.request(
+			jsonRequest(
+				'PATCH',
+				`/api/actors/${agent.id}`,
+				{ starter_prompts: ['Mine'] },
+				ws(workspace.id),
+			),
+		)
+		expect(ownRes.status).toBe(200)
 	})
 
 	it('reset to defaults clears the starters and keeps tags and the other metadata', async () => {
