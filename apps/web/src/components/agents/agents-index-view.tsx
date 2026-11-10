@@ -634,7 +634,7 @@ function AgentGroupSection({
 			{/* Bold name and a muted count (mockup 15); the note, when there is one,
 			    shares the line. */}
 			<div className="flex items-baseline gap-2 px-2 pt-5 pb-2">
-				<h3 className="shrink-0 text-sm font-bold text-foreground">{group.label}</h3>
+				<h3 className="shrink-0 text-[15px] font-semibold text-foreground">{group.label}</h3>
 				<span className="shrink-0 text-[13px] font-medium tabular-nums text-muted-foreground">
 					{group.rows.length}
 				</span>

@@ -57,12 +57,15 @@ private let questions = [
 ]
 
 @MainActor
-private func render<V: View>(_ view: V, width: CGFloat, dark: Bool, name: String) throws {
+private func render<V: View>(
+	_ view: V, width: CGFloat, dark: Bool, name: String, type: DynamicTypeSize = .large
+) throws {
 	let framed = view
 		.padding(MaskinSpace.s9)
 		.frame(width: width)
 		.background(MaskinSurface.grouped)
 		.environment(\.colorScheme, dark ? .dark : .light)
+		.environment(\.dynamicTypeSize, type)
 	let renderer = ImageRenderer(content: framed)
 	renderer.scale = 2
 	guard let image = renderer.cgImage else {
@@ -119,6 +122,28 @@ struct ActivityTraceSnapshotTests {
 					width: width, dark: dark, name: "decision-open")
 			}
 		}
+	}
+
+	@Test("the card with its X renders at 375pt, in both themes and at the largest text size")
+	func decisionCardWithDismiss() throws {
+		for dark in [false, true] {
+			for type in [DynamicTypeSize.large, .accessibility5] {
+				try render(
+					QuestionOptionsView(
+						questions: questions, answers: nil, picked: [0: ["Hold"]], onSubmit: { _ in },
+						onDismiss: {}),
+					width: 375, dark: dark, name: "decision-dismiss-\(type == .large ? "large" : "ax5")",
+					type: type)
+			}
+		}
+	}
+
+	@Test("an answered-by-typing card draws nothing")
+	func closedCardIsEmpty() throws {
+		let renderer = ImageRenderer(
+			content: QuestionOptionsView(questions: questions, answers: [], onSubmit: { _ in }))
+		renderer.scale = 1
+		#expect(renderer.cgImage == nil || (renderer.cgImage?.height ?? 0) <= 1)
 	}
 
 	@Test("elapsed label formats seconds and minutes")

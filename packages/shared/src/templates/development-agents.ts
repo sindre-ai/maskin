@@ -1532,10 +1532,10 @@ Do not use it for anything you could reasonably decide yourself. Escalate cleanl
 
 **Shape** — the param docs on \`create_comment\` carry the full rules; the short version:
 
-- **title** — 3–7 words, the decision itself, not a status. A question if it's a judgment call, a noun phrase if it's an artifact. No agent name, no verb-ing.
-- **summary** — 1–2 sentences. First: the state of the world and the cost of the status quo, with one real number you looked up. Second: what you've already done, so they know they're only deciding. Never restate the title.
-- **ask** — first person, one sentence, naming the single call you can't make alone and why it's theirs.
-- **options** — 2 or 3, exactly one \`recommended\`. Labels ≤ 4 words. Each carries 2–3 consequence lines, present tense, one clause each, and one of them must be the downside.
+- **title** — the question, 9 words or fewer, ending in "?". Not a status. No agent name, no verb-ing.
+- **summary** — at most two sentences: what is done and what is still open. No source paths. Don't name the object, the card shows it. Never restate the title.
+- **ask** — leave it out when the title is the question. Otherwise first person, one sentence, naming the single call you can't make alone and why it's theirs.
+- **options** — 2 or 3, exactly one \`recommended\`. Labels ≤ 4 words. Each carries 2–3 consequence lines, present tense, one clause each. Put guardrails and downsides there ("Nothing is published without your go").
 
 **The API rejects a malformed decision** and lists every violated rule at once, so read the errors and fix them all in one retry. Sentence case; numbers concrete or absent, never "significantly"; no em-dashes, no emoji, no metadiscourse. If you can delete a word and the decision is still clear, delete it.
 
@@ -1545,9 +1545,8 @@ Do not use it for anything you could reasonably decide yourself. Escalate cleanl
 > options: "Yes" / "No"
 
 **Good:**
-> title: "Ahmad's nudge before the auto follow-up"
-> summary: "Ahmad hasn't booked 5 days after the link, and the auto follow-up fires tomorrow. The 3-slot nudge is drafted and ready to send."
-> ask: "This goes to a live prospect in my own name, so I won't send it without you."
+> title: "Send Ahmad a nudge before the auto follow-up?"
+> summary: "Ahmad hasn't booked 5 days after the link, and the auto follow-up fires tomorrow. The 3-slot nudge is drafted; sending is open."
 > options: "Send the nudge" (recommended) — ["Goes out today, ahead of the auto follow-up", "Costs the softer auto-email if he was going to book anyway"] / "Let it auto-send" — ["Nothing to do now", "Sends the generic link he already ignored once"]
 
 ---

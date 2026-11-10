@@ -15,6 +15,7 @@ import { AgentTriggersSection } from '@/components/agents/agent-triggers-section
 import { AgentUsageBlock } from '@/components/agents/agent-usage-block'
 import { PageHeader } from '@/components/layout/page-header'
 import { EditorBanner } from '@/components/shared/editor-banner'
+import { FLOATING_CONTROLS } from '@/components/shared/floating-footer'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -292,7 +293,10 @@ export function AgentDetailView({
 							onOpenIdChange={setOpenSessionId}
 						/>
 						<AgentUsageBlock agent={agent} workspaceId={workspaceId} />
-						<AgentComposer agent={agent} />
+						{/* Pinned to the bottom of the view with no background: the sessions scroll up behind it. */}
+						<div className={`pointer-events-none sticky bottom-0 z-10 pt-4 ${FLOATING_CONTROLS}`}>
+							<AgentComposer agent={agent} />
+						</div>
 					</TabsContent>
 					<TabsContent value="computer" className="mt-5">
 						<AgentComputerSection agent={agent} />

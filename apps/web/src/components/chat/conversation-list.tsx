@@ -1,4 +1,5 @@
 import { EmptyState } from '@/components/shared/empty-state'
+import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useReplyThreads } from '@/hooks/use-conversation'
@@ -8,7 +9,7 @@ import { cn } from '@/lib/cn'
 import { groupConversations } from '@/lib/conversation-groups'
 import { focusField, usePageSearchShortcut } from '@/lib/page-search-shortcut'
 import { Link } from '@tanstack/react-router'
-import { ChevronDown, Plus, Search } from 'lucide-react'
+import { ChevronDown, MessageCircle, MessageCircleWarning, Plus, Search } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { type ChatsFilter, ChatsFilterMenu } from './chats-filter-menu'
@@ -130,8 +131,8 @@ interface ConversationListProps {
 
 const EMPTY_COPY: Record<ChatsFilter, { title: string; description: string }> = {
 	all: {
-		title: 'No conversations here',
-		description: 'Start a chat with a teammate or an agent.',
+		title: 'No chats yet',
+		description: 'Start one with the Chief of Staff.',
 	},
 	unread: {
 		title: 'No conversations here',
@@ -191,7 +192,17 @@ function ChatConversationList({
 		...(filter === 'unread' ? { unread_only: true } : {}),
 	})
 
-	const fetched = useMemo(() => data?.pages.flatMap((page) => page.conversations) ?? [], [data])
+	// Pages are fetched by offset, so a chat created or bumped while the list is open shifts the
+	// next page and returns a chat already seen. Two rows with one id share a React key, and
+	// React then leaves one behind when its group folds. Keep the first copy of each chat.
+	const fetched = useMemo(() => {
+		const seen = new Set<string>()
+		return (data?.pages.flatMap((page) => page.conversations) ?? []).filter((c) => {
+			if (seen.has(c.id)) return false
+			seen.add(c.id)
+			return true
+		})
+	}, [data])
 	// Reading a chat opened from the Unread filter would drop its row on the
 	// next refetch and shift everything below it. Keep rows that were shown in
 	// place (as read) until the filter or workspace changes.
@@ -251,6 +262,7 @@ function ChatConversationList({
 		mode: filter === 'archived' ? 'archived' : 'unread',
 	})
 	const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+	const allCollapsed = groups.length > 0 && groups.every((g) => collapsed.has(g.key))
 	const updateMe = useUpdateConversationMe(workspaceId)
 	const markAllRead = async () => {
 		// Exactly the chats the Unread group lists (pinned chats sit in their own group).
@@ -287,6 +299,9 @@ function ChatConversationList({
 		// re-observing would refire the same request in a tight loop. The manual
 		// "Try again" below is the only way back in.
 		if (!el || !hasNextPage || isFetchingNextPage || isFetchNextPageError) return
+		// With every group folded the list is a few header rows, so the sentinel is always on
+		// screen and would pull in the whole history behind the reader's back.
+		if (allCollapsed) return
 		if (typeof IntersectionObserver === 'undefined') return
 		const observer = new IntersectionObserver(
 			(entries) => {
@@ -296,31 +311,31 @@ function ChatConversationList({
 		)
 		observer.observe(el)
 		return () => observer.disconnect()
-	}, [hasNextPage, isFetchingNextPage, isFetchNextPageError, loadNextPage])
+	}, [hasNextPage, isFetchingNextPage, isFetchNextPageError, loadNextPage, allCollapsed])
 
 	return (
 		<div data-testid="conversation-list" className={cn('flex min-h-0 flex-1 flex-col', className)}>
 			<div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3 lg:pr-4 lg:pl-10">
 				<div className={cn('w-full', expanded && 'mx-auto max-w-[900px]')}>
 					{isLoading ? (
-						<div className="flex justify-center py-8">
-							<Spinner />
-						</div>
+						<ListSkeleton rows={8} />
 					) : isError ? (
 						// A failed fetch must not borrow the empty state: "No conversations
 						// here — start a chat" reads as an empty account and invites the
 						// reader to duplicate a thread they already have.
 						<EmptyState
-							title="Couldn't load your conversations"
-							description="Something went wrong reaching the server. Nothing has been lost — this is only the list."
+							icon={<MessageCircleWarning size={24} aria-hidden="true" />}
+							title="Couldn't load chats"
+							description="Check your connection and try again."
 							action={
-								<Button variant="link" size="sm" onClick={() => refetch()}>
-									Try again →
+								<Button variant="outline" size="sm" onClick={() => refetch()}>
+									Try again
 								</Button>
 							}
 						/>
 					) : conversations.length === 0 ? (
 						<EmptyState
+							icon={<MessageCircle size={24} aria-hidden="true" />}
 							title={EMPTY_COPY[filter].title}
 							description={EMPTY_COPY[filter].description}
 							action={
@@ -353,7 +368,7 @@ function ChatConversationList({
 						<>
 							{groups.map((group) => (
 								<div key={group.key} className="flex flex-col gap-px">
-									<div className="flex items-center gap-2 px-2 pt-3 pb-1.5 text-[13px]">
+									<div className="flex items-center gap-2 px-2 pt-3.5 pb-3 text-[15px]">
 										<button
 											type="button"
 											aria-expanded={!collapsed.has(group.key)}

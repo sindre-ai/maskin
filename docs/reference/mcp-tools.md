@@ -2,12 +2,65 @@
 title: MCP tools
 slug: mcp-tools
 description: The MCP tool surface — which tools exist, what they return, and when to reach for each.
-last_updated: 2026-11-02
+last_updated: 2026-11-09
 ---
 
 # MCP tools
 
 Stub — content pending. See parent bet.
+
+## Files
+
+### Reading a file: `get_file`
+
+`get_file` returns the stored bytes as `content` by default (`format: "raw"`). Any
+HTML page an agent writes (a deck, a website, a dashboard, a custom view) can be
+mostly embedded base64 fonts and inline CSS or script, so its raw `content` is
+hundreds of kilobytes of noise. Pass `format: "text"` to read the words instead:
+
+- `content_text` is markdown: headings, paragraphs, bullets, tables, links and code,
+  plus the labels of buttons, fields and menus (`[button: Save]`,
+  `[input text: Search]`, `[select Status: Open, Done]`). A deck
+  (`<section class="slide">`) gets one block per slide (`Slide N`) and its speaker
+  notes held in `data-notes`; a deck's own buttons are navigation chrome and are
+  left out. Styles, scripts, SVG and `data:` URIs are left out. If the page carries a
+  `<script type="text/markdown" id="deck-source">`, that source is returned as is.
+- `note` appears when the page shows almost no text in its markup but carries
+  script, which means a person sees what the script draws. The extract is then not
+  what they see: read the raw file for the logic and data.
+- Also returned: `title`, `meta_description`, `json_ld` (when present),
+  `source_object_id` (when a `derived_from` or `relates_to` edge ties the file to an
+  object), `contentHash`, `annotations`, `url` and `extracted: true`.
+- A text file that is not HTML comes back unchanged with `extracted: false`. A
+  binary file ignores `format` and returns the usual response.
+- The text is computed on every read from the stored bytes. Nothing is stored, so
+  it can never be stale. HTML over 8 MB is refused with a 400; read it raw.
+
+A raw read of an HTML file over 100 KB that is mostly embedded data opens with a
+`readable_with` field (for example `get_file format=text (96% of this file is
+embedded fonts)`), placed before `content` so a reader that stops early still sees it.
+
+There is no `offset` or `limit` on `get_file`. Use `format: "text"` rather than
+paging raw bytes.
+
+### Changing part of a file: `update_file` with `edits`
+
+`update_file` takes either `content` (replace the whole file) or `edits` (change
+parts of a text file), never both. `edits` is a list of `{ old, new, replace_all? }`
+applied in order on the server, under the same row lock as a whole-file save:
+
+- `old` must appear exactly once in the text as it stands after the earlier edits,
+  unless `replace_all` is true. No match, or more than one match without
+  `replace_all`, fails with a 400 that names the edit, and nothing is written.
+- `new` is literal text; it may be empty to delete.
+- Text MIME types only (not base64, not images or video). Files over 50 MB cannot
+  be edited. The result must stay under the file type's size cap.
+- At most 50 edits, 200,000 characters per `old` or `new`, 1,000,000 characters in
+  total.
+- `if_match` works as for `content`: a stale hash fails with 409 and writes nothing.
+- `old` must match the stored bytes, so copy it from a raw `get_file` read, not from
+  the `format: "text"` extract (which drops markup).
+- The save logs an `updated` event for the file, with `editCount`.
 
 ## Workspace skills: id or name
 
@@ -96,6 +149,16 @@ No registered tool description is over 1,500 characters; **packages/mcp/src/__te
 - Use action **send** only for a step that reads and reports (a tap sends it as written, so **prompt** must equal **label**). Use **fill** for everything else: a step that needs words only the person can supply, or that writes, sends, spends or deletes.
 - Pass **needed_integrations** for the tools the agent cannot do the job without.
 - A new agent is always a member (never admin or owner). Setting **tools** or **llm_config** needs a human admin or owner caller; a member or agent caller gets a 403 and nothing is created.
+
+### delete_agent: a person approves first
+
+An agent may delete another agent only after a person says yes on a decision card.
+
+1. The agent posts **create_comment** on a relevant object with a **decision**, mentions the person, and puts **delete_agent: { actor_id }** on the destructive option that approves it. The API refuses a card that names itself, a person, a system agent, an agent of another workspace, or more than one agent.
+2. The person taps that option. Their reply records a **deletion_approved** event on the agent, naming the asking agent. Nothing is deleted by the tap. Replies from an agent, or sent through MCP, never approve.
+3. The reply wakes the asking agent, which calls **delete_agent** with the same **id**. **DELETE /api/actors/:id** from an agent is allowed only while an approval from the last 24 hours names that agent as the asker and that target. Otherwise it is a 403 that says how to ask. An agent cannot delete itself.
+
+A person deleting an agent from the app is unchanged and needs no approval.
 
 ### gmail_send_email: the two approval routes
 

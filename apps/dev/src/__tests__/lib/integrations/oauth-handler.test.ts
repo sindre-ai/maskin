@@ -223,6 +223,49 @@ describe('OAuth2Handler', () => {
 		})
 	})
 
+	describe('no-secret public client', () => {
+		const publicConfig: OAuth2Config = {
+			authorizationUrl: 'https://provider.com/authorize',
+			tokenUrl: 'https://provider.com/token',
+			scopes: ['mcp'],
+			pkce: true,
+			tokenAuthMethod: 'none',
+			clientIdEnv: 'TEST_CLIENT_ID',
+		}
+
+		it('sends the client id and the PKCE verifier, never a secret or Basic auth', async () => {
+			mockFetch.mockResolvedValue({ ok: true, json: async () => ({ access_token: 'token' }) })
+
+			const handler = new OAuth2Handler(publicConfig)
+			await handler.exchangeCode('code', 'https://app.com/callback', 'verifier-123')
+
+			const [, options] = mockFetch.mock.calls[0]
+			const body = new URLSearchParams(options.body)
+			expect(body.get('client_id')).toBe('my-client-id')
+			expect(body.get('code_verifier')).toBe('verifier-123')
+			expect(body.has('client_secret')).toBe(false)
+			expect((options.headers as Headers).has('Authorization')).toBe(false)
+		})
+
+		it('refreshes with the client id only', async () => {
+			mockFetch.mockResolvedValue({ ok: true, json: async () => ({ access_token: 'new' }) })
+
+			await new OAuth2Handler(publicConfig).refreshToken('refresh-1')
+
+			const body = new URLSearchParams(mockFetch.mock.calls[0][1].body)
+			expect(body.get('grant_type')).toBe('refresh_token')
+			expect(body.get('client_id')).toBe('my-client-id')
+			expect(body.has('client_secret')).toBe(false)
+		})
+
+		it('fails loudly when a secret method has no secret setting', async () => {
+			const handler = new OAuth2Handler({ ...publicConfig, tokenAuthMethod: 'client_secret_post' })
+			await expect(handler.exchangeCode('code', 'https://app.com/callback')).rejects.toThrow(
+				/clientSecretEnv/,
+			)
+		})
+	})
+
 	describe('custom parser', () => {
 		it('merges custom parser results with standard parsing', async () => {
 			mockFetch.mockResolvedValue({

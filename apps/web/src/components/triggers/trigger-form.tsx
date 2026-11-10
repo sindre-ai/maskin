@@ -1,5 +1,6 @@
 import { Composer } from '@/components/chat/chat'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { FLOATING_CONTROLS } from '@/components/shared/floating-footer'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
@@ -25,6 +26,7 @@ import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useEntityEvents } from '@/hooks/use-events'
 import { useIntegrations, useProviders } from '@/hooks/use-integrations'
+import { useLoops } from '@/hooks/use-loops'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import type { ProviderEventDefinition, TriggerResponse, WorkspaceWithRole } from '@/lib/api'
 import { EMPTY_CHAT_SELECTION } from '@/lib/chat-selection'
@@ -33,7 +35,7 @@ import { describeCronSchedule, parseCronExpression } from '@/lib/cron'
 import { isTriggerChange } from '@/lib/triggers'
 import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
 import type { SafeJsonValue, conditionOperatorSchema } from '@maskin/shared'
-import { useNavigate } from '@tanstack/react-router'
+import { Link, useNavigate } from '@tanstack/react-router'
 import { Bell, Clock, Plus, X, Zap } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { z } from 'zod'
@@ -385,6 +387,10 @@ export function TriggerForm({
 	const { data: integrations } = useIntegrations(workspaceId)
 	const { data: providers } = useProviders()
 	const { data: sessions } = useWorkspaceSessions(workspaceId)
+	const { data: loops } = useLoops(workspaceId)
+	const ownerFlow = initialValues
+		? loops?.find((l) => l.triggerIds.includes(initialValues.id))
+		: undefined
 	const enabledModules = useEnabledModules()
 	const customExtensions = useCustomExtensions()
 
@@ -982,7 +988,18 @@ export function TriggerForm({
 							<RelativeTime date={initialValues.updatedAt} />
 						</>
 					)}
-					{' · not tied to a flow'}
+					{' · '}
+					{ownerFlow ? (
+						<Link
+							to="/$workspaceId/loops/$loopId"
+							params={{ workspaceId, loopId: ownerFlow.id }}
+							className="font-semibold text-foreground hover:underline"
+						>
+							{ownerFlow.name ?? 'Untitled flow'}
+						</Link>
+					) : (
+						'not tied to a flow'
+					)}
 				</span>
 			</div>
 
@@ -1395,11 +1412,7 @@ export function TriggerForm({
 			)}
 
 			{/* Sticky language edit bar (mockup 1818–1837) */}
-			<div className="sticky bottom-0 z-10 mt-7 bg-background">
-				<div
-					aria-hidden="true"
-					className="pointer-events-none h-5 bg-gradient-to-b from-transparent to-background"
-				/>
+			<div className={`pointer-events-none sticky bottom-0 z-10 mt-7 ${FLOATING_CONTROLS}`}>
 				<div className="pb-[max(0.625rem,env(safe-area-inset-bottom))]">
 					{isCreated && !hasChanges && (
 						<div className="flex flex-wrap gap-1.5 pb-2.5" aria-label="Suggested changes">

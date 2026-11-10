@@ -4,8 +4,9 @@ import MaskinUI
 import SwiftUI
 
 /// New conversation (spec 7 §6b): a To card with chips and an inline field that filters people
-/// and agents by name and role, N MATCHES / SUGGESTED rows with a 32pt +, the group note, starter
-/// chips above the shared composer, and a draft that survives closing the sheet. The Chief of
+/// and agents by name and role, N MATCHES / SUGGESTED rows with a 32pt +, starter chips above the
+/// shared composer, and a draft that survives closing the sheet. The keyboard stays open: picking a
+/// recipient moves focus to the message field, removing a chip moves it back to To. The Chief of
 /// Staff is on the line to begin with; more than one recipient makes a group chat.
 struct NewChatSheet: View {
 	let store: ConversationsStore
@@ -51,7 +52,7 @@ struct NewChatSheet: View {
 				NewConversationForm(
 					store: store, currentActorID: currentActorID, initialRecipient: initialRecipient, error: error,
 					draft: $draft, query: $query, highlightedChip: $highlightedChip,
-					toFocused: $toFocused)
+					toFocused: $toFocused, onRecipientPicked: { composer.requestFocus() })
 			}
 			// Dragging the open list must not drop the keyboard: that would blur To and close the list.
 			.scrollDismissesKeyboard(toFocused ? .never : .interactively)
@@ -73,6 +74,13 @@ struct NewChatSheet: View {
 				if !prefill.isEmpty { composer.text = prefill }
 				composer.bind(conversationID: Self.draftKey)
 				toFocused = draft.recipientIDs.isEmpty
+				// Someone is already in To (Chief of Staff, or a person the sheet was opened for), or a
+				// starter filled the message: the message is next. The request waits for the sheet to
+				// finish appearing, or the system ignores it.
+				if !draft.recipientIDs.isEmpty || !prefill.isEmpty {
+					try? await Task.sleep(for: .milliseconds(450))
+					composer.requestFocus()
+				}
 			}
 		}
 	}
@@ -84,8 +92,12 @@ struct NewChatSheet: View {
 		recipients.count == 1 && recipients[0].kind == .agent && !isCreating ? recipients[0] : nil
 	}
 
+	/// One agent and nobody else: its own openers. Several people, or only people, have none.
+	private var starters: [String] { StarterPrompts.forChat(others: recipients, actors: store.actors) }
+
 	private var bottomBar: some View {
 		VStack(alignment: .trailing, spacing: MaskinSpace.s5) {
+			StarterPromptsView(prompts: starters) { composer.addStarter($0) }
 			if !composer.trimmedText.isEmpty, restoredDraft {
 				Text("Draft saved · ⌘↩ to send")
 					.font(MaskinTypeface.sans(MaskinFontSize.t12, relativeTo: .caption))
@@ -130,6 +142,7 @@ struct NewChatSheet: View {
 				title: ThreadLayout.newChatTitle(for: people.map(\.name), startsLiveCall: live),
 				participantIDs: people.map(\.id), firstMessage: message,
 				firstMessageMetadata: taken?.metadata)
+			Analytics.shared.chatSessionStarted(conversationId: created.id, participants: people)
 			MaskinHaptics.play(.success)
 			onCreated(created, live)
 			dismiss()
@@ -141,7 +154,7 @@ struct NewChatSheet: View {
 	}
 }
 
-/// The sheet's scrolling content: title, the To card, the group note, and the people rows.
+/// The sheet's scrolling content: title, the To card and the people rows.
 /// Separate from the sheet so it renders in a snapshot without the scroll view.
 struct NewConversationForm: View {
 	let store: ConversationsStore
@@ -153,6 +166,8 @@ struct NewConversationForm: View {
 	/// The last chip, after one Backspace on an empty field; a second Backspace removes it.
 	@Binding var highlightedChip: String?
 	var toFocused: FocusState<Bool>.Binding
+	/// Called after a recipient is picked: the message field takes the keyboard.
+	var onRecipientPicked: () -> Void = {}
 
 	static func recipients(_ ids: [String], store: ConversationsStore, initialRecipient: ChatParticipant?) -> [ChatParticipant] {
 		ids.compactMap { id in
@@ -175,19 +190,7 @@ struct NewConversationForm: View {
 			Text("New conversation")
 				.maskinText(.sheetTitle)
 				.foregroundStyle(MaskinColor.ink)
-			Text("Choose who's in it, then say what you need.")
-				.font(MaskinTypeface.sans(MaskinFontSize.t15, relativeTo: .subheadline))
-				.foregroundStyle(MaskinColor.ink4)
-				.padding(.top, MaskinSpace.s3)
 			toCard.padding(.top, MaskinSpace.s9)
-			if let note = NewConversationCopy.groupNote(recipientCount: recipients.count) {
-				Text(note)
-					.font(MaskinTypeface.sans(MaskinFontSize.t13, relativeTo: .footnote))
-					.foregroundStyle(MaskinColor.ink5)
-					.fixedSize(horizontal: false, vertical: true)
-					.padding(.top, MaskinSpace.s4)
-					.padding(.horizontal, MaskinSpace.s2)
-			}
 			if let error { FormError(error).padding(.top, MaskinSpace.s7) }
 			// The list only exists while To has focus, so no person row sits under the message box.
 			if toFocused.wrappedValue {
@@ -251,7 +254,7 @@ struct NewConversationForm: View {
 				card(rows: matches)
 			}
 		} else if !matches.isEmpty {
-			sectionLabel("Suggested")
+			sectionLabel("Recent")
 			card(rows: matches)
 		}
 	}
@@ -311,13 +314,16 @@ struct NewConversationForm: View {
 		withAnimation(MaskinMotion.quick) { draft.toggle(id) }
 		query = ""
 		highlightedChip = nil
-		toFocused.wrappedValue = true
+		toFocused.wrappedValue = false
+		onRecipientPicked()
 	}
 
 	private func remove(_ id: String) {
 		MaskinHaptics.play(.selection)
 		withAnimation(MaskinMotion.quick) { draft.remove(id) }
 		highlightedChip = nil
+		// The chip is gone: the next thing to do is name someone else, so To takes the keyboard.
+		toFocused.wrappedValue = true
 	}
 
 	/// Return adds the top match, like a mail client's To field.

@@ -33,12 +33,17 @@ import {
  *  - github: a stdio server in the container that also needs the token for git itself.
  */
 export const GATEWAY_PROVIDERS: ReadonlySet<string> = new Set([
+	'atlassian',
+	'attio',
 	'gmail',
 	'google-calendar',
 	'linear',
 	'miro',
+	'notion',
 	'posthog',
 	'resend',
+	'sentry',
+	'stripe',
 	'ubersuggest',
 ])
 

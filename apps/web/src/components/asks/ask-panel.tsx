@@ -140,15 +140,6 @@ export function AskPanel({
 										<Check className="mr-1 size-3" />
 										Approve
 									</Button>
-									<Button
-										type="button"
-										size="sm"
-										variant="outline"
-										onClick={() => handleRespond(a, 'hold')}
-									>
-										<Clock className="mr-1 size-3" />
-										Hold
-									</Button>
 								</div>
 							</li>
 						))}

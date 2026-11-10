@@ -264,14 +264,62 @@ struct TeamLayoutTests {
 struct ConversationRowStatusTests {
 	private let convo = chatConvo("c", snippet: "Done. PR is **up**", participants: [chatMe, chatRelay])
 
-	@Test("the plain preview is led by who wrote it")
-	func plain() {
-		var c = convo
-		c.snippetActorName = "Relay"
-		let status = ConversationRowStatus.make(conversation: c)
+	/// `displayed` is the title the row shows; it defaults to the stored one.
+	private func preview(
+		title: String = "Chat c", displayed: String? = nil, by: ChatParticipant? = chatRelay,
+		participants: [ChatParticipant] = [chatMe, chatRelay], tick: ConversationRowStatus.Tick? = nil,
+		me: String? = "me"
+	) -> ConversationRowStatus {
+		var c = chatConvo("c", title: title, snippet: "Done. PR is **up**", participants: participants)
+		c.snippetActorName = by?.name
+		c.snippetActorID = by?.id
+		return ConversationRowStatus.make(conversation: c, tick: tick, displayedTitle: displayed, me: me)
+	}
+
+	@Test("a custom-titled one-to-one keeps the name: nothing else says who wrote it")
+	func customTitledOneToOneKeepsName() {
+		let status = preview(title: "Q3 planning")
 		#expect(status.prefix == nil)
 		#expect(status.preview == "Relay: Done. PR is up")
 		#expect(!status.isDraft)
+	}
+
+	@Test("a one-to-one whose displayed title is the author drops the name, folded")
+	func titleEqualsNameDropsLead() {
+		#expect(preview(title: "Relay").preview == "Done. PR is up")
+		#expect(preview(title: "  relay ").preview == "Done. PR is up")
+		#expect(preview(title: "Relay").previewPieces == nil)
+	}
+
+	@Test("the comparison is with the displayed title, not the stored one")
+	func displayedTitleDecides() {
+		// Stored title is custom but the team list shows the person's name: drop it.
+		#expect(preview(title: "Q3 planning", displayed: "Relay").preview == "Done. PR is up")
+		// Stored title is the person's name but the row shows a custom title: keep it.
+		#expect(preview(title: "Relay", displayed: "Month-end close").preview == "Relay: Done. PR is up")
+	}
+
+	@Test("three people keep the name even when the title matches")
+	func groupKeepsName() {
+		let status = preview(title: "Relay", participants: [chatMe, chatRelay, chatSam])
+		#expect(status.preview == "Relay: Done. PR is up")
+	}
+
+	@Test("an empty participant list is not guessed to be a one-to-one: the name stays")
+	func emptyParticipantsKeepName() {
+		#expect(preview(title: "Relay", participants: []).preview == "Relay: Done. PR is up")
+	}
+
+	@Test("a list that leaves you out, or an unknown you, keeps the name even with two people")
+	func listWithoutYouKeepsName() {
+		#expect(preview(title: "Relay", participants: [chatRelay, chatSam]).preview == "Relay: Done. PR is up")
+		#expect(preview(title: "Relay", me: nil).preview == "Relay: Done. PR is up")
+	}
+
+	@Test("your own message reads You, with or without a send tick, whatever the title")
+	func ownMessageStillYou() {
+		#expect(preview(title: "Me", by: chatMe, tick: .sent).preview == "You: Done. PR is up")
+		#expect(preview(title: "Me", by: chatMe).preview == "You: Done. PR is up")
 	}
 
 	@Test("typing replaces everything, a draft beats working, working beats the tick")
@@ -343,12 +391,6 @@ struct NewConversationCopyTests {
 		#expect(NewConversationCopy.placeholder(for: [sam]) == "Message Sam")
 		#expect(NewConversationCopy.placeholder(for: [sam, chief]) == "Message Sam and Chief of Staff")
 		#expect(NewConversationCopy.placeholder(for: [sam, chief, ida, forge]) == "Message Sam, Chief of Staff +2")
-	}
-
-	@Test("the group note counts you in and only shows with two or more recipients")
-	func note() {
-		#expect(NewConversationCopy.groupNote(recipientCount: 1) == nil)
-		#expect(NewConversationCopy.groupNote(recipientCount: 2) == "3 in this conversation, including you. Everyone sees the whole thread.")
 	}
 
 	@Test("matches search name and role, never someone already picked")
@@ -452,7 +494,8 @@ struct WorkingTextTests {
 
 @Suite("ConversationRowStatus links") struct ConversationRowStatusLinkTests {
 	private func convo(_ snippet: String, who: String? = "Developer") -> ConversationSummary {
-		ConversationSummary(id: "c", title: "t", snippet: snippet, snippetActorName: who)
+		ConversationSummary(
+			id: "c", title: "t", snippet: snippet, snippetActorName: who, participants: [chatMe, chatRelay, chatSam])
 	}
 
 	@Test("the author lead is unchanged and a bare address reads link in a muted run")
@@ -477,5 +520,71 @@ struct WorkingTextTests {
 		var status = ConversationRowStatus.make(conversation: convo("https://x.io/a"))
 		status.preview = "2 conversations · Title"
 		#expect(status.previewPieces == nil)
+	}
+}
+
+@Suite("NameMatch")
+struct NameMatchTests {
+	/// The same table is in the web tests (`conversation-snippet.test.ts`). Keep the two in step.
+	@Test(
+		"compares names the way the web client does",
+		arguments: [
+			("José", "jose", true),
+			("Straße", "STRASSE", true),
+			("İlker", "ilker", true),
+			("  Bookkeeper ", "bookkeeper", true),
+			("Bookkeeper", "Bookkeeper 2", false),
+			("Zoë", "Zoe Lee", false),
+		])
+	func table(a: String, b: String, expected: Bool) {
+		#expect(NameMatch.same(a, b) == expected)
+	}
+
+	@Test("folds to the same text the web side does")
+	func folded() {
+		#expect(NameMatch.folded(" Straße ") == "strasse")
+		#expect(NameMatch.folded("İlker") == "ilker")
+		#expect(NameMatch.folded("José") == "jose")
+	}
+}
+
+@Suite("ConversationSummary.snippetAuthorLead")
+struct SnippetAuthorLeadTests {
+	private func chat(title: String = "Chat c", by: ChatParticipant = chatRelay) -> ConversationSummary {
+		var c = chatConvo("c", title: title, snippet: "Hi", participants: [chatMe, chatRelay])
+		c.snippetActorName = by.name
+		c.snippetActorID = by.id
+		return c
+	}
+
+	@Test("the person sub-row compares with the conversation's own title")
+	func subRowUsesItsOwnTitle() {
+		#expect(chat(title: "Q3 planning").snippetAuthorLead(displayedTitle: "Q3 planning", me: "me") == "Relay: ")
+		#expect(chat(title: "Relay").snippetAuthorLead(displayedTitle: "Relay", me: "me") == nil)
+	}
+
+	// Same case as "keeps a name that arrives without an author id" in the web tests.
+	@Test("a name with no author id is still shown")
+	func nameWithoutAuthorIDKeepsName() {
+		var c = chat(title: "Q3 planning")
+		c.snippetActorID = nil
+		#expect(c.snippetAuthorLead(displayedTitle: "Q3 planning", me: "me") == "Relay: ")
+	}
+
+	@Test("the sub-row reads You for your own message, like the status line and web")
+	func subRowReadsYou() {
+		#expect(chat(by: chatMe).snippetAuthorLead(displayedTitle: "Chat c", me: "me") == "You: ")
+	}
+
+	@Test("a team-list row compares with the title it shows: custom stays, default becomes the person")
+	func teamListDisplayedTitle() {
+		let custom = chat(title: "Q3 planning")
+		let customShown = TeamLayout.displayedTitle(of: .conversation(custom), me: "me")
+		#expect(customShown == "Q3 planning")
+		#expect(custom.snippetAuthorLead(displayedTitle: customShown, me: "me") == "Relay: ")
+		let plain = chat(title: "Relay")
+		let plainShown = TeamLayout.displayedTitle(of: .conversation(plain), me: "me")
+		#expect(plainShown == "Relay")
+		#expect(plain.snippetAuthorLead(displayedTitle: plainShown, me: "me") == nil)
 	}
 }

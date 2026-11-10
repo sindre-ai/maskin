@@ -6,8 +6,8 @@ import SwiftUI
 enum SettingsRoute: Hashable, Identifiable {
 	var id: Self { self }
 	case profile, notifications, workspace, skills, objectTypes, deleteAccount, deleteWorkspace
-	case members, integrations, files, autonomy, keys, triggers, billing
-	case deviceSignIn, appLock, workspaces
+	case members, integrations, files, keys, triggers, billing
+	case deviceSignIn, appLock, workspaces, advanced, nativeSurfaces
 	/// `maskin://connect?code=`: Sign in a device with the code already typed.
 	case deviceCode(String)
 }
@@ -131,6 +131,18 @@ struct SettingsServices {
 		#endif
 		return IntegrationsStore(
 			api: source ?? NoSettingsSource(), currentRole: role, webAuth: webAuth)
+	}
+
+	/// The figures beside the rows of the account menu and the Settings page; nil without a workspace.
+	func countsStore() -> SettingsCountsStore? {
+		guard let source, let workspaceId else { return nil }
+		let client = environment.client
+		let files = APIFilesRemote(client: client, credentials: environment.auth.credentialsProvider)
+		return SettingsCountsStore(
+			workspaceId: workspaceId, members: source, integrations: source, skills: source, schema: source,
+			billing: source,
+			triggerCount: { try await APITriggersSource(client: client, workspaceID: workspaceId).list().count },
+			fileCount: { limit in try await files.list(query: "", limit: limit, offset: 0).count })
 	}
 
 	func keychainStore() -> KeychainStore {

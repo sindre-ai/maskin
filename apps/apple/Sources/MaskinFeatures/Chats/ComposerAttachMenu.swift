@@ -49,6 +49,9 @@ struct ComposerAttachMenu: View {
 		CGFloat(count) * row + CGFloat(max(count - 1, 0))
 	}
 
+	/// How far to move the card, from the bar's top edge, so its bottom sits 8pt above the bar.
+	static func offsetY(height: CGFloat) -> CGFloat { -(height + MaskinSpace.s4) }
+
 	var body: some View {
 		Group {
 			if Self.contentHeight(rows: actions.count) > maxHeight {

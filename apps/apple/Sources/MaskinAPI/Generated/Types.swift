@@ -445,7 +445,7 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `GET /api/conversations/{id}`.
     /// - Remark: Generated from `#/paths//api/conversations/{id}/get`.
     func get_sol_api_sol_conversations_sol__lcub_id_rcub_(_ input: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub_.Input) async throws -> Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub_.Output
-    /// Rename a conversation
+    /// Rename a conversation or change its tags
     ///
     /// - Remark: HTTP `PATCH /api/conversations/{id}`.
     /// - Remark: Generated from `#/paths//api/conversations/{id}/patch`.
@@ -475,6 +475,11 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `PATCH /api/conversations/{id}/messages/{messageId}`.
     /// - Remark: Generated from `#/paths//api/conversations/{id}/messages/{messageId}/patch`.
     func patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_(_ input: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Input) async throws -> Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output
+    /// Delete a message you authored
+    ///
+    /// - Remark: HTTP `DELETE /api/conversations/{id}/messages/{messageId}`.
+    /// - Remark: Generated from `#/paths//api/conversations/{id}/messages/{messageId}/delete`.
+    func delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_(_ input: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Input) async throws -> Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output
     /// React to a message with an emoji
     ///
     /// - Remark: HTTP `PUT /api/conversations/{id}/messages/{messageId}/reactions`.
@@ -1823,7 +1828,7 @@ extension APIProtocol {
             headers: headers
         ))
     }
-    /// Rename a conversation
+    /// Rename a conversation or change its tags
     ///
     /// - Remark: HTTP `PATCH /api/conversations/{id}`.
     /// - Remark: Generated from `#/paths//api/conversations/{id}/patch`.
@@ -1909,6 +1914,19 @@ extension APIProtocol {
             path: path,
             headers: headers,
             body: body
+        ))
+    }
+    /// Delete a message you authored
+    ///
+    /// - Remark: HTTP `DELETE /api/conversations/{id}/messages/{messageId}`.
+    /// - Remark: Generated from `#/paths//api/conversations/{id}/messages/{messageId}/delete`.
+    public func delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_(
+        path: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Input.Path,
+        headers: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Input.Headers
+    ) async throws -> Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output {
+        try await delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_(Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Input(
+            path: path,
+            headers: headers
         ))
     }
     /// React to a message with an emoji
@@ -2394,10 +2412,12 @@ extension APIProtocol {
     /// - Remark: Generated from `#/paths//api/files/{id}/get`.
     public func get_sol_api_sol_files_sol__lcub_id_rcub_(
         path: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Input.Path,
+        query: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Input.Query = .init(),
         headers: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Input.Headers = .init()
     ) async throws -> Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output {
         try await get_sol_api_sol_files_sol__lcub_id_rcub_(Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Input(
             path: path,
+            query: query,
             headers: headers
         ))
     }

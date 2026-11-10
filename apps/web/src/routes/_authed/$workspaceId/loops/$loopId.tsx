@@ -1,8 +1,8 @@
 import { PageHeader } from '@/components/layout/page-header'
 import { AskBanner } from '@/components/loops/ask-banner'
 import { LoopBlockError } from '@/components/loops/loop-block-error'
-import { itemsNeedingYou, loopCounters } from '@/components/loops/loop-counters'
-import { LoopCustomView } from '@/components/loops/loop-custom-view'
+import { itemsNeedingYou } from '@/components/loops/loop-counters'
+import { LoopDecisions } from '@/components/loops/loop-decisions'
 import { LoopDetailTabs } from '@/components/loops/loop-detail-tabs'
 import { LoopFirstRunBanner } from '@/components/loops/loop-first-run-banner'
 import { LoopFlow } from '@/components/loops/loop-flow'
@@ -16,6 +16,7 @@ import {
 import { LoopStats } from '@/components/loops/loop-stats'
 import { LoopTags } from '@/components/loops/loop-tags'
 import { LoopUtteranceInput } from '@/components/loops/loop-utterance-input'
+import { LoopViewTab } from '@/components/loops/loop-view-tab'
 import { TargetsAndOwners } from '@/components/loops/targets-and-owners'
 import { ObjectDetailBody } from '@/components/objects/object-detail-body'
 import { TimelineTab } from '@/components/objects/timeline-tab'
@@ -29,7 +30,6 @@ import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
-import { ButtonGroup } from '@/components/ui/button-group'
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -44,16 +44,17 @@ import { useLoop, useLoopActivity } from '@/hooks/use-loops'
 import { useNotifications } from '@/hooks/use-notifications'
 import { useDeleteObject, useObject, useObjects, useUpdateObject } from '@/hooks/use-objects'
 import { useRelationships } from '@/hooks/use-relationships'
-import { useTriggers } from '@/hooks/use-triggers'
+import { useCreateTrigger, useTriggers } from '@/hooks/use-triggers'
 import { trackAskBannerDecideClicked, trackLoopViewed } from '@/lib/analytics'
+import { api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { nextFireAt, nextFireLabel } from '@/lib/loop-next-fire'
 import { type LoopPlan, parseLoopDescription } from '@/lib/loop-plan'
 import { useWorkspace } from '@/lib/workspace-context'
-import { useWaitingOnViewer } from '@maskin/shared'
+import { type LoopStatus, readLoopViews, useWaitingOnViewer } from '@maskin/shared'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
-import { MoreHorizontal, Pause, Play, Trash2 } from 'lucide-react'
+import { Check, ChevronDown, MoreHorizontal, Pause, Play, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -78,6 +79,12 @@ interface ProposedEdit {
 	 *  alongside the plan so the next refinement builds on it. */
 	nextSource: string
 }
+
+const LOOP_STAGES = [
+	'learning',
+	'supervised',
+	'fully_autonomous',
+] as const satisfies readonly LoopStatus[]
 
 function SetupBlock({ label, text }: { label: string; text: string | null }) {
 	return (
@@ -154,17 +161,16 @@ function LoopDetailRoute() {
 	const [confirmDelete, setConfirmDelete] = useState(false)
 	const [tab, setTab] = useState('overview')
 
-	// Custom view: an agent pins an HTML file with set_loop_view
-	// (metadata.view_file_id); it replaces the stats and flow, and the toggle
-	// switches back. A view that cannot be shown sets customFailure and the
-	// default page renders with a note; choosing "Custom view" again clears it
-	// and retries.
-	const viewFileId =
-		typeof object?.metadata?.view_file_id === 'string' ? object.metadata.view_file_id : null
-	const hasCustomView = viewFileId !== null
-	const [viewMode, setViewMode] = useState<'default' | 'custom'>('custom')
-	const [customFailure, setCustomFailure] = useState<string | null>(null)
-	const showCustomView = hasCustomView && viewMode === 'custom' && customFailure === null
+	// Custom views: an agent pins HTML files with set_loop_view
+	// (metadata.views). Each is its own tab between Overview and Items. A tab
+	// that is no longer there falls back to Overview.
+	const views = useMemo(() => readLoopViews(object?.metadata), [object?.metadata])
+	const viewTabs = useMemo(() => views.map((view, i) => ({ ...view, value: `view-${i}` })), [views])
+	const activeView = viewTabs.find((v) => v.value === tab)
+	const activeTab =
+		tab === 'overview' || ['items', 'activity', 'setup'].includes(tab) || activeView
+			? tab
+			: 'overview'
 
 	// D3 AskBanner wiring — the shared `useWaitingOnViewer` (T1) takes a getter
 	// so `packages/shared` stays React-free. The loop-level `waitingOnViewer` bit
@@ -205,6 +211,74 @@ function LoopDetailRoute() {
 			} catch (err) {
 				toast.error('Could not save your changes')
 				throw err
+			}
+		},
+		[loopId, updateObject],
+	)
+
+	const createTrigger = useCreateTrigger(workspaceId)
+	const loopTriggerIds = loop?.triggerIds
+	const loopAgentIds = loop?.agentIds
+	const addingTriggerRef = useRef(false)
+	const [addingTrigger, setAddingTrigger] = useState(false)
+	// A new trigger starts paused with placeholder settings, tied to this flow, and opens on
+	// its own page to be filled in — the same start the create picker gives a trigger.
+	const handleAddTrigger = useCallback(async () => {
+		if (addingTriggerRef.current) return
+		const actorId = getStoredActor()?.id
+		if (!actorId) {
+			toast.error('Sign in required to add a trigger')
+			return
+		}
+		addingTriggerRef.current = true
+		setAddingTrigger(true)
+		let createdId: string | null = null
+		try {
+			const created = await createTrigger.mutateAsync({
+				name: 'New trigger',
+				type: 'cron',
+				config: { expression: '0 0 * * *' },
+				action_prompt: 'New trigger',
+				// The flow's own first agent when it has one, so the new step lands in a column
+				// that exists; the person adding it otherwise, as the create picker does.
+				target_actor_id: loopAgentIds?.[0] ?? actorId,
+				enabled: false,
+			})
+			createdId = created.id
+			await updateObject.mutateAsync({
+				id: loopId,
+				data: { metadata: { trigger_ids: [...(loopTriggerIds ?? []), created.id] } },
+			})
+			navigate({
+				to: '/$workspaceId/triggers/$triggerId',
+				params: { workspaceId, triggerId: created.id },
+			})
+		} catch {
+			// A trigger that never got tied to the flow would sit loose in the workspace.
+			if (createdId) api.triggers.delete(createdId, workspaceId).catch(() => {})
+			toast.error('Could not add a trigger')
+		} finally {
+			addingTriggerRef.current = false
+			setAddingTrigger(false)
+		}
+	}, [createTrigger, updateObject, loopId, loopTriggerIds, loopAgentIds, navigate, workspaceId])
+
+	// "Message" on the Decisions card: bring the flow's own composer into reach and focus it.
+	const handleMessageDriver = useCallback(() => {
+		composerRef.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })
+		const field = composerRef.current?.querySelector<HTMLElement>(
+			'textarea, [contenteditable="true"], input',
+		)
+		field?.focus()
+	}, [])
+
+	// The stage the flow works in. Pausing stays under the "..." menu, so a stage never hides it.
+	const handleChangeStage = useCallback(
+		async (status: LoopStatus) => {
+			try {
+				await updateObject.mutateAsync({ id: loopId, data: { status } })
+			} catch {
+				toast.error('Could not change the stage')
 			}
 		},
 		[loopId, updateObject],
@@ -393,7 +467,6 @@ function LoopDetailRoute() {
 	const pill = LOOP_PILL_STYLES[loop.pill]
 	// The flow's driver is the object's own `driver`; no driver, no pill.
 	const driver = object?.driver ? actors?.find((a) => a.id === object.driver) : undefined
-	const counters = loopCounters(children ?? [], statusChains)
 	const needsYouRows = itemsNeedingYou(
 		children ?? [],
 		needsInputNotifications ?? [],
@@ -505,7 +578,7 @@ function LoopDetailRoute() {
 				    is — the description IS the summary now. */}
 				{object && (
 					// Pulled up under the title, as the prototype sets the promise close to it.
-					<div className="-mt-4">
+					<div className="-mt-4 [&_p]:text-base [&_p]:leading-[1.45]">
 						<ObjectDetailBody
 							object={object}
 							workspaceId={workspaceId}
@@ -532,31 +605,64 @@ function LoopDetailRoute() {
 				)}
 
 				<div className="mt-4 flex flex-wrap items-center gap-2">
-					<span
-						data-testid="loop-pill"
-						className="inline-flex h-8 items-center gap-2 rounded-full border border-border px-3 text-[13px] font-semibold text-foreground"
-					>
-						<span
-							aria-hidden="true"
-							className={cn(
-								'size-2 rounded-full',
-								pill.dot,
-								isLiveLoopPill(loop.pill) && 'animate-pulse',
-							)}
-						/>
-						{LOOP_PILL_STYLES[loop.status].label}
-						{loop.pill === 'waiting_on_you' && (
-							<span className={LOOP_PILL_STYLES.waiting_on_you.text}>· Needs you</span>
-						)}
-					</span>
+					<DropdownMenu>
+						<ViewerTooltip>
+							<DropdownMenuTrigger asChild>
+								<button
+									type="button"
+									data-testid="loop-pill"
+									disabled={!canWrite || !object}
+									aria-label={`Stage: ${LOOP_PILL_STYLES[loop.status].label}`}
+									className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-3.5 text-[13.5px] font-semibold text-foreground disabled:cursor-default"
+								>
+									<span
+										aria-hidden="true"
+										className={cn(
+											'size-2 rounded-full',
+											pill.dot,
+											isLiveLoopPill(loop.pill) && 'animate-pulse',
+										)}
+									/>
+									{LOOP_PILL_STYLES[loop.status].label}
+									{canWrite && object && (
+										<ChevronDown size={11} aria-hidden="true" className="text-muted-foreground" />
+									)}
+								</button>
+							</DropdownMenuTrigger>
+						</ViewerTooltip>
+						<DropdownMenuContent align="start">
+							{LOOP_STAGES.map((stage) => (
+								<DropdownMenuItem
+									key={stage}
+									onClick={() => handleChangeStage(stage)}
+									className="gap-2"
+								>
+									<span>{LOOP_PILL_STYLES[stage].label}</span>
+									{loop.status === stage && (
+										<Check size={13} className="ml-auto" aria-hidden="true" />
+									)}
+								</DropdownMenuItem>
+							))}
+						</DropdownMenuContent>
+					</DropdownMenu>
 					{driver && (
 						<span
 							data-testid="loop-driver"
-							className="inline-flex h-8 items-center gap-2 rounded-full border border-border px-3 text-[13px]"
+							className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-3.5 text-[13.5px]"
 						>
 							<ActorAvatar id={driver.id} name={driver.name} type={driver.type} />
 							<span className="font-semibold text-foreground">{driver.name}</span>
 							<span className="text-muted-foreground">drives</span>
+						</span>
+					)}
+					{needsYouRows.length > 0 && (
+						<span
+							data-testid="loop-decisions-chip"
+							className="inline-flex h-9 items-center rounded-full border border-border px-3.5 text-[13.5px] font-semibold text-foreground"
+						>
+							{needsYouRows.length === 1
+								? '1 decision needed'
+								: `${needsYouRows.length} decisions needed`}
 						</span>
 					)}
 					<LoopTags tags={loop.tags} canWrite={canWrite && !!object} onChange={handleUpdateTags} />
@@ -565,17 +671,18 @@ function LoopDetailRoute() {
 				<div className="mt-6">
 					<LoopDetailTabs
 						tabs={[
-							{ value: 'overview', label: 'Overview' },
+							{ value: 'overview', label: 'Overview', count: needsYouRows.length },
+							...viewTabs.map((v) => ({ value: v.value, label: v.name })),
 							{ value: 'items', label: 'Items', count: childIds.length },
 							{ value: 'activity', label: 'Activity' },
 							{ value: 'setup', label: 'Setup' },
 						]}
-						value={tab}
+						value={activeTab}
 						onChange={setTab}
 					/>
 				</div>
 
-				{tab === 'overview' && (
+				{activeTab === 'overview' && (
 					<div role="tabpanel" className="mt-8 flex flex-col gap-8">
 						{/* Stable aria-live wrapper for the D3 AskBanner. The wrapper element
 				    is permanent so screen readers announce the banner appearance
@@ -609,136 +716,61 @@ function LoopDetailRoute() {
 
 						<TargetsAndOwners loop={loop} actors={actors} />
 
-						{hasCustomView && (
-							<div
-								className={cn(
-									'flex flex-wrap items-center justify-between gap-2',
-									// The view sits right under its switch, not a whole section away.
-									showCustomView && '-mb-4',
-								)}
-							>
-								<p className="text-xs text-muted-foreground">
-									{viewMode === 'custom' && customFailure
-										? `Custom view unavailable: ${customFailure} Showing the default page.`
-										: ''}
-								</p>
-								<ButtonGroup aria-label="Loop view">
-									<Button
-										type="button"
-										variant={viewMode === 'default' ? 'secondary' : 'ghost'}
-										size="sm"
-										onClick={() => setViewMode('default')}
-									>
-										Default
-									</Button>
-									<Button
-										type="button"
-										variant={viewMode === 'custom' ? 'secondary' : 'ghost'}
-										size="sm"
-										onClick={() => {
-											setCustomFailure(null)
-											setViewMode('custom')
-										}}
-									>
-										Custom view
-									</Button>
-								</ButtonGroup>
-							</div>
-						)}
+						<LoopDecisions
+							workspaceId={workspaceId}
+							rows={needsYouRows.map(({ item, ask }) => ({
+								item,
+								ask: {
+									title: ask.title,
+									createdAt: ask.createdAt,
+									sourceActorId: ask.sourceActorId,
+								},
+							}))}
+							actors={actors}
+							messageLabel={driver?.name}
+							onMessage={handleMessageDriver}
+						/>
 
-						{showCustomView && viewFileId && (
-							// One block, so the "Updated" line and the view are not spaced as sections.
-							<div className="min-w-0">
-								<LoopCustomView
-									workspaceId={workspaceId}
-									fileId={viewFileId}
-									onFailure={setCustomFailure}
+						<div>
+							{flowFailed ? (
+								<LoopBlockError
+									message={`Couldn't load the steps of this flow. ${SLOW_LOAD_MESSAGE}`}
+									onRetry={() => {
+										for (const [failed, query] of [
+											[triggersFailed, triggersQuery],
+											[actorsFailed, actorsQuery],
+											[edgesFailed, edgesQuery],
+											[childrenFailed, childrenQuery],
+										] as const) {
+											if (failed) query.refetch?.()
+										}
+									}}
 								/>
-							</div>
-						)}
-
-						{!showCustomView && (
-							<>
-								{counters.length > 0 && (
-									<section
-										aria-label="Progress"
-										data-testid="loop-counters"
-										className="grid grid-cols-3 gap-3 sm:flex"
-									>
-										{counters.map((c) => (
-											<div key={c.key} className="rounded-2xl bg-muted px-4 py-3.5 sm:w-44">
-												<p className="text-[26px] font-bold leading-none tracking-tight tabular-nums text-foreground">
-													{c.count}
-												</p>
-												<p className="mt-1.5 text-[13px] text-muted-foreground">{c.label}</p>
-											</div>
-										))}
-									</section>
-								)}
-
-								{needsYouRows.length > 0 && (
-									<section
-										aria-label="Needs you"
-										data-testid="loop-needs-you"
-										className="flex flex-col"
-									>
-										<span className="text-[13px] font-semibold text-muted-foreground">
-											Needs you
-										</span>
-										<p className="mt-2 text-[14px] font-semibold text-foreground">
-											{needsYouRows.length === 1
-												? '1 item is waiting for you'
-												: `${needsYouRows.length} items are waiting for you`}
-										</p>
-										{needsYouRows.map(({ item, ask }) => (
-											<Link
-												key={item.id}
-												to="/$workspaceId/objects/$objectId"
-												params={{ workspaceId, objectId: item.id }}
-												className="mt-2 flex flex-col gap-0.5 rounded-lg border border-border px-3 py-2.5 transition-colors duration-150 hover:bg-muted"
-											>
-												<span className="truncate text-[14px] font-semibold text-foreground">
-													{item.title ?? 'Untitled'}
-												</span>
-												<span className="truncate text-[12.5px] text-muted-foreground">
-													{ask.title}
-												</span>
-											</Link>
-										))}
-									</section>
-								)}
-
-								<div>
-									{flowFailed ? (
-										<LoopBlockError
-											message={`Couldn't load the steps of this flow. ${SLOW_LOAD_MESSAGE}`}
-											onRetry={() => {
-												for (const [failed, query] of [
-													[triggersFailed, triggersQuery],
-													[actorsFailed, actorsQuery],
-													[edgesFailed, edgesQuery],
-													[childrenFailed, childrenQuery],
-												] as const) {
-													if (failed) query.refetch?.()
-												}
-											}}
-										/>
-									) : (
-										<LoopFlow
-											workspaceId={workspaceId}
-											triggers={loopTriggers}
-											actors={actors}
-											childObjects={children ?? []}
-											loop={loop}
-										/>
-									)}
-								</div>
-							</>
-						)}
+							) : (
+								<LoopFlow
+									workspaceId={workspaceId}
+									triggers={loopTriggers}
+									actors={actors}
+									loop={loop}
+									onAddTrigger={canWrite && object ? handleAddTrigger : undefined}
+									addingTrigger={addingTrigger}
+								/>
+							)}
+						</div>
 					</div>
 				)}
 
-				{tab === 'items' && (
+				{activeView && (
+					<div role="tabpanel" className="mt-8 min-w-0">
+						<LoopViewTab
+							key={activeView.value}
+							workspaceId={workspaceId}
+							fileId={activeView.fileId}
+						/>
+					</div>
+				)}
+
+				{activeTab === 'items' && (
 					<div role="tabpanel" className="mt-8 flex flex-col">
 						{sortedChildren.length === 0 ? (
 							<EmptyState
@@ -764,7 +796,7 @@ function LoopDetailRoute() {
 					</div>
 				)}
 
-				{tab === 'activity' && object && (
+				{activeTab === 'activity' && object && (
 					<div role="tabpanel" className="mt-8">
 						{activityFailed && (
 							<LoopBlockError
@@ -781,7 +813,7 @@ function LoopDetailRoute() {
 					</div>
 				)}
 
-				{tab === 'setup' && (
+				{activeTab === 'setup' && (
 					<div role="tabpanel" className="mt-8 flex flex-col gap-8">
 						<LoopStats
 							loop={loop}

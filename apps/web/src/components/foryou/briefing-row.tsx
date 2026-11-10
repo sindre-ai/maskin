@@ -58,25 +58,18 @@ function BriefingTile({
 			aria-label={`${card.author.name}: ${card.headline}${seen ? '' : ', new'}`}
 			data-testid="briefing-card"
 			data-seen={seen}
-			className="flex h-31 w-60 shrink-0 snap-start flex-col rounded-xl border border-border bg-card p-4.5 text-left shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-brand-subtle"
+			className={cn(
+				'flex h-31 w-50 shrink-0 snap-start flex-col rounded-[20px] p-4.5 text-left transition-colors duration-150',
+				seen ? 'bg-muted hover:bg-border' : 'bg-brand-subtle hover:bg-border',
+			)}
 		>
 			<span
 				className={cn(
-					'line-clamp-2 text-[19px] font-bold leading-[1.2] tracking-[-0.02em] text-pretty',
+					'line-clamp-3 text-[19px] font-bold leading-[1.2] tracking-[-0.02em] text-pretty',
 					seen ? 'text-muted-foreground' : 'text-foreground',
 				)}
 			>
 				{card.headline}
-			</span>
-			<span className="mt-auto flex items-center gap-1.5 text-[11.5px] text-muted-foreground">
-				<span className="min-w-0 truncate">
-					{card.author.name} · <RelativeTime date={card.updatedAt} />
-				</span>
-				{!seen && (
-					<span className="ml-auto shrink-0 rounded-full bg-brand px-2 py-0.5 text-[9.5px] font-bold uppercase tracking-wide text-brand-foreground">
-						New
-					</span>
-				)}
 			</span>
 		</button>
 	)

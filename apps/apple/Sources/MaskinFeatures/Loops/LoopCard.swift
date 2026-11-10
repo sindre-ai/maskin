@@ -13,13 +13,8 @@ struct LoopCard: View {
 	let needsYou: Bool
 	var hasUpdate = false
 	var update: LoopLatestUpdate.Line?
-	/// The title of the decision that waits, for the banner. Nil reads the count alone.
-	var decisionTitle: String?
-	/// Opens the flow from the banner's button.
-	var onReview: () -> Void = {}
 
 	private var figures: FlowsOverview.Figures? { FlowsOverview.figures(loop) }
-	private var banner: String? { FlowsOverview.banner(loop, decisionTitle: decisionTitle) }
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s6) {
@@ -29,15 +24,9 @@ struct LoopCard: View {
 				Text(work).maskinText(.subhead).foregroundStyle(MaskinColor.ink4).lineLimit(1)
 			}
 			if let update { latest(update) }
-			if let banner { bannerView(banner) }
 		}
-		.padding(.vertical, MaskinSpace.s9)
-		.padding(.horizontal, MaskinSpace.s9)
+		.padding(MaskinSpace.s11)
 		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.brief, style: .continuous))
-		.overlay(
-			RoundedRectangle(cornerRadius: MaskinRadius.brief, style: .continuous)
-				.strokeBorder(MaskinSurface.line, lineWidth: 1)
-		)
 		.contentShape(Rectangle())
 		.maskinHover(.lift, cornerRadius: MaskinRadius.brief)
 		.accessibilityElement(children: .contain)
@@ -108,36 +97,11 @@ struct LoopCard: View {
 		.frame(maxWidth: .infinity, alignment: .leading)
 	}
 
-	private func bannerView(_ message: String) -> some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s6) {
-			Text(message)
-				.font(MaskinTypeface.sans(MaskinFontSize.t16, weight: .semibold, relativeTo: .body))
-				.foregroundStyle(MaskinColor.ink)
-				.fixedSize(horizontal: false, vertical: true)
-			HStack {
-				Spacer(minLength: 0)
-				Button(action: onReview) {
-					Text("Review")
-						.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: MaskinFontWeight.bold, relativeTo: .subheadline))
-						.foregroundStyle(MaskinSurface.onInverse)
-						.padding(.horizontal, MaskinSpace.s9)
-						.frame(minHeight: MaskinSpace.touchMin)
-						.background(MaskinSurface.inverse, in: Capsule())
-				}
-				.buttonStyle(.maskinPressed(.shrink))
-			}
-		}
-		.padding(MaskinSpace.s7)
-		.frame(maxWidth: .infinity, alignment: .leading)
-		.background(MaskinSurface.cardInset2, in: RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous))
-	}
-
 	private var accessibilityLabel: String {
 		var parts = [loop.displayName, statusWord]
 		if let figures { parts.append("\(figures.label), \(figures.value), \(figures.status.label)") }
 		if let work = FlowsOverview.workLine(loop) { parts.append(work) }
 		if let update { parts.append(([update.author, update.text].compactMap { $0 }).joined(separator: " ")) }
-		if let banner { parts.append(banner) }
 		if hasUpdate { parts.append("update available") }
 		return parts.joined(separator: ". ")
 	}

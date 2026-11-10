@@ -298,29 +298,35 @@ describe('Conversations Integration', () => {
 			const list = (await listRes.json()) as {
 				conversations: Array<{
 					id: string
+					directPairKey: string | null
 					unread_count: number
 					snippet: string | null
 					snippet_actor_id: string | null
 					snippet_actor_name: string | null
 				}>
 			}
-			expect(list.conversations).toHaveLength(1)
-			expect(list.conversations[0]?.id).toBe(conversation.id)
-			expect(list.conversations[0]?.unread_count).toBe(1)
-			expect(list.conversations[0]?.snippet).toBe('first message')
+			// People in a workspace also have a direct message with each other, so only
+			// the topical chats are compared here.
+			const topical = list.conversations.filter((c) => c.directPairKey === null)
+			expect(topical).toHaveLength(1)
+			expect(topical[0]?.id).toBe(conversation.id)
+			expect(topical[0]?.unread_count).toBe(1)
+			expect(topical[0]?.snippet).toBe('first message')
 			// The preview carries its author across the actors join, so the list
 			// row can say "Owner: first message" rather than attributing every
 			// preview to whoever is reading it.
-			expect(list.conversations[0]?.snippet_actor_id).toBe(ownerId)
-			expect(list.conversations[0]?.snippet_actor_name).toBeTruthy()
+			expect(topical[0]?.snippet_actor_id).toBe(ownerId)
+			expect(topical[0]?.snippet_actor_name).toBeTruthy()
 
 			// Stranger (workspace member, not a conversation participant) sees nothing.
 			const { app: strangerApp } = createConversationsApp(stranger.id)
 			const strangerList = await strangerApp.request(
 				jsonGet('/api/conversations', { 'x-workspace-id': workspaceId }),
 			)
-			const strangerBody = (await strangerList.json()) as { conversations: unknown[] }
-			expect(strangerBody.conversations).toHaveLength(0)
+			const strangerBody = (await strangerList.json()) as {
+				conversations: Array<{ directPairKey: string | null }>
+			}
+			expect(strangerBody.conversations.filter((c) => c.directPairKey === null)).toHaveLength(0)
 
 			// And a 404 on direct detail access.
 			const strangerDetail = await strangerApp.request(
@@ -664,8 +670,11 @@ describe('Conversations Integration', () => {
 			const unfiltered = await otherApp.request(
 				jsonGet('/api/conversations', { 'x-workspace-id': workspaceId }),
 			)
-			const unfilteredBody = (await unfiltered.json()) as { conversations: Array<{ id: string }> }
-			expect(unfilteredBody.conversations).toHaveLength(2)
+			const unfilteredBody = (await unfiltered.json()) as {
+				conversations: Array<{ id: string; directPairKey: string | null }>
+			}
+			// The direct messages between people are not part of what this test made.
+			expect(unfilteredBody.conversations.filter((c) => c.directPairKey === null)).toHaveLength(2)
 		})
 
 		it('logs an events row when updating pin/archive/read state via PATCH /:id/me', async () => {
@@ -2759,6 +2768,165 @@ describe('Conversations Integration', () => {
 				),
 			)
 			expect(res.status).toBe(403)
+		})
+	})
+
+	describe('message deletion', () => {
+		async function chatWithMessage(
+			title: string,
+			values: Partial<typeof messages.$inferInsert> = {},
+		) {
+			const { app } = createConversationsApp(ownerId)
+			const created = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title, participant_actor_ids: [] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const [msg] = await db
+				.insert(messages)
+				.values({ conversationId: conversation.id, actorId: ownerId, content: 'secret', ...values })
+				.returning()
+			const remove = (messageId: number | undefined = msg?.id) =>
+				app.request(
+					jsonDelete(`/api/conversations/${conversation.id}/messages/${messageId}`, {
+						'x-workspace-id': workspaceId,
+					}),
+				)
+			return { app, conversation, msg, remove }
+		}
+
+		it('lets the author delete: row stays, content and metadata are cleared, event recorded', async () => {
+			const { conversation, msg, remove } = await chatWithMessage('Delete test', {
+				metadata: { mentions: [ownerId] },
+			})
+
+			const res = await remove()
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as {
+				content: string
+				deletedAt: string | null
+				metadata: unknown
+			}
+			expect(body.content).toBe('')
+			expect(body.deletedAt).toBeTruthy()
+			expect(body.metadata).toBeNull()
+
+			const [row] = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.id, msg?.id ?? -1))
+			expect(row?.content).toBe('')
+			expect(row?.metadata).toBeNull()
+			expect(row?.deletedAt).toBeTruthy()
+
+			const auditRows = await db
+				.select()
+				.from(events)
+				.where(and(eq(events.entityId, conversation.id), eq(events.action, 'message_deleted')))
+			expect(auditRows).toHaveLength(1)
+		})
+
+		it('keeps a thread root readable as deleted, with its replies', async () => {
+			const { app, conversation, msg, remove } = await chatWithMessage('Delete root test')
+			await db.insert(messages).values({
+				conversationId: conversation.id,
+				actorId: ownerId,
+				content: 'a reply',
+				threadRootId: msg?.id,
+			})
+
+			expect((await remove()).status).toBe(200)
+
+			const list = await app.request(
+				jsonGet(`/api/conversations/${conversation.id}/messages`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(list.status).toBe(200)
+			const page = (await list.json()) as {
+				messages: { id: number; content: string; deletedAt: string | null }[]
+			}
+			const root = page.messages.find((m) => m.id === msg?.id)
+			expect(root?.deletedAt).toBeTruthy()
+			expect(root?.content).toBe('')
+			const [reply] = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.threadRootId, msg?.id ?? -1))
+			expect(reply?.content).toBe('a reply')
+		})
+
+		it('is a no-op the second time: one event, same deletedAt', async () => {
+			const { conversation, msg, remove } = await chatWithMessage('Delete twice test')
+			const first = (await (await remove()).json()) as { deletedAt: string }
+			const secondRes = await remove()
+			expect(secondRes.status).toBe(200)
+			const second = (await secondRes.json()) as { deletedAt: string }
+			expect(second.deletedAt).toBe(first.deletedAt)
+			const auditRows = await db
+				.select()
+				.from(events)
+				.where(and(eq(events.entityId, conversation.id), eq(events.action, 'message_deleted')))
+			expect(auditRows).toHaveLength(1)
+			expect(msg?.id).toBeDefined()
+		})
+
+		it("rejects deleting someone else's message", async () => {
+			const other = await insertActor(db, { type: 'human' })
+			await addMember(workspaceId, other.id)
+			const { conversation, msg, remove } = await chatWithMessage('Foreign delete test', {
+				actorId: other.id,
+				content: 'not yours',
+			})
+			void conversation
+
+			const res = await remove()
+			expect(res.status).toBe(403)
+			const [row] = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.id, msg?.id ?? -1))
+			expect(row?.content).toBe('not yours')
+			expect(row?.deletedAt).toBeNull()
+		})
+
+		it('rejects deleting auto-posted agent output', async () => {
+			const { msg, remove } = await chatWithMessage('Final output delete test', {
+				content: 'agent turn output',
+				metadata: { source: 'final_output' },
+			})
+
+			const res = await remove()
+			expect(res.status).toBe(403)
+			const [row] = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.id, msg?.id ?? -1))
+			expect(row?.deletedAt).toBeNull()
+		})
+
+		it('returns not found for a message that is not in the conversation', async () => {
+			const { remove } = await chatWithMessage('Missing delete test')
+			expect((await remove(999999999)).status).toBe(404)
+		})
+
+		it('refuses to edit a deleted message', async () => {
+			const { app, conversation, msg, remove } = await chatWithMessage('Edit after delete test')
+			expect((await remove()).status).toBe(200)
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${conversation.id}/messages/${msg?.id}`,
+					{ content: 'back from the dead' },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(404)
 		})
 	})
 

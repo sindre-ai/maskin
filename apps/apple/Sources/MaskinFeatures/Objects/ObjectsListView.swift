@@ -294,7 +294,6 @@ struct ObjectsListView: View {
 				header
 				emptyState.padding(MaskinSpace.s9)
 			}
-			.refreshable { await store.reload() }
 		}
 	}
 
@@ -382,7 +381,6 @@ struct ObjectsListView: View {
 		.compactSections()
 		.scrollContentBackground(.hidden)
 		.environment(\.defaultMinListRowHeight, MaskinSpace.touchMin)
-		.refreshable { await store.reload() }
 	}
 
 	/// One inset card per group with hairline separators; the header folds it.
@@ -403,7 +401,7 @@ struct ObjectsListView: View {
 				let count = group.objects.count
 				ForEach(Array(group.objects.enumerated()), id: \.element.id) { index, object in
 					row(object)
-						.listRowInsets(EdgeInsets(top: MaskinSpace.s5, leading: MaskinSpace.s9, bottom: MaskinSpace.s5, trailing: MaskinSpace.s9))
+						.listRowInsets(EdgeInsets(top: MaskinSpace.s8, leading: MaskinSpace.s9, bottom: MaskinSpace.s8, trailing: MaskinSpace.s9))
 						.listRowBackground(
 							(selection?.wrappedValue == object.id && !picking.isActive)
 								? MaskinSurface.fillStrong : Color.clear)

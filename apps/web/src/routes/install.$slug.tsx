@@ -29,7 +29,7 @@ export const Route = createFileRoute('/install/$slug')({
 			throw redirect({ to: '/login', search: { redirect: location.href } })
 		}
 	},
-	head: () => ({ meta: [{ title: 'Install a loop — Maskin' }] }),
+	head: () => ({ meta: [{ title: 'Install a flow — Maskin' }] }),
 	component: InstallPage,
 })
 
@@ -45,12 +45,12 @@ function NotFound() {
 	return (
 		<Shell>
 			<div className="text-center">
-				<h1 className="text-2xl font-semibold tracking-tight">We couldn't find that loop</h1>
+				<h1 className="text-2xl font-semibold tracking-tight">We couldn't find that flow</h1>
 				<p className="mt-1 text-sm text-muted-foreground">
 					It may not be installable yet, or the link is wrong.
 				</p>
 				<Button asChild variant="secondary" className="mt-4">
-					<a href={PUBLIC_MARKETPLACE_URL}>See all loops</a>
+					<a href={PUBLIC_MARKETPLACE_URL}>See all flows</a>
 				</Button>
 			</div>
 		</Shell>
@@ -101,7 +101,7 @@ function InstallPage() {
 				<div className="text-center">
 					<h1 className="text-2xl font-semibold tracking-tight">Something went wrong</h1>
 					<p className="mt-1 text-sm text-muted-foreground">
-						We couldn't load the loop. Reload the page to try again.
+						We couldn't load the flow. Reload the page to try again.
 					</p>
 				</div>
 			</Shell>
@@ -187,7 +187,7 @@ function InstallPage() {
 				<div className="space-y-2">
 					<FormError
 						error={
-							install.error ? install.error.message || 'Could not install the loop' : undefined
+							install.error ? install.error.message || 'Could not install the flow' : undefined
 						}
 					/>
 					<Button

@@ -30,13 +30,19 @@ export function compactTime(iso: string | null | undefined, now: number = Date.n
 
 // The amber "held 3 days" note beside the status word: how long a card that
 // still needs a person has been sitting in the feed (mockup's `c.waitNote`).
-// Nothing is said until a card has been waiting a full day.
+// Nothing is said until a card has been waiting two full days.
+/** A long sender name shrinks to its first name so the byline stays on one line. */
+export function bylineName(name: string | null | undefined): string {
+	if (!name) return ''
+	return name.length > 18 ? (name.split(' ')[0] ?? name) : name
+}
+
 export function heldNote(iso: string | null | undefined, now: number = Date.now()): string {
 	if (!iso) return ''
 	const then = new Date(iso).getTime()
 	if (!Number.isFinite(then)) return ''
 	const days = Math.floor((now - then) / 86_400_000)
-	if (days < 1) return ''
+	if (days < 2) return ''
 	if (days >= 7) return 'held over a week'
 	return `held ${days} ${days === 1 ? 'day' : 'days'}`
 }
@@ -49,11 +55,10 @@ export function heldNote(iso: string | null | undefined, now: number = Date.now(
  * - `waiting` — the ball is with an agent (you answered last)
  * - `fyi`     — nothing to decide, just new activity
  * - `done`    — decided in this sitting; the green receipt strip
- * - `later`   — set aside on this device until a chosen time (`foryou-later.ts`)
  */
-export type FeedBucket = 'needs' | 'waiting' | 'fyi' | 'done' | 'later'
+export type FeedBucket = 'needs' | 'waiting' | 'fyi' | 'done'
 
-export const BUCKET_ORDER: readonly FeedBucket[] = ['needs', 'waiting', 'fyi', 'done', 'later']
+export const BUCKET_ORDER: readonly FeedBucket[] = ['needs', 'waiting', 'fyi', 'done']
 
 export function bucketRank(bucket: FeedBucket): number {
 	const index = BUCKET_ORDER.indexOf(bucket)
@@ -83,7 +88,7 @@ export function feedTailLabel({
 	filtered,
 	kindLabel,
 }: { filtered: boolean; kindLabel?: string }): string {
-	if (!filtered) return 'Feed cleared'
+	if (!filtered) return "You're caught up"
 	return kindLabel ? `Nothing in ${kindLabel}` : 'Nothing here'
 }
 
@@ -125,12 +130,11 @@ export function feedKindOf(item: UnreadItem): FeedKind {
 
 /**
  * What a bulk dismiss ("Dismiss all", Alt+U) may touch: never a card that is
- * waiting on a decision or an answer from the person, and never one they set
- * aside on purpose with Later (a dismissed card does not come back).
+ * waiting on a decision or an answer from the person.
  */
 export function dismissableItems<T>(items: readonly T[], bucketOf: (item: T) => FeedBucket): T[] {
 	return items.filter((item) => {
 		const bucket = bucketOf(item)
-		return bucket !== 'needs' && bucket !== 'later'
+		return bucket !== 'needs'
 	})
 }

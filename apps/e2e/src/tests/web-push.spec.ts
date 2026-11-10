@@ -13,9 +13,12 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 const VAPID_PUBLIC_KEY = `B${'A'.repeat(86)}`
 
-async function installFakePushApi(page: Page, opts: { permission: NotificationPermission }) {
+async function installFakePushApi(
+	page: Page,
+	opts: { permission: NotificationPermission; dismissPrompt?: boolean },
+) {
 	await page.addInitScript(
-		({ initialPermission }) => {
+		({ initialPermission, dismissPrompt }) => {
 			// A browser keeps its permission across a reload, like the subscription below.
 			const PERMISSION_KEY = 'e2e-fake-push-permission'
 			let permission = (sessionStorage.getItem(PERMISSION_KEY) ??
@@ -64,13 +67,21 @@ async function installFakePushApi(page: Page, opts: { permission: NotificationPe
 				configurable: true,
 				get: () => permission,
 			})
+			// Lets a test play the user changing the permission in the browser's site settings.
+			;(window as unknown as { __e2eSetPermission: unknown }).__e2eSetPermission = (
+				next: NotificationPermission,
+			) => {
+				permission = next
+				sessionStorage.setItem(PERMISSION_KEY, next)
+			}
 			Notification.requestPermission = async () => {
-				if (permission === 'default') permission = 'granted'
+				// A closed prompt leaves the permission on "default", as real browsers do.
+				if (permission === 'default' && !dismissPrompt) permission = 'granted'
 				sessionStorage.setItem(PERMISSION_KEY, permission)
 				return permission
 			}
 		},
-		{ initialPermission: opts.permission },
+		{ initialPermission: opts.permission, dismissPrompt: opts.dismissPrompt ?? false },
 	)
 	await page.route('**/api/web-push/config', (route) =>
 		route.fulfill({ json: { enabled: true, public_key: VAPID_PUBLIC_KEY } }),
@@ -131,6 +142,66 @@ test.describe('Browser notifications', () => {
 		await page.goto(`/${account.workspaceId}/profile`)
 		await expect(toggle(page)).toBeDisabled({ timeout: 10_000 })
 		await expect(page.getByText('Blocked in site settings')).toBeVisible()
+	})
+
+	test('shows no toast and keeps the switch off when the permission prompt is dismissed', async ({
+		page,
+		account,
+	}) => {
+		await installFakePushApi(page, { permission: 'default', dismissPrompt: true })
+		await page.setViewportSize({ width: 1024, height: 768 })
+		await page.goto(`/${account.workspaceId}/profile`)
+		await expect(toggle(page)).toBeVisible({ timeout: 10_000 })
+
+		let subscribeCalls = 0
+		page.on('request', (r) => {
+			if (r.url().endsWith('/api/web-push/subscriptions') && r.method() === 'POST') subscribeCalls++
+		})
+		await toggle(page).click()
+
+		// Give a toast time to appear; none should, for the blocked case or any other.
+		await page.waitForTimeout(1000)
+		await expect(page.locator('[data-sonner-toast]')).toHaveCount(0)
+		await expect(toggle(page)).not.toBeChecked()
+		await expect(toggle(page)).toBeEnabled()
+		expect(subscribeCalls).toBe(0)
+	})
+
+	test('explains the blocked state on one line at 375px and links it to the switch', async ({
+		page,
+		account,
+	}) => {
+		await installFakePushApi(page, { permission: 'denied' })
+		await page.setViewportSize({ width: 375, height: 812 })
+		await page.goto(`/${account.workspaceId}/profile`)
+		await expect(toggle(page)).toBeDisabled({ timeout: 10_000 })
+
+		const hint = page.getByText('Blocked in site settings')
+		await expect(hint).toBeVisible()
+		await expect(toggle(page)).toHaveAccessibleDescription('Blocked in site settings')
+		// One line: the box is no taller than a single 11px text line.
+		const box = await hint.boundingBox()
+		expect(box?.height).toBeLessThan(20)
+	})
+
+	test('clears the blocked state when the tab regains focus after allowing notifications', async ({
+		page,
+		account,
+	}) => {
+		await installFakePushApi(page, { permission: 'denied' })
+		await page.setViewportSize({ width: 1024, height: 768 })
+		await page.goto(`/${account.workspaceId}/profile`)
+		await expect(toggle(page)).toBeDisabled({ timeout: 10_000 })
+
+		await page.evaluate(() =>
+			(
+				window as unknown as { __e2eSetPermission: (p: NotificationPermission) => void }
+			).__e2eSetPermission('default'),
+		)
+		await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+
+		await expect(toggle(page)).toBeEnabled()
+		await expect(page.getByText('Blocked in site settings')).toHaveCount(0)
 	})
 
 	test('hides the whole section when the server has no VAPID keys', async ({ page, account }) => {

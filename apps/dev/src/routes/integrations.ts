@@ -25,7 +25,10 @@ import type { StorageProvider } from '@maskin/storage'
 import { and, eq, isNotNull, sql } from 'drizzle-orm'
 import type { Context } from 'hono'
 import { getCookie, setCookie } from 'hono/cookie'
-import { trackIntegrationConnected } from '../lib/analytics/integration-events'
+import {
+	trackIntegrationConnectStarted,
+	trackIntegrationConnected,
+} from '../lib/analytics/integration-events'
 import { trackSlackMentionReceived } from '../lib/analytics/loop-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { markSlackMention } from '../lib/analytics/slack-attribution'
@@ -61,7 +64,7 @@ import {
 	UnauthorizedGithubInstallationError,
 	type UserInstallation,
 	buildAppInstallUrl,
-	fetchInstallationOwnerLogin,
+	fetchInstallationAccount,
 	mintInstallationTokenWithRecovery,
 } from '../lib/integrations/providers/github/auth'
 import {
@@ -330,12 +333,24 @@ async function bindGithubInstallation(opts: {
 	actorId: string
 	installationId: string
 	ownerLogin?: string
+	ownerType?: IntegrationConfig['owner_type']
+	ownerAvatarUrl?: string
 	credentials: StoredCredentials
 	/** Recorded on the audit event so the two paths stay distinguishable. */
 	reason: string
 	sourceWorkspaceId?: string
 }): Promise<typeof integrations.$inferSelect | null> {
-	const { db, workspaceId, actorId, installationId, ownerLogin, credentials, reason } = opts
+	const {
+		db,
+		workspaceId,
+		actorId,
+		installationId,
+		ownerLogin,
+		ownerType,
+		ownerAvatarUrl,
+		credentials,
+		reason,
+	} = opts
 
 	// Same system actor the OAuth callback provisions, scoped into this
 	// workspace. Deliberately re-derived rather than copied from any source row —
@@ -382,6 +397,8 @@ async function bindGithubInstallation(opts: {
 	const encryptedCredentials = encrypt(JSON.stringify(credentials))
 	const config: IntegrationConfig = { system_actor_id: systemActor.id }
 	if (ownerLogin) config.owner_login = ownerLogin
+	if (ownerType) config.owner_type = ownerType
+	if (ownerAvatarUrl) config.owner_avatar_url = ownerAvatarUrl
 
 	// A prior row for the same installation in this workspace — active, or
 	// revoked by an earlier disconnect — would trip the partial unique index on
@@ -579,7 +596,8 @@ app.openapi(linkInstallationRoute, (async (c) => {
 	// Re-encrypt rather than copying the source ciphertext, so the rows stay
 	// independent if credential storage ever becomes per-row keyed.
 	const credentials: StoredCredentials = JSON.parse(decrypt(requireCredentials(source)))
-	const ownerLogin = (source.config as IntegrationConfig)?.owner_login
+	const sourceConfig = source.config as IntegrationConfig | null
+	const ownerLogin = sourceConfig?.owner_login
 
 	const row = await bindGithubInstallation({
 		db,
@@ -587,6 +605,8 @@ app.openapi(linkInstallationRoute, (async (c) => {
 		actorId,
 		installationId,
 		ownerLogin,
+		ownerType: sourceConfig?.owner_type,
+		ownerAvatarUrl: sourceConfig?.owner_avatar_url,
 		credentials,
 		reason: 'linked_existing_installation',
 		sourceWorkspaceId: source.workspaceId,
@@ -811,6 +831,8 @@ app.openapi(selectInstallationRoute, (async (c) => {
 		actorId,
 		installationId,
 		ownerLogin: chosen.ownerLogin ?? undefined,
+		ownerType: chosen.ownerType ?? undefined,
+		ownerAvatarUrl: chosen.ownerAvatarUrl ?? undefined,
 		credentials: { installation_id: installationId },
 		reason: 'selected_authorized_installation',
 	})
@@ -1503,6 +1525,8 @@ app.openapi(connectRoute, (async (c) => {
 		)
 	}
 
+	void trackIntegrationConnectStarted({ provider: providerName, workspaceId, actorId })
+
 	// Native: the cookie set above lands in the app's URL session, not in the
 	// web-auth browser that will finish the flow. Route that browser through our
 	// own launch endpoint first so the binding cookie is set where it is checked.
@@ -1958,9 +1982,14 @@ app.openapi(callbackRoute, (async (c) => {
 	// back to an undefined owner_login rather than blocking the connect — the row
 	// is still useful for token/webhook routing.
 	let ownerLogin: string | undefined
+	let ownerType: IntegrationConfig['owner_type']
+	let ownerAvatarUrl: string | undefined
 	if (credentials.installation_id) {
 		try {
-			ownerLogin = await fetchInstallationOwnerLogin(String(credentials.installation_id))
+			const account = await fetchInstallationAccount(String(credentials.installation_id))
+			ownerLogin = account.login
+			ownerType = account.type ?? undefined
+			ownerAvatarUrl = account.avatarUrl ?? undefined
 		} catch (err) {
 			logger.warn(`Failed to fetch installation owner_login for ${providerName}`, {
 				workspaceId: stateData.workspaceId,
@@ -1998,6 +2027,8 @@ app.openapi(callbackRoute, (async (c) => {
 	const encryptedCredentials = encrypt(JSON.stringify(credentials))
 	const activeConfig: IntegrationConfig = { system_actor_id: systemActor.id }
 	if (ownerLogin) activeConfig.owner_login = ownerLogin
+	if (ownerType) activeConfig.owner_type = ownerType
+	if (ownerAvatarUrl) activeConfig.owner_avatar_url = ownerAvatarUrl
 	if (meetPeopleId) activeConfig.meet = { peopleId: meetPeopleId }
 
 	// Re-connecting an installation whose externalId is stable across connects

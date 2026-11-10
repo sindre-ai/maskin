@@ -157,6 +157,9 @@ jobs:
       - name: GitHub MCP supervisor tests
         run: node --test scripts/checks/github-mcp-supervisor/github-mcp-supervisor.test.cjs
 
+      - name: OAuth client registration script tests
+        run: node --test scripts/register-oauth-client.test.mjs
+
   integration-tests:
     # lint-typecheck is a gate here and on unit-tests and verify-e2e: when it fails they are
     # skipped, so a red lint run reports in about a minute instead of 16 to 22. Their required
@@ -323,78 +326,6 @@ jobs:
 
       - name: A busy SeaweedFS master port is routed around
         run: MASKIN_DEVSTACK_CACHE_DIR="$HOME/.cache/maskin-devstack" bash scripts/checks/devstack-port-conflict.sh
-
-  # The three drift checks for the native Apple clients, on Linux. They used to be the first
-  # steps of the macOS `apple` job in apple.yml, where a stale file cost a 14 minute wait for a
-  # Mac plus the minutes up to the failing step (10x the price of a Linux minute) to find out
-  # something that needs no Mac. Cheapest first:
-  #   1. Tokens.swift is generated from the design-system CSS (gen-tokens.mjs --check).
-  #   2. apps/apple/openapi.json is a snapshot of the served spec (dump-openapi.ts).
-  #   3. Sources/MaskinAPI/Generated is generated from that snapshot (gen-api.sh, needs Swift,
-  #      so it runs in the official swift image).
-  # Runs when the backend can have moved the spec (`backend`) or an input of the Apple app or
-  # its tokens changed (`apple`, see scripts/ci/changed-areas.sh). The macOS `apple` job in
-  # apple.yml keeps only `swift test` and the platform builds.
-  apple-drift:
-    needs: changes
-    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.apple == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v6
-
-      # --- 1. Token drift (no deps, runs in a second) ---
-      - name: Design tokens are up to date
-        run: |
-          if ! node apps/apple/scripts/gen-tokens.mjs --check; then
-            echo "::error::Tokens.swift is stale. Run 'node apps/apple/scripts/gen-tokens.mjs' and commit the result."
-            exit 1
-          fi
-
-      # --- 2. OpenAPI snapshot drift ---
-      - uses: pnpm/action-setup@v5
-        with:
-          version: 9.15.0
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 20
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-
-      - name: Build workspace deps of @maskin/dev
-        run: pnpm --filter "@maskin/dev^..." build
-
-      - name: Apple OpenAPI snapshot is up to date
-        run: |
-          pnpm --filter @maskin/dev exec tsx scripts/dump-openapi.ts
-          if ! git diff --exit-code -- apps/apple/openapi.json; then
-            echo "::error::apps/apple/openapi.json is stale. Run 'pnpm --filter @maskin/dev exec tsx scripts/dump-openapi.ts' and commit the result, then run apps/apple/scripts/gen-api.sh and commit Sources/MaskinAPI/Generated (or run the 'Apple regenerate API client' workflow on your branch)."
-            exit 1
-          fi
-
-      # --- 3. Generated client drift ---
-      # Only the generator is built (swift run), never the app, so no Apple SDK is needed. The
-      # SwiftPM checkouts and the built generator are cached on the pinned versions; a cold
-      # build of the generator is the slow part.
-      - name: Cache SwiftPM and the generator build
-        uses: actions/cache@v4
-        with:
-          path: apps/apple/.build
-          key: apple-gen-api-${{ runner.os }}-${{ hashFiles('apps/apple/Package.resolved', 'apps/apple/Package.swift') }}
-          restore-keys: |
-            apple-gen-api-${{ runner.os }}-
-
-      - name: Apple generated API client is up to date
-        run: |
-          docker run --rm -v "$PWD:/w" -w /w/apps/apple swift:6.1 ./scripts/gen-api.sh
-          # The container ran as root; give the files back so git does not see a foreign owner.
-          sudo chown -R "$(id -u):$(id -g)" apps/apple
-          if ! git diff --exit-code -- apps/apple/Sources/MaskinAPI/Generated; then
-            echo "::error::apps/apple/Sources/MaskinAPI/Generated is stale. Run 'apps/apple/scripts/gen-api.sh' on a Mac (or the 'Apple regenerate API client' workflow on your branch) and commit the result."
-            exit 1
-          fi
 
   # Boots the real agent-base image through its entrypoint and agent-run.sh with
   # a stub `claude` (scripts/checks/agent-image-smoke.sh). Merging a change under

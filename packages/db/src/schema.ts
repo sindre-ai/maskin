@@ -15,6 +15,7 @@ import {
 	boolean,
 	check,
 	date,
+	doublePrecision,
 	index,
 	integer,
 	jsonb,
@@ -347,6 +348,9 @@ export const relationships = pgTable(
 	},
 	(t) => [
 		unique('relationships_src_tgt_type_uniq').on(t.sourceId, t.targetId, t.type),
+		// Target-side edge lookups (graph, relationships list, spawned-session lookup); the unique
+		// above leads with source_id. Built CONCURRENTLY in migration 0143.
+		index('relationships_target_type_idx').on(t.targetId, t.type),
 		// S2 · widened to admit `conversation` and `session` endpoint kinds so
 		// the writer hook can persist automatic provenance edges
 		// (conversation→session `spawned`, session→object|file `produced_by`).
@@ -384,10 +388,28 @@ export const events = pgTable(
 		index('events_session_entity_action_idx')
 			.on(t.entityId, t.action, t.workspaceId)
 			.where(sql`${t.entityType} = 'session'`),
+		// The agent page's Objects tab: which objects an actor changed. Partial, so it holds only
+		// updates and status changes. Built CONCURRENTLY in migration 0139.
+		index('events_actor_changed_idx')
+			.on(t.actorId, t.entityId)
+			.where(sql`${t.action} IN ('updated', 'status_changed')`),
 		// For You unread feed: comments only. Built CONCURRENTLY in migration 0084.
 		index('events_ws_entity_commented_idx')
 			.on(t.workspaceId, t.entityId, t.id)
 			.where(sql`${t.action} = 'commented'`),
+		// "Which comments mention this actor?", behind the unread feed (GET /api/subscriptions/unread)
+		// and the For You decision cards. Without it both read every comment in the workspace to
+		// find a few (144 ms and 500 ms on production data; 3 ms and 41 ms with it). Holds only
+		// comment rows. Built CONCURRENTLY in migration 0142.
+		index('events_commented_mentions_idx')
+			.using('gin', sql`(${t.data} -> 'mentions')`)
+			.where(sql`${t.action} = 'commented'`),
+		// The daily-budget summary scheduler's "already posted for this day?" check, once per
+		// workspace per tick (services/daily-budget-events.ts). Holds one entry per workspace per
+		// day. Built CONCURRENTLY in migration 0143.
+		index('events_daily_budget_summary_day_idx')
+			.on(t.workspaceId, sql`(${t.data} ->> 'day')`)
+			.where(sql`${t.action} = 'daily_budget_summary'`),
 	],
 )
 
@@ -896,6 +918,11 @@ export const sessions = pgTable(
 		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0044.
 		index('sessions_ws_updated_at_idx').on(t.workspaceId, t.updatedAt),
 		index('sessions_actor_idx').on(t.actorId),
+		// Sessions spawned by a chat message, and the ON DELETE SET NULL FK. Built CONCURRENTLY in
+		// migration 0144.
+		index('sessions_spawned_by_message_id_idx')
+			.on(t.spawnedByMessageId)
+			.where(sql`${t.spawnedByMessageId} IS NOT NULL`),
 		// "Does this agent have another live session?" on every completion. Built
 		// CONCURRENTLY in migration 0087.
 		index('sessions_actor_status_idx').on(t.actorId, t.status),
@@ -1127,6 +1154,10 @@ export const conversations = pgTable(
 		// lowest first, joined with ':' (directPairKey in services/direct-chat.ts).
 		// NULL for every topical chat, however many people are in it.
 		directPairKey: text('direct_pair_key'),
+		// Labels for grouping chats, for example a team name. A JSON array of short strings,
+		// written only through PATCH /api/conversations/:id (strict) and read through
+		// normalizeTags. Same shape as a flow's metadata.tags and an agent's metadata.tags.
+		tags: jsonb('tags').notNull().default(sql`'[]'::jsonb`),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	},
@@ -1222,6 +1253,9 @@ export const messages = pgTable(
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		// Set when the author edits the message; null for never-edited messages.
 		editedAt: timestamp('edited_at', { withTimezone: true }),
+		// Set when the author deletes the message. The row stays (threads and read markers keep
+		// pointing at it) but its content is cleared and its metadata nulled. Null while live.
+		deletedAt: timestamp('deleted_at', { withTimezone: true }),
 		// Set on a reply inside a thread: the id of the thread's root message in the
 		// same conversation. Roots are never replies themselves (one level only), so
 		// this never chains. Cascades with the root.
@@ -2215,6 +2249,43 @@ export const userDisplaySettings = pgTable(
 export type UserDisplaySettings = typeof userDisplaySettings.$inferSelect
 export type NewUserDisplaySettings = typeof userDisplaySettings.$inferInsert
 
+// ── Saved Views ─────────────────────────────────────────────────────────────
+//
+// A named, shared way to look at a list: which tags (and, for flows, which driver) to keep and
+// what to group by. One per workspace and kind, shared by every member. Unlike
+// user_display_settings these are not per person. `filter` holds { tags?, driverId? } and is
+// checked at the route (savedViewFilterSchema), `group_by` is null, 'tag' or 'driver'.
+
+export const savedViews = pgTable(
+	'saved_views',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		kind: text('kind').notNull(),
+		name: text('name').notNull(),
+		filter: jsonb('filter').notNull().default({}),
+		groupBy: text('group_by'),
+		// Kept when the author is deleted, so a shared view outlives the person who made it.
+		createdBy: uuid('created_by').references(() => actors.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		// One name per kind in a workspace, whatever the capitalisation.
+		uniqueIndex('saved_views_ws_kind_name_uniq').on(t.workspaceId, t.kind, sql`lower(${t.name})`),
+		check('saved_views_kind_check', sql`${t.kind} IN ('flow', 'agent', 'chat')`),
+		check(
+			'saved_views_group_by_check',
+			sql`${t.groupBy} IS NULL OR ${t.groupBy} IN ('tag', 'driver')`,
+		),
+	],
+)
+
+export type SavedView = typeof savedViews.$inferSelect
+export type NewSavedView = typeof savedViews.$inferInsert
+
 // ── Workspace Onboarding Prompts ──────────────────────────────────────────────
 //
 // One row per prompt type per workspace. Written when onboarding is enabled;
@@ -2894,7 +2965,41 @@ export const liveActivityCards = pgTable(
 	],
 )
 
+// The runs a person chose to follow from an agent's working banner (opt-in "Following an agent"
+// Live Activity). The app starts the card itself and registers the card's own push token here, so
+// the backend can push the agent's latest step and its end. One row per device and session; the
+// row goes when the person stops following or the run ends. Rows cascade with the actor, device,
+// workspace and session.
+export const liveActivityFollows = pgTable(
+	'live_activity_follows',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		actorId: uuid('actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		deviceId: uuid('device_id')
+			.notNull()
+			.references(() => deviceTokens.id, { onDelete: 'cascade' }),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		sessionId: uuid('session_id')
+			.notNull()
+			.references(() => sessions.id, { onDelete: 'cascade' }),
+		token: text('token').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex('live_activity_follows_device_session_uniq').on(t.deviceId, t.sessionId),
+		index('live_activity_follows_workspace_idx').on(t.workspaceId),
+		index('live_activity_follows_actor_idx').on(t.actorId),
+		index('live_activity_follows_session_idx').on(t.sessionId),
+	],
+)
+
 export type LiveActivityToken = typeof liveActivityTokens.$inferSelect
+export type LiveActivityFollow = typeof liveActivityFollows.$inferSelect
 export type NewLiveActivityToken = typeof liveActivityTokens.$inferInsert
 
 export type DeviceToken = typeof deviceTokens.$inferSelect
@@ -3068,3 +3173,33 @@ export const deviceAuthCodes = pgTable(
 
 export type DeviceAuthCode = typeof deviceAuthCodes.$inferSelect
 export type NewDeviceAuthCode = typeof deviceAuthCodes.$inferInsert
+
+// ── API route timing counts ─────────────────────────────────────────────────
+// One row per minute, per route, per server build, per sender: how many requests the API answered and how long
+// they took. Counts and sums only. No actor, workspace, URL or header is stored; the route is the
+// pattern (`/api/objects/:id`). Written by the once-a-minute timing flush
+// (apps/dev/src/lib/route-timing-store.ts) and deleted after 30 days, so the load per route can be
+// read over a week. `minute` is the minute the flush ran in; two replicas (or two flushes in one
+// minute) add into the same row.
+export const apiRouteTimingMinutes = pgTable(
+	'api_route_timing_minutes',
+	{
+		minute: timestamp('minute', { withTimezone: true }).notNull(),
+		build: text('build').notNull(),
+		method: text('method').notNull(),
+		route: text('route').notNull(),
+		stream: boolean('stream').notNull(),
+		// Who sent the requests: ui, ios, mcp, other or none (no header). '' on rows written before
+		// this column existed, which stay in the all-traffic sum.
+		clientSource: text('client_source').notNull().default(''),
+		requests: integer('requests').notNull(),
+		slowRequests: integer('slow_requests').notNull(),
+		errors5xx: integer('errors_5xx').notNull(),
+		totalMsSum: doublePrecision('total_ms_sum').notNull(),
+		dbMsSum: doublePrecision('db_ms_sum').notNull(),
+		dbQueries: integer('db_queries').notNull(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.minute, t.build, t.method, t.route, t.stream, t.clientSource] }),
+	],
+)

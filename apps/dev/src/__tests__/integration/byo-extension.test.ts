@@ -257,6 +257,42 @@ describe('extensions API (integration)', () => {
 		expect(decrypt(rows[0]?.credentials ?? '')).toBe(next)
 	})
 
+	it('deletes the stored secret when the webhook is turned off, and needs a new one to turn it back on', async () => {
+		const app = buildApp()
+		const { json } = await createExtension(app, workspaceId)
+		const headers = { 'x-workspace-id': workspaceId }
+		const secretRows = () =>
+			db
+				.select()
+				.from(integrations)
+				.where(
+					and(
+						eq(integrations.workspaceId, workspaceId),
+						eq(integrations.provider, 'extension:fireflies'),
+					),
+				)
+		expect(await secretRows()).toHaveLength(1)
+
+		const off = await app.request(
+			jsonRequest('PATCH', `/api/extensions/${json.id}`, { webhook_config: null }, headers),
+		)
+		expect(off.status).toBe(200)
+		const body = (await off.json()) as ExtensionJson
+		expect(body.hasSigningSecret).toBe(false)
+		expect(body.webhookToken).toBeNull()
+		expect(await secretRows()).toHaveLength(0)
+
+		const backOnNoSecret = await app.request(
+			jsonRequest(
+				'PATCH',
+				`/api/extensions/${json.id}`,
+				{ webhook_config: fireflies?.webhookConfig },
+				headers,
+			),
+		)
+		expect(backOnNoSecret.status).toBe(400)
+	})
+
 	it('rejects an mcp_config with more than 20 tools', async () => {
 		const app = buildApp()
 		const tools = Array.from({ length: 21 }, (_, i) => ({ name: `get_${i}`, kind: 'read' }))

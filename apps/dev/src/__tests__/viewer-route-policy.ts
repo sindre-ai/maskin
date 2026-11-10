@@ -105,6 +105,16 @@ export const OPEN_ROUTES: OpenRoute[] = [
 		'/api/live-activities/tokens',
 		'registers a Live Activity token for the caller\u2019s own device',
 	],
+	[
+		'POST',
+		'/api/live-activities/follows',
+		'registers the caller\u2019s own Live Activity follow for their own device',
+	],
+	[
+		'DELETE',
+		'/api/live-activities/follows/:session_id',
+		'removes only the caller\u2019s own follow',
+	],
 	['DELETE', '/api/live-activities/tokens/:id', 'removes only the caller\u2019s own token'],
 	// Device sign-in (Apple TV): start/token are public and write only the device's own code row;
 	// approve/deny act on a code, not on workspace data, so a read-only viewer can still sign in a TV.

@@ -48,9 +48,12 @@ export type {
 	UpdateFileCommentInput,
 	WorkspaceDeletionPreview,
 }
+import { DATA_QUERY_MAX_PAGE_SIZE, parseRelativeBound } from '@maskin/shared'
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
+import { readEveryPage } from './data-query-pages'
 import { reportApiFailure } from './faro'
+import { limitConcurrency } from './limit-concurrency'
 
 import type {
 	DailyBudget,
@@ -464,6 +467,59 @@ export type ExtensionSampleResult =
 	  }
 	| { ok: false; field: string; message: string }
 
+/**
+ * A custom loop view can ask for dozens of sources at once, and each one is a database query on the
+ * server's small shared pool. Sending them all together starves every other request, so they go
+ * out a few at a time. The timeout starts when a request does, not while it waits its turn.
+ */
+const DATA_REQUESTS_AT_ONCE = 4
+
+/**
+ * Every group of a query. The server sends them a page at a time; this follows the cursors, so a
+ * caller gets one complete answer. A page is cheap (after the first it is cut from a snapshot the
+ * server holds), and the whole read holds one request slot, so a big answer never crowds out the
+ * view's other sources. The timeout is per page: it bounds a stuck request, not the size of the data.
+ */
+const limitedDataQuery = limitConcurrency(
+	DATA_REQUESTS_AT_ONCE,
+	(workspaceId: string, spec: DataQuerySpec, opts?: { timeoutMs?: number }) => {
+		const specParam = encodeURIComponent(JSON.stringify(spec))
+		return readEveryPage((cursor) =>
+			request<DataQueryResult>(
+				`/data/query?spec=${specParam}&limit=${DATA_QUERY_MAX_PAGE_SIZE}${
+					cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''
+				}`,
+				{
+					workspaceId,
+					signal: opts?.timeoutMs === undefined ? undefined : AbortSignal.timeout(opts.timeoutMs),
+				},
+			),
+		)
+	},
+)
+
+/** Only a moving date (a relative bound or a time bucket) changes an answer with no write. */
+function answerMovesWithTime(spec: DataQuerySpec) {
+	if (spec.group_by && /^(created_at|updated_at)\.(hour|day|week|month)$/.test(spec.group_by)) {
+		return true
+	}
+	return Object.values(spec.filters ?? {}).some(
+		(v) => typeof v === 'string' && parseRelativeBound(v) !== null,
+	)
+}
+
+const limitedNextChange = limitConcurrency(
+	DATA_REQUESTS_AT_ONCE,
+	async (workspaceId: string, spec: DataQuerySpec) => {
+		// Nothing to wait for, so do not spend a request (and a database query) finding that out.
+		if (!answerMovesWithTime(spec)) return { in_ms: null }
+		return request<{ in_ms: number | null }>(
+			`/data/next-change?spec=${encodeURIComponent(JSON.stringify(spec))}`,
+			{ workspaceId },
+		)
+	},
+)
+
 export const api = {
 	// The unified search endpoint: all five sources, true counts, AND matching.
 	search: {
@@ -736,16 +792,8 @@ export const api = {
 	},
 
 	data: {
-		query: (workspaceId: string, spec: DataQuerySpec, opts?: { signal?: AbortSignal }) =>
-			request<DataQueryResult>(`/data/query?spec=${encodeURIComponent(JSON.stringify(spec))}`, {
-				workspaceId,
-				signal: opts?.signal,
-			}),
-		nextChange: (workspaceId: string, spec: DataQuerySpec) =>
-			request<{ in_ms: number | null }>(
-				`/data/next-change?spec=${encodeURIComponent(JSON.stringify(spec))}`,
-				{ workspaceId },
-			),
+		query: limitedDataQuery,
+		nextChange: limitedNextChange,
 	},
 
 	triggers: {
@@ -1696,6 +1744,18 @@ export const api = {
 					workspaceId,
 				},
 			),
+		// Idempotent: reacting with an emoji you already used changes nothing.
+		reactToMessage: (id: string, workspaceId: string, messageId: number, emoji: string) =>
+			request<void>(`/conversations/${id}/messages/${messageId}/reactions`, {
+				method: 'PUT',
+				body: { emoji },
+				workspaceId,
+			}),
+		unreactToMessage: (id: string, workspaceId: string, messageId: number, emoji: string) =>
+			request<void>(
+				`/conversations/${id}/messages/${messageId}/reactions?emoji=${encodeURIComponent(emoji)}`,
+				{ method: 'DELETE', workspaceId },
+			),
 		updateMe: (id: string, workspaceId: string, data: UpdateConversationParticipantStateInput) =>
 			request<ConversationParticipantStateResponse>(`/conversations/${id}/me`, {
 				method: 'PATCH',
@@ -2057,7 +2117,7 @@ export interface LatestMentionDecisionDraft {
 export interface LatestMentionDecision {
 	title: string
 	summary: string
-	ask: string
+	ask?: string
 	options: LatestMentionDecisionOption[]
 	draft?: LatestMentionDecisionDraft
 	/** One card, several messages: each shows as its own preview with Send and Skip. */
@@ -2772,6 +2832,8 @@ export interface ConversationListItemResponse {
 	workspaceId: string
 	title: string
 	createdBy: string
+	/** Set on the direct message (DM) of a pair, null on every topical chat. The list tells the two apart by this alone. */
+	directPairKey?: string | null
 	lastMessageAt: string | null
 	createdAt: string | null
 	updatedAt: string | null
@@ -3090,6 +3152,18 @@ export interface MessageResponse {
 	threadAlsoInChannel?: boolean
 	/** Reply summary on a top-level message that has replies; null when it has none. */
 	thread?: ReplyThreadSummary | null
+	/** Emoji reactions grouped by emoji, in the order each was first used. Present on list responses. */
+	reactions?: MessageReaction[]
+	/** Set when the author deleted the message; its content is then empty. */
+	deletedAt?: string | null
+}
+
+export interface MessageReaction {
+	emoji: string
+	count: number
+	/** The caller is one of the people who reacted. */
+	reactedByMe: boolean
+	actors: { actorId: string; actorName: string }[]
 }
 
 export interface ReplyThreadParticipant {

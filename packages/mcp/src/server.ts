@@ -17,10 +17,14 @@ import {
 	type McpProtocolVersionLabel,
 	type ObjectPreview,
 	type WebAppTarget,
+	applyLoopView,
 	buildWebAppHref,
+	normalizeLoopViewName,
+	readLoopViews,
 	resolveWebAppBaseUrl,
 	slimForYouItems,
 	stripTrailingSlash,
+	toLoopViewsMetadata,
 } from '@maskin/shared'
 import {
 	RESOURCE_MIME_TYPE,
@@ -440,7 +444,7 @@ const LOOP_VIEW_CHECKLIST = [
 	'Opens with the loop outcome in one plain sentence and where it stands against it.',
 	'Three to five metrics at most, each with a value and unit, a comparison and its source.',
 	'Every number has a declared source in maskin-sources and an empty and an error state that shows the message.',
-	'No query is truncated (rows_truncated and groups_truncated false), or the view says its numbers are partial.',
+	'A table over many rows (every person, every task) scrolls or pages instead of drawing everything at once.',
 	'Says what needs a person now, if anything. Nothing that does not change a decision.',
 	'One self-contained file, no network calls, readable in light and dark.',
 ]
@@ -5986,6 +5990,25 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'delete_agent',
+		{
+			description: tools.delete_agent.description,
+			inputSchema: tools.delete_agent.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(config, 'DELETE', `/api/actors/${args.id}`, undefined, {
+				workspaceId: args.workspace_id,
+			})
+			return {
+				_meta: meta('delete_agent', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'delete_workspace_skill',
 		{
 			description: tools.delete_workspace_skill.description,
@@ -6108,7 +6131,8 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
-			const result = await apiCall(config, 'GET', `/api/files/${args.id}`, undefined, {
+			const fileQuery = args.format === 'text' ? '?format=text' : ''
+			const result = await apiCall(config, 'GET', `/api/files/${args.id}${fileQuery}`, undefined, {
 				workspaceId: wsId,
 			})
 			const file = result as { mimeType?: string | null; encoding?: string; content?: unknown }
@@ -6154,6 +6178,7 @@ export function createMcpServer(config: McpConfig) {
 			if (args.mime_type !== undefined) body.mime_type = args.mime_type
 			if (args.content !== undefined) body.content = args.content
 			if (args.encoding !== undefined) body.encoding = args.encoding
+			if (args.edits !== undefined) body.edits = args.edits
 			if (args.if_match !== undefined) body.if_match = args.if_match
 			const result = await apiCall(config, 'PATCH', `/api/files/${args.id}`, body, {
 				workspaceId: wsId,
@@ -7766,7 +7791,8 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const { workspace_id, loop_id, file_id } = args
+			const { workspace_id, loop_id, file_id, name } = args
+			const viewName = normalizeLoopViewName(name)
 			const loop = (await apiCall(config, 'GET', `/api/objects/${loop_id}`, undefined, {
 				workspaceId: workspace_id,
 			})) as { type?: string; metadata?: Record<string, unknown> | null }
@@ -7795,14 +7821,17 @@ export function createMcpServer(config: McpConfig) {
 					)
 				}
 			}
-			const current = loop.metadata?.view_file_id
-			const unchanged = (typeof current === 'string' ? current : null) === file_id
+			// Every pin is a named tab. A loop still on the single legacy id reads as one
+			// "Custom view" tab, so its first named pin moves it onto the tab list.
+			const before = readLoopViews(loop.metadata)
+			const views = applyLoopView(before, viewName, file_id)
+			const unchanged = JSON.stringify(before) === JSON.stringify(views)
 			if (!unchanged) {
 				await apiCall(
 					config,
 					'PATCH',
 					`/api/objects/${loop_id}`,
-					{ metadata: { view_file_id: file_id } },
+					{ metadata: { views: toLoopViewsMetadata(views), view_file_id: null } },
 					{ workspaceId: workspace_id },
 				)
 			}
@@ -7813,6 +7842,8 @@ export function createMcpServer(config: McpConfig) {
 						type: 'text' as const,
 						text: JSON.stringify({
 							loop_id,
+							view_name: viewName,
+							views: toLoopViewsMetadata(views),
 							view_file_id: file_id,
 							changed: !unchanged,
 							...(file_id === null ? {} : { checklist: LOOP_VIEW_CHECKLIST }),
@@ -7832,11 +7863,15 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const { workspace_id, ...spec } = args
+			const { workspace_id, cursor, limit, ...spec } = args
+			const paging = [
+				limit === undefined ? '' : `&limit=${limit}`,
+				cursor === undefined ? '' : `&cursor=${encodeURIComponent(cursor)}`,
+			].join('')
 			const result = await apiCall(
 				config,
 				'GET',
-				`/api/data/query?spec=${encodeURIComponent(JSON.stringify(spec))}`,
+				`/api/data/query?spec=${encodeURIComponent(JSON.stringify(spec))}${paging}`,
 				undefined,
 				{ workspaceId: workspace_id },
 			)

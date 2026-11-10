@@ -7,6 +7,7 @@ import { ThreadComposer } from '@/components/chat/thread-composer'
 import { ThreadHeader } from '@/components/chat/thread-header'
 import { ThreadMessages } from '@/components/chat/thread-messages'
 import { ThreadsPaneContext } from '@/components/chat/threads-context'
+import { FLOATING_EDGE } from '@/components/shared/floating-footer'
 import { RouteError } from '@/components/shared/route-error'
 import {
 	Sheet,
@@ -27,10 +28,12 @@ import { useConversationLinked, useResolvedLinkedItems } from '@/hooks/use-conve
 import { useConversationProduced } from '@/hooks/use-conversation-produced'
 import { useConversationThreads } from '@/hooks/use-conversation-threads'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useHeightVar } from '@/hooks/use-height-var'
 import { useMarkConversationRead } from '@/hooks/use-mark-conversation-read'
 import { useIsWideDesktopViewport } from '@/hooks/use-mobile'
 import { useOriginDeepLinkScroll } from '@/hooks/use-origin-deep-link-scroll'
 import type { MessageMetadata } from '@/lib/api'
+import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -86,11 +89,26 @@ function ConversationThreadPage() {
 	// A fill step asks the composer to take its prompt; a send step asks it only to
 	// take focus, so the person can follow up (the tapped button is gone by then).
 	// The nonce makes the same request twice a new one; it is dropped with the chat.
-	const [fillRequest, setFillRequest] = useState<{ text?: string; nonce: number } | null>(null)
+	const [fillRequest, setFillRequest] = useState<{
+		text?: string
+		append?: boolean
+		nonce: number
+	} | null>(null)
 	const fillNonceRef = useRef(0)
+	const headerBarRef = useRef<HTMLDivElement>(null)
+	const composerBarRef = useRef<HTMLDivElement>(null)
+	useHeightVar(headerBarRef, '--thread-header-h')
+	useHeightVar(composerBarRef, '--thread-composer-h', {
+		keepAtBottom: '[data-testid="thread-messages"]',
+	})
 	const requestComposer = useCallback((text?: string) => {
 		fillNonceRef.current += 1
 		setFillRequest({ text, nonce: fillNonceRef.current })
+	}, [])
+	// A starter prompt goes after whatever is already in the box, so a tap never erases a draft.
+	const requestStarter = useCallback((text: string) => {
+		fillNonceRef.current += 1
+		setFillRequest({ text, append: true, nonce: fillNonceRef.current })
 	}, [])
 	const sendStep = useCallback(
 		(content: string, metadata: MessageMetadata) => {
@@ -335,18 +353,24 @@ function ConversationThreadPage() {
 			    viewport. Without it the column — and its header/composer children —
 			    blow out past the phone's right edge, which `overflow-x: clip` on
 			    html/body then hides instead of surfacing as a scrollbar. */}
-					<div className="flex min-h-0 min-w-0 flex-1 flex-col">
-						<ThreadHeader
-							workspaceId={workspaceId}
-							conversationId={conversationId}
-							overviewOpen={overview !== null}
-							overviewHasNew={overviewHasNew}
-							onToggleOverview={toggleOverview}
-						/>
+					<div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+						{/* The header and the composer float over the transcript, which fills the whole
+						    column and pads itself by their measured heights (see FLOATING_EDGE). */}
+						<div ref={headerBarRef} className={cn(FLOATING_EDGE, 'top-0 pb-3')}>
+							<ThreadHeader
+								workspaceId={workspaceId}
+								conversationId={conversationId}
+								overviewOpen={overview !== null}
+								overviewHasNew={overviewHasNew}
+								onToggleOverview={toggleOverview}
+							/>
+						</div>
 						<ThreadMessages
+							className="pt-[calc(var(--thread-header-h,4.5rem)+18px)] pb-[calc(var(--thread-composer-h,6.75rem)+6px)] scroll-pt-[max(0px,calc(var(--thread-header-h,4.5rem)-54px))] scroll-pb-[calc(var(--thread-composer-h,6.75rem)+6px)]"
 							workspaceId={workspaceId}
 							conversationId={conversationId}
 							onPickStep={requestComposer}
+							onPickStarter={requestStarter}
 							onSendStep={sendStep}
 							sendingStep={sendMessage.isPending}
 							onOpenReplies={openReplies}
@@ -360,13 +384,15 @@ function ConversationThreadPage() {
 				    border, and a second full-bleed hairline behind it cut the thread in
 				    half. The gutter matches the header's and the transcript's so the
 				    three stack on one vertical edge. */}
-						<LiveCallComposerSlot />
-						<div className="shrink-0 px-[var(--chat-gut)] pt-2.5 pb-[max(0.875rem,env(safe-area-inset-bottom))]">
-							<ThreadComposer
-								workspaceId={workspaceId}
-								conversationId={conversationId}
-								fillRequest={fillRequest}
-							/>
+						<div ref={composerBarRef} className={cn(FLOATING_EDGE, 'bottom-0 pt-4')}>
+							<LiveCallComposerSlot />
+							<div className="px-[var(--chat-gut)] pt-2.5 pb-[max(0.875rem,env(safe-area-inset-bottom))]">
+								<ThreadComposer
+									workspaceId={workspaceId}
+									conversationId={conversationId}
+									fillRequest={fillRequest}
+								/>
+							</div>
 						</div>
 					</div>
 					{/* Wide desktop (≥1280): persistent right-rail column at 440px, sliding

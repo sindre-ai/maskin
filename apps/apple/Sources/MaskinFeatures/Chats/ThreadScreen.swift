@@ -39,15 +39,28 @@ struct ThreadScreen: View {
 		recipients.isEmpty ? nil : recipients[recipientIndex % recipients.count]
 	}
 
+	/// Agents are named above their words only where more than one can speak; read once per body.
+	private var namesAgents: Bool {
+		AgentRowStyle.namesAgents(
+			participants: store.participants, currentActorID: store.currentActorID,
+			agentAuthorIDs: store.agentAuthorIDs)
+	}
+
 	var body: some View {
+		let namesAgents = namesAgents
 		VStack(spacing: 0) {
 			ScrollViewReader { proxy in
 				ScrollView {
 					LazyVStack(alignment: .leading, spacing: MaskinSpace.s5) {
-						row(shownRoot, showsAuthor: true)
+						row(
+							shownRoot, showsAuthor: true, namesAgents: namesAgents,
+							endsRun: replies.first.map { $0.actorID != shownRoot.actorID } ?? true)
 						repliesDivider
 						ForEach(Array(replies.enumerated()), id: \.element.id) { index, reply in
-							row(reply, showsAuthor: index == 0 || replies[index - 1].actorID != reply.actorID)
+							row(
+								reply, showsAuthor: index == 0 || replies[index - 1].actorID != reply.actorID,
+								namesAgents: namesAgents,
+								endsRun: index == replies.count - 1 || replies[index + 1].actorID != reply.actorID)
 								.id(reply.id)
 						}
 						Color.clear.frame(height: 1).id("end")
@@ -113,7 +126,7 @@ struct ThreadScreen: View {
 		.accessibilityAddTraits(.isHeader)
 	}
 
-	private func row(_ message: ChatMessage, showsAuthor: Bool) -> some View {
+	private func row(_ message: ChatMessage, showsAuthor: Bool, namesAgents: Bool, endsRun: Bool) -> some View {
 		var actions = MessageMenuActions()
 		if !message.content.isEmpty {
 			actions.onCopy = {
@@ -132,12 +145,16 @@ struct ThreadScreen: View {
 		}
 		return MessageRow(
 			message: message, isOwn: message.actorID == store.currentActorID, showsAuthor: showsAuthor,
+			namesAgent: namesAgents, endsRun: endsRun,
 			mentions: message.mentionIDs.compactMap { id in
 				store.displayName(for: id).map { (id: id, name: $0) }
 			},
+			questionAnswers: message.questions.isEmpty ? nil : message.serverID.flatMap { store.questionAnswerIndex[$0] },
 			sendStatus: message.isPending ? MessageSendStatus.of(message, readBy: nil) : nil,
 			actions: actions, onRetrySend: { store.retrySend(message.id) },
 			onToggleReaction: { emoji in Task { await store.toggleReaction(emoji, on: message) } },
+			onAnswer: { picks in _ = store.answer(question: message, picks: picks) },
+			onDismissQuestion: { _ = store.dismiss(question: message) },
 			onKeychainReply: { text, metadata in
 				// The allow or save goes back into this thread, to the agent that asked.
 				guard let rootID else { return }

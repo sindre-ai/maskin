@@ -14,10 +14,10 @@ import SwiftUI
 ///                 Toggle("Show done", isOn: $showDone)
 ///             }))
 ///
-/// Order in the pill is Display, the avatar, then New at the very right, inside ONE glass capsule (a single
+/// Order in the pill is Search, Marketplace, Display, the avatar, then New at the very right, inside ONE glass capsule (a single
 /// `ToolbarItemGroup`). Live is the primary button: a black disc of its own at the very right, after
 /// that capsule. The per-tab sets are `ShellTab.barItems`. While the content is scrolled New folds away (Live, Display and the
-/// avatar stay). Search is never a bar item: it is the trailing search tab.
+/// avatar stay).
 public struct ShellActions {
 	/// Three horizontal lines: For you and Flows.
 	public static let filterSymbol = "line.3.horizontal.decrease"
@@ -32,6 +32,10 @@ public struct ShellActions {
 	/// The black primary Live button, at the very right of the bar, that opens the live daily
 	/// briefing (For you only).
 	public var live: Bool
+	/// The magnifier that opens search (Chats, Items). Nil hides it.
+	public var search: (() -> Void)?
+	/// The shop icon that opens the marketplace (Flows). Nil hides it.
+	public var marketplace: (() -> Void)?
 	/// The filter-icon menu. Nil hides it.
 	public var display: ShellDisplayMenu?
 	/// Makes the filter button a plain toggle instead of a menu (For you: it shows or hides the
@@ -50,8 +54,11 @@ public struct ShellActions {
 		new: (() -> Void)? = nil, newLabel: String = "New", live: Bool = false,
 		display: ShellDisplayMenu? = nil, displaySymbol: String = ShellActions.filterSymbol,
 		displayActive: Bool = false, displayToggle: (() -> Void)? = nil,
-		hidesAvatar: Bool = false, newAlwaysVisible: Bool = false, newIsPrimary: Bool = false
+		hidesAvatar: Bool = false, newAlwaysVisible: Bool = false, newIsPrimary: Bool = false,
+		search: (() -> Void)? = nil, marketplace: (() -> Void)? = nil
 	) {
+		self.search = search
+		self.marketplace = marketplace
 		self.newIsPrimary = newIsPrimary
 		self.hidesAvatar = hidesAvatar
 		self.newAlwaysVisible = newAlwaysVisible
@@ -117,6 +124,18 @@ private struct ShellToolbarModifier: ViewModifier {
 				ToolbarItemGroup(placement: .primaryAction) {
 					Group {
 					// Display, then the avatar; Live is its own primary button after this capsule.
+					if let search = actions.search {
+						Button(action: search) {
+							ShellInkCircle(symbol: "magnifyingglass", label: "Search")
+						}
+						.buttonStyle(.plain)
+					}
+					if let marketplace = actions.marketplace {
+						Button(action: marketplace) {
+							ShellInkCircle(symbol: "storefront", label: "Marketplace")
+						}
+						.buttonStyle(.plain)
+					}
 					if let display = actions.display {
 						Menu {
 							display.content

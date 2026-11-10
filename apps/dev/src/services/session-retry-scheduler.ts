@@ -26,6 +26,7 @@ import type { SessionResult } from '@maskin/shared'
 import { logger } from '../lib/logger'
 import { MAX_RETRY_ATTEMPTS } from '../lib/subscription-limit-reset'
 import { startSession } from './session-lifecycle'
+import { TaskSessionRestarter } from './task-session-restart'
 
 const TICK_MS = 30_000
 export { MAX_RETRY_ATTEMPTS }
@@ -51,11 +52,14 @@ type RetryableSession = {
 export class SessionRetryScheduler {
 	private timer: NodeJS.Timeout | null = null
 	private running = false
+	private taskRestarter: TaskSessionRestarter
 
 	constructor(
 		private db: Database,
 		private env: NodeJS.ProcessEnv = process.env,
-	) {}
+	) {
+		this.taskRestarter = new TaskSessionRestarter(db, env)
+	}
 
 	/** Start the tick loop. Idempotent — a second call is a no-op. */
 	start(): void {
@@ -110,6 +114,12 @@ export class SessionRetryScheduler {
 					}),
 				)
 			}
+
+			// Same tick, its own killswitch (FEATURE_TASK_SESSION_RESTART=0): restart agent
+			// sessions that ended early while their task is still in progress.
+			await this.taskRestarter
+				.sweep(now)
+				.catch((err) => logger.error('TaskSessionRestarter sweep failed', { error: String(err) }))
 		} finally {
 			this.running = false
 		}

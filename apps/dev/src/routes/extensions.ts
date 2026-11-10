@@ -34,6 +34,7 @@ import {
 	webhookSecretWriteError,
 } from '../lib/integrations/extensions'
 import {
+	deleteExtensionSecret,
 	ensureExtensionSystemActor,
 	hasExtensionMcpKey,
 	hasExtensionSecret,
@@ -682,7 +683,10 @@ app.openapi(updateExtensionRoute, async (c) => {
 			.where(and(eq(extensions.id, id), eq(extensions.workspaceId, workspaceId)))
 			.returning()
 		if (!updated) throw new Error('Failed to update extension')
-		if (body.signing_secret) {
+		// Turning the webhook off deletes its stored secret with it. A webhook cannot exist without one.
+		if (body.webhook_config === null) {
+			await deleteExtensionSecret(tx, workspaceId, existing.slug)
+		} else if (body.signing_secret) {
 			await upsertExtensionSecret(tx, {
 				workspaceId,
 				slug: existing.slug,
@@ -710,7 +714,8 @@ app.openapi(updateExtensionRoute, async (c) => {
 		data: {
 			slug: row.slug,
 			fields: Object.keys(body).filter((k) => k !== 'signing_secret' && k !== 'mcp_api_key'),
-			secret_replaced: !!body.signing_secret,
+			secret_replaced: !!body.signing_secret && body.webhook_config !== null,
+			secret_removed: body.webhook_config === null,
 			mcp_key_replaced: !!body.mcp_api_key,
 		},
 	})
