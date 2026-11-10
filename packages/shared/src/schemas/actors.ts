@@ -51,6 +51,10 @@ export const createActorSchema = z.object({
 	llm_provider: z.string().optional(),
 	llm_config: llmConfigSchema.optional(),
 	auto_create_workspace: z.boolean().optional(),
+	// Humans only: this client shows the card step after sign-up. The server honours it only
+	// while the trial-card-percent flag is on for new sign-ups; a client without a card step (the
+	// iPhone app) leaves it out and signs up exactly as before.
+	card_step: z.boolean().optional(),
 	// Agents only: the workspace the new agent is born into. The caller must be a
 	// member of it. Never accepted for humans (signup mints its own workspace).
 	workspace_id: z.string().uuid().optional(),

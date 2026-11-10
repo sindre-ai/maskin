@@ -2,6 +2,7 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { workspaces } from '@maskin/db/schema'
 import {
+	ApiErrorCode,
 	type BillingPlan,
 	CREDIT_TOPUP_MAX_USD,
 	CREDIT_TOPUP_MIN_USD,
@@ -29,6 +30,7 @@ import {
 	hasActivePaidPlan,
 } from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
+import { shouldSkipOnboardingKickoff } from '../lib/onboarding/chief-of-staff-kickoff'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import {
 	CREDIT_TOPUP_BOUNDS_MINOR,
@@ -36,8 +38,15 @@ import {
 	getStripeClient,
 	readStripeEnv,
 } from '../lib/stripe'
+import {
+	TrialCardAlreadyUsedError,
+	TrialCardError,
+	createTrialSetup,
+	startTrial,
+} from '../lib/trial-card'
 import type { WorkspaceSettings } from '../lib/types'
 import { assertWorkspaceWriterRole, isWorkspaceHumanAdminOrOwner } from '../lib/workspace-auth'
+import { startChiefOfStaffWelcome } from '../services/workspace-bootstrap'
 
 /**
  * Fallback hard caps (USD cents) for paid plans when
@@ -145,6 +154,9 @@ const usageResponseSchema = z.object({
 	// older clients, which hide Buy usage credits on false, keep working.
 	credit_topup_available: z.boolean(),
 	linkedin_identity_addon: linkedinIdentityAddonSchema,
+	// Card-at-sign-up trial: null on every workspace that did not go through the card step.
+	// awaiting_card means no session starts until a card is saved; started means the 7 days run.
+	trial_state: z.enum(['awaiting_card', 'started']).nullable(),
 })
 
 const usageRoute = createRoute({
@@ -377,12 +389,16 @@ async function readBillingUsage(db: Database, workspaceId: string) {
 		usd_cents_used: usdCentsUsed,
 		hard_cap_usd_cents: hardCapCents,
 		period_start: periodStartSec,
-		period_resets_in_ms: plan === 'enterprise' ? null : resetsIn,
+		// No trial clock until the card is down: a workspace waiting for its card has no end date,
+		// and the 30 day rolling fallback would show "30 days left" for a trial that has not begun.
+		period_resets_in_ms:
+			plan === 'enterprise' || billing?.trial_state === 'awaiting_card' ? null : resetsIn,
 		stripe_customer_id: billing?.stripe_customer_id ?? null,
 		stripe_subscription_id: billing?.stripe_subscription_id ?? null,
 		credit_balance_cents: creditBalanceCents,
 		credit_topup_available: false,
 		linkedin_identity_addon: linkedinIdentityAddon,
+		trial_state: billing?.trial_state ?? null,
 	}
 }
 
@@ -573,6 +589,207 @@ app.openapi(checkoutRoute, async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create checkout session'), 500)
 	}
 })
+
+// ── Card step: save a card for the 7-day trial, no charge ────────────────────────────────────────
+// A workspace that signed up through the card step (trial-card-percent flag) waits for a card.
+// setup hands the browser a Stripe card-setup secret and the public key; start reads the finished
+// setup back from Stripe, refuses a plain card that already had a trial, and starts the 7 days.
+
+const trialSetupResponseSchema = z.object({
+	client_secret: z.string(),
+	publishable_key: z.string(),
+})
+
+const trialStartBodySchema = z.object({
+	setup_intent_id: z.string().min(1).max(255),
+})
+
+const trialStartResponseSchema = z.object({
+	trial_state: z.literal('started'),
+	// Unix seconds.
+	trial_ends_at: z.number().int().nullable(),
+})
+
+const trialSetupRoute = createRoute({
+	method: 'post',
+	path: '/trial/setup',
+	tags: ['billing'],
+	summary: 'Start a Stripe card setup (no charge) for a workspace waiting for its trial card',
+	request: { headers: workspaceIdHeader },
+	responses: {
+		200: {
+			description: 'Secret for the browser card form',
+			content: { 'application/json': { schema: trialSetupResponseSchema } },
+		},
+		400: {
+			description: 'The card setup is not finished or does not belong to this workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Caller is not a human workspace admin or owner',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Workspace not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		409: {
+			description:
+				'The workspace is not waiting for a card, or the card already started a free trial (code TRIAL_CARD_ALREADY_USED)',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		500: {
+			description: 'Stripe is not configured or failed',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+const trialStartRoute = createRoute({
+	method: 'post',
+	path: '/trial/start',
+	tags: ['billing'],
+	summary: 'Start the 7-day trial from a finished card setup',
+	request: {
+		headers: workspaceIdHeader,
+		body: { content: { 'application/json': { schema: trialStartBodySchema } }, required: true },
+	},
+	responses: {
+		200: {
+			description: 'The trial has started',
+			content: { 'application/json': { schema: trialStartResponseSchema } },
+		},
+		400: {
+			description: 'The card setup is not finished or does not belong to this workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Caller is not a human workspace admin or owner',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Workspace not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		409: {
+			description:
+				'The workspace is not waiting for a card, or the card already started a free trial (code TRIAL_CARD_ALREADY_USED)',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		500: {
+			description: 'Stripe is not configured or failed',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+// Same gate as checkout: authMiddleware only proves membership, and a card binds the workspace to
+// a payer, so a human admin or owner does it. Agent keys never reach the payment surface.
+const TRIAL_FORBIDDEN_MESSAGE = 'Only workspace owners/admins can manage billing'
+
+// What a failed card step means for the caller. Kept apart from c.json so each handler answers
+// with a status the route declares.
+function trialFailure(err: unknown) {
+	if (err instanceof TrialCardAlreadyUsedError) {
+		return {
+			status: 409 as const,
+			body: {
+				error: {
+					code: ApiErrorCode.TRIAL_CARD_ALREADY_USED,
+					message: err.message,
+					suggestion: 'Choose a plan to keep going, or add a different card.',
+				},
+			},
+		}
+	}
+	if (err instanceof TrialCardError) {
+		return { status: err.status, body: createApiError(err.code, err.message) }
+	}
+	logger.error('Trial card step failed', {
+		error: err instanceof Error ? err.message : String(err),
+	})
+	return {
+		status: 500 as const,
+		body: createApiError('INTERNAL_ERROR', 'Could not save the card. Try again.'),
+	}
+}
+
+app.openapi(trialSetupRoute, async (c) => {
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	if (!(await isWorkspaceHumanAdminOrOwner(c.get('db'), c.get('actorId'), workspaceId))) {
+		return c.json(createApiError('FORBIDDEN', TRIAL_FORBIDDEN_MESSAGE), 403)
+	}
+	const publishableKey = process.env.STRIPE_PUBLISHABLE_KEY?.trim()
+	if (!publishableKey) {
+		logger.error('STRIPE_PUBLISHABLE_KEY is not set, so the card step cannot start')
+		return c.json(createApiError('INTERNAL_ERROR', 'Stripe is not configured'), 500)
+	}
+	try {
+		const { clientSecret } = await createTrialSetup({
+			db: c.get('db'),
+			stripe: getStripeClient(),
+			workspaceId,
+		})
+		return c.json({ client_secret: clientSecret, publishable_key: publishableKey }, 200)
+	} catch (err) {
+		const failure = trialFailure(err)
+		switch (failure.status) {
+			case 400:
+				return c.json(failure.body, 400)
+			case 404:
+				return c.json(failure.body, 404)
+			case 409:
+				return c.json(failure.body, 409)
+			default:
+				return c.json(failure.body, 500)
+		}
+	}
+})
+
+app.openapi(trialStartRoute, async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { setup_intent_id } = c.req.valid('json')
+	if (!(await isWorkspaceHumanAdminOrOwner(db, c.get('actorId'), workspaceId))) {
+		return c.json(createApiError('FORBIDDEN', TRIAL_FORBIDDEN_MESSAGE), 403)
+	}
+	try {
+		const { trialEndsAt } = await startTrial({
+			db,
+			stripe: getStripeClient(),
+			workspaceId,
+			actorId: c.get('actorId'),
+			setupIntentId: setup_intent_id,
+			// The welcome was held back at sign-up so no session started before the card.
+			onStarted: () => startWelcomeAfterTrial(db, workspaceId, c.get('actorId')),
+		})
+		return c.json({ trial_state: 'started' as const, trial_ends_at: trialEndsAt }, 200)
+	} catch (err) {
+		const failure = trialFailure(err)
+		switch (failure.status) {
+			case 400:
+				return c.json(failure.body, 400)
+			case 404:
+				return c.json(failure.body, 404)
+			case 409:
+				return c.json(failure.body, 409)
+			default:
+				return c.json(failure.body, 500)
+		}
+	}
+})
+
+async function startWelcomeAfterTrial(db: Database, workspaceId: string, ownerActorId: string) {
+	if (shouldSkipOnboardingKickoff()) return
+	const [row] = await db
+		.select({ settings: workspaces.settings })
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+	const chiefOfStaffId = (row?.settings as { default_agent_id?: string | null } | undefined)
+		?.default_agent_id
+	if (chiefOfStaffId) await startChiefOfStaffWelcome(db, workspaceId, ownerActorId, chiefOfStaffId)
+}
 
 // The schema only takes the widest range any currency allows. The exact
 // min/max for the chosen currency is checked in the handler, otherwise this

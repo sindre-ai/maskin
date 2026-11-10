@@ -8,6 +8,11 @@ export const ApiErrorCode = {
 	BAD_REQUEST: 'BAD_REQUEST',
 	INTERNAL_ERROR: 'INTERNAL_ERROR',
 	PLAN_CAP_EXCEEDED: 'PLAN_CAP_EXCEEDED',
+	// The workspace signed up through the card step and has not put a card down yet, so nothing
+	// runs. 402 like PLAN_CAP_EXCEEDED; the client offers "Add card".
+	TRIAL_NOT_STARTED: 'TRIAL_NOT_STARTED',
+	// The card is a plain card that already started a free trial. 409.
+	TRIAL_CARD_ALREADY_USED: 'TRIAL_CARD_ALREADY_USED',
 	AUTH_REVOKED: 'AUTH_REVOKED',
 	// Workspace-membership entitlement gates (distinct from PLAN_CAP_EXCEEDED,
 	// which is token-usage-specific and returns 402). These are

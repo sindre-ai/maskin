@@ -19,7 +19,7 @@ const TIER1_EXACT = new Set([
 	'integration_connect_started',
 	'integration_tool_called',
 ])
-const TIER1_PREFIXES = ['foryou_card_', 'signup_', 'workspace_', 'checkout_']
+const TIER1_PREFIXES = ['foryou_card_', 'signup_', 'workspace_', 'checkout_', 'trial_']
 
 // Fraction of events sent. 0 drops the event. Sampled events carry
 // `sample_rate`, so a count is read as `count / sample_rate`.

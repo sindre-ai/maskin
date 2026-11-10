@@ -613,6 +613,12 @@ async function applyEvent(
 			}
 		}
 
+		// A paid plan ends the wait for a trial card: the person paid, so the card step has nothing
+		// left to ask, and a later fall back to trial must not send them to it.
+		if (next.plan !== 'trial' && next.trial_state === 'awaiting_card') {
+			next = { ...next, trial_state: undefined }
+		}
+
 		// BYO-LLM -> paid plan mutex: when the subscription lands in an active
 		// paid state, clear every BYO source in the same workspace update so we
 		// never keep both sides "active" at once.
