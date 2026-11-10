@@ -6,7 +6,7 @@
  * for people who switched Flow activity on. No polling loop and no new scheduler.
  *
  * What counts: a completed, non-chat run by an agent that ties to a flow (billing's rule, see
- * lib/flow-lookup.ts). Chat turns, failed runs and runs with no flow send nothing.
+ * lib/session-flow.ts). Chat turns, failed runs and runs with no flow send nothing.
  *
  * Who: every person in the run's workspace whose Flow activity is on for a channel, unless they
  * muted that workspace. Nobody else gets anything.
@@ -36,10 +36,9 @@ import { and, desc, eq, gt, lte, sql } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { buildEmailStopUrl } from '../lib/email-stop-link'
 import { isEmailStopConfigured } from '../lib/email-stop-token'
-import { findFlowForRun } from '../lib/flow-lookup'
-import type { FlowRef } from '../lib/flow-lookup'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
+import { loadFlowLookup } from '../lib/session-flow'
 import { EMAIL_KILLSWITCH_ENV_VAR } from './briefing-email-scheduler'
 import { PUSH_ONLY_METADATA_KEY } from './chat-notifications'
 import { buildFlowActivityEmail } from './flow-activity-text'
@@ -51,6 +50,8 @@ export const FLOW_ACTIVITY_KIND = 'flow_activity'
 export const FLOW_EMAIL_WINDOW_MS = 60 * 60_000
 /** Most runs read for one email; the mail lists a few and counts the rest. */
 const MAX_RUNS_READ = 50
+
+type FlowRef = { id: string; title: string }
 
 interface RunRow {
 	id: string
@@ -121,8 +122,10 @@ export class FlowActivityNotifier {
 		// that completed counts.
 		if (!run || run.status !== 'completed' || run.interactive || run.actorType !== 'agent') return
 
-		const flow = await findFlowForRun(this.db, run)
-		if (!flow) return
+		const lookup = await loadFlowLookup(this.db, run.workspaceId, [run])
+		const flowId = lookup.flowIdOf(run)
+		if (!flowId) return
+		const flow: FlowRef = { id: flowId, title: lookup.titles.get(flowId) ?? 'A flow' }
 
 		const recipients = await this.recipients(run.workspaceId)
 		for (const person of recipients) {
@@ -401,13 +404,11 @@ export class FlowActivityNotifier {
 			.orderBy(desc(sessions.completedAt))
 			.limit(MAX_RUNS_READ)
 		const mine: { agentName: string; objectTitle: string | null }[] = []
+		const lookup = await loadFlowLookup(this.db, workspaceId, rows)
 		for (const row of rows) {
-			const ref = await findFlowForRun(this.db, {
-				workspaceId,
-				triggerId: row.triggerId,
-				initiatedFromObjectId: row.initiatedFromObjectId,
-			})
-			if (ref?.id === flow.id) mine.push({ agentName: row.agentName, objectTitle: row.objectTitle })
+			if (lookup.flowIdOf(row) === flow.id) {
+				mine.push({ agentName: row.agentName, objectTitle: row.objectTitle })
+			}
 		}
 		return mine
 	}
