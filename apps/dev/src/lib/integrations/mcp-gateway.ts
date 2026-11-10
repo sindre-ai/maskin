@@ -35,6 +35,7 @@ import {
 export const GATEWAY_PROVIDERS: ReadonlySet<string> = new Set([
 	'atlassian',
 	'attio',
+	'canva',
 	'gmail',
 	'google-calendar',
 	'linear',
