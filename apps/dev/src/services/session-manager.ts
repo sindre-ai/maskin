@@ -2172,26 +2172,6 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
-	 * How many thread sessions (a session with a thread, not the main-chat one) this agent has
-	 * live in this chat, counting those still on their way up.
-	 */
-	async countActiveThreadSessions(conversationId: string, actorId: string): Promise<number> {
-		const [row] = await this.db
-			.select({ count: countFn() })
-			.from(sessions)
-			.where(
-				and(
-					eq(sessions.conversationId, conversationId),
-					eq(sessions.actorId, actorId),
-					eq(sessions.interactive, true),
-					isNotNull(sessions.threadRootId),
-					inArray(sessions.status, ['pending', 'starting', 'queued', 'running']),
-				),
-			)
-		return Number(row?.count ?? 0)
-	}
-
-	/**
 	 * Separate aggregate cap for chat sessions (see the isChatSession bypass in
 	 * startSession()) — they don't compete with max_concurrent_sessions, but
 	 * still need a ceiling so a workspace with many active conversations can't
