@@ -1,5 +1,6 @@
 import { Composer } from '@/components/chat/chat'
 import { outsideChatLinkedCards } from '@/components/chat/linked-object-preview'
+import { FloatingFooter } from '@/components/shared/floating-footer'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { QueryStateError } from '@/components/shared/query-state'
@@ -203,7 +204,7 @@ export function BriefDrawer({ workspaceId, open, onOpenChange }: BriefDrawerProp
 		<Sheet open={open} onOpenChange={onOpenChange}>
 			<SheetContent
 				side="right"
-				className="flex w-full flex-col gap-0 p-0 sm:max-w-md"
+				className="relative flex w-full flex-col gap-0 p-0 sm:max-w-md"
 				data-testid="brief-drawer"
 			>
 				<div className="flex shrink-0 items-center gap-3 border-b border-border px-5 py-4 pr-14">
@@ -215,7 +216,10 @@ export function BriefDrawer({ workspaceId, open, onOpenChange }: BriefDrawerProp
 					</div>
 				</div>
 
-				<div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+				<div
+					data-floating-scroller
+					className="min-h-0 flex-1 overflow-y-auto px-5 pt-4 pb-[calc(var(--brief-composer-h,5rem)+8px)]"
+				>
 					{isLoading ? (
 						<CardSkeleton />
 					) : isError ? (
@@ -286,7 +290,7 @@ export function BriefDrawer({ workspaceId, open, onOpenChange }: BriefDrawerProp
 					)}
 				</div>
 
-				<div className="shrink-0 border-t border-border px-5 py-3">
+				<FloatingFooter name="--brief-composer-h" className="px-5 py-3">
 					<Composer
 						workspaceId={workspaceId}
 						onSend={onSend}
@@ -304,7 +308,7 @@ export function BriefDrawer({ workspaceId, open, onOpenChange }: BriefDrawerProp
 						externalError={sendError}
 						onDismissExternalError={() => setSendError(null)}
 					/>
-				</div>
+				</FloatingFooter>
 			</SheetContent>
 		</Sheet>
 	)

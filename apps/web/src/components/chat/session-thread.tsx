@@ -5,6 +5,7 @@ import { MessageActivity } from '@/components/chat/message-activity'
 import { MessageBubble } from '@/components/chat/message-bubble'
 import { QuestionOptions } from '@/components/chat/question-options'
 import { EmptyState } from '@/components/shared/empty-state'
+import { FloatingFooter } from '@/components/shared/floating-footer'
 import { Spinner } from '@/components/ui/spinner'
 import { useActors } from '@/hooks/use-actors'
 import { flattenMessagesOldestFirst, useConversationMessages } from '@/hooks/use-conversation'
@@ -154,11 +155,12 @@ export function SessionThread({
 	}, [size])
 
 	return (
-		<>
+		<div className="relative flex min-h-0 flex-1 flex-col">
 			<div
 				// The scroller clips a chip's hover preview, so the preview places itself inside it.
 				{...{ [PREVIEW_BOUNDS_ATTR]: '' }}
-				className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4"
+				data-floating-scroller
+				className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pt-4 pb-[calc(var(--session-composer-h,5rem)+8px)] scroll-pb-[calc(var(--session-composer-h,5rem)+8px)]"
 			>
 				{isLoading ? (
 					<Spinner />
@@ -223,7 +225,7 @@ export function SessionThread({
 				thread={thread}
 				mode={mode}
 			/>
-		</>
+		</div>
 	)
 }
 
@@ -257,7 +259,7 @@ function SessionComposer({
 	const carryOn = useContinueSession(workspaceId, conversationId)
 
 	return (
-		<div className="shrink-0 px-3 pt-2.5 pb-3.5">
+		<FloatingFooter name="--session-composer-h" className="px-3 pt-2.5 pb-3.5">
 			<Composer
 				workspaceId={workspaceId}
 				onSend={async (content) => {
@@ -292,6 +294,6 @@ function SessionComposer({
 				textareaLabel={`Message ${thread.actorName}`}
 				draftKey={`session:${thread.id}`}
 			/>
-		</div>
+		</FloatingFooter>
 	)
 }

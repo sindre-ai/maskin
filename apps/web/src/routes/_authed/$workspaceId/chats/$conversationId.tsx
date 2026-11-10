@@ -7,6 +7,7 @@ import { ThreadComposer } from '@/components/chat/thread-composer'
 import { ThreadHeader } from '@/components/chat/thread-header'
 import { ThreadMessages } from '@/components/chat/thread-messages'
 import { ThreadsPaneContext } from '@/components/chat/threads-context'
+import { FLOATING_EDGE } from '@/components/shared/floating-footer'
 import { RouteError } from '@/components/shared/route-error'
 import {
 	Sheet,
@@ -67,11 +68,6 @@ function writeSeenOverview(conversationId: string, signature: string) {
 		// Storage can be blocked; the dot then just re-pulses on reload.
 	}
 }
-
-// The thread's header and composer lay over the transcript instead of boxing it in: the bar
-// itself has no background and lets clicks through; just its controls take them.
-const FLOATING_EDGE =
-	'pointer-events-none absolute inset-x-0 z-10 [&_:is(a,button,input,select,textarea,form,[role=button],[contenteditable=true])]:pointer-events-auto'
 
 export const Route = createFileRoute('/_authed/$workspaceId/chats/$conversationId')({
 	component: ConversationThreadPage,
