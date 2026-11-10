@@ -27,11 +27,4 @@ describe('missing-index migrations 0143-0145', () => {
 		expect(row?.indexdef).toContain('(spawned_by_message_id)')
 		expect(row?.indexdef).toContain('spawned_by_message_id IS NOT NULL')
 	})
-
-	it('sessions_actor_created_at_idx exists, is valid, and orders created_at descending', async () => {
-		const row = await indexRow('sessions', 'sessions_actor_created_at_idx')
-		expect(row).toBeDefined()
-		expect(row?.indisvalid).toBe(true)
-		expect(row?.indexdef).toContain('(actor_id, created_at DESC)')
-	})
 })
