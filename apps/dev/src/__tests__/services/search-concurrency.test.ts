@@ -21,7 +21,12 @@ describe('settleWithLimit', () => {
 			if (n === 2) throw new Error('boom')
 			return n * 10
 		})
-		expect(results.map((r) => r.status)).toEqual(['fulfilled', 'rejected', 'fulfilled', 'fulfilled'])
+		expect(results.map((r) => r.status)).toEqual([
+			'fulfilled',
+			'rejected',
+			'fulfilled',
+			'fulfilled',
+		])
 		expect(results[0]).toEqual({ status: 'fulfilled', value: 10 })
 		expect(results[3]).toEqual({ status: 'fulfilled', value: 40 })
 		expect((results[1] as PromiseRejectedResult).reason).toBeInstanceOf(Error)
