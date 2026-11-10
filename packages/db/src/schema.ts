@@ -2818,14 +2818,14 @@ export const notificationPreferences = pgTable(
 		// Date of the last summary email, set by the email sender. Migration 0138.
 		emailLastSentOn: date('email_last_sent_on', { mode: 'string' }),
 		// The "Marketplace picks" switch for the summary email. Off for everyone until the person
-		// turns it on. Migration 0145.
+		// turns it on. Migration 0146.
 		marketplacePicksEnabled: boolean('marketplace_picks_enabled').notNull().default(false),
-		// Marketplace flows the person marked "Not useful"; never picked for them again. Migration 0145.
+		// Marketplace flows the person marked "Not useful"; never picked for them again. Migration 0146.
 		marketplaceDismissedLoopIds: uuid('marketplace_dismissed_loop_ids')
 			.array()
 			.notNull()
 			.default(sql`'{}'::uuid[]`),
-		// Date of the last summary email that carried a pick; at most one a week. Migration 0145.
+		// Date of the last summary email that carried a pick; at most one a week. Migration 0146.
 		marketplacePickLastSentOn: date('marketplace_pick_last_sent_on', { mode: 'string' }),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

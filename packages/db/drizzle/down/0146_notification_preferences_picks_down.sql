@@ -1,4 +1,4 @@
--- Rollback for 0145_notification_preferences_picks.sql. Drops the three columns, which loses every
+-- Rollback for 0146_notification_preferences_picks.sql. Drops the three columns, which loses every
 -- Marketplace picks switch and every "Not useful" dismissal (picks go back to off for everyone).
 -- Roll back the code that reads them first.
 --
