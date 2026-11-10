@@ -23,7 +23,6 @@ import { planUsageState } from '@/lib/plan-usage'
 import { queryKeys } from '@/lib/query-keys'
 import { trialCardState } from '@/lib/trial'
 import {
-	INCLUDED_USAGE_DKK,
 	OWNERSHIP_CAPS,
 	PLAN_PRICE_DKK,
 	type PaidPlan,
@@ -100,8 +99,8 @@ interface PlanCardConfig {
 	features: string[]
 }
 
-// Prices and included usage come from @maskin/shared (plan-pricing.ts), the same
-// file the backend caps are derived from; scripts/verify-billing-cap-literals.mjs
+// Prices come from @maskin/shared (plan-pricing.ts), the same file the backend caps
+// are derived from; plan cards show no usage amount; scripts/verify-billing-cap-literals.mjs
 // fails CI when this file stops reading from it.
 function paidPlanCard(plan: PaidPlan, eyebrow: string, tagline: string): PlanCardConfig {
 	return {
@@ -111,7 +110,7 @@ function paidPlanCard(plan: PaidPlan, eyebrow: string, tagline: string): PlanCar
 		priceSuffix: '/mo',
 		tagline,
 		features: [
-			`${formatKroner(INCLUDED_USAGE_DKK[plan])} of usage included each month`,
+			'Usage included each month',
 			formatOwnershipCap(OWNERSHIP_CAPS[plan]),
 			formatSeatCap(SEAT_CAPS[plan]),
 			'Hosted by Maskin — no API key needed',
@@ -125,9 +124,9 @@ const PLAN_CONFIG: PlanCardConfig[] = [
 		eyebrow: 'TRIAL',
 		price: 'Free',
 		priceSuffix: '/14 days',
-		tagline: `Full product, no card. ${formatKroner(INCLUDED_USAGE_DKK.trial)} of usage on the house.`,
+		tagline: 'Full product, no card. Usage included.',
 		features: [
-			`${formatKroner(INCLUDED_USAGE_DKK.trial)} of usage included`,
+			'Usage included for the trial',
 			formatOwnershipCap(OWNERSHIP_CAPS.trial),
 			formatSeatCap(SEAT_CAPS.trial),
 			'Hosted by Maskin — no API key needed',
@@ -144,7 +143,7 @@ const PLAN_CONFIG: PlanCardConfig[] = [
 		priceSuffix: '',
 		tagline: 'Bring your own LLM. Pay by invoice. Full control.',
 		features: [
-			'No Maskin-hosted token cap',
+			'No Maskin-hosted usage cap',
 			formatOwnershipCap(OWNERSHIP_CAPS.enterprise),
 			formatSeatCap(SEAT_CAPS.enterprise),
 			'Use your own Claude Pro/Max, Anthropic API key, or custom endpoint',
