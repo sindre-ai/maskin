@@ -151,6 +151,7 @@ describe('Integrations Routes', () => {
 					.map((p) => p.name)
 					.sort(),
 			).toEqual([
+				'atlassian',
 				'attio',
 				'github',
 				'gmail',
