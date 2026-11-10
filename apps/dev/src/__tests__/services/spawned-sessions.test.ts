@@ -1,3 +1,4 @@
+import { clearSessionFrameCaches } from '../../lib/session-frame-cache'
 import {
 	formatActiveSessionsNote,
 	isConversationParticipant,
@@ -113,6 +114,8 @@ describe('loadSpawnedSessionsByMessage', () => {
 })
 
 describe('loadSessionStateChangeFrame', () => {
+	beforeEach(() => clearSessionFrameCaches())
+
 	const baseRow = {
 		id: 'session-1',
 		workspaceId: 'ws-1',
@@ -191,9 +194,66 @@ describe('loadSessionStateChangeFrame', () => {
 		expect(frame).toBeNull()
 	})
 
+	it('still refuses a non-participant when the lookup is cached from another connection', async () => {
+		const { db, mockResults } = createTestContext()
+		// Connection A (entitled) populates the anchor and participant caches.
+		mockResults.selectQueue = [[baseRow], [{ actorId: 'actor-1' }]]
+		const first = await loadSessionStateChangeFrame(db, {
+			sessionId: 'session-1',
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+		})
+		expect(first).not.toBeNull()
+
+		// Connection B (outsider) hits both caches: only the state row is read.
+		mockResults.selectQueue = [[baseRow]]
+		const second = await loadSessionStateChangeFrame(db, {
+			sessionId: 'session-1',
+			workspaceId: 'ws-1',
+			actorId: 'outsider',
+		})
+		expect(second).toBeNull()
+	})
+
+	it('refuses a cached session from another workspace', async () => {
+		const { db, mockResults } = createTestContext()
+		mockResults.selectQueue = [[baseRow], [{ actorId: 'actor-1' }]]
+		await loadSessionStateChangeFrame(db, {
+			sessionId: 'session-1',
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+		})
+
+		mockResults.selectQueue = [[baseRow]]
+		const frame = await loadSessionStateChangeFrame(db, {
+			sessionId: 'session-1',
+			workspaceId: 'ws-2',
+			actorId: 'actor-1',
+		})
+		expect(frame).toBeNull()
+	})
+
+	it('returns fresh state on a cached lookup', async () => {
+		const { db, mockResults } = createTestContext()
+		mockResults.selectQueue = [[baseRow], [{ actorId: 'actor-1' }]]
+		await loadSessionStateChangeFrame(db, {
+			sessionId: 'session-1',
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+		})
+
+		mockResults.selectQueue = [[{ ...baseRow, status: 'failed' }]]
+		const frame = await loadSessionStateChangeFrame(db, {
+			sessionId: 'session-1',
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+		})
+		expect(frame?.status).toBe('failed')
+	})
+
 	it('returns the snake_case state-changed payload for an entitled participant', async () => {
 		const { db, mockResults } = createTestContext()
-		mockResults.selectQueue = [[baseRow], [{ conversationId: 'conv-1' }]]
+		mockResults.selectQueue = [[baseRow], [{ actorId: 'actor-1' }]]
 
 		const frame = await loadSessionStateChangeFrame(db, {
 			sessionId: 'session-1',
