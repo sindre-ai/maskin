@@ -9,6 +9,8 @@ export const RECAP_WINDOW_DAYS = 7
 const DECISION_WINDOW_DAYS = 14
 /** Named items per section. The count is the full figure; the list is only a sample. */
 export const RECAP_ITEM_CAP = 5
+/** Object events are logged under the object's own type, so a status change is found by these. */
+const MOVED_TYPES = ['insight', 'bet', 'task']
 
 const countedSchema = <T extends z.ZodTypeAny>(item: T) =>
 	z.object({ count: z.number().int().nonnegative(), items: z.array(item) })
@@ -90,7 +92,9 @@ async function movedItems(db: Database, workspaceId: string, inWindow: Window) {
 			total: sql<number>`count(*) over ()`.mapWith(Number),
 		})
 		.from(events)
-		.where(and(inWindow, eq(events.entityType, 'object'), eq(events.action, 'status_changed')))
+		.where(
+			and(inWindow, inArray(events.entityType, MOVED_TYPES), eq(events.action, 'status_changed')),
+		)
 		.groupBy(events.entityId)
 		.orderBy(desc(sql`max(${events.id})`))
 		.limit(RECAP_ITEM_CAP)
