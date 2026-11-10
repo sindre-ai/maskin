@@ -1521,7 +1521,8 @@ export function Composer({
 						onDragLeave={handleDragLeave}
 						onDrop={handleDrop}
 						className={cn(
-							'flex items-end gap-1.5 rounded-3xl bg-card p-1.5 inset-ring inset-ring-input max-md:p-1',
+							// shadow-md: the bar floats over the page, so it lifts off the content behind it.
+							'flex items-end gap-1.5 rounded-3xl bg-card p-1.5 shadow-md inset-ring inset-ring-input max-md:p-1',
 							dropTargeted && 'outline-2 outline-dashed outline-ring',
 						)}
 					>

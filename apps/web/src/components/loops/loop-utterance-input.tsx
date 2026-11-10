@@ -62,11 +62,12 @@ export const LoopUtteranceInput = forwardRef<
 	)
 
 	return (
-		<div ref={ref} className="sticky bottom-0 z-10 mt-6 bg-background">
-			<div
-				aria-hidden="true"
-				className="pointer-events-none h-5 bg-gradient-to-b from-transparent to-background"
-			/>
+		// A fade of the page colour, not a block: the content shows through above the composer, and
+		// only the composer and its chips take clicks.
+		<div
+			ref={ref}
+			className="pointer-events-none sticky bottom-0 z-10 mt-6 bg-gradient-to-b from-transparent to-background to-40% pt-8 [&_:is(a,button,input,textarea,[role=button],[contenteditable=true])]:pointer-events-auto [&_form]:pointer-events-auto"
+		>
 			<div className="pb-[max(0.625rem,env(safe-area-inset-bottom))]">
 				{children}
 				{showSuggestions && (
