@@ -126,8 +126,11 @@ describe('timeQueries queued-query deadline', () => {
 			queuedQueryTimeoutMs: 30,
 			saturationAt: 2,
 		})
+		// A query is only sent and counted once something awaits it, so start the two that fill the pool.
 		const first = client.unsafe('select 1')
 		const second = client.unsafe('select 2')
+		void first.then(undefined, () => {})
+		void second.then(undefined, () => {})
 		const third = client.unsafe('select 3')
 		await expect(third).rejects.toBeInstanceOf(QueryTimeoutError)
 		// The two that fit in the pool keep the full deadline and are still waiting.
