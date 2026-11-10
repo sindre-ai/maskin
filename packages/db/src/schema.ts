@@ -993,11 +993,12 @@ export const sessions = pgTable(
 
 // ── API Keys ───────────────────────────────────────────────────────────────
 
-export type ApiKeyKind = 'primary' | 'login' | 'login_ios' | 'session'
+export type ApiKeyKind = 'primary' | 'login' | 'login_ios' | 'session' | 'personal'
 
 /**
  * Hashed API keys. One actor holds many: a primary key (shown once at creation or rotation),
- * one per web or iOS login, and one per agent session launch. key_hash is the hex SHA-256 of
+ * one per web or iOS login, one per agent session launch, and any number of named personal keys a
+ * person makes by hand (capped in lib/api-keys). key_hash is the hex SHA-256 of
  * the full ank_ token, so a lookup is one indexed equality and a database leak yields no
  * usable keys. A key authenticates while revoked_at is null and expires_at is null or future.
  */
@@ -1011,6 +1012,8 @@ export const apiKeys = pgTable(
 		keyHash: text('key_hash').notNull().unique(),
 		last4: text('last4').notNull(),
 		kind: text('kind').$type<ApiKeyKind>().notNull(),
+		/** Set only on personal keys: the label the person gave it. */
+		name: text('name'),
 		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'cascade' }),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		expiresAt: timestamp('expires_at', { withTimezone: true }),
@@ -1020,7 +1023,10 @@ export const apiKeys = pgTable(
 	(t) => [
 		index('api_keys_actor_kind_idx').on(t.actorId, t.kind),
 		index('api_keys_session_idx').on(t.sessionId).where(sql`${t.sessionId} IS NOT NULL`),
-		check('api_keys_kind_enum', sql`${t.kind} IN ('primary', 'login', 'login_ios', 'session')`),
+		check(
+			'api_keys_kind_enum',
+			sql`${t.kind} IN ('primary', 'login', 'login_ios', 'session', 'personal')`,
+		),
 	],
 )
 export type ApiKey = typeof apiKeys.$inferSelect

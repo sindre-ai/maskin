@@ -1,6 +1,12 @@
 import type { Database } from '@maskin/db'
-import { sendPermissions } from '@maskin/db/schema'
-import { STARTING_SEND_MODES, type SendPermissionMode, isSendPermissionKind } from '@maskin/shared'
+import { actors, sendPermissions, workspaceMembers } from '@maskin/db/schema'
+import {
+	SEND_PERMISSION_KINDS,
+	STARTING_SEND_MODES,
+	type SendPermissionKind,
+	type SendPermissionMode,
+	isSendPermissionKind,
+} from '@maskin/shared'
 import { and, eq, isNull, or } from 'drizzle-orm'
 
 /**
@@ -54,4 +60,55 @@ export async function resolveSendMode(
 		return { mode: workspaceDefault.mode, source: 'workspace', settingId: workspaceDefault.id }
 	}
 	return { mode: startingSendMode(params.kind), source: 'starting', settingId: null }
+}
+
+export interface EffectiveSendSetting {
+	mode: SendPermissionMode
+	source: SendModeSource
+}
+
+/**
+ * Every send setting in a workspace, resolved the way the send gate resolves it: the workspace
+ * default per kind, and for every agent the mode in force per kind with where it came from.
+ */
+export async function loadSendSettings(
+	db: Database,
+	workspaceId: string,
+): Promise<{
+	defaults: Record<SendPermissionKind, EffectiveSendSetting>
+	agents: Array<{
+		agentId: string
+		name: string
+		settings: Record<SendPermissionKind, EffectiveSendSetting>
+	}>
+}> {
+	const [rows, agents] = await Promise.all([
+		db.select().from(sendPermissions).where(eq(sendPermissions.workspaceId, workspaceId)),
+		db
+			.select({ id: actors.id, name: actors.name })
+			.from(workspaceMembers)
+			.innerJoin(actors, eq(actors.id, workspaceMembers.actorId))
+			.where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(actors.type, 'agent')))
+			.orderBy(actors.name),
+	])
+
+	const defaults = {} as Record<SendPermissionKind, EffectiveSendSetting>
+	for (const kind of SEND_PERMISSION_KINDS) {
+		const row = rows.find((r) => r.agentId === null && r.kind === kind)
+		defaults[kind] = row
+			? { mode: row.mode, source: 'workspace' }
+			: { mode: startingSendMode(kind), source: 'starting' }
+	}
+
+	return {
+		defaults,
+		agents: agents.map((agent) => {
+			const settings = {} as Record<SendPermissionKind, EffectiveSendSetting>
+			for (const kind of SEND_PERMISSION_KINDS) {
+				const own = rows.find((r) => r.agentId === agent.id && r.kind === kind)
+				settings[kind] = own ? { mode: own.mode, source: 'agent' } : defaults[kind]
+			}
+			return { agentId: agent.id, name: agent.name, settings }
+		}),
+	}
 }
