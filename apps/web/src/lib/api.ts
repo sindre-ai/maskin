@@ -1039,6 +1039,12 @@ export const api = {
 		},
 		slackUsers: (id: string, workspaceId: string) =>
 			request<SlackUser[]>(`/integrations/${id}/slack/users`, { workspaceId }),
+		/** Replaces the Slack channels agents may post to without approval. Human admins and owners only. */
+		setSlackDirectPostChannels: (workspaceId: string, channels: string[]) =>
+			request<{ integration_id: string; channels: string[] }>(
+				'/integrations/slack/direct-post-channels',
+				{ method: 'PUT', body: { channels }, workspaceId },
+			),
 		linkedinIdentities: (workspaceId: string) =>
 			request<LinkedInIdentitySummary[]>('/integrations/linkedin-unipile/identities', {
 				workspaceId,
