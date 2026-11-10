@@ -37,6 +37,7 @@ import { maskLlmConfigSecrets, restoreMaskedLlmConfig } from '../lib/actor-llm-c
 import { toActorWithKeyResponse } from '../lib/actor-response'
 import { redactActorToolsForCaller, restoreMaskedToolValues } from '../lib/actor-tools-redaction'
 import { hasAgentDeletionApproval } from '../lib/agent-deletion-approval'
+import { checkAgentModelForWorkspace } from '../lib/agent-model-check'
 import { withHumanPauseMarker, withoutHumanPauseMarker } from '../lib/agent-pause'
 import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
@@ -319,6 +320,21 @@ app.openapi(createActorRoute, async (c) => {
 						'Only workspace admins can set tools or llm_config on a new agent',
 					),
 					403,
+				)
+			}
+			// A model the workspace cannot run is refused now, not ignored at launch.
+			const modelRefusal = await checkAgentModelForWorkspace(db, {
+				workspaceId: body.workspace_id,
+				model: body.llm_config?.model,
+				storedModel: undefined,
+				hasAgentKey: Boolean(body.llm_config?.api_key),
+			})
+			if (modelRefusal) {
+				return c.json(
+					createApiError('BAD_REQUEST', modelRefusal, [
+						{ field: 'llm_config.model', message: modelRefusal },
+					]),
+					400,
 				)
 			}
 			memberWorkspaceId = body.workspace_id
@@ -1511,6 +1527,23 @@ app.openapi(updateActorRoute, (async (c) => {
 			)
 		}
 		llmConfig = restored.llmConfig as typeof llmConfig
+	}
+
+	// A model the agent's workspace cannot run is refused here rather than saved
+	// and then ignored when a session starts. Only a changed model is checked.
+	if (llmConfig !== undefined) {
+		const refusal = await checkAgentModelForWorkspace(db, {
+			workspaceId,
+			model: llmConfig?.model,
+			storedModel: (existing.llmConfig as { model?: unknown } | null)?.model,
+			hasAgentKey: Boolean(llmConfig?.api_key),
+		})
+		if (refusal) {
+			return c.json(
+				createApiError('BAD_REQUEST', refusal, [{ field: 'llm_config.model', message: refusal }]),
+				400,
+			)
+		}
 	}
 
 	const [updated] = await db

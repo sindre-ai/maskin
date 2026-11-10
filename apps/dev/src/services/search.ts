@@ -575,6 +575,36 @@ async function runSource(
 	return result
 }
 
+/**
+ * Each source holds a pooled connection for the length of its transaction, and a search is sent on
+ * every keystroke of the command palette. All sources at once meant one search took up to six
+ * connections of the pool of 20; three at a time keeps the rest for everyone else, and the sources
+ * are short.
+ */
+export const SEARCH_MAX_CONCURRENT_SOURCES = 3
+
+/** Like Promise.allSettled over `items`, but with at most `limit` running at once. Order is kept. */
+export async function settleWithLimit<T, R>(
+	items: T[],
+	limit: number,
+	run: (item: T) => Promise<R>,
+): Promise<PromiseSettledResult<R>[]> {
+	const results = new Array<PromiseSettledResult<R>>(items.length)
+	let next = 0
+	const worker = async () => {
+		while (next < items.length) {
+			const i = next++
+			try {
+				results[i] = { status: 'fulfilled', value: await run(items[i] as T) }
+			} catch (reason) {
+				results[i] = { status: 'rejected', reason }
+			}
+		}
+	}
+	await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+	return results
+}
+
 /** Each source runs in its own transaction so the statement timeout is scoped to it. */
 async function runSourceWithTimeout(
 	db: Database,
@@ -808,8 +838,8 @@ export async function runSearch(
 ): Promise<SearchResponse> {
 	const startedAt = Date.now()
 	const tokens = searchTokens(query.q)
-	const settled = await Promise.allSettled(
-		sources.map((source) => runSourceWithTimeout(db, source, ctx, query, tokens)),
+	const settled = await settleWithLimit(sources, SEARCH_MAX_CONCURRENT_SOURCES, (source) =>
+		runSourceWithTimeout(db, source, ctx, query, tokens),
 	)
 
 	const partial: SearchSourceGroup[] = []

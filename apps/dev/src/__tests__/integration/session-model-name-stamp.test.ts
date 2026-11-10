@@ -9,9 +9,9 @@ import { db, getTestActorId } from './global-setup'
  * Foundational task for the session-cost accounting bet: every maskin_plan
  * session must land with `sessions.model_name` non-null (the OpenRouter model
  * that will actually run) and `sessions.config.llm_route = 'maskin_plan'` so
- * the follow-on local cost resolver has the fields it needs. Non-maskin_plan
- * routes (claude_oauth, BYO) leave `model_name` null on purpose — Claude
- * Code's own `total_cost_usd` stays ground truth there.
+ * the follow-on local cost resolver has the fields it needs. Since model choice
+ * slice 1 every other route stamps its resolved model too (claude_oauth, BYO);
+ * Claude Code's own `total_cost_usd` stays ground truth for cost there.
  *
  * Real Postgres rather than a mocked query builder because what's asserted is
  * the persisted terminal shape on the row after a full route-resolve pass,
@@ -94,7 +94,7 @@ describe('SessionManager.buildLaunchSpec — stamps sessions.model_name on maski
 		expect((row?.config as { llm_route?: string } | null)?.llm_route).toBe('maskin_plan')
 	})
 
-	it('leaves model_name null on a workspace-anthropic-key route (BYO / non-maskin_plan)', async () => {
+	it('stamps the tier default model on a workspace-anthropic-key route (BYO / non-maskin_plan)', async () => {
 		const ws = await insertWorkspace(db, actorId, {
 			enterpriseGranted: true,
 			settings: { llm_keys: { anthropic: 'sk-ant-integration-test' } },
@@ -122,8 +122,8 @@ describe('SessionManager.buildLaunchSpec — stamps sessions.model_name on maski
 		}
 
 		const [row] = await db.select().from(sessions).where(eq(sessions.id, pending.id))
-		expect(row?.modelName).toBeNull()
-		// The route stamp is still applied — that path is unchanged from before.
+		expect(row?.modelName).toBe('claude-sonnet-5-5')
+		// The route stamp is unchanged from before.
 		expect((row?.config as { llm_route?: string } | null)?.llm_route).toBe('workspace_api_key')
 	})
 })
