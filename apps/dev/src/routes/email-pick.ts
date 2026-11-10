@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { notificationPreferences } from '@maskin/db/schema'
-import { eq, sql } from 'drizzle-orm'
+import { sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { verifyEmailPickToken } from '../lib/email-pick-token'
 import { logger } from '../lib/logger'
