@@ -147,7 +147,8 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 				ChatActor(
 					participant: ChatParticipant(id: row.id, name: row.name, actorType: row._type),
 					agentState: ChatActor.AgentState(rawValue: row.agentState.rawValue) ?? .unknown,
-					summary: row.description, isSystem: row.isSystem)
+					summary: row.description, isSystem: row.isSystem,
+					starterPrompts: StarterPrompts.normalize(row.starter_prompts))
 			}
 			if rows.count < pageSize { break }
 			offset += pageSize

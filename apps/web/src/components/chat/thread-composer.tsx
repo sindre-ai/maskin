@@ -24,8 +24,11 @@ const BOOTING_STATUSES = new Set(['pending', 'starting', 'queued'])
 interface ThreadComposerProps {
 	workspaceId: string
 	conversationId: string
-	/** A step was tapped: replace the draft with this text (when given) and focus the box. */
-	fillRequest?: { text?: string; nonce: number } | null
+	/**
+	 * A step or starter was tapped: replace the draft with this text (or, with `append`, add it
+	 * after the draft) when given, and focus the box.
+	 */
+	fillRequest?: { text?: string; append?: boolean; nonce: number } | null
 	/**
 	 * Makes this a reply under a top-level message: sends carry `thread_root_id` and
 	 * `also_in_channel`, the recipient (when there is one) is seeded as a mention, and
