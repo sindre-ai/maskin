@@ -36,6 +36,7 @@ import {
 	CredentialResolutionTimeoutError,
 	LlmCredentialsUnavailableError,
 	PlanCapExceededError,
+	TrialNotStartedError,
 } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
@@ -564,7 +565,10 @@ export class TriggerRunner {
 				workspaceId,
 				{
 					until,
-					reason: `${err.plan} plan cap exceeded ($${(err.used / 100).toFixed(2)} of $${(err.cap / 100).toFixed(2)})`,
+					reason:
+						err instanceof TrialNotStartedError
+							? 'trial not started (waiting for a card)'
+							: `${err.plan} plan cap exceeded ($${(err.used / 100).toFixed(2)} of $${(err.cap / 100).toFixed(2)})`,
 				},
 				triggerName,
 			)

@@ -393,6 +393,27 @@ export class PlanCapExceededError extends Error {
 	}
 }
 
+/** How long a paused automation waits before it asks again while a workspace has no card yet. */
+const TRIAL_NOT_STARTED_RETRY_MS = 5 * 60_000
+
+/**
+ * A workspace that signed up through the card step has not put a card down, so nothing runs
+ * (bet "A card to start a 7-day trial", task T2). Surfaces as HTTP 402 with
+ * `{ code: 'TRIAL_NOT_STARTED' }`, and the client offers "Add card".
+ *
+ * It extends PlanCapExceededError on purpose: every place that already treats a plan cap as the
+ * workspace working as designed (not a Sentry error, automations paused rather than failed)
+ * treats this the same way. `used` and `cap` are 0, and `periodEnd` is a few minutes out so a
+ * paused automation asks again soon after the card is down instead of waiting out an hour.
+ */
+export class TrialNotStartedError extends PlanCapExceededError {
+	constructor() {
+		super({ plan: 'trial', used: 0, cap: 0, periodEnd: Date.now() + TRIAL_NOT_STARTED_RETRY_MS })
+		this.name = 'TrialNotStartedError'
+		this.message = 'Your trial has not started. Add a card to begin your 7 days.'
+	}
+}
+
 /**
  * Returns the configured cap (USD cents) for a maskin_plan workspace.
  *
@@ -495,6 +516,11 @@ export async function checkPlanCap(params: {
 	const plan = (billing?.plan ?? 'trial') as MaskinPlan | 'enterprise'
 	if (!MASKIN_PLAN_ROUTED_PLANS.has(plan)) return
 	if (params.enterprise) return
+
+	// Signed up through the card step and no card yet: nothing runs until the trial has started.
+	if (plan === 'trial' && billing?.trial_state === 'awaiting_card') {
+		throw new TrialNotStartedError()
+	}
 
 	const maskinPlan = plan as MaskinPlan
 	const cap = effectivePlanCap(maskinPlan, billing?.hard_cap_usd_cents ?? undefined)

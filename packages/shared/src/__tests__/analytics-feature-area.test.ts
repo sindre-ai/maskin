@@ -25,6 +25,8 @@ describe('featureAreaForEvent', () => {
 		['command_palette_opened', 'search'],
 		['voice_session_started', 'voice'],
 		['checkout_session_completed', 'billing'],
+		['trial_started', 'billing'],
+		['trial_card_rejected_duplicate', 'billing'],
 		['workspace_member_joined', 'settings'],
 	])('puts %s in %s', (event, area) => {
 		expect(featureAreaForEvent(event)).toBe(area)

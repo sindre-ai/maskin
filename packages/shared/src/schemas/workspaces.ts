@@ -204,6 +204,12 @@ export const workspaceSettingsSchema = z.object({
 			// cap (and the usage compared against it) is tracked in actual dollar
 			// cost rather than a token count — see lib/llm-routing.ts.
 			hard_cap_usd_cents: z.number().nullable().optional(),
+			// Card-at-sign-up trial (bet "A card to start a 7-day trial"). Absent on every workspace
+			// that did not go through the card step. `awaiting_card`: signed up, no card yet, so no
+			// session starts. `started`: the card is saved and the 7 days run (period_start /
+			// period_end hold the window). `trial_wallet` records how the card was entered.
+			trial_state: z.enum(['awaiting_card', 'started']).optional(),
+			trial_wallet: z.enum(['apple_pay', 'google_pay', 'other', 'none']).optional(),
 			status: z.enum(['active', 'past_due', 'canceled', 'incomplete']).optional(),
 			// Prepaid usage-credits balance, in USD cents. Depletes as
 			// `maskin_plan` usage crosses the plan's included cap

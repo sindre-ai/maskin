@@ -6,6 +6,7 @@ import { trackEvent } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import { identifyForWorkspace, signupSourceFrom } from '@/lib/posthog'
 import { safeInternalPath } from '@/lib/safe-redirect'
+import { welcomeLandingPath } from '@/lib/welcome-landing'
 import { buildSignupCaptureKnowledge } from '@maskin/shared'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
@@ -112,6 +113,7 @@ function SignupPage() {
 				name: trimmedName,
 				email: email.trim(),
 				password,
+				card_step: true,
 			})
 			const actorId = result?.id
 			const workspaceId = result?.workspace_id
@@ -177,13 +179,14 @@ function SignupPage() {
 			}
 			let landing = '/'
 			if (workspaceId) {
-				landing = `/${workspaceId}/chats/new`
-				try {
-					const { conversations } = await api.conversations.list(workspaceId, { limit: '1' })
-					if (conversations[0]) landing = `/${workspaceId}/chats/${conversations[0].id}`
-				} catch (err) {
-					console.error('[maskin] failed to find the welcome chat', err)
-				}
+				// A workspace made through the card step waits for a card before anything runs,
+				// so the card step opens instead of the welcome chat. The server decides (flag),
+				// we only ask.
+				const usage = await api.billing.usage(workspaceId).catch(() => null)
+				landing =
+					usage?.trial_state === 'awaiting_card'
+						? `/start-trial/${workspaceId}`
+						: await welcomeLandingPath(workspaceId)
 			}
 			window.location.assign(landing)
 		} catch (err) {

@@ -516,8 +516,9 @@ async function applyEvent(
 					// with the add-on's — silently changing what the workspace is
 					// entitled to because it connected LinkedIn.
 					const addonItem =
-						sub.items?.data?.find((item) => isLinkedInAddonPrice(item.price?.id ?? null, stripeEnv)) ??
-						sub.items?.data?.[0]
+						sub.items?.data?.find((item) =>
+							isLinkedInAddonPrice(item.price?.id ?? null, stripeEnv),
+						) ?? sub.items?.data?.[0]
 					next = {
 						...next,
 						linkedin_addon_subscription_id: sub.id,
@@ -610,6 +611,12 @@ async function applyEvent(
 				next = { ...next, status: 'past_due' }
 				break
 			}
+		}
+
+		// A paid plan ends the wait for a trial card: the person paid, so the card step has nothing
+		// left to ask, and a later fall back to trial must not send them to it.
+		if (next.plan !== 'trial' && next.trial_state === 'awaiting_card') {
+			next = { ...next, trial_state: undefined }
 		}
 
 		// BYO-LLM -> paid plan mutex: when the subscription lands in an active

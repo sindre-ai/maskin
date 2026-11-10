@@ -47,6 +47,7 @@ import {
 } from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { FLAGS, isSignupFlagEnabled } from '../lib/feature-flags'
 import { describeAgentAccess } from '../lib/integrations/agent-access-view'
 import { mailboxTakenBy, normalizeMailbox } from '../lib/integrations/providers/resend/mailbox'
 import { PlanCapExceededError } from '../lib/llm-routing'
@@ -481,6 +482,12 @@ app.openapi(createActorRoute, async (c) => {
 				name: `${body.name}'s Workspace`,
 				ownerActorId: actor.id,
 				settings: { enabled_modules: ['work', 'crm', 'knowledge'] },
+				// Only a client that shows the card step asks for it, and only while the flag is
+				// on for new sign-ups. Off, or any other client: sign-up works exactly as before.
+				awaitingCard:
+					body.type === 'human' &&
+					body.card_step === true &&
+					isSignupFlagEnabled(FLAGS.TRIAL_CARD_PERCENT),
 			})
 			if (!created) {
 				logger.error('signup workspace provisioning returned no workspace row', {
