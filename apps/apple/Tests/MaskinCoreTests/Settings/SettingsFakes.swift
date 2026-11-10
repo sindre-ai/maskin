@@ -162,6 +162,11 @@ final class FakeSettings: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Integration
 		try record("usage")
 		return billingUsage
 	}
+	/// Flag ids turned on for the signed-in person.
+	var enabledFlags: Set<String> = []
+	func isFeatureEnabled(_ flag: String) async -> Bool {
+		(try? record("feature-flag")) != nil && enabledFlags.contains(flag)
+	}
 	func load() async throws -> WorkspaceSchema {
 		try record("load-schema")
 		return schemaValue

@@ -395,6 +395,13 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 		}
 	}
 
+	public func isFeatureEnabled(_ flag: String) async -> Bool {
+		guard let output = try? await client.get_sol_api_sol_feature_hyphen_flags(.init()),
+			case .ok(let ok) = output, let body = try? ok.body.json
+		else { return false }
+		return body.flags.additionalProperties[flag] ?? false
+	}
+
 	// MARK: Schema
 
 	public func load() async throws -> WorkspaceSchema {

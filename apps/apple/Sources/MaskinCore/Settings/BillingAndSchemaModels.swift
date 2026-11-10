@@ -62,6 +62,73 @@ public struct BillingUsage: Sendable, Equatable {
 		return min(1, Double(usedCents) / Double(capCents))
 	}
 
+	// MARK: Percent of the plan (flag trial-card-percent)
+
+	/// How much of the plan is used, as a whole percent. The same rule as `usagePercent` in
+	/// `packages/shared/src/plan-pricing.ts` (the web's number): used over the stored cap the server
+	/// stops on, rounded down, exactly 100 once the cap is reached. Nil for Enterprise (not metered)
+	/// and when no cap is known: no figure is made up.
+	public var percent: Int? {
+		guard plan != "enterprise", let capCents, capCents > 0 else { return nil }
+		if usedCents >= capCents { return 100 }
+		return max(0, Int((Double(usedCents) / Double(capCents) * 100).rounded(.down)))
+	}
+
+	/// The meter colour: primary under 80%, warning from 80%, error at 100%. The number is always
+	/// written next to it, so colour is never the only signal.
+	public enum PercentTone: Sendable, Equatable { case primary, warning, error }
+
+	public static let warnPercent = 80
+
+	public var percentTone: PercentTone? {
+		guard let percent else { return nil }
+		if percent >= 100 { return .error }
+		return percent >= Self.warnPercent ? .warning : .primary
+	}
+
+	/// "42% of plan used".
+	public var percentText: String? { percent.map { "\($0)% of plan used" } }
+
+	/// A balance from an earlier top-up keeps work starting at 100%, unless the plan is not billable.
+	private var holdsCredit: Bool {
+		status != .pastDue && status != .canceled && creditBalanceCents > 0
+	}
+
+	/// At 100% and nothing lets new work start. Not while the period is over (`resetsInMs == 0`):
+	/// the trial-ended notice owns the screen then.
+	public var isPaused: Bool {
+		guard let percent, percent >= 100, !holdsCredit else { return false }
+		return resetsInMs != 0
+	}
+
+	/// "16 Nov": when the period (the trial, or the month) ends and work can start again.
+	public func periodEndLabel(now: Date = Date(), locale: Locale = Locale(identifier: "en_GB")) -> String? {
+		guard let ms = resetsInMs, ms > 0 else { return nil }
+		let f = DateFormatter()
+		f.locale = locale
+		f.setLocalizedDateFormatFromTemplate("dMMM")
+		return f.string(from: now.addingTimeInterval(TimeInterval(ms) / 1000))
+	}
+
+	/// What the 100% screen says, the design spec's words (the same as the web). A trial waits until
+	/// it ends, a paid plan until the month rolls over; both can be ended by picking a plan now.
+	public func limitCopy(now: Date = Date()) -> (banner: String, button: String, notice: String) {
+		let resets = periodEndLabel(now: now)
+		if plan == "trial" {
+			return (
+				"You have used 100% of your trial. New work waits until your trial ends\(resets.map { " on \($0)" } ?? ""), or you can choose a plan now.",
+				"Choose a plan",
+				"Your agents are paused. Your plan is used up. Work starts again when you choose a plan."
+			)
+		}
+		let name = ["starter", "pro", "team", "ultra"].contains(plan) ? planLabel : "plan"
+		return (
+			"You have used 100% of your \(name) plan. New work waits until \(resets ?? "next month"), or you can change plan now.",
+			"Change plan",
+			"Your agents are paused. Your plan is used up. Work starts again on \(resets ?? "the next period"), or when you change plan."
+		)
+	}
+
 	public static func dollars(_ cents: Int, locale: Locale = .current) -> String {
 		let value = Double(cents) / 100
 		let whole = cents % 100 == 0

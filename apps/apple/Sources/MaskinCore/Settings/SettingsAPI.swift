@@ -85,6 +85,13 @@ public protocol SkillsAPI: Sendable {
 public protocol BillingAPI: Sendable {
 	/// `GET /api/billing/usage`.
 	func usage() async throws -> BillingUsage
+	/// `GET /api/feature-flags`: whether `flag` is on for the signed-in person. Any failure reads
+	/// as off, like the web's flag cache, so a flags outage never changes the screen.
+	func isFeatureEnabled(_ flag: String) async -> Bool
+}
+
+extension BillingAPI {
+	public func isFeatureEnabled(_ flag: String) async -> Bool { false }
 }
 
 public protocol SchemaAPI: Sendable {
