@@ -345,6 +345,15 @@ const execRoute = createRoute({
 
 type ControlAction = 'screenshot' | 'input' | 'exec'
 
+// What an agent is told when a saved password was not typed. Fixed text: the computer's own
+// reply is never passed on, because it can sit next to the secret.
+const NOT_A_PASSWORD_FIELD_MESSAGE =
+	'The saved password was not typed: the focused field is not a password field, or the page could not confirm it. Nothing was typed.'
+const NOT_A_PASSWORD_FIELD_HINT =
+	'Click the password field, take a screenshot to see it has focus, then send the reference again. If the page shows the password as plain text, switch it back to hidden first.'
+const OLD_COMPUTER_MESSAGE =
+	'This computer is an older version that cannot check which field has focus, so the saved password was not typed. Nothing was typed. Ask a person to close and reopen the computer.'
+
 /**
  * The session a call comes from, so a credential allowed for only this chat counts. Taken
  * only when it is this actor's own session in this workspace; anything else is ignored.
@@ -403,7 +412,13 @@ async function forwardControl(c: Ctx, action: ControlAction, body: unknown) {
 			return c.json(createApiError(code, resolved.message), resolved.status)
 		}
 		if (resolved.kind === 'resolved') {
-			forwarded = { ...(body as object), text: resolved.text }
+			// A password goes in only while a password field has focus: the computer checks
+			// that itself, right before typing. An older computer does not know this action
+			// and refuses it, so nothing is typed there either.
+			forwarded =
+				resolved.field === 'password'
+					? { action: 'type_secret', text: resolved.text, require: 'password_field' }
+					: { ...(body as object), text: resolved.text }
 			typedCredential = { credentialName: resolved.credentialName, field: resolved.field }
 		}
 	}
@@ -449,6 +464,21 @@ async function forwardControl(c: Ctx, action: ControlAction, body: unknown) {
 			agentId,
 			status: result.status,
 		})
+		const refusal = (result.body as { error?: string; message?: string } | null) ?? {}
+		if (result.status === 409 && refusal.error === 'not_a_password_field') {
+			return c.json(
+				createApiError(
+					'CONFLICT',
+					NOT_A_PASSWORD_FIELD_MESSAGE,
+					undefined,
+					NOT_A_PASSWORD_FIELD_HINT,
+				),
+				409,
+			)
+		}
+		if (result.status === 400 && refusal.message === 'unknown action') {
+			return c.json(createApiError('CONFLICT', OLD_COMPUTER_MESSAGE), 409)
+		}
 		return c.json(
 			createApiError(
 				'INTERNAL_ERROR',
