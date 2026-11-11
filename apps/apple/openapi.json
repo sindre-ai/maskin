@@ -60633,6 +60633,236 @@
 				}
 			}
 		},
+		"/api/for-you/recap": {
+			"get": {
+				"tags": [
+					"For You"
+				],
+				"summary": "What changed since the person last looked: facts the app turns into a sentence",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "date-time",
+							"description": "When the person last looked (ISO 8601). Kept on the device. Anything older than 7 days is cut to 7 days."
+						},
+						"required": true,
+						"description": "When the person last looked (ISO 8601). Kept on the device. Anything older than 7 days is cut to 7 days.",
+						"name": "since",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Counts and a few named items. Zero counts when nothing is new.",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"since": {
+											"type": "string",
+											"description": "The start of the window actually used, after the 7 day cap."
+										},
+										"asks_answered": {
+											"type": "object",
+											"properties": {
+												"count": {
+													"type": "integer",
+													"minimum": 0
+												},
+												"items": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"object_id": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"comment_id": {
+																"type": "number",
+																"description": "The decision card's comment id."
+															},
+															"answered_by": {
+																"type": "string",
+																"format": "uuid"
+															}
+														},
+														"required": [
+															"object_id",
+															"comment_id",
+															"answered_by"
+														]
+													}
+												}
+											},
+											"required": [
+												"count",
+												"items"
+											],
+											"description": "Decision cards addressed to the person that someone else has replied to."
+										},
+										"items_moved": {
+											"type": "object",
+											"properties": {
+												"count": {
+													"type": "integer",
+													"minimum": 0
+												},
+												"items": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"object_id": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"type": {
+																"type": "string"
+															},
+															"title": {
+																"type": "string"
+															},
+															"status": {
+																"type": "string",
+																"description": "Where the item is now."
+															}
+														},
+														"required": [
+															"object_id",
+															"type",
+															"title",
+															"status"
+														]
+													}
+												}
+											},
+											"required": [
+												"count",
+												"items"
+											],
+											"description": "Insights, bets and tasks that changed status, not counting the ones the person moved."
+										},
+										"agents_finished": {
+											"type": "object",
+											"properties": {
+												"count": {
+													"type": "integer",
+													"minimum": 0
+												},
+												"items": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"agent_id": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"name": {
+																"type": "string"
+															},
+															"sessions": {
+																"type": "integer",
+																"exclusiveMinimum": 0
+															}
+														},
+														"required": [
+															"agent_id",
+															"name",
+															"sessions"
+														]
+													}
+												}
+											},
+											"required": [
+												"count",
+												"items"
+											],
+											"description": "Agents with a session that completed. count is the number of agents."
+										}
+									},
+									"required": [
+										"since",
+										"asks_answered",
+										"items_moved",
+										"agents_finished"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Missing workspace ID or a bad since time",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/for-you/dismissals": {
 			"post": {
 				"tags": [
