@@ -38,6 +38,7 @@ function file(overrides: Partial<FileDetail> = {}): FileDetail {
 		workspaceId: 'ws-1',
 		name: 'view.html',
 		description: null,
+		tags: [],
 		mimeType: 'text/html',
 		sizeBytes: 10,
 		storageKey: 'k',
