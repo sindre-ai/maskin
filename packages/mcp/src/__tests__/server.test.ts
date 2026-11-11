@@ -96,9 +96,10 @@ describe('createMcpServer', () => {
 		expect(registeredNames).toContain('create_objects')
 		expect(registeredNames).toContain('list_objects')
 		expect(registeredNames).toContain('create_actor')
-		expect(registeredNames).toContain('create_session')
-		// Restored as a listed, deprecated alias of create_session (see tool-aliases.ts).
-		expect(registeredNames).toContain('run_agent')
+		expect(registeredNames).toContain('create_sub_chat')
+		// Deleted outright, with no alias (see removal-ledger.ts).
+		expect(registeredNames).not.toContain('create_session')
+		expect(registeredNames).not.toContain('run_agent')
 		expect(registeredNames).toContain('create_trigger')
 	})
 
@@ -2720,67 +2721,82 @@ describe('tool handlers', () => {
 		})
 	})
 
-	describe('create_session handler: notify_on_complete', () => {
-		const postedBody = (spy: { mock: { calls: unknown[][] } }) =>
-			JSON.parse(((spy.mock.calls[0] as [string, { body: string }])[1] as { body: string }).body)
+	describe('create_sub_chat handler', () => {
+		// A session that is already finished, so the wait ends after one poll.
+		const finishedSession = (id: string) =>
+			vi
+				.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id, status: 'pending' }),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id, status: 'completed' }),
+				} as Response)
+				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) } as Response)
+		const run = async (args: Record<string, unknown>) => {
+			vi.useFakeTimers()
+			const resultPromise = getHandler('create_sub_chat')(args)
+			await vi.advanceTimersByTimeAsync(5000)
+			return resultPromise
+		}
+		const createBody = (spy: { mock: { calls: unknown[][] } }) =>
+			JSON.parse((spy.mock.calls[0] as [string, { body: string }])[1].body)
 
-		it('flag on: sent to the create route', async () => {
-			mockFetchSuccess({ id: 'session-1', status: 'pending' })
-			await getHandler('create_session')({
-				actor_id: 'actor-1',
-				action_prompt: 'Fix bugs',
-				notify_on_complete: true,
-			})
-			expect(postedBody(vi.mocked(fetch)).notify_on_complete).toBe(true)
-		})
-
-		it('always on, so a caller that does not wait still hears back', async () => {
-			mockFetchSuccess({ id: 'session-1', status: 'pending' })
-			await getHandler('create_session')({ actor_id: 'actor-1', action_prompt: 'Fix bugs' })
-			expect(postedBody(vi.mocked(fetch)).notify_on_complete).toBe(true)
-		})
-
-		it('cannot be switched off: a caller passing false still hears back', async () => {
-			mockFetchSuccess({ id: 'session-1', status: 'pending' })
-			await getHandler('create_session')({
-				actor_id: 'actor-1',
-				action_prompt: 'Fix bugs',
-				notify_on_complete: false,
-			})
-			expect(postedBody(vi.mocked(fetch)).notify_on_complete).toBe(true)
-		})
-	})
-
-	describe('create_session handler', () => {
 		it('POSTs to /api/sessions', async () => {
-			mockFetchSuccess({ id: 'session-1', status: 'pending' })
+			const fetchSpy = finishedSession('session-1')
+			await run({ actor_id: 'actor-1', action_prompt: 'Fix bugs' })
 
-			const handler = getHandler('create_session')
-			await handler({
-				actor_id: 'actor-1',
-				action_prompt: 'Fix bugs',
-			})
-
-			expect(fetch).toHaveBeenCalledWith(
+			expect(fetchSpy).toHaveBeenCalledWith(
 				'http://localhost:3000/api/sessions',
 				expect.objectContaining({ method: 'POST' }),
 			)
 		})
 
-		it('without wait: with no web app url the note still carries no session id', async () => {
-			mockFetchSuccess({ id: 'session-1', status: 'queued' })
-			const result = (await getHandler('create_session')({
-				actor_id: 'actor-1',
-				action_prompt: 'Fix bugs',
-			})) as { content: Array<{ text: string }> }
-			const parsed = JSON.parse(result.content[0].text)
-			expect(parsed.handoff).toContain('is queued')
-			expect(parsed.handoff).not.toContain('session-1')
+		it('always waits: returns the finished session with its logs and settled true', async () => {
+			finishedSession('session-1')
+			const result = (await run({ actor_id: 'actor-1', action_prompt: 'Fix bugs' })) as {
+				content: Array<{ text: string }>
+			}
+			expect(JSON.parse(result.content[0].text)).toMatchObject({
+				session_id: 'session-1',
+				settled: true,
+				logs: [],
+			})
 		})
 
-		it('without wait: a failed start says nothing was handed over', async () => {
+		it.each([[{}], [{ notify_on_complete: true }], [{ notify_on_complete: false }]])(
+			'sends notify_on_complete false on the create call, whatever the caller passes (%j)',
+			async (extra) => {
+				// The result comes back inline, so it is only registered later if the wait ends early.
+				const fetchSpy = finishedSession('session-1')
+				await run({ actor_id: 'actor-1', action_prompt: 'Fix bugs', ...extra })
+				expect(createBody(fetchSpy).notify_on_complete).toBe(false)
+			},
+		)
+
+		it('keeps wait off the create route, even when a caller still sends it', async () => {
+			const fetchSpy = finishedSession('session-1')
+			const result = (await run({
+				actor_id: 'actor-1',
+				action_prompt: 'Fix bugs',
+				wait: false,
+			})) as { content: Array<{ text: string }> }
+			expect(createBody(fetchSpy)).not.toHaveProperty('wait')
+			// A caller cannot opt out of waiting.
+			expect(JSON.parse(result.content[0].text).settled).toBe(true)
+		})
+
+		it('forwards spawned_by_message_id to the create route', async () => {
+			const fetchSpy = finishedSession('session-1')
+			await run({ actor_id: 'actor-1', action_prompt: 'Fix bugs', spawned_by_message_id: 42 })
+			expect(createBody(fetchSpy).spawned_by_message_id).toBe(42)
+		})
+
+		it('a failed start says nothing was handed over', async () => {
 			mockFetchError(500, 'boom')
-			const result = (await getHandler('create_session')({
+			const result = (await getHandler('create_sub_chat')({
 				actor_id: 'actor-1',
 				action_prompt: 'Fix bugs',
 			})) as { isError?: boolean; content: Array<{ text: string }> }
@@ -2788,71 +2804,9 @@ describe('tool handlers', () => {
 			expect(result.content[0].text).toContain('Not started')
 			expect(result.content[0].text).toContain('Nothing was handed over')
 		})
-
-		it('with wait: a failed start says nothing was handed over', async () => {
-			mockFetchError(500, 'boom')
-			const result = (await getHandler('create_session')({
-				actor_id: 'actor-1',
-				action_prompt: 'Fix bugs',
-				wait: true,
-			})) as { isError?: boolean; content: Array<{ text: string }> }
-			expect(result.isError).toBe(true)
-			expect(result.content[0].text).toContain('Nothing was handed over')
-		})
-
-		it('forwards spawned_by_message_id to the create route', async () => {
-			mockFetchSuccess({ id: 'session-1', status: 'pending' })
-			const fetchSpy = vi.mocked(fetch)
-			await getHandler('create_session')({
-				actor_id: 'actor-1',
-				action_prompt: 'Fix bugs',
-				spawned_by_message_id: 42,
-			})
-			const body = JSON.parse((fetchSpy.mock.calls[0][1] as { body: string }).body)
-			expect(body.spawned_by_message_id).toBe(42)
-		})
-
-		it('without wait: returns the bare session row and keeps wait off the wire', async () => {
-			mockFetchSuccess({ id: 'session-1', status: 'pending' })
-			const fetchSpy = vi.mocked(fetch)
-			const result = (await getHandler('create_session')({
-				actor_id: 'actor-1',
-				action_prompt: 'Fix bugs',
-			})) as { content: Array<{ text: string }> }
-			const body = JSON.parse((fetchSpy.mock.calls[0][1] as { body: string }).body)
-			expect(body).not.toHaveProperty('wait')
-			expect(JSON.parse(result.content[0].text)).not.toHaveProperty('logs')
-			expect(fetchSpy).toHaveBeenCalledTimes(1)
-		})
-
-		it('with wait: keeps wait off the create route', async () => {
-			vi.useFakeTimers()
-			const fetchSpy = vi
-				.spyOn(globalThis, 'fetch')
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () => Promise.resolve({ id: 'sess-w', status: 'pending' }),
-				} as Response)
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () => Promise.resolve({ id: 'sess-w', status: 'completed' }),
-				} as Response)
-				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) } as Response)
-
-			const resultPromise = getHandler('create_session')({
-				actor_id: 'actor-1',
-				action_prompt: 'Quick task',
-				wait: true,
-			})
-			await vi.advanceTimersByTimeAsync(5000)
-			await resultPromise
-
-			const body = JSON.parse((fetchSpy.mock.calls[0][1] as { body: string }).body)
-			expect(body).not.toHaveProperty('wait')
-		})
 	})
 
-	describe('create_session handler (wait: true): notify_on_complete', () => {
+	describe('create_sub_chat handler: notify_on_complete when the wait ends early', () => {
 		type Call = [string, { method?: string; body?: string }]
 		const callsWith = (spy: { mock: { calls: unknown[][] } }, method: string) =>
 			(spy.mock.calls as Call[]).filter(([, init]) => init?.method === method)
@@ -2871,12 +2825,40 @@ describe('tool handlers', () => {
 					json: () => Promise.resolve({ id, status: 'waiting_for_input' }),
 				} as Response)
 
+		it('a session still running after 2 hours: stops waiting, says it is not finished, asks for the return', async () => {
+			vi.useFakeTimers()
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve({ id: 'sess-long', status: 'pending' }),
+				} as Response)
+				.mockResolvedValue({
+					ok: true,
+					json: () => Promise.resolve({ id: 'sess-long', status: 'running' }),
+				} as Response)
+
+			const resultPromise = getHandler('create_sub_chat')({
+				actor_id: 'actor-1',
+				action_prompt: 'Very long task',
+			})
+			await vi.advanceTimersByTimeAsync(2 * 60 * 60 * 1000 + 60_000)
+
+			const result = (await resultPromise) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.settled).toBe(false)
+			expect(parsed.stopped_because).toBe('wait_limit')
+			expect(parsed.message).toContain('has not finished after waiting 2 hours')
+			expect(parsed.message).toContain('get_session')
+			expect(parsed.notify_on_complete).toBe('registered')
+			expect(callsWith(fetchSpy, 'PATCH')).toHaveLength(1)
+		})
+
 		it('flag on and the wait stops with the helper unfinished: asks for the return with one PATCH, false on the create call', async () => {
 			vi.useFakeTimers()
 			const fetchSpy = neverFinishes('sess-n1')
 
-			const resultPromise = getHandler('create_session')({
-				wait: true,
+			const resultPromise = getHandler('create_sub_chat')({
 				actor_id: 'actor-1',
 				action_prompt: 'Long task',
 				notify_on_complete: true,
@@ -2900,8 +2882,7 @@ describe('tool handlers', () => {
 			vi.useFakeTimers()
 			const fetchSpy = neverFinishes('sess-n0')
 
-			const resultPromise = getHandler('create_session')({
-				wait: true,
+			const resultPromise = getHandler('create_sub_chat')({
 				actor_id: 'actor-1',
 				action_prompt: 'Long task',
 			})
@@ -2925,8 +2906,7 @@ describe('tool handlers', () => {
 				} as Response)
 				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) } as Response)
 
-			const resultPromise = getHandler('create_session')({
-				wait: true,
+			const resultPromise = getHandler('create_sub_chat')({
 				actor_id: 'actor-1',
 				action_prompt: 'Quick task',
 				notify_on_complete: true,
@@ -2954,8 +2934,7 @@ describe('tool handlers', () => {
 				} as Response
 			}) as typeof fetch)
 
-			const resultPromise = getHandler('create_session')({
-				wait: true,
+			const resultPromise = getHandler('create_sub_chat')({
 				actor_id: 'actor-1',
 				action_prompt: 'Very long task',
 				notify_on_complete: true,
@@ -2990,8 +2969,7 @@ describe('tool handlers', () => {
 				} as Response)
 				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) } as Response)
 
-			const resultPromise = getHandler('create_session')({
-				wait: true,
+			const resultPromise = getHandler('create_sub_chat')({
 				actor_id: 'actor-1',
 				action_prompt: 'Quick task',
 			})
@@ -3015,8 +2993,7 @@ describe('tool handlers', () => {
 					: ({ ok: false, status: 503, text: () => Promise.resolve('down') } as Response)
 			vi.spyOn(globalThis, 'fetch').mockImplementation(respond as typeof fetch)
 
-			const resultPromise = getHandler('create_session')({
-				wait: true,
+			const resultPromise = getHandler('create_sub_chat')({
 				actor_id: 'actor-1',
 				action_prompt: 'Long task',
 			})
@@ -3035,8 +3012,7 @@ describe('tool handlers', () => {
 			vi.useFakeTimers()
 			const fetchSpy = neverFinishes('sess-n3')
 
-			const resultPromise = getHandler('create_session')({
-				wait: true,
+			const resultPromise = getHandler('create_sub_chat')({
 				actor_id: 'actor-1',
 				action_prompt: 'Long task',
 				notify_on_complete: false,
@@ -3058,8 +3034,7 @@ describe('tool handlers', () => {
 						} as Response)
 			vi.spyOn(globalThis, 'fetch').mockImplementation(respond as typeof fetch)
 
-			const resultPromise = getHandler('create_session')({
-				wait: true,
+			const resultPromise = getHandler('create_sub_chat')({
 				actor_id: 'actor-1',
 				action_prompt: 'Long task',
 				notify_on_complete: true,
@@ -3093,8 +3068,7 @@ describe('tool handlers', () => {
 						} as Response)
 			vi.spyOn(globalThis, 'fetch').mockImplementation(respond as typeof fetch)
 
-			const resultPromise = getHandler('create_session')({
-				wait: true,
+			const resultPromise = getHandler('create_sub_chat')({
 				actor_id: 'actor-1',
 				action_prompt: 'Long task',
 				notify_on_complete: true,
@@ -3352,7 +3326,7 @@ describe('tool handlers', () => {
 		})
 	})
 
-	describe('create_session handler (wait: true)', () => {
+	describe('create_sub_chat handler: waiting', () => {
 		it('creates session, polls until completed, fetches logs', async () => {
 			vi.useFakeTimers()
 			const fetchSpy = vi
@@ -3378,7 +3352,7 @@ describe('tool handlers', () => {
 					json: () => Promise.resolve([{ message: 'Done' }]),
 				} as Response)
 
-			const handler = getHandler('create_session')
+			const handler = getHandler('create_sub_chat')
 			const resultPromise = handler({
 				wait: true,
 				actor_id: 'actor-1',
@@ -3417,8 +3391,7 @@ describe('tool handlers', () => {
 					json: () => Promise.resolve({ id: 'sess-2', status: 'paused' }),
 				} as Response)
 
-			const resultPromise = getHandler('create_session')({
-				wait: true,
+			const resultPromise = getHandler('create_sub_chat')({
 				actor_id: 'actor-1',
 				action_prompt: 'Long task',
 			})
@@ -3450,7 +3423,7 @@ describe('tool handlers', () => {
 					json: () => Promise.resolve([]),
 				} as Response)
 
-			const handler = getHandler('create_session')
+			const handler = getHandler('create_sub_chat')
 			const resultPromise = handler({
 				wait: true,
 				actor_id: 'actor-1',
@@ -3483,8 +3456,7 @@ describe('tool handlers', () => {
 					.mockResolvedValueOnce(okJson({ notify_on_complete: 'registered' }))
 					.mockResolvedValueOnce(okJson([{ message: 'first line' }]))
 
-				const resultPromise = getHandler('create_session')({
-					wait: true,
+				const resultPromise = getHandler('create_sub_chat')({
 					actor_id: 'actor-1',
 					action_prompt: 'Ask me something',
 				})
@@ -3516,8 +3488,7 @@ describe('tool handlers', () => {
 					.mockResolvedValueOnce(okJson({ notify_on_complete: 'registered' }))
 					.mockResolvedValueOnce(okJson([]))
 
-				const resultPromise = getHandler('create_session')({
-					wait: true,
+				const resultPromise = getHandler('create_sub_chat')({
 					actor_id: 'actor-1',
 					action_prompt: 'Ask me something',
 					notify_on_complete: true,
@@ -3547,8 +3518,7 @@ describe('tool handlers', () => {
 					} as Response)
 					.mockResolvedValueOnce(okJson([]))
 
-				const resultPromise = getHandler('create_session')({
-					wait: true,
+				const resultPromise = getHandler('create_sub_chat')({
 					actor_id: 'actor-1',
 					action_prompt: 'Ask me something',
 					notify_on_complete: true,
@@ -3570,8 +3540,7 @@ describe('tool handlers', () => {
 					.mockResolvedValueOnce(okJson({ id: 'sess-u1', status: 'user_stopped' }))
 					.mockResolvedValueOnce(okJson([{ message: 'stopped' }]))
 
-				const resultPromise = getHandler('create_session')({
-					wait: true,
+				const resultPromise = getHandler('create_sub_chat')({
 					actor_id: 'actor-1',
 					action_prompt: 'Stop me',
 					notify_on_complete: true,
@@ -8378,46 +8347,43 @@ describe('url field injection', () => {
 	})
 
 	describe('session url', () => {
-		it('create_session — url links to the chat route for the session', async () => {
-			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-				ok: true,
-				headers: new Headers(),
-				json: () => Promise.resolve({ id: 'sess-1', actorId: 'actor-9', status: 'pending' }),
-			} as Response)
+		// create_sub_chat waits for the session, so the url is on the session in the result.
+		const startSubChat = async (session: Record<string, unknown>) => {
+			vi.useFakeTimers()
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve({ ...session, status: 'pending' }),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve({ ...session, status: 'completed' }),
+				} as Response)
+				.mockResolvedValue({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve([]),
+				} as Response)
 
-			const handler = getUrlHandler('create_session')
-			const result = (await handler({
+			const resultPromise = getUrlHandler('create_sub_chat')({
 				actor_id: testUuid,
 				action_prompt: 'Fix bugs',
-			})) as { content: Array<{ text: string }> }
+			})
+			await vi.advanceTimersByTimeAsync(5000)
+			const result = (await resultPromise) as { content: Array<{ text: string }> }
+			return JSON.parse(result.content[0].text) as { session: { id: string; url: string } }
+		}
 
-			const parsed = JSON.parse(result.content[0].text) as {
-				id: string
-				url: string
-				handoff: string
-			}
-			expect(parsed.url).toBe('https://maskin.example.com/ws-default-123/sessions/sess-1')
-			// The note gives the person the chat link and never the session id.
-			expect(parsed.handoff).toContain(parsed.url)
-			expect(parsed.handoff.replace(parsed.url, '')).not.toContain('sess-1')
-			expect(parsed.handoff).toContain('Never show the person a session id')
+		it('create_sub_chat — url links to the chat route for the session', async () => {
+			const parsed = await startSubChat({ id: 'sess-1', actorId: 'actor-9' })
+			expect(parsed.session.url).toBe('https://maskin.example.com/ws-default-123/sessions/sess-1')
 		})
 
-		it('create_session — url does not need an actorId', async () => {
-			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-				ok: true,
-				headers: new Headers(),
-				json: () => Promise.resolve({ id: 'sess-2', status: 'pending' }),
-			} as Response)
-
-			const handler = getUrlHandler('create_session')
-			const result = (await handler({
-				actor_id: testUuid,
-				action_prompt: 'Fix bugs',
-			})) as { content: Array<{ text: string }> }
-
-			const parsed = JSON.parse(result.content[0].text) as { id: string; url: string }
-			expect(parsed.url).toBe('https://maskin.example.com/ws-default-123/sessions/sess-2')
+		it('create_sub_chat — url does not need an actorId', async () => {
+			const parsed = await startSubChat({ id: 'sess-2' })
+			expect(parsed.session.url).toBe('https://maskin.example.com/ws-default-123/sessions/sess-2')
 		})
 
 		it('list_sessions — url added to each session', async () => {
@@ -8438,41 +8404,6 @@ describe('url field injection', () => {
 
 			const parsed = JSON.parse(result.content[0].text) as Array<{ id: string; url: string }>
 			expect(parsed[0].url).toBe('https://maskin.example.com/ws-default-123/sessions/sess-3')
-		})
-
-		it('create_session (wait: true) — url added to session in response', async () => {
-			vi.useFakeTimers()
-			vi.spyOn(globalThis, 'fetch')
-				.mockResolvedValueOnce({
-					ok: true,
-					headers: new Headers(),
-					json: () => Promise.resolve({ id: 'sess-4', actorId: 'actor-7', status: 'pending' }),
-				} as Response)
-				.mockResolvedValueOnce({
-					ok: true,
-					headers: new Headers(),
-					json: () => Promise.resolve({ id: 'sess-4', actorId: 'actor-7', status: 'completed' }),
-				} as Response)
-				.mockResolvedValue({
-					ok: true,
-					headers: new Headers(),
-					json: () => Promise.resolve([]),
-				} as Response)
-
-			const handler = getUrlHandler('create_session')
-			const resultPromise = handler({
-				wait: true,
-				actor_id: testUuid,
-				action_prompt: 'Deploy',
-			})
-
-			await vi.advanceTimersByTimeAsync(5000)
-
-			const result = (await resultPromise) as { content: Array<{ text: string }> }
-			const parsed = JSON.parse(result.content[0].text) as {
-				session: { id: string; url: string }
-			}
-			expect(parsed.session.url).toBe('https://maskin.example.com/ws-default-123/sessions/sess-4')
 		})
 	})
 })
@@ -8497,19 +8428,27 @@ describe('X-Maskin-Session-Id source', () => {
 	}
 
 	async function createSessionHeaders(): Promise<Record<string, string>> {
+		// create_sub_chat waits, so the session is already finished and the clock is faked.
+		vi.useFakeTimers()
 		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
 			ok: true,
 			headers: new Headers(),
-			json: () => Promise.resolve({ id: 'sess-1', actorId: 'actor-1', status: 'pending' }),
+			json: () => Promise.resolve({ id: 'sess-1', actorId: 'actor-1', status: 'completed' }),
 		} as Response)
-		const handler = handlers.get('create_session')
-		if (!handler) throw new Error('create_session handler not registered')
-		await handler({ actor_id: '550e8400-e29b-41d4-a716-446655440000', action_prompt: 'help' })
+		const handler = handlers.get('create_sub_chat')
+		if (!handler) throw new Error('create_sub_chat handler not registered')
+		const done = handler({
+			actor_id: '550e8400-e29b-41d4-a716-446655440000',
+			action_prompt: 'help',
+		})
+		await vi.advanceTimersByTimeAsync(5000)
+		await done
 		const call = vi.mocked(fetch).mock.calls.find((c) => String(c[0]).endsWith('/api/sessions'))
 		return (call?.[1] as RequestInit).headers as Record<string, string>
 	}
 
 	afterEach(() => {
+		vi.useRealTimers()
 		vi.unstubAllEnvs()
 		vi.restoreAllMocks()
 	})

@@ -92,12 +92,7 @@ import {
 	recordToolCall,
 	recordToolCallResponseSize,
 } from './telemetry.js'
-import {
-	RUN_AGENT_DROPPED_KEYS,
-	TOOL_ALIAS_ARG_RENAMES,
-	TOOL_NAME_ALIASES,
-	type ToolNameAlias,
-} from './tool-aliases.js'
+import { TOOL_ALIAS_ARG_RENAMES, TOOL_NAME_ALIASES, type ToolNameAlias } from './tool-aliases.js'
 import { legacyListTools, parseListActorsInclude, tools } from './tools.js'
 import { compactTrigger } from './trigger-rows.js'
 import { type OtherTrigger, type WarningChecks, detectTriggerWarnings } from './trigger-warnings.js'
@@ -1396,6 +1391,11 @@ async function waitUntilSessionRunning(
 // (waiting for input, paused) or when the status checks keep failing. Sessions have
 // their own timeout, so none runs forever.
 const WAIT_POLL_MS = 5_000
+// How long a call waits for a session before it hands back "not finished yet". The server
+// ends a running session at 2 hours (a wall timeout), but nothing ends one that is still
+// queued or whose status never changes, so without this a wait could hold the call open for
+// good. Matches that 2 hour ceiling.
+const SESSION_WAIT_MAX_MS = 2 * 60 * 60 * 1000
 
 // Short helpers finish quickly, so the first checks stay at WAIT_POLL_MS; a wait that is
 // still going backs off so a long one is not ~130 requests against the API.
@@ -1514,16 +1514,11 @@ async function waitForObjectStatus(
  * What the caller reads when a handover did not start. A chat agent that only sees a
  * bare API error tends to tell the person it handed the work over anyway.
  */
-function sessionNotStartedResult(
-	config: McpConfig,
-	toolName: 'create_session' | 'create_sub_chat',
-	workspaceId: string | undefined,
-	err: unknown,
-) {
+function sessionNotStartedResult(config: McpConfig, workspaceId: string | undefined, err: unknown) {
 	const reason = err instanceof Error ? err.message : String(err)
-	console.error(`${toolName}: could not start the session`, err)
+	console.error('create_sub_chat: could not start the session', err)
 	return {
-		_meta: meta(toolName, config, workspaceId),
+		_meta: meta('create_sub_chat', config, workspaceId),
 		isError: true,
 		content: [
 			{
@@ -1535,34 +1530,21 @@ function sessionNotStartedResult(
 }
 
 /**
- * Added to a started session so the caller has something real to quote to the person: the
- * link to its chat, never the session id.
+ * Starts the sub-chat, then waits for it to reach a terminal state (or stop moving) and
+ * returns `{ session, logs, settled }`.
  */
-function handoffNote(session: { id: string; status?: string }, url?: unknown) {
-	const status = session.status ?? 'pending'
-	if (typeof url !== 'string' || !url) {
-		return `Started: the session is ${status}. Say it is queued if it has not started running yet. Never show the person a session id.`
-	}
-	return `Started: the session is ${status}. When you tell the person you handed this over, give them this link to its chat as a markdown link: ${url}. Say it is queued if it has not started running yet. Never show the person a session id.`
-}
-
-/**
- * The `wait: true` path of `create_session`: start the session, then wait for it to
- * reach a terminal state and return `{ session, logs }`.
- */
-async function createSessionAndWait(
+async function createSubChatAndWait(
 	config: McpConfig,
-	args: z.infer<typeof tools.create_session.inputSchema>,
-	toolName: 'create_session' | 'create_sub_chat' = 'create_session',
+	args: z.infer<typeof tools.create_sub_chat.inputSchema>,
 ) {
-	// `notify_on_complete` is no longer a parameter; a caller that still sends it is
-	// ignored, and it is never true on this create call (registered below instead).
+	// A caller that still sends `wait` or `notify_on_complete` is ignored: the call always
+	// waits, and the result is registered below only if the wait runs out.
 	const {
 		workspace_id,
 		wait: _wait,
 		notify_on_complete: _ignored,
 		...createBody
-	} = args as typeof args & { notify_on_complete?: unknown }
+	} = args as typeof args & { wait?: unknown; notify_on_complete?: unknown }
 	const wsOpts = { workspaceId: workspace_id }
 
 	// 1. Create session. notify_on_complete is sent as false here: this call
@@ -1579,11 +1561,11 @@ async function createSessionAndWait(
 			wsOpts,
 		)) as { id: string; status: string }
 	} catch (err) {
-		return sessionNotStartedResult(config, toolName, workspace_id, err)
+		return sessionNotStartedResult(config, workspace_id, err)
 	}
 
 	return waitForSessionResult(config, {
-		toolName,
+		toolName: 'create_sub_chat',
 		workspaceId: workspace_id,
 		session,
 		registerReturn: true,
@@ -1599,12 +1581,7 @@ async function createSessionAndWait(
 async function waitForSessionResult(
 	config: McpConfig,
 	opts: {
-		toolName:
-			| 'create_session'
-			| 'create_sub_chat'
-			| 'get_session'
-			| 'resume_session'
-			| 'send_session_message'
+		toolName: 'create_sub_chat' | 'get_session' | 'resume_session' | 'send_session_message'
 		workspaceId: string | undefined
 		session: { id: string; status: string }
 		registerReturn?: boolean
@@ -1628,11 +1605,12 @@ async function waitForSessionResult(
 	// 2. Poll until terminal, following retried_session_id redirects
 	let current = session as typeof session & { retriedSessionId?: string | null }
 	let settled = false
-	let stoppedBecause: 'waiting_for_input' | 'paused' | undefined
+	let stoppedBecause: 'waiting_for_input' | 'paused' | 'wait_limit' | undefined
 	let pollFailures = 0
 	let pollError: string | undefined
 	let pollAttempt = 0
 	let judgeNow = opts.judgeFirst ?? false
+	const waitDeadline = Date.now() + SESSION_WAIT_MAX_MS
 	while (true) {
 		if (!judgeNow) {
 			await new Promise((resolve) => setTimeout(resolve, waitPollDelayMs(pollAttempt++)))
@@ -1668,16 +1646,22 @@ async function waitForSessionResult(
 			break
 		}
 		// A session parked on waiting_for_input, or paused, will not progress until
-		// someone acts on it, and with no time limit polling on would never end. Stop
+		// someone acts on it, so polling on would never end. Stop
 		// early but leave settled false: the session is not finished.
 		if (current.status === 'waiting_for_input' || current.status === 'paused') {
 			stoppedBecause = current.status
 			break
 		}
+		// Still going after the longest wait: stop holding the call. Not finished, and its
+		// result is registered to come back later (below).
+		if (Date.now() >= waitDeadline) {
+			stoppedBecause = 'wait_limit'
+			break
+		}
 	}
 
-	// The wait ended with the helper still going (it stopped on waiting_for_input or
-	// paused, or the status checks kept failing): ask for its result to be sent back
+	// The wait ended with the helper still going (it stopped on waiting_for_input,
+	// paused or the 2 hour wait limit, or the status checks kept failing): ask for its result to be sent back
 	// later. Never on the settled path, where the caller gets it inline, and only for
 	// the caller that started the session.
 	// If the helper ended in the gap, the PATCH sends the return itself.
@@ -1732,7 +1716,9 @@ async function waitForSessionResult(
 			? `The session is waiting for input and is not finished. It cannot be answered from the MCP surface yet. Answer it in the web app or @mention the agent. Check it with get_session, read the latest output with get_session_logs (newest first, the question is usually at the end), or stop it with stop_session. The logs field in this response is the first 500 lines, oldest first, so it will likely not contain the question.${notifyOnComplete?.state === 'registered' ? ' Its result will come back to you when it finishes.' : ''}`
 			: stoppedBecause === 'paused'
 				? 'The session is paused and is not finished: it will not progress until it is resumed. Carry on with it using resume_session.'
-				: undefined
+				: stoppedBecause === 'wait_limit'
+					? `The session has not finished after waiting 2 hours, so this call stopped waiting. That does not mean it failed. Check its latest status with get_session, and what it has done so far with get_session_logs (newest first) or get_chat_activity, before you decide what to do next. Stop it with stop_session if it should not go on.${notifyOnComplete?.state === 'registered' ? ' Its result will come back to you when it finishes.' : ''}`
+					: undefined
 
 	const wsId = workspace_id ?? config.defaultWorkspaceId
 	const currentWithUrl = wsId
@@ -3042,7 +3028,7 @@ function oneTimeOrScheduledBody<T extends { type?: string; config?: Record<strin
 	const at = new Date(runAt)
 	if (at.getTime() <= Date.now()) {
 		throw new Error(
-			`run_at ${runAt} is not in the future. Pick a later time, or use run_agent to start the agent now.`,
+			`run_at ${runAt} is not in the future. Pick a later time, or use create_sub_chat to start the agent now.`,
 		)
 	}
 	return { ...fields, type: 'reminder', config: { scheduled_at: at.toISOString() } }
@@ -7115,7 +7101,7 @@ export function createMcpServer(config: McpConfig) {
 
 	// The upstream signature accepts a raw shape; list_triggers passes its strict
 	// schema object so the SDK rejects unknown parameters, so the narrow type is
-	// spelled out here. Same cast as registerWrappedSchemaTool below.
+	// spelled out here.
 	const registerStrictSchemaTool = registerAppTool as unknown as (
 		s: typeof server,
 		name: string,
@@ -8378,121 +8364,18 @@ export function createMcpServer(config: McpConfig) {
 	)
 
 	// ─── Sessions ─────────────────────────────────────────────
-	// create_sub_chat is the new name for create_session: one handler, two names, so
-	// prompts that still say create_session keep working.
-	for (const toolName of ['create_sub_chat', 'create_session'] as const) {
-		registerAppTool(
-			server,
-			toolName,
-			{
-				description: tools[toolName].description,
-				inputSchema: tools[toolName].inputSchema.shape,
-				_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
-			},
-			async (args) => {
-				if (args.wait) return createSessionAndWait(config, args, toolName)
-
-				// `wait` never goes to the create route. The result is always sent back to
-				// the caller, with no opt-out: not waiting means not holding the call open,
-				// not never finding out how it went.
-				const { workspace_id, wait, ...rest } = args
-				const createBody = { ...rest, notify_on_complete: true }
-
-				let result: SessionRow
-				try {
-					result = (await apiCall(config, 'POST', '/api/sessions', createBody, {
-						workspaceId: workspace_id,
-					})) as SessionRow
-				} catch (err) {
-					return sessionNotStartedResult(config, toolName, workspace_id, err)
-				}
-				const wsId = workspace_id ?? config.defaultWorkspaceId
-				const enriched = await enrichSessionActorName(config, wsId, result)
-				const withUrl = wsId
-					? addUrl(enriched as Record<string, unknown>, config, wsId, {
-							kind: 'session',
-							id: enriched.id,
-							actorId: (enriched as { actorId?: string }).actorId,
-						})
-					: enriched
-				return {
-					_meta: meta(toolName, config, (args as { workspace_id?: string }).workspace_id),
-					content: [
-						{
-							type: 'text' as const,
-							text: JSON.stringify({
-								...withUrl,
-								handoff: handoffNote(enriched, (withUrl as { url?: unknown }).url),
-							}),
-						},
-					],
-				}
-			},
-		)
-	}
-
-	// Listed alias of create_session with wait on (see tool-aliases.ts). Registered
-	// through the same wrapper as a real tool, so it gets the same tool_call row,
-	// size event, token cap and mutation event. The handler calls the wait path of
-	// create_session directly rather than the registered create_session handler,
-	// which would record a second tool_call row for one call.
-	//
-	// Argument mapping, derived from run_agent as it was before PR 1986:
-	//   actor_id, action_prompt, spawned_by_message_id  carried over one to one
-	//   workspace_id                                    filled from the default when absent
-	//   notify_on_complete                              accepted and ignored: create_session no longer
-	//                                                   takes it and registers the same fallback itself
-	//                                                   when the wait times out
-	//   config, poll_interval_seconds, timeout_seconds,
-	//   depends_on_session_ids                          no equivalent, dropped, names recorded
-	// The upstream signature accepts a raw shape; this tool passes a schema object
-	// (the alias layer's preprocess wrapper), so the narrow type is spelled out
-	// here. It is still registered through the same wrapper as every other tool.
-	const registerWrappedSchemaTool = registerAppTool as unknown as (
-		s: typeof server,
-		name: string,
-		definition: {
-			description: string
-			inputSchema: z.ZodTypeAny
-			_meta: Record<string, unknown>
-		},
-		handler: (args: z.infer<typeof tools.run_agent.inputSchema>) => Promise<unknown>,
-	) => unknown
-	registerWrappedSchemaTool(
+	// create_sub_chat always holds until the agent is done: there is no way to start it
+	// without waiting. A wait that ends early (the agent is waiting for input or paused)
+	// asks for the result to be sent back later, see waitForSessionResult.
+	registerAppTool(
 		server,
-		'run_agent',
+		'create_sub_chat',
 		{
-			description: tools.run_agent.description,
-			// The dropped key names are read in this preprocess step, before the
-			// schema strips them, and before validation, so a call that then fails
-			// validation is still counted. Same wrapper the alias rows use; this
-			// tool has no alias rows, so registerAppTool leaves the schema as given.
-			inputSchema: wrapInputSchema(tools.run_agent.inputSchema.shape, (raw) => {
-				const sent =
-					typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-						? (raw as Record<string, unknown>)
-						: {}
-				recordAliasUse(telemetrySink, telemetryTarget, {
-					tool_name: 'run_agent',
-					workspace_id: extractWorkspaceId(raw),
-					dropped_keys: RUN_AGENT_DROPPED_KEYS.filter((key) => key in sent),
-					tool_alias: { old: 'run_agent', new: TOOL_NAME_ALIASES.run_agent },
-					transport: config.transport,
-				})
-				return raw
-			}),
+			description: tools.create_sub_chat.description,
+			inputSchema: tools.create_sub_chat.inputSchema.shape,
 			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
-		async (args) => {
-			const { workspace_id, actor_id, action_prompt, spawned_by_message_id } = args
-			return createSessionAndWait(config, {
-				workspace_id: workspace_id ?? config.defaultWorkspaceId,
-				actor_id,
-				action_prompt,
-				spawned_by_message_id,
-				wait: true,
-			})
-		},
+		async (args) => createSubChatAndWait(config, args),
 	)
 
 	registerAppTool(

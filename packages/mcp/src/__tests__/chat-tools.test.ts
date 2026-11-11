@@ -319,24 +319,35 @@ describe('chat tools', () => {
 	})
 
 	describe('create_sub_chat', () => {
-		it('starts the agent like create_session and registers the result to come back', async () => {
+		it('starts the agent and always waits for it to finish', async () => {
+			vi.useFakeTimers()
 			responses['POST /api/sessions'] = { id: 's1', actorId: agentA, status: 'pending' }
-			await call('create_sub_chat', {
+			responses['GET /api/sessions/s1'] = { id: 's1', actorId: agentA, status: 'completed' }
+			responses['GET /api/sessions/s1/logs'] = []
+			const pending = call('create_sub_chat', {
 				workspace_id: wsId,
 				actor_id: agentA,
 				action_prompt: 'Review the draft',
 			})
+			await vi.advanceTimersByTimeAsync(5000)
+			const result = (await pending) as { content: Array<{ text: string }> }
 			const [created] = callsTo('POST', '/api/sessions')
+			// The result comes back inline, so it is not also registered to come back later.
 			expect(created?.body).toMatchObject({
 				actor_id: agentA,
 				action_prompt: 'Review the draft',
-				notify_on_complete: true,
+				notify_on_complete: false,
+			})
+			expect(JSON.parse(result.content[0]?.text ?? '{}')).toMatchObject({
+				session_id: 's1',
+				settled: true,
 			})
 		})
 
-		it('keeps create_session working under the old name', () => {
-			expect(handlers.has('create_session')).toBe(true)
+		it('has no wait flag and no create_session or run_agent tool', () => {
 			expect(handlers.has('create_sub_chat')).toBe(true)
+			expect(handlers.has('create_session')).toBe(false)
+			expect(handlers.has('run_agent')).toBe(false)
 		})
 	})
 

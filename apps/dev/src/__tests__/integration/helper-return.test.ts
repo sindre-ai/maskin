@@ -168,7 +168,7 @@ describe('Helper return (integration)', () => {
 		expect((row.data as { content: string }).content).toContain('Helper ran out of time')
 	})
 
-	it('a completed create_session helper returns, with attention 1 and no retry advice', async () => {
+	it('a completed create_sub_chat helper returns, with attention 1 and no retry advice', async () => {
 		const s = await senderSession()
 		const h = await helperSession(s, { status: 'completed', result: { exit_code: 0 } })
 		await returnToSender(db, h.id)
