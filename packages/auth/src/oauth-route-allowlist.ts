@@ -413,7 +413,6 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'PUT /api/integrations/:id/default-access',
 	'PUT /api/integrations/:id/grants',
 	'PUT /api/integrations/:id/grants/:actorId',
-	'PUT /api/integrations/slack/direct-post-channels',
 	'PUT /api/notification-preferences',
 	'PUT /api/send-permissions',
 ]

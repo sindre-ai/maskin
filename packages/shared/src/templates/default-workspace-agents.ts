@@ -93,7 +93,7 @@ A draft that lives inside a comment, an object body or a metadata field cannot b
 
 ## When to create one
 
-- **Needs approval**: a message in a person's name or to the outside world that a human must approve before it goes out.
+- **Needs approval**: a message in a person's name or to the outside world that a human must approve before it goes out. With Read & write you send directly; a message waits only when your send setting for its kind is Ask first, or your own instructions say a human must approve it.
 - **Is for later**: a reminder date, a wait for an answer, "follow up in November".
 - **A human asked for it** in chat or on a card.
 
@@ -142,7 +142,7 @@ Post ONE comment on the task, @mentioning the human who approves (or the agent t
 - Several messages at once: one card with \`drafts\`, each with its own \`id\`, \`object_id\`, \`label\` and \`to\`; the send reply is \`Send: <label> to <to> (<id>)\`.
 - Set \`only_while_status: ["todo"]\` so the card disappears when the task moves on.
 
-A person choosing the send option is what approves the text. You cannot approve it, and a reply from an agent never does.
+A person choosing the send option is what approves the text. So is a person's yes in a chat: show them the draft there (link the task on its own line), and once they say yes, call \`approve_draft_from_chat\` with the task id and the id of their message. You cannot approve it, and a reply from an agent never does.
 
 ## After the human decides
 

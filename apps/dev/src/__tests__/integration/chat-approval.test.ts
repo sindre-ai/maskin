@@ -16,6 +16,7 @@ import {
 	insertAgentGrant,
 	insertConversation,
 	insertObject,
+	insertSendMode,
 	insertWorkspace,
 } from '../factories'
 import { db, getTestActorId } from './global-setup'
@@ -75,6 +76,13 @@ async function setup(opts: { agentInChat?: boolean } = {}) {
 	await db
 		.insert(workspaceMembers)
 		.values({ workspaceId: workspace.id, actorId: agent.id, role: 'member' })
+	// A yes in the chat matters for an agent that asks first, so that is how this agent is set.
+	await insertSendMode(db, {
+		workspaceId: workspace.id,
+		agentId: agent.id,
+		kind: 'email',
+		mode: 'ask_first',
+	})
 	const [resend] = await db
 		.insert(integrations)
 		.values({
@@ -342,16 +350,47 @@ describe('approve_draft_from_chat: a person said yes in the chat', () => {
 		expect(await approvals(s)).toHaveLength(0)
 	})
 
-	it('refuses a person calling it, and a draft that is not an email', async () => {
+	it('refuses a person calling it', async () => {
 		const s = await setup()
 		const yes = await shownAndAnswered(s)
 		expect((await approve(s, s.email.id, yes.id, s.human)).status).toBe(403)
+		expect(await approvals(s)).toHaveLength(0)
+	})
 
+	it('approves a LinkedIn or Slack draft the same way, for exactly its text', async () => {
+		const s = await setup()
+		const drafts = [
+			{ kind: 'linkedin_message', to: 'Ada Lovelace' },
+			{ kind: 'linkedin_post' },
+			{ kind: 'linkedin_comment', post_id: 'urn:li:activity:1' },
+			{ kind: 'slack_message', channel: '#general' },
+		]
+		let order = 3
+		for (const metadata of drafts) {
+			const note = await insertObject(db, s.workspace.id, s.agent.id, {
+				type: 'task',
+				status: 'todo',
+				content: `Hi there, thanks for the chat (${metadata.kind}).`,
+				metadata,
+				createdAt: s.t0,
+				updatedAt: s.t0,
+			})
+			if (!note) throw new Error('note was not inserted')
+			await say(s, s.agent.id, link(s, note.id), order++)
+			const yes = await say(s, s.human, 'send it', order++)
+			const res = await approve(s, note.id, yes.id)
+			expect(res.status).toBe(200)
+			expect(await approvals(s, note.id)).toHaveLength(1)
+		}
+	})
+
+	it('refuses a draft that has no send tool, such as one typed by hand', async () => {
+		const s = await setup()
 		const note = await insertObject(db, s.workspace.id, s.agent.id, {
 			type: 'task',
 			status: 'todo',
 			content: 'Hi there, thanks for the chat.',
-			metadata: { kind: 'linkedin_message', to: 'Ada Lovelace' },
+			metadata: { kind: 'manual_message', to: 'Ada Lovelace', channel: 'Facebook' },
 			createdAt: s.t0,
 			updatedAt: s.t0,
 		})

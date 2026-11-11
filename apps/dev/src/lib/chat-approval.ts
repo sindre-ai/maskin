@@ -13,7 +13,7 @@ import { buildObjectPreview } from './object-preview'
 import { getWorkspaceRole } from './workspace-auth'
 
 /**
- * A person's "send it" in a chat, counted as the Approve on an email draft.
+ * A person's "send it" in a chat, counted as the Approve on a draft.
  *
  * The server never takes the agent's word that a person said yes. It reads the message the
  * agent names and records the approval only when every one of these holds:
@@ -33,11 +33,23 @@ import { getWorkspaceRole } from './workspace-auth'
  * approval keeps it to one send, and any later edit changes the content hash, which
  * withdraws it, exactly as for the button.
  *
- * Email drafts only for now: a kind is added to CHAT_APPROVABLE_KINDS when its send path
- * is ready to honour a chat approval.
+ * Every kind that has a send tool honouring an approval is listed in CHAT_APPROVABLE_KINDS:
+ * email, the LinkedIn kinds and Slack messages. Their send tools read the same `approved`
+ * event the card's button writes, so a chat approval unlocks them the same way. A kind is added
+ * only when its send path reads that event.
  */
 
-export const CHAT_APPROVABLE_KINDS: ReadonlySet<string> = new Set(['email'])
+export const CHAT_APPROVABLE_KINDS: ReadonlySet<string> = new Set([
+	'email',
+	'linkedin_message',
+	'linkedin_connection_request',
+	'linkedin_inmail',
+	'linkedin_post',
+	'linkedin_comment',
+	'linkedin_comment_reply',
+	'linkedin_post_edit',
+	'slack_message',
+])
 
 const OBJECT_LINK =
 	/\/objects\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?![\w-])/gi
@@ -92,7 +104,7 @@ export async function approveDraftFromChat(
 		return refuse(
 			400,
 			'BAD_REQUEST',
-			'Only an email draft can be approved from a chat message for now.',
+			'Only a draft that has a send tool (an email, a LinkedIn message, post, comment or invitation, or a Slack message) can be approved from a chat message.',
 			'Ask the person to press Approve on the card.',
 		)
 	}

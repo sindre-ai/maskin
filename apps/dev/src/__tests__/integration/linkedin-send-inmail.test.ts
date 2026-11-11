@@ -24,7 +24,7 @@ import {
 import type { LinkedInClient } from '../../lib/integrations/providers/linkedin-unipile/unipile-client'
 import { recordObjectApproval } from '../../lib/object-delivery'
 import { buildObjectPreview } from '../../lib/object-preview'
-import { insertObject, insertWorkspace } from '../factories'
+import { insertLinkedinSendModes, insertObject, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
 /**
@@ -86,6 +86,8 @@ function stubClient(
 async function connect() {
 	const actorId = getTestActorId()
 	const ws = await insertWorkspace(db, actorId)
+	// These tests are about the approval path: the agent is set to ask first for LinkedIn sends.
+	await insertLinkedinSendModes(db, { workspaceId: ws.id, agentId: actorId, mode: 'ask_first' })
 	const [integration] = await db
 		.insert(integrations)
 		.values({
