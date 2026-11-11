@@ -5,6 +5,7 @@ import { PlanCapExceededError } from '../../lib/llm-routing'
 import { ViewerReadOnlyError } from '../../lib/workspace-auth'
 import transcriptionsRoutes from '../../routes/transcriptions'
 import { FileTranscriptionError, transcribeStoredFile } from '../../services/file-transcription'
+import { saveTranscriptFile } from '../../services/transcript-file'
 import { buildFile, buildWorkspace } from '../factories'
 import { jsonRequest } from '../helpers'
 import { createMockStorageProvider, createTestContext } from '../setup'
@@ -12,6 +13,10 @@ import { createMockStorageProvider, createTestContext } from '../setup'
 vi.mock('../../services/file-transcription', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../services/file-transcription')>()),
 	transcribeStoredFile: vi.fn(),
+}))
+vi.mock('../../services/transcript-file', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../services/transcript-file')>()),
+	saveTranscriptFile: vi.fn(),
 }))
 vi.mock('../../lib/llm-routing', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../lib/llm-routing')>()),
@@ -21,6 +26,7 @@ vi.mock('../../lib/llm-routing', async (importOriginal) => ({
 import { checkPlanCap } from '../../lib/llm-routing'
 
 const workspaceId = randomUUID()
+const transcriptFileId = randomUUID()
 
 function setup(role: string | undefined = 'member') {
 	const { db, mockResults } = createTestContext()
@@ -59,6 +65,12 @@ describe('POST /api/transcriptions/files/:id', () => {
 	beforeEach(() => {
 		vi.mocked(transcribeStoredFile).mockReset()
 		vi.mocked(checkPlanCap).mockReset()
+		vi.mocked(saveTranscriptFile).mockReset()
+		vi.mocked(saveTranscriptFile).mockResolvedValue({
+			fileId: transcriptFileId,
+			name: 'standup transcript.txt',
+			url: `http://localhost:5173/${workspaceId}/files/${transcriptFileId}`,
+		})
 	})
 
 	it('transcribes the file and returns the text with its audio length', async () => {
@@ -79,6 +91,9 @@ describe('POST /api/transcriptions/files/:id', () => {
 			file_id: file.id,
 			name: 'standup.mp4',
 			text: 'Good morning everyone.',
+			text_truncated: false,
+			transcript_file_id: transcriptFileId,
+			transcript_file_url: `http://localhost:5173/${workspaceId}/files/${transcriptFileId}`,
 			audio_seconds: 12.5,
 			chunks: 1,
 			model: 'mistralai/voxtral-small-transcribe-3-0',
@@ -91,6 +106,71 @@ describe('POST /api/transcriptions/files/:id', () => {
 				language: 'en',
 			}),
 		)
+	})
+
+	it('saves the transcript as a file and returns only its opening when it is long', async () => {
+		const { app, mockResults } = setup()
+		const file = video()
+		mockResults.selectQueue = [[file], [planWorkspace()]]
+		const longText = `${'word '.repeat(5000)}end`
+		vi.mocked(transcribeStoredFile).mockResolvedValue({
+			text: longText,
+			audioSeconds: 3000,
+			chunks: 17,
+			model: 'mistralai/voxtral-small-transcribe-3-0',
+		})
+
+		const res = await app.request(post(file.id))
+
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as { text: string; text_truncated: boolean }
+		expect(body).toMatchObject({ text_truncated: true, transcript_file_id: transcriptFileId })
+		expect(body.text.length).toBeLessThan(longText.length)
+		expect(vi.mocked(saveTranscriptFile).mock.calls[0]?.[0]).toMatchObject({
+			workspaceId,
+			sourceName: 'standup.mp4',
+			text: longText,
+		})
+	})
+
+	it('saves a short transcript as a file too', async () => {
+		const { app, mockResults } = setup()
+		const file = video()
+		mockResults.selectQueue = [[file], [planWorkspace()]]
+		vi.mocked(transcribeStoredFile).mockResolvedValue({
+			text: 'Hi.',
+			audioSeconds: 1,
+			chunks: 1,
+			model: 'mistralai/voxtral-small-transcribe-3-0',
+		})
+
+		await app.request(post(file.id))
+
+		expect(saveTranscriptFile).toHaveBeenCalledWith(expect.objectContaining({ text: 'Hi.' }))
+	})
+
+	it('returns the whole text inline when the transcript file cannot be saved', async () => {
+		const { app, mockResults } = setup()
+		const file = video()
+		mockResults.selectQueue = [[file], [planWorkspace()]]
+		const longText = `${'word '.repeat(5000)}end`
+		vi.mocked(transcribeStoredFile).mockResolvedValue({
+			text: longText,
+			audioSeconds: 3000,
+			chunks: 17,
+			model: 'mistralai/voxtral-small-transcribe-3-0',
+		})
+		vi.mocked(saveTranscriptFile).mockResolvedValue(null)
+
+		const res = await app.request(post(file.id))
+
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({
+			text: longText,
+			text_truncated: false,
+			transcript_file_id: null,
+			transcript_file_url: null,
+		})
 	})
 
 	it('checks the plan cap before doing any work', async () => {

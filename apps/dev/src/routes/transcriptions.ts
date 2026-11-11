@@ -16,6 +16,11 @@ import {
 	MAX_TRANSCRIBE_AUDIO_SECONDS,
 	transcribeStoredFile,
 } from '../services/file-transcription'
+import {
+	TRANSCRIPT_PREVIEW_CHARS,
+	saveTranscriptFile,
+	transcriptPreview,
+} from '../services/transcript-file'
 import { transcribeAudio } from '../services/transcription'
 
 type Env = {
@@ -23,6 +28,7 @@ type Env = {
 		db: Database
 		actorId: string
 		workspaceRole?: string
+		maskinSessionId?: string
 		storageProvider: StorageProvider
 	}
 }
@@ -182,7 +188,17 @@ const transcribeFileResponse = z
 	.object({
 		file_id: z.string().uuid(),
 		name: z.string(),
-		text: z.string(),
+		text: z.string().openapi({
+			description: `The opening of the transcript (up to ${TRANSCRIPT_PREVIEW_CHARS} characters), or all of it when the transcript could not be saved as a file. See text_truncated.`,
+		}),
+		text_truncated: z.boolean().openapi({
+			description: 'True when `text` is only the opening and the whole transcript is in the file.',
+		}),
+		transcript_file_id: z.string().uuid().nullable().openapi({
+			description:
+				'The saved .txt transcript. Read it with get_file. Null only if saving it failed, in which case `text` holds the whole transcript.',
+		}),
+		transcript_file_url: z.string().nullable(),
 		audio_seconds: z.number(),
 		chunks: z.number().int(),
 		model: z.string(),
@@ -195,7 +211,7 @@ const postFileTranscriptionRoute = createRoute({
 	'x-viewer-policy': 'writer',
 	tags: ['Transcriptions'],
 	summary: 'Transcribe an uploaded audio or video file',
-	description: `Reads a stored file, extracts its audio with ffmpeg, transcribes it in chunks on OpenRouter and returns the full text. Up to ${MAX_TRANSCRIBE_AUDIO_SECONDS / 60} minutes of audio. The cost OpenRouter reports is recorded against the workspace's plan usage, so the call is refused with 402 once the plan cap is reached and no prepaid credit remains. An enterprise workspace is never capped, but its usage is still recorded. Requires X-Workspace-Id and a writer role.`,
+	description: `Reads a stored file, extracts its audio with ffmpeg, transcribes it in chunks on OpenRouter and saves the transcript as a .txt workspace file and returns its id with the opening of the text. Up to ${MAX_TRANSCRIBE_AUDIO_SECONDS / 60} minutes of audio. The cost OpenRouter reports is recorded against the workspace's plan usage, so the call is refused with 402 once the plan cap is reached and no prepaid credit remains. An enterprise workspace is never capped, but its usage is still recorded. Requires X-Workspace-Id and a writer role.`,
 	request: {
 		headers: workspaceIdHeader,
 		params: idParamSchema,
@@ -311,11 +327,26 @@ app.openapi(postFileTranscriptionRoute, async (c) => {
 			file: { id: file.id, storageKey: file.storageKey },
 			language,
 		})
+		// Always kept as a file. If saving fails the audio is already paid for, so
+		// fall through and return the whole text inline.
+		const saved = await saveTranscriptFile({
+			db,
+			storage: c.get('storageProvider'),
+			workspaceId,
+			actorId: c.get('actorId'),
+			sessionId: c.get('maskinSessionId'),
+			sourceName: file.name,
+			text: result.text,
+		})
+		const preview = saved ? transcriptPreview(result.text) : result.text
 		return c.json(
 			{
 				file_id: file.id,
 				name: file.name,
-				text: result.text,
+				text: preview,
+				text_truncated: saved !== null && result.text.length > TRANSCRIPT_PREVIEW_CHARS,
+				transcript_file_id: saved?.fileId ?? null,
+				transcript_file_url: saved?.url ?? null,
 				audio_seconds: Math.round(result.audioSeconds * 100) / 100,
 				chunks: result.chunks,
 				model: result.model,
