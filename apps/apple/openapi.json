@@ -45206,6 +45206,12 @@
 													"index"
 												]
 											},
+											"started_from": {
+												"type": "string",
+												"enum": [
+													"share"
+												]
+											},
 											"comment_event_id": {
 												"type": "integer"
 											}
@@ -48623,6 +48629,12 @@
 												"required": [
 													"intro_message_id",
 													"index"
+												]
+											},
+											"started_from": {
+												"type": "string",
+												"enum": [
+													"share"
 												]
 											},
 											"comment_event_id": {

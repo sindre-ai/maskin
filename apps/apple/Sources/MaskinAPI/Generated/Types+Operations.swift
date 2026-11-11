@@ -49160,6 +49160,12 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/from_suggested_step`.
                         public var from_suggested_step: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.from_suggested_stepPayload?
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/started_from`.
+                        @frozen public enum started_fromPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                            case share = "share"
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/started_from`.
+                        public var started_from: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.started_fromPayload?
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/comment_event_id`.
                         public var comment_event_id: Swift.Int?
                         /// Creates a new `initial_message_metadataPayload`.
@@ -49191,6 +49197,7 @@ public enum Operations {
                         ///   - needed_tools:
                         ///   - plain_tail:
                         ///   - from_suggested_step:
+                        ///   - started_from:
                         ///   - comment_event_id:
                         public init(
                             attachments: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.attachmentsPayload? = nil,
@@ -49219,6 +49226,7 @@ public enum Operations {
                             needed_tools: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.needed_toolsPayload? = nil,
                             plain_tail: Swift.Int? = nil,
                             from_suggested_step: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.from_suggested_stepPayload? = nil,
+                            started_from: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.started_fromPayload? = nil,
                             comment_event_id: Swift.Int? = nil
                         ) {
                             self.attachments = attachments
@@ -49247,6 +49255,7 @@ public enum Operations {
                             self.needed_tools = needed_tools
                             self.plain_tail = plain_tail
                             self.from_suggested_step = from_suggested_step
+                            self.started_from = started_from
                             self.comment_event_id = comment_event_id
                         }
                         public enum CodingKeys: String, CodingKey {
@@ -49276,6 +49285,7 @@ public enum Operations {
                             case needed_tools
                             case plain_tail
                             case from_suggested_step
+                            case started_from
                             case comment_event_id
                         }
                     }
@@ -54631,6 +54641,12 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/from_suggested_step`.
                         public var from_suggested_step: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.from_suggested_stepPayload?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/started_from`.
+                        @frozen public enum started_fromPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                            case share = "share"
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/started_from`.
+                        public var started_from: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.started_fromPayload?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/comment_event_id`.
                         public var comment_event_id: Swift.Int?
                         /// Creates a new `metadataPayload`.
@@ -54662,6 +54678,7 @@ public enum Operations {
                         ///   - needed_tools:
                         ///   - plain_tail:
                         ///   - from_suggested_step:
+                        ///   - started_from:
                         ///   - comment_event_id:
                         public init(
                             attachments: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.attachmentsPayload? = nil,
@@ -54690,6 +54707,7 @@ public enum Operations {
                             needed_tools: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.needed_toolsPayload? = nil,
                             plain_tail: Swift.Int? = nil,
                             from_suggested_step: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.from_suggested_stepPayload? = nil,
+                            started_from: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.started_fromPayload? = nil,
                             comment_event_id: Swift.Int? = nil
                         ) {
                             self.attachments = attachments
@@ -54718,6 +54736,7 @@ public enum Operations {
                             self.needed_tools = needed_tools
                             self.plain_tail = plain_tail
                             self.from_suggested_step = from_suggested_step
+                            self.started_from = started_from
                             self.comment_event_id = comment_event_id
                         }
                         public enum CodingKeys: String, CodingKey {
@@ -54747,6 +54766,7 @@ public enum Operations {
                             case needed_tools
                             case plain_tail
                             case from_suggested_step
+                            case started_from
                             case comment_event_id
                         }
                     }
