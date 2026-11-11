@@ -39,9 +39,11 @@ public struct APINotificationPreferencesSource: NotificationPreferencesAPI {
 			quietHours: Self.quietHours(start: body.quiet_hours_start, end: body.quiet_hours_end),
 			categories: .init(
 				needsYou: body.categories.needs_you, conversation: body.categories.conversation,
-				digest: body.categories.digest, tips: body.categories.tips),
+				digest: body.categories.digest, tips: body.categories.tips,
+				flowActivity: body.categories.flow_activity),
 			briefingEnabled: body.briefing_enabled, briefingTime: body.briefing_time,
 			emailDigestEnabled: body.email_digest_enabled,
+			emailFlowActivity: body.email_categories.flow_activity,
 			marketplacePicksEnabled: body.marketplace_picks_enabled,
 			mutedWorkspaceIds: body.muted_workspace_ids)
 	}
@@ -93,6 +95,11 @@ public struct APINotificationPreferencesSource: NotificationPreferencesAPI {
 			var conversation: Bool
 			var digest: Bool
 			var tips: Bool
+			/// Absent from a server that predates Flow activity.
+			var flow_activity: Bool?
+		}
+		struct EmailCategories: Decodable {
+			var flow_activity: Bool?
 		}
 		var timezone: String?
 		var quiet_hours_start: Int?
@@ -102,6 +109,8 @@ public struct APINotificationPreferencesSource: NotificationPreferencesAPI {
 		var briefing_time: Int
 		/// Absent from a server that predates the email switch.
 		var email_digest_enabled: Bool?
+		/// Absent from a server that predates Flow activity.
+		var email_categories: EmailCategories?
 		/// Absent from a server that predates Marketplace picks.
 		var marketplace_picks_enabled: Bool?
 		var muted_workspace_ids: [String]
@@ -112,9 +121,11 @@ public struct APINotificationPreferencesSource: NotificationPreferencesAPI {
 				quietHours: APINotificationPreferencesSource.quietHours(start: quiet_hours_start, end: quiet_hours_end),
 				categories: .init(
 					needsYou: categories.needs_you, conversation: categories.conversation,
-					digest: categories.digest, tips: categories.tips),
+					digest: categories.digest, tips: categories.tips,
+					flowActivity: categories.flow_activity ?? false),
 				briefingEnabled: briefing_enabled, briefingTime: briefing_time,
 				emailDigestEnabled: email_digest_enabled ?? false,
+				emailFlowActivity: email_categories?.flow_activity ?? false,
 				marketplacePicksEnabled: marketplace_picks_enabled ?? false,
 				mutedWorkspaceIds: muted_workspace_ids)
 		}

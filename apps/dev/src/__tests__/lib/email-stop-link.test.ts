@@ -13,7 +13,7 @@ describe('buildEmailStopUrl', () => {
 		expect(url.origin).toBe('https://app.maskin.test')
 		expect(url.pathname).toBe('/api/email/stop')
 		const verdict = verifyEmailStopToken(url.searchParams.get('token') ?? '')
-		expect(verdict).toEqual({ ok: true, actorId: ACTOR })
+		expect(verdict).toEqual({ ok: true, actorId: ACTOR, kind: null })
 	})
 
 	it('throws when the secret is not set', () => {

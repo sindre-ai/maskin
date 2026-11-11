@@ -29,6 +29,7 @@ export function useUpdateNotificationPreferences() {
 					...data,
 					categories: { ...previous.categories, ...data.categories },
 					browser_categories: { ...previous.browser_categories, ...data.browser_categories },
+					email_categories: { ...previous.email_categories, ...data.email_categories },
 					browser_not_asked: previous.browser_not_asked.filter(
 						(kind) => data.browser_categories?.[kind] === undefined,
 					),

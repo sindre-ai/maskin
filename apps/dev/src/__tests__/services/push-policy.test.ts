@@ -93,6 +93,19 @@ describe('categories and muting', () => {
 		expect(run(note({ type: 'needs_input' }), { prefs: off('needs_you') }).action).toBe('skip')
 	})
 
+	it('Flow activity is off until chosen, then pushes one banner per flow', () => {
+		const flow = note({
+			metadata: { push_category: 'flow_activity', push_collapse_key: 'flow:f1' },
+		})
+		expect(run(flow)).toMatchObject({ action: 'skip', reason: 'category-disabled' })
+		const on = prefs({ categories: { ...DEFAULT_PUSH_PREFS.categories, flow_activity: true } })
+		expect(run(flow, { prefs: on })).toMatchObject({ action: 'send', collapseKey: 'flow:f1' })
+		expect(channelsWanted(on, 'flow_activity')).toEqual({ push: true, browser: true })
+		expect(
+			channelsWanted({ ...on, browserCategories: { flow_activity: false } }, 'flow_activity'),
+		).toEqual({ push: true, browser: false })
+	})
+
 	it('keeps a kind that is off for push but on in the browser, and skips it only when both are off', () => {
 		const pushOff = { ...DEFAULT_PUSH_PREFS.categories, conversation: false }
 		expect(

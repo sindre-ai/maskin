@@ -17,7 +17,11 @@ describe('email stop token', () => {
 	})
 
 	it('accepts a token it signed', () => {
-		expect(verifyEmailStopToken(signEmailStopToken(ACTOR))).toEqual({ ok: true, actorId: ACTOR })
+		expect(verifyEmailStopToken(signEmailStopToken(ACTOR))).toEqual({
+			ok: true,
+			actorId: ACTOR,
+			kind: null,
+		})
 	})
 
 	it('rejects a token for another account or a changed expiry', () => {
@@ -61,5 +65,32 @@ describe('email stop token', () => {
 			expect(() => signEmailStopToken(ACTOR)).toThrow()
 			expect(verifyEmailStopToken(token)).toEqual({ ok: false, reason: 'unconfigured' })
 		}
+	})
+
+	it('a link scoped to a kind carries the kind and cannot pass as the summary stop', () => {
+		const token = signEmailStopToken(ACTOR, Date.now(), 'flow_activity')
+		expect(token.split('.')).toHaveLength(4)
+		expect(verifyEmailStopToken(token)).toEqual({ ok: true, actorId: ACTOR, kind: 'flow_activity' })
+
+		const [id, expiry, , sig] = token.split('.') as [string, string, string, string]
+		// Dropping the kind turns it into a summary link whose signature does not match.
+		expect(verifyEmailStopToken(`${id}.${expiry}.${sig}`)).toEqual({ ok: false, reason: 'invalid' })
+		// Changing the kind breaks the signature.
+		expect(verifyEmailStopToken(`${id}.${expiry}.other_kind.${sig}`)).toEqual({
+			ok: false,
+			reason: 'invalid',
+		})
+	})
+
+	it('a summary link reports no kind', () => {
+		expect(verifyEmailStopToken(signEmailStopToken(ACTOR))).toEqual({
+			ok: true,
+			actorId: ACTOR,
+			kind: null,
+		})
+	})
+
+	it('refuses to sign a kind that is not a plain name', () => {
+		expect(() => signEmailStopToken(ACTOR, Date.now(), 'a.b')).toThrow()
 	})
 })

@@ -172,3 +172,33 @@ test('A new sign-up starts with Tips off for push and the browser, the rest on',
 		page.getByRole('switch', { name: 'Tips and updates in the browser', exact: true }),
 	).not.toBeChecked()
 })
+
+for (const vp of SHIP_GATE_VIEWPORTS) {
+	test(`Flow activity has Push, Browser and Email switches, all off until chosen @ ${vp.label}`, async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize({ width: vp.width, height: vp.height })
+		await page.goto(`/${account.workspaceId}/settings/notifications`)
+
+		const push = page.getByRole('switch', { name: 'Flow activity', exact: true })
+		const browser = page.getByRole('switch', { name: 'Flow activity in the browser', exact: true })
+		const email = page.getByRole('switch', { name: 'Flow activity by email', exact: true })
+		await expect(push).toBeVisible({ timeout: 15_000 })
+		for (const sw of [push, browser, email]) await expect(sw).not.toBeChecked()
+
+		// Email is its own switch: it saves, survives a reload, and leaves Push and the summary alone.
+		await email.click()
+		await expect(email).toBeChecked()
+		await page.reload()
+		await expect(
+			page.getByRole('switch', { name: 'Flow activity by email', exact: true }),
+		).toBeChecked({ timeout: 15_000 })
+		await expect(page.getByRole('switch', { name: 'Flow activity', exact: true })).not.toBeChecked()
+		await expect(page.getByRole('switch', { name: 'Digests by email', exact: true })).toBeChecked()
+
+		expect(
+			await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth),
+		).toBe(false)
+	})
+}

@@ -10,10 +10,12 @@ import Testing
 private final class CannedTransport: ClientTransport, @unchecked Sendable {
 	static let body = """
 		{"timezone":"Europe/Oslo","quiet_hours_start":1320,"quiet_hours_end":420,
-		"categories":{"needs_you":true,"conversation":false,"digest":true,"tips":false},
-		"browser_categories":{"needs_you":true,"conversation":false,"digest":true,"tips":false},
-		"browser_not_asked":["needs_you","conversation","digest","tips"],
-		"briefing_enabled":false,"briefing_time":480,"email_digest_enabled":true,"marketplace_picks_enabled":true,
+		"categories":{"needs_you":true,"conversation":false,"digest":true,"tips":false,"flow_activity":false},
+		"browser_categories":{"needs_you":true,"conversation":false,"digest":true,"tips":false,"flow_activity":false},
+		"browser_not_asked":["needs_you","conversation","digest","tips","flow_activity"],
+		"briefing_enabled":false,"briefing_time":480,"email_digest_enabled":true,
+		"email_categories":{"flow_activity":false},
+		"marketplace_picks_enabled":true,
 		"muted_workspace_ids":["00000000-0000-4000-8000-000000000001"],
 		"updated_at":null}
 		"""

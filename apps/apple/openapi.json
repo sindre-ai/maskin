@@ -58915,13 +58915,17 @@
 												},
 												"tips": {
 													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
 												}
 											},
 											"required": [
 												"needs_you",
 												"conversation",
 												"digest",
-												"tips"
+												"tips",
+												"flow_activity"
 											]
 										},
 										"browser_categories": {
@@ -58938,13 +58942,17 @@
 												},
 												"tips": {
 													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
 												}
 											},
 											"required": [
 												"needs_you",
 												"conversation",
 												"digest",
-												"tips"
+												"tips",
+												"flow_activity"
 											]
 										},
 										"browser_not_asked": {
@@ -58955,7 +58963,8 @@
 													"needs_you",
 													"conversation",
 													"digest",
-													"tips"
+													"tips",
+													"flow_activity"
 												]
 											}
 										},
@@ -58969,6 +58978,17 @@
 										},
 										"email_digest_enabled": {
 											"type": "boolean"
+										},
+										"email_categories": {
+											"type": "object",
+											"properties": {
+												"flow_activity": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"flow_activity"
+											]
 										},
 										"marketplace_picks_enabled": {
 											"type": "boolean"
@@ -58997,6 +59017,7 @@
 										"briefing_enabled",
 										"briefing_time",
 										"email_digest_enabled",
+										"email_categories",
 										"marketplace_picks_enabled",
 										"muted_workspace_ids",
 										"updated_at"
@@ -59057,6 +59078,9 @@
 											},
 											"tips": {
 												"type": "boolean"
+											},
+											"flow_activity": {
+												"type": "boolean"
 											}
 										}
 									},
@@ -59074,6 +59098,9 @@
 											},
 											"tips": {
 												"type": "boolean"
+											},
+											"flow_activity": {
+												"type": "boolean"
 											}
 										}
 									},
@@ -59087,6 +59114,14 @@
 									},
 									"email_digest_enabled": {
 										"type": "boolean"
+									},
+									"email_categories": {
+										"type": "object",
+										"properties": {
+											"flow_activity": {
+												"type": "boolean"
+											}
+										}
 									},
 									"marketplace_picks_enabled": {
 										"type": "boolean"
@@ -59150,13 +59185,17 @@
 												},
 												"tips": {
 													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
 												}
 											},
 											"required": [
 												"needs_you",
 												"conversation",
 												"digest",
-												"tips"
+												"tips",
+												"flow_activity"
 											]
 										},
 										"browser_categories": {
@@ -59173,13 +59212,17 @@
 												},
 												"tips": {
 													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
 												}
 											},
 											"required": [
 												"needs_you",
 												"conversation",
 												"digest",
-												"tips"
+												"tips",
+												"flow_activity"
 											]
 										},
 										"browser_not_asked": {
@@ -59190,7 +59233,8 @@
 													"needs_you",
 													"conversation",
 													"digest",
-													"tips"
+													"tips",
+													"flow_activity"
 												]
 											}
 										},
@@ -59204,6 +59248,17 @@
 										},
 										"email_digest_enabled": {
 											"type": "boolean"
+										},
+										"email_categories": {
+											"type": "object",
+											"properties": {
+												"flow_activity": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"flow_activity"
+											]
 										},
 										"marketplace_picks_enabled": {
 											"type": "boolean"
@@ -59232,6 +59287,7 @@
 										"briefing_enabled",
 										"briefing_time",
 										"email_digest_enabled",
+										"email_categories",
 										"marketplace_picks_enabled",
 										"muted_workspace_ids",
 										"updated_at"

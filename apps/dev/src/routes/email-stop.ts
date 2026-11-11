@@ -4,7 +4,11 @@ import { eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { verifyEmailStopToken } from '../lib/email-stop-token'
 import { logger } from '../lib/logger'
-import { switchEmailOff, trackEmailSwitchedOff } from '../services/email-preferences'
+import {
+	switchEmailKindOff,
+	switchEmailOff,
+	trackEmailSwitchedOff,
+} from '../services/email-preferences'
 
 // The "stop these emails" link in a summary email. Public: nobody is signed in when they tap it,
 // so the signed token in the link is the only credential (lib/email-stop-token.ts). GET shows a
@@ -60,6 +64,11 @@ function refusal(reason: 'unconfigured' | 'invalid' | 'expired') {
 	}
 }
 
+/** What the link stops, in the words of the confirm page. A kind-scoped link names only that kind. */
+const KIND_WORDS: Record<string, { what: string; title: string }> = {
+	flow_activity: { what: 'flow activity emails', title: 'Stop flow activity emails?' },
+}
+
 app.get('/', (c) => {
 	const token = c.req.query('token') ?? ''
 	const verdict = verifyEmailStopToken(token)
@@ -67,11 +76,16 @@ app.get('/', (c) => {
 		const r = refusal(verdict.reason)
 		return html(r.status, page(r.title, `<p>${escapeHtml(r.text)}</p>`))
 	}
+	const words = verdict.kind ? KIND_WORDS[verdict.kind] : null
+	if (verdict.kind && !words) {
+		const r = refusal('invalid')
+		return html(r.status, page(r.title, `<p>${escapeHtml(r.text)}</p>`))
+	}
 	return html(
 		200,
 		page(
-			'Stop summary emails?',
-			`<p>You will stop getting the summary emails from Maskin. You can switch them back on in Settings.</p><form method="post" action="/api/email/stop"><input type="hidden" name="token" value="${escapeHtml(token)}"><button type="submit">Stop emails</button></form>`,
+			words?.title ?? 'Stop summary emails?',
+			`<p>You will stop getting the ${words?.what ?? 'summary emails'} from Maskin. You can switch them back on in Settings.</p><form method="post" action="/api/email/stop"><input type="hidden" name="token" value="${escapeHtml(token)}"><button type="submit">Stop emails</button></form>`,
 		),
 	)
 })
@@ -99,9 +113,18 @@ app.post('/', async (c) => {
 		return html(r.status, page(r.title, `<p>${escapeHtml(r.text)}</p>`))
 	}
 
+	const words = verdict.kind ? KIND_WORDS[verdict.kind] : null
+	if (verdict.kind && !words) {
+		const r = refusal('invalid')
+		return html(r.status, page(r.title, `<p>${escapeHtml(r.text)}</p>`))
+	}
+
 	try {
-		const changed = await switchEmailOff(db, actor.id)
-		if (changed) trackEmailSwitchedOff(actor.id, 'link')
+		// A kind-scoped link switches off that kind only; the summary keeps going.
+		const changed = verdict.kind
+			? await switchEmailKindOff(db, actor.id, verdict.kind)
+			: await switchEmailOff(db, actor.id)
+		if (changed) trackEmailSwitchedOff(actor.id, 'link', verdict.kind ?? undefined)
 	} catch (err) {
 		logger.error('email stop link failed to save', { error: String(err) })
 		return html(
@@ -113,7 +136,7 @@ app.post('/', async (c) => {
 		200,
 		page(
 			'Emails stopped',
-			'<p>You won’t get summary emails from Maskin any more. You can switch them back on in Settings, then Notifications.</p>',
+			`<p>You won’t get ${words?.what ?? 'summary emails'} from Maskin any more. You can switch them back on in Settings, then Notifications.</p>`,
 		),
 	)
 })
