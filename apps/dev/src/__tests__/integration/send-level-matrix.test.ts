@@ -76,7 +76,8 @@ async function connectIntegration(
 			status: INTEGRATION_STATUS_ACTIVE,
 			externalId: `${provider}-account`,
 			credentials: encrypt(JSON.stringify(credentials)),
-			actorId: s.human,
+			// Gmail is looked up as a workspace-wide row (no actor); only LinkedIn is actor-scoped.
+			actorId: provider === 'gmail' ? null : s.human,
 			createdBy: s.human,
 		})
 		.returning()
