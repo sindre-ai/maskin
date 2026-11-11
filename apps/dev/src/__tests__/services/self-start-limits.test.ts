@@ -219,14 +219,14 @@ describe('an extend reply', () => {
 			kind: 'wait',
 			waitMs: BACKOFF_BASE_MS,
 		})
-		expect(backoffDecision({ runsWithNoChange: 3, lastEndedAt, now: at(5.6) })).toEqual({
+		expect(backoffDecision({ runsWithNoChange: 3, lastEndedAt, now: at(4.6) })).toEqual({
 			kind: 'ask',
 		})
 		expect(
-			backoffDecision({ runsWithNoChange: 3, lastEndedAt, now: at(5.6), extended: true }),
+			backoffDecision({ runsWithNoChange: 3, lastEndedAt, now: at(4.6), extended: true }),
 		).toMatchObject({ kind: 'wait', waitMs: 2 * BACKOFF_BASE_MS })
 		expect(
-			backoffDecision({ runsWithNoChange: 3, lastEndedAt, now: at(5.6), extended: true }),
+			backoffDecision({ runsWithNoChange: 3, lastEndedAt, now: at(4.6), extended: true }),
 		).not.toHaveProperty('atCeiling')
 	})
 
