@@ -16,6 +16,14 @@ public enum ActorSearch {
 		return nil
 	}
 
+	/// True when the query is a whole word of `name` ("CCO" in "CCO" or "Ask CCO", not in "Accounting").
+	public static func isWholeWord(name: String, query: String) -> Bool {
+		let needle = fold(query).trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !needle.isEmpty else { return false }
+		let hay = fold(name)
+		return hay == needle || hay.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).contains { $0 == needle }
+	}
+
 	/// The items whose name matches, best matches first. An empty query returns everything as is.
 	public static func filter<T>(_ items: [T], query: String, name: (T) -> String) -> [T] {
 		let ranked = items.enumerated().compactMap { index, item in
