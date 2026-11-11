@@ -531,12 +531,37 @@ jobs:
             echo 'APT::Keep-Downloaded-Packages "true";'
           } | sudo tee /etc/apt/apt.conf.d/99playwright-cache
 
+      # 2026-11-11: from ~13:00 UTC runners could not resolve azure.archive.ubuntu.com
+      # ("Temporary failure resolving"). apt waited 20 s per file on every mirror in
+      # /etc/apt/apt-mirrors.txt and failed after ~10 minutes, in every shard, even though the
+      # only missing packages are 9 font packages. Public DNS answers fine, so the fault is the
+      # runner's resolver. Pin the mirrors from Cloudflare's DoH endpoint (queried by IP, no
+      # DNS needed) and make apt give up on a dead connection in 15 s instead of 20 s x mirrors.
+      # Best effort: if the lookup fails, the runner's own resolver is used as before.
+      - name: Keep apt working when the runner resolver fails
+        if: needs.changes.outputs.e2e == 'true'
+        run: |
+          printf '%s\n' 'Acquire::Retries "3";' 'Acquire::http::Timeout "15";' 'Acquire::https::Timeout "15";' |
+            sudo tee /etc/apt/apt.conf.d/98playwright-network
+          for host in azure.archive.ubuntu.com archive.ubuntu.com security.ubuntu.com; do
+            ip=$(curl -sf -m 10 -H 'accept: application/dns-json' \
+              "https://1.1.1.1/dns-query?name=$host&type=A" |
+              jq -r '[.Answer[]? | select(.type == 1) | .data][0] // empty' || true)
+            if [ -n "$ip" ]; then
+              echo "$ip $host" | sudo tee -a /etc/hosts
+            else
+              echo "::warning::Could not look up $host through 1.1.1.1; apt will use the runner resolver"
+            fi
+          done
+
       - name: Install Playwright browsers
         if: needs.changes.outputs.e2e == 'true' && steps.playwright-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 8
         run: pnpm --filter @maskin/e2e exec playwright install --with-deps chromium
 
       - name: Install Playwright OS dependencies
         if: needs.changes.outputs.e2e == 'true' && steps.playwright-cache.outputs.cache-hit == 'true'
+        timeout-minutes: 8
         run: pnpm --filter @maskin/e2e exec playwright install-deps chromium
 
       - name: Run E2E tests (shard ${{ matrix.shard }}/7)
