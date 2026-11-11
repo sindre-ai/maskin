@@ -40250,6 +40250,7 @@
 		},
 		"/api/billing/trial/setup": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"billing"
 				],
@@ -40578,6 +40579,7 @@
 		},
 		"/api/billing/trial/start": {
 			"post": {
+				"x-viewer-policy": "writer",
 				"tags": [
 					"billing"
 				],

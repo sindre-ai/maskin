@@ -613,6 +613,7 @@ const trialStartResponseSchema = z.object({
 const trialSetupRoute = createRoute({
 	method: 'post',
 	path: '/trial/setup',
+	'x-viewer-policy': 'writer',
 	tags: ['billing'],
 	summary: 'Start a Stripe card setup (no charge) for a workspace waiting for its trial card',
 	request: { headers: workspaceIdHeader },
@@ -648,6 +649,7 @@ const trialSetupRoute = createRoute({
 const trialStartRoute = createRoute({
 	method: 'post',
 	path: '/trial/start',
+	'x-viewer-policy': 'writer',
 	tags: ['billing'],
 	summary: 'Start the 7-day trial from a finished card setup',
 	request: {
