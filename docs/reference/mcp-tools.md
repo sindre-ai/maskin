@@ -67,16 +67,16 @@ applied in order on the server, under the same row lock as a whole-file save:
 `transcribe_file` turns an uploaded audio or video file into text. The agent passes the
 file `id` and, optionally, a `language` hint; it never downloads or converts anything.
 
-- Returns `{ file_id, name, text, text_truncated, transcript_file_id, transcript_file_url,
+- Returns `{ file_id, name, transcript_file_id, transcript_file_url, text, next_step,
   audio_seconds, chunks, model }`. The transcript is plain (no timestamps, no speaker labels)
-  and is **always** saved as a `text/plain` workspace file, named `<recording> transcript.txt`
-  and tagged `transcript`, whatever its length: there is no size threshold. `text` is only the
-  first 1000 characters (`text_truncated` says whether there is more); the whole transcript is
-  `get_file` on `transcript_file_id`. `text` is empty when no speech was found.
+  and is saved as a `text/plain` workspace file named `<recording> transcript.txt`, tagged
+  `transcript`, whatever its length: there is no size threshold. The response does **not**
+  carry the text. `next_step` tells the agent to `get_file` the `transcript_file_id`.
 - Saving goes through `saveTranscriptFile` (`apps/dev/src/services/transcript-file.ts`), in
-  the same order as `POST /api/files`: row, bytes, `created` event. If it fails, the audio is
-  already paid for, so the call still succeeds with the whole text in `text`, `text_truncated`
-  false and `transcript_file_id` null.
+  the same order as `POST /api/files`: row, bytes, `created` event. Two cases return `text`
+  instead: if saving fails, the audio is already paid for, so the call still succeeds with
+  the whole transcript in `text` and `transcript_file_id` null; and if no speech was found,
+  no empty file is saved and `text` is `""`.
 - Audio and video both work. The server decodes the first audio track to 16 kHz mono WAV with
   ffmpeg, so the API image must have ffmpeg and ffprobe (`apps/dev/Dockerfile`); a local
   `pnpm dev` needs them on `PATH`. Without them the call fails with a 503 that says so.

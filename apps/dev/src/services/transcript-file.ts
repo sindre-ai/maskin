@@ -8,18 +8,7 @@ import { sha256Hex } from '../lib/file-save'
 import { fileStorageKey, fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
 import { logger } from '../lib/logger'
 
-/** How much of the transcript the transcribe response carries beside the saved file. */
-export const TRANSCRIPT_PREVIEW_CHARS = 1000
-
 const FILE_NAME_MAX = 200
-
-/** First part of a transcript, cut on a word boundary where there is one. */
-export function transcriptPreview(text: string): string {
-	if (text.length <= TRANSCRIPT_PREVIEW_CHARS) return text
-	const cut = text.slice(0, TRANSCRIPT_PREVIEW_CHARS)
-	const lastSpace = cut.lastIndexOf(' ')
-	return `${(lastSpace > TRANSCRIPT_PREVIEW_CHARS / 2 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`
-}
 
 /** "standup.mp4" -> "standup transcript.txt" */
 export function transcriptFileName(sourceName: string): string {

@@ -16,11 +16,7 @@ import {
 	MAX_TRANSCRIBE_AUDIO_SECONDS,
 	transcribeStoredFile,
 } from '../services/file-transcription'
-import {
-	TRANSCRIPT_PREVIEW_CHARS,
-	saveTranscriptFile,
-	transcriptPreview,
-} from '../services/transcript-file'
+import { saveTranscriptFile } from '../services/transcript-file'
 import { transcribeAudio } from '../services/transcription'
 
 type Env = {
@@ -188,17 +184,16 @@ const transcribeFileResponse = z
 	.object({
 		file_id: z.string().uuid(),
 		name: z.string(),
-		text: z.string().openapi({
-			description: `The opening of the transcript (up to ${TRANSCRIPT_PREVIEW_CHARS} characters), or all of it when the transcript could not be saved as a file. See text_truncated.`,
-		}),
-		text_truncated: z.boolean().openapi({
-			description: 'True when `text` is only the opening and the whole transcript is in the file.',
-		}),
 		transcript_file_id: z.string().uuid().nullable().openapi({
 			description:
-				'The saved .txt transcript. Read it with get_file. Null only if saving it failed, in which case `text` holds the whole transcript.',
+				'The saved .txt transcript. Read it with get_file. Null when no speech was found, or when saving it failed (then `text` holds the transcript).',
 		}),
 		transcript_file_url: z.string().nullable(),
+		text: z.string().nullable().openapi({
+			description:
+				'Null when the transcript was saved: read the file. Set only when saving failed (the whole transcript) or no speech was found (empty).',
+		}),
+		next_step: z.string().openapi({ description: 'What to do with this result.' }),
 		audio_seconds: z.number(),
 		chunks: z.number().int(),
 		model: z.string(),
@@ -211,7 +206,7 @@ const postFileTranscriptionRoute = createRoute({
 	'x-viewer-policy': 'writer',
 	tags: ['Transcriptions'],
 	summary: 'Transcribe an uploaded audio or video file',
-	description: `Reads a stored file, extracts its audio with ffmpeg, transcribes it in chunks on OpenRouter and saves the transcript as a .txt workspace file and returns its id with the opening of the text. Up to ${MAX_TRANSCRIBE_AUDIO_SECONDS / 60} minutes of audio. The cost OpenRouter reports is recorded against the workspace's plan usage, so the call is refused with 402 once the plan cap is reached and no prepaid credit remains. An enterprise workspace is never capped, but its usage is still recorded. Requires X-Workspace-Id and a writer role.`,
+	description: `Reads a stored file, extracts its audio with ffmpeg, transcribes it in chunks on OpenRouter and saves the transcript as a .txt workspace file. The response carries the file's id, not the text: read it with get_file. Up to ${MAX_TRANSCRIBE_AUDIO_SECONDS / 60} minutes of audio. The cost OpenRouter reports is recorded against the workspace's plan usage, so the call is refused with 402 once the plan cap is reached and no prepaid credit remains. An enterprise workspace is never capped, but its usage is still recorded. Requires X-Workspace-Id and a writer role.`,
 	request: {
 		headers: workspaceIdHeader,
 		params: idParamSchema,
@@ -327,26 +322,33 @@ app.openapi(postFileTranscriptionRoute, async (c) => {
 			file: { id: file.id, storageKey: file.storageKey },
 			language,
 		})
-		// Always kept as a file. If saving fails the audio is already paid for, so
-		// fall through and return the whole text inline.
-		const saved = await saveTranscriptFile({
-			db,
-			storage: c.get('storageProvider'),
-			workspaceId,
-			actorId: c.get('actorId'),
-			sessionId: c.get('maskinSessionId'),
-			sourceName: file.name,
-			text: result.text,
-		})
-		const preview = saved ? transcriptPreview(result.text) : result.text
+		// Always kept as a file, never returned inline. Two exceptions: no speech means
+		// nothing worth a file, and if saving fails the audio is already paid for, so
+		// the text goes back inline instead.
+		const saved =
+			result.text === ''
+				? null
+				: await saveTranscriptFile({
+						db,
+						storage: c.get('storageProvider'),
+						workspaceId,
+						actorId: c.get('actorId'),
+						sessionId: c.get('maskinSessionId'),
+						sourceName: file.name,
+						text: result.text,
+					})
 		return c.json(
 			{
 				file_id: file.id,
 				name: file.name,
-				text: preview,
-				text_truncated: saved !== null && result.text.length > TRANSCRIPT_PREVIEW_CHARS,
 				transcript_file_id: saved?.fileId ?? null,
 				transcript_file_url: saved?.url ?? null,
+				text: saved ? null : result.text,
+				next_step: saved
+					? `The transcript is saved as a file. Read it with get_file on id ${saved.fileId}.`
+					: result.text === ''
+						? 'No speech was found in this recording, so no transcript file was saved.'
+						: 'The transcript could not be saved as a file, so the whole text is in `text`.',
 				audio_seconds: Math.round(result.audioSeconds * 100) / 100,
 				chunks: result.chunks,
 				model: result.model,

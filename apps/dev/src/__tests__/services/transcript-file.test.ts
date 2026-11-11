@@ -1,12 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { recordEvent } from '../../lib/events/record-event'
-import {
-	TRANSCRIPT_PREVIEW_CHARS,
-	saveTranscriptFile,
-	transcriptFileName,
-	transcriptPreview,
-} from '../../services/transcript-file'
+import { saveTranscriptFile, transcriptFileName } from '../../services/transcript-file'
 import { buildFile } from '../factories'
 import { createMockStorageProvider, createTestContext } from '../setup'
 
@@ -52,18 +47,6 @@ describe('transcriptFileName', () => {
 
 	it('stays within the file name limit', () => {
 		expect(transcriptFileName(`${'a'.repeat(500)}.mp3`).length).toBeLessThanOrEqual(200)
-	})
-})
-
-describe('transcriptPreview', () => {
-	it('returns a short transcript whole', () => {
-		expect(transcriptPreview('Hi there.')).toBe('Hi there.')
-	})
-
-	it('cuts a long transcript on a word boundary and marks the cut', () => {
-		const preview = transcriptPreview('word '.repeat(5000))
-		expect(preview.length).toBeLessThanOrEqual(TRANSCRIPT_PREVIEW_CHARS + 1)
-		expect(preview.endsWith('word…')).toBe(true)
 	})
 })
 

@@ -73,7 +73,7 @@ describe('POST /api/transcriptions/files/:id', () => {
 		})
 	})
 
-	it('transcribes the file and returns the text with its audio length', async () => {
+	it('transcribes the file and returns the saved transcript file, not the text', async () => {
 		const { app, mockResults } = setup()
 		const file = video()
 		mockResults.selectQueue = [[file], [planWorkspace()]]
@@ -90,10 +90,10 @@ describe('POST /api/transcriptions/files/:id', () => {
 		expect(await res.json()).toEqual({
 			file_id: file.id,
 			name: 'standup.mp4',
-			text: 'Good morning everyone.',
-			text_truncated: false,
 			transcript_file_id: transcriptFileId,
 			transcript_file_url: `http://localhost:5173/${workspaceId}/files/${transcriptFileId}`,
+			text: null,
+			next_step: `The transcript is saved as a file. Read it with get_file on id ${transcriptFileId}.`,
 			audio_seconds: 12.5,
 			chunks: 1,
 			model: 'mistralai/voxtral-small-transcribe-3-0',
@@ -108,7 +108,7 @@ describe('POST /api/transcriptions/files/:id', () => {
 		)
 	})
 
-	it('saves the transcript as a file and returns only its opening when it is long', async () => {
+	it('saves a long transcript as a file and keeps the text out of the response', async () => {
 		const { app, mockResults } = setup()
 		const file = video()
 		mockResults.selectQueue = [[file], [planWorkspace()]]
@@ -123,9 +123,7 @@ describe('POST /api/transcriptions/files/:id', () => {
 		const res = await app.request(post(file.id))
 
 		expect(res.status).toBe(200)
-		const body = (await res.json()) as { text: string; text_truncated: boolean }
-		expect(body).toMatchObject({ text_truncated: true, transcript_file_id: transcriptFileId })
-		expect(body.text.length).toBeLessThan(longText.length)
+		expect(await res.json()).toMatchObject({ transcript_file_id: transcriptFileId, text: null })
 		expect(vi.mocked(saveTranscriptFile).mock.calls[0]?.[0]).toMatchObject({
 			workspaceId,
 			sourceName: 'standup.mp4',
@@ -144,9 +142,10 @@ describe('POST /api/transcriptions/files/:id', () => {
 			model: 'mistralai/voxtral-small-transcribe-3-0',
 		})
 
-		await app.request(post(file.id))
+		const res = await app.request(post(file.id))
 
 		expect(saveTranscriptFile).toHaveBeenCalledWith(expect.objectContaining({ text: 'Hi.' }))
+		expect(await res.json()).toMatchObject({ text: null })
 	})
 
 	it('returns the whole text inline when the transcript file cannot be saved', async () => {
@@ -167,10 +166,26 @@ describe('POST /api/transcriptions/files/:id', () => {
 		expect(res.status).toBe(200)
 		expect(await res.json()).toMatchObject({
 			text: longText,
-			text_truncated: false,
 			transcript_file_id: null,
 			transcript_file_url: null,
 		})
+	})
+
+	it('saves no file when no speech was found', async () => {
+		const { app, mockResults } = setup()
+		const file = video()
+		mockResults.selectQueue = [[file], [planWorkspace()]]
+		vi.mocked(transcribeStoredFile).mockResolvedValue({
+			text: '',
+			audioSeconds: 5,
+			chunks: 1,
+			model: 'mistralai/voxtral-small-transcribe-3-0',
+		})
+
+		const res = await app.request(post(file.id))
+
+		expect(saveTranscriptFile).not.toHaveBeenCalled()
+		expect(await res.json()).toMatchObject({ text: '', transcript_file_id: null })
 	})
 
 	it('checks the plan cap before doing any work', async () => {
