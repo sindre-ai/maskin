@@ -248,10 +248,10 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'POST /api/billing/checkout',
 	'POST /api/billing/credits/checkout',
 	'GET /api/billing/invoices',
-	'POST /api/billing/trial/setup',
-	'POST /api/billing/trial/start',
 	'GET /api/billing/auto-top-up',
 	'PUT /api/billing/auto-top-up',
+	'POST /api/billing/trial/setup',
+	'POST /api/billing/trial/start',
 	'GET /api/billing/usage',
 
 	// Create a workspace, change settings, or change who is in a workspace and with what role.
