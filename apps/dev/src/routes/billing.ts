@@ -17,7 +17,7 @@ import {
 	workspaceSettingsSchema,
 } from '@maskin/shared'
 import { eq, sql } from 'drizzle-orm'
-import { AUTO_TOP_UP_EVENT } from '../lib/auto-top-up'
+import { AUTO_TOP_UP_EVENT, autoTopUpClosedForPlans } from '../lib/auto-top-up'
 import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from '../lib/billing-defaults'
 import { USAGE_BREAKDOWN_MAX_ROWS, readUsageBreakdown } from '../lib/billing-usage-breakdown'
 import { cachedBillingUsage, evictBillingUsage } from '../lib/billing-usage-cache'
@@ -1167,7 +1167,8 @@ const setAutoTopUpRoute = createRoute({
 			content: { 'application/json': { schema: autoTopUpResponseSchema } },
 		},
 		400: {
-			description: 'Workspace cannot be charged automatically yet',
+			description:
+				'Workspace cannot be charged automatically yet, or auto top-up is closed on plans',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		403: {
@@ -1250,6 +1251,17 @@ app.openapi(setAutoTopUpRoute, async (c) => {
 		workspace.settings as { billing?: { stripe_customer_id?: string; status?: string } } | null
 	)?.billing
 	if (rule.enabled) {
+		// The pricing bet has no top-up: at 100% a plan waits for next month. A rule that was
+		// already saved is left alone, so switching the flag off brings it back.
+		if (autoTopUpClosedForPlans()) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					'Automatic top-up is not available on a plan. At 100% your plan waits for next month.',
+				),
+				400,
+			)
+		}
 		const blocked = billing?.status === 'past_due' || billing?.status === 'canceled'
 		if (!billing?.stripe_customer_id || blocked || (await isEnterpriseWorkspace(db, workspaceId))) {
 			return c.json(

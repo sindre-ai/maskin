@@ -47762,7 +47762,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// Workspace cannot be charged automatically yet
+            /// Workspace cannot be charged automatically yet, or auto top-up is closed on plans
             ///
             /// - Remark: Generated from `#/paths//api/billing/auto-top-up/put/responses/400`.
             ///

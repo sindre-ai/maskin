@@ -43704,7 +43704,7 @@
 						}
 					},
 					"400": {
-						"description": "Workspace cannot be charged automatically yet",
+						"description": "Workspace cannot be charged automatically yet, or auto top-up is closed on plans",
 						"content": {
 							"application/json": {
 								"schema": {
