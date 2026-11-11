@@ -2,6 +2,7 @@ import {
 	__setInitializedForTesting,
 	beforeSend,
 	capture,
+	firstTouchFromPosthog,
 	hashDistinctId,
 	identifyForWorkspace,
 	initPosthog,
@@ -336,9 +337,76 @@ describe('signupSourceFrom', () => {
 		expect(signupSourceFrom('', 'not a url', 'app.maskin.io')).toBe('direct')
 	})
 
+	it('uses the campaign tag from the first visit when the sign-up page has none', () => {
+		// Home page with a tag, then a plain /signup link from our own site.
+		expect(
+			signupSourceFrom('', 'https://app.maskin.io/', 'app.maskin.io', { utmSource: 'LinkedIn' }),
+		).toBe('linkedin')
+	})
+
+	it('lets a tag on the sign-up page win over the first visit', () => {
+		expect(
+			signupSourceFrom('?utm_source=newsletter', '', 'app.maskin.io', { utmSource: 'linkedin' }),
+		).toBe('newsletter')
+	})
+
+	it('uses the site from the first visit when there was no tag', () => {
+		expect(
+			signupSourceFrom('', 'https://app.maskin.io/', 'app.maskin.io', {
+				referringDomain: 'www.google.com',
+			}),
+		).toBe('google.com')
+	})
+
+	it('is still direct when the first visit had neither a tag nor an outside site', () => {
+		expect(signupSourceFrom('', '', 'app.maskin.io', { referringDomain: '$direct' })).toBe('direct')
+		expect(signupSourceFrom('', '', 'app.maskin.io', { referringDomain: 'app.maskin.io' })).toBe(
+			'direct',
+		)
+		expect(signupSourceFrom('', '', 'app.maskin.io', {})).toBe('direct')
+	})
+
+	it('cleans the first-visit values the same way', () => {
+		expect(signupSourceFrom('', '', 'app.maskin.io', { utmSource: 'a b<script>' })).toBe('abscript')
+		expect(signupSourceFrom('', '', 'app.maskin.io', { utmSource: 42 })).toBe('direct')
+	})
+
 	it('keeps free text off the person', () => {
 		expect(signupSourceFrom('?utm_source=a%20b%3Cscript%3E', '', 'app.maskin.io')).toBe('abscript')
 		expect(signupSourceFrom(`?utm_source=${'x'.repeat(200)}`, '', 'app.maskin.io')).toHaveLength(60)
+	})
+})
+
+describe('firstTouchFromPosthog', () => {
+	it('reads the first-visit tag and referring site that posthog stored', () => {
+		const persistence = {
+			get_initial_props: () => ({
+				$initial_utm_source: 'linkedin',
+				$initial_referring_domain: 'www.google.com',
+			}),
+		}
+		const holder = posthog as unknown as { persistence?: unknown }
+		const original = holder.persistence
+		holder.persistence = persistence
+		try {
+			expect(firstTouchFromPosthog()).toEqual({
+				utmSource: 'linkedin',
+				referringDomain: 'www.google.com',
+			})
+		} finally {
+			holder.persistence = original
+		}
+	})
+
+	it('is empty when posthog has no persistence yet', () => {
+		const holder = posthog as unknown as { persistence?: unknown }
+		const original = holder.persistence
+		holder.persistence = undefined
+		try {
+			expect(firstTouchFromPosthog()).toEqual({ utmSource: undefined, referringDomain: undefined })
+		} finally {
+			holder.persistence = original
+		}
 	})
 })
 
