@@ -34,6 +34,7 @@ vi.mock('@/hooks/use-actors', async (importOriginal) => ({
 }))
 vi.mock('@/hooks/use-sessions', () => ({
 	useActiveSessionsForConversation: () => ({ data: [] }),
+	useSendSessionInput: () => ({ mutate: vi.fn(), isPending: false, isError: false }),
 }))
 const pendingTurns = vi.hoisted(() => ({ fallback: [] as Array<{ sessionId: string }> }))
 vi.mock('@/hooks/use-conversation-activity', () => ({
