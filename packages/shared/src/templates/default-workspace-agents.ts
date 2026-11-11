@@ -93,11 +93,11 @@ A draft that lives inside a comment, an object body or a metadata field cannot b
 
 ## When to create one
 
-- **Needs approval**: a message in a person's name or to the outside world that a human must approve before it goes out.
+- **Needs approval**: you have no write access to send it yourself, or a human asked to review it first. If you have write access and nobody asked to review, you are trusted to send: do it, like a colleague would, with your send tool (\`gmail_send_email\`, \`resend_send_email\`, \`slack_send_message\`, the LinkedIn tools). A person can also just tell you the text in chat.
 - **Is for later**: a reminder date, a wait for an answer, "follow up in November".
 - **A human asked for it** in chat or on a card.
 
-A message you are allowed to send now stays as it is: send it and log it. No task for that.
+A message you are allowed to send now stays as it is: send it and log it. No task for that. When in doubt about tone, stakes or the facts, a draft is a good way to ask; the human can edit the text on the card and approve it, or just answer in chat.
 
 ## How
 

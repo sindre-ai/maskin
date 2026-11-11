@@ -244,7 +244,7 @@ describe('LinkedIn send tools with object_id', () => {
 		expect(sendConnectionRequest).toHaveBeenCalledTimes(1)
 	})
 
-	it('will not send a connection request nobody approved, or one edited after approval', async () => {
+	it('sends a connection request nobody approved, once, and closes the task', async () => {
 		const { client, sendConnectionRequest } = stubClient()
 		__setLinkedInClientForTests(() => client)
 		const { cfg, mcp, workspaceId, actorId } = await connect()
@@ -255,17 +255,33 @@ describe('LinkedIn send tools with object_id', () => {
 				arguments: { object_id: task.id },
 			})
 
-		const unapproved = await send()
+		const first = await send()
+		const again = await send()
+
+		expect(first.isError).toBeFalsy()
+		expect(again.isError).toBe(true)
+		expect(textOf(again)).toContain('already been sent')
+		expect(sendConnectionRequest).toHaveBeenCalledTimes(1)
+		expect(await statusOf(task.id)).toBe('done')
+	})
+
+	it('sends the note as it reads now when it was edited after an approval', async () => {
+		const { client, sendConnectionRequest } = stubClient()
+		__setLinkedInClientForTests(() => client)
+		const { cfg, mcp, workspaceId, actorId } = await connect()
+		const task = await invite(workspaceId, actorId)
 		await approve(workspaceId, actorId, task.id)
 		await db.update(objects).set({ content: 'Hej Liz, edited' }).where(eq(objects.id, task.id))
-		const afterEdit = await send()
 
-		for (const result of [unapproved, afterEdit]) {
-			expect(result.isError).toBe(true)
-			expect(textOf(result)).toContain('No person has approved')
-		}
-		expect(sendConnectionRequest).not.toHaveBeenCalled()
-		expect(await statusOf(task.id)).toBe('todo')
+		const result = await mcp.callTool({
+			name: toolName(cfg, 'send_connection_request'),
+			arguments: { object_id: task.id },
+		})
+
+		expect(result.isError).toBeFalsy()
+		expect(sendConnectionRequest).toHaveBeenCalledWith(
+			expect.objectContaining({ message: 'Hej Liz, edited' }),
+		)
 	})
 
 	it('refuses a connection request with no object_id, and one that is not a connection request', async () => {
@@ -288,7 +304,7 @@ describe('LinkedIn send tools with object_id', () => {
 			arguments: { object_id: '00000000-0000-4000-8000-000000000000' },
 		})
 
-		expect(textOf(direct)).toContain('held for a person')
+		expect(textOf(direct)).toContain('sent from an object that holds it')
 		expect(textOf(wrongKind)).toContain('not a LinkedIn connection request')
 		expect(textOf(missing)).toContain('does not exist')
 		for (const result of [direct, wrongKind, missing]) expect(result.isError).toBe(true)
@@ -337,27 +353,27 @@ describe('LinkedIn send tools with object_id', () => {
 		expect(await statusOf(task.id)).toBe('done')
 	})
 
-	it('will not publish a post nobody approved, or one edited after approval', async () => {
+	it('publishes a post nobody approved, and the edited text after an approval', async () => {
 		const { client, publishPost } = stubClient()
 		__setLinkedInClientForTests(() => client)
 		const { cfg, mcp, workspaceId, actorId } = await connect()
 		const task = await postDraft(workspaceId, actorId)
-		const publish = () =>
-			mcp.callTool({ name: toolName(cfg, 'publish_post'), arguments: { object_id: task.id } })
-
-		const unapproved = await publish()
 		await approve(workspaceId, actorId, task.id)
 		await db
 			.update(objects)
 			.set({ content: 'Header\n--- POST ---\nSun is out, edited\n--- MEDIA ---\nnone' })
 			.where(eq(objects.id, task.id))
-		const afterEdit = await publish()
 
-		for (const result of [unapproved, afterEdit]) {
-			expect(result.isError).toBe(true)
-			expect(textOf(result)).toContain('No person has approved')
-		}
-		expect(publishPost).not.toHaveBeenCalled()
+		const result = await mcp.callTool({
+			name: toolName(cfg, 'publish_post'),
+			arguments: { object_id: task.id },
+		})
+
+		expect(result.isError).toBeFalsy()
+		expect(publishPost).toHaveBeenCalledTimes(1)
+		expect(publishPost).toHaveBeenCalledWith(
+			expect.objectContaining({ text: 'Sun is out, edited' }),
+		)
 	})
 
 	it('refuses a post with no object_id, text next to object_id, and an object that is not a post', async () => {
@@ -375,7 +391,7 @@ describe('LinkedIn send tools with object_id', () => {
 		const withText = await call({ object_id: task.id, text: 'Something else' })
 		const wrongKind = await call({ object_id: message.id })
 
-		expect(textOf(direct)).toContain('held for a person')
+		expect(textOf(direct)).toContain('sent from an object that holds it')
 		expect(textOf(withText)).toContain('Do not pass text')
 		expect(textOf(wrongKind)).toContain('not a LinkedIn post')
 		for (const result of [direct, withText, wrongKind]) expect(result.isError).toBe(true)
@@ -402,24 +418,24 @@ describe('LinkedIn send tools with object_id', () => {
 		expect(await statusOf(task.id)).toBe('done')
 	})
 
-	it('will not send a direct message nobody approved', async () => {
+	it('sends a direct message nobody approved, once', async () => {
 		const { client, sendMessage } = stubClient()
 		__setLinkedInClientForTests(() => client)
 		const { cfg, mcp, workspaceId, actorId } = await connect()
 		const task = await draft(workspaceId, actorId)
+		const send = () =>
+			mcp.callTool({ name: toolName(cfg, 'send_message'), arguments: { object_id: task.id } })
 
-		const result = await mcp.callTool({
-			name: toolName(cfg, 'send_message'),
-			arguments: { object_id: task.id },
-		})
+		const first = await send()
+		const again = await send()
 
-		expect(result.isError).toBe(true)
-		expect(textOf(result)).toContain('No person has approved')
-		expect(sendMessage).not.toHaveBeenCalled()
-		expect(await statusOf(task.id)).toBe('todo')
+		expect(first.isError).toBeFalsy()
+		expect(again.isError).toBe(true)
+		expect(sendMessage).toHaveBeenCalledTimes(1)
+		expect(await statusOf(task.id)).toBe('done')
 	})
 
-	it('holds the approval line: edit withdraws it, re-approve sends once, a second send is refused', async () => {
+	it('sends the edited text after an approval, once, and refuses a second send', async () => {
 		const { client, sendMessage } = stubClient()
 		__setLinkedInClientForTests(() => client)
 		const { cfg, mcp, workspaceId, actorId } = await connect()
@@ -429,15 +445,9 @@ describe('LinkedIn send tools with object_id', () => {
 
 		await approve(workspaceId, actorId, task.id)
 		await db.update(objects).set({ content: 'Hej Liz, edited' }).where(eq(objects.id, task.id))
-		const afterEdit = await send()
-		expect(afterEdit.isError).toBe(true)
-		expect(textOf(afterEdit)).toContain('No person has approved')
-		expect(sendMessage).not.toHaveBeenCalled()
-
-		await approve(workspaceId, actorId, task.id)
 		const sent = await send()
 		expect(sent.isError).toBeFalsy()
-		expect(sendMessage).toHaveBeenCalledTimes(1)
+		expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ body: 'Hej Liz, edited' }))
 
 		const again = await send()
 		expect(again.isError).toBe(true)
@@ -500,7 +510,7 @@ describe('LinkedIn send tools with object_id', () => {
 		for (const result of [direct, directReply]) {
 			expect(result.isError).toBe(true)
 			expect(textOf(result)).toContain('INVALID_INPUT')
-			expect(textOf(result)).toContain('held for a person')
+			expect(textOf(result)).toContain('sent from an object that holds it')
 		}
 		expect(sendMessage).not.toHaveBeenCalled()
 		expect(reply).not.toHaveBeenCalled()
@@ -518,7 +528,7 @@ describe('LinkedIn comment, comment reply and post edit tools with object_id', (
 			tool: 'comment_on_post',
 			kind: 'linkedin_comment',
 			notIt: 'not a LinkedIn comment',
-			held: 'A comment is held for a person',
+			held: 'A comment is sent from an object that holds it',
 			metadata: { to: 'Liz Benison', post_id: 'urn:li:activity:111' },
 			stub: (c: ReturnType<typeof stubClient>) => c.commentOnPost,
 			sentWith: { post_id: 'urn:li:activity:111', text: 'Well said, Liz' },
@@ -528,7 +538,7 @@ describe('LinkedIn comment, comment reply and post edit tools with object_id', (
 			tool: 'reply_to_comment',
 			kind: 'linkedin_comment_reply',
 			notIt: 'not a LinkedIn comment reply',
-			held: 'A comment reply is held for a person',
+			held: 'A comment reply is sent from an object that holds it',
 			metadata: {
 				to: 'Liz Benison',
 				post_id: 'urn:li:activity:222',
@@ -543,7 +553,7 @@ describe('LinkedIn comment, comment reply and post edit tools with object_id', (
 			tool: 'edit_post',
 			kind: 'linkedin_post_edit',
 			notIt: 'not a LinkedIn post edit',
-			held: 'A post edit is held for a person',
+			held: 'A post edit is sent from an object that holds it',
 			metadata: { post_id: 'urn:li:share:444' },
 			stub: (c: ReturnType<typeof stubClient>) => c.editPost,
 			sentWith: { post_id: 'urn:li:share:444', text: 'Well said, Liz' },
@@ -588,35 +598,11 @@ describe('LinkedIn comment, comment reply and post edit tools with object_id', (
 			expect(await statusOf(task.id)).toBe('done')
 		})
 
-		it('refuses a draft nobody approved, and one edited after approval', async () => {
+		it('sends a draft nobody approved, and the post or comment the draft names now', async () => {
 			const stubs = stubClient()
 			__setLinkedInClientForTests(() => stubs.client)
 			const { cfg, mcp, workspaceId, actorId } = await connect()
 			const task = await held(workspaceId, actorId, `${t.tool}-edit`)
-			const send = () =>
-				mcp.callTool({ name: toolName(cfg, t.tool), arguments: { object_id: task.id } })
-
-			const unapproved = await send()
-			await approve(workspaceId, actorId, task.id)
-			await db
-				.update(objects)
-				.set({ content: `Well said, Liz ${t.tool}-edit, edited` })
-				.where(eq(objects.id, task.id))
-			const afterEdit = await send()
-
-			for (const result of [unapproved, afterEdit]) {
-				expect(result.isError).toBe(true)
-				expect(textOf(result)).toContain('No person has approved')
-			}
-			expect(t.stub(stubs)).not.toHaveBeenCalled()
-			expect(await statusOf(task.id)).toBe('todo')
-		})
-
-		it('withdraws the approval when the post or comment on the draft changes', async () => {
-			const stubs = stubClient()
-			__setLinkedInClientForTests(() => stubs.client)
-			const { cfg, mcp, workspaceId, actorId } = await connect()
-			const task = await held(workspaceId, actorId, `${t.tool}-target`)
 			await approve(workspaceId, actorId, task.id)
 			await db
 				.update(objects)
@@ -628,9 +614,9 @@ describe('LinkedIn comment, comment reply and post edit tools with object_id', (
 				arguments: { object_id: task.id },
 			})
 
-			expect(result.isError).toBe(true)
-			expect(textOf(result)).toContain('No person has approved')
-			expect(t.stub(stubs)).not.toHaveBeenCalled()
+			expect(result.isError).toBeFalsy()
+			expect(t.stub(stubs)).toHaveBeenCalledTimes(1)
+			expect(await statusOf(task.id)).toBe('done')
 		})
 
 		it('refuses a call with no object_id, text or ids next to object_id, and the wrong kind', async () => {

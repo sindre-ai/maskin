@@ -12,9 +12,9 @@ vi.mock('../../lib/analytics/posthog', () => ({
 }))
 
 /**
- * slack_send_message posts only a draft a person approved, or goes direct to a channel on the
- * workspace's saved allowlist. The approval and the once-only rule live in events (bound to a
- * content hash), so they can only be proven against real Postgres. Slack itself is a stubbed
+ * slack_send_message posts directly to any channel for an agent with write access, or sends a
+ * Slack message draft. A person's approval of the draft is optional. The delivery record and the
+ * once-only rule live in events (bound to a content hash), so they can only be proven against real Postgres. Slack itself is a stubbed
  * fetch here, which says nothing about what Slack does with the call.
  */
 
@@ -35,10 +35,7 @@ afterEach(() => {
 	vi.unstubAllGlobals()
 })
 
-async function setup(
-	overrides: Record<string, unknown> = {},
-	directPostChannels: string[] = [INTERNAL_CHANNEL_ID],
-) {
+async function setup(overrides: Record<string, unknown> = {}) {
 	const actorId = getTestActorId()
 	const ws = await insertWorkspace(db, actorId)
 	const object = await insertObject(db, ws.id, actorId, {
@@ -54,7 +51,6 @@ async function setup(
 		workspaceId: ws.id,
 		actorId,
 		db,
-		directPostChannels,
 	})
 	const tool = (
 		server as unknown as {
@@ -85,65 +81,33 @@ async function approve(wsId: string, actorId: string, object: typeof objects.$in
 	})
 }
 
-describe('slack_send_message approval hold', () => {
-	it('refuses a direct call with a channel and text, and posts nothing', async () => {
+describe('slack_send_message', () => {
+	it('posts directly to any channel with a channel and text, no approval and no list', async () => {
 		const { send } = await setup()
 		const result = await send({ channel: OTHER_CHANNEL_ID, text: 'hello' })
-		expect(result.isError).toBe(true)
-		expect(result.content[0].text).toMatch(/held for a person to approve/)
-		expect(result.content[0].text).toMatch(/object_id/)
-		expect(fetchMock).not.toHaveBeenCalled()
-	})
-
-	it('refuses a direct call to a DM', async () => {
-		const { send } = await setup()
-		const result = await send({ channel: 'D0123456789', text: 'hello' })
-		expect(result.isError).toBe(true)
-		expect(fetchMock).not.toHaveBeenCalled()
-	})
-
-	it('posts directly to a channel on the saved list', async () => {
-		const { send } = await setup()
-		const result = await send({ channel: INTERNAL_CHANNEL_ID, text: 'main is red' })
 		expect(result.isError).toBeUndefined()
 		expect(fetchMock).toHaveBeenCalledTimes(1)
 		const body = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string)
-		expect(body.channel).toBe(INTERNAL_CHANNEL_ID)
-		expect(body.text).toBe('main is red')
+		expect(body.channel).toBe(OTHER_CHANNEL_ID)
+		expect(body.text).toBe('hello')
 	})
 
-	it('refuses a direct call to every channel when no list was saved', async () => {
-		const actorId = getTestActorId()
-		const ws = await insertWorkspace(db, actorId)
-		const server = createSlackMcpServer({
-			botToken: 'xoxb-test-token',
-			integrationId: 'int-1',
-			agentLabel: 'Test agent · in test-workspace',
-			workspaceId: ws.id,
-			actorId,
-			db,
-		})
-		const tool = (
-			server as unknown as {
-				_registeredTools: Record<
-					string,
-					{ handler: (args: unknown, extra: unknown) => Promise<unknown> }
-				>
-			}
-		)._registeredTools.slack_send_message
-		const result = (await tool.handler({ channel: INTERNAL_CHANNEL_ID, text: 'hello' }, {})) as {
-			isError?: boolean
-		}
-		expect(result.isError).toBe(true)
-		expect(fetchMock).not.toHaveBeenCalled()
-	})
-
-	it('refuses a draft nobody approved, and posts nothing', async () => {
-		const { send, object } = await setup()
+	it('sends a draft nobody approved, because the agent has write access', async () => {
+		const { send, object, ws } = await setup()
 		const result = await send({ object_id: object.id })
-		expect(result.isError).toBe(true)
-		expect(result.content[0].text).toMatch(/No person has approved/)
-		expect(fetchMock).not.toHaveBeenCalled()
+		expect(result.isError).toBeUndefined()
+		expect(fetchMock).toHaveBeenCalledTimes(1)
+		const delivered = await db
+			.select()
+			.from(events)
+			.where(
+				and(
+					eq(events.entityId, object.id),
+					eq(events.action, DELIVERED_ACTION),
+					eq(events.workspaceId, ws.id),
+				),
+			)
+		expect(delivered).toHaveLength(1)
 	})
 
 	it('refuses an object that is not a Slack message draft', async () => {
@@ -195,35 +159,27 @@ describe('slack_send_message approval hold', () => {
 		expect(body.text).toBe('Release 4.2 is out.')
 	})
 
-	it('withdraws the approval when the text is edited afterwards', async () => {
+	it('posts the text and channel the draft holds now, after an edit', async () => {
 		const { send, object, ws, actorId } = await setup()
 		await approve(ws.id, actorId, object)
 		await db
 			.update(objects)
-			.set({ content: 'Release 4.2 is out, and so is 4.3.' })
+			.set({
+				content: 'Release 4.2 is out, and so is 4.3.',
+				metadata: { kind: 'slack_message', channel: 'C0888888888' },
+			})
 			.where(eq(objects.id, object.id))
 
 		const result = await send({ object_id: object.id })
-		expect(result.isError).toBe(true)
-		expect(result.content[0].text).toMatch(/No person has approved/)
-		expect(fetchMock).not.toHaveBeenCalled()
-	})
 
-	it('withdraws the approval when the channel is changed afterwards', async () => {
-		const { send, object, ws, actorId } = await setup()
-		await approve(ws.id, actorId, object)
-		await db
-			.update(objects)
-			.set({ metadata: { kind: 'slack_message', channel: 'C0888888888' } })
-			.where(eq(objects.id, object.id))
-
-		const result = await send({ object_id: object.id })
-		expect(result.isError).toBe(true)
-		expect(fetchMock).not.toHaveBeenCalled()
+		expect(result.isError).toBeUndefined()
+		const body = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string)
+		expect(body.channel).toBe('C0888888888')
+		expect(body.text).toBe('Release 4.2 is out, and so is 4.3.')
 	})
 })
 
-describe('slack_update_message approval hold', () => {
+describe('slack_update_message', () => {
 	const TS = '1717000000.000100'
 
 	async function setupUpdate(overrides: Record<string, unknown> = {}) {
@@ -235,7 +191,6 @@ describe('slack_update_message approval hold', () => {
 			workspaceId: base.ws.id,
 			actorId: base.actorId,
 			db,
-			directPostChannels: [INTERNAL_CHANNEL_ID],
 		})
 		const tool = (
 			server as unknown as {
@@ -260,30 +215,20 @@ describe('slack_update_message approval hold', () => {
 		}))
 	}
 
-	it('refuses a direct edit with a channel and text, and changes nothing', async () => {
+	it('edits directly in any channel with a channel, ts and text', async () => {
 		const { update } = await setupUpdate()
 		const result = await update({ channel: OTHER_CHANNEL_ID, ts: TS, text: 'rewritten' })
-		expect(result.isError).toBe(true)
-		expect(result.content[0].text).toMatch(/held for a person to approve/)
-		expect(result.content[0].text).toMatch(/object_id/)
-		expect(fetchMock).not.toHaveBeenCalled()
-	})
-
-	it('edits directly in a channel on the saved list', async () => {
-		const { update } = await setupUpdate()
-		const result = await update({ channel: INTERNAL_CHANNEL_ID, ts: TS, text: 'main is green' })
 		expect(result.isError).toBeUndefined()
 		const [call] = sentToSlack()
 		expect(call.url).toBe('https://slack.com/api/chat.update')
-		expect(call.body).toMatchObject({ channel: INTERNAL_CHANNEL_ID, ts: TS, text: 'main is green' })
+		expect(call.body).toMatchObject({ channel: OTHER_CHANNEL_ID, ts: TS, text: 'rewritten' })
 	})
 
-	it('refuses a draft nobody approved, and changes nothing', async () => {
+	it('applies a draft nobody approved', async () => {
 		const { update, object } = await setupUpdate()
 		const result = await update({ object_id: object.id, ts: TS })
-		expect(result.isError).toBe(true)
-		expect(result.content[0].text).toMatch(/No person has approved/)
-		expect(fetchMock).not.toHaveBeenCalled()
+		expect(result.isError).toBeUndefined()
+		expect(sentToSlack()).toHaveLength(1)
 	})
 
 	it('applies the approved text to the filed channel, once, and records it', async () => {
@@ -327,19 +272,5 @@ describe('slack_update_message approval hold', () => {
 			channel: OTHER_CHANNEL_ID,
 			text: 'Release 4.2 is out (fixed link).',
 		})
-	})
-
-	it('withdraws the approval when the text is edited afterwards', async () => {
-		const { update, object, ws, actorId } = await setupUpdate()
-		await approve(ws.id, actorId, object)
-		await db
-			.update(objects)
-			.set({ content: 'Something nobody approved.' })
-			.where(eq(objects.id, object.id))
-
-		const result = await update({ object_id: object.id, ts: TS })
-		expect(result.isError).toBe(true)
-		expect(result.content[0].text).toMatch(/No person has approved/)
-		expect(fetchMock).not.toHaveBeenCalled()
 	})
 })

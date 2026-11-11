@@ -310,18 +310,10 @@ describe('buildAccessPreamble', () => {
 		expect(MISSING_TOOL_BLOCK.endsWith('\n\n')).toBe(true)
 	})
 
-	it('tells the agent that Gmail still needs a person to approve each email', () => {
+	it('describes a Gmail writer like any other writer, with no approval caveat', () => {
 		const text = buildAccessPreamble([row('gmail', 'read_write')])
-		expect(text).toMatch(
-			/- gmail: Read & write \(all tools, but a person has to approve each email before you send it\)/i,
-		)
-	})
-
-	it('tells a Gmail writer to say drafted for a draft and sent only with a message id', () => {
-		const text = buildAccessPreamble([row('gmail', 'read_write')])
-		expect(text).toContain('report "drafted" for a draft')
-		expect(text).toContain('gmail_send_email returns a message id')
-		expect(buildAccessPreamble([row('gmail', 'read')])).not.toContain('drafted')
+		expect(text).toMatch(/- gmail: Read & write \(all tools\)/i)
+		expect(text).not.toMatch(/approve/i)
 	})
 
 	it('folds several accounts of one provider into one line when they differ', () => {

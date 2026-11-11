@@ -296,18 +296,40 @@ describe('gmail_send_email: who may send', () => {
 	})
 })
 
-describe('gmail_send_email: Read & write still needs a person', () => {
-	it('refuses a direct send, whoever the recipient is, and says how to get it approved', async () => {
+describe('gmail_send_email: Read & write sends, an approval is optional', () => {
+	it('sends a new email with to, subject and body, and records it as a direct send', async () => {
 		const s = await setup({ agentAccess: 'read_write' })
+		fetchMock.mockResolvedValueOnce(gmailOk())
 
 		const res = await post(s.agent.id, s.workspace.id, DIRECT)
 
-		expect(res.status).toBe(403)
-		const text = JSON.stringify(await res.json())
-		expect(text).toContain('approve')
-		expect(text).toContain('decision')
+		expect(res.status).toBe(200)
+		expect(((await res.json()) as { mode: string }).mode).toBe('direct')
+		expect(fetchMock).toHaveBeenCalledOnce()
+		expect(await sendEvents(s.workspace.id, s.gmail.id)).toHaveLength(1)
+	})
+
+	it('refuses the same email a second time within 24 hours', async () => {
+		const s = await setup({ agentAccess: 'read_write' })
+		fetchMock.mockResolvedValue(gmailOk())
+
+		expect((await post(s.agent.id, s.workspace.id, DIRECT)).status).toBe(200)
+		const again = await post(s.agent.id, s.workspace.id, DIRECT)
+
+		expect(again.status).toBe(409)
+		expect(fetchMock).toHaveBeenCalledOnce()
+	})
+
+	it('refuses a mix of to, subject and body with an object_id', async () => {
+		const s = await setup({ agentAccess: 'read_write' })
+
+		const res = await post(s.agent.id, s.workspace.id, {
+			...DIRECT,
+			object_id: crypto.randomUUID(),
+		})
+
+		expect(res.status).toBe(400)
 		expect(fetchMock).not.toHaveBeenCalled()
-		expect(await sendEvents(s.workspace.id, s.gmail.id)).toHaveLength(0)
 	})
 
 	it('still cannot send when nobody has answered the card', async () => {

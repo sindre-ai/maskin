@@ -21,14 +21,3 @@ export const AGENT_ACCESS_EFFECT: Record<AgentAccessLevel, string> = {
 	read: 'read tools only; write tools are refused',
 	read_write: 'all tools',
 }
-
-/**
- * Providers with an irreversible action that always waits for a person's approval, even at
- * `read_write`. Gmail: sending an email, approved on a For You approval card or on the draft.
- * Adding a provider here is a promise that its tool refuses the action until a person has
- * approved it and says how to ask.
- */
-export const APPROVAL_GATED_PROVIDERS: ReadonlySet<string> = new Set(['gmail'])
-
-export const requiresApprovalToAct = (provider: string): boolean =>
-	APPROVAL_GATED_PROVIDERS.has(provider)

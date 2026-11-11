@@ -230,7 +230,7 @@ describe('gmail_send_email: an approved email with a file', () => {
 		expect(fetchMock).not.toHaveBeenCalled()
 	})
 
-	it('withdraws the approval when a file is swapped on the draft', async () => {
+	it('sends the files the draft lists now when a file was swapped after the approval', async () => {
 		const s = await setup('gmail')
 		const a = await fileFor(s)
 		const b = await fileFor(s, { name: 'other.pdf' })
@@ -246,11 +246,13 @@ describe('gmail_send_email: an approved email with a file', () => {
 				},
 			})
 			.where(eq(objects.id, email.id))
+		fetchMock.mockResolvedValueOnce(json({ id: 'sent-1', threadId: 't1' }))
 
 		const res = await post('gmail', s, email.id)
 
-		expect(res.status).toBe(403)
-		expect(fetchMock).not.toHaveBeenCalled()
+		expect(res.status).toBe(200)
+		expect(((await res.json()) as { mode: string }).mode).toBe('direct')
+		expect(sentMime()).toContain('other.pdf')
 	})
 
 	it.each([

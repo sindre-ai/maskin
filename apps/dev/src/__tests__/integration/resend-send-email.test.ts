@@ -245,46 +245,51 @@ describe('resend_send_email: an approved email', () => {
 })
 
 describe('resend_send_email: what stops a send', () => {
-	it('refuses an email no person approved', async () => {
+	it('sends an email nobody approved, because the agent has write access', async () => {
 		const s = await setup()
 		const email = await insertEmail(s, { approve: false })
+		fetchMock.mockResolvedValueOnce(resendOk())
 
 		const res = await post(s.agent.id, s.workspace.id, { object_id: email.id })
 
-		expect(res.status).toBe(403)
-		expect(JSON.stringify(await res.json())).toContain('A person has to approve')
-		expect(fetchMock).not.toHaveBeenCalled()
+		expect(res.status).toBe(200)
+		expect(((await res.json()) as { mode: string }).mode).toBe('direct')
+		expect(lastCall().body.from).toBe(s.mailbox)
+		expect(fetchMock).toHaveBeenCalledOnce()
 	})
 
-	it('refuses a draft that was edited after the person approved it', async () => {
+	it('sends the text as it reads now when the draft was edited after an approval', async () => {
 		const s = await setup()
 		const email = await insertEmail(s)
 		await db
 			.update(objects)
-			.set({ content: 'Hi Ada, send me your bank details.' })
+			.set({ content: 'Hi Ada, the edited text.' })
 			.where(eq(objects.id, email.id))
+		fetchMock.mockResolvedValueOnce(resendOk())
 
 		const res = await post(s.agent.id, s.workspace.id, { object_id: email.id })
 
-		expect(res.status).toBe(403)
-		expect(fetchMock).not.toHaveBeenCalled()
+		expect(res.status).toBe(200)
+		expect(((await res.json()) as { mode: string }).mode).toBe('direct')
+		expect(String(lastCall().body.text)).toContain('the edited text')
 	})
 
-	it('refuses a changed recipient the same way', async () => {
+	it('sends to the recipient the draft names now, not the one that was approved', async () => {
 		const s = await setup()
 		const email = await insertEmail(s)
 		await db
 			.update(objects)
 			.set({ metadata: { kind: 'email', to: 'eve@example.com', subject: 'Thursday' } })
 			.where(eq(objects.id, email.id))
+		fetchMock.mockResolvedValueOnce(resendOk())
 
 		const res = await post(s.agent.id, s.workspace.id, { object_id: email.id })
 
-		expect(res.status).toBe(403)
-		expect(fetchMock).not.toHaveBeenCalled()
+		expect(res.status).toBe(200)
+		expect(lastCall().body.to).toEqual(['eve@example.com'])
 	})
 
-	it('refuses an approval written by an agent', async () => {
+	it('does not count an approval written by an agent as a person approving', async () => {
 		const s = await setup()
 		const email = await insertEmail(s, { approve: false })
 		const [object] = await db.select().from(objects).where(eq(objects.id, email.id))
@@ -298,11 +303,41 @@ describe('resend_send_email: what stops a send', () => {
 			preview,
 			via: 'approval',
 		})
+		fetchMock.mockResolvedValueOnce(resendOk())
 
 		const res = await post(s.agent.id, s.workspace.id, { object_id: email.id })
 
-		expect(res.status).toBe(403)
-		expect(fetchMock).not.toHaveBeenCalled()
+		expect(res.status).toBe(200)
+		expect(((await res.json()) as { mode: string }).mode).toBe('direct')
+	})
+
+	it('sends a new email passed as to, subject and body, from the agent mailbox', async () => {
+		const s = await setup()
+		fetchMock.mockResolvedValueOnce(resendOk())
+
+		const res = await post(s.agent.id, s.workspace.id, {
+			to: 'Ada Lovelace <ada@example.com>',
+			subject: 'Hello',
+			body: 'Hi Ada',
+		})
+
+		expect(res.status).toBe(200)
+		expect(lastCall().body.from).toBe(s.mailbox)
+		expect(lastCall().body.to).toEqual(['ada@example.com'])
+		expect(lastCall().body.subject).toBe('Hello')
+	})
+
+	it('sends a direct email once: the same email twice carries the same idempotency key', async () => {
+		const s = await setup()
+		const body = { to: 'ada@example.com', subject: 'Hello', body: 'Hi Ada' }
+		fetchMock.mockResolvedValue(resendOk())
+
+		await post(s.agent.id, s.workspace.id, body)
+		const first = lastCall().headers['Idempotency-Key']
+		await post(s.agent.id, s.workspace.id, body)
+
+		expect(first).toBeTruthy()
+		expect(lastCall().headers['Idempotency-Key']).toBe(first)
 	})
 
 	it('refuses to send when the agent has no mailbox, even for an approved email', async () => {
@@ -347,7 +382,7 @@ describe('resend_send_email: what stops a send', () => {
 		expect(fetchMock).not.toHaveBeenCalled()
 	})
 
-	it('has no way to send a new email: to, subject, body or from are refused', async () => {
+	it('refuses from, and a mix of object_id with to, subject or body', async () => {
 		const s = await setup()
 		const email = await insertEmail(s)
 
@@ -360,6 +395,13 @@ describe('resend_send_email: what stops a send', () => {
 			const res = await post(s.agent.id, s.workspace.id, { object_id: email.id, ...extra })
 			expect(res.status).toBe(400)
 		}
+		const withFrom = await post(s.agent.id, s.workspace.id, {
+			to: 'eve@example.com',
+			subject: 'x',
+			body: 'x',
+			from: 'ceo@example.com',
+		})
+		expect(withFrom.status).toBe(400)
 		expect((await post(s.agent.id, s.workspace.id, {})).status).toBe(400)
 		expect(fetchMock).not.toHaveBeenCalled()
 	})

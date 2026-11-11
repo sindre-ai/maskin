@@ -160,12 +160,13 @@ An agent may delete another agent only after a person says yes on a decision car
 
 A person deleting an agent from the app is unchanged and needs no approval.
 
-### gmail_send_email: the two approval routes
+### gmail_send_email: three ways to send
 
-1. Preferred: save the email as an object (**metadata.kind** email, **to**, **subject**, optional **cc**, text as **content**), mention the person with create_comment, and call the tool with only **object_id** once they approve. Any edit withdraws the approval. See [drafts.md](./drafts.md).
-2. Older: a comment with a **decision** whose **draft** holds the email (real address in **to**, first line "Subject: ...", then the body), with exactly one destructive send option. After the person picks it, call the tool with only **approval_comment_id**. For several emails on one card use **decision.drafts** and pass each message's **draft_id**.
+1. Send now: pass **to**, **subject** and optional **cc** and **body**. The agent needs Read & write access.
+2. From an object: save the email as an object (**metadata.kind** email, **to**, **subject**, optional **cc**, text as **content**) and call the tool with only **object_id**. A person may review, edit and approve it on the card first; an approval is used when there is one and is not required. Any edit withdraws an approval. See [drafts.md](./drafts.md).
+3. Older: a comment with a **decision** whose **draft** holds the email, with exactly one destructive send option. After the person picks it, call the tool with only **approval_comment_id** (and **draft_id** for a card with several drafts).
 
-Never pass **to**, **subject** or **body**. If the answer says the outcome is unknown, do not send again; check the Sent folder.
+Do not mix the forms. If the answer says the outcome is unknown, do not send again; check the Sent folder.
 
 ### create_loop: steps, status and closing
 

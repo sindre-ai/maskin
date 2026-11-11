@@ -6,21 +6,10 @@ import { buildObjectPreview } from '../../../object-preview'
 import { type SendClosure, recordSendOutcome } from '../../../send-closure'
 
 /**
- * Slack posts that go out without a person's approval: channels on the workspace's allowlist,
- * by Slack id. Everything else (every DM, every customer or shared channel) is held for
- * approval. The list is stored on the Slack connection (`config.slack_direct_post_channels`) and
- * only a human admin or owner can change it. There is no built-in channel: until a list is
- * saved, every post is held for approval, the same as an empty list.
+ * A Slack post or edit goes out when the agent has write access to Slack, like a person's would.
+ * A draft (`metadata.kind = slack_message`) is the way to have a person review, edit and approve
+ * the text first; an approval, when there is one, is used and counted, and is not required.
  */
-
-/** Key on the Slack integration's `config` jsonb that holds the allowlist. */
-export const DIRECT_POST_CHANNELS_CONFIG_KEY = 'slack_direct_post_channels'
-
-/**
- * A public or private channel id. DM ids (D...) and names are rejected on purpose: a DM is
- * always someone's inbox and a name can be re-pointed, so neither is a safe thing to allow.
- */
-export const SLACK_CHANNEL_ID_PATTERN = /^[CG][A-Z0-9]{8,}$/
 
 export const SLACK_MESSAGE_KIND = 'slack_message'
 
@@ -32,46 +21,13 @@ export class SlackSendRefusal extends Error {
 	}
 }
 
-/** The refusal for a call with a channel and text and no approved draft. */
-export const DIRECT_POST_HELD_MESSAGE =
-	'Direct Slack posts are held for a person to approve. Nothing was posted. Save the message as a task whose content is only the exact text, with metadata.kind slack_message and metadata.channel (for example #coach-maskin). Ask a person to approve it with a decision card whose draft.object_id is that task. Once they approve, call slack_send_message again with object_id set to that task. Do not retry with channel and text.'
-
-/** The refusal for an edit with a channel and text and no approved draft. */
-export const DIRECT_EDIT_HELD_MESSAGE =
-	'Editing a Slack message is held for a person to approve, because it changes what people read under the bot name. Nothing was changed. Save the new text as a task whose content is only the exact text, with metadata.kind slack_message and metadata.channel (the channel the message is in). Ask a person to approve it with a decision card whose draft.object_id is that task. Once they approve, call slack_update_message again with object_id set to that task and ts set to the message to edit. Do not retry with channel and text.'
-
 /**
- * The allowlist saved on a Slack integration's config, or undefined when none was ever saved.
- * Anything stored that is not a channel id is dropped, so a hand-edited row cannot widen it.
+ * The draft behind a send, once it is known to be a complete `slack_message` that has not gone
+ * yet. The text and channel come from the object, never from the caller. `approval` is the
+ * person's current yes if there is one (an edit to the text or channel withdraws it); the send
+ * does not need it. A draft that has been sent is refused: one draft, one send.
  */
-export function directPostChannelsFromConfig(config: unknown): string[] | undefined {
-	const stored = (config as Record<string, unknown> | null | undefined)?.[
-		DIRECT_POST_CHANNELS_CONFIG_KEY
-	]
-	if (!Array.isArray(stored)) return undefined
-	return stored.filter(
-		(id): id is string => typeof id === 'string' && SLACK_CHANNEL_ID_PATTERN.test(id),
-	)
-}
-
-/**
- * True when a post to this channel id may go without approval: it is on the saved allowlist.
- * With no list saved, nothing qualifies. A DM id never qualifies.
- */
-export function isDirectPostChannel(channelId: string, configured?: readonly string[]): boolean {
-	if (!SLACK_CHANNEL_ID_PATTERN.test(channelId)) return false
-	return configured?.includes(channelId) ?? false
-}
-
-/**
- * The draft behind an approved send, once it is known to be a complete `slack_message` that a
- * person approved and that has not gone yet. Same checks as the LinkedIn and Gmail send paths:
- *  - the text and channel come from the object, never from the caller, so what goes out is
- *    what the person saw,
- *  - an edit to the text or the channel changes the content hash and withdraws the approval,
- *  - a draft that has been sent is refused: one approval, one send.
- */
-export async function loadApprovedSlackMessage(
+export async function loadSlackMessageDraft(
 	db: Database,
 	params: { workspaceId: string; objectId: string },
 ) {
@@ -107,11 +63,6 @@ export async function loadApprovedSlackMessage(
 		object.id,
 		preview.content_hash,
 	)
-	if (!approval) {
-		throw new SlackSendRefusal(
-			'No person has approved this text. Nothing was posted. Ask them to approve it from the card (an edit needs approving again), then call this again.',
-		)
-	}
 
 	const channel = preview.details.find((d) => d.label === 'Channel')?.value.trim()
 	if (!channel) {

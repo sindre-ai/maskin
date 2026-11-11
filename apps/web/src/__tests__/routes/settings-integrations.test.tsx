@@ -83,9 +83,7 @@ vi.mock('@/hooks/use-integrations', () => ({
 	useSetAgentGrant: () => ({ mutate: vi.fn(), isPending: false }),
 	useRemoveAgentGrant: () => ({ mutate: vi.fn(), isPending: false }),
 	useSetDefaultAgentAccess: () => ({ mutate: vi.fn(), isPending: false }),
-	// The Slack card's direct-post channels have their own tests; here they only have to render.
 	useSlackConversations: () => ({ data: [], isLoading: false, isError: false }),
-	useSetSlackDirectPostChannels: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 /** LinkedIn installs are per-member, so the grouped row resolves who connected

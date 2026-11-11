@@ -204,7 +204,7 @@ describe('linkedin publish_post with workspace file ids', () => {
 	})
 })
 
-describe('linkedin publish_post tool without an approved draft', () => {
+describe('linkedin publish_post tool without an object_id', () => {
 	it('refuses a call that still sends the post text and attachments and posts nothing', async () => {
 		const { actorId, ws, integration } = await setup()
 		const publishPost = stubbedClient()
@@ -235,7 +235,7 @@ describe('linkedin publish_post tool without an approved draft', () => {
 		const text = (result.content as Array<{ text?: string }>).map((c) => c.text ?? '').join('')
 		expect(result.isError).toBe(true)
 		expect(text).toContain('INVALID_INPUT')
-		expect(text).toContain('held for a person')
+		expect(text).toContain('sent from an object that holds it')
 		expect(publishPost).not.toHaveBeenCalled()
 	})
 })

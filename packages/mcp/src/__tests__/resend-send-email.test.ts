@@ -65,9 +65,13 @@ describe('resend_send_email', () => {
 		vi.restoreAllMocks()
 	})
 
-	it('takes only an object id: no recipient, subject, body or sender to pass', () => {
+	it('takes an object id or to, subject and body, and never a sender', () => {
 		expect(Object.keys(tools.resend_send_email.inputSchema.shape).sort()).toEqual([
+			'body',
+			'cc',
 			'object_id',
+			'subject',
+			'to',
 			'workspace_id',
 		])
 	})

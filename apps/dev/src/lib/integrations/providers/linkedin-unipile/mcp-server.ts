@@ -131,24 +131,24 @@ const sendObjectIdSchema = z
 	.uuid()
 	.optional()
 	.describe(
-		'The task or draft this send carries out. Required: a call without it is refused. Once LinkedIn accepts it, the server records the send on the object and moves a task to done, so do not update it yourself. Refused, with nothing sent, until a person has approved the object, again after any edit, and once it was sent.',
+		'The task or draft this send carries out. Required: a call without it is refused. Once LinkedIn accepts it, the server records the send on the object and moves a task to done, so do not update it yourself. Approval from a person is used if the object has one, and is not required: you may send it yourself. Refused, with nothing sent, once it was sent.',
 	)
 
 /**
- * What a caller gets for a send, post or invitation with no `object_id`. Everything LinkedIn
- * sends in a person's name goes out as text a person approved on a card, so there is no
- * direct path.
+ * What a caller gets for a send, post or invitation with no `object_id`. LinkedIn sends carry out
+ * a task or object that holds the text (the same card a person can preview, edit and approve), so
+ * there is one path; the agent files the text and sends it in the same turn.
  */
 function heldForApproval(what: string, kind: string): LinkedInActionRefusal {
 	return new LinkedInActionRefusal(
 		'refused_rule',
 		'INVALID_INPUT',
-		`${what} is held for a person. Put the draft on a task or object (kind ${kind}), ask a person to approve it from the card, then call this again with only object_id. Nothing was sent.`,
+		`${what} is sent from an object that holds it. Create a task or object of kind ${kind} with the text (create_objects), then call this again with only its object_id. Approval from a person is not needed. Nothing was sent.`,
 	)
 }
 
 /**
- * Refuses a call that passes anything but `object_id`: what is sent is what a person approved
+ * Refuses a call that passes anything but `object_id`: what is sent is what the object holds
  * on the object, so a field next to it that would change the send is an error, not ignored.
  */
 function refuseExtraFields(args: Record<string, unknown>, what: string): void {
@@ -242,7 +242,7 @@ export function registerLinkedInMcpInstance(
 			toolName(cfg, 'publish_post'),
 			{
 				description: scopedDescription(
-					'Publish a LinkedIn post a person approved. Pass only object_id: the task or object that holds a linkedin_post draft (the post text and, optionally, attachment_file_ids: workspace file ids of PNG or JPEG files, up to 9, separated by commas). The text and images posted are the ones a person approved on the card, read from the object; it is refused until a person has approved it, again after any edit, and once it has been posted. The server reads the files; never send file bytes. Video and documents are not supported',
+					'Publish a LinkedIn post. Pass only object_id: the task or object that holds a linkedin_post draft (the post text and, optionally, attachment_file_ids: workspace file ids of PNG or JPEG files, up to 9, separated by commas). The text and images posted are the ones a person approved on the card, read from the object; approval from a person is used if there is one and is not required; it is refused once it has been posted. The server reads the files; never send file bytes. Video and documents are not supported',
 					cfg,
 				),
 				// Passthrough so a call that still sends text, images or other fields reaches the handler
@@ -258,7 +258,7 @@ export function registerLinkedInMcpInstance(
 						if (extra.length > 0) {
 							throw new LinkedInIntegrationError(
 								'INVALID_INPUT',
-								`Do not pass ${extra.join(', ')} with object_id: the text and images posted are the approved ones on the object.`,
+								`Do not pass ${extra.join(', ')} with object_id: the text and images posted are the ones on the object.`,
 							)
 						}
 						const published = await publishApprovedLinkedInPost(opCtx, {
@@ -304,7 +304,7 @@ export function registerLinkedInMcpInstance(
 			toolName(cfg, 'comment_on_post'),
 			{
 				description: scopedDescription(
-					'Post a top-level LinkedIn comment a person approved. Pass only object_id: the task or object that holds a linkedin_comment draft (the comment is its text, the post is its post_id). The comment and post are the ones a person approved on the card, read from the object; it is refused until a person has approved it, again after any edit, and once it has been posted. post_id and text are not used, and a call without object_id is refused',
+					'Post a top-level LinkedIn comment. Pass only object_id: the task or object that holds a linkedin_comment draft (the comment is its text, the post is its post_id). The comment and post are read from the object; approval from a person is used if there is one and is not required; it is refused once it has been posted. post_id and text are not used, and a call without object_id is refused',
 					cfg,
 				),
 				// Passthrough so a call that still sends text or a post id reaches the handler and is
@@ -316,7 +316,7 @@ export function registerLinkedInMcpInstance(
 					return await logged('comment_on_post', 'write', undefined, async (rec) => {
 						if (!args.object_id) throw heldForApproval('A comment', 'linkedin_comment')
 						rec.set({ objectId: args.object_id })
-						refuseExtraFields(args, 'the comment and the post are the approved ones on the object.')
+						refuseExtraFields(args, 'the comment and the post are the ones on the object.')
 						const posted = await commentOnApprovedLinkedInPost(opCtx, {
 							object_id: args.object_id,
 							onResolved: (resolved) => rec.set(resolved),
@@ -335,7 +335,7 @@ export function registerLinkedInMcpInstance(
 			toolName(cfg, 'reply_to_comment'),
 			{
 				description: scopedDescription(
-					'Reply to an existing LinkedIn comment, with a reply a person approved. Pass only object_id: the task or object that holds a linkedin_comment_reply draft (the reply is its text; the post is its post_id and the comment answered is its comment_id; reply_to holds the comment text, shown above the draft). The reply and the comment answered are the ones a person approved on the card, read from the object; it is refused until a person has approved it, again after any edit, and once it has been posted. comment_id and text are not used, and a call without object_id is refused',
+					'Reply to an existing LinkedIn comment, with a reply. Pass only object_id: the task or object that holds a linkedin_comment_reply draft (the reply is its text; the post is its post_id and the comment answered is its comment_id; reply_to holds the comment text, shown above the draft). The reply and the comment answered are the ones a person approved on the card, read from the object; approval from a person is used if there is one and is not required; it is refused once it has been posted. comment_id and text are not used, and a call without object_id is refused',
 					cfg,
 				),
 				inputSchema: z.object({ object_id: sendObjectIdSchema }).passthrough(),
@@ -347,7 +347,7 @@ export function registerLinkedInMcpInstance(
 						rec.set({ objectId: args.object_id })
 						refuseExtraFields(
 							args,
-							'the reply and the comment answered are the approved ones on the object.',
+							'the reply and the comment answered are the ones on the object.',
 						)
 						const posted = await replyToApprovedLinkedInComment(opCtx, {
 							object_id: args.object_id,
@@ -367,7 +367,7 @@ export function registerLinkedInMcpInstance(
 			toolName(cfg, 'edit_post'),
 			{
 				description: scopedDescription(
-					'Edit the text of a LinkedIn post this identity already published, to a text a person approved. Pass only object_id: the task or object that holds a linkedin_post_edit draft (the new post text is its text, the post is its post_id). The text and post are the ones a person approved on the card, read from the object; it is refused until a person has approved it, again after any edit, and once it has been applied. post_id, text and can_comment are not used (who may comment cannot be changed here), and a call without object_id is refused. Does NOT accept attachments: LinkedIn only allows a text edit (attachments are frozen at publish time). Fails with POST_NOT_FOUND if this identity is not the post author. LinkedIn shows an "edited" marker on the post after this call',
+					'Edit the text of a LinkedIn post this identity already published, to a new text. Pass only object_id: the task or object that holds a linkedin_post_edit draft (the new post text is its text, the post is its post_id). The text and post are the ones a person approved on the card, read from the object; approval from a person is used if there is one and is not required; it is refused once it has been applied. post_id, text and can_comment are not used (who may comment cannot be changed here), and a call without object_id is refused. Does NOT accept attachments: LinkedIn only allows a text edit (attachments are frozen at publish time). Fails with POST_NOT_FOUND if this identity is not the post author. LinkedIn shows an "edited" marker on the post after this call',
 					cfg,
 				),
 				inputSchema: z.object({ object_id: sendObjectIdSchema }).passthrough(),
@@ -379,10 +379,7 @@ export function registerLinkedInMcpInstance(
 					return await logged('edit_post', 'write', undefined, async (rec) => {
 						if (!args.object_id) throw heldForApproval('A post edit', 'linkedin_post_edit')
 						rec.set({ objectId: args.object_id })
-						refuseExtraFields(
-							args,
-							'the new text and the post are the approved ones on the object.',
-						)
+						refuseExtraFields(args, 'the new text and the post are the ones on the object.')
 						const edited = await editApprovedLinkedInPost(opCtx, {
 							object_id: args.object_id,
 							onResolved: (resolved) => rec.set(resolved),
@@ -450,7 +447,7 @@ export function registerLinkedInMcpInstance(
 			toolName(cfg, 'send_message'),
 			{
 				description: scopedDescription(
-					'Send a LinkedIn direct message a person approved. Pass only object_id (the task or object that holds the draft): the text sent is the approved text read from the object, and it is refused until a person has approved it. The recipient (recipient_provider_id) and an optional file (attachment_file_id) are filed on the object, and a message with a thread_id on the object goes into that conversation. recipient_urn, body and idempotency_key are not used, and a call without object_id is refused',
+					'Send a LinkedIn direct message. Pass only object_id (the task or object that holds the draft): the text sent is the text read from the object, and approval from a person is not required. The recipient (recipient_provider_id) and an optional file (attachment_file_id) are filed on the object, and a message with a thread_id on the object goes into that conversation. recipient_urn, body and idempotency_key are not used, and a call without object_id is refused',
 					cfg,
 				),
 				// Passthrough so a call that still sends the removed `attachments` reaches the handler and
@@ -475,7 +472,7 @@ export function registerLinkedInMcpInstance(
 						if (args.body !== undefined || args.recipient_urn !== undefined) {
 							throw new LinkedInIntegrationError(
 								'INVALID_INPUT',
-								'Do not pass body or recipient_urn with object_id: the text and the recipient sent are the ones on the approved object.',
+								'Do not pass body or recipient_urn with object_id: the text and the recipient sent are the ones on the object.',
 							)
 						}
 						const sent = await sendApprovedLinkedInObject(opCtx, {
@@ -496,7 +493,7 @@ export function registerLinkedInMcpInstance(
 			toolName(cfg, 'reply'),
 			{
 				description: scopedDescription(
-					'Reply in an existing LinkedIn conversation thread with a draft a person approved. Pass object_id (the task or object that holds the draft): the text sent is the approved text read from the object, and it is refused until a person has approved it. thread_id is optional when the object has metadata.thread_id. body, in_reply_to_message_id and idempotency_key are not used, and a call without object_id is refused',
+					'Reply in an existing LinkedIn conversation thread with a draft. Pass object_id (the task or object that holds the draft): the text sent is the text read from the object, and approval from a person is not required. thread_id is optional when the object has metadata.thread_id. body, in_reply_to_message_id and idempotency_key are not used, and a call without object_id is refused',
 					cfg,
 				),
 				inputSchema: {
@@ -528,7 +525,7 @@ export function registerLinkedInMcpInstance(
 						if (args.body !== undefined) {
 							throw new LinkedInIntegrationError(
 								'INVALID_INPUT',
-								'Do not pass body with object_id: the text sent is the approved text on the object.',
+								'Do not pass body with object_id: the text sent is the text on the object.',
 							)
 						}
 						const sent = await sendApprovedLinkedInObject(opCtx, {
@@ -712,7 +709,7 @@ export function registerLinkedInMcpInstance(
 			toolName(cfg, 'send_connection_request'),
 			{
 				description: scopedDescription(
-					'Send a LinkedIn connection invitation a person approved. Pass only object_id: the task or object that holds a linkedin_connection_request draft (the note is its text, the person is its recipient_provider_id). The note and person are the ones a person approved on the card, read from the object; it is refused until a person has approved it, again after any edit, and once it has been sent. user_id and message are not used, and a call without object_id is refused',
+					'Send a LinkedIn connection invitation. Pass only object_id: the task or object that holds a linkedin_connection_request draft (the note is its text, the person is its recipient_provider_id). The note and person are the ones a person approved on the card, read from the object; approval from a person is used if there is one and is not required; it is refused once it has been sent. user_id and message are not used, and a call without object_id is refused',
 					cfg,
 				),
 				inputSchema: {
@@ -731,7 +728,7 @@ export function registerLinkedInMcpInstance(
 						if (args.user_id !== undefined || args.message !== undefined) {
 							throw new LinkedInIntegrationError(
 								'INVALID_INPUT',
-								'Do not pass user_id or message with object_id: the person and the note sent are the ones on the approved object.',
+								'Do not pass user_id or message with object_id: the person and the note sent are the ones on the object.',
 							)
 						}
 						const sent = await sendApprovedLinkedInConnectionRequest(opCtx, {
@@ -907,7 +904,7 @@ export function registerLinkedInMcpInstance(
 			toolName(cfg, 'send_inmail'),
 			{
 				description: scopedDescription(
-					'Send a LinkedIn InMail to someone you are not connected to, spending exactly one InMail credit. Pass only object_id: the task or object that holds a linkedin_inmail draft (recipient_provider_id, body of at most 1900 characters, no subject, optional attachment_file_id). The text, recipient and file sent are the ones a person approved on the card, read from the object; it is refused until a person has approved it, again after any edit, and once it has been sent. Refused with nothing sent when the recipient is already a 1st-degree connection (use send_message), when classic credits are 2 or fewer (LINKEDIN_INMAIL_UNAVAILABLE: stop drafting InMails for this account and use another channel; check get_inmail_balance first), or after 5 InMails in a rolling 24 hours (RATE_LIMITED_LINKEDIN). Returns message_id, chat_id, sent_at, credits_before and credits_after.',
+					'Send a LinkedIn InMail to someone you are not connected to, spending exactly one InMail credit. Pass only object_id: the task or object that holds a linkedin_inmail draft (recipient_provider_id, body of at most 1900 characters, no subject, optional attachment_file_id). The text, recipient and file sent are the ones a person approved on the card, read from the object; approval from a person is used if there is one and is not required; it is refused once it has been sent. Refused with nothing sent when the recipient is already a 1st-degree connection (use send_message), when classic credits are 2 or fewer (LINKEDIN_INMAIL_UNAVAILABLE: stop drafting InMails for this account and use another channel; check get_inmail_balance first), or after 5 InMails in a rolling 24 hours (RATE_LIMITED_LINKEDIN). Returns message_id, chat_id, sent_at, credits_before and credits_after.',
 					cfg,
 				),
 				inputSchema: { object_id: z.string().uuid() },

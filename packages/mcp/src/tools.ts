@@ -2467,7 +2467,7 @@ export const tools = {
 	},
 	gmail_send_email: {
 		description:
-			'Send an email from the workspace\'s connected Gmail account. Sending cannot be undone and is never retried. It needs "Read & write" access to Gmail AND a person\'s approval of that exact email; with "Read" or no access you cannot send. PREFERRED: keep the email as an object. create_objects with `metadata: { kind: "email", to: "Mette Holm <mette@northwind.dk>", subject: "...", cc: "..." }` and the email text as `content`, then mention the person with create_comment (no `decision` needed). They approve the exact text from the preview; any edit withdraws the approval. To attach files, save each as a workspace file (create_file) and list the ids in `metadata.attachment_file_ids` (max 5 files, 20 MB total); changing the list withdraws the approval. Then call this tool with only `object_id`: it sends the object as it reads now, once. If it is refused because no one approved it, end your turn; you will be woken after approval. Older route: a comment with `decision` whose `draft` holds the email (real address in `to`, first line "Subject: ...", then the body) and exactly one destructive send option; once the person chose it, call this tool with only `approval_comment_id` (plus `draft_id` when the card holds several drafts in `decision.drafts`). Never pass `to`, `subject` or `body`: a new email cannot be sent directly. If the answer says the outcome is unknown, do not send again: tell the person to check the Sent folder. Details: docs/reference/drafts.md.',
+			'Send an email from the workspace\'s connected Gmail account. Sending cannot be undone and is never retried. It needs "Read & write" access to Gmail; with "Read" or no access you cannot send. With write access you send like a colleague would: pass `to`, `subject` and `body` and it goes out now. To let a person review or edit first (or when they asked to), keep the email as an object instead: create_objects with `metadata: { kind: "email", to: "Mette Holm <mette@northwind.dk>", subject: "...", cc: "..." }` and the email text as `content`, then mention the person with create_comment (no `decision` needed). They can edit the text on the preview card and approve it; any edit withdraws the approval. To attach files, save each as a workspace file (create_file) and list the ids in `metadata.attachment_file_ids` (max 5 files, 20 MB total). Then call this tool with only `object_id`: it sends the object as it reads now, once, with or without a person\'s approval. Older route: after a person chose the send option on a `decision` card, pass only `approval_comment_id` (plus `draft_id` for a card with several `decision.drafts`). Pass either `to`, `subject` and `body`, or `object_id`, or `approval_comment_id`, not a mix. The same email is refused twice in 24 hours. If the answer says the outcome is unknown, do not send again: tell the person to check the Sent folder. Details: docs/reference/drafts.md.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			to: z
@@ -2529,15 +2529,23 @@ export const tools = {
 	},
 	resend_send_email: {
 		description:
-			'Send an email from your own maskin.io mailbox through Resend. Sending cannot be undone. Resend\'s own send tools are not available to you: this is the only way an email goes out, and nothing is sent until a person has approved that exact email. Keep the email as an object: create_objects with `metadata: { kind: "email", to: "Mette Holm <mette@northwind.dk>", subject: "...", cc: "..." }` and the email text as `content` (relate it to the contact or bet it concerns), then mention the person with create_comment (no `decision` needed). The object shows as a preview with an Approve button in For You and in chat. A person approves exactly the text they see, and any edit withdraws the approval. To send files, save each as a workspace file (create_file) and list the ids in `metadata.attachment_file_ids` (at most 5 files, 20 MB in total); changing the list withdraws the approval. Call this tool with only `object_id`: it sends the object as it reads now, once, if a person approved it. If it is refused because no one approved it, end your turn; the person will approve it and you will be woken. The sender is your own mailbox, set by a workspace admin, and cannot be passed: if none is recorded the send is refused. Never pass `to`, `subject`, `body` or `from`. If the answer says the outcome is unclear, calling again with the same object_id is safe: Resend ignores a repeat of the same approval.',
+			'Send an email from your own maskin.io mailbox through Resend. Sending cannot be undone. Resend\'s own send tools are not available to you: this is the way an email goes out. It needs "Read & write" access to Resend. Pass `to`, `subject` and `body` (and optionally `cc`) and it goes out now. To let a person review or edit first, keep the email as an object: create_objects with `metadata: { kind: "email", to: "Mette Holm <mette@northwind.dk>", subject: "...", cc: "..." }` and the email text as `content`, then mention the person with create_comment (no `decision` needed). They can edit the text on the preview card and approve it; any edit withdraws the approval. To send files, save each as a workspace file (create_file) and list the ids in `metadata.attachment_file_ids` (at most 5 files, 20 MB in total). Call this tool with only `object_id` to send the object as it reads now, once, with or without approval. The sender is your own mailbox, set by a workspace admin, and cannot be passed: if none is recorded the send is refused. Never pass `from`. If the answer says the outcome is unclear, calling again with the same arguments is safe: Resend ignores a repeat of the same email.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			object_id: z
 				.string()
 				.uuid()
 				.describe(
-					'The email object to send (metadata.kind "email"). Sends it exactly as it reads now, if a person approved it.',
-				),
+					'The email object to send (metadata.kind "email"). Sends it exactly as it reads now. Use alone, or pass to, subject and body instead.',
+				)
+				.optional(),
+			to: z
+				.string()
+				.optional()
+				.describe('Recipient address, or several separated by commas. Not used with object_id.'),
+			cc: z.string().optional().describe('Cc addresses, comma separated. Not used with object_id.'),
+			subject: z.string().optional().describe('Subject line. Not used with object_id.'),
+			body: z.string().optional().describe('The email text, plain text. Not used with object_id.'),
 		}),
 	},
 	approve_draft_from_chat: {

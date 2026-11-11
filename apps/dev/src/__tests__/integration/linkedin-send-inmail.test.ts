@@ -200,21 +200,20 @@ describe('send_inmail', () => {
 		expect(JSON.stringify(row)).not.toContain('analytical engines')
 	})
 
-	it('refuses an InMail nobody approved, and sends nothing', async () => {
+	it('sends an InMail nobody approved, and logs the call with no approval id', async () => {
 		const stub = stubClient()
 		const c = await connect()
 		const object = await inmailDraft(c)
 
 		const result = await sendInmail(c, object.id)
 
-		expect(result.isError).toBe(true)
-		expect(text(result)).toContain('No person has approved')
-		expect(stub.sendMessage).not.toHaveBeenCalled()
-		expect(stub.getProfile).not.toHaveBeenCalled()
-		expect(stub.getInmailCredits).not.toHaveBeenCalled()
+		expect(result.isError).toBeFalsy()
+		expect(stub.sendMessage).toHaveBeenCalledTimes(1)
+		const [row] = await rowsFor(c.integrationId)
+		expect(row.approvalId).toBeFalsy()
 	})
 
-	it('refuses after the text is edited, until a person approves again', async () => {
+	it('sends the text as it reads now when it was edited after an approval', async () => {
 		const stub = stubClient()
 		const c = await connect()
 		const object = await inmailDraft(c)
@@ -226,12 +225,13 @@ describe('send_inmail', () => {
 
 		const result = await sendInmail(c, object.id)
 
-		expect(result.isError).toBe(true)
-		expect(text(result)).toContain('No person has approved')
-		expect(stub.sendMessage).not.toHaveBeenCalled()
+		expect(result.isError).toBeFalsy()
+		expect(stub.sendMessage).toHaveBeenCalledWith(
+			expect.objectContaining({ body: 'Hi Ada, different text now.' }),
+		)
 	})
 
-	it('refuses when the recipient is edited after approval', async () => {
+	it('sends to the recipient the draft names now when it was edited after an approval', async () => {
 		const stub = stubClient()
 		const c = await connect()
 		const object = await inmailDraft(c)
@@ -241,8 +241,8 @@ describe('send_inmail', () => {
 
 		const result = await sendInmail(c, object.id)
 
-		expect(result.isError).toBe(true)
-		expect(stub.sendMessage).not.toHaveBeenCalled()
+		expect(result.isError).toBeFalsy()
+		expect(stub.sendMessage).toHaveBeenCalledTimes(1)
 	})
 
 	it('refuses a 1st-degree connection with INVALID_INPUT and spends no credit', async () => {

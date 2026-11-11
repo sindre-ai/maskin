@@ -171,12 +171,19 @@ describe('object email drafts', () => {
 		expect(res.status).toBe(409)
 	})
 
-	it('does not send an unapproved draft, and sends it once a person approves it', async () => {
-		const s = await setup('read_write')
-		const refused = await sendDraft(s.agent.id, s.workspace.id, s.draft.id)
-		expect(refused.status).toBe(403)
-		expect(fetchMock).not.toHaveBeenCalled()
+	it('sends a draft nobody approved, and sends the approved one as approved', async () => {
+		const unapproved = await setup('read_write')
+		fetchMock.mockResolvedValueOnce(gmailOk('m0'))
+		const direct = await sendDraft(
+			unapproved.agent.id,
+			unapproved.workspace.id,
+			unapproved.draft.id,
+		)
+		expect(direct.status).toBe(200)
+		expect(await direct.json()).toMatchObject({ message_id: 'm0', mode: 'direct' })
+		fetchMock.mockReset()
 
+		const s = await setup('read_write')
 		const shown = await previewOf(s)
 		expect((await approve(s.human, s.workspace.id, s.draft.id, shown.content_hash)).status).toBe(
 			200,
@@ -206,16 +213,17 @@ describe('object email drafts', () => {
 		expect(fetchMock).toHaveBeenCalledTimes(1)
 	})
 
-	it('withdraws the approval when the text is edited afterwards', async () => {
+	it('withdraws the approval when the text is edited afterwards, and the edited text still sends', async () => {
 		const s = await setup('read_write')
 		await approve(s.human, s.workspace.id, s.draft.id)
 		await db.execute(
 			`update objects set content = 'Hi Ada, how about Friday?' where id = '${s.draft.id}'` as never,
 		)
 		expect((await previewOf(s)).delivery?.state).toBe('draft')
+		fetchMock.mockResolvedValueOnce(gmailOk())
 		const res = await sendDraft(s.agent.id, s.workspace.id, s.draft.id)
-		expect(res.status).toBe(403)
-		expect(fetchMock).not.toHaveBeenCalled()
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({ mode: 'direct' })
 	})
 
 	it('refuses to send an object that is not an email draft', async () => {
@@ -320,7 +328,9 @@ describe('approving by answering a decision card', () => {
 		expect((await reply(s, card, 'Send it', { as: 'agent' })).status).toBe(201)
 		expect((await reply(s, card, 'Send it', { source: 'mcp' })).status).toBe(201)
 		expect(await approvals(s.draft.id)).toHaveLength(0)
-		expect((await sendDraft(s.agent.id, s.workspace.id, s.draft.id)).status).toBe(403)
+		fetchMock.mockResolvedValueOnce(gmailOk())
+		const sent = await sendDraft(s.agent.id, s.workspace.id, s.draft.id)
+		expect(await sent.json()).toMatchObject({ mode: 'direct' })
 	})
 
 	it('does not add a second approval when the Approve call already recorded one', async () => {

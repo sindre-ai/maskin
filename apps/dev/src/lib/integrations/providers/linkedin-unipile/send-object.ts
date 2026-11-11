@@ -54,7 +54,7 @@ export async function sendApprovedLinkedInObject(
 		 * Called once the draft is approved and its recipient is known, before anything is sent. The
 		 * action log uses it to record who the message goes to and which approval released it.
 		 */
-		onResolved?: (resolved: { targetProviderId?: string; approvalId: string }) => void
+		onResolved?: (resolved: { targetProviderId?: string; approvalId?: string }) => void
 		/**
 		 * Set only by `send_inmail`. Gets the classic credits right before and after the send, for
 		 * the action log.
@@ -119,12 +119,7 @@ export async function sendApprovedLinkedInObject(
 		object.id,
 		preview.content_hash,
 	)
-	if (!approval) {
-		throw new LinkedInIntegrationError(
-			'INVALID_INPUT',
-			'No person has approved this text. Do not send. Ask them to approve it from the card (an edit needs approving again), then call this again.',
-		)
-	}
+	// A person's approval is optional: the agent has write access. When there is one it is used.
 
 	const filed = (object.metadata ?? {}) as Record<string, unknown>
 	// An InMail always opens a new chat, so a conversation on the object or the call is ignored.
@@ -139,7 +134,7 @@ export async function sendApprovedLinkedInObject(
 
 	input.onResolved?.({
 		targetProviderId: threadId ? undefined : recipient,
-		approvalId: String(approval.id),
+		approvalId: approval ? String(approval.id) : undefined,
 	})
 
 	const fileId = optionalString(filed.attachment_file_id)
@@ -147,7 +142,7 @@ export async function sendApprovedLinkedInObject(
 		? [
 				await loadApprovedAttachment(
 					{ db: ctx.db, storage: ctx.storage },
-					{ workspaceId: ctx.workspaceId, fileId, approvedAt: approval.createdAt },
+					{ workspaceId: ctx.workspaceId, fileId, approvedAt: approval?.createdAt ?? new Date() },
 				),
 			]
 		: undefined
@@ -159,7 +154,7 @@ export async function sendApprovedLinkedInObject(
 			{
 				recipient_urn: recipient,
 				body: preview.body,
-				idempotency_key: `inmail-${object.id}-${approval.id}`,
+				idempotency_key: `inmail-${object.id}-${approval?.id ?? preview.content_hash}`,
 			},
 			{ attachments },
 		)
@@ -185,7 +180,7 @@ export async function sendApprovedLinkedInObject(
 	}
 
 	// The key an approval's send is claimed under. The events work guards double sends on it.
-	const idempotencyKey = `object-${object.id}-${approval.id}`
+	const idempotencyKey = `object-${object.id}-${approval?.id ?? preview.content_hash}`
 	const body = { body: preview.body, idempotency_key: idempotencyKey }
 	const sent = threadId
 		? await replyToLinkedInThread(ctx, { thread_id: threadId, ...body }, { attachments })
@@ -253,12 +248,7 @@ async function loadApprovedDraft(
 		object.id,
 		preview.content_hash,
 	)
-	if (!approval) {
-		throw new LinkedInIntegrationError(
-			'INVALID_INPUT',
-			'No person has approved this text. Do not send. Ask them to approve it from the card (an edit needs approving again), then call this again.',
-		)
-	}
+	// A person's approval is optional: the agent has write access. When there is one it is used.
 	return { object, preview, approval, filed: (object.metadata ?? {}) as Record<string, unknown> }
 }
 
@@ -274,7 +264,7 @@ export async function sendApprovedLinkedInConnectionRequest(
 	ctx: LinkedInOperationContext,
 	input: {
 		object_id: string
-		onResolved?: (resolved: { targetProviderId: string; approvalId: string }) => void
+		onResolved?: (resolved: { targetProviderId: string; approvalId?: string }) => void
 		beforeSend?: (targetProviderId: string) => Promise<void>
 	},
 ): Promise<{
@@ -294,7 +284,10 @@ export async function sendApprovedLinkedInConnectionRequest(
 			'A recipient is required: file recipient_provider_id on the object.',
 		)
 	}
-	input.onResolved?.({ targetProviderId: recipient, approvalId: String(approval.id) })
+	input.onResolved?.({
+		targetProviderId: recipient,
+		approvalId: approval ? String(approval.id) : undefined,
+	})
 	await input.beforeSend?.(recipient)
 
 	const sent = await sendLinkedInConnectionRequest(ctx, {
@@ -326,7 +319,7 @@ export async function publishApprovedLinkedInPost(
 	ctx: LinkedInOperationContext,
 	input: {
 		object_id: string
-		onResolved?: (resolved: { approvalId: string }) => void
+		onResolved?: (resolved: { approvalId?: string }) => void
 	},
 ): Promise<PublishPostResult & { replayed: boolean; object: { id: string } & SendClosure }> {
 	const { object, preview, approval, filed } = await loadApprovedDraft(ctx, input.object_id, {
@@ -344,14 +337,18 @@ export async function publishApprovedLinkedInPost(
 			.limit(1)
 		// A file that is not here fails in the post itself, with its id. An approval with no
 		// time cannot show the file is unchanged, so it does not pass.
-		if (file && (!approval.createdAt || file.updatedAt.getTime() > approval.createdAt.getTime())) {
+		if (
+			file &&
+			approval &&
+			(!approval.createdAt || file.updatedAt.getTime() > approval.createdAt.getTime())
+		) {
 			throw new LinkedInIntegrationError(
 				'INVALID_INPUT',
 				`File ${fileId} changed after it was approved. Ask a person to approve it again.`,
 			)
 		}
 	}
-	input.onResolved?.({ approvalId: String(approval.id) })
+	input.onResolved?.({ approvalId: approval ? String(approval.id) : undefined })
 
 	const published = await publishLinkedInPost(ctx, {
 		text: preview.body,
@@ -377,7 +374,7 @@ export async function commentOnApprovedLinkedInPost(
 	ctx: LinkedInOperationContext,
 	input: {
 		object_id: string
-		onResolved?: (resolved: { approvalId: string }) => void
+		onResolved?: (resolved: { approvalId?: string }) => void
 	},
 ): Promise<CommentResult & { replayed: boolean; object: { id: string } & SendClosure }> {
 	const { object, preview, approval, filed } = await loadApprovedDraft(ctx, input.object_id, {
@@ -391,7 +388,7 @@ export async function commentOnApprovedLinkedInPost(
 			'A post is required: file post_id on the object.',
 		)
 	}
-	input.onResolved?.({ approvalId: String(approval.id) })
+	input.onResolved?.({ approvalId: approval ? String(approval.id) : undefined })
 
 	const posted = await commentOnLinkedInPost(ctx, { post_id: postId, text: preview.body })
 	const outcome = await recordSendOutcome(ctx.db, {
@@ -415,7 +412,7 @@ export async function replyToApprovedLinkedInComment(
 	ctx: LinkedInOperationContext,
 	input: {
 		object_id: string
-		onResolved?: (resolved: { approvalId: string }) => void
+		onResolved?: (resolved: { approvalId?: string }) => void
 	},
 ): Promise<CommentResult & { replayed: boolean; object: { id: string } & SendClosure }> {
 	const { object, preview, approval, filed } = await loadApprovedDraft(ctx, input.object_id, {
@@ -429,7 +426,7 @@ export async function replyToApprovedLinkedInComment(
 			'A post and a comment are required: file post_id and comment_id on the object.',
 		)
 	}
-	input.onResolved?.({ approvalId: String(approval.id) })
+	input.onResolved?.({ approvalId: approval ? String(approval.id) : undefined })
 
 	const posted = await replyToLinkedInComment(ctx, { comment_id: commentId, text: preview.body })
 	const outcome = await recordSendOutcome(ctx.db, {
@@ -456,7 +453,7 @@ export async function editApprovedLinkedInPost(
 	ctx: LinkedInOperationContext,
 	input: {
 		object_id: string
-		onResolved?: (resolved: { approvalId: string }) => void
+		onResolved?: (resolved: { approvalId?: string }) => void
 	},
 ): Promise<EditPostResult & { replayed: boolean; object: { id: string } & SendClosure }> {
 	const { object, preview, approval, filed } = await loadApprovedDraft(ctx, input.object_id, {
@@ -470,7 +467,7 @@ export async function editApprovedLinkedInPost(
 			'A post is required: file post_id on the object.',
 		)
 	}
-	input.onResolved?.({ approvalId: String(approval.id) })
+	input.onResolved?.({ approvalId: approval ? String(approval.id) : undefined })
 
 	const edited = await editLinkedInPost(ctx, { post_id: postId, text: preview.body })
 	const outcome = await recordSendOutcome(ctx.db, {

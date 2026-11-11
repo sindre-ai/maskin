@@ -217,7 +217,6 @@ describe('approve_draft_from_chat: a person said yes in the chat', () => {
 		expect(res.status).toBe(403)
 		expect(await errorOf(res)).toMatch(/not written by a person/)
 		expect(await approvals(s)).toHaveLength(0)
-		expect((await send(s, s.email.id)).status).toBe(403)
 		expect(fetchMock).not.toHaveBeenCalled()
 	})
 
@@ -373,8 +372,16 @@ describe('approve_draft_from_chat: a person said yes in the chat', () => {
 			.set({ content: 'Hi Ada,\n\nFriday instead.' })
 			.where(eq(objects.id, s.email.id))
 
+		// The approval is withdrawn, but the agent has write access and may still send the edited text.
+		expect((await approvals(s)).length).toBeGreaterThan(0)
+		fetchMock.mockResolvedValueOnce(
+			new Response(JSON.stringify({ id: 'sent-1', threadId: 't1' }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' },
+			}),
+		)
 		const res = await send(s, s.email.id)
-		expect(res.status).toBe(403)
-		expect(fetchMock).not.toHaveBeenCalled()
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({ mode: 'direct' })
 	})
 })

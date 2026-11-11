@@ -151,13 +151,12 @@ async function approve(wsId: string, actorId: string, object: typeof objects.$in
 }
 
 describe('sendApprovedLinkedInObject', () => {
-	it('refuses to send a draft nobody approved, and sends nothing', async () => {
+	it('sends a draft nobody approved, because the agent has write access', async () => {
 		const reply = stubbedClient()
 		const { ctx, object } = await setup()
-		await expect(sendApprovedLinkedInObject(ctx, { object_id: object.id })).rejects.toThrow(
-			/No person has approved/,
-		)
-		expect(reply).not.toHaveBeenCalled()
+		const sent = await sendApprovedLinkedInObject(ctx, { object_id: object.id })
+		expect(sent.message_id).toBe('msg-1')
+		expect(reply).toHaveBeenCalledTimes(1)
 	})
 
 	it('sends the approved text into the filed conversation and records the delivery', async () => {
@@ -204,7 +203,7 @@ describe('sendApprovedLinkedInObject', () => {
 		expect(reply).toHaveBeenCalledTimes(1)
 	})
 
-	it('withdraws the approval when the text is edited afterwards', async () => {
+	it('sends the text as it reads now when it was edited after an approval', async () => {
 		const reply = stubbedClient()
 		const { ctx, ws, actorId, object } = await setup()
 		await approve(ws.id, actorId, object)
@@ -212,21 +211,22 @@ describe('sendApprovedLinkedInObject', () => {
 			.update(objects)
 			.set({ content: 'Thanks Liz, different text now.' })
 			.where(eq(objects.id, object.id))
-		await expect(sendApprovedLinkedInObject(ctx, { object_id: object.id })).rejects.toThrow(
-			/No person has approved/,
+		await sendApprovedLinkedInObject(ctx, { object_id: object.id })
+		expect(reply).toHaveBeenCalledWith(
+			expect.objectContaining({ body: 'Thanks Liz, different text now.' }),
 		)
-		expect(reply).not.toHaveBeenCalled()
 	})
 
-	it('does not count an agent saying yes', async () => {
+	it('sends once whether or not an agent said yes', async () => {
 		const reply = stubbedClient()
 		const { ctx, ws, object } = await setup()
 		const agent = await insertActor(db, { type: 'agent', email: null })
 		await approve(ws.id, agent.id, object)
+		await sendApprovedLinkedInObject(ctx, { object_id: object.id })
 		await expect(sendApprovedLinkedInObject(ctx, { object_id: object.id })).rejects.toThrow(
-			/No person has approved/,
+			/already been sent/,
 		)
-		expect(reply).not.toHaveBeenCalled()
+		expect(reply).toHaveBeenCalledTimes(1)
 	})
 
 	it('needs a conversation, from the object or the caller', async () => {
@@ -313,16 +313,15 @@ describe('sendApprovedLinkedInObject with a file', () => {
 		])
 	})
 
-	it('refuses a file nobody approved, and sends nothing', async () => {
+	it('sends the file of a message nobody approved', async () => {
 		const reply = stubbedClient()
 		const { ctx, object } = await withFile()
-		await expect(sendApprovedLinkedInObject(ctx, { object_id: object.id })).rejects.toThrow(
-			/No person has approved/,
-		)
-		expect(reply).not.toHaveBeenCalled()
+		await sendApprovedLinkedInObject(ctx, { object_id: object.id })
+		const payload = reply.mock.calls[0]?.[0] as { attachments: Array<Record<string, string>> }
+		expect(payload.attachments).toHaveLength(1)
 	})
 
-	it('withdraws the approval when the file is swapped for another', async () => {
+	it('sends the file the message lists now when it was swapped after the approval', async () => {
 		const reply = stubbedClient()
 		const { ctx, ws, actorId, object, store } = await withFile()
 		await approve(ws.id, actorId, object)
@@ -331,10 +330,9 @@ describe('sendApprovedLinkedInObject with a file', () => {
 			.update(objects)
 			.set({ metadata: { ...(object.metadata as object), attachment_file_id: other.id } })
 			.where(eq(objects.id, object.id))
-		await expect(sendApprovedLinkedInObject(ctx, { object_id: object.id })).rejects.toThrow(
-			/No person has approved/,
-		)
-		expect(reply).not.toHaveBeenCalled()
+		await sendApprovedLinkedInObject(ctx, { object_id: object.id })
+		const payload = reply.mock.calls[0]?.[0] as { attachments: Array<Record<string, string>> }
+		expect(payload.attachments[0]?.filename).toBe('other.pdf')
 	})
 
 	it('refuses a file that changed after the approval', async () => {

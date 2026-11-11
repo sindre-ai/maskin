@@ -14,6 +14,7 @@ import { canWrite, resolveAgentAccess } from '../lib/integrations/agent-access'
 import { IntegrationAuthRevokedError, ScopeDeniedError } from '../lib/integrations/errors'
 import { getIntegrationCredential } from '../lib/integrations/lookup'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
+import { contentHash } from '../lib/integrations/providers/gmail/approval-hash'
 import { GmailSendError, parseRecipients } from '../lib/integrations/providers/gmail/send'
 import { readAgentMailbox } from '../lib/integrations/providers/resend/mailbox'
 import { ResendSendError, sendResendEmail } from '../lib/integrations/providers/resend/send'
@@ -38,14 +39,15 @@ import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
  * tool, the way `gmail_send_email` is behind Gmail (routes/integrations-gmail.ts), with the
  * same rules:
  *
- *  - Needs "Read & write" on Resend AND a person's approval of this exact email. The only
- *    input is `object_id`: the email is read from the object (`metadata.kind = "email"`), so
- *    nothing the agent passes can change what goes out.
- *  - Any edit to the recipients, subject or text withdraws the approval (it is bound to the
+ *  - Needs "Read & write" on Resend. The agent sends straight away with `to`, `subject` and
+ *    `body`, or from an email object (`object_id`, `metadata.kind = "email"`). A person's
+ *    approval is optional: when the object carries one it is used and counted.
+ *  - Any edit to the recipients, subject or text withdraws an approval (it is bound to the
  *    content hash), and one approval sends once.
  *  - The sender is the agent's own mailbox, read on the server (mailbox.ts), never from the
  *    call. An agent with no mailbox cannot send.
- *  - The approval's id is the Resend idempotency key, so a retry cannot deliver twice.
+ *  - The approval's id (or, with none, the content hash) is the Resend idempotency key, so a
+ *    retry cannot deliver twice.
  *
  * The Resend MCP's own send tools are held at the gateway (tool-kinds.ts), so this is the
  * one way an agent's email leaves.
@@ -62,18 +64,32 @@ const app = new OpenAPIHono<{
 const TOOL_NAME = 'resend_send_email'
 
 const sendBodySchema = z
-	.object({ object_id: z.string().uuid() })
-	// A to, subject or body here would be an email nobody approved: refuse instead of ignoring.
+	.object({
+		object_id: z.string().uuid().optional(),
+		to: z.string().min(1).max(2000).optional(),
+		cc: z.string().max(2000).optional(),
+		subject: z.string().min(1).max(998).optional(),
+		body: z.string().min(1).max(100_000).optional(),
+	})
+	// `from` is never accepted: the sender is the agent's mailbox. Unknown fields are refused.
 	.strict()
+	.refine(
+		(v) =>
+			v.object_id ? !v.to && !v.cc && !v.subject && !v.body : Boolean(v.to && v.subject && v.body),
+		{
+			message:
+				'Pass object_id (to send the email an object holds) or to, subject and body (to send a new email). Not a mix.',
+		},
+	)
 
 const sendRoute = createRoute({
 	method: 'post',
 	path: '/send',
 	'x-viewer-policy': 'writer',
 	tags: ['integrations'],
-	summary: 'Send an approved email draft from the agent mailbox through Resend',
+	summary: 'Send an email from the agent mailbox through Resend',
 	description:
-		'Needs "Read & write" access to Resend, a mailbox recorded for the calling agent, and an email draft a person approved (object_id). Sends once per approval.',
+		'Needs "Read & write" access to Resend and a mailbox recorded for the calling agent. Send a new email with to, subject and body, or an email object with object_id. A person\'s approval of the object is used and counted but is not required. Sends once per approval or per exact email.',
 	request: {
 		headers: workspaceIdHeader,
 		body: { content: { 'application/json': { schema: sendBodySchema } }, required: true },
@@ -86,7 +102,7 @@ const sendRoute = createRoute({
 					schema: z.object({
 						email_id: z.string(),
 						from: z.string(),
-						mode: z.literal('approved_draft'),
+						mode: z.enum(['approved_draft', 'direct']),
 					}),
 				},
 			},
@@ -174,17 +190,15 @@ async function loadObjectEmail(
 		const to = parseRecipients(raw('to'), 'to').map((r) => r.address)
 		const cc = raw('cc') ? parseRecipients(raw('cc'), 'cc').map((r) => r.address) : []
 		const approval = await findCurrentApproval(db, workspaceId, objectId, preview.content_hash)
-		// Files are read only once a person has approved: until then nothing is sent.
-		const attachments = approval
-			? await loadEmailAttachments(
-					{ db, storage },
-					{
-						workspaceId,
-						ids: readAttachmentIds(object.metadata),
-						approvedAt: approval.createdAt,
-					},
-				)
-			: []
+		// With an approval a file must be unchanged since it; without one the files are read as they are.
+		const attachments = await loadEmailAttachments(
+			{ db, storage },
+			{
+				workspaceId,
+				ids: readAttachmentIds(object.metadata),
+				approvedAt: approval?.createdAt ?? new Date(),
+			},
+		)
 		return {
 			email: { to, cc, subject: preview.subject ?? '', body: preview.body, attachments },
 			contentHash: preview.content_hash,
@@ -204,7 +218,7 @@ app.openapi(sendRoute, async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-	const { object_id: objectId } = c.req.valid('json')
+	const input = c.req.valid('json')
 	assertWorkspaceWriterRole(c.get('workspaceRole'))
 
 	// 1. Is Resend connected, and may this actor write with it?
@@ -256,22 +270,53 @@ app.openapi(sendRoute, async (c) => {
 		return c.json(f.body, f.status)
 	}
 
-	// 3. Exactly what a person approved.
-	const loaded = await loadObjectEmail(db, c.get('storageProvider'), workspaceId, objectId)
-	if (loaded.failure) return c.json(loaded.failure.body, loaded.failure.status)
-	if (!loaded.approvalEventId) {
-		const f = fail(
-			403,
-			'FORBIDDEN',
-			'Not sent. A person has to approve this email first. The draft shows an Approve button in For You and in chat. If the person has just said yes in a chat you are in, after you showed them this draft there, call approve_draft_from_chat with this object_id and the id of their message, then call this tool again. Otherwise end your turn; when they have approved it, call this tool again with the same object_id.',
-		)
-		return c.json(f.body, f.status)
+	// 3. What goes out: an email object (with a person's approval if it has one) or a new email.
+	const objectId = input.object_id ?? null
+	let email: {
+		to: string[]
+		cc: string[]
+		subject: string
+		body: string
+		attachments: Awaited<ReturnType<typeof loadEmailAttachments>>
 	}
-	const approvalEventId = loaded.approvalEventId
+	let hash: string
+	let objectType: string | null = null
+	let approvalEventId: number | null = null
+	if (objectId) {
+		const loaded = await loadObjectEmail(db, c.get('storageProvider'), workspaceId, objectId)
+		if (loaded.failure) return c.json(loaded.failure.body, loaded.failure.status)
+		email = loaded.email
+		hash = loaded.contentHash
+		objectType = loaded.objectType
+		approvalEventId = loaded.approvalEventId
+	} else {
+		try {
+			const to = parseRecipients(input.to ?? '', 'to')
+			const cc = input.cc ? parseRecipients(input.cc, 'cc') : []
+			hash = contentHash(to, cc, input.subject ?? '', input.body ?? '')
+			email = {
+				to: to.map((r) => r.address),
+				cc: cc.map((r) => r.address),
+				subject: input.subject ?? '',
+				body: input.body ?? '',
+				attachments: [],
+			}
+		} catch (err) {
+			if (err instanceof GmailSendError) {
+				const f = fail(400, 'BAD_REQUEST', err.message)
+				return c.json(f.body, f.status)
+			}
+			throw err
+		}
+	}
+	const mode = approvalEventId ? ('approved_draft' as const) : ('direct' as const)
 
 	// 4. One send per approval: claim it before calling Resend, so two calls cannot both send.
-	const approval: ResendApprovalRef = { workspaceId, integrationId, actorId, approvalEventId }
-	if (!(await claimResendApproval(db, approval))) {
+	// With no approval the idempotency key below (the exact email) stops a repeat within Resend's window.
+	const approval: ResendApprovalRef | null = approvalEventId
+		? { workspaceId, integrationId, actorId, approvalEventId }
+		: null
+	if (approval && !(await claimResendApproval(db, approval))) {
 		const state = await resendApprovalState(db, approval)
 		const f = fail(
 			409,
@@ -282,14 +327,17 @@ app.openapi(sendRoute, async (c) => {
 		)
 		return c.json(f.body, f.status)
 	}
+	const release = async () => {
+		if (approval) await releaseResendApproval(db, approval)
+	}
 
-	// 5. A live key, then send. The idempotency key is the approval, so a retry of an unclear
-	// failure cannot deliver twice.
+	// 5. A live key, then send. The idempotency key is the approval (or the exact email), so a
+	// retry of an unclear failure cannot deliver twice.
 	let apiKey: string
 	try {
 		apiKey = await new TokenManager().getValidToken(db, integrationId, getProvider('resend'))
 	} catch (err) {
-		await releaseResendApproval(db, approval)
+		await release()
 		if (err instanceof IntegrationAuthRevokedError) {
 			const f = fail(
 				409,
@@ -304,8 +352,10 @@ app.openapi(sendRoute, async (c) => {
 	try {
 		const sent = await sendResendEmail(
 			apiKey,
-			{ from, ...loaded.email },
-			`maskin-email-${objectId}-${approvalEventId}`,
+			{ from, ...email },
+			approvalEventId
+				? `maskin-email-${objectId}-${approvalEventId}`
+				: `maskin-email-direct-${actorId}-${hash}`,
 		)
 		try {
 			await recordEvent(db, {
@@ -317,40 +367,36 @@ app.openapi(sendRoute, async (c) => {
 				data: {
 					provider: 'resend',
 					resend_action: 'sent',
+					mode,
 					email_id: sent.emailId,
 					from,
-					content_hash: loaded.contentHash,
-					to: loaded.email.to.join(', ').slice(0, 300),
-					recipients: loaded.email.to.length + loaded.email.cc.length,
-					...(loaded.email.attachments.length
-						? { attachments: loaded.email.attachments.length }
-						: {}),
-					approval_event_id: approvalEventId,
-					object_id: objectId,
+					content_hash: hash,
+					to: email.to.join(', ').slice(0, 300),
+					recipients: email.to.length + email.cc.length,
+					...(email.attachments.length ? { attachments: email.attachments.length } : {}),
+					...(approvalEventId ? { approval_event_id: approvalEventId } : {}),
+					...(objectId ? { object_id: objectId } : {}),
 				},
 			})
-			// The draft's own log says it went, so its card can turn into a receipt.
-			await recordEvent(db, {
-				workspaceId,
-				actorId,
-				action: DELIVERED_ACTION,
-				entityType: loaded.objectType,
-				entityId: objectId,
-				data: {
+			if (objectId && objectType) {
+				// The draft's own log says it went, so its card can turn into a receipt.
+				await recordEvent(db, {
+					workspaceId,
+					actorId,
+					action: DELIVERED_ACTION,
+					entityType: objectType,
+					entityId: objectId,
+					data: { provider: 'resend', content_hash: hash, message_id: sent.emailId, from },
+				})
+				// The send ends the task it carried out, so nothing still says "to do" for it.
+				await recordSendOutcome(db, {
+					workspaceId,
+					actorId,
+					target: { id: objectId, type: objectType },
 					provider: 'resend',
-					content_hash: loaded.contentHash,
-					message_id: sent.emailId,
-					from,
-				},
-			})
-			// The send ends the task it carried out, so nothing still says "to do" for it.
-			await recordSendOutcome(db, {
-				workspaceId,
-				actorId,
-				target: { id: objectId, type: loaded.objectType },
-				provider: 'resend',
-				skipDeliveredEvent: true,
-			})
+					skipDeliveredEvent: true,
+				})
+			}
 		} catch (bookkeepingErr) {
 			// The email is gone. Bookkeeping must not turn that into an error the caller retries.
 			logger.error('Resend email sent but the record of it failed', {
@@ -359,10 +405,10 @@ app.openapi(sendRoute, async (c) => {
 				error: bookkeepingErr instanceof Error ? bookkeepingErr.message : String(bookkeepingErr),
 			})
 		}
-		return c.json({ email_id: sent.emailId, from, mode: 'approved_draft' as const }, 200)
+		return c.json({ email_id: sent.emailId, from, mode }, 200)
 	} catch (err) {
 		if (!(err instanceof ResendSendError)) {
-			await releaseResendApproval(db, approval)
+			await release()
 			throw err
 		}
 		logger.warn('Resend send failed', {
@@ -372,7 +418,7 @@ app.openapi(sendRoute, async (c) => {
 		})
 		// Whatever failed, nothing is confirmed sent and a retry carries the same idempotency
 		// key, so the approval goes back in the pool.
-		await releaseResendApproval(db, approval)
+		await release()
 		const f = sendFailureFor(err)
 		return c.json(f.body, f.status)
 	}

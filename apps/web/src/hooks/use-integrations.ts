@@ -201,19 +201,6 @@ export function useSlackUsers(integrationId: string | undefined, workspaceId: st
 	})
 }
 
-/** Save the Slack channels agents may post to without a person approving a draft. */
-export function useSetSlackDirectPostChannels(workspaceId: string) {
-	const queryClient = useQueryClient()
-	return useMutation({
-		mutationFn: (channels: string[]) =>
-			api.integrations.setSlackDirectPostChannels(workspaceId, channels),
-		onSuccess: () => {
-			toast.success('Direct-post channels updated')
-			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
-		},
-	})
-}
-
 /**
  * P3-K · Enumerate LinkedIn identities for a workspace. Every connected
  * identity — the human profile plus each admined page — is one Quick Add
