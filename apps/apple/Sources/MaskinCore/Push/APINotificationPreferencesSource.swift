@@ -43,6 +43,9 @@ public struct APINotificationPreferencesSource: NotificationPreferencesAPI {
 				flowActivity: body.categories.flow_activity),
 			briefingEnabled: body.briefing_enabled, briefingTime: body.briefing_time,
 			emailDigestEnabled: body.email_digest_enabled,
+			emailNeedsYou: body.email_categories.needs_you,
+			emailConversation: body.email_categories.conversation,
+			emailTips: body.email_categories.tips,
 			emailFlowActivity: body.email_categories.flow_activity,
 			marketplacePicksEnabled: body.marketplace_picks_enabled,
 			emailRhythm: NotificationPreferences.EmailRhythm(rawValue: body.email_rhythm.rawValue) ?? .daily,
@@ -100,6 +103,9 @@ public struct APINotificationPreferencesSource: NotificationPreferencesAPI {
 			var flow_activity: Bool?
 		}
 		struct EmailCategories: Decodable {
+			var needs_you: Bool?
+			var conversation: Bool?
+			var tips: Bool?
 			var flow_activity: Bool?
 		}
 		var timezone: String?
@@ -128,6 +134,9 @@ public struct APINotificationPreferencesSource: NotificationPreferencesAPI {
 					flowActivity: categories.flow_activity ?? false),
 				briefingEnabled: briefing_enabled, briefingTime: briefing_time,
 				emailDigestEnabled: email_digest_enabled ?? false,
+				emailNeedsYou: email_categories?.needs_you ?? false,
+				emailConversation: email_categories?.conversation ?? false,
+				emailTips: email_categories?.tips ?? false,
 				emailFlowActivity: email_categories?.flow_activity ?? false,
 				marketplacePicksEnabled: marketplace_picks_enabled ?? false,
 				emailRhythm: email_rhythm.flatMap(NotificationPreferences.EmailRhythm.init(rawValue:)) ?? .daily,

@@ -158,7 +158,12 @@ describe('browser switch per kind (Integration)', () => {
 			'flow_activity',
 		])
 		expect(body.email_digest_enabled).toBe(true)
-		expect(body.email_categories).toEqual({ flow_activity: false })
+		expect(body.email_categories).toEqual({
+			needs_you: false,
+			conversation: false,
+			tips: false,
+			flow_activity: false,
+		})
 	})
 
 	it('has the Marketplace picks switch off for everyone, saves it on its own, and keeps dismissals', async () => {

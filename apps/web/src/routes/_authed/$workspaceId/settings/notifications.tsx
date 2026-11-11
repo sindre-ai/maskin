@@ -237,6 +237,10 @@ function NotificationsPage() {
 					locked={prefs.categories.needs_you}
 					checked={prefs.categories.needs_you}
 					onChange={(next) => save({ categories: { needs_you: next } })}
+					email={{
+						checked: prefs.email_categories.needs_you,
+						onChange: (next) => save({ email_categories: { needs_you: next } }),
+					}}
 					browser={browserSwitch('needs_you')}
 					columns
 				/>
@@ -245,6 +249,10 @@ function NotificationsPage() {
 					description="When someone answers you in a chat."
 					checked={prefs.categories.conversation}
 					onChange={(next) => save({ categories: { conversation: next } })}
+					email={{
+						checked: prefs.email_categories.conversation,
+						onChange: (next) => save({ email_categories: { conversation: next } }),
+					}}
 					browser={browserSwitch('conversation')}
 					columns
 				/>
@@ -298,6 +306,10 @@ function NotificationsPage() {
 					description="What is new in Maskin."
 					checked={prefs.categories.tips}
 					onChange={(next) => save({ categories: { tips: next } })}
+					email={{
+						checked: prefs.email_categories.tips,
+						onChange: (next) => save({ email_categories: { tips: next } }),
+					}}
 					browser={browserSwitch('tips')}
 					columns
 				/>

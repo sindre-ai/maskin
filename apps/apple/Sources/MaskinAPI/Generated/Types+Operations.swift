@@ -69603,16 +69603,36 @@ public enum Operations {
                         public var email_digest_enabled: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/email_categories`.
                         public struct email_categoriesPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/email_categories/needs_you`.
+                            public var needs_you: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/email_categories/conversation`.
+                            public var conversation: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/email_categories/tips`.
+                            public var tips: Swift.Bool
                             /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/email_categories/flow_activity`.
                             public var flow_activity: Swift.Bool
                             /// Creates a new `email_categoriesPayload`.
                             ///
                             /// - Parameters:
+                            ///   - needs_you:
+                            ///   - conversation:
+                            ///   - tips:
                             ///   - flow_activity:
-                            public init(flow_activity: Swift.Bool) {
+                            public init(
+                                needs_you: Swift.Bool,
+                                conversation: Swift.Bool,
+                                tips: Swift.Bool,
+                                flow_activity: Swift.Bool
+                            ) {
+                                self.needs_you = needs_you
+                                self.conversation = conversation
+                                self.tips = tips
                                 self.flow_activity = flow_activity
                             }
                             public enum CodingKeys: String, CodingKey {
+                                case needs_you
+                                case conversation
+                                case tips
                                 case flow_activity
                             }
                         }
@@ -69900,16 +69920,36 @@ public enum Operations {
                     public var email_digest_enabled: Swift.Bool?
                     /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/email_categories`.
                     public struct email_categoriesPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/email_categories/needs_you`.
+                        public var needs_you: Swift.Bool?
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/email_categories/conversation`.
+                        public var conversation: Swift.Bool?
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/email_categories/tips`.
+                        public var tips: Swift.Bool?
                         /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/email_categories/flow_activity`.
                         public var flow_activity: Swift.Bool?
                         /// Creates a new `email_categoriesPayload`.
                         ///
                         /// - Parameters:
+                        ///   - needs_you:
+                        ///   - conversation:
+                        ///   - tips:
                         ///   - flow_activity:
-                        public init(flow_activity: Swift.Bool? = nil) {
+                        public init(
+                            needs_you: Swift.Bool? = nil,
+                            conversation: Swift.Bool? = nil,
+                            tips: Swift.Bool? = nil,
+                            flow_activity: Swift.Bool? = nil
+                        ) {
+                            self.needs_you = needs_you
+                            self.conversation = conversation
+                            self.tips = tips
                             self.flow_activity = flow_activity
                         }
                         public enum CodingKeys: String, CodingKey {
+                            case needs_you
+                            case conversation
+                            case tips
                             case flow_activity
                         }
                     }
@@ -70118,16 +70158,36 @@ public enum Operations {
                         public var email_digest_enabled: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/email_categories`.
                         public struct email_categoriesPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/email_categories/needs_you`.
+                            public var needs_you: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/email_categories/conversation`.
+                            public var conversation: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/email_categories/tips`.
+                            public var tips: Swift.Bool
                             /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/email_categories/flow_activity`.
                             public var flow_activity: Swift.Bool
                             /// Creates a new `email_categoriesPayload`.
                             ///
                             /// - Parameters:
+                            ///   - needs_you:
+                            ///   - conversation:
+                            ///   - tips:
                             ///   - flow_activity:
-                            public init(flow_activity: Swift.Bool) {
+                            public init(
+                                needs_you: Swift.Bool,
+                                conversation: Swift.Bool,
+                                tips: Swift.Bool,
+                                flow_activity: Swift.Bool
+                            ) {
+                                self.needs_you = needs_you
+                                self.conversation = conversation
+                                self.tips = tips
                                 self.flow_activity = flow_activity
                             }
                             public enum CodingKeys: String, CodingKey {
+                                case needs_you
+                                case conversation
+                                case tips
                                 case flow_activity
                             }
                         }

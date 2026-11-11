@@ -14,7 +14,7 @@ private final class CannedTransport: ClientTransport, @unchecked Sendable {
 		"browser_categories":{"needs_you":true,"conversation":false,"digest":true,"tips":false,"flow_activity":false},
 		"browser_not_asked":["needs_you","conversation","digest","tips","flow_activity"],
 		"briefing_enabled":false,"briefing_time":480,"email_digest_enabled":true,
-		"email_categories":{"flow_activity":false},
+		"email_categories":{"needs_you":false,"conversation":false,"tips":false,"flow_activity":false},
 		"marketplace_picks_enabled":true,
 		"email_rhythm":"weekly",
 		"muted_workspace_ids":["00000000-0000-4000-8000-000000000001"],

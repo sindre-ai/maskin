@@ -119,6 +119,24 @@ public final class NotificationPreferencesStore {
 		submit(patch)
 	}
 
+	public func setEmailNeedsYou(enabled: Bool) {
+		var patch = NotificationPreferencesPatch()
+		patch.emailNeedsYou = enabled
+		submit(patch)
+	}
+
+	public func setEmailConversation(enabled: Bool) {
+		var patch = NotificationPreferencesPatch()
+		patch.emailConversation = enabled
+		submit(patch)
+	}
+
+	public func setEmailTips(enabled: Bool) {
+		var patch = NotificationPreferencesPatch()
+		patch.emailTips = enabled
+		submit(patch)
+	}
+
 	public func setEmailFlowActivity(enabled: Bool) {
 		var patch = NotificationPreferencesPatch()
 		patch.emailFlowActivity = enabled
