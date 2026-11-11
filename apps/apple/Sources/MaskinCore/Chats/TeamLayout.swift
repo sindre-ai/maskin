@@ -632,6 +632,7 @@ public struct TeamLayout: Equatable, Sendable {
 				return da != db ? da > db : a.offset < b.offset
 			}
 			.map(\.row)
+		if sections.isEmpty { return sections }
 		if var only = sections.first, sections.count == 1 {
 			only.rows = rows
 			return [only]
