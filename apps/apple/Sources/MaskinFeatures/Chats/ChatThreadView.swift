@@ -197,7 +197,10 @@ struct ChatThreadView: View {
 				.backChevronOnly()
 				.task { await runtime?.mentionRoster()?.load() }
 				.task { runtime?.chatOpened(store.conversationID) }
-				.onAppear { liveCalls?.visibleConversationID = store.conversationID }
+				.onAppear {
+					liveCalls?.visibleConversationID = store.conversationID
+					composer.splitsLongMessages = true
+				}
 				.task {
 					// Drafts are per conversation: restored here, saved on every keystroke.
 					if composer.boundConversationID == nil { composer.bind(conversationID: store.conversationID) }
@@ -856,7 +859,19 @@ struct ChatThreadView: View {
 			Task { await store.edit(edit.messageID, to: edit.text) }
 			return
 		}
+		// Over the cap: the full text uploads as a file first, then the short message goes.
+		if composer.isOverLength {
+			Task {
+				guard let (text, metadata) = await composer.takeLong() else { return }
+				deliver(text, metadata: metadata)
+			}
+			return
+		}
 		guard let (text, metadata) = composer.take() else { return }
+		deliver(text, metadata: metadata)
+	}
+
+	private func deliver(_ text: String, metadata: ChatSendMetadata?) {
 		if store.send(text, metadata: metadata) == nil {
 			// Nothing was queued: give the words back rather than lose them.
 			composer.text = text
