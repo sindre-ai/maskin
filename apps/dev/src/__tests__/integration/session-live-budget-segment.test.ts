@@ -162,12 +162,11 @@ describe('SessionManager.enforceRunningSessionBudget — live usage (Integration
 		}
 		const ws = await insertWorkspace(db, actorId, { settings })
 		workspaceId = ws.id
-		const row = await runningSession()
-		await insertSessionLog(db, row.id, { content: turn(2) })
-		await insertSessionLog(db, row.id, { content: turn(4) })
+		// The start check reads only what is saved on session rows, so the 400 cents sit on
+		// the row (over the 300 cent cap). The mid-run stop counts the same saved usage.
+		const row = await runningSession({ inputTokens: TURN_TOKENS * 2, totalCostUsd: '4' })
 
 		expect(await check(row)).toHaveBeenCalledWith(row.id)
-		// The refused start finds the same session usage (400 cents) over the cap.
 		await expect(
 			checkPlanCap({ db, workspaceId, wsSettings: settings, enterprise: false }),
 		).rejects.toBeInstanceOf(PlanCapExceededError)
