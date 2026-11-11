@@ -13,7 +13,7 @@ import {
 import {
 	type LoopTarget,
 	SAFE_METADATA_FIELD_NAME_RE,
-	TERMINAL_BET_STATUSES,
+	TERMINAL_STATUSES_BY_TYPE,
 	findChange,
 	getChangesFromEventData,
 	listLoopBriefingsResponseSchema,
@@ -113,35 +113,13 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
  */
 
 /**
- * Terminal statuses per object type — a child object in one of these values
- * counts toward the loop's `closedCount` and drops out of `inProgressCount`.
- * `bet` is `TERMINAL_BET_STATUSES` (`packages/shared/src/schemas/objects.ts`)
- * *plus* `archived` — a deliberate, loop-scoped superset, not a mirror.
- * `TERMINAL_BET_STATUSES` excludes `archived` on purpose (archiving a bet is
- * a silent move that must not fan out a retro or unread-feed row), but that's
- * a "does this warrant a notification" definition, not a "is this bet still
- * active work" one. For loop progress tracking, an archived bet has stopped
- * moving either way, so it belongs in `closedCount` here even though it never
- * triggers the bet-terminal watcher signal.
- * `task` mirrors the done-set the CTO/validation flow treats as complete.
- * `insight`'s only closed state today is `discarded` (see workspace-briefing's
- * `ne(objects.status, 'discarded')` filter for open insights).
- *
- * Kept as a per-type table here rather than shared because the read API is
- * the only consumer today; if a second consumer appears, promote to
- * `packages/shared/src/schemas/objects.ts` alongside `TERMINAL_BET_STATUSES`.
- *
- * This table is the FALLBACK only. A loop can carry its own
- * `metadata.closed_statuses` map (`{ <type>: [statuses...] }`, written by the
- * MCP create_loop/update_loop tools) that overrides the entry for a type —
- * that's what makes closed counts work for workspace-defined custom object
- * types, which by definition can never appear in a hardcoded table.
+ * `TERMINAL_STATUSES_BY_TYPE` (shared) is the FALLBACK for what counts as
+ * closed per object type. A loop can carry its own `metadata.closed_statuses`
+ * map (`{ <type>: [statuses...] }`, written by the MCP create_loop/update_loop
+ * tools) that overrides the entry for a type — that's what makes closed counts
+ * work for workspace-defined custom object types, which by definition can never
+ * appear in a hardcoded table.
  */
-const TERMINAL_STATUSES_BY_TYPE: Record<string, string[]> = {
-	bet: [...TERMINAL_BET_STATUSES, 'archived'],
-	task: ['done', 'validated', 'discarded'],
-	insight: ['discarded'],
-}
 
 /**
  * Extract a loop's `metadata.closed_statuses` override map, shape-validated:

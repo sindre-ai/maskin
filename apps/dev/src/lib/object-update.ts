@@ -1,5 +1,7 @@
+import { isDeepStrictEqual } from 'node:util'
 import type { Transaction } from '@maskin/db'
 import { objects, subscriptions, triggers } from '@maskin/db/schema'
+import { TARGET_FIELDS, TARGET_TYPE } from '@maskin/ext-targets/shared'
 import {
 	OBJECT_DIFF_FIELDS,
 	TERMINAL_BET_STATUSES,
@@ -19,6 +21,11 @@ export interface ApplyObjectUpdateInput {
 	actorId: string
 	body: ObjectUpdate
 	sessionId?: string
+	/**
+	 * The caller's actor type. An agent is refused a change to a target's fields or a flow's
+	 * targets and close condition. Left unset by callers that act for a person (a card tap).
+	 */
+	actorType?: string
 	/** Apply only if the object is still in this status, checked under the row lock. */
 	onlyIfStatus?: string
 }
@@ -28,6 +35,48 @@ export interface ApplyObjectUpdateResult {
 	row?: typeof objects.$inferSelect
 	/** Set when `onlyIfStatus` did not hold: the status the object is in now. */
 	staleStatus?: string | null
+}
+
+/** Thrown when an agent tries to change a field only a person may change. Maps to a 403. */
+export class AgentFieldWriteError extends Error {
+	constructor(
+		readonly fields: string[],
+		readonly objectType: string,
+	) {
+		super(
+			`Agents cannot change ${fields.join(', ')} on a ${objectType}. Ask a person with a decision card (create_comment with a decision and the person in mentions), and let them make the change.`,
+		)
+		this.name = 'AgentFieldWriteError'
+	}
+}
+
+const TARGET_GUARDED_METADATA_KEYS: string[] = TARGET_FIELDS.map((f) => f.name)
+const LOOP_GUARDED_METADATA_KEYS = ['targets', 'close_condition']
+
+/**
+ * The fields of this update that an agent may not change: a target object's label and numbers,
+ * and a flow's targets and close condition. A value written back unchanged is not a change.
+ * Scope written in prose cannot be told from a normal edit, so it is not guarded.
+ */
+function guardedFieldsChanged(current: typeof objects.$inferSelect, body: ObjectUpdate): string[] {
+	const keys =
+		current.type === TARGET_TYPE
+			? TARGET_GUARDED_METADATA_KEYS
+			: current.type === 'loop'
+				? LOOP_GUARDED_METADATA_KEYS
+				: []
+	if (keys.length === 0) return []
+
+	const changed: string[] = []
+	if (current.type === TARGET_TYPE && body.title !== undefined && body.title !== current.title) {
+		changed.push('title')
+	}
+	const before = (current.metadata ?? {}) as Record<string, unknown>
+	const after = (body.metadata ?? {}) as Record<string, unknown>
+	for (const key of keys) {
+		if (key in after && !isDeepStrictEqual(after[key], before[key])) changed.push(key)
+	}
+	return changed
 }
 
 /**
@@ -56,6 +105,11 @@ export async function applyObjectUpdate(
 	// the fan-out.
 	const [current] = await tx.select().from(objects).where(eq(objects.id, id)).for('update').limit(1)
 	if (!current) return {}
+
+	if (input.actorType === 'agent') {
+		const refused = guardedFieldsChanged(current, body)
+		if (refused.length > 0) throw new AgentFieldWriteError(refused, current.type)
+	}
 
 	// A status change made from an answer to a card: the card was written about one status, so
 	// if the object has moved on since, leave it where it is.

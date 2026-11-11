@@ -212,6 +212,7 @@ import {
 	AgentServerHttpError,
 } from './agent-server-client'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
+import { buildChatDrivesBlock, saveChatDrives } from './chat-drives'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
 import { applyExtensionGuards } from './extension-guard-launch'
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
@@ -2621,6 +2622,39 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
+	 * The "What you drive" block for a chat session: the loops and open objects
+	 * the agent drives, with targets. Built on the first launch and saved on
+	 * `sessions.config.chat_drives`, so the saved text is what the agent was shown
+	 * and a resume reuses it. An agent that drives nothing gets '' and nothing is
+	 * saved. A failure here only costs the block, never the launch.
+	 */
+	private async resolveChatDrivesBlock(session: typeof sessions.$inferSelect): Promise<string> {
+		// Only a chat (a conversation) gets it; other interactive sessions are not chats.
+		const { conversationId } = session
+		if (!conversationId) return ''
+		const config = (session.config as Record<string, unknown>) ?? {}
+		if (typeof config.chat_drives === 'string') return config.chat_drives
+		try {
+			const block = await buildChatDrivesBlock(
+				this.db,
+				{ workspaceId: session.workspaceId, actorId: session.actorId, conversationId },
+				frontendBaseUrl(),
+			)
+			if (!block) return ''
+			await saveChatDrives(this.db, session.id, block)
+			// Later launch steps spread `session.config` into their own write.
+			;(session as { config: Record<string, unknown> }).config = { ...config, chat_drives: block }
+			return block
+		} catch (err) {
+			logger.warn('Failed to build chat drives block', {
+				sessionId: session.id,
+				error: String(err),
+			})
+			return ''
+		}
+	}
+
+	/**
 	 * Build the launch spec for a session — env vars (including integration
 	 * credentials), image, and resource limits. The shape mirrors
 	 * `StartSessionRequest` on `AgentServerClient` so the SessionDispatcher (T6)
@@ -2859,7 +2893,8 @@ ${cont.continues_prompt}
 								: ''
 						}The full log of each earlier session of this conversation is available with get_session_logs, oldest first: ${(Array.isArray(cont.continues_chain) ? cont.continues_chain : [cont.continues_session_id]).join(', ')}.`
 					: ''
-			envVars.SYSTEM_PROMPT = `${startupBlock}${resolvedSystemPrompt}${continuation}`
+			const drivesBlock = await this.resolveChatDrivesBlock(session)
+			envVars.SYSTEM_PROMPT = `${startupBlock}${drivesBlock}${resolvedSystemPrompt}${continuation}`
 		} else {
 			const goalBlock = await this.resolveRunGoalBlock(session)
 			const sentBy = (session.config as Record<string, unknown> | null)?.sent_by_actor_id
