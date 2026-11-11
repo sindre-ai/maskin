@@ -1,7 +1,9 @@
 import { sessions } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
+import type { MockInstance } from 'vitest'
 import { resetPlanLimitEventsForTest } from '../../lib/analytics/plan-limit-events'
+import * as posthog from '../../lib/analytics/posthog'
 import { PlanCapExceededError, checkPlanCap } from '../../lib/llm-routing'
 import type { WorkspaceSettings } from '../../lib/types'
 import { SessionManager } from '../../services/session-manager'
@@ -9,10 +11,9 @@ import { SESSION_RESUMED_LOG } from '../../services/usage-parser'
 import { insertSession, insertSessionLog, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
-const { capturePosthogEventMock } = vi.hoisted(() => ({
-	capturePosthogEventMock: vi.fn(async () => {}),
-}))
-vi.mock('../../lib/analytics/posthog', () => ({ capturePosthogEvent: capturePosthogEventMock }))
+// global-setup already imports llm-routing, so the real PostHog module is cached before a
+// vi.mock in this file registers. A spy on the export is seen by every caller regardless.
+let capturePosthogEventMock: MockInstance<typeof posthog.capturePosthogEvent>
 
 function stubStorage(): StorageProvider {
 	return {
@@ -50,13 +51,17 @@ describe('SessionManager.enforceRunningSessionBudget — live usage (Integration
 	let actorId: string
 
 	beforeEach(async () => {
-		capturePosthogEventMock.mockClear()
+		capturePosthogEventMock = vi.spyOn(posthog, 'capturePosthogEvent').mockResolvedValue(undefined)
 		resetPlanLimitEventsForTest()
 		actorId = getTestActorId()
 		const ws = await insertWorkspace(db, actorId, {
 			settings: { billing: { plan: 'pro', hard_cap_usd_cents: 500 } },
 		})
 		workspaceId = ws.id
+	})
+
+	afterEach(() => {
+		capturePosthogEventMock.mockRestore()
 	})
 
 	async function runningSession(overrides: Record<string, unknown> = {}) {
