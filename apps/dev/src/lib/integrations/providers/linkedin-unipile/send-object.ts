@@ -224,7 +224,7 @@ function loadDraftAttachment(
 	input: {
 		workspaceId: string
 		fileId: string
-		approval: { createdAt: Date | null } | undefined
+		approval: { createdAt: Date | null } | null | undefined
 	},
 ) {
 	if (input.approval) {
