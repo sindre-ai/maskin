@@ -5,7 +5,7 @@
  * one button to the flow. Run lines read the way the summary email reads them. It says only that
  * runs finished: no result, no success claim, no AI call.
  */
-import { clip } from './briefing-push-scheduler'
+import { button, clipAtWord as clip, headline, renderEmail, tickList } from './email-layout'
 
 /** Most run lines in one mail; the rest become "and N more". */
 export const MAX_FLOW_ACTIVITY_RUNS = 5
@@ -34,15 +34,6 @@ export interface FlowActivityEmail {
 	headers: Record<string, string>
 }
 
-function escapeHtml(value: string): string {
-	return value
-		.replace(/&/g, '&amp;')
-		.replace(/</g, '&lt;')
-		.replace(/>/g, '&gt;')
-		.replace(/"/g, '&quot;')
-		.replace(/'/g, '&#39;')
-}
-
 export function flowRunLine(run: FlowActivityRun): string {
 	return run.objectTitle
 		? `${run.agentName} finished '${clip(run.objectTitle, 60)}'`
@@ -67,17 +58,12 @@ export function buildFlowActivityEmail(input: FlowActivityEmailInput): FlowActiv
 		`Stop these emails: ${stopUrl}`,
 	].join('\n')
 
-	const html = [
-		'<!doctype html>',
-		'<html>',
-		'<body style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, sans-serif; color: #111; max-width: 560px; margin: 0 auto; padding: 24px;">',
-		`<p style="font-size: 18px; font-weight: 600; margin: 0 0 8px;">${escapeHtml(subject)}</p>`,
-		`<ul style="margin: 0; padding-left: 20px;">${lines.map((l) => `<li>${escapeHtml(l)}</li>`).join('')}</ul>`,
-		`<p><a href="${escapeHtml(buttonUrl)}" style="display: inline-block; background: #111; color: #fff; padding: 12px 20px; border-radius: 6px; text-decoration: none;">Open the flow</a></p>`,
-		`<p style="color: #666; font-size: 13px;"><a href="${escapeHtml(stopUrl)}" style="color: #666;">Stop these emails</a></p>`,
-		'</body>',
-		'</html>',
-	].join('\n')
+	const html = renderEmail({
+		// The first run line says something the subject does not.
+		preheader: lines[0] ?? subject,
+		blocks: [headline(subject), tickList(lines), button(buttonUrl, 'Open the flow')],
+		stopUrl,
+	})
 
 	return {
 		subject,
