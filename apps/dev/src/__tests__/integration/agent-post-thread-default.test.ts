@@ -148,13 +148,24 @@ describe('Agent post defaults to the turn thread', () => {
 		expect(posted.threadRootId).toBe(rootId)
 	})
 
-	it('posts top-level when the turn was started by a top-level message', async () => {
+	it('posts into a thread under the message when the turn was started by a top-level message', async () => {
 		const session = await seedSession()
 		await startTurn(session.id, rootId)
 
 		const posted = await post(
 			{ id: agentId, type: 'agent' },
 			{ content: 'looking into it', session_id: session.id },
+		)
+		expect(posted.threadRootId).toBe(rootId)
+	})
+
+	it('posts top-level from a top-level turn with top_level: true', async () => {
+		const session = await seedSession()
+		await startTurn(session.id, rootId)
+
+		const posted = await post(
+			{ id: agentId, type: 'agent' },
+			{ content: 'for everyone', session_id: session.id, top_level: true },
 		)
 		expect(posted.threadRootId).toBeNull()
 	})
@@ -172,13 +183,14 @@ describe('Agent post defaults to the turn thread', () => {
 	it('follows the newest turn of a long-lived session', async () => {
 		const session = await seedSession()
 		await startTurn(session.id, replyId)
-		await startTurn(session.id, rootId)
+		const newer = await post({ id: humanId, type: 'human' }, { content: 'a new question' })
+		await startTurn(session.id, newer.id)
 
 		const posted = await post(
 			{ id: agentId, type: 'agent' },
 			{ content: 'looking into it', session_id: session.id },
 		)
-		expect(posted.threadRootId).toBeNull()
+		expect(posted.threadRootId).toBe(newer.id)
 	})
 
 	it('lets an explicit thread_root_id win over the turn thread', async () => {

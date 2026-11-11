@@ -7,6 +7,8 @@ import { config as attioConfig } from './providers/attio/config'
 import { config as canvaConfig } from './providers/canva/config'
 import { config as clickupConfig } from './providers/clickup/config'
 import { config as customMcpConfig } from './providers/custom-mcp/config'
+import { deepdotsAuth } from './providers/deepdots/auth'
+import { config as deepdotsConfig } from './providers/deepdots/config'
 import { githubAuth } from './providers/github/auth'
 // Import provider configs
 import { config as githubConfig } from './providers/github/config'
@@ -258,6 +260,14 @@ providers.set('skjald', {
 providers.set('ubersuggest', {
 	config: ubersuggestConfig,
 	customAuth: ubersuggestAuth,
+})
+
+// deepdots — connects from an email and password form (routes/integrations-deepdots.ts),
+// which is mounted before the generic /api/integrations routes. The generic connect
+// route would try to build an OAuth redirect and fail, so it must not run for it.
+providers.set('deepdots', {
+	config: deepdotsConfig,
+	customAuth: deepdotsAuth,
 })
 
 // linkedin-unipile — the connect + callback flow is LinkedIn's Hosted Auth

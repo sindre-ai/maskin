@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label'
 import { useCanWrite } from '@/hooks/use-can-write'
 import {
 	useCompleteIntegration,
+	useConnectDeepdots,
 	useConnectIntegration,
 	useLinkGithubInstallation,
 	useLinkableGithubInstallations,
@@ -84,6 +85,93 @@ export function ApiKeyDialog({
 						Connect
 					</Button>
 				</div>
+			</DialogContent>
+		</Dialog>
+	)
+}
+
+// Deepdots signs in with an email and password, so the form takes both. Maskin signs in once
+// and refuses a wrong password on the spot, so what is stored always worked.
+export function DeepdotsConnectDialog({
+	workspaceId,
+	open,
+	onClose,
+}: {
+	workspaceId: string
+	open: boolean
+	onClose: () => void
+}) {
+	const connect = useConnectDeepdots(workspaceId)
+	const canWrite = useCanWrite()
+	const [email, setEmail] = useState('')
+	const [password, setPassword] = useState('')
+
+	const close = () => {
+		setEmail('')
+		setPassword('')
+		connect.reset()
+		onClose()
+	}
+	const handleConnect = () => {
+		if (!canWrite) return
+		connect.mutate({ email: email.trim(), password }, { onSuccess: close })
+	}
+
+	return (
+		<Dialog open={open} onOpenChange={(next) => !next && close()}>
+			<DialogContent>
+				<DialogHeader>
+					<DialogTitle>Connect Deepdots</DialogTitle>
+					<DialogDescription>
+						Enter the Deepdots email and password. Maskin signs in now to check them and keeps the
+						sign-in alive. We suggest a Deepdots user made only for Maskin, with read rights.
+					</DialogDescription>
+				</DialogHeader>
+				<form
+					className="space-y-3"
+					onSubmit={(e) => {
+						e.preventDefault()
+						if (email.trim() && password) handleConnect()
+					}}
+				>
+					<div className="space-y-2">
+						<Label htmlFor="deepdots-email">Email</Label>
+						<Input
+							id="deepdots-email"
+							type="email"
+							autoComplete="off"
+							value={email}
+							onChange={(e) => setEmail(e.target.value)}
+							placeholder="name@company.com"
+						/>
+					</div>
+					<div className="space-y-2">
+						<Label htmlFor="deepdots-password">Password</Label>
+						<Input
+							id="deepdots-password"
+							type="password"
+							autoComplete="new-password"
+							value={password}
+							onChange={(e) => setPassword(e.target.value)}
+						/>
+					</div>
+					{connect.isError && (
+						<p role="alert" className="text-sm text-destructive">
+							{connect.error.message}
+						</p>
+					)}
+					<div className="flex justify-end gap-2">
+						<Button type="button" variant="ghost" onClick={close}>
+							Cancel
+						</Button>
+						<Button
+							type="submit"
+							disabled={!email.trim() || !password || connect.isPending || !canWrite}
+						>
+							{connect.isPending ? 'Checking…' : 'Connect'}
+						</Button>
+					</div>
+				</form>
 			</DialogContent>
 		</Dialog>
 	)

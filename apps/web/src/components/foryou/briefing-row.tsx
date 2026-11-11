@@ -51,11 +51,15 @@ function BriefingTile({
 	seen: boolean
 	onOpen: () => void
 }) {
+	const { tile } = card
+	const spoken = tile
+		? [tile.value, tile.label, card.headline].filter(Boolean).join(', ')
+		: card.headline
 	return (
 		<button
 			type="button"
 			onClick={onOpen}
-			aria-label={`${card.author.name}: ${card.headline}${seen ? '' : ', new'}`}
+			aria-label={`${card.author.name}: ${spoken}${seen ? '' : ', new'}`}
 			data-testid="briefing-card"
 			data-seen={seen}
 			className={cn(
@@ -63,14 +67,36 @@ function BriefingTile({
 				seen ? 'bg-muted hover:bg-border' : 'bg-brand-subtle hover:bg-border',
 			)}
 		>
-			<span
-				className={cn(
-					'line-clamp-3 text-[19px] font-bold leading-[1.2] tracking-[-0.02em] text-pretty',
-					seen ? 'text-muted-foreground' : 'text-foreground',
-				)}
-			>
-				{card.headline}
-			</span>
+			{tile ? (
+				<>
+					<span
+						data-testid="briefing-tile-value"
+						className={cn(
+							'truncate text-[34px] font-bold leading-[1.1] tracking-[-0.02em]',
+							seen ? 'text-muted-foreground' : 'text-foreground',
+						)}
+					>
+						{tile.value}
+					</span>
+					{tile.label && (
+						<span
+							data-testid="briefing-tile-label"
+							className="mt-1 line-clamp-2 text-[15px] leading-[1.25] text-muted-foreground"
+						>
+							{tile.label}
+						</span>
+					)}
+				</>
+			) : (
+				<span
+					className={cn(
+						'line-clamp-3 text-[19px] font-bold leading-[1.2] tracking-[-0.02em] text-pretty',
+						seen ? 'text-muted-foreground' : 'text-foreground',
+					)}
+				>
+					{card.headline}
+				</span>
+			)}
 		</button>
 	)
 }

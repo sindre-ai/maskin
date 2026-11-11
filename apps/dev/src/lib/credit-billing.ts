@@ -3,6 +3,7 @@ import { sessions, workspaceCreditLedger, workspaces } from '@maskin/db/schema'
 import { workspaceSettingsSchema } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
 import type Stripe from 'stripe'
+import { maybeAutoTopUp } from './auto-top-up'
 import { evictBillingUsage } from './billing-usage-cache'
 import { isEnterpriseWorkspace } from './enterprise'
 import { recordEvent } from './events/record-event'
@@ -344,4 +345,9 @@ export async function debitCreditForSession(params: {
 	// usage read landing in between could re-cache the pre-debit balance. Evict
 	// again now that the debit is visible to every connection.
 	evictBillingUsage(workspaceId)
+
+	// Auto top-up runs only now, after the debit has committed and its row lock
+	// is gone: the card call must never sit inside that lock. It claims,
+	// charges and credits on its own and never throws.
+	await maybeAutoTopUp({ db, workspaceId, actorId })
 }
