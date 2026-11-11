@@ -127,6 +127,7 @@ function ConversationThreadPage() {
 	// biome-ignore lint/correctness/useExhaustiveDependencies: conversationId is the trigger, its value is not read
 	useEffect(() => {
 		setFillRequest(null)
+		setEditRequest(null)
 	}, [conversationId])
 	const navigate = useNavigate()
 	// The URL owns the open reply thread (Back and deep links work). Opening pushes; closing

@@ -830,6 +830,7 @@ export function Composer({
 				e.key === 'ArrowUp' &&
 				onEditLast &&
 				valueRef.current === '' &&
+				tagIdsRef.current.length === 0 &&
 				!e.shiftKey &&
 				!e.altKey &&
 				!e.ctrlKey &&
@@ -921,6 +922,9 @@ export function Composer({
 			handleKeyDown({
 				key: e.key,
 				shiftKey: e.shiftKey,
+				altKey: e.altKey,
+				ctrlKey: e.ctrlKey,
+				metaKey: e.metaKey,
 				nativeEvent: e,
 				preventDefault: () => e.preventDefault(),
 			} as unknown as KeyboardEvent<HTMLDivElement>)
