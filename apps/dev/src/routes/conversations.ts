@@ -1518,6 +1518,24 @@ app.openapi(postMessageRoute, (async (c) => {
 		sessionThreadRootId = placed.sessionThreadRootId
 		if (body.thread_root_id === undefined && body.top_level !== true) {
 			turnThreadRootId = placed.threadRootId
+			// A turn started by a top-level message: interim notes hang under that message as a
+			// thread, so a long run does not fill the main timeline. Only the end-of-turn reply
+			// (interactive-turn-finalizer) lands in the main timeline. Best-effort, like
+			// resolveThreadRootId: a message that is not a top-level message of this chat is skipped.
+			if (turnThreadRootId === null && turnMessageId !== null) {
+				const [origin] = await db
+					.select({ id: messages.id })
+					.from(messages)
+					.where(
+						and(
+							eq(messages.id, turnMessageId),
+							eq(messages.conversationId, id),
+							isNull(messages.threadRootId),
+						),
+					)
+					.limit(1)
+				if (origin) turnThreadRootId = origin.id
+			}
 		}
 	}
 
