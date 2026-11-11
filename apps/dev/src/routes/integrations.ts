@@ -203,16 +203,22 @@ app.openapi(listIntegrationsRoute, (async (c) => {
 			integrationId: agentChatGrants.integrationId,
 			actorId: agentChatGrants.actorId,
 			conversationId: agentChatGrants.conversationId,
+			expiresAt: agentChatGrants.expiresAt,
 		})
 		.from(agentChatGrants)
 		.where(eq(agentChatGrants.workspaceId, workspaceId))
 	const chatsByIntegration = new Map<
 		string,
-		{ id: string; actorId: string; conversationId: string }[]
+		{ id: string; actorId: string; conversationId: string; expiresAt: Date | null }[]
 	>()
 	for (const g of chatRows) {
 		const list = chatsByIntegration.get(g.integrationId) ?? []
-		list.push({ id: g.id, actorId: g.actorId, conversationId: g.conversationId })
+		list.push({
+			id: g.id,
+			actorId: g.actorId,
+			conversationId: g.conversationId,
+			expiresAt: g.expiresAt,
+		})
 		chatsByIntegration.set(g.integrationId, list)
 	}
 	const grantsByIntegration = new Map<string, { actorId: string; access: AgentGrantAccess }[]>()
