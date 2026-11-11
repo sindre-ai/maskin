@@ -1,3 +1,11 @@
+import {
+	type FlowErrorCategory,
+	type FlowName,
+	type FlowStepName,
+	buildFlowErrorProps,
+	buildFlowStepProps,
+	createFlowClock,
+} from '@maskin/shared'
 import type { CaptureOptions } from 'posthog-js'
 import { getStoredActor } from './auth'
 import type { CardKind } from './foryou-card-kind'
@@ -1050,4 +1058,42 @@ export function trackMarkReadClicked(p: { loop_id: string; unread_count: number 
 		entity_type: 'loop',
 		source: 'web',
 	})
+}
+
+// The two generic events for journeys with no screen of their own (see
+// `@maskin/shared` analytics-flows for the flow and step names). An unknown flow or
+// step fails the type check; `flow_error` takes a category from a fixed list, never
+// message text. `duration_ms` is the time since the previous step with the same
+// flow_id in this page load.
+const flowClock = createFlowClock()
+
+export function trackFlowStep<F extends FlowName>(p: {
+	flow: F
+	step: FlowStepName<F>
+	flowId: string
+}): void {
+	const props = buildFlowStepProps({
+		flow: p.flow,
+		step: p.step,
+		flowId: p.flowId,
+		surface: 'web',
+		durationMs: flowClock.tick(p.flowId),
+	})
+	if (props) trackEvent('flow_step', props)
+}
+
+export function trackFlowError<F extends FlowName>(p: {
+	flow: F
+	step: FlowStepName<F>
+	flowId: string
+	errorCategory: FlowErrorCategory
+}): void {
+	const props = buildFlowErrorProps({
+		flow: p.flow,
+		step: p.step,
+		flowId: p.flowId,
+		surface: 'web',
+		errorCategory: p.errorCategory,
+	})
+	if (props) trackEvent('flow_error', props)
 }

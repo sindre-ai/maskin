@@ -24,6 +24,8 @@ import {
 	trackFileViewerPinPlaced,
 	trackFileViewerRoundSent,
 	trackFileViewerZoomUsed,
+	trackFlowError,
+	trackFlowStep,
 	trackForyouCardAction,
 	trackForyouCardShown,
 	trackKnowledgePageViewed,
@@ -1110,5 +1112,59 @@ describe('email_return', () => {
 		expect(trackEmailReturn('app_active', '?surface=web')).toBe(false)
 		expect(trackEmailReturn('app_active', '')).toBe(false)
 		expect(capture).not.toHaveBeenCalled()
+	})
+})
+
+describe('flow_step and flow_error', () => {
+	it('flow_step carries flow, step, flow_id, surface and a null duration on the first step', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+
+		trackFlowStep({ flow: 'agent_computer', step: 'view_opened', flowId: 'flow-a' })
+
+		expect(capture).toHaveBeenCalledWith('flow_step', {
+			flow: 'agent_computer',
+			step: 'view_opened',
+			flow_id: 'flow-a',
+			surface: 'web',
+			duration_ms: null,
+		})
+	})
+
+	it('flow_step sets duration_ms from the previous step of the same flow_id', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+
+		trackFlowStep({ flow: 'agent_computer', step: 'view_opened', flowId: 'flow-b' })
+		trackFlowStep({ flow: 'agent_computer', step: 'take_over_started', flowId: 'flow-b' })
+
+		const second = capture.mock.calls[1][1] as { duration_ms: unknown }
+		expect(typeof second.duration_ms).toBe('number')
+	})
+
+	it('flow_step sends nothing for a step outside the vocabulary', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+
+		// @ts-expect-error unknown step names fail the type check
+		trackFlowStep({ flow: 'agent_computer', step: 'not_a_step', flowId: 'flow-c' })
+
+		expect(capture).not.toHaveBeenCalled()
+	})
+
+	it('flow_error carries a category and nothing else free-form', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+
+		trackFlowError({
+			flow: 'agent_computer',
+			step: 'view_opened',
+			flowId: 'flow-d',
+			errorCategory: 'connection_lost',
+		})
+
+		expect(capture).toHaveBeenCalledWith('flow_error', {
+			flow: 'agent_computer',
+			step: 'view_opened',
+			flow_id: 'flow-d',
+			surface: 'web',
+			error_category: 'connection_lost',
+		})
 	})
 })
