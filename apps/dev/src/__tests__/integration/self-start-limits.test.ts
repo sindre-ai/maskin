@@ -243,6 +243,96 @@ describe('self-start limits', () => {
 		})
 	})
 
+	describe('back-off after a person extends', () => {
+		const minutesFromNow = (minutes: number) => new Date(now.getTime() + minutes * MINUTE)
+
+		// 3 quiet runs, the ask, then a person's reply that starts a person run. Returns the time the
+		// person run ended.
+		const askThenExtend = async () => {
+			await finishedRun(300, 'trigger_cron')
+			await finishedRun(200, 'trigger_cron')
+			await finishedRun(100, 'trigger_cron')
+			expect((await refusalOf(admit({ triggerType: 'cron' }))).refusal).toBe('no_change_decision')
+
+			const [reply] = await db
+				.insert(events)
+				.values({
+					workspaceId,
+					actorId: humanId,
+					action: 'commented',
+					entityType: 'object',
+					entityId: taskId,
+					data: { content: 'Keep going.' },
+					createdAt: minutesFromNow(1),
+				})
+				.returning({ id: events.id })
+			await insertSession(db, workspaceId, agentId, humanId, {
+				status: 'completed',
+				config: { start_reason: 'person', source_comment_event_id: reply?.id },
+				initiatedFromObjectId: taskId,
+				startedAt: minutesFromNow(1),
+				createdAt: minutesFromNow(1),
+				completedAt: minutesFromNow(4),
+			})
+			// What the agent did while answering the person.
+			await db.insert(events).values({
+				workspaceId,
+				actorId: agentId,
+				action: 'commented',
+				entityType: 'object',
+				entityId: taskId,
+				data: { content: 'Carrying on, slower.' },
+				createdAt: minutesFromNow(2),
+			})
+		}
+
+		it('keeps the count: the next wait is twice the last, and nobody is asked again', async () => {
+			await askThenExtend()
+			now = minutesFromNow(10)
+
+			const err = await refusalOf(admit({ triggerType: 'cron' }))
+			expect(err.refusal).toBe('no_change_backoff')
+			// The last quiet run ended 100 minutes before the original "now"; the wait is 2 hours.
+			expect(err.retryAt?.getTime()).toBe(minutesFromNow(-100).getTime() + 2 * BACKOFF_BASE_MS)
+			expect(await ownerCards()).toHaveLength(1)
+
+			now = minutesFromNow(30)
+			expect((await admit({ triggerType: 'cron' })).reason).toBe('trigger_cron')
+		})
+
+		it('resets the count when the status changes after the extend', async () => {
+			await askThenExtend()
+			await db.insert(events).values({
+				workspaceId,
+				actorId: humanId,
+				action: 'status_changed',
+				entityType: 'task',
+				entityId: taskId,
+				data: { changes: [{ field: 'status', old: 'in_progress', new: 'in_review' }] },
+				createdAt: minutesFromNow(6),
+			})
+			now = minutesFromNow(10)
+
+			expect((await admit({ triggerType: 'cron' })).reason).toBe('trigger_cron')
+		})
+
+		it('counts a status change or edit as a change when it happens during a run', async () => {
+			await finishedRun(120, 'trigger_cron')
+			await finishedRun(10, 'trigger_cron')
+			await db.insert(events).values({
+				workspaceId,
+				actorId: humanId,
+				action: 'updated',
+				entityType: 'task',
+				entityId: taskId,
+				data: { changes: [{ field: 'content' }] },
+				createdAt: new Date(now.getTime() - 15 * MINUTE),
+			})
+
+			expect((await admit({ triggerType: 'cron' })).reason).toBe('trigger_cron')
+		})
+	})
+
 	describe('daily budget per agent for self-started runs', () => {
 		const spend = (tokens: number, reason = 'trigger_cron') =>
 			insertSession(db, workspaceId, agentId, humanId, {

@@ -499,7 +499,7 @@ const updateWorkspaceRoute = createRoute({
 		},
 		403: {
 			description:
-				'Caller is not a human workspace admin or owner (for name, llm_keys or custom_llm), or the workspace is not entitled to BYO LLM credentials',
+				'Caller is not a human workspace admin or owner (for name, llm_keys, custom_llm or agent_daily_budget), or the workspace is not entitled to BYO LLM credentials',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		404: {
@@ -534,12 +534,18 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 		: { settings: undefined, changed: false }
 	let patchSettings = pickedSettings
 	const changesName = body.name !== undefined && body.name !== existing.name
+	// The per-agent daily budget caps what agents may spend, so an agent or a member must not be able
+	// to raise its own limit. Same rule as above: a value equal to the stored one is not a change.
+	const changesAgentBudget =
+		body.settings !== undefined &&
+		'agent_daily_budget' in body.settings &&
+		!isDeepStrictEqual(body.settings.agent_daily_budget, existingSettings.agent_daily_budget)
 	const callerIsHumanAdminOrOwner = await isWorkspaceHumanAdminOrOwner(db, actorId, id)
-	if ((changesName || changesLlm) && !callerIsHumanAdminOrOwner) {
+	if ((changesName || changesLlm || changesAgentBudget) && !callerIsHumanAdminOrOwner) {
 		return c.json(
 			createApiError(
 				'FORBIDDEN',
-				'Only a workspace admin or owner can change the workspace name or LLM credentials',
+				'Only a workspace admin or owner can change the workspace name, LLM credentials or the agent daily budget',
 			),
 			403,
 		)

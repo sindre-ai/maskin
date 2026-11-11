@@ -13,7 +13,9 @@ import {
 	continuationStreak,
 	isContinuation,
 	isSelfStarted,
+	markExtendSessions,
 	noChangeRuns,
+	noChangeStreak,
 } from '../../services/self-start-limits'
 
 const HOUR = 60 * 60_000
@@ -165,6 +167,73 @@ describe('noChangeRuns', () => {
 	it('stops at a person-started run', () => {
 		const recent = [session({ n: 2 }), session({ n: 1, reason: 'person' })]
 		expect(noChangeRuns(recent, [])).toBe(1)
+	})
+})
+
+describe('an extend reply', () => {
+	// Three quiet runs (1, 2, 3), a person asked at hour 4, the person's reply started run 5.
+	const threeQuiet = () => [
+		session({ n: 5, reason: 'person' }),
+		session({ n: 3 }),
+		session({ n: 2 }),
+		session({ n: 1 }),
+	]
+
+	it('marks the first person-started run after an ask, and only that one', () => {
+		const recent = [session({ n: 7, reason: 'person' }), ...threeQuiet()]
+		const marked = markExtendSessions(recent, [at(4)])
+		expect(marked.filter((s) => s.extend).map((s) => s.id)).toEqual(['s-5'])
+	})
+
+	it('marks nothing when nobody was asked', () => {
+		expect(markExtendSessions(threeQuiet(), []).some((s) => s.extend)).toBe(false)
+	})
+
+	it('keeps the quiet count running across the extend', () => {
+		const marked = markExtendSessions(threeQuiet(), [at(4)])
+		expect(noChangeStreak(marked, [])).toEqual({ runs: 3, extended: true })
+	})
+
+	it('without the mark, the person run ends the streak', () => {
+		expect(noChangeStreak(threeQuiet(), [])).toEqual({ runs: 0, extended: false })
+	})
+
+	it('does not count what happened while the extend run ran as a change', () => {
+		const marked = markExtendSessions(threeQuiet(), [at(4)])
+		expect(noChangeStreak(marked, [at(5.2)])).toEqual({ runs: 3, extended: true })
+	})
+
+	it('resets the count on a status change or edit after the extend', () => {
+		const marked = markExtendSessions(threeQuiet(), [at(4)])
+		expect(noChangeStreak(marked, [at(6)])).toEqual({ runs: 0, extended: false })
+	})
+
+	it('resets the count when the run after the extend changed something', () => {
+		const marked = markExtendSessions([session({ n: 8 }), ...threeQuiet()], [at(4)])
+		expect(noChangeStreak(marked, [at(8.2)])).toEqual({ runs: 0, extended: false })
+	})
+
+	it('doubles the wait for the next run: 1x before the ask, 2x after the extend', () => {
+		const lastEndedAt = at(3.5)
+		expect(backoffDecision({ runsWithNoChange: 2, lastEndedAt, now: at(3.6) })).toMatchObject({
+			kind: 'wait',
+			waitMs: BACKOFF_BASE_MS,
+		})
+		expect(backoffDecision({ runsWithNoChange: 3, lastEndedAt, now: at(5.6) })).toEqual({
+			kind: 'ask',
+		})
+		expect(
+			backoffDecision({ runsWithNoChange: 3, lastEndedAt, now: at(5.6), extended: true }),
+		).toMatchObject({ kind: 'wait', waitMs: 2 * BACKOFF_BASE_MS })
+		expect(
+			backoffDecision({ runsWithNoChange: 3, lastEndedAt, now: at(5.6), extended: true }),
+		).not.toHaveProperty('atCeiling')
+	})
+
+	it('flags the ceiling so a person is asked again, only there', () => {
+		expect(
+			backoffDecision({ runsWithNoChange: 9, lastEndedAt: at(0), now: at(1), extended: true }),
+		).toMatchObject({ kind: 'wait', waitMs: BACKOFF_CEILING_MS, atCeiling: true })
 	})
 })
 

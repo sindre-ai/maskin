@@ -30,7 +30,7 @@ import {
 	agentDailyBudgetSchema,
 	sessionStartReasonSchema,
 } from '@maskin/shared'
-import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm'
+import { and, desc, eq, gte, inArray, notInArray, sql } from 'drizzle-orm'
 import { HTTPException } from 'hono/http-exception'
 import { postComment } from '../lib/comments'
 import { recordEvent } from '../lib/events/record-event'
@@ -53,6 +53,9 @@ export const NO_CHANGE_RUNS_BEFORE_BACKOFF = 2
 /** Triggers an agent may leave pending that it made while running a self-started session. */
 export const MAX_PENDING_TRIGGERS_FROM_SELF_STARTED_RUNS = 3
 export const NO_CHANGE_RUNS_BEFORE_DECISION = 3
+/** Written on the object when a person is asked to extend, reassign or close; marks the extend reply. */
+export const BACKOFF_ASK_ACTION = 'self_start_backoff_ask'
+const GATE_BOOKKEEPING_ACTIONS = ['self_start_cap_note', BACKOFF_ASK_ACTION]
 /** Share of the daily budget at which the warning goes out. */
 export const BUDGET_WARN_SHARE = 0.8
 /** Newer than this many sessions on one object and agent are read when judging a streak. */
@@ -126,6 +129,11 @@ export interface StreakSession {
 	completedAt: Date | null
 	/** The plan asked for this run to check something, so it counts as a change. */
 	plannedCheck: boolean
+	/**
+	 * The person-started run that answered a back-off ask, i.e. an "extend". It is not a run of the
+	 * streak and not a change on the object: the quiet count runs on across it.
+	 */
+	extend?: boolean
 }
 
 /** Sessions newest first, from the newest one back to the first that is not `reason`. */
@@ -143,23 +151,68 @@ export function continuationCapReached(streak: number): boolean {
 }
 
 /**
- * How many of the newest self-started runs in a row changed nothing. `changedAt` holds the times
- * of everything that happened on the object. A run that is still live, or a streak whose newest
- * session is not self-started, counts 0: nothing can be judged yet.
+ * Marks the extend runs: for each time a person was asked, the first person-started session after
+ * it is that person's answer. `sessions` are newest first; the input is not changed.
  */
-export function noChangeRuns(sessions: StreakSession[], changedAt: Date[]): number {
+export function markExtendSessions<T extends StreakSession>(sessions: T[], askTimes: Date[]): T[] {
+	const extendIds = new Set<string>()
+	for (const ask of [...askTimes].sort((a, b) => a.getTime() - b.getTime())) {
+		const answer = [...sessions]
+			.reverse()
+			.find((s) => s.reason === 'person' && !extendIds.has(s.id) && s.createdAt >= ask)
+		if (answer) extendIds.add(answer.id)
+	}
+	return sessions.map((s) => (extendIds.has(s.id) ? { ...s, extend: true } : s))
+}
+
+/**
+ * How many of the newest self-started runs in a row changed nothing, and whether a person extended
+ * the streak on the way. `changedAt` holds the times of everything that happened on the object. A
+ * run that is still live, or a streak whose newest session is not self-started, counts 0: nothing
+ * can be judged yet. An extend run (and what happened while it ran) is skipped, so the count is not
+ * reset by the person's reply; a real change after it still resets the count.
+ */
+export function noChangeStreak(
+	sessions: StreakSession[],
+	changedAt: Date[],
+): { runs: number; extended: boolean } {
+	const extendWindows = sessions
+		.filter((s) => s.extend)
+		.map((s) => ({
+			from: (s.startedAt ?? s.createdAt).getTime(),
+			to: s.completedAt?.getTime() ?? Number.POSITIVE_INFINITY,
+		}))
+	const changes = changedAt
+		.map((t) => t.getTime())
+		.filter((t) => !extendWindows.some((w) => t >= w.from && t <= w.to))
+
 	let n = 0
+	let extended = false
+	let newest = true
 	for (const s of sessions) {
+		if (s.extend) {
+			if (!s.completedAt) return { runs: 0, extended: false }
+			// A change after the extend, before the next run, is a real change.
+			if (newest && changes.some((t) => t > (s.completedAt as Date).getTime())) {
+				return { runs: 0, extended: false }
+			}
+			extended = true
+			continue
+		}
+		newest = false
 		if (!s.reason || !isSelfStarted(s.reason)) break
-		if (s.live || !s.completedAt) return 0
+		if (s.live || !s.completedAt) return { runs: 0, extended: false }
 		const from = (s.startedAt ?? s.createdAt).getTime()
 		const to = s.completedAt.getTime()
-		const changed =
-			s.plannedCheck || changedAt.some((t) => t.getTime() >= from && t.getTime() <= to)
+		const changed = s.plannedCheck || changes.some((t) => t >= from && t <= to)
 		if (changed) break
 		n++
 	}
-	return n
+	return { runs: n, extended: n > 0 && extended }
+}
+
+export function noChangeRuns(sessions: StreakSession[], changedAt: Date[]): number {
+	return noChangeStreak(sessions, changedAt).runs
 }
 
 /** 0 before the 2nd run; then 1x, 2x, 4x ... the base wait, up to the ceiling. */
@@ -169,23 +222,33 @@ export function backoffWaitMs(runsWithNoChange: number): number {
 	return Math.min(BACKOFF_BASE_MS * 2 ** doublings, BACKOFF_CEILING_MS)
 }
 
+/** `atCeiling` is set only when the wait is the longest there is: a person is asked again then. */
 export type BackoffDecision =
-	| { kind: 'admit' }
-	| { kind: 'wait'; retryAt: Date; waitMs: number }
+	| { kind: 'admit'; atCeiling?: true }
+	| { kind: 'wait'; retryAt: Date; waitMs: number; atCeiling?: true }
 	| { kind: 'ask' }
 
+/**
+ * After 3 quiet runs the first time, a person is asked and nothing starts. Once a person has
+ * extended, the quiet count runs on: each further quiet run doubles the wait up to the ceiling.
+ */
 export function backoffDecision(input: {
 	runsWithNoChange: number
 	lastEndedAt: Date | null
 	now: Date
+	extended?: boolean
 }): BackoffDecision {
-	if (input.runsWithNoChange >= NO_CHANGE_RUNS_BEFORE_DECISION) return { kind: 'ask' }
+	if (input.runsWithNoChange >= NO_CHANGE_RUNS_BEFORE_DECISION && !input.extended) {
+		return { kind: 'ask' }
+	}
 	const waitMs = backoffWaitMs(input.runsWithNoChange)
-	if (waitMs === 0 || !input.lastEndedAt) return { kind: 'admit' }
+	if (waitMs === 0) return { kind: 'admit' }
+	const ceiling = waitMs >= BACKOFF_CEILING_MS ? ({ atCeiling: true } as const) : {}
+	if (!input.lastEndedAt) return { kind: 'admit', ...ceiling }
 	const retryAt = new Date(input.lastEndedAt.getTime() + waitMs)
 	return retryAt.getTime() > input.now.getTime()
-		? { kind: 'wait', retryAt, waitMs }
-		: { kind: 'admit' }
+		? { kind: 'wait', retryAt, waitMs, ...ceiling }
+		: { kind: 'admit', ...ceiling }
 }
 
 export type BudgetState = 'ok' | 'warn' | 'blocked'
@@ -249,7 +312,7 @@ function readReason(config: unknown): SessionStartReason | null {
 async function readRecentSessions(
 	db: Database,
 	params: { workspaceId: string; actorId: string; objectId: string },
-): Promise<StreakSession[]> {
+): Promise<{ sessions: StreakSession[]; extendCommentIds: Set<number> }> {
 	const rows = await db
 		.select({
 			id: sessions.id,
@@ -269,34 +332,65 @@ async function readRecentSessions(
 		)
 		.orderBy(desc(sessions.createdAt))
 		.limit(STREAK_LOOKBACK)
-	return rows.map((r) => ({
-		id: r.id,
-		reason: readReason(r.config),
-		live: !r.completedAt,
-		createdAt: r.createdAt ?? new Date(0),
-		startedAt: r.startedAt,
-		completedAt: r.completedAt,
-		plannedCheck: (r.config as { planned_check?: unknown } | null)?.planned_check === true,
-	}))
-}
-
-/** When anything happened to the object (a comment, an update, a status change) since `since`. */
-async function readObjectChangeTimes(
-	db: Database,
-	params: { workspaceId: string; objectId: string; since: Date },
-): Promise<Date[]> {
-	const rows = await db
+	const asks = await db
 		.select({ at: events.createdAt })
 		.from(events)
 		.where(
 			and(
 				eq(events.workspaceId, params.workspaceId),
 				eq(events.entityId, params.objectId),
-				eq(events.entityType, 'object'),
+				eq(events.action, BACKOFF_ASK_ACTION),
+				sql`${events.data}->>'actor_id' = ${params.actorId}`,
+			),
+		)
+	const marked = markExtendSessions(
+		rows.map((r) => ({
+			id: r.id,
+			reason: readReason(r.config),
+			live: !r.completedAt,
+			createdAt: r.createdAt ?? new Date(0),
+			startedAt: r.startedAt,
+			completedAt: r.completedAt,
+			plannedCheck: (r.config as { planned_check?: unknown } | null)?.planned_check === true,
+		})),
+		asks.flatMap((a) => (a.at ? [a.at] : [])),
+	)
+	// The person's reply is what started the extend run; it must not count as a change.
+	const extendCommentIds = new Set<number>()
+	for (const s of marked) {
+		if (!s.extend) continue
+		const config = rows.find((r) => r.id === s.id)?.config as {
+			source_comment_event_id?: unknown
+			mention?: { comment_event_id?: unknown }
+		} | null
+		const id = Number(config?.source_comment_event_id ?? config?.mention?.comment_event_id)
+		if (Number.isFinite(id)) extendCommentIds.add(id)
+	}
+	return { sessions: marked, extendCommentIds }
+}
+
+/**
+ * When anything happened to the object (a comment, an edit, a status change) since `since`. Events
+ * hang on the object under its own type ('task', 'bet', ...) except comments, which use 'object',
+ * so the type is not filtered: the id is unique. The gate's own bookkeeping is left out, or its
+ * note would count as the change that ends the quiet streak.
+ */
+async function readObjectChangeTimes(
+	db: Database,
+	params: { workspaceId: string; objectId: string; since: Date; ignoreEventIds: Set<number> },
+): Promise<Date[]> {
+	const rows = await db
+		.select({ id: events.id, at: events.createdAt })
+		.from(events)
+		.where(
+			and(
+				eq(events.workspaceId, params.workspaceId),
+				eq(events.entityId, params.objectId),
+				notInArray(events.action, GATE_BOOKKEEPING_ACTIONS),
 				gte(events.createdAt, params.since),
 			),
 		)
-	return rows.flatMap((r) => (r.at ? [r.at] : []))
+	return rows.flatMap((r) => (r.at && !params.ignoreEventIds.has(Number(r.id)) ? [r.at] : []))
 }
 
 /** Tokens the agent's self-started runs have used since `dayStart`: input, output and cache writes. */
@@ -511,6 +605,46 @@ async function leaveCapNote(
 	})
 }
 
+/**
+ * Asks the owners once per `dedupeKey`, and marks the object with the time of the ask so that a
+ * person's reply afterwards is read as the answer (an extend), not as a change.
+ */
+async function askOnce(
+	db: Database,
+	input: AdmitInput,
+	params: { dedupeKey: string; headline: string; rationale: string },
+): Promise<void> {
+	if (!input.initiatedFromObjectId) return
+	const objectId = input.initiatedFromObjectId
+	try {
+		const [already] = await db
+			.select({ id: events.id })
+			.from(events)
+			.where(
+				and(
+					eq(events.workspaceId, input.workspaceId),
+					eq(events.entityId, objectId),
+					eq(events.action, BACKOFF_ASK_ACTION),
+					sql`${events.data}->>'dedupe_key' = ${params.dedupeKey}`,
+				),
+			)
+			.limit(1)
+		if (!already) {
+			await recordEvent(db, {
+				workspaceId: input.workspaceId,
+				actorId: input.actorId,
+				action: BACKOFF_ASK_ACTION,
+				entityType: 'object',
+				entityId: objectId,
+				data: { actor_id: input.actorId, dedupe_key: params.dedupeKey },
+			})
+		}
+		await sendOwnerCard(db, { workspaceId: input.workspaceId, ...params })
+	} catch (err) {
+		logger.warn('Failed to send the back-off card', { error: String(err) })
+	}
+}
+
 async function checkObjectLimits(
 	db: Database,
 	input: AdmitInput,
@@ -519,7 +653,7 @@ async function checkObjectLimits(
 ): Promise<void> {
 	const objectId = input.initiatedFromObjectId
 	if (!objectId) return
-	const recent = await readRecentSessions(db, {
+	const { sessions: recent, extendCommentIds } = await readRecentSessions(db, {
 		workspaceId: input.workspaceId,
 		actorId: input.actorId,
 		objectId,
@@ -547,13 +681,24 @@ async function checkObjectLimits(
 		workspaceId: input.workspaceId,
 		objectId,
 		since: oldest,
+		ignoreEventIds: extendCommentIds,
 	})
-	const quiet = noChangeRuns(recent, changes)
+	const { runs: quiet, extended } = noChangeStreak(recent, changes)
 	const decision = backoffDecision({
 		runsWithNoChange: quiet,
-		lastEndedAt: recent[0]?.completedAt ?? null,
+		// The wait counts from the last self-started run, not from the person's extend reply.
+		lastEndedAt: recent.find((s) => !s.extend)?.completedAt ?? null,
 		now,
+		extended,
 	})
+	if (decision.kind !== 'ask' && 'atCeiling' in decision) {
+		// The wait is the longest there is: ask again, at most once a day for this agent and item.
+		await askOnce(db, input, {
+			dedupeKey: `backoff_ceiling:${objectId}:${input.actorId}:${now.toISOString().slice(0, 10)}`,
+			headline: 'An agent keeps running here and nothing changes. Extend, reassign or close?',
+			rationale: `${quiet} runs in a row started on their own and changed nothing on the item, and the wait between runs is now the longest there is (24 hours). Recommended: close it, or reassign it if it still matters. To extend, reply on the item; the wait stays this long until something changes.`,
+		})
+	}
 	if (decision.kind === 'wait') {
 		await refuse(db, input, {
 			refusal: 'no_change_backoff',
@@ -565,12 +710,11 @@ async function checkObjectLimits(
 		})
 	}
 	if (decision.kind === 'ask') {
-		await sendOwnerCard(db, {
-			workspaceId: input.workspaceId,
+		await askOnce(db, input, {
 			dedupeKey: `backoff:${objectId}:${input.actorId}:${recent[0]?.id ?? 'none'}`,
 			headline: 'An agent keeps running here and nothing changes. Extend, reassign or close?',
-			rationale: `${quiet} runs in a row started on their own and changed nothing on the item, so I stopped starting more. Recommended: close it, or reassign it if it still matters. To extend, reply on the item and the agent will run again. Nothing else happens until you decide.`,
-		}).catch((err) => logger.warn('Failed to send the back-off card', { error: String(err) }))
+			rationale: `${quiet} runs in a row started on their own and changed nothing on the item, so I stopped starting more. Recommended: close it, or reassign it if it still matters. To extend, reply on the item and the agent will run again, more slowly each time while nothing changes. Nothing else happens until you decide.`,
+		})
 		await refuse(db, input, {
 			refusal: 'no_change_decision',
 			decision: 'blocked',
