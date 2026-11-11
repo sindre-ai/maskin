@@ -164,6 +164,7 @@ struct FileTagEditorSheet: View {
 /// "has all of these" or "has any of these".
 struct FileTagFilterSheet: View {
 	let store: FilesListStore
+	@State private var editing: String?
 	@Environment(\.dismiss) private var dismiss
 
 	var body: some View {
@@ -182,21 +183,38 @@ struct FileTagFilterSheet: View {
 				}
 				Section("Tags") {
 					ForEach(store.tagOptions) { option in
-						Button {
-							toggle(option.tag)
-						} label: {
-							HStack {
-								Text(option.tag).foregroundStyle(MaskinColor.ink)
-								Spacer(minLength: 0)
-								Text("\(option.count)").foregroundStyle(MaskinColor.ink4)
-								if store.selectedTags.contains(option.tag) {
-									Image(systemName: "checkmark").foregroundStyle(MaskinColor.ink)
+						HStack {
+							Button {
+								toggle(option.tag)
+							} label: {
+								HStack {
+									Text(option.tag).foregroundStyle(MaskinColor.ink)
+									Spacer(minLength: 0)
+									Text("\(option.count)").foregroundStyle(MaskinColor.ink4)
+									if store.selectedTags.contains(option.tag) {
+										Image(systemName: "checkmark").foregroundStyle(MaskinColor.ink)
+									}
 								}
+								.contentShape(Rectangle())
 							}
-							.contentShape(Rectangle())
+							.buttonStyle(.plain)
+							.accessibilityElement(children: .combine)
+							.accessibilityAddTraits(store.selectedTags.contains(option.tag) ? .isSelected : [])
+							// A picked tag no file carries any more has nothing left to change.
+							if option.count > 0 {
+								Button {
+									store.clearTagChangeError()
+									editing = option.tag
+								} label: {
+									Image(systemName: "pencil")
+										.foregroundStyle(MaskinColor.ink4)
+										.frame(minWidth: MaskinSpace.s9, minHeight: MaskinSpace.s9)
+										.contentShape(Rectangle())
+								}
+								.buttonStyle(.borderless)
+								.accessibilityLabel("Edit tag \(option.tag)")
+							}
 						}
-						.accessibilityElement(children: .combine)
-						.accessibilityAddTraits(store.selectedTags.contains(option.tag) ? .isSelected : [])
 					}
 				}
 			}
@@ -205,6 +223,9 @@ struct FileTagFilterSheet: View {
 			.navigationBarTitleDisplayMode(.inline)
 			#endif
 			.toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+			.sheet(item: Binding(get: { editing.map(TagEditTarget.init) }, set: { editing = $0?.tag })) {
+				FileTagEditSheet(store: store, tag: $0.tag)
+			}
 		}
 		.presentationDetents([.medium, .large])
 	}
@@ -236,5 +257,71 @@ struct FileTagFilterChips: View {
 			.accessibilityElement(children: .contain)
 			.accessibilityLabel("Picked tags")
 		}
+	}
+}
+
+private struct TagEditTarget: Identifiable {
+	let tag: String
+	var id: String { tag }
+}
+
+/// Changes one tag on every file in the workspace: rename it, or merge it into another tag.
+struct FileTagEditSheet: View {
+	let store: FilesListStore
+	let tag: String
+	@State private var newName = ""
+	@State private var mergeInto = ""
+	@Environment(\.dismiss) private var dismiss
+
+	private var normalized: String? { FileTagRules.normalized(newName) }
+	private var otherTags: [String] { store.tagOptions.filter { $0.tag != tag && $0.count > 0 }.map(\.tag) }
+
+	var body: some View {
+		NavigationStack {
+			Form {
+				Section {
+					TextField("New name", text: $newName)
+						#if os(iOS)
+						.textInputAutocapitalization(.never)
+						#endif
+						.autocorrectionDisabled()
+						.submitLabel(.done)
+						.onSubmit(rename)
+					Button("Rename", action: rename)
+						.disabled(normalized == nil || normalized == tag || store.isChangingTag)
+				} header: {
+					Text("New name")
+				} footer: {
+					Text("Changes the tag on every file in the workspace.")
+				}
+				if !otherTags.isEmpty {
+					Section("Merge into") {
+						Picker("Merge into", selection: $mergeInto) {
+							Text("Pick a tag").tag("")
+							ForEach(otherTags, id: \.self) { Text($0).tag($0) }
+						}
+						Button("Merge", action: merge)
+							.disabled(mergeInto.isEmpty || store.isChangingTag)
+					}
+				}
+				FormError(store.tagChangeError)
+			}
+			.navigationTitle("Edit tag \"\(tag)\"")
+			#if os(iOS)
+			.navigationBarTitleDisplayMode(.inline)
+			#endif
+			.toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+		}
+		.presentationDetents([.medium, .large])
+	}
+
+	private func rename() {
+		guard let name = normalized, name != tag else { return }
+		Task { if await store.renameTag(tag, to: name) != nil { dismiss() } }
+	}
+
+	private func merge() {
+		guard !mergeInto.isEmpty else { return }
+		Task { if await store.mergeTag(tag, into: mergeInto) != nil { dismiss() } }
 	}
 }

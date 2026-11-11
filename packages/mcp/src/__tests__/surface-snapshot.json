@@ -288,6 +288,7 @@
 		"list_workspace_skills": ["cursor", "limit", "workspace_id"],
 		"list_workspaces": ["cursor", "limit"],
 		"mark_read": ["entity_id", "entity_type", "last_event_id", "workspace_id"],
+		"merge_file_tags": ["from", "into", "workspace_id"],
 		"pause_session": ["id", "workspace_id"],
 		"post_conversation_message": [
 			"content",
@@ -380,6 +381,7 @@
 			"metadata.voice_session_id",
 			"workspace_id"
 		],
+		"rename_file_tag": ["from", "to", "workspace_id"],
 		"request_keychain_access": ["credential_name", "hint", "workspace_id"],
 		"request_keychain_credential": [
 			"hint",

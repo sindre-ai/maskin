@@ -1,5 +1,5 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
-import { fileUploads, files } from '@maskin/db/schema'
+import { events, fileUploads, files } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { insertWorkspace } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
@@ -259,5 +259,205 @@ describe('files.tags', () => {
 			tag: string
 		}>
 		expect(counts.map((c) => c.tag).sort()).toEqual(['clip_type:b_roll', 'raw'])
+	})
+})
+
+// Rename and merge change one tag on every file in the workspace in one transaction.
+describe('files.tags rename and merge', () => {
+	let workspaceId: string
+	let app: ReturnType<typeof createApp>
+
+	beforeEach(async () => {
+		workspaceId = (await insertWorkspace(db, getTestActorId())).id
+		app = createApp()
+	})
+
+	const headers = (ws = workspaceId) => ({ 'X-Workspace-Id': ws })
+	const create = async (name: string, tags: string[], ws = workspaceId) => {
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/files',
+				{ name, mime_type: 'text/plain', content: 'x', tags },
+				headers(ws),
+			),
+		)
+		expect(res.status).toBe(201)
+		return (await res.json()) as Row
+	}
+	const post = (path: 'rename' | 'merge', body: Record<string, string>, ws = workspaceId) =>
+		app.request(jsonRequest('POST', `/api/files/tags/${path}`, body, headers(ws)))
+	const tagsOf = async (id: string) => {
+		const [row] = await db.select().from(files).where(eq(files.id, id))
+		return row?.tags
+	}
+	const tagCounts = async (ws = workspaceId) => {
+		const res = await app.request(jsonGet('/api/files/tags', headers(ws)))
+		return (await res.json()) as Array<{ tag: string; count: number }>
+	}
+	const auditEvents = async () => {
+		const rows = await db.select().from(events).where(eq(events.workspaceId, workspaceId))
+		return rows.filter((e) => e.action.startsWith('file_tag'))
+	}
+
+	it('renames a tag on every file that carries it, keeping the other tags in order', async () => {
+		const a = await create('a.txt', ['raw', 'broll', 'final'])
+		const b = await create('b.txt', ['broll'])
+		const c = await create('c.txt', ['raw'])
+
+		const res = await post('rename', { from: ' BRoll ', to: 'B-Roll' })
+
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({ from: 'broll', to: 'b-roll', files_changed: 2 })
+		expect(await tagsOf(a.id)).toEqual(['raw', 'b-roll', 'final'])
+		expect(await tagsOf(b.id)).toEqual(['b-roll'])
+		expect(await tagsOf(c.id)).toEqual(['raw'])
+		expect(await tagCounts()).toEqual([
+			{ tag: 'b-roll', count: 2 },
+			{ tag: 'raw', count: 2 },
+			{ tag: 'final', count: 1 },
+		])
+	})
+
+	it('moves updated_at on the files it changes and leaves the others alone', async () => {
+		const changed = await create('a.txt', ['broll'])
+		const untouched = await create('b.txt', ['raw'])
+		const updatedAtOf = async (id: string) =>
+			(await db.select().from(files).where(eq(files.id, id)))[0]?.updatedAt?.getTime() ?? 0
+		const [changedBefore, untouchedBefore] = [
+			await updatedAtOf(changed.id),
+			await updatedAtOf(untouched.id),
+		]
+		await new Promise((r) => setTimeout(r, 20))
+
+		await post('rename', { from: 'broll', to: 'b-roll' })
+
+		expect(await updatedAtOf(changed.id)).toBeGreaterThan(changedBefore)
+		expect(await updatedAtOf(untouched.id)).toBe(untouchedBefore)
+	})
+
+	it('refuses to rename onto a tag that already exists and changes nothing', async () => {
+		const a = await create('a.txt', ['broll'])
+		await create('b.txt', ['b-roll'])
+
+		const res = await post('rename', { from: 'broll', to: 'b-roll' })
+
+		expect(res.status).toBe(409)
+		expect(await tagsOf(a.id)).toEqual(['broll'])
+		expect(await auditEvents()).toEqual([])
+	})
+
+	it('merges a tag into another: files with both keep one copy, the old tag is gone', async () => {
+		const onlyOld = await create('a.txt', ['broll', 'raw'])
+		const both = await create('b.txt', ['b-roll', 'broll'])
+		const onlyNew = await create('c.txt', ['b-roll'])
+
+		const res = await post('merge', { from: 'broll', into: 'b-roll' })
+
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({ from: 'broll', to: 'b-roll', files_changed: 2 })
+		expect(await tagsOf(onlyOld.id)).toEqual(['b-roll', 'raw'])
+		expect(await tagsOf(both.id)).toEqual(['b-roll'])
+		expect(await tagsOf(onlyNew.id)).toEqual(['b-roll'])
+		const counts = await tagCounts()
+		expect(counts.find((t) => t.tag === 'broll')).toBeUndefined()
+		expect(counts.find((t) => t.tag === 'b-roll')?.count).toBe(3)
+	})
+
+	it('never pushes a file over the 20 tag limit: a file with 20 tags merges fine', async () => {
+		const full = Array.from({ length: 20 }, (_, i) => `t${String(i).padStart(2, '0')}`)
+		const a = await create('full.txt', full)
+
+		const res = await post('merge', { from: 't00', into: 't01' })
+
+		expect(res.status).toBe(200)
+		expect((await tagsOf(a.id))?.length).toBe(19)
+		expect((await tagsOf(a.id))?.filter((t) => t === 't01')).toHaveLength(1)
+
+		// Merging into a tag the file lacks swaps one for one, still 20.
+		const c = await create('full2.txt', full)
+		const swap = await post('merge', { from: 't05', into: 'fresh' })
+		expect(swap.status).toBe(200)
+		expect((await tagsOf(c.id))?.length).toBe(20)
+		expect(await tagsOf(c.id)).toContain('fresh')
+	})
+
+	it('writes one audit event per change, naming the old tag, the new tag and the count', async () => {
+		await create('a.txt', ['broll'])
+		await create('b.txt', ['broll'])
+		await create('c.txt', ['raw'])
+
+		await post('rename', { from: 'broll', to: 'b-roll' })
+		await post('merge', { from: 'raw', into: 'b-roll' })
+
+		const logged = await auditEvents()
+		expect(logged.map((e) => [e.action, e.data])).toEqual([
+			['file_tag_renamed', { from: 'broll', to: 'b-roll', files_changed: 2 }],
+			['file_tags_merged', { from: 'raw', to: 'b-roll', files_changed: 1 }],
+		])
+		expect(logged.every((e) => e.entityType === 'workspace' && e.entityId === workspaceId)).toBe(
+			true,
+		)
+	})
+
+	it('answers 404 and writes nothing when no file carries the tag', async () => {
+		await create('a.txt', ['raw'])
+
+		const res = await post('merge', { from: 'missing', into: 'raw' })
+
+		expect(res.status).toBe(404)
+		expect(await auditEvents()).toEqual([])
+	})
+
+	it('rejects the same tag on both sides, a blank tag and a comma', async () => {
+		await create('a.txt', ['raw'])
+		expect((await post('rename', { from: 'raw', to: ' RAW ' })).status).toBe(400)
+		expect((await post('merge', { from: 'raw', into: 'raw' })).status).toBe(400)
+		expect((await post('rename', { from: 'raw', to: '  ' })).status).toBe(400)
+		expect((await post('rename', { from: 'raw', to: 'a,b' })).status).toBe(400)
+	})
+
+	it('also fixes the tag on a large upload that has not finished', async () => {
+		const start = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/files/uploads',
+				{
+					name: 'IMG_1.MOV',
+					mime_type: 'video/quicktime',
+					size_bytes: LARGE_BYTES,
+					tags: ['broll'],
+				},
+				headers(),
+			),
+		)
+		expect(start.status).toBe(201)
+		const session = (await start.json()) as { upload_id: string }
+		await create('a.txt', ['broll'])
+
+		await post('rename', { from: 'broll', to: 'b-roll' })
+
+		const [upload] = await db
+			.select()
+			.from(fileUploads)
+			.where(eq(fileUploads.id, session.upload_id))
+		expect(upload?.tags).toEqual(['b-roll'])
+	})
+
+	it('never touches another workspace’s files or tags', async () => {
+		const other = (await insertWorkspace(db, getTestActorId())).id
+		const theirs = await create('theirs.txt', ['broll'], other)
+		await create('mine.txt', ['broll'])
+
+		await post('rename', { from: 'broll', to: 'b-roll' })
+		expect(await tagsOf(theirs.id)).toEqual(['broll'])
+		expect(await tagCounts(other)).toEqual([{ tag: 'broll', count: 1 }])
+
+		await post('merge', { from: 'b-roll', into: 'final' })
+		expect(await tagsOf(theirs.id)).toEqual(['broll'])
+
+		// Their workspace has no "b-roll", so asking there is a plain not-found.
+		expect((await post('rename', { from: 'b-roll', to: 'x' }, other)).status).toBe(404)
+		expect(await tagsOf(theirs.id)).toEqual(['broll'])
 	})
 })

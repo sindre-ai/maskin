@@ -40,6 +40,20 @@ private final class TagRemote: FilesRemote, @unchecked Sendable {
 	var failSave = false
 	private(set) var lists: [(query: String, tags: [String], match: FileTagMatch, offset: Int)] = []
 	private(set) var saves: [[String]] = []
+	var changeError: String?
+	private(set) var changes: [String] = []
+
+	func renameTag(from: String, to: String) async throws -> FileTagChange {
+		if let changeError { throw FileError(changeError) }
+		changes.append("rename \(from) -> \(to)")
+		return FileTagChange(from: from, to: to, filesChanged: 3)
+	}
+
+	func mergeTag(from: String, into: String) async throws -> FileTagChange {
+		if let changeError { throw FileError(changeError) }
+		changes.append("merge \(from) -> \(into)")
+		return FileTagChange(from: from, to: into, filesChanged: 2)
+	}
 
 	func file(id: String) async throws -> FileDetail {
 		FileDetail(id: id, name: "clip.md", mimeType: "text/markdown", sizeBytes: 1, data: Data("x".utf8))
@@ -188,6 +202,56 @@ struct FileStoreTagTests {
 	}
 }
 
+@MainActor
+@Suite("FilesListStore tag rename and merge")
+struct FilesListStoreTagChangeTests {
+	@Test("a rename reloads the list and the counts, and a picked tag follows its new name")
+	func rename() async {
+		let remote = TagRemote()
+		remote.counts = [FileTagCount(tag: "broll", count: 3)]
+		let store = FilesListStore(remote: remote)
+		await store.setTags(["broll", "raw"])
+		let loadsBefore = remote.lists.count
+
+		let change = await store.renameTag("broll", to: "b-roll")
+
+		#expect(change == FileTagChange(from: "broll", to: "b-roll", filesChanged: 3))
+		#expect(remote.changes == ["rename broll -> b-roll"])
+		#expect(store.selectedTags == ["b-roll", "raw"])
+		#expect(remote.lists.count == loadsBefore + 1)
+		#expect(remote.lists.last?.tags == ["b-roll", "raw"])
+		#expect(store.tagChangeError == nil)
+	}
+
+	@Test("a merge into a tag that is already picked keeps one copy of it")
+	func mergeIntoPicked() async {
+		let remote = TagRemote()
+		let store = FilesListStore(remote: remote)
+		await store.setTags(["broll", "b-roll"])
+
+		_ = await store.mergeTag("broll", into: "b-roll")
+
+		#expect(remote.changes == ["merge broll -> b-roll"])
+		#expect(store.selectedTags == ["b-roll"])
+	}
+
+	@Test("a refused change keeps the picked tags and shows the server's reason")
+	func refused() async {
+		let remote = TagRemote()
+		remote.changeError = "That name is already a tag. Merge into it instead."
+		let store = FilesListStore(remote: remote)
+		await store.setTags(["broll"])
+
+		let change = await store.renameTag("broll", to: "b-roll")
+
+		#expect(change == nil)
+		#expect(store.selectedTags == ["broll"])
+		#expect(store.tagChangeError == "That name is already a tag. Merge into it instead.")
+		store.clearTagChangeError()
+		#expect(store.tagChangeError == nil)
+	}
+}
+
 @Suite("APIFilesRemote tag requests")
 struct APIFilesRemoteTagRequestTests {
 	private struct NoTransport: ClientTransport {
@@ -242,11 +306,26 @@ struct APIFilesRemoteTagRequestTests {
 		#expect(sent == ["tags": ["a", "b"]])
 	}
 
+	@Test("a rename and a merge post the old and new tag to their own routes")
+	func changeRequests() async throws {
+		let body = try JSONEncoder().encode(["from": "broll", "to": "b-roll"])
+		let request = await remote().makeRequest(
+			method: "POST", path: "api/files/tags/rename", query: [], body: body, idempotencyKey: nil,
+			transport: transport)
+		#expect(request.url?.path == "/api/files/tags/rename")
+		#expect(request.httpMethod == "POST")
+		#expect(request.value(forHTTPHeaderField: "X-Workspace-Id") == "ws-1")
+		let sent = try JSONDecoder().decode([String: String].self, from: try #require(request.httpBody))
+		#expect(sent == ["from": "broll", "to": "b-roll"])
+	}
+
 	@Test("without a raw transport the tag calls say tags aren't available")
 	func noTransport() async {
 		let plain = APIFilesRemote(
 			client: Client(serverURL: URL(string: "http://localhost:3000")!, transport: NoTransport()))
 		await #expect(throws: FileError.self) { try await plain.tagCounts() }
+		await #expect(throws: FileError.self) { try await plain.renameTag(from: "a", to: "b") }
+		await #expect(throws: FileError.self) { try await plain.mergeTag(from: "a", into: "b") }
 	}
 
 	@Test("reads tag counts and a file's tags from the server's JSON")

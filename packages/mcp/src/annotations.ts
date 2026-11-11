@@ -128,6 +128,8 @@ const ROWS: Record<string, Row> = {
 	create_file: row('Create file'),
 	list_files: row('List files'),
 	list_file_tags: row('List file tags'),
+	rename_file_tag: row('Rename file tag'),
+	merge_file_tags: row('Merge file tags'),
 	get_file: row('Get file'),
 	update_file: row('Update file', { idempotent: true }),
 	propose_file_changes: row('Propose file changes'),

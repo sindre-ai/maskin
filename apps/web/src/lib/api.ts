@@ -1820,6 +1820,20 @@ export const api = {
 		},
 		/** Every tag in use in the workspace with how many files carry it, most-used first. */
 		tags: (workspaceId: string) => request<FileTagCount[]>('/files/tags', { workspaceId }),
+		/** Renames a tag on every file in the workspace. Fails if the new name is already a tag. */
+		renameTag: (workspaceId: string, data: { from: string; to: string }) =>
+			request<FileTagChangeResult>('/files/tags/rename', {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+		/** Folds one tag into another on every file in the workspace. */
+		mergeTags: (workspaceId: string, data: { from: string; into: string }) =>
+			request<FileTagChangeResult>('/files/tags/merge', {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
 		get: (workspaceId: string, id: string) => request<FileDetail>(`/files/${id}`, { workspaceId }),
 		create: (workspaceId: string, data: CreateFileInput) =>
 			request<FileDetail>('/files', { method: 'POST', body: data, workspaceId }),
@@ -2804,6 +2818,12 @@ export type FileTagMatch = 'all' | 'any'
 export interface FileTagCount {
 	tag: string
 	count: number
+}
+
+export interface FileTagChangeResult {
+	from: string
+	to: string
+	files_changed: number
 }
 
 export interface FileAnnotation {

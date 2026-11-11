@@ -25,6 +25,9 @@ public final class FilesListStore {
 	public private(set) var match: FileTagMatch = .all
 	/// Every tag in use with its file count, A to Z.
 	public private(set) var availableTags: [FileTagCount] = []
+	/// Why the last rename or merge failed, shown in its sheet; nil otherwise.
+	public private(set) var tagChangeError: String?
+	public private(set) var isChangingTag = false
 
 	@ObservationIgnored private let remote: any FilesRemote
 	@ObservationIgnored private var generation = 0
@@ -71,6 +74,46 @@ public final class FilesListStore {
 	public func loadTags() async {
 		guard let counts = try? await remote.tagCounts() else { return }
 		availableTags = FileTagRules.sorted(counts)
+	}
+
+	/// Renames `tag` on every file. On success a picked `tag` follows its new name, and the list and
+	/// the tag counts reload. Returns what changed, or nil with `tagChangeError` set.
+	public func renameTag(_ tag: String, to newName: String) async -> FileTagChange? {
+		await changeTag(from: tag) { try await self.remote.renameTag(from: tag, to: newName) }
+	}
+
+	/// Folds `tag` into `target` on every file. Same follow-up as `renameTag`.
+	public func mergeTag(_ tag: String, into target: String) async -> FileTagChange? {
+		await changeTag(from: tag) { try await self.remote.mergeTag(from: tag, into: target) }
+	}
+
+	public func clearTagChangeError() { tagChangeError = nil }
+
+	private func changeTag(from tag: String, _ run: () async throws -> FileTagChange) async
+		-> FileTagChange?
+	{
+		guard !isChangingTag else { return nil }
+		isChangingTag = true
+		tagChangeError = nil
+		defer { isChangingTag = false }
+		let change: FileTagChange
+		do {
+			change = try await run()
+		} catch {
+			tagChangeError = (error as? FileError)?.message ?? "Couldn't change the tag. Try again."
+			return nil
+		}
+		if selectedTags.contains(tag) {
+			var next: [String] = []
+			for picked in selectedTags {
+				let name = picked == tag ? change.to : picked
+				if !next.contains(name) { next.append(name) }
+			}
+			selectedTags = next
+		}
+		await load()
+		await loadTags()
+		return change
 	}
 
 	/// First page for the current query. A failed refresh keeps the rows already on screen.

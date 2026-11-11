@@ -50,6 +50,55 @@ test.describe('File tags', () => {
 			expect(overflow).toBe(false)
 		})
 
+		test(`rename a tag and merge another into it — ${vp.label}`, async ({ page, account }) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			const make = (name: string, tags: string[]) =>
+				account.api.createFile(account.workspaceId, {
+					name,
+					mime_type: 'text/markdown',
+					content: '# Clip',
+					encoding: 'utf8',
+					tags,
+				})
+			const one = await make('one.md', ['broll', 'raw'])
+			const two = await make('two.md', ['b-roll', 'broll'])
+			const three = await make('three.md', ['raw'])
+
+			await page.goto(`/${account.workspaceId}/objects?type=file`)
+			await expect(page.getByRole('link', { name: /three\.md/ })).toBeVisible({ timeout: 10000 })
+
+			// Rename "raw" to "footage".
+			await page.getByRole('button', { name: 'Filter by tag' }).click()
+			await page.getByRole('button', { name: 'Edit tag raw' }).click()
+			await page.getByRole('textbox', { name: 'New name' }).fill('  Footage ')
+			await page.getByRole('button', { name: 'Rename', exact: true }).click()
+			await expect(page.getByText('Renamed to "footage" on 2 files.')).toBeVisible()
+			await expect
+				.poll(async () => (await account.api.getFile(account.workspaceId, one.id)).tags)
+				.toEqual(['broll', 'footage'])
+			expect((await account.api.getFile(account.workspaceId, three.id)).tags).toEqual(['footage'])
+
+			// Merge "broll" into "b-roll": the file that had both keeps one copy.
+			await page.getByRole('button', { name: 'Filter by tag' }).click()
+			await page.getByRole('button', { name: 'Edit tag broll' }).click()
+			await page.getByRole('combobox', { name: 'Merge into' }).click()
+			await page.getByRole('option', { name: 'b-roll' }).click()
+			await page.getByRole('button', { name: 'Merge', exact: true }).click()
+			await expect(page.getByText('Merged into "b-roll" on 2 files.')).toBeVisible()
+			await expect
+				.poll(async () => (await account.api.getFile(account.workspaceId, two.id)).tags)
+				.toEqual(['b-roll'])
+			expect((await account.api.getFile(account.workspaceId, one.id)).tags).toEqual([
+				'b-roll',
+				'footage',
+			])
+
+			// The tag list now has the new names only.
+			await page.getByRole('button', { name: 'Filter by tag' }).click()
+			await expect(page.getByRole('checkbox')).toHaveCount(2)
+			await expect(page.getByRole('button', { name: 'Edit tag broll' })).toHaveCount(0)
+		})
+
 		test(`add and remove a tag on the file page — ${vp.label}`, async ({ page, account }) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 			await account.api.createFile(account.workspaceId, {
