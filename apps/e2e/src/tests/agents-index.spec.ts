@@ -20,7 +20,7 @@ async function seedTeams(account: { workspaceId: string; api: TestAPI }) {
 	for (const [i, tag] of names.entries()) {
 		const agent = await account.api.createAgentActor(i === 0 ? 'Ada Atom' : 'Brian Bot')
 		await account.api.addWorkspaceMember(account.workspaceId, agent.id)
-		await account.api.updateActor(agent.id, { tags: [tag] })
+		await account.api.updateActor(agent.id, { tags: [tag] }, account.workspaceId)
 		agents.push({ id: agent.id, name: agent.name })
 	}
 	return agents
