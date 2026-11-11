@@ -9,6 +9,7 @@ import { useActor, useActors } from '@/hooks/use-actors'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useNotifications } from '@/hooks/use-notifications'
 import { useObjectFlow } from '@/hooks/use-object-flow'
+import { useObjectOpenedEvent } from '@/hooks/use-object-opened-event'
 import { useDeleteObject, useObjectGraph, useObjects, useUpdateObject } from '@/hooks/use-objects'
 import { useScrollToTopEmitter } from '@/hooks/use-scroll-to-top-emitter'
 import { useSession } from '@/hooks/use-sessions'
@@ -166,6 +167,7 @@ export function ObjectDetailShell({
 	const { data: actors } = useActors(workspaceId)
 	const { data: graph } = useObjectGraph(workspaceId, object.id)
 	const { data: allObjects } = useObjects(workspaceId)
+	useObjectOpenedEvent(object, graph?.relationships, actors)
 	const settings = workspace.settings as Record<string, unknown>
 	const statuses = (settings?.statuses as Record<string, string[]> | undefined)?.[object.type] ?? []
 
