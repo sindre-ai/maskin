@@ -550,6 +550,7 @@ function CommentInputForm({
 						)}
 						<div className={cn(isBar && 'flex items-center gap-2 px-2 py-1.5 max-sm:gap-1')}>
 							{isBar && leading}
+							{isBar && !leading && controlsLeft}
 							<TagInput
 								workspaceId={workspaceId}
 								selfActorId={actor.id}
@@ -570,7 +571,7 @@ function CommentInputForm({
 								onChange={setValue}
 								onKeyDown={handleKeyDown}
 							/>
-							{isBar && controlsLeft}
+							{isBar && leading && controlsLeft}
 							{isBar && controlsRight}
 						</div>
 						{/* Control row — `+` menu, hint, mic, send (mockup 457–472). The
