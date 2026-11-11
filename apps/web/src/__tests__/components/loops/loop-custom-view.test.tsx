@@ -25,7 +25,7 @@ vi.mock('@/lib/sse-invalidation', () => ({
 }))
 vi.mock('@/lib/api', async (importOriginal) => ({
 	...(await importOriginal<typeof import('@/lib/api')>()),
-	api: { data: { query: vi.fn(), nextChange: vi.fn() } },
+	api: { data: { query: vi.fn(), nextChange: vi.fn() }, objects: { list: vi.fn() } },
 }))
 
 const VALID_VIEW = `<html><head></head><body>
@@ -101,6 +101,7 @@ describe('LoopCustomView', () => {
 		vi.mocked(api.data.query).mockReset()
 		vi.mocked(api.data.nextChange).mockReset()
 		vi.mocked(api.data.nextChange).mockResolvedValue({ in_ms: null })
+		vi.mocked(api.objects.list).mockReset()
 		sseListeners.length = 0
 		localStorage.clear()
 	})
@@ -630,35 +631,152 @@ describe('LoopCustomView', () => {
 <script id="maskin-sources" type="application/json">{"opps":{"list":"opportunities"},"by_status":{"type":"task","group_by":"status"}}</script>
 <h1>Pipeline</h1></body></html>`
 
-		it('refuses a list on the loop page: no rows, no query, and the rest of the view still works', async () => {
+		const POSTS_VIEW = `<html><head></head><body>
+<script id="maskin-sources" type="application/json">{"posts":{"list":"objects","params":{"type":"content","status":["proposed"],"where":{"platform":"linkedin"},"sort":"scheduled_date","order":"asc","fields":["cluster"]}},"bad":{"list":"objects","params":{"type":"content","fields":["content"]}}}</script>
+<h1>Candidates</h1></body></html>`
+
+		const post = (id: string) => ({
+			id,
+			workspaceId: 'ws-1',
+			type: 'content',
+			title: `Post ${id}`,
+			content: 'Draft body that must never reach the view.',
+			status: 'proposed',
+			metadata: { cluster: 'events', platform: 'linkedin', angle: 'secret angle' },
+			driver: null,
+			activeSessionId: null,
+			createdBy: 'actor-1',
+			createdAt: '2026-11-01T00:00:00.000Z',
+			updatedAt: '2026-11-02T00:00:00.000Z',
+		})
+
+		async function askFor(view: { postMessage: unknown }, name: string, id: number) {
+			await act(async () => {
+				window.dispatchEvent(
+					new MessageEvent('message', {
+						data: { type: BRIDGE_QUERY_MESSAGE, id, name },
+						source: view as unknown as Window,
+					}),
+				)
+			})
+		}
+
+		it('answers an opportunities list on the loop page without a Refresh click, and counts still work', async () => {
 			useFileMock.mockReturnValue({
 				data: file({ content: LIST_VIEW }),
 				isLoading: false,
 				isError: false,
 			})
-			vi.mocked(api.data.query).mockResolvedValue({ total: { count: 1, value: 1 } } as never)
+			vi.mocked(api.objects.list).mockResolvedValue([post('p1')] as never)
 			const { container, onFailure } = renderView()
 			const { view } = viewWindowOf(container)
 
-			await act(async () => {
-				window.dispatchEvent(
-					new MessageEvent('message', {
-						data: { type: BRIDGE_QUERY_MESSAGE, id: 1, name: 'opps' },
-						source: view as unknown as Window,
-					}),
-				)
-			})
+			await askFor(view, 'opps', 1)
 
 			expect(onFailure).not.toHaveBeenCalled()
-			expect(api.data.query).not.toHaveBeenCalled()
+			expect(api.objects.list).toHaveBeenCalledWith(
+				'ws-1',
+				expect.objectContaining({ type: 'bet', status: 'opportunity' }),
+			)
 			expect(view.postMessage).toHaveBeenCalledWith(
 				{
 					type: 'maskin:bridge:result',
 					id: 1,
+					data: { rows: [expect.objectContaining({ id: 'p1' })], fetchedAt: expect.any(Number) },
+				},
+				'*',
+			)
+		})
+
+		it('answers an objects list with the named fields only, as the viewer', async () => {
+			useFileMock.mockReturnValue({
+				data: file({ content: POSTS_VIEW }),
+				isLoading: false,
+				isError: false,
+			})
+			vi.mocked(api.objects.list).mockResolvedValue([post('p1'), post('p2')] as never)
+			const { container } = renderView()
+			const { view } = viewWindowOf(container)
+
+			await askFor(view, 'posts', 2)
+
+			expect(api.objects.list).toHaveBeenCalledWith('ws-1', {
+				type: 'content',
+				status: 'proposed',
+				'metadata.platform': 'linkedin',
+				sort: 'metadata.scheduled_date',
+				order: 'asc',
+				limit: '100',
+				offset: '0',
+			})
+			const sent = JSON.stringify(vi.mocked(view.postMessage).mock.calls)
+			expect(sent).toContain('"cluster":"events"')
+			expect(sent).not.toContain('Draft body')
+			expect(sent).not.toContain('secret angle')
+			expect(sent).not.toContain('platform')
+		})
+
+		it('fetches a list once and answers a second ask from what it holds', async () => {
+			useFileMock.mockReturnValue({
+				data: file({ content: POSTS_VIEW }),
+				isLoading: false,
+				isError: false,
+			})
+			vi.mocked(api.objects.list).mockResolvedValue([post('p1')] as never)
+			const { container } = renderView()
+			const { view } = viewWindowOf(container)
+
+			await askFor(view, 'posts', 3)
+			await askFor(view, 'posts', 4)
+
+			expect(api.objects.list).toHaveBeenCalledTimes(1)
+			expect(view.postMessage).toHaveBeenCalledTimes(2)
+		})
+
+		it('refuses a list that asks for a field the app does not offer, with no call', async () => {
+			useFileMock.mockReturnValue({
+				data: file({ content: POSTS_VIEW }),
+				isLoading: false,
+				isError: false,
+			})
+			const { container, onFailure } = renderView()
+			const { view } = viewWindowOf(container)
+
+			await askFor(view, 'bad', 5)
+
+			expect(onFailure).not.toHaveBeenCalled()
+			expect(api.objects.list).not.toHaveBeenCalled()
+			expect(view.postMessage).toHaveBeenCalledWith(
+				{
+					type: 'maskin:bridge:result',
+					id: 5,
 					error: "This view asks for data the app doesn't offer",
 				},
 				'*',
 			)
+		})
+
+		it('tells the view, and offers Refresh, when the list cannot be loaded; the next ask tries again', async () => {
+			useFileMock.mockReturnValue({
+				data: file({ content: POSTS_VIEW }),
+				isLoading: false,
+				isError: false,
+			})
+			vi.spyOn(console, 'error').mockImplementation(() => {})
+			vi.mocked(api.objects.list).mockRejectedValueOnce(new Error('boom'))
+			vi.mocked(api.objects.list).mockResolvedValueOnce([post('p1')] as never)
+			const { container } = renderView()
+			const { view } = viewWindowOf(container)
+
+			await askFor(view, 'posts', 6)
+			expect(view.postMessage).toHaveBeenCalledWith(
+				{ type: 'maskin:bridge:result', id: 6, error: 'boom' },
+				'*',
+			)
+			expect(screen.getByRole('button', { name: /refresh/i })).toBeTruthy()
+
+			await askFor(view, 'posts', 7)
+			expect(api.objects.list).toHaveBeenCalledTimes(2)
 		})
 	})
 })
