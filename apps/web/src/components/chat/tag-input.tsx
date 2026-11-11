@@ -15,6 +15,7 @@ import {
 	type TagSegment,
 	type TagValue,
 	isTagChip,
+	isTaggable,
 	pointAtTextOffset,
 	readTagDom,
 	tagLabel,
@@ -128,15 +129,13 @@ export function TagInput({
 	const { data: workspaceActors } = useActors(workspaceId, { enabled: true })
 	const pool = useMemo<MentionPickerActor[]>(
 		() =>
-			(workspaceActors ?? [])
-				.filter((a) => !a.isSystem)
-				.map((a) => ({
-					id: a.id,
-					name: a.name,
-					type: a.type,
-					description: a.description,
-					email: a.email,
-				})),
+			(workspaceActors ?? []).filter(isTaggable).map((a) => ({
+				id: a.id,
+				name: a.name,
+				type: a.type,
+				description: a.description,
+				email: a.email,
+			})),
 		[workspaceActors],
 	)
 	const { data: conversationPages } = useConversationsInfinite(workspaceId)

@@ -41,7 +41,7 @@ import {
 	settingsChipText,
 	splitOwnLinks,
 } from '@/lib/linked-objects'
-import { type TagSegment, splitTextByTags, tagLabel } from '@/lib/tag-input-model'
+import { type TagSegment, isTaggable, splitTextByTags, tagLabel } from '@/lib/tag-input-model'
 import { useIsEnterpriseWorkspace } from '@/lib/workspace-context'
 import { formatQuestionsAsMarkdown } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
@@ -233,10 +233,7 @@ export function MessageBubble({
 	// text, and keeps the "You mentioned" row. Once any tag sits in the text the row is gone, so an
 	// id left over (a thread reply's default recipient) is not shown as a mention above words that
 	// tag someone else.
-	const tagActors = useMemo(
-		() => (workspaceActors ?? []).filter((a) => !a.isSystem),
-		[workspaceActors],
-	)
+	const tagActors = useMemo(() => (workspaceActors ?? []).filter(isTaggable), [workspaceActors])
 	const tagLabelOf = useMemo(() => {
 		const byId = new Map(tagActors.map((a) => [a.id, a]))
 		return (id: string) => {

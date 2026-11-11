@@ -10,6 +10,13 @@ export interface TagActor {
 	email?: string | null
 }
 
+/** Who can be tagged: people and agents, including built-in agents such as the Chief of Staff.
+ *  Integration actors (GitHub, Gmail, Slack and the like) have type "system" and stay out. The
+ *  isSystem flag does not decide this: it is set on built-in agents that people do talk to. */
+export function isTaggable(actor: { type: string }): boolean {
+	return actor.type !== 'system'
+}
+
 export type TagSegment =
 	| { kind: 'text'; text: string }
 	| { kind: 'chip'; id: string; label: string }
