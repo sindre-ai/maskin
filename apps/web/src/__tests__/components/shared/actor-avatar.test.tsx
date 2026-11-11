@@ -79,10 +79,22 @@ describe('getActorInitials', () => {
 		expect(getActorInitials('C.T.O.')).toBe('CTO')
 	})
 
-	it('keeps multi-word names at 2 letters', () => {
-		expect(getActorInitials('Chief of Staff')).toBe('CO')
+	it('uses the first letter of the first three words for a three-word name', () => {
+		expect(getActorInitials('Chief of Staff')).toBe('COS')
+	})
+
+	it('stops at three letters for a name with four or more words', () => {
+		expect(getActorInitials('Head of Customer Success')).toBe('HOC')
+	})
+
+	it('keeps two-word names at 2 letters', () => {
 		expect(getActorInitials('Sebastian Krumhausen')).toBe('SK')
 		expect(getActorInitials('CTO Agent')).toBe('CA')
+	})
+
+	it('does not count a punctuation-only token as a word', () => {
+		expect(getActorInitials('Chief - Staff')).toBe('CS')
+		expect(getActorInitials('Linker (Sigrid) Lead')).toBe('LSL')
 	})
 })
 
