@@ -68,7 +68,7 @@ export function ThreadComposer({
 	const { data: conversation } = useConversation(conversationId, workspaceId)
 	const messagesQuery = useConversationMessages(conversationId, workspaceId)
 	const { data: workspaceActors } = useActors(workspaceId)
-	const richText = useFeatureFlag('chat-rich-composer')
+	const richText = useFeatureFlag('chat-formatting')
 
 	const self = getStoredActor()
 	// Where a pasted provider secret gets vaulted: the running session of this chat and

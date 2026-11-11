@@ -11,7 +11,7 @@ import { describe, expect, it } from 'vitest'
 // on these inputs. The mounts
 // that do swap are asserted in their own component tests. The chat message box was on this
 // list; it moved off it when the plain-text decision was reversed (task "Add formatting to the
-// chat message box"): behind the chat-rich-composer flag it is the formatting box.
+// chat message box"): behind the chat-formatting flag it is the formatting box.
 const EDITOR_REFERENCES = [
 	'MarkdownEditor',
 	'DocumentMarkdownEditor',
