@@ -57,6 +57,7 @@ import importsRoutes from './routes/imports'
 import installedLoopsRoutes from './routes/installed-loops'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
 import integrationsDeepdotsRoutes from './routes/integrations-deepdots'
+import integrationsDeepdotsMcpRoutes from './routes/integrations-deepdots-mcp'
 import integrationsGatewayRoutes from './routes/integrations-gateway'
 import integrationsGmailRoutes from './routes/integrations-gmail'
 import integrationsGoogleDisconnectRoutes from './routes/integrations-google-disconnect'
@@ -483,6 +484,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// folder watches list + stop for the Drive detail page; its own prefix, so the
 	// generic /api/integrations/{provider}/... routes never see these paths.
 	app.route('/api/integrations/google-drive', integrationsGoogleDriveRoutes)
+	app.route('/api/integrations/deepdots/mcp', integrationsDeepdotsMcpRoutes)
 	app.route('/api/integrations/google-search-console/mcp', integrationsGoogleSearchConsoleMcpRoutes)
 	app.route('/api/custom-mcp-servers', customMcpServersRoutes)
 	app.route('/api/integrations', integrationsKeychainRoutes)

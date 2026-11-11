@@ -147,6 +147,7 @@ describe('Integrations Routes', () => {
 					.map((p) => p.name)
 					.sort(),
 			).toEqual([
+				'deepdots',
 				'github',
 				'gmail',
 				'google-calendar',

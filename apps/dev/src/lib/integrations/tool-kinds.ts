@@ -70,7 +70,7 @@ const READ_TOOLS: Record<string, ReadonlySet<string>> = {
  * names are not read verbs (keyword_ideas, domain_overview), so without this a read-only
  * agent could never use them.
  */
-const ALL_READ_PROVIDERS: ReadonlySet<string> = new Set(['ubersuggest'])
+const ALL_READ_PROVIDERS: ReadonlySet<string> = new Set(['ubersuggest', 'deepdots'])
 
 const READ_PREFIXES = [
 	'get_',
