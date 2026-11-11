@@ -53,6 +53,7 @@ const EXACT: Record<string, FeatureArea> = {
 	file_saved: 'files_briefings',
 	editor_saved: 'files_briefings',
 	mini_app_file_viewed: 'files_briefings',
+	view_refreshed: 'files_briefings',
 	files_display_property_toggled: 'files_briefings',
 	change_review_opened: 'files_briefings',
 	change_proposal_submitted: 'files_briefings',

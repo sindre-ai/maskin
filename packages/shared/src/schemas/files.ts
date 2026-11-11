@@ -50,6 +50,44 @@ export const mimeTypeSchema = z
 export const fileKindSchema = z.enum(['briefing'])
 export type FileKind = z.infer<typeof fileKindSchema>
 
+// Free-form labels on a file, such as "b-roll" or "clip_type:b_roll" (a colon marks a
+// structured tag). Trimmed and lowercased on every write so "B-roll" and "b-roll" are one
+// tag; repeats within one list collapse to one.
+export const MAX_TAGS_PER_FILE = 20
+export const MAX_TAG_LENGTH = 60
+
+// No commas: the list filter takes tags as a comma-separated string, so a tag with a comma in
+// it could be stored but never searched for.
+export const fileTagSchema = z
+	.string()
+	.trim()
+	.toLowerCase()
+	.min(1)
+	.max(MAX_TAG_LENGTH)
+	.refine((tag) => !tag.includes(','), 'A tag cannot contain a comma')
+
+export const fileTagsSchema = z
+	.array(fileTagSchema)
+	.max(MAX_TAGS_PER_FILE)
+	.transform((tags) => [...new Set(tags)])
+
+/**
+ * Reads the `tags` filter of the files list: comma-separated, each tag trimmed and
+ * lowercased like on write, blanks and repeats dropped, at most MAX_TAGS_PER_FILE kept.
+ */
+export function parseFileTagFilter(raw: string | undefined): string[] {
+	if (!raw) return []
+	const tags = raw
+		.split(',')
+		.map((tag) => tag.trim().toLowerCase())
+		.filter((tag) => tag.length > 0)
+	return [...new Set(tags)].slice(0, MAX_TAGS_PER_FILE)
+}
+
+// "all": the file has every listed tag. "any": the file has at least one of them.
+export const fileTagMatchSchema = z.enum(['all', 'any'])
+export type FileTagMatch = z.infer<typeof fileTagMatchSchema>
+
 export const fileNameSchema = z.string().trim().min(1).max(255)
 
 export const fileEncodingSchema = z.enum(['base64', 'utf8'])
@@ -156,6 +194,7 @@ export const createFileSchema = z
 		name: fileNameSchema,
 		description: z.string().max(1000).nullable().optional(),
 		kind: fileKindSchema.nullable().optional(),
+		tags: fileTagsSchema.optional(),
 		mime_type: mimeTypeSchema,
 		content: z.string(),
 		encoding: fileEncodingSchema.default('utf8'),
@@ -203,6 +242,8 @@ export const updateFileSchema = z
 		name: fileNameSchema.optional(),
 		description: z.string().max(1000).nullable().optional(),
 		kind: fileKindSchema.nullable().optional(),
+		// Replaces the whole tag list; [] clears it. Omit to leave the tags as they are.
+		tags: fileTagsSchema.optional(),
 		mime_type: mimeTypeSchema.optional(),
 		content: z.string().optional(),
 		encoding: fileEncodingSchema.optional(),
@@ -247,6 +288,7 @@ export const fileListItemSchema = z.object({
 	name: z.string(),
 	description: z.string().nullable(),
 	kind: fileKindSchema.nullable(),
+	tags: z.array(z.string()),
 	mimeType: z.string(),
 	sizeBytes: z.number().int().nonnegative(),
 	storageKey: z.string(),
@@ -256,6 +298,35 @@ export const fileListItemSchema = z.object({
 })
 
 export type FileListItem = z.infer<typeof fileListItemSchema>
+
+// GET /files/tags: every tag in use in the workspace and how many files carry it,
+// most-used first.
+export const fileTagCountSchema = z.object({
+	tag: z.string(),
+	count: z.number().int().positive(),
+})
+
+export type FileTagCount = z.infer<typeof fileTagCountSchema>
+
+// POST /files/tags/rename and /files/tags/merge. Both change a tag on every file in the
+// workspace at once. The names are trimmed and lowercased like tags on write.
+export const renameFileTagSchema = z.object({
+	from: fileTagSchema,
+	to: fileTagSchema,
+})
+
+export const mergeFileTagsSchema = z.object({
+	from: fileTagSchema,
+	into: fileTagSchema,
+})
+
+export const fileTagChangeResultSchema = z.object({
+	from: z.string(),
+	to: z.string(),
+	files_changed: z.number().int().nonnegative(),
+})
+
+export type FileTagChangeResult = z.infer<typeof fileTagChangeResultSchema>
 
 // GET /files/:id?format=text. `raw` (default) returns the stored bytes.
 export const fileReadFormatSchema = z.enum(['raw', 'text'])
@@ -309,6 +380,7 @@ export const startFileUploadSchema = z.object({
 	name: fileNameSchema,
 	description: z.string().max(1000).nullable().optional(),
 	kind: fileKindSchema.nullable().optional(),
+	tags: fileTagsSchema.optional(),
 	mime_type: mimeTypeSchema,
 	size_bytes: z
 		.number()

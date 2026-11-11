@@ -1,0 +1,68 @@
+name: Uptime /api/health/db
+
+# Probes the database health check every 5 minutes. One retry, 10 s timeout per try. A non-200
+# answer or a timeout fails the run and opens (or comments on) an "Uptime" issue, so watchers
+# are notified. The issue is closed when the probe is green again. Read-only against production:
+# a single GET. To switch it off, disable this workflow or delete the file.
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: uptime-health-db
+  cancel-in-progress: false
+
+env:
+  PROBE_URL: https://maskin.io/api/health/db
+  ISSUE_TITLE: 'Uptime: /api/health/db is failing'
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Probe (one retry)
+        id: probe
+        run: |
+          code=000
+          for attempt in 1 2; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$PROBE_URL" || true)
+            echo "attempt $attempt: HTTP $code"
+            [ "$code" = "200" ] && break
+            [ "$attempt" = "1" ] && sleep 10
+          done
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          [ "$code" = "200" ]
+
+      - name: Open or update the uptime issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CODE: ${{ steps.probe.outputs.code }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          body="Probe of $PROBE_URL failed twice (HTTP ${CODE:-000}; 000 means timeout over 10 s or no connection) at $(date -u +%Y-%m-%dT%H:%MZ). Run: $RUN_URL"
+          existing=$(gh issue list --state open --search "\"$ISSUE_TITLE\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$ISSUE_TITLE" --body "$body"
+          fi
+
+      - name: Close the uptime issue when healthy again
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          existing=$(gh issue list --state open --search "\"$ISSUE_TITLE\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue close "$existing" --comment "Probe is back to HTTP 200 at $(date -u +%Y-%m-%dT%H:%MZ). Run: $RUN_URL"
+          fi

@@ -238,6 +238,45 @@ describe('useToggleReaction', () => {
 		expect(reactionsOf(queryClient, mainKey, 1)).toEqual([])
 	})
 
+	it('add, remove, add with the first refused: the chip ends up as the server will hold it', async () => {
+		const first = deferred()
+		vi.mocked(api.conversations.reactToMessage)
+			.mockReturnValueOnce(first.promise)
+			.mockResolvedValue(undefined)
+		const { queryClient, result } = setup()
+		seed(queryClient, mainKey, [message(1)])
+
+		act(() => {
+			result.current.toggle(1, '👍') // add (refused)
+			result.current.toggle(1, '👍') // remove
+			result.current.toggle(1, '👍') // add
+		})
+		expect(emojisOf(queryClient, mainKey, 1)).toEqual(['👍'])
+
+		first.reject(new Error('boom'))
+		await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to react'))
+		await waitFor(() => expect(api.conversations.reactToMessage).toHaveBeenCalledTimes(2))
+		// The last add still goes out and the server ends up holding 👍, so the chip keeps it.
+		expect(reactionsOf(queryClient, mainKey, 1)?.[0]).toMatchObject({ reactedByMe: true })
+	})
+
+	it('add, remove, add with the last refused: the chip goes back to no reaction', async () => {
+		vi.mocked(api.conversations.reactToMessage)
+			.mockResolvedValueOnce(undefined)
+			.mockRejectedValueOnce(new Error('boom'))
+		const { queryClient, result } = setup()
+		seed(queryClient, mainKey, [message(1)])
+
+		act(() => {
+			result.current.toggle(1, '👍')
+			result.current.toggle(1, '👍')
+			result.current.toggle(1, '👍')
+		})
+		await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to react'))
+		// The server still holds nothing after add, remove, refused add.
+		await waitFor(() => expect(reactionsOf(queryClient, mainKey, 1)).toEqual([]))
+	})
+
 	it('a refused tap leaves changes on other messages alone', async () => {
 		const first = deferred()
 		vi.mocked(api.conversations.reactToMessage).mockImplementation((_c, _w, messageId) =>
@@ -268,6 +307,36 @@ describe('useToggleReaction', () => {
 		await waitFor(() =>
 			expect(reactionsOf(queryClient, mainKey, 1)?.[0]).toMatchObject({ reactedByMe: true }),
 		)
+	})
+
+	it('cancels a refetch in flight without turning the query into an error, keeping the chip', async () => {
+		const { queryClient, result } = setup()
+		seed(queryClient, mainKey, [message(1)])
+		const refetch = deferred()
+		const stale = {
+			pages: [{ messages: [message(1)], has_more: false }],
+			pageParams: [undefined],
+		}
+		// A refetch started before the tap, carrying the page as it was.
+		const inFlight = queryClient
+			.fetchQuery({
+				queryKey: mainKey,
+				queryFn: () => refetch.promise.then(() => stale),
+				staleTime: 0,
+			})
+			.catch(() => undefined)
+
+		act(() => result.current.toggle(1, '👍'))
+		await inFlight
+		// Late data from the cancelled fetch must not land over the chip.
+		refetch.resolve()
+		await new Promise((r) => setTimeout(r, 30))
+
+		const state = queryClient.getQueryState(mainKey)
+		expect(state?.status).toBe('success')
+		expect(state?.error).toBeNull()
+		expect(state?.fetchStatus).toBe('idle')
+		expect(emojisOf(queryClient, mainKey, 1)).toEqual(['👍'])
 	})
 
 	it('does not refetch the messages itself: the live message_updated refresh does that', async () => {

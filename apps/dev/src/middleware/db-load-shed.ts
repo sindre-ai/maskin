@@ -6,9 +6,10 @@ export const SHED_RETRY_AFTER_S = 5
 
 // Never refused: the health check must report the truth, webhooks and agent-server calls are
 // sent by other systems that would lose data, and a refused event stream does not reconnect.
-function isExempt(path: string) {
+export function isExempt(path: string) {
 	return (
 		path === '/api/health' ||
+		path === '/api/health/db' ||
 		path.startsWith('/api/webhooks/') ||
 		path.startsWith('/api/internal/') ||
 		path === '/api/events' ||

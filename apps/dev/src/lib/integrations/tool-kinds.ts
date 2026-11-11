@@ -47,6 +47,19 @@ const READ_TOOLS: Record<string, ReadonlySet<string>> = {
 		'google_drive__get_sheet_range',
 	]),
 	'google-search-console': new Set(['inspect_url', 'list_sites', 'list_sitemaps', 'get_sitemap']),
+	// Stripe's hosted tool names are not read verbs (stripe_api_read), and stripe_api_write takes
+	// any POST, PATCH, PUT or DELETE, so only these exact tools are reads. Left out on purpose
+	// because they act or are unproven as reads: stripe_analytics (runs query jobs),
+	// stripe_implementation_planner, atlas_company_formation, setup_recipient, send_stripe_feedback,
+	// and the Treasury movers convert_currency, send_money and transfer_money.
+	stripe: new Set([
+		'stripe_api_search',
+		'stripe_api_details',
+		'stripe_api_read',
+		'get_stripe_account_info',
+		'get_balance_summary',
+		'search_stripe_documentation',
+	]),
 	// Matched on the verb: LinkedIn tool names carry a per-identity prefix.
 	'linkedin-unipile': new Set([
 		'read_post_comments',

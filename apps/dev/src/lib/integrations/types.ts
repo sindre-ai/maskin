@@ -9,16 +9,19 @@ export interface OAuth2Config {
 	scopes: string[]
 	/** Enable PKCE (S256 code challenge). Default: false */
 	pkce?: boolean
-	/** How to send client credentials on token exchange. Default: 'client_secret_post' */
-	tokenAuthMethod?: 'client_secret_post' | 'client_secret_basic'
+	/**
+	 * How to send client credentials on token exchange. Default: 'client_secret_post'.
+	 * 'none' is a public client (PKCE, no secret): only client_id is sent and clientSecretEnv is not used.
+	 */
+	tokenAuthMethod?: 'client_secret_post' | 'client_secret_basic' | 'none'
 	/** Extra params appended to the authorization URL (e.g. Reddit: { duration: 'permanent' }) */
 	extraAuthParams?: Record<string, string>
 	/** Extra params added to token exchange request body */
 	extraTokenParams?: Record<string, string>
 	/** Env var name for OAuth client ID */
 	clientIdEnv: string
-	/** Env var name for OAuth client secret */
-	clientSecretEnv: string
+	/** Env var name for OAuth client secret. Leave out when tokenAuthMethod is 'none'. */
+	clientSecretEnv?: string
 }
 
 export interface ApiKeyConfig {

@@ -1,5 +1,6 @@
 import type { IntegrationResponse, ProviderInfo } from '@/lib/api'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
@@ -114,7 +115,7 @@ describe('IntegrationsPage — resend', () => {
 		mockUseProviders.mockReset()
 	})
 
-	it('shows the Resend provider card AND surfaces a Finish setup affordance for awaiting_secret rows', () => {
+	it('shows the Resend provider card AND surfaces a Finish setup affordance for awaiting_secret rows', async () => {
 		mockUseProviders.mockReturnValue({ data: [RESEND_PROVIDER], isLoading: false })
 		mockUseIntegrations.mockReturnValue({
 			data: [AWAITING_SECRET_RESEND_ROW],
@@ -127,8 +128,47 @@ describe('IntegrationsPage — resend', () => {
 			</TestWrapper>,
 		)
 
-		expect(screen.getByText('Resend')).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: /finish setup/i })).toBeInTheDocument()
 		expect(screen.getByText(/mail\.example\.com/)).toBeInTheDocument()
+		// The provider itself is not connected yet, so its card is under Discover.
+		await userEvent.click(screen.getByRole('button', { name: /^Discover/ }))
+		expect(screen.getByText('Resend')).toBeInTheDocument()
+	})
+
+	describe('awaiting-secret block and the Connected filters', () => {
+		beforeEach(() => {
+			mockUseProviders.mockReturnValue({ data: [RESEND_PROVIDER], isLoading: false })
+			mockUseIntegrations.mockReturnValue({
+				data: [AWAITING_SECRET_RESEND_ROW],
+				isLoading: false,
+			})
+		})
+
+		const renderPage = () =>
+			render(
+				<TestWrapper>
+					<IntegrationsPage />
+				</TestWrapper>,
+			)
+
+		it('hides when the search does not match Resend', async () => {
+			renderPage()
+			await userEvent.type(screen.getByRole('searchbox', { name: /Search integrations/ }), 'slack')
+			expect(screen.queryByRole('button', { name: /finish setup/i })).not.toBeInTheDocument()
+		})
+
+		it('stays when the search matches Resend', async () => {
+			renderPage()
+			await userEvent.type(screen.getByRole('searchbox', { name: /Search integrations/ }), 'rese')
+			expect(screen.getByRole('button', { name: /finish setup/i })).toBeInTheDocument()
+		})
+
+		it('hides under a category chip Resend is not in, and shows under its own', async () => {
+			renderPage()
+			await userEvent.click(screen.getByRole('button', { name: 'Code' }))
+			expect(screen.queryByRole('button', { name: /finish setup/i })).not.toBeInTheDocument()
+			await userEvent.click(screen.getByRole('button', { name: 'Email & calendar' }))
+			expect(screen.getByRole('button', { name: /finish setup/i })).toBeInTheDocument()
+		})
 	})
 })

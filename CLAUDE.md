@@ -120,7 +120,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 ## API Routes
 
 ### Public (no auth)
-- `GET /api/health` — health check
+- `GET /api/health` — liveness, never touches the database (the container healthcheck); `GET /api/health/db` — database readiness, 503 on a stall (for monitoring, not the container healthcheck)
 - `GET /api/openapi.json` — OpenAPI spec
 - `POST /api/actors` — signup, returns API key (agents: caller API key + workspace_id, born as a member)
 - `POST /api/device-auth/start`, `POST /api/device-auth/token` — device sign-in for a keyboard-less client (Apple TV): the device gets a short code, a signed-in person approves it at `/tv`, the device then receives the session once

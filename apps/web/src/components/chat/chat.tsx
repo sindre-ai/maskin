@@ -10,12 +10,7 @@ import {
 import { SecretCaptureFlow } from '@/components/chat/secret-capture-flow'
 import { SelectionChips } from '@/components/chat/selection-chips'
 import { TagInput, type TagInputHandle } from '@/components/chat/tag-input'
-import {
-	UnifiedChatSlashPicker,
-	type UnifiedChatSlashPickerHandle,
-} from '@/components/chat/unified-slash-picker'
 import { VaultPrefixFlow, vaultSeedFrom } from '@/components/chat/vault-prefix-flow'
-import { CreatePicker } from '@/components/shared/create-picker'
 import { UploadProgress } from '@/components/shared/upload-progress'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
@@ -33,17 +28,17 @@ import { useConversationsInfinite } from '@/hooks/use-conversations'
 import { useDictation } from '@/hooks/use-dictation'
 import { useUploadFile } from '@/hooks/use-files'
 import { useIsMobile } from '@/hooks/use-mobile'
-import { trackChatMentionInserted, trackChatObjectReferenceCreated } from '@/lib/analytics'
+import { trackChatMentionInserted } from '@/lib/analytics'
 import { getStoredActor } from '@/lib/auth'
 import type { ChatSelection, ChatSelectionAction, ChatSelectionFile } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { toUploadInput } from '@/lib/large-file-upload'
 import { splitLongMessage } from '@/lib/long-message'
 import { hasHighConfidenceSecret, scanComposerText } from '@/lib/secret-scanner'
-import { type TagValue, splitTextByTags, tagLabel } from '@/lib/tag-input-model'
+import { type TagValue, isTaggable, splitTextByTags, tagLabel } from '@/lib/tag-input-model'
 import { VIEWER_READ_ONLY_MESSAGE, isViewerRefusal } from '@/lib/workspace-role'
-import { type SecretMatch, withoutSecrets } from '@maskin/shared'
-import { ArrowUp, AtSign, FileText, Hash, Image, Info, Mic, Plus, X } from 'lucide-react'
+import { type SecretMatch, withStarterPrompt, withoutSecrets } from '@maskin/shared'
+import { ArrowUp, AtSign, FileText, Image, Info, Mic, Plus, X } from 'lucide-react'
 import {
 	type ChangeEvent,
 	type ClipboardEvent,
@@ -94,95 +89,6 @@ export function nameClipboardImage(file: File, now: Date): File {
 		type: file.type,
 		lastModified: file.lastModified,
 	})
-}
-
-// The three built-in NEWKIND labels that can promote to a type-filter chip when
-// typed as `/task ` / `/bet ` / `/insight `. Any custom workspace type falls
-// through as a normal search query — hardcoded per spec §Create-new rows.
-const CHAT_NEWKIND_LABELS: ReadonlySet<string> = new Set(['task', 'bet', 'insight'])
-
-// Trigger regex verbatim from the spec §Interaction details: `/` at input start
-// or after whitespace, capturing the word-char query up to the caret.
-const UNIFIED_SLASH_TRIGGER_RE = /(?:^|\s)\/([\w-]*)$/
-
-/**
- * Pure state machine for the `/` composer trigger. Called on every keystroke
- * inside the textarea. Returns one
- * of four verdicts:
- *
- *  - `open`: user just typed `/` at a word boundary. `slashStart` is the
- *    index of that `/`.
- *  - `promote_to_chip`: the picker was already open and the text now ends
- *    with `/<label> ` where label is one of {task,bet,insight}. `nextValue`
- *    is the composer text with the `/label ` slice removed; `nextSlashStart`
- *    is the new `/` position (`null` when the picker should close and no new
- *    trigger is left in the text). Picker stays open, chip is set, both
- *    sections narrow.
- *  - `close`: the picker was open and something invalidated the trigger
- *    (the `/` is gone, the caret drifted before it, etc.).
- *  - `noop`: nothing to change — either the picker wasn't tracking or the
- *    user is just typing more query chars.
- */
-type UnifiedSlashOutcome =
-	| { type: 'noop' }
-	| { type: 'open'; slashStart: number }
-	| { type: 'close' }
-	| {
-			type: 'promote_to_chip'
-			objectType: string
-			nextValue: string
-			nextSlashStart: number | null
-			nextCaret: number
-	  }
-
-export function detectUnifiedSlashTransition({
-	next,
-	pos,
-	slashStart,
-	typeFilterChip,
-}: {
-	next: string
-	pos: number
-	slashStart: number | null
-	typeFilterChip: string | null
-}): UnifiedSlashOutcome {
-	// Chip already set — the picker is scoped and further `/` typing is just
-	// query text; we don't promote a second time.
-	if (typeFilterChip === null && slashStart !== null) {
-		// Detect `/<label> ` transformation. Only fires when the current run
-		// starts at slashStart and the last char is a space.
-		const runFromSlash = next.slice(slashStart, pos)
-		const promote = /^\/(task|bet|insight) $/.exec(runFromSlash)
-		if (promote) {
-			const objectType = promote[1]
-			// Splice the `/label ` slice out of the composer. The tail (from
-			// `pos` on) stays put; caret goes to slashStart.
-			const nextValue = next.slice(0, slashStart) + next.slice(pos)
-			return {
-				type: 'promote_to_chip',
-				objectType,
-				nextValue,
-				nextSlashStart: null,
-				nextCaret: slashStart,
-			}
-		}
-	}
-
-	// Recognise a fresh `/` trigger at a word boundary.
-	const uptoCaret = next.slice(0, pos)
-	const match = UNIFIED_SLASH_TRIGGER_RE.exec(uptoCaret)
-	if (match) {
-		// Match index is where `(?:^|\s)` matched — the `/` is one char in.
-		const rawStart = match.index
-		const slashIndex = rawStart === 0 && match[0][0] === '/' ? 0 : rawStart + 1
-		if (slashStart === slashIndex) return { type: 'noop' }
-		return { type: 'open', slashStart: slashIndex }
-	}
-
-	// No trigger matched, but the picker is currently open — the trigger's
-	// `/` was deleted or the caret drifted before it; close.
-	if (slashStart !== null) return { type: 'close' }
-	return { type: 'noop' }
 }
 
 /**
@@ -282,11 +188,12 @@ export interface ComposerProps {
 	callAgent?: VoiceCallAgent | null
 	/**
 	 * Asks the composer to replace its draft with `text` (when given), then focus
-	 * with the caret at the end. Without `text` it only focuses and leaves the draft
-	 * alone. One request per nonce: a request that was already there when the
+	 * with the caret at the end. With `append` the text goes after the draft instead
+	 * (a starter prompt never erases what was typed). Without `text` it only focuses
+	 * and leaves the draft alone. One request per nonce: a request that was already there when the
 	 * composer mounted never fires, so a stale one cannot overwrite a draft.
 	 */
-	fillRequest?: { text?: string; nonce: number } | null
+	fillRequest?: { text?: string; append?: boolean; nonce: number } | null
 	/**
 	 * Writes in the shared tag input instead of a textarea: an `@` tag stays in the sentence as
 	 * a chip and the tagged ids reach the selection (`add_agent` / `remove_agent`) from the chips
@@ -375,11 +282,10 @@ export function composerActionMode({
  * `pending` back to false.
  *
  * Entry points into pickers:
- *  - `/` typed at a word boundary opens the unified Reference / Create picker.
  *  - `@` typed at a word boundary opens the mention picker (agents + humans)
  *    inline at the caret; ↑↓ navigate, ↵ inserts, Escape closes. Textarea
  *    keeps DOM focus while the picker is open.
- *  - The + menu attaches a photo or file, or starts a `/` item or `@` mention.
+ *  - The + menu attaches a photo or file, or starts an `@` mention.
  */
 export function Composer({
 	workspaceId,
@@ -438,8 +344,8 @@ export function Composer({
 	const mentionActors = useMemo<MentionPickerActor[]>(
 		() =>
 			(workspaceActors ?? [])
-				// role !== "system" — filter out Google Calendar / Gmail / Slack / GitHub / Ubersuggest.
-				.filter((a) => !a.isSystem)
+				// Filters out Google Calendar / Gmail / Slack / GitHub / Ubersuggest (type "system").
+				.filter(isTaggable)
 				.map((a) => ({
 					id: a.id,
 					name: a.name,
@@ -609,27 +515,6 @@ export function Composer({
 		(textareaFocused || value.trim().length > 0 || selection.agents.length > 0)
 			? hint
 			: null
-	// Unified `/` picker state. `slashStart`
-	// points at the `/` in the textarea; when set, everything after it up to the
-	// caret is the picker's live query. `typeFilterChip` is the NEWKIND label
-	// (e.g. 'task') the user promoted by typing `/task ` — it lives outside the
-	// text as a first-class composer chip and narrows both picker sections.
-	const [unifiedOpen, setUnifiedOpen] = useState(false)
-	const [slashStart, setSlashStart] = useState<number | null>(null)
-	const [typeFilterChip, setTypeFilterChip] = useState<string | null>(null)
-	// The picker's active row id — the textarea publishes this as its
-	// `aria-activedescendant` so screen readers announce the highlighted row
-	// while the composer keeps DOM focus (spec §Accessibility). Set by the
-	// picker via `onActiveDescendantChange`; null when no row is active.
-	const [unifiedActiveDescendant, setUnifiedActiveDescendant] = useState<string | null>(null)
-	// Imperative handle: arrow keys and Enter reach the picker through this
-	// ref rather than by bubbling from the textarea to a Portal that isn't
-	// its DOM ancestor.
-	const unifiedPickerRef = useRef<UnifiedChatSlashPickerHandle | null>(null)
-	// Seed title captured on a create-row select — threaded into `<CreatePicker>`
-	// as `defaultText` so the user doesn't retype the query they just typed
-	// (spec's "never dead-ends" contract).
-	const [createSeedTitle, setCreateSeedTitle] = useState<string>('')
 	// In-flight + failed uploads. Only the resolved fileId enters `ChatSelection`
 	// (high-frequency upload events would otherwise churn the selection reducer);
 	// these are the chips shown while bytes are still transferring or after the
@@ -656,7 +541,11 @@ export function Composer({
 	useEffect(() => {
 		if (!fillRequest || fillRequest.nonce === handledFillNonceRef.current) return
 		handledFillNonceRef.current = fillRequest.nonce
-		if (fillRequest.text !== undefined) setValue(fillRequest.text)
+		if (fillRequest.text !== undefined) {
+			const text = fillRequest.text
+			if (fillRequest.append) setValue((prev) => withStarterPrompt(prev, text))
+			else setValue(text)
+		}
 		requestAnimationFrame(() => {
 			if (inlineTags) return tagRef.current?.focus()
 			const el = textareaRef.current
@@ -666,13 +555,6 @@ export function Composer({
 			el.setSelectionRange(end, end)
 		})
 	}, [fillRequest, setValue, inlineTags])
-	// `/` opens the create list (mockup 761–771). The chosen type seeds the
-	// shipped create surface; the mockup's FROM-THIS-CHAT panel additionally
-	// pre-fills the name/fields from the conversation, which needs a `seed`
-	// prop on <CreatePicker> that doesn't exist yet — see the composer note
-	// where it is rendered.
-	const [createOpen, setCreateOpen] = useState(false)
-	const [createSubtype, setCreateSubtype] = useState<string | undefined>(undefined)
 	const abortControllersRef = useRef<Map<string, AbortController>>(new Map())
 	const uploadFile = useUploadFile(workspaceId)
 	const selfActor = getStoredActor()
@@ -908,47 +790,9 @@ export function Composer({
 					return
 				}
 			}
-			// v2 chip lives outside the text — Backspace on an empty composer
-			// with a chip set clears the chip (spec §Interaction details).
-			if (e.key === 'Backspace' && typeFilterChip !== null && value.length === 0) {
-				e.preventDefault()
-				setTypeFilterChip(null)
-				return
-			}
-			// While the unified picker is open, ↑↓ move its active row and ↵
-			// selects it — routed through the imperative handle because focus
-			// stays on the textarea and the picker Portal isn't a DOM ancestor.
-			if (unifiedOpen) {
-				if (e.key === 'ArrowDown') {
-					e.preventDefault()
-					unifiedPickerRef.current?.moveActive(1)
-					return
-				}
-				if (e.key === 'ArrowUp') {
-					e.preventDefault()
-					unifiedPickerRef.current?.moveActive(-1)
-					return
-				}
-			}
-			// Escape closes the unified picker without touching the composer text
-			// or the chip; the trigger char stays so the user can continue.
-			if (e.key === 'Escape' && unifiedOpen) {
-				e.preventDefault()
-				setUnifiedOpen(false)
-				setSlashStart(null)
-				return
-			}
 			if (e.key !== 'Enter') return
 			if (e.shiftKey) return
 			if (e.nativeEvent.isComposing) return
-			// Enter fires the picker's active row while the picker is open. If
-			// there's no active row (empty list), swallow Enter rather than
-			// submitting — the visual state promises a selection is pending.
-			if (unifiedOpen) {
-				e.preventDefault()
-				unifiedPickerRef.current?.selectActive()
-				return
-			}
 			// On touch viewports there is no Shift key, so Enter must insert a
 			// newline rather than send. The visible send button is the send
 			// affordance there.
@@ -956,62 +800,7 @@ export function Composer({
 			e.preventDefault()
 			void handleSubmit()
 		},
-		[
-			handleSubmit,
-			isMobile,
-
-			unifiedOpen,
-			typeFilterChip,
-			value.length,
-			mentionTrigger,
-			mentionFlatRows,
-			mentionHighlightIndex,
-			commitMention,
-		],
-	)
-
-	// The `/` trigger, shared by both inputs: `next` is the plain text, `pos` the caret in it.
-	const applySlash = useCallback(
-		(next: string, pos: number) => {
-			// The top-level `/` path routes to `<UnifiedChatSlashPicker>`
-			// (Reference on top, Create-new below).
-			const outcome = detectUnifiedSlashTransition({
-				next,
-				pos,
-				slashStart,
-				typeFilterChip,
-			})
-			if (outcome.type === 'promote_to_chip') {
-				// `/task ` transformed → the raw label is stripped from the
-				// input and the chip is set. Picker stays open with the
-				// query cleared and the type filter narrowing both sections.
-				setValue(outcome.nextValue)
-				setSlashStart(outcome.nextSlashStart)
-				setTypeFilterChip(outcome.objectType)
-				setUnifiedOpen(true)
-				// Restore caret to right after the removed `/label ` so a
-				// follow-up keystroke lands where the user expects.
-				requestAnimationFrame(() => {
-					if (inlineTags) return tagRef.current?.setCaretOffset(outcome.nextCaret)
-					const el = textareaRef.current
-					if (el) el.setSelectionRange(outcome.nextCaret, outcome.nextCaret)
-				})
-				return
-			}
-			if (outcome.type === 'open') {
-				setSlashStart(outcome.slashStart)
-				setUnifiedOpen(true)
-				return
-			}
-			if (outcome.type === 'close') {
-				setSlashStart(null)
-				setUnifiedOpen(false)
-				return
-			}
-			// `outcome.type === 'noop'` — either not triggering, or already tracking the
-			// same `/` and the user is just typing more chars.
-		},
-		[slashStart, typeFilterChip, setValue, inlineTags],
+		[handleSubmit, isMobile, mentionTrigger, mentionFlatRows, mentionHighlightIndex, commitMention],
 	)
 
 	const handleChange = useCallback(
@@ -1036,25 +825,19 @@ export function Composer({
 			// `@`-in-composer opens the mention picker whenever the regex from the
 			// acceptance criteria matches the text up to the caret. This also
 			// keeps the picker open across further typing that stays inside a word
-			// after the `@` — the query updates, the picker filters. Clears any
-			// competing `/` picker anchor so the two pickers can't fight over the
-			// same trigger.
+			// after the `@` — the query updates, the picker filters.
 			const mention = detectMentionTrigger(next, pos)
 			if (mention) {
 				setMentionTrigger(mention)
-				setUnifiedOpen(false)
-				setSlashStart(null)
 				return
 			}
 			setMentionTrigger(null)
-
-			applySlash(next, pos)
 		},
-		[setValue, vaultFlow?.blocking, enterVault, applySlash],
+		[setValue, vaultFlow?.blocking, enterVault],
 	)
 
-	// The tag input reports text and chip ids on every change. The `!` vault prefix, the `/`
-	// picker and the id list work off that, the same as handleChange does for the textarea.
+	// The tag input reports text and chip ids on every change. The `!` vault prefix
+	// and the id list work off that, the same as handleChange does for the textarea.
 	const handleTagChange = useCallback(
 		(next: TagValue) => {
 			domTextRef.current = next.text
@@ -1068,88 +851,9 @@ export function Composer({
 			}
 			setValue(next.text)
 			syncTagIds(next.ids, true)
-			const pos = tagRef.current?.caretOffset()
-			if (typeof pos === 'number') applySlash(next.text, pos)
 		},
-		[vaultFlow?.blocking, enterVault, setValue, syncTagIds, applySlash],
+		[vaultFlow?.blocking, enterVault, setValue, syncTagIds],
 	)
-
-	// Compute the picker's live query — text from the char AFTER the `/` up to
-	// the current caret. Falls back to '' when the picker is closed or the
-	// user has typed nothing after the trigger.
-	const unifiedQuery = useMemo(() => {
-		if (!unifiedOpen || slashStart === null) return ''
-		return value.slice(slashStart + 1)
-	}, [unifiedOpen, slashStart, value])
-
-	// Consumes the `/<query>` slice from the textarea after a pick, restoring
-	// the caret to the position where the trigger used to be. The type-filter
-	// chip stays until the user explicitly clears it (backspace / X) — the
-	// spec treats it as a first-class composer chip.
-	const consumeUnifiedSlashRange = useCallback(() => {
-		if (slashStart === null) return
-		const start = slashStart
-		setValue((prev) => {
-			// Delete from the `/` at slashStart through the end (query slice).
-			// The picker's own layout is caret-anchored, so the caret is always
-			// at the end of the value here — no need to compute a separate end.
-			return prev.slice(0, start)
-		})
-		setSlashStart(null)
-		requestAnimationFrame(() => {
-			const el = textareaRef.current
-			if (el) el.setSelectionRange(start, start)
-		})
-	}, [slashStart, setValue])
-
-	const handleUnifiedSelect = useCallback(
-		(selection: {
-			kind: 'reference' | 'create'
-			object?: { id: string; title?: string | null; type?: string | null }
-			objectType?: string
-			seedTitle?: string
-		}) => {
-			if (selection.kind === 'reference' && selection.object) {
-				const object = {
-					id: selection.object.id,
-					title: selection.object.title ?? null,
-					type: selection.object.type ?? null,
-				}
-				onDispatchSelection?.({ type: 'add_object', object })
-				trackChatObjectReferenceCreated({
-					entity_id: object.id,
-					object_type: object.type ?? 'object',
-				})
-				consumeUnifiedSlashRange()
-				setUnifiedOpen(false)
-				return
-			}
-			if (selection.kind === 'create' && selection.objectType) {
-				// Existing create-object flow, seeded with the query the user just
-				// typed so the create form opens with the title pre-populated
-				// (spec's "never dead-ends" contract — the user must not retype
-				// what they just typed).
-				const seed = selection.seedTitle?.trim() ?? ''
-				consumeUnifiedSlashRange()
-				setUnifiedOpen(false)
-				setCreateSubtype(selection.objectType)
-				setCreateSeedTitle(seed)
-				setCreateOpen(true)
-			}
-		},
-		[onDispatchSelection, consumeUnifiedSlashRange],
-	)
-
-	const handleUnifiedOpenChange = useCallback((next: boolean) => {
-		setUnifiedOpen(next)
-		if (!next) {
-			// Leaving the picker cleans up its state but leaves the composer
-			// text alone — the `/` and any typed query stay so the user can
-			// pick up where they left off. Chip persists too; the user is
-			// still authoring in that scope.
-			setSlashStart(null)
-		}
-	}, [])
 
 	const uploadPickedFile = useCallback(
 		async (tempId: string, file: File) => {
@@ -1297,23 +1001,15 @@ export function Composer({
 		[vaultFlow?.blocking, enterVault, attachFiles],
 	)
 
-	// The + menu's Item and Person-or-agent rows type the trigger character for the person
-	// and open the same picker typing it would, so there is one path to each picker.
-	const startTrigger = useCallback(
-		(char: '/' | '@') => {
-			const current = valueRef.current
-			const base = current === '' || /\s$/.test(current) ? current : `${current} `
-			setValue(`${base}${char}`)
-			if (char === '/') {
-				setSlashStart(base.length)
-				setUnifiedOpen(true)
-			} else {
-				setMentionTrigger({ atPos: base.length, query: '' })
-			}
-			requestAnimationFrame(() => textareaRef.current?.focus())
-		},
-		[setValue],
-	)
+	// The + menu's Person-or-agent row types the `@` for the person and opens the same picker
+	// typing it would, so there is one path to the picker.
+	const startMention = useCallback(() => {
+		const current = valueRef.current
+		const base = current === '' || /\s$/.test(current) ? current : `${current} `
+		setValue(`${base}@`)
+		setMentionTrigger({ atPos: base.length, query: '' })
+		requestAnimationFrame(() => textareaRef.current?.focus())
+	}, [setValue])
 
 	const handleRemovePending = useCallback((tempId: string) => {
 		// Abort first so the in-flight XHR is cancelled before the request can
@@ -1345,35 +1041,6 @@ export function Composer({
 				vaultFlow?.blocking && 'border-brand bg-brand-subtle ring-2 ring-brand/30',
 			)}
 		>
-			<UnifiedChatSlashPicker
-				ref={unifiedPickerRef}
-				workspaceId={workspaceId}
-				open={unifiedOpen}
-				onOpenChange={handleUnifiedOpenChange}
-				query={unifiedQuery}
-				typeFilter={typeFilterChip}
-				onSelect={handleUnifiedSelect}
-				onActiveDescendantChange={setUnifiedActiveDescendant}
-				anchor={
-					<span aria-hidden className="pointer-events-none absolute left-2 bottom-2 h-0 w-0" />
-				}
-			/>
-			{typeFilterChip !== null ? (
-				<ul className="flex list-none flex-wrap items-center gap-1 p-0" aria-label="Type filter">
-					<li className="inline-flex items-center gap-1 rounded-full border border-brand/40 bg-brand/10 px-2 py-0.5 text-xs font-semibold text-brand">
-						<Hash size={12} aria-hidden />
-						<span>{typeFilterChip}</span>
-						<button
-							type="button"
-							onClick={() => setTypeFilterChip(null)}
-							aria-label={`Clear ${typeFilterChip} filter`}
-							className="-mr-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-brand hover:bg-brand/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-						>
-							<X size={10} aria-hidden />
-						</button>
-					</li>
-				</ul>
-			) : null}
 			{/* Inline `@` mention picker — the composer's textarea remains the
 			    focused element, and the picker consumes arrow keys / Enter /
 			    Escape via `handleKeyDown`'s `reduceMentionPickerKey` branch. */}
@@ -1521,7 +1188,8 @@ export function Composer({
 						onDragLeave={handleDragLeave}
 						onDrop={handleDrop}
 						className={cn(
-							'flex items-end gap-1.5 rounded-3xl bg-card p-1.5 inset-ring inset-ring-input max-md:p-1',
+							// shadow-md: the bar floats over the page, so it lifts off the content behind it.
+							'flex items-end gap-1.5 rounded-3xl bg-card p-1.5 shadow-md inset-ring inset-ring-input max-md:p-1',
 							dropTargeted && 'outline-2 outline-dashed outline-ring',
 						)}
 					>
@@ -1553,10 +1221,7 @@ export function Composer({
 								<DropdownMenuItem onSelect={() => fileInputRef.current?.click()}>
 									<FileText aria-hidden /> File
 								</DropdownMenuItem>
-								<DropdownMenuItem onSelect={() => startTrigger('/')}>
-									<Hash aria-hidden /> Item
-								</DropdownMenuItem>
-								<DropdownMenuItem onSelect={() => startTrigger('@')}>
+								<DropdownMenuItem onSelect={startMention}>
 									<AtSign aria-hidden /> Person or agent
 								</DropdownMenuItem>
 							</DropdownMenuContent>
@@ -1579,10 +1244,6 @@ export function Composer({
 									surface="card"
 									ariaLabel={textareaLabel ?? placeholder}
 									ariaDescribedBy={hint === undefined ? undefined : hintId}
-									// The `/` picker's active row, announced while focus stays in the input.
-									ariaActiveDescendant={
-										unifiedOpen ? (unifiedActiveDescendant ?? undefined) : undefined
-									}
 									placeholder={
 										canWrite
 											? dictation.recording
@@ -1620,12 +1281,6 @@ export function Composer({
 								aria-describedby={hint === undefined ? undefined : hintId}
 								onFocus={() => setTextareaFocused(true)}
 								onBlur={() => setTextareaFocused(false)}
-								// Screen readers announce the picker's active row while focus
-								// stays on the textarea (spec §Accessibility). The picker
-								// keeps this in sync via `onActiveDescendantChange`.
-								aria-activedescendant={
-									unifiedOpen ? (unifiedActiveDescendant ?? undefined) : undefined
-								}
 								aria-controls={mentionTrigger !== null ? 'mention-picker-listbox' : undefined}
 								aria-expanded={mentionTrigger !== null || undefined}
 							/>
@@ -1704,13 +1359,6 @@ export function Composer({
 					)}
 				</form>
 			</ViewerTooltip>
-			<CreatePicker
-				open={createOpen}
-				onOpenChange={setCreateOpen}
-				defaultType="object"
-				defaultObjectSubtype={createSubtype}
-				defaultText={createSeedTitle || undefined}
-			/>
 		</div>
 	)
 }

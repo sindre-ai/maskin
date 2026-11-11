@@ -1,4 +1,5 @@
 import { AskPanel } from '@/components/asks/ask-panel'
+import { FilesList } from '@/components/files/files-list'
 import { PageHeader } from '@/components/layout/page-header'
 import { BoardView } from '@/components/objects/board/board-view'
 import { BulkActionBar } from '@/components/objects/bulk-action-bar'
@@ -171,6 +172,7 @@ const BOARD_MANUAL_SORT = 'boardOrder'
 // `{ fresh: true, star: true, work: false }`). Both are workspace-agnostic —
 // unlike a status or driver pin, they mean the same thing on day one as they
 // do on day one hundred, so they are safe to pre-place in the chip row.
+const FILES_TAB_VALUE = 'file'
 const DEFAULT_GROUP_BY = 'status'
 const DEFAULT_PINNED_FILTERS = ['quick:waiting', 'quick:starred', 'quick:fresh']
 
@@ -197,6 +199,9 @@ function ObjectsRoute() {
 		updated,
 	} = searchParams
 	const includeArchived = includeArchivedParam === 1
+	// Files are not objects: the Files tab swaps the object list for the workspace's
+	// files, so every object query below stands down while it is open.
+	const filesTab = typeFilter === FILES_TAB_VALUE
 	// `none` is the URL's way of saying "explicitly ungrouped".
 	// Nothing saved and no display intent in the URL: the list opens grouped by
 	// Status. Held in state, never written to the URL, so the first render does
@@ -494,9 +499,12 @@ function ObjectsRoute() {
 
 	// Exact totals — tab counts, group headers and filter chips all read these,
 	// never a count of whichever rows have loaded.
-	const grouped = !!groupBy
+	const grouped = !!groupBy && !filesTab
 	const facetParams = useMemo(() => {
-		const { sort: _sort, order: _order, ...matching } = listParams
+		const { sort: _sort, order: _order, ...rest } = listParams
+		// Type counts ignore the open tab, and `file` is not an object type the API knows.
+		const { type: _type, ...withoutType } = rest
+		const matching = filesTab ? withoutType : rest
 		return {
 			...matching,
 			group_by: groupBy ?? 'status',
@@ -504,7 +512,7 @@ function ObjectsRoute() {
 			day_start: startOfLocalDay().toISOString(),
 			...(waitingIds.length > 0 ? { waiting_ids: waitingIds.join(',') } : {}),
 		}
-	}, [listParams, groupBy, waitingIds])
+	}, [listParams, groupBy, waitingIds, filesTab])
 	const facetsQuery = useObjectFacets(workspaceId, facetParams)
 	const facets = facetsQuery.data
 
@@ -523,7 +531,7 @@ function ObjectsRoute() {
 		},
 		initialPageParam: 0,
 		placeholderData: keepPreviousData,
-		enabled: !grouped,
+		enabled: !grouped && !filesTab,
 	})
 
 	// Grouped list: headers and totals come from the facets above; each group
@@ -603,12 +611,17 @@ function ObjectsRoute() {
 	// an empty workspace shows one tab, not a row of zeroes. The totals are exact,
 	// so the rule applies from the first paint; the open tab always stays.
 	const tabsWithCounts = useMemo(() => {
-		if (!countsByType) return tabs.map((t) => ({ ...t, count: undefined }))
+		// Files are not counted by the objects facets, so the tab carries no number.
+		const filesTabItem = { label: 'Files', value: FILES_TAB_VALUE, count: undefined }
+		if (!countsByType) return [...tabs.map((t) => ({ ...t, count: undefined })), filesTabItem]
 		const withCounts = tabs.map((t) => ({
 			...t,
 			count: t.value ? countsByType[t.value] : countsByType.all,
 		}))
-		return withCounts.filter((t) => !t.value || (t.count ?? 0) > 0 || t.value === typeFilter)
+		return [
+			...withCounts.filter((t) => !t.value || (t.count ?? 0) > 0 || t.value === typeFilter),
+			filesTabItem,
+		]
 	}, [tabs, countsByType, typeFilter])
 
 	// Derive available statuses grouped by type (scoped to enabled types only)
@@ -1067,6 +1080,8 @@ function ObjectsRoute() {
 	// ephemeral store; this write is a cross-session backstop.
 	useEffect(() => {
 		if (!hydratedTypesRef.current.has(displaySettingsKey)) return
+		// The Files tab has no display settings of its own to save.
+		if (filesTab) return
 		const settings: DisplaySettingsBody = {
 			...toDisplaySettingsBody(filterModel),
 			view,
@@ -1087,7 +1102,7 @@ function ObjectsRoute() {
 			updateMutateRef.current({ objectType: displaySettingsKey, settings })
 		}, 500)
 		return () => clearTimeout(handle)
-	}, [displaySettingsKey, view, filterModel, expanded, capturedAnchor, pinnedFilters])
+	}, [displaySettingsKey, view, filterModel, expanded, capturedAnchor, pinnedFilters, filesTab])
 
 	const idsCount = idsFilter ? idsFilter.split(',').length : 0
 
@@ -1910,7 +1925,7 @@ function ObjectsRoute() {
 							label="Search items"
 							debounceMs={250}
 						/>
-						<DisplayPanel {...displayPanelProps} />
+						{!filesTab && <DisplayPanel {...displayPanelProps} />}
 					</>
 				}
 				scrollLocked
@@ -1937,16 +1952,25 @@ function ObjectsRoute() {
 				</div>
 			)}
 
-			<DataTableToolbar {...toolbarProps} leading={typeTabs} hideDisplay />
+			{filesTab ? (
+				// Object filters and Display do not apply to files — only the tab strip stays.
+				<div className="flex min-h-8 flex-none items-center gap-2 overflow-x-auto pb-3">
+					{typeTabs}
+				</div>
+			) : (
+				<DataTableToolbar {...toolbarProps} leading={typeTabs} hideDisplay />
+			)}
 
 			<CreatePicker
 				open={createPickerOpen}
 				onOpenChange={setCreatePickerOpen}
 				defaultType="object"
-				defaultObjectSubtype={typeFilter}
+				defaultObjectSubtype={filesTab ? undefined : typeFilter}
 			/>
 
-			{effectiveView === 'board' && typeFilter ? (
+			{filesTab ? (
+				<FilesList workspaceId={workspaceId} q={q} />
+			) : effectiveView === 'board' && typeFilter ? (
 				<div className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden pb-4">
 					<BoardView
 						objectType={typeFilter}
@@ -2006,7 +2030,7 @@ function ObjectsRoute() {
 				/>
 			)}
 			<BulkActionBar
-				selectedCount={selectedIds.length}
+				selectedCount={filesTab ? 0 : selectedIds.length}
 				totalCount={selectableObjects.length}
 				onSelectAll={handleSelectAll}
 				onAskAgent={handleAskAgent}

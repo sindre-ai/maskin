@@ -27,17 +27,19 @@ export function MarketplaceDetailHeader({
 	badge,
 	actions,
 }: MarketplaceDetailHeaderProps) {
+	const initials = getActorInitials(name)
 	return (
 		<div className="flex flex-col gap-4">
 			<div className="flex flex-wrap items-center gap-4">
 				<span
 					className={cn(
-						'grid size-[52px] shrink-0 place-items-center rounded-2xl text-lg font-bold',
+						'grid size-[52px] shrink-0 place-items-center rounded-2xl font-bold',
+						initials.length === 3 ? 'text-[15px]' : 'text-lg',
 						getActorAvatarPaletteClass(name),
 					)}
 					aria-hidden="true"
 				>
-					{getActorInitials(name)}
+					{initials}
 				</span>
 				<div className="min-w-[200px] flex-1">
 					<div className={cn(KIND_LABEL_BASE, 'tracking-[0.09em]', KIND_LABEL_CLASS[kind])}>

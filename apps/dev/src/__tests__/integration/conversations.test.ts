@@ -191,6 +191,75 @@ describe('Conversations Integration', () => {
 			])
 		})
 
+		it('stores the share mark on the initial message and leaves other chats unmarked', async () => {
+			const other = await insertActor(db, { type: 'human' })
+			await addMember(workspaceId, other.id)
+			const { app } = createConversationsApp(ownerId)
+			const headers = { 'x-workspace-id': workspaceId }
+
+			const shared = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{
+						title: 'From a share',
+						participant_actor_ids: [other.id],
+						initial_message: 'https://example.com/article',
+						initial_message_metadata: { started_from: 'share' },
+					},
+					headers,
+				),
+			)
+			expect(shared.status).toBe(201)
+			const { id: sharedId } = (await shared.json()) as { id: string }
+			const [sharedFirst] = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.conversationId, sharedId))
+			expect(sharedFirst?.metadata?.started_from).toBe('share')
+
+			const plain = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Typed', participant_actor_ids: [other.id], initial_message: 'hello' },
+					headers,
+				),
+			)
+			expect(plain.status).toBe(201)
+			const { id: plainId } = (await plain.json()) as { id: string }
+			const [plainFirst] = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.conversationId, plainId))
+			expect(plainFirst?.metadata?.started_from).toBeUndefined()
+		})
+
+		it('ignores a metadata field it does not know and still starts the chat', async () => {
+			const other = await insertActor(db, { type: 'human' })
+			await addMember(workspaceId, other.id)
+			const { app } = createConversationsApp(ownerId)
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{
+						title: 'Newer app',
+						participant_actor_ids: [other.id],
+						initial_message: 'hi',
+						initial_message_metadata: { field_from_a_newer_app: 'x' },
+					},
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(201)
+			const { id } = (await res.json()) as { id: string }
+			const [first] = await db.select().from(messages).where(eq(messages.conversationId, id))
+			expect(first?.content).toBe('hi')
+			expect(first?.metadata ?? {}).not.toHaveProperty('field_from_a_newer_app')
+		})
+
 		it('accepts an empty message when it carries an attachment, and refuses it without one', async () => {
 			const other = await insertActor(db, { type: 'human' })
 			await addMember(workspaceId, other.id)
@@ -298,29 +367,35 @@ describe('Conversations Integration', () => {
 			const list = (await listRes.json()) as {
 				conversations: Array<{
 					id: string
+					directPairKey: string | null
 					unread_count: number
 					snippet: string | null
 					snippet_actor_id: string | null
 					snippet_actor_name: string | null
 				}>
 			}
-			expect(list.conversations).toHaveLength(1)
-			expect(list.conversations[0]?.id).toBe(conversation.id)
-			expect(list.conversations[0]?.unread_count).toBe(1)
-			expect(list.conversations[0]?.snippet).toBe('first message')
+			// People in a workspace also have a direct message with each other, so only
+			// the topical chats are compared here.
+			const topical = list.conversations.filter((c) => c.directPairKey === null)
+			expect(topical).toHaveLength(1)
+			expect(topical[0]?.id).toBe(conversation.id)
+			expect(topical[0]?.unread_count).toBe(1)
+			expect(topical[0]?.snippet).toBe('first message')
 			// The preview carries its author across the actors join, so the list
 			// row can say "Owner: first message" rather than attributing every
 			// preview to whoever is reading it.
-			expect(list.conversations[0]?.snippet_actor_id).toBe(ownerId)
-			expect(list.conversations[0]?.snippet_actor_name).toBeTruthy()
+			expect(topical[0]?.snippet_actor_id).toBe(ownerId)
+			expect(topical[0]?.snippet_actor_name).toBeTruthy()
 
 			// Stranger (workspace member, not a conversation participant) sees nothing.
 			const { app: strangerApp } = createConversationsApp(stranger.id)
 			const strangerList = await strangerApp.request(
 				jsonGet('/api/conversations', { 'x-workspace-id': workspaceId }),
 			)
-			const strangerBody = (await strangerList.json()) as { conversations: unknown[] }
-			expect(strangerBody.conversations).toHaveLength(0)
+			const strangerBody = (await strangerList.json()) as {
+				conversations: Array<{ directPairKey: string | null }>
+			}
+			expect(strangerBody.conversations.filter((c) => c.directPairKey === null)).toHaveLength(0)
 
 			// And a 404 on direct detail access.
 			const strangerDetail = await strangerApp.request(
@@ -664,8 +739,71 @@ describe('Conversations Integration', () => {
 			const unfiltered = await otherApp.request(
 				jsonGet('/api/conversations', { 'x-workspace-id': workspaceId }),
 			)
-			const unfilteredBody = (await unfiltered.json()) as { conversations: Array<{ id: string }> }
-			expect(unfilteredBody.conversations).toHaveLength(2)
+			const unfilteredBody = (await unfiltered.json()) as {
+				conversations: Array<{ id: string; directPairKey: string | null }>
+			}
+			// The direct messages between people are not part of what this test made.
+			expect(unfilteredBody.conversations.filter((c) => c.directPairKey === null)).toHaveLength(2)
+		})
+
+		it('scope splits the list into priority (direct, pinned, unread) and recent, with no overlap', async () => {
+			const other = await insertActor(db, { type: 'human' })
+			await addMember(workspaceId, other.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const create = async (title: string) => {
+				const res = await ownerApp.request(
+					jsonRequest(
+						'POST',
+						'/api/conversations',
+						{ title, participant_actor_ids: [other.id] },
+						{ 'x-workspace-id': workspaceId },
+					),
+				)
+				return ((await res.json()) as { id: string }).id
+			}
+			const unreadId = await create('Unread')
+			const pinnedId = await create('Pinned')
+			const quietId = await create('Quiet')
+			await ownerApp.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${unreadId}/messages`,
+					{ content: 'ping' },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+
+			const { app: otherApp } = createConversationsApp(other.id)
+			await otherApp.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${pinnedId}/me`,
+					{ pinned: true },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+
+			type Row = { id: string; directPairKey: string | null }
+			const list = async (scope: string) => {
+				const res = await otherApp.request(
+					jsonGet(`/api/conversations?scope=${scope}&sort=activity`, {
+						'x-workspace-id': workspaceId,
+					}),
+				)
+				expect(res.status).toBe(200)
+				return ((await res.json()) as { conversations: Row[] }).conversations
+			}
+			const priority = await list('priority')
+			const recent = await list('recent')
+
+			const priorityIds = priority.map((c) => c.id)
+			expect(priorityIds).toContain(unreadId)
+			expect(priorityIds).toContain(pinnedId)
+			expect(priorityIds).not.toContain(quietId)
+			// Every direct message is priority, however quiet.
+			expect(priority.filter((c) => c.directPairKey !== null).length).toBeGreaterThan(0)
+			expect(recent.map((c) => c.id)).toEqual([quietId])
+			expect(recent.some((c) => c.directPairKey !== null)).toBe(false)
 		})
 
 		it('logs an events row when updating pin/archive/read state via PATCH /:id/me', async () => {
@@ -1199,6 +1337,49 @@ describe('Conversations Integration', () => {
 					),
 				)
 			expect(countAfterSecond.length).toBe(1)
+		})
+	})
+
+	describe('quoted message id', () => {
+		it('stores the quoted message id as sent and returns it on the stored message', async () => {
+			const { app } = createConversationsApp(ownerId)
+			const created = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Quote', participant_actor_ids: [] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const send = (metadata: unknown) =>
+				app.request(
+					jsonRequest(
+						'POST',
+						`/api/conversations/${conversation.id}/messages`,
+						{ content: 'replying to that', metadata },
+						{ 'x-workspace-id': workspaceId },
+					),
+				)
+
+			const res = await send({ quoted_message_id: 42 })
+			expect(res.status).toBe(201)
+			const stored = (await res.json()) as { metadata: { quoted_message_id?: number } | null }
+			expect(stored.metadata?.quoted_message_id).toBe(42)
+
+			const list = await app.request(
+				jsonGet(`/api/conversations/${conversation.id}/messages`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			const body = (await list.json()) as {
+				messages: Array<{ metadata: { quoted_message_id?: number } | null }>
+			}
+			expect(body.messages.at(-1)?.metadata?.quoted_message_id).toBe(42)
+
+			// Not a message id: refused rather than stored.
+			expect((await send({ quoted_message_id: 0 })).status).toBe(400)
+			expect((await send({ quoted_message_id: 'abc' })).status).toBe(400)
 		})
 	})
 

@@ -242,6 +242,9 @@ export const fromSuggestedStepSchema = z.object({
 	index: z.number().int().min(0).max(3),
 })
 
+/** Where a chat was started from, when the client says so. Today only the iPhone share sheet. */
+export const startedFromSchema = z.enum(['share'])
+
 /** What an agent can ask the human to put into the Keychain from a chat card. */
 export const KEYCHAIN_REQUEST_KINDS = ['api_key', 'login'] as const
 export type KeychainRequestKind = (typeof KEYCHAIN_REQUEST_KINDS)[number]
@@ -306,6 +309,12 @@ export const messageIntegrationAccessRequestSchema = z.object({
 	provider: z.string().min(1).max(100),
 	/** The name the person knows it by, e.g. "Slack". */
 	display_name: z.string().min(1).max(100),
+	/**
+	 * Which account is being connected, as a person knows it (the mailbox address for Gmail).
+	 * Only set when the provider stores such an address; a card without it shows no account row.
+	 * Never a provider id.
+	 */
+	account: z.string().min(1).max(320).optional(),
 	level: z.enum(INTEGRATION_ACCESS_REQUEST_LEVELS),
 	/** One line on what the agent needs it for. */
 	reason: z.string().min(1).max(300).optional(),
@@ -523,6 +532,12 @@ export const messageMetadataSchema = z.object({
 	 * card reads as answered whenever the chat is opened again.
 	 */
 	card_answer: messageCardAnswerSchema.optional(),
+	/**
+	 * Client-supplied: the message this one quotes (a message id). Stored and returned as sent, so
+	 * an app can jump to the exact original instead of matching on text and author. The id is
+	 * only echoed, never looked up, so it cannot reach into another conversation.
+	 */
+	quoted_message_id: z.number().int().positive().optional(),
 	/** Backend-owned: the helper session whose result this message hands to its sender. */
 	helper_return: z.string().uuid().optional(),
 	/**
@@ -540,6 +555,12 @@ export const messageMetadataSchema = z.object({
 	plain_tail: z.number().int().min(0).max(10).optional(),
 	/** Client-supplied: the intro step a message was sent from. */
 	from_suggested_step: fromSuggestedStepSchema.optional(),
+	/**
+	 * Client-supplied: where the person started the chat from, a category only (no text). Set on
+	 * the first message of a chat started from the iPhone share sheet. It carries no authority and
+	 * only lets share-started chats be counted from saved messages.
+	 */
+	started_from: startedFromSchema.optional(),
 	/** Backend-owned: the `commented` event this message was copied from (object chats). */
 	comment_event_id: z.number().int().optional(),
 })
@@ -652,6 +673,9 @@ export const conversationListQuerySchema = z.object({
 	// 'pinned' (default) keeps pinned chats on top, as the chat list shows them;
 	// 'activity' orders purely by last message, newest first.
 	sort: z.enum(['pinned', 'activity']).default('pinned'),
+	// 'priority' keeps only what the chat rail always lists in full: direct messages, pinned
+	// chats and chats with unread messages. 'recent' is everything else. Omitted = both.
+	scope: z.enum(['priority', 'recent']).optional(),
 	limit: z.coerce.number().int().min(1).max(100).default(30),
 	offset: z.coerce.number().int().min(0).default(0),
 })

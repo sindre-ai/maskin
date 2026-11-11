@@ -96,10 +96,12 @@ const SINGLE_SHAPE_CLASS: Record<SingleShape, string> = {
 	square: 'aspect-square w-[260px] max-w-[75%]',
 }
 
+// Filled, a single image takes its box's width but stops at the width where its height reaches
+// 240px, so a wide bubble does not make a tall picture.
 const SINGLE_SHAPE_RATIO: Record<SingleShape, string> = {
-	landscape: 'aspect-[4/3] w-full',
-	portrait: 'aspect-[3/4] w-full',
-	square: 'aspect-square w-full',
+	landscape: 'aspect-[4/3] w-full max-w-80',
+	portrait: 'aspect-[3/4] w-full max-w-[180px]',
+	square: 'aspect-square w-full max-w-60',
 }
 
 function shapeOf(ratio: number): SingleShape {
@@ -152,14 +154,14 @@ function ImageBlock({
 		</li>
 	)
 
-	// Filled, the block is as wide as its box and keeps each layout's shape.
-	const width = fill ? 'w-full' : 'w-80 max-w-[80%]'
+	// Filled, the block is as wide as its box and keeps each layout's shape, up to 240px tall.
+	const width = (cap: string) => (fill ? `w-full ${cap}` : 'w-80 max-w-[80%]')
 	let layout: string
 	if (images.length === 1)
 		layout = cn('grid-cols-1', fill ? SINGLE_SHAPE_RATIO[shape] : SINGLE_SHAPE_CLASS[shape])
-	else if (images.length === 2) layout = `aspect-[2/1] ${width} grid-cols-2`
-	else if (images.length === 3) layout = `aspect-[4/3] ${width} grid-cols-2 grid-rows-2`
-	else layout = `aspect-square ${width} grid-cols-2 grid-rows-2`
+	else if (images.length === 2) layout = `aspect-[2/1] ${width('max-w-[480px]')} grid-cols-2`
+	else if (images.length === 3) layout = `aspect-[4/3] ${width('max-w-80')} grid-cols-2 grid-rows-2`
+	else layout = `aspect-square ${width('max-w-60')} grid-cols-2 grid-rows-2`
 
 	return (
 		<>

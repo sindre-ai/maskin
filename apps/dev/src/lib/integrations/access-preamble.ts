@@ -1,4 +1,11 @@
-import { AGENT_ACCESS_EFFECT, AGENT_ACCESS_LABELS, requiresApprovalToAct } from '@maskin/shared'
+import {
+	AGENT_ACCESS_EFFECT,
+	AGENT_ACCESS_LABELS,
+	SEND_PERMISSION_KINDS,
+	SEND_PERMISSION_KIND_LABELS,
+	type SendPermissionKind,
+	type SendPermissionMode,
+} from '@maskin/shared'
 import type { ActorIntegrationAccess, AgentAccess } from './agent-access'
 import { CUSTOM_MCP_PROVIDER } from './custom-mcp'
 import { getProvider } from './registry'
@@ -12,12 +19,38 @@ const LEVEL_TEXT: Record<AgentAccess, string> = {
 // Strongest first, so a mixed provider lists its best level first.
 const LEVEL_ORDER: AgentAccess[] = ['read_write', 'read', 'none']
 
-/** Read & write where an irreversible action still waits for a person (sending an email). */
-const APPROVAL_GATED_WRITE = `${AGENT_ACCESS_LABELS.read_write} (all tools, but a person has to approve each email before you send it)`
-
-/** A saved draft has not gone anywhere, and agents have reported one as sent. */
+/** A saved Gmail draft has not gone anywhere, and agents have reported one as sent. */
 const DRAFT_IS_NOT_SENT =
 	' A saved draft is not a sent email: report "drafted" for a draft, and "sent" only after gmail_send_email returns a message id.'
+
+const kindList = (kinds: SendPermissionKind[]): string =>
+	kinds.map((k) => SEND_PERMISSION_KIND_LABELS[k]).join(', ')
+
+/**
+ * Tells the agent which of its sends wait for a person and which are off. With Read & write an
+ * agent sends directly, so nothing is said about the kinds that are set to always allow. Empty
+ * when every kind sends directly.
+ */
+export function buildSendModeNote(
+	modes: Partial<Record<SendPermissionKind, SendPermissionMode>>,
+): string {
+	const of = (mode: SendPermissionMode) => SEND_PERMISSION_KINDS.filter((k) => modes[k] === mode)
+	const askFirst = of('ask_first')
+	const denied = of('deny')
+	if (askFirst.length === 0 && denied.length === 0) return ''
+	const lines = ['## Sending']
+	if (askFirst.length > 0) {
+		lines.push(
+			`With Read & write you send directly, with no draft or card. These are set to ask first for you: ${kindList(askFirst)}. For those, save the exact text as a task or object with the right metadata.kind, show it to the person (link it in the chat or put it on a decision card), and ask. They can edit the text on the card before approving, or just say yes in the chat (then call approve_draft_from_chat with the draft and their message id). Once it is approved, call the send tool with only object_id.`,
+		)
+	}
+	if (denied.length > 0) {
+		lines.push(
+			`Turned off for you: ${kindList(denied)}. Do not look for another way to send these; ask a person to change the setting if one is needed.`,
+		)
+	}
+	return `${lines.join('\n')}\n\n`
+}
 
 export function providerLabel(provider: string): string {
 	try {
@@ -35,7 +68,14 @@ export function providerLabel(provider: string): string {
  */
 export function buildAccessPreamble(
 	rows: ActorIntegrationAccess[],
-	{ personReachable = false }: { personReachable?: boolean } = {},
+	{
+		personReachable = false,
+		sendModes,
+	}: {
+		personReachable?: boolean
+		/** The agent's resolved send setting per kind; leaves the sending note out when absent. */
+		sendModes?: Partial<Record<SendPermissionKind, SendPermissionMode>>
+	} = {},
 ): string {
 	const byProvider = new Map<string, Set<AgentAccess>>()
 	for (const row of rows) {
@@ -52,20 +92,16 @@ export function buildAccessPreamble(
 		.map(([provider, levels]) => ({ provider, label: providerLabel(provider), levels }))
 		.sort((a, b) => a.label.localeCompare(b.label))
 		.map(({ provider, label, levels }) => {
-			const ordered = LEVEL_ORDER.filter((l) => levels.has(l)).map((l) =>
-				l === 'read_write' && requiresApprovalToAct(provider)
-					? APPROVAL_GATED_WRITE
-					: LEVEL_TEXT[l],
-			)
+			const ordered = LEVEL_ORDER.filter((l) => levels.has(l)).map((l) => LEVEL_TEXT[l])
 			const text =
 				ordered.length === 1
 					? ordered[0]
 					: `${ordered.slice(0, -1).join(', ')} on some accounts and ${ordered[ordered.length - 1]} on others`
-			const draftNote =
-				levels.has('read_write') && requiresApprovalToAct(provider) ? DRAFT_IS_NOT_SENT : ''
+			const draftNote = provider === 'gmail' && levels.has('read_write') ? DRAFT_IS_NOT_SENT : ''
 			return `- ${label}: ${text}${draftNote}`
 		})
 
+	const sending = sendModes ? buildSendModeNote(sendModes) : ''
 	return [
 		'## Integration access',
 		'A person sets what you may do with each connected integration. This is background for you: do not bring it up, and do not describe your access in an answer, unless it stops you doing something you were asked to do or someone asks about it. What you have:',
@@ -75,7 +111,7 @@ export function buildAccessPreamble(
 			: 'If a tool is refused because of access, do not retry the same call. Say in your reply which integration and what level you need; a workspace admin can change it under Settings → Integrations.',
 	]
 		.join('\n')
-		.concat('\n\n')
+		.concat('\n\n', sending)
 }
 
 /**

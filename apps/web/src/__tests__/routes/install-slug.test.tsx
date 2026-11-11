@@ -121,8 +121,8 @@ describe('install page', () => {
 		mockSlug = 'no-such-loop'
 		render(<route.component />)
 
-		expect(screen.getByText("We couldn't find that loop")).toBeInTheDocument()
-		expect(screen.getByRole('link', { name: 'See all loops' })).toHaveAttribute(
+		expect(screen.getByText("We couldn't find that flow")).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'See all flows' })).toHaveAttribute(
 			'href',
 			'https://maskin.io/marketplace/',
 		)

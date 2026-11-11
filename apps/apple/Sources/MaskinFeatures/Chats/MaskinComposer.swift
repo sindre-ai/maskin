@@ -161,10 +161,21 @@ struct MaskinComposer: View {
 					.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, MaskinSpace.s5)
 					.onTapGesture { model.notice = nil }
 			}
+			// Over the cap: say why Send is on (the text goes as a file) or off, never a bare grey arrow.
+			if let lengthNotice = model.lengthNotice {
+				Text(lengthNotice).maskinText(.caption).foregroundStyle(MaskinColor.ink2)
+					.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, MaskinSpace.s5)
+			}
 			#if os(iOS)
-			// Server dictation gave way to the phone's recogniser by itself: say why, not only that.
-			if let note = dictation.fallbackNote {
+			// Which engine is dictating, and why it is the phone when it is: stays after Done.
+			if let note = dictation.engineNote {
 				Text(note).maskinText(.caption).foregroundStyle(MaskinColor.ink2)
+					.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, MaskinSpace.s5)
+			}
+			// The words the server hasn't returned yet, as the phone hears them; the server's text replaces them.
+			if !dictation.previewText.isEmpty {
+				Text(dictation.previewText).maskinText(.caption).foregroundStyle(MaskinColor.ink3)
+					.lineLimit(2).truncationMode(.head)
 					.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, MaskinSpace.s5)
 			}
 			#endif

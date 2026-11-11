@@ -40,7 +40,7 @@ pulled at session start and pushed at session end by
 `apps/dev/src/services/agent-storage.ts`.
 
 When it degrades, **sessions do not hard-fail**. The container stays up,
-`/api/health` stays green, and Coolify shows a healthy deployment. What actually
+`/api/health` stays green (liveness only; `/api/health/db` checks the database), and Coolify shows a healthy deployment. What actually
 happens is that agent file operations get slow or start failing individually,
 and the result surfaces as an agent that has quietly forgotten something. That is
 a silent-degradation failure — no exception, no 5xx, no page, just wrong

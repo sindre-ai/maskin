@@ -301,6 +301,7 @@ describe('Actors Routes', () => {
 			mockResults.insertQueue = [
 				[actor], // human actor insert
 				[{}], // human primary api_keys insert
+				[{}], // human email-on notification_preferences insert
 				[{ id: randomUUID(), name: 'ws' }], // workspaces insert
 				[{}], // owner workspaceMembers insert
 				[coach], // workspace_coach actor insert
@@ -324,8 +325,8 @@ describe('Actors Routes', () => {
 			}
 			expect(body.workspace_id).toBeDefined()
 			expect(body.workspace_provisioning_failed).toBeUndefined()
-			// inserts: [actor, api key, workspace, owner-member, coach, coach-member]
-			const coachInsert = calls.inserts[4] as { apiKey?: string; isSystem?: boolean }
+			// inserts: [actor, api key, email prefs, workspace, owner-member, coach, coach-member]
+			const coachInsert = calls.inserts[5] as { apiKey?: string; isSystem?: boolean }
 			expect(coachInsert.isSystem).toBe(true)
 			// Seeded agents get a key per session launch, never a stored one.
 			expect(coachInsert).not.toHaveProperty('apiKey')
@@ -1136,6 +1137,91 @@ describe('Actors Routes', () => {
 			const body = await res.json()
 			expect(body.deleted).toBe(true)
 			expect(agentStorage.deleteAllAgentFiles).toHaveBeenCalledWith(agentActor.id, wsId)
+		})
+
+		describe('when the caller is an agent', () => {
+			const agentCaller = (selectQueue: (agentId: string) => unknown[][]) => {
+				const target = buildActor({ type: 'agent' })
+				const agentStorage = createMockAgentStorage()
+				const { app, mockResults } = createTestApp(
+					actorsRoutes,
+					'/api/actors',
+					'test-actor-id',
+					'agent',
+					agentStorage,
+				)
+				mockResults.selectQueue = selectQueue(target.id)
+				return { app, target, agentStorage }
+			}
+			const members = (targetId: string) => [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[buildActor({ id: targetId, type: 'agent' })],
+				[buildWorkspaceMember({ actorId: targetId, workspaceId: wsId })],
+			]
+
+			it('returns 403 and deletes nothing without a person’s approval', async () => {
+				const { app, target, agentStorage } = agentCaller((id) => [...members(id), []])
+
+				const res = await app.request(
+					jsonDelete(`/api/actors/${target.id}`, { 'x-workspace-id': wsId }),
+				)
+
+				expect(res.status).toBe(403)
+				expect((await res.json()).error.message).toContain('has not approved')
+				expect(agentStorage.deleteAllAgentFiles).not.toHaveBeenCalled()
+			})
+
+			it('returns 403 when the approval was given to a different agent', async () => {
+				const { app, target } = agentCaller((id) => [
+					...members(id),
+					[{ data: { requested_by: 'some-other-agent' } }],
+				])
+
+				const res = await app.request(
+					jsonDelete(`/api/actors/${target.id}`, { 'x-workspace-id': wsId }),
+				)
+
+				expect(res.status).toBe(403)
+			})
+
+			it('deletes the agent when a person approved this agent asking', async () => {
+				const { app, target, agentStorage } = agentCaller((id) => [
+					...members(id),
+					[{ data: { requested_by: 'test-actor-id' } }],
+					[], // actorSessions in transaction
+				])
+
+				const res = await app.request(
+					jsonDelete(`/api/actors/${target.id}`, { 'x-workspace-id': wsId }),
+				)
+
+				expect(res.status).toBe(200)
+				expect((await res.json()).deleted).toBe(true)
+				expect(agentStorage.deleteAllAgentFiles).toHaveBeenCalledWith(target.id, wsId)
+			})
+
+			it('refuses an agent deleting itself even with an approval', async () => {
+				const selfId = buildActor({ type: 'agent' }).id
+				const { app, mockResults } = createTestApp(
+					actorsRoutes,
+					'/api/actors',
+					selfId,
+					'agent',
+					createMockAgentStorage(),
+				)
+				mockResults.selectQueue = [
+					[buildWorkspaceMember({ actorId: selfId, workspaceId: wsId })],
+					[buildActor({ id: selfId, type: 'agent' })],
+					[buildWorkspaceMember({ actorId: selfId, workspaceId: wsId })],
+				]
+
+				const res = await app.request(
+					jsonDelete(`/api/actors/${selfId}`, { 'x-workspace-id': wsId }),
+				)
+
+				expect(res.status).toBe(403)
+				expect((await res.json()).error.message).toContain('itself')
+			})
 		})
 
 		it("removes the deleted agent's computer on the agent server", async () => {

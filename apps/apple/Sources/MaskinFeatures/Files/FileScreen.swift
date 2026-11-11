@@ -12,12 +12,14 @@ import UniformTypeIdentifiers
 public struct FileScreen: View {
 	@State private var store: FileStore
 	@State private var showFileInfo = false
+	@State private var showTagEditor = false
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 
 	public init(environment: AppEnvironment, fileId: String) {
 		_store = State(
 			initialValue: FileStore(fileId: fileId, remote: APIFilesRemote(
-					client: environment.client, credentials: environment.auth.credentialsProvider)))
+					client: environment.client, credentials: environment.auth.credentialsProvider,
+					baseURL: environment.baseURL, clientSource: environment.clientSource)))
 	}
 
 	init(store: FileStore) {
@@ -44,6 +46,7 @@ public struct FileScreen: View {
 							}
 							.disabled(runtime == nil)
 							Button { showFileInfo = true } label: { Label("File", systemImage: "info.circle") }
+							Button { showTagEditor = true } label: { Label("Tags", systemImage: "tag") }
 							// The bytes are written only when the person actually shares.
 							ShareLink(item: FileExport(file: file), preview: SharePreview(file.name)) {
 								Label("Share", systemImage: "square.and.arrow.up")
@@ -57,6 +60,7 @@ public struct FileScreen: View {
 			.sheet(isPresented: $showFileInfo) {
 				if let file = store.file { FileInfoSheet(file: file) }
 			}
+			.sheet(isPresented: $showTagEditor) { FileTagEditorSheet(store: store) }
 			.onDisappear { FileStore.clearExports() }
 			.task { await store.load() }
 			.refreshable { await store.load() }
@@ -120,6 +124,7 @@ struct FileLoadedContent: View {
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s9) {
 			header(file)
+			FileTagList(store: store)
 			if file.kind == .markdown || isHTML {
 				HStack(spacing: MaskinSpace.s7) {
 					Picker("View", selection: $showsSource) {

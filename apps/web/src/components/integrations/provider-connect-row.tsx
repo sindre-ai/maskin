@@ -1,4 +1,4 @@
-import { AgentAccess } from '@/components/integrations/agent-access'
+import { AgentAccess, accessChipLabel } from '@/components/integrations/agent-access'
 import { StatusPill } from '@/components/integrations/drive/status-pill'
 import { ProviderCard } from '@/components/integrations/provider-card'
 import {
@@ -8,6 +8,7 @@ import {
 	LinkGithubDialog,
 	SkjaldConnectDialog,
 } from '@/components/integrations/provider-dialogs'
+import { ProviderLogo } from '@/components/integrations/provider-logo'
 import { ResendConnectDialog } from '@/components/integrations/resend/resend-connect-dialog'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
@@ -25,6 +26,7 @@ import type { IntegrationResponse, ProviderInfo } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { DRIVE_COPY } from '@/lib/drive-copy'
 import { DRIVE_PROVIDER } from '@/lib/drive-humans'
+import { logoDomainFor } from '@/lib/integration-catalog'
 import type { IntegrationToolState } from '@/lib/integration-tool-state'
 import { PILL_BUTTON } from '@/lib/pill-button'
 import { MULTI_INSTALL_PROVIDERS } from '@maskin/shared'
@@ -181,6 +183,16 @@ export function ProviderRow({
 
 	return (
 		<ProviderCard
+			logo={
+				variant === 'settings' && introState === undefined ? (
+					<ProviderLogo name={provider.displayName} domain={logoDomainFor(provider.name)} />
+				) : undefined
+			}
+			chip={
+				integration
+					? accessChipLabel(integration.defaultAgentAccess ?? 'read', integration.agentGrants ?? [])
+					: undefined
+			}
 			name={provider.displayName}
 			badge={isDrive && <StatusPill tone="new">{DRIVE_COPY.providerCard.pill}</StatusPill>}
 			compact={introState !== undefined}
@@ -252,7 +264,7 @@ export function ProviderRow({
 									<Button
 										variant="ghost"
 										size="sm"
-										className={cn(PILL_BUTTON, 'text-muted-foreground hover:text-error')}
+										className={cn(PILL_BUTTON, 'text-error hover:text-error')}
 										onClick={() => setConfirmingDisconnect(true)}
 										disabled={disconnect.isPending || !canWrite}
 									>
@@ -451,15 +463,17 @@ export function GroupedProviderRow({
 	}
 
 	return (
-		<div className="overflow-hidden rounded-xl border border-border bg-card">
+		<div className="overflow-hidden rounded-2xl border border-border bg-card">
 			<button
 				type="button"
 				onClick={() => setExpanded((v) => !v)}
 				aria-expanded={expanded}
-				className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-bg-hover max-md:min-h-11"
+				className="flex w-full items-center gap-3 p-[18px] text-left transition-colors hover:bg-bg-hover max-md:min-h-11"
 			>
+				<ProviderLogo name={provider.displayName} domain={logoDomainFor(provider.name)} />
+				<span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-success" />
 				<div className="flex-1 min-w-0">
-					<p className="text-[15px] font-semibold text-foreground truncate">
+					<p className="text-base font-semibold text-foreground truncate">
 						{provider.displayName} · {count}
 					</p>
 					<p className="text-[13px] text-muted-foreground truncate">

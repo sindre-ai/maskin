@@ -8584,6 +8584,8 @@ public enum Operations {
                         public var avatar_url: Swift.String?
                         /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/tags`.
                         public var tags: [Swift.String]?
+                        /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/starter_prompts`.
+                        public var starter_prompts: [Swift.String]?
                         /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/workspacesPayload`.
                         public struct workspacesPayloadPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/workspacesPayload/id`.
@@ -8634,6 +8636,7 @@ public enum Operations {
                         ///   - voice_enabled:
                         ///   - avatar_url:
                         ///   - tags:
+                        ///   - starter_prompts:
                         ///   - workspaces:
                         ///   - skills:
                         public init(
@@ -8649,6 +8652,7 @@ public enum Operations {
                             voice_enabled: Swift.Bool? = nil,
                             avatar_url: Swift.String? = nil,
                             tags: [Swift.String]? = nil,
+                            starter_prompts: [Swift.String]? = nil,
                             workspaces: Operations.get_sol_api_sol_actors.Output.Ok.Body.jsonPayloadPayload.workspacesPayload? = nil,
                             skills: [Swift.String]? = nil
                         ) {
@@ -8664,6 +8668,7 @@ public enum Operations {
                             self.voice_enabled = voice_enabled
                             self.avatar_url = avatar_url
                             self.tags = tags
+                            self.starter_prompts = starter_prompts
                             self.workspaces = workspaces
                             self.skills = skills
                         }
@@ -8680,6 +8685,7 @@ public enum Operations {
                             case voice_enabled
                             case avatar_url
                             case tags
+                            case starter_prompts
                             case workspaces
                             case skills
                         }
@@ -11225,6 +11231,8 @@ public enum Operations {
                     public var default_workspace_id: Swift.String?
                     /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/json/tags`.
                     public var tags: [Swift.String]?
+                    /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/json/starter_prompts`.
+                    public var starter_prompts: [Swift.String]?
                     /// Creates a new `jsonPayload`.
                     ///
                     /// - Parameters:
@@ -11239,6 +11247,7 @@ public enum Operations {
                     ///   - mailbox:
                     ///   - default_workspace_id:
                     ///   - tags:
+                    ///   - starter_prompts:
                     public init(
                         name: Swift.String? = nil,
                         email: Swift.String? = nil,
@@ -11250,7 +11259,8 @@ public enum Operations {
                         llm_config: Operations.patch_sol_api_sol_actors_sol__lcub_id_rcub_.Input.Body.jsonPayload.llm_configPayload? = nil,
                         mailbox: Swift.String? = nil,
                         default_workspace_id: Swift.String? = nil,
-                        tags: [Swift.String]? = nil
+                        tags: [Swift.String]? = nil,
+                        starter_prompts: [Swift.String]? = nil
                     ) {
                         self.name = name
                         self.email = email
@@ -11263,6 +11273,7 @@ public enum Operations {
                         self.mailbox = mailbox
                         self.default_workspace_id = default_workspace_id
                         self.tags = tags
+                        self.starter_prompts = starter_prompts
                     }
                     public enum CodingKeys: String, CodingKey {
                         case name
@@ -11276,6 +11287,7 @@ public enum Operations {
                         case mailbox
                         case default_workspace_id
                         case tags
+                        case starter_prompts
                     }
                 }
                 /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/content/application\/json`.
@@ -12240,7 +12252,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// Cannot delete human actors
+            /// Cannot delete human actors or system agents, and an agent caller needs a person’s approval (a delete_agent option tapped on a decision card)
             ///
             /// - Remark: Generated from `#/paths//api/actors/{id}/delete/responses/403`.
             ///
@@ -46287,6 +46299,1016 @@ public enum Operations {
             }
         }
     }
+    /// The auto top-up rule and whether the last automatic charge failed
+    ///
+    /// - Remark: HTTP `GET /api/billing/auto-top-up`.
+    /// - Remark: Generated from `#/paths//api/billing/auto-top-up/get`.
+    public enum get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up {
+        public static let id: Swift.String = "get/api/billing/auto-top-up"
+        public struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/header`.
+            public struct Headers: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/header/x-workspace-id`.
+                public var x_hyphen_workspace_hyphen_id: Swift.String
+                public var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - x_hyphen_workspace_hyphen_id:
+                ///   - accept:
+                public init(
+                    x_hyphen_workspace_hyphen_id: Swift.String,
+                    accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.AcceptableContentType>] = .defaultValues()
+                ) {
+                    self.x_hyphen_workspace_hyphen_id = x_hyphen_workspace_hyphen_id
+                    self.accept = accept
+                }
+            }
+            public var headers: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Input.Headers
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - headers:
+            public init(headers: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Input.Headers) {
+                self.headers = headers
+            }
+        }
+        @frozen public enum Output: Sendable, Hashable {
+            public struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content/json/auto_top_up`.
+                        public struct auto_top_upPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content/json/auto_top_up/enabled`.
+                            public var enabled: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content/json/auto_top_up/threshold_cents`.
+                            public var threshold_cents: Swift.Int
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content/json/auto_top_up/amount_cents`.
+                            public var amount_cents: Swift.Int
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content/json/auto_top_up/threshold_dkk_approx`.
+                            public var threshold_dkk_approx: Swift.Int
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content/json/auto_top_up/amount_dkk_approx`.
+                            public var amount_dkk_approx: Swift.Int
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content/json/auto_top_up/status`.
+                            @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case ok = "ok"
+                                case failed = "failed"
+                            }
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content/json/auto_top_up/status`.
+                            public var status: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload.auto_top_upPayload.statusPayload
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content/json/auto_top_up/failure_reason`.
+                            @frozen public enum failure_reasonPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case card_declined = "card_declined"
+                                case no_payment_method = "no_payment_method"
+                                case authentication_required = "authentication_required"
+                                case charge_error = "charge_error"
+                            }
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content/json/auto_top_up/failure_reason`.
+                            public var failure_reason: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload.auto_top_upPayload.failure_reasonPayload?
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content/json/auto_top_up/failed_at`.
+                            public var failed_at: Swift.Int?
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content/json/auto_top_up/last_charged_at`.
+                            public var last_charged_at: Swift.Int?
+                            /// Creates a new `auto_top_upPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - enabled:
+                            ///   - threshold_cents:
+                            ///   - amount_cents:
+                            ///   - threshold_dkk_approx:
+                            ///   - amount_dkk_approx:
+                            ///   - status:
+                            ///   - failure_reason:
+                            ///   - failed_at:
+                            ///   - last_charged_at:
+                            public init(
+                                enabled: Swift.Bool,
+                                threshold_cents: Swift.Int,
+                                amount_cents: Swift.Int,
+                                threshold_dkk_approx: Swift.Int,
+                                amount_dkk_approx: Swift.Int,
+                                status: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload.auto_top_upPayload.statusPayload,
+                                failure_reason: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload.auto_top_upPayload.failure_reasonPayload? = nil,
+                                failed_at: Swift.Int? = nil,
+                                last_charged_at: Swift.Int? = nil
+                            ) {
+                                self.enabled = enabled
+                                self.threshold_cents = threshold_cents
+                                self.amount_cents = amount_cents
+                                self.threshold_dkk_approx = threshold_dkk_approx
+                                self.amount_dkk_approx = amount_dkk_approx
+                                self.status = status
+                                self.failure_reason = failure_reason
+                                self.failed_at = failed_at
+                                self.last_charged_at = last_charged_at
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case enabled
+                                case threshold_cents
+                                case amount_cents
+                                case threshold_dkk_approx
+                                case amount_dkk_approx
+                                case status
+                                case failure_reason
+                                case failed_at
+                                case last_charged_at
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content/json/auto_top_up`.
+                        public var auto_top_up: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload.auto_top_upPayload?
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - auto_top_up:
+                        public init(auto_top_up: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload.auto_top_upPayload? = nil) {
+                            self.auto_top_up = auto_top_up
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case auto_top_up
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/200/content/application\/json`.
+                    case json(Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// The rule (null until one has been saved)
+            ///
+            /// - Remark: Generated from `#/paths//api/billing/auto-top-up/get/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            public var ok: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct NotFound: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/404/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/404/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/404/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/404/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/404/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/404/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/404/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/404/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/404/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/404/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/404/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/404/content/json/error/details`.
+                            public var details: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/404/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/404/content/json/error`.
+                        public var error: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/billing/auto-top-up/GET/responses/404/content/application\/json`.
+                    case json(Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body
+                /// Creates a new `NotFound`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body) {
+                    self.body = body
+                }
+            }
+            /// Workspace not found
+            ///
+            /// - Remark: Generated from `#/paths//api/billing/auto-top-up/get/responses/404`.
+            ///
+            /// HTTP response code: `404 notFound`.
+            case notFound(Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound)
+            /// The associated value of the enum case if `self` is `.notFound`.
+            ///
+            /// - Throws: An error if `self` is not `.notFound`.
+            /// - SeeAlso: `.notFound`.
+            public var notFound: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound {
+                get throws {
+                    switch self {
+                    case let .notFound(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Undocumented response.
+            ///
+            /// A response with a code that is not documented in the OpenAPI document.
+            case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
+        }
+        @frozen public enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            public init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            public var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            public static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
+    /// Save the auto top-up rule (also clears a failed state and retries on the next debit)
+    ///
+    /// - Remark: HTTP `PUT /api/billing/auto-top-up`.
+    /// - Remark: Generated from `#/paths//api/billing/auto-top-up/put`.
+    public enum put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up {
+        public static let id: Swift.String = "put/api/billing/auto-top-up"
+        public struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/header`.
+            public struct Headers: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/header/x-workspace-id`.
+                public var x_hyphen_workspace_hyphen_id: Swift.String
+                public var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - x_hyphen_workspace_hyphen_id:
+                ///   - accept:
+                public init(
+                    x_hyphen_workspace_hyphen_id: Swift.String,
+                    accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.AcceptableContentType>] = .defaultValues()
+                ) {
+                    self.x_hyphen_workspace_hyphen_id = x_hyphen_workspace_hyphen_id
+                    self.accept = accept
+                }
+            }
+            public var headers: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Input.Headers
+            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/requestBody`.
+            @frozen public enum Body: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/requestBody/json`.
+                public struct jsonPayload: Codable, Hashable, Sendable {
+                    /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/requestBody/json/enabled`.
+                    public var enabled: Swift.Bool
+                    /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/requestBody/json/threshold_cents`.
+                    public var threshold_cents: Swift.Int
+                    /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/requestBody/json/amount_cents`.
+                    public var amount_cents: Swift.Int
+                    /// Creates a new `jsonPayload`.
+                    ///
+                    /// - Parameters:
+                    ///   - enabled:
+                    ///   - threshold_cents:
+                    ///   - amount_cents:
+                    public init(
+                        enabled: Swift.Bool,
+                        threshold_cents: Swift.Int,
+                        amount_cents: Swift.Int
+                    ) {
+                        self.enabled = enabled
+                        self.threshold_cents = threshold_cents
+                        self.amount_cents = amount_cents
+                    }
+                    public enum CodingKeys: String, CodingKey {
+                        case enabled
+                        case threshold_cents
+                        case amount_cents
+                    }
+                }
+                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/requestBody/content/application\/json`.
+                case json(Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Input.Body.jsonPayload)
+            }
+            public var body: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Input.Body
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - headers:
+            ///   - body:
+            public init(
+                headers: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Input.Headers,
+                body: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Input.Body
+            ) {
+                self.headers = headers
+                self.body = body
+            }
+        }
+        @frozen public enum Output: Sendable, Hashable {
+            public struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content/json/auto_top_up`.
+                        public struct auto_top_upPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content/json/auto_top_up/enabled`.
+                            public var enabled: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content/json/auto_top_up/threshold_cents`.
+                            public var threshold_cents: Swift.Int
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content/json/auto_top_up/amount_cents`.
+                            public var amount_cents: Swift.Int
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content/json/auto_top_up/threshold_dkk_approx`.
+                            public var threshold_dkk_approx: Swift.Int
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content/json/auto_top_up/amount_dkk_approx`.
+                            public var amount_dkk_approx: Swift.Int
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content/json/auto_top_up/status`.
+                            @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case ok = "ok"
+                                case failed = "failed"
+                            }
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content/json/auto_top_up/status`.
+                            public var status: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload.auto_top_upPayload.statusPayload
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content/json/auto_top_up/failure_reason`.
+                            @frozen public enum failure_reasonPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case card_declined = "card_declined"
+                                case no_payment_method = "no_payment_method"
+                                case authentication_required = "authentication_required"
+                                case charge_error = "charge_error"
+                            }
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content/json/auto_top_up/failure_reason`.
+                            public var failure_reason: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload.auto_top_upPayload.failure_reasonPayload?
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content/json/auto_top_up/failed_at`.
+                            public var failed_at: Swift.Int?
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content/json/auto_top_up/last_charged_at`.
+                            public var last_charged_at: Swift.Int?
+                            /// Creates a new `auto_top_upPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - enabled:
+                            ///   - threshold_cents:
+                            ///   - amount_cents:
+                            ///   - threshold_dkk_approx:
+                            ///   - amount_dkk_approx:
+                            ///   - status:
+                            ///   - failure_reason:
+                            ///   - failed_at:
+                            ///   - last_charged_at:
+                            public init(
+                                enabled: Swift.Bool,
+                                threshold_cents: Swift.Int,
+                                amount_cents: Swift.Int,
+                                threshold_dkk_approx: Swift.Int,
+                                amount_dkk_approx: Swift.Int,
+                                status: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload.auto_top_upPayload.statusPayload,
+                                failure_reason: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload.auto_top_upPayload.failure_reasonPayload? = nil,
+                                failed_at: Swift.Int? = nil,
+                                last_charged_at: Swift.Int? = nil
+                            ) {
+                                self.enabled = enabled
+                                self.threshold_cents = threshold_cents
+                                self.amount_cents = amount_cents
+                                self.threshold_dkk_approx = threshold_dkk_approx
+                                self.amount_dkk_approx = amount_dkk_approx
+                                self.status = status
+                                self.failure_reason = failure_reason
+                                self.failed_at = failed_at
+                                self.last_charged_at = last_charged_at
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case enabled
+                                case threshold_cents
+                                case amount_cents
+                                case threshold_dkk_approx
+                                case amount_dkk_approx
+                                case status
+                                case failure_reason
+                                case failed_at
+                                case last_charged_at
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content/json/auto_top_up`.
+                        public var auto_top_up: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload.auto_top_upPayload?
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - auto_top_up:
+                        public init(auto_top_up: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload.auto_top_upPayload? = nil) {
+                            self.auto_top_up = auto_top_up
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case auto_top_up
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/200/content/application\/json`.
+                    case json(Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// Rule saved
+            ///
+            /// - Remark: Generated from `#/paths//api/billing/auto-top-up/put/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            public var ok: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct BadRequest: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/400/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/400/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/400/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/400/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/400/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/400/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/400/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/400/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/400/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/400/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/400/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.BadRequest.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/400/content/json/error/details`.
+                            public var details: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.BadRequest.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/400/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.BadRequest.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/400/content/json/error`.
+                        public var error: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.BadRequest.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.BadRequest.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/400/content/application\/json`.
+                    case json(Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.BadRequest.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.BadRequest.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.BadRequest.Body
+                /// Creates a new `BadRequest`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.BadRequest.Body) {
+                    self.body = body
+                }
+            }
+            /// Workspace cannot be charged automatically yet
+            ///
+            /// - Remark: Generated from `#/paths//api/billing/auto-top-up/put/responses/400`.
+            ///
+            /// HTTP response code: `400 badRequest`.
+            case badRequest(Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.BadRequest)
+            /// The associated value of the enum case if `self` is `.badRequest`.
+            ///
+            /// - Throws: An error if `self` is not `.badRequest`.
+            /// - SeeAlso: `.badRequest`.
+            public var badRequest: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.BadRequest {
+                get throws {
+                    switch self {
+                    case let .badRequest(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "badRequest",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct Forbidden: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/403/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/403/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/403/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/403/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/403/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/403/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/403/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/403/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/403/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/403/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/403/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Forbidden.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/403/content/json/error/details`.
+                            public var details: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Forbidden.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/403/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Forbidden.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/403/content/json/error`.
+                        public var error: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Forbidden.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Forbidden.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/403/content/application\/json`.
+                    case json(Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Forbidden.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Forbidden.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Forbidden.Body
+                /// Creates a new `Forbidden`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Forbidden.Body) {
+                    self.body = body
+                }
+            }
+            /// Caller is not a human workspace admin or owner
+            ///
+            /// - Remark: Generated from `#/paths//api/billing/auto-top-up/put/responses/403`.
+            ///
+            /// HTTP response code: `403 forbidden`.
+            case forbidden(Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Forbidden)
+            /// The associated value of the enum case if `self` is `.forbidden`.
+            ///
+            /// - Throws: An error if `self` is not `.forbidden`.
+            /// - SeeAlso: `.forbidden`.
+            public var forbidden: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.Forbidden {
+                get throws {
+                    switch self {
+                    case let .forbidden(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "forbidden",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct NotFound: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/404/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/404/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/404/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/404/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/404/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/404/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/404/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/404/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/404/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/404/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/404/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/404/content/json/error/details`.
+                            public var details: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/404/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/404/content/json/error`.
+                        public var error: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/billing/auto-top-up/PUT/responses/404/content/application\/json`.
+                    case json(Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body
+                /// Creates a new `NotFound`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound.Body) {
+                    self.body = body
+                }
+            }
+            /// Workspace not found
+            ///
+            /// - Remark: Generated from `#/paths//api/billing/auto-top-up/put/responses/404`.
+            ///
+            /// HTTP response code: `404 notFound`.
+            case notFound(Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound)
+            /// The associated value of the enum case if `self` is `.notFound`.
+            ///
+            /// - Throws: An error if `self` is not `.notFound`.
+            /// - SeeAlso: `.notFound`.
+            public var notFound: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output.NotFound {
+                get throws {
+                    switch self {
+                    case let .notFound(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Undocumented response.
+            ///
+            /// A response with a code that is not documented in the OpenAPI document.
+            case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
+        }
+        @frozen public enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            public init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            public var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            public static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
     /// Paginated event history
     ///
     /// - Remark: HTTP `GET /api/events/history`.
@@ -46849,6 +47871,29 @@ public enum Operations {
                             ///
                             /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/optionsPayload/set_status`.
                             public var set_status: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.optionsPayloadPayload.set_statusPayload?
+                            /// Use on the option that approves deleting another agent ("Delete Scout"), and mark it destructive. A person tapping it records their approval and nothing is deleted yet: the reply wakes you, and you then call delete_agent with the same id. The approval is for you only, for that one agent, and lapses after 24 hours. Without a tap, delete_agent is refused. All delete_agent options on one card must name the same agent. You cannot ask to delete yourself or a system agent.
+                            ///
+                            /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/optionsPayload/delete_agent`.
+                            public struct delete_agentPayload: Codable, Hashable, Sendable {
+                                /// The agent to delete: its id from list_actors.
+                                ///
+                                /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/optionsPayload/delete_agent/actor_id`.
+                                public var actor_id: Swift.String
+                                /// Creates a new `delete_agentPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - actor_id: The agent to delete: its id from list_actors.
+                                public init(actor_id: Swift.String) {
+                                    self.actor_id = actor_id
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case actor_id
+                                }
+                            }
+                            /// Use on the option that approves deleting another agent ("Delete Scout"), and mark it destructive. A person tapping it records their approval and nothing is deleted yet: the reply wakes you, and you then call delete_agent with the same id. The approval is for you only, for that one agent, and lapses after 24 hours. Without a tap, delete_agent is refused. All delete_agent options on one card must name the same agent. You cannot ask to delete yourself or a system agent.
+                            ///
+                            /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/optionsPayload/delete_agent`.
+                            public var delete_agent: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.optionsPayloadPayload.delete_agentPayload?
                             /// Creates a new `optionsPayloadPayload`.
                             ///
                             /// - Parameters:
@@ -46857,18 +47902,21 @@ public enum Operations {
                             ///   - recommended: Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing.
                             ///   - destructive: Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices.
                             ///   - set_status: Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
+                            ///   - delete_agent: Use on the option that approves deleting another agent ("Delete Scout"), and mark it destructive. A person tapping it records their approval and nothing is deleted yet: the reply wakes you, and you then call delete_agent with the same id. The approval is for you only, for that one agent, and lapses after 24 hours. Without a tap, delete_agent is refused. All delete_agent options on one card must name the same agent. You cannot ask to delete yourself or a system agent.
                             public init(
                                 label: Swift.String,
                                 consequences: [Swift.String],
                                 recommended: Swift.Bool? = nil,
                                 destructive: Swift.Bool? = nil,
-                                set_status: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.optionsPayloadPayload.set_statusPayload? = nil
+                                set_status: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.optionsPayloadPayload.set_statusPayload? = nil,
+                                delete_agent: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.optionsPayloadPayload.delete_agentPayload? = nil
                             ) {
                                 self.label = label
                                 self.consequences = consequences
                                 self.recommended = recommended
                                 self.destructive = destructive
                                 self.set_status = set_status
+                                self.delete_agent = delete_agent
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case label
@@ -46876,6 +47924,7 @@ public enum Operations {
                                 case recommended
                                 case destructive
                                 case set_status
+                                case delete_agent
                             }
                         }
                         /// 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
@@ -48641,6 +49690,8 @@ public enum Operations {
                             public var provider: Swift.String
                             /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/integration_access_request/display_name`.
                             public var display_name: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/integration_access_request/account`.
+                            public var account: Swift.String?
                             /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/integration_access_request/level`.
                             @frozen public enum levelPayload: String, Codable, Hashable, Sendable, CaseIterable {
                                 case read = "read"
@@ -48658,6 +49709,7 @@ public enum Operations {
                             ///   - integration_id:
                             ///   - provider:
                             ///   - display_name:
+                            ///   - account:
                             ///   - level:
                             ///   - reason:
                             public init(
@@ -48666,6 +49718,7 @@ public enum Operations {
                                 integration_id: Swift.String,
                                 provider: Swift.String,
                                 display_name: Swift.String,
+                                account: Swift.String? = nil,
                                 level: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.integration_access_requestPayload.levelPayload,
                                 reason: Swift.String? = nil
                             ) {
@@ -48674,6 +49727,7 @@ public enum Operations {
                                 self.integration_id = integration_id
                                 self.provider = provider
                                 self.display_name = display_name
+                                self.account = account
                                 self.level = level
                                 self.reason = reason
                             }
@@ -48683,6 +49737,7 @@ public enum Operations {
                                 case integration_id
                                 case provider
                                 case display_name
+                                case account
                                 case level
                                 case reason
                             }
@@ -48984,6 +50039,8 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/card_answer`.
                         public var card_answer: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.card_answerPayload?
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/quoted_message_id`.
+                        public var quoted_message_id: Swift.Int?
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/helper_return`.
                         public var helper_return: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/hidden_from_chat`.
@@ -49121,6 +50178,12 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/from_suggested_step`.
                         public var from_suggested_step: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.from_suggested_stepPayload?
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/started_from`.
+                        @frozen public enum started_fromPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                            case share = "share"
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/started_from`.
+                        public var started_from: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.started_fromPayload?
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/comment_event_id`.
                         public var comment_event_id: Swift.Int?
                         /// Creates a new `initial_message_metadataPayload`.
@@ -49145,6 +50208,7 @@ public enum Operations {
                         ///   - plan: Steps you plan, shown as a plan card. Also write the steps in the message text. Set version to 1.
                         ///   - proposed_edit: A change you propose to one field of one object, shown with Apply and Dismiss. Also describe it in the message text. Set version to 1.
                         ///   - card_answer:
+                        ///   - quoted_message_id:
                         ///   - helper_return:
                         ///   - hidden_from_chat:
                         ///   - delivery:
@@ -49152,6 +50216,7 @@ public enum Operations {
                         ///   - needed_tools:
                         ///   - plain_tail:
                         ///   - from_suggested_step:
+                        ///   - started_from:
                         ///   - comment_event_id:
                         public init(
                             attachments: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.attachmentsPayload? = nil,
@@ -49173,6 +50238,7 @@ public enum Operations {
                             plan: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.planPayload? = nil,
                             proposed_edit: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.proposed_editPayload? = nil,
                             card_answer: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.card_answerPayload? = nil,
+                            quoted_message_id: Swift.Int? = nil,
                             helper_return: Swift.String? = nil,
                             hidden_from_chat: Swift.Bool? = nil,
                             delivery: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.deliveryPayload? = nil,
@@ -49180,6 +50246,7 @@ public enum Operations {
                             needed_tools: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.needed_toolsPayload? = nil,
                             plain_tail: Swift.Int? = nil,
                             from_suggested_step: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.from_suggested_stepPayload? = nil,
+                            started_from: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.started_fromPayload? = nil,
                             comment_event_id: Swift.Int? = nil
                         ) {
                             self.attachments = attachments
@@ -49201,6 +50268,7 @@ public enum Operations {
                             self.plan = plan
                             self.proposed_edit = proposed_edit
                             self.card_answer = card_answer
+                            self.quoted_message_id = quoted_message_id
                             self.helper_return = helper_return
                             self.hidden_from_chat = hidden_from_chat
                             self.delivery = delivery
@@ -49208,6 +50276,7 @@ public enum Operations {
                             self.needed_tools = needed_tools
                             self.plain_tail = plain_tail
                             self.from_suggested_step = from_suggested_step
+                            self.started_from = started_from
                             self.comment_event_id = comment_event_id
                         }
                         public enum CodingKeys: String, CodingKey {
@@ -49230,6 +50299,7 @@ public enum Operations {
                             case plan
                             case proposed_edit
                             case card_answer
+                            case quoted_message_id
                             case helper_return
                             case hidden_from_chat
                             case delivery
@@ -49237,6 +50307,7 @@ public enum Operations {
                             case needed_tools
                             case plain_tail
                             case from_suggested_step
+                            case started_from
                             case comment_event_id
                         }
                     }
@@ -54112,6 +55183,8 @@ public enum Operations {
                             public var provider: Swift.String
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/integration_access_request/display_name`.
                             public var display_name: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/integration_access_request/account`.
+                            public var account: Swift.String?
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/integration_access_request/level`.
                             @frozen public enum levelPayload: String, Codable, Hashable, Sendable, CaseIterable {
                                 case read = "read"
@@ -54129,6 +55202,7 @@ public enum Operations {
                             ///   - integration_id:
                             ///   - provider:
                             ///   - display_name:
+                            ///   - account:
                             ///   - level:
                             ///   - reason:
                             public init(
@@ -54137,6 +55211,7 @@ public enum Operations {
                                 integration_id: Swift.String,
                                 provider: Swift.String,
                                 display_name: Swift.String,
+                                account: Swift.String? = nil,
                                 level: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.integration_access_requestPayload.levelPayload,
                                 reason: Swift.String? = nil
                             ) {
@@ -54145,6 +55220,7 @@ public enum Operations {
                                 self.integration_id = integration_id
                                 self.provider = provider
                                 self.display_name = display_name
+                                self.account = account
                                 self.level = level
                                 self.reason = reason
                             }
@@ -54154,6 +55230,7 @@ public enum Operations {
                                 case integration_id
                                 case provider
                                 case display_name
+                                case account
                                 case level
                                 case reason
                             }
@@ -54455,6 +55532,8 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/card_answer`.
                         public var card_answer: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.card_answerPayload?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/quoted_message_id`.
+                        public var quoted_message_id: Swift.Int?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/helper_return`.
                         public var helper_return: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/hidden_from_chat`.
@@ -54592,6 +55671,12 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/from_suggested_step`.
                         public var from_suggested_step: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.from_suggested_stepPayload?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/started_from`.
+                        @frozen public enum started_fromPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                            case share = "share"
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/started_from`.
+                        public var started_from: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.started_fromPayload?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/comment_event_id`.
                         public var comment_event_id: Swift.Int?
                         /// Creates a new `metadataPayload`.
@@ -54616,6 +55701,7 @@ public enum Operations {
                         ///   - plan: Steps you plan, shown as a plan card. Also write the steps in the message text. Set version to 1.
                         ///   - proposed_edit: A change you propose to one field of one object, shown with Apply and Dismiss. Also describe it in the message text. Set version to 1.
                         ///   - card_answer:
+                        ///   - quoted_message_id:
                         ///   - helper_return:
                         ///   - hidden_from_chat:
                         ///   - delivery:
@@ -54623,6 +55709,7 @@ public enum Operations {
                         ///   - needed_tools:
                         ///   - plain_tail:
                         ///   - from_suggested_step:
+                        ///   - started_from:
                         ///   - comment_event_id:
                         public init(
                             attachments: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.attachmentsPayload? = nil,
@@ -54644,6 +55731,7 @@ public enum Operations {
                             plan: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.planPayload? = nil,
                             proposed_edit: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.proposed_editPayload? = nil,
                             card_answer: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.card_answerPayload? = nil,
+                            quoted_message_id: Swift.Int? = nil,
                             helper_return: Swift.String? = nil,
                             hidden_from_chat: Swift.Bool? = nil,
                             delivery: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.deliveryPayload? = nil,
@@ -54651,6 +55739,7 @@ public enum Operations {
                             needed_tools: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.needed_toolsPayload? = nil,
                             plain_tail: Swift.Int? = nil,
                             from_suggested_step: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.from_suggested_stepPayload? = nil,
+                            started_from: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.started_fromPayload? = nil,
                             comment_event_id: Swift.Int? = nil
                         ) {
                             self.attachments = attachments
@@ -54672,6 +55761,7 @@ public enum Operations {
                             self.plan = plan
                             self.proposed_edit = proposed_edit
                             self.card_answer = card_answer
+                            self.quoted_message_id = quoted_message_id
                             self.helper_return = helper_return
                             self.hidden_from_chat = hidden_from_chat
                             self.delivery = delivery
@@ -54679,6 +55769,7 @@ public enum Operations {
                             self.needed_tools = needed_tools
                             self.plain_tail = plain_tail
                             self.from_suggested_step = from_suggested_step
+                            self.started_from = started_from
                             self.comment_event_id = comment_event_id
                         }
                         public enum CodingKeys: String, CodingKey {
@@ -54701,6 +55792,7 @@ public enum Operations {
                             case plan
                             case proposed_edit
                             case card_answer
+                            case quoted_message_id
                             case helper_return
                             case hidden_from_chat
                             case delivery
@@ -54708,6 +55800,7 @@ public enum Operations {
                             case needed_tools
                             case plain_tail
                             case from_suggested_step
+                            case started_from
                             case comment_event_id
                         }
                     }
@@ -69651,6 +70744,29 @@ public enum Operations {
                                         ///
                                         /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/set_status`.
                                         public var set_status: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.set_statusPayload?
+                                        /// Use on the option that approves deleting another agent ("Delete Scout"), and mark it destructive. A person tapping it records their approval and nothing is deleted yet: the reply wakes you, and you then call delete_agent with the same id. The approval is for you only, for that one agent, and lapses after 24 hours. Without a tap, delete_agent is refused. All delete_agent options on one card must name the same agent. You cannot ask to delete yourself or a system agent.
+                                        ///
+                                        /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/delete_agent`.
+                                        public struct delete_agentPayload: Codable, Hashable, Sendable {
+                                            /// The agent to delete: its id from list_actors.
+                                            ///
+                                            /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/delete_agent/actor_id`.
+                                            public var actor_id: Swift.String
+                                            /// Creates a new `delete_agentPayload`.
+                                            ///
+                                            /// - Parameters:
+                                            ///   - actor_id: The agent to delete: its id from list_actors.
+                                            public init(actor_id: Swift.String) {
+                                                self.actor_id = actor_id
+                                            }
+                                            public enum CodingKeys: String, CodingKey {
+                                                case actor_id
+                                            }
+                                        }
+                                        /// Use on the option that approves deleting another agent ("Delete Scout"), and mark it destructive. A person tapping it records their approval and nothing is deleted yet: the reply wakes you, and you then call delete_agent with the same id. The approval is for you only, for that one agent, and lapses after 24 hours. Without a tap, delete_agent is refused. All delete_agent options on one card must name the same agent. You cannot ask to delete yourself or a system agent.
+                                        ///
+                                        /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/delete_agent`.
+                                        public var delete_agent: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.delete_agentPayload?
                                         /// Creates a new `optionsPayloadPayload`.
                                         ///
                                         /// - Parameters:
@@ -69659,18 +70775,21 @@ public enum Operations {
                                         ///   - recommended: Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing.
                                         ///   - destructive: Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices.
                                         ///   - set_status: Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
+                                        ///   - delete_agent: Use on the option that approves deleting another agent ("Delete Scout"), and mark it destructive. A person tapping it records their approval and nothing is deleted yet: the reply wakes you, and you then call delete_agent with the same id. The approval is for you only, for that one agent, and lapses after 24 hours. Without a tap, delete_agent is refused. All delete_agent options on one card must name the same agent. You cannot ask to delete yourself or a system agent.
                                         public init(
                                             label: Swift.String,
                                             consequences: [Swift.String],
                                             recommended: Swift.Bool? = nil,
                                             destructive: Swift.Bool? = nil,
-                                            set_status: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.set_statusPayload? = nil
+                                            set_status: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.set_statusPayload? = nil,
+                                            delete_agent: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.delete_agentPayload? = nil
                                         ) {
                                             self.label = label
                                             self.consequences = consequences
                                             self.recommended = recommended
                                             self.destructive = destructive
                                             self.set_status = set_status
+                                            self.delete_agent = delete_agent
                                         }
                                         public enum CodingKeys: String, CodingKey {
                                             case label
@@ -69678,6 +70797,7 @@ public enum Operations {
                                             case recommended
                                             case destructive
                                             case set_status
+                                            case delete_agent
                                         }
                                     }
                                     /// 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
@@ -71018,6 +72138,8 @@ public enum Operations {
                             public var digest: Swift.Bool
                             /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/categories/tips`.
                             public var tips: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/categories/flow_activity`.
+                            public var flow_activity: Swift.Bool
                             /// Creates a new `categoriesPayload`.
                             ///
                             /// - Parameters:
@@ -71025,30 +72147,137 @@ public enum Operations {
                             ///   - conversation:
                             ///   - digest:
                             ///   - tips:
+                            ///   - flow_activity:
                             public init(
                                 needs_you: Swift.Bool,
                                 conversation: Swift.Bool,
                                 digest: Swift.Bool,
-                                tips: Swift.Bool
+                                tips: Swift.Bool,
+                                flow_activity: Swift.Bool
                             ) {
                                 self.needs_you = needs_you
                                 self.conversation = conversation
                                 self.digest = digest
                                 self.tips = tips
+                                self.flow_activity = flow_activity
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case needs_you
                                 case conversation
                                 case digest
                                 case tips
+                                case flow_activity
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/categories`.
                         public var categories: Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.categoriesPayload
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_categories`.
+                        public struct browser_categoriesPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_categories/needs_you`.
+                            public var needs_you: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_categories/conversation`.
+                            public var conversation: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_categories/digest`.
+                            public var digest: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_categories/tips`.
+                            public var tips: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_categories/flow_activity`.
+                            public var flow_activity: Swift.Bool
+                            /// Creates a new `browser_categoriesPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - needs_you:
+                            ///   - conversation:
+                            ///   - digest:
+                            ///   - tips:
+                            ///   - flow_activity:
+                            public init(
+                                needs_you: Swift.Bool,
+                                conversation: Swift.Bool,
+                                digest: Swift.Bool,
+                                tips: Swift.Bool,
+                                flow_activity: Swift.Bool
+                            ) {
+                                self.needs_you = needs_you
+                                self.conversation = conversation
+                                self.digest = digest
+                                self.tips = tips
+                                self.flow_activity = flow_activity
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case needs_you
+                                case conversation
+                                case digest
+                                case tips
+                                case flow_activity
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_categories`.
+                        public var browser_categories: Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_categoriesPayload
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_not_askedPayload`.
+                        @frozen public enum browser_not_askedPayloadPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                            case needs_you = "needs_you"
+                            case conversation = "conversation"
+                            case digest = "digest"
+                            case tips = "tips"
+                            case flow_activity = "flow_activity"
+                        }
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_not_asked`.
+                        public typealias browser_not_askedPayload = [Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_not_askedPayloadPayload]
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_not_asked`.
+                        public var browser_not_asked: Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_not_askedPayload
                         /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/briefing_enabled`.
                         public var briefing_enabled: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/briefing_time`.
                         public var briefing_time: Swift.Int
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/email_digest_enabled`.
+                        public var email_digest_enabled: Swift.Bool
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/email_categories`.
+                        public struct email_categoriesPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/email_categories/needs_you`.
+                            public var needs_you: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/email_categories/conversation`.
+                            public var conversation: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/email_categories/tips`.
+                            public var tips: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/email_categories/flow_activity`.
+                            public var flow_activity: Swift.Bool
+                            /// Creates a new `email_categoriesPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - needs_you:
+                            ///   - conversation:
+                            ///   - tips:
+                            ///   - flow_activity:
+                            public init(
+                                needs_you: Swift.Bool,
+                                conversation: Swift.Bool,
+                                tips: Swift.Bool,
+                                flow_activity: Swift.Bool
+                            ) {
+                                self.needs_you = needs_you
+                                self.conversation = conversation
+                                self.tips = tips
+                                self.flow_activity = flow_activity
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case needs_you
+                                case conversation
+                                case tips
+                                case flow_activity
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/email_categories`.
+                        public var email_categories: Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.email_categoriesPayload
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/marketplace_picks_enabled`.
+                        public var marketplace_picks_enabled: Swift.Bool
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/email_rhythm`.
+                        @frozen public enum email_rhythmPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                            case daily = "daily"
+                            case weekly = "weekly"
+                        }
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/email_rhythm`.
+                        public var email_rhythm: Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.email_rhythmPayload
                         /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/muted_workspace_ids`.
                         public var muted_workspace_ids: [Swift.String]
                         /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/updated_at`.
@@ -71060,8 +72289,14 @@ public enum Operations {
                         ///   - quiet_hours_start:
                         ///   - quiet_hours_end:
                         ///   - categories:
+                        ///   - browser_categories:
+                        ///   - browser_not_asked:
                         ///   - briefing_enabled:
                         ///   - briefing_time:
+                        ///   - email_digest_enabled:
+                        ///   - email_categories:
+                        ///   - marketplace_picks_enabled:
+                        ///   - email_rhythm:
                         ///   - muted_workspace_ids:
                         ///   - updated_at:
                         public init(
@@ -71069,8 +72304,14 @@ public enum Operations {
                             quiet_hours_start: Swift.Int? = nil,
                             quiet_hours_end: Swift.Int? = nil,
                             categories: Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.categoriesPayload,
+                            browser_categories: Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_categoriesPayload,
+                            browser_not_asked: Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_not_askedPayload,
                             briefing_enabled: Swift.Bool,
                             briefing_time: Swift.Int,
+                            email_digest_enabled: Swift.Bool,
+                            email_categories: Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.email_categoriesPayload,
+                            marketplace_picks_enabled: Swift.Bool,
+                            email_rhythm: Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.email_rhythmPayload,
                             muted_workspace_ids: [Swift.String],
                             updated_at: Swift.String? = nil
                         ) {
@@ -71078,8 +72319,14 @@ public enum Operations {
                             self.quiet_hours_start = quiet_hours_start
                             self.quiet_hours_end = quiet_hours_end
                             self.categories = categories
+                            self.browser_categories = browser_categories
+                            self.browser_not_asked = browser_not_asked
                             self.briefing_enabled = briefing_enabled
                             self.briefing_time = briefing_time
+                            self.email_digest_enabled = email_digest_enabled
+                            self.email_categories = email_categories
+                            self.marketplace_picks_enabled = marketplace_picks_enabled
+                            self.email_rhythm = email_rhythm
                             self.muted_workspace_ids = muted_workspace_ids
                             self.updated_at = updated_at
                         }
@@ -71088,8 +72335,14 @@ public enum Operations {
                             case quiet_hours_start
                             case quiet_hours_end
                             case categories
+                            case browser_categories
+                            case browser_not_asked
                             case briefing_enabled
                             case briefing_time
+                            case email_digest_enabled
+                            case email_categories
+                            case marketplace_picks_enabled
+                            case email_rhythm
                             case muted_workspace_ids
                             case updated_at
                         }
@@ -71214,6 +72467,8 @@ public enum Operations {
                         public var digest: Swift.Bool?
                         /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/categories/tips`.
                         public var tips: Swift.Bool?
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/categories/flow_activity`.
+                        public var flow_activity: Swift.Bool?
                         /// Creates a new `categoriesPayload`.
                         ///
                         /// - Parameters:
@@ -71221,30 +72476,125 @@ public enum Operations {
                         ///   - conversation:
                         ///   - digest:
                         ///   - tips:
+                        ///   - flow_activity:
                         public init(
                             needs_you: Swift.Bool? = nil,
                             conversation: Swift.Bool? = nil,
                             digest: Swift.Bool? = nil,
-                            tips: Swift.Bool? = nil
+                            tips: Swift.Bool? = nil,
+                            flow_activity: Swift.Bool? = nil
                         ) {
                             self.needs_you = needs_you
                             self.conversation = conversation
                             self.digest = digest
                             self.tips = tips
+                            self.flow_activity = flow_activity
                         }
                         public enum CodingKeys: String, CodingKey {
                             case needs_you
                             case conversation
                             case digest
                             case tips
+                            case flow_activity
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/categories`.
                     public var categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Input.Body.jsonPayload.categoriesPayload?
+                    /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/browser_categories`.
+                    public struct browser_categoriesPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/browser_categories/needs_you`.
+                        public var needs_you: Swift.Bool?
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/browser_categories/conversation`.
+                        public var conversation: Swift.Bool?
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/browser_categories/digest`.
+                        public var digest: Swift.Bool?
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/browser_categories/tips`.
+                        public var tips: Swift.Bool?
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/browser_categories/flow_activity`.
+                        public var flow_activity: Swift.Bool?
+                        /// Creates a new `browser_categoriesPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - needs_you:
+                        ///   - conversation:
+                        ///   - digest:
+                        ///   - tips:
+                        ///   - flow_activity:
+                        public init(
+                            needs_you: Swift.Bool? = nil,
+                            conversation: Swift.Bool? = nil,
+                            digest: Swift.Bool? = nil,
+                            tips: Swift.Bool? = nil,
+                            flow_activity: Swift.Bool? = nil
+                        ) {
+                            self.needs_you = needs_you
+                            self.conversation = conversation
+                            self.digest = digest
+                            self.tips = tips
+                            self.flow_activity = flow_activity
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case needs_you
+                            case conversation
+                            case digest
+                            case tips
+                            case flow_activity
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/browser_categories`.
+                    public var browser_categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Input.Body.jsonPayload.browser_categoriesPayload?
                     /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/briefing_enabled`.
                     public var briefing_enabled: Swift.Bool?
                     /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/briefing_time`.
                     public var briefing_time: Swift.Int?
+                    /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/email_digest_enabled`.
+                    public var email_digest_enabled: Swift.Bool?
+                    /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/email_categories`.
+                    public struct email_categoriesPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/email_categories/needs_you`.
+                        public var needs_you: Swift.Bool?
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/email_categories/conversation`.
+                        public var conversation: Swift.Bool?
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/email_categories/tips`.
+                        public var tips: Swift.Bool?
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/email_categories/flow_activity`.
+                        public var flow_activity: Swift.Bool?
+                        /// Creates a new `email_categoriesPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - needs_you:
+                        ///   - conversation:
+                        ///   - tips:
+                        ///   - flow_activity:
+                        public init(
+                            needs_you: Swift.Bool? = nil,
+                            conversation: Swift.Bool? = nil,
+                            tips: Swift.Bool? = nil,
+                            flow_activity: Swift.Bool? = nil
+                        ) {
+                            self.needs_you = needs_you
+                            self.conversation = conversation
+                            self.tips = tips
+                            self.flow_activity = flow_activity
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case needs_you
+                            case conversation
+                            case tips
+                            case flow_activity
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/email_categories`.
+                    public var email_categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Input.Body.jsonPayload.email_categoriesPayload?
+                    /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/marketplace_picks_enabled`.
+                    public var marketplace_picks_enabled: Swift.Bool?
+                    /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/email_rhythm`.
+                    @frozen public enum email_rhythmPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                        case daily = "daily"
+                        case weekly = "weekly"
+                    }
+                    /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/email_rhythm`.
+                    public var email_rhythm: Operations.put_sol_api_sol_notification_hyphen_preferences.Input.Body.jsonPayload.email_rhythmPayload?
                     /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/muted_workspace_ids`.
                     public var muted_workspace_ids: [Swift.String]?
                     /// Creates a new `jsonPayload`.
@@ -71254,24 +72604,39 @@ public enum Operations {
                     ///   - quiet_hours_start:
                     ///   - quiet_hours_end:
                     ///   - categories:
+                    ///   - browser_categories:
                     ///   - briefing_enabled:
                     ///   - briefing_time:
+                    ///   - email_digest_enabled:
+                    ///   - email_categories:
+                    ///   - marketplace_picks_enabled:
+                    ///   - email_rhythm:
                     ///   - muted_workspace_ids:
                     public init(
                         timezone: Swift.String? = nil,
                         quiet_hours_start: Swift.Int? = nil,
                         quiet_hours_end: Swift.Int? = nil,
                         categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Input.Body.jsonPayload.categoriesPayload? = nil,
+                        browser_categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Input.Body.jsonPayload.browser_categoriesPayload? = nil,
                         briefing_enabled: Swift.Bool? = nil,
                         briefing_time: Swift.Int? = nil,
+                        email_digest_enabled: Swift.Bool? = nil,
+                        email_categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Input.Body.jsonPayload.email_categoriesPayload? = nil,
+                        marketplace_picks_enabled: Swift.Bool? = nil,
+                        email_rhythm: Operations.put_sol_api_sol_notification_hyphen_preferences.Input.Body.jsonPayload.email_rhythmPayload? = nil,
                         muted_workspace_ids: [Swift.String]? = nil
                     ) {
                         self.timezone = timezone
                         self.quiet_hours_start = quiet_hours_start
                         self.quiet_hours_end = quiet_hours_end
                         self.categories = categories
+                        self.browser_categories = browser_categories
                         self.briefing_enabled = briefing_enabled
                         self.briefing_time = briefing_time
+                        self.email_digest_enabled = email_digest_enabled
+                        self.email_categories = email_categories
+                        self.marketplace_picks_enabled = marketplace_picks_enabled
+                        self.email_rhythm = email_rhythm
                         self.muted_workspace_ids = muted_workspace_ids
                     }
                     public enum CodingKeys: String, CodingKey {
@@ -71279,8 +72644,13 @@ public enum Operations {
                         case quiet_hours_start
                         case quiet_hours_end
                         case categories
+                        case browser_categories
                         case briefing_enabled
                         case briefing_time
+                        case email_digest_enabled
+                        case email_categories
+                        case marketplace_picks_enabled
+                        case email_rhythm
                         case muted_workspace_ids
                     }
                 }
@@ -71323,6 +72693,8 @@ public enum Operations {
                             public var digest: Swift.Bool
                             /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/categories/tips`.
                             public var tips: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/categories/flow_activity`.
+                            public var flow_activity: Swift.Bool
                             /// Creates a new `categoriesPayload`.
                             ///
                             /// - Parameters:
@@ -71330,30 +72702,137 @@ public enum Operations {
                             ///   - conversation:
                             ///   - digest:
                             ///   - tips:
+                            ///   - flow_activity:
                             public init(
                                 needs_you: Swift.Bool,
                                 conversation: Swift.Bool,
                                 digest: Swift.Bool,
-                                tips: Swift.Bool
+                                tips: Swift.Bool,
+                                flow_activity: Swift.Bool
                             ) {
                                 self.needs_you = needs_you
                                 self.conversation = conversation
                                 self.digest = digest
                                 self.tips = tips
+                                self.flow_activity = flow_activity
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case needs_you
                                 case conversation
                                 case digest
                                 case tips
+                                case flow_activity
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/categories`.
                         public var categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.categoriesPayload
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_categories`.
+                        public struct browser_categoriesPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_categories/needs_you`.
+                            public var needs_you: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_categories/conversation`.
+                            public var conversation: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_categories/digest`.
+                            public var digest: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_categories/tips`.
+                            public var tips: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_categories/flow_activity`.
+                            public var flow_activity: Swift.Bool
+                            /// Creates a new `browser_categoriesPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - needs_you:
+                            ///   - conversation:
+                            ///   - digest:
+                            ///   - tips:
+                            ///   - flow_activity:
+                            public init(
+                                needs_you: Swift.Bool,
+                                conversation: Swift.Bool,
+                                digest: Swift.Bool,
+                                tips: Swift.Bool,
+                                flow_activity: Swift.Bool
+                            ) {
+                                self.needs_you = needs_you
+                                self.conversation = conversation
+                                self.digest = digest
+                                self.tips = tips
+                                self.flow_activity = flow_activity
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case needs_you
+                                case conversation
+                                case digest
+                                case tips
+                                case flow_activity
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_categories`.
+                        public var browser_categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_categoriesPayload
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_not_askedPayload`.
+                        @frozen public enum browser_not_askedPayloadPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                            case needs_you = "needs_you"
+                            case conversation = "conversation"
+                            case digest = "digest"
+                            case tips = "tips"
+                            case flow_activity = "flow_activity"
+                        }
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_not_asked`.
+                        public typealias browser_not_askedPayload = [Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_not_askedPayloadPayload]
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_not_asked`.
+                        public var browser_not_asked: Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_not_askedPayload
                         /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/briefing_enabled`.
                         public var briefing_enabled: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/briefing_time`.
                         public var briefing_time: Swift.Int
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/email_digest_enabled`.
+                        public var email_digest_enabled: Swift.Bool
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/email_categories`.
+                        public struct email_categoriesPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/email_categories/needs_you`.
+                            public var needs_you: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/email_categories/conversation`.
+                            public var conversation: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/email_categories/tips`.
+                            public var tips: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/email_categories/flow_activity`.
+                            public var flow_activity: Swift.Bool
+                            /// Creates a new `email_categoriesPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - needs_you:
+                            ///   - conversation:
+                            ///   - tips:
+                            ///   - flow_activity:
+                            public init(
+                                needs_you: Swift.Bool,
+                                conversation: Swift.Bool,
+                                tips: Swift.Bool,
+                                flow_activity: Swift.Bool
+                            ) {
+                                self.needs_you = needs_you
+                                self.conversation = conversation
+                                self.tips = tips
+                                self.flow_activity = flow_activity
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case needs_you
+                                case conversation
+                                case tips
+                                case flow_activity
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/email_categories`.
+                        public var email_categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.email_categoriesPayload
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/marketplace_picks_enabled`.
+                        public var marketplace_picks_enabled: Swift.Bool
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/email_rhythm`.
+                        @frozen public enum email_rhythmPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                            case daily = "daily"
+                            case weekly = "weekly"
+                        }
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/email_rhythm`.
+                        public var email_rhythm: Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.email_rhythmPayload
                         /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/muted_workspace_ids`.
                         public var muted_workspace_ids: [Swift.String]
                         /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/updated_at`.
@@ -71365,8 +72844,14 @@ public enum Operations {
                         ///   - quiet_hours_start:
                         ///   - quiet_hours_end:
                         ///   - categories:
+                        ///   - browser_categories:
+                        ///   - browser_not_asked:
                         ///   - briefing_enabled:
                         ///   - briefing_time:
+                        ///   - email_digest_enabled:
+                        ///   - email_categories:
+                        ///   - marketplace_picks_enabled:
+                        ///   - email_rhythm:
                         ///   - muted_workspace_ids:
                         ///   - updated_at:
                         public init(
@@ -71374,8 +72859,14 @@ public enum Operations {
                             quiet_hours_start: Swift.Int? = nil,
                             quiet_hours_end: Swift.Int? = nil,
                             categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.categoriesPayload,
+                            browser_categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_categoriesPayload,
+                            browser_not_asked: Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_not_askedPayload,
                             briefing_enabled: Swift.Bool,
                             briefing_time: Swift.Int,
+                            email_digest_enabled: Swift.Bool,
+                            email_categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.email_categoriesPayload,
+                            marketplace_picks_enabled: Swift.Bool,
+                            email_rhythm: Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.email_rhythmPayload,
                             muted_workspace_ids: [Swift.String],
                             updated_at: Swift.String? = nil
                         ) {
@@ -71383,8 +72874,14 @@ public enum Operations {
                             self.quiet_hours_start = quiet_hours_start
                             self.quiet_hours_end = quiet_hours_end
                             self.categories = categories
+                            self.browser_categories = browser_categories
+                            self.browser_not_asked = browser_not_asked
                             self.briefing_enabled = briefing_enabled
                             self.briefing_time = briefing_time
+                            self.email_digest_enabled = email_digest_enabled
+                            self.email_categories = email_categories
+                            self.marketplace_picks_enabled = marketplace_picks_enabled
+                            self.email_rhythm = email_rhythm
                             self.muted_workspace_ids = muted_workspace_ids
                             self.updated_at = updated_at
                         }
@@ -71393,8 +72890,14 @@ public enum Operations {
                             case quiet_hours_start
                             case quiet_hours_end
                             case categories
+                            case browser_categories
+                            case browser_not_asked
                             case briefing_enabled
                             case briefing_time
+                            case email_digest_enabled
+                            case email_categories
+                            case marketplace_picks_enabled
+                            case email_rhythm
                             case muted_workspace_ids
                             case updated_at
                         }
@@ -73311,6 +74814,29 @@ public enum Operations {
                                         ///
                                         /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/set_status`.
                                         public var set_status: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.set_statusPayload?
+                                        /// Use on the option that approves deleting another agent ("Delete Scout"), and mark it destructive. A person tapping it records their approval and nothing is deleted yet: the reply wakes you, and you then call delete_agent with the same id. The approval is for you only, for that one agent, and lapses after 24 hours. Without a tap, delete_agent is refused. All delete_agent options on one card must name the same agent. You cannot ask to delete yourself or a system agent.
+                                        ///
+                                        /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/delete_agent`.
+                                        public struct delete_agentPayload: Codable, Hashable, Sendable {
+                                            /// The agent to delete: its id from list_actors.
+                                            ///
+                                            /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/delete_agent/actor_id`.
+                                            public var actor_id: Swift.String
+                                            /// Creates a new `delete_agentPayload`.
+                                            ///
+                                            /// - Parameters:
+                                            ///   - actor_id: The agent to delete: its id from list_actors.
+                                            public init(actor_id: Swift.String) {
+                                                self.actor_id = actor_id
+                                            }
+                                            public enum CodingKeys: String, CodingKey {
+                                                case actor_id
+                                            }
+                                        }
+                                        /// Use on the option that approves deleting another agent ("Delete Scout"), and mark it destructive. A person tapping it records their approval and nothing is deleted yet: the reply wakes you, and you then call delete_agent with the same id. The approval is for you only, for that one agent, and lapses after 24 hours. Without a tap, delete_agent is refused. All delete_agent options on one card must name the same agent. You cannot ask to delete yourself or a system agent.
+                                        ///
+                                        /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/delete_agent`.
+                                        public var delete_agent: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.delete_agentPayload?
                                         /// Creates a new `optionsPayloadPayload`.
                                         ///
                                         /// - Parameters:
@@ -73319,18 +74845,21 @@ public enum Operations {
                                         ///   - recommended: Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing.
                                         ///   - destructive: Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices.
                                         ///   - set_status: Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
+                                        ///   - delete_agent: Use on the option that approves deleting another agent ("Delete Scout"), and mark it destructive. A person tapping it records their approval and nothing is deleted yet: the reply wakes you, and you then call delete_agent with the same id. The approval is for you only, for that one agent, and lapses after 24 hours. Without a tap, delete_agent is refused. All delete_agent options on one card must name the same agent. You cannot ask to delete yourself or a system agent.
                                         public init(
                                             label: Swift.String,
                                             consequences: [Swift.String],
                                             recommended: Swift.Bool? = nil,
                                             destructive: Swift.Bool? = nil,
-                                            set_status: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.set_statusPayload? = nil
+                                            set_status: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.set_statusPayload? = nil,
+                                            delete_agent: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.delete_agentPayload? = nil
                                         ) {
                                             self.label = label
                                             self.consequences = consequences
                                             self.recommended = recommended
                                             self.destructive = destructive
                                             self.set_status = set_status
+                                            self.delete_agent = delete_agent
                                         }
                                         public enum CodingKeys: String, CodingKey {
                                             case label
@@ -73338,6 +74867,7 @@ public enum Operations {
                                             case recommended
                                             case destructive
                                             case set_status
+                                            case delete_agent
                                         }
                                     }
                                     /// 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
@@ -77719,6 +79249,15 @@ public enum Operations {
                 }
                 /// - Remark: Generated from `#/paths/api/files/GET/query/kind`.
                 public var kind: Operations.get_sol_api_sol_files.Input.Query.kindPayload?
+                /// - Remark: Generated from `#/paths/api/files/GET/query/tags`.
+                public var tags: Swift.String?
+                /// - Remark: Generated from `#/paths/api/files/GET/query/tags_match`.
+                @frozen public enum tags_matchPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                    case all = "all"
+                    case any = "any"
+                }
+                /// - Remark: Generated from `#/paths/api/files/GET/query/tags_match`.
+                public var tags_match: Operations.get_sol_api_sol_files.Input.Query.tags_matchPayload?
                 /// - Remark: Generated from `#/paths/api/files/GET/query/limit`.
                 public var limit: Swift.Int?
                 /// - Remark: Generated from `#/paths/api/files/GET/query/offset`.
@@ -77742,6 +79281,8 @@ public enum Operations {
                 ///   - q:
                 ///   - ids:
                 ///   - kind:
+                ///   - tags:
+                ///   - tags_match:
                 ///   - limit:
                 ///   - offset:
                 ///   - order:
@@ -77752,6 +79293,8 @@ public enum Operations {
                     q: Swift.String? = nil,
                     ids: Swift.String? = nil,
                     kind: Operations.get_sol_api_sol_files.Input.Query.kindPayload? = nil,
+                    tags: Swift.String? = nil,
+                    tags_match: Operations.get_sol_api_sol_files.Input.Query.tags_matchPayload? = nil,
                     limit: Swift.Int? = nil,
                     offset: Swift.Int? = nil,
                     order: Operations.get_sol_api_sol_files.Input.Query.orderPayload? = nil,
@@ -77762,6 +79305,8 @@ public enum Operations {
                     self.q = q
                     self.ids = ids
                     self.kind = kind
+                    self.tags = tags
+                    self.tags_match = tags_match
                     self.limit = limit
                     self.offset = offset
                     self.order = order
@@ -77823,6 +79368,8 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/files/GET/responses/200/content/jsonPayload/kind`.
                         public var kind: Operations.get_sol_api_sol_files.Output.Ok.Body.jsonPayloadPayload.kindPayload?
+                        /// - Remark: Generated from `#/paths/api/files/GET/responses/200/content/jsonPayload/tags`.
+                        public var tags: [Swift.String]
                         /// - Remark: Generated from `#/paths/api/files/GET/responses/200/content/jsonPayload/mimeType`.
                         public var mimeType: Swift.String
                         /// - Remark: Generated from `#/paths/api/files/GET/responses/200/content/jsonPayload/sizeBytes`.
@@ -77843,6 +79390,7 @@ public enum Operations {
                         ///   - name:
                         ///   - description:
                         ///   - kind:
+                        ///   - tags:
                         ///   - mimeType:
                         ///   - sizeBytes:
                         ///   - storageKey:
@@ -77855,6 +79403,7 @@ public enum Operations {
                             name: Swift.String,
                             description: Swift.String? = nil,
                             kind: Operations.get_sol_api_sol_files.Output.Ok.Body.jsonPayloadPayload.kindPayload? = nil,
+                            tags: [Swift.String],
                             mimeType: Swift.String,
                             sizeBytes: Swift.Int,
                             storageKey: Swift.String,
@@ -77867,6 +79416,7 @@ public enum Operations {
                             self.name = name
                             self.description = description
                             self.kind = kind
+                            self.tags = tags
                             self.mimeType = mimeType
                             self.sizeBytes = sizeBytes
                             self.storageKey = storageKey
@@ -77880,6 +79430,7 @@ public enum Operations {
                             case name
                             case description
                             case kind
+                            case tags
                             case mimeType
                             case sizeBytes
                             case storageKey
@@ -78147,6 +79698,8 @@ public enum Operations {
                     }
                     /// - Remark: Generated from `#/paths/api/files/POST/requestBody/json/kind`.
                     public var kind: Operations.post_sol_api_sol_files.Input.Body.jsonPayload.kindPayload?
+                    /// - Remark: Generated from `#/paths/api/files/POST/requestBody/json/tags`.
+                    public var tags: [Swift.String]?
                     /// - Remark: Generated from `#/paths/api/files/POST/requestBody/json/mime_type`.
                     public var mime_type: Swift.String
                     /// - Remark: Generated from `#/paths/api/files/POST/requestBody/json/content`.
@@ -78164,6 +79717,7 @@ public enum Operations {
                     ///   - name:
                     ///   - description:
                     ///   - kind:
+                    ///   - tags:
                     ///   - mime_type:
                     ///   - content:
                     ///   - encoding:
@@ -78171,6 +79725,7 @@ public enum Operations {
                         name: Swift.String,
                         description: Swift.String? = nil,
                         kind: Operations.post_sol_api_sol_files.Input.Body.jsonPayload.kindPayload? = nil,
+                        tags: [Swift.String]? = nil,
                         mime_type: Swift.String,
                         content: Swift.String,
                         encoding: Operations.post_sol_api_sol_files.Input.Body.jsonPayload.encodingPayload? = nil
@@ -78178,6 +79733,7 @@ public enum Operations {
                         self.name = name
                         self.description = description
                         self.kind = kind
+                        self.tags = tags
                         self.mime_type = mime_type
                         self.content = content
                         self.encoding = encoding
@@ -78186,6 +79742,7 @@ public enum Operations {
                         case name
                         case description
                         case kind
+                        case tags
                         case mime_type
                         case content
                         case encoding
@@ -78228,6 +79785,8 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/files/POST/responses/201/content/json/kind`.
                         public var kind: Operations.post_sol_api_sol_files.Output.Created.Body.jsonPayload.kindPayload?
+                        /// - Remark: Generated from `#/paths/api/files/POST/responses/201/content/json/tags`.
+                        public var tags: [Swift.String]
                         /// - Remark: Generated from `#/paths/api/files/POST/responses/201/content/json/mimeType`.
                         public var mimeType: Swift.String
                         /// - Remark: Generated from `#/paths/api/files/POST/responses/201/content/json/sizeBytes`.
@@ -78374,6 +79933,7 @@ public enum Operations {
                         ///   - name:
                         ///   - description:
                         ///   - kind:
+                        ///   - tags:
                         ///   - mimeType:
                         ///   - sizeBytes:
                         ///   - storageKey:
@@ -78393,6 +79953,7 @@ public enum Operations {
                             name: Swift.String,
                             description: Swift.String? = nil,
                             kind: Operations.post_sol_api_sol_files.Output.Created.Body.jsonPayload.kindPayload? = nil,
+                            tags: [Swift.String],
                             mimeType: Swift.String,
                             sizeBytes: Swift.Int,
                             storageKey: Swift.String,
@@ -78412,6 +79973,7 @@ public enum Operations {
                             self.name = name
                             self.description = description
                             self.kind = kind
+                            self.tags = tags
                             self.mimeType = mimeType
                             self.sizeBytes = sizeBytes
                             self.storageKey = storageKey
@@ -78432,6 +79994,7 @@ public enum Operations {
                             case name
                             case description
                             case kind
+                            case tags
                             case mimeType
                             case sizeBytes
                             case storageKey
@@ -78890,6 +80453,8 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/200/content/json/kind`.
                         public var kind: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.kindPayload?
+                        /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/200/content/json/tags`.
+                        public var tags: [Swift.String]
                         /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/200/content/json/mimeType`.
                         public var mimeType: Swift.String
                         /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/200/content/json/sizeBytes`.
@@ -79036,6 +80601,7 @@ public enum Operations {
                         ///   - name:
                         ///   - description:
                         ///   - kind:
+                        ///   - tags:
                         ///   - mimeType:
                         ///   - sizeBytes:
                         ///   - storageKey:
@@ -79055,6 +80621,7 @@ public enum Operations {
                             name: Swift.String,
                             description: Swift.String? = nil,
                             kind: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.kindPayload? = nil,
+                            tags: [Swift.String],
                             mimeType: Swift.String,
                             sizeBytes: Swift.Int,
                             storageKey: Swift.String,
@@ -79074,6 +80641,7 @@ public enum Operations {
                             self.name = name
                             self.description = description
                             self.kind = kind
+                            self.tags = tags
                             self.mimeType = mimeType
                             self.sizeBytes = sizeBytes
                             self.storageKey = storageKey
@@ -79094,6 +80662,7 @@ public enum Operations {
                             case name
                             case description
                             case kind
+                            case tags
                             case mimeType
                             case sizeBytes
                             case storageKey
@@ -79510,6 +81079,8 @@ public enum Operations {
                     }
                     /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/requestBody/json/kind`.
                     public var kind: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Input.Body.jsonPayload.kindPayload?
+                    /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/requestBody/json/tags`.
+                    public var tags: [Swift.String]?
                     /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/requestBody/json/mime_type`.
                     public var mime_type: Swift.String?
                     /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/requestBody/json/content`.
@@ -79677,6 +81248,7 @@ public enum Operations {
                     ///   - name:
                     ///   - description:
                     ///   - kind:
+                    ///   - tags:
                     ///   - mime_type:
                     ///   - content:
                     ///   - encoding:
@@ -79687,6 +81259,7 @@ public enum Operations {
                         name: Swift.String? = nil,
                         description: Swift.String? = nil,
                         kind: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Input.Body.jsonPayload.kindPayload? = nil,
+                        tags: [Swift.String]? = nil,
                         mime_type: Swift.String? = nil,
                         content: Swift.String? = nil,
                         encoding: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Input.Body.jsonPayload.encodingPayload? = nil,
@@ -79697,6 +81270,7 @@ public enum Operations {
                         self.name = name
                         self.description = description
                         self.kind = kind
+                        self.tags = tags
                         self.mime_type = mime_type
                         self.content = content
                         self.encoding = encoding
@@ -79708,6 +81282,7 @@ public enum Operations {
                         case name
                         case description
                         case kind
+                        case tags
                         case mime_type
                         case content
                         case encoding
@@ -79756,6 +81331,8 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/200/content/json/kind`.
                         public var kind: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.kindPayload?
+                        /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/200/content/json/tags`.
+                        public var tags: [Swift.String]
                         /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/200/content/json/mimeType`.
                         public var mimeType: Swift.String
                         /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/200/content/json/sizeBytes`.
@@ -79902,6 +81479,7 @@ public enum Operations {
                         ///   - name:
                         ///   - description:
                         ///   - kind:
+                        ///   - tags:
                         ///   - mimeType:
                         ///   - sizeBytes:
                         ///   - storageKey:
@@ -79921,6 +81499,7 @@ public enum Operations {
                             name: Swift.String,
                             description: Swift.String? = nil,
                             kind: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.kindPayload? = nil,
+                            tags: [Swift.String],
                             mimeType: Swift.String,
                             sizeBytes: Swift.Int,
                             storageKey: Swift.String,
@@ -79940,6 +81519,7 @@ public enum Operations {
                             self.name = name
                             self.description = description
                             self.kind = kind
+                            self.tags = tags
                             self.mimeType = mimeType
                             self.sizeBytes = sizeBytes
                             self.storageKey = storageKey
@@ -79960,6 +81540,7 @@ public enum Operations {
                             case name
                             case description
                             case kind
+                            case tags
                             case mimeType
                             case sizeBytes
                             case storageKey
