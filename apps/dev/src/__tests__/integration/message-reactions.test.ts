@@ -155,6 +155,18 @@ describe('Message reactions', () => {
 		expect((await react(ownerId, '👍')).status).toBe(404)
 	})
 
+	it('404s for a deleted message, for adding and for taking back', async () => {
+		expect((await react(ownerId, '👍')).status).toBe(204)
+		await db.update(messages).set({ deletedAt: new Date() }).where(eq(messages.id, messageId))
+		expect((await react(ownerId, '❤️')).status).toBe(404)
+		expect((await unreact(ownerId, '👍')).status).toBe(404)
+		const rows = await db
+			.select()
+			.from(messageReactions)
+			.where(eq(messageReactions.messageId, messageId))
+		expect(rows.map((r) => r.emoji)).toEqual(['👍'])
+	})
+
 	it('drops reactions with their message', async () => {
 		await react(ownerId, '👍')
 		await db.delete(messages).where(eq(messages.id, messageId))
