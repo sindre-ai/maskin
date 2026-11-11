@@ -3,7 +3,7 @@ import { TestAPI } from '../helpers/api.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 // Covers ActorAvatar (T1 of Per-agent avatars in Maskin):
-// 2-letter initials + deterministic per-actor background color.
+// 2 or 3-letter initials + deterministic per-actor background color.
 // Renders on every ship-gate viewport since the primitive is used
 // across desktop, iPad, and mobile surfaces. T2 landed the activity
 // timeline, so this spec now scopes to the comment-author slot as planned:
@@ -16,12 +16,18 @@ function initialsFor(name: string): string {
 	const words = name.trim().split(/\s+/).filter(Boolean)
 	const first = words[0] ?? ''
 	const second = words[1] ?? ''
-	if (first && second) return (first[0] + second[0]).toUpperCase()
+	// Three or more words show the first letter of the first three.
+	if (first && second)
+		return words
+			.slice(0, 3)
+			.map((word) => word[0])
+			.join('')
+			.toUpperCase()
 	if (first.length >= 2) return first.slice(0, 2).toUpperCase()
 	return (first[0] ?? '?').toUpperCase()
 }
 
-test.describe('ActorAvatar — 2-letter initials + deterministic color', () => {
+test.describe('ActorAvatar — initials + deterministic color', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
 		test(`renders initials in the comment-author avatar slot at ${viewport.label}`, async ({
 			page,
