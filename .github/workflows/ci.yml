@@ -529,7 +529,18 @@ jobs:
             echo "Dir::Cache::archives \"$HOME/.cache/playwright-apt\";"
             # Keep downloaded .debs so the cache has something to save.
             echo 'APT::Keep-Downloaded-Packages "true";'
+            # A mirror that stops answering fails in seconds per file, not a 10 minute step.
+            echo 'Acquire::Retries "2";'
+            echo 'Acquire::http::Timeout "20";'
+            echo 'Acquire::https::Timeout "20";'
           } | sudo tee /etc/apt/apt.conf.d/99playwright-cache
+
+      # The runner's default mirror (azure.archive.ubuntu.com) failed to resolve on every
+      # runner from about 13:50 UTC on 2026-11-11 and took all 7 shards down at the install step.
+      # Switches apt to a fallback mirror only when the default does not answer.
+      - name: Use a reachable apt mirror
+        if: needs.changes.outputs.e2e == 'true'
+        run: bash scripts/ci/pick-apt-mirror.sh
 
       - name: Install Playwright browsers
         if: needs.changes.outputs.e2e == 'true' && steps.playwright-cache.outputs.cache-hit != 'true'
