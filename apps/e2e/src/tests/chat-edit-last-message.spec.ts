@@ -65,6 +65,36 @@ test.describe('Chat, up arrow edits the last message', () => {
 		})
 	}
 
+	test('the up arrow also works in the formatting box', async ({ page, account }) => {
+		await flag(page, 'on')
+		await page.addInitScript(() => localStorage.setItem('ff:chat-formatting', 'on'))
+		const ws = account.workspaceId
+		const agent = await account.api.createAgentActor(`Upagent ${Date.now()}`)
+		const conv = await account.api.createConversation(ws, {
+			title: 'Up arrow formatting box',
+			participant_actor_ids: [agent.id],
+		})
+		await account.api.postConversationMessage(conv.id, ws, { content: 'rich first' })
+
+		await page.goto(`/${ws}/chats/${conv.id}`)
+		const thread = page.getByTestId('thread-messages')
+		await expect(thread.getByText('rich first', { exact: true })).toBeVisible()
+
+		const composer = page.getByRole('textbox', { name: 'Message this conversation' })
+		await composer.click()
+		await page.keyboard.type('draft')
+		await page.keyboard.press('ArrowUp')
+		await expect(page.getByRole('textbox', { name: 'Edit message' })).toHaveCount(0)
+		await page.keyboard.press('Control+A')
+		await page.keyboard.press('Backspace')
+
+		await page.keyboard.press('ArrowUp')
+		const edit = page.getByRole('textbox', { name: 'Edit message' })
+		await expect(edit).toHaveCount(1)
+		await expect(edit).toContainText('rich first')
+		await expect(edit).toBeFocused()
+	})
+
 	test('with the flag off the up arrow does nothing', async ({ page, account }) => {
 		await flag(page, 'off')
 		const ws = account.workspaceId
