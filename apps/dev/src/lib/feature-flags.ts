@@ -55,6 +55,13 @@ export const FLAGS = {
 	 */
 	COMPUTER_CLIPBOARD: 'computer-clipboard',
 	/**
+	 * Gates the formatting box for chat messages (bold, italic, strikethrough, code, quotes,
+	 * lists, links) in the new-chat page and in an open chat or DM, in place of the plain text
+	 * box. Frontend only: read with useFeatureFlag in the chat composer callers. Off keeps the
+	 * plain box exactly as it is. Retire once the formatting box is on for everyone.
+	 */
+	CHAT_RICH_COMPOSER: 'chat-rich-composer',
+	/**
 	 * Claude connector sign-in. Gates only what a person sees and does: the consent preview
 	 * and approve routes under /api/oauth/authorize answer 403 access_denied for non-testers,
 	 * and the Claude tab and consent page read the same id. Default off (FF_TESTER_FEATURES

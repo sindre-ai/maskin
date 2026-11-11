@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input'
 import { useActors, useDefaultChatAgent } from '@/hooks/use-actors'
 import { useCreateConversation } from '@/hooks/use-conversations'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useObjects } from '@/hooks/use-objects'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import { deriveEntryAgentRole, trackChatSessionStarted } from '@/lib/analytics'
@@ -77,6 +78,7 @@ function NewChatRoute() {
 	useDocumentTitle('New chat')
 	const search = Route.useSearch()
 	const { workspaceId } = useWorkspace()
+	const richText = useFeatureFlag('chat-rich-composer')
 	const navigate = useNavigate()
 	const createConversation = useCreateConversation(workspaceId)
 	const { data: members } = useWorkspaceMembers(workspaceId)
@@ -492,6 +494,7 @@ function NewChatRoute() {
 				value={draft}
 				onValueChange={setDraft}
 				fillRequest={fillRequest}
+				richText={richText}
 			/>
 		</div>
 	)

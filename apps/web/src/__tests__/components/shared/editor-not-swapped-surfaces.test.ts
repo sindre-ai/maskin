@@ -1,5 +1,6 @@
 import chatSource from '@/components/chat/chat.tsx?raw'
 import messageBubbleSource from '@/components/chat/message-bubble.tsx?raw'
+import richComposerInputSource from '@/components/chat/rich-composer-input.tsx?raw'
 import loopUtteranceInputSource from '@/components/loops/loop-utterance-input.tsx?raw'
 import objectDocumentSource from '@/components/objects/object-document.tsx?raw'
 import notificationInputSource from '@/components/pulse/notification-input.tsx?raw'
@@ -8,7 +9,9 @@ import { describe, expect, it } from 'vitest'
 
 // Tech spec section 1, "Deliberately NOT swapped": the rich editor never mounts
 // on these inputs. The mounts
-// that do swap are asserted in their own component tests.
+// that do swap are asserted in their own component tests. The chat message box was on this
+// list; it moved off it when the plain-text decision was reversed (task "Add formatting to the
+// chat message box"): behind the chat-rich-composer flag it is the formatting box.
 const EDITOR_REFERENCES = [
 	'MarkdownEditor',
 	'DocumentMarkdownEditor',
@@ -22,9 +25,14 @@ function expectNoEditor(source: string) {
 }
 
 describe('surfaces that stay on a plain input', () => {
-	it('chat composer stays on its textarea', () => {
+	it('chat composer keeps its textarea and offers the formatting box behind a flag', () => {
+		// chat.tsx never names the editor: the box is its own lazy-loaded component, and the plain
+		// textarea stays as the default for every caller that does not opt in.
 		expectNoEditor(chatSource)
 		expect(chatSource).toContain('<Textarea')
+		expect(chatSource).toContain('<RichComposerInput')
+		expect(chatSource).toContain('richText = false')
+		expect(richComposerInputSource).toContain("import('@maskin/markdown/react/composer')")
 	})
 
 	it('edit-own-message in a chat bubble uses the edit card, not the rich editor', () => {

@@ -128,6 +128,11 @@ export interface MarkdownEditorProps {
 	readOnly?: boolean
 	variant?: EditorVariant
 	disallowedNodes?: EditorDisallowedNode[]
+	/**
+	 * Keep GFM tables in a variant that has none by default, so a table pasted in survives as a
+	 * markdown table. No table editing controls come with it.
+	 */
+	allowTables?: boolean
 	mentionSuggestions?: (query: string) => Promise<MentionSuggestionItem[]>
 	onSubmitShortcut?: () => void
 	className?: string
@@ -339,6 +344,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 			readOnly = false,
 			variant = 'document',
 			disallowedNodes,
+			allowTables,
 			onSubmitShortcut,
 			className,
 			ariaLabel,
@@ -440,10 +446,12 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 					placeholder,
 					[...(extensions ?? []), commentExtension, linkChipExtension],
 					shortcutExtension,
+					allowTables,
 				),
 			[
 				variant,
 				disallowedNodes,
+				allowTables,
 				placeholder,
 				extensions,
 				commentExtension,

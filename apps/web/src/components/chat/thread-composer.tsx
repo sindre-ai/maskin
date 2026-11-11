@@ -6,6 +6,7 @@ import {
 	useConversationMessages,
 	useSendMessage,
 } from '@/hooks/use-conversation'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
 import type { ConversationParticipantResponse, MessageMetadata } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
@@ -67,6 +68,7 @@ export function ThreadComposer({
 	const { data: conversation } = useConversation(conversationId, workspaceId)
 	const messagesQuery = useConversationMessages(conversationId, workspaceId)
 	const { data: workspaceActors } = useActors(workspaceId)
+	const richText = useFeatureFlag('chat-rich-composer')
 
 	const self = getStoredActor()
 	// Where a pasted provider secret gets vaulted: the running session of this chat and
@@ -264,6 +266,7 @@ export function ThreadComposer({
 			draftKey={reply ? `${conversationId}:reply:${reply.rootId}` : conversationId}
 			fillRequest={fillRequest}
 			inlineTags
+			richText={richText}
 			secretCapture={secretCapture}
 			secretRestarting={secretRestarting}
 			vaultModeBlocked={vaultModeBlocked}
