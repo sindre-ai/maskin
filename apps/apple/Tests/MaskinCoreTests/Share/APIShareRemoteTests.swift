@@ -47,7 +47,7 @@ private final class WireTransport: ClientTransport, @unchecked Sendable {
 	static let object =
 		"{\"id\":\"11111111-1111-1111-1111-111111111111\",\"workspaceId\":\"ws\",\"type\":\"insight\",\"title\":\"t\",\"content\":\"c\",\"status\":\"new\",\"metadata\":{},\"driver\":null,\"activeSessionId\":null,\"createdBy\":\"a\",\(stamp),\"updatedAt\":\"2026-10-02T10:00:00.000Z\"}"
 	static let file =
-		"{\"id\":\"22222222-2222-2222-2222-222222222222\",\"workspaceId\":\"ws\",\"name\":\"a.pdf\",\"description\":null,\"mimeType\":\"application/pdf\",\"sizeBytes\":3,\"storageKey\":\"k\",\"createdBy\":\"a\",\(stamp),\"updatedAt\":\"2026-10-02T10:00:00.000Z\",\"content\":\"\",\"encoding\":\"base64\",\"url\":\"u\"}"
+		"{\"id\":\"22222222-2222-2222-2222-222222222222\",\"workspaceId\":\"ws\",\"name\":\"a.pdf\",\"description\":null,\"tags\":[],\"mimeType\":\"application/pdf\",\"sizeBytes\":3,\"storageKey\":\"k\",\"createdBy\":\"a\",\(stamp),\"updatedAt\":\"2026-10-02T10:00:00.000Z\",\"content\":\"\",\"encoding\":\"base64\",\"url\":\"u\"}"
 	static let relationship =
 		"{\"id\":\"r\",\"sourceType\":\"insight\",\"sourceId\":\"s\",\"targetType\":\"file\",\"targetId\":\"t\",\"type\":\"attached\",\"metadata\":{},\"createdBy\":\"a\",\(stamp)}"
 	static let workspaces =
