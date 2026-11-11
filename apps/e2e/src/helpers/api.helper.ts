@@ -381,6 +381,7 @@ export class TestAPI {
 			tools?: Record<string, unknown> | null
 			llm_provider?: string | null
 			llm_config?: Record<string, unknown> | null
+			tags?: string[]
 		},
 	): Promise<ActorResponse> {
 		const res = await fetch(`${this.baseURL}/api/actors/${id}`, {
