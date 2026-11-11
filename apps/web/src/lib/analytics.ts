@@ -405,6 +405,44 @@ export function trackObjectViewed(p: { entity_id: string; object_type: string })
 	})
 }
 
+// A person opened an item page, with where it came from. `source_session_id` is the run that
+// made it (its produced_by edge), null when nobody's run did. `created_by_actor_type` is the
+// maker's actor type (human, agent) or `unknown` when the actor list has not loaded or no longer
+// holds the maker. Ids and categories only. Sits beside `object_viewed`, which keeps its name.
+export function trackObjectOpened(p: {
+	entity_id: string
+	object_subtype: string
+	source_session_id: string | null
+	created_by_actor_type: string
+}): void {
+	trackEvent('object_opened', {
+		...fillBase({ entity_id: p.entity_id, entity_type: 'object' }),
+		object_subtype: p.object_subtype,
+		source_session_id: p.source_session_id,
+		created_by_actor_type: p.created_by_actor_type,
+		feature_area: 'objects',
+	})
+}
+
+// A person opened a result that a flow's run made. Same payload as `object_opened` plus the flow,
+// so the open can be joined to the run's `agent_session_completed` on `source_session_id`.
+export function trackLoopResultOpened(p: {
+	entity_id: string
+	loop_id: string
+	object_subtype: string
+	source_session_id: string | null
+	created_by_actor_type: string
+}): void {
+	trackEvent('loop_result_opened', {
+		...fillBase({ entity_id: p.entity_id, entity_type: 'object' }),
+		loop_id: p.loop_id,
+		object_subtype: p.object_subtype,
+		source_session_id: p.source_session_id,
+		created_by_actor_type: p.created_by_actor_type,
+		feature_area: 'loops',
+	})
+}
+
 export function trackLoopViewed(p: { entity_id: string }): void {
 	trackEvent('loop_viewed', {
 		...fillBase({ entity_id: p.entity_id, entity_type: 'loop' }),

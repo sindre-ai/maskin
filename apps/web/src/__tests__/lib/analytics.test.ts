@@ -27,11 +27,13 @@ import {
 	trackForyouCardAction,
 	trackForyouCardShown,
 	trackKnowledgePageViewed,
+	trackLoopResultOpened,
 	trackLoopViewed,
 	trackMiniAppFileViewed,
 	trackNavItemClicked,
 	trackObjectAttachedFile,
 	trackObjectCreated,
+	trackObjectOpened,
 	trackObjectUpdated,
 	trackObjectViewed,
 	trackObjectsListArrived,
@@ -589,6 +591,52 @@ describe('v1 taxonomy helpers', () => {
 			flow_id: null,
 			object_type: 'knowledge',
 			feature_area: 'objects',
+		})
+	})
+
+	it('object_opened carries the source run and the maker type, ids and categories only', () => {
+		const capture = captureSpy()
+
+		trackObjectOpened({
+			entity_id: 'o-1',
+			object_subtype: 'insight',
+			source_session_id: 's-1',
+			created_by_actor_type: 'agent',
+		})
+
+		expect(capture).toHaveBeenCalledWith('object_opened', {
+			entity_id: 'o-1',
+			entity_type: 'object',
+			source: 'web',
+			flow_id: null,
+			object_subtype: 'insight',
+			source_session_id: 's-1',
+			created_by_actor_type: 'agent',
+			feature_area: 'objects',
+		})
+	})
+
+	it('loop_result_opened carries the flow and the run that made the result', () => {
+		const capture = captureSpy()
+
+		trackLoopResultOpened({
+			entity_id: 'o-1',
+			loop_id: 'l-1',
+			object_subtype: 'task',
+			source_session_id: 's-1',
+			created_by_actor_type: 'agent',
+		})
+
+		expect(capture).toHaveBeenCalledWith('loop_result_opened', {
+			entity_id: 'o-1',
+			entity_type: 'object',
+			source: 'web',
+			flow_id: null,
+			loop_id: 'l-1',
+			object_subtype: 'task',
+			source_session_id: 's-1',
+			created_by_actor_type: 'agent',
+			feature_area: 'loops',
 		})
 	})
 
