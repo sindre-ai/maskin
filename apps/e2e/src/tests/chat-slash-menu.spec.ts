@@ -2,7 +2,7 @@ import { expect, test } from '../fixtures/auth.fixture'
 import type { TestAPI } from '../helpers/api.helper'
 
 /**
- * The slash menu in the chat message box (flag chat-rich-composer, switched on through the
+ * The slash menu in the chat message box (flag chat-formatting, switched on through the
  * test-only localStorage override). Typing "/" opens a short menu: code block, quote, bulleted
  * list, numbered list, attach a file. Esc closes it and keeps the text.
  */
@@ -18,7 +18,7 @@ async function openChat(api: TestAPI, workspaceId: string) {
 
 test.describe('Chat message box slash menu', () => {
 	test.beforeEach(async ({ page }) => {
-		await page.addInitScript(() => localStorage.setItem('ff:chat-rich-composer', 'on'))
+		await page.addInitScript(() => localStorage.setItem('ff:chat-formatting', 'on'))
 	})
 
 	test('picks a code block, filters, and Esc keeps the typed text', async ({ page, account }) => {
