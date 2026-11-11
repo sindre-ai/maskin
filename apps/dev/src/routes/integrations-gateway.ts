@@ -6,6 +6,7 @@ import { trackIntegrationToolCalled } from '../lib/analytics/integration-events'
 import { createApiError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { type AgentAccess, resolveAgentAccess } from '../lib/integrations/agent-access'
+import { resolveCallerChat } from '../lib/integrations/chat-lift'
 import {
 	GATEWAY_BODY_LIMIT_BYTES,
 	GATEWAY_PROVIDERS,
@@ -74,9 +75,23 @@ function rememberAnnotations(key: string, annotations: Map<string, ToolAnnotatio
 	annotationCache.set(key, annotations)
 }
 
+// The tool names each server listed last, so a refused call can say whether the name is one the
+// provider really has (an agent can send any name in tools/call). Bounded the same way.
+const toolNameCache = new Map<string, Set<string>>()
+
+function rememberToolNames(key: string, names: Set<string>): void {
+	if (names.size === 0) return
+	if (toolNameCache.size >= ANNOTATION_CACHE_MAX && !toolNameCache.has(key)) {
+		const oldest = toolNameCache.keys().next().value
+		if (oldest !== undefined) toolNameCache.delete(oldest)
+	}
+	toolNameCache.set(key, names)
+}
+
 /** Test seam. */
 export function clearGatewayAnnotationCache(): void {
 	annotationCache.clear()
+	toolNameCache.clear()
 }
 
 function jsonRpcError(status: 400 | 403 | 404 | 413 | 502, code: number, message: string) {
@@ -131,7 +146,15 @@ async function handle(c: import('hono').Context<Env>): Promise<Response> {
 		return jsonRpcError(403, -32001, `${label} is switched off for agent sessions.`)
 	}
 
-	const access = (await resolveAgentAccess(db, workspaceId, integration.id, actorId)) ?? 'none'
+	// The chat the call comes from, so an Allow in this chat counts. Unchecked header: no lift.
+	const chat = await resolveCallerChat(db, c.req.header('x-maskin-session-id'), {
+		workspaceId,
+		actorId,
+	})
+	const access =
+		(await resolveAgentAccess(db, workspaceId, integration.id, actorId, {
+			conversationId: chat?.conversationId ?? null,
+		})) ?? 'none'
 
 	return proxyMcp(c, {
 		workspaceId,
@@ -253,6 +276,8 @@ export async function proxyMcp(
 						tool: toolName,
 						kind: decision.kind,
 						access,
+						// Only a name the provider listed may be shown on an access card.
+						tool_listed: toolNameCache.get(cacheKey)?.has(toolName) === true,
 						// The inner tool only, never the json input: it can hold personal data.
 						...(decision.innerTool ? { command_tool: decision.innerTool } : {}),
 					},
@@ -356,6 +381,14 @@ export async function proxyMcp(
 			access,
 		})
 		rememberAnnotations(cacheKey, out.upstreamAnnotations)
+		rememberToolNames(
+			cacheKey,
+			new Set(
+				(m.result.tools as Array<{ name?: unknown }>)
+					.map((t) => t?.name)
+					.filter((n): n is string => typeof n === 'string'),
+			),
+		)
 		return { ...m, result: out.result }
 	})
 	responseHeaders.delete('content-length')

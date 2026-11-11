@@ -53,6 +53,12 @@ import { providerLabel } from '../lib/integrations/access-preamble'
 import { isKeychainMode, resolveAgentAccess } from '../lib/integrations/agent-access'
 import { describeAgentAccess } from '../lib/integrations/agent-access-view'
 import {
+	CHAT_LIFT_HOURS,
+	CHAT_LIFT_TEXT,
+	isChatLiftable,
+	recentRefusedTool,
+} from '../lib/integrations/chat-lift'
+import {
 	customMcpServerSchema,
 	isCredentialReference,
 	isGatedRow,
@@ -2445,24 +2451,71 @@ app.openapi(integrationAccessCardRoute, (async (c) => {
 
 	const displayName = integration.displayName ?? providerLabel(integration.provider)
 	const account = accountAddressOf(integration.provider, integration.externalId)
-	const created = await insertConversationMessage(db, {
-		conversationId: target.conversationId,
-		workspaceId: session.workspaceId,
-		actorId: session.actorId,
-		content: formatIntegrationAccessRequestAsMarkdown(displayName, level, reason),
-		metadata: {
-			integration_access_request: {
-				session_id: session.id,
-				integration_id: integration.id,
-				provider: integration.provider,
-				display_name: displayName,
-				...(account ? { account } : {}),
-				level,
-				...(reason ? { reason } : {}),
-				...(target.helper ? { reply_to_session: true } : {}),
+	// Allow in this chat for 8 hours is offered for a write ask on a provider on the in-code list,
+	// from the person's own chat. The text on the card is fixed per provider, and the tool named is
+	// the one the refused call used, not anything the agent wrote.
+	const chatLift =
+		level === 'read_write' && isChatLiftable(integration.provider) && !target.helper
+			? {
+					hours: CHAT_LIFT_HOURS,
+					text: CHAT_LIFT_TEXT[integration.provider] as string,
+					tool: await recentRefusedTool(db, {
+						workspaceId: session.workspaceId,
+						integrationId: integration.id,
+						actorId: session.actorId,
+					}),
+				}
+			: null
+	// The card and its "shown" row commit together, so a card that failed to post leaves no row.
+	// Written at post time, not when a browser draws it, so a closed tab cannot lose it.
+	const created = await db.transaction(async (tx) => {
+		const message = await insertConversationMessage(tx, {
+			conversationId: target.conversationId,
+			workspaceId: session.workspaceId,
+			actorId: session.actorId,
+			content: formatIntegrationAccessRequestAsMarkdown(displayName, level, reason),
+			metadata: {
+				integration_access_request: {
+					session_id: session.id,
+					integration_id: integration.id,
+					provider: integration.provider,
+					display_name: displayName,
+					...(account ? { account } : {}),
+					level,
+					...(reason ? { reason } : {}),
+					...(target.helper ? { reply_to_session: true } : {}),
+					...(chatLift
+						? {
+								chat_lift: {
+									hours: chatLift.hours,
+									text: chatLift.text,
+									...(chatLift.tool ? { tool: chatLift.tool } : {}),
+								},
+							}
+						: {}),
+				},
 			},
-		},
-		sessionId: session.id,
+			sessionId: session.id,
+		})
+		if (!message) return null
+		await recordEvent(tx, {
+			workspaceId: session.workspaceId,
+			actorId: session.actorId,
+			action: 'updated',
+			entityType: 'integration',
+			entityId: integration.id,
+			data: {
+				change: 'chat_access_card',
+				outcome: 'shown',
+				provider: integration.provider,
+				session_id: session.id,
+				agent_id: session.actorId,
+				conversation_id: target.conversationId,
+				level,
+				chat_lift_offered: chatLift !== null,
+			},
+		})
+		return message
 	})
 	if (!created) {
 		logger.error('Integration access card insert returned no row', {

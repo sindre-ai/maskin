@@ -1,6 +1,14 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, integrations, objects, sendPermissions, workspaceMembers } from '@maskin/db/schema'
+import {
+	events,
+	agentChatGrants,
+	conversations,
+	integrations,
+	objects,
+	sendPermissions,
+	workspaceMembers,
+} from '@maskin/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encrypt } from '../../lib/crypto'
@@ -11,6 +19,7 @@ import {
 	insertObject,
 	insertRelationship,
 	insertSendMode,
+	insertSession,
 	insertWorkspace,
 } from '../factories'
 import { db, getTestActorId } from './global-setup'
@@ -1209,5 +1218,99 @@ describe('gmail_send_email: an approval covers the exact text the person saw', (
 
 		expect(res.status).toBe(200)
 		expect(sentMime()).toContain('Subject: Approved subject')
+	})
+})
+
+describe('gmail_send_email: with an Allow in this chat on Gmail', () => {
+	/**
+	 * A chat of the agent's, a running session in it, and a chat grant on Gmail written directly
+	 * (Gmail is not on the allowlist, so no route writes one): the agent's standing level is Read,
+	 * and the lift is the only thing that makes it read & write.
+	 */
+	async function liftedChat(s: Setup, expiresAt: Date | null = new Date(Date.now() + 3_600_000)) {
+		const [conversation] = await db
+			.insert(conversations)
+			.values({ workspaceId: s.workspace.id, title: 'Chat', createdBy: s.human })
+			.returning()
+		if (!conversation) throw new Error('conversation was not inserted')
+		const session = await insertSession(db, s.workspace.id, s.agent.id, s.human, {
+			interactive: true,
+			conversationId: conversation.id,
+			status: 'running',
+		})
+		await db.insert(agentChatGrants).values({
+			workspaceId: s.workspace.id,
+			integrationId: s.gmail.id,
+			actorId: s.agent.id,
+			conversationId: conversation.id,
+			createdBy: s.human,
+			expiresAt,
+		})
+		return { conversation, session }
+	}
+
+	const postIn = (s: Setup, sessionId: string, body: Record<string, unknown>) =>
+		appFor(s.agent.id).request('/api/integrations/gmail/send', {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				'X-Workspace-Id': s.workspace.id,
+				'X-Maskin-Session-Id': sessionId,
+			},
+			body: JSON.stringify(body),
+		})
+
+	it('still refuses an email nobody approved, and sends nothing', async () => {
+		const s = await setup({ agentAccess: 'read' })
+		const { session } = await liftedChat(s)
+
+		const res = await postIn(s, session.id, DIRECT)
+
+		expect(res.status).toBe(403)
+		// The access check passed (the lift is on); the approval is what refused it.
+		const text = JSON.stringify(await res.json())
+		expect(text).toContain('approve')
+		expect(text).not.toContain('needs write access to Gmail')
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('sends the email a person approved, with the text they approved', async () => {
+		const s = await setup({ agentAccess: 'read' })
+		const { session } = await liftedChat(s)
+		const { card } = await insertApprovalCard(s)
+		fetchMock.mockResolvedValueOnce(gmailOk())
+
+		const res = await postIn(s, session.id, { approval_comment_id: card.id })
+
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({ message_id: 'sent-1', mode: 'approved_draft' })
+	})
+
+	it('gives an email the person did not answer no way through', async () => {
+		const s = await setup({ agentAccess: 'read' })
+		const { session } = await liftedChat(s)
+		const { card } = await insertApprovalCard(s, { answers: [] })
+
+		expect((await postIn(s, session.id, { approval_comment_id: card.id })).status).toBe(409)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('does not lift a call with no session header, or when the grant has expired', async () => {
+		const s = await setup({ agentAccess: 'read' })
+		const { session } = await liftedChat(s)
+		const { card } = await insertApprovalCard(s)
+
+		const bare = await post(s.agent.id, s.workspace.id, { approval_comment_id: card.id })
+		expect(bare.status).toBe(403)
+		expect(JSON.stringify(await bare.json())).toContain('needs write access to Gmail')
+
+		const expired = await setup({ agentAccess: 'read' })
+		const old = await liftedChat(expired, new Date(Date.now() - 1000))
+		const again = await insertApprovalCard(expired)
+		const res = await postIn(expired, old.session.id, { approval_comment_id: again.card.id })
+		expect(res.status).toBe(403)
+		expect(JSON.stringify(await res.json())).toContain('needs write access to Gmail')
+		expect(session.id).not.toBe(old.session.id)
+		expect(fetchMock).not.toHaveBeenCalled()
 	})
 })

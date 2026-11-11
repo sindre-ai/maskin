@@ -4,6 +4,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { and, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { createApiError } from '../lib/errors'
+import { resolveCallerChat } from '../lib/integrations/chat-lift'
 import { createGoogleMeetMcpServer } from '../lib/integrations/providers/google-meet/mcp-server'
 import { toolGateFor } from '../lib/integrations/tool-gate'
 import { logger } from '../lib/logger'
@@ -72,12 +73,18 @@ app.post('/', async (c) => {
 			),
 		)
 		.limit(1)
+	// The chat the call comes from, so an Allow in this chat counts. Unchecked header: no lift.
+	const chat = await resolveCallerChat(db, c.req.header('x-maskin-session-id'), {
+		workspaceId,
+		actorId,
+	})
 	const gate = await toolGateFor(db, {
 		workspaceId,
 		actorId,
 		integrationId: meet?.id ?? null,
 		provider: 'google-meet',
 		providerLabel: 'Google Meet',
+		conversationId: chat?.conversationId ?? null,
 	})
 	const mcpServer = createGoogleMeetMcpServer({ db, workspaceId, actorId }, gate)
 

@@ -78,11 +78,15 @@ export function IntegrationAccessRequestCard({
 	const [error, setError] = useState<string | null>(null)
 	const [declinedNow, setDeclinedNow] = useState(false)
 	const [allowedNow, setAllowedNow] = useState(false)
+	const [chatAllowedNow, setChatAllowedNow] = useState(false)
 	const [agentStillRunning, setAgentStillRunning] = useState(false)
 	// The level can be lowered before Allow, never raised above what the agent asked for.
 	const [chosen, setChosen] = useState<'read' | 'read_write'>(request.level)
 	const storedAnswer = useCardAnswer(conversationId, workspaceId, messageId)
 	const declined = declinedNow || storedAnswer === 'declined'
+	// Offered by the server for a write ask on Calendar or Meet. Only the full level can be lifted.
+	const lift = request.level === 'read_write' ? (request.chat_lift ?? null) : null
+	const chatAllowed = lift !== null && (chatAllowedNow || storedAnswer === 'done')
 
 	const integration = (integrations ?? []).find((i) => i.id === request.integration_id)
 	// An agent's own entry wins over the default for agents without one.
@@ -97,26 +101,39 @@ export function IntegrationAccessRequestCard({
 		me?.type === 'human' &&
 		(integration?.createdBy === me.id || workspace.role === 'owner' || workspace.role === 'admin')
 
-	const allow = async () => {
+	const allow = async (scope: 'always' | 'chat' = 'always') => {
 		setBusy(true)
 		setError(null)
 		try {
-			const res = await api.integrations.allowAccess(
-				request.integration_id,
-				workspaceId,
-				request.session_id,
-				chosen,
-			)
-			setAllowedNow(true)
+			const res =
+				scope === 'chat'
+					? await api.integrations.allowAccess(
+							request.integration_id,
+							workspaceId,
+							request.session_id,
+							'read_write',
+							'chat',
+						)
+					: await api.integrations.allowAccess(
+							request.integration_id,
+							workspaceId,
+							request.session_id,
+							chosen,
+						)
+			if (scope === 'chat') setChatAllowedNow(true)
+			else setAllowedNow(true)
 			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
 			if (res.changed && res.relaunch === 'failed') {
 				// The idle session could not be stopped, so it still has the old access.
 				setAgentStillRunning(true)
 				return
 			}
-			const content = res.changed
-				? `I've allowed you ${levelText(chosen)} to ${request.display_name}. Carry on with the work.`
-				: `You already have ${levelText(chosen)} to ${request.display_name}. Carry on with the work.`
+			const content =
+				scope === 'chat'
+					? `I've allowed you read and write access to ${request.display_name} for the next ${lift?.hours ?? 8} hours, in this chat only. Carry on with the work.`
+					: res.changed
+						? `I've allowed you ${levelText(chosen)} to ${request.display_name}. Carry on with the work.`
+						: `You already have ${levelText(chosen)} to ${request.display_name}. Carry on with the work.`
 			if (helper) {
 				// Stopped to take the new access, so its follow-up carries on; not stopped, so write into it.
 				if (res.changed) continueSession.mutate({ id: request.session_id, content })
@@ -126,7 +143,11 @@ export function IntegrationAccessRequestCard({
 			sendMessage.mutate({
 				// Plain text: a person's own message is not rendered as markdown.
 				content: `${content} Reply with one short line to say you have it.`,
-				metadata: { hidden_from_chat: true },
+				metadata: {
+					hidden_from_chat: true,
+					// A chat Allow leaves the standing level as it was, so the card reads the answer from here.
+					...(scope === 'chat' ? { card_answer: { message_id: messageId, outcome: 'done' } } : {}),
+				},
 			})
 		} catch (err) {
 			setError(
@@ -169,7 +190,7 @@ export function IntegrationAccessRequestCard({
 		sendMessage.mutate({ content })
 	}
 
-	if (allowed || declined || gone) {
+	if (allowed || chatAllowed || declined || gone) {
 		return (
 			<RequestCardSummary
 				icon={KeyRound}
@@ -179,7 +200,7 @@ export function IntegrationAccessRequestCard({
 						: null
 				}
 				actions={
-					allowed ? (
+					allowed || chatAllowed ? (
 						<Link
 							to="/$workspaceId/settings/integrations"
 							params={{ workspaceId }}
@@ -199,6 +220,11 @@ export function IntegrationAccessRequestCard({
 					<>
 						Allowed <strong>{request.display_name}</strong> for {agentName}. It stays until you
 						remove it.
+					</>
+				) : chatAllowed ? (
+					<>
+						Allowed <strong>{request.display_name}</strong> for {agentName} in this chat for{' '}
+						{lift?.hours} hours.
 					</>
 				) : declined ? (
 					<>
@@ -226,9 +252,17 @@ export function IntegrationAccessRequestCard({
 	return (
 		<fieldset aria-label={`Allow ${request.display_name}`} className={REQUEST_CARD}>
 			<RequestCardHeader icon={KeyRound} title={`Allow ${request.display_name} for ${agentName}`}>
-				{request.reason ? `${request.reason}` : `${capFirst(agentName)} needs it to carry on.`}
+				{lift
+					? lift.text
+					: request.reason
+						? `${request.reason}`
+						: `${capFirst(agentName)} needs it to carry on.`}
 			</RequestCardHeader>
 			<RequestCardRow label="Integration">{request.display_name}</RequestCardRow>
+			{lift?.tool ? <RequestCardRow label="Tool asked for">{lift.tool}</RequestCardRow> : null}
+			{lift && request.reason ? (
+				<RequestCardRow label="The agent says">{request.reason}</RequestCardRow>
+			) : null}
 			<RequestCardRow label="Access">
 				{request.level === 'read_write' ? (
 					<RadioGroup
@@ -254,16 +288,31 @@ export function IntegrationAccessRequestCard({
 					'Read'
 				)}
 			</RequestCardRow>
-			<RequestCardRow label="Lasts">Until you remove it in Integrations</RequestCardRow>
+			<RequestCardRow label="Lasts">
+				{lift
+					? `Allow in this chat: ${lift.hours} hours. Always allow: until you remove it in Integrations`
+					: 'Until you remove it in Integrations'}
+			</RequestCardRow>
 			<FormError error={error ?? undefined} />
 			<div className={REQUEST_CARD_ACTIONS}>
+				{lift && chosen === 'read_write' ? (
+					<Button
+						type="button"
+						className={REQUEST_CARD_PRIMARY}
+						disabled={busy}
+						onClick={() => void allow('chat')}
+					>
+						Allow in this chat for {lift.hours} hours
+					</Button>
+				) : null}
 				<Button
 					type="button"
-					className={REQUEST_CARD_PRIMARY}
+					variant={lift && chosen === 'read_write' ? 'outline' : undefined}
+					className={lift && chosen === 'read_write' ? undefined : REQUEST_CARD_PRIMARY}
 					disabled={busy}
 					onClick={() => void allow()}
 				>
-					Allow
+					{lift ? 'Always allow' : 'Allow'}
 				</Button>
 				<Button
 					type="button"
