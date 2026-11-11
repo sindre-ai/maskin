@@ -11,6 +11,13 @@ export const PUSH_CATEGORIES = [
 export const pushCategorySchema = z.enum(PUSH_CATEGORIES)
 export type PushCategory = z.infer<typeof pushCategorySchema>
 
+/** How often the summary email comes. Off is the email switch being off, not a third value. */
+export const EMAIL_RHYTHMS = ['daily', 'weekly'] as const
+export const emailRhythmSchema = z.enum(EMAIL_RHYTHMS)
+export type EmailRhythm = z.infer<typeof emailRhythmSchema>
+/** No saved rhythm means daily. */
+export const DEFAULT_EMAIL_RHYTHM: EmailRhythm = 'daily'
+
 export const NOTIFICATION_PREFERENCES_DEFAULTS = {
 	timezone: null,
 	quiet_hours_start: null,
@@ -119,6 +126,8 @@ export const notificationPreferencesResponseSchema = z.object({
 	email_categories: emailCategoriesSchema,
 	/** The Marketplace picks switch for the summary email. Off until the person turns it on. */
 	marketplace_picks_enabled: z.boolean(),
+	/** How often the summary email comes; daily when the person never chose. */
+	email_rhythm: emailRhythmSchema,
 	muted_workspace_ids: z.array(z.string().uuid()),
 	/** Null when the actor has never saved preferences (defaults are returned). */
 	updated_at: z.string().nullable(),
@@ -141,6 +150,7 @@ export const updateNotificationPreferencesSchema = z
 		email_digest_enabled: z.boolean(),
 		email_categories: emailCategoriesSchema.partial(),
 		marketplace_picks_enabled: z.boolean(),
+		email_rhythm: emailRhythmSchema,
 		muted_workspace_ids: z.array(z.string().uuid()).max(200),
 	})
 	.partial()

@@ -149,6 +149,23 @@ public final class NotificationPreferencesStore {
 		submit(patch)
 	}
 
+	/// Daily and Weekly turn the summary email on with that rhythm; Off is the email switch off.
+	/// Moving between Daily and Weekly is not a switch-off.
+	public func setEmailChoice(_ choice: NotificationPreferences.EmailChoice) {
+		var patch = NotificationPreferencesPatch()
+		switch choice {
+		case .off:
+			patch.emailDigestEnabled = false
+		case .daily:
+			patch.emailDigestEnabled = true
+			patch.emailRhythm = .daily
+		case .weekly:
+			patch.emailDigestEnabled = true
+			patch.emailRhythm = .weekly
+		}
+		submit(patch)
+	}
+
 	public func isMuted(workspaceId: String) -> Bool { preferences.mutedWorkspaceIds.contains(workspaceId) }
 
 	public func setMuted(_ muted: Bool, workspaceId: String) {

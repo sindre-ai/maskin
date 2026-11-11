@@ -13,6 +13,11 @@
  * of activity rows are not a person's own doing and do not count: the bulk 'integration created'
  * rows and the 'notification settings created' rows.
  *
+ * Rhythm: daily (the default, also when the choice is empty) or weekly. A weekly person gets a mail
+ * only when the last send was WEEKLY_GAP_DAYS or more days ago, on top of the step spacing below,
+ * and the mail looks back over the whole week. A day with nothing to say sends nothing and does not
+ * use up the week: the next tick looks again. Off is the email switch, not a rhythm.
+ *
  * When: at 08:00 UTC, or the briefing time in the person's stored timezone. A new sign-up gets
  * step 1 on or after account day 1, step 2 on or after day 3, step 3 on or after day 7. An
  * existing member with no saved choice starts at step 1 on the first tick, then gets step 2 two
@@ -41,6 +46,7 @@
 import type { Database } from '@maskin/db'
 import { actors, objects, workspaceMembers } from '@maskin/db/schema'
 import { EmailSendError, isEmailConfigured, sendEmail } from '@maskin/email'
+import type { EmailRhythm } from '@maskin/shared'
 import { and, eq, sql } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { buildEmailPickDismissUrl } from '../lib/email-pick-token'
@@ -64,6 +70,8 @@ const EMPTY_RECHECK_MS = 10 * 60_000
 export const ACTIVE_WINDOW_DAYS = 30
 const DAY_MS = 86_400_000
 const MAX_LOOKBACK_DAYS = 7
+/** A weekly person is mailed when the last send is this many days back or more. */
+export const WEEKLY_GAP_DAYS = 6
 /** Account age (in days) at which onboarding steps 1, 2 and 3 are due. */
 export const STEP_DUE_DAYS = [1, 3, 7] as const
 /** Days that must pass after the previous mail before step 2 and step 3 (index = counter). */
@@ -88,6 +96,7 @@ SELECT
   p.email_digest_enabled AS email_digest_enabled,
   COALESCE(p.email_onboarding_step, 0) AS email_onboarding_step,
   p.email_last_sent_on::text AS email_last_sent_on,
+  p.email_rhythm AS email_rhythm,
   p.timezone AS timezone,
   p.briefing_time AS briefing_time,
   COALESCE(p.marketplace_picks_enabled, false) AS marketplace_picks_enabled,
@@ -124,6 +133,8 @@ export interface EmailRecipientRow {
 	emailDigestEnabled: boolean | null
 	emailOnboardingStep: number
 	emailLastSentOn: string | null
+	/** Null means no saved rhythm, which is daily. */
+	emailRhythm: string | null
 	timezone: string | null
 	briefingTime: number | null
 	marketplacePicksEnabled: boolean
@@ -140,6 +151,7 @@ type RawRecipient = {
 	email_digest_enabled: boolean | null
 	email_onboarding_step: number
 	email_last_sent_on: string | null
+	email_rhythm: string | null
 	timezone: string | null
 	briefing_time: number | null
 	marketplace_picks_enabled: boolean
@@ -174,6 +186,7 @@ export async function selectEmailRecipients(
 		emailDigestEnabled: r.email_digest_enabled,
 		emailOnboardingStep: Number(r.email_onboarding_step),
 		emailLastSentOn: r.email_last_sent_on,
+		emailRhythm: r.email_rhythm,
 		timezone: r.timezone,
 		briefingTime: r.briefing_time === null ? null : Number(r.briefing_time),
 		marketplacePicksEnabled: r.marketplace_picks_enabled === true,
@@ -193,11 +206,22 @@ function dayNumber(isoDate: string): number {
  * age wait for step 1 only; steps 2 and 3 keep their spacing from the previous send.
  */
 export function dueEmailStep(
-	row: Pick<EmailRecipientRow, 'emailDigestEnabled' | 'emailOnboardingStep' | 'emailLastSentOn'>,
+	row: Pick<
+		EmailRecipientRow,
+		'emailDigestEnabled' | 'emailOnboardingStep' | 'emailLastSentOn' | 'emailRhythm'
+	>,
 	localDate: string,
 	ageDays: number,
 ): { step: EmailStep; nextCounter: number } | null {
 	if (row.emailLastSentOn && row.emailLastSentOn >= localDate) return null
+	// Weekly sits on top of everything below: the step spacing and the age wait still apply.
+	if (
+		row.emailRhythm === 'weekly' &&
+		row.emailLastSentOn &&
+		dayNumber(localDate) - dayNumber(row.emailLastSentOn) < WEEKLY_GAP_DAYS
+	) {
+		return null
+	}
 	const counter = Math.min(Math.max(row.emailOnboardingStep, 0), 3)
 	if (counter === 3) return { step: 'daily', nextCounter: 3 }
 	const existingMemberStart = counter === 0 && row.emailDigestEnabled === null
@@ -208,6 +232,20 @@ export function dueEmailStep(
 	}
 	const next = (counter + 1) as 1 | 2 | 3
 	return { step: next, nextCounter: next }
+}
+
+/**
+ * Pure: how many days of finished runs the mail looks back over. Since the last mail, at least one
+ * day and at most a week. The first mail looks back one day like the push; the first weekly mail
+ * looks back the whole week.
+ */
+export function lookbackDays(
+	rhythm: string | null,
+	lastSentOn: string | null,
+	localDate: string,
+): number {
+	if (!lastSentOn) return rhythm === 'weekly' ? MAX_LOOKBACK_DAYS : 1
+	return Math.min(Math.max(dayNumber(localDate) - dayNumber(lastSentOn), 1), MAX_LOOKBACK_DAYS)
 }
 
 export class BriefingEmailScheduler {
@@ -310,12 +348,7 @@ export class BriefingEmailScheduler {
 
 		// Runs finished since the last mail: the days since it (at least 24 h), so a quiet day does
 		// not drop work and a busy one is not repeated.
-		const sinceDays = row.emailLastSentOn
-			? Math.min(
-					Math.max(dayNumber(clock.date) - dayNumber(row.emailLastSentOn), 1),
-					MAX_LOOKBACK_DAYS,
-				)
-			: 1
+		const sinceDays = lookbackDays(row.emailRhythm, row.emailLastSentOn, clock.date)
 		const facts = await loadBriefingFacts(
 			this.db,
 			row.actorId,
@@ -369,6 +402,7 @@ export class BriefingEmailScheduler {
 			actor_type: 'human',
 			step: String(due.step),
 			role,
+			rhythm: row.emailRhythm === 'weekly' ? ('weekly' satisfies EmailRhythm) : 'daily',
 			account_age_days: Math.max(ageDays, 0),
 			pick: pick !== null,
 		})

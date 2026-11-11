@@ -1,4 +1,5 @@
 import { BrowserNotificationsToggle } from '@/components/profile/browser-notifications-row'
+import { EmailRhythmRow, emailChoice } from '@/components/settings/email-rhythm-row'
 import { SettingsPageTitle } from '@/components/settings/settings-page-title'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
@@ -185,7 +186,8 @@ function MarketplacePicksRow({
 
 /**
  * Settings → Notifications. The API stores a Push and a Browser switch per category, one Push
- * switch for the daily briefing, and one email switch, which sits on the Digests row. A Browser
+ * switch for the daily briefing, and one email switch, which sits on the Digests row; the Summary
+ * email row under it picks Daily, Weekly or Off for that same switch. A Browser
  * switch the person never touched shows "Not asked" and follows that category's Push switch.
  */
 function NotificationsPage() {
@@ -288,6 +290,16 @@ function NotificationsPage() {
 					}}
 					browser={browserSwitch('flow_activity')}
 					columns
+				/>
+				<EmailRhythmRow
+					value={emailChoice(prefs.email_digest_enabled, prefs.email_rhythm)}
+					onChange={(next) =>
+						save(
+							next === 'off'
+								? { email_digest_enabled: false }
+								: { email_digest_enabled: true, email_rhythm: next },
+						)
+					}
 				/>
 				<PreferenceRow
 					title="Tips and updates"

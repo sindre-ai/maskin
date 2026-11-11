@@ -38,6 +38,7 @@ struct NotificationPreferencesSection: View {
 			.accessibilityHint("Dismiss")
 		}
 		categories
+		emailRhythm
 		quietHours
 		briefing
 		if !workspaces.isEmpty { mutes }
@@ -105,6 +106,40 @@ struct NotificationPreferencesSection: View {
 			id: category.rawValue, title: title, subtitle: subtitle,
 			accessory: .toggle(
 				isOn: store.isEnabled(category), set: { store.setCategory(category, enabled: $0) }))
+	}
+
+	// MARK: Summary email
+
+	private var emailRhythm: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+			PageGroupLabel(text: "Summary email")
+			PreferenceCard {
+				VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+					VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+						Text("Summary email")
+							.font(MaskinTypeface.sans(MaskinFontSize.t16, weight: MaskinFontWeight.semibold))
+							.foregroundStyle(MaskinColor.ink)
+						Text("One email with what your agents did and what waits on you.")
+							.font(MaskinTypeface.sans(MaskinFontSize.t13))
+							.foregroundStyle(MaskinColor.ink4)
+					}
+					Picker(
+						"How often the summary email comes",
+						selection: Binding(
+							get: { store.preferences.emailChoice },
+							set: { store.setEmailChoice($0) })
+					) {
+						Text("Daily").tag(NotificationPreferences.EmailChoice.daily)
+						Text("Weekly").tag(NotificationPreferences.EmailChoice.weekly)
+						Text("Off").tag(NotificationPreferences.EmailChoice.off)
+					}
+					.pickerStyle(.segmented)
+				}
+				.frame(maxWidth: .infinity, alignment: .leading)
+				.padding(.horizontal, MaskinSpace.s9)
+				.padding(.vertical, MaskinSpace.s8)
+			}
+		}
 	}
 
 	// MARK: Quiet hours

@@ -15,7 +15,12 @@ import { validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { errorSchema } from '../lib/openapi-schemas'
-import { resolveEmailDigestEnabled, trackEmailSwitchedOff } from '../services/email-preferences'
+import {
+	resolveEmailDigestEnabled,
+	resolveEmailRhythm,
+	trackEmailRhythmChanged,
+	trackEmailSwitchedOff,
+} from '../services/email-preferences'
 import { resolveAuditWorkspace } from './devices'
 
 type Env = {
@@ -52,6 +57,7 @@ function serialize(
 				flow_activity: false,
 			},
 			marketplace_picks_enabled: false,
+			email_rhythm: resolveEmailRhythm(null),
 			muted_workspace_ids: [],
 			updated_at: null,
 		}
@@ -75,6 +81,7 @@ function serialize(
 			flow_activity: row.emailCategories?.flow_activity === true,
 		},
 		marketplace_picks_enabled: row.marketplacePicksEnabled,
+		email_rhythm: resolveEmailRhythm(row.emailRhythm),
 		muted_workspace_ids: row.mutedWorkspaceIds,
 		updated_at: row.updatedAt.toISOString(),
 	}
@@ -178,6 +185,8 @@ app.openapi(putRoute, async (c) => {
 		...(body.marketplace_picks_enabled !== undefined && {
 			marketplacePicksEnabled: body.marketplace_picks_enabled,
 		}),
+		// Same for the rhythm: only a rhythm sent in this call is saved.
+		...(body.email_rhythm !== undefined && { emailRhythm: body.email_rhythm }),
 	}
 
 	const [row] = await db
@@ -196,6 +205,11 @@ app.openapi(putRoute, async (c) => {
 		if (body.email_categories?.[kind] === false && existing?.emailCategories?.[kind]) {
 			trackEmailSwitchedOff(actorId, 'settings', kind)
 		}
+	}
+	// Daily to Weekly is a change of rhythm, not a switch-off: it never fires email_switched_off.
+	if (body.email_rhythm !== undefined) {
+		const before = resolveEmailRhythm(existing?.emailRhythm)
+		if (before !== body.email_rhythm) trackEmailRhythmChanged(actorId, before, body.email_rhythm)
 	}
 
 	try {
