@@ -193,6 +193,9 @@ public struct ShareQueueDrainer: Sendable {
 		public var sent = 0
 		/// Refused for good (4xx) or unusable: removed so they can't block the queue.
 		public var dropped = 0
+		/// Why each dropped share was dropped, in the order they were dropped (`unknown` for a share
+		/// that could not be read back).
+		public var droppedReasons: [ShareError] = []
 		public var remaining = 0
 	}
 
@@ -214,6 +217,7 @@ public struct ShareQueueDrainer: Sendable {
 			guard let request = queue.request(for: share) else {
 				queue.remove(share.id)
 				report.dropped += 1
+				report.droppedReasons.append(.unknown)
 				continue
 			}
 			let remote = makeRemote(ShareCredentials(apiKey: apiKey, workspaceId: share.workspaceId))
@@ -228,6 +232,7 @@ public struct ShareQueueDrainer: Sendable {
 				// Refused for good: keeping it would block everything behind it.
 				queue.remove(share.id)
 				report.dropped += 1
+				report.droppedReasons.append(error as? ShareError ?? .unknown)
 			}
 		}
 		return finish(report)
