@@ -11,8 +11,8 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 /**
  * `<MentionPicker>` — the `@`-in-composer picker for chat.tsx.
  *
- * Pool: every workspace actor with `role !== "system"` (i.e. not the
- * `isSystem` flag), agents and humans alike. Loaded once via a cached
+ * Pool: every workspace actor that is not an integration actor (type
+ * `"system"`, see `isTaggable`), agents and humans alike. Loaded once via a cached
  * `useActors` query and filtered client-side against the current query. The
  * three-section layout matches the spec verbatim:
  *
@@ -49,7 +49,7 @@ export interface MentionPickerProps {
 	/** Whether the picker is open. */
 	open: boolean
 	onOpenChange: (open: boolean) => void
-	/** Every workspace actor eligible for mention (agents + humans, `isSystem` filtered upstream). */
+	/** Every workspace actor eligible for mention (agents + humans, integration actors filtered upstream). */
 	actors: MentionPickerActor[]
 	/** The current conversation's participant actor ids. Drives the "In this conversation" section. */
 	conversationParticipantIds: string[]

@@ -80,6 +80,16 @@ export const FLAGS = {
 	 * `EditableMarkdownStage`. Retire once the review is on for everyone.
 	 */
 	AGENT_CHANGE_REVIEW: 'agent-change-review',
+	/**
+	 * Gates the Refresh button on HTML views in the file viewer (bet
+	 * [Customizable app: best-practice templates users can reshape or replace with their own views](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/0e9b2ed9-1246-430d-8d2a-b44bbb7a70d5)).
+	 * A view that names a list in its maskin-sources block is shown through the data
+	 * bridge, and the user's Refresh click fetches the list with their own login.
+	 * Frontend only: read once, in `HtmlViewerStage`. Off means the file viewer is
+	 * exactly as before: no bridge, no Refresh button. Retire once it is on for
+	 * everyone.
+	 */
+	LIVING_VIEW_REFRESH: 'living-view-refresh',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

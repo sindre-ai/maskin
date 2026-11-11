@@ -300,6 +300,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'GET /api/extensions/recipes',
 	'GET /api/files/:id/proposals',
 	'GET /api/for-you',
+	'GET /api/for-you/recap',
 	'GET /api/guardrails',
 	'GET /api/integrations/:id/audit-log',
 	'GET /api/integrations/:id/grants',

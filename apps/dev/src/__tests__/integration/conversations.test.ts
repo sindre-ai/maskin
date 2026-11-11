@@ -1211,6 +1211,49 @@ describe('Conversations Integration', () => {
 		})
 	})
 
+	describe('quoted message id', () => {
+		it('stores the quoted message id as sent and returns it on the stored message', async () => {
+			const { app } = createConversationsApp(ownerId)
+			const created = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Quote', participant_actor_ids: [] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const send = (metadata: unknown) =>
+				app.request(
+					jsonRequest(
+						'POST',
+						`/api/conversations/${conversation.id}/messages`,
+						{ content: 'replying to that', metadata },
+						{ 'x-workspace-id': workspaceId },
+					),
+				)
+
+			const res = await send({ quoted_message_id: 42 })
+			expect(res.status).toBe(201)
+			const stored = (await res.json()) as { metadata: { quoted_message_id?: number } | null }
+			expect(stored.metadata?.quoted_message_id).toBe(42)
+
+			const list = await app.request(
+				jsonGet(`/api/conversations/${conversation.id}/messages`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			const body = (await list.json()) as {
+				messages: Array<{ metadata: { quoted_message_id?: number } | null }>
+			}
+			expect(body.messages.at(-1)?.metadata?.quoted_message_id).toBe(42)
+
+			// Not a message id: refused rather than stored.
+			expect((await send({ quoted_message_id: 0 })).status).toBe(400)
+			expect((await send({ quoted_message_id: 'abc' })).status).toBe(400)
+		})
+	})
+
 	describe('server-owned message metadata', () => {
 		it('strips a client-claimed final_output marker', async () => {
 			const { app } = createConversationsApp(ownerId)
