@@ -127,6 +127,11 @@ vi.mock('../../lib/integrations/providers/github/auth', () => ({
 	fetchInstallationOwnerLogin: mockFetchInstallationOwnerLogin,
 }))
 
+vi.mock('../../services/chat-drives', () => ({
+	buildChatDrivesBlock: vi.fn().mockResolvedValue(''),
+	saveChatDrives: vi.fn().mockResolvedValue(undefined),
+}))
+
 vi.mock('../../services/workspace-briefing', () => ({
 	buildWorkspaceStartupBlock: vi.fn().mockReturnValue(''),
 	loadSenderLine: vi.fn().mockResolvedValue(''),
@@ -162,6 +167,7 @@ import {
 } from '../../lib/llm-routing'
 import { logger } from '../../lib/logger'
 import { AgentStorageManager } from '../../services/agent-storage'
+import { buildChatDrivesBlock, saveChatDrives } from '../../services/chat-drives'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import { SessionManager, mergeLaunchRouteConfig } from '../../services/session-manager'
 import { buildWorkspaceStartupBlock } from '../../services/workspace-briefing'
@@ -611,6 +617,109 @@ describe('SessionManager', () => {
 			expect(mockContainerManager.attachStdin).toHaveBeenCalledWith(session.id, 'container-id-123')
 			// actionPrompt is '' here — no seed turn should be sent once attached.
 			expect(mockContainerManager.write).not.toHaveBeenCalled()
+		})
+
+		describe('what the agent drives', () => {
+			const DRIVES = '## What you drive\n\nYou own these outcomes.\n\n'
+
+			async function launchChat(overrides: Record<string, unknown>) {
+				const session = buildSession({
+					status: 'pending',
+					interactive: true,
+					actionPrompt: '',
+					containerId: null,
+					...overrides,
+				})
+				const agent = {
+					id: session.actorId,
+					type: 'agent',
+					systemPrompt: 'You are Workspace Coach.',
+					llmProvider: null,
+					llmConfig: null,
+					apiKey: 'ank_test_agent_key',
+					tools: null,
+				}
+				const workspace = {
+					id: session.workspaceId,
+					enterpriseGranted: true,
+					settings: LAUNCHABLE_WS_SETTINGS,
+				}
+				vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+					pulled: 0,
+					skipped: 0,
+					failures: [],
+				})
+				mockResults.selectQueue = [[session], [workspace], [{ count: 0 }], [agent], [workspace], []]
+				vi.mocked(buildWorkspaceStartupBlock).mockReturnValueOnce('STARTUP-BLOCK\n\n')
+				await manager.startSession(session.id)
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+				return { session, systemPrompt: createArgs.env.SYSTEM_PROMPT }
+			}
+
+			it('puts the block between the startup text and the agent prompt, and saves it on the session', async () => {
+				vi.mocked(buildChatDrivesBlock).mockClear()
+				vi.mocked(saveChatDrives).mockClear()
+				vi.mocked(buildChatDrivesBlock).mockResolvedValueOnce(DRIVES)
+
+				const { session, systemPrompt } = await launchChat({ conversationId: 'conv-1' })
+
+				expect(systemPrompt).toMatch(/^STARTUP-BLOCK\n\n## What you drive/)
+				expect(systemPrompt.indexOf('## What you drive')).toBeLessThan(
+					systemPrompt.indexOf('You are Workspace Coach.'),
+				)
+				expect(buildChatDrivesBlock).toHaveBeenCalledWith(
+					expect.anything(),
+					{ workspaceId: session.workspaceId, actorId: session.actorId, conversationId: 'conv-1' },
+					expect.any(String),
+				)
+				expect(saveChatDrives).toHaveBeenCalledWith(expect.anything(), session.id, DRIVES)
+			})
+
+			it('adds nothing and saves nothing for an agent that drives nothing', async () => {
+				vi.mocked(buildChatDrivesBlock).mockClear()
+				vi.mocked(saveChatDrives).mockClear()
+				vi.mocked(buildChatDrivesBlock).mockResolvedValueOnce('')
+
+				const { systemPrompt } = await launchChat({ conversationId: 'conv-1' })
+
+				expect(systemPrompt).not.toContain('What you drive')
+				expect(saveChatDrives).not.toHaveBeenCalled()
+			})
+
+			it('skips an interactive session that is not a chat', async () => {
+				vi.mocked(buildChatDrivesBlock).mockClear()
+
+				const { systemPrompt } = await launchChat({ conversationId: null })
+
+				expect(buildChatDrivesBlock).not.toHaveBeenCalled()
+				expect(systemPrompt).not.toContain('What you drive')
+			})
+
+			it('reuses the saved block on resume instead of rebuilding or overwriting it', async () => {
+				vi.mocked(buildChatDrivesBlock).mockClear()
+				vi.mocked(saveChatDrives).mockClear()
+
+				const { systemPrompt } = await launchChat({
+					conversationId: 'conv-1',
+					config: { chat_drives: '## What you drive\n\nSaved earlier.\n\n' },
+				})
+
+				expect(systemPrompt).toContain('Saved earlier.')
+				expect(buildChatDrivesBlock).not.toHaveBeenCalled()
+				expect(saveChatDrives).not.toHaveBeenCalled()
+			})
+
+			it('launches without the block when building it fails', async () => {
+				vi.mocked(buildChatDrivesBlock).mockClear()
+				vi.mocked(buildChatDrivesBlock).mockRejectedValueOnce(new Error('db down'))
+
+				const { systemPrompt } = await launchChat({ conversationId: 'conv-1' })
+
+				expect(systemPrompt).toContain('You are Workspace Coach.')
+				expect(systemPrompt).not.toContain('What you drive')
+			})
 		})
 
 		it('inserts a session_started event once the session reaches running — without this, live-activity surfaces like the chat typing indicator never learn the session left pending', async () => {
