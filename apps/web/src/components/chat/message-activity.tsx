@@ -57,7 +57,7 @@ export function MessageActivity({ workspaceId, turn, layout = 'block' }: Message
 					name={name}
 					type={actor?.type ?? 'agent'}
 					size="md"
-					className="shrink-0 rounded-lg"
+					className="shrink-0"
 				/>
 				<div className="min-w-0 flex-1 md:max-w-[660px]">
 					<div className="flex items-center gap-2">

@@ -542,7 +542,7 @@ export function MessageBubble({
 				type={message.actorType ?? 'agent'}
 				id={message.actorId}
 				size="md"
-				className="mt-0.5 size-[30px] shrink-0 rounded-[9px] bg-secondary text-[11px] font-bold text-foreground"
+				className="mt-0.5 size-[30px] shrink-0"
 			/>
 			<div className={cn('relative min-w-0 flex-1', spawnInfo && 'pr-2')}>
 				{spawnInfo ? (

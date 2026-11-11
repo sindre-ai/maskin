@@ -83,12 +83,7 @@ export function ConversationListRow({
 						type={lead.actorType}
 						id={lead.actorId}
 						size="md"
-						className={cn(
-							'mt-px size-8 shrink-0 rounded-[9px] text-[11px] font-bold',
-							isUnread
-								? 'bg-brand-subtle text-brand-subtle-foreground'
-								: 'bg-secondary text-foreground',
-						)}
+						className="mt-px size-8 shrink-0"
 					/>
 				) : null}
 				<div className="min-w-0 flex-1">

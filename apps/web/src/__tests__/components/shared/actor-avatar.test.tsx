@@ -1,7 +1,9 @@
 import {
 	ActorAvatar,
 	getActorAvatarPaletteClass,
+	getActorHue,
 	getActorInitials,
+	getActorPlateStyle,
 } from '@/components/shared/actor-avatar'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -118,6 +120,51 @@ describe('getActorAvatarPaletteClass', () => {
 	})
 })
 
+describe('getActorHue', () => {
+	it('folds every character with h = (h * 31 + code) % 360, as the app does', () => {
+		expect(getActorHue('a')).toBe(97)
+		expect(getActorHue('ab')).toBe((97 * 31 + 98) % 360)
+		expect(getActorHue('Chief of Staff')).toBe(
+			[...'Chief of Staff'].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 0),
+		)
+	})
+
+	it('treats a missing or empty seed as "?"', () => {
+		expect(getActorHue(undefined)).toBe(getActorHue('?'))
+		expect(getActorHue('')).toBe(getActorHue('?'))
+	})
+
+	it('stays inside 0..359', () => {
+		for (let i = 0; i < 200; i++) {
+			const hue = getActorHue(`actor-${i}-${'x'.repeat(i)}`)
+			expect(hue).toBeGreaterThanOrEqual(0)
+			expect(hue).toBeLessThan(360)
+		}
+	})
+})
+
+describe('getActorPlateStyle', () => {
+	it('draws a 135 degree gradient from the hue to the hue plus 38 under a white highlight', () => {
+		const hue = getActorHue('a')
+		const style = getActorPlateStyle('a')
+		expect(style.backgroundImage).toContain('linear-gradient(135deg')
+		expect(style.backgroundImage).toContain(`hsl(${hue} 52% 44%)`)
+		expect(style.backgroundImage).toContain(`hsl(${hue + 38} 58% 32%)`)
+		expect(style.backgroundImage).toContain('rgba(255,255,255,0.18)')
+		expect(style.borderRadius).toBe('30%')
+		expect(style.color).toBe('#fff')
+	})
+
+	it('wraps the second hue past 360', () => {
+		// 'ab' folds to 275, so the second stop is 313; find a seed above 322 to wrap.
+		const seed = Array.from({ length: 400 }, (_, i) => `s${i}`).find((s) => getActorHue(s) > 322)
+		expect(seed).toBeDefined()
+		expect(getActorPlateStyle(seed).backgroundImage).toContain(
+			`hsl(${(getActorHue(seed) + 38) % 360} 58% 32%)`,
+		)
+	})
+})
+
 describe('ActorAvatar', () => {
 	it('renders 2-letter initials for multi-word names', () => {
 		render(<ActorAvatar name="Product Marketer" type="human" />)
@@ -129,29 +176,35 @@ describe('ActorAvatar', () => {
 		expect(screen.getByText('CTO')).toBeInTheDocument()
 	})
 
-	it('shrinks the glyph for three letters at every size and on the tile', () => {
-		const { rerender } = render(<ActorAvatar name="PMM" type="human" size="sm" />)
-		expect(screen.getByText('PMM').parentElement?.className).toContain('text-[7px]')
-		rerender(<ActorAvatar name="PMM" type="human" size="md" />)
-		expect(screen.getByText('PMM').parentElement?.className).toContain('text-[9px]')
-		rerender(<ActorAvatar name="PMM" type="human" size="lg" />)
-		expect(screen.getByText('PMM').parentElement?.className).toContain('text-xs')
-		rerender(<ActorAvatar name="PMM" type="human" size="xl" />)
-		expect(screen.getByText('PMM').parentElement?.className).toContain('text-[15px]')
+	it('sizes the glyph as a share of the plate: 36 percent, 28 percent for three letters', () => {
+		const { rerender } = render(<ActorAvatar name="Sebastian Krumhausen" type="human" />)
+		expect(screen.getByText('SK').style.fontSize).toBe('36cqw')
+		rerender(<ActorAvatar name="PMM" type="human" size="sm" />)
+		expect(screen.getByText('PMM').style.fontSize).toBe('28cqw')
+		rerender(<ActorAvatar name="PMM" type="agent" size="xl" />)
+		expect(screen.getByText('PMM').style.fontSize).toBe('28cqw')
 		rerender(<ActorAvatar name="PMM" type="human" tile />)
-		expect(screen.getByText('PMM').parentElement?.className).toContain('text-[8px]')
+		expect(screen.getByText('PMM').style.fontSize).toBe('28cqw')
+		expect(screen.getByTitle('PMM').className).toContain('size-[26px]')
 	})
 
-	it('keeps the normal glyph size for two letters', () => {
-		render(<ActorAvatar name="Sebastian Krumhausen" type="human" size="sm" />)
-		expect(screen.getByText('SK').parentElement?.className).toContain('text-[10px]')
-	})
-
-	it('draws an agent as a tile with its initials and no pictogram', () => {
-		const { container } = render(<ActorAvatar name="Product Marketer" type="agent" />)
+	it('draws agents and people the same: rounded square, white letters, gradient, no pictogram', () => {
+		const { container, rerender } = render(<ActorAvatar name="Product Marketer" type="agent" />)
 		expect(container.querySelector('svg')).toBeNull()
 		expect(screen.getByText('PM')).toBeInTheDocument()
-		expect(screen.getByTitle('Product Marketer').className).toContain('rounded-md')
+		const agent = screen.getByTitle('Product Marketer')
+		expect(agent.style.borderRadius).toBe('30%')
+		expect(agent.style.color).toBe('rgb(255, 255, 255)')
+		expect(agent.style.backgroundImage).toContain('linear-gradient')
+		rerender(<ActorAvatar name="Product Marketer" type="human" />)
+		const person = screen.getByTitle('Product Marketer')
+		expect(person.style.borderRadius).toBe('30%')
+		expect(person.style.backgroundImage).toBe(agent.style.backgroundImage)
+	})
+
+	it('keeps its look when a caller passes its own radius or fill', () => {
+		render(<ActorAvatar name="Alice" type="human" className="rounded-full bg-secondary" />)
+		expect(screen.getByTitle('Alice').style.borderRadius).toBe('30%')
 	})
 
 	it('shows the same letters for an agent as for a person', () => {
@@ -199,15 +252,16 @@ describe('ActorAvatar', () => {
 		expect(screen.getByText('SI')).toBeInTheDocument()
 	})
 
-	it('applies a deterministic palette class keyed off id', () => {
-		const { container, rerender } = render(<ActorAvatar name="Alpha" type="agent" id="actor-abc" />)
-		const first = container.firstChild as HTMLElement
-		const cls = first.className
+	it('colours by id when there is one, else by name', () => {
+		const { rerender } = render(<ActorAvatar name="Alpha" type="agent" id="actor-abc" />)
+		const byId = screen.getByTitle('Alpha').style.backgroundImage
+		expect(byId).toContain(`hsl(${getActorHue('actor-abc')} 52% 44%)`)
 		rerender(<ActorAvatar name="Alpha" type="agent" id="actor-abc" />)
-		const second = container.firstChild as HTMLElement
-		expect(second.className).toBe(cls)
-		expect(cls).toMatch(/bg-\[var\(--st-/)
-		expect(cls).toMatch(/text-\[var\(--st-/)
+		expect(screen.getByTitle('Alpha').style.backgroundImage).toBe(byId)
+		rerender(<ActorAvatar name="Alpha" type="agent" />)
+		expect(screen.getByTitle('Alpha').style.backgroundImage).toContain(
+			`hsl(${getActorHue('Alpha')} 52% 44%)`,
+		)
 	})
 
 	it('has title attribute with name', () => {
