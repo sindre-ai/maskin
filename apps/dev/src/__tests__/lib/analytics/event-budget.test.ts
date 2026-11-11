@@ -78,16 +78,16 @@ describe('admitPosthogEvent', () => {
 	})
 
 	describe('sampling', () => {
-		it('drops provenance_edge_written outright', () => {
+		it.each(['provenance_edge_written', 'mcp_rate_limit_summary'])('drops %s outright', (event) => {
 			vi.spyOn(Math, 'random').mockReturnValue(0)
-			expect(admitPosthogEvent('provenance_edge_written').send).toBe(false)
+			expect(admitPosthogEvent(event).send).toBe(false)
 		})
 
 		it('sends a sampled event with its rate when the draw is under the rate', () => {
-			vi.spyOn(Math, 'random').mockReturnValue(0.05)
+			vi.spyOn(Math, 'random').mockReturnValue(0.01)
 			expect(admitPosthogEvent('mcp_tool_call_response_size')).toEqual({
 				send: true,
-				sampleRate: 0.1,
+				sampleRate: 0.02,
 			})
 		})
 
@@ -99,7 +99,10 @@ describe('admitPosthogEvent', () => {
 		it.each([
 			['agent_session_completed', 0.25],
 			['mcp_tool_call', 0.1],
-			['runtime_session_ended', 0.25],
+			['runtime_session_ended', 0.02],
+			['mcp_tool_call_response_size', 0.02],
+			['trigger_match_failed', 0.02],
+			['keychain_credential_accessed', 0.02],
 			['agent_session_started_with_prompt', 0.25],
 			['mcp_misfire_schema_validation_error', 0.25],
 			['mcp_alias_use', 0.1],
