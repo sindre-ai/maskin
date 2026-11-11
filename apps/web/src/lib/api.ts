@@ -394,7 +394,13 @@ export interface ExtensionAttempted {
 	agents: { agentId: string; tools: string[]; lastAttemptedAt: string }[]
 }
 
-export type ExtensionSignatureScheme = 'hmac-sha256' | 'hmac-sha1' | 'timestamp' | 'ed25519'
+export type ExtensionSignatureScheme =
+	| 'hmac-sha256'
+	| 'hmac-sha1'
+	| 'timestamp'
+	| 'ed25519'
+	| 'standard-webhooks'
+	| 'stripe'
 
 export type LiteralOrPath = { literal: string } | { path: string }
 
@@ -423,6 +429,10 @@ export interface ExtensionWebhookConfig {
 	signaturePrefix?: string
 	timestampHeader?: string
 	timestampBodyTemplate?: string
+	/** How the HMAC digest is written (hex when left out). Set through the API, not the form. */
+	digestEncoding?: 'hex' | 'base64'
+	/** Header carrying the delivery id (standard-webhooks). Set through the API, not the form. */
+	idHeader?: string
 	maxAgeSeconds?: number
 	secretSource?: 'env' | 'credential'
 	eventMap: {
