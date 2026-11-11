@@ -38,13 +38,24 @@ const TIER1_PREFIXES = ['foryou_card_', 'signup_', 'workspace_', 'checkout_']
 // 3 Nov 2026: the day was still 20.5k without stale browser tabs, so
 // runtime_session_ended, agent_session_started_with_prompt and
 // mcp_misfire_schema_validation_error (each 1k to 2k a day) are sampled at 0.25.
+// 11 Nov 2026: the day was 26.2k on 10 Nov. The ceiling did not hold the plumbing
+// events because it stops a name only after it has sent DEFAULT_DAILY_CAP, none
+// of them reached it once sampled (keychain_credential_accessed 2.1k, response
+// size 1.7k), the caps of ~80 names add up to far more than the day's target,
+// and every restart resets the in-memory count. So the five tier 3 events are cut
+// at the rate: mcp_rate_limit_summary is dropped (the same payload is logged at
+// info next to the capture), the other four are sampled at 0.02, a trace of the
+// trend. Their full counts are in the daily "events by name" log line (seen), and
+// keychain_credential_accessed, runtime_session_ended and trigger_match_failed
+// also live in the credential access log, the sessions table and the trigger logs.
 const SAMPLE_RATES: Record<string, number> = {
 	provenance_edge_written: 0,
+	mcp_rate_limit_summary: 0,
 	mcp_tool_call: 0.1,
-	mcp_tool_call_response_size: 0.1,
+	mcp_tool_call_response_size: 0.02,
 	mcp_handshake: 0.1,
-	trigger_match_failed: 0.2,
-	keychain_credential_accessed: 0.2,
+	trigger_match_failed: 0.02,
+	keychain_credential_accessed: 0.02,
 	session_waiting_stuck: 0.1,
 	runtime_concurrent_sessions_gauge: 0.1,
 	agent_session_completed: 0.25,
@@ -55,7 +66,7 @@ const SAMPLE_RATES: Record<string, number> = {
 	mention_guard_decision: 0.1,
 	helper_return_skipped: 0.1,
 	orphan_thread_detected: 0.1,
-	runtime_session_ended: 0.25,
+	runtime_session_ended: 0.02,
 	agent_session_started_with_prompt: 0.25,
 	mcp_misfire_schema_validation_error: 0.25,
 }

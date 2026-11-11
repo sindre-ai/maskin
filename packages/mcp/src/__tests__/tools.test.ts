@@ -542,10 +542,16 @@ describe('create_actor schema', () => {
 			name: 'Bot',
 			description: 'Test agent',
 			workspace_id: uuid,
-			role: 'owner',
+			role: 'member',
 		})
 		expect(result.workspace_id).toBe(uuid)
-		expect(result.role).toBe('owner')
+		expect(result.role).toBe('member')
+	})
+
+	it('rejects owner before any membership call is made', () => {
+		expect(() =>
+			schema.parse({ type: 'agent', name: 'Bot', description: 'Test agent', role: 'owner' }),
+		).toThrow()
 	})
 
 	it('accepts admin role, matching update_actor', () => {
@@ -657,9 +663,13 @@ describe('update_actor schema', () => {
 		expect(result.role).toBe('member')
 	})
 
-	it('accepts owner and admin roles', () => {
-		expect(schema.parse({ id: uuid, workspace_id: uuid2, role: 'owner' }).role).toBe('owner')
+	it('accepts admin and member roles', () => {
 		expect(schema.parse({ id: uuid, workspace_id: uuid2, role: 'admin' }).role).toBe('admin')
+		expect(schema.parse({ id: uuid, workspace_id: uuid2, role: 'member' }).role).toBe('member')
+	})
+
+	it('rejects owner before any membership call is made', () => {
+		expect(() => schema.parse({ id: uuid, workspace_id: uuid2, role: 'owner' })).toThrow()
 	})
 
 	it('rejects an invalid role', () => {
