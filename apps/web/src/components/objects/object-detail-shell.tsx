@@ -6,6 +6,7 @@ import { AgentWorkingBadge } from '@/components/shared/agent-working-badge'
 import { FLOATING_CONTROLS } from '@/components/shared/floating-footer'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useActor, useActors } from '@/hooks/use-actors'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useNotifications } from '@/hooks/use-notifications'
 import { useObjectFlow } from '@/hooks/use-object-flow'
@@ -31,6 +32,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { Pencil } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import { NextStepBlock } from './next-step-block'
 import { ObjectAskBanner } from './object-ask-banner'
 import { ObjectDetailBody } from './object-detail-body'
 import { getAsk } from './object-detail-fixtures'
@@ -165,6 +167,7 @@ export function ObjectDetailShell({
 	const { data: members } = useWorkspaceMembers(workspaceId)
 	const { data: actors } = useActors(workspaceId)
 	const { data: graph } = useObjectGraph(workspaceId, object.id)
+	const nextStepBlockOn = useFeatureFlag('next-step-block')
 	const { data: allObjects } = useObjects(workspaceId)
 	const settings = workspace.settings as Record<string, unknown>
 	const statuses = (settings?.statuses as Record<string, string[]> | undefined)?.[object.type] ?? []
@@ -579,6 +582,10 @@ export function ObjectDetailShell({
 							relationships={graph?.relationships ?? []}
 							workspaceId={workspaceId}
 						/>
+
+						{/* The open next step: action, owner, due date. Renders NOTHING when the
+						    object has none, and the whole block is behind its flag. */}
+						{nextStepBlockOn && <NextStepBlock step={object.next_step} workspaceId={workspaceId} />}
 
 						{/* v16: status and owner as the shared pills, under the Origin row. */}
 						<div className="mt-3 flex flex-wrap items-center gap-2">

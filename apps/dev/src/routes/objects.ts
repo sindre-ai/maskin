@@ -70,6 +70,7 @@ import { fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
 import { resolveEndpointTitles, sessionTitleFrom } from '../lib/graph/endpoint-titles'
 import { findKnowledgeDuplicate, isKnowledgeTitleUniqueViolation } from '../lib/knowledge-dedup'
 import { logger } from '../lib/logger'
+import { getLiveNextStep, serializeNextStep } from '../lib/next-steps'
 import { withDeliveryState } from '../lib/object-delivery'
 import { buildObjectPreview } from '../lib/object-preview'
 import {
@@ -1979,7 +1980,7 @@ app.openapi(getObjectRoute, async (c) => {
 	}
 
 	const basePreview = buildObjectPreview(object)
-	const [subscribed, unreadCount, subscriberCount, activeSession, starred, lastSession] =
+	const [subscribed, unreadCount, subscriberCount, activeSession, starred, lastSession, nextStep] =
 		await Promise.all([
 			isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
 			getUnreadCount(db, {
@@ -2003,11 +2004,13 @@ app.openapi(getObjectRoute, async (c) => {
 				: Promise.resolve(null),
 			isObjectStarredByActor(db, { actorId, objectId: id }),
 			loadObjectLastSession(db, object, { actorId, workspaceRole: c.get('workspaceRole') }),
+			getLiveNextStep(db, id),
 		])
 
 	return c.json(
 		{
 			...serialize(object),
+			next_step: nextStep ? serializeNextStep(nextStep) : null,
 			activeSessionCurrentActivity: activeSession?.currentActivity ?? null,
 			active_session_state: activeSession?.status ?? null,
 			last_session: lastSession,

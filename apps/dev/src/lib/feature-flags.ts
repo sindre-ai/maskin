@@ -105,6 +105,13 @@ export const FLAGS = {
 	 * box formatting reads the same id. Retire once it is on for everyone.
 	 */
 	CHAT_FORMATTING: 'chat-formatting',
+	/**
+	 * Gates the Next step block at the top of the object page (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
+	 * rule 2). Frontend only: read once, in the object detail shell. Off means the page is drawn
+	 * exactly as before. The table, route and MCP tools behind it are additive and safe with the
+	 * flag off. Retire once the block is on for everyone.
+	 */
+	NEXT_STEP_BLOCK: 'next-step-block',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
