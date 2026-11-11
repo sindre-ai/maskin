@@ -20,6 +20,19 @@ export class InviteEmailSendError extends Error {
 	}
 }
 
+const DEFAULT_FROM_ADDRESS = 'notifications@maskin.io'
+const FROM_NAME = 'Maskin'
+
+/**
+ * The From header for every mail: EMAIL_FROM, or the default address. A bare address gets the
+ * display name Maskin so inboxes show "Maskin" instead of "notifications"; an address that
+ * already has a name ("Name <a@b.c>") is left alone.
+ */
+export function resolveFrom(env: NodeJS.ProcessEnv = process.env): string {
+	const configured = env.EMAIL_FROM?.trim() || DEFAULT_FROM_ADDRESS
+	return configured.includes('<') ? configured : `${FROM_NAME} <${configured}>`
+}
+
 function buildSubject(params: SendInviteEmailParams): string {
 	return `${params.inviterName} invited you to ${params.workspaceName} on Maskin`
 }
@@ -75,7 +88,7 @@ function escapeHtml(value: string): string {
 // accept-invite flow can be exercised end-to-end without a Resend account.
 export async function sendInviteEmail(params: SendInviteEmailParams): Promise<void> {
 	const apiKey = process.env.RESEND_API_KEY
-	const from = process.env.EMAIL_FROM ?? 'notifications@maskin.io'
+	const from = resolveFrom()
 	const subject = buildSubject(params)
 	const text = buildPlaintext(params)
 	const html = buildHtml(params)
@@ -127,7 +140,7 @@ export function isEmailConfigured(env: NodeJS.ProcessEnv = process.env): boolean
  */
 export async function sendEmail(params: SendEmailParams): Promise<boolean> {
 	const apiKey = process.env.RESEND_API_KEY
-	const from = process.env.EMAIL_FROM ?? 'notifications@maskin.io'
+	const from = resolveFrom()
 	if (!apiKey) {
 		console.log('[email:dev-mode] sendEmail — RESEND_API_KEY is empty, not dispatching')
 		console.log(`  from: ${from}`)
