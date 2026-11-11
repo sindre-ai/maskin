@@ -72,7 +72,12 @@ import { findKnowledgeDuplicate, isKnowledgeTitleUniqueViolation } from '../lib/
 import { logger } from '../lib/logger'
 import { withDeliveryState } from '../lib/object-delivery'
 import { buildObjectPreview } from '../lib/object-preview'
-import { AgentFieldWriteError, applyObjectUpdate } from '../lib/object-update'
+import {
+	AgentFieldWriteError,
+	applyObjectUpdate,
+	guardedFieldsChanged,
+	recordAgentWriteRefused,
+} from '../lib/object-update'
 import { postSignupWelcomeComment } from '../lib/onboarding/signup-welcome'
 import {
 	errorSchema,
@@ -2052,7 +2057,7 @@ const updateObjectRoute = createRoute({
 		403: {
 			content: { 'application/json': { schema: errorSchema } },
 			description:
-				"An agent tried to change a target's fields or a flow's targets or close condition",
+				"An agent tried to change what defines done: a target's fields or status, or a flow's targets, entry condition, close condition or closed statuses",
 		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
@@ -2121,6 +2126,14 @@ app.openapi(updateObjectRoute, async (c) => {
 		updated = result.row
 	} catch (err) {
 		if (err instanceof AgentFieldWriteError) {
+			await recordAgentWriteRefused(db, {
+				workspaceId: existing.workspaceId,
+				actorId,
+				objectId: id,
+				objectType: err.objectType,
+				fieldCount: err.fields.length,
+				sessionId: c.get('maskinSessionId'),
+			})
 			return c.json(createApiError('FORBIDDEN', err.message), 403)
 		}
 		throw err
@@ -2774,6 +2787,26 @@ app.openapi(bulkUpdateObjectsRoute, async (c) => {
 					id,
 					ok: false,
 					error: `Invalid status '${patch.status}' for type '${existing.type}'`,
+				})
+				continue
+			}
+		}
+
+		if (c.get('actorType') === 'agent') {
+			const refused = guardedFieldsChanged(existing, patch)
+			if (refused.length > 0) {
+				results.push({
+					id,
+					ok: false,
+					error: new AgentFieldWriteError(refused, existing.type).message,
+				})
+				await recordAgentWriteRefused(db, {
+					workspaceId,
+					actorId,
+					objectId: id,
+					objectType: existing.type,
+					fieldCount: refused.length,
+					sessionId: c.get('maskinSessionId'),
 				})
 				continue
 			}
