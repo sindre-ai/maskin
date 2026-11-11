@@ -119,8 +119,10 @@ struct ThreadNavAvatars: View {
 			ForEach(shown) { p in
 				Group {
 					if p.id == leadID {
-						Text(ActorIdentity.initials(for: p.name))
-							.font(MaskinTypeface.sans(size * 0.38, weight: .semibold, relativeTo: .caption))
+						let initials = ActorIdentity.initials(for: p.name)
+						Text(initials)
+							.font(MaskinTypeface.sans(size * (initials.count > 2 ? 0.3 : 0.38), weight: .semibold, relativeTo: .caption))
+							.lineLimit(1)
 							.foregroundStyle(MaskinSurface.onInverse)
 							.frame(width: size, height: size)
 							.background(MaskinSurface.inverse, in: RoundedRectangle(cornerRadius: size * 0.3, style: .continuous))
