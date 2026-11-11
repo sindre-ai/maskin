@@ -129,6 +129,8 @@ type RequestOptions = {
 	signal?: AbortSignal
 	/** Keep the message of a structured 502/503/504 from our own API instead of the generic service text. */
 	keepServerErrorMessage?: boolean
+	/** Lets the request finish after the page is gone (tab closed, app backgrounded). */
+	keepalive?: boolean
 }
 
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
@@ -140,6 +142,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		credentials,
 		signal,
 		keepServerErrorMessage,
+		keepalive,
 	} = opts
 	const apiKey = getApiKey()
 
@@ -171,6 +174,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 			body: body !== undefined ? JSON.stringify(body) : undefined,
 			...(credentials ? { credentials } : {}),
 			...(signal ? { signal } : {}),
+			...(keepalive ? { keepalive } : {}),
 		})
 	} catch (err) {
 		// No status to report — offline, DNS, CORS or a dropped connection — but
@@ -1702,11 +1706,12 @@ export const api = {
 		},
 		get: (id: string, workspaceId: string) =>
 			request<ConversationDetailResponse>(`/conversations/${id}`, { workspaceId }),
-		create: (workspaceId: string, data: CreateConversationInput) =>
+		create: (workspaceId: string, data: CreateConversationInput, opts?: { keepalive?: boolean }) =>
 			request<ConversationDetailResponse>('/conversations', {
 				method: 'POST',
 				body: data,
 				workspaceId,
+				...opts,
 			}),
 		update: (id: string, workspaceId: string, data: UpdateConversationInput) =>
 			request<ConversationDetailResponse>(`/conversations/${id}`, {
@@ -1729,11 +1734,17 @@ export const api = {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<MessagesListResponse>(`/conversations/${id}/messages${qs}`, { workspaceId })
 		},
-		postMessage: (id: string, workspaceId: string, data: PostMessageInput) =>
+		postMessage: (
+			id: string,
+			workspaceId: string,
+			data: PostMessageInput,
+			opts?: { keepalive?: boolean },
+		) =>
 			request<MessageResponse>(`/conversations/${id}/messages`, {
 				method: 'POST',
 				body: data,
 				workspaceId,
+				...opts,
 			}),
 		editMessage: (id: string, workspaceId: string, messageId: number, data: EditMessageInput) =>
 			request<MessageResponse>(`/conversations/${id}/messages/${messageId}`, {

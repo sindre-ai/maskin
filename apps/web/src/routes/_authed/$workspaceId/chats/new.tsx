@@ -10,7 +10,7 @@ import { useObjects } from '@/hooks/use-objects'
 import { useUndoSend } from '@/hooks/use-undo-send'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import { deriveEntryAgentRole, trackChatSessionStarted } from '@/lib/analytics'
-import type { MessageMetadata } from '@/lib/api'
+import { type MessageMetadata, api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import {
 	type ChatSelectionAction,
@@ -358,16 +358,17 @@ function NewChatRoute() {
 				nonce: (prev?.nonce ?? 0) + 1,
 			}))
 		}
+		const createBody = {
+			title: deriveConversationTitle(content, recipients[0]?.name ?? 'New chat'),
+			participant_actor_ids: recipients.map((r) => r.id),
+			// An attachments-only send has empty text; the API accepts that when attachments ride along.
+			...(content || metadata.attachments ? { initial_message: content } : {}),
+			...((content || metadata.attachments) && Object.keys(metadata).length > 0
+				? { initial_message_metadata: metadata }
+				: {}),
+		}
 		const create = async () => {
-			const conversation = await createConversation.mutateAsync({
-				title: deriveConversationTitle(content, recipients[0]?.name ?? 'New chat'),
-				participant_actor_ids: recipients.map((r) => r.id),
-				// An attachments-only send has empty text; the API accepts that when attachments ride along.
-				...(content || metadata.attachments ? { initial_message: content } : {}),
-				...((content || metadata.attachments) && Object.keys(metadata).length > 0
-					? { initial_message_metadata: metadata }
-					: {}),
-			})
+			const conversation = await createConversation.mutateAsync(createBody)
 			const singleAgent =
 				recipients.length === 1 && recipients[0]?.type === 'agent' ? recipients[0] : null
 			trackChatSessionStarted({
@@ -386,7 +387,12 @@ function NewChatRoute() {
 		}
 
 		try {
-			await hold({ send: create, restore, onError: (err) => setError(describeSendError(err)) })
+			await hold({
+				send: create,
+				sendOnHide: () => api.conversations.create(workspaceId, createBody, { keepalive: true }),
+				restore,
+				onError: (err) => setError(describeSendError(err)),
+			})
 		} catch (err) {
 			setError(describeSendError(err))
 			throw err

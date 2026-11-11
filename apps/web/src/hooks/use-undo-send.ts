@@ -7,6 +7,11 @@ export const UNDO_SEND_WINDOW_MS = 5000
 export interface HeldSend {
 	/** The real send. Runs once, when the window ends or the held message is flushed. */
 	send: () => Promise<unknown>
+	/**
+	 * The send for a page that is going away (tab closed, app backgrounded): a request that
+	 * outlives the page, with no cache updates, since nothing will be there to read them.
+	 */
+	sendOnHide: () => Promise<unknown>
 	/** Puts the message back in the box: on Undo, and when a delayed send fails. */
 	restore: () => void
 	/** Reports a delayed send that failed, after the box was already cleared. */
@@ -16,8 +21,8 @@ export interface HeldSend {
 /**
  * Undo send. `hold` keeps a message in the client for `UNDO_SEND_WINDOW_MS` and posts nothing
  * until the window ends, so an undone message is never delivered, saved or seen by an agent.
- * Sending again, leaving the chat or closing the tab posts the held message at once: it is
- * never dropped and never reordered. With the flag off `hold` just runs `send`, and its
+ * Sending again, leaving the chat, closing the tab or sending the app to the background posts
+ * the held message at once: it is never dropped and never reordered. With the flag off `hold` just runs `send`, and its
  * rejection reaches the caller as before.
  *
  * `scopeKey` is whatever the held message belongs to (the conversation): when it changes the
@@ -54,6 +59,14 @@ export function useUndoSend(scopeKey?: string) {
 		)
 	}, [take])
 
+	// The page is going away: fire now, not behind an earlier send, and let the request outlive it.
+	// A failure here has nobody left to tell.
+	const flushOnHide = useCallback(() => {
+		take()
+			?.sendOnHide()
+			.catch(() => undefined)
+	}, [take])
+
 	const hold = useCallback(
 		async (next: HeldSend) => {
 			if (!enabled) {
@@ -75,9 +88,16 @@ export function useUndoSend(scopeKey?: string) {
 	// biome-ignore lint/correctness/useExhaustiveDependencies: scopeKey is the trigger, not a value the cleanup reads.
 	useLayoutEffect(() => flush, [flush, scopeKey])
 	useEffect(() => {
-		window.addEventListener('pagehide', flush)
-		return () => window.removeEventListener('pagehide', flush)
-	}, [flush])
+		const onVisibility = () => {
+			if (document.visibilityState === 'hidden') flushOnHide()
+		}
+		window.addEventListener('pagehide', flushOnHide)
+		document.addEventListener('visibilitychange', onVisibility)
+		return () => {
+			window.removeEventListener('pagehide', flushOnHide)
+			document.removeEventListener('visibilitychange', onVisibility)
+		}
+	}, [flushOnHide])
 
 	return { hold, undo, isHeld }
 }

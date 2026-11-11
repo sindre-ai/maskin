@@ -9,7 +9,7 @@ import {
 } from '@/hooks/use-conversation'
 import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
 import { useUndoSend } from '@/hooks/use-undo-send'
-import type { ConversationParticipantResponse, MessageMetadata } from '@/lib/api'
+import { type ConversationParticipantResponse, type MessageMetadata, api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import {
 	type ChatSelectionAction,
@@ -181,17 +181,18 @@ export function ThreadComposer({
 			}
 
 			try {
+				const body = {
+					content,
+					...(Object.keys(metadata).length > 0 ? { metadata } : {}),
+					...(reply ? { thread_root_id: reply.rootId, also_in_channel: reply.alsoInChannel } : {}),
+				}
 				await hold({
 					send: async () => {
-						await sendMessage.mutateAsync({
-							content,
-							...(Object.keys(metadata).length > 0 ? { metadata } : {}),
-							...(reply
-								? { thread_root_id: reply.rootId, also_in_channel: reply.alsoInChannel }
-								: {}),
-						})
+						await sendMessage.mutateAsync(body)
 						reply?.onSent?.()
 					},
+					sendOnHide: () =>
+						api.conversations.postMessage(conversationId, workspaceId, body, { keepalive: true }),
 					restore,
 				})
 				dispatch({ type: 'clear_all' })
@@ -207,7 +208,7 @@ export function ThreadComposer({
 				throw err
 			}
 		},
-		[selection, sendMessage, self?.id, reply, hold],
+		[selection, sendMessage, self?.id, reply, hold, conversationId, workspaceId],
 	)
 
 	// Name who you are answering (mockup 7850). "Message this conversation"
