@@ -386,6 +386,89 @@ test.describe('Chat message box with formatting', () => {
 			.toBe('tap **bold**')
 	})
 
+	test('typing a colon and two letters lists emoji, Enter picks one and the message carries it', async ({
+		page,
+		account,
+	}) => {
+		const { conversation } = await setUpConversation(account.api, account.workspaceId)
+		await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+		const box = page.getByLabel('Message this conversation')
+		await expect(box).toBeVisible({ timeout: 15_000 })
+		await box.click()
+
+		await page.keyboard.type('nice :smi')
+		const list = page.getByRole('listbox', { name: 'Emoji' })
+		await expect(list).toBeVisible()
+		await expect(list.getByRole('option').first()).toContainText(':smile:')
+		await page.screenshot({ path: 'test-results/rich-composer-emoji.png' })
+
+		// Enter picks the highlighted row; it does not send the message.
+		await page.keyboard.press('Enter')
+		await expect(list).toHaveCount(0)
+		await expect(box).toContainText('nice 😄')
+		expect(
+			(await account.api.listConversationMessages(conversation.id, account.workspaceId)).messages,
+		).toHaveLength(0)
+
+		await page.keyboard.press('Enter')
+		await expect
+			.poll(
+				async () => (await lastSent(account.api, conversation.id, account.workspaceId))?.content,
+			)
+			.toBe('nice 😄')
+	})
+
+	test('emoji list: arrows move, Escape keeps the typed text, a time stays plain', async ({
+		page,
+		account,
+	}) => {
+		const { conversation } = await setUpConversation(account.api, account.workspaceId)
+		await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+		const box = page.getByLabel('Message this conversation')
+		await expect(box).toBeVisible({ timeout: 15_000 })
+		await box.click()
+
+		await page.keyboard.type('at 12:30 ')
+		await expect(page.getByRole('listbox', { name: 'Emoji' })).toHaveCount(0)
+
+		await page.keyboard.type(':thumb')
+		const list = page.getByRole('listbox', { name: 'Emoji' })
+		await expect(list).toBeVisible()
+		await page.keyboard.press('ArrowDown')
+		await expect(list.getByRole('option').nth(1)).toHaveAttribute('aria-selected', 'true')
+		await page.keyboard.press('Escape')
+		await expect(list).toHaveCount(0)
+		await expect(box).toContainText('at 12:30 :thumb')
+	})
+
+	test('emoji list works at phone width: tap a row to pick it', async ({ page, account }) => {
+		await page.setViewportSize({ width: 375, height: 700 })
+		const { conversation } = await setUpConversation(account.api, account.workspaceId)
+		await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+		const box = page.getByLabel('Message this conversation')
+		await expect(box).toBeVisible({ timeout: 15_000 })
+		await box.click()
+		await page.keyboard.type(':rock')
+		const list = page.getByRole('listbox', { name: 'Emoji' })
+		await expect(list).toBeVisible()
+		const row = list.getByRole('option', { name: /:rocket:/ })
+		await expect(row).toBeVisible()
+		// The list stays on screen and above the line being typed, not over it.
+		const listBox = await list.boundingBox()
+		const typed = await box.boundingBox()
+		expect(listBox && listBox.x >= 0 && listBox.x + listBox.width <= 375).toBe(true)
+		expect(listBox && typed && listBox.y + listBox.height <= typed.y + typed.height).toBe(true)
+		await page.screenshot({ path: 'test-results/rich-composer-emoji-mobile.png' })
+		await row.click()
+		await expect(box).toContainText('🚀')
+		await page.getByRole('button', { name: 'Send message' }).click()
+		await expect
+			.poll(
+				async () => (await lastSent(account.api, conversation.id, account.workspaceId))?.content,
+			)
+			.toBe('🚀')
+	})
+
 	test('the new-chat page has the same box', async ({ page, account }) => {
 		await setUpConversation(account.api, account.workspaceId)
 		await page.goto(`/${account.workspaceId}/chats/new`)

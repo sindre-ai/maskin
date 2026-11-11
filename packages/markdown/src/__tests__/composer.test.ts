@@ -13,9 +13,14 @@ import {
 	createComposerExtensions,
 	shapeTablesForMarkdown,
 } from '../react/composer'
+import type { EmojiMenuState, EmojiMenuView } from '../react/emoji-suggestion'
 
 // Tiptap announces a new editor on the next tick, which is when the box sets its chips.
-async function open(markdown: string, tags: ComposerTag[] = []) {
+async function open(
+	markdown: string,
+	tags: ComposerTag[] = [],
+	extra: Partial<MarkdownComposerProps> = {},
+) {
 	const changes: ComposerValue[] = []
 	const triggers: (string | null)[] = []
 	const props: MarkdownComposerProps = {
@@ -31,6 +36,7 @@ async function open(markdown: string, tags: ComposerTag[] = []) {
 		onChange: (value) => changes.push(value),
 		onTriggerChange: (t) => triggers.push(t ? t.query : null),
 		onKeyDown: vi.fn(() => false),
+		...extra,
 	}
 	const handlers: { current: Handlers } = { current: { props, editor: null } }
 	const { extensions } = createComposerExtensions(handlers)
@@ -40,7 +46,7 @@ async function open(markdown: string, tags: ComposerTag[] = []) {
 	})
 	const md = () => editor.storage.markdown.getMarkdown() as string
 	await new Promise((resolve) => setTimeout(resolve, 0))
-	return { editor, md, changes, triggers }
+	return { editor, md, changes, triggers, props }
 }
 
 describe('message box markdown', () => {
@@ -167,5 +173,67 @@ describe('pasted tables', () => {
 
 	it('leaves HTML without a table alone', () => {
 		expect(shapeTablesForMarkdown('<p>hi</p>')).toBe('<p>hi</p>')
+	})
+})
+
+describe('message box emoji list', () => {
+	const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+	async function typeText(editor: Editor, text: string) {
+		for (const char of text) {
+			editor.commands.insertContent(char)
+			await settle()
+		}
+	}
+	const enter = () => new KeyboardEvent('keydown', { key: 'Enter', cancelable: true })
+
+	function openWithEmoji(consumeKeys: boolean) {
+		const states: EmojiMenuState[] = []
+		const createEmojiView = vi.fn((state: EmojiMenuState): EmojiMenuView => {
+			states.push(state)
+			return {
+				update: (next) => states.push(next),
+				onKeyDown: () => consumeKeys,
+				destroy: () => {},
+			}
+		})
+		return { states, createEmojiView }
+	}
+
+	it('lists emoji after a colon and two letters, and a pick swaps the typed text', async () => {
+		const { states, createEmojiView } = openWithEmoji(false)
+		const { editor, md } = await open('', [], { createEmojiView })
+		await typeText(editor, 'hi :smi')
+		const smile = states.at(-1)?.items.find((i) => i.shortcode === 'smile')
+		expect(smile).toBeDefined()
+		if (smile) states.at(-1)?.select(smile)
+		expect(md().trim()).toBe('hi 😄')
+		editor.destroy()
+	})
+
+	it('hands Enter to the open list before the message is sent', async () => {
+		const { createEmojiView } = openWithEmoji(true)
+		const { editor, props } = await open('', [], { createEmojiView })
+		await typeText(editor, ':smi')
+		const handled = editor.view.someProp('handleKeyDown', (f) => f(editor.view, enter()))
+		expect(handled).toBe(true)
+		expect(props.onKeyDown).not.toHaveBeenCalled()
+		editor.destroy()
+	})
+
+	it('leaves Enter to the box when the list is closed', async () => {
+		const { createEmojiView } = openWithEmoji(true)
+		const { editor, props } = await open('', [], { createEmojiView })
+		await typeText(editor, 'no emoji here')
+		editor.view.someProp('handleKeyDown', (f) => f(editor.view, enter()))
+		expect(createEmojiView).not.toHaveBeenCalled()
+		expect(props.onKeyDown).toHaveBeenCalled()
+		editor.destroy()
+	})
+
+	it('types a colon as plain text when the host paints no list', async () => {
+		const { editor, md } = await open('')
+		await typeText(editor, 'at 12:30 or :smi')
+		expect(md().trim()).toBe('at 12:30 or :smi')
+		editor.destroy()
 	})
 })

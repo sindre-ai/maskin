@@ -9,6 +9,7 @@ import type { EditorState } from '@tiptap/pm/state'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'react'
 import { MarkdownEditor } from './editor'
+import { type EmojiMenuState, type EmojiMenuView, EmojiSuggestion } from './emoji-suggestion'
 
 export interface ComposerTag {
 	id: string
@@ -80,6 +81,11 @@ export interface MarkdownComposerProps {
 	 * while the picker is open.
 	 */
 	onKeyDown: (event: KeyboardEvent) => boolean
+	/**
+	 * Paints the emoji list that opens when the person types a colon and two letters (":smi").
+	 * Without it the colon stays plain text.
+	 */
+	createEmojiView?: (state: EmojiMenuState) => EmojiMenuView
 }
 
 const MENTION_NODE = 'composerMention'
@@ -96,6 +102,13 @@ const ACTIVE_NAMES: [ComposerFormat, string][] = [
 	['code', 'code'],
 	['codeBlock', 'codeBlock'],
 ]
+
+// What the list is when the host paints none: it consumes no key and shows nothing.
+const NO_EMOJI_VIEW: EmojiMenuView = {
+	update() {},
+	onKeyDown: () => false,
+	destroy() {},
+}
 
 function createMentionNode(chipClass: (id: string) => string) {
 	return Node.create({
@@ -336,8 +349,13 @@ export function createComposerExtensions(handlers: { current: Handlers }) {
 		lastActive = key
 		handlers.current.props.onActiveFormatsChange?.(active)
 	}
+	// Ahead of composerKeys, so Enter picks the highlighted emoji instead of sending the message.
+	const emoji = EmojiSuggestion.extend({ priority: 1100 }).configure({
+		createView: (state) => handlers.current.props.createEmojiView?.(state) ?? NO_EMOJI_VIEW,
+	})
 	const extensions = [
 		createMentionNode((id) => handlers.current.props.chipClass(id)),
+		emoji,
 		Extension.create({
 			name: 'composerBehaviour',
 			onBeforeCreate() {

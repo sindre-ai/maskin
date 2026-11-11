@@ -1,3 +1,4 @@
+import { createEmojiMenuView } from '@/components/chat/emoji-menu'
 import { detectMentionTrigger } from '@/components/chat/mention-picker'
 import { tagChipClass } from '@/components/chat/tag-chip'
 import { cn } from '@/lib/cn'
@@ -16,7 +17,10 @@ const MarkdownComposer = lazy(() =>
 )
 
 export interface RichComposerInputProps
-	extends Omit<MarkdownComposerProps, 'chipClass' | 'detectTrigger' | 'className'> {
+	extends Omit<
+		MarkdownComposerProps,
+		'chipClass' | 'detectTrigger' | 'className' | 'createEmojiView'
+	> {
 	selfActorId: string | null
 	/** Sizes the box (min and max height). */
 	className?: string
@@ -25,6 +29,7 @@ export interface RichComposerInputProps
 /**
  * `<RichComposerInput>` is the chat message box with formatting: bold, italic, strikethrough,
  * inline code, code blocks, quotes, lists and links, by typing markdown or with the shortcuts.
+ * Typing a colon and two letters (":smi") lists emoji to pick from.
  * `@` tags stay chips inside the sentence, like the plain tag input. The value is markdown.
  */
 export const RichComposerInput = forwardRef<MarkdownComposerHandle, RichComposerInputProps>(
@@ -40,6 +45,7 @@ export const RichComposerInput = forwardRef<MarkdownComposerHandle, RichComposer
 				<MarkdownComposer
 					ref={ref}
 					{...rest}
+					createEmojiView={createEmojiMenuView}
 					chipClass={(id) => tagChipClass('card', id === selfActorId)}
 					detectTrigger={detectMentionTrigger}
 					className={cn(
