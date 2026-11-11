@@ -180,7 +180,8 @@ describe('A thread session posting into the chat (Integration)', () => {
 		await vi.waitFor(() => expect(track).toHaveBeenCalledTimes(1))
 		expect(lastReported()).toMatchObject({
 			sessionThreadRootId: null,
-			replyThreadRootId: null,
+			// An interim post from a top-level turn starts a thread under that message.
+			replyThreadRootId: mainMessageId,
 			originThreadRootId: null,
 			path: 'session',
 		})

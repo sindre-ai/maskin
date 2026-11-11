@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { integrations } from '@maskin/db/schema'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { decrypt, encrypt } from '../../crypto'
 import { recordEvent } from '../../events/record-event'
 import { logger } from '../../logger'
@@ -222,6 +222,7 @@ export class TokenManager {
 						owner.createdBy,
 						provider.config.name,
 					),
+				withRefreshLock: (fn) => this.withRefreshLock(db, integrationId, fn),
 			})
 		} catch (err) {
 			// Mirror doRefresh: a handler that reports the grant as gone flips the
@@ -239,6 +240,35 @@ export class TokenManager {
 			}
 			throw err
 		}
+	}
+
+	/**
+	 * Serialise renewals of one integration across every server. The in-flight map
+	 * above only covers this process; a rotating refresh token is burned by the
+	 * first use, so a second server renewing at once would strand the integration.
+	 *
+	 * The lock is transaction-scoped and released when the transaction ends. The
+	 * handler persists through the pool, not this transaction, so its write is
+	 * committed before the next waiter reads the credentials.
+	 */
+	private withRefreshLock<T>(
+		db: Database,
+		integrationId: string,
+		fn: (current: StoredCredentials) => Promise<T>,
+	): Promise<T> {
+		return db.transaction(async (tx) => {
+			await tx.execute(
+				sql`SELECT pg_advisory_xact_lock(hashtextextended(${`integration-refresh:${integrationId}`}::text, 0))`,
+			)
+			const [row] = await tx
+				.select()
+				.from(integrations)
+				.where(eq(integrations.id, integrationId))
+				.limit(1)
+			if (!row) throw new Error(`Integration ${integrationId} not found`)
+			const current: StoredCredentials = JSON.parse(decrypt(requireCredentials(row)))
+			return fn(current)
+		})
 	}
 
 	private async doRefresh(

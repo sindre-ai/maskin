@@ -201,9 +201,8 @@ struct TeamLayoutTests {
 		]
 		let layout = build(rows, flows: flows, archived: [chatConvo("z")], query: "road")
 		#expect(layout.tiles.map(\.id) == ["p"])
-		#expect(layout.rowIDs("flows") == ["flow:f3"])
-		#expect(layout.section("flows")?.moreLabel == nil)
-		#expect(layout.sections.filter { $0.kind == .time }.flatMap { $0.rows.map(\.id) } == ["a"])
+		#expect(layout.rowIDs("results") == ["flow:f3", "a"], "one ranked list: a name match before a preview-only match")
+		#expect(layout.section("results")?.count == 2)
 		#expect(layout.showsArchived == false)
 		#expect(layout.isFiltering)
 
@@ -211,6 +210,33 @@ struct TeamLayoutTests {
 		#expect(none.empty == .noResults("zzz"))
 		#expect(none.empty?.title == "No results for “zzz”")
 		#expect(none.empty?.action == "Search all of Maskin")
+	}
+
+	@Test("search ranks the chat with the person named like the query above newer chats that only contain it")
+	func searchRanksNameMatches() {
+		let cco = ChatParticipant(id: "cco", name: "CCO", kind: .agent)
+		let accountant = ChatParticipant(id: "acc", name: "Accountant Ida", kind: .human)
+		let ccoCompany = ChatParticipant(id: "ccoc", name: "CCOmpany", kind: .human)
+		let rows = [
+			chatConvo("acct", last: ago(hours: 1), participants: [chatMe, accountant]),
+			chatConvo("snip", last: ago(hours: 2), snippet: "ask the cco about it"),
+			chatConvo("pre", last: ago(hours: 3), participants: [chatMe, ccoCompany]),
+			chatConvo("dm", last: ago(hours: 30), participants: [chatMe, cco]),
+			chatConvo("dm2", title: "CCO plan", last: ago(hours: 20), participants: [chatMe, cco, ida]),
+		]
+		for grouping in [TeamDisplayOptions.Grouping.byTime, .newestFirst] {
+			let layout = build(rows, options: TeamDisplayOptions(grouping: grouping), query: "cco")
+			#expect(layout.sections.count == 1)
+			#expect(
+				layout.sections.flatMap { $0.rows.map(\.id) } == ["dm2", "dm", "pre", "acct", "snip"],
+				"whole word first, then starts-with, then inside another word, then preview only; newest first inside each")
+		}
+		let pinned = build([chatConvo("pinned", last: ago(hours: 30), pinned: true, participants: [chatMe, cco])] + rows, query: "cco")
+		#expect(pinned.tiles.map(\.id) == ["pinned"], "pinned matches stay in the tiles")
+		let byPerson = build(rows, options: TeamDisplayOptions(grouping: .byPerson), query: "cco")
+		let people = byPerson.sections.flatMap { $0.rows.map(\.id) }
+		#expect(people.firstIndex(of: "person:cco")! < people.firstIndex(of: "person:ccoc")!)
+		#expect(people.firstIndex(of: "person:ccoc")! < people.firstIndex(of: "person:acc")!)
 	}
 
 	@Test("a search also finds archived chats, keeps the Archived row for them and is not a dead end")

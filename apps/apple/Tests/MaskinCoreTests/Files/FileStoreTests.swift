@@ -30,6 +30,9 @@ struct FileContentKindTests {
 		("audio/mpeg", .audio),
 		("audio/mp4", .audio),
 		("audio/wav", .audio),
+		("video/mp4", .video),
+		("video/quicktime", .video),
+		("video/mp4; codecs=avc1", .video),
 		("application/zip", .other),
 	])
 	func routes(mime: String, kind: FileContentKind) {
@@ -42,6 +45,34 @@ struct FileContentKindTests {
 		#expect(FileContentKind.classify(mimeType: "application/octet-stream", name: "scan.pdf") == .pdf)
 		#expect(FileContentKind.classify(mimeType: "application/octet-stream", name: "blob.bin") == .other)
 		#expect(FileContentKind.classify(mimeType: "application/octet-stream", name: "Memo.M4A") == .audio)
+		#expect(FileContentKind.classify(mimeType: "application/octet-stream", name: "clip.mp4") == .video)
+		#expect(FileContentKind.classify(mimeType: "", name: "IMG_0042.MOV") == .video)
+		#expect(FileContentKind.classify(mimeType: "application/octet-stream", name: "clip.m4v") == .video)
+	}
+
+	@Test("a video has its own label")
+	func videoLabel() {
+		#expect(FileContentKind.label(forMime: "video/mp4") == "Video")
+	}
+}
+
+@Suite("FileVideo")
+struct FileVideoTests {
+	@Test("keeps the file's own extension, else takes one from the MIME type")
+	func fileExtension() {
+		#expect(FileVideo.fileExtension(mimeType: "video/mp4", name: "Clip.MOV") == "mov")
+		#expect(FileVideo.fileExtension(mimeType: "video/quicktime", name: "clip") == "mov")
+		#expect(FileVideo.fileExtension(mimeType: "video/x-m4v", name: "") == "m4v")
+		#expect(FileVideo.fileExtension(mimeType: "video/mp4; codecs=avc1", name: "") == "mp4")
+		#expect(FileVideo.fileExtension(mimeType: "video/webm", name: "a.b/../c") == "mp4")
+	}
+
+	@Test("frame shape follows the video, portrait included, and unreadable sizes read as 16:9")
+	func aspectRatio() {
+		#expect(FileVideo.aspectRatio(width: 540, height: 960) == 540.0 / 960.0)
+		#expect(FileVideo.aspectRatio(width: -960, height: 540) == 960.0 / 540.0)
+		#expect(FileVideo.aspectRatio(width: 0, height: 0) == 16.0 / 9.0)
+		#expect(FileVideo.aspectRatio(width: .nan, height: 100) == 16.0 / 9.0)
 	}
 }
 

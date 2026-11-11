@@ -958,6 +958,9 @@ export const api = {
 				receive_subdomain?: string
 				install_new_org?: boolean
 				origin?: string
+				// Deepdots signs in with these (the connect route stores nothing if they fail).
+				email?: string
+				password?: string
 			},
 		) =>
 			request<{

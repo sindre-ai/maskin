@@ -29,4 +29,12 @@ struct ActorSearchTests {
 		#expect(names("zz", in: ["Ann"]).isEmpty)
 		#expect(ActorSearch.rank(name: "Ann", query: "zz") == nil)
 	}
+
+	@Test func wholeWordIsNotAWordPrefix() {
+		#expect(ActorSearch.isWholeWord(name: "CCO", query: "cco"))
+		#expect(ActorSearch.isWholeWord(name: "Ask the CCO", query: " cco "))
+		#expect(!ActorSearch.isWholeWord(name: "Accounting", query: "cco"))
+		#expect(!ActorSearch.isWholeWord(name: "CCOmpany", query: "cco"))
+		#expect(!ActorSearch.isWholeWord(name: "Ann", query: ""))
+	}
 }
