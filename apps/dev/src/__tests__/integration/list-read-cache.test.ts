@@ -64,6 +64,9 @@ describe('List read cache Integration', () => {
 		expect(res.status).toBe(200)
 		return ((await res.json()) as { conversations: ListedConversation[] }).conversations
 	}
+	// The list can hold chats this test did not create, so the tests that count chats look only at their own.
+	const listOwn = async (actorId: string, ids: string[]) =>
+		(await listChats(actorId)).filter((c) => ids.includes(c.id))
 	const createChat = async (actorId: string, title: string, participants: string[] = []) => {
 		const res = await call(actorId, 'POST', '/api/conversations', {
 			title,
@@ -85,26 +88,27 @@ describe('List read cache Integration', () => {
 
 	it('serves each person their own chat list, repeat reads from the cache', async () => {
 		const shared = await createChat(ownerId, 'Shared')
-		await createChat(ownerId, 'Owner only')
+		const ownerOnly = await createChat(ownerId, 'Owner only')
+		const own = [shared.id, ownerOnly.id]
 		await call(ownerId, 'POST', `/api/conversations/${shared.id}/participants`, {
 			actor_ids: [otherId],
 		})
 
-		const ownerFirst = await listChats(ownerId)
-		const otherFirst = await listChats(otherId)
+		const ownerFirst = await listOwn(ownerId, own)
+		const otherFirst = await listOwn(otherId, own)
 		expect(ownerFirst.map((c) => c.title).sort()).toEqual(['Owner only', 'Shared'])
 		expect(otherFirst.map((c) => c.title)).toEqual(['Shared'])
 
 		// Changed behind the cache's back (no request, so no eviction): repeat reads still answer
 		// from the cache, and each person still gets their own body.
 		await db.update(conversations).set({ title: 'Renamed' }).where(eq(conversations.id, shared.id))
-		expect(await listChats(ownerId)).toEqual(ownerFirst)
-		expect(await listChats(otherId)).toEqual(otherFirst)
+		expect(await listOwn(ownerId, own)).toEqual(ownerFirst)
+		expect(await listOwn(otherId, own)).toEqual(otherFirst)
 	})
 
 	it('gives a removed member no stale hit', async () => {
 		const chat = await createChat(ownerId, 'Leaving soon', [otherId])
-		expect((await listChats(otherId)).map((c) => c.id)).toEqual([chat.id])
+		expect((await listOwn(otherId, [chat.id])).map((c) => c.id)).toEqual([chat.id])
 
 		const removed = await call(
 			ownerId,
@@ -113,9 +117,9 @@ describe('List read cache Integration', () => {
 		)
 		expect(removed.status).toBe(204)
 
-		expect(await listChats(otherId)).toEqual([])
+		expect(await listOwn(otherId, [chat.id])).toEqual([])
 		// The owner still has it.
-		expect((await listChats(ownerId)).map((c) => c.id)).toEqual([chat.id])
+		expect((await listOwn(ownerId, [chat.id])).map((c) => c.id)).toEqual([chat.id])
 	})
 
 	it('shows a person their own write straight away', async () => {
