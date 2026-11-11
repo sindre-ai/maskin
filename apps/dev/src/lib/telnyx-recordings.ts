@@ -109,6 +109,24 @@ export async function listRecordings(
 	}
 }
 
+/**
+ * A fresh mp3 link for one recording. The links in the list are only good for 10
+ * minutes, so the caller asks for a new one right before each download.
+ */
+export async function getRecordingDownloadUrl(
+	apiKey: string,
+	recordingId: string,
+	fetchFn: typeof fetch = fetch,
+): Promise<string | null> {
+	const res = await fetchFn(`${TELNYX_API}/recordings/${encodeURIComponent(recordingId)}`, {
+		headers: { Authorization: `Bearer ${apiKey}` },
+		signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+	})
+	if (!res.ok) throw await telnyxError(res)
+	const body = (await res.json()) as { data?: RawRecording }
+	return str(body.data?.download_urls?.mp3)
+}
+
 /** The mp3 bytes. The download URL is pre-signed, so no auth header goes with it. */
 export async function downloadRecording(
 	url: string,

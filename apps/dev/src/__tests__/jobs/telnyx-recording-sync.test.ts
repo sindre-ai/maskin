@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { recordingDescription, recordingFileName } from '../../jobs/telnyx-recording-sync'
-import { MAX_RECORDING_BYTES, downloadRecording, listRecordings } from '../../lib/telnyx-recordings'
+import {
+	MAX_RECORDING_BYTES,
+	downloadRecording,
+	getRecordingDownloadUrl,
+	listRecordings,
+} from '../../lib/telnyx-recordings'
 
 const rec = {
 	id: 'f5cdc44a-9bd1-4f3a-86a0-3a859fca01f3',
@@ -106,5 +111,22 @@ describe('downloadRecording', () => {
 		const fetchFn = (async () =>
 			new Response(Buffer.alloc(MAX_RECORDING_BYTES + 1))) as unknown as typeof fetch
 		await expect(downloadRecording('https://x.test/a.mp3', fetchFn)).rejects.toThrow('cap')
+	})
+})
+
+describe('getRecordingDownloadUrl', () => {
+	it('asks for the one recording and returns its mp3 link', async () => {
+		const fetchFn = (async (url: string) => {
+			expect(url).toBe('https://api.telnyx.com/v2/recordings/abc')
+			return json({ data: { id: 'abc', download_urls: { mp3: 'https://example.test/fresh.mp3' } } })
+		}) as unknown as typeof fetch
+		expect(await getRecordingDownloadUrl('k', 'abc', fetchFn)).toBe(
+			'https://example.test/fresh.mp3',
+		)
+	})
+
+	it('returns null when Telnyx has no mp3 link', async () => {
+		const fetchFn = (async () => json({ data: { id: 'abc' } })) as unknown as typeof fetch
+		expect(await getRecordingDownloadUrl('k', 'abc', fetchFn)).toBeNull()
 	})
 })

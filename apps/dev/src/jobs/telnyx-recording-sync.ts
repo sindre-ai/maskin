@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { Database } from '@maskin/db'
-import { files, integrations, objects, relationships } from '@maskin/db/schema'
+import { events, files, integrations, objects, relationships } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { Cron } from 'croner'
 import { and, asc, eq, inArray, like, or, sql } from 'drizzle-orm'
@@ -10,7 +10,12 @@ import { fileStorageKey } from '../lib/file-urls'
 import { getCredential } from '../lib/integrations/lookup'
 import { logger } from '../lib/logger'
 import { derivePairEndpointKinds } from '../lib/relationships-endpoint-kind'
-import { type TelnyxRecording, downloadRecording, listRecordings } from '../lib/telnyx-recordings'
+import {
+	type TelnyxRecording,
+	downloadRecording,
+	getRecordingDownloadUrl,
+	listRecordings,
+} from '../lib/telnyx-recordings'
 
 /**
  * Saves every Telnyx call recording as a Maskin file. No model in the path.
@@ -20,10 +25,13 @@ import { type TelnyxRecording, downloadRecording, listRecordings } from '../lib/
  * phoned and to the outbound loop. The same pass is the backfill: it looks at
  * everything Telnyx still holds since `backfillFrom`, not only new calls.
  *
- * Idempotent by Telnyx recording id: the id is written into the file description
- * ("Telnyx recording <id>", the same words the hand-saved files carry), and a
- * recording whose id is found in a description is never fetched again. A recording
- * that fails to download is logged and left alone, so the next run retries it.
+ * Idempotent by Telnyx recording id, in two places. The id is written into the file
+ * description ("Telnyx recording <id>", the same words the hand-saved files carry),
+ * and into the data of the file's "created" event. The event outlives the file, so a
+ * recording that was saved and later erased on request is not saved again: the
+ * recording stays on Telnyx for a year, and without this the next run would bring it
+ * back. A recording that fails to download or store is logged and left alone, with
+ * nothing half-written, so the next run retries it.
  *
  * The Telnyx key is read through the Keychain's own choke point (getCredential),
  * as `actorId`, so the grant check and the audit row apply. That actor must have
@@ -49,18 +57,49 @@ export interface TelnyxRecordingSyncConfig {
 }
 
 export interface TelnyxRecordingSyncDeps {
+	/** The Telnyx key, or null (logged) when it cannot be had. */
+	readKey: (db: Database, config: TelnyxRecordingSyncConfig) => Promise<string | null>
 	listRecordings: typeof listRecordings
+	getRecordingDownloadUrl: typeof getRecordingDownloadUrl
 	downloadRecording: typeof downloadRecording
 	now: () => Date
 }
 
 const defaultDeps: TelnyxRecordingSyncDeps = {
+	readKey,
 	listRecordings,
+	getRecordingDownloadUrl,
 	downloadRecording,
 	now: () => new Date(),
 }
 
 type ContactMatch = { id: string; name: string | null; role: string | null; company: string | null }
+
+async function readKey(db: Database, config: TelnyxRecordingSyncConfig): Promise<string | null> {
+	const { workspaceId, actorId, keyName } = config
+	const [row] = await db
+		.select({ id: integrations.id })
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.workspaceId, workspaceId),
+				eq(integrations.providerMode, 'byo_apikey'),
+				eq(integrations.displayName, keyName),
+				eq(integrations.status, 'active'),
+			),
+		)
+		.limit(1)
+	if (!row) {
+		logger.error('Telnyx recording sync: no active Keychain key with that name', { keyName })
+		return null
+	}
+	const credential = await getCredential(db, workspaceId, row.id, {
+		requestingActorId: actorId,
+		outboundTarget: 'api.telnyx.com',
+		requestId: `telnyx-recording-sync:${randomUUID()}`,
+	})
+	return credential.value
+}
 
 export class TelnyxRecordingSyncJob {
 	private job: Cron | null = null
@@ -98,7 +137,7 @@ export class TelnyxRecordingSyncJob {
 		this.running = true
 		try {
 			const tickStart = this.deps.now()
-			const apiKey = await this.readKey()
+			const apiKey = await this.deps.readKey(this.db, this.config)
 			if (!apiKey) return 0
 			const since = new Date(
 				Math.max(this.config.backfillFrom.getTime(), this.completeThrough.getTime()),
@@ -113,7 +152,7 @@ export class TelnyxRecordingSyncJob {
 			let saved = 0
 			let failed = 0
 			for (const rec of todo.slice(0, MAX_NEW_PER_TICK)) {
-				if (await this.saveOne(rec)) saved++
+				if (await this.saveOne(rec, apiKey)) saved++
 				else failed++
 			}
 			const leftOver = Math.max(0, todo.length - MAX_NEW_PER_TICK)
@@ -141,35 +180,14 @@ export class TelnyxRecordingSyncJob {
 		}
 	}
 
-	private async readKey(): Promise<string | null> {
-		const { workspaceId, actorId, keyName } = this.config
-		const [row] = await this.db
-			.select({ id: integrations.id })
-			.from(integrations)
-			.where(
-				and(
-					eq(integrations.workspaceId, workspaceId),
-					eq(integrations.providerMode, 'byo_apikey'),
-					eq(integrations.displayName, keyName),
-					eq(integrations.status, 'active'),
-				),
-			)
-			.limit(1)
-		if (!row) {
-			logger.error('Telnyx recording sync: no active Keychain key with that name', { keyName })
-			return null
-		}
-		const credential = await getCredential(this.db, workspaceId, row.id, {
-			requestingActorId: actorId,
-			outboundTarget: 'api.telnyx.com',
-			requestId: `telnyx-recording-sync:${randomUUID()}`,
-		})
-		return credential.value
-	}
-
-	/** Which of these Telnyx ids already sit in a file description. */
+	/**
+	 * Which of these Telnyx ids were already saved: a file with the id in its
+	 * description, or a "created" file event carrying it. The event stays after the
+	 * file is erased, which is what keeps an erased recording from coming back.
+	 */
 	private async findStoredIds(ids: string[], since: Date): Promise<Set<string>> {
 		const found = new Set<string>()
+		const sinceIso = since.toISOString()
 		for (let i = 0; i < ids.length; i += DEDUPE_CHUNK) {
 			const chunk = ids.slice(i, i + DEDUPE_CHUNK)
 			const rows = await this.db
@@ -178,13 +196,26 @@ export class TelnyxRecordingSyncJob {
 				.where(
 					and(
 						eq(files.workspaceId, this.config.workspaceId),
-						sql`${files.createdAt} >= ${since.toISOString()}`,
+						sql`${files.createdAt} >= ${sinceIso}`,
 						or(...chunk.map((id) => like(files.description, `%${id}%`))),
 					),
 				)
 			for (const { description } of rows) {
 				for (const id of chunk) if (description?.includes(id)) found.add(id)
 			}
+			const eventRows = await this.db
+				.select({ recordingId: sql<string>`${events.data}->>'telnyxRecordingId'` })
+				.from(events)
+				.where(
+					and(
+						eq(events.workspaceId, this.config.workspaceId),
+						eq(events.entityType, 'file'),
+						eq(events.action, 'created'),
+						sql`${events.createdAt} >= ${sinceIso}`,
+						inArray(sql<string>`${events.data}->>'telnyxRecordingId'`, chunk),
+					),
+				)
+			for (const { recordingId } of eventRows) found.add(recordingId)
 		}
 		return found
 	}
@@ -232,61 +263,79 @@ export class TelnyxRecordingSyncJob {
 		}
 	}
 
-	/** True when the recording is now stored. A failure is logged and leaves nothing behind. */
-	private async saveOne(rec: TelnyxRecording): Promise<boolean> {
+	/**
+	 * True when the recording is now stored: bytes, file row, both links and the event
+	 * all committed together. A failure is logged and leaves nothing behind, so the
+	 * recording is picked up again on the next run.
+	 */
+	private async saveOne(rec: TelnyxRecording, apiKey: string): Promise<boolean> {
 		const { workspaceId, actorId, loopId } = this.config
+		const fileId = randomUUID()
+		const storageKey = fileStorageKey(workspaceId, fileId)
+		let stored = false
 		try {
-			if (!rec.mp3Url) throw new Error('recording has no mp3 download link')
-			const bytes = await this.deps.downloadRecording(rec.mp3Url)
+			// The link in the list is good for 10 minutes only; ask for a fresh one.
+			const url = await this.deps.getRecordingDownloadUrl(apiKey, rec.id)
+			if (!url) throw new Error('recording has no mp3 download link')
+			const bytes = await this.deps.downloadRecording(url)
 			const contact = await this.matchContact(rec)
 
-			const fileId = randomUUID()
-			const storageKey = fileStorageKey(workspaceId, fileId)
-			await this.db.insert(files).values({
-				id: fileId,
-				workspaceId,
-				name: recordingFileName(rec, contact),
-				description: recordingDescription(rec, contact),
-				tags: ['erase-on-request'],
-				mimeType: 'audio/mpeg',
-				sizeBytes: bytes.byteLength,
-				storageKey,
-				contentHash: sha256Hex(bytes),
-				createdBy: actorId,
-			})
-			try {
-				await this.storage.put(storageKey, bytes)
-			} catch (err) {
-				await this.db.delete(files).where(eq(files.id, fileId))
-				throw err
-			}
-
-			for (const sourceId of contact ? [contact.id, loopId] : [loopId]) {
-				const { sourceType, targetType } = await derivePairEndpointKinds(
-					this.db,
+			await this.storage.put(storageKey, bytes)
+			stored = true
+			await this.db.transaction(async (tx) => {
+				await tx.insert(files).values({
+					id: fileId,
 					workspaceId,
-					sourceId,
-					fileId,
-				)
-				await this.db.insert(relationships).values({
-					sourceType,
-					sourceId,
-					targetType,
-					targetId: fileId,
-					type: 'attached',
+					name: recordingFileName(rec, contact),
+					description: recordingDescription(rec, contact),
+					tags: ['erase-on-request'],
+					mimeType: 'audio/mpeg',
+					sizeBytes: bytes.byteLength,
+					storageKey,
+					contentHash: sha256Hex(bytes),
 					createdBy: actorId,
 				})
-			}
-			await recordEvent(this.db, {
-				workspaceId,
-				actorId,
-				action: 'created',
-				entityType: 'file',
-				entityId: fileId,
-				data: { id: fileId, mimeType: 'audio/mpeg', sizeBytes: bytes.byteLength },
+				for (const sourceId of contact ? [contact.id, loopId] : [loopId]) {
+					const { sourceType, targetType } = await derivePairEndpointKinds(
+						tx,
+						workspaceId,
+						sourceId,
+						fileId,
+					)
+					await tx.insert(relationships).values({
+						sourceType,
+						sourceId,
+						targetType,
+						targetId: fileId,
+						type: 'attached',
+						createdBy: actorId,
+					})
+				}
+				await recordEvent(tx, {
+					workspaceId,
+					actorId,
+					action: 'created',
+					entityType: 'file',
+					entityId: fileId,
+					// telnyxRecordingId outlives the file: it is how an erased recording stays erased.
+					data: {
+						id: fileId,
+						mimeType: 'audio/mpeg',
+						sizeBytes: bytes.byteLength,
+						telnyxRecordingId: rec.id,
+					},
+				})
 			})
 			return true
 		} catch (err) {
+			if (stored) {
+				await this.storage.delete(storageKey).catch((e) => {
+					logger.error('Telnyx recording: orphan object left in storage', {
+						storageKey,
+						error: String(e),
+					})
+				})
+			}
 			logger.error('Telnyx recording not saved; will retry on the next run', {
 				recordingId: rec.id,
 				error: String(err),
