@@ -147,7 +147,7 @@ A person choosing the send option is what approves the text. You cannot approve 
 ## After the human decides
 
 - **Approved**: if you are allowed to send, send once. For email, \`gmail_send_email({ object_id })\`; for the other kinds, with your own send tool, exactly the text as it reads on the task. Then set the task \`done\`. If you have no tool to send it (for example no mail tool because Gmail is not connected), do not send: leave the task as it is and say in a comment that it is approved but cannot be sent from here.
-- **Edited**: the approval is withdrawn. Read the task again and wait for a new approval before you send.
+- **Edited**: the approval is withdrawn. You asked for review on this one, so read the task again and wait for a new approval before you send.
 - **Skipped**: set the task \`done\` with \`metadata.outcome = "skipped"\` and one line in a comment.
 - A task is never a way around a gate. A held contact or a do-not-contact flag gets a task for the human to decide, never a send.
 

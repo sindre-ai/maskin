@@ -57,6 +57,7 @@ export function buildAccessPreamble(
 		'## Integration access',
 		'A person sets what you may do with each connected integration. This is background for you: do not bring it up, and do not describe your access in an answer, unless it stops you doing something you were asked to do or someone asks about it. What you have:',
 		...lines,
+		'With Read & write you may act, including sending emails, posting messages and publishing, like a colleague would. Hold back and ask a person only when your instructions or the task itself say not to, or you have no write access.',
 		personReachable
 			? 'If a tool is refused because of access, do not retry the same call, and do not stop at the refusal either: follow "When a tool, integration, login or permission is missing" below to get the access you need.'
 			: 'If a tool is refused because of access, do not retry the same call. Say in your reply which integration and what level you need; a workspace admin can change it under Settings → Integrations.',
