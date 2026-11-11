@@ -195,7 +195,7 @@ const postFileTranscriptionRoute = createRoute({
 	'x-viewer-policy': 'writer',
 	tags: ['Transcriptions'],
 	summary: 'Transcribe an uploaded audio or video file',
-	description: `Reads a stored file, extracts its audio with ffmpeg, transcribes it in chunks on OpenRouter and returns the full text. Up to ${MAX_TRANSCRIBE_AUDIO_SECONDS / 60} minutes of audio. The cost OpenRouter reports is recorded against the workspace's plan usage, so the call is refused with 402 once the plan cap is reached and no prepaid credit remains, and with 403 for an enterprise workspace (it has no Maskin-funded plan to charge). Requires X-Workspace-Id and a writer role.`,
+	description: `Reads a stored file, extracts its audio with ffmpeg, transcribes it in chunks on OpenRouter and returns the full text. Up to ${MAX_TRANSCRIBE_AUDIO_SECONDS / 60} minutes of audio. The cost OpenRouter reports is recorded against the workspace's plan usage, so the call is refused with 402 once the plan cap is reached and no prepaid credit remains. An enterprise workspace is never capped, but its usage is still recorded. Requires X-Workspace-Id and a writer role.`,
 	request: {
 		headers: workspaceIdHeader,
 		params: idParamSchema,
@@ -215,7 +215,7 @@ const postFileTranscriptionRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		403: {
-			description: 'The workspace has no Maskin-funded plan to charge',
+			description: 'The caller has a read-only role in this workspace',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		404: {
@@ -291,18 +291,9 @@ app.openapi(postFileTranscriptionRoute, async (c) => {
 		.limit(1)
 	if (!workspace) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 
-	// Transcription runs on Maskin's OpenRouter account. An enterprise workspace
-	// brings its own credentials and has no plan to charge, so it must not reach it.
+	// Transcription runs on Maskin's OpenRouter account. An enterprise workspace is
+	// exempt from the plan cap (checkPlanCap returns early) but its spend is recorded.
 	const enterprise = isEnterprise(workspace)
-	if (enterprise) {
-		return c.json(
-			createApiError(
-				'FORBIDDEN',
-				'Transcription is billed to a Maskin plan and is not available to workspaces that bring their own LLM credentials.',
-			),
-			403,
-		)
-	}
 	// Throws PlanCapExceededError, which the app's error handler turns into a 402.
 	await checkPlanCap({
 		db,

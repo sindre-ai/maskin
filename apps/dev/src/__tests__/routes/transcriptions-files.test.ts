@@ -110,15 +110,24 @@ describe('POST /api/transcriptions/files/:id', () => {
 		expect(transcribeStoredFile).not.toHaveBeenCalled()
 	})
 
-	it('refuses an enterprise workspace, which has no Maskin plan to charge', async () => {
+	it('transcribes for an enterprise workspace, which is exempt from the plan cap', async () => {
 		const { app, mockResults } = setup()
 		const file = video()
 		mockResults.selectQueue = [[file], [planWorkspace({ enterpriseGranted: true })]]
+		vi.mocked(transcribeStoredFile).mockResolvedValue({
+			text: 'Hello.',
+			audioSeconds: 3,
+			chunks: 1,
+			model: 'mistralai/voxtral-small-transcribe-3-0',
+		})
 
 		const res = await app.request(post(file.id))
 
-		expect(res.status).toBe(403)
-		expect(transcribeStoredFile).not.toHaveBeenCalled()
+		expect(res.status).toBe(200)
+		expect(checkPlanCap).toHaveBeenCalledWith(
+			expect.objectContaining({ workspaceId, enterprise: true }),
+		)
+		expect(transcribeStoredFile).toHaveBeenCalled()
 	})
 
 	it('returns 404 for a file that is not in the header workspace', async () => {

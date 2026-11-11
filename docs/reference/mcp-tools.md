@@ -92,8 +92,8 @@ the usage page (and its model, agent and flow split) and the prepaid credit over
 
 - Before any work, `checkPlanCap` runs: over the cap with no credit balance is a 402
   `PLAN_CAP_EXCEEDED`, the same as starting a session.
-- An enterprise workspace brings its own credentials and has no plan to charge, so it gets a
-  403 instead of spending Maskin's key.
+- An enterprise workspace is exempt from the plan cap (`checkPlanCap` returns early), so it is
+  never refused with a 402. Its spend is still recorded in `workspace_ai_usage`.
 - Spend of chunks that succeeded is recorded even if a later chunk fails: it was charged.
 - Credit overage is settled the next time a session ends (the debit takes the period's whole
   overage minus what was already accounted), not at the moment of transcription.
