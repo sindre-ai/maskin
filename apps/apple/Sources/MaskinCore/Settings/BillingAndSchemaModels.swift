@@ -13,10 +13,17 @@ public struct BillingUsage: Sendable, Equatable {
 	public var creditBalanceCents: Int
 	/// Milliseconds until the usage period resets.
 	public var resetsInMs: Int?
+	/// Nil on a workspace that never went through the card step.
+	public var trialState: TrialState?
+
+	public enum TrialState: String, Sendable, Equatable {
+		case awaitingCard = "awaiting_card"
+		case started
+	}
 
 	public init(
 		plan: String, status: Status, usedCents: Int, capCents: Int?, creditBalanceCents: Int,
-		resetsInMs: Int?
+		resetsInMs: Int?, trialState: TrialState? = nil
 	) {
 		self.plan = plan
 		self.status = status
@@ -24,7 +31,11 @@ public struct BillingUsage: Sendable, Equatable {
 		self.capCents = capCents
 		self.creditBalanceCents = creditBalanceCents
 		self.resetsInMs = resetsInMs
+		self.trialState = trialState
 	}
+
+	/// Signed up through the card step and no card yet: nothing runs until the trial has started.
+	public var awaitingCard: Bool { trialState == .awaitingCard }
 
 	public var planLabel: String {
 		switch plan {
