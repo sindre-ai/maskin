@@ -552,7 +552,8 @@ jobs:
         run: |
           if ! timeout -k 10 240 pnpm --filter @maskin/e2e exec playwright install-deps chromium; then
             echo "::warning::playwright install-deps did not finish (Ubuntu mirror unreachable?). Continuing without the extra fonts; screenshot baselines on main may differ."
-            rm -rf "$HOME/.cache/playwright-apt"
+            # apt may leave root- or _apt-owned files in there; a failed cleanup must not fail the shard.
+            sudo rm -rf "$HOME/.cache/playwright-apt" || true
           fi
 
       - name: Run E2E tests (shard ${{ matrix.shard }}/7)
