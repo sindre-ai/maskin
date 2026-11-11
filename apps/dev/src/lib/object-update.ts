@@ -8,6 +8,7 @@ import {
 } from '@maskin/shared'
 import { and, eq, inArray, ne } from 'drizzle-orm'
 import type { z } from 'zod'
+import { trackSupportItemResolved } from './analytics/support-events'
 import { recordEvent } from './events/record-event'
 import { logger } from './logger'
 import { insertNotificationsWithEvents } from './notifications'
@@ -99,6 +100,17 @@ export async function applyObjectUpdate(
 		data: { changes },
 		provenance: { sessionId, entityKind: 'object' },
 	})
+
+	if (action === 'status_changed' && current.type === 'task') {
+		await trackSupportItemResolved(tx, {
+			workspaceId: current.workspaceId,
+			actorId,
+			taskId: id,
+			fromStatus: current.status,
+			toStatus: row.status,
+			resolvedAt: row.updatedAt ?? new Date(),
+		})
+	}
 
 	// Fan out a notification row to every subscriber when a bet reaches a
 	// terminal state (succeeded/failed/paused — see TERMINAL_BET_STATUSES).
