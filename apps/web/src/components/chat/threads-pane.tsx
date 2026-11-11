@@ -69,7 +69,7 @@ export function ThreadsPane({
 	return (
 		<div
 			className={cn('flex h-full min-h-0 w-full flex-col bg-surface-sunken', className)}
-			aria-label="Sessions"
+			aria-label="Threads"
 		>
 			{open ? (
 				<ThreadView
@@ -97,12 +97,12 @@ function ThreadsList({
 		threads.length === 0
 			? 'Nothing has been handed off yet.'
 			: waiting > 0
-				? `${waiting} ${waiting === 1 ? 'session is' : 'sessions are'} waiting on you.`
+				? `${waiting} ${waiting === 1 ? 'thread is' : 'threads are'} waiting on you.`
 				: failed > 0
-					? `${failed} ${failed === 1 ? 'session needs' : 'sessions need'} your attention.`
+					? `${failed} ${failed === 1 ? 'thread needs' : 'threads need'} your attention.`
 					: working > 0
-						? `${working} ${working === 1 ? 'session is' : 'sessions are'} working.`
-						: 'All sessions are done.'
+						? `${working} ${working === 1 ? 'thread is' : 'threads are'} working.`
+						: 'All threads are done.'
 	return (
 		<div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4">
 			<div>
@@ -111,7 +111,7 @@ function ThreadsList({
 			</div>
 			{threads.length === 0 ? (
 				<EmptyState
-					title="No sessions yet"
+					title="No threads yet"
 					description="When an agent in this chat hands work to another agent, it shows up here."
 				/>
 			) : (
@@ -209,7 +209,7 @@ export function ThreadView({
 						size="icon"
 						className="h-6 w-6"
 						onClick={onBack}
-						aria-label="Back to sessions"
+						aria-label="Back to threads"
 					>
 						<ArrowLeft size={14} />
 					</Button>
