@@ -23,6 +23,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { removeTriggerMetadataKey } from '../lib/trigger-metadata'
+import { fetchLastRunAt, triggerSearchCondition } from '../lib/trigger-queries'
 import { assertWorkspaceWriterRole, isWorkspaceWriter } from '../lib/workspace-auth'
 import { assertInWorkspace } from '../lib/workspace-scope'
 import { extractSlackChannelIds, runSlackTriggerSetup } from '../services/slack-trigger-setup'
@@ -245,14 +246,12 @@ const listTriggersQuerySchema = z.object({
 	// Filters combine with AND and apply to the rows and to X-Total-Count alike.
 	target_actor_id: z.string().uuid().optional(),
 	enabled: z.enum(['true', 'false']).optional(),
-	// Case-insensitive substring of the trigger name.
+	// Case-insensitive words, each of which must match the name, agent name or id,
+	// kind, status, schedule or a loop name. Never the prompt.
 	q: z.string().trim().min(1).max(200).optional(),
+	// Adds `lastRunAt` to each row. Off by default: it is one extra query.
+	include_last_run: z.enum(['true', 'false']).optional(),
 })
-
-/** Escape LIKE wildcards (percent, underscore) and the escape character itself. */
-function escapeLike(value: string): string {
-	return value.replace(/[%_\\]/g, '\\$&')
-}
 
 // GET /api/triggers
 const listTriggersRoute = createRoute({
@@ -291,8 +290,17 @@ app.openapi(listTriggersRoute, (async (c) => {
 	if (query.target_actor_id)
 		filterConditions.push(eq(triggers.targetActorId, query.target_actor_id))
 	if (query.enabled) filterConditions.push(eq(triggers.enabled, query.enabled === 'true'))
-	if (query.q) {
-		filterConditions.push(sql`${triggers.name} ILIKE ${`%${escapeLike(query.q)}%`} ESCAPE '\\'`)
+	const searchCondition = query.q ? triggerSearchCondition(query.q) : undefined
+	if (searchCondition) filterConditions.push(searchCondition)
+
+	const withLastRun = async <T extends { id: string }>(rows: T[]) => {
+		if (query.include_last_run !== 'true') return rows
+		const lastRun = await fetchLastRunAt(
+			db,
+			workspaceId,
+			rows.map((r) => r.id),
+		)
+		return rows.map((r) => ({ ...r, lastRunAt: lastRun.get(r.id) ?? null }))
 	}
 
 	if (limit === undefined) {
@@ -301,7 +309,9 @@ app.openapi(listTriggersRoute, (async (c) => {
 			.from(triggers)
 			.where(and(...filterConditions))
 		c.header('X-Total-Count', String(results.length))
-		return c.json(serializeArray(results) as z.infer<typeof triggerResponseSchema>[])
+		return c.json(
+			serializeArray(await withLastRun(results)) as z.infer<typeof triggerResponseSchema>[],
+		)
 	}
 
 	const cursorOn = Boolean(query.snapshot_at)
@@ -341,8 +351,52 @@ app.openapi(listTriggersRoute, (async (c) => {
 	])
 
 	c.header('X-Total-Count', String(totalRow[0]?.value ?? 0))
-	return c.json(serializeArray(results) as z.infer<typeof triggerResponseSchema>[])
+	return c.json(
+		serializeArray(await withLastRun(results)) as z.infer<typeof triggerResponseSchema>[],
+	)
 }) as RouteHandler<typeof listTriggersRoute, Env>)
+
+// GET /api/triggers/:id
+const getTriggerRoute = createRoute({
+	method: 'get',
+	path: '/{id}',
+	tags: ['triggers'],
+	summary: 'Get a trigger',
+	request: {
+		headers: workspaceIdHeader,
+		params: idParamSchema,
+	},
+	responses: {
+		200: {
+			description: 'The trigger, with when it last fired',
+			content: { 'application/json': { schema: triggerResponseSchema } },
+		},
+		404: {
+			description: 'Trigger not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(getTriggerRoute, (async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id } = c.req.valid('param')
+
+	const [row] = await db
+		.select()
+		.from(triggers)
+		.where(and(eq(triggers.id, id), eq(triggers.workspaceId, workspaceId)))
+		.limit(1)
+	if (!row) return c.json(createApiError('NOT_FOUND', 'Trigger not found'), 404)
+
+	const lastRun = await fetchLastRunAt(db, workspaceId, [id])
+	return c.json(
+		serialize({ ...row, lastRunAt: lastRun.get(id) ?? null }) as z.infer<
+			typeof triggerResponseSchema
+		>,
+	)
+}) as RouteHandler<typeof getTriggerRoute, Env>)
 
 // PATCH /api/triggers/:id
 const updateTriggerRoute = createRoute({

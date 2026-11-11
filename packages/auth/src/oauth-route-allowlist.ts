@@ -36,6 +36,7 @@ export const OAUTH_ALLOWED_ROUTES: readonly string[] = [
 	'PATCH /api/files/:id',
 	'DELETE /api/files/:id',
 	'GET /api/triggers',
+	'GET /api/triggers/:id',
 	'POST /api/triggers',
 	'PATCH /api/triggers/:id',
 	'DELETE /api/triggers/:id',
