@@ -71,7 +71,13 @@ describe('migration 0139_notification_preferences_browser (Integration)', () => 
 				.where(eq(notificationPreferences.actorId, actor))
 			expect(row?.browserCategories).toBeNull()
 			const body = await get(prefsApp(actor))
-			expect(body.browser_not_asked).toEqual(['needs_you', 'conversation', 'digest', 'tips'])
+			expect(body.browser_not_asked).toEqual([
+				'needs_you',
+				'conversation',
+				'digest',
+				'tips',
+				'flow_activity',
+			])
 			expect(body.browser_categories).toEqual(body.categories)
 		} finally {
 			if (!(await hasBrowserColumn())) await runSqlFile('0139_notification_preferences_browser.sql')
