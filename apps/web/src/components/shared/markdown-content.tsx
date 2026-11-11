@@ -409,12 +409,12 @@ function RenderedMarkdownContent({
 							.filter(Boolean)
 					return (
 						<>
-							{list('objects').map((id, index) => (
+							{list('objects').map((id) => (
 								<Fragment key={`object:${id}`}>
 									{linkedCards.renderCard({ kind: 'object', id }, null, {
 										...linkedCards,
 										after: true,
-										first: index === 0,
+										first: id === String(node?.properties?.textCard ?? ''),
 										updated: linkedCards.updatedIds?.has(id),
 									})}
 								</Fragment>

@@ -624,6 +624,9 @@ export function placeLinkedCards(
 	const placed = { object: 0, file: 0 }
 	const trailed = new Set<string>()
 	const trailing: HastNode[] = []
+	// Whether the one text card under a message has been given out: the first object linked in a
+	// sentence, and only when no object is already its own card above it.
+	let textSlotTaken = false
 	const key = (t: LinkedTarget) => `${t.kind}:${t.id}`
 	// Loops and triggers cost no request of their own (they read shared lists), but they count
 	// toward the same caps as objects so there is one rule.
@@ -665,12 +668,15 @@ export function placeLinkedCards(
 			return true
 		})
 		if (objects.length + files.length === 0) return []
+		const textCard = !textSlotTaken && placed.object === 0 ? objects[0]?.id : undefined
+		if (objects.length > 0) textSlotTaken = true
 		const element: HastNode = {
 			type: 'element',
 			tagName: LINKED_CARDS_TAG,
 			properties: {
 				objects: objects.map((t) => t.id).join(','),
 				files: files.map((t) => t.id).join(','),
+				textCard: textCard ?? '',
 			},
 			children: [],
 		}

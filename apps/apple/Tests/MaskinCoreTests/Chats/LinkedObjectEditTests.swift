@@ -22,7 +22,7 @@ final class FakeEditableRemote: ObjectDraftsRemote, @unchecked Sendable {
 		throw ObjectApprovalError.notAllowed
 	}
 
-	func linkedUpdate(objectId: String, patch: ObjectPatch, idempotencyKey: String) async throws -> WorkObject {
+	func update(objectId: String, patch: ObjectPatch, idempotencyKey: String) async throws -> WorkObject {
 		if failing { throw ObjectsError("nope") }
 		return lock.withLock {
 			_patches.append(patch)
@@ -31,8 +31,15 @@ final class FakeEditableRemote: ObjectDraftsRemote, @unchecked Sendable {
 		}
 	}
 
-	func statusOrder(forType type: String, workspaceId: String) async -> [String] {
-		["planned", "approved", "live", "done"]
+	private var _reads = 0
+	var statusReads: Int { lock.withLock { _reads } }
+	/// What the workspace lists; empty stands for a read that failed.
+	var statuses: [String: [String]] = ["event": ["planned", "approved", "live", "done"]]
+
+	func workspaceStatuses(workspaceId: String) async -> [String: [String]] {
+		lock.withLock { _reads += 1 }
+		try? await Task.sleep(for: .milliseconds(20))
+		return statuses
 	}
 }
 
@@ -125,5 +132,64 @@ struct LinkedObjectEditStoreTests {
 			return
 		}
 		#expect(card.content == "Listing draft")
+	}
+
+	@Test("cards that ask together make one read of the workspace's statuses")
+	func oneRead() async {
+		let remote = FakeEditableRemote()
+		let store = store(remote)
+		async let a = store.statusOrder(forType: "event")
+		async let b = store.statusOrder(forType: "event")
+		async let c = store.statusOrder(forType: "event")
+		_ = await (a, b, c)
+		#expect(await store.statusOrder(forType: "event") == ["planned", "approved", "live", "done"])
+		#expect(remote.statusReads == 1)
+	}
+
+	@Test("a read that failed is not held, so the next card asks again")
+	func failedReadNotHeld() async {
+		let remote = FakeEditableRemote()
+		remote.statuses = [:]
+		let store = store(remote)
+		#expect(await store.statusOrder(forType: "event").isEmpty)
+		remote.statuses = ["event": ["planned", "done"]]
+		#expect(await store.statusOrder(forType: "event") == ["planned", "done"])
+		#expect(remote.statusReads == 2)
+	}
+
+	@Test("a type the workspace lists no statuses for has no order, and no default stands in")
+	func unlistedType() async {
+		let store = store(FakeEditableRemote())
+		#expect(await store.statusOrder(forType: "insight").isEmpty)
+	}
+}
+
+@Suite("Which card under a message edits")
+struct LinkedTextCardTargetTests {
+	private let file = LinkedTarget(kind: .file, uuid: "f")
+	private let first = LinkedTarget(kind: .object, uuid: "a")
+	private let second = LinkedTarget(kind: .object, uuid: "b")
+
+	@Test("the first object, not the first card of another kind")
+	func firstObject() {
+		let target = LinkedMessageLayout.textCardTarget(parts: [.markdown("x")], appended: [file, first, second])
+		#expect(target == first)
+	}
+
+	@Test("none when an object is already a card in place")
+	func objectInPlace() {
+		let target = LinkedMessageLayout.textCardTarget(parts: [.card(second)], appended: [first])
+		#expect(target == nil)
+	}
+
+	@Test("a file in place does not take the slot")
+	func fileInPlace() {
+		let target = LinkedMessageLayout.textCardTarget(parts: [.card(file)], appended: [first])
+		#expect(target == first)
+	}
+
+	@Test("none when no object is linked in a sentence")
+	func noObject() {
+		#expect(LinkedMessageLayout.textCardTarget(parts: [], appended: [file]) == nil)
 	}
 }

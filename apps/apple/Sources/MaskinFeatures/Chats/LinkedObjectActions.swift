@@ -23,7 +23,6 @@ struct LinkedObjectActions: View {
 					Text(content)
 						.font(MaskinTypeface.sans(MaskinFontSize.t13, relativeTo: .footnote))
 						.foregroundStyle(MaskinColor.ink2)
-						.lineLimit(12)
 						.multilineTextAlignment(.leading)
 						.frame(maxWidth: .infinity, alignment: .leading)
 						.contentShape(Rectangle())

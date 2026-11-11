@@ -428,10 +428,11 @@ struct MessageRow: View {
 			.swipeToReply(onReply)
 			.messageContextMenu(message, isOwn: true, actions: actions)
 			if let appended = layout?.appended, !appended.isEmpty {
+				let textCard = layout.flatMap { LinkedMessageLayout.textCardTarget(parts: $0.parts, appended: $0.appended) }
 				VStack(alignment: .trailing, spacing: MaskinSpace.s3) {
 					ForEach(appended) { target in
 						LinkedTargetCard(
-							target: target, onApproved: onApprovedDraft, editable: target == appended.first, chat: agentChat)
+							target: target, onApproved: onApprovedDraft, editable: target == textCard, chat: agentChat)
 					}
 				}
 				.frame(maxWidth: rowWidth > 0 ? rowWidth * BubbleShape.myMaxWidthFraction : nil, alignment: .trailing)
@@ -512,9 +513,10 @@ struct MessageRow: View {
 			.swipeToReply(onReply)
 			.messageContextMenu(message, isOwn: false, actions: menuActions)
 			if let appended = layout?.appended {
+				let textCard = layout.flatMap { LinkedMessageLayout.textCardTarget(parts: $0.parts, appended: $0.appended) }
 				ForEach(appended) { target in
 					LinkedTargetCard(
-						target: target, onApproved: onApprovedDraft, editable: target == appended.first, chat: agentChat)
+						target: target, onApproved: onApprovedDraft, editable: target == textCard, chat: agentChat)
 				}
 			}
 			ReactionChips(reactions: message.reactions, onToggle: onToggleReaction)

@@ -571,16 +571,25 @@ public final class LinkedItemStore {
 	public private(set) var editFailures: [String: String] = [:]
 	/// Objects with an edit out, so a second tap waits.
 	public private(set) var editing: Set<String> = []
-	@ObservationIgnored private var statusOrders: [String: [String]] = [:]
+	/// What the workspace's settings say, read once per workspace; never what failed to read.
+	@ObservationIgnored private var workspaceStatuses: [String: [String: [String]]] = [:]
+	/// The read in flight, so cards that ask together make one request.
+	@ObservationIgnored private var statusReads: [String: Task<[String: [String]], Never>] = [:]
 
-	/// The workspace's own status order for a type, read once per type. Empty when it cannot be read,
-	/// and then the card offers no next-status button.
+	/// The workspace's own status order for a type. Empty when it cannot be read or the workspace
+	/// lists none for the type, and then the card offers no next-status button. A failed read is not
+	/// held, so the next card asks again.
 	public func statusOrder(forType type: String) async -> [String] {
-		if let held = statusOrders[type] { return held }
 		guard let workspace = workspaceID() else { return [] }
-		let order = await objects.statusOrder(forType: type, workspaceId: workspace)
-		if !order.isEmpty { statusOrders[type] = order }
-		return order
+		if let held = workspaceStatuses[workspace] { return held[type] ?? [] }
+		let read =
+			statusReads[workspace]
+			?? Task { [objects] in await objects.workspaceStatuses(workspaceId: workspace) }
+		statusReads[workspace] = read
+		let statuses = await read.value
+		statusReads[workspace] = nil
+		if !statuses.isEmpty { workspaceStatuses[workspace] = statuses }
+		return statuses[type] ?? []
 	}
 
 	/// Saves a new text for a linked object. The agent behind the card is told by the server when
@@ -605,7 +614,7 @@ public final class LinkedItemStore {
 		defer { editing.remove(objectID) }
 		let key = LinkedTarget(kind: .object, uuid: objectID).key
 		do {
-			let saved = try await objects.linkedUpdate(
+			let saved = try await objects.update(
 				objectId: objectID, patch: patch, idempotencyKey: UUID().uuidString)
 			if case .ready(.object(var card))? = entries[key]?.state {
 				card.status = saved.status

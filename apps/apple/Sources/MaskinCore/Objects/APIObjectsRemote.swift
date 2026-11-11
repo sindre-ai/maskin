@@ -292,13 +292,19 @@ public struct APIObjectsRemote: ObjectsRemote {
 		}
 	}
 
-	static func schema(from settings: JSONValue) -> ObjectsSchema {
+	/// The status order per type the workspace's settings list; empty when it lists none.
+	static func statuses(from settings: JSONValue) -> [String: [String]] {
 		var statuses: [String: [String]] = [:]
 		if case .object(let raw)? = settings["statuses"] {
 			for (type, value) in raw {
 				if case .array(let items) = value { statuses[type] = items.compactMap(\.stringValue) }
 			}
 		}
+		return statuses
+	}
+
+	static func schema(from settings: JSONValue) -> ObjectsSchema {
+		let statuses = statuses(from: settings)
 		var names: [String: String] = [:]
 		if case .object(let raw)? = settings["display_names"] {
 			for (type, value) in raw { if let s = value.stringValue { names[type] = s } }
@@ -506,13 +512,12 @@ extension APIObjectsRemote: ObjectDraftsRemote {
 		}
 	}
 
-	public func linkedUpdate(objectId: String, patch: ObjectPatch, idempotencyKey: String) async throws -> WorkObject {
-		try await update(objectId: objectId, patch: patch, idempotencyKey: idempotencyKey)
-	}
-
-	public func statusOrder(forType type: String, workspaceId: String) async -> [String] {
-		let schema = (try? await schema(workspaceId: workspaceId)) ?? .fallback
-		return schema.statuses[type] ?? []
+	public func workspaceStatuses(workspaceId: String) async -> [String: [String]] {
+		guard let output = try? await client.get_sol_api_sol_workspaces(), case .ok(let ok) = output,
+			let workspaces = try? Self.convert(ok.body.json, as: [WorkspaceDTO].self),
+			let settings = workspaces.first(where: { $0.id == workspaceId })?.settings
+		else { return [:] }
+		return Self.statuses(from: settings)
 	}
 
 	public func save(objectId: String, content: String?, subject: String?, idempotencyKey: String) async throws {

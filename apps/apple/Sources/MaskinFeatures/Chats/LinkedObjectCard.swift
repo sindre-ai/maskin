@@ -54,6 +54,30 @@ struct LinkedObjectCard: View {
 			face
 				.accessibilityElement(children: .ignore)
 				.accessibilityLabel(cardLabel)
+		} else if editable {
+			// The text and the status button are siblings of the buttons that open the object, never
+			// inside one: a button in a button's label is not reliably tapped or read by VoiceOver.
+			ZStack(alignment: .topTrailing) {
+				VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+					opener {
+						VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+							topRow
+							titleBlock(withSummary: false)
+						}
+					}
+					.accessibilityLabel(cardLabel)
+					.accessibilityHint("Opens in Maskin")
+					.accessibilityAddTraits(.isLink)
+					LinkedObjectActions(object: object, chat: chat)
+					opener { bottomBlock }
+						.accessibilityHidden(true)
+				}
+				.padding(.leading, MaskinSpace.s7)
+				.padding(.trailing, MaskinSpace.s7)
+				.padding(.bottom, MaskinSpace.s7)
+				.frame(maxWidth: .infinity, alignment: .leading)
+				foldButton
+			}
 		} else {
 			ZStack(alignment: .topTrailing) {
 				Button { open(object.target) } label: { face }
@@ -67,48 +91,71 @@ struct LinkedObjectCard: View {
 		}
 	}
 
+	/// A part of the card that opens the object when tapped.
+	private func opener<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+		Button { open(object.target) } label: {
+			content()
+				.frame(maxWidth: .infinity, alignment: .leading)
+				.contentShape(Rectangle())
+		}
+		.buttonStyle(.maskinPressed(.shrink))
+		.accessibilityElement(children: .ignore)
+	}
+
 	private var cardLabel: String { "\(object.kindLabel), \(statusLabel): \(object.displayTitle)" }
 
 	private var face: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-			HStack(spacing: MaskinSpace.s5) {
-				tile
-				Text(object.kindLabel.uppercased())
-					.maskinText(.microLabel)
-					.tracking(ChatType.mono11Tracking)
-					.foregroundStyle(MaskinColor.ink4)
-					.lineLimit(1)
-				Spacer(minLength: 0)
-				badge
-				// Room for the fold button, which sits above this corner.
-				if !preview {
-					Color.clear.frame(width: MaskinSpace.touchMin - MaskinSpace.s7, height: MaskinSpace.touchMin)
-				}
-			}
-			.frame(minHeight: MaskinSpace.touchMin)
-			VStack(alignment: .leading, spacing: MaskinSpace.s3) {
-				Text(object.displayTitle)
-					.maskinText(.subhead).fontWeight(.semibold)
-					.foregroundStyle(MaskinColor.ink)
-					.lineLimit(2).multilineTextAlignment(.leading)
-				if editable {
-					LinkedObjectActions(object: object, chat: chat)
-				} else if let summary = object.summary {
-					Text(summary)
-						.font(MaskinTypeface.sans(MaskinFontSize.t13, relativeTo: .footnote))
-						.foregroundStyle(MaskinColor.ink3)
-						.lineLimit(inBubble ? 1 : 2).multilineTextAlignment(.leading)
-				}
-			}
-			if let priority = object.priority { fact(label: "Priority", value: priority) }
-			Rectangle().fill(MaskinSurface.line).frame(height: 1)
-			footer
+			topRow
+			titleBlock(withSummary: true)
+			bottomBlock
 		}
 		.padding(.leading, MaskinSpace.s7)
 		.padding(.trailing, MaskinSpace.s7)
 		.padding(.bottom, MaskinSpace.s7)
 		.frame(maxWidth: .infinity, alignment: .leading)
 		.contentShape(Rectangle())
+	}
+
+	private var topRow: some View {
+		HStack(spacing: MaskinSpace.s5) {
+			tile
+			Text(object.kindLabel.uppercased())
+				.maskinText(.microLabel)
+				.tracking(ChatType.mono11Tracking)
+				.foregroundStyle(MaskinColor.ink4)
+				.lineLimit(1)
+			Spacer(minLength: 0)
+			badge
+			// Room for the fold button, which sits above this corner.
+			if !preview {
+				Color.clear.frame(width: MaskinSpace.touchMin - MaskinSpace.s7, height: MaskinSpace.touchMin)
+			}
+		}
+		.frame(minHeight: MaskinSpace.touchMin)
+	}
+
+	private func titleBlock(withSummary: Bool) -> some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+			Text(object.displayTitle)
+				.maskinText(.subhead).fontWeight(.semibold)
+				.foregroundStyle(MaskinColor.ink)
+				.lineLimit(2).multilineTextAlignment(.leading)
+			if withSummary, let summary = object.summary {
+				Text(summary)
+					.font(MaskinTypeface.sans(MaskinFontSize.t13, relativeTo: .footnote))
+					.foregroundStyle(MaskinColor.ink3)
+					.lineLimit(inBubble ? 1 : 2).multilineTextAlignment(.leading)
+			}
+		}
+	}
+
+	private var bottomBlock: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+			if let priority = object.priority { fact(label: "Priority", value: priority) }
+			Rectangle().fill(MaskinSurface.line).frame(height: 1)
+			footer
+		}
 	}
 
 	private var tile: some View {
