@@ -21,6 +21,11 @@ struct ShareSheetView: View {
 	var onCancel: () -> Void = {}
 	var onOpen: (URL) -> Void
 
+	/// The form, or one of the two pushed screens inside the sheet.
+	private enum Screen { case form, agents, chats }
+
+	@State private var screen: Screen = .form
+	@State private var agentQuery = ""
 	@FocusState private var noteFocused: Bool
 	@State private var confirmingDiscard = false
 	@ScaledMetric(relativeTo: .title) private var heroIconSize: CGFloat = 56
@@ -39,7 +44,11 @@ struct ShareSheetView: View {
 			case .queued:
 				queued
 			case .ready, .posting, .failed:
-				form
+				switch screen {
+				case .form: form
+				case .agents: agentPicker
+				case .chats: chatPicker
+				}
 			}
 		}
 		.ambientBackground(showsBottom: false)
@@ -48,10 +57,14 @@ struct ShareSheetView: View {
 			switch phase {
 			case .posted:
 				MaskinHaptics.play(.success)
-				AccessibilityNotification.Announcement("Sent to Maskin").post()
+				AccessibilityNotification.Announcement(model.successTitle).post()
 			case .queued:
 				MaskinHaptics.play(.success)
-				AccessibilityNotification.Announcement("Saved for later. Maskin will send it from the app.").post()
+				AccessibilityNotification.Announcement(
+					model.isNewChat
+						? "Saved for later. Maskin will start the chat from the app."
+						: "Saved for later. Maskin will send it from the app."
+				).post()
 			case .failed(let error):
 				MaskinHaptics.play(.error)
 				AccessibilityNotification.Announcement("Couldn't send. \(error.message)").post()
@@ -78,18 +91,18 @@ struct ShareSheetView: View {
 	/// After sending, Done replaces Cancel and Send goes away.
 	private var header: some View {
 		HStack {
-			Button(isDone ? "Done" : "Cancel", action: headerAction)
+			Button(isPushed ? "Back" : (isDone ? "Done" : "Cancel"), action: headerAction)
 				.maskinText(.headline)
 				.fontWeight(.regular)
 				.foregroundStyle(MaskinColor.ink3)
 				.frame(minHeight: MaskinSpace.touchMin, alignment: .leading)
 				.frame(maxWidth: .infinity, alignment: .leading)
-			Text("Maskin")
+			Text(headerTitle)
 				.maskinText(.headline)
 				.foregroundStyle(MaskinColor.ink)
 				.accessibilityAddTraits(.isHeader)
 			Group {
-				if showsForm { sendButton } else { Color.clear.frame(height: MaskinSpace.touchMin) }
+				if showsForm, !isPushed { sendButton } else { Color.clear.frame(height: MaskinSpace.touchMin) }
 			}
 			.frame(maxWidth: .infinity, alignment: .trailing)
 		}
@@ -113,8 +126,18 @@ struct ShareSheetView: View {
 		#endif
 	}
 
+	/// One of the pushed screens (the agent picker, the existing chats) is showing.
+	private var isPushed: Bool { showsForm && screen != .form }
+
+	private var headerTitle: String {
+		guard isPushed else { return "Maskin" }
+		return screen == .agents ? "Choose an agent" : "Existing chats"
+	}
+
 	private func headerAction() {
-		if isDone {
+		if isPushed {
+			screen = .form
+		} else if isDone {
 			onClose()
 		} else if isPosting {
 			// Stop the upload, then leave: the parked files are removed with the sheet.
@@ -156,6 +179,12 @@ struct ShareSheetView: View {
 								.foregroundStyle(MaskinColor.ink4)
 								.padding(.horizontal, MaskinSpace.s4)
 						}
+						if model.isNewChat, model.uploadedFilesBeforeFailure, error.isRetryable {
+							Text("Your files are already uploaded. Trying again only finishes the chat.")
+								.maskinText(.caption)
+								.foregroundStyle(MaskinColor.ink4)
+								.padding(.horizontal, MaskinSpace.s4)
+						}
 					}
 				}
 				.padding(.horizontal, MaskinSpace.s10)
@@ -165,8 +194,8 @@ struct ShareSheetView: View {
 		.padding(.bottom, MaskinSpace.s6)
 	}
 
-	/// The sheet in the v3 layout: what is shared, the Send to / Type rows, the note and the chats
-	/// the person can send it to with one tap.
+	/// What is shared, the To row (and a Workspace row when the person is in more than one), the
+	/// note and the link to an existing chat.
 	private var composer: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s6) {
 			SharePreviewCard(content: model.content)
@@ -180,7 +209,11 @@ struct ShareSheetView: View {
 					.disabled(isPosting)
 			}
 			destinationRows
-			TextField(model.isChat ? "Add a message" : "Add a note for the agent", text: $model.note, axis: .vertical)
+			Text(model.isLoadingAgents ? "Loading agents" : (model.isNewChat ? "Starts a new chat" : "Adds to this chat"))
+				.maskinText(.caption)
+				.foregroundStyle(MaskinColor.ink4)
+				.padding(.horizontal, MaskinSpace.s4)
+			TextField(notePlaceholder, text: $model.note, axis: .vertical)
 				.lineLimit(3...8)
 				.focused($noteFocused)
 				.maskinText(.body)
@@ -188,21 +221,32 @@ struct ShareSheetView: View {
 				.padding(MaskinSpace.s7)
 				.frame(maxWidth: .infinity, minHeight: 72, alignment: .topLeading)
 				.background(MaskinSurface.cardInset2, in: RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous))
-				.accessibilityLabel(model.isChat ? "Message" : "Note")
+				.accessibilityLabel(model.isNewChat ? "Message to the agent" : "Message")
 				.disabled(isPosting)
-			chatChips
+			if !model.conversations.isEmpty {
+				Button("Add to an existing chat instead") {
+					screen = .chats
+					MaskinHaptics.play(.selection)
+				}
+				.maskinText(.subhead)
+				.foregroundStyle(MaskinColor.ink3)
+				.frame(minHeight: MaskinSpace.touchMin, alignment: .leading)
+				.padding(.horizontal, MaskinSpace.s4)
+				.disabled(isPosting)
+			}
 		}
 	}
 
-	/// "Send to" (a new item, or a chat) and "Type" (the object type; only for a new item), with a
-	/// "Workspace" row when the person has more than one. A row is a menu, so it has a chevron.
+	private var notePlaceholder: String {
+		guard model.isNewChat else { return "Add a message" }
+		return "Tell \(model.selectedAgent?.name ?? "the agent") what to do with this"
+	}
+
+	/// "To" (the agent, or the existing chat) with a "Workspace" row when the person has more than
+	/// one. A row opens a pushed screen or a menu, so it has a chevron.
 	private var destinationRows: some View {
 		VStack(spacing: 0) {
-			sendToRow
-			if !model.isChat, model.typeOptions.count > 1 {
-				Divider().overlay(MaskinSurface.line)
-				typeRow
-			}
+			toRow
 			if model.workspaces.count > 1, let name = model.workspace?.name {
 				Divider().overlay(MaskinSurface.line)
 				workspaceRow(name)
@@ -214,10 +258,11 @@ struct ShareSheetView: View {
 				.strokeBorder(MaskinSurface.line, lineWidth: 1))
 	}
 
-	private func row(_ name: String, value: String) -> some View {
+	private func row(_ name: String, value: String, agent: ShareAgent? = nil) -> some View {
 		HStack(spacing: MaskinSpace.s4) {
 			Text(name).maskinText(.body).foregroundStyle(MaskinColor.ink4)
 			Spacer(minLength: MaskinSpace.s4)
+			if let agent { ActorAvatar(name: agent.name, kind: .agent, size: 24, seed: agent.id) }
 			Text(value).maskinText(.body).fontWeight(.medium).foregroundStyle(MaskinColor.ink).lineLimit(1)
 			Image(systemName: "chevron.right").imageScale(.small).foregroundStyle(MaskinColor.ink4)
 		}
@@ -227,36 +272,19 @@ struct ShareSheetView: View {
 		.accessibilityElement(children: .combine)
 	}
 
-	private var sendToRow: some View {
-		Menu {
-			Button("New item") {
-				model.useNewItem()
-				MaskinHaptics.play(.selection)
-			}
-			if !model.conversations.isEmpty {
-				Section("Chat") {
-					ForEach(model.conversations) { conversation in
-						Button(conversation.title) { select(.chat(id: conversation.id)) }
-					}
-				}
-			}
+	private var toRow: some View {
+		let value = model.isLoadingAgents ? "Loading agents" : model.label(for: model.destination)
+		return Button {
+			agentQuery = ""
+			screen = .agents
+			MaskinHaptics.play(.selection)
 		} label: {
-			row("Send to", value: model.isChat ? model.label(for: model.destination) : "New item")
+			row("To", value: value, agent: model.isLoadingAgents ? nil : model.selectedAgent)
 		}
-		.disabled(isPosting)
-		.accessibilityLabel("Send to: \(model.isChat ? model.label(for: model.destination) : "New item")")
-	}
-
-	private var typeRow: some View {
-		Menu {
-			ForEach(model.typeOptions, id: \.self) { option in
-				Button(model.label(for: option)) { select(option) }
-			}
-		} label: {
-			row("Type", value: model.label(for: model.destination))
-		}
-		.disabled(isPosting)
-		.accessibilityLabel("Type: \(model.label(for: model.destination))")
+		.buttonStyle(.plain)
+		.disabled(isPosting || model.isLoadingAgents)
+		.accessibilityLabel("To: \(value)")
+		.accessibilityHint("Double tap to choose an agent")
 	}
 
 	private func workspaceRow(_ name: String) -> some View {
@@ -279,30 +307,107 @@ struct ShareSheetView: View {
 		.accessibilityLabel("Workspace: \(name)")
 	}
 
-	/// The first few chats as chips; tapping one sends to it, and the chosen one is filled.
-	@ViewBuilder private var chatChips: some View {
-		if !model.suggestedConversations.isEmpty {
-			HStack(spacing: MaskinSpace.s4) {
-				ForEach(model.suggestedConversations) { conversation in
-					let selected = model.destination == .chat(id: conversation.id)
-					Button {
-						if selected { model.useNewItem() } else { select(.chat(id: conversation.id)) }
-					} label: {
-						Text(conversation.title)
-							.maskinText(.subhead)
-							.fontWeight(.medium)
-							.lineLimit(1)
-							.foregroundStyle(selected ? MaskinSurface.onInverse : MaskinColor.ink2)
-							.padding(.horizontal, MaskinSpace.s7)
-							.frame(minHeight: MaskinSpace.touchMin)
-							.background(selected ? MaskinSurface.inverse : MaskinSurface.cardInset2, in: Capsule())
+	// MARK: Pushed screens
+
+	/// "Choose an agent": search, RECENT and ALL AGENTS (or N MATCHES while searching).
+	private var agentPicker: some View {
+		let searching = !agentQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+		let matches = model.agents(matching: agentQuery)
+		return VStack(alignment: .leading, spacing: MaskinSpace.s6) {
+			TextField("Search agents", text: $agentQuery)
+				.maskinText(.body)
+				.foregroundStyle(MaskinColor.ink)
+				.padding(MaskinSpace.s7)
+				.background(MaskinSurface.cardInset2, in: RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous))
+				.submitLabel(.done)
+				.onSubmit { if let first = matches.first { pick(first) } }
+				.accessibilityLabel("Search agents")
+			ScrollView {
+				LazyVStack(alignment: .leading, spacing: 0) {
+					if searching {
+						MonoLabel(matches.count == 1 ? "1 MATCH" : "\(matches.count) MATCHES")
+						if matches.isEmpty {
+							Text("No agent matches \u{201C}\(agentQuery.trimmingCharacters(in: .whitespacesAndNewlines))\u{201D}. Try a role, like Researcher or CPO.")
+								.maskinText(.body)
+								.foregroundStyle(MaskinColor.ink4)
+								.padding(.top, MaskinSpace.s5)
+						}
+						ForEach(matches) { agentRow($0) }
+					} else {
+						if !model.recentAgents.isEmpty {
+							MonoLabel("RECENT")
+							ForEach(model.recentAgents) { agentRow($0) }
+						}
+						MonoLabel("ALL AGENTS").padding(.top, MaskinSpace.s5)
+						ForEach(model.agents) { agentRow($0) }
 					}
-					.buttonStyle(.maskinPressed)
-					.disabled(isPosting)
-					.accessibilityAddTraits(selected ? .isSelected : [])
 				}
 			}
+			.scrollDismissesKeyboard(.interactively)
 		}
+		.padding(.horizontal, MaskinSpace.s10)
+		.padding(.bottom, MaskinSpace.s6)
+	}
+
+	private func agentRow(_ agent: ShareAgent) -> some View {
+		Button {
+			pick(agent)
+		} label: {
+			HStack(spacing: MaskinSpace.s7) {
+				ActorAvatar(name: agent.name, kind: .agent, size: 32, seed: agent.id)
+				VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+					Text(agent.name).maskinText(.body).foregroundStyle(MaskinColor.ink)
+					if let role = agent.role, !role.isEmpty {
+						Text(role).maskinText(.subhead).foregroundStyle(MaskinColor.ink4).lineLimit(1)
+					}
+				}
+				Spacer(minLength: MaskinSpace.s4)
+				if model.selectedAgent?.id == agent.id {
+					Image(systemName: "checkmark").foregroundStyle(MaskinColor.ink)
+				}
+			}
+			.frame(minHeight: MaskinSpace.touchMin)
+			.contentShape(Rectangle())
+		}
+		.buttonStyle(.maskinPressed)
+		.accessibilityLabel(agent.role.map { "\(agent.name), \($0)" } ?? agent.name)
+		.accessibilityAddTraits(model.selectedAgent?.id == agent.id ? .isSelected : [])
+	}
+
+	private func pick(_ agent: ShareAgent) {
+		model.selectAgent(agent.id)
+		MaskinHaptics.play(.selection)
+		screen = .form
+	}
+
+	/// "Existing chats": the newest chats of the workspace.
+	private var chatPicker: some View {
+		ScrollView {
+			LazyVStack(alignment: .leading, spacing: 0) {
+				MonoLabel("RECENT")
+				ForEach(model.conversations) { conversation in
+					Button {
+						model.selectConversation(conversation.id)
+						MaskinHaptics.play(.selection)
+						screen = .form
+					} label: {
+						HStack {
+							Text(conversation.title).maskinText(.body).foregroundStyle(MaskinColor.ink).lineLimit(1)
+							Spacer(minLength: MaskinSpace.s4)
+							if model.destination == .chat(id: conversation.id) {
+								Image(systemName: "checkmark").foregroundStyle(MaskinColor.ink)
+							}
+						}
+						.frame(minHeight: MaskinSpace.touchMin)
+						.contentShape(Rectangle())
+					}
+					.buttonStyle(.maskinPressed)
+					.accessibilityAddTraits(model.destination == .chat(id: conversation.id) ? .isSelected : [])
+				}
+			}
+			.padding(.horizontal, MaskinSpace.s10)
+		}
+		.padding(.bottom, MaskinSpace.s6)
 	}
 
 	/// The text Send in the header. Spinner while a post is in flight; after a failure it is Try
@@ -338,19 +443,11 @@ struct ShareSheetView: View {
 		switch model.phase {
 		case .posting(let step):
 			if case .uploading(let index, let total)? = step, total > 1 { return "Uploading \(index) of \(total)" }
+			if case .startingChat? = step { return "Starting chat" }
 			return "Sending"
 		case .failed(let error): return error.isRetryable ? "Try again" : "Send to Maskin"
 		default: return "Send to Maskin"
 		}
-	}
-
-	private func isChat(_ destination: ShareDestination) -> Bool {
-		if case .chat = destination { true } else { false }
-	}
-
-	private func select(_ destination: ShareDestination) {
-		model.destination = destination
-		MaskinHaptics.play(.selection)
 	}
 
 	// MARK: Terminal states
@@ -363,7 +460,7 @@ struct ShareSheetView: View {
 				.foregroundStyle(MaskinColor.doneFg)
 				.accessibilityHidden(true)
 			VStack(spacing: MaskinSpace.s3) {
-				Text("Sent to Maskin").maskinText(.title).foregroundStyle(MaskinColor.ink)
+				Text(model.successTitle).maskinText(.title).foregroundStyle(MaskinColor.ink)
 				if let name = model.workspace?.name {
 					Text(name).maskinText(.body).foregroundStyle(MaskinColor.ink4)
 				}
@@ -391,7 +488,11 @@ struct ShareSheetView: View {
 				.accessibilityHidden(true)
 			VStack(spacing: MaskinSpace.s3) {
 				Text("Saved for later").maskinText(.title).foregroundStyle(MaskinColor.ink)
-				Text("Maskin will send it next time you open the app with a connection.")
+				Text(
+					model.isNewChat
+						? "Maskin will start the chat next time you open the app with a connection."
+						: "Maskin will send it next time you open the app with a connection."
+				)
 					.maskinText(.body).foregroundStyle(MaskinColor.ink4)
 			}
 			.multilineTextAlignment(.center)

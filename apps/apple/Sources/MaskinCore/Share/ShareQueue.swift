@@ -41,6 +41,7 @@ extension PendingShare.Destination {
 		case .object(let type): self.init(kind: "object", value: type)
 		case .filesOnly: self.init(kind: "files", value: nil)
 		case .chat(let id): self.init(kind: "chat", value: id)
+		case .newChat(let agentID): self.init(kind: "new_chat", value: agentID)
 		}
 	}
 
@@ -49,6 +50,7 @@ extension PendingShare.Destination {
 		case "object": value.map { .object(type: $0) }
 		case "files": .filesOnly
 		case "chat": value.map { .chat(id: $0) }
+		case "new_chat": value.map { .newChat(agentID: $0) }
 		default: nil
 		}
 	}

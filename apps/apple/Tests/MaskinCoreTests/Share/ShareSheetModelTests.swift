@@ -24,13 +24,14 @@ private func makeModel(
 struct ShareSheetModelTests {
 	private let link = ShareContent(link: URL(string: "https://example.com/p")!, linkTitle: "A page")
 
-	@Test("loads ready with the page title, insight selected and the workspace's name")
+	@Test("loads ready with the page title, a new chat with the Chief of Staff and the workspace's name")
 	func ready() async {
 		let model = makeModel(content: link)
 		await model.start()
 		#expect(model.phase == .ready)
 		#expect(model.title == "A page")
-		#expect(model.destination == .object(type: "insight"))
+		#expect(model.destination == .newChat(agentID: "agent-chief"))
+		#expect(model.canPost)
 		#expect(model.workspace?.name == "Mesh Firm")
 	}
 
@@ -106,6 +107,7 @@ struct ShareSheetModelTests {
 		remote.failNext("object", with: .offline)
 		let model = makeModel(content: link, remote: remote)
 		await model.start()
+		model.destination = .object(type: "insight")
 		model.title = "My edit"
 		model.note = "my note"
 		await model.post()
@@ -131,6 +133,7 @@ struct ShareSheetModelTests {
 		let store = session()
 		let model = makeModel(store: store, content: link, remote: remote)
 		await model.start()
+		model.destination = .object(type: "insight")
 		await model.post()
 		#expect(model.phase == .blocked(.sessionExpired))
 		#expect((try? store.read()) != nil)
@@ -188,6 +191,6 @@ struct ShareSheetModelTests {
 		await model.start()
 		await model.post()
 		await model.post()  // already posted: canPost is false
-		#expect(remote.calls.filter { if case .createObject = $0 { true } else { false } }.count == 1)
+		#expect(remote.calls.filter { if case .createChat = $0 { true } else { false } }.count == 1)
 	}
 }
