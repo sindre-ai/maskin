@@ -17507,6 +17507,10 @@ public enum Operations {
                         public var isDefault: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/isTeam`.
                         public var isTeam: Swift.Bool
+                        /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/internal`.
+                        public var _internal: Swift.Bool
+                        /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/paying`.
+                        public var paying: Swift.Bool
                         /// Creates a new `jsonPayloadPayload`.
                         ///
                         /// - Parameters:
@@ -17525,6 +17529,8 @@ public enum Operations {
                         ///   - memberCount:
                         ///   - isDefault:
                         ///   - isTeam:
+                        ///   - _internal:
+                        ///   - paying:
                         public init(
                             id: Swift.String,
                             name: Swift.String,
@@ -17540,7 +17546,9 @@ public enum Operations {
                             role: Swift.String,
                             memberCount: Swift.Int,
                             isDefault: Swift.Bool,
-                            isTeam: Swift.Bool
+                            isTeam: Swift.Bool,
+                            _internal: Swift.Bool,
+                            paying: Swift.Bool
                         ) {
                             self.id = id
                             self.name = name
@@ -17557,6 +17565,8 @@ public enum Operations {
                             self.memberCount = memberCount
                             self.isDefault = isDefault
                             self.isTeam = isTeam
+                            self._internal = _internal
+                            self.paying = paying
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -17574,6 +17584,8 @@ public enum Operations {
                             case memberCount
                             case isDefault
                             case isTeam
+                            case _internal = "internal"
+                            case paying
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/json`.
