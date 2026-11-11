@@ -72,7 +72,7 @@ import { findKnowledgeDuplicate, isKnowledgeTitleUniqueViolation } from '../lib/
 import { logger } from '../lib/logger'
 import { withDeliveryState } from '../lib/object-delivery'
 import { buildObjectPreview } from '../lib/object-preview'
-import { applyObjectUpdate } from '../lib/object-update'
+import { AgentFieldWriteError, applyObjectUpdate } from '../lib/object-update'
 import { postSignupWelcomeComment } from '../lib/onboarding/signup-welcome'
 import {
 	errorSchema,
@@ -2049,6 +2049,11 @@ const updateObjectRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Invalid request',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description:
+				"An agent tried to change a target's fields or a flow's targets or close condition",
+		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Object not found',
@@ -2102,9 +2107,24 @@ app.openapi(updateObjectRoute, async (c) => {
 	}
 
 	// One transaction for the update, its status event and the notification fan-out.
-	const { row: updated } = await db.transaction((tx) =>
-		applyObjectUpdate(tx, { id, actorId, body, sessionId: c.get('maskinSessionId') }),
-	)
+	let updated: typeof objects.$inferSelect | undefined
+	try {
+		const result = await db.transaction((tx) =>
+			applyObjectUpdate(tx, {
+				id,
+				actorId,
+				body,
+				sessionId: c.get('maskinSessionId'),
+				actorType: c.get('actorType'),
+			}),
+		)
+		updated = result.row
+	} catch (err) {
+		if (err instanceof AgentFieldWriteError) {
+			return c.json(createApiError('FORBIDDEN', err.message), 403)
+		}
+		throw err
+	}
 
 	if (!updated) {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
