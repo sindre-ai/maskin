@@ -36,6 +36,16 @@ export function toastSessionCreateError(
 		showPlanLimitToast(navigate, workspaceId, err.planCapContext?.plan === 'trial')
 		return
 	}
+	// The workspace is waiting for its card: nothing runs until the trial has started.
+	if (err instanceof ApiError && err.code === 'TRIAL_NOT_STARTED') {
+		toast.error('Your trial has not started. Add a card to begin your 7 days.', {
+			action: {
+				label: 'Add card',
+				onClick: () => navigate({ to: '/start-trial/$workspaceId', params: { workspaceId } }),
+			},
+		})
+		return
+	}
 	// A viewer's refused start already got the shared message from the global handler.
 	if (isViewerRefusal(err)) return
 	// `fallbackMessage` lets a call site keep its own more specific copy for

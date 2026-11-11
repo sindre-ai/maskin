@@ -9175,6 +9175,8 @@ public enum Operations {
                     public var llm_config: Operations.post_sol_api_sol_actors.Input.Body.jsonPayload.llm_configPayload?
                     /// - Remark: Generated from `#/paths/api/actors/POST/requestBody/json/auto_create_workspace`.
                     public var auto_create_workspace: Swift.Bool?
+                    /// - Remark: Generated from `#/paths/api/actors/POST/requestBody/json/card_step`.
+                    public var card_step: Swift.Bool?
                     /// - Remark: Generated from `#/paths/api/actors/POST/requestBody/json/workspace_id`.
                     public var workspace_id: Swift.String?
                     /// - Remark: Generated from `#/paths/api/actors/POST/requestBody/json/first_stepsPayload`.
@@ -9231,6 +9233,7 @@ public enum Operations {
                     ///   - llm_provider:
                     ///   - llm_config:
                     ///   - auto_create_workspace:
+                    ///   - card_step:
                     ///   - workspace_id:
                     ///   - first_steps:
                     ///   - needed_integrations:
@@ -9246,6 +9249,7 @@ public enum Operations {
                         llm_provider: Swift.String? = nil,
                         llm_config: Operations.post_sol_api_sol_actors.Input.Body.jsonPayload.llm_configPayload? = nil,
                         auto_create_workspace: Swift.Bool? = nil,
+                        card_step: Swift.Bool? = nil,
                         workspace_id: Swift.String? = nil,
                         first_steps: Operations.post_sol_api_sol_actors.Input.Body.jsonPayload.first_stepsPayload? = nil,
                         needed_integrations: [Swift.String]? = nil
@@ -9261,6 +9265,7 @@ public enum Operations {
                         self.llm_provider = llm_provider
                         self.llm_config = llm_config
                         self.auto_create_workspace = auto_create_workspace
+                        self.card_step = card_step
                         self.workspace_id = workspace_id
                         self.first_steps = first_steps
                         self.needed_integrations = needed_integrations
@@ -9277,6 +9282,7 @@ public enum Operations {
                         case llm_provider
                         case llm_config
                         case auto_create_workspace
+                        case card_step
                         case workspace_id
                         case first_steps
                         case needed_integrations
@@ -18644,6 +18650,22 @@ public enum Operations {
                             public var period_end: Swift.Double?
                             /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/billing/hard_cap_usd_cents`.
                             public var hard_cap_usd_cents: Swift.Double?
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/billing/trial_state`.
+                            @frozen public enum trial_statePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case awaiting_card = "awaiting_card"
+                                case started = "started"
+                            }
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/billing/trial_state`.
+                            public var trial_state: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.billingPayload.trial_statePayload?
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/billing/trial_wallet`.
+                            @frozen public enum trial_walletPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case apple_pay = "apple_pay"
+                                case google_pay = "google_pay"
+                                case other = "other"
+                                case none = "none"
+                            }
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/billing/trial_wallet`.
+                            public var trial_wallet: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.billingPayload.trial_walletPayload?
                             /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/billing/status`.
                             @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
                                 case active = "active"
@@ -18668,6 +18690,8 @@ public enum Operations {
                             ///   - period_start:
                             ///   - period_end:
                             ///   - hard_cap_usd_cents:
+                            ///   - trial_state:
+                            ///   - trial_wallet:
                             ///   - status:
                             ///   - credit_balance_cents:
                             ///   - linkedin_addon_subscription_id:
@@ -18679,6 +18703,8 @@ public enum Operations {
                                 period_start: Swift.Double? = nil,
                                 period_end: Swift.Double? = nil,
                                 hard_cap_usd_cents: Swift.Double? = nil,
+                                trial_state: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.billingPayload.trial_statePayload? = nil,
+                                trial_wallet: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.billingPayload.trial_walletPayload? = nil,
                                 status: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.billingPayload.statusPayload? = nil,
                                 credit_balance_cents: Swift.Int? = nil,
                                 linkedin_addon_subscription_id: Swift.String? = nil,
@@ -18690,6 +18716,8 @@ public enum Operations {
                                 self.period_start = period_start
                                 self.period_end = period_end
                                 self.hard_cap_usd_cents = hard_cap_usd_cents
+                                self.trial_state = trial_state
+                                self.trial_wallet = trial_wallet
                                 self.status = status
                                 self.credit_balance_cents = credit_balance_cents
                                 self.linkedin_addon_subscription_id = linkedin_addon_subscription_id
@@ -18702,6 +18730,8 @@ public enum Operations {
                                 case period_start
                                 case period_end
                                 case hard_cap_usd_cents
+                                case trial_state
+                                case trial_wallet
                                 case status
                                 case credit_balance_cents
                                 case linkedin_addon_subscription_id
@@ -20675,6 +20705,22 @@ public enum Operations {
                             public var period_end: Swift.Double?
                             /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/billing/hard_cap_usd_cents`.
                             public var hard_cap_usd_cents: Swift.Double?
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/billing/trial_state`.
+                            @frozen public enum trial_statePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case awaiting_card = "awaiting_card"
+                                case started = "started"
+                            }
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/billing/trial_state`.
+                            public var trial_state: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.billingPayload.trial_statePayload?
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/billing/trial_wallet`.
+                            @frozen public enum trial_walletPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case apple_pay = "apple_pay"
+                                case google_pay = "google_pay"
+                                case other = "other"
+                                case none = "none"
+                            }
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/billing/trial_wallet`.
+                            public var trial_wallet: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.billingPayload.trial_walletPayload?
                             /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/billing/status`.
                             @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
                                 case active = "active"
@@ -20699,6 +20745,8 @@ public enum Operations {
                             ///   - period_start:
                             ///   - period_end:
                             ///   - hard_cap_usd_cents:
+                            ///   - trial_state:
+                            ///   - trial_wallet:
                             ///   - status:
                             ///   - credit_balance_cents:
                             ///   - linkedin_addon_subscription_id:
@@ -20710,6 +20758,8 @@ public enum Operations {
                                 period_start: Swift.Double? = nil,
                                 period_end: Swift.Double? = nil,
                                 hard_cap_usd_cents: Swift.Double? = nil,
+                                trial_state: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.billingPayload.trial_statePayload? = nil,
+                                trial_wallet: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.billingPayload.trial_walletPayload? = nil,
                                 status: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.billingPayload.statusPayload? = nil,
                                 credit_balance_cents: Swift.Int? = nil,
                                 linkedin_addon_subscription_id: Swift.String? = nil,
@@ -20721,6 +20771,8 @@ public enum Operations {
                                 self.period_start = period_start
                                 self.period_end = period_end
                                 self.hard_cap_usd_cents = hard_cap_usd_cents
+                                self.trial_state = trial_state
+                                self.trial_wallet = trial_wallet
                                 self.status = status
                                 self.credit_balance_cents = credit_balance_cents
                                 self.linkedin_addon_subscription_id = linkedin_addon_subscription_id
@@ -20733,6 +20785,8 @@ public enum Operations {
                                 case period_start
                                 case period_end
                                 case hard_cap_usd_cents
+                                case trial_state
+                                case trial_wallet
                                 case status
                                 case credit_balance_cents
                                 case linkedin_addon_subscription_id
@@ -46023,6 +46077,13 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/billing/usage/GET/responses/200/content/json/linkedin_identity_addon`.
                         public var linkedin_identity_addon: Operations.get_sol_api_sol_billing_sol_usage.Output.Ok.Body.jsonPayload.linkedin_identity_addonPayload?
+                        /// - Remark: Generated from `#/paths/api/billing/usage/GET/responses/200/content/json/trial_state`.
+                        @frozen public enum trial_statePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                            case awaiting_card = "awaiting_card"
+                            case started = "started"
+                        }
+                        /// - Remark: Generated from `#/paths/api/billing/usage/GET/responses/200/content/json/trial_state`.
+                        public var trial_state: Operations.get_sol_api_sol_billing_sol_usage.Output.Ok.Body.jsonPayload.trial_statePayload?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -46037,6 +46098,7 @@ public enum Operations {
                         ///   - credit_balance_cents:
                         ///   - credit_topup_available:
                         ///   - linkedin_identity_addon:
+                        ///   - trial_state:
                         public init(
                             plan: Operations.get_sol_api_sol_billing_sol_usage.Output.Ok.Body.jsonPayload.planPayload,
                             status: Operations.get_sol_api_sol_billing_sol_usage.Output.Ok.Body.jsonPayload.statusPayload,
@@ -46048,7 +46110,8 @@ public enum Operations {
                             stripe_subscription_id: Swift.String? = nil,
                             credit_balance_cents: Swift.Int,
                             credit_topup_available: Swift.Bool,
-                            linkedin_identity_addon: Operations.get_sol_api_sol_billing_sol_usage.Output.Ok.Body.jsonPayload.linkedin_identity_addonPayload? = nil
+                            linkedin_identity_addon: Operations.get_sol_api_sol_billing_sol_usage.Output.Ok.Body.jsonPayload.linkedin_identity_addonPayload? = nil,
+                            trial_state: Operations.get_sol_api_sol_billing_sol_usage.Output.Ok.Body.jsonPayload.trial_statePayload? = nil
                         ) {
                             self.plan = plan
                             self.status = status
@@ -46061,6 +46124,7 @@ public enum Operations {
                             self.credit_balance_cents = credit_balance_cents
                             self.credit_topup_available = credit_topup_available
                             self.linkedin_identity_addon = linkedin_identity_addon
+                            self.trial_state = trial_state
                         }
                         public enum CodingKeys: String, CodingKey {
                             case plan
@@ -46074,6 +46138,7 @@ public enum Operations {
                             case credit_balance_cents
                             case credit_topup_available
                             case linkedin_identity_addon
+                            case trial_state
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/billing/usage/GET/responses/200/content/application\/json`.

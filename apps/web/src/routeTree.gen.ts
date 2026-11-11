@@ -23,6 +23,7 @@ import { Route as ConnectSkjaldRouteImport } from './routes/connect.skjald'
 import { Route as AuthedWorkspacesRouteImport } from './routes/_authed/workspaces'
 import { Route as AuthedWorkspaceIdRouteImport } from './routes/_authed/$workspaceId'
 import { Route as AuthedWorkspaceIdIndexRouteImport } from './routes/_authed/$workspaceId/index'
+import { Route as AuthedStartTrialWorkspaceIdRouteImport } from './routes/_authed/start-trial.$workspaceId'
 import { Route as AuthedWorkspaceIdSettingsRouteImport } from './routes/_authed/$workspaceId/settings'
 import { Route as AuthedWorkspaceIdSearchRouteImport } from './routes/_authed/$workspaceId/search'
 import { Route as AuthedWorkspaceIdProfileRouteImport } from './routes/_authed/$workspaceId/profile'
@@ -131,6 +132,12 @@ const AuthedWorkspaceIdIndexRoute = AuthedWorkspaceIdIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AuthedWorkspaceIdRoute,
 } as any)
+const AuthedStartTrialWorkspaceIdRoute =
+  AuthedStartTrialWorkspaceIdRouteImport.update({
+    id: '/start-trial/$workspaceId',
+    path: '/start-trial/$workspaceId',
+    getParentRoute: () => AuthedRoute,
+  } as any)
 const AuthedWorkspaceIdSettingsRoute =
   AuthedWorkspaceIdSettingsRouteImport.update({
     id: '/settings',
@@ -369,6 +376,7 @@ export interface FileRoutesByFullPath {
   '/$workspaceId/profile': typeof AuthedWorkspaceIdProfileRoute
   '/$workspaceId/search': typeof AuthedWorkspaceIdSearchRoute
   '/$workspaceId/settings': typeof AuthedWorkspaceIdSettingsRouteWithChildren
+  '/start-trial/$workspaceId': typeof AuthedStartTrialWorkspaceIdRoute
   '/$workspaceId/': typeof AuthedWorkspaceIdIndexRoute
   '/$workspaceId/agents/$agentId': typeof AuthedWorkspaceIdAgentsAgentIdRoute
   '/$workspaceId/chats/$conversationId': typeof AuthedWorkspaceIdChatsConversationIdRoute
@@ -418,6 +426,7 @@ export interface FileRoutesByTo {
   '/': typeof AuthedIndexRoute
   '/$workspaceId/profile': typeof AuthedWorkspaceIdProfileRoute
   '/$workspaceId/search': typeof AuthedWorkspaceIdSearchRoute
+  '/start-trial/$workspaceId': typeof AuthedStartTrialWorkspaceIdRoute
   '/$workspaceId': typeof AuthedWorkspaceIdIndexRoute
   '/$workspaceId/agents/$agentId': typeof AuthedWorkspaceIdAgentsAgentIdRoute
   '/$workspaceId/chats/$conversationId': typeof AuthedWorkspaceIdChatsConversationIdRoute
@@ -471,6 +480,7 @@ export interface FileRoutesById {
   '/_authed/$workspaceId/profile': typeof AuthedWorkspaceIdProfileRoute
   '/_authed/$workspaceId/search': typeof AuthedWorkspaceIdSearchRoute
   '/_authed/$workspaceId/settings': typeof AuthedWorkspaceIdSettingsRouteWithChildren
+  '/_authed/start-trial/$workspaceId': typeof AuthedStartTrialWorkspaceIdRoute
   '/_authed/$workspaceId/': typeof AuthedWorkspaceIdIndexRoute
   '/_authed/$workspaceId/agents/$agentId': typeof AuthedWorkspaceIdAgentsAgentIdRoute
   '/_authed/$workspaceId/chats/$conversationId': typeof AuthedWorkspaceIdChatsConversationIdRoute
@@ -525,6 +535,7 @@ export interface FileRouteTypes {
     | '/$workspaceId/profile'
     | '/$workspaceId/search'
     | '/$workspaceId/settings'
+    | '/start-trial/$workspaceId'
     | '/$workspaceId/'
     | '/$workspaceId/agents/$agentId'
     | '/$workspaceId/chats/$conversationId'
@@ -574,6 +585,7 @@ export interface FileRouteTypes {
     | '/'
     | '/$workspaceId/profile'
     | '/$workspaceId/search'
+    | '/start-trial/$workspaceId'
     | '/$workspaceId'
     | '/$workspaceId/agents/$agentId'
     | '/$workspaceId/chats/$conversationId'
@@ -626,6 +638,7 @@ export interface FileRouteTypes {
     | '/_authed/$workspaceId/profile'
     | '/_authed/$workspaceId/search'
     | '/_authed/$workspaceId/settings'
+    | '/_authed/start-trial/$workspaceId'
     | '/_authed/$workspaceId/'
     | '/_authed/$workspaceId/agents/$agentId'
     | '/_authed/$workspaceId/chats/$conversationId'
@@ -774,6 +787,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/$workspaceId/'
       preLoaderRoute: typeof AuthedWorkspaceIdIndexRouteImport
       parentRoute: typeof AuthedWorkspaceIdRoute
+    }
+    '/_authed/start-trial/$workspaceId': {
+      id: '/_authed/start-trial/$workspaceId'
+      path: '/start-trial/$workspaceId'
+      fullPath: '/start-trial/$workspaceId'
+      preLoaderRoute: typeof AuthedStartTrialWorkspaceIdRouteImport
+      parentRoute: typeof AuthedRoute
     }
     '/_authed/$workspaceId/settings': {
       id: '/_authed/$workspaceId/settings'
@@ -1180,12 +1200,14 @@ interface AuthedRouteChildren {
   AuthedWorkspaceIdRoute: typeof AuthedWorkspaceIdRouteWithChildren
   AuthedWorkspacesRoute: typeof AuthedWorkspacesRoute
   AuthedIndexRoute: typeof AuthedIndexRoute
+  AuthedStartTrialWorkspaceIdRoute: typeof AuthedStartTrialWorkspaceIdRoute
 }
 
 const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedWorkspaceIdRoute: AuthedWorkspaceIdRouteWithChildren,
   AuthedWorkspacesRoute: AuthedWorkspacesRoute,
   AuthedIndexRoute: AuthedIndexRoute,
+  AuthedStartTrialWorkspaceIdRoute: AuthedStartTrialWorkspaceIdRoute,
 }
 
 const AuthedRouteWithChildren =

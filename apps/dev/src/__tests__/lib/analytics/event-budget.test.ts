@@ -45,6 +45,8 @@ describe('admitPosthogEvent', () => {
 			'signup_completed',
 			'workspace_created',
 			'checkout_session_completed',
+			'trial_started',
+			'trial_card_rejected_duplicate',
 		]) {
 			for (let i = 0; i < 10; i++) expect(admitPosthogEvent(event)).toEqual({ send: true })
 		}

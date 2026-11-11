@@ -1264,6 +1264,16 @@ export const api = {
 			}),
 		usage: (workspaceId: string) =>
 			request<BillingUsageResponse>('/billing/usage', { workspaceId }),
+		trial: {
+			setup: (workspaceId: string) =>
+				request<TrialSetupResponse>('/billing/trial/setup', { method: 'POST', workspaceId }),
+			start: (workspaceId: string, setupIntentId: string) =>
+				request<TrialStartResponse>('/billing/trial/start', {
+					method: 'POST',
+					body: { setup_intent_id: setupIntentId },
+					workspaceId,
+				}),
+		},
 		cancel: (workspaceId: string) =>
 			request<{ ok: true }>('/billing/cancel', { method: 'POST', workspaceId }),
 		dailyBudget: (workspaceId: string) =>
@@ -1963,6 +1973,17 @@ export interface LinkedInIdentityAddonLine {
 	monthly_total_usd_cents: number
 }
 
+export interface TrialSetupResponse {
+	client_secret: string
+	publishable_key: string
+}
+
+export interface TrialStartResponse {
+	trial_state: 'started'
+	// Unix seconds.
+	trial_ends_at: number | null
+}
+
 export interface BillingUsageResponse {
 	plan: BillingPlan
 	status: BillingStatus
@@ -1984,6 +2005,8 @@ export interface BillingUsageResponse {
 	// `credit_balance_cents` and `usd_cents_used`: connectivity and inference
 	// are billed as distinct lines.
 	linkedin_identity_addon: LinkedInIdentityAddonLine | null
+	// Card-at-sign-up trial: null on every workspace that did not go through the card step.
+	trial_state?: 'awaiting_card' | 'started' | null
 }
 
 // Types derived from backend response schemas
@@ -2274,6 +2297,9 @@ export interface CreateActorInput {
 	// Agents only: the workspace the new agent is born into (the caller must be a
 	// member). Humans sign up without it.
 	workspace_id?: string
+	// Humans only: this client shows the card step after sign-up. The server honours it only
+	// while the trial-card-percent flag is on for new sign-ups.
+	card_step?: boolean
 }
 
 export interface UpdateActorInput {

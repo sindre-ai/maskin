@@ -3,6 +3,7 @@ import { VoiceCallHost } from '@/components/agents/voice-call-host'
 import { PlanLimitBanner } from '@/components/billing/plan-limit-banner'
 import { PlanPercentProvider } from '@/components/billing/plan-percent-context'
 import { TrialExpiredBanner } from '@/components/billing/trial-expired-banner'
+import { TrialNotStartedBanner } from '@/components/billing/trial-not-started-banner'
 import { Header, ScrollingPageTitle } from '@/components/layout/header'
 import { MobileNav } from '@/components/layout/mobile-nav'
 import { AppSidebar } from '@/components/layout/sidebar'
@@ -147,6 +148,7 @@ function WorkspaceLayout() {
 										<AppSidebar />
 										<SidebarInset className="min-w-0">
 											<Header />
+											<TrialNotStartedBanner workspaceId={workspaceId} />
 											<TrialExpiredBanner workspaceId={workspaceId} />
 											{planPercent && <PlanLimitBanner workspaceId={workspaceId} />}
 											<MainScrollArea>

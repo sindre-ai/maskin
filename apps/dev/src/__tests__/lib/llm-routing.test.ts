@@ -34,6 +34,7 @@ import {
 	LLM_ROUTE_OAUTH,
 	LlmCredentialsUnavailableError,
 	PlanCapExceededError,
+	TrialNotStartedError,
 	ceilCents,
 	checkPlanCap,
 	getWorkspacePlanUsdCentsUsage,
@@ -731,6 +732,40 @@ describe('checkPlanCap', () => {
 		expect(err).toBeInstanceOf(PlanCapExceededError)
 		expect(err.plan).toBe('trial')
 		expect(err.cap).toBe(286)
+	})
+
+	it('refuses a trial workspace that is waiting for its card, before reading any usage', async () => {
+		const settings = emptySettings()
+		settings.billing = { plan: 'trial', trial_state: 'awaiting_card' }
+		const db = dbWithSessionUsage([])
+		const err = await checkPlanCap({
+			db,
+			workspaceId: 'ws-1',
+			wsSettings: settings,
+			enterprise: false,
+		}).catch((e) => e)
+		expect(err).toBeInstanceOf(TrialNotStartedError)
+		// A plan cap error too, so everything that already treats those quietly does the same.
+		expect(err).toBeInstanceOf(PlanCapExceededError)
+		expect(err.message).toBe('Your trial has not started. Add a card to begin your 7 days.')
+	})
+
+	it('lets a trial workspace run once its trial has started', async () => {
+		const settings = emptySettings()
+		settings.billing = { plan: 'trial', trial_state: 'started', period_start: 0 }
+		const db = dbWithSessionUsage([])
+		await expect(
+			checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings, enterprise: false }),
+		).resolves.toBeUndefined()
+	})
+
+	it('does not hold a paid plan back for a stale awaiting_card marker', async () => {
+		const settings = emptySettings()
+		settings.billing = { plan: 'pro', trial_state: 'awaiting_card', period_start: 0 }
+		const db = dbWithSessionUsage([])
+		await expect(
+			checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings, enterprise: false }),
+		).resolves.toBeUndefined()
 	})
 
 	it('is a no-op for enterprise — explicit opt-out', async () => {

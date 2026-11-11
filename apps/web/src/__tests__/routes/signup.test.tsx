@@ -16,6 +16,7 @@ vi.mock('@/lib/api', () => ({
 		publicBetStrategist: { claim: vi.fn() },
 		objects: { create: vi.fn() },
 		conversations: { list: vi.fn().mockResolvedValue({ conversations: [], has_more: false }) },
+		billing: { usage: vi.fn().mockResolvedValue({ trial_state: null }) },
 	},
 }))
 
@@ -64,6 +65,7 @@ describe('SignupPage', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks()
+		vi.mocked(api.billing.usage).mockResolvedValue({ trial_state: null } as never)
 		mockSearch = {}
 		localStorage.clear()
 		Object.defineProperty(window, 'location', {
@@ -193,6 +195,7 @@ describe('SignupPage', () => {
 				name: 'Test User',
 				email: 'test@example.com',
 				password: 'password123',
+				card_step: true,
 			})
 		})
 	})
@@ -233,6 +236,19 @@ describe('SignupPage', () => {
 		await waitFor(() =>
 			expect(window.location.assign).toHaveBeenCalledWith('/ws-1/chats/conv-welcome'),
 		)
+	})
+
+	it('lands on the card step when the new workspace is waiting for a card', async () => {
+		mockSignup.mockResolvedValue({ id: 'actor-1', workspace_id: 'ws-1' })
+		vi.mocked(api.objects.create).mockResolvedValue({} as never)
+		vi.mocked(api.billing.usage).mockResolvedValue({ trial_state: 'awaiting_card' } as never)
+
+		const user = userEvent.setup()
+		render(<SignupPage />)
+		await fillAndSubmit(user)
+
+		await waitFor(() => expect(window.location.assign).toHaveBeenCalledWith('/start-trial/ws-1'))
+		expect(api.conversations.list).not.toHaveBeenCalled()
 	})
 
 	it('falls back to New Chat when the welcome chat cannot be found', async () => {
