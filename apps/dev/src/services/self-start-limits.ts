@@ -154,7 +154,10 @@ export function continuationCapReached(streak: number): boolean {
  * Marks the extend runs: for each time a person was asked, the first person-started session after
  * it is that person's answer. `sessions` are newest first; the input is not changed.
  */
-export function markExtendSessions<T extends StreakSession>(sessions: T[], askTimes: Date[]): T[] {
+export function markExtendSessions<T extends StreakSession>(
+	sessions: T[],
+	askTimes: Date[],
+): (T & { extend?: boolean })[] {
 	const extendIds = new Set<string>()
 	for (const ask of [...askTimes].sort((a, b) => a.getTime() - b.getTime())) {
 		const answer = [...sessions]

@@ -36,6 +36,8 @@ type Env = {
 		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
 		workspaceRole?: string
 		actorType: string
+		/** Set by app-factory when the request carried a well-formed `X-Maskin-Session-Id` header. */
+		maskinSessionId?: string
 	}
 }
 
