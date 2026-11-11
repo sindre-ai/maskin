@@ -69638,6 +69638,8 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/email_categories`.
                         public var email_categories: Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.email_categoriesPayload
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/marketplace_picks_enabled`.
+                        public var marketplace_picks_enabled: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/muted_workspace_ids`.
                         public var muted_workspace_ids: [Swift.String]
                         /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/updated_at`.
@@ -69655,6 +69657,7 @@ public enum Operations {
                         ///   - briefing_time:
                         ///   - email_digest_enabled:
                         ///   - email_categories:
+                        ///   - marketplace_picks_enabled:
                         ///   - muted_workspace_ids:
                         ///   - updated_at:
                         public init(
@@ -69668,6 +69671,7 @@ public enum Operations {
                             briefing_time: Swift.Int,
                             email_digest_enabled: Swift.Bool,
                             email_categories: Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.email_categoriesPayload,
+                            marketplace_picks_enabled: Swift.Bool,
                             muted_workspace_ids: [Swift.String],
                             updated_at: Swift.String? = nil
                         ) {
@@ -69681,6 +69685,7 @@ public enum Operations {
                             self.briefing_time = briefing_time
                             self.email_digest_enabled = email_digest_enabled
                             self.email_categories = email_categories
+                            self.marketplace_picks_enabled = marketplace_picks_enabled
                             self.muted_workspace_ids = muted_workspace_ids
                             self.updated_at = updated_at
                         }
@@ -69695,6 +69700,7 @@ public enum Operations {
                             case briefing_time
                             case email_digest_enabled
                             case email_categories
+                            case marketplace_picks_enabled
                             case muted_workspace_ids
                             case updated_at
                         }
@@ -69938,6 +69944,8 @@ public enum Operations {
                     }
                     /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/email_categories`.
                     public var email_categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Input.Body.jsonPayload.email_categoriesPayload?
+                    /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/marketplace_picks_enabled`.
+                    public var marketplace_picks_enabled: Swift.Bool?
                     /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/muted_workspace_ids`.
                     public var muted_workspace_ids: [Swift.String]?
                     /// Creates a new `jsonPayload`.
@@ -69952,6 +69960,7 @@ public enum Operations {
                     ///   - briefing_time:
                     ///   - email_digest_enabled:
                     ///   - email_categories:
+                    ///   - marketplace_picks_enabled:
                     ///   - muted_workspace_ids:
                     public init(
                         timezone: Swift.String? = nil,
@@ -69963,6 +69972,7 @@ public enum Operations {
                         briefing_time: Swift.Int? = nil,
                         email_digest_enabled: Swift.Bool? = nil,
                         email_categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Input.Body.jsonPayload.email_categoriesPayload? = nil,
+                        marketplace_picks_enabled: Swift.Bool? = nil,
                         muted_workspace_ids: [Swift.String]? = nil
                     ) {
                         self.timezone = timezone
@@ -69974,6 +69984,7 @@ public enum Operations {
                         self.briefing_time = briefing_time
                         self.email_digest_enabled = email_digest_enabled
                         self.email_categories = email_categories
+                        self.marketplace_picks_enabled = marketplace_picks_enabled
                         self.muted_workspace_ids = muted_workspace_ids
                     }
                     public enum CodingKeys: String, CodingKey {
@@ -69986,6 +69997,7 @@ public enum Operations {
                         case briefing_time
                         case email_digest_enabled
                         case email_categories
+                        case marketplace_picks_enabled
                         case muted_workspace_ids
                     }
                 }
@@ -70159,6 +70171,8 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/email_categories`.
                         public var email_categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.email_categoriesPayload
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/marketplace_picks_enabled`.
+                        public var marketplace_picks_enabled: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/muted_workspace_ids`.
                         public var muted_workspace_ids: [Swift.String]
                         /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/updated_at`.
@@ -70176,6 +70190,7 @@ public enum Operations {
                         ///   - briefing_time:
                         ///   - email_digest_enabled:
                         ///   - email_categories:
+                        ///   - marketplace_picks_enabled:
                         ///   - muted_workspace_ids:
                         ///   - updated_at:
                         public init(
@@ -70189,6 +70204,7 @@ public enum Operations {
                             briefing_time: Swift.Int,
                             email_digest_enabled: Swift.Bool,
                             email_categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.email_categoriesPayload,
+                            marketplace_picks_enabled: Swift.Bool,
                             muted_workspace_ids: [Swift.String],
                             updated_at: Swift.String? = nil
                         ) {
@@ -70202,6 +70218,7 @@ public enum Operations {
                             self.briefing_time = briefing_time
                             self.email_digest_enabled = email_digest_enabled
                             self.email_categories = email_categories
+                            self.marketplace_picks_enabled = marketplace_picks_enabled
                             self.muted_workspace_ids = muted_workspace_ids
                             self.updated_at = updated_at
                         }
@@ -70216,6 +70233,7 @@ public enum Operations {
                             case briefing_time
                             case email_digest_enabled
                             case email_categories
+                            case marketplace_picks_enabled
                             case muted_workspace_ids
                             case updated_at
                         }

@@ -143,6 +143,12 @@ public final class NotificationPreferencesStore {
 		submit(patch)
 	}
 
+	public func setMarketplacePicks(enabled: Bool) {
+		var patch = NotificationPreferencesPatch()
+		patch.marketplacePicksEnabled = enabled
+		submit(patch)
+	}
+
 	public func isMuted(workspaceId: String) -> Bool { preferences.mutedWorkspaceIds.contains(workspaceId) }
 
 	public func setMuted(_ muted: Bool, workspaceId: String) {

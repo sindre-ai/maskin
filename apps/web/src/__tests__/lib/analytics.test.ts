@@ -1096,6 +1096,15 @@ describe('email_return', () => {
 		expect(capture).toHaveBeenCalledWith('email_return', { via: 'foryou_card_action' })
 	})
 
+	it('carries the block of the mail the button sat in, and drops an unknown one', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+		expect(trackEmailReturn('app_active', '?surface=email&block=pick')).toBe(true)
+		expect(capture).toHaveBeenCalledWith('email_return', { via: 'app_active', block: 'pick' })
+		sessionStorage.clear()
+		expect(trackEmailReturn('app_active', '?surface=email&block=junk')).toBe(true)
+		expect(capture).toHaveBeenLastCalledWith('email_return', { via: 'app_active' })
+	})
+
 	it('does not fire without the email tag', () => {
 		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
 		expect(trackEmailReturn('app_active', '?surface=web')).toBe(false)

@@ -47,6 +47,7 @@ public struct APINotificationPreferencesSource: NotificationPreferencesAPI {
 			emailConversation: body.email_categories.conversation,
 			emailTips: body.email_categories.tips,
 			emailFlowActivity: body.email_categories.flow_activity,
+			marketplacePicksEnabled: body.marketplace_picks_enabled,
 			mutedWorkspaceIds: body.muted_workspace_ids)
 	}
 
@@ -116,6 +117,8 @@ public struct APINotificationPreferencesSource: NotificationPreferencesAPI {
 		var email_digest_enabled: Bool?
 		/// Absent from a server that predates Flow activity.
 		var email_categories: EmailCategories?
+		/// Absent from a server that predates Marketplace picks.
+		var marketplace_picks_enabled: Bool?
 		var muted_workspace_ids: [String]
 
 		var model: NotificationPreferences {
@@ -132,6 +135,7 @@ public struct APINotificationPreferencesSource: NotificationPreferencesAPI {
 				emailConversation: email_categories?.conversation ?? false,
 				emailTips: email_categories?.tips ?? false,
 				emailFlowActivity: email_categories?.flow_activity ?? false,
+				marketplacePicksEnabled: marketplace_picks_enabled ?? false,
 				mutedWorkspaceIds: muted_workspace_ids)
 		}
 	}

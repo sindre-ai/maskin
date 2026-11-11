@@ -38,6 +38,7 @@ describe('GET /api/notification-preferences', () => {
 				tips: false,
 				flow_activity: false,
 			},
+			marketplace_picks_enabled: false,
 			muted_workspace_ids: [],
 			updated_at: null,
 		})

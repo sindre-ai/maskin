@@ -153,6 +153,36 @@ function PreferenceRow({
 	)
 }
 
+/** The Marketplace picks switch: email only, off for everyone until the person turns it on. */
+function MarketplacePicksRow({
+	checked,
+	onChange,
+}: {
+	checked: boolean
+	onChange: (next: boolean) => void
+}) {
+	return (
+		<div className="flex flex-col gap-3 px-2 py-3.5 lg:flex-row lg:items-center lg:justify-between lg:gap-4">
+			<div className="min-w-0">
+				<span className="block text-[15px] font-medium leading-tight">Marketplace picks</span>
+				<span className="block text-[13px] text-muted-foreground">
+					One suggested flow under your summary email, at most once a week.
+				</span>
+			</div>
+			<div className="flex shrink-0 items-start gap-1 lg:items-center">
+				<SwitchCell
+					label="Email"
+					ariaLabel="Marketplace picks by email"
+					channel={{ checked, onChange }}
+					labelClass="lg:hidden"
+				/>
+				<div className="hidden w-16 lg:block" />
+				<div className="hidden w-16 lg:block" />
+			</div>
+		</div>
+	)
+}
+
 /**
  * Settings → Notifications. The API stores a Push and a Browser switch per category, one Push
  * switch for the daily briefing, and one email switch, which sits on the Digests row. A Browser
@@ -242,6 +272,10 @@ function NotificationsPage() {
 					}}
 					browser={browserSwitch('digest')}
 					columns
+				/>
+				<MarketplacePicksRow
+					checked={prefs.marketplace_picks_enabled}
+					onChange={(next) => save({ marketplace_picks_enabled: next })}
 				/>
 				<PreferenceRow
 					title="Flow activity"

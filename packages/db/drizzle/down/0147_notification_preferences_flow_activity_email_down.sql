@@ -1,4 +1,4 @@
--- Rollback for 0140_notification_preferences_flow_activity_email.sql. Drops both columns, which
+-- Rollback for 0147_notification_preferences_flow_activity_email.sql. Drops both columns, which
 -- loses every saved Flow activity Email switch and the hourly claims (nobody would get Flow
 -- activity email until they switch it on again). Roll back the code that reads them first.
 --

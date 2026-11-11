@@ -59002,6 +59002,9 @@
 												"flow_activity"
 											]
 										},
+										"marketplace_picks_enabled": {
+											"type": "boolean"
+										},
 										"muted_workspace_ids": {
 											"type": "array",
 											"items": {
@@ -59027,6 +59030,7 @@
 										"briefing_time",
 										"email_digest_enabled",
 										"email_categories",
+										"marketplace_picks_enabled",
 										"muted_workspace_ids",
 										"updated_at"
 									]
@@ -59139,6 +59143,9 @@
 												"type": "boolean"
 											}
 										}
+									},
+									"marketplace_picks_enabled": {
+										"type": "boolean"
 									},
 									"muted_workspace_ids": {
 										"type": "array",
@@ -59286,6 +59293,9 @@
 												"flow_activity"
 											]
 										},
+										"marketplace_picks_enabled": {
+											"type": "boolean"
+										},
 										"muted_workspace_ids": {
 											"type": "array",
 											"items": {
@@ -59311,6 +59321,7 @@
 										"briefing_time",
 										"email_digest_enabled",
 										"email_categories",
+										"marketplace_picks_enabled",
 										"muted_workspace_ids",
 										"updated_at"
 									]

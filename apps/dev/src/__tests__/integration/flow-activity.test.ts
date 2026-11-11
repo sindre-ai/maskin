@@ -68,7 +68,9 @@ async function finishedRun(w: World, opts: { title?: string; at?: number; flowId
 		title: opts.title ?? 'Competitor update',
 	})
 	await db.insert(relationships).values({
+		sourceType: 'object',
 		sourceId: opts.flowId ?? w.flowId,
+		targetType: 'object',
 		targetId: item?.id as string,
 		type: 'in_loop',
 		createdBy: w.ownerId,

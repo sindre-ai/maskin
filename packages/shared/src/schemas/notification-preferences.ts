@@ -117,6 +117,8 @@ export const notificationPreferencesResponseSchema = z.object({
 	email_digest_enabled: z.boolean(),
 	/** The Email switch per kind other than the summary; a kind never switched on is false. */
 	email_categories: emailCategoriesSchema,
+	/** The Marketplace picks switch for the summary email. Off until the person turns it on. */
+	marketplace_picks_enabled: z.boolean(),
 	muted_workspace_ids: z.array(z.string().uuid()),
 	/** Null when the actor has never saved preferences (defaults are returned). */
 	updated_at: z.string().nullable(),
@@ -138,6 +140,7 @@ export const updateNotificationPreferencesSchema = z
 		briefing_time: minuteOfDay,
 		email_digest_enabled: z.boolean(),
 		email_categories: emailCategoriesSchema.partial(),
+		marketplace_picks_enabled: z.boolean(),
 		muted_workspace_ids: z.array(z.string().uuid()).max(200),
 	})
 	.partial()
