@@ -70,6 +70,8 @@ describe('ubersuggestAuth.getAccessToken', () => {
 			persistCredentials: async (creds) => {
 				persisted.push(creds)
 			},
+			// Ubersuggest does not take the lock; the context just has to carry one.
+			withRefreshLock: (fn) => fn({}),
 		}
 	})
 
