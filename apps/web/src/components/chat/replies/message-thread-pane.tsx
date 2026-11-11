@@ -4,6 +4,7 @@ import { MessageBubble } from '@/components/chat/message-bubble'
 import { MessageDivider } from '@/components/chat/message-divider'
 import { ThreadComposer } from '@/components/chat/thread-composer'
 import { EmptyState } from '@/components/shared/empty-state'
+import { FloatingFooter } from '@/components/shared/floating-footer'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
@@ -21,7 +22,8 @@ import { useIsDesktopViewport } from '@/hooks/use-mobile'
 import { ApiError } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
-import { defaultReplyRecipient } from '@/lib/message-threads'
+import { defaultReplyRecipient, threadParticipantIds } from '@/lib/message-threads'
+import { answeredQuestionIds } from '@/lib/question-answers'
 import { X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
@@ -68,6 +70,11 @@ export function MessageThreadPane({
 		for (const m of replyMessages) byId.set(m.id, m)
 		return [...byId.values()].sort((a, b) => a.id - b.id)
 	}, [mainMessages, replyMessages])
+	// Which questions in this thread are answered, so a picked or dismissed card collapses here too.
+	const answeredQuestions = useMemo(
+		() => answeredQuestionIds(everything, self?.id),
+		[everything, self?.id],
+	)
 	const { byReplyMessageId, byTriggerMessageId, fallback } = useConversationActivity(
 		workspaceId,
 		conversationId,
@@ -109,9 +116,21 @@ export function MessageThreadPane({
 		[root, summary?.participants, conversation?.participants, self?.id],
 	)
 
+	// Only the people in this thread, not the whole chat, lead the composer's mention list.
+	const participantIds = useMemo(
+		() => (root ? threadParticipantIds(root, replyMessages, summary?.participants) : []),
+		[root, replyMessages, summary?.participants],
+	)
+
 	const reply = useMemo(
-		() => ({ rootId, recipient, alsoInChannel, onSent: () => setAlsoInChannel(false) }),
-		[rootId, recipient, alsoInChannel],
+		() => ({
+			rootId,
+			recipient,
+			alsoInChannel,
+			participantIds,
+			onSent: () => setAlsoInChannel(false),
+		}),
+		[rootId, recipient, alsoInChannel, participantIds],
 	)
 
 	const paneRef = useRef<HTMLDivElement | null>(null)
@@ -155,7 +174,7 @@ export function MessageThreadPane({
 			onKeyDown={(e) => {
 				if (e.key === 'Escape' && !e.defaultPrevented) onClose()
 			}}
-			className={cn('flex h-full min-h-0 w-full flex-col bg-surface-sunken', className)}
+			className={cn('relative flex h-full min-h-0 w-full flex-col bg-surface-sunken', className)}
 		>
 			<div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-2">
 				<h2 className="text-sm font-semibold text-foreground">Thread</h2>
@@ -192,11 +211,13 @@ export function MessageThreadPane({
 						onScroll={handleScroll}
 						// The scroller clips a chip's hover preview, so the preview places itself inside it.
 						{...{ [PREVIEW_BOUNDS_ATTR]: '' }}
-						className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pt-4 pb-2"
+						data-floating-scroller
+						className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pt-4 pb-[calc(var(--reply-composer-h,6rem)+8px)] scroll-pb-[calc(var(--reply-composer-h,6rem)+8px)]"
 					>
 						<MessageBubble
 							workspaceId={workspaceId}
 							message={root}
+							questionAnswered={answeredQuestions.has(root.id)}
 							activity={(byReplyMessageId.get(root.id) ?? []).map((turn, i) => (
 								<MessageActivity
 									key={`${turn.sessionId}-above-${i}`}
@@ -236,6 +257,7 @@ export function MessageThreadPane({
 								<MessageBubble
 									workspaceId={workspaceId}
 									message={reply}
+									questionAnswered={answeredQuestions.has(reply.id)}
 									activity={(byReplyMessageId.get(reply.id) ?? []).map((turn, i) => (
 										<MessageActivity
 											key={`${turn.sessionId}-above-${i}`}
@@ -263,7 +285,11 @@ export function MessageThreadPane({
 						))}
 						<div ref={bottomRef} />
 					</div>
-					<div className="flex shrink-0 flex-col gap-2 px-4 pt-2 pb-3.5">
+					<FloatingFooter
+						name="--reply-composer-h"
+						keepAtBottom
+						className="flex flex-col gap-2 px-4 pt-2 pb-3.5"
+					>
 						<div className="flex items-center gap-2">
 							<Checkbox
 								id={`also-in-channel-${rootId}`}
@@ -282,7 +308,7 @@ export function MessageThreadPane({
 							conversationId={conversationId}
 							reply={reply}
 						/>
-					</div>
+					</FloatingFooter>
 				</>
 			)}
 		</div>

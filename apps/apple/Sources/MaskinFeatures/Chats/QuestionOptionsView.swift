@@ -14,13 +14,17 @@ struct QuestionOptionsView: View {
 	/// What a later human message picked, when this question was already answered.
 	let answers: [ChatQuestionAnswer.Answer]?
 	let onSubmit: ([Int: [String]]) -> Void
+	/// Closes the card without answering (the X).
+	var onDismiss: (() -> Void)?
 
 	@State private var picked: [Int: [String]]
 
 	init(
 		questions: [ChatQuestionItem], answers: [ChatQuestionAnswer.Answer]?,
-		picked: [Int: [String]] = [:], onSubmit: @escaping ([Int: [String]]) -> Void
+		picked: [Int: [String]] = [:], onSubmit: @escaping ([Int: [String]]) -> Void,
+		onDismiss: (() -> Void)? = nil
 	) {
+		self.onDismiss = onDismiss
 		self.questions = questions
 		self.answers = answers
 		self.onSubmit = onSubmit
@@ -29,29 +33,14 @@ struct QuestionOptionsView: View {
 
 	var body: some View {
 		if let answers {
-			answeredSummary(answers)
+			// Answered by typing or dismissed: nothing to summarise, so nothing is drawn.
+			if !answers.isEmpty { answeredSummary(answers) }
 		} else {
 			VStack(alignment: .leading, spacing: MaskinSpace.s8) {
 				ForEach(questions) { question in
 					group(question)
 				}
-				HStack(spacing: MaskinSpace.s5) {
-					Button {
-						MaskinHaptics.play(.light)
-						onSubmit(picked)
-					} label: {
-						Text("Send answer")
-							.maskinText(.subhead).fontWeight(.semibold)
-							.foregroundStyle(MaskinSurface.onInverse)
-							.padding(.horizontal, MaskinSpace.s9)
-							.frame(minHeight: MaskinSpace.touchMin)
-							.background(MaskinSurface.inverse, in: Capsule())
-							.opacity(complete ? 1 : 0.35)
-					}
-					.buttonStyle(.maskinPressed(.shrink))
-					.disabled(!complete)
-					Text("or just type your reply").maskinText(.caption).foregroundStyle(MaskinColor.ink4)
-				}
+				actionRow
 			}
 			.padding(MaskinSpace.s8)
 			.frame(maxWidth: .infinity, alignment: .leading)
@@ -59,6 +48,65 @@ struct QuestionOptionsView: View {
 			.overlay(cardShape.strokeBorder(MaskinSurface.line, lineWidth: 1))
 			.padding(.top, MaskinSpace.s3)
 			.accessibilityElement(children: .contain)
+		}
+	}
+
+	/// Send answer, the hint, and the X. On one line when they fit; otherwise the hint drops under
+	/// the buttons, so nothing is clipped at 375pt or at large Dynamic Type.
+	private var actionRow: some View {
+		ViewThatFits(in: .horizontal) {
+			HStack(spacing: MaskinSpace.s5) {
+				sendButton
+				hint
+				Spacer(minLength: 0)
+				dismissButton
+			}
+			VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+				HStack(spacing: MaskinSpace.s5) {
+					sendButton
+					Spacer(minLength: 0)
+					dismissButton
+				}
+				hint
+			}
+		}
+	}
+
+	private var sendButton: some View {
+		Button {
+			MaskinHaptics.play(.light)
+			onSubmit(picked)
+		} label: {
+			Text("Send answer")
+				.maskinText(.subhead).fontWeight(.semibold)
+				.foregroundStyle(MaskinSurface.onInverse)
+				.padding(.horizontal, MaskinSpace.s9)
+				.frame(minHeight: MaskinSpace.touchMin)
+				.background(MaskinSurface.inverse, in: Capsule())
+				.opacity(complete ? 1 : 0.35)
+		}
+		.buttonStyle(.maskinPressed(.shrink))
+		.disabled(!complete)
+	}
+
+	private var hint: some View {
+		Text("or just type your reply").maskinText(.caption).foregroundStyle(MaskinColor.ink4)
+			.fixedSize(horizontal: false, vertical: true)
+	}
+
+	@ViewBuilder private var dismissButton: some View {
+		if let onDismiss {
+			Button {
+				MaskinHaptics.play(.light)
+				onDismiss()
+			} label: {
+				Image(systemName: "xmark").maskinSymbol(MaskinFontSize.t14, weight: .semibold)
+					.foregroundStyle(MaskinColor.ink4)
+					.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
+					.contentShape(Rectangle())
+			}
+			.buttonStyle(.maskinPressed)
+			.accessibilityLabel("Dismiss question")
 		}
 	}
 

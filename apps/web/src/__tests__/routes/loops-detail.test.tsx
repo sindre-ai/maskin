@@ -43,6 +43,8 @@ vi.mock('@/hooks/use-notifications', () => ({
 }))
 vi.mock('@/hooks/use-triggers', () => ({
 	useTriggers: () => mockUseTriggers(),
+	useCreateTrigger: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	useUpdateTrigger: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 const mockUseRelationships = vi.fn()

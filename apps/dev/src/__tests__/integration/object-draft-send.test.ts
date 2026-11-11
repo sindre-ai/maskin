@@ -4,7 +4,13 @@ import { events, integrations, workspaceMembers } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encrypt } from '../../lib/crypto'
-import { insertActor, insertAgentGrant, insertObject, insertWorkspace } from '../factories'
+import {
+	insertActor,
+	insertAgentGrant,
+	insertObject,
+	insertSendMode,
+	insertWorkspace,
+} from '../factories'
 import { db, getTestActorId } from './global-setup'
 
 const { default: gmailRoutes } = await import('../../routes/integrations-gmail')
@@ -94,6 +100,13 @@ async function setup(access: 'read' | 'read_write' = 'read_write') {
 	await db
 		.insert(workspaceMembers)
 		.values({ workspaceId: workspace.id, actorId: agent.id, role: 'member' })
+	// These tests are about approving a draft, so the agent is set to ask first for emails.
+	await insertSendMode(db, {
+		workspaceId: workspace.id,
+		agentId: agent.id,
+		kind: 'email',
+		mode: 'ask_first',
+	})
 	const [gmail] = await db
 		.insert(integrations)
 		.values({

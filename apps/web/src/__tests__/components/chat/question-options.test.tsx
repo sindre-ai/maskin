@@ -32,7 +32,11 @@ const QUESTION: MessageQuestion = {
 	],
 }
 
-function renderOptions(question: MessageQuestion = QUESTION, answered = false) {
+function renderOptions(
+	question: MessageQuestion = QUESTION,
+	answered = false,
+	threadRootId?: number,
+) {
 	return render(
 		<QuestionOptions
 			conversationId="conv-1"
@@ -40,6 +44,7 @@ function renderOptions(question: MessageQuestion = QUESTION, answered = false) {
 			questionMessageId={7}
 			question={question}
 			answered={answered}
+			threadRootId={threadRootId}
 		/>,
 		{ wrapper: TestWrapper },
 	)
@@ -73,6 +78,72 @@ describe('QuestionOptions', () => {
 		// question — a bare "API token" is ambiguous across a multi-question set.
 		expect(payload.content).toContain('How should I reach Spotify?')
 		expect(payload.content).toContain('API token')
+	})
+
+	it('sends the pick into the thread the question sits in', async () => {
+		sendMutate.mockClear()
+		const user = userEvent.setup()
+		renderOptions(QUESTION, false, 4)
+
+		await user.click(screen.getByRole('button', { name: 'API token' }))
+		await user.click(screen.getByRole('button', { name: 'Send answer' }))
+
+		const payload = sendMutate.mock.calls[0]?.[0]
+		expect(payload.thread_root_id).toBe(4)
+		expect(payload.also_in_channel).toBe(true)
+	})
+
+	it('dismisses with a hidden answer, so the card goes away on every device', async () => {
+		sendMutate.mockClear()
+		const user = userEvent.setup()
+		renderOptions()
+
+		await user.click(screen.getByRole('button', { name: 'Dismiss question' }))
+
+		expect(sendMutate).toHaveBeenCalledTimes(1)
+		const payload = sendMutate.mock.calls[0]?.[0]
+		expect(payload.metadata.hidden_from_chat).toBe(true)
+		expect(payload.metadata.question_answer.question_message_id).toBe(7)
+	})
+
+	it('records every question of a card when dismissing, not just the first', async () => {
+		sendMutate.mockClear()
+		const user = userEvent.setup()
+		renderOptions({
+			...QUESTION,
+			questions: [
+				...QUESTION.questions,
+				{
+					question: 'Which city is the office in?',
+					header: 'City',
+					multi_select: false,
+					options: [{ label: 'Oslo' }, { label: 'Bergen' }],
+				},
+			],
+		})
+
+		await user.click(screen.getByRole('button', { name: 'Dismiss question' }))
+
+		expect(sendMutate.mock.calls[0]?.[0].metadata.question_answer.answers).toEqual([
+			{ header: 'Spotify access', selected: ['Dismissed'] },
+			{ header: 'City', selected: ['Dismissed'] },
+		])
+	})
+
+	it('dismisses a helper question through the session, the way its answer goes', async () => {
+		sendMutate.mockClear()
+		inputMutate.mockClear()
+		const user = userEvent.setup()
+		renderOptions({ ...QUESTION, reply_to_session: true })
+
+		await user.click(screen.getByRole('button', { name: 'Dismiss question' }))
+
+		expect(sendMutate).not.toHaveBeenCalled()
+		expect(inputMutate).toHaveBeenCalledTimes(1)
+		const payload = inputMutate.mock.calls[0]?.[0]
+		expect(payload.id).toBe(QUESTION.session_id)
+		expect(payload.question_answer.question_message_id).toBe(7)
+		expect(payload.question_answer.answers[0].selected).toEqual(['Dismissed'])
 	})
 
 	it('cannot send until every question has a pick', async () => {

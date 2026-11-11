@@ -46,6 +46,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
 	'get_events',
 	'get_comments',
 	'list_triggers',
+	'get_trigger',
 	'list_loops',
 	'get_loop',
 	'query_data',
@@ -66,6 +67,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
 	'list_for_you',
 	'list_keychain_credentials',
 	'desktop_list_ports',
+	'list_file_tags',
 ])
 
 interface Row {
@@ -107,6 +109,7 @@ const ROWS: Record<string, Row> = {
 	create_actor: row('Create actor'),
 	list_actors: row('List actors'),
 	get_actor: row('Get actor'),
+	delete_agent: row('Delete agent', { destructive: true, idempotent: true }),
 	update_actor: row('Update actor', { idempotent: true }),
 	// Workspaces
 	create_workspace: row('Create workspace'),
@@ -125,6 +128,9 @@ const ROWS: Record<string, Row> = {
 	// Files
 	create_file: row('Create file'),
 	list_files: row('List files'),
+	list_file_tags: row('List file tags'),
+	rename_file_tag: row('Rename file tag'),
+	merge_file_tags: row('Merge file tags'),
 	get_file: row('Get file'),
 	update_file: row('Update file', { idempotent: true }),
 	propose_file_changes: row('Propose file changes'),
@@ -145,6 +151,7 @@ const ROWS: Record<string, Row> = {
 	// Triggers
 	create_trigger: row('Create trigger'),
 	list_triggers: row('List triggers'),
+	get_trigger: row('Get trigger'),
 	update_trigger: row('Update trigger', { idempotent: true }),
 	delete_trigger: row('Delete trigger', { destructive: true, idempotent: true }),
 	// Loops

@@ -16,7 +16,10 @@ const mockNavigate = vi.fn()
 const mockSearch = vi.fn<() => Record<string, string | undefined>>(() => ({}))
 
 // The Tools section has its own tests (components/integrations/tools-section.test.tsx).
-vi.mock('@/components/integrations/tools-section', () => ({ ToolsSection: () => null }))
+vi.mock('@/components/integrations/tools-section', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@/components/integrations/tools-section')>()),
+	ToolsSection: () => null,
+}))
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
@@ -104,7 +107,12 @@ vi.mock('@/hooks/use-actors', () => ({
 }))
 
 vi.mock('@/components/shared/empty-state', () => ({
-	EmptyState: ({ title }: { title: string }) => <div>{title}</div>,
+	EmptyState: ({ title, description }: { title: string; description?: string }) => (
+		<div>
+			<div>{title}</div>
+			{description && <div>{description}</div>}
+		</div>
+	),
 }))
 
 vi.mock('@/components/shared/loading-skeleton', () => ({
@@ -118,6 +126,16 @@ vi.mock('@/components/shared/route-error', () => ({
 import { Route } from '@/routes/_authed/$workspaceId/settings/integrations'
 
 const IntegrationsPage = (Route as unknown as { component: React.FC }).component
+
+/** Providers nobody has connected live on the Discover tab. */
+async function openDiscover() {
+	await userEvent.click(screen.getByRole('button', { name: /^Discover/ }))
+}
+
+/** A connected provider is a collapsed card on the Connected tab; its actions sit inside. */
+async function expandCard(name: string) {
+	await userEvent.click(screen.getByRole('button', { name: new RegExp(`^${name}`) }))
+}
 
 describe('IntegrationsPage', () => {
 	beforeEach(() => {
@@ -150,7 +168,7 @@ describe('IntegrationsPage', () => {
 		expect(screen.getByText('No providers available')).toBeInTheDocument()
 	})
 
-	it('renders provider list with display names', () => {
+	it('renders provider list with display names', async () => {
 		mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
 		mockUseProviders.mockReturnValue({
 			data: [
@@ -160,11 +178,12 @@ describe('IntegrationsPage', () => {
 			isLoading: false,
 		})
 		render(<IntegrationsPage />)
+		await openDiscover()
 		expect(screen.getByText('Slack')).toBeInTheDocument()
 		expect(screen.getByText('GitHub')).toBeInTheDocument()
 	})
 
-	it('shows Connect for disconnected and Disconnect for connected providers', () => {
+	it('shows Connect for disconnected and Disconnect for connected providers', async () => {
 		const integration = buildIntegrationResponse({
 			provider: 'slack',
 			status: 'active',
@@ -178,7 +197,9 @@ describe('IntegrationsPage', () => {
 			isLoading: false,
 		})
 		render(<IntegrationsPage />)
+		await expandCard('Slack')
 		expect(screen.getByRole('button', { name: 'Disconnect' })).toBeInTheDocument()
+		await openDiscover()
 		expect(screen.getByRole('button', { name: 'Connect' })).toBeInTheDocument()
 	})
 
@@ -190,15 +211,16 @@ describe('IntegrationsPage', () => {
 			events: [{ type: 'meeting.created' }],
 		}
 
-		function renderSkjald() {
+		async function renderSkjald() {
 			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
 			mockUseProviders.mockReturnValue({ data: [skjaldProvider], isLoading: false })
-			return render(<IntegrationsPage />)
+			render(<IntegrationsPage />)
+			await openDiscover()
 		}
 
 		it('tells the person where to tap in the Skjald app, without creating a webhook', async () => {
 			const user = userEvent.setup()
-			renderSkjald()
+			await renderSkjald()
 
 			await user.click(screen.getByRole('button', { name: 'Connect' }))
 
@@ -213,7 +235,7 @@ describe('IntegrationsPage', () => {
 
 		it('closes on Done', async () => {
 			const user = userEvent.setup()
-			renderSkjald()
+			await renderSkjald()
 
 			await user.click(screen.getByRole('button', { name: 'Connect' }))
 			await user.click(screen.getByRole('button', { name: 'Done' }))
@@ -224,7 +246,7 @@ describe('IntegrationsPage', () => {
 
 		it('keeps the URL-and-secret flow behind Set up manually', async () => {
 			const user = userEvent.setup()
-			renderSkjald()
+			await renderSkjald()
 
 			await user.click(screen.getByRole('button', { name: 'Connect' }))
 			await user.click(screen.getByRole('button', { name: 'Set up manually' }))
@@ -257,6 +279,7 @@ describe('IntegrationsPage', () => {
 			isLoading: false,
 		})
 		render(<IntegrationsPage />)
+		await openDiscover()
 
 		await user.click(screen.getByRole('button', { name: 'Connect' }))
 		expect(screen.getByRole('dialog')).toBeInTheDocument()
@@ -374,9 +397,14 @@ describe('IntegrationsPage', () => {
 
 			const sindreRow = screen.getByText('sindre-ai').closest('div.flex') as HTMLElement
 			await user.click(within(sindreRow).getByRole('button', { name: 'Disconnect' }))
+			expect(mockDisconnect).not.toHaveBeenCalled()
+
+			const dialog = screen.getByRole('dialog', { name: 'Disconnect GitHub?' })
+			expect(within(dialog).getByText(/This removes sindre-ai\./)).toBeInTheDocument()
+			await user.click(within(dialog).getByRole('button', { name: 'Disconnect' }))
 
 			expect(mockDisconnect).toHaveBeenCalledTimes(1)
-			expect(mockDisconnect).toHaveBeenCalledWith('gh-2')
+			expect(mockDisconnect).toHaveBeenCalledWith('gh-2', expect.anything())
 		})
 
 		it('"Add another" triggers the connect flow for github', async () => {
@@ -411,16 +439,17 @@ describe('IntegrationsPage', () => {
 			expect(mockConnect).toHaveBeenCalledWith({ provider: 'github' })
 		})
 
-		it('falls back to the single-row Connect UI when github has no active installations', () => {
+		it('falls back to the single-row Connect UI when github has no active installations', async () => {
 			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
 			mockUseProviders.mockReturnValue({ data: [githubProvider], isLoading: false })
 			render(<IntegrationsPage />)
+			await openDiscover()
 
 			expect(screen.queryByText(/GitHub · /)).not.toBeInTheDocument()
 			expect(screen.getByRole('button', { name: 'Connect' })).toBeInTheDocument()
 		})
 
-		it('does not group non-github providers even when multiple integrations exist for them', () => {
+		it('does not group non-github providers even when multiple integrations exist for them', async () => {
 			mockUseIntegrations.mockReturnValue({
 				data: [
 					buildIntegrationResponse({ id: 's1', provider: 'slack', status: 'active' }),
@@ -433,6 +462,7 @@ describe('IntegrationsPage', () => {
 				isLoading: false,
 			})
 			render(<IntegrationsPage />)
+			await expandCard('Slack')
 
 			expect(screen.queryByText(/Slack · /)).not.toBeInTheDocument()
 			expect(screen.getAllByRole('button', { name: 'Disconnect' })).toHaveLength(1)
@@ -460,20 +490,50 @@ describe('IntegrationsPage', () => {
 			mockUseProviders.mockReturnValue({ data: [googleCalendarProvider], isLoading: false })
 
 			render(<IntegrationsPage />)
+			await expandCard('Google Calendar')
 
 			expect(screen.getByText('Google Calendar')).toBeInTheDocument()
 			expect(screen.getByText('Connected as magnus@example.com')).toBeInTheDocument()
 			expect(screen.queryByText(/Installation /)).not.toBeInTheDocument()
 
 			await user.click(screen.getByRole('button', { name: 'Disconnect' }))
-			expect(mockDisconnect).toHaveBeenCalledWith('gc-1')
+			// Nothing is disconnected until the person confirms.
+			expect(mockDisconnect).not.toHaveBeenCalled()
+			const dialog = screen.getByRole('dialog', { name: 'Disconnect Google Calendar?' })
+			expect(within(dialog).getByText(/This removes magnus@example\.com\./)).toBeInTheDocument()
+
+			await user.click(within(dialog).getByRole('button', { name: 'Disconnect' }))
+			expect(mockDisconnect).toHaveBeenCalledTimes(1)
+			expect(mockDisconnect).toHaveBeenCalledWith('gc-1', expect.anything())
 		})
 
-		it('shows "Available to connect" when not connected (no event types defined yet)', () => {
+		it('closes the Disconnect confirm on Cancel without disconnecting', async () => {
+			const user = userEvent.setup()
+			const integration = buildIntegrationResponse({
+				id: 'gc-1',
+				provider: 'google-calendar',
+				status: 'active',
+				externalId: 'magnus@example.com',
+			})
+			mockUseIntegrations.mockReturnValue({ data: [integration], isLoading: false })
+			mockUseProviders.mockReturnValue({ data: [googleCalendarProvider], isLoading: false })
+
+			render(<IntegrationsPage />)
+			await expandCard('Google Calendar')
+
+			await user.click(screen.getByRole('button', { name: 'Disconnect' }))
+			await user.click(screen.getByRole('button', { name: 'Cancel' }))
+
+			expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+			expect(mockDisconnect).not.toHaveBeenCalled()
+		})
+
+		it('shows "Available to connect" when not connected (no event types defined yet)', async () => {
 			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
 			mockUseProviders.mockReturnValue({ data: [googleCalendarProvider], isLoading: false })
 
 			render(<IntegrationsPage />)
+			await openDiscover()
 
 			expect(screen.getByText('Available to connect')).toBeInTheDocument()
 			expect(screen.queryByText(/event types available/)).not.toBeInTheDocument()
@@ -489,7 +549,7 @@ describe('IntegrationsPage', () => {
 			externalIdDisplay: 'email' as const,
 		}
 
-		it('shows the Drive card next to the other OAuth providers', () => {
+		it('shows the Drive card next to the other OAuth providers', async () => {
 			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
 			mockUseProviders.mockReturnValue({
 				data: [
@@ -500,17 +560,19 @@ describe('IntegrationsPage', () => {
 			})
 
 			render(<IntegrationsPage />)
+			await openDiscover()
 
 			expect(screen.getByText('Google Drive')).toBeInTheDocument()
 			expect(screen.getByText('Gmail')).toBeInTheDocument()
 			expect(screen.getAllByRole('button', { name: 'Connect' })).toHaveLength(2)
 		})
 
-		it('shows the New pill, description, meta line and a Details link on the Drive card', () => {
+		it('shows the New pill, description, meta line and a Details link on the Drive card', async () => {
 			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
 			mockUseProviders.mockReturnValue({ data: [googleDriveProvider], isLoading: false })
 
 			render(<IntegrationsPage />)
+			await openDiscover()
 
 			expect(screen.getByLabelText('New')).toBeInTheDocument()
 			expect(
@@ -520,7 +582,7 @@ describe('IntegrationsPage', () => {
 			expect(screen.getByRole('link', { name: 'Details' })).toBeInTheDocument()
 		})
 
-		it('keeps the Details link on a connected Drive card', () => {
+		it('keeps the Details link on a connected Drive card', async () => {
 			mockUseIntegrations.mockReturnValue({
 				data: [
 					buildIntegrationResponse({
@@ -535,12 +597,13 @@ describe('IntegrationsPage', () => {
 			mockUseProviders.mockReturnValue({ data: [googleDriveProvider], isLoading: false })
 
 			render(<IntegrationsPage />)
+			await expandCard('Google Drive')
 
 			expect(screen.getByRole('link', { name: 'Details' })).toBeInTheDocument()
 			expect(screen.getByRole('button', { name: 'Disconnect' })).toBeInTheDocument()
 		})
 
-		it('does not put Drive extras on other providers', () => {
+		it('does not put Drive extras on other providers', async () => {
 			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
 			mockUseProviders.mockReturnValue({
 				data: [{ ...googleDriveProvider, name: 'gmail', displayName: 'Gmail' }],
@@ -548,6 +611,7 @@ describe('IntegrationsPage', () => {
 			})
 
 			render(<IntegrationsPage />)
+			await openDiscover()
 
 			expect(screen.queryByLabelText('New')).not.toBeInTheDocument()
 			expect(screen.queryByRole('link', { name: 'Details' })).not.toBeInTheDocument()
@@ -563,7 +627,7 @@ describe('IntegrationsPage', () => {
 			externalIdDisplay: 'email' as const,
 		}
 
-		it('shows "Connected as <email>" for Gmail when externalIdDisplay is email', () => {
+		it('shows "Connected as <email>" for Gmail when externalIdDisplay is email', async () => {
 			const integration = buildIntegrationResponse({
 				id: 'gm-1',
 				provider: 'gmail',
@@ -574,6 +638,7 @@ describe('IntegrationsPage', () => {
 			mockUseProviders.mockReturnValue({ data: [gmailProvider], isLoading: false })
 
 			render(<IntegrationsPage />)
+			await expandCard('Gmail')
 
 			expect(screen.getByText('Connected as user@gmail.com')).toBeInTheDocument()
 			expect(screen.queryByText(/Installation /)).not.toBeInTheDocument()
@@ -595,6 +660,7 @@ describe('IntegrationsPage', () => {
 			isLoading: false,
 		})
 		render(<IntegrationsPage />)
+		await openDiscover()
 
 		await user.click(screen.getByRole('button', { name: /Add existing/ }))
 		expect(screen.getByRole('dialog')).toBeInTheDocument()
@@ -604,7 +670,7 @@ describe('IntegrationsPage', () => {
 		expect(mockLinkGithub).toHaveBeenCalledWith('4242', expect.anything())
 	})
 
-	it('hides "Add existing" when every reachable installation is already here', () => {
+	it('hides "Add existing" when every reachable installation is already here', async () => {
 		mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
 		mockUseProviders.mockReturnValue({
 			data: [{ name: 'github', displayName: 'GitHub', authType: 'oauth2_custom', events: [] }],
@@ -615,6 +681,7 @@ describe('IntegrationsPage', () => {
 			isLoading: false,
 		})
 		render(<IntegrationsPage />)
+		await openDiscover()
 
 		expect(screen.queryByRole('button', { name: /Add existing/ })).not.toBeInTheDocument()
 	})
@@ -753,7 +820,7 @@ describe('IntegrationsPage', () => {
 	describe('slack reconnect-required label', () => {
 		const slackProvider = { name: 'slack', displayName: 'Slack', authType: 'oauth2', events: [] }
 
-		it('renders the Slack-specific label when a history scope is missing', () => {
+		it('renders the Slack-specific label when a history scope is missing', async () => {
 			mockUseIntegrations.mockReturnValue({
 				data: [
 					buildIntegrationResponse({
@@ -767,6 +834,7 @@ describe('IntegrationsPage', () => {
 			})
 			mockUseProviders.mockReturnValue({ data: [slackProvider], isLoading: false })
 			render(<IntegrationsPage />)
+			await expandCard('Slack')
 
 			expect(
 				screen.getByText(
@@ -776,7 +844,7 @@ describe('IntegrationsPage', () => {
 			expect(screen.getByRole('button', { name: 'Reconnect' })).toBeInTheDocument()
 		})
 
-		it('hides the Reconnect button and Slack-specific label when all three history scopes are granted', () => {
+		it('hides the Reconnect button and Slack-specific label when all three history scopes are granted', async () => {
 			mockUseIntegrations.mockReturnValue({
 				data: [
 					buildIntegrationResponse({
@@ -790,8 +858,9 @@ describe('IntegrationsPage', () => {
 			})
 			mockUseProviders.mockReturnValue({ data: [slackProvider], isLoading: false })
 			render(<IntegrationsPage />)
+			await expandCard('Slack')
 
-			expect(screen.getByText('Connected')).toBeInTheDocument()
+			expect(screen.getByText('Channels and triggers')).toBeInTheDocument()
 			expect(screen.queryByRole('button', { name: 'Reconnect' })).not.toBeInTheDocument()
 			expect(
 				screen.queryByText(/Slack agents need history access to read channel backlog/),
@@ -813,12 +882,13 @@ describe('IntegrationsPage', () => {
 			})
 			mockUseProviders.mockReturnValue({ data: [slackProvider], isLoading: false })
 			render(<IntegrationsPage />)
+			await expandCard('Slack')
 
 			await user.click(screen.getByRole('button', { name: 'Reconnect' }))
 			expect(mockConnect).toHaveBeenCalledWith({ provider: 'slack' })
 		})
 
-		it('falls through to the generic copy when Slack is missing only a non-history scope', () => {
+		it('falls through to the generic copy when Slack is missing only a non-history scope', async () => {
 			mockUseIntegrations.mockReturnValue({
 				data: [
 					buildIntegrationResponse({
@@ -832,6 +902,7 @@ describe('IntegrationsPage', () => {
 			})
 			mockUseProviders.mockReturnValue({ data: [slackProvider], isLoading: false })
 			render(<IntegrationsPage />)
+			await expandCard('Slack')
 
 			expect(
 				screen.getByText('Update needed — reconnect to grant 1 new permission'),
@@ -843,7 +914,7 @@ describe('IntegrationsPage', () => {
 	})
 
 	describe('linkedin identity add-on pricing copy', () => {
-		const renderLinkedIn = () => {
+		const renderLinkedIn = async () => {
 			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
 			mockUseProviders.mockReturnValue({
 				data: [
@@ -857,24 +928,25 @@ describe('IntegrationsPage', () => {
 				isLoading: false,
 			})
 			render(<IntegrationsPage />)
+			await openDiscover()
 		}
 
-		it('states the per-identity price on a non-enterprise plan', () => {
+		it('states the per-identity price on a non-enterprise plan', async () => {
 			mockUseBillingUsage.mockReturnValue({ data: { plan: 'pro' } })
-			renderLinkedIn()
+			await renderLinkedIn()
 			expect(screen.getByText(/\$49/)).toBeInTheDocument()
 		})
 
-		it('says the add-on is included instead of priced on an enterprise plan', () => {
+		it('says the add-on is included instead of priced on an enterprise plan', async () => {
 			mockUseBillingUsage.mockReturnValue({ data: { plan: 'enterprise' } })
-			renderLinkedIn()
+			await renderLinkedIn()
 			expect(screen.getByText(/Included in your enterprise plan/)).toBeInTheDocument()
 			expect(screen.queryByText(/\$49/)).not.toBeInTheDocument()
 		})
 
-		it('states neither line until the plan is known', () => {
+		it('states neither line until the plan is known', async () => {
 			mockUseBillingUsage.mockReturnValue({ data: undefined })
-			renderLinkedIn()
+			await renderLinkedIn()
 			expect(screen.queryByText(/\$49/)).not.toBeInTheDocument()
 			expect(screen.queryByText(/Included in your enterprise plan/)).not.toBeInTheDocument()
 		})
@@ -947,8 +1019,95 @@ describe('IntegrationsPage', () => {
 	})
 })
 
+describe('IntegrationsPage tabs, search and categories', () => {
+	const providers = [
+		{ name: 'slack', displayName: 'Slack', authType: 'oauth2', events: [] },
+		{ name: 'gmail', displayName: 'Gmail', authType: 'oauth2', events: [] },
+		{ name: 'github', displayName: 'GitHub', authType: 'oauth2', events: [] },
+	]
+
+	beforeEach(() => {
+		mockUseIntegrations.mockReturnValue({
+			data: [buildIntegrationResponse({ provider: 'slack', status: 'active' })],
+			isLoading: false,
+		})
+		mockUseProviders.mockReturnValue({ data: providers, isLoading: false })
+	})
+
+	it('counts connected and unconnected providers on the tabs', () => {
+		render(<IntegrationsPage />)
+		expect(screen.getByRole('button', { name: 'Connected (1)' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Discover (2)' })).toBeInTheDocument()
+	})
+
+	it('shows only connected providers first, and the rest under Discover', async () => {
+		render(<IntegrationsPage />)
+		expect(screen.getByText('Slack')).toBeInTheDocument()
+		expect(screen.queryByText('Gmail')).not.toBeInTheDocument()
+		await openDiscover()
+		expect(screen.getByText('Gmail')).toBeInTheDocument()
+		expect(screen.queryByText('Slack')).not.toBeInTheDocument()
+	})
+
+	it('filters Discover by what is typed in the search field', async () => {
+		render(<IntegrationsPage />)
+		await openDiscover()
+		await userEvent.type(screen.getByRole('searchbox', { name: /Search integrations/ }), 'git')
+		expect(screen.getByText('GitHub')).toBeInTheDocument()
+		expect(screen.queryByText('Gmail')).not.toBeInTheDocument()
+	})
+
+	it('filters Discover by category chip', async () => {
+		render(<IntegrationsPage />)
+		await openDiscover()
+		await userEvent.click(screen.getByRole('button', { name: 'Code' }))
+		expect(screen.getByText('GitHub')).toBeInTheDocument()
+		expect(screen.queryByText('Gmail')).not.toBeInTheDocument()
+	})
+
+	it('says so when nothing matches', async () => {
+		render(<IntegrationsPage />)
+		await openDiscover()
+		await userEvent.type(screen.getByRole('searchbox', { name: /Search integrations/ }), 'zzz')
+		expect(screen.getByText('Nothing to discover')).toBeInTheDocument()
+		expect(screen.getByText('No integration matches that search')).toBeInTheDocument()
+	})
+
+	it('says so on Connected when the search matches nothing', async () => {
+		render(<IntegrationsPage />)
+		await userEvent.type(screen.getByRole('searchbox', { name: /Search integrations/ }), 'zzz')
+		expect(screen.getByText('Nothing connected here')).toBeInTheDocument()
+		expect(screen.getByText('No integration matches that search')).toBeInTheDocument()
+	})
+
+	it('says nothing matches the filter, not that everything is connected, for the Custom chip', async () => {
+		render(<IntegrationsPage />)
+		await openDiscover()
+		await userEvent.click(screen.getByRole('button', { name: 'Custom' }))
+		expect(screen.getByText('No integration matches that filter')).toBeInTheDocument()
+		expect(screen.queryByText('Everything is connected')).not.toBeInTheDocument()
+	})
+
+	it('says nothing matches the filter for a category with no providers in it', async () => {
+		render(<IntegrationsPage />)
+		await openDiscover()
+		await userEvent.click(screen.getByRole('button', { name: 'Sales & payments' }))
+		expect(screen.getByText('No integration matches that filter')).toBeInTheDocument()
+	})
+
+	it('still says everything is connected when nothing is filtered', async () => {
+		mockUseIntegrations.mockReturnValue({
+			data: providers.map((p) => buildIntegrationResponse({ provider: p.name, status: 'active' })),
+			isLoading: false,
+		})
+		render(<IntegrationsPage />)
+		await openDiscover()
+		expect(screen.getByText('Everything is connected')).toBeInTheDocument()
+	})
+})
+
 describe('IntegrationsPage ordering', () => {
-	it('lists providers alphabetically by name', () => {
+	it('lists providers alphabetically by name', async () => {
 		mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
 		mockUseProviders.mockReturnValue({
 			data: [
@@ -959,6 +1118,7 @@ describe('IntegrationsPage ordering', () => {
 			isLoading: false,
 		})
 		render(<IntegrationsPage />)
+		await openDiscover()
 
 		const gh = screen.getByText('GitHub', { exact: false })
 		const li = screen.getByText('Linear', { exact: false })

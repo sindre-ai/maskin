@@ -9,8 +9,10 @@ vi.mock('../../../lib/analytics/posthog', () => ({
 
 import {
 	INTEGRATION_CONNECTED,
+	INTEGRATION_CONNECT_STARTED,
 	INTEGRATION_SYNC_COMPLETED,
 	INTEGRATION_TOOL_CALLED,
+	trackIntegrationConnectStarted,
 	trackIntegrationConnected,
 	trackIntegrationSyncCompleted,
 	trackIntegrationToolCalled,
@@ -146,6 +148,24 @@ describe('trackIntegrationSyncCompleted', () => {
 
 	it('exports the canonical event-name constant', () => {
 		expect(INTEGRATION_SYNC_COMPLETED).toBe('integration_sync_completed')
+	})
+})
+
+describe('trackIntegrationConnectStarted', () => {
+	it('captures the start of a sign-in with ids and provider only', async () => {
+		await trackIntegrationConnectStarted({
+			provider: 'notion',
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+		})
+
+		expect(capturePosthogEventMock).toHaveBeenCalledWith(INTEGRATION_CONNECT_STARTED, 'actor-1', {
+			provider: 'notion',
+			workspace_id: 'ws-1',
+			actor_id: 'actor-1',
+			auth_type: 'oauth',
+		})
+		expect(INTEGRATION_CONNECT_STARTED).toBe('integration_connect_started')
 	})
 })
 

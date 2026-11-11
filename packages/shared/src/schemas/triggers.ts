@@ -213,6 +213,9 @@ export const triggerResponseSchema = z.object({
 	createdBy: z.string().uuid(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
+	// When the trigger last fired. Only on a single-trigger read, or a list asked
+	// for it with include_last_run; null when it has never fired.
+	lastRunAt: z.string().nullable().optional(),
 })
 
 export type TriggerResponse = z.infer<typeof triggerResponseSchema>

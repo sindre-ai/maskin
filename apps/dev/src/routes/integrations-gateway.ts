@@ -2,18 +2,21 @@ import type { Database } from '@maskin/db'
 import { integrations } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
+import { trackIntegrationToolCalled } from '../lib/analytics/integration-events'
 import { createApiError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { type AgentAccess, resolveAgentAccess } from '../lib/integrations/agent-access'
 import {
 	GATEWAY_BODY_LIMIT_BYTES,
 	GATEWAY_PROVIDERS,
+	RESEND_SEND_TOOLS,
 	annotateToolsList,
 	buildUpstreamHeaders,
 	decideToolCall,
 	denialResult,
 	parseJsonRpc,
 	parseSseData,
+	resendSendRefusal,
 	toSse,
 	toolsCallName,
 } from '../lib/integrations/mcp-gateway'
@@ -21,6 +24,7 @@ import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { getProvider } from '../lib/integrations/registry'
 import type { ToolAnnotationsLike } from '../lib/integrations/tool-kinds'
 import { logger } from '../lib/logger'
+import { decideSend } from '../lib/send-gate'
 import type { IntegrationConfig } from '../lib/types'
 import { isWorkspaceWriter } from '../lib/workspace-auth'
 
@@ -217,9 +221,10 @@ export async function proxyMcp(
 	// upstream. So what goes upstream is the re-serialized message that was judged, for every
 	// provider and custom server.
 	const forwardBody = rpc ? JSON.stringify(rpc) : bodyText
+	let allowed = false
 
 	if (toolName) {
-		const decision = decideToolCall({
+		let decision = decideToolCall({
 			provider,
 			providerLabel: label,
 			toolName,
@@ -227,6 +232,14 @@ export async function proxyMcp(
 			access,
 			annotations: annotationCache.get(cacheKey)?.get(toolName),
 		})
+		// Read & write lets an agent use Resend's send tools, unless its send setting for emails holds
+		// or turns off its sends: then they are refused and it is pointed at resend_send_email.
+		if (decision.allowed && provider === 'resend' && RESEND_SEND_TOOLS.has(toolName)) {
+			const send = await decideSend(db, { workspaceId, agentId: actorId, kind: 'email' })
+			if (send !== 'send_now') {
+				decision = { ...decision, allowed: false, message: resendSendRefusal(toolName, send) }
+			}
+		}
 		if (!decision.allowed) {
 			try {
 				await recordEvent(db, {
@@ -259,6 +272,20 @@ export async function proxyMcp(
 				},
 			)
 		}
+		allowed = true
+	}
+	// One count per call let through, with the vendor's answer. Never the arguments or result.
+	const countToolCall = (errorCode: string | null) => {
+		if (!toolName || !allowed) return
+		void trackIntegrationToolCalled({
+			provider,
+			tool: toolName,
+			outcome: errorCode ? 'error' : 'success',
+			errorCode,
+			actorId,
+			sessionId: null,
+			workspaceId,
+		})
 	}
 
 	let upstreamHeaders: Record<string, string>
@@ -295,8 +322,10 @@ export async function proxyMcp(
 			provider,
 			error: err instanceof Error ? err.name : 'unknown',
 		})
+		countToolCall('UNREACHABLE')
 		return jsonRpcError(502, -32002, `${label} could not be reached. Try again shortly.`)
 	}
+	countToolCall(upstream.ok ? null : `HTTP_${upstream.status}`)
 
 	const responseHeaders = new Headers()
 	for (const name of FORWARDED_RESPONSE_HEADERS) {

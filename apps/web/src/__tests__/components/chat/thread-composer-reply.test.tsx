@@ -1,5 +1,5 @@
 import { ThreadComposer } from '@/components/chat/thread-composer'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createWorkspaceWrapper } from '../../setup'
@@ -113,6 +113,17 @@ describe('ThreadComposer — reply mode', () => {
 		const sent = mockMutateAsync.mock.calls[0]?.[0]
 		expect(sent).toMatchObject({ thread_root_id: 7, also_in_channel: false })
 		expect(sent.metadata).toBeUndefined()
+	})
+
+	it('leads the mention list with the thread participants, not the whole chat', async () => {
+		const user = userEvent.setup()
+		renderReply({ participantIds: ['me', 'agent-2'] })
+
+		await user.type(await replyBox(), '@')
+
+		const inThread = (await screen.findByText('In this conversation')).parentElement as HTMLElement
+		expect(within(inThread).getByText('Developer')).toBeInTheDocument()
+		expect(within(inThread).queryByText('Forge')).not.toBeInTheDocument()
 	})
 
 	it('keeps a separate draft per thread', async () => {

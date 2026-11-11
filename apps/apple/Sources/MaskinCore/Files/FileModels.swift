@@ -133,10 +133,13 @@ public struct FileDetail: Identifiable, Sendable, Equatable {
 	public var updatedAt: Date?
 	public var data: Data
 	public var annotations: [FileAnnotation]
+	/// Lowercase labels, A to Z; empty for a file with none.
+	public var tags: [String]
 
 	public init(
 		id: String, name: String, description: String? = nil, mimeType: String, sizeBytes: Int,
-		createdAt: Date? = nil, updatedAt: Date? = nil, data: Data, annotations: [FileAnnotation] = []
+		createdAt: Date? = nil, updatedAt: Date? = nil, data: Data, annotations: [FileAnnotation] = [],
+		tags: [String] = []
 	) {
 		self.id = id
 		self.name = name
@@ -147,6 +150,7 @@ public struct FileDetail: Identifiable, Sendable, Equatable {
 		self.updatedAt = updatedAt
 		self.data = data
 		self.annotations = annotations
+		self.tags = tags
 	}
 
 	public var kind: FileContentKind { .classify(mimeType: mimeType, name: name) }
@@ -175,10 +179,11 @@ public struct FileSummary: Identifiable, Sendable, Equatable {
 	public var mimeType: String
 	public var sizeBytes: Int
 	public var updatedAt: Date?
+	public var tags: [String]
 
 	public init(
 		id: String, name: String, description: String? = nil, mimeType: String, sizeBytes: Int,
-		updatedAt: Date? = nil
+		updatedAt: Date? = nil, tags: [String] = []
 	) {
 		self.id = id
 		self.name = name
@@ -186,9 +191,49 @@ public struct FileSummary: Identifiable, Sendable, Equatable {
 		self.mimeType = mimeType
 		self.sizeBytes = sizeBytes
 		self.updatedAt = updatedAt
+		self.tags = tags
 	}
 
 	public var kind: FileContentKind { .classify(mimeType: mimeType, name: name) }
+}
+
+/// How a tag filter combines several tags: the file has every one, or at least one.
+public enum FileTagMatch: String, Sendable, Equatable, CaseIterable {
+	case all
+	case any
+
+	/// The wording the web uses for the same choice.
+	public var label: String {
+		switch self {
+		case .all: "Has all of these"
+		case .any: "Has any of these"
+		}
+	}
+}
+
+/// A tag in use in the workspace and how many files carry it.
+public struct FileTagCount: Identifiable, Sendable, Equatable {
+	public var tag: String
+	public var count: Int
+	public var id: String { tag }
+
+	public init(tag: String, count: Int) {
+		self.tag = tag
+		self.count = count
+	}
+}
+
+/// What a rename or merge did: the tag it removed, the tag it left, and how many files changed.
+public struct FileTagChange: Sendable, Equatable {
+	public var from: String
+	public var to: String
+	public var filesChanged: Int
+
+	public init(from: String, to: String, filesChanged: Int) {
+		self.from = from
+		self.to = to
+		self.filesChanged = filesChanged
+	}
 }
 
 public protocol FilesRemote: Sendable {
@@ -201,6 +246,20 @@ public protocol FilesRemote: Sendable {
 	/// `GET /api/files?ids=`: metadata (no bytes) for specific files in one request. Unknown or
 	/// inaccessible ids are simply absent from the result.
 	func summaries(ids: [String]) async throws -> [FileSummary]
+	/// `GET /api/files` narrowed by name and by tags (`tags_match` all or any), in the server's order.
+	func list(query: String, tags: [String], match: FileTagMatch, limit: Int, offset: Int) async throws
+		-> [FileSummary]
+	/// `GET /api/files/tags`: every tag in use with its file count.
+	func tagCounts() async throws -> [FileTagCount]
+	/// The tags one file holds, from `GET /api/files?ids=`.
+	func tags(ofFile id: String) async throws -> [String]
+	/// `PATCH /api/files/{id}` with the complete tag list. The server replaces it. Returns what it stored.
+	func saveTags(fileId: String, tags: [String], idempotencyKey: String) async throws -> [String]
+	/// `POST /api/files/tags/rename`: every file with `from` carries `to` instead. Fails if `to` is
+	/// already a tag.
+	func renameTag(from: String, to: String) async throws -> FileTagChange
+	/// `POST /api/files/tags/merge`: every file with `from` gets `into`, and `from` is gone.
+	func mergeTag(from: String, into: String) async throws -> FileTagChange
 	/// `PATCH /api/files/{id}` with the complete annotation list. The server replaces the list, so
 	/// callers always send everything. Returns what the server stored.
 	func saveAnnotations(
@@ -211,6 +270,33 @@ public protocol FilesRemote: Sendable {
 extension FilesRemote {
 	public func list(query: String, limit: Int, offset: Int) async throws -> [FileSummary] {
 		throw FileError("Browsing files isn't available here.")
+	}
+
+	public func list(query: String, tags: [String], match: FileTagMatch, limit: Int, offset: Int) async throws
+		-> [FileSummary]
+	{
+		guard tags.isEmpty else { throw FileError("Filtering by tag isn't available here.") }
+		return try await list(query: query, limit: limit, offset: offset)
+	}
+
+	public func tagCounts() async throws -> [FileTagCount] {
+		throw FileError("Tags aren't available here.")
+	}
+
+	public func tags(ofFile id: String) async throws -> [String] {
+		throw FileError("Tags aren't available here.")
+	}
+
+	public func saveTags(fileId: String, tags: [String], idempotencyKey: String) async throws -> [String] {
+		throw FileError("Tags aren't available here.")
+	}
+
+	public func renameTag(from: String, to: String) async throws -> FileTagChange {
+		throw FileError("Tags aren't available here.")
+	}
+
+	public func mergeTag(from: String, into: String) async throws -> FileTagChange {
+		throw FileError("Tags aren't available here.")
 	}
 
 	public func briefings(limit: Int) async throws -> [FileSummary] {

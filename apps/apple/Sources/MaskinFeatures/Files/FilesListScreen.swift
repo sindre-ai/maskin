@@ -36,6 +36,7 @@ public struct FilesListScreen: View {
 private struct FilesListContent: View {
 	@State private var store: FilesListStore
 	@State private var search = ""
+	@State private var showTags = false
 	private let environment: AppEnvironment
 	private let open: ((String) -> Void)?
 	private let onDone: (() -> Void)?
@@ -47,12 +48,16 @@ private struct FilesListContent: View {
 		_store = State(
 			initialValue: FilesListStore(
 				remote: APIFilesRemote(
-					client: environment.client, credentials: environment.auth.credentialsProvider)))
+					client: environment.client, credentials: environment.auth.credentialsProvider,
+					baseURL: environment.baseURL, clientSource: environment.clientSource)))
 	}
 
 	var body: some View {
 		StandaloneStack {
-			FilesListView(store: store, search: search, onOpen: open)
+			VStack(spacing: 0) {
+				FileTagFilterChips(store: store)
+				FilesListView(store: store, search: search, onOpen: open)
+			}
 			.ambientBackground()
 			.navigationTitle("Files")
 			#if os(iOS)
@@ -62,11 +67,26 @@ private struct FilesListContent: View {
 				if let onDone {
 					ToolbarItem(placement: .confirmationAction) { Button("Done", action: onDone) }
 				}
+				// Shown once some file carries a tag (or one is already picked).
+				if store.hasTagFilter {
+					ToolbarItem(placement: .primaryAction) {
+						Button { showTags = true } label: {
+							Label(
+								store.selectedTags.isEmpty ? "Tags" : "Tags (\(store.selectedTags.count))",
+								systemImage: "tag")
+						}
+					}
+				}
 			}
+			.sheet(isPresented: $showTags) { FileTagFilterSheet(store: store) }
 			.searchable(text: $search, prompt: "Search files")
 			.navigationDestination(for: FileRoute.self) { FileScreen(environment: environment, fileId: $0.id) }
 			.task { await store.load() }
-			.refreshable { await store.load() }
+			.task { await store.loadTags() }
+			.refreshable {
+				await store.load()
+				await store.loadTags()
+			}
 			// Debounced: each keystroke restarts the wait, so only the pause hits the server.
 			.task(id: search) {
 				try? await Task.sleep(for: .milliseconds(250))
@@ -100,12 +120,21 @@ struct FilesListView: View {
 			if store.files.isEmpty {
 				EmptyState(
 					symbol: "doc.on.doc",
-					title: search.isEmpty ? "No files yet" : "No matching files",
-					message: search.isEmpty ? "Files your agents and teammates add show up here." : "Try a different name.")
+					title: emptyTitle, message: emptyMessage)
 			} else {
 				list
 			}
 		}
+	}
+
+	private var emptyTitle: String {
+		if !search.isEmpty { return "No matching files" }
+		return store.selectedTags.isEmpty ? "No files yet" : "No files have these tags"
+	}
+
+	private var emptyMessage: String? {
+		if !search.isEmpty { return "Try a different name." }
+		return store.selectedTags.isEmpty ? "Files your agents and teammates add show up here." : nil
 	}
 
 	private var list: some View {

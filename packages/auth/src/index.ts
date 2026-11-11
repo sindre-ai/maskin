@@ -1,11 +1,17 @@
 export {
 	LOGIN_KEY_CAP,
+	PERSONAL_KEY_CAP,
+	type ActorKeySummary,
 	generateApiKey,
 	issueApiKey,
 	issueLoginKey,
+	issuePersonalKey,
+	listActorKeys,
 	revokeActorKeys,
+	revokeOwnKey,
 	revokeSessionKeys,
 	validateApiKey,
+	validateApiKeyWithKind,
 } from './api-keys'
 export { hashApiKey } from './key-hash'
 export { hashPassword, verifyPassword } from './password'

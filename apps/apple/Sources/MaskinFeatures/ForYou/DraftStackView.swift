@@ -16,6 +16,7 @@ struct DraftStackView: View {
 	@State private var done: [String: DecisionService.DraftAction] = [:]
 	@State private var confirming: DecisionDraft?
 	@State private var failedKey: String?
+	@State private var confirmingAll = false
 
 	private func key(_ draft: DecisionDraft, _ index: Int) -> String { draft.id ?? String(index) }
 
@@ -27,6 +28,13 @@ struct DraftStackView: View {
 	private func name(_ draft: DecisionDraft) -> String {
 		let to = draft.to?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 		return to.isEmpty ? draft.label : to
+	}
+
+	/// The messages still open, with their positions: what Send all and Skip all act on.
+	private var pending: [(index: Int, draft: DecisionDraft)] {
+		drafts.enumerated().compactMap { index, draft in
+			offersActions(draft) && done[key(draft, index)] == nil ? (index, draft) : nil
+		}
 	}
 
 	var body: some View {
@@ -84,6 +92,7 @@ struct DraftStackView: View {
 					}
 				}
 			}
+			if pending.count > 1 { bulkBar }
 		}
 		.confirmationDialog(
 			confirming.map { "Send to \(name($0))?" } ?? "Send?",
@@ -99,6 +108,43 @@ struct DraftStackView: View {
 			Button("Cancel", role: .cancel) { confirming = nil }
 		} message: {
 			Text("This can\u{2019}t be undone. It goes to a real person.")
+		}
+	}
+
+	/// Send all N and Skip all, at the bottom of the card. Send reaches real people, so it asks first.
+	private var bulkBar: some View {
+		HStack(spacing: MaskinSpace.s4) {
+			Button {
+				confirmingAll = true
+			} label: {
+				Text("Send all \(pending.count)")
+					.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .bold))
+					.foregroundStyle(MaskinSurface.onInverse)
+					.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin)
+					.background(MaskinSurface.inverse, in: Capsule())
+					.contentShape(Capsule())
+			}
+			.buttonStyle(.maskinPressed(.shrink))
+			Button {
+				for item in pending { settle(item.draft, index: item.index, action: .skip) }
+			} label: {
+				Text("Skip all")
+					.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold))
+					.foregroundStyle(MaskinColor.ink)
+					.padding(.horizontal, MaskinSpace.s10)
+					.frame(minHeight: MaskinSpace.touchMin)
+					.background(MaskinSurface.fill, in: Capsule())
+					.contentShape(Capsule())
+			}
+			.buttonStyle(.maskinPressed(.shrink))
+		}
+		.confirmationDialog("Send all \(pending.count)?", isPresented: $confirmingAll, titleVisibility: .visible) {
+			Button("Send all \(pending.count)") {
+				for item in pending { settle(item.draft, index: item.index, action: .send) }
+			}
+			Button("Cancel", role: .cancel) {}
+		} message: {
+			Text("This can\u{2019}t be undone. It goes to real people.")
 		}
 	}
 

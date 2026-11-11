@@ -2,6 +2,8 @@ import { z } from '@hono/zod-openapi'
 import {
 	actorListItemSchema,
 	agentStateSchema,
+	messagePlanSchema,
+	messageProposedEditSchema,
 	objectPreviewSchema,
 	providerMcpInfoSchema,
 	triggerResponseSchema,
@@ -395,6 +397,12 @@ export const conversationListItemResponseSchema = z.object({
 	subjectType: z.enum(['object', 'loop']).nullable(),
 	subjectId: z.string().uuid().nullable(),
 	createdBy: z.string().uuid(),
+	// Labels for grouping chats, for example a team name. Shared by every participant.
+	tags: z.array(z.string()),
+	// Marks the direct message (DM) of a pair: the two actor ids, lowest first, joined with ':'.
+	// Null for every topical chat. The chat list tells a DM from a topical chat by this alone,
+	// never by title or participant count.
+	directPairKey: z.string().nullable(),
 	lastMessageAt: z.string().nullable(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
@@ -425,6 +433,7 @@ export const conversationDetailResponseSchema = conversationListItemResponseSche
 		snippet_actor_name: true,
 		snippet_is_caller: true,
 		working_actor_ids: true,
+		directPairKey: true,
 	})
 	.extend({
 		last_read_message_id: z.number().nullable(),
@@ -445,9 +454,15 @@ export const messageResponseSchema = z.object({
 	kind: z.string(),
 	content: z.string(),
 	metadata: jsonbField,
+	/** The plan the message carries, typed. Absent when it has none or the version is unknown. */
+	plan: messagePlanSchema.optional(),
+	/** The edit the message proposes, typed. Absent when it has none or the version is unknown. */
+	proposed_edit: messageProposedEditSchema.optional(),
 	sessionId: z.string().uuid().nullable(),
 	createdAt: z.string().nullable(),
 	editedAt: z.string().nullable(),
+	/** Set when the author deleted the message; its content is then empty. */
+	deletedAt: z.string().nullable(),
 	/** Root message id when this is a thread reply; null for top-level messages. */
 	threadRootId: z.number().nullable(),
 	/** A thread reply also shown in the main timeline. */

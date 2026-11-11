@@ -40,6 +40,7 @@ import {
 	buildIntegrationInsert,
 	buildSkillInsert,
 	buildTriggerInsert,
+	sanitizeSnapshotLlmConfig,
 } from '../services/loop-provisioning'
 import { stopSessionsForActors } from '../services/session-cleanup'
 import type { SessionManager } from '../services/session-manager'
@@ -894,7 +895,11 @@ app.openapi(installItemRoute, (async (c) => {
 	const snapshot = (item.itemSnapshot as Record<string, unknown>) ?? {}
 	// Individual-item installs are tracked by marketplace_item_id in metadata.
 	// No installed_loop_id is set so the version-push cron ignores them.
-	const meta = { marketplace_item_id: item.id, source_item_id: item.sourceItemId, snapshot }
+	const meta = {
+		marketplace_item_id: item.id,
+		source_item_id: item.sourceItemId,
+		snapshot: sanitizeSnapshotLlmConfig(snapshot),
+	}
 
 	const name = (snapshot.name as string) ?? 'Untitled'
 

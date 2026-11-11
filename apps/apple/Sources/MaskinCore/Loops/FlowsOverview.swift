@@ -59,19 +59,6 @@ public enum FlowTags {
 
 /// What the Flows list and its cards say, worked out from the loops alone.
 public enum FlowsOverview {
-	/// The card's footer message, specific to the decision: "Decide: <title>" for one, "3 decisions
-	/// waiting: <title>" for several, naming the newest unanswered one. Without a title it counts
-	/// only ("1 decision waits on you"). Nil when none wait on the viewer.
-	public static func banner(_ loop: LoopSummary, decisionTitle: String? = nil) -> String? {
-		guard loop.status.isLive, loop.waitingCount > 0 else { return nil }
-		let n = loop.waitingCount
-		let title = decisionTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard let title, !title.isEmpty else {
-			return n == 1 ? "1 decision waits on you" : "\(n) decisions wait on you"
-		}
-		return n == 1 ? "Decide: \(title)" : "\(n) decisions waiting: \(title)"
-	}
-
 	/// What a decision post is called: its own title, else the first sentence of its text.
 	public static func decisionTitle(from post: LoopPost?) -> String? {
 		guard let post, post.isDecision else { return nil }
@@ -80,17 +67,13 @@ public enum FlowsOverview {
 		return text.isEmpty ? nil : text
 	}
 
-	/// The overview strip above the cards: what is running, what needs the viewer and the work
-	/// moving through the flows, all counted from the list the API returned. Empty without flows.
-	public static func kpis(_ loops: [LoopSummary]) -> [LoopQuality.Stat] {
-		guard !loops.isEmpty else { return [] }
-		let live = loops.filter(\.status.isLive)
-		return [
-			.init(label: "Need you", value: "\(live.filter { $0.pill == .waitingOnYou || $0.waitingCount > 0 }.count)"),
-			.init(label: "Running", value: "\(live.count) of \(loops.count)"),
-			.init(label: "In progress", value: "\(loops.reduce(0) { $0 + $1.inProgressCount })"),
-			.init(label: "Closed", value: "\(loops.reduce(0) { $0 + $1.closedCount })"),
-		]
+	/// The one sentence under the Flows title: "2 of 4 flows need you.", or "Nothing needs you." when
+	/// no running flow waits on the viewer. Nil without flows.
+	public static func needsYouLine(_ loops: [LoopSummary]) -> String? {
+		guard !loops.isEmpty else { return nil }
+		let needing = loops.filter { $0.status.isLive && ($0.pill == .waitingOnYou || $0.waitingCount > 0) }.count
+		guard needing > 0 else { return "Nothing needs you." }
+		return "\(needing) of \(loops.count) \(loops.count == 1 ? "flow needs" : "flows need") you."
 	}
 
 	/// "2 in progress · 5 closed" under a card's figure; nil when the flow has no work yet.

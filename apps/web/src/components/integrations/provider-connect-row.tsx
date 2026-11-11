@@ -1,13 +1,15 @@
-import { AgentAccess } from '@/components/integrations/agent-access'
+import { AgentAccess, accessChipLabel } from '@/components/integrations/agent-access'
 import { StatusPill } from '@/components/integrations/drive/status-pill'
 import { ProviderCard } from '@/components/integrations/provider-card'
 import {
 	ApiKeyDialog,
 	DeepdotsConnectDialog,
+	DisconnectConfirmDialog,
 	InstallGithubOrgButton,
 	LinkGithubDialog,
 	SkjaldConnectDialog,
 } from '@/components/integrations/provider-dialogs'
+import { ProviderLogo } from '@/components/integrations/provider-logo'
 import { ResendConnectDialog } from '@/components/integrations/resend/resend-connect-dialog'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
@@ -25,6 +27,7 @@ import type { IntegrationResponse, ProviderInfo } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { DRIVE_COPY } from '@/lib/drive-copy'
 import { DRIVE_PROVIDER } from '@/lib/drive-humans'
+import { logoDomainFor } from '@/lib/integration-catalog'
 import type { IntegrationToolState } from '@/lib/integration-tool-state'
 import { PILL_BUTTON } from '@/lib/pill-button'
 import { MULTI_INSTALL_PROVIDERS } from '@maskin/shared'
@@ -102,6 +105,7 @@ export function ProviderRow({
 	const disconnect = useDisconnectIntegration(workspaceId)
 	const canWrite = useCanWrite()
 	const isConnected = !!integration
+	const [confirmingDisconnect, setConfirmingDisconnect] = useState(false)
 	// The Drive card carries a pill, a one-line pitch and a link to its detail page
 	// in Settings; the chat card stays the plain row every provider gets.
 	const isDrive = provider.name === DRIVE_PROVIDER && variant === 'settings'
@@ -179,9 +183,24 @@ export function ProviderRow({
 			: undefined
 	const introNeedsReconnect = introState === 'needs_reconnect' || reconnect
 	const connectLabel = reconnect ? 'Reconnect' : 'Connect'
+	const disconnectAccount = integration?.externalId
+		? provider.externalIdDisplay === 'email'
+			? integration.externalId
+			: `Installation ${integration.externalId}`
+		: undefined
 
 	return (
 		<ProviderCard
+			logo={
+				variant === 'settings' && introState === undefined ? (
+					<ProviderLogo name={provider.displayName} domain={logoDomainFor(provider.name)} />
+				) : undefined
+			}
+			chip={
+				integration
+					? accessChipLabel(integration.defaultAgentAccess ?? 'read', integration.agentGrants ?? [])
+					: undefined
+			}
 			name={provider.displayName}
 			badge={isDrive && <StatusPill tone="new">{DRIVE_COPY.providerCard.pill}</StatusPill>}
 			compact={introState !== undefined}
@@ -248,17 +267,32 @@ export function ProviderRow({
 								<ConnectedButton />
 							)
 						) : (
-							<ViewerTooltip>
-								<Button
-									variant="ghost"
-									size="sm"
-									className={cn(PILL_BUTTON, 'text-muted-foreground hover:text-error')}
-									onClick={() => disconnect.mutate(integration.id)}
-									disabled={disconnect.isPending || !canWrite}
-								>
-									Disconnect
-								</Button>
-							</ViewerTooltip>
+							<>
+								<ViewerTooltip>
+									<Button
+										variant="ghost"
+										size="sm"
+										className={cn(PILL_BUTTON, 'text-error hover:text-error')}
+										onClick={() => setConfirmingDisconnect(true)}
+										disabled={disconnect.isPending || !canWrite}
+									>
+										Disconnect
+									</Button>
+								</ViewerTooltip>
+								<DisconnectConfirmDialog
+									open={confirmingDisconnect}
+									onClose={() => setConfirmingDisconnect(false)}
+									name={provider.displayName}
+									account={disconnectAccount}
+									billingNote={isPaidIdentityAddon}
+									pending={disconnect.isPending}
+									onConfirm={() =>
+										disconnect.mutate(integration.id, {
+											onSettled: () => setConfirmingDisconnect(false),
+										})
+									}
+								/>
+							</>
 						)}
 					</div>
 				) : (
@@ -437,15 +471,17 @@ export function GroupedProviderRow({
 	}
 
 	return (
-		<div className="overflow-hidden rounded-xl border border-border bg-card">
+		<div className="overflow-hidden rounded-2xl border border-border bg-card">
 			<button
 				type="button"
 				onClick={() => setExpanded((v) => !v)}
 				aria-expanded={expanded}
-				className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-bg-hover max-md:min-h-11"
+				className="flex w-full items-center gap-3 p-[18px] text-left transition-colors hover:bg-bg-hover max-md:min-h-11"
 			>
+				<ProviderLogo name={provider.displayName} domain={logoDomainFor(provider.name)} />
+				<span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-success" />
 				<div className="flex-1 min-w-0">
-					<p className="text-[15px] font-semibold text-foreground truncate">
+					<p className="text-base font-semibold text-foreground truncate">
 						{provider.displayName} · {count}
 					</p>
 					<p className="text-[13px] text-muted-foreground truncate">
@@ -482,7 +518,9 @@ export function GroupedProviderRow({
 							actorName={installation.actorId ? actorNames.get(installation.actorId) : undefined}
 							isOwn={Boolean(installation.actorId && installation.actorId === currentActorId)}
 							workspaceId={workspaceId}
-							onDisconnect={() => disconnect.mutate(installation.id)}
+							providerName={provider.displayName}
+							billingNote={isPaidIdentityAddon}
+							onDisconnect={(onSettled) => disconnect.mutate(installation.id, { onSettled })}
 							disconnecting={disconnect.isPending}
 							onReconnect={() => connect.mutate({ provider: provider.name, returnTo })}
 							reconnecting={connect.isPending}
@@ -533,6 +571,8 @@ function NestedInstallationRow({
 	actorName,
 	isOwn = false,
 	workspaceId,
+	providerName,
+	billingNote = false,
 	onDisconnect,
 	disconnecting,
 	onReconnect,
@@ -545,13 +585,19 @@ function NestedInstallationRow({
 	actorName?: string
 	isOwn?: boolean
 	workspaceId: string
-	onDisconnect: () => void
+	/** The tool's display name, for the confirm dialog. */
+	providerName: string
+	/** The card states a per-identity charge, so the confirm dialog repeats how Disconnect stops it. */
+	billingNote?: boolean
+	/** Runs the disconnect; `onSettled` fires once it has finished, either way. */
+	onDisconnect: (onSettled: () => void) => void
 	disconnecting: boolean
 	/** Runs the provider's normal sign-in, which updates this row in place. */
 	onReconnect: () => void
 	reconnecting: boolean
 }) {
 	const canWrite = useCanWrite()
+	const [confirmingDisconnect, setConfirmingDisconnect] = useState(false)
 	// Same rule as the single row: a token that predates a scope the provider now asks for
 	// keeps working for what it was granted, so the install stays listed but says so.
 	const needsReconnect =
@@ -604,12 +650,21 @@ function NestedInstallationRow({
 					variant="ghost"
 					size="sm"
 					className={cn(PILL_BUTTON, 'shrink-0 text-muted-foreground hover:text-error')}
-					onClick={onDisconnect}
+					onClick={() => setConfirmingDisconnect(true)}
 					disabled={disconnecting || !canWrite}
 				>
 					Disconnect
 				</Button>
 			</ViewerTooltip>
+			<DisconnectConfirmDialog
+				open={confirmingDisconnect}
+				onClose={() => setConfirmingDisconnect(false)}
+				name={providerName}
+				account={actorScoped ? (isOwn ? 'your account' : `${label}'s account`) : label}
+				billingNote={billingNote}
+				pending={disconnecting}
+				onConfirm={() => onDisconnect(() => setConfirmingDisconnect(false))}
+			/>
 			<div className="basis-full">
 				<AgentAccess integration={integration} workspaceId={workspaceId} />
 			</div>

@@ -540,6 +540,7 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	// Actors
 	create_actor: 'actor_create',
 	update_actor: 'actor_update',
+	delete_agent: 'actor_delete',
 	// Triggers
 	create_trigger: 'trigger_create',
 	update_trigger: 'trigger_update',

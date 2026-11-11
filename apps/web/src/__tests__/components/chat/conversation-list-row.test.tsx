@@ -50,6 +50,19 @@ function buildConversation(
 	}
 }
 
+// Three people: the title no longer names the one who spoke, so the preview does.
+const GROUP_PARTICIPANTS: ConversationListItemResponse['participants'] = [
+	{ actorId: 'me', actorName: 'Me', actorType: 'human', joinedAt: null, addedBy: null },
+	{
+		actorId: 'agent-1',
+		actorName: 'Billing Agent',
+		actorType: 'agent',
+		joinedAt: null,
+		addedBy: null,
+	},
+	{ actorId: 'agent-2', actorName: 'Relay', actorType: 'agent', joinedAt: null, addedBy: null },
+]
+
 function renderRow(conversation: ConversationListItemResponse) {
 	return render(<ConversationListRow workspaceId="ws-1" conversation={conversation} />, {
 		wrapper: TestWrapper,
@@ -74,6 +87,17 @@ describe('ConversationListRow', () => {
 		expect(screen.queryByText(/in threads/)).not.toBeInTheDocument()
 	})
 
+	it('names a direct message after who is on the other end, not its stored title', () => {
+		renderRow(buildConversation({ title: 'Some old topic', directPairKey: 'a:me' }))
+		expect(screen.getByText('Billing Agent')).toBeInTheDocument()
+		expect(screen.queryByText('Some old topic')).not.toBeInTheDocument()
+	})
+
+	it('keeps the title of a topical chat with the same two people', () => {
+		renderRow(buildConversation({ title: 'Billing retries', directPairKey: null }))
+		expect(screen.getByText('Billing retries')).toBeInTheDocument()
+	})
+
 	it('plates who the conversation is with, never the viewer', () => {
 		renderRow(buildConversation())
 		// Two participants, one of them the viewer — only the counterpart plates.
@@ -81,7 +105,7 @@ describe('ConversationListRow', () => {
 		expect(screen.queryByTitle('Me')).not.toBeInTheDocument()
 	})
 
-	it('plates the first counterpart only', () => {
+	it('stacks the first two counterparts and folds the rest into a +N chip', () => {
 		renderRow(
 			buildConversation({
 				participants: [
@@ -100,7 +124,33 @@ describe('ConversationListRow', () => {
 			}),
 		)
 		expect(screen.getByTitle('Billing Agent')).toBeInTheDocument()
-		expect(screen.queryByTitle('Relay')).not.toBeInTheDocument()
+		expect(screen.getByTitle('Relay')).toBeInTheDocument()
+		expect(screen.queryByTitle('Quill')).not.toBeInTheDocument()
+		expect(screen.getByText('+2')).toBeInTheDocument()
+		expect(screen.queryByTitle('Me')).not.toBeInTheDocument()
+	})
+
+	it('draws one plate and no stack for a chat with one counterpart', () => {
+		const { container } = renderRow(buildConversation())
+		expect(container.querySelector('[data-avatar-stack]')).toBeNull()
+	})
+
+	it('stacks two counterparts without a chip', () => {
+		const { container } = renderRow(buildConversation({ participants: GROUP_PARTICIPANTS }))
+		expect(container.querySelector('[data-avatar-stack]')).not.toBeNull()
+		expect(container.querySelector('[data-avatar-stack-more]')).toBeNull()
+	})
+
+	it('shortens a long author name to its initials, keeping the full name on hover', () => {
+		renderRow(
+			buildConversation({
+				snippet_actor_id: 'agent-1',
+				snippet_actor_name: 'Chief of Staff',
+				participants: GROUP_PARTICIPANTS,
+			}),
+		)
+		expect(screen.getByText('CoS:')).toBeInTheDocument()
+		expect(screen.getByTitle('Chief of Staff')).toBeInTheDocument()
 	})
 
 	it('plates the only participant in a thread the viewer is alone in', () => {
@@ -148,7 +198,11 @@ describe('ConversationListRow', () => {
 
 	it('attributes the snippet to whoever wrote it, and to "You" when that is the viewer', () => {
 		const { unmount } = renderRow(
-			buildConversation({ snippet_actor_id: 'agent-1', snippet_actor_name: 'Billing Agent' }),
+			buildConversation({
+				snippet_actor_id: 'agent-1',
+				snippet_actor_name: 'Billing Agent',
+				participants: GROUP_PARTICIPANTS,
+			}),
 		)
 		expect(screen.getByText('Billing Agent:')).toBeInTheDocument()
 		unmount()
@@ -157,11 +211,33 @@ describe('ConversationListRow', () => {
 		expect(screen.getByText('You:')).toBeInTheDocument()
 	})
 
+	it('names the author in a custom-titled one-to-one chat, where nothing else says who wrote it', () => {
+		renderRow(
+			buildConversation({ snippet_actor_id: 'agent-1', snippet_actor_name: 'Billing Agent' }),
+		)
+		expect(screen.getByText('Billing Agent:')).toBeInTheDocument()
+	})
+
+	it('drops the name when the chat is titled with the one who wrote the preview', () => {
+		renderRow(
+			buildConversation({
+				title: 'Billing Agent',
+				snippet_actor_id: 'agent-1',
+				snippet_actor_name: 'Billing Agent',
+			}),
+		)
+		expect(screen.queryByText('Billing Agent:')).not.toBeInTheDocument()
+		expect(
+			screen.getByText('The retry window is still open on three accounts.'),
+		).toBeInTheDocument()
+	})
+
 	it('shows a link in the last message as its text, with no markdown', () => {
 		renderRow(
 			buildConversation({
 				snippet_actor_id: 'agent-1',
 				snippet_actor_name: 'Billing Agent',
+				participants: GROUP_PARTICIPANTS,
 				snippet:
 					'**Merged** [PR 2527](https://github.com/sindre-ai/maskin/pull/2527), see https://maskin.io/x/objects/abc',
 			}),
@@ -189,6 +265,7 @@ describe('ConversationListRow', () => {
 				working_actor_ids: ['agent-1'],
 				snippet_actor_id: 'agent-1',
 				snippet_actor_name: 'Billing Agent',
+				participants: GROUP_PARTICIPANTS,
 				snippet: 'Found where the tile gets its count. Reading how the sidebar uses it.',
 			}),
 		)

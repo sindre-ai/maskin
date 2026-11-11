@@ -290,6 +290,10 @@ describe('Subscriptions Routes', () => {
 	})
 
 	describe('GET /api/subscriptions/unread', () => {
+		// The route first lists the entities that can have unread (a mentioning comment, then the
+		// onboarding threads) and only then aggregates, so those two selects come off the queue first.
+		const candidates = (entityId: string) => [[{ entityId }], []]
+
 		it('returns empty list when nothing unread', async () => {
 			const { app } = createTestApp(subscriptionsRoutes, '/api/subscriptions')
 
@@ -304,9 +308,10 @@ describe('Subscriptions Routes', () => {
 			const obj = buildObject({ workspaceId: wsId })
 			const sub = buildSubscription({ workspaceId: wsId, entityType: 'object', entityId: obj.id })
 			const { app, mockResults } = createTestApp(subscriptionsRoutes, '/api/subscriptions')
-			// First select = aggregate join query → returns the grouped row.
-			// Second select = inArray fetch for object summaries.
+			// After the two candidate selects: aggregate join query → returns the grouped row,
+			// then the inArray fetch for object summaries.
 			mockResults.selectQueue = [
+				...candidates(obj.id),
 				[
 					{
 						entityType: 'object',
@@ -338,6 +343,7 @@ describe('Subscriptions Routes', () => {
 			const obj = buildObject({ workspaceId: wsId })
 			const { app, mockResults } = createTestApp(subscriptionsRoutes, '/api/subscriptions')
 			mockResults.selectQueue = [
+				...candidates(obj.id),
 				[
 					{
 						entityType: 'object',
@@ -368,6 +374,7 @@ describe('Subscriptions Routes', () => {
 			const obj = buildObject({ workspaceId: wsId })
 			const { app, mockResults } = createTestApp(subscriptionsRoutes, '/api/subscriptions')
 			mockResults.selectQueue = [
+				...candidates(obj.id),
 				[
 					{
 						entityType: 'object',
@@ -405,6 +412,7 @@ describe('Subscriptions Routes', () => {
 			// A recently-read card comes back with unread_count = 0 but is still
 			// present in the feed with a non-null latest_activity_at.
 			mockResults.selectQueue = [
+				...candidates(obj.id),
 				[
 					{
 						entityType: 'object',

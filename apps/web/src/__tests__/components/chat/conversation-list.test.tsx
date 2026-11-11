@@ -47,6 +47,29 @@ function buildConversation(
 	}
 }
 
+/** Answers the default list's two fetches: the priority set (DMs, pinned, unread) and the recent rest. */
+function mockScopedList({
+	priority = [],
+	priorityPages,
+	recent,
+	recentHasMore = false,
+}: {
+	priority?: ConversationListItemResponse[]
+	/** Overrides `priority`: one array per page, the last page closing the set. */
+	priorityPages?: ConversationListItemResponse[][]
+	recent: ConversationListItemResponse[]
+	recentHasMore?: boolean
+}) {
+	const pages = priorityPages ?? [priority]
+	vi.mocked(api.conversations.list).mockImplementation(async (_ws, params) => {
+		if (params?.scope === 'priority') {
+			const page = Number(params.offset) / Number(params.limit)
+			return { conversations: pages[page] ?? [], has_more: page < pages.length - 1 }
+		}
+		return { conversations: recent, has_more: recentHasMore }
+	})
+}
+
 describe('ConversationList', () => {
 	beforeEach(() => {
 		vi.mocked(api.conversations.list).mockReset()
@@ -70,11 +93,31 @@ describe('ConversationList', () => {
 		expect(screen.queryByText(/Older conversations load as you scroll/)).not.toBeInTheDocument()
 	})
 
-	it('hides the end-of-history line while more pages remain', async () => {
-		vi.mocked(api.conversations.list).mockResolvedValue({
-			conversations: [buildConversation({ id: 'a' })],
-			has_more: true,
+	it('loads every direct message, pinned and unread chat, and only the newest 20 of the rest', async () => {
+		const dms = Array.from({ length: 3 }, (_, i) =>
+			buildConversation({ id: `dm-${i}`, title: `Agent ${i}`, directPairKey: `pair-${i}` }),
+		)
+		const pinned = buildConversation({ id: 'pin', title: 'Pinned chat', pinned: true })
+		const unread = buildConversation({ id: 'unr', title: 'Unread chat', unread_count: 4 })
+		// Priority streams in over two pages; the list must wait for both before it shows counts.
+		mockScopedList({
+			priorityPages: [[...dms, pinned], [unread]],
+			recent: [buildConversation({ id: 'old', title: 'Old chat' })],
+			recentHasMore: true,
 		})
+		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+		expect(await screen.findByRole('button', { name: /Unread\s*1/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /Direct messages\s*3/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /Pinned\s*1/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /Earlier\s*1/ })).toBeInTheDocument()
+		const calls = vi.mocked(api.conversations.list).mock.calls.map(([, q]) => q)
+		expect(calls).toContainEqual(expect.objectContaining({ scope: 'recent', limit: '20' }))
+		expect(calls).toContainEqual(expect.objectContaining({ scope: 'priority', offset: '100' }))
+	})
+
+	it('hides the end-of-history line while more pages remain', async () => {
+		mockScopedList({ recent: [buildConversation({ id: 'a' })], recentHasMore: true })
 		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
 
 		// The scroll sentinel owns the tail while pages are still fetchable —
@@ -84,10 +127,7 @@ describe('ConversationList', () => {
 	})
 
 	it('advertises the scroll affordance only while another page is pending', async () => {
-		vi.mocked(api.conversations.list).mockResolvedValue({
-			conversations: [buildConversation({ id: 'a' })],
-			has_more: true,
-		})
+		mockScopedList({ recent: [buildConversation({ id: 'a' })], recentHasMore: true })
 		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
 
 		// The sentinel only claims to be loading while a page is actually in
@@ -312,5 +352,90 @@ describe('ConversationList', () => {
 			last_read_message_id: 7,
 		})
 		expect(api.conversations.messages).not.toHaveBeenCalledWith('pin', expect.anything())
+	})
+})
+
+describe('ConversationList collapse', () => {
+	it('hides every direct message row when the Direct messages group is collapsed', async () => {
+		vi.mocked(api.conversations.replyThreads).mockResolvedValue({ threads: [] } as never)
+		vi.mocked(api.conversations.list).mockResolvedValue({
+			conversations: Array.from({ length: 21 }, (_, i) =>
+				buildConversation({ id: `dm-${i}`, title: `Agent ${i}`, directPairKey: `pair-${i}` }),
+			),
+			has_more: false,
+		})
+		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
+		const header = await screen.findByRole('button', { name: /Direct messages/ })
+		expect(screen.getAllByRole('link')).toHaveLength(21)
+		await userEvent.click(header)
+		expect(screen.queryAllByRole('link')).toHaveLength(0)
+	})
+
+	it('keeps rows hidden and stops paging while every group is collapsed', async () => {
+		const live = new Set<() => void>()
+		vi.stubGlobal(
+			'IntersectionObserver',
+			class {
+				constructor(cb: (e: Array<{ isIntersecting: boolean }>) => void) {
+					this.fire = () => cb([{ isIntersecting: true }])
+				}
+				fire: () => void
+				observe() {
+					live.add(this.fire)
+				}
+				disconnect() {
+					live.delete(this.fire)
+				}
+			},
+		)
+		const dm = (i: number) =>
+			buildConversation({ id: `dm-${i}`, title: `Agent ${i}`, directPairKey: `pair-${i}` })
+		mockScopedList({
+			priority: Array.from({ length: 13 }, (_, i) => dm(i)),
+			recent: [],
+			recentHasMore: true,
+		})
+		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
+		await userEvent.click(await screen.findByRole('button', { name: /Direct messages/ }))
+		for (const fire of live) fire()
+		expect(vi.mocked(api.conversations.list).mock.calls.some(([, q]) => q?.offset === '20')).toBe(
+			false,
+		)
+		expect(screen.queryAllByRole('link')).toHaveLength(0)
+		vi.unstubAllGlobals()
+	})
+
+	it('lists a chat once when a later page repeats it', async () => {
+		const dm = (i: number) =>
+			buildConversation({ id: `dm-${i}`, title: `Agent ${i}`, directPairKey: `pair-${i}` })
+		vi.mocked(api.conversations.list)
+			.mockResolvedValueOnce({ conversations: [dm(0), dm(1)], has_more: true })
+			.mockResolvedValue({ conversations: [dm(1), dm(2)], has_more: false })
+		const live = new Set<() => void>()
+		vi.stubGlobal(
+			'IntersectionObserver',
+			class {
+				fire: () => void
+				constructor(cb: (e: Array<{ isIntersecting: boolean }>) => void) {
+					this.fire = () => cb([{ isIntersecting: true }])
+				}
+				observe() {
+					live.add(this.fire)
+				}
+				disconnect() {
+					live.delete(this.fire)
+				}
+			},
+		)
+		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
+		const header = await screen.findByRole('button', { name: /Direct messages/ })
+		await act(async () => {
+			for (const fire of live) fire()
+		})
+		await waitFor(() => expect(screen.getAllByRole('link')).toHaveLength(3))
+		expect(header).toHaveTextContent('3')
+		await userEvent.click(header)
+		expect(screen.queryAllByRole('link')).toHaveLength(0)
+		vi.unstubAllGlobals()
 	})
 })

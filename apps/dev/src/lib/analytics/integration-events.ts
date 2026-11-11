@@ -10,6 +10,7 @@ import { capturePosthogEvent } from './posthog'
 export const INTEGRATION_CONNECTED = 'integration_connected'
 export const INTEGRATION_SYNC_COMPLETED = 'integration_sync_completed'
 export const INTEGRATION_TOOL_CALLED = 'integration_tool_called'
+export const INTEGRATION_CONNECT_STARTED = 'integration_connect_started'
 
 // Auth path that produced the connect event. `oauth` covers both standard
 // oauth2 providers (the callback route) and `oauth2_custom` (GitHub App),
@@ -111,5 +112,27 @@ export async function trackIntegrationToolCalled(p: IntegrationToolCalledProps):
 		actor_id: p.actorId,
 		session_id: p.sessionId,
 		workspace_id: p.workspaceId,
+	})
+}
+
+interface IntegrationConnectStartedProps {
+	provider: string
+	workspaceId: string
+	actorId: string
+}
+
+/**
+ * Fire `integration_connect_started` when the connect route hands back the vendor's sign-in
+ * address. Paired with `integration_connected` (the token landing), so finished over started
+ * is the sign-in completion rate for every provider. Not sampled (see event-budget).
+ */
+export async function trackIntegrationConnectStarted(
+	p: IntegrationConnectStartedProps,
+): Promise<void> {
+	await capturePosthogEvent(INTEGRATION_CONNECT_STARTED, p.actorId, {
+		provider: p.provider,
+		workspace_id: p.workspaceId,
+		actor_id: p.actorId,
+		auth_type: 'oauth',
 	})
 }

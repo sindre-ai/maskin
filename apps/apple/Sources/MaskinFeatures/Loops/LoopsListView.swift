@@ -24,23 +24,26 @@ struct LoopsListView: View {
 		}
 		.ambientBackground()
 		.overlay { overlay(isEmpty: loops.isEmpty) }
-		.refreshable { await store.refresh() }
 	}
 
 	private func card(_ loop: LoopSummary) -> LoopCard {
 		LoopCard(
 			loop: loop, needsYou: store.needsYou(loop),
 			hasUpdate: store.installs[loop.id]?.hasUpdate == true,
-			update: store.display.showsSummary ? store.latestUpdate(for: loop) : nil,
-			decisionTitle: store.decisionTitle(for: loop),
-			onReview: { selection = loop.id })
+			update: store.display.showsSummary ? store.latestUpdate(for: loop) : nil)
 	}
 
-	/// The overview strip and the tag chips above the cards.
+	/// The one-line summary and the tag chips above the cards.
 	@ViewBuilder
 	private var header: some View {
 		if search.isEmpty {
-			FlowsKPIStrip(stats: FlowsOverview.kpis(store.loops))
+			if let line = FlowsOverview.needsYouLine(store.loops) {
+				Text(line)
+					.font(MaskinTypeface.sans(MaskinFontSize.t24, weight: .semibold, relativeTo: .title2))
+					.tracking(-0.02 * MaskinFontSize.t24)
+					.foregroundStyle(MaskinColor.ink)
+					.frame(maxWidth: .infinity, alignment: .leading)
+			}
 			FlowTagChips(tags: store.tags, selection: Binding(get: { store.tagFilter }, set: { store.tagFilter = $0 }))
 		}
 	}
@@ -88,7 +91,7 @@ struct LoopsListView: View {
 					.onTapGesture { store.notice = nil }
 			}
 			header
-				.listRowInsets(EdgeInsets(top: 0, leading: MaskinSpace.s7, bottom: MaskinSpace.s4, trailing: MaskinSpace.s7))
+				.listRowInsets(EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
 				.listRowSeparator(.hidden)
 				.listRowBackground(Color.clear)
 			ForEach(loops) { loop in
@@ -99,8 +102,8 @@ struct LoopsListView: View {
 				.listRowBackground(Color.clear)
 				.listRowInsets(
 					EdgeInsets(
-						top: MaskinSpace.s3, leading: MaskinSpace.s7, bottom: MaskinSpace.s3,
-						trailing: MaskinSpace.s7))
+						top: MaskinSpace.s3, leading: MaskinSpace.s9, bottom: MaskinSpace.s3,
+						trailing: MaskinSpace.s9))
 				.swipeActions(edge: .trailing, allowsFullSwipe: true) {
 					if loop.status != .draft {
 						Button {
@@ -146,20 +149,6 @@ struct LoopsListView: View {
 				} else {
 					ContentUnavailableView.search(text: search)
 				}
-			}
-		}
-	}
-}
-
-/// What the flows add up to, above the cards: need you, running, in progress, closed. The same
-/// tiles as a flow's Performance tab.
-struct FlowsKPIStrip: View {
-	let stats: [LoopQuality.Stat]
-
-	var body: some View {
-		if !stats.isEmpty {
-			HStack(alignment: .top, spacing: MaskinSpace.s4) {
-				ForEach(stats) { FlowStatTile(stat: $0) }
 			}
 		}
 	}

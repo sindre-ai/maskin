@@ -4,6 +4,7 @@ import type { Database } from '@maskin/db'
 import { conversationParticipants, integrations, sessions } from '@maskin/db/schema'
 import { SECRET_PROVIDER_IDS, type SecretProviderId } from '@maskin/shared'
 import { and, eq, isNull } from 'drizzle-orm'
+import { resolveCardFromAction } from '../../services/card-resolution'
 import { encryptEnvelope } from '../crypto'
 import { recordEvent } from '../events/record-event'
 import { helperAskConversationId } from '../session-access'
@@ -219,6 +220,18 @@ export async function captureChatSecret(
 			},
 		})
 	})
+
+	// Saved from the agent's card: the card's message records when and by whom. After the
+	// commit, so a card never reads answered for a key that was not saved.
+	if (input.viaCard) {
+		await resolveCardFromAction(db, {
+			sessionId,
+			key: 'keychain_request',
+			byActorId: actorId,
+			at: now,
+			outcome: 'done',
+		})
+	}
 
 	return {
 		integrationId,

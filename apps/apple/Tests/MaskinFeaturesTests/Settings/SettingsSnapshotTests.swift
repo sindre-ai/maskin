@@ -166,17 +166,6 @@ private struct KeysAndMCPSnapshot: View {
 	}
 }
 
-/// The profile sheet's three stat tiles, each a link.
-private struct StatTilesSnapshot: View {
-	var body: some View {
-		HStack(alignment: .top, spacing: MaskinSpace.s4) {
-			ProfileStatTile(value: 3, label: "waiting on you", destination: "For you") {}
-			ProfileStatTile(value: 5, label: "flows you own", destination: "Flows") {}
-			ProfileStatTile(value: 2, label: "agents working", destination: "Members") {}
-		}
-	}
-}
-
 private struct KeySnapshot: View {
 	let key: SecretValue
 	var body: some View {
@@ -203,7 +192,6 @@ struct SettingsSnapshotTests {
 		try render(KeySnapshot(key: key), name: "apikey-skills", width: width, dark: dark)
 		try render(MembersGroupsSnapshot(), name: "members-groups", width: width, dark: dark)
 		try render(KeysAndMCPSnapshot(key: key), name: "keys-and-mcp", width: width, dark: dark)
-		try render(StatTilesSnapshot(), name: "profile-stat-tiles", width: width, dark: dark)
 	}
 
 	@Test("the Keys & MCP footer is the handoff sentence, with no exclamation mark")

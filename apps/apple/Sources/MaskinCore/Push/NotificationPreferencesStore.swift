@@ -71,11 +71,12 @@ public final class NotificationPreferencesStore {
 		case .conversation: patch.conversation = enabled
 		case .digest: patch.digest = enabled
 		case .tips: patch.tips = enabled
+		case .flowActivity: patch.flowActivity = enabled
 		}
 		submit(patch)
 	}
 
-	public enum Category: String, CaseIterable, Sendable { case needsYou, conversation, digest, tips }
+	public enum Category: String, CaseIterable, Sendable { case needsYou, conversation, digest, tips, flowActivity }
 
 	public func isEnabled(_ category: Category) -> Bool {
 		switch category {
@@ -83,6 +84,7 @@ public final class NotificationPreferencesStore {
 		case .conversation: preferences.categories.conversation
 		case .digest: preferences.categories.digest
 		case .tips: preferences.categories.tips
+		case .flowActivity: preferences.categories.flowActivity
 		}
 	}
 
@@ -108,6 +110,59 @@ public final class NotificationPreferencesStore {
 	public func setBriefingTime(_ minutes: Int) {
 		var patch = NotificationPreferencesPatch()
 		patch.briefingTime = NotificationPreferences.clamp(minutes: minutes)
+		submit(patch)
+	}
+
+	public func setEmailDigest(enabled: Bool) {
+		var patch = NotificationPreferencesPatch()
+		patch.emailDigestEnabled = enabled
+		submit(patch)
+	}
+
+	public func setEmailNeedsYou(enabled: Bool) {
+		var patch = NotificationPreferencesPatch()
+		patch.emailNeedsYou = enabled
+		submit(patch)
+	}
+
+	public func setEmailConversation(enabled: Bool) {
+		var patch = NotificationPreferencesPatch()
+		patch.emailConversation = enabled
+		submit(patch)
+	}
+
+	public func setEmailTips(enabled: Bool) {
+		var patch = NotificationPreferencesPatch()
+		patch.emailTips = enabled
+		submit(patch)
+	}
+
+	public func setEmailFlowActivity(enabled: Bool) {
+		var patch = NotificationPreferencesPatch()
+		patch.emailFlowActivity = enabled
+		submit(patch)
+	}
+
+	public func setMarketplacePicks(enabled: Bool) {
+		var patch = NotificationPreferencesPatch()
+		patch.marketplacePicksEnabled = enabled
+		submit(patch)
+	}
+
+	/// Daily and Weekly turn the summary email on with that rhythm; Off is the email switch off.
+	/// Moving between Daily and Weekly is not a switch-off.
+	public func setEmailChoice(_ choice: NotificationPreferences.EmailChoice) {
+		var patch = NotificationPreferencesPatch()
+		switch choice {
+		case .off:
+			patch.emailDigestEnabled = false
+		case .daily:
+			patch.emailDigestEnabled = true
+			patch.emailRhythm = .daily
+		case .weekly:
+			patch.emailDigestEnabled = true
+			patch.emailRhythm = .weekly
+		}
 		submit(patch)
 	}
 

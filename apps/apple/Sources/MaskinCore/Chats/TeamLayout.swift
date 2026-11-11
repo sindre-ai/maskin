@@ -566,6 +566,26 @@ public struct TeamLayout: Equatable, Sendable {
 		return conversation.others(excluding: me).first?.name ?? ChatPreviewText.plain(conversation.title)
 	}
 
+	/// A 1:1 conversation with its own title ("Q3 planning") keeps it; one titled after the other
+	/// person, or with the default "Alex, Relay" title, is shown as that person's name. A direct
+	/// message has no topic, so it is always shown as the other party's name.
+	public static func hasCustomTitle(_ c: ConversationSummary, me: String?) -> Bool {
+		guard !c.isGroupChat(excluding: me), !c.isDirect else { return false }
+		let names = c.others(excluding: me).map(\.name)
+		let title = c.title.trimmingCharacters(in: .whitespacesAndNewlines)
+		return !title.isEmpty && title != ThreadLayout.defaultTitle(for: names) && !names.contains(title)
+	}
+
+	/// The title a team-list row actually shows. Previews compare the author against this.
+	public static func displayedTitle(of kind: RowKind, me: String?) -> String {
+		switch kind {
+		case .conversation(let c):
+			return hasCustomTitle(c, me: me) ? ChatPreviewText.plain(c.title) : title(of: c, me: me)
+		case .person(let p): return p.name
+		case .flow(let f): return f.name
+		}
+	}
+
 	private static func tileTitle(_ c: ConversationSummary, me: String?) -> String { title(of: c, me: me) }
 
 	private static func conversationRow(_ c: ConversationSummary) -> Row { Row(id: c.id, kind: .conversation(c)) }
@@ -635,12 +655,6 @@ public enum NewConversationCopy {
 		let names = recipients.map { $0.kind == .agent ? $0.name : TeamLayout.firstName($0.name) }
 		if names.count <= 2 { return "Message " + names.joined(separator: " and ") }
 		return "Message \(names.prefix(2).joined(separator: ", ")) +\(names.count - 2)"
-	}
-
-	/// Shown with two or more recipients.
-	public static func groupNote(recipientCount: Int) -> String? {
-		guard recipientCount >= 2 else { return nil }
-		return "\(recipientCount + 1) in this conversation, including you. Everyone sees the whole thread."
 	}
 
 	/// Candidates for the To field, matched on name and role.

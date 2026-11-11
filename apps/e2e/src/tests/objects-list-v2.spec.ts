@@ -131,10 +131,19 @@ test.describe('Objects list — v2 control row', () => {
 				await folded.click()
 				await expect(page).toHaveURL(/type=/)
 			} else {
-				// 768px and up: every chip fits, so there is no More at all.
+				// 768px and up: every object-type chip stays in the row.
 				await expect(chips.getByRole('button', { name: /^Tasks \(\d+\)$/ })).toBeVisible()
 				await expect(chips.getByRole('button', { name: /^Bets \(\d+\)$/ })).toBeVisible()
-				await expect(more).toHaveCount(0)
+				if (vp.width < 1024) {
+					// The trailing chips (Knowledge, Files) no longer fit beside the sidebar
+					// at iPad portrait, so they sit behind More; Files must be among them.
+					await expect(more).toHaveText(/^More/)
+					await more.click()
+					await expect(page.getByRole('menuitemradio', { name: /^Files/ })).toBeVisible()
+					await page.keyboard.press('Escape')
+				} else {
+					await expect(more).toHaveCount(0)
+				}
 			}
 			const overflow = await page.evaluate(() => ({
 				scroll: document.documentElement.scrollWidth,

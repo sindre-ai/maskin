@@ -4,11 +4,10 @@ import MaskinUI
 import SwiftUI
 
 /// Spec 7 §5 long-press actions, built on the system context menu (blur, haptic, a preview of the
-/// bubble clamped to six lines, 44pt rows). All messages: Reply · Copy · Select text · Pin/Unpin. Your newest:
+/// bubble clamped to six lines, 44pt rows). All messages: Copy · Select text · Pin/Unpin. Your newest:
 /// Edit. Agent messages: Try again · Make it shorter · Good answer · Not right. No reaction strip:
 /// the API carries no reactions. A top-level message also offers Reply in thread.
 struct MessageMenuActions {
-	var onReply: (() -> Void)?
 	/// Opens (or starts) the thread under this message.
 	var onThread: (() -> Void)?
 	/// Add or take back one of the quick emoji; `reacted` are the ones you already used.
@@ -17,6 +16,10 @@ struct MessageMenuActions {
 	var onCopy: (() -> Void)?
 	/// Opens the message's text in a sheet where single words can be selected.
 	var onSelectText: (() -> Void)?
+	/// Opens the agent that wrote this message. An agent's words have no avatar or name row to
+	/// tap, so the long-press menu is how every one of them reaches the agent's page.
+	var onOpenAgent: (() -> Void)?
+	var openAgentTitle = "Open agent"
 	var onPin: (() -> Void)?
 	var isPinned = false
 	var onEdit: (() -> Void)?
@@ -30,33 +33,59 @@ struct MessageMenuActions {
 	var readAloudTitle = "Read aloud"
 	var feedback: MessageOverride.Feedback?
 
-	/// The row titles in order, for tests and accessibility.
-	var titles: [String] {
-		var out: [String] = []
-		if onReply != nil { out.append("Reply") }
-		if onThread != nil { out.append("Reply in thread") }
-		if onCopy != nil { out.append("Copy") }
-		if onSelectText != nil { out.append("Select text") }
-		if onPin != nil { out.append(isPinned ? "Unpin" : "Pin") }
-		if onEdit != nil { out.append("Edit") }
-		if onTryAgain != nil { out.append("Try again") }
-		if onShorter != nil { out.append("Make it shorter") }
-		if onGoodAnswer != nil { out.append("Good answer") }
-		if onNotRight != nil { out.append("Not right") }
-		if onRetrySend != nil { out.append("Retry") }
-		if onDiscard != nil { out.append("Delete") }
-		if onReadAloud != nil { out.append(readAloudTitle) }
+	/// The rows in order, each with its own identity, so a title is only a label: an agent whose
+	/// name happens to read like an action ("Copy") cannot be mistaken for that action.
+	var entries: [(item: MessageMenuItem, title: String)] {
+		var out: [(MessageMenuItem, String)] = []
+		if onThread != nil { out.append((.thread, "Reply in thread")) }
+		if onCopy != nil { out.append((.copy, "Copy")) }
+		if onSelectText != nil { out.append((.selectText, "Select text")) }
+		if onOpenAgent != nil { out.append((.openAgent, openAgentTitle)) }
+		if onPin != nil { out.append((.pin, isPinned ? "Unpin" : "Pin")) }
+		if onEdit != nil { out.append((.edit, "Edit")) }
+		if onTryAgain != nil { out.append((.tryAgain, "Try again")) }
+		if onShorter != nil { out.append((.shorter, "Make it shorter")) }
+		if onGoodAnswer != nil { out.append((.goodAnswer, "Good answer")) }
+		if onNotRight != nil { out.append((.notRight, "Not right")) }
+		if onRetrySend != nil { out.append((.retrySend, "Retry")) }
+		if onDiscard != nil { out.append((.discard, "Delete")) }
+		if onReadAloud != nil { out.append((.readAloud, readAloudTitle)) }
 		return out
 	}
+
+	/// The row titles in order, for tests and accessibility.
+	var titles: [String] { entries.map(\.title) }
+
+	/// Runs the action behind a row.
+	func run(_ item: MessageMenuItem) {
+		switch item {
+		case .thread: onThread?()
+		case .copy: onCopy?()
+		case .selectText: onSelectText?()
+		case .openAgent: onOpenAgent?()
+		case .pin: onPin?()
+		case .edit: onEdit?()
+		case .tryAgain: onTryAgain?()
+		case .shorter: onShorter?()
+		case .goodAnswer: onGoodAnswer?()
+		case .notRight: onNotRight?()
+		case .retrySend: onRetrySend?()
+		case .discard: onDiscard?()
+		case .readAloud: onReadAloud?()
+		}
+	}
+}
+
+/// What a long-press menu row does, independent of the words on it.
+enum MessageMenuItem: Hashable {
+	case thread, copy, selectText, openAgent, pin, edit, tryAgain, shorter, goodAnswer, notRight, retrySend,
+		discard, readAloud
 }
 
 struct MessageMenuItems: View {
 	let actions: MessageMenuActions
 
 	var body: some View {
-		if let onReply = actions.onReply {
-			Button(action: onReply) { Label("Reply", systemImage: "arrowshape.turn.up.left") }
-		}
 		if let onReact = actions.onReact {
 			Menu {
 				ForEach(MessageReaction.quick, id: \.self) { emoji in
@@ -76,6 +105,9 @@ struct MessageMenuItems: View {
 		}
 		if let onSelectText = actions.onSelectText {
 			Button(action: onSelectText) { Label("Select text", systemImage: "text.cursor") }
+		}
+		if let onOpenAgent = actions.onOpenAgent {
+			Button(action: onOpenAgent) { Label(actions.openAgentTitle, systemImage: "person.crop.circle") }
 		}
 		if let onPin = actions.onPin {
 			Button(action: onPin) {

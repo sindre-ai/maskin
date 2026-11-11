@@ -36,6 +36,8 @@ window.maskinComputer = {
 		rfb = mine
 		mine.scaleViewport = true
 		mine.resizeSession = false
+		// noVNC defaults to JPEG quality 6, which smears text once the picture is scaled to fit.
+		mine.qualityLevel = 9
 		mine.viewOnly = true
 		mine.addEventListener('connect', () => {
 			if (rfb === mine) post('connect')

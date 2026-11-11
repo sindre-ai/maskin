@@ -9,7 +9,7 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 const SERVER = { type: 'stdio', command: 'npx', args: ['-y', 'docs-mcp'] }
 
 for (const vp of SHIP_GATE_VIEWPORTS) {
-	test(`Integrations shows tool servers with an Active pill and 44px actions on touch @ ${vp.label}`, async ({
+	test(`Integrations shows tool servers with 44px actions on touch @ ${vp.label}`, async ({
 		page,
 		account,
 	}) => {
@@ -19,9 +19,9 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 		await page.goto(`/${account.workspaceId}/settings/integrations`)
 		const tools = page.getByRole('region', { name: 'Tool servers' })
 		await expect(tools).toBeVisible({ timeout: 15_000 })
-		await expect(tools.getByLabel('Active')).toBeVisible()
+		await expect(tools.getByRole('button', { name: /Docs search/ })).toBeVisible()
 
-		const add = tools.getByRole('button', { name: /Add tool server/ })
+		const add = tools.getByRole('button', { name: /Add your own MCP server/ })
 		await expect(add).toBeVisible()
 		if (vp.width < 768) {
 			const box = await add.boundingBox()
@@ -62,8 +62,10 @@ test('Integrations and Members read in light and dark', async ({ page, account }
 		await page.addInitScript((value) => localStorage.setItem('maskin-theme', value), scheme)
 		await page.goto(`/${account.workspaceId}/settings/integrations`)
 		const tools = page.getByRole('region', { name: 'Tool servers' })
-		await expect(tools.getByLabel('Active')).toBeVisible({ timeout: 15_000 })
-		await expect(tools.getByRole('button', { name: /Add tool server/ })).toBeVisible()
+		await expect(tools.getByRole('button', { name: /Docs search/ })).toBeVisible({
+			timeout: 15_000,
+		})
+		await expect(tools.getByRole('button', { name: /Add your own MCP server/ })).toBeVisible()
 
 		await page.goto(`/${account.workspaceId}/settings/members`)
 		await expect(page.getByRole('heading', { name: 'Members' })).toBeVisible()

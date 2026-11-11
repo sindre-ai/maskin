@@ -30,9 +30,6 @@ import { loadActiveSessionsNote } from './spawned-sessions'
 const MAX_CONSECUTIVE_AGENT_REPLIES = 5
 const LOOKBACK_LIMIT = 50
 const HISTORY_CONTEXT_MESSAGES = 15
-// Thread sessions one agent may have live in one chat, next to its main-chat session. A thread
-// message past this falls back to the main-chat session.
-const MAX_THREAD_SESSIONS_PER_AGENT = 3
 
 /**
  * Why an agent was handed a turn, as the chat prompts word it. `legacy` is the plain wording
@@ -800,10 +797,9 @@ export async function deliverTurnToAgent(params: {
  *
  * A thread gets its own session only when the message is in a thread and was written by a person
  * (never judged by the agent), and then: a live session for that thread is reused as is,
- * otherwise a new one starts unless the agent already has MAX_THREAD_SESSIONS_PER_AGENT thread
- * sessions in this chat or the workspace has no chat capacity. In those two cases the turn falls
- * back to the main-chat session rather than queueing, because a queued thread reply is slower
- * than the main session answering it.
+ * otherwise a new one starts, however many other threads the agent has going. Only when the
+ * workspace has no chat capacity does the turn fall back to the main-chat session rather than
+ * queueing, because a queued thread reply is slower than the main session answering it.
  */
 async function pickSessionThread(ctx: {
 	sessionManager: SessionManager
@@ -822,8 +818,6 @@ async function pickSessionThread(ctx: {
 	) {
 		return threadRootId
 	}
-	const live = await sessionManager.countActiveThreadSessions(conversationId, agentId)
-	if (live >= MAX_THREAD_SESSIONS_PER_AGENT) return null
 	if (!(await sessionManager.hasChatCapacity(ctx.workspaceId))) return null
 	return threadRootId
 }

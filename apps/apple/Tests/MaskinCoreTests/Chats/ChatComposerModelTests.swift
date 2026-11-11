@@ -49,6 +49,98 @@ struct ChatComposerModelTests {
 		#expect(m.sendBlocker == "Message is too long")
 	}
 
+	private func longModel(_ uploader: FakeUploader = FakeUploader()) -> ChatComposerModel {
+		let m = model(uploader)
+		m.splitsLongMessages = true
+		return m
+	}
+
+	@Test("a chat host sends text over the cap as a file, exactly at the cap it stays a message")
+	func longMessageBoundary() {
+		let m = longModel()
+		m.text = String(repeating: "x", count: ChatLimits.maxMessageLength)
+		#expect(m.canSend && !m.isOverLength && m.lengthNotice == nil)
+		m.text = String(repeating: "x", count: ChatLimits.maxMessageLength + 1)
+		#expect(m.canSend && m.sendsAsFile)
+		#expect(m.lengthNotice?.contains("attached as a file") == true)
+		#expect(m.take() == nil)
+	}
+
+	@Test("a host that is not a chat, or has no uploader, still blocks over-length with a reason")
+	func longMessageBlocked() {
+		let over = String(repeating: "x", count: ChatLimits.maxMessageLength + 1)
+		let comment = model()
+		comment.text = over
+		#expect(!comment.canSend)
+		#expect(comment.lengthNotice == "A message can be at most 8,000 characters.")
+		let noUploader = ChatComposerModel(uploader: nil, selfActorID: "me")
+		noUploader.splitsLongMessages = true
+		noUploader.text = over
+		#expect(!noUploader.canSend)
+	}
+
+	@Test("an over-long edit stays blocked and says why")
+	func longEditBlocked() {
+		let m = longModel()
+		m.beginEdit(messageID: "m1", text: String(repeating: "x", count: ChatLimits.maxMessageLength + 1))
+		#expect(!m.canSend)
+		#expect(m.takeEdit() == nil)
+		#expect(m.lengthNotice == "An edited message can be at most 8,000 characters.")
+	}
+
+	@Test("takeLong uploads the text, sends a short body, and keeps mentions and the reply")
+	func takeLongUploads() async {
+		let uploader = FakeUploader()
+		let m = longModel(uploader)
+		m.addMention(ChatMention(id: "relay", name: "Relay", kind: .agent))
+		m.beginReply(author: "Forge", content: "earlier", serverID: 7)
+		let full = String(repeating: "word ", count: 2000)
+		m.text = full
+		let taken = await m.takeLong()
+		let uploaded = await uploader.uploaded
+		#expect(uploaded.count == 1)
+		#expect(uploaded.first?.hasPrefix("message-") == true && uploaded.first?.hasSuffix(".txt") == true)
+		#expect(taken?.text.contains("is attached as \(uploaded[0]).") == true)
+		#expect(taken?.text.contains("(9,999 characters)") == true)
+		#expect(taken.map { $0.text.count < ChatLimits.maxMessageLength } == true)
+		#expect(taken?.metadata?.attachments?.map(\.name) == [uploaded[0]])
+		#expect(taken?.metadata?.mentions == ["relay"])
+		#expect(taken?.metadata?.quotedMessageId == 7)
+		#expect(m.text.isEmpty && m.quote == nil)
+	}
+
+	@Test("a failed file upload keeps everything typed and says so")
+	func takeLongFails() async {
+		let uploader = FakeUploader()
+		await uploader.failNext(URLError(.notConnectedToInternet))
+		let m = longModel(uploader)
+		let full = String(repeating: "x", count: ChatLimits.maxMessageLength + 1)
+		m.text = full
+		#expect(await m.takeLong() == nil)
+		#expect(m.text == full)
+		#expect(m.notice?.contains("Couldn't attach the full message") == true)
+		#expect(!m.isSplitting)
+	}
+
+	@Test("the split: preview is 500 characters cut at a word, the file holds all of it")
+	func splitShape() {
+		let words = String(repeating: "alpha beta ", count: 1000)
+		let split = LongMessageSplit.make(words, now: Date(timeIntervalSince1970: 0))
+		#expect(split?.fileName == "message-1970-01-01-00-00-00.txt")
+		#expect(split?.fileText == words)
+		let preview = split?.body.components(separatedBy: "…").first ?? ""
+		#expect(preview.count <= 500 && !preview.hasSuffix(" "))
+		#expect(preview.hasSuffix("alpha") || preview.hasSuffix("beta"))
+		#expect(
+			split?.body.hasSuffix(
+				"\n\nThe full message (11,000 characters) is attached as message-1970-01-01-00-00-00.txt.") == true)
+		// One word of 600 letters has no space to break on: cut at 500.
+		let solid = LongMessageSplit.make(String(repeating: "y", count: 9000))
+		#expect(solid?.body.hasPrefix(String(repeating: "y", count: 500) + "…") == true)
+		#expect(LongMessageSplit.make(String(repeating: "y", count: ChatLimits.maxMessageLength)) == nil)
+		#expect(LongMessageSplit.make(String(repeating: "y", count: ChatLimits.maxMessageLength + 1)) != nil)
+	}
+
 	@Test("send is blocked while an attachment uploads and opens when it lands")
 	func blocksWhileUploading() async {
 		let uploader = FakeUploader()

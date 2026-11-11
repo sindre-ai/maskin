@@ -23,6 +23,8 @@ Access lives in `agent_grants` plus `integrations.default_agent_access`, resolve
 | `list_keychain_credentials` | `describeAgentAccess` | `request_keychain_access` (a person allows) |
 | Launch prompt and attached servers | `listAgentAccess` / `attachesServer` | (never written: read at launch) |
 
+`GET /api/guardrails` is a read-only roll-up for the Autonomy and guardrails page: per agent its send mode per kind (from `send_permissions`, resolved by `loadSendSettings`) and how many integrations it has at each level (from `describeAgentAccess`), plus the workspace's daily target. It stores nothing. `daily_budget_enforced` is false until a session start path checks the target; do not show a limit as in force before that.
+
 Rules that keep it that way:
 
 - Add a new place that shows or changes access by reading `describeAgentAccess` / the grants routes, not by recomputing it. "Is the MCP server attached" is `attachesServer()`, used by launch and by every report of it.
@@ -62,19 +64,21 @@ An MCP server a person adds by hand (a command to run, or a URL to call) is a wo
 | Saved key or login, no row | off |
 | Actor that does not exist | none |
 
-## Read & write and actions that cannot be undone
+## Read & write and sending
 
-`read_write` lets an agent use every tool of the integration. Where a tool does something that cannot be undone, the tool itself still waits for a person's yes, whatever the level: a person approves that one action, the agent cannot approve it for itself.
+`read_write` lets an agent use every tool of the integration, including the ones that send in the company's or a person's name (Slack posts, LinkedIn messages, posts and invitations, email through Gmail and Resend). Whether a send goes out at once or waits for a person is a separate, per-agent setting for each kind of send (`send_permissions`, resolved by `decideSend` in `apps/dev/src/lib/send-gate.ts`):
 
-- **Which providers:** `APPROVAL_GATED_PROVIDERS` in `packages/shared/src/agent-access.ts`, today Gmail (sending an email, approved on the draft or on a For You approval card, see "Sending email through Gmail" below). Adding a provider is a promise that its tool refuses the action until a person has approved it and says how to ask.
-- **What it means in code:** `canWrite` is true for `read_write`, and the tool does the asking. There is no separate level for it: an earlier "Ask first" level was folded into Read & write.
-- **Migration 0107** turned every `ask_first` grant into `read_write` (same behaviour: those agents already needed approval to send). Its down migration puts Gmail `read_write` grants back on `ask_first` so a rollback does not let an agent send on its own.
+- **Always allow** sends the call as given. A workspace with no saved setting starts here for every kind.
+- **Ask first** needs a draft and a person's approval of that exact text: on its card (editing the text there first if they want), or by saying yes in a chat (`approve_draft_from_chat`). See [drafts](./drafts.md).
+- **Deny** refuses the send tool, whatever the agent says.
+
+Read, or no access, cannot send at all. An agent is told which kinds ask first or are off in the "Sending" note of its launch prompt (`buildSendModeNote`); nothing is said for kinds that send directly. An earlier "Ask first" access level was folded into Read & write by migration 0107, which turned every `ask_first` grant into `read_write`; its down migration puts Gmail `read_write` grants back on `ask_first`. The send setting is what now holds a send.
 
 ## Sending email through Gmail
 
 Google's hosted Gmail tool can only create drafts, so Maskin serves the send itself: the `gmail_send_email` MCP tool, `POST /api/integrations/gmail/send` (`apps/dev/src/routes/integrations-gmail.ts`).
 
-- **Sending needs both Read & write and a person's approval of that exact email.** An agent with **Read** or no access cannot send, not even an approved email. An agent with Read & write may draft freely, but a direct send (`to`/`subject`/`body`) is refused with instructions to ask: no email goes out on an agent's own say-so. There is no "send on its own" setting and so no per-recipient exception (a protected contact, an opt-out) to make: a person looked at every email.
+- **Sending needs Read & write, and then the agent's send setting for emails decides.** An agent with **Read** or no access cannot send, not even an approved email. With **always allow** it passes `to`/`subject`/`body` (or an `object_id` draft nobody approved) and the email goes out; the response says `mode: direct`, a repeat of the same text within 24 hours is refused, and a draft that already went is refused. With **ask first** a direct send is refused with instructions to ask, and only an approved draft or an answered approval card goes out (`mode: approved_draft`). With **deny** every call is refused. There is no per-recipient exception (a protected contact, an opt-out) in this route.
 - **Asking is the For You approval card.** The agent posts a comment with a `decision` whose `draft` is the email (`to` with a real address, the text starting with a "Subject: ..." line so the person approves the subject too) and exactly one `destructive` option, the send. A person's tap is stored as a reply under the card. The agent then calls the tool with `approval_comment_id`.
 - **The server reads the approval back rather than trusting the agent.** The card must be the caller's own. The latest answer under it must come from a person (an agent's reply never counts) and equal the send option. The draft's text must not have changed since that answer, because the person approved other text: only a logged edit to its content counts (moving the task to another status or changing its driver does not), and an object that moved on with no logged reason is treated as changed. Then the email goes out exactly as the card shows it.
 - **One approval, one email.** The send claims the approval before calling Gmail (`send_claim` events on the integration, serialised with an advisory lock). Gmail refusing it releases the claim; an unclear failure (5xx, dropped connection) locks it, since sending again could deliver it twice. A direct send is also refused if the same email went out in the last 24 hours.
@@ -86,8 +90,8 @@ Maskin serves the Resend send as well: the `resend_send_email` MCP tool, `POST /
 
 - **Only `object_id`.** The email is the draft object (`metadata.kind = "email"`) as it reads now. A `to`, `subject`, `body` or `from` in the call is refused, not ignored.
 - **The sender is the agent's mailbox, read on the server.** It lives in `actors.metadata.mailbox`. Only a human workspace admin or owner can set it (`PATCH /api/actors/:id` with `mailbox`; an address is one plain address and one agent holds it). The `email` column is not used: any workspace member can change it. No mailbox, no send. The draft cannot name a sender either.
-- **The approval is the idempotency key** (`maskin-email-{object_id}-{approval event id}`), so Resend delivers a retry once. A refusal or an unclear failure releases the approval (`resend_action: send_released` on the integration) and the same call can be made again; a confirmed send locks it.
-- Resend's own send tools through the gateway are held in a separate change; until then they still work for Read & write agents.
+- **The approval is the idempotency key** (`maskin-email-{object_id}-{approval event id}`), so Resend delivers a retry once. A draft sent without an approval (an agent set to always allow; the response says `mode: direct`) uses `maskin-email-{object_id}-direct-{content hash}` and is refused once it has a `delivered` event. A refusal or an unclear failure releases the approval (`resend_action: send_released` on the integration) and the same call can be made again; a confirmed send locks it.
+- Resend's own send tools through the gateway (`send-email`, `send-batch-emails`, `send-broadcast`, `send-inbox-draft`, `send-new-inbox-email`, `reply-to-inbox-thread-email`, `forward-inbox-thread-email`) work for a Read & write agent set to always allow, and are refused with a pointer to `resend_send_email` for one set to ask first, or with a plain refusal for one set to deny (`RESEND_SEND_TOOLS` in `mcp-gateway.ts`). `resend_send_email` itself sends the draft at once for always allow, and only an approved draft for ask first.
 
 ## API
 

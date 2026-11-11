@@ -332,6 +332,7 @@ export function connectSSE(workspaceId: string, callbacks: SSECallbacks): AbortC
 		headers: () => ({
 			Authorization: `Bearer ${getApiKey()}`,
 			'X-Workspace-Id': workspaceId,
+			'X-Client-Source': 'ui',
 		}),
 		cursor: {
 			get: () => getLastEventId(workspaceId),

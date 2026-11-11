@@ -34,7 +34,7 @@ public struct SavedView: Identifiable, Sendable, Equatable, Codable {
 		case .needsYou: if !needsYou { return false }
 		case .favourites: if !object.isStarred { return false }
 		case .type(let type): if object.type != type { return false }
-		case .all, .saved: break
+		case .all, .saved, .files: break
 		}
 		if let statusFilter, object.status != statusFilter { return false }
 		if !search.isEmpty, !object.displayTitle.localizedCaseInsensitiveContains(search) { return false }

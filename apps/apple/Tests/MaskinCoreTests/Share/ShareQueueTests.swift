@@ -129,7 +129,7 @@ struct ShareQueueDrainerTests {
 		let remote = FakeShareRemote()
 		remote.failNext("object", with: .rejected)
 		let report = await ShareQueueDrainer(queue: queue) { _ in remote }.drain(apiKey: "k")
-		#expect(report == .init(sent: 1, dropped: 1, remaining: 0))
+		#expect(report == .init(sent: 1, dropped: 1, droppedReasons: [.rejected], remaining: 0))
 	}
 
 	@Test("keeps everything when the session expired, for after the next sign-in")
@@ -140,6 +140,112 @@ struct ShareQueueDrainerTests {
 		remote.failNext("object", with: .sessionExpired)
 		let report = await ShareQueueDrainer(queue: queue) { _ in remote }.drain(apiKey: "k")
 		#expect(report == .init(sent: 0, dropped: 0, remaining: 1))
+	}
+}
+
+@Suite("ShareQueueDrainer new chat")
+struct ShareQueueDrainerNewChatTests {
+	private let scratch = ShareScratch()
+	private var queue: ShareQueue { ShareQueue(root: scratch.url.appendingPathComponent("queue")) }
+
+	private func chatKeys(_ remote: FakeShareRemote) -> [String] {
+		remote.calls.compactMap { call -> String? in
+			if case .createChat(_, _, _, _, let key) = call { key } else { nil }
+		}
+	}
+
+	@Test("a saved share keeps its agent and its files, and the chat starts with them on the next open")
+	func startsWithAgentAndFiles() async throws {
+		let queue = queue
+		try queue.enqueue(
+			request(scratch, destination: .newChat(agentID: "agent-cpo"), attachments: 2), workspaceId: "ws-1",
+			idempotencyBase: "b1")
+		let remote = FakeShareRemote()
+		let report = await ShareQueueDrainer(queue: queue) { _ in remote }.drain(apiKey: "k")
+		#expect(report == .init(sent: 1, dropped: 0, remaining: 0))
+		let created = remote.calls.compactMap { call -> (String, [String])? in
+			if case .createChat(let agent, _, _, let files, _) = call { (agent, files) } else { nil }
+		}
+		#expect(created.count == 1 && created.first?.0 == "agent-cpo" && created.first?.1.count == 2)
+	}
+
+	@Test("a second drain never starts the same chat twice")
+	func drainTwice() async throws {
+		let queue = queue
+		try queue.enqueue(
+			request(scratch, destination: .newChat(agentID: "agent-cpo")), workspaceId: "ws-1", idempotencyBase: "b1")
+		let remote = FakeShareRemote()
+		let drainer = ShareQueueDrainer(queue: queue) { _ in remote }
+		_ = await drainer.drain(apiKey: "k")
+		let second = await drainer.drain(apiKey: "k")
+		#expect(second == .init(sent: 0, dropped: 0, remaining: 0))
+		#expect(chatKeys(remote) == ["share-chat-b1"])
+	}
+
+	@Test("a server hiccup keeps the share, and the retry uses the same chat key")
+	func hiccupThenRetry() async throws {
+		let queue = queue
+		try queue.enqueue(
+			request(scratch, destination: .newChat(agentID: "agent-cpo")), workspaceId: "ws-1", idempotencyBase: "b1")
+		let remote = FakeShareRemote()
+		remote.failNext("createChat", with: .server)
+		let drainer = ShareQueueDrainer(queue: queue) { _ in remote }
+		let first = await drainer.drain(apiKey: "k")
+		#expect(first == .init(sent: 0, dropped: 0, remaining: 1))
+		let second = await drainer.drain(apiKey: "k")
+		#expect(second == .init(sent: 1, dropped: 0, remaining: 0))
+		#expect(chatKeys(remote) == ["share-chat-b1", "share-chat-b1"])
+	}
+
+	@Test("a refused chat is dropped with its reason and does not block the next share")
+	func refusedWithReason() async throws {
+		let queue = queue
+		try queue.enqueue(
+			request(scratch, destination: .newChat(agentID: "agent-cpo")), workspaceId: "ws-1", idempotencyBase: "b1")
+		try queue.enqueue(
+			request(scratch, destination: .newChat(agentID: "agent-cpo")), workspaceId: "ws-1", idempotencyBase: "b2")
+		let remote = FakeShareRemote()
+		remote.failNext("createChat", with: .rejected)
+		let report = await ShareQueueDrainer(queue: queue) { _ in remote }.drain(apiKey: "k")
+		#expect(report == .init(sent: 1, dropped: 1, droppedReasons: [.rejected], remaining: 0))
+	}
+
+	@Test("shares saved before this change (an item, or a message to a chat) are still sent as they were")
+	func oldSharesStillSend() async throws {
+		let queue = queue
+		try queue.enqueue(request(scratch), workspaceId: "ws-1", idempotencyBase: "old-1")
+		try queue.enqueue(request(scratch, destination: .chat(id: "c-1")), workspaceId: "ws-1", idempotencyBase: "old-2")
+		let remote = FakeShareRemote()
+		let report = await ShareQueueDrainer(queue: queue) { _ in remote }.drain(apiKey: "k")
+		#expect(report == .init(sent: 2, dropped: 0, remaining: 0))
+		#expect(
+			remote.calls.contains(
+				.createObject(
+					type: "insight", title: "A page", content: "Look at this\n\n[A page](https://example.com/p)",
+					status: "new", key: "old-1-object")))
+		#expect(
+			remote.calls.contains(
+				.chat(
+					conversation: "c-1", content: "Look at this\n\n[A page](https://example.com/p)", files: [],
+					key: "old-2-message")))
+	}
+
+	@Test("a share.json written by the previous build still reads back")
+	func previousFormatReads() throws {
+		let queue = queue
+		let id = UUID()
+		let folder = queue.root.appendingPathComponent(id.uuidString, isDirectory: true)
+		try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+		let json = """
+			{"id":"\(id.uuidString)","createdAt":\(Date().timeIntervalSinceReferenceDate),"workspaceId":"ws-1",
+			"destination":{"kind":"object","value":"insight"},"title":"T","note":"N","status":"new",
+			"text":"hello","attachments":[],"idempotencyBase":"legacy"}
+			"""
+		try Data(json.utf8).write(to: folder.appendingPathComponent("share.json"))
+		let share = try #require(queue.pending().first)
+		#expect(share.destination.destination == .object(type: "insight"))
+		#expect(share.idempotencyBase == "legacy")
+		#expect(queue.request(for: share) != nil)
 	}
 }
 

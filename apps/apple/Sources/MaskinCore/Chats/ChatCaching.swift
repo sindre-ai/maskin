@@ -6,16 +6,22 @@ import Foundation
 /// per actor and workspace by `SnapshotCache`, wiped by `DiskCache.clearAll()` on sign-out.
 enum ChatCaching {
 	/// Bump when any cached type below changes shape: a mismatch discards the entry.
-	static let version = 2
+	static let version = 3
 	static let threadMessageLimit = 50
 	static let listLimit = 50
 
 	static func threadName(_ conversationID: String) -> String { "chat.\(conversationID)" }
 	static let listName = "chats.list"
 
-	/// Metadata keys a bubble renders. Everything else (stream envelopes, hashes) is dropped.
+	/// Metadata keys a bubble renders, cards included: a thread opened from the cache must draw the
+	/// same Connect, Keychain, computer, tool-server and access cards the fetched one does. Everything
+	/// else (stream envelopes, hashes) is dropped. Bump `version` when this list grows, so a cache
+	/// written without the new key is discarded instead of showing a bare bubble.
 	private static let keptMetadataKeys: Set<String> = [
-		"attachments", "mentions", "question", "question_answer",
+		"attachments", "mentions", "question", "question_answer", "card_answer",
+		"integration_connect", "integration_access_request", "keychain_request", "keychain_access_request",
+		"computer_request", "mcp_server_request", "suggested_steps", "needed_tools", "plain_tail",
+		"quoted_message_id", "hidden_from_chat", "helper_return",
 	]
 
 	struct ThreadSnapshot: Codable, Sendable {

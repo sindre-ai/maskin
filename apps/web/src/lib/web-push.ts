@@ -125,10 +125,12 @@ export async function closeShownNotifications(
 export type SubscribeOutcome =
 	| { status: 'subscribed'; subscription: PushSubscription }
 	| { status: 'denied' }
+	| { status: 'dismissed' } // prompt closed without a choice; permission is still "default"
 
 /** Must be called from a user gesture: it may show the permission prompt. */
 export async function subscribeBrowser(publicKey: string): Promise<SubscribeOutcome> {
 	const permission = await Notification.requestPermission()
+	if (permission === 'default') return { status: 'dismissed' }
 	if (permission !== 'granted') return { status: 'denied' }
 	const reg = await registration()
 	const subscription =

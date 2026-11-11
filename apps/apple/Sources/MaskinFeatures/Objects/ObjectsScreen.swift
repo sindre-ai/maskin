@@ -11,10 +11,14 @@ public struct ObjectsScreen: View {
 	private let services: ObjectsServices
 	@State private var store: ObjectsStore
 	@State private var board: ObjectsBoardStore
+	@State private var filesStore: FilesListStore
+	@State private var openFile: PresentedID?
 	@State private var picking = SelectionModel()
 	@State private var intents = ObjectsListIntents()
 	@State private var path: [ObjectRoute] = []
 	@State private var showDisplay = false
+	@State private var searchText = ""
+	@State private var searchPresented = false
 	@Namespace private var zoom
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 
@@ -27,6 +31,10 @@ public struct ObjectsScreen: View {
 				remote: services.remote, directory: services.directory,
 				cache: environment.snapshotCache, displayStorage: UserDefaultsObjectsDisplayStorage()))
 		_board = State(initialValue: ObjectsBoardStore(remote: services.remote))
+		_filesStore = State(
+			initialValue: FilesListStore(
+				remote: APIFilesRemote(
+					client: environment.client, credentials: environment.auth.credentialsProvider)))
 	}
 
 	/// The For You feed: where open asks come from, and where answers go.
@@ -44,6 +52,10 @@ public struct ObjectsScreen: View {
 		}
 		.task { await store.observe(environment.events.subscribe()) }
 		.task { await board.observe(environment.events.subscribe()) }
+		// Files load when their tab opens, and again when the workspace changes under it.
+		.task(id: "\(environment.workspaceId ?? "")/\(store.scope == .files)") {
+			if store.scope == .files { await filesStore.load() }
+		}
 		.task {
 			if let feed, feed.phase == .idle { await feed.load() }
 		}
@@ -54,13 +66,14 @@ public struct ObjectsScreen: View {
 	}
 
 	/// The title lives in the content; the pill holds Display and the avatar. Go to opens from Display.
-	/// The Objects page has no search field in its top bar.
+	/// The magnifier opens a field that filters this page only.
 	private var shellActions: ShellActions {
 		ShellActions(
 			displaySymbol: ShellActions.slidersSymbol,
 			displayActive: store.display.isCustomised || store.statusFilter != nil,
 			displayToggle: { showDisplay = true },
-			hidesAvatar: true)
+			hidesAvatar: true,
+			search: { searchPresented = true })
 	}
 
 	// MARK: Asks
@@ -102,8 +115,21 @@ public struct ObjectsScreen: View {
 		NavigationStack(path: $path) {
 			ObjectsListView(
 				store: store, board: board, selection: nil, zoomNamespace: zoom, picking: picking, intents: intents,
-				askActions: askActions, onOpen: { path.append(ObjectRoute(id: $0)) })
+				askActions: askActions, onOpen: { path.append(ObjectRoute(id: $0)) },
+				files: filesStore, onOpenFile: { openFile = PresentedID(id: $0) })
 				.shellToolbar(environment: environment, title: nil, actions: shellActions)
+				.pageSearch(text: $searchText, isPresented: $searchPresented, prompt: "Search items")
+				// Filters this page only; closing the field clears the filter.
+				.onChange(of: searchText) { _, text in
+					Task {
+						await store.setSearch(text)
+						await filesStore.setQuery(text)
+					}
+				}
+				.sheet(item: $openFile) { file in
+					DetailSheet { FileScreen(environment: environment, fileId: file.id) }
+				}
+				.onChange(of: searchPresented) { _, open in if !open, !searchText.isEmpty { searchText = "" } }
 				.sheet(isPresented: $showDisplay) {
 					ObjectsDisplaySheet(store: store, picking: picking, intents: intents)
 				}

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { fileUploads, files } from '@maskin/db/schema'
+import { fileUploads, files, relationships } from '@maskin/db/schema'
 import {
 	MAX_INLINE_FILE_SIZE_BYTES,
 	completeFileUploadSchema,
@@ -9,14 +9,22 @@ import {
 	fileDetailSchema,
 	fileKindSchema,
 	fileListItemSchema,
+	fileReadFormatSchema,
+	fileTagChangeResultSchema,
+	fileTagCountSchema,
+	fileTagMatchSchema,
+	type fileTextDetailSchema,
 	fileUploadSessionSchema,
 	isTextMimeType,
+	mergeFileTagsSchema,
+	parseFileTagFilter,
 	planFileUploadParts,
+	renameFileTagSchema,
 	startFileUploadSchema,
 	updateFileSchema,
 } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { and, asc, desc, eq, ilike, inArray } from 'drizzle-orm'
+import { and, asc, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
 import { trackFileSaved } from '../lib/analytics/file-events'
 import {
 	buildCreatedAtCursorConditions,
@@ -26,14 +34,22 @@ import {
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import {
+	FileEditError,
 	FileSaveTimeoutError,
 	FileVersionConflictError,
 	ensureContentHash,
 	saveFile,
 	sha256Hex,
 } from '../lib/file-save'
+import { FileTagExistsError, FileTagNotFoundError, changeFileTag } from '../lib/file-tag-change'
 import { abortStoredUpload, classifyCompleteFailure, deleteStoredObject } from '../lib/file-uploads'
 import { fileStorageKey, fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
+import {
+	HtmlTooDeepError,
+	MAX_HTML_TEXT_INPUT_BYTES,
+	extractHtmlText,
+	readableWithHint,
+} from '../lib/html-text'
 import { htmlViewerWarning } from '../lib/html-viewer-warning'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceIdHeader } from '../lib/openapi-schemas'
@@ -66,16 +82,49 @@ function buildResponse(
 	bytes: Buffer,
 	frontendUrl: string,
 	warning?: string,
+	/** Set on a raw read: points a reader of a mostly-embedded-data HTML file at format=text. */
+	readableWith?: string | null,
 ) {
 	const encoding = isTextMimeType(row.mimeType) ? 'utf8' : 'base64'
 	return {
 		...serialize(row),
-		content: bytes.toString(encoding),
-		encoding,
 		annotations: row.annotations ?? [],
 		url: fileViewerUrl(frontendUrl, row.workspaceId, row.id),
+		// Ahead of `content` on purpose: a reader that stops early, or a tool
+		// result cut at a character cap, still sees the hint.
+		...(readableWith ? { readable_with: readableWith } : {}),
+		content: bytes.toString(encoding),
+		encoding,
 		...(warning ? { warning } : {}),
 	}
+}
+
+const HTML_MIME_TYPES = new Set(['text/html', 'application/xhtml+xml'])
+
+/** The object an edge ties this file to (derived_from or relates_to), if any. */
+async function findSourceObjectId(db: Database, fileId: string): Promise<string | undefined> {
+	const edges = await db
+		.select()
+		.from(relationships)
+		.where(
+			and(
+				inArray(relationships.type, ['derived_from', 'relates_to']),
+				or(
+					and(eq(relationships.sourceType, 'file'), eq(relationships.sourceId, fileId)),
+					and(eq(relationships.targetType, 'file'), eq(relationships.targetId, fileId)),
+				),
+			),
+		)
+		.orderBy(asc(relationships.createdAt))
+	for (const e of edges) {
+		if (e.sourceType === 'file' && e.sourceId === fileId && e.targetType === 'object') {
+			return e.targetId
+		}
+		if (e.targetType === 'file' && e.targetId === fileId && e.sourceType === 'object') {
+			return e.sourceId
+		}
+	}
+	return undefined
 }
 
 /** How long a download URL for a large file stays valid. */
@@ -132,6 +181,9 @@ const listQuerySchema = z.object({
 	q: z.string().trim().min(1).max(255).optional(),
 	ids: z.string().optional(),
 	kind: fileKindSchema.optional(),
+	// Comma-separated; trimmed and lowercased like tags on write.
+	tags: z.string().optional(),
+	tags_match: fileTagMatchSchema.optional(),
 	limit: z.coerce.number().int().positive().max(200).optional(),
 	offset: z.coerce.number().int().nonnegative().optional(),
 	order: z.enum(['asc', 'desc']).optional(),
@@ -206,6 +258,7 @@ app.openapi(createFileRoute, (async (c) => {
 			name: body.name,
 			description: body.description ?? null,
 			kind: body.kind ?? null,
+			tags: body.tags ?? [],
 			mimeType: body.mime_type,
 			sizeBytes,
 			storageKey,
@@ -319,6 +372,18 @@ app.openapi(listFilesRoute, (async (c) => {
 	if (query.q) conditions.push(ilike(files.name, `%${query.q}%`))
 	if (ids?.length) conditions.push(inArray(files.id, ids))
 	if (query.kind) conditions.push(eq(files.kind, query.kind))
+	const filterTags = parseFileTagFilter(query.tags)
+	if (filterTags.length > 0) {
+		const wanted = sql`ARRAY[${sql.join(
+			filterTags.map((t) => sql`${t}`),
+			sql`, `,
+		)}]::text[]`
+		conditions.push(
+			query.tags_match === 'any'
+				? sql`${files.tags} && ${wanted}`
+				: sql`${files.tags} @> ${wanted}`,
+		)
+	}
 	conditions.push(
 		...buildCreatedAtCursorConditions({ createdAt: files.createdAt, id: files.id }, query),
 	)
@@ -341,6 +406,7 @@ app.openapi(listFilesRoute, (async (c) => {
 			name: files.name,
 			description: files.description,
 			kind: files.kind,
+			tags: files.tags,
 			mimeType: files.mimeType,
 			sizeBytes: files.sizeBytes,
 			storageKey: files.storageKey,
@@ -357,6 +423,158 @@ app.openapi(listFilesRoute, (async (c) => {
 	return c.json(serializeArray(rows) as z.infer<typeof fileListItemSchema>[], 200)
 }) as RouteHandler<typeof listFilesRoute, Env>)
 
+// -- GET /tags — Tags in use, with file counts ----------------------------------
+
+// Plenty for a workspace's vocabulary; a longer tail than this is a sign tags are being
+// used as free text.
+const MAX_TAG_COUNT_ROWS = 500
+
+const listTagsRoute = createRoute({
+	method: 'get',
+	path: '/tags',
+	tags: ['Files'],
+	summary: 'List the tags in use in the workspace and how many files carry each',
+	request: { headers: workspaceIdHeader },
+	responses: {
+		200: {
+			content: { 'application/json': { schema: z.array(fileTagCountSchema) } },
+			description: 'Tags, most-used first (ties in alphabetical order)',
+		},
+	},
+})
+
+app.openapi(listTagsRoute, (async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const rows = (await db.execute(sql`
+		SELECT t.tag AS tag, count(*)::int AS count
+		FROM files f
+		CROSS JOIN LATERAL unnest(f.tags) AS t(tag)
+		WHERE f.workspace_id = ${workspaceId}
+		GROUP BY t.tag
+		ORDER BY count(*) DESC, t.tag ASC
+		LIMIT ${MAX_TAG_COUNT_ROWS}
+	`)) as unknown as Array<{ tag: string; count: number }>
+
+	return c.json(
+		Array.from(rows, (row) => ({ tag: row.tag, count: row.count })) as z.infer<
+			typeof fileTagCountSchema
+		>[],
+		200,
+	)
+}) as RouteHandler<typeof listTagsRoute, Env>)
+
+// -- POST /tags/rename and /tags/merge — Change a tag on every file ---------------
+
+const fileTagChangeResponses = {
+	200: {
+		content: { 'application/json': { schema: fileTagChangeResultSchema } },
+		description: 'Every file that carried the tag now carries the new one',
+	},
+	400: {
+		content: { 'application/json': { schema: errorSchema } },
+		description: 'Invalid tag, or the old and new tag are the same',
+	},
+	404: {
+		content: { 'application/json': { schema: errorSchema } },
+		description: 'No file in the workspace carries the tag; nothing was written',
+	},
+	409: {
+		content: { 'application/json': { schema: errorSchema } },
+		description: 'Rename only: the new name is already a tag; merge into it instead',
+	},
+}
+
+const renameFileTagRoute = createRoute({
+	method: 'post',
+	path: '/tags/rename',
+	'x-viewer-policy': 'writer',
+	tags: ['Files'],
+	summary: 'Rename a tag on every file in the workspace',
+	request: {
+		headers: workspaceIdHeader,
+		body: { content: { 'application/json': { schema: renameFileTagSchema } } },
+	},
+	responses: fileTagChangeResponses,
+})
+
+const mergeFileTagsRoute = createRoute({
+	method: 'post',
+	path: '/tags/merge',
+	'x-viewer-policy': 'writer',
+	tags: ['Files'],
+	summary: 'Merge a tag into another on every file in the workspace',
+	request: {
+		headers: workspaceIdHeader,
+		body: { content: { 'application/json': { schema: mergeFileTagsSchema } } },
+	},
+	responses: fileTagChangeResponses,
+})
+
+type FileTagChangeOutcome =
+	| { status: 200; body: { from: string; to: string; files_changed: number } }
+	| { status: 400 | 404 | 409; body: ReturnType<typeof createApiError> }
+
+async function runFileTagChange(
+	db: Database,
+	params: {
+		workspaceId: string
+		actorId: string
+		kind: 'rename' | 'merge'
+		from: string
+		to: string
+	},
+): Promise<FileTagChangeOutcome> {
+	const { from, to } = params
+	if (from === to) {
+		return {
+			status: 400,
+			body: createApiError('VALIDATION_ERROR', 'The old and new tag are the same'),
+		}
+	}
+	try {
+		const filesChanged = await changeFileTag(db, params)
+		return { status: 200, body: { from, to, files_changed: filesChanged } }
+	} catch (err) {
+		if (err instanceof FileTagNotFoundError) {
+			return { status: 404, body: createApiError('NOT_FOUND', err.message) }
+		}
+		if (err instanceof FileTagExistsError) {
+			return { status: 409, body: createApiError('CONFLICT', err.message) }
+		}
+		throw err
+	}
+}
+
+app.openapi(renameFileTagRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { from, to } = c.req.valid('json')
+	const out = await runFileTagChange(c.get('db'), {
+		workspaceId,
+		actorId: c.get('actorId'),
+		kind: 'rename',
+		from,
+		to,
+	})
+	return c.json(out.body, out.status)
+}) as RouteHandler<typeof renameFileTagRoute, Env>)
+
+app.openapi(mergeFileTagsRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { from, into } = c.req.valid('json')
+	const out = await runFileTagChange(c.get('db'), {
+		workspaceId,
+		actorId: c.get('actorId'),
+		kind: 'merge',
+		from,
+		to: into,
+	})
+	return c.json(out.body, out.status)
+}) as RouteHandler<typeof mergeFileTagsRoute, Env>)
+
 // -- GET /:id — Get file detail -----------------------------------------------
 
 const getFileRoute = createRoute({
@@ -364,11 +582,27 @@ const getFileRoute = createRoute({
 	path: '/{id}',
 	tags: ['Files'],
 	summary: 'Get a file (content as plain text for text MIME types, base64 for binary)',
-	request: { params: idParamSchema },
+	request: {
+		params: idParamSchema,
+		query: z.object({
+			format: fileReadFormatSchema.optional().openapi({
+				description:
+					'raw (default) returns the stored bytes. text returns the words in a text file: for HTML, markdown extracted from the page (no styles, scripts or embedded fonts) as content_text; other text files unchanged. Non-text files ignore it.',
+			}),
+		}),
+	},
 	responses: {
 		200: {
 			content: { 'application/json': { schema: fileDetailSchema } },
-			description: 'File detail',
+			// With format=text and a text file the body is fileTextDetailSchema
+			// instead (content_text in place of content). It is not declared as a
+			// union here so the generated native clients keep one response type.
+			description:
+				'File detail. With format=text on a text file: content_text, extracted, title, meta_description, note (when the page is drawn by script), json_ld and source_object_id instead of content and encoding.',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid format, or an HTML file too large to extract text from',
 		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
@@ -382,6 +616,7 @@ app.openapi(getFileRoute, (async (c) => {
 	const storage = c.get('storageProvider')
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
+	const { format } = c.req.valid('query')
 
 	let frontendUrl: string
 	try {
@@ -424,8 +659,77 @@ app.openapi(getFileRoute, (async (c) => {
 
 	const contentHash = await ensureContentHash(db, row, bytes)
 
+	if (format === 'text' && isTextMimeType(row.mimeType)) {
+		const text = bytes.toString('utf8')
+		const isHtml = HTML_MIME_TYPES.has(row.mimeType.toLowerCase())
+		const base = {
+			...serialize({ ...row, contentHash }),
+			annotations: row.annotations ?? [],
+			url: fileViewerUrl(frontendUrl, row.workspaceId, row.id),
+		}
+		if (!isHtml) {
+			return c.json(
+				{ ...base, content_text: text, extracted: false } as z.infer<typeof fileTextDetailSchema>,
+				200,
+			)
+		}
+		if (bytes.byteLength > MAX_HTML_TEXT_INPUT_BYTES) {
+			return c.json(
+				createApiError(
+					'VALIDATION_ERROR',
+					`This HTML file is ${bytes.byteLength} bytes, too large to extract text from (limit ${MAX_HTML_TEXT_INPUT_BYTES}). Read it with format=raw.`,
+				),
+				400,
+			)
+		}
+		let extracted: ReturnType<typeof extractHtmlText>
+		try {
+			extracted = extractHtmlText(text)
+		} catch (err) {
+			if (err instanceof HtmlTooDeepError) {
+				return c.json(
+					createApiError(
+						'VALIDATION_ERROR',
+						`This HTML file is nested more than ${err.maxDepth} levels deep, too deep to extract text from. Read it with format=raw.`,
+					),
+					400,
+				)
+			}
+			logger.error('Failed to extract text from HTML file', { fileId: row.id, error: String(err) })
+			return c.json(createApiError('INTERNAL_ERROR', 'Failed to extract text from the file'), 500)
+		}
+		let sourceObjectId: string | undefined
+		try {
+			sourceObjectId = await findSourceObjectId(db, row.id)
+		} catch (err) {
+			logger.warn('Failed to look up source object for file', {
+				fileId: row.id,
+				error: String(err),
+			})
+		}
+		return c.json(
+			{
+				...base,
+				content_text: extracted.contentText,
+				extracted: true,
+				title: extracted.title,
+				meta_description: extracted.description,
+				...(extracted.note ? { note: extracted.note } : {}),
+				...(extracted.jsonLd.length > 0 ? { json_ld: extracted.jsonLd } : {}),
+				...(sourceObjectId ? { source_object_id: sourceObjectId } : {}),
+			} as z.infer<typeof fileTextDetailSchema>,
+			200,
+		)
+	}
+
+	const readableWith = HTML_MIME_TYPES.has(row.mimeType.toLowerCase())
+		? readableWithHint(bytes.toString('utf8'), bytes.byteLength)
+		: null
+
 	return c.json(
-		buildResponse({ ...row, contentHash }, bytes, frontendUrl) as z.infer<typeof fileDetailSchema>,
+		buildResponse({ ...row, contentHash }, bytes, frontendUrl, undefined, readableWith) as z.infer<
+			typeof fileDetailSchema
+		>,
 		200,
 	)
 }) as RouteHandler<typeof getFileRoute, Env>)
@@ -453,7 +757,8 @@ const updateFileRoute = createRoute({
 		},
 		400: {
 			content: { 'application/json': { schema: errorSchema } },
-			description: 'Invalid request',
+			description:
+				'Invalid request, or an edit that cannot be applied (text not found, found more than once without replace_all, file is not text)',
 		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
@@ -503,6 +808,16 @@ app.openapi(updateFileRoute, (async (c) => {
 		)
 	}
 
+	if (large && body.edits !== undefined) {
+		return c.json(
+			createApiError(
+				'VALIDATION_ERROR',
+				'A file larger than 50 MB cannot be edited; upload a new file instead',
+			),
+			400,
+		)
+	}
+
 	const newBytes =
 		body.content !== undefined ? Buffer.from(body.content, body.encoding ?? 'utf8') : null
 
@@ -516,9 +831,11 @@ app.openapi(updateFileRoute, (async (c) => {
 				fileId: existing.id,
 				ifMatch: large ? undefined : body.if_match,
 				newBytes,
+				edits: body.edits,
 				name: body.name,
 				description: body.description,
 				kind: body.kind,
+				tags: body.tags,
 				mimeType: body.mime_type,
 				annotations: body.annotations,
 			},
@@ -543,6 +860,25 @@ app.openapi(updateFileRoute, (async (c) => {
 					currentHash: err.currentHash,
 				},
 				409,
+			)
+		}
+		if (err instanceof FileEditError) {
+			return c.json(
+				createApiError(
+					'VALIDATION_ERROR',
+					err.message,
+					err.editIndex !== undefined
+						? [
+								{
+									field: `edits.${err.editIndex}.old`,
+									message: err.reason === 'no_match' ? 'not found' : `found ${err.matches} times`,
+									...(err.matches !== undefined ? { received: String(err.matches) } : {}),
+								},
+							]
+						: undefined,
+					'Nothing was written. Fix the edit and send it again.',
+				),
+				400,
 			)
 		}
 		if (err instanceof FileSaveTimeoutError) {
@@ -589,6 +925,7 @@ app.openapi(updateFileRoute, (async (c) => {
 				name: updated.name,
 				mimeType: updated.mimeType,
 				sizeBytes: updated.sizeBytes,
+				...(body.edits ? { editCount: body.edits.length } : {}),
 			},
 			provenance: { sessionId: c.get('maskinSessionId'), entityKind: 'file' },
 		})
@@ -617,6 +954,7 @@ app.openapi(updateFileRoute, (async (c) => {
 	// Re-read latest bytes for the response so the caller sees the post-update content.
 	let responseBytes: Buffer = newBytes ?? Buffer.alloc(0)
 	let responseRow = updated
+	const contentWritten = newBytes !== null || body.edits !== undefined
 	if (!newBytes) {
 		try {
 			responseBytes = await storage.get(updated.storageKey)
@@ -637,7 +975,9 @@ app.openapi(updateFileRoute, (async (c) => {
 			responseRow,
 			responseBytes,
 			frontendUrl,
-			newBytes ? htmlViewerWarning(updated.mimeType, newBytes.toString('utf8')) : undefined,
+			contentWritten
+				? htmlViewerWarning(updated.mimeType, responseBytes.toString('utf8'))
+				: undefined,
 		) as z.infer<typeof fileDetailSchema>,
 		200,
 	)
@@ -778,6 +1118,7 @@ app.openapi(startUploadRoute, (async (c) => {
 				name: body.name,
 				description: body.description ?? null,
 				kind: body.kind ?? null,
+				tags: body.tags ?? [],
 				mimeType: body.mime_type,
 				sizeBytes: body.size_bytes,
 				storageKey,
@@ -1046,6 +1387,7 @@ app.openapi(completeUploadRoute, (async (c) => {
 				name: upload.name,
 				description: upload.description,
 				kind: upload.kind,
+				tags: upload.tags,
 				mimeType: upload.mimeType,
 				sizeBytes: stored.size,
 				storageKey: upload.storageKey,

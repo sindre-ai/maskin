@@ -171,6 +171,28 @@ describe('POST /sessions/:id/ask', () => {
 		expect(rows[0]?.content).toContain('API token')
 	})
 
+	it("posts a thread session's question in its own thread", async () => {
+		const [root] = await db
+			.insert(messages)
+			.values({ conversationId, actorId: humanId, content: 'Start a thread' })
+			.returning()
+		if (!root) throw new Error('failed to seed thread root')
+		const session = await insertSession(db, workspaceId, agentId, humanId, {
+			interactive: true,
+			conversationId,
+			threadRootId: root.id,
+			status: 'running',
+		})
+		if (!session) throw new Error('failed to seed session')
+
+		const res = await createSessionsApp(agentId).request(ask(session.id, workspaceId))
+		expect(res.status).toBe(200)
+
+		const question = (await messagesFor(conversationId)).find((m) => m.sessionId === session.id)
+		expect(question?.threadRootId).toBe(root.id)
+		expect(question?.threadAlsoInChannel).toBe(true)
+	})
+
 	describe('with no chat and no helper parent', () => {
 		type QuestionMeta = {
 			question?: { reply_to_session?: boolean; routed_to?: string; session_id: string }

@@ -20,6 +20,14 @@ public enum HoldReason {
 		return first == "hold"
 	}
 
+	/// Whether an option label is a defer ("Later", "Later this week"). Like Hold, For you does not
+	/// draw it on the card: a decision is answered, not put off.
+	public static func isLater(_ label: String) -> Bool {
+		let first = label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+			.split(whereSeparator: { !$0.isLetter }).first
+		return first == "later"
+	}
+
 	/// The reason as it is stored: trimmed, nil when empty (Skip).
 	public static func normalized(_ text: String?) -> String? {
 		let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

@@ -51,7 +51,11 @@ export function LoopTags({
 	return (
 		<section aria-label="Tags" className="contents">
 			{tags.map((tag) => (
-				<Badge key={tag} variant="secondary" className="h-8 gap-1.5 px-3.5 text-[13px] font-medium">
+				<Badge
+					key={tag}
+					variant="secondary"
+					className="h-9 gap-1.5 px-3.5 text-[13.5px] font-medium"
+				>
 					{tag}
 					{canWrite && (
 						<button
@@ -82,7 +86,7 @@ export function LoopTags({
 						}}
 						placeholder="Tag name"
 						aria-label="New tag"
-						className="h-8 w-36 rounded-full"
+						className="h-9 w-36 rounded-full"
 					/>
 				) : (
 					<Button
@@ -93,7 +97,7 @@ export function LoopTags({
 							settledRef.current = false
 							setAdding(true)
 						}}
-						className="h-8 rounded-full border-dashed text-[13px] text-muted-foreground"
+						className="h-9 rounded-full border-dashed text-[13.5px] text-muted-foreground"
 					>
 						<Plus size={13} aria-hidden="true" />
 						Tag

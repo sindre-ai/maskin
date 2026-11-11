@@ -167,6 +167,7 @@ export interface WebPushSenderOptions {
 }
 
 export class WebPushSender implements PushChannel {
+	readonly channelKind = 'browser' as const
 	private config: WebPushConfig | null
 	private transport: WebPushTransport
 	private warnedDisabled = false
@@ -227,7 +228,11 @@ export class WebPushSender implements PushChannel {
 							payload,
 							options,
 						)
-						if (res.status >= 200 && res.status < 300) return
+						if (res.status >= 200 && res.status < 300) {
+							// The denominator for delivery health: pushes the push service accepted.
+							logger.info('Web Push accepted', { subscriptionId: sub.id, status: res.status })
+							return
+						}
 						if (res.status === 404 || res.status === 410) {
 							await this.db.delete(webPushSubscriptions).where(eq(webPushSubscriptions.id, sub.id))
 							logger.info('Web Push subscription gone, removed', {
