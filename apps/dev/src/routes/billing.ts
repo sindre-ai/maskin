@@ -22,7 +22,7 @@ import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from '../lib/billing-de
 import { USAGE_BREAKDOWN_MAX_ROWS, readUsageBreakdown } from '../lib/billing-usage-breakdown'
 import { cachedBillingUsage, evictBillingUsage } from '../lib/billing-usage-cache'
 import { resolveWorkspaceCapCents } from '../lib/daily-budget'
-import { isEnterprise } from '../lib/enterprise'
+import { isEnterprise, isEnterpriseWorkspace } from '../lib/enterprise'
 import { createApiError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import {
