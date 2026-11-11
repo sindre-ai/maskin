@@ -545,6 +545,10 @@ export const failureReasonCodeSchema = z.enum([
 	// time, resolved route if any) so the stall is at least diagnosable from
 	// the session itself instead of only from server logs.
 	'startup_stalled',
+	// The run exited non-zero and nothing in its output matched a known cause. Written
+	// by the two completion paths so such a death is never saved bare; it is not retried
+	// and the workspace owner gets a card (services/run-death-alerts.ts).
+	'unclassified',
 ])
 export type FailureReasonCode = z.infer<typeof failureReasonCodeSchema>
 
