@@ -11,8 +11,21 @@
  * Steps 1 to 3 (the first three mails anyone gets, new or existing) also carry one short lesson
  * each (a card, a flow, your results), plain how-to and no offers. After that the mail is the plain daily summary.
  */
-import { MAX_FINISHED_RUNS, clip } from './briefing-push-scheduler'
+import { MAX_FINISHED_RUNS } from './briefing-push-scheduler'
 import type { BriefingText, FinishedFlow } from './briefing-push-scheduler'
+import {
+	bigNumber,
+	button,
+	clipAtWord as clip,
+	headline,
+	linkRow,
+	nextStepLine,
+	renderEmail,
+	sectionHeading,
+	softBox,
+	tickList,
+	waitingRow,
+} from './email-layout'
 
 /** Most flows named in the finished part; the rest fold into "and N more flows". */
 export const MAX_FINISHED_FLOWS = 3
@@ -96,20 +109,12 @@ export interface SummaryEmail {
 	headers: Record<string, string>
 }
 
-function escapeHtml(value: string): string {
-	return value
-		.replace(/&/g, '&amp;')
-		.replace(/</g, '&lt;')
-		.replace(/>/g, '&gt;')
-		.replace(/"/g, '&quot;')
-		.replace(/'/g, '&#39;')
-}
-
 export function buttonLabel(summary: BriefingText): string {
 	return summary.waiting > 0 ? 'Open it' : 'Open Maskin'
 }
 
 export interface Section {
+	kind: 'done' | 'waiting' | 'next'
 	heading: string
 	lines: string[]
 }
@@ -149,20 +154,33 @@ export function summarySections(summary: BriefingText, nextStep: string | null):
 		} else if (more > 0) {
 			runLines.push(`and ${more} more`)
 		}
-		sections.push({ heading: `Done for you${where}`, lines: [...lines, ...runLines] })
+		sections.push({
+			kind: 'done',
+			heading: `Done for you${where}`,
+			lines: [...lines, ...runLines],
+		})
 	}
 
+	// The count is the mail's title ("3 things need you"), so this part only adds what the title does not.
 	if (summary.waiting > 0) {
-		const lines = [
-			summary.waiting === 1 ? '1 thing needs you' : `${summary.waiting} things need you`,
-		]
+		const lines: string[] = []
 		if (summary.topHeadline) lines.push(`Starting with: ${clip(summary.topHeadline, 90)}`)
 		if (summary.waitingElsewhere) lines.push(`${summary.waitingElsewhere} more in other workspaces`)
-		sections.push({ heading: `Waiting on you${where}`, lines })
+		if (lines.length > 0)
+			sections.push({ kind: 'waiting', heading: `Waiting on you${where}`, lines })
 	}
 
-	if (nextStep) sections.push({ heading: 'Next step', lines: [nextStep] })
+	if (nextStep) sections.push({ kind: 'next', heading: 'Next step', lines: [nextStep] })
 	return sections
+}
+
+/** The hidden inbox preview: the first line of content that is not the subject. */
+function summaryPreheader(summary: BriefingText, sections: Section[], lesson: string | null) {
+	const order = ['waiting', 'done', 'next'] as const
+	const lines = order.flatMap((kind) => sections.find((s) => s.kind === kind)?.lines ?? [])
+	return (
+		lines.find((l) => l !== summary.title) ?? lesson ?? 'See what is waiting for you in Maskin.'
+	)
 }
 
 export function buildSummaryEmail(input: SummaryEmailInput): SummaryEmail {
@@ -193,27 +211,40 @@ export function buildSummaryEmail(input: SummaryEmailInput): SummaryEmail {
 		`Stop these emails: ${stopUrl}`,
 	].join('\n')
 
-	const html = [
-		'<!doctype html>',
-		'<html>',
-		'<body style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, sans-serif; color: #111; max-width: 560px; margin: 0 auto; padding: 24px;">',
-		`<p style="font-size: 18px; font-weight: 600; margin: 0 0 8px;">${escapeHtml(summary.title)}</p>`,
-		...sections.map(
-			(s) =>
-				`<p style="margin: 16px 0 4px; font-weight: 600;">${escapeHtml(s.heading)}</p><ul style="margin: 0; padding-left: 20px;">${s.lines.map((l) => `<li>${escapeHtml(l)}</li>`).join('')}</ul>`,
-		),
-		...(lesson ? [`<p style="color: #444; margin: 16px 0;">${escapeHtml(lesson)}</p>`] : []),
-		`<p><a href="${escapeHtml(buttonUrl)}" style="display: inline-block; background: #111; color: #fff; padding: 12px 20px; border-radius: 6px; text-decoration: none;">${escapeHtml(label)}</a></p>`,
+	// Reading order in the mail: the headline moment, what waits, what finished, the next step.
+	const part = (kind: Section['kind']) => sections.find((s) => s.kind === kind)
+	const waiting = part('waiting')
+	const done = part('done')
+	const next = part('next')
+	const blocks = [
+		summary.waiting > 0
+			? bigNumber(summary.waiting, summary.waiting === 1 ? 'thing needs you' : 'things need you')
+			: headline(summary.title),
+		...(waiting ? [sectionHeading(waiting.heading), ...waiting.lines.map(waitingRow)] : []),
+		...(done ? [sectionHeading(done.heading), tickList(done.lines)] : []),
+		...(next ? [sectionHeading(next.heading), ...next.lines.map(nextStepLine)] : []),
+		...(lesson ? [softBox(lesson)] : []),
+		button(buttonUrl, label),
 		...(pick
 			? [
-					`<p style="margin: 24px 0 4px; font-weight: 600;">Marketplace pick</p><ul style="margin: 0; padding-left: 20px;"><li>${escapeHtml(pick.name)}: ${escapeHtml(pickDescription)}</li><li>Why you see this: ${escapeHtml(pick.why)}</li><li>Setup and cost are on its Marketplace page.</li></ul>`,
-					`<p><a href="${escapeHtml(pick.url)}" style="color: #111;">See the flow</a> &nbsp;·&nbsp; <a href="${escapeHtml(pick.dismissUrl)}" style="color: #666;">Not useful</a></p>`,
+					sectionHeading('Marketplace pick'),
+					softBox([
+						`${pick.name}: ${pickDescription}`,
+						`Why you see this: ${pick.why}`,
+						'Setup and cost are on its Marketplace page.',
+					]),
+					linkRow([
+						{ url: pick.url, label: 'See the flow' },
+						{ url: pick.dismissUrl, label: 'Not useful' },
+					]),
 				]
 			: []),
-		`<p style="color: #666; font-size: 13px;"><a href="${escapeHtml(stopUrl)}" style="color: #666;">Stop these emails</a></p>`,
-		'</body>',
-		'</html>',
-	].join('\n')
+	]
+	const html = renderEmail({
+		preheader: summaryPreheader(summary, sections, lesson),
+		blocks,
+		stopUrl,
+	})
 
 	return {
 		subject: summary.title,

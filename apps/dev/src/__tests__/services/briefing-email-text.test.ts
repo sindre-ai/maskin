@@ -86,7 +86,7 @@ describe('buildSummaryEmail', () => {
 		expect(at('Done for you')).toBeLessThan(at('Waiting on you'))
 		expect(at('Waiting on you')).toBeLessThan(at('Next step'))
 		expect(mail.text).toContain('- Open the card at the top first.')
-		expect(mail.html).toContain('<li>Open the card at the top first.</li>')
+		expect(mail.html).toContain('Open the card at the top first.')
 	})
 
 	it('lists up to 5 finished runs, then "and N more", and leaves out empty parts', () => {
@@ -192,6 +192,64 @@ describe('buildSummaryEmail', () => {
 			...urls,
 		})
 		expect(finishedOnly.html).toContain('>Open Maskin</a>')
+	})
+
+	it('says the count once: the title is the headline, not also the first bullet', () => {
+		const mail = buildSummaryEmail({ summary: summary(), step: 'daily', ...urls })
+		expect(mail.text.match(/2 things need you/g)).toHaveLength(1)
+		expect(mail.text).toContain('Waiting on you\n- Starting with: Approve the launch email')
+		// The html shows the number big, with its label beside it, and no second copy of the title.
+		expect(mail.html).not.toContain('2 things need you')
+		expect(mail.html).toContain('>2</td>')
+		expect(mail.html).toContain('>things need you</td>')
+	})
+
+	it('leaves the waiting part out when the title already says all there is', () => {
+		const mail = buildSummaryEmail({
+			summary: summary({ topHeadline: null, waitingElsewhere: 0 }),
+			step: 'daily',
+			...urls,
+		})
+		expect(mail.text).not.toContain('Waiting on you')
+	})
+
+	it('cuts the top card headline at a word boundary, never mid-word', () => {
+		const headline = `${'Approve the launch plan for '.repeat(5)}and give the go-ahead today`
+		const mail = buildSummaryEmail({
+			summary: summary({ topHeadline: headline }),
+			step: 'daily',
+			...urls,
+		})
+		const line = mail.text.split('\n').find((l) => l.startsWith('- Starting with: ')) as string
+		expect(line.endsWith('…')).toBe(true)
+		const shown = line.slice('- Starting with: '.length, -1)
+		expect(shown.length).toBeLessThanOrEqual(89)
+		expect(headline.startsWith(`${shown} `)).toBe(true)
+	})
+
+	it('has a hidden preview line that is not the subject', () => {
+		const mail = buildSummaryEmail({ summary: summary(), step: 'daily', ...urls })
+		const preview = mail.html.match(/display: none[^>]*>([^<]*)</)?.[1] as string
+		expect(preview).toContain('Starting with: Approve the launch email')
+		expect(preview).not.toContain(mail.subject)
+	})
+
+	it('shows only finished runs, as a tick list, when nothing waits', () => {
+		const mail = buildSummaryEmail({
+			summary: summary({
+				title: "Ada finished 'Task 1'",
+				finished: 1,
+				waiting: 0,
+				topHeadline: null,
+				finishedRuns: [run(1)],
+			}),
+			step: 'daily',
+			...urls,
+		})
+		expect(mail.html).toContain('Done for you')
+		expect(mail.html).toContain('&#10003;')
+		expect(mail.html).not.toContain('Waiting on you')
+		expect(mail.html).toContain('>Open Maskin</a>')
 	})
 
 	it('escapes text that came from a card headline', () => {
