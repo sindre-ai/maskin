@@ -61,6 +61,20 @@ export function summarizeAgentAccess(
 	return `${withAccess} ${withAccess === 1 ? 'agent has' : 'agents have'} access`
 }
 
+/**
+ * The short chip on a collapsed integration card: what every agent gets, then how many
+ * agents differ ("Read", "Read & write · 2 exceptions").
+ */
+export function accessChipLabel(
+	defaultAccess: DefaultAgentAccess,
+	grants: Pick<AgentGrant, 'access'>[],
+): string {
+	const base = AGENT_ACCESS_LABELS[defaultAccess]
+	const exceptions = grants.filter((g) => g.access !== defaultAccess).length
+	if (exceptions === 0) return base
+	return `${base} · ${exceptions} ${exceptions === 1 ? 'exception' : 'exceptions'}`
+}
+
 /** What a newly added agent starts with: the step up from the default. */
 export function startingAccess(defaultAccess: DefaultAgentAccess): AgentGrantAccess {
 	// When every agent already writes, an entry of its own can only hold one back.
