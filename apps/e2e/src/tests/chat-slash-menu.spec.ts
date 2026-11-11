@@ -54,6 +54,7 @@ test.describe('Chat message box slash menu', () => {
 		await box.click()
 
 		await page.keyboard.type('/bul')
+		await expect(page.getByRole('option')).toHaveCount(1)
 		await page.keyboard.press('Enter')
 		await page.keyboard.type('one')
 		await page.keyboard.press('Enter')
@@ -93,6 +94,7 @@ test.describe('Chat message box slash menu', () => {
 		await box.click()
 
 		await page.keyboard.type('/file')
+		await expect(page.getByRole('option')).toHaveCount(1)
 		const chooser = page.waitForEvent('filechooser')
 		await page.keyboard.press('Enter')
 		await chooser

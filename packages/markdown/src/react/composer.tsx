@@ -359,7 +359,7 @@ export function createComposerExtensions(handlers: { current: Handlers }) {
 		// (Enter with no row to pick) still does.
 		...(slashMenu
 			? [
-					SlashCommand.extend({ priority: 200 }).configure({
+					SlashCommand.extend({ priority: 1100 }).configure({
 						createView: slashMenu.createView,
 						items: buildChatSlashItems(() => handlers.current.props.slashMenu?.attachFile()),
 						onCommandUsed: (id) => handlers.current.props.slashMenu?.onCommandUsed?.(id),
