@@ -41,7 +41,8 @@ Open `http://10.0.1.1:16080/vnc.html` from the server (or an SSH tunnel:
 - A web page's file chooser fits the 1920x1080 screen with its Open button visible. GTK
   restores the chooser size from `dock/keyfile` (`org/gtk/settings/file-chooser`,
   `window-size` and `window-position`, both needed); unset it opens 1124x822, taller than
-  the screen. Select the file, then click Open: double click and Enter do not submit it.
+  the screen. Press ctrl+L, type the file's full path, then click Open or press alt+O. Enter and
+  double click close the chooser without choosing the file (tried on the 5 Nov image).
 - Chromium opens a page at 67 percent zoom (a page's `innerWidth` is 2866 on the 1920
   pixel screen). The default comes from `chromium/preferences.json`, installed as the
   profile's `Preferences`; change `partition.default_zoom_level.x` (log(zoom)/log(1.2):

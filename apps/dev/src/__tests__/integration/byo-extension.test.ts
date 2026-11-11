@@ -14,6 +14,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
 	buildCalcomDelivery,
 	buildFirefliesDelivery,
+	buildStandardWebhooksDelivery,
+	buildStripeDelivery,
 	buildTelnyxDelivery,
 	generateTelnyxKeys,
 } from '../../../tests/integrations/fixtures/signed-deliveries'
@@ -971,6 +973,99 @@ describe('Telnyx Ed25519 webhook (integration)', () => {
 		}
 		expect(await ledgerRows(workspaceId, 'telnyx')).toHaveLength(0)
 		expect(await eventRows(workspaceId, 'telnyx.event')).toHaveLength(0)
+	})
+})
+
+describe('Standard Webhooks and Stripe presets (integration)', () => {
+	let workspaceId: string
+	const standardSecret = `whsec_${Buffer.from('a-sixteen-byte-or-longer-key').toString('base64')}`
+	const stripeSecret = 'whsec_test_secret_1234567890'
+
+	beforeEach(async () => {
+		resetWebhookRateLimits()
+		workspaceId = (await insertWorkspace(db, getTestActorId())).id
+	})
+
+	const eventMap = {
+		externalIdPath: '$.id',
+		entityType: { literal: 'vendor.event' },
+		action: { path: '$.type' },
+	}
+
+	async function setup(
+		slug: string,
+		webhook_config: Record<string, unknown>,
+		signing_secret: string,
+	) {
+		const app = buildApp()
+		const { res, json } = await createExtension(app, workspaceId, {
+			slug,
+			name: slug,
+			webhook_config: { secretSource: 'credential', eventMap, ...webhook_config },
+			signing_secret,
+		})
+		expect(res.status).toBe(201)
+		return { app, token: json.webhookToken as string }
+	}
+
+	it('commits a signed Standard Webhooks delivery and answers 401 for tampered, old and unsigned ones', async () => {
+		const { app, token } = await setup(
+			'resend',
+			{
+				signatureScheme: 'standard-webhooks',
+				signatureHeader: 'webhook-signature',
+				idHeader: 'webhook-id',
+				timestampHeader: 'webhook-timestamp',
+				eventMap: { ...eventMap, externalIdPath: '$.data.email_id', action: { path: '$.type' } },
+			},
+			standardSecret,
+		)
+		const good = buildStandardWebhooksDelivery({ secret: standardSecret })
+		const old = buildStandardWebhooksDelivery({
+			secret: standardSecret,
+			id: 'msg_old',
+			timestamp: Math.floor(Date.now() / 1000) - 3600,
+		})
+		const { 'webhook-signature': _s, ...unsignedHeaders } = good.headers
+		for (const d of [
+			{ ...good, body: good.body.replace('delivered', 'bounced') },
+			old,
+			{ ...good, headers: unsignedHeaders },
+		]) {
+			expect((await app.request(deliveryRequest(token, d))).status).toBe(401)
+		}
+		expect(await ledgerRows(workspaceId, 'resend')).toHaveLength(0)
+
+		const ok = await app.request(deliveryRequest(token, good))
+		expect(ok.status).toBe(200)
+		expect(await ok.json()).toMatchObject({ status: 'committed' })
+		expect(await ledgerRows(workspaceId, 'resend')).toHaveLength(1)
+	})
+
+	it('commits a signed Stripe delivery and answers 401 for tampered, old and unsigned ones', async () => {
+		const { app, token } = await setup(
+			'stripe',
+			{ signatureScheme: 'stripe', signatureHeader: 'stripe-signature' },
+			stripeSecret,
+		)
+		const good = buildStripeDelivery({ secret: stripeSecret })
+		const old = buildStripeDelivery({
+			secret: stripeSecret,
+			timestamp: Math.floor(Date.now() / 1000) - 3600,
+		})
+		for (const d of [
+			{ ...good, body: good.body.replace('invoice.paid', 'invoice.voided') },
+			old,
+			{ ...good, headers: { 'content-type': 'application/json' } },
+		]) {
+			expect((await app.request(deliveryRequest(token, d))).status).toBe(401)
+		}
+		expect(await ledgerRows(workspaceId, 'stripe')).toHaveLength(0)
+
+		const ok = await app.request(deliveryRequest(token, good))
+		expect(ok.status).toBe(200)
+		expect(await ok.json()).toMatchObject({ status: 'committed' })
+		expect(await ledgerRows(workspaceId, 'stripe')).toHaveLength(1)
 	})
 })
 

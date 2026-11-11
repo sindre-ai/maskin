@@ -14,6 +14,15 @@ export const SIGNATURE_SCHEMES: { value: ExtensionSignatureScheme; label: string
 	{ value: 'ed25519', label: 'Ed25519 public key, timestamp + body' },
 ]
 
+/**
+ * Presets the form shows but does not edit. They are set through the API or the create_extension
+ * tool, so the form only keeps them intact when an extension that uses one is saved.
+ */
+export const PRESET_SCHEMES: { value: ExtensionSignatureScheme; label: string }[] = [
+	{ value: 'standard-webhooks', label: 'Standard Webhooks (Svix)' },
+	{ value: 'stripe', label: 'Stripe style t= and v1= header' },
+]
+
 /** Both schemes sign a text built from a timestamp header and the body. */
 export const usesTimestamp = (scheme: ExtensionSignatureScheme) =>
 	scheme === 'timestamp' || scheme === 'ed25519'
@@ -42,6 +51,11 @@ export interface WebhookFormState {
 	action: string
 	/** Only held while the owner is typing or has just generated one; blank means "keep the stored secret". */
 	signingSecret: string
+	/**
+	 * Stored options the form has no field for (digestEncoding, idHeader, maxAgeSeconds, rateLimit), and the scheme they were saved under. Sent back unchanged on save, so editing an
+	 * extension made through the API does not silently drop them.
+	 */
+	kept: { scheme: ExtensionSignatureScheme; fields: Partial<ExtensionWebhookConfig> } | null
 }
 
 export type WebhookFormErrors = Partial<Record<keyof WebhookFormState, string>>
@@ -59,6 +73,7 @@ export function emptyWebhookForm(): WebhookFormState {
 		actionMode: 'literal',
 		action: '',
 		signingSecret: '',
+		kept: null,
 	}
 }
 
@@ -74,9 +89,18 @@ export function formFromConfig(
 ): WebhookFormState {
 	const entity = splitLiteralOrPath(cfg.eventMap?.entityType)
 	const action = splitLiteralOrPath(cfg.eventMap?.action)
+	const scheme = cfg.signatureScheme ?? base.scheme
+	const { digestEncoding, idHeader, maxAgeSeconds, rateLimit } = cfg
+	const fields: Partial<ExtensionWebhookConfig> = {
+		...(digestEncoding ? { digestEncoding } : {}),
+		...(idHeader ? { idHeader } : {}),
+		...(maxAgeSeconds !== undefined ? { maxAgeSeconds } : {}),
+		...(rateLimit ? { rateLimit } : {}),
+	}
 	return {
 		...base,
-		scheme: cfg.signatureScheme ?? base.scheme,
+		scheme,
+		kept: Object.keys(fields).length > 0 ? { scheme, fields } : null,
 		signatureHeader: cfg.signatureHeader ?? base.signatureHeader,
 		signaturePrefix: cfg.signaturePrefix ?? '',
 		timestampHeader: cfg.timestampHeader ?? '',
@@ -113,6 +137,12 @@ export function configFromForm(form: WebhookFormState): ExtensionWebhookConfig {
 		cfg.timestampHeader = form.timestampHeader.trim()
 		cfg.timestampBodyTemplate = form.timestampBodyTemplate.trim()
 	}
+	// Standard Webhooks reads its timestamp from a header but has no signed-text template.
+	if (form.scheme === 'standard-webhooks' && form.timestampHeader.trim()) {
+		cfg.timestampHeader = form.timestampHeader.trim()
+	}
+	// Only while the scheme is unchanged: options for one scheme can be invalid on another.
+	if (form.kept && form.kept.scheme === form.scheme) Object.assign(cfg, form.kept.fields)
 	return cfg
 }
 
