@@ -30,6 +30,7 @@ export const OAUTH_ALLOWED_ROUTES: readonly string[] = [
 	'POST /api/events',
 	'GET /api/events/history',
 	'GET /api/files',
+	'GET /api/files/tags',
 	'POST /api/files',
 	'GET /api/files/:id',
 	'PATCH /api/files/:id',
