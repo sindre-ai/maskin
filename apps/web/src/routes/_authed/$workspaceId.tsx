@@ -9,6 +9,7 @@ import { RouteError } from '@/components/shared/route-error'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { useDefaultChatAgent } from '@/hooks/use-actors'
 import { useCreateConversation } from '@/hooks/use-conversations'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useMediaQuery } from '@/hooks/use-media-query'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { usePersistedSidebarOpen } from '@/hooks/use-persisted-sidebar-open'
@@ -73,10 +74,13 @@ function WorkspaceLayout() {
 	const privacy = settings?.privacy as
 		| { share_usage?: boolean; anonymize_workspace?: boolean }
 		| undefined
+	// The only read of this flag: off, the browser never starts the recommend question.
+	const npsSurveyFlag = useFeatureFlag('nps-survey')
 	useWorkspaceAnalytics({
 		workspaceId,
 		resolved: hasWorkspace,
 		isTeam: workspace?.isTeam ?? false,
+		npsSurveyDue: npsSurveyFlag && !(workspace?.isTeam ?? false),
 		createdAt: workspace?.createdAt ?? undefined,
 		shareUsage: privacy?.share_usage ?? true,
 		anonymizeWorkspace: privacy?.anonymize_workspace ?? false,

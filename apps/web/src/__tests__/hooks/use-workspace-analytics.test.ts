@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
 	setCapturingEnabled: vi.fn(),
 	identifyForWorkspace: vi.fn(() => Promise.resolve()),
 	trackAppActive: vi.fn(),
+	trackNpsSurveyDue: vi.fn(),
 	setFaroUser: vi.fn(),
 }))
 
@@ -17,7 +18,10 @@ vi.mock('@/lib/posthog', () => ({
 	setCapturingEnabled: mocks.setCapturingEnabled,
 	identifyForWorkspace: mocks.identifyForWorkspace,
 }))
-vi.mock('@/lib/analytics', () => ({ trackAppActive: mocks.trackAppActive }))
+vi.mock('@/lib/analytics', () => ({
+	trackAppActive: mocks.trackAppActive,
+	trackNpsSurveyDue: mocks.trackNpsSurveyDue,
+}))
 vi.mock('@/lib/faro', () => ({ setFaroUser: mocks.setFaroUser }))
 vi.mock('@/lib/auth', () => ({
 	getStoredActor: () => ({ id: 'actor-1', type: 'human', name: 'Ada', email: 'ada@example.com' }),
@@ -86,5 +90,41 @@ describe('useWorkspaceAnalytics', () => {
 		})
 		expect(mocks.setWorkspaceGroup).not.toHaveBeenCalled()
 		expect(mocks.identifyForWorkspace).not.toHaveBeenCalled()
+	})
+
+	it('starts the recommend question after identify when it is due', async () => {
+		renderHook((props) => useWorkspaceAnalytics(props), {
+			initialProps: { ...base, npsSurveyDue: true },
+		})
+		await vi.waitFor(() => expect(mocks.trackNpsSurveyDue).toHaveBeenCalledTimes(1))
+		const identifyOrder = mocks.identifyForWorkspace.mock.invocationCallOrder[0]
+		const surveyOrder = mocks.trackNpsSurveyDue.mock.invocationCallOrder[0]
+		expect(identifyOrder).toBeLessThan(surveyOrder)
+	})
+
+	it('does not start the recommend question when it is not due', async () => {
+		renderHook((props) => useWorkspaceAnalytics(props), { initialProps: base })
+		await vi.waitFor(() => expect(mocks.trackAppActive).toHaveBeenCalledTimes(1))
+		expect(mocks.trackNpsSurveyDue).not.toHaveBeenCalled()
+	})
+
+	it('does not start the recommend question when the workspace turned usage sharing off', async () => {
+		renderHook((props) => useWorkspaceAnalytics(props), {
+			initialProps: { ...base, shareUsage: false, npsSurveyDue: true },
+		})
+		await vi.waitFor(() => expect(mocks.identifyForWorkspace).toHaveBeenCalledTimes(1))
+		await Promise.resolve()
+		expect(mocks.trackNpsSurveyDue).not.toHaveBeenCalled()
+	})
+
+	it('starts the question when the flag arrives late, without sending identify again', async () => {
+		const { rerender } = renderHook((props) => useWorkspaceAnalytics(props), {
+			initialProps: base,
+		})
+		await vi.waitFor(() => expect(mocks.trackAppActive).toHaveBeenCalledTimes(1))
+		rerender({ ...base, npsSurveyDue: true })
+		await vi.waitFor(() => expect(mocks.trackNpsSurveyDue).toHaveBeenCalledTimes(1))
+		expect(mocks.identifyForWorkspace).toHaveBeenCalledTimes(1)
+		expect(mocks.setWorkspaceGroup).toHaveBeenCalledTimes(1)
 	})
 })
