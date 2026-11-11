@@ -15,7 +15,9 @@ import {
 } from '@maskin/shared'
 import { and, eq, sql } from 'drizzle-orm'
 import { vi } from 'vitest'
+import { z } from 'zod'
 import { createApiError, formatZodError } from '../../lib/errors'
+import { conversationParticipantResponseSchema } from '../../lib/openapi-schemas'
 import { evaluateAndRespond } from '../../services/conversation-responder'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import type { SessionManager } from '../../services/session-manager'
@@ -1218,6 +1220,40 @@ describe('Conversations Integration', () => {
 			expect(detail.status).toBe(200)
 			const detailBody = (await detail.json()) as { pinned: boolean }
 			expect(detailBody.pinned).toBe(true)
+		})
+
+		it('replies to an add with the participant list, matching the declared reply schema', async () => {
+			// Regression: the route declared the per-user state shape (pinned, archived,
+			// last_read_message_id) but sent the participant list, so the generated iOS client
+			// failed to decode the reply ("Key 'pinned' not found") after the person was added.
+			const other = await insertActor(db, { type: 'human' })
+			await addMember(workspaceId, other.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Add reply shape', participant_actor_ids: [] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+
+			const res = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversation.id}/participants`,
+					{ actor_ids: [other.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			const parsed = z.array(conversationParticipantResponseSchema).safeParse(body)
+			expect(parsed.success).toBe(true)
+			expect((body as Array<{ actorId: string }>).map((p) => p.actorId).sort()).toEqual(
+				[ownerId, other.id].sort(),
+			)
 		})
 
 		it('rejects a non-creator participant trying to remove another participant', async () => {

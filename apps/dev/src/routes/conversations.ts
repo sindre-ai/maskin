@@ -56,6 +56,7 @@ import { logger } from '../lib/logger'
 import {
 	conversationDetailResponseSchema,
 	conversationListItemResponseSchema,
+	conversationParticipantResponseSchema,
 	conversationParticipantStateResponseSchema,
 	errorSchema,
 	idParamSchema,
@@ -1204,7 +1205,7 @@ const addParticipantsRoute = createRoute({
 	responses: {
 		200: {
 			content: {
-				'application/json': { schema: z.array(conversationParticipantStateResponseSchema) },
+				'application/json': { schema: z.array(conversationParticipantResponseSchema) },
 			},
 			description: 'Updated participant list (state omitted — see GET /:id)',
 		},
