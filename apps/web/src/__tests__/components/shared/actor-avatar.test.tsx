@@ -147,11 +147,20 @@ describe('ActorAvatar', () => {
 		expect(screen.getByText('SK').parentElement?.className).toContain('text-[10px]')
 	})
 
-	it('draws an agent as a pictogram tile and keeps its name', () => {
+	it('draws an agent as a tile with its initials and no pictogram', () => {
 		const { container } = render(<ActorAvatar name="Product Marketer" type="agent" />)
-		expect(container.querySelector('svg[data-pictogram]')).not.toBeNull()
-		expect(screen.queryByText('PM')).toBeNull()
-		expect(screen.getByTitle('Product Marketer')).toBeInTheDocument()
+		expect(container.querySelector('svg')).toBeNull()
+		expect(screen.getByText('PM')).toBeInTheDocument()
+		expect(screen.getByTitle('Product Marketer').className).toContain('rounded-md')
+	})
+
+	it('shows the same letters for an agent as for a person', () => {
+		const { rerender } = render(<ActorAvatar name="CTO" type="agent" />)
+		expect(screen.getByText('CTO')).toBeInTheDocument()
+		rerender(<ActorAvatar name="Chief of Staff" type="agent" />)
+		expect(screen.getByText('COS')).toBeInTheDocument()
+		rerender(<ActorAvatar name="Sebastian Krumhausen" type="human" />)
+		expect(screen.getByText('SK')).toBeInTheDocument()
 	})
 
 	it('draws a status dot on an agent tile only when a status is given', () => {
@@ -183,11 +192,6 @@ describe('ActorAvatar', () => {
 	it('draws no status dot at the 20px size', () => {
 		const { container } = render(<ActorAvatar name="Dev" type="agent" size="sm" status="failed" />)
 		expect(container.querySelector('[data-avatar-status]')).toBeNull()
-	})
-
-	it('draws a human as initials, never a pictogram', () => {
-		const { container } = render(<ActorAvatar name="Ada Lovelace" type="human" />)
-		expect(container.querySelector('svg[data-pictogram]')).toBeNull()
 	})
 
 	it('renders 2-letter initials for single-word names', () => {
