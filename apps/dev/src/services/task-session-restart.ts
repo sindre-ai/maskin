@@ -26,6 +26,7 @@ import { events, actors, objects, sessions, workspaceMembers } from '@maskin/db/
 
 import { postComment } from '../lib/comments'
 import { logger } from '../lib/logger'
+import { SessionNotAdmittedError } from './self-start-limits'
 import { TERMINAL_STATUSES, startSession } from './session-lifecycle'
 
 export const TASK_RESTART_KILLSWITCH_ENV_VAR = 'FEATURE_TASK_SESSION_RESTART'
@@ -136,6 +137,8 @@ export class TaskSessionRestarter {
 			}
 
 			const attempt = restarts + 1
+			// The self-start gate may refuse (cap in a row, back-off, the agent's daily budget). That is
+			// a decision with its own note and event, so the restart simply does not happen.
 			const handle = await startSession({
 				workspaceId: candidate.workspaceId,
 				actorId: candidate.actorId,
@@ -146,7 +149,11 @@ export class TaskSessionRestarter {
 				initiatedFromObjectId: candidate.taskId,
 				// Restore the ended session's /agent folder (checkout, branch); missing snapshot starts fresh.
 				parentSessionId: candidate.id,
+			}).catch((err) => {
+				if (err instanceof SessionNotAdmittedError) return null
+				throw err
 			})
+			if (!handle) return
 
 			await tx.insert(events).values({
 				workspaceId: candidate.workspaceId,
