@@ -63,7 +63,9 @@ export const FLOW_ERROR_CATEGORIES = [
 
 export type FlowErrorCategory = (typeof FLOW_ERROR_CATEGORIES)[number]
 
-export interface FlowStepProps {
+// Type aliases, not interfaces: an interface has no implicit index signature, so it
+// would not fit the web's `AnalyticsProps` record when passed straight to trackEvent.
+export type FlowStepProps = {
 	flow: string
 	step: string
 	flow_id: string
@@ -72,7 +74,7 @@ export interface FlowStepProps {
 	duration_ms: number | null
 }
 
-export interface FlowErrorProps {
+export type FlowErrorProps = {
 	flow: string
 	step: string
 	flow_id: string
