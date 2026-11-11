@@ -213,7 +213,7 @@ export async function setNextStep(
 		if (!input.replace) {
 			throw new NextStepError(
 				'CONFLICT',
-				`This object already has a ${live.status} next step ("${live.action}", due ${live.dueAt.toISOString()}). Update or close it with update_next_step, or pass replace: true.`,
+				`This object already has ${live.status === 'open' ? 'an open' : 'a blocked'} next step ("${live.action}", due ${live.dueAt.toISOString()}). Update or close it with update_next_step, or pass replace: true.`,
 			)
 		}
 		await tx
