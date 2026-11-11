@@ -186,6 +186,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'POST /api/integrations/:id/complete',
 	'GET /api/integrations/:id/github-token',
 	'POST /api/integrations/:provider/connect',
+	'POST /api/integrations/deepdots/connect',
 	'POST /api/integrations/github/link',
 	'GET /api/integrations/github/linkable',
 	'GET /api/integrations/github/pending-selection/:id',
