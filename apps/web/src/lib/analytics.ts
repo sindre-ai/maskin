@@ -412,6 +412,28 @@ export function trackLoopViewed(p: { entity_id: string }): void {
 	})
 }
 
+// A person (or an agent acting through the page) opened an item from a loop view, or changed
+// or approved one from its card beside the view (bet Act on items inside loop views). Sent on
+// the click, before the change is saved, so every saved change has a click to match. `surface`
+// is loop_view here, not the app-wide web; ids and action categories only, never titles or text.
+export type LoopViewCardAction = 'open' | 'status_change' | 'approve'
+
+export function trackLoopViewCardAction(p: {
+	entity_id: string
+	object_type: string
+	loop_id: string
+	action: LoopViewCardAction
+}): void {
+	trackEvent('loop_view_card_action', {
+		...fillBase({ entity_id: p.entity_id, entity_type: 'object' }),
+		surface: 'loop_view',
+		actor_type: getStoredActor()?.type ?? 'human',
+		action: p.action,
+		object_type: p.object_type,
+		loop_id: p.loop_id,
+	})
+}
+
 export function trackAgentOpened(p: { entity_id: string }): void {
 	trackEvent('agent_opened', {
 		...fillBase({ entity_id: p.entity_id, entity_type: 'agent' }),

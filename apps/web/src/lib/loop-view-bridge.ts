@@ -1,5 +1,11 @@
 import type { DataQuerySpec } from '@maskin/shared'
-import { BRIDGE_QUERY_MESSAGE, BRIDGE_RESULT_MESSAGE, VIEWER_DOC_SIZE_MESSAGE } from './mini-app'
+import {
+	BRIDGE_OPEN_MESSAGE,
+	BRIDGE_QUERY_MESSAGE,
+	BRIDGE_RESULT_MESSAGE,
+	VIEWER_DOC_SIZE_MESSAGE,
+} from './mini-app'
+import { UUID_RE } from './navigation'
 import {
 	LIST_REFUSED_MESSAGE,
 	type ListAnswer,
@@ -18,7 +24,9 @@ import {
 //   - a named list (rows) is answered only when the host opts in with `allowLists`, and
 //     only from what the host chose to give (`listAnswer`), never by running anything
 //     the frame wrote. The file viewer gives only rows its Refresh click fetched; the loop
-//     page fetches a declared list for the viewer when the frame asks, like a count.
+//     page fetches a declared list for the viewer when the frame asks, like a count;
+//   - an open message carries one object id and nothing else: it is used only if it is a
+//     UUID, and the host decides where that goes (never a web address from the frame).
 
 export interface BridgeHost {
 	/** The iframe's current window; compared against event.source. */
@@ -38,6 +46,8 @@ export interface BridgeHost {
 	 * after the user's Refresh click. The loop page's may, and returns a promise.
 	 */
 	listAnswer?: (name: string, source: ListSource) => ListAnswer | Promise<ListAnswer>
+	/** Takes the viewer to this object's page. Only ever called with a UUID. */
+	onOpen?: (objectId: string) => void
 	post: (message: Record<string, unknown>) => void
 	onDocHeight: (height: number) => void
 	/** The view's content is wider than its frame: the width it needs. Optional; hosts that never scroll sideways skip it. */
@@ -87,6 +97,10 @@ export async function handleBridgeMessage(
 		if (typeof data.w === 'number' && typeof data.cw === 'number' && data.w > data.cw) {
 			host.onDocOverflow?.(data.w)
 		}
+		return
+	}
+	if (data.type === BRIDGE_OPEN_MESSAGE) {
+		if (typeof data.id === 'string' && UUID_RE.test(data.id)) host.onOpen?.(data.id)
 		return
 	}
 	if (data.type !== BRIDGE_QUERY_MESSAGE) return

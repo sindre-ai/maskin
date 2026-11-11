@@ -18,6 +18,7 @@ import {
 	fetchListRows,
 } from '@/lib/view-lists'
 import type { DataQueryResult, DataQuerySpec } from '@maskin/shared'
+import { useNavigate } from '@tanstack/react-router'
 import { RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
@@ -43,9 +44,16 @@ interface LoopCustomViewProps {
 	fileId: string
 	/** Called when the view cannot be shown (file missing, bad sources, escaped frame). The loop page then shows its default content. A failed query is not one: the view stays and says so. */
 	onFailure: (reason: string) => void
+	/** What a view's window.maskin.open(id) does. Without it the viewer goes to that object's page. */
+	onOpenItem?: (objectId: string) => void
 }
 
-export function LoopCustomView({ workspaceId, fileId, onFailure }: LoopCustomViewProps) {
+export function LoopCustomView({
+	workspaceId,
+	fileId,
+	onFailure,
+	onOpenItem,
+}: LoopCustomViewProps) {
 	const { data: file, isLoading, isError } = useFile(workspaceId, fileId)
 	const html = file?.mimeType.toLowerCase().startsWith('text/html') ? file.content : null
 	const sources = useMemo(() => (html === null ? null : readViewSources(html)), [html])
@@ -70,6 +78,7 @@ export function LoopCustomView({ workspaceId, fileId, onFailure }: LoopCustomVie
 			lists={sources.lists}
 			workspaceId={workspaceId}
 			onFailure={onFailure}
+			onOpenItem={onOpenItem}
 		/>
 	)
 }
@@ -80,14 +89,17 @@ function ViewFrame({
 	lists,
 	workspaceId,
 	onFailure,
+	onOpenItem,
 }: {
 	html: string
 	sources: ReadonlyMap<string, DataQuerySpec>
 	lists: ReadonlyMap<string, ListSourceEntry>
 	workspaceId: string
 	onFailure: (reason: string) => void
+	onOpenItem?: (objectId: string) => void
 }) {
 	const iframeRef = useRef<HTMLIFrameElement>(null)
+	const navigate = useNavigate()
 	const [height, setHeight] = useState(MIN_HEIGHT)
 	// Width the view needs when it is wider than the box it sits in. The frame takes that width
 	// and the box scrolls sideways; null means "fit the box". Reset whenever the box changes
@@ -135,6 +147,8 @@ function ViewFrame({
 	)
 	const onFailureRef = useRef(onFailure)
 	onFailureRef.current = onFailure
+	const onOpenItemRef = useRef(onOpenItem)
+	onOpenItemRef.current = onOpenItem
 
 	// The view draws from the last saved answers when it has them, then the host asks the
 	// server again behind it. `updatedAt` is the age of the oldest answer on screen; `refreshing`
@@ -265,6 +279,13 @@ function ViewFrame({
 					sources: () => sourcesRef.current,
 					allowLists: true,
 					listSources: () => listsRef.current,
+					onOpen: (objectId) =>
+						onOpenItemRef.current
+							? onOpenItemRef.current(objectId)
+							: navigate({
+									to: '/$workspaceId/objects/$objectId',
+									params: { workspaceId, objectId },
+								}),
 					listAnswer: answerList,
 					run: async (spec) => {
 						const key = JSON.stringify(spec)
@@ -323,7 +344,7 @@ function ViewFrame({
 		}
 		window.addEventListener('message', onMessage)
 		return () => window.removeEventListener('message', onMessage)
-	}, [workspaceId, queryAndStore, syncUpdatedAt, answerList])
+	}, [workspaceId, queryAndStore, syncUpdatedAt, answerList, navigate])
 
 	// Keeps the view live without it having to cooperate, and only while it is open (this
 	// component is mounted). A page cannot be told to re-render from outside, so when an

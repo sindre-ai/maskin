@@ -1,5 +1,6 @@
 import { type BridgeHost, handleBridgeMessage } from '@/lib/loop-view-bridge'
 import {
+	BRIDGE_OPEN_MESSAGE,
 	BRIDGE_QUERY_MESSAGE,
 	BRIDGE_RESULT_MESSAGE,
 	VIEWER_DOC_SIZE_MESSAGE,
@@ -161,6 +162,66 @@ describe('handleBridgeMessage', () => {
 			data: { type: VIEWER_DOC_SIZE_MESSAGE, w: 1400, cw: 900, h: 640 },
 		})
 		expect(onDocOverflow).toHaveBeenCalledWith(1400)
+	})
+})
+
+describe('handleBridgeMessage: open', () => {
+	const objectId = '6215098e-4739-418c-80a3-fc844ea0e23b'
+	const open = (id: unknown) => ({ type: BRIDGE_OPEN_MESSAGE, id })
+	let onOpen: ReturnType<typeof vi.fn>
+	let host: ReturnType<typeof makeHost>
+
+	beforeEach(() => {
+		onOpen = vi.fn()
+		host = makeHost({ onOpen })
+	})
+
+	it('takes the viewer to the object when the frame asks with a UUID', async () => {
+		await handleBridgeMessage(host, { source: frame, data: open(objectId) })
+
+		expect(onOpen).toHaveBeenCalledTimes(1)
+		expect(onOpen).toHaveBeenCalledWith(objectId)
+		expect(host.run).not.toHaveBeenCalled()
+		expect(host.post).not.toHaveBeenCalled()
+	})
+
+	it('ignores anything that is not a UUID, such as web addresses and paths', async () => {
+		for (const id of [
+			'https://example.com',
+			'javascript:alert(1)',
+			'/some/path',
+			`${objectId}/../x`,
+			`x${objectId}`,
+			'',
+			7,
+			null,
+			undefined,
+			{ toString: () => objectId },
+		]) {
+			await handleBridgeMessage(host, { source: frame, data: open(id) })
+		}
+		expect(onOpen).not.toHaveBeenCalled()
+	})
+
+	it('ignores an open from any window other than the view iframe', async () => {
+		await handleBridgeMessage(host, { source: otherWindow, data: open(objectId) })
+		await handleBridgeMessage(host, { source: null, data: open(objectId) })
+
+		expect(onOpen).not.toHaveBeenCalled()
+	})
+
+	it('ignores an open once the frame has navigated away', async () => {
+		host = makeHost({ onOpen, isBlocked: () => true })
+		await handleBridgeMessage(host, { source: frame, data: open(objectId) })
+
+		expect(onOpen).not.toHaveBeenCalled()
+	})
+
+	it('ignores an open when the host has no way to open', async () => {
+		host = makeHost()
+		await expect(
+			handleBridgeMessage(host, { source: frame, data: open(objectId) }),
+		).resolves.toBeUndefined()
 	})
 })
 
