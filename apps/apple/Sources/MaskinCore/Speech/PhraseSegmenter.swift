@@ -49,6 +49,10 @@ public struct PhraseSegmenter: Sendable {
 	public private(set) var threshold: Double
 	/// The loudest reading in the current segment, for the log.
 	public private(set) var peakRMS = 0.0
+	/// Set by the caller while something else (the phone's own recogniser) has heard words in the current
+	/// segment. A segment the level never called speech is then sent anyway, not dropped as silence: the
+	/// words are there, so a microphone too quiet for the level rule must not lose them.
+	public var heardWords = false
 
 	public init(startedAtMs: Double = 0, options: Options = Options()) {
 		self.options = options
@@ -70,7 +74,7 @@ public struct PhraseSegmenter: Sendable {
 		}
 		let needed = nowMs - segmentStart >= options.softCutMs ? options.softSilenceMs : options.silenceMs
 		if hasVoice, nowMs - lastVoiceAt >= needed { return .cut }
-		if nowMs - segmentStart >= options.maxSegmentMs { return hasVoice ? .cut : .discard }
+		if nowMs - segmentStart >= options.maxSegmentMs { return hasVoice || heardWords ? .cut : .discard }
 		return nil
 	}
 
@@ -79,6 +83,7 @@ public struct PhraseSegmenter: Sendable {
 		segmentStart = nowMs
 		lastVoiceAt = nowMs
 		hasVoice = false
+		heardWords = false
 		peakRMS = 0
 	}
 }

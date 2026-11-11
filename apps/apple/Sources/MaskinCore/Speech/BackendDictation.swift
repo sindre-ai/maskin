@@ -51,10 +51,8 @@ public enum DictationFallback: Equatable, Sendable {
 	/// The session reached the server's length limit, so the phone carries on.
 	case timeLimit
 
-	/// The line shown under the composer while the server is doing the transcription.
-	public static let serverNote = "Dictating with the Maskin server"
 	/// The server answered for a phrase but found no words in it.
-	public static let emptyAnswerNote = "Dictating with the Maskin server (it heard no words in the last phrase)"
+	public static let emptyAnswerNote = "The server heard no words in the last phrase."
 	/// Done was pressed and nothing had been sent: no phrase ever sounded like speech.
 	public static let nothingSentNote = "No speech was picked up, so nothing was sent. Try speaking closer to the microphone."
 

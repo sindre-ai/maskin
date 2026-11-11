@@ -209,10 +209,12 @@ final class BackendDictationRun {
 			guard !converted.isEmpty else { return }
 			var phrase: [Float]?
 			var closedPhrase = false
+			let heard = preview?.heardWords ?? false
 			lock.lock()
 			if !finished {
 				samples.append(contentsOf: converted)
 				clockMs += Double(converted.count) * 1000 / Double(WAVEncoding.sampleRate)
+				segmenter.heardWords = heard
 				switch segmenter.push(rms: Self.rms(converted), atMs: clockMs) {
 				case .cut:
 					phrase = samples
@@ -236,8 +238,9 @@ final class BackendDictationRun {
 
 		/// The microphone is closed: sends what was said since the last pause, then ends the stream.
 		func finish() {
+			let heard = preview?.heardWords ?? false
 			lock.lock()
-			let tail = !finished && segmenter.hasVoice ? samples : []
+			let tail = !finished && (segmenter.hasVoice || heard) ? samples : []
 			finished = true
 			samples = []
 			lock.unlock()
@@ -251,7 +254,7 @@ final class BackendDictationRun {
 		private static func log(_ what: String, _ segmenter: PhraseSegmenter, _ sampleCount: Int) {
 			let seconds = Double(sampleCount) / Double(WAVEncoding.sampleRate)
 			DictationFallback.log.info(
-				"dictation phrase \(what, privacy: .public): \(seconds) s, loudest \(segmenter.peakRMS), speech level \(segmenter.threshold)"
+				"dictation phrase \(what, privacy: .public): \(seconds) s, loudest \(segmenter.peakRMS), speech level \(segmenter.threshold), phone heard words \(segmenter.heardWords)"
 			)
 		}
 
@@ -310,6 +313,8 @@ final class BackendDictationRun {
 		private var tasks: [SFSpeechRecognitionTask] = []
 		private var phrase = 0
 		private var finished = false
+		/// Whether the recogniser has heard any words in the phrase being spoken.
+		private var wordsInPhrase = false
 
 		init(recognizer: SFSpeechRecognizer, report: @escaping @Sendable (Event) -> Void) {
 			self.recognizer = recognizer
@@ -324,6 +329,14 @@ final class BackendDictationRun {
 			current?.append(buffer)
 		}
 
+		/// True once the recogniser has heard words in the phrase being spoken. The level rule can miss a
+		/// quiet microphone; this does not depend on level, so `PhraseCapture` sends the phrase on it.
+		var heardWords: Bool {
+			lock.lock()
+			defer { lock.unlock() }
+			return wordsInPhrase
+		}
+
 		/// The phrase was cut: ends its task and starts the next one.
 		func closePhrase(sent: Bool) {
 			lock.lock()
@@ -334,6 +347,7 @@ final class BackendDictationRun {
 			let closed = phrase
 			request?.endAudio()
 			phrase += 1
+			wordsInPhrase = false
 			request = startTask()
 			lock.unlock()
 			report(.closed(phrase: closed, sent: sent))
@@ -366,6 +380,12 @@ final class BackendDictationRun {
 			running.forEach { $0.cancel() }
 		}
 
+		private func heard(phrase id: Int) {
+			lock.lock()
+			if id == phrase { wordsInPhrase = true }
+			lock.unlock()
+		}
+
 		/// Called with the lock held.
 		private func startTask() -> SFSpeechAudioBufferRecognitionRequest {
 			// One task per phrase adds up over a long session: let go of the ones that are done.
@@ -377,8 +397,10 @@ final class BackendDictationRun {
 			request.requiresOnDeviceRecognition = true
 			let id = phrase
 			let report = report
-			let task = recognizer.recognitionTask(with: request) { result, _ in
-				if let text = result?.bestTranscription.formattedString { report(.words(phrase: id, text: text)) }
+			let task = recognizer.recognitionTask(with: request) { [weak self] result, _ in
+				guard let text = result?.bestTranscription.formattedString else { return }
+				if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { self?.heard(phrase: id) }
+				report(.words(phrase: id, text: text))
 			}
 			tasks.append(task)
 			return request
