@@ -55,14 +55,14 @@ describe('PATCH /api/objects/:id with expected_status', () => {
 
 		const res = await appAs(actorId).request(
 			jsonRequest('PATCH', `/api/objects/${bet.id}`, {
-				status: 'define',
+				status: 'proposed',
 				expected_status: 'opportunity',
 			}),
 		)
 
 		expect(res.status).toBe(200)
 		const [row] = await db.select().from(objects).where(eq(objects.id, bet.id))
-		expect(row.status).toBe('define')
+		expect(row.status).toBe('proposed')
 	})
 
 	it('answers 409 and changes nothing when the object has moved on since the caller saw it', async () => {
@@ -70,7 +70,7 @@ describe('PATCH /api/objects/:id with expected_status', () => {
 
 		const res = await appAs(actorId).request(
 			jsonRequest('PATCH', `/api/objects/${bet.id}`, {
-				status: 'define',
+				status: 'proposed',
 				expected_status: 'opportunity',
 			}),
 		)
@@ -89,7 +89,7 @@ describe('PATCH /api/objects/:id with expected_status', () => {
 		const bet = await insertObject(db, workspaceId, actorId, { type: 'bet', status: 'active' })
 
 		const res = await appAs(actorId).request(
-			jsonRequest('PATCH', `/api/objects/${bet.id}`, { status: 'define' }),
+			jsonRequest('PATCH', `/api/objects/${bet.id}`, { status: 'proposed' }),
 		)
 
 		expect(res.status).toBe(200)
