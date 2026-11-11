@@ -26,7 +26,7 @@ import {
 	useTrigger,
 	useUpdateTrigger,
 } from '@/hooks/use-triggers'
-import { trackTriggerCreated, trackTriggerUpdated } from '@/lib/analytics'
+import { trackTriggerUpdated } from '@/lib/analytics'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { Check, MoreHorizontal, Pause, Play, Trash2 } from 'lucide-react'
@@ -105,7 +105,6 @@ function TriggerDetailRoute() {
 				config: payload.config as never,
 				enabled: payload.enabled,
 			})
-			trackTriggerCreated({ entity_id: triggerId, entity_type: 'trigger' })
 			toast.success('Trigger created')
 		} catch {
 			isCreatedRef.current = false
