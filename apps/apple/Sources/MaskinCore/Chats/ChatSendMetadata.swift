@@ -79,6 +79,13 @@ public struct ChatSuggestedStepRef: Codable, Sendable, Equatable {
 	enum CodingKeys: String, CodingKey { case introMessageID = "intro_message_id", index }
 }
 
+/// Where a chat was started from (`metadata.started_from`), a category only. Client-supplied and
+/// carrying no authority; it only lets chats started from the share sheet be counted from saved
+/// messages.
+public enum ChatStartedFrom: String, Codable, Sendable, Equatable {
+	case share
+}
+
 /// The client-supplied part of a message's `metadata`. Exactly the keys the API accepts, so the
 /// encoded form can go straight on the wire (and be stored in the outbox).
 public struct ChatSendMetadata: Codable, Sendable, Equatable {
@@ -93,6 +100,8 @@ public struct ChatSendMetadata: Codable, Sendable, Equatable {
 	public var hiddenFromChat: Bool?
 	public var cardAnswer: ChatCardAnswer?
 	public var fromSuggestedStep: ChatSuggestedStepRef?
+	/// Set on the first message of a chat started from the share sheet.
+	public var startedFrom: ChatStartedFrom?
 	/// Server id of the message a reply quotes. Free-form message metadata, so no API change; it
 	/// lets the quote find its original exactly instead of matching text.
 	public var quotedMessageId: Int?
@@ -101,7 +110,7 @@ public struct ChatSendMetadata: Codable, Sendable, Equatable {
 		attachments: [ChatAttachmentRef]? = nil, mentions: [String]? = nil,
 		questionAnswer: ChatQuestionAnswer? = nil, hiddenFromChat: Bool? = nil,
 		cardAnswer: ChatCardAnswer? = nil, fromSuggestedStep: ChatSuggestedStepRef? = nil,
-		quotedMessageId: Int? = nil
+		quotedMessageId: Int? = nil, startedFrom: ChatStartedFrom? = nil
 	) {
 		self.attachments = attachments?.isEmpty == true ? nil : attachments
 		self.mentions = mentions?.isEmpty == true ? nil : mentions
@@ -110,18 +119,20 @@ public struct ChatSendMetadata: Codable, Sendable, Equatable {
 		self.cardAnswer = cardAnswer
 		self.fromSuggestedStep = fromSuggestedStep
 		self.quotedMessageId = quotedMessageId
+		self.startedFrom = startedFrom
 	}
 
 	enum CodingKeys: String, CodingKey {
 		case attachments, mentions, questionAnswer = "question_answer"
 		case hiddenFromChat = "hidden_from_chat", cardAnswer = "card_answer"
 		case fromSuggestedStep = "from_suggested_step", quotedMessageId = "quoted_message_id"
+		case startedFrom = "started_from"
 	}
 
 	public var isEmpty: Bool {
 		attachments == nil && mentions == nil && questionAnswer == nil && hiddenFromChat == nil
 			&& cardAnswer == nil
-			&& fromSuggestedStep == nil && quotedMessageId == nil
+			&& fromSuggestedStep == nil && quotedMessageId == nil && startedFrom == nil
 	}
 
 	/// The same data as a `JSONValue`, so an optimistic bubble reads it exactly like a server row.

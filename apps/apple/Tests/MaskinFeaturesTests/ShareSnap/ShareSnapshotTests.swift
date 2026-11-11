@@ -13,6 +13,17 @@ private struct SnapRemote: ShareRemote {
 	func workspace() async throws -> ShareWorkspace {
 		ShareWorkspace(id: "ws-1", name: "Mesh Firm", schema: .fallback)
 	}
+	func agents() async throws -> [ShareAgent] {
+		[
+			ShareAgent(id: "chief", name: "Chief of Staff", role: "Runs the workspace", isChiefOfStaff: true),
+			ShareAgent(id: "researcher", name: "Researcher", role: "Finds things out"),
+		]
+	}
+	func createChat(agentID: String, title: String, content: String, attachments: [ChatAttachmentRef], idempotencyKey: String) async throws -> String {
+		if hang { try await Task.sleep(for: .seconds(60)) }
+		if let failCreate { throw failCreate }
+		return "chat-1"
+	}
 	func createObject(type: String, title: String, content: String, status: String, idempotencyKey: String) async throws -> String {
 		if hang { try await Task.sleep(for: .seconds(60)) }
 		if let failCreate { throw failCreate }
