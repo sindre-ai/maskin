@@ -90,6 +90,13 @@ export const FLAGS = {
 	 * everyone.
 	 */
 	LIVING_VIEW_REFRESH: 'living-view-refresh',
+	/**
+	 * Gates formatting in chat messages you write: bold, lists, quotes, code and tables in your
+	 * own sent messages draw formatted, as other people's already do. Frontend only: read once,
+	 * in `MessageBubble`. Off means your own message is drawn exactly as before. The chat typing
+	 * box formatting reads the same id. Retire once it is on for everyone.
+	 */
+	CHAT_FORMATTING: 'chat-formatting',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
