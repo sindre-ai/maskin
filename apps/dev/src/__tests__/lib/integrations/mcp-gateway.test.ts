@@ -38,6 +38,7 @@ describe('GATEWAY_PROVIDERS', () => {
 			'sentry',
 			'stripe',
 			'ubersuggest',
+			'vercel',
 			'webflow',
 			'zapier',
 		])

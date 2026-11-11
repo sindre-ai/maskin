@@ -65,6 +65,7 @@ import { slackEventNormalizer } from './providers/slack/webhooks'
 import { config as stripeConfig } from './providers/stripe/config'
 import { ubersuggestAuth } from './providers/ubersuggest/auth'
 import { config as ubersuggestConfig } from './providers/ubersuggest/config'
+import { config as vercelConfig } from './providers/vercel/config'
 import { config as webflowConfig } from './providers/webflow/config'
 import { config as zapierConfig } from './providers/zapier/config'
 
@@ -183,6 +184,10 @@ providers.set('miro', {
 
 providers.set('mixpanel', {
 	config: mixpanelConfig,
+})
+
+providers.set('vercel', {
+	config: vercelConfig,
 })
 
 providers.set('canva', {
