@@ -341,7 +341,7 @@ describe('GET /api/search against real Postgres', () => {
 			await ensureWorkspaceMember(db, workspaceId, cpo.id)
 			const direct = await seedChat('', [actorId, cpo.id])
 			await say(direct.id, actorId, 'morning')
-			const inWord = await seedChat('Scopes review', [actorId, otherUserId])
+			const inWord = await seedChat('Ascpo review', [actorId, otherUserId])
 			await say(inWord.id, otherUserId, 'nothing here')
 			await tick()
 			// The word-only chat is the newest one.
