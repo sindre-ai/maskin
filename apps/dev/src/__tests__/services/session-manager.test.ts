@@ -136,8 +136,12 @@ const { mockClassifyCreditExhaustion } = vi.hoisted(() => ({
 	mockClassifyCreditExhaustion: vi.fn(),
 }))
 
-vi.mock('../../lib/credit-classifier', () => ({
+vi.mock('../../lib/credit-classifier', async (importOriginal) => ({
 	classifyCreditExhaustion: mockClassifyCreditExhaustion,
+	// Pure and unmocked: a non-zero exit nothing recognised gets this reason. Its own
+	// rule is covered in lib/credit-classifier.test.ts.
+	classifyUnclassifiedExit: (await importOriginal<typeof import('../../lib/credit-classifier')>())
+		.classifyUnclassifiedExit,
 	// Helper close-out only; covered in integration/helper-limit-retry.test.ts.
 	classifyClaudeAuthFailureText: () => null,
 	// Same call the real helper makes for an exit with no final result message,
