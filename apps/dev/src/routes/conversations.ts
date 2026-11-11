@@ -2004,7 +2004,7 @@ const removeReactionRoute = createRoute({
 	},
 })
 
-/** The message must be a real (non-system) message of a conversation the caller is in. */
+/** The message must be a real (non-system), not deleted message of a conversation the caller is in. */
 async function findReactableMessage(
 	db: Database,
 	args: { conversationId: string; messageId: number; callerId: string; workspaceId: string },
@@ -2019,6 +2019,7 @@ async function findReactableMessage(
 				eq(messages.id, args.messageId),
 				eq(messages.conversationId, args.conversationId),
 				eq(messages.kind, 'message'),
+				isNull(messages.deletedAt),
 			),
 		)
 		.limit(1)
