@@ -47436,23 +47436,36 @@
 									"items": {
 										"type": "object",
 										"properties": {
-											"pinned": {
-												"type": "boolean"
+											"actorId": {
+												"type": "string",
+												"format": "uuid"
 											},
-											"archived": {
-												"type": "boolean"
+											"actorName": {
+												"type": "string"
 											},
-											"last_read_message_id": {
+											"actorType": {
+												"type": "string"
+											},
+											"joinedAt": {
 												"type": [
-													"number",
+													"string",
 													"null"
 												]
+											},
+											"addedBy": {
+												"type": [
+													"string",
+													"null"
+												],
+												"format": "uuid"
 											}
 										},
 										"required": [
-											"pinned",
-											"archived",
-											"last_read_message_id"
+											"actorId",
+											"actorName",
+											"actorType",
+											"joinedAt",
+											"addedBy"
 										]
 									}
 								}

@@ -52917,31 +52917,43 @@ public enum Operations {
                 @frozen public enum Body: Sendable, Hashable {
                     /// - Remark: Generated from `#/paths/api/conversations/{id}/participants/POST/responses/200/content/jsonPayload`.
                     public struct jsonPayloadPayload: Codable, Hashable, Sendable {
-                        /// - Remark: Generated from `#/paths/api/conversations/{id}/participants/POST/responses/200/content/jsonPayload/pinned`.
-                        public var pinned: Swift.Bool
-                        /// - Remark: Generated from `#/paths/api/conversations/{id}/participants/POST/responses/200/content/jsonPayload/archived`.
-                        public var archived: Swift.Bool
-                        /// - Remark: Generated from `#/paths/api/conversations/{id}/participants/POST/responses/200/content/jsonPayload/last_read_message_id`.
-                        public var last_read_message_id: Swift.Double?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/participants/POST/responses/200/content/jsonPayload/actorId`.
+                        public var actorId: Swift.String
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/participants/POST/responses/200/content/jsonPayload/actorName`.
+                        public var actorName: Swift.String
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/participants/POST/responses/200/content/jsonPayload/actorType`.
+                        public var actorType: Swift.String
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/participants/POST/responses/200/content/jsonPayload/joinedAt`.
+                        public var joinedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/participants/POST/responses/200/content/jsonPayload/addedBy`.
+                        public var addedBy: Swift.String?
                         /// Creates a new `jsonPayloadPayload`.
                         ///
                         /// - Parameters:
-                        ///   - pinned:
-                        ///   - archived:
-                        ///   - last_read_message_id:
+                        ///   - actorId:
+                        ///   - actorName:
+                        ///   - actorType:
+                        ///   - joinedAt:
+                        ///   - addedBy:
                         public init(
-                            pinned: Swift.Bool,
-                            archived: Swift.Bool,
-                            last_read_message_id: Swift.Double? = nil
+                            actorId: Swift.String,
+                            actorName: Swift.String,
+                            actorType: Swift.String,
+                            joinedAt: Swift.String? = nil,
+                            addedBy: Swift.String? = nil
                         ) {
-                            self.pinned = pinned
-                            self.archived = archived
-                            self.last_read_message_id = last_read_message_id
+                            self.actorId = actorId
+                            self.actorName = actorName
+                            self.actorType = actorType
+                            self.joinedAt = joinedAt
+                            self.addedBy = addedBy
                         }
                         public enum CodingKeys: String, CodingKey {
-                            case pinned
-                            case archived
-                            case last_read_message_id
+                            case actorId
+                            case actorName
+                            case actorType
+                            case joinedAt
+                            case addedBy
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/conversations/{id}/participants/POST/responses/200/content/json`.
