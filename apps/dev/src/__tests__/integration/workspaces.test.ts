@@ -347,7 +347,11 @@ describe('Workspaces Integration', () => {
 			const first = await (
 				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'First' }))
 			).json()
-			await db.delete(workspacesTable).where(eq(workspacesTable.id, first.id))
+			// A new workspace already has audit events pointing at it, so a bare row delete is refused.
+			const removed = await app.request(
+				jsonRequest('POST', `/api/workspaces/${first.id}/delete`, { confirm_name: 'First' }),
+			)
+			expect(removed.status).toBe(200)
 
 			const res = await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Again' }))
 
