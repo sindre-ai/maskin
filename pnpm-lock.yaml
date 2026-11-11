@@ -99,6 +99,9 @@ importers:
       '@maskin/ext-notetaker':
         specifier: workspace:*
         version: link:../../extensions/notetaker
+      '@maskin/ext-targets':
+        specifier: workspace:*
+        version: link:../../extensions/targets
       '@maskin/ext-work':
         specifier: workspace:*
         version: link:../../extensions/work
@@ -459,6 +462,16 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  extensions/targets:
+    dependencies:
+      '@maskin/module-sdk':
+        specifier: workspace:*
+        version: link:../../packages/module-sdk
+    devDependencies:
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   extensions/work:
     dependencies:
       '@maskin/module-sdk':
@@ -661,6 +674,9 @@ importers:
       '@maskin/ext-notetaker':
         specifier: workspace:*
         version: link:../../extensions/notetaker
+      '@maskin/ext-targets':
+        specifier: workspace:*
+        version: link:../../extensions/targets
       '@maskin/ext-work':
         specifier: workspace:*
         version: link:../../extensions/work
