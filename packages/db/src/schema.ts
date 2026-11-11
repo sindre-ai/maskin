@@ -2811,9 +2811,9 @@ export const notificationPreferences = pgTable(
 			.notNull()
 			.default(sql`'{}'::jsonb`),
 		// Email switch per kind other than the summary, e.g. { flow_activity: true }. null or a
-		// missing kind means off. Empty on every existing row. Migration 0140.
+		// missing kind means off. Empty on every existing row. Migration 0147.
 		emailCategories: jsonb('email_categories').$type<Record<string, boolean>>(),
-		// { <flow id>: ISO time } of the last Flow activity email per flow; the hourly claim. Migration 0140.
+		// { <flow id>: ISO time } of the last Flow activity email per flow; the hourly claim. Migration 0147.
 		flowEmailSent: jsonb('flow_email_sent').$type<Record<string, string>>(),
 		// The summary email choice. null means no choice yet (every row that existed before
 		// migration 0138); true/false is a saved choice and always wins. Migration 0138.
@@ -2822,6 +2822,16 @@ export const notificationPreferences = pgTable(
 		emailOnboardingStep: smallint('email_onboarding_step').notNull().default(0),
 		// Date of the last summary email, set by the email sender. Migration 0138.
 		emailLastSentOn: date('email_last_sent_on', { mode: 'string' }),
+		// The "Marketplace picks" switch for the summary email. Off for everyone until the person
+		// turns it on. Migration 0146.
+		marketplacePicksEnabled: boolean('marketplace_picks_enabled').notNull().default(false),
+		// Marketplace flows the person marked "Not useful"; never picked for them again. Migration 0146.
+		marketplaceDismissedLoopIds: uuid('marketplace_dismissed_loop_ids')
+			.array()
+			.notNull()
+			.default(sql`'{}'::uuid[]`),
+		// Date of the last summary email that carried a pick; at most one a week. Migration 0146.
+		marketplacePickLastSentOn: date('marketplace_pick_last_sent_on', { mode: 'string' }),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	},

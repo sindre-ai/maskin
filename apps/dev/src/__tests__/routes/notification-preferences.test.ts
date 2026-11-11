@@ -33,6 +33,7 @@ describe('GET /api/notification-preferences', () => {
 			briefing_time: 510,
 			email_digest_enabled: false,
 			email_categories: { flow_activity: false },
+			marketplace_picks_enabled: false,
 			muted_workspace_ids: [],
 			updated_at: null,
 		})

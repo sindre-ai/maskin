@@ -44,6 +44,7 @@ public struct APINotificationPreferencesSource: NotificationPreferencesAPI {
 			briefingEnabled: body.briefing_enabled, briefingTime: body.briefing_time,
 			emailDigestEnabled: body.email_digest_enabled,
 			emailFlowActivity: body.email_categories.flow_activity,
+			marketplacePicksEnabled: body.marketplace_picks_enabled,
 			mutedWorkspaceIds: body.muted_workspace_ids)
 	}
 
@@ -110,6 +111,8 @@ public struct APINotificationPreferencesSource: NotificationPreferencesAPI {
 		var email_digest_enabled: Bool?
 		/// Absent from a server that predates Flow activity.
 		var email_categories: EmailCategories?
+		/// Absent from a server that predates Marketplace picks.
+		var marketplace_picks_enabled: Bool?
 		var muted_workspace_ids: [String]
 
 		var model: NotificationPreferences {
@@ -123,6 +126,7 @@ public struct APINotificationPreferencesSource: NotificationPreferencesAPI {
 				briefingEnabled: briefing_enabled, briefingTime: briefing_time,
 				emailDigestEnabled: email_digest_enabled ?? false,
 				emailFlowActivity: email_categories?.flow_activity ?? false,
+				marketplacePicksEnabled: marketplace_picks_enabled ?? false,
 				mutedWorkspaceIds: muted_workspace_ids)
 		}
 	}

@@ -45,6 +45,7 @@ function serialize(
 			briefing_time: d.briefing_time,
 			email_digest_enabled: emailDigestEnabled,
 			email_categories: { flow_activity: false },
+			marketplace_picks_enabled: false,
 			muted_workspace_ids: [],
 			updated_at: null,
 		}
@@ -62,6 +63,7 @@ function serialize(
 		briefing_time: row.briefingTime,
 		email_digest_enabled: emailDigestEnabled,
 		email_categories: { flow_activity: row.emailCategories?.flow_activity === true },
+		marketplace_picks_enabled: row.marketplacePicksEnabled,
 		muted_workspace_ids: row.mutedWorkspaceIds,
 		updated_at: row.updatedAt.toISOString(),
 	}
@@ -161,6 +163,9 @@ app.openapi(putRoute, async (c) => {
 		// Only a choice sent in this call is saved; an empty choice stays empty.
 		...(body.email_digest_enabled !== undefined && {
 			emailDigestEnabled: body.email_digest_enabled,
+		}),
+		...(body.marketplace_picks_enabled !== undefined && {
+			marketplacePicksEnabled: body.marketplace_picks_enabled,
 		}),
 	}
 

@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'vitest'
-import { STEP_LESSON, buildSummaryEmail, pickNextStep } from '../../services/briefing-email-text'
+import { describe, expect, it, vi } from 'vitest'
+import {
+	STEP_LESSON,
+	buildSummaryEmail,
+	emailRole,
+	pickNextStep,
+} from '../../services/briefing-email-text'
+import type { NextStepFacts } from '../../services/briefing-email-text'
 import type { BriefingText } from '../../services/briefing-push-scheduler'
 
 const summary = (over: Partial<BriefingText> = {}): BriefingText => ({
@@ -201,10 +207,90 @@ describe('buildSummaryEmail', () => {
 })
 
 describe('pickNextStep', () => {
-	it('picks a waiting card first, then a first loop, else nothing', () => {
-		expect(pickNextStep({ waiting: 2, hasLoop: false })).toBe('Open the card at the top first.')
-		expect(pickNextStep({ waiting: 1, hasLoop: true })).toBe('Open the card that needs you.')
-		expect(pickNextStep({ waiting: 0, hasLoop: false })).toContain('Create your first loop')
-		expect(pickNextStep({ waiting: 0, hasLoop: true })).toBeNull()
+	const OPEN_ONE = 'Open the card that needs you.'
+	const OPEN_TOP = 'Open the card at the top first.'
+	const CREATE_FLOW = 'Create your first flow, a routine your agents repeat for you.'
+	const INVITE = 'Invite a teammate, so your agents can work for more than just you.'
+
+	const rows: Array<[string, NextStepFacts, string | null]> = [
+		[
+			'owner/admin, one card waits',
+			{ role: 'owner_admin', waiting: 1, hasFlow: false, onlyMember: true },
+			OPEN_ONE,
+		],
+		[
+			'owner/admin, many cards wait',
+			{ role: 'owner_admin', waiting: 3, hasFlow: true, onlyMember: false },
+			OPEN_TOP,
+		],
+		[
+			'owner/admin, no flow, alone',
+			{ role: 'owner_admin', waiting: 0, hasFlow: false, onlyMember: true },
+			CREATE_FLOW,
+		],
+		[
+			'owner/admin, no flow, not alone',
+			{ role: 'owner_admin', waiting: 0, hasFlow: false, onlyMember: false },
+			CREATE_FLOW,
+		],
+		[
+			'owner/admin, has a flow, alone',
+			{ role: 'owner_admin', waiting: 0, hasFlow: true, onlyMember: true },
+			INVITE,
+		],
+		[
+			'owner/admin, has a flow, not alone',
+			{ role: 'owner_admin', waiting: 0, hasFlow: true, onlyMember: false },
+			null,
+		],
+		[
+			'member, one card waits',
+			{ role: 'member', waiting: 1, hasFlow: false, onlyMember: true },
+			OPEN_ONE,
+		],
+		[
+			'member, many cards wait',
+			{ role: 'member', waiting: 2, hasFlow: true, onlyMember: false },
+			OPEN_TOP,
+		],
+		[
+			'member, no flow, alone',
+			{ role: 'member', waiting: 0, hasFlow: false, onlyMember: true },
+			null,
+		],
+		[
+			'member, has a flow, alone',
+			{ role: 'member', waiting: 0, hasFlow: true, onlyMember: true },
+			null,
+		],
+		[
+			'member, has a flow, not alone',
+			{ role: 'member', waiting: 0, hasFlow: true, onlyMember: false },
+			null,
+		],
+	]
+
+	it.each(rows)('%s', (_name, facts, expected) => {
+		expect(pickNextStep(facts)).toBe(expected)
+		expect(pickNextStep(facts)).toBe(expected) // same input, same text
+	})
+
+	it('makes no network call', () => {
+		const fetchSpy = vi
+			.spyOn(globalThis, 'fetch')
+			.mockRejectedValue(new Error('no network in pickNextStep'))
+		for (const [, facts] of rows) pickNextStep(facts)
+		expect(fetchSpy).not.toHaveBeenCalled()
+		fetchSpy.mockRestore()
+	})
+})
+
+describe('emailRole', () => {
+	it('maps owner and admin to owner_admin and everything else to member', () => {
+		expect(emailRole('owner')).toBe('owner_admin')
+		expect(emailRole('admin')).toBe('owner_admin')
+		expect(emailRole('member')).toBe('member')
+		expect(emailRole(null)).toBe('member')
+		expect(emailRole(undefined)).toBe('member')
 	})
 })

@@ -103,6 +103,9 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	// The stop link in a summary email: opened signed out and authenticated by its own signed token, so no mat_ token has a reason to call it.
 	'GET /api/email/stop',
 	'POST /api/email/stop',
+	// The "Not useful" link under a Marketplace pick: opened signed out and authenticated by its own signed token.
+	'GET /api/email/pick-dismiss',
+	'POST /api/email/pick-dismiss',
 	'GET /api/briefing',
 	'POST /api/briefing/spoken',
 	'GET /api/conversations',

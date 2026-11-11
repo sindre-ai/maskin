@@ -21,7 +21,8 @@
  * and the step is not used up.
  *
  * Each mail has three parts (see briefing-email-text.ts): runs finished since the last mail, what
- * waits, and one next-step line. "Since the last mail" is the days since the last send, at least
+ * waits, and one next-step line chosen by plain rules from the person's role in the anchor
+ * workspace (the `email_sent` event carries it as `role`: owner_admin or member). "Since the last mail" is the days since the last send, at least
  * 24 hours, at most MAX_LOOKBACK_DAYS.
  *
  * Exactly once: the step is claimed with one conditional UPDATE on the step counter and
@@ -29,21 +30,28 @@
  * failed send releases the claim. For a person with no saved choice the claim creates or fills the
  * row (email on, step 1) so the stop link has something to switch off.
  *
+ * Marketplace pick (opt-in): for someone who switched picks on, a daily mail after the first three
+ * may carry one Marketplace flow below the summary (marketplace-pick.ts), at most one every 7 days.
+ * A pick only joins a mail that is already going out: with nothing to say nothing is sent, pick or
+ * not. The week is claimed together with the mail and released with it.
+ *
  * Production without a Resend key, APP_URL or stop-link secret: log and skip, nothing is claimed.
  * Killswitch env FEATURE_BRIEFING_EMAIL=0 skips the tick. The push is not affected.
  */
 import type { Database } from '@maskin/db'
-import { objects } from '@maskin/db/schema'
+import { actors, objects, workspaceMembers } from '@maskin/db/schema'
 import { EmailSendError, isEmailConfigured, sendEmail } from '@maskin/email'
 import { and, eq, sql } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
+import { buildEmailPickDismissUrl } from '../lib/email-pick-token'
 import { buildEmailStopUrl } from '../lib/email-stop-link'
 import { isEmailStopConfigured } from '../lib/email-stop-token'
 import { localClock, localTimeReached } from '../lib/local-time'
 import { logger } from '../lib/logger'
-import { buildSummaryEmail, pickNextStep } from './briefing-email-text'
-import type { EmailStep } from './briefing-email-text'
+import { buildSummaryEmail, emailRole, pickNextStep } from './briefing-email-text'
+import type { EmailRole, EmailStep, PickBlock } from './briefing-email-text'
 import { buildBriefingText, loadBriefingFacts } from './briefing-push-scheduler'
+import { loadMarketplacePick, pickWeekOpen } from './marketplace-pick'
 
 const TICK_MS = 60_000
 export const EMAIL_KILLSWITCH_ENV_VAR = 'FEATURE_BRIEFING_EMAIL'
@@ -82,6 +90,9 @@ SELECT
   p.email_last_sent_on::text AS email_last_sent_on,
   p.timezone AS timezone,
   p.briefing_time AS briefing_time,
+  COALESCE(p.marketplace_picks_enabled, false) AS marketplace_picks_enabled,
+  COALESCE(p.marketplace_dismissed_loop_ids, '{}'::uuid[]) AS marketplace_dismissed_loop_ids,
+  p.marketplace_pick_last_sent_on::text AS marketplace_pick_last_sent_on,
   COALESCE(p.muted_workspace_ids, '{}'::uuid[]) AS muted_workspace_ids
 FROM actors a
 LEFT JOIN notification_preferences p ON p.actor_id = a.id
@@ -115,6 +126,9 @@ export interface EmailRecipientRow {
 	emailLastSentOn: string | null
 	timezone: string | null
 	briefingTime: number | null
+	marketplacePicksEnabled: boolean
+	marketplaceDismissedLoopIds: string[]
+	marketplacePickLastSentOn: string | null
 	mutedWorkspaceIds: string[]
 }
 
@@ -128,6 +142,9 @@ type RawRecipient = {
 	email_last_sent_on: string | null
 	timezone: string | null
 	briefing_time: number | null
+	marketplace_picks_enabled: boolean
+	marketplace_dismissed_loop_ids: string[] | string
+	marketplace_pick_last_sent_on: string | null
 	muted_workspace_ids: string[] | string
 }
 
@@ -159,6 +176,9 @@ export async function selectEmailRecipients(
 		emailLastSentOn: r.email_last_sent_on,
 		timezone: r.timezone,
 		briefingTime: r.briefing_time === null ? null : Number(r.briefing_time),
+		marketplacePicksEnabled: r.marketplace_picks_enabled === true,
+		marketplaceDismissedLoopIds: parseUuidArray(r.marketplace_dismissed_loop_ids),
+		marketplacePickLastSentOn: r.marketplace_pick_last_sent_on,
 		mutedWorkspaceIds: parseUuidArray(r.muted_workspace_ids),
 	}))
 }
@@ -314,17 +334,23 @@ export class BriefingEmailScheduler {
 		const buttonPath = topObjectId
 			? `/${summary.workspaceId}/objects/${topObjectId}`
 			: `/${summary.workspaceId}`
-		// Only look for a loop when nothing waits: a waiting card comes first in the next-step order.
-		const hasLoop = summary.waiting > 0 || (await this.workspaceHasLoop(summary.workspaceId))
+		const { role, nextStep } = await this.nextStepFor(
+			row.actorId,
+			summary.workspaceId,
+			summary.waiting,
+		)
+		const pick = await this.choosePickBlock(row, due.step, clock.date, summary.workspaceId, appUrl)
 		const mail = buildSummaryEmail({
 			summary,
 			step: due.step,
-			nextStep: pickNextStep({ waiting: summary.waiting, hasLoop }),
-			buttonUrl: `${appUrl}${buttonPath}?surface=email`,
+			nextStep,
+			buttonUrl: `${appUrl}${buttonPath}?surface=email&block=summary`,
 			stopUrl: buildEmailStopUrl(row.actorId, this.env),
+			pick: pick?.block ?? null,
 		})
 
-		if (!(await this.claim(row, clock.date, due.nextCounter))) return false
+		const pickOn = pick ? clock.date : null
+		if (!(await this.claim(row, clock.date, due.nextCounter, pickOn))) return false
 		try {
 			await sendEmail({ to: row.email, ...mail })
 		} catch (err) {
@@ -342,18 +368,82 @@ export class BriefingEmailScheduler {
 			actor_id: row.actorId,
 			actor_type: 'human',
 			step: String(due.step),
+			role,
 			account_age_days: Math.max(ageDays, 0),
+			pick: pick !== null,
 		})
 		return true
 	}
 
-	private async workspaceHasLoop(workspaceId: string): Promise<boolean> {
+	/**
+	 * The person's role in the anchor workspace and the one next-step line for it. Facts are read
+	 * in the order the rules need them, so a card that waits, or a plain member, costs one query.
+	 */
+	private async nextStepFor(
+		actorId: string,
+		workspaceId: string,
+		waiting: number,
+	): Promise<{ role: EmailRole; nextStep: string | null }> {
+		const [membership] = await this.db
+			.select({ role: workspaceMembers.role })
+			.from(workspaceMembers)
+			.where(
+				and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.actorId, actorId)),
+			)
+			.limit(1)
+		const role = emailRole(membership?.role)
+		const needsSetupFacts = role === 'owner_admin' && waiting === 0
+		const hasFlow = needsSetupFacts ? await this.workspaceHasFlow(workspaceId) : true
+		const onlyMember = needsSetupFacts && hasFlow ? await this.isOnlyHuman(workspaceId) : false
+		return { role, nextStep: pickNextStep({ role, waiting, hasFlow, onlyMember }) }
+	}
+
+	/**
+	 * The pick for this mail, or null. Only for someone who switched picks on, only on the plain
+	 * daily mail (never in the first three), at most one every 7 days, and only when the rule finds
+	 * a flow; a dev copy without a stop-link secret cannot sign the "Not useful" link, so no pick.
+	 */
+	private async choosePickBlock(
+		row: EmailRecipientRow,
+		step: EmailStep,
+		localDate: string,
+		workspaceId: string,
+		appUrl: string,
+	): Promise<{ block: PickBlock } | null> {
+		if (!row.marketplacePicksEnabled || step !== 'daily') return null
+		if (!pickWeekOpen(row.marketplacePickLastSentOn, localDate)) return null
+		if (!isEmailStopConfigured()) return null
+		const found = await loadMarketplacePick(this.db, workspaceId, row.marketplaceDismissedLoopIds)
+		if (!found) return null
+		return {
+			block: {
+				name: found.flow.name,
+				description: found.flow.description,
+				why: found.why,
+				url: `${appUrl}/${workspaceId}/marketplace/${found.flow.id}?surface=email&block=pick`,
+				dismissUrl: buildEmailPickDismissUrl(row.actorId, found.flow.id, this.env),
+			},
+		}
+	}
+
+	private async workspaceHasFlow(workspaceId: string): Promise<boolean> {
 		const rows = await this.db
 			.select({ id: objects.id })
 			.from(objects)
 			.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, 'loop')))
 			.limit(1)
 		return rows.length > 0
+	}
+
+	/** True when no other human (agents do not count) is a member of the workspace. */
+	private async isOnlyHuman(workspaceId: string): Promise<boolean> {
+		const rows = await this.db
+			.select({ id: workspaceMembers.actorId })
+			.from(workspaceMembers)
+			.innerJoin(actors, eq(actors.id, workspaceMembers.actorId))
+			.where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(actors.type, 'human')))
+			.limit(2)
+		return rows.length < 2
 	}
 
 	/**
@@ -365,6 +455,7 @@ export class BriefingEmailScheduler {
 		row: EmailRecipientRow,
 		localDate: string,
 		counter: number,
+		pickOn: string | null,
 	): Promise<boolean> {
 		if (!row.hasRow) {
 			const inserted = await this.db.execute(sql`
@@ -380,6 +471,7 @@ export class BriefingEmailScheduler {
 			SET email_digest_enabled = true,
 				email_onboarding_step = ${counter},
 				email_last_sent_on = ${localDate}::date,
+				marketplace_pick_last_sent_on = COALESCE(${pickOn}::date, marketplace_pick_last_sent_on),
 				updated_at = now()
 			WHERE actor_id = ${row.actorId}
 				AND email_digest_enabled IS NOT DISTINCT FROM ${row.emailDigestEnabled}::boolean
@@ -403,7 +495,8 @@ export class BriefingEmailScheduler {
 			UPDATE notification_preferences
 			SET email_digest_enabled = ${row.emailDigestEnabled}::boolean,
 				email_onboarding_step = ${row.emailOnboardingStep},
-				email_last_sent_on = ${row.emailLastSentOn}::date
+				email_last_sent_on = ${row.emailLastSentOn}::date,
+				marketplace_pick_last_sent_on = ${row.marketplacePickLastSentOn}::date
 			WHERE actor_id = ${row.actorId}
 				AND email_onboarding_step = ${counter}
 				AND email_last_sent_on = ${localDate}::date`)
