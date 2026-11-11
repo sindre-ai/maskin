@@ -1,6 +1,6 @@
 import type { NotificationResponse } from '@/lib/api'
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /** Metadata keys ending in _id that are NOT object references. */
 const NON_OBJECT_ID_KEYS = new Set(['source_actor_id', 'target_actor_id', 'session_id'])
