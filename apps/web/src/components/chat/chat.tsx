@@ -1336,6 +1336,7 @@ export function Composer({
 									}
 									onKeyDown={handleRichKeyDown}
 									onActiveFormatsChange={setActiveFormats}
+									onAttachFile={() => fileInputRef.current?.click()}
 								/>
 							</div>
 						) : inlineTags ? (

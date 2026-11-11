@@ -11,13 +11,28 @@ import { Suspense, forwardRef, lazy } from 'react'
 export type { ComposerFormat, MarkdownComposerHandle as RichComposerHandle }
 
 // Dynamic-imported so Tiptap stays out of the main bundle; the chat box is the only caller.
-const MarkdownComposer = lazy(() =>
-	import('@maskin/markdown/react/composer').then((m) => ({ default: m.MarkdownComposer })),
-)
+// The slash menu is fetched with it, for the same reason.
+const MarkdownComposer = lazy(async () => {
+	const [{ MarkdownComposer: Composer }, { chatSlashMenu }] = await Promise.all([
+		import('@maskin/markdown/react/composer'),
+		import('@/components/chat/chat-slash-command'),
+	])
+	const WithSlashMenu = forwardRef<
+		MarkdownComposerHandle,
+		Omit<MarkdownComposerProps, 'slashMenu'> & { onAttachFile: () => void }
+	>(function WithSlashMenu({ onAttachFile, ...props }, ref) {
+		return (
+			<Composer ref={ref} {...props} slashMenu={{ ...chatSlashMenu, attachFile: onAttachFile }} />
+		)
+	})
+	return { default: WithSlashMenu }
+})
 
 export interface RichComposerInputProps
-	extends Omit<MarkdownComposerProps, 'chipClass' | 'detectTrigger' | 'className'> {
+	extends Omit<MarkdownComposerProps, 'chipClass' | 'detectTrigger' | 'className' | 'slashMenu'> {
 	selfActorId: string | null
+	/** The "Attach a file" row of the slash menu: opens the composer's file picker. */
+	onAttachFile: () => void
 	/** Sizes the box (min and max height). */
 	className?: string
 }
