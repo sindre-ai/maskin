@@ -41,7 +41,7 @@ describe('buildWorkspaceStartupBlock', () => {
 				'Look before you ask. Read the object, its comments, the knowledge base and the code first. If another agent would know, ask that agent: @mention it on the object, or use create_session with wait: true if you need the answer now. Ask a person only for the cases below.',
 			)
 			expect(block).toContain(
-				"Don't promise later work you haven't scheduled. If you say you'll check or do something later, set it up before you end: create a trigger for yourself, or @mention the agent who owns it. If you haven't, do it now or say plainly that it's still open.",
+				"Don't promise later work you haven't scheduled. If you say you'll check or do something later, set it up before you end: create a trigger for yourself, or @mention the agent who owns it. If you haven't, do it now. Only when you can neither do it nor schedule it, say that it's still open and what is stopping you.",
 			)
 			expect(block).toContain(
 				"Done means checked. Before you say done, compare the result with what was asked and say what you checked. If you're blocked, say what blocked you and what you tried. Never make up a result.",
