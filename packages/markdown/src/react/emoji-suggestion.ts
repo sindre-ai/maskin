@@ -267,9 +267,16 @@ export interface EmojiSuggestionOptions {
 export interface EmojiSuggestionStorage {
 	/** Start of a colon the person dismissed; it stays closed until that colon goes. */
 	dismissedFrom: number | null
+	/** True while the list is on screen, so a host can leave Enter and the arrows to it. */
+	open: boolean
 }
 
 const pluginKey = new PluginKey('emojiSuggestion')
+
+/** Whether the emoji list is showing in this editor. False when the extension is not mounted. */
+export function isEmojiMenuOpen(editor: Editor): boolean {
+	return (editor.storage.emojiSuggestion as EmojiSuggestionStorage | undefined)?.open === true
+}
 
 function isInsideCode(state: EditorState, from: number): boolean {
 	const $from = state.doc.resolve(from)
@@ -297,7 +304,7 @@ export const EmojiSuggestion = Extension.create<EmojiSuggestionOptions, EmojiSug
 	},
 
 	addStorage() {
-		return { dismissedFrom: null }
+		return { dismissedFrom: null, open: false }
 	},
 
 	onTransaction({ transaction }) {
@@ -352,20 +359,24 @@ export const EmojiSuggestion = Extension.create<EmojiSuggestionOptions, EmojiSug
 							// No match: nothing to show, and no empty box either.
 							if (props.items.length === 0) return
 							view = options.createView(stateFor(props))
+							storage.open = true
 						},
 						onUpdate: (props) => {
 							if (props.items.length === 0) {
 								view?.destroy()
 								view = null
+								storage.open = false
 								return
 							}
 							if (view) view.update(stateFor(props))
 							else view = options.createView(stateFor(props))
+							storage.open = true
 						},
 						onKeyDown: ({ event }) => view?.onKeyDown(event) ?? false,
 						onExit: () => {
 							view?.destroy()
 							view = null
+							storage.open = false
 						},
 					}
 				},
