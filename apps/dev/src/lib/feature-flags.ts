@@ -90,6 +90,14 @@ export const FLAGS = {
 	 * everyone.
 	 */
 	LIVING_VIEW_REFRESH: 'living-view-refresh',
+	/**
+	 * Gates undo send in chat: a sent message is held in the client for a few seconds
+	 * behind an Undo bar, and nothing is posted until the window ends. Frontend only,
+	 * on web and iOS: web reads it once, in `useUndoSend`; iOS reads the same id from
+	 * GET /api/feature-flags. Off means a send posts at once, as before. The API is
+	 * untouched. Retire once undo send is on for everyone.
+	 */
+	CHAT_UNDO_SEND: 'chat-undo-send',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
