@@ -65,8 +65,7 @@ describe('create_trigger and update_trigger warnings over the real MCP transport
 		}
 		const outcome = await harness.call('create_trigger', {
 			name: 'Call Hans',
-			type: 'reminder',
-			config: { scheduled_at: '2030-11-12T09:00:00.000Z' },
+			run_at: '2030-11-12T09:00:00.000Z',
 			action_prompt: String(base.actionPrompt),
 			target_actor_id: AGENT,
 		})

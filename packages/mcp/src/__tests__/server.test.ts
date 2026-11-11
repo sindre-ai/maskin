@@ -6641,7 +6641,7 @@ describe('tool handlers', () => {
 									name: `Trigger ${id}`,
 									enabled: true,
 									targetActorId: null,
-									actionPrompt: 'A very long prompt',
+									actionPrompt: 'Sweep the board\nA very long prompt',
 								})),
 							),
 					} as Response
@@ -6655,7 +6655,9 @@ describe('tool handlers', () => {
 			}
 			const full = (await handler({ workspace_id: 'ws-1', compact: false })) as Result
 			expect(full.content[0].text).toContain('A very long prompt')
-			expect(full.structuredContent.heroCard.objects[0].actionPrompt).toBe('A very long prompt')
+			expect(full.structuredContent.heroCard.objects[0].actionPrompt).toBe(
+				'Sweep the board\nA very long prompt',
+			)
 
 			// Compact is the default: no argument, no prompt.
 			const compact = (await handler({ workspace_id: 'ws-1' })) as Result
