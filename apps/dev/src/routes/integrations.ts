@@ -22,7 +22,7 @@ import {
 	webhookConfigSchema,
 } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { and, eq, isNotNull, sql } from 'drizzle-orm'
+import { and, eq, gt, isNotNull, isNull, or, sql } from 'drizzle-orm'
 import type { Context } from 'hono'
 import { getCookie, setCookie } from 'hono/cookie'
 import {
@@ -206,7 +206,13 @@ app.openapi(listIntegrationsRoute, (async (c) => {
 			expiresAt: agentChatGrants.expiresAt,
 		})
 		.from(agentChatGrants)
-		.where(eq(agentChatGrants.workspaceId, workspaceId))
+		.where(
+			and(
+				eq(agentChatGrants.workspaceId, workspaceId),
+				// Same test the access resolver uses: a timed grant stops counting at its expiry.
+				or(isNull(agentChatGrants.expiresAt), gt(agentChatGrants.expiresAt, sql`now()`)),
+			),
+		)
 	const chatsByIntegration = new Map<
 		string,
 		{ id: string; actorId: string; conversationId: string; expiresAt: Date | null }[]
