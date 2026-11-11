@@ -68,7 +68,7 @@ final class VideoPlaybackModel {
 			}
 			let asset = AVURLAsset(url: url)
 			guard try await asset.load(.isPlayable) else {
-				failed = true
+				if fileURL == url { failed = true }
 				return
 			}
 			if let track = try await asset.loadTracks(withMediaType: .video).first {
@@ -84,8 +84,12 @@ final class VideoPlaybackModel {
 			try? AVAudioSession.sharedInstance().setActive(true)
 			#endif
 			player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
+		} catch is CancellationError {
+			// A cancelled load is not a failure; whoever cancelled it owns the next state.
 		} catch {
-			failed = true
+			// Only the load that still owns the file may report failure, so a superseded load's
+			// error cannot flash "Couldn't play this file" over a newer one.
+			if fileURL == url { failed = true }
 		}
 	}
 
