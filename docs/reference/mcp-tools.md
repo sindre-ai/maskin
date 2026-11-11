@@ -99,7 +99,7 @@ Today there is one:
 
 Removal is a decision with a sweep date, never a zero count alone.
 
-**run_agent** and **create_session** were deleted outright on 2026-11-11, with no alias. Use **create_sub_chat**, which always waits for the agent to finish: it has no **wait** parameter. A call that names a deleted tool fails with an unknown-tool error (see the ledger in **packages/mcp/src/removal-ledger.ts**).
+**run_agent** and **create_session** were deleted outright on 2026-11-11, with no alias. Use **create_sub_chat**, which returns at once and always sends the result back as a new turn when the agent finishes: it has no **wait** or **notify_on_complete** parameter. A call that names a deleted tool fails with an unknown-tool error (see the ledger in **packages/mcp/src/removal-ledger.ts**).
 
 ### Rollback for the list contract
 

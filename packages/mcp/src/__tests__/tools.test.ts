@@ -703,7 +703,7 @@ describe('create_sub_chat schema', () => {
 		expect(schema.shape).not.toHaveProperty('notify_on_complete')
 	})
 
-	it('has no wait parameter: the call always waits', () => {
+	it('has no wait parameter: the call always returns at once', () => {
 		expect(schema.shape).not.toHaveProperty('wait')
 		expect(schema.parse({ ...base, wait: true })).not.toHaveProperty('wait')
 	})

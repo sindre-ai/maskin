@@ -102,11 +102,8 @@ describe('create_sub_chat through HTTP /mcp (integration)', () => {
 		await new Promise((resolve) => setTimeout(resolve, 500))
 	})
 
-	// create_sub_chat always waits for the agent, and no agent runs in this harness. So the
-	// call is left open, the session row it creates is found in the database, and that row is
-	// marked completed so the call returns.
 	async function createSessionOverMcp(sessionHeader: string | null) {
-		const pending = fetch(`${baseUrl}/mcp`, {
+		const res = await fetch(`${baseUrl}/mcp`, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json',
@@ -124,19 +121,12 @@ describe('create_sub_chat through HTTP /mcp (integration)', () => {
 					arguments: {
 						actor_id: target.id,
 						action_prompt: 'please help',
+						auto_start: false,
 						workspace_id: workspaceId,
 					},
 				},
 			}),
 		})
-		let started: typeof sessions.$inferSelect | undefined
-		for (let attempt = 0; attempt < 100 && !started; attempt++) {
-			;[started] = await db.select().from(sessions).where(eq(sessions.actorId, target.id))
-			if (!started) await new Promise((resolve) => setTimeout(resolve, 100))
-		}
-		if (!started) throw new Error('create_sub_chat never created a session')
-		await db.update(sessions).set({ status: 'completed' }).where(eq(sessions.id, started.id))
-		const res = await pending
 		expect(res.status).toBe(200)
 		const rpc = (await res.json()) as {
 			result?: { isError?: boolean; content?: Array<{ text?: string }> }
@@ -144,10 +134,8 @@ describe('create_sub_chat through HTTP /mcp (integration)', () => {
 		}
 		expect(rpc.error).toBeUndefined()
 		expect(rpc.result?.isError).not.toBe(true)
-		const created = JSON.parse(rpc.result?.content?.[0]?.text ?? '{}') as {
-			session_id: string
-		}
-		const [row] = await db.select().from(sessions).where(eq(sessions.id, created.session_id))
+		const created = JSON.parse(rpc.result?.content?.[0]?.text ?? '{}') as { id: string }
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, created.id))
 		return row
 	}
 

@@ -569,7 +569,7 @@ describe('Helper return (integration)', () => {
 			expect(await commentsOn(objectId)).toHaveLength(0)
 		})
 
-		it('five agent messages in a row drop the turn, and that is recorded as its own skip reason', async () => {
+		it('many agent messages in a row do not drop the return: the sender is still woken', async () => {
 			const conv = await newChat()
 			const s = await senderSession({
 				status: 'running',
@@ -577,7 +577,7 @@ describe('Helper return (integration)', () => {
 				conversationId: conv.id,
 				initiatedFromObjectId: null,
 			})
-			for (let i = 0; i < 4; i++) {
+			for (let i = 0; i < 25; i++) {
 				await insertConversationMessage(db, {
 					conversationId: conv.id,
 					workspaceId,
@@ -591,13 +591,11 @@ describe('Helper return (integration)', () => {
 			const { manager, writeInput } = fakeManager(s)
 
 			expect(await returnToSender(db, h.id, { sessionManager: manager })).toEqual({
-				returned: false,
-				reason: 'agent_message_cap',
+				returned: true,
+				destination: 'conversation',
 			})
-			expect(writeInput).not.toHaveBeenCalled()
-			expect((await skippedEvents(h.id)).map((e) => e.data)).toEqual([
-				{ reason: 'agent_message_cap' },
-			])
+			expect(writeInput).toHaveBeenCalledTimes(1)
+			expect(await skippedEvents(h.id)).toEqual([])
 		})
 	})
 

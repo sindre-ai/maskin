@@ -1530,66 +1530,85 @@ function sessionNotStartedResult(config: McpConfig, workspaceId: string | undefi
 }
 
 /**
- * Starts the sub-chat, then waits for it to reach a terminal state (or stop moving) and
- * returns `{ session, logs, settled }`.
+ * Added to a started session so the caller has something real to quote to the person: the
+ * link to its chat, never the session id.
  */
-async function createSubChatAndWait(
+function handoffNote(session: { id: string; status?: string }, url?: unknown) {
+	const status = session.status ?? 'pending'
+	if (typeof url !== 'string' || !url) {
+		return `Started: the session is ${status}. Say it is queued if it has not started running yet. Never show the person a session id.`
+	}
+	return `Started: the session is ${status}. When you tell the person you handed this over, give them this link to its chat as a markdown link: ${url}. Say it is queued if it has not started running yet. Never show the person a session id.`
+}
+
+/**
+ * Starts the sub-chat and returns straight away with its details. It never waits: the
+ * result is always sent back to the caller as a new turn when the sub-chat finishes, with
+ * no opt-out, so the caller can carry on meanwhile.
+ */
+async function createSubChat(
 	config: McpConfig,
 	args: z.infer<typeof tools.create_sub_chat.inputSchema>,
 ) {
-	// A caller that still sends `wait` or `notify_on_complete` is ignored: the call always
-	// waits, and the result is registered below only if the wait runs out.
+	// A caller that still sends `wait` or `notify_on_complete` is ignored: neither is a
+	// parameter, and the result is always sent back whatever the caller sent.
 	const {
 		workspace_id,
 		wait: _wait,
 		notify_on_complete: _ignored,
 		...createBody
 	} = args as typeof args & { wait?: unknown; notify_on_complete?: unknown }
-	const wsOpts = { workspaceId: workspace_id }
 
-	// 1. Create session. notify_on_complete is sent as false here: this call
-	// returns the result inline, so it is only registered (below) if the wait runs
-	// out. False, not omitted, because an omitted value defaults on for a helper
-	// started from a chat, and the waiting caller would get the result twice.
-	let session: { id: string; status: string }
+	let result: SessionRow
 	try {
-		session = (await apiCall(
+		result = (await apiCall(
 			config,
 			'POST',
 			'/api/sessions',
-			{ ...createBody, notify_on_complete: false },
-			wsOpts,
-		)) as { id: string; status: string }
+			{ ...createBody, notify_on_complete: true },
+			{ workspaceId: workspace_id },
+		)) as SessionRow
 	} catch (err) {
 		return sessionNotStartedResult(config, workspace_id, err)
 	}
-
-	return waitForSessionResult(config, {
-		toolName: 'create_sub_chat',
-		workspaceId: workspace_id,
-		session,
-		registerReturn: true,
-	})
+	const wsId = workspace_id ?? config.defaultWorkspaceId
+	const enriched = await enrichSessionActorName(config, wsId, result)
+	const withUrl = wsId
+		? addUrl(enriched as Record<string, unknown>, config, wsId, {
+				kind: 'session',
+				id: enriched.id,
+				actorId: (enriched as { actorId?: string }).actorId,
+			})
+		: enriched
+	return {
+		_meta: meta('create_sub_chat', config, workspace_id),
+		content: [
+			{
+				type: 'text' as const,
+				text: JSON.stringify({
+					...withUrl,
+					handoff: handoffNote(enriched, (withUrl as { url?: unknown }).url),
+				}),
+			},
+		],
+	}
 }
 
 /**
  * Polls a session until it ends (or stops moving) and returns `{ session, logs, settled }`.
- * Shared by every tool that takes `wait`. `registerReturn` is for the one caller that
- * started the session itself: when the wait stops with the session still going, it asks
- * for the session's result to be sent back to that caller later.
+ * Shared by every tool that takes `wait`.
  */
 async function waitForSessionResult(
 	config: McpConfig,
 	opts: {
-		toolName: 'create_sub_chat' | 'get_session' | 'resume_session' | 'send_session_message'
+		toolName: 'get_session' | 'resume_session' | 'send_session_message'
 		workspaceId: string | undefined
 		session: { id: string; status: string }
-		registerReturn?: boolean
 		/** The session was just read, so judge that reading before the first sleep. */
 		judgeFirst?: boolean
 	},
 ) {
-	const { toolName, workspaceId: workspace_id, session, registerReturn = false } = opts
+	const { toolName, workspaceId: workspace_id, session } = opts
 	const wsOpts = { workspaceId: workspace_id }
 	let sessionId = session.id
 	const terminalStatuses = ['completed', 'failed', 'timeout', 'user_stopped']
@@ -1652,47 +1671,10 @@ async function waitForSessionResult(
 			stoppedBecause = current.status
 			break
 		}
-		// Still going after the longest wait: stop holding the call. Not finished, and its
-		// result is registered to come back later (below).
+		// Still going after the longest wait: stop holding the call. Not finished.
 		if (Date.now() >= waitDeadline) {
 			stoppedBecause = 'wait_limit'
 			break
-		}
-	}
-
-	// The wait ended with the helper still going (it stopped on waiting_for_input,
-	// paused or the 2 hour wait limit, or the status checks kept failing): ask for its result to be sent back
-	// later. Never on the settled path, where the caller gets it inline, and only for
-	// the caller that started the session.
-	// If the helper ended in the gap, the PATCH sends the return itself.
-	// The server says what became of it: 'registered' (still running, it will
-	// be sent), 'delivered' (already ended, sent now), 'skipped' (already ended,
-	// could not be sent, with the reason) or 'failed' (not registered at all).
-	let notifyOnComplete:
-		| { state: 'registered' | 'delivered' | 'skipped' | 'failed'; reason?: string }
-		| undefined
-	if (!settled && registerReturn) {
-		try {
-			const patched = (await apiCall(
-				config,
-				'PATCH',
-				`/api/sessions/${sessionId}`,
-				{ notify_on_complete: true },
-				wsOpts,
-			)) as {
-				notify_on_complete?: 'registered' | 'delivered' | 'skipped'
-				notify_skip_reason?: string
-			}
-			notifyOnComplete = {
-				state: patched.notify_on_complete ?? 'registered',
-				...(patched.notify_skip_reason ? { reason: patched.notify_skip_reason } : {}),
-			}
-		} catch (err) {
-			console.error(`${toolName}: could not register notify_on_complete`, err)
-			notifyOnComplete = {
-				state: 'failed',
-				reason: err instanceof Error ? err.message : String(err),
-			}
 		}
 	}
 
@@ -1713,11 +1695,11 @@ async function waitForSessionResult(
 
 	const stopMessage =
 		stoppedBecause === 'waiting_for_input'
-			? `The session is waiting for input and is not finished. It cannot be answered from the MCP surface yet. Answer it in the web app or @mention the agent. Check it with get_session, read the latest output with get_session_logs (newest first, the question is usually at the end), or stop it with stop_session. The logs field in this response is the first 500 lines, oldest first, so it will likely not contain the question.${notifyOnComplete?.state === 'registered' ? ' Its result will come back to you when it finishes.' : ''}`
+			? 'The session is waiting for input and is not finished. It cannot be answered from the MCP surface yet. Answer it in the web app or @mention the agent. Check it with get_session, read the latest output with get_session_logs (newest first, the question is usually at the end), or stop it with stop_session. The logs field in this response is the first 500 lines, oldest first, so it will likely not contain the question.'
 			: stoppedBecause === 'paused'
 				? 'The session is paused and is not finished: it will not progress until it is resumed. Carry on with it using resume_session.'
 				: stoppedBecause === 'wait_limit'
-					? `The session has not finished after waiting 2 hours, so this call stopped waiting. That does not mean it failed. Check its latest status with get_session, and what it has done so far with get_session_logs (newest first) or get_chat_activity, before you decide what to do next. Stop it with stop_session if it should not go on.${notifyOnComplete?.state === 'registered' ? ' Its result will come back to you when it finishes.' : ''}`
+					? 'The session has not finished after waiting 2 hours, so this call stopped waiting. That does not mean it failed. Check its latest status with get_session, and what it has done so far with get_session_logs (newest first) or get_chat_activity, before you decide what to do next. Stop it with stop_session if it should not go on.'
 					: undefined
 
 	const wsId = workspace_id ?? config.defaultWorkspaceId
@@ -1751,14 +1733,6 @@ async function waitForSessionResult(
 					...(stoppedBecause ? { stopped_because: stoppedBecause, message: stopMessage } : {}),
 					...(pollError ? { poll_error: pollError } : {}),
 					...(logsError ? { logs_error: logsError } : {}),
-					...(notifyOnComplete
-						? {
-								notify_on_complete: notifyOnComplete.state,
-								...(notifyOnComplete.reason
-									? { notify_on_complete_reason: notifyOnComplete.reason }
-									: {}),
-							}
-						: {}),
 				}),
 			},
 		],
@@ -8364,9 +8338,8 @@ export function createMcpServer(config: McpConfig) {
 	)
 
 	// ─── Sessions ─────────────────────────────────────────────
-	// create_sub_chat always holds until the agent is done: there is no way to start it
-	// without waiting. A wait that ends early (the agent is waiting for input or paused)
-	// asks for the result to be sent back later, see waitForSessionResult.
+	// create_sub_chat returns straight away; the result comes back to the caller as a new
+	// turn when the agent finishes (always on, see createSubChat).
 	registerAppTool(
 		server,
 		'create_sub_chat',
@@ -8375,7 +8348,7 @@ export function createMcpServer(config: McpConfig) {
 			inputSchema: tools.create_sub_chat.inputSchema.shape,
 			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
-		async (args) => createSubChatAndWait(config, args),
+		async (args) => createSubChat(config, args),
 	)
 
 	registerAppTool(

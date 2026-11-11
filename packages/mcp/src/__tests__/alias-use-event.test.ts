@@ -217,35 +217,35 @@ describe('alias_use event through the real SDK path', () => {
 		})
 
 		it(
-			'creates a session, waits for it, and records no alias_use',
+			'creates a session, returns at once, and records no alias_use',
 			{ timeout: 20_000 },
 			async () => {
 				const { outcome, uses } = await callAndCapture('create_sub_chat', call)
 
 				expect(outcome.isError).toBe(false)
-				expect(JSON.parse(outcome.text)).toMatchObject({
-					session_id: 's1',
-					settled: true,
-					logs: [],
-				})
+				expect(JSON.parse(outcome.text)).toMatchObject({ id: 's1' })
 
 				const create = outcome.requests.find(
 					(r) => r.method === 'POST' && r.path === '/api/sessions',
 				)
-				expect(create?.body).toMatchObject({ actor_id: U1, action_prompt: SECRET })
+				expect(create?.body).toMatchObject({
+					actor_id: U1,
+					action_prompt: SECRET,
+					notify_on_complete: true,
+				})
 				expect(create?.workspace).toBe(DEFAULT_WORKSPACE_ID)
 				expect(uses).toHaveLength(0)
 			},
 		)
 
 		it(
-			'still waits when a caller sends the removed wait flag, and never forwards it',
+			'still returns at once when a caller sends the removed wait flag, and never forwards it',
 			{ timeout: 20_000 },
 			async () => {
 				const { outcome } = await callAndCapture('create_sub_chat', { ...call, wait: false })
 
 				expect(outcome.isError).toBe(false)
-				expect(JSON.parse(outcome.text)).toMatchObject({ session_id: 's1', settled: true })
+				expect(JSON.parse(outcome.text)).toMatchObject({ id: 's1' })
 				const create = outcome.requests.find(
 					(r) => r.method === 'POST' && r.path === '/api/sessions',
 				)

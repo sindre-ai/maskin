@@ -47,7 +47,6 @@ export type HelperReturnSkipReason =
 	| 'mention_reply_is_the_return'
 	| 'return_cap'
 	| 'no_destination'
-	| 'agent_message_cap'
 	| 'relaunching'
 
 export type HelperReturnOutcome =
@@ -337,17 +336,15 @@ async function doReturn(
 		// Lazy import: conversation-responder pulls in the session lifecycle, which
 		// imports this module.
 		const { evaluateAndRespond } = await import('./conversation-responder')
-		const responded = await evaluateAndRespond({
+		await evaluateAndRespond({
 			db,
 			sessionManager: opts.sessionManager,
 			workspaceId: helper.workspaceId,
 			conversationId: destination.conversationId,
 			messageId: message.id,
-			options: { forceRespond: true, targetAgentId: sender.actorId },
+			// Not subject to the agent-messages-in-a-row cap: a lost result is worse than one more turn.
+			options: { forceRespond: true, targetAgentId: sender.actorId, skipAgentCap: true },
 		})
-		// The responder drops a turn after 5 agent messages in a row. For a flagged
-		// return that is a lost result, so it is recorded instead of passing as a success.
-		if (notify && responded === 'agent_cap') return skip('agent_message_cap')
 	}
 	return { returned: true, destination: 'conversation' }
 }
