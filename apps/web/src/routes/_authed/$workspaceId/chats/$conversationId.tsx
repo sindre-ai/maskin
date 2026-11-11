@@ -95,6 +95,13 @@ function ConversationThreadPage() {
 		nonce: number
 	} | null>(null)
 	const fillNonceRef = useRef(0)
+	// The up arrow in the empty box asks one bubble to open its edit card. Same nonce idea as above.
+	const [editRequest, setEditRequest] = useState<{ messageId: number; nonce: number } | null>(null)
+	const editNonceRef = useRef(0)
+	const requestEditLast = useCallback((messageId: number) => {
+		editNonceRef.current += 1
+		setEditRequest({ messageId, nonce: editNonceRef.current })
+	}, [])
 	const headerBarRef = useRef<HTMLDivElement>(null)
 	const composerBarRef = useRef<HTMLDivElement>(null)
 	useHeightVar(headerBarRef, '--thread-header-h')
@@ -374,6 +381,7 @@ function ConversationThreadPage() {
 							onSendStep={sendStep}
 							sendingStep={sendMessage.isPending}
 							onOpenReplies={openReplies}
+							editRequest={editRequest}
 						/>
 						{/* Live region for the Origin deep-link jump — announced once per
 				    navigation (spec §7 accessibility). Kept out of ThreadMessages so
@@ -391,6 +399,7 @@ function ConversationThreadPage() {
 									workspaceId={workspaceId}
 									conversationId={conversationId}
 									fillRequest={fillRequest}
+									onEditLast={requestEditLast}
 								/>
 							</div>
 						</div>
