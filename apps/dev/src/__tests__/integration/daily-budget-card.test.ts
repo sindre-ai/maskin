@@ -25,7 +25,12 @@ const yesterdayNoon = new Date('2026-03-09T11:00:00Z')
 async function setup(settings: Record<string, unknown> | null) {
 	const owner = await insertActor(db, { type: 'human' })
 	const ownerId = owner?.id as string
-	const ws = await insertWorkspace(db, ownerId, settings ? { settings } : undefined)
+	// The factory grants enterprise by default; an enterprise workspace has no plan limit and gets
+	// no card, so seed these as ordinary metered workspaces.
+	const ws = await insertWorkspace(db, ownerId, {
+		...(settings ? { settings } : {}),
+		enterpriseGranted: false,
+	})
 	const workspaceId = ws?.id as string
 	const agent = await insertActor(db, { type: 'agent', name: 'Researcher' })
 	const agentId = agent?.id as string
