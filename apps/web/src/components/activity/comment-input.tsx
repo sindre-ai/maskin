@@ -61,6 +61,9 @@ interface CommentInputProps {
 	// Overrides the composer's own placeholder. The bar reads
 	// "Comment — / commands, @ mentions" on object detail.
 	placeholder?: string
+	// Bar only: sits first inside the bar, before the field (the item page's
+	// Comment / Message chip). The + menu then follows the field.
+	leading?: React.ReactNode
 }
 
 function randomDraftId(): string {
@@ -104,6 +107,7 @@ function CommentInputForm({
 	hint,
 	variant = 'stacked',
 	placeholder,
+	leading,
 }: CommentInputProps) {
 	const isBar = variant === 'bar'
 	const actor = getStoredActor()
@@ -508,7 +512,11 @@ function CommentInputForm({
 						className={cn(
 							'border transition-colors',
 							isBar ? 'rounded-2xl bg-background shadow-sm' : 'rounded-md',
-							overLimit ? 'border-error' : isBar ? 'border-input' : 'border-border',
+							overLimit
+								? 'border-error'
+								: isBar
+									? 'border-input focus-within:border-border-strong'
+									: 'border-border',
 						)}
 					>
 						{!isBar && referenceChips}
@@ -540,8 +548,8 @@ function CommentInputForm({
 								))}
 							</ul>
 						)}
-						<div className={cn(isBar && 'flex items-center gap-2 px-2 py-1.5')}>
-							{isBar && controlsLeft}
+						<div className={cn(isBar && 'flex items-center gap-2 px-2 py-1.5 max-sm:gap-1')}>
+							{isBar && leading}
 							<TagInput
 								workspaceId={workspaceId}
 								selfActorId={actor.id}
@@ -554,13 +562,15 @@ function CommentInputForm({
 								}
 								className={cn(
 									'min-h-7 max-h-[50vh] px-2 py-1 text-base',
-									isBar && 'min-w-0 flex-1',
+									// The placeholder stays on one line and ends in an ellipsis when the bar is narrow.
+									isBar && 'min-w-0 flex-1 [&>span]:truncate',
 									overLimit && 'text-error',
 								)}
 								invalid={overLimit}
 								onChange={setValue}
 								onKeyDown={handleKeyDown}
 							/>
+							{isBar && controlsLeft}
 							{isBar && controlsRight}
 						</div>
 						{/* Control row — `+` menu, hint, mic, send (mockup 457–472). The
