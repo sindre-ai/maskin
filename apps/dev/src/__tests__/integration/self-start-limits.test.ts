@@ -288,12 +288,13 @@ describe('self-start limits', () => {
 
 		it('keeps the count: the next wait is twice the last, and nobody is asked again', async () => {
 			await askThenExtend()
+			// The last quiet run ended 100 minutes before the original "now"; the wait is 2 hours.
+			const lastRunEnded = minutesFromNow(-100)
 			now = minutesFromNow(10)
 
 			const err = await refusalOf(admit({ triggerType: 'cron' }))
 			expect(err.refusal).toBe('no_change_backoff')
-			// The last quiet run ended 100 minutes before the original "now"; the wait is 2 hours.
-			expect(err.retryAt?.getTime()).toBe(minutesFromNow(-100).getTime() + 2 * BACKOFF_BASE_MS)
+			expect(err.retryAt?.getTime()).toBe(lastRunEnded.getTime() + 2 * BACKOFF_BASE_MS)
 			expect(await ownerCards()).toHaveLength(1)
 
 			now = minutesFromNow(30)
