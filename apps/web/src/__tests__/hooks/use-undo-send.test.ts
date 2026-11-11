@@ -6,7 +6,12 @@ const flag = vi.hoisted(() => ({ on: true }))
 vi.mock('@/hooks/use-feature-flag', () => ({ useFeatureFlag: () => flag.on }))
 
 function held(send = vi.fn().mockResolvedValue(undefined)) {
-	return { send, restore: vi.fn(), onError: vi.fn() }
+	return {
+		send,
+		sendOnHide: vi.fn().mockResolvedValue(undefined),
+		restore: vi.fn(),
+		onError: vi.fn(),
+	}
 }
 
 describe('useUndoSend', () => {
@@ -66,6 +71,36 @@ describe('useUndoSend', () => {
 		await act(async () => unmount())
 
 		expect(m.send).toHaveBeenCalledTimes(1)
+	})
+
+	it('sends the held message at once, outliving the page, when the tab closes', async () => {
+		const { result } = renderHook(() => useUndoSend())
+		const m = held()
+		await act(() => result.current.hold(m))
+
+		act(() => {
+			window.dispatchEvent(new Event('pagehide'))
+		})
+
+		expect(m.sendOnHide).toHaveBeenCalledTimes(1)
+		expect(m.send).not.toHaveBeenCalled()
+		expect(result.current.isHeld).toBe(false)
+		await act(() => vi.advanceTimersByTimeAsync(UNDO_SEND_WINDOW_MS * 2))
+		expect(m.send).not.toHaveBeenCalled()
+	})
+
+	it('sends the held message at once when the app goes to the background', async () => {
+		const { result } = renderHook(() => useUndoSend())
+		const m = held()
+		await act(() => result.current.hold(m))
+
+		const state = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+		act(() => {
+			document.dispatchEvent(new Event('visibilitychange'))
+		})
+		state.mockRestore()
+
+		expect(m.sendOnHide).toHaveBeenCalledTimes(1)
 	})
 
 	it('posts the held message when the scope changes', async () => {
