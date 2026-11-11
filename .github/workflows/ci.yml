@@ -521,6 +521,9 @@ jobs:
           key: playwright-apt-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: playwright-apt-${{ runner.os }}-
 
+      # The Acquire timeouts matter when the Ubuntu mirror is down: on 2026-11-11
+      # azure.archive.ubuntu.com stopped resolving and apt spent ~20 s per package, so the
+      # step ran 10 minutes and failed on all 7 shards.
       - name: Point apt at the cached package directory
         if: needs.changes.outputs.e2e == 'true'
         run: |
@@ -529,15 +532,28 @@ jobs:
             echo "Dir::Cache::archives \"$HOME/.cache/playwright-apt\";"
             # Keep downloaded .debs so the cache has something to save.
             echo 'APT::Keep-Downloaded-Packages "true";'
+            echo 'Acquire::Retries "1";'
+            echo 'Acquire::http::Timeout "10";'
+            echo 'Acquire::https::Timeout "10";'
           } | sudo tee /etc/apt/apt.conf.d/99playwright-cache
 
+      # Browsers only. The OS packages are installed in the next step, which can fail softly.
       - name: Install Playwright browsers
         if: needs.changes.outputs.e2e == 'true' && steps.playwright-cache.outputs.cache-hit != 'true'
-        run: pnpm --filter @maskin/e2e exec playwright install --with-deps chromium
+        run: pnpm --filter @maskin/e2e exec playwright install chromium
 
+      # On ubuntu-24.04 the browser libraries are already on the image; what install-deps still
+      # fetches is fonts. A dead Ubuntu mirror must not fail the whole shard, so the step is
+      # capped at 4 minutes and carries on with a warning. If a library were really missing,
+      # chromium would fail to launch and the tests would fail loudly. The cache dir is removed
+      # on failure so a partial or empty apt cache is not saved under the lockfile key.
       - name: Install Playwright OS dependencies
-        if: needs.changes.outputs.e2e == 'true' && steps.playwright-cache.outputs.cache-hit == 'true'
-        run: pnpm --filter @maskin/e2e exec playwright install-deps chromium
+        if: needs.changes.outputs.e2e == 'true'
+        run: |
+          if ! timeout -k 10 240 pnpm --filter @maskin/e2e exec playwright install-deps chromium; then
+            echo "::warning::playwright install-deps did not finish (Ubuntu mirror unreachable?). Continuing without the extra fonts; screenshot baselines on main may differ."
+            rm -rf "$HOME/.cache/playwright-apt"
+          fi
 
       - name: Run E2E tests (shard ${{ matrix.shard }}/7)
         if: needs.changes.outputs.e2e == 'true'
