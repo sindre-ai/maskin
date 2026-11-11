@@ -46,6 +46,7 @@ jobs:
           context: docker/desktop
           push: true
           tags: ${{ steps.meta.outputs.tags }}
+          build-args: IMAGE_TAG=sha-${{ substr(github.sha, 0, 7) }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

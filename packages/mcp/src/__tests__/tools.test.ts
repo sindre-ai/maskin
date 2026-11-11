@@ -133,6 +133,8 @@ const ALL_TOOL_NAMES = [
 	'desktop_key',
 	'desktop_run',
 	'desktop_put_file',
+	'desktop_apply_settings',
+	'desktop_settings',
 	'desktop_expose_port',
 	'desktop_list_ports',
 	'desktop_close_port',

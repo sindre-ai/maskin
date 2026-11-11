@@ -305,6 +305,7 @@ const RISKY_TOOLS: ReadonlySet<string> = new Set([
 	'desktop_click',
 	'desktop_drag',
 	'desktop_put_file',
+	'desktop_apply_settings',
 	// Opens a port of the desktop to the outside
 	'desktop_expose_port',
 	'update_workspace',

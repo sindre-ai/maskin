@@ -87,6 +87,12 @@ COPY dock/keyfile /home/user/.config/glib-2.0/settings/keyfile
 # Everything above was written as root; hand the user its home.
 RUN chown -R user:user /home/user
 
+# Which build this is. A computer keeps the image it was created from, so the settings read
+# (GET /api/desktop/settings) reports this to tell an old computer from a current one. Set by
+# .github/workflows/desktop-docker.yml; "unknown" for a build by hand.
+ARG IMAGE_TAG=unknown
+RUN echo "$IMAGE_TAG" > /etc/maskin-desktop-image
+
 COPY entrypoint.sh /entrypoint.sh
 COPY desktopd.py /usr/local/bin/desktopd.py
 RUN chmod +x /entrypoint.sh /usr/local/bin/desktopd.py
