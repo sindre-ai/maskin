@@ -8,9 +8,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
 	SLASH_ITEMS,
 	SlashCommand,
+	type SlashItem,
 	type SlashMenuState,
 	type SlashMenuView,
 	availableSlashItems,
+	buildChatSlashItems,
 	filterSlashItems,
 } from '../react/slash-command'
 
@@ -233,6 +235,77 @@ describe('SlashCommand extension', () => {
 		const item = SLASH_ITEMS.find((i) => i.id === 'divider')
 		if (item) harness.states.at(-1)?.select(item)
 		expect(harness.editor.getJSON().content?.some((n) => n.type === 'horizontalRule')).toBe(true)
+	})
+})
+
+describe('SlashCommand items option', () => {
+	afterEach(() => vi.restoreAllMocks())
+
+	it('keeps an item that has no node, and only offers the items it was given', async () => {
+		const run = vi.fn()
+		const items: SlashItem[] = [
+			SLASH_ITEMS.find((i) => i.id === 'quote') as SlashItem,
+			{ id: 'attach-file', title: 'Attach a file', description: '', aliases: ['upload'], run },
+		]
+		const states: SlashMenuState[] = []
+		const editor = new Editor({
+			extensions: [
+				StarterKit,
+				SlashCommand.configure({
+					items,
+					createView: (state): SlashMenuView => {
+						states.push(state)
+						return { update: (next) => states.push(next), onKeyDown: () => false, destroy: vi.fn() }
+					},
+				}),
+			],
+		})
+		await type(editor, '/')
+		expect(states.at(-1)?.items.map((i) => i.id)).toEqual(['quote', 'attach-file'])
+		await type(editor, 'up')
+		const last = states.at(-1)
+		expect(last?.items.map((i) => i.id)).toEqual(['attach-file'])
+		last?.select(last.items[0] as SlashItem)
+		expect(run).toHaveBeenCalledOnce()
+		// The typed "/up" is deleted by the item's own command, not by the plugin.
+		editor.destroy()
+	})
+})
+
+describe('buildChatSlashItems', () => {
+	it('offers code block, quote, the two lists and attach a file, in that order', () => {
+		const items = buildChatSlashItems(() => {})
+		expect(items.map((i) => i.id)).toEqual([
+			'code-block',
+			'quote',
+			'bulleted-list',
+			'numbered-list',
+			'attach-file',
+		])
+	})
+
+	it('has no language step for the code block', () => {
+		const code = buildChatSlashItems(() => {}).find((i) => i.id === 'code-block')
+		expect(code?.needsLanguage).toBe(false)
+	})
+
+	it('turns the line into a code block and removes the typed slash', () => {
+		const editor = new Editor({ extensions: [StarterKit], content: '<p>/code</p>' })
+		const code = buildChatSlashItems(() => {}).find((i) => i.id === 'code-block')
+		code?.run(editor, { from: 1, to: 6 })
+		expect(editor.getJSON().content?.[0]).toMatchObject({ type: 'codeBlock' })
+		expect(editor.getText()).toBe('')
+		editor.destroy()
+	})
+
+	it('attach a file removes the typed slash and calls the file picker', () => {
+		const attachFile = vi.fn()
+		const editor = new Editor({ extensions: [StarterKit], content: '<p>hi /fi</p>' })
+		const attach = buildChatSlashItems(attachFile).find((i) => i.id === 'attach-file')
+		attach?.run(editor, { from: 4, to: 7 })
+		expect(attachFile).toHaveBeenCalledOnce()
+		expect(editor.getText()).toBe('hi ')
+		editor.destroy()
 	})
 })
 

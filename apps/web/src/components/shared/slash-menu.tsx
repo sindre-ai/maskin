@@ -16,6 +16,7 @@ import {
 	ListOrdered,
 	type LucideIcon,
 	Minus,
+	Paperclip,
 	Quote,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
@@ -39,6 +40,7 @@ const ITEM_ICONS: Record<string, LucideIcon> = {
 	quote: Quote,
 	'code-block': Code,
 	divider: Minus,
+	'attach-file': Paperclip,
 }
 
 const MOBILE_QUERY = '(max-width: 640px)'

@@ -46,8 +46,11 @@ export interface SlashItem {
 	description: string
 	/** Extra names the filter matches, so old names and muscle memory still land. */
 	aliases: readonly string[]
-	/** ProseMirror node the item inserts. Items whose node the editor lacks are hidden. */
-	node: string
+	/**
+	 * ProseMirror node the item inserts. Items whose node the editor lacks are hidden.
+	 * Omit it for an item that inserts no node (a host action such as attaching a file).
+	 */
+	node?: string
 	/** True when picking the item opens a second step (the language picker). */
 	needsLanguage?: boolean
 	run: (editor: Editor, range: Range, options?: SlashItemRunOptions) => void
@@ -133,6 +136,35 @@ export const SLASH_ITEMS: readonly SlashItem[] = [
 	},
 ]
 
+const CHAT_BLOCK_IDS = ['code-block', 'quote', 'bulleted-list', 'numbered-list'] as const
+
+export const ATTACH_FILE_ITEM_ID = 'attach-file'
+
+/**
+ * The menu for a chat message box: the document blocks a message can hold, plus
+ * a row that opens the host's file picker.
+ */
+export function buildChatSlashItems(attachFile: () => void): SlashItem[] {
+	const blocks = CHAT_BLOCK_IDS.flatMap((id) => {
+		const item = SLASH_ITEMS.find((i) => i.id === id)
+		// A message has no language step: picking Code block switches the box straight to one.
+		return item ? [{ ...item, needsLanguage: false }] : []
+	})
+	return [
+		...blocks,
+		{
+			id: ATTACH_FILE_ITEM_ID,
+			title: 'Attach a file',
+			description: 'Add a file to this message',
+			aliases: ['file', 'upload', 'attachment', 'image', 'photo'],
+			run: (editor, range) => {
+				editor.chain().focus().deleteRange(range).run()
+				attachFile()
+			},
+		},
+	]
+}
+
 /**
  * Substring match, case-insensitive, on title and aliases. No fuzzy matching:
  * with eight items it only adds surprises. An empty query returns everything.
@@ -150,8 +182,11 @@ export function filterSlashItems(
 }
 
 /** The items this editor can actually insert (a disallowed node drops its rows). */
-export function availableSlashItems(editor: Editor): SlashItem[] {
-	return SLASH_ITEMS.filter((item) => editor.schema.nodes[item.node] !== undefined)
+export function availableSlashItems(
+	editor: Editor,
+	items: readonly SlashItem[] = SLASH_ITEMS,
+): SlashItem[] {
+	return items.filter((item) => item.node === undefined || editor.schema.nodes[item.node])
 }
 
 /** What the injected view gets on every suggestion update. */
@@ -176,6 +211,8 @@ export interface SlashMenuView {
 
 export interface SlashCommandOptions {
 	createView: (state: SlashMenuState) => SlashMenuView
+	/** The menu's items. Defaults to the eight document blocks in SLASH_ITEMS. */
+	items?: readonly SlashItem[]
 	/** Fires once per inserted item, after the command ran. */
 	onCommandUsed?: (commandId: string) => void
 }
@@ -206,6 +243,7 @@ export const SlashCommand = Extension.create<SlashCommandOptions, SlashCommandSt
 			createView: () => {
 				throw new Error('SlashCommand needs a createView option')
 			},
+			items: SLASH_ITEMS,
 			onCommandUsed: undefined,
 		}
 	},
@@ -254,13 +292,13 @@ export const SlashCommand = Extension.create<SlashCommandOptions, SlashCommandSt
 					// Once the query has a space and nothing matches, the person is writing.
 					if (
 						/\s/.test(query) &&
-						filterSlashItems(query, availableSlashItems(editor)).length === 0
+						filterSlashItems(query, availableSlashItems(editor, options.items)).length === 0
 					) {
 						return false
 					}
 					return true
 				},
-				items: ({ query }) => filterSlashItems(query, availableSlashItems(editor)),
+				items: ({ query }) => filterSlashItems(query, availableSlashItems(editor, options.items)),
 				command: ({ editor: e, range, props }) => props.run(e, range),
 				render: () => {
 					const stateFor = (props: SuggestionProps<SlashItem>): SlashMenuState => ({
