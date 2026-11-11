@@ -46,7 +46,7 @@ test.describe('Plan usage as a percent', () => {
 			await page.goto(`/${account.workspaceId}/settings/billing`)
 
 			await expect(page.getByText('41%', { exact: true })).toBeVisible()
-			await expect(page.getByText('of your plan used')).toBeVisible()
+			await expect(page.getByText('of your plan used', { exact: true })).toBeVisible()
 			await expect(page.getByRole('progressbar', { name: 'Plan usage' }).first()).toHaveAttribute(
 				'aria-valuenow',
 				'41',
@@ -97,7 +97,7 @@ test.describe('Plan usage as a percent', () => {
 		await page.goto(`/${account.workspaceId}/settings/billing`)
 
 		await expect(page.getByTestId('usage-banner')).toBeVisible()
-		await expect(page.getByText('of your plan used')).toHaveCount(0)
+		await expect(page.getByText('of your plan used', { exact: true })).toHaveCount(0)
 		await expect(page.getByText('You have used 100% of your trial')).toHaveCount(0)
 	})
 })
