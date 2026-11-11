@@ -51,6 +51,7 @@ export const GATEWAY_PROVIDERS: ReadonlySet<string> = new Set([
 	'stripe',
 	'ubersuggest',
 	'webflow',
+	'zapier',
 ])
 
 export const GATEWAY_BODY_LIMIT_BYTES = 1_000_000

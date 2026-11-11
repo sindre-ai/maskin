@@ -175,6 +175,7 @@ describe('Integrations Routes', () => {
 				'stripe',
 				'ubersuggest',
 				'webflow',
+				'zapier',
 			])
 
 			// Two multi-identity exemptions omit a single `server` spec:

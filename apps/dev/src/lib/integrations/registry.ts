@@ -66,6 +66,7 @@ import { config as stripeConfig } from './providers/stripe/config'
 import { ubersuggestAuth } from './providers/ubersuggest/auth'
 import { config as ubersuggestConfig } from './providers/ubersuggest/config'
 import { config as webflowConfig } from './providers/webflow/config'
+import { config as zapierConfig } from './providers/zapier/config'
 
 const providers = new Map<string, ResolvedProvider>()
 
@@ -218,6 +219,10 @@ providers.set('clickup', {
 
 providers.set('sentry', {
 	config: sentryConfig,
+})
+
+providers.set('zapier', {
+	config: zapierConfig,
 })
 
 providers.set('stripe', {
