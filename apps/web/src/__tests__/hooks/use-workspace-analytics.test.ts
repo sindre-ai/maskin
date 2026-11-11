@@ -1,0 +1,90 @@
+import { useWorkspaceAnalytics } from '@/hooks/use-workspace-analytics'
+import { renderHook } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const mocks = vi.hoisted(() => ({
+	setWorkspaceGroup: vi.fn(),
+	registerWorkspaceProperties: vi.fn(),
+	setCapturingEnabled: vi.fn(),
+	identifyForWorkspace: vi.fn(() => Promise.resolve()),
+	trackAppActive: vi.fn(),
+	setFaroUser: vi.fn(),
+}))
+
+vi.mock('@/lib/posthog', () => ({
+	setWorkspaceGroup: mocks.setWorkspaceGroup,
+	registerWorkspaceProperties: mocks.registerWorkspaceProperties,
+	setCapturingEnabled: mocks.setCapturingEnabled,
+	identifyForWorkspace: mocks.identifyForWorkspace,
+}))
+vi.mock('@/lib/analytics', () => ({ trackAppActive: mocks.trackAppActive }))
+vi.mock('@/lib/faro', () => ({ setFaroUser: mocks.setFaroUser }))
+vi.mock('@/lib/auth', () => ({
+	getStoredActor: () => ({ id: 'actor-1', type: 'human', name: 'Ada', email: 'ada@example.com' }),
+}))
+
+const base = {
+	workspaceId: 'ws-1',
+	resolved: true,
+	isTeam: false,
+	createdAt: '2026-10-01T00:00:00.000Z',
+	shareUsage: true,
+	anonymizeWorkspace: false,
+}
+
+describe('useWorkspaceAnalytics', () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+	})
+
+	it('sends the group, identify and app_active once on first load', async () => {
+		renderHook((props) => useWorkspaceAnalytics(props), { initialProps: base })
+		await vi.waitFor(() => expect(mocks.trackAppActive).toHaveBeenCalledTimes(1))
+		expect(mocks.setWorkspaceGroup).toHaveBeenCalledTimes(1)
+		expect(mocks.setWorkspaceGroup).toHaveBeenCalledWith('ws-1', '2026-10-01T00:00:00.000Z')
+		expect(mocks.identifyForWorkspace).toHaveBeenCalledTimes(1)
+	})
+
+	it('does not re-run when the workspace is replaced with an equal copy', async () => {
+		const { rerender } = renderHook((props) => useWorkspaceAnalytics(props), {
+			initialProps: base,
+		})
+		await vi.waitFor(() => expect(mocks.trackAppActive).toHaveBeenCalledTimes(1))
+
+		// A refetch of the workspaces list: same values, fresh object.
+		rerender({ ...base })
+		rerender({ ...base })
+
+		expect(mocks.setWorkspaceGroup).toHaveBeenCalledTimes(1)
+		expect(mocks.identifyForWorkspace).toHaveBeenCalledTimes(1)
+		expect(mocks.trackAppActive).toHaveBeenCalledTimes(1)
+	})
+
+	it('runs again when the workspace id changes', async () => {
+		const { rerender } = renderHook((props) => useWorkspaceAnalytics(props), {
+			initialProps: base,
+		})
+		rerender({ ...base, workspaceId: 'ws-2' })
+		expect(mocks.setWorkspaceGroup).toHaveBeenCalledTimes(2)
+		expect(mocks.setWorkspaceGroup).toHaveBeenLastCalledWith('ws-2', '2026-10-01T00:00:00.000Z')
+	})
+
+	it('runs again when a privacy setting really changes', () => {
+		const { rerender } = renderHook((props) => useWorkspaceAnalytics(props), {
+			initialProps: base,
+		})
+		rerender({ ...base, shareUsage: false })
+		expect(mocks.setCapturingEnabled).toHaveBeenLastCalledWith(false)
+		rerender({ ...base, shareUsage: false, anonymizeWorkspace: true })
+		expect(mocks.identifyForWorkspace).toHaveBeenLastCalledWith('actor-1', true, expect.any(Object))
+		expect(mocks.setWorkspaceGroup).toHaveBeenCalledTimes(3)
+	})
+
+	it('sends nothing until the workspace has resolved', () => {
+		renderHook((props) => useWorkspaceAnalytics(props), {
+			initialProps: { ...base, resolved: false },
+		})
+		expect(mocks.setWorkspaceGroup).not.toHaveBeenCalled()
+		expect(mocks.identifyForWorkspace).not.toHaveBeenCalled()
+	})
+})
