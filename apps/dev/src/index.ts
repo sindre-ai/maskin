@@ -49,12 +49,14 @@ import { AgentStorageManager } from './services/agent-storage'
 import { ApnsSender } from './services/apns'
 import { BlockedToolCallsCleaner } from './services/blocked-tool-calls-cleaner'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
+import { BriefingEmailScheduler } from './services/briefing-email-scheduler'
 import { BriefingPushScheduler } from './services/briefing-push-scheduler'
 import { CapabilityScanner } from './services/capability-scanner'
 import { DailyBudgetCardScheduler } from './services/daily-budget-card-scheduler'
 import { DailyBudgetSummaryScheduler } from './services/daily-budget-events'
 import { handleDesktopStreamUpgrade, isDesktopStreamRequest } from './services/desktop-relay'
 import { DriveWatchRenewer } from './services/drive-watch-renewer'
+import { FlowActivityNotifier } from './services/flow-activity'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { GscSyncScheduler } from './services/gsc-sync-scheduler'
 import { LifecyclePushScheduler } from './services/lifecycle-push-scheduler'
@@ -62,6 +64,7 @@ import { LiveActivityFanout } from './services/live-activity-push'
 import { LoopVersionPusher } from './services/loop-version-pusher'
 import { MeetTranscriptReconciler } from './services/meet-transcript-reconciler'
 import { MeetWatchRenewer } from './services/meet-watch-renewer'
+import { NotificationEmailFanout } from './services/notification-email'
 import { NotificationPushFanout } from './services/notification-push'
 import { OAuthSweeper } from './services/oauth-sweeper'
 import { OrphanThreadDetector } from './services/orphan-thread-detector'
@@ -299,6 +302,12 @@ const webPushSender = new WebPushSender(db)
 const notificationPush = new NotificationPushFanout(db, notifyBridge, [apnsSender, webPushSender])
 notificationPush.start()
 
+const flowActivity = new FlowActivityNotifier(db, notifyBridge)
+flowActivity.start()
+
+const notificationEmail = new NotificationEmailFanout(db, notifyBridge)
+notificationEmail.start()
+
 const liveActivityPush = new LiveActivityFanout(db, notifyBridge, apnsSender, {
 	turns: sessionManager,
 })
@@ -366,6 +375,10 @@ const briefingPushScheduler = new BriefingPushScheduler(db)
 briefingPushScheduler.start()
 const lifecyclePushScheduler = new LifecyclePushScheduler(db)
 lifecyclePushScheduler.start()
+// Summary email (one grouped mail a day). Own query, own claim; killswitch
+// FEATURE_BRIEFING_EMAIL=0 stops the emails and leaves the push alone.
+const briefingEmailScheduler = new BriefingEmailScheduler(db)
+briefingEmailScheduler.start()
 // Daily budget 1a: one summary event per workspace per day, no model call.
 const dailyBudgetSummaryScheduler = new DailyBudgetSummaryScheduler(db)
 dailyBudgetSummaryScheduler.start()
@@ -583,7 +596,10 @@ const shutdown = async (signal: string) => {
 	rotateDeksJob.stop()
 	chainSnapshotJob.stop()
 	notificationPush.stop()
+	flowActivity.stop()
+	notificationEmail.stop()
 	briefingPushScheduler.stop()
+	briefingEmailScheduler.stop()
 	lifecyclePushScheduler.stop()
 	dailyBudgetSummaryScheduler.stop()
 	dailyBudgetCardScheduler.stop()

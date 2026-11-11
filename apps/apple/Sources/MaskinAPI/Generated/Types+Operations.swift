@@ -71128,6 +71128,8 @@ public enum Operations {
                             public var digest: Swift.Bool
                             /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/categories/tips`.
                             public var tips: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/categories/flow_activity`.
+                            public var flow_activity: Swift.Bool
                             /// Creates a new `categoriesPayload`.
                             ///
                             /// - Parameters:
@@ -71135,30 +71137,137 @@ public enum Operations {
                             ///   - conversation:
                             ///   - digest:
                             ///   - tips:
+                            ///   - flow_activity:
                             public init(
                                 needs_you: Swift.Bool,
                                 conversation: Swift.Bool,
                                 digest: Swift.Bool,
-                                tips: Swift.Bool
+                                tips: Swift.Bool,
+                                flow_activity: Swift.Bool
                             ) {
                                 self.needs_you = needs_you
                                 self.conversation = conversation
                                 self.digest = digest
                                 self.tips = tips
+                                self.flow_activity = flow_activity
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case needs_you
                                 case conversation
                                 case digest
                                 case tips
+                                case flow_activity
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/categories`.
                         public var categories: Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.categoriesPayload
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_categories`.
+                        public struct browser_categoriesPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_categories/needs_you`.
+                            public var needs_you: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_categories/conversation`.
+                            public var conversation: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_categories/digest`.
+                            public var digest: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_categories/tips`.
+                            public var tips: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_categories/flow_activity`.
+                            public var flow_activity: Swift.Bool
+                            /// Creates a new `browser_categoriesPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - needs_you:
+                            ///   - conversation:
+                            ///   - digest:
+                            ///   - tips:
+                            ///   - flow_activity:
+                            public init(
+                                needs_you: Swift.Bool,
+                                conversation: Swift.Bool,
+                                digest: Swift.Bool,
+                                tips: Swift.Bool,
+                                flow_activity: Swift.Bool
+                            ) {
+                                self.needs_you = needs_you
+                                self.conversation = conversation
+                                self.digest = digest
+                                self.tips = tips
+                                self.flow_activity = flow_activity
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case needs_you
+                                case conversation
+                                case digest
+                                case tips
+                                case flow_activity
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_categories`.
+                        public var browser_categories: Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_categoriesPayload
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_not_askedPayload`.
+                        @frozen public enum browser_not_askedPayloadPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                            case needs_you = "needs_you"
+                            case conversation = "conversation"
+                            case digest = "digest"
+                            case tips = "tips"
+                            case flow_activity = "flow_activity"
+                        }
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_not_asked`.
+                        public typealias browser_not_askedPayload = [Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_not_askedPayloadPayload]
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/browser_not_asked`.
+                        public var browser_not_asked: Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_not_askedPayload
                         /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/briefing_enabled`.
                         public var briefing_enabled: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/briefing_time`.
                         public var briefing_time: Swift.Int
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/email_digest_enabled`.
+                        public var email_digest_enabled: Swift.Bool
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/email_categories`.
+                        public struct email_categoriesPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/email_categories/needs_you`.
+                            public var needs_you: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/email_categories/conversation`.
+                            public var conversation: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/email_categories/tips`.
+                            public var tips: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/email_categories/flow_activity`.
+                            public var flow_activity: Swift.Bool
+                            /// Creates a new `email_categoriesPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - needs_you:
+                            ///   - conversation:
+                            ///   - tips:
+                            ///   - flow_activity:
+                            public init(
+                                needs_you: Swift.Bool,
+                                conversation: Swift.Bool,
+                                tips: Swift.Bool,
+                                flow_activity: Swift.Bool
+                            ) {
+                                self.needs_you = needs_you
+                                self.conversation = conversation
+                                self.tips = tips
+                                self.flow_activity = flow_activity
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case needs_you
+                                case conversation
+                                case tips
+                                case flow_activity
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/email_categories`.
+                        public var email_categories: Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.email_categoriesPayload
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/marketplace_picks_enabled`.
+                        public var marketplace_picks_enabled: Swift.Bool
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/email_rhythm`.
+                        @frozen public enum email_rhythmPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                            case daily = "daily"
+                            case weekly = "weekly"
+                        }
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/email_rhythm`.
+                        public var email_rhythm: Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.email_rhythmPayload
                         /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/muted_workspace_ids`.
                         public var muted_workspace_ids: [Swift.String]
                         /// - Remark: Generated from `#/paths/api/notification-preferences/GET/responses/200/content/json/updated_at`.
@@ -71170,8 +71279,14 @@ public enum Operations {
                         ///   - quiet_hours_start:
                         ///   - quiet_hours_end:
                         ///   - categories:
+                        ///   - browser_categories:
+                        ///   - browser_not_asked:
                         ///   - briefing_enabled:
                         ///   - briefing_time:
+                        ///   - email_digest_enabled:
+                        ///   - email_categories:
+                        ///   - marketplace_picks_enabled:
+                        ///   - email_rhythm:
                         ///   - muted_workspace_ids:
                         ///   - updated_at:
                         public init(
@@ -71179,8 +71294,14 @@ public enum Operations {
                             quiet_hours_start: Swift.Int? = nil,
                             quiet_hours_end: Swift.Int? = nil,
                             categories: Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.categoriesPayload,
+                            browser_categories: Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_categoriesPayload,
+                            browser_not_asked: Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_not_askedPayload,
                             briefing_enabled: Swift.Bool,
                             briefing_time: Swift.Int,
+                            email_digest_enabled: Swift.Bool,
+                            email_categories: Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.email_categoriesPayload,
+                            marketplace_picks_enabled: Swift.Bool,
+                            email_rhythm: Operations.get_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.email_rhythmPayload,
                             muted_workspace_ids: [Swift.String],
                             updated_at: Swift.String? = nil
                         ) {
@@ -71188,8 +71309,14 @@ public enum Operations {
                             self.quiet_hours_start = quiet_hours_start
                             self.quiet_hours_end = quiet_hours_end
                             self.categories = categories
+                            self.browser_categories = browser_categories
+                            self.browser_not_asked = browser_not_asked
                             self.briefing_enabled = briefing_enabled
                             self.briefing_time = briefing_time
+                            self.email_digest_enabled = email_digest_enabled
+                            self.email_categories = email_categories
+                            self.marketplace_picks_enabled = marketplace_picks_enabled
+                            self.email_rhythm = email_rhythm
                             self.muted_workspace_ids = muted_workspace_ids
                             self.updated_at = updated_at
                         }
@@ -71198,8 +71325,14 @@ public enum Operations {
                             case quiet_hours_start
                             case quiet_hours_end
                             case categories
+                            case browser_categories
+                            case browser_not_asked
                             case briefing_enabled
                             case briefing_time
+                            case email_digest_enabled
+                            case email_categories
+                            case marketplace_picks_enabled
+                            case email_rhythm
                             case muted_workspace_ids
                             case updated_at
                         }
@@ -71324,6 +71457,8 @@ public enum Operations {
                         public var digest: Swift.Bool?
                         /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/categories/tips`.
                         public var tips: Swift.Bool?
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/categories/flow_activity`.
+                        public var flow_activity: Swift.Bool?
                         /// Creates a new `categoriesPayload`.
                         ///
                         /// - Parameters:
@@ -71331,30 +71466,125 @@ public enum Operations {
                         ///   - conversation:
                         ///   - digest:
                         ///   - tips:
+                        ///   - flow_activity:
                         public init(
                             needs_you: Swift.Bool? = nil,
                             conversation: Swift.Bool? = nil,
                             digest: Swift.Bool? = nil,
-                            tips: Swift.Bool? = nil
+                            tips: Swift.Bool? = nil,
+                            flow_activity: Swift.Bool? = nil
                         ) {
                             self.needs_you = needs_you
                             self.conversation = conversation
                             self.digest = digest
                             self.tips = tips
+                            self.flow_activity = flow_activity
                         }
                         public enum CodingKeys: String, CodingKey {
                             case needs_you
                             case conversation
                             case digest
                             case tips
+                            case flow_activity
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/categories`.
                     public var categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Input.Body.jsonPayload.categoriesPayload?
+                    /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/browser_categories`.
+                    public struct browser_categoriesPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/browser_categories/needs_you`.
+                        public var needs_you: Swift.Bool?
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/browser_categories/conversation`.
+                        public var conversation: Swift.Bool?
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/browser_categories/digest`.
+                        public var digest: Swift.Bool?
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/browser_categories/tips`.
+                        public var tips: Swift.Bool?
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/browser_categories/flow_activity`.
+                        public var flow_activity: Swift.Bool?
+                        /// Creates a new `browser_categoriesPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - needs_you:
+                        ///   - conversation:
+                        ///   - digest:
+                        ///   - tips:
+                        ///   - flow_activity:
+                        public init(
+                            needs_you: Swift.Bool? = nil,
+                            conversation: Swift.Bool? = nil,
+                            digest: Swift.Bool? = nil,
+                            tips: Swift.Bool? = nil,
+                            flow_activity: Swift.Bool? = nil
+                        ) {
+                            self.needs_you = needs_you
+                            self.conversation = conversation
+                            self.digest = digest
+                            self.tips = tips
+                            self.flow_activity = flow_activity
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case needs_you
+                            case conversation
+                            case digest
+                            case tips
+                            case flow_activity
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/browser_categories`.
+                    public var browser_categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Input.Body.jsonPayload.browser_categoriesPayload?
                     /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/briefing_enabled`.
                     public var briefing_enabled: Swift.Bool?
                     /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/briefing_time`.
                     public var briefing_time: Swift.Int?
+                    /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/email_digest_enabled`.
+                    public var email_digest_enabled: Swift.Bool?
+                    /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/email_categories`.
+                    public struct email_categoriesPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/email_categories/needs_you`.
+                        public var needs_you: Swift.Bool?
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/email_categories/conversation`.
+                        public var conversation: Swift.Bool?
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/email_categories/tips`.
+                        public var tips: Swift.Bool?
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/email_categories/flow_activity`.
+                        public var flow_activity: Swift.Bool?
+                        /// Creates a new `email_categoriesPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - needs_you:
+                        ///   - conversation:
+                        ///   - tips:
+                        ///   - flow_activity:
+                        public init(
+                            needs_you: Swift.Bool? = nil,
+                            conversation: Swift.Bool? = nil,
+                            tips: Swift.Bool? = nil,
+                            flow_activity: Swift.Bool? = nil
+                        ) {
+                            self.needs_you = needs_you
+                            self.conversation = conversation
+                            self.tips = tips
+                            self.flow_activity = flow_activity
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case needs_you
+                            case conversation
+                            case tips
+                            case flow_activity
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/email_categories`.
+                    public var email_categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Input.Body.jsonPayload.email_categoriesPayload?
+                    /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/marketplace_picks_enabled`.
+                    public var marketplace_picks_enabled: Swift.Bool?
+                    /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/email_rhythm`.
+                    @frozen public enum email_rhythmPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                        case daily = "daily"
+                        case weekly = "weekly"
+                    }
+                    /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/email_rhythm`.
+                    public var email_rhythm: Operations.put_sol_api_sol_notification_hyphen_preferences.Input.Body.jsonPayload.email_rhythmPayload?
                     /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/requestBody/json/muted_workspace_ids`.
                     public var muted_workspace_ids: [Swift.String]?
                     /// Creates a new `jsonPayload`.
@@ -71364,24 +71594,39 @@ public enum Operations {
                     ///   - quiet_hours_start:
                     ///   - quiet_hours_end:
                     ///   - categories:
+                    ///   - browser_categories:
                     ///   - briefing_enabled:
                     ///   - briefing_time:
+                    ///   - email_digest_enabled:
+                    ///   - email_categories:
+                    ///   - marketplace_picks_enabled:
+                    ///   - email_rhythm:
                     ///   - muted_workspace_ids:
                     public init(
                         timezone: Swift.String? = nil,
                         quiet_hours_start: Swift.Int? = nil,
                         quiet_hours_end: Swift.Int? = nil,
                         categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Input.Body.jsonPayload.categoriesPayload? = nil,
+                        browser_categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Input.Body.jsonPayload.browser_categoriesPayload? = nil,
                         briefing_enabled: Swift.Bool? = nil,
                         briefing_time: Swift.Int? = nil,
+                        email_digest_enabled: Swift.Bool? = nil,
+                        email_categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Input.Body.jsonPayload.email_categoriesPayload? = nil,
+                        marketplace_picks_enabled: Swift.Bool? = nil,
+                        email_rhythm: Operations.put_sol_api_sol_notification_hyphen_preferences.Input.Body.jsonPayload.email_rhythmPayload? = nil,
                         muted_workspace_ids: [Swift.String]? = nil
                     ) {
                         self.timezone = timezone
                         self.quiet_hours_start = quiet_hours_start
                         self.quiet_hours_end = quiet_hours_end
                         self.categories = categories
+                        self.browser_categories = browser_categories
                         self.briefing_enabled = briefing_enabled
                         self.briefing_time = briefing_time
+                        self.email_digest_enabled = email_digest_enabled
+                        self.email_categories = email_categories
+                        self.marketplace_picks_enabled = marketplace_picks_enabled
+                        self.email_rhythm = email_rhythm
                         self.muted_workspace_ids = muted_workspace_ids
                     }
                     public enum CodingKeys: String, CodingKey {
@@ -71389,8 +71634,13 @@ public enum Operations {
                         case quiet_hours_start
                         case quiet_hours_end
                         case categories
+                        case browser_categories
                         case briefing_enabled
                         case briefing_time
+                        case email_digest_enabled
+                        case email_categories
+                        case marketplace_picks_enabled
+                        case email_rhythm
                         case muted_workspace_ids
                     }
                 }
@@ -71433,6 +71683,8 @@ public enum Operations {
                             public var digest: Swift.Bool
                             /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/categories/tips`.
                             public var tips: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/categories/flow_activity`.
+                            public var flow_activity: Swift.Bool
                             /// Creates a new `categoriesPayload`.
                             ///
                             /// - Parameters:
@@ -71440,30 +71692,137 @@ public enum Operations {
                             ///   - conversation:
                             ///   - digest:
                             ///   - tips:
+                            ///   - flow_activity:
                             public init(
                                 needs_you: Swift.Bool,
                                 conversation: Swift.Bool,
                                 digest: Swift.Bool,
-                                tips: Swift.Bool
+                                tips: Swift.Bool,
+                                flow_activity: Swift.Bool
                             ) {
                                 self.needs_you = needs_you
                                 self.conversation = conversation
                                 self.digest = digest
                                 self.tips = tips
+                                self.flow_activity = flow_activity
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case needs_you
                                 case conversation
                                 case digest
                                 case tips
+                                case flow_activity
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/categories`.
                         public var categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.categoriesPayload
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_categories`.
+                        public struct browser_categoriesPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_categories/needs_you`.
+                            public var needs_you: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_categories/conversation`.
+                            public var conversation: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_categories/digest`.
+                            public var digest: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_categories/tips`.
+                            public var tips: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_categories/flow_activity`.
+                            public var flow_activity: Swift.Bool
+                            /// Creates a new `browser_categoriesPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - needs_you:
+                            ///   - conversation:
+                            ///   - digest:
+                            ///   - tips:
+                            ///   - flow_activity:
+                            public init(
+                                needs_you: Swift.Bool,
+                                conversation: Swift.Bool,
+                                digest: Swift.Bool,
+                                tips: Swift.Bool,
+                                flow_activity: Swift.Bool
+                            ) {
+                                self.needs_you = needs_you
+                                self.conversation = conversation
+                                self.digest = digest
+                                self.tips = tips
+                                self.flow_activity = flow_activity
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case needs_you
+                                case conversation
+                                case digest
+                                case tips
+                                case flow_activity
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_categories`.
+                        public var browser_categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_categoriesPayload
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_not_askedPayload`.
+                        @frozen public enum browser_not_askedPayloadPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                            case needs_you = "needs_you"
+                            case conversation = "conversation"
+                            case digest = "digest"
+                            case tips = "tips"
+                            case flow_activity = "flow_activity"
+                        }
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_not_asked`.
+                        public typealias browser_not_askedPayload = [Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_not_askedPayloadPayload]
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/browser_not_asked`.
+                        public var browser_not_asked: Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_not_askedPayload
                         /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/briefing_enabled`.
                         public var briefing_enabled: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/briefing_time`.
                         public var briefing_time: Swift.Int
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/email_digest_enabled`.
+                        public var email_digest_enabled: Swift.Bool
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/email_categories`.
+                        public struct email_categoriesPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/email_categories/needs_you`.
+                            public var needs_you: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/email_categories/conversation`.
+                            public var conversation: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/email_categories/tips`.
+                            public var tips: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/email_categories/flow_activity`.
+                            public var flow_activity: Swift.Bool
+                            /// Creates a new `email_categoriesPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - needs_you:
+                            ///   - conversation:
+                            ///   - tips:
+                            ///   - flow_activity:
+                            public init(
+                                needs_you: Swift.Bool,
+                                conversation: Swift.Bool,
+                                tips: Swift.Bool,
+                                flow_activity: Swift.Bool
+                            ) {
+                                self.needs_you = needs_you
+                                self.conversation = conversation
+                                self.tips = tips
+                                self.flow_activity = flow_activity
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case needs_you
+                                case conversation
+                                case tips
+                                case flow_activity
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/email_categories`.
+                        public var email_categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.email_categoriesPayload
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/marketplace_picks_enabled`.
+                        public var marketplace_picks_enabled: Swift.Bool
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/email_rhythm`.
+                        @frozen public enum email_rhythmPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                            case daily = "daily"
+                            case weekly = "weekly"
+                        }
+                        /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/email_rhythm`.
+                        public var email_rhythm: Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.email_rhythmPayload
                         /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/muted_workspace_ids`.
                         public var muted_workspace_ids: [Swift.String]
                         /// - Remark: Generated from `#/paths/api/notification-preferences/PUT/responses/200/content/json/updated_at`.
@@ -71475,8 +71834,14 @@ public enum Operations {
                         ///   - quiet_hours_start:
                         ///   - quiet_hours_end:
                         ///   - categories:
+                        ///   - browser_categories:
+                        ///   - browser_not_asked:
                         ///   - briefing_enabled:
                         ///   - briefing_time:
+                        ///   - email_digest_enabled:
+                        ///   - email_categories:
+                        ///   - marketplace_picks_enabled:
+                        ///   - email_rhythm:
                         ///   - muted_workspace_ids:
                         ///   - updated_at:
                         public init(
@@ -71484,8 +71849,14 @@ public enum Operations {
                             quiet_hours_start: Swift.Int? = nil,
                             quiet_hours_end: Swift.Int? = nil,
                             categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.categoriesPayload,
+                            browser_categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_categoriesPayload,
+                            browser_not_asked: Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.browser_not_askedPayload,
                             briefing_enabled: Swift.Bool,
                             briefing_time: Swift.Int,
+                            email_digest_enabled: Swift.Bool,
+                            email_categories: Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.email_categoriesPayload,
+                            marketplace_picks_enabled: Swift.Bool,
+                            email_rhythm: Operations.put_sol_api_sol_notification_hyphen_preferences.Output.Ok.Body.jsonPayload.email_rhythmPayload,
                             muted_workspace_ids: [Swift.String],
                             updated_at: Swift.String? = nil
                         ) {
@@ -71493,8 +71864,14 @@ public enum Operations {
                             self.quiet_hours_start = quiet_hours_start
                             self.quiet_hours_end = quiet_hours_end
                             self.categories = categories
+                            self.browser_categories = browser_categories
+                            self.browser_not_asked = browser_not_asked
                             self.briefing_enabled = briefing_enabled
                             self.briefing_time = briefing_time
+                            self.email_digest_enabled = email_digest_enabled
+                            self.email_categories = email_categories
+                            self.marketplace_picks_enabled = marketplace_picks_enabled
+                            self.email_rhythm = email_rhythm
                             self.muted_workspace_ids = muted_workspace_ids
                             self.updated_at = updated_at
                         }
@@ -71503,8 +71880,14 @@ public enum Operations {
                             case quiet_hours_start
                             case quiet_hours_end
                             case categories
+                            case browser_categories
+                            case browser_not_asked
                             case briefing_enabled
                             case briefing_time
+                            case email_digest_enabled
+                            case email_categories
+                            case marketplace_picks_enabled
+                            case email_rhythm
                             case muted_workspace_ids
                             case updated_at
                         }

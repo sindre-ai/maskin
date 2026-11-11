@@ -14,9 +14,32 @@ describe('GET /api/notification-preferences', () => {
 			timezone: null,
 			quiet_hours_start: null,
 			quiet_hours_end: null,
-			categories: { needs_you: true, conversation: true, digest: true, tips: true },
+			categories: {
+				needs_you: true,
+				conversation: true,
+				digest: true,
+				tips: true,
+				flow_activity: false,
+			},
+			browser_categories: {
+				needs_you: true,
+				conversation: true,
+				digest: true,
+				tips: true,
+				flow_activity: false,
+			},
+			browser_not_asked: ['needs_you', 'conversation', 'digest', 'tips', 'flow_activity'],
 			briefing_enabled: true,
 			briefing_time: 510,
+			email_digest_enabled: false,
+			email_categories: {
+				needs_you: false,
+				conversation: false,
+				tips: false,
+				flow_activity: false,
+			},
+			marketplace_picks_enabled: false,
+			email_rhythm: 'daily',
 			muted_workspace_ids: [],
 			updated_at: null,
 		})
@@ -34,6 +57,7 @@ describe('PUT /api/notification-preferences validation', () => {
 		['briefing time out of range', { briefing_time: 2000 }],
 		['non-uuid muted workspace', { muted_workspace_ids: ['nope'] }],
 		['unknown category value', { categories: { needs_you: 'yes' } }],
+		['unknown email rhythm', { email_rhythm: 'hourly' }],
 	])('returns 400 for %s', async (_n, body) => {
 		const { app } = createTestApp(routes, URL)
 		const res = await app.request(jsonRequest('PUT', URL, body))

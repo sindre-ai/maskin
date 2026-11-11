@@ -96,3 +96,53 @@ export async function sendInviteEmail(params: SendInviteEmailParams): Promise<vo
 	const { error } = await client.emails.send({ from, to: params.to, subject, text, html })
 	if (error) throw new InviteEmailSendError(error.name, error.message)
 }
+
+export interface SendEmailParams {
+	to: string
+	subject: string
+	text: string
+	html: string
+	/** Extra headers, e.g. List-Unsubscribe and List-Unsubscribe-Post. */
+	headers?: Record<string, string>
+}
+
+export class EmailSendError extends Error {
+	constructor(
+		public readonly providerErrorName: string,
+		public readonly providerMessage: string,
+	) {
+		super(`Email send failed: ${providerErrorName}`)
+		this.name = 'EmailSendError'
+	}
+}
+
+/** True when a Resend key is set, so a caller can skip instead of claiming work it cannot send. */
+export function isEmailConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
+	return Boolean(env.RESEND_API_KEY)
+}
+
+/**
+ * Send one message through Resend. Click tracking is a domain setting and is deliberately not
+ * touched here. Returns false (and logs) when no key is set, true once Resend accepted it.
+ */
+export async function sendEmail(params: SendEmailParams): Promise<boolean> {
+	const apiKey = process.env.RESEND_API_KEY
+	const from = process.env.EMAIL_FROM ?? 'notifications@maskin.io'
+	if (!apiKey) {
+		console.log('[email:dev-mode] sendEmail — RESEND_API_KEY is empty, not dispatching')
+		console.log(`  from: ${from}`)
+		console.log(`  subject: ${params.subject}`)
+		return false
+	}
+	const client = new Resend(apiKey)
+	const { error } = await client.emails.send({
+		from,
+		to: params.to,
+		subject: params.subject,
+		text: params.text,
+		html: params.html,
+		...(params.headers ? { headers: params.headers } : {}),
+	})
+	if (error) throw new EmailSendError(error.name, error.message)
+	return true
+}
