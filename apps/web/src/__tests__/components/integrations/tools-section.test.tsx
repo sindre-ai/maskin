@@ -29,6 +29,7 @@ vi.mock('@/hooks/use-integrations', () => ({
 	useIntegrations: () => ({ data: integrations }),
 	useSetAgentGrant: () => ({ mutate: setGrant, isPending: false }),
 	useRemoveAgentGrant: () => ({ mutate: removeGrant, isPending: false }),
+	useRemoveChatGrant: () => ({ mutate: vi.fn(), isPending: false }),
 	useSetDefaultAgentAccess: () => ({ mutate: setDefault, isPending: false }),
 	useCreateCustomMcpServer: () => ({
 		mutate: createServer,

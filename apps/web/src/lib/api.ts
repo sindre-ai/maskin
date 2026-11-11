@@ -922,6 +922,13 @@ export const api = {
 				`/integrations/${id}/allow-from-chat`,
 				{ method: 'POST', body: { sessionId, scope }, workspaceId },
 			),
+		/** Record that a person pressed Not now on an access card. Grants nothing, restarts nothing. */
+		declineFromChat: (id: string, workspaceId: string, sessionId: string) =>
+			request<{ actorId: string }>(`/integrations/${id}/decline-from-chat`, {
+				method: 'POST',
+				body: { sessionId },
+				workspaceId,
+			}),
 		/** Allow the agent whose session asked in a chat to use a connected integration, and restart it. */
 		allowAccess: (
 			id: string,
@@ -936,6 +943,11 @@ export const api = {
 			),
 		removeGrant: (id: string, workspaceId: string, actorId: string) =>
 			request<{ actorId: string }>(`/integrations/${id}/grants/${actorId}`, {
+				method: 'DELETE',
+				workspaceId,
+			}),
+		removeChatGrant: (id: string, workspaceId: string, grantId: string) =>
+			request<{ grantId: string }>(`/integrations/${id}/chat-grants/${grantId}`, {
 				method: 'DELETE',
 				workspaceId,
 			}),
@@ -2565,7 +2577,7 @@ export interface IntegrationResponse {
 	/** Explicit per-agent grants. For a Keychain credential these are the only agents with access. */
 	agentGrants?: AgentGrant[]
 	/** Saved credentials shared with an agent for one chat only. */
-	chatGrants?: Array<{ actorId: string; conversationId: string }>
+	chatGrants?: Array<{ id: string; actorId: string; conversationId: string }>
 }
 
 /** 'none' is an explicit no that beats a read default. A saved credential only uses read_write. */

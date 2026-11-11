@@ -11,6 +11,7 @@ import { useActors } from '@/hooks/use-actors'
 import { useCanWrite } from '@/hooks/use-can-write'
 import {
 	useRemoveAgentGrant,
+	useRemoveChatGrant,
 	useSetAgentGrant,
 	useSetDefaultAgentAccess,
 } from '@/hooks/use-integrations'
@@ -139,6 +140,7 @@ export function AgentAccess({
 	const setGrant = useSetAgentGrant(workspaceId, integration.id)
 	const removeGrant = useRemoveAgentGrant(workspaceId, integration.id)
 	const setDefault = useSetDefaultAgentAccess(workspaceId, integration.id)
+	const removeChatGrant = useRemoveChatGrant(workspaceId, integration.id)
 
 	const defaultAccess = integration.defaultAgentAccess ?? (isKey ? 'none' : 'read')
 	const grants = integration.agentGrants ?? []
@@ -148,6 +150,7 @@ export function AgentAccess({
 		const grant = grants.find((g) => g.actorId === agent.id)
 		return grant ? [{ agent, access: grant.access }] : []
 	})
+	const chatGrants = integration.chatGrants ?? []
 	const addable = agents.filter((a) => !grants.some((g) => g.actorId === a.id))
 
 	const me = getStoredActor()
@@ -155,7 +158,8 @@ export function AgentAccess({
 		canWrite &&
 		me?.type === 'human' &&
 		(integration.createdBy === me.id || workspace.role === 'owner' || workspace.role === 'admin')
-	const busy = setGrant.isPending || removeGrant.isPending || setDefault.isPending
+	const busy =
+		setGrant.isPending || removeGrant.isPending || setDefault.isPending || removeChatGrant.isPending
 
 	// An agent set to what "All other agents" already get has nothing of its own to keep: its entry
 	// goes and it falls back into that group. For a key, Full access is the default's 'read'.
@@ -273,6 +277,36 @@ export function AgentAccess({
 								</SelectContent>
 							</Select>
 						</ViewerTooltip>
+					)}
+
+					{chatGrants.length > 0 && (
+						<div className="divide-y divide-border-subtle overflow-hidden rounded-xl border border-border bg-card">
+							<p className="settings-label px-3 py-2">Allowed in a chat</p>
+							{chatGrants.map((grant) => {
+								const agent = agents.find((a) => a.id === grant.actorId)
+								return (
+									<div key={grant.id} className="flex flex-wrap items-center gap-2 px-3 py-2.5">
+										<div className="min-w-0 flex-1 basis-40">
+											<p className="truncate text-[15px] font-semibold text-foreground">
+												{agent?.name ?? 'An agent'}
+											</p>
+											<p className="text-[13px] text-muted-foreground">Only in one chat</p>
+										</div>
+										<ViewerTooltip className="flex">
+											<button
+												type="button"
+												className="text-sm text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:opacity-50 max-md:min-h-11"
+												disabled={!canEdit || busy}
+												aria-label={`Remove chat access for ${agent?.name ?? 'this agent'}`}
+												onClick={() => removeChatGrant.mutate(grant.id)}
+											>
+												Remove
+											</button>
+										</ViewerTooltip>
+									</div>
+								)
+							})}
+						</div>
 					)}
 
 					<p className="text-xs text-muted-foreground">
