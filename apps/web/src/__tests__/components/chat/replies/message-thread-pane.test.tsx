@@ -164,6 +164,28 @@ describe('MessageThreadPane', () => {
 		expect(text.indexOf('message 2')).toBeLessThan(text.indexOf('message 3'))
 	})
 
+	it("shows an agent's question card among the thread's replies", async () => {
+		const question = reply(2, {
+			content: 'How should I reach Spotify?',
+			metadata: {
+				question: {
+					session_id: '11111111-1111-1111-1111-111111111111',
+					questions: [
+						{
+							question: 'How should I reach Spotify?',
+							header: 'Spotify access',
+							multi_select: false,
+							options: [{ label: 'API token' }, { label: 'No login' }],
+						},
+					],
+				},
+			},
+		})
+		setup({ replies: [question] })
+		expect(await screen.findByRole('button', { name: 'API token' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Send answer' })).toBeInTheDocument()
+	})
+
 	it('marks the thread read up to the newest reply on open and again as replies arrive', async () => {
 		const { client } = setup()
 		await waitFor(() =>

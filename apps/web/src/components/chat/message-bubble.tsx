@@ -584,6 +584,7 @@ export function MessageBubble({
 						questionMessageId={message.id}
 						question={message.metadata.question}
 						answered={questionAnswered}
+						threadRootId={message.threadRootId}
 					/>
 				) : null}
 				{/* An agent's connect_integration call, surfaced as a Connect card. Like
