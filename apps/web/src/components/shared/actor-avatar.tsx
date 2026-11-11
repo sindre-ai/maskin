@@ -42,8 +42,9 @@ export type ActorAvatarTone = 'subtle' | 'strong'
 
 /** Strip everything that is not a letter or digit so a bracketed qualifier
  *  ("Linker (Sigrid)") or a title suffix never lands in the glyph. A single
- *  all-caps word of 3 letters (CTO, CPO, PMM) keeps all three; every other
- *  name stays at two. */
+ *  all-caps word of 3 letters (CTO, CPO, PMM) keeps all three; names of three
+ *  or more words use the first letter of the first three words (Chief of Staff
+ *  is COS); every other name stays at two. */
 export function getActorInitials(name: string): string {
 	const trimmed = (name ?? '').trim()
 	if (!trimmed) return '?'
@@ -53,9 +54,11 @@ export function getActorInitials(name: string): string {
 		.filter(Boolean)
 	if (words.length === 0) return '?'
 	if (words.length >= 2) {
-		const first = words[0]?.[0] ?? ''
-		const second = words[1]?.[0] ?? ''
-		const combined = (first + second).toUpperCase()
+		const combined = words
+			.slice(0, 3)
+			.map((word) => word[0] ?? '')
+			.join('')
+			.toUpperCase()
 		return combined || '?'
 	}
 	const word = words[0] ?? ''

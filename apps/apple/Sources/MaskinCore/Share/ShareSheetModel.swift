@@ -25,22 +25,31 @@ public final class ShareSheetModel {
 	public private(set) var workspace: ShareWorkspace?
 	public var title = ""
 	public var note = ""
-	public var destination: ShareDestination = .object(type: "insight")
+	public var destination: ShareDestination = .newChat(agentID: "")
 	/// Every workspace the person is in, for the picker. Empty until loaded (or when offline).
 	public private(set) var workspaces: [ShareWorkspace] = []
 	/// Conversations of the chosen workspace, for the Chat destination. Empty until loaded.
 	public private(set) var conversations: [ShareConversation] = []
+	/// The workspace's agents, for the To row and the picker. Empty until loaded (or when offline).
+	public private(set) var agents: [ShareAgent] = []
+	/// True while the agent list is loading. Sending waits for it, so the default agent is known.
+	public private(set) var isLoadingAgents = false
+	/// The agent list could not be loaded (offline). The last agent used still works as the target.
+	public private(set) var agentsFailedToLoad = false
 	/// True while the chosen workspace's types and statuses are still loading. Sending waits for
 	/// it: the first status of a type the server doesn't know would be rejected.
 	public private(set) var isLoadingSchema = false
 	/// Set when a failed post had already created the object, so Retry only finishes the files.
 	public private(set) var createdObjectBeforeFailure = false
+	/// Set when a failed post had already uploaded files, so Retry only finishes the chat.
+	public private(set) var uploadedFilesBeforeFailure = false
 
 	@ObservationIgnored private let loadContent: @Sendable () async -> ShareContent
 	@ObservationIgnored private let secretStore: any SecretStore
 	@ObservationIgnored private let makeRemote: @Sendable (ShareCredentials) -> any ShareRemote
 	@ObservationIgnored private let queue: ShareQueue?
 	@ObservationIgnored private let drafts: ShareDraftStore?
+	@ObservationIgnored private let memory: ShareAgentMemory?
 	@ObservationIgnored private var postTask: Task<Void, Never>?
 	@ObservationIgnored private var poster: SharePoster?
 	@ObservationIgnored private var credentials: ShareCredentials?
@@ -48,10 +57,11 @@ public final class ShareSheetModel {
 	public init(
 		secretStore: any SecretStore, loadContent: @escaping @Sendable () async -> ShareContent,
 		makeRemote: @escaping @Sendable (ShareCredentials) -> any ShareRemote,
-		queue: ShareQueue? = nil, drafts: ShareDraftStore? = nil
+		queue: ShareQueue? = nil, drafts: ShareDraftStore? = nil, memory: ShareAgentMemory? = nil
 	) {
 		self.queue = queue
 		self.drafts = drafts
+		self.memory = memory
 		self.secretStore = secretStore
 		self.loadContent = loadContent
 		self.makeRemote = makeRemote
@@ -73,6 +83,45 @@ public final class ShareSheetModel {
 		case .object(let type): schema.displayName(for: type)
 		case .filesOnly: content.attachments.count == 1 ? "File" : "Files"
 		case .chat(let id): conversations.first { $0.id == id }?.title ?? "Chat"
+		case .newChat(let id):
+			agents.first { $0.id == id }?.name ?? (id.isEmpty ? "Choose an agent" : "Last agent used")
+		}
+	}
+
+	/// Whether the share starts a new chat (the default) rather than adding to an existing one.
+	public var isNewChat: Bool { if case .newChat = destination { true } else { false } }
+
+	/// The agent a new chat goes to: the pick, else the last one used, else the Chief of Staff.
+	public var selectedAgent: ShareAgent? {
+		guard case .newChat(let id) = destination else { return nil }
+		return agents.first { $0.id == id }
+	}
+
+	/// The last agents used in this workspace that are still in it, most recent first.
+	public var recentAgents: [ShareAgent] {
+		guard let workspace = credentials?.workspaceId, let memory else { return [] }
+		return memory.recent(workspaceId: workspace).compactMap { id in agents.first { $0.id == id } }
+	}
+
+	/// Agents whose name or role contains `query`, in list order. Everyone for a blank query.
+	public func agents(matching query: String) -> [ShareAgent] {
+		let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+		guard !needle.isEmpty else { return agents }
+		return agents.filter { $0.name.lowercased().contains(needle) || ($0.role ?? "").lowercased().contains(needle) }
+	}
+
+	/// Points the share at a new chat with `agentID`.
+	public func selectAgent(_ id: String) { destination = .newChat(agentID: id) }
+
+	/// Points the share at an existing chat.
+	public func selectConversation(_ id: String) { destination = .chat(id: id) }
+
+	/// The line on the success screen.
+	public var successTitle: String {
+		switch destination {
+		case .newChat: "Chat started with \(label(for: destination))"
+		case .chat: "Sent to \(label(for: destination))"
+		default: "Sent to Maskin"
 		}
 	}
 
@@ -82,12 +131,19 @@ public final class ShareSheetModel {
 	/// The workspace the share currently goes to: the picked one, else the session's.
 	public var activeWorkspaceId: String? { credentials?.workspaceId }
 
-	public var showsTitleField: Bool { destination != .filesOnly && !isChat }
+	public var showsTitleField: Bool { destination != .filesOnly && !isChat && !isNewChat }
 	public var canPost: Bool {
 		switch phase {
-		case .ready, .failed: !isLoadingSchema
+		case .ready, .failed: !isLoadingSchema && !isLoadingAgents && hasTarget
 		default: false
 		}
+	}
+
+	/// A new chat needs an agent. With the list loaded that is a pick; with the list unreachable the
+	/// last agent used stands in, and with neither Send still runs and fails with a reason.
+	private var hasTarget: Bool {
+		guard case .newChat(let id) = destination else { return true }
+		return !id.isEmpty || agentsFailedToLoad
 	}
 
 	/// Whether dismissing now would throw away something the person typed.
@@ -145,8 +201,9 @@ public final class ShareSheetModel {
 			if !saved.title.isEmpty { title = saved.title }
 			note = saved.note
 		}
-		destination = Self.defaultDestination(in: schema, content: loaded)
+		destination = .newChat(agentID: "")
 		isLoadingSchema = true
+		isLoadingAgents = true
 		phase = .ready
 
 		await connect(credentials)
@@ -162,12 +219,17 @@ public final class ShareSheetModel {
 		poster = SharePoster(remote: remote)
 		workspace = nil
 		conversations = []
+		agents = []
 		isLoadingSchema = true
-		defer { isLoadingSchema = false }
+		isLoadingAgents = true
+		defer {
+			isLoadingSchema = false
+			isLoadingAgents = false
+		}
 		do {
 			let workspace = try await remote.workspace()
 			self.workspace = workspace
-			if !typeOptions.contains(destination), !isChat {
+			if isObjectDestination, !typeOptions.contains(destination) {
 				destination = Self.defaultDestination(in: workspace.schema, content: content)
 			}
 		} catch let error as ShareError where error == .sessionExpired || error == .noWorkspace {
@@ -177,19 +239,54 @@ public final class ShareSheetModel {
 			// Offline or a hiccup: the sheet still works with the standard types.
 		}
 		conversations = (try? await remote.conversations()) ?? []
+		await loadAgents(remote, workspaceId: credentials.workspaceId)
+	}
+
+	private var isObjectDestination: Bool {
+		switch destination {
+		case .object, .filesOnly: true
+		case .chat, .newChat: false
+		}
+	}
+
+	/// Loads the agents and sets the default one: the last used in this workspace, else the Chief of
+	/// Staff, else none (the person picks). A list that can't be loaded leaves the last used agent
+	/// as the target so an offline share can still be saved for later.
+	private func loadAgents(_ remote: any ShareRemote, workspaceId: String) async {
+		let remembered = memory?.recent(workspaceId: workspaceId) ?? []
+		do {
+			agents = try await remote.agents()
+			agentsFailedToLoad = false
+		} catch let error as ShareError where error == .sessionExpired {
+			phase = .blocked(error)
+			return
+		} catch {
+			agents = []
+			agentsFailedToLoad = true
+		}
+		guard case .newChat(let current) = destination else { return }
+		if agentsFailedToLoad {
+			destination = .newChat(agentID: current.isEmpty ? (remembered.first ?? "") : current)
+		} else if agents.isEmpty {
+			phase = .blocked(.noAgents)
+		} else if agents.contains(where: { $0.id == current }) {
+			return
+		} else {
+			let fallback = remembered.compactMap { id in agents.first { $0.id == id } }.first
+				?? agents.first { $0.isChiefOfStaff }
+			destination = .newChat(agentID: fallback?.id ?? "")
+		}
 	}
 
 	/// Sends the share to another workspace. Types and conversations are that workspace's own,
 	/// so a destination that doesn't exist there falls back to the default.
 	public func selectWorkspace(_ id: String) async {
 		guard canPost, let current = credentials, id != current.workspaceId else { return }
-		if isChat { destination = Self.defaultDestination(in: schema, content: content) }
+		// Chats and agents belong to a workspace: the new one starts from its own default.
+		destination = .newChat(agentID: "")
 		await connect(ShareCredentials(apiKey: current.apiKey, workspaceId: id))
 		if let name = workspaces.first(where: { $0.id == id })?.name, workspace == nil {
 			workspace = ShareWorkspace(id: id, name: name, schema: .fallback)
-		}
-		if !typeOptions.contains(destination), !isChat {
-			destination = Self.defaultDestination(in: schema, content: content)
 		}
 	}
 
@@ -236,7 +333,15 @@ public final class ShareSheetModel {
 		let status: String
 		switch destination {
 		case .object(let type): status = schema.statuses(for: type).first ?? "new"
-		case .filesOnly, .chat: status = ""
+		case .filesOnly, .chat, .newChat: status = ""
+		}
+		if case .newChat(let agentID) = destination {
+			// No agent and no list: nothing can be saved for later either, so say so.
+			guard !agentID.isEmpty else {
+				phase = .failed(.offline)
+				return
+			}
+			if let workspace = credentials?.workspaceId { memory?.remember(agentID, workspaceId: workspace) }
 		}
 		let request = ShareRequest(
 			destination: destination, title: title, note: note, content: content, status: status)
@@ -255,6 +360,7 @@ public final class ShareSheetModel {
 			if Task.isCancelled { phase = .ready; return }
 			if error.isTransient, await park(request) { return }
 			createdObjectBeforeFailure = await poster.progress.objectID != nil
+			uploadedFilesBeforeFailure = await !poster.progress.fileIDs.isEmpty
 			phase = error.needsApp ? .blocked(error) : .failed(error)
 		} catch {
 			if Task.isCancelled { phase = .ready; return }

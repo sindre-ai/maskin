@@ -134,6 +134,65 @@ struct APIShareRemoteTests {
 		}
 	}
 
+	@Test("create chat: POST /api/conversations with the agent, the first message, its files and one key")
+	func createChatRequest() async throws {
+		let transport = WireTransport()
+		transport.status = 400  // the answer is not under test, the request is
+		let client = Client(
+			serverURL: URL(string: "http://localhost:3000")!, transport: transport,
+			middlewares: [IdempotencyMiddleware()])
+		let remote = APIShareRemote(client: client, workspaceID: "ws-1")
+		_ = try? await remote.createChat(
+			agentID: "agent-1", title: "A page", content: "Look at this",
+			attachments: [ChatAttachmentRef(fileID: "f-1", name: "a.pdf", mimeType: "application/pdf", sizeBytes: 3)],
+			idempotencyKey: "key-chat")
+		let seen = try #require(transport.seen.first)
+		#expect(seen.method == "POST" && seen.path == "/api/conversations")
+		#expect(seen.headers["x-workspace-id"] == "ws-1")
+		#expect(seen.headers["idempotency-key"] == "key-chat")
+		let json = try #require(JSONSerialization.jsonObject(with: seen.body) as? [String: Any])
+		#expect(json["participant_actor_ids"] as? [String] == ["agent-1"])
+		#expect(json["title"] as? String == "A page" && json["initial_message"] as? String == "Look at this")
+		#expect(json["direct"] == nil)
+		let metadata = try #require(json["initial_message_metadata"] as? [String: Any])
+		let files = try #require(metadata["attachments"] as? [[String: Any]])
+		#expect(files.first?["file_id"] as? String == "f-1")
+		#expect(metadata["started_from"] as? String == "share")
+	}
+
+	@Test("create chat: a share with no files still carries the share mark, and nothing else")
+	func createChatMarkWithoutFiles() async throws {
+		let transport = WireTransport()
+		transport.status = 400  // the answer is not under test, the request is
+		let client = Client(
+			serverURL: URL(string: "http://localhost:3000")!, transport: transport,
+			middlewares: [IdempotencyMiddleware()])
+		let remote = APIShareRemote(client: client, workspaceID: "ws-1")
+		_ = try? await remote.createChat(
+			agentID: "agent-1", title: "A page", content: "Look at this", attachments: [],
+			idempotencyKey: "key-chat")
+		let seen = try #require(transport.seen.first)
+		let json = try #require(JSONSerialization.jsonObject(with: seen.body) as? [String: Any])
+		let metadata = try #require(json["initial_message_metadata"] as? [String: Any])
+		#expect(metadata["started_from"] as? String == "share")
+		#expect(metadata.keys.sorted() == ["started_from"])
+	}
+
+	@Test("create chat keeps the real status: a hiccup is retryable, a refusal is not, nothing is unknown")
+	func createChatStatusMapping() async {
+		let cases: [(Int, ShareError)] = [
+			(400, .rejected), (401, .sessionExpired), (403, .rejected), (429, .server), (500, .server), (503, .server),
+		]
+		for (status, expected) in cases {
+			let transport = WireTransport()
+			transport.status = status
+			await #expect(throws: expected) {
+				_ = try await make(transport).createChat(
+					agentID: "agent-1", title: "t", content: "c", attachments: [], idempotencyKey: "k")
+			}
+		}
+	}
+
 	@Test("a rejected upload names the file; transport errors map to offline")
 	func uploadErrors() async throws {
 		let transport = WireTransport()

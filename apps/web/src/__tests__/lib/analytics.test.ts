@@ -17,6 +17,7 @@ import {
 	trackChatSessionStarted,
 	trackCommentPosted,
 	trackCreditLowShown,
+	trackEmailReturn,
 	trackEvent,
 	trackFileViewerCommentResolved,
 	trackFileViewerPageNavigated,
@@ -1072,5 +1073,42 @@ describe('file_viewer events', () => {
 			comment_id: 'cmt-1',
 			resolved_by: 'actor-99',
 		})
+	})
+})
+
+describe('email_return', () => {
+	beforeEach(() => {
+		sessionStorage.clear()
+		__setInitializedForTesting(true)
+	})
+
+	it('fires once on the first app_active after arriving with surface=email', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+		expect(trackEmailReturn('app_active', '?surface=email')).toBe(true)
+		expect(trackEmailReturn('foryou_card_shown')).toBe(false)
+		expect(capture).toHaveBeenCalledTimes(1)
+		expect(capture).toHaveBeenCalledWith('email_return', { via: 'app_active' })
+	})
+
+	it('fires on a For You event when that comes first', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+		expect(trackEmailReturn('foryou_card_action', '?surface=email')).toBe(true)
+		expect(capture).toHaveBeenCalledWith('email_return', { via: 'foryou_card_action' })
+	})
+
+	it('carries the block of the mail the button sat in, and drops an unknown one', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+		expect(trackEmailReturn('app_active', '?surface=email&block=pick')).toBe(true)
+		expect(capture).toHaveBeenCalledWith('email_return', { via: 'app_active', block: 'pick' })
+		sessionStorage.clear()
+		expect(trackEmailReturn('app_active', '?surface=email&block=junk')).toBe(true)
+		expect(capture).toHaveBeenLastCalledWith('email_return', { via: 'app_active' })
+	})
+
+	it('does not fire without the email tag', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+		expect(trackEmailReturn('app_active', '?surface=web')).toBe(false)
+		expect(trackEmailReturn('app_active', '')).toBe(false)
+		expect(capture).not.toHaveBeenCalled()
 	})
 })

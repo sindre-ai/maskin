@@ -5,8 +5,8 @@
  * default for anything not set (a more specific setting beats the default):
  *
  *   always_allow  the agent sends without asking; the send is logged on the draft (`auto_sent`)
- *   ask_first     nothing goes out until a person approves the exact text (how every send behaved
- *                 before this existed)
+ *   ask_first     nothing goes out until a person approves the exact text of a draft (on its
+ *                 card, after editing it there, or by saying yes in the chat)
  *   deny          the send tool refuses, whatever the agent says
  *
  * Only a human admin or owner can change a setting. Resolution and the send gate live in
@@ -54,24 +54,24 @@ export const SEND_PERMISSION_KIND_LABELS: Record<SendPermissionKind, string> = {
 }
 
 /**
- * Where a workspace starts, set by Sebastian on 4 Nov 2026: ask first for what reaches people
- * outside the company (email, LinkedIn messages, connection requests and InMail), always allow
- * for everything else (posts, comments, Slack). The migration writes these as the workspace
- * default of every existing workspace; the same table answers for a workspace that has no row,
- * so a new workspace starts the same way.
+ * Where a workspace starts: every kind sends directly (Sebastian, 11 Nov 2026: an agent with
+ * Read & write sends; a person turns a kind to ask first, or off, per agent or for the whole
+ * workspace). This is the answer for a workspace that has no saved row. It replaces the 4 Nov
+ * start (ask first for email, LinkedIn messages, invitations and InMail); the rows that
+ * migration wrote into existing workspaces are saved settings and stay as they are until a
+ * person changes them.
  */
 export const STARTING_SEND_MODES: Record<SendPermissionKind, SendPermissionMode> = {
-	email: 'ask_first',
-	linkedin_message: 'ask_first',
-	linkedin_connection_request: 'ask_first',
-	linkedin_inmail: 'ask_first',
+	email: 'always_allow',
+	linkedin_message: 'always_allow',
+	linkedin_connection_request: 'always_allow',
+	linkedin_inmail: 'always_allow',
 	linkedin_post: 'always_allow',
 	linkedin_comment: 'always_allow',
 	linkedin_comment_reply: 'always_allow',
 	linkedin_post_edit: 'always_allow',
 	slack_message: 'always_allow',
-	// Typed by hand outside any integration to someone outside the company, so it asks first.
-	manual_message: 'ask_first',
+	manual_message: 'always_allow',
 }
 
 export const isSendPermissionKind = (value: string): value is SendPermissionKind =>

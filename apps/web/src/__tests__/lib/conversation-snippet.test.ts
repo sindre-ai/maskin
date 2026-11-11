@@ -1,5 +1,5 @@
 import type { ConversationListItemResponse } from '@/lib/api'
-import { foldName, sameName, snippetAuthorLabel } from '@/lib/conversation-snippet'
+import { foldName, sameName, shortActorName, snippetAuthorLabel } from '@/lib/conversation-snippet'
 import { describe, expect, it } from 'vitest'
 
 type Participant = ConversationListItemResponse['participants'][number]
@@ -97,5 +97,18 @@ describe('snippetAuthorLabel', () => {
 			snippet_actor_name: 'Bookkeeper',
 		}
 		expect(snippetAuthorLabel(noId, 'Q3 planning', 'me')).toBe('Bookkeeper')
+	})
+})
+
+describe('shortActorName', () => {
+	it('cuts a name of three or more words to its initials, small words in lower case', () => {
+		expect(shortActorName('Chief of Staff')).toBe('CoS')
+		expect(shortActorName('Head Of Growth')).toBe('HOG')
+	})
+
+	it('leaves one- and two-word names whole', () => {
+		expect(shortActorName('Billing Agent')).toBe('Billing Agent')
+		expect(shortActorName('Strategist')).toBe('Strategist')
+		expect(shortActorName('  Quill ')).toBe('Quill')
 	})
 })

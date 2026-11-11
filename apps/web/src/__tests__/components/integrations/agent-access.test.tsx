@@ -193,25 +193,12 @@ describe('AgentAccess', () => {
 		expect(setDefault).toHaveBeenCalledWith('read_write')
 	})
 
-	it('offers Read & write as the default for Gmail too, and says each email still needs approval', async () => {
+	it('offers Read & write as the default for Gmail too', async () => {
 		const { open, user } = renderOpen({ provider: 'gmail' })
 		await open()
-		expect(screen.getByText(/Each email still waits for your approval/)).toBeInTheDocument()
 		await user.click(screen.getByRole('combobox', { name: 'Access for all other agents' }))
 		await user.click(await screen.findByRole('option', { name: 'Read & write' }))
 		expect(setDefault).toHaveBeenCalledWith('read_write')
-	})
-
-	it('says on a Slack card, without opening it, that posts outside the Direct posting list wait', () => {
-		renderOpen({ provider: 'slack', defaultAgentAccess: 'read_write' })
-		expect(
-			screen.getByText(/not on the Direct posting list wait for a person to approve/),
-		).toBeInTheDocument()
-	})
-
-	it('does not say it on other integrations', () => {
-		renderOpen({ provider: 'github', defaultAgentAccess: 'read_write' })
-		expect(screen.queryByText(/Direct posting list/)).not.toBeInTheDocument()
 	})
 
 	it('adds an agent that has no override, starting at read & write when the default is read', async () => {

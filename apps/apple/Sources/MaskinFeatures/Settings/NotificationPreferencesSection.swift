@@ -38,6 +38,7 @@ struct NotificationPreferencesSection: View {
 			.accessibilityHint("Dismiss")
 		}
 		categories
+		emailRhythm
 		quietHours
 		briefing
 		if !workspaces.isEmpty { mutes }
@@ -55,9 +56,43 @@ struct NotificationPreferencesSection: View {
 					id: "needs_you", title: "Needs you",
 					subtitle: "Decisions and questions from your agents",
 					accessory: .state(PageState("Always on", .active))),
+				PageRowModel(
+					id: "email_needs_you", title: "Needs you by email",
+					subtitle: "Decisions and questions from your agents",
+					accessory: .toggle(
+						isOn: store.preferences.emailNeedsYou, set: { store.setEmailNeedsYou(enabled: $0) })),
 				toggleRow(.conversation, "Chat replies", "When someone answers you in a chat"),
+				PageRowModel(
+					id: "email_conversation", title: "Chat replies by email",
+					subtitle: "When someone answers you in a chat",
+					accessory: .toggle(
+						isOn: store.preferences.emailConversation,
+						set: { store.setEmailConversation(enabled: $0) })),
 				toggleRow(.digest, "Digests", "Summaries of what your agents got done"),
+				PageRowModel(
+					id: "email_digest", title: "Digests by email",
+					subtitle: "Summaries of what your agents got done",
+					accessory: .toggle(
+						isOn: store.preferences.emailDigestEnabled, set: { store.setEmailDigest(enabled: $0) })),
+				toggleRow(.flowActivity, "Flow activity", "When one of your flows finishes a run"),
+				PageRowModel(
+					id: "email_flow_activity", title: "Flow activity by email",
+					subtitle: "When one of your flows finishes a run",
+					accessory: .toggle(
+						isOn: store.preferences.emailFlowActivity,
+						set: { store.setEmailFlowActivity(enabled: $0) })),
+				PageRowModel(
+					id: "marketplace_picks", title: "Marketplace picks",
+					subtitle: "One suggested flow under your summary email, at most once a week",
+					accessory: .toggle(
+						isOn: store.preferences.marketplacePicksEnabled,
+						set: { store.setMarketplacePicks(enabled: $0) })),
 				toggleRow(.tips, "Tips and updates", "What\u{2019}s new in Maskin"),
+				PageRowModel(
+					id: "email_tips", title: "Tips and updates by email",
+					subtitle: "What\u{2019}s new in Maskin",
+					accessory: .toggle(
+						isOn: store.preferences.emailTips, set: { store.setEmailTips(enabled: $0) })),
 			])
 			PageFootnote(
 				text: "Needs you is always delivered, even in quiet hours. To quiet a workspace, mute it below. Its decisions still arrive, but don\u{2019}t break through Focus.")
@@ -71,6 +106,40 @@ struct NotificationPreferencesSection: View {
 			id: category.rawValue, title: title, subtitle: subtitle,
 			accessory: .toggle(
 				isOn: store.isEnabled(category), set: { store.setCategory(category, enabled: $0) }))
+	}
+
+	// MARK: Summary email
+
+	private var emailRhythm: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+			PageGroupLabel(text: "Summary email")
+			PreferenceCard {
+				VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+					VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+						Text("Summary email")
+							.font(MaskinTypeface.sans(MaskinFontSize.t16, weight: MaskinFontWeight.semibold))
+							.foregroundStyle(MaskinColor.ink)
+						Text("One email with what your agents did and what waits on you.")
+							.font(MaskinTypeface.sans(MaskinFontSize.t13))
+							.foregroundStyle(MaskinColor.ink4)
+					}
+					Picker(
+						"How often the summary email comes",
+						selection: Binding(
+							get: { store.preferences.emailChoice },
+							set: { store.setEmailChoice($0) })
+					) {
+						Text("Daily").tag(NotificationPreferences.EmailChoice.daily)
+						Text("Weekly").tag(NotificationPreferences.EmailChoice.weekly)
+						Text("Off").tag(NotificationPreferences.EmailChoice.off)
+					}
+					.pickerStyle(.segmented)
+				}
+				.frame(maxWidth: .infinity, alignment: .leading)
+				.padding(.horizontal, MaskinSpace.s9)
+				.padding(.vertical, MaskinSpace.s8)
+			}
+		}
 	}
 
 	// MARK: Quiet hours

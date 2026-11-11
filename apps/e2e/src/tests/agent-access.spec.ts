@@ -168,10 +168,7 @@ test('the access section reads in light and dark', async ({ page, account }) => 
 const GMAIL = { name: 'gmail', displayName: 'Gmail' }
 
 for (const vp of SHIP_GATE_VIEWPORTS) {
-	test(`Gmail has the same three levels, and says each email still needs approval @ ${vp.label}`, async ({
-		page,
-		account,
-	}) => {
+	test(`Gmail has the same three levels @ ${vp.label}`, async ({ page, account }) => {
 		await page.setViewportSize({ width: vp.width, height: vp.height })
 		const writer = await account.api.createAgentActor('Sales Rep', account.workspaceId)
 		const state: State = { defaultAgentAccess: 'read', agentGrants: [] }
@@ -181,8 +178,6 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 		await openIntegrationCard(page, /Gmail/)
 		await page.getByRole('button', { name: /Agent access/ }).click()
 
-		// Read & write on Gmail lets an agent draft; each email still waits for a person.
-		await expect(page.getByText(/Each email still waits for your approval/)).toBeVisible()
 		await page.getByRole('combobox', { name: 'Add an agent' }).click()
 		await page.getByRole('option', { name: 'Sales Rep' }).click()
 		const level = page.getByRole('combobox', { name: 'Access for Sales Rep' })

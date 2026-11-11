@@ -4,7 +4,7 @@ import { Label } from '@/components/ui/label'
 import { useAuth } from '@/hooks/use-auth'
 import { trackEvent } from '@/lib/analytics'
 import { api } from '@/lib/api'
-import { identifyForWorkspace, signupSourceFrom } from '@/lib/posthog'
+import { firstTouchFromPosthog, identifyForWorkspace, signupSourceFrom } from '@/lib/posthog'
 import { safeInternalPath } from '@/lib/safe-redirect'
 import { welcomeLandingPath } from '@/lib/welcome-landing'
 import { buildSignupCaptureKnowledge } from '@maskin/shared'
@@ -159,6 +159,7 @@ function SignupPage() {
 						window.location.search,
 						document.referrer,
 						window.location.hostname,
+						firstTouchFromPosthog(),
 					),
 				})
 				trackEvent('signup_completed', { user_id: actorId, workspace_id: workspaceId })

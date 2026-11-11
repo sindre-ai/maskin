@@ -36,6 +36,7 @@ export const OAUTH_ALLOWED_ROUTES: readonly string[] = [
 	'PATCH /api/files/:id',
 	'DELETE /api/files/:id',
 	'GET /api/triggers',
+	'GET /api/triggers/:id',
 	'POST /api/triggers',
 	'PATCH /api/triggers/:id',
 	'DELETE /api/triggers/:id',
@@ -102,6 +103,12 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'POST /api/actors/:id/run',
 	'GET /api/admin/landing-funnel',
 	'POST /api/admin/linkedin-unipile/refresh-identities',
+	// The stop link in a summary email: opened signed out and authenticated by its own signed token, so no mat_ token has a reason to call it.
+	'GET /api/email/stop',
+	'POST /api/email/stop',
+	// The "Not useful" link under a Marketplace pick: opened signed out and authenticated by its own signed token.
+	'GET /api/email/pick-dismiss',
+	'POST /api/email/pick-dismiss',
 	'GET /api/briefing',
 	'POST /api/briefing/spoken',
 	'GET /api/conversations',
@@ -243,6 +250,8 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'GET /api/billing/invoices',
 	'POST /api/billing/trial/setup',
 	'POST /api/billing/trial/start',
+	'GET /api/billing/auto-top-up',
+	'PUT /api/billing/auto-top-up',
 	'GET /api/billing/usage',
 
 	// Create a workspace, change settings, or change who is in a workspace and with what role.
@@ -408,7 +417,6 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'PUT /api/integrations/:id/default-access',
 	'PUT /api/integrations/:id/grants',
 	'PUT /api/integrations/:id/grants/:actorId',
-	'PUT /api/integrations/slack/direct-post-channels',
 	'PUT /api/notification-preferences',
 	'PUT /api/send-permissions',
 ]

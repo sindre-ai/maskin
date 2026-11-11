@@ -39,8 +39,16 @@ public struct APINotificationPreferencesSource: NotificationPreferencesAPI {
 			quietHours: Self.quietHours(start: body.quiet_hours_start, end: body.quiet_hours_end),
 			categories: .init(
 				needsYou: body.categories.needs_you, conversation: body.categories.conversation,
-				digest: body.categories.digest, tips: body.categories.tips),
+				digest: body.categories.digest, tips: body.categories.tips,
+				flowActivity: body.categories.flow_activity),
 			briefingEnabled: body.briefing_enabled, briefingTime: body.briefing_time,
+			emailDigestEnabled: body.email_digest_enabled,
+			emailNeedsYou: body.email_categories.needs_you,
+			emailConversation: body.email_categories.conversation,
+			emailTips: body.email_categories.tips,
+			emailFlowActivity: body.email_categories.flow_activity,
+			marketplacePicksEnabled: body.marketplace_picks_enabled,
+			emailRhythm: NotificationPreferences.EmailRhythm(rawValue: body.email_rhythm.rawValue) ?? .daily,
 			mutedWorkspaceIds: body.muted_workspace_ids)
 	}
 
@@ -91,6 +99,14 @@ public struct APINotificationPreferencesSource: NotificationPreferencesAPI {
 			var conversation: Bool
 			var digest: Bool
 			var tips: Bool
+			/// Absent from a server that predates Flow activity.
+			var flow_activity: Bool?
+		}
+		struct EmailCategories: Decodable {
+			var needs_you: Bool?
+			var conversation: Bool?
+			var tips: Bool?
+			var flow_activity: Bool?
 		}
 		var timezone: String?
 		var quiet_hours_start: Int?
@@ -98,6 +114,14 @@ public struct APINotificationPreferencesSource: NotificationPreferencesAPI {
 		var categories: Categories
 		var briefing_enabled: Bool
 		var briefing_time: Int
+		/// Absent from a server that predates the email switch.
+		var email_digest_enabled: Bool?
+		/// Absent from a server that predates Flow activity.
+		var email_categories: EmailCategories?
+		/// Absent from a server that predates Marketplace picks.
+		var marketplace_picks_enabled: Bool?
+		/// Absent from a server that predates the rhythm; that means daily.
+		var email_rhythm: String?
 		var muted_workspace_ids: [String]
 
 		var model: NotificationPreferences {
@@ -106,8 +130,16 @@ public struct APINotificationPreferencesSource: NotificationPreferencesAPI {
 				quietHours: APINotificationPreferencesSource.quietHours(start: quiet_hours_start, end: quiet_hours_end),
 				categories: .init(
 					needsYou: categories.needs_you, conversation: categories.conversation,
-					digest: categories.digest, tips: categories.tips),
+					digest: categories.digest, tips: categories.tips,
+					flowActivity: categories.flow_activity ?? false),
 				briefingEnabled: briefing_enabled, briefingTime: briefing_time,
+				emailDigestEnabled: email_digest_enabled ?? false,
+				emailNeedsYou: email_categories?.needs_you ?? false,
+				emailConversation: email_categories?.conversation ?? false,
+				emailTips: email_categories?.tips ?? false,
+				emailFlowActivity: email_categories?.flow_activity ?? false,
+				marketplacePicksEnabled: marketplace_picks_enabled ?? false,
+				emailRhythm: email_rhythm.flatMap(NotificationPreferences.EmailRhythm.init(rawValue:)) ?? .daily,
 				mutedWorkspaceIds: muted_workspace_ids)
 		}
 	}

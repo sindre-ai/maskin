@@ -69,7 +69,7 @@ import Testing
 		#expect(ActorIdentity.initials(for: "x") == "X")
 	}
 
-	@Test("a short all-caps role keeps its three letters, everything else stays at two")
+	@Test("a short all-caps role and a three-word name show three letters, everything else stays at two")
 	func threeLetterAcronyms() {
 		#expect(ActorIdentity.initials(for: "CTO") == "CTO")
 		#expect(ActorIdentity.initials(for: "PMM") == "PMM")
@@ -77,7 +77,9 @@ import Testing
 		#expect(ActorIdentity.initials(for: "QA") == "QA")
 		#expect(ActorIdentity.initials(for: "Cto") == "CT")
 		#expect(ActorIdentity.initials(for: "NASA") == "NA")
-		#expect(ActorIdentity.initials(for: "Chief of Staff") == "CO")
+		#expect(ActorIdentity.initials(for: "Chief of Staff") == "COS")
+		#expect(ActorIdentity.initials(for: "Head of Customer Success") == "HOC")
+		#expect(ActorIdentity.initials(for: "Linker (Sigrid) Lead") == "LSL")
 		#expect(ActorIdentity.initials(for: "Sebastian Krumhausen") == "SK")
 		#expect(ActorIdentity.initials(for: "CTO Agent") == "CA")
 	}
