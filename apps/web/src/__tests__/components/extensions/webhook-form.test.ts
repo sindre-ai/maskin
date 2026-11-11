@@ -1,4 +1,5 @@
 import {
+	PRESET_SCHEMES,
 	SIGNATURE_SCHEMES,
 	configFromForm,
 	emptyWebhookForm,
@@ -140,6 +141,61 @@ describe('ed25519 scheme', () => {
 			{ requireSecret: true },
 		)
 		expect(errors.signingSecret).toMatch(/Ed25519 public key/)
+	})
+})
+
+describe('options the form has no field for', () => {
+	const STANDARD_WEBHOOKS: ExtensionWebhookConfig = {
+		...FIREFLIES,
+		signatureScheme: 'standard-webhooks',
+		signatureHeader: 'webhook-signature',
+		signaturePrefix: undefined,
+		idHeader: 'webhook-id',
+		timestampHeader: 'webhook-timestamp',
+		maxAgeSeconds: 120,
+	}
+	const BASE64_HMAC: ExtensionWebhookConfig = { ...FIREFLIES, digestEncoding: 'base64' }
+	const STRIPE: ExtensionWebhookConfig = {
+		...FIREFLIES,
+		signatureScheme: 'stripe',
+		signatureHeader: 'stripe-signature',
+		signaturePrefix: undefined,
+		maxAgeSeconds: 300,
+	}
+
+	it('saves a Standard Webhooks extension without dropping its id header or timestamp header', () => {
+		const cfg = configFromForm(formFromConfig(STANDARD_WEBHOOKS))
+		expect(cfg.idHeader).toBe('webhook-id')
+		expect(cfg.timestampHeader).toBe('webhook-timestamp')
+		expect(cfg.maxAgeSeconds).toBe(120)
+		expect(cfg.timestampBodyTemplate).toBeUndefined()
+	})
+
+	it('saves a base64 HMAC extension without dropping the digest encoding', () => {
+		expect(configFromForm(formFromConfig(BASE64_HMAC))).toEqual(BASE64_HMAC)
+	})
+
+	it('round-trips a Stripe extension', () => {
+		expect(configFromForm(formFromConfig(STRIPE))).toEqual(STRIPE)
+	})
+
+	it('drops the kept options when the scheme is changed', () => {
+		const form = { ...formFromConfig(BASE64_HMAC), scheme: 'hmac-sha1' as const }
+		expect(configFromForm(form).digestEncoding).toBeUndefined()
+	})
+
+	it('lists the presets for display but not as a choice for a new extension', () => {
+		expect(PRESET_SCHEMES.map((s) => s.value)).toEqual(['standard-webhooks', 'stripe'])
+		expect(SIGNATURE_SCHEMES.map((s) => s.value)).not.toContain('stripe')
+	})
+
+	it('validates a Standard Webhooks form like the others', () => {
+		expect(
+			validateWebhookForm(
+				{ ...formFromConfig(STANDARD_WEBHOOKS), signingSecret: SECRET },
+				{ requireSecret: true },
+			),
+		).toEqual({})
 	})
 })
 
