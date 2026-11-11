@@ -2,7 +2,7 @@ import { expect, test } from '../fixtures/auth.fixture'
 import type { TestAPI } from '../helpers/api.helper'
 
 /**
- * The chat message box with formatting (flag chat-rich-composer, switched on here through the
+ * The chat message box with formatting (flag chat-formatting, switched on here through the
  * test-only localStorage override). Typing markdown or using the shortcuts formats the text, a
  * tag stays a chip, Enter sends, and what reaches the server is the markdown.
  */
@@ -24,7 +24,7 @@ async function lastSent(api: TestAPI, conversationId: string, workspaceId: strin
 
 test.describe('Chat message box with formatting', () => {
 	test.beforeEach(async ({ page }) => {
-		await page.addInitScript(() => localStorage.setItem('ff:chat-rich-composer', 'on'))
+		await page.addInitScript(() => localStorage.setItem('ff:chat-formatting', 'on'))
 	})
 
 	test('formats with markdown typing and shortcuts, then sends markdown', async ({

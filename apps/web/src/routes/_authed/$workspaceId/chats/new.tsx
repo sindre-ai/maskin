@@ -78,7 +78,7 @@ function NewChatRoute() {
 	useDocumentTitle('New chat')
 	const search = Route.useSearch()
 	const { workspaceId } = useWorkspace()
-	const richText = useFeatureFlag('chat-rich-composer')
+	const richText = useFeatureFlag('chat-formatting')
 	const navigate = useNavigate()
 	const createConversation = useCreateConversation(workspaceId)
 	const { data: members } = useWorkspaceMembers(workspaceId)
