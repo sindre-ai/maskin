@@ -191,8 +191,7 @@ function ActorAvatarView({
 	const content = (
 		<>
 			<span
-				className="leading-none"
-				style={{ fontSize: threeLetters ? '28cqw' : '36cqw' }}
+				className={cn('leading-none', threeLetters ? 'text-[length:28cqw]' : 'text-[length:36cqw]')}
 				aria-hidden={showImage ? 'true' : undefined}
 			>
 				{initials}

@@ -178,13 +178,13 @@ describe('ActorAvatar', () => {
 
 	it('sizes the glyph as a share of the plate: 36 percent, 28 percent for three letters', () => {
 		const { rerender } = render(<ActorAvatar name="Sebastian Krumhausen" type="human" />)
-		expect(screen.getByText('SK').style.fontSize).toBe('36cqw')
+		expect(screen.getByText('SK').className).toContain('text-[length:36cqw]')
 		rerender(<ActorAvatar name="PMM" type="human" size="sm" />)
-		expect(screen.getByText('PMM').style.fontSize).toBe('28cqw')
+		expect(screen.getByText('PMM').className).toContain('text-[length:28cqw]')
 		rerender(<ActorAvatar name="PMM" type="agent" size="xl" />)
-		expect(screen.getByText('PMM').style.fontSize).toBe('28cqw')
+		expect(screen.getByText('PMM').className).toContain('text-[length:28cqw]')
 		rerender(<ActorAvatar name="PMM" type="human" tile />)
-		expect(screen.getByText('PMM').style.fontSize).toBe('28cqw')
+		expect(screen.getByText('PMM').className).toContain('text-[length:28cqw]')
 		expect(screen.getByTitle('PMM').className).toContain('size-[26px]')
 	})
 
