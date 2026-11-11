@@ -38770,8 +38770,7 @@
 														"unit": {
 															"type": "string",
 															"enum": [
-																"tokens",
-																"dollars"
+																"percent"
 															]
 														},
 														"amount": {
