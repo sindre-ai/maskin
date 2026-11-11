@@ -8569,9 +8569,11 @@ export function createMcpServer(config: McpConfig) {
 					'/api/integrations/resend/send',
 					{ object_id: args.object_id },
 					{ workspaceId: args.workspace_id },
-				)) as { email_id: string; from: string }
+				)) as { email_id: string; from: string; mode?: 'approved_draft' | 'direct' }
 				return reply(
-					`Sent from ${sent.from}: the email went out exactly as the person approved it. Do not send it again.`,
+					sent.mode === 'direct'
+						? `Sent from ${sent.from}. Do not send it again.`
+						: `Sent from ${sent.from}: the email went out exactly as the person approved it. Do not send it again.`,
 				)
 			} catch (err) {
 				// The server words every refusal for the agent (what happened, what to do next),

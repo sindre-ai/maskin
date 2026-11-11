@@ -34301,7 +34301,7 @@
 					"integrations"
 				],
 				"summary": "Send an email from the connected Gmail account",
-				"description": "Irreversible and never retried. Needs \"Read & write\" access and an email a person approved: an object draft they approved (object_id) or an approval card they answered (approval_comment_id).",
+				"description": "Irreversible and never retried. Needs \"Read & write\" access. If the agent is set to always allow emails, pass to, subject and body (or object_id) and it sends. If it is set to ask first, the email must be one a person approved: an object draft they approved (object_id) or an approval card they answered (approval_comment_id).",
 				"parameters": [
 					{
 						"schema": {
@@ -34377,7 +34377,8 @@
 										"mode": {
 											"type": "string",
 											"enum": [
-												"approved_draft"
+												"approved_draft",
+												"direct"
 											]
 										}
 									},
@@ -35229,8 +35230,8 @@
 				"tags": [
 					"integrations"
 				],
-				"summary": "Send an approved email draft from the agent mailbox through Resend",
-				"description": "Needs \"Read & write\" access to Resend, a mailbox recorded for the calling agent, and an email draft a person approved (object_id). Sends once per approval.",
+				"summary": "Send an email draft from the agent mailbox through Resend",
+				"description": "Needs \"Read & write\" access to Resend, a mailbox recorded for the calling agent, and an email draft (object_id). An agent set to ask first needs a draft a person approved; one set to always allow sends it at once. Sends once per approval, or once per draft.",
 				"parameters": [
 					{
 						"schema": {
@@ -35279,7 +35280,8 @@
 										"mode": {
 											"type": "string",
 											"enum": [
-												"approved_draft"
+												"approved_draft",
+												"direct"
 											]
 										}
 									},

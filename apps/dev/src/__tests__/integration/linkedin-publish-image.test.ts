@@ -235,7 +235,7 @@ describe('linkedin publish_post tool without an approved draft', () => {
 		const text = (result.content as Array<{ text?: string }>).map((c) => c.text ?? '').join('')
 		expect(result.isError).toBe(true)
 		expect(text).toContain('INVALID_INPUT')
-		expect(text).toContain('held for a person')
+		expect(text).toContain('does not take raw attachments')
 		expect(publishPost).not.toHaveBeenCalled()
 	})
 })

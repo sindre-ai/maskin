@@ -40,20 +40,22 @@ import { readContextFor } from '../lib/integrations/read-context'
 import { getProvider } from '../lib/integrations/registry'
 import { accessDeniedMessage } from '../lib/integrations/tool-gate'
 import { logger } from '../lib/logger'
-import { DELIVERED_ACTION, findCurrentApproval } from '../lib/object-delivery'
+import { DELIVERED_ACTION, findCurrentApproval, hasDelivered } from '../lib/object-delivery'
 import { buildObjectPreview } from '../lib/object-preview'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { recordSendOutcome } from '../lib/send-closure'
+import { decideSend, deniedMessage } from '../lib/send-gate'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 
 /**
  * Send an email from the workspace's connected Gmail. Behind the `gmail_send_email`
  * MCP tool: Google's hosted Gmail tool can only create drafts.
  *
- * Who may send, in one place. Reading and drafting need Read or Read & write; sending needs
- * Read & write AND a person's approval of that exact email, every time (Settings → Integrations).
- * Read, or no access, cannot send at all. An agent never sends an email on its own, so there is
- * no "direct" send and no per-recipient exception to make: a person looked at every email.
+ * Who may send, in one place. Reading and drafting need Read or Read & write. Read, or no
+ * access, cannot send at all. With Read & write, the agent's send setting for emails decides
+ * (Settings → Autonomy and guardrails): always allow sends the email as given (`to`, `subject`,
+ * `body`, or an `object_id` draft); ask first needs a person's approval of that exact email;
+ * deny refuses.
  *
  * "Approve" is the For You decision card: the agent posts a comment with a `decision` whose
  * `draft` holds the email and whose one destructive option is the send, and a person taps it.
@@ -79,6 +81,7 @@ type Env = {
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 const TOOL_NAME = 'gmail_send_email'
+const DUPLICATE_WINDOW_MS = 24 * 60 * 60 * 1000
 
 const sendBodySchema = z
 	.object({
@@ -115,7 +118,7 @@ const sendRoute = createRoute({
 	tags: ['integrations'],
 	summary: 'Send an email from the connected Gmail account',
 	description:
-		'Irreversible and never retried. Needs "Read & write" access and an email a person approved: an object draft they approved (object_id) or an approval card they answered (approval_comment_id).',
+		'Irreversible and never retried. Needs "Read & write" access. If the agent is set to always allow emails, pass to, subject and body (or object_id) and it sends. If it is set to ask first, the email must be one a person approved: an object draft they approved (object_id) or an approval card they answered (approval_comment_id).',
 	request: {
 		headers: workspaceIdHeader,
 		body: { content: { 'application/json': { schema: sendBodySchema } }, required: true },
@@ -128,7 +131,7 @@ const sendRoute = createRoute({
 					schema: z.object({
 						message_id: z.string(),
 						thread_id: z.string().nullable(),
-						mode: z.literal('approved_draft'),
+						mode: z.enum(['approved_draft', 'direct']),
 					}),
 				},
 			},
@@ -181,7 +184,7 @@ function sendFailureFor(err: GmailSendError): Fail {
 }
 
 const SEND_APPROVAL_HOWTO =
-	'Post a decision comment (create_comment with `decision` and the person in `mentions`) whose `draft` holds the email: `to` with the real address ("Mette Holm <mette@northwind.dk>"), and the text starting with a line "Subject: ..." then the body. Mark the option that sends as destructive. End your turn; when the person has chosen it, call gmail_send_email with approval_comment_id set to the id of your comment. For several emails on one card use `drafts` (each with its own `id`, `to` and Subject line) and call once per email with approval_comment_id and that email\'s draft_id; the person approves each with its own Send.'
+	'This agent is set to ask first for emails. Save the email as a task or object with metadata.kind email (to, subject; the text as its content) and call this tool with object_id once a person approved it: they approve from its card, or say yes in the chat (then call approve_draft_from_chat). Or post a decision comment (create_comment with `decision` and the person in `mentions`) whose `draft` holds the email: `to` with the real address ("Mette Holm <mette@northwind.dk>"), and the text starting with a line "Subject: ..." then the body. Mark the option that sends as destructive. End your turn; when the person has chosen it, call gmail_send_email with approval_comment_id set to the id of your comment. For several emails on one card use `drafts` (each with its own `id`, `to` and Subject line) and call once per email with approval_comment_id and that email\'s draft_id; the person approves each with its own Send.'
 
 /**
  * Whether the draft's text changed after the person's tap. Moving the task to another
@@ -475,6 +478,8 @@ async function loadObjectEmail(
 	storage: StorageProvider | undefined,
 	workspaceId: string,
 	objectId: string,
+	/** True for an agent set to always allow: the files are read even with no approval. */
+	allowUnapproved: boolean,
 ): Promise<
 	| {
 			email: OutgoingEmail
@@ -524,15 +529,17 @@ async function loadObjectEmail(
 		return { failure: sendFailureFor(err) }
 	}
 	const approval = await findCurrentApproval(db, workspaceId, objectId, preview.content_hash)
-	// Files are read only once a person has approved: until then nothing is sent, so nothing is checked.
-	if (approval) {
+	// Files are read only once the send can go: after a person's approval, or at once for an agent
+	// set to always allow. Until then nothing is sent, so nothing is checked.
+	if (approval || allowUnapproved) {
 		try {
 			email.attachments = await loadEmailAttachments(
 				{ db, storage },
 				{
 					workspaceId,
 					ids: readAttachmentIds(object.metadata),
-					approvedAt: approval.createdAt,
+					approvedAt: approval?.createdAt ?? null,
+					unapproved: !approval,
 				},
 			)
 		} catch (err) {
@@ -595,10 +602,19 @@ app.openapi(sendRoute, async (c) => {
 		)
 		return c.json(f.body, f.status)
 	}
-	// 2. Work out exactly what is being sent. Nothing goes out without a person's yes, so the only
-	// ways in are an approved object draft or an answered approval card.
+	// 1b. The agent's send setting for emails: send as given, wait for a person, or never.
+	const decision = await decideSend(db, { workspaceId, agentId: actorId, kind: 'email' })
+	if (decision === 'denied') {
+		const f = fail(403, 'FORBIDDEN', deniedMessage('emails'))
+		return c.json(f.body, f.status)
+	}
+	const mayUnapproved = decision === 'send_now'
+
+	// 2. Work out exactly what is being sent. An agent set to ask first sends only an approved
+	// object draft or an answered approval card; one set to always allow may also send an email
+	// given as to, subject and body, or an object draft nobody has approved.
 	let email: OutgoingEmail
-	const mode = 'approved_draft' as const
+	let mode: 'approved_draft' | 'direct'
 	// For an object draft: the approval event that unlocks it, and the hash it was approved at.
 	let objectDraft: {
 		id: string
@@ -607,7 +623,13 @@ app.openapi(sendRoute, async (c) => {
 		approvalEventId: number | null
 	} | null = null
 	if (input.object_id) {
-		const loaded = await loadObjectEmail(db, c.get('storageProvider'), workspaceId, input.object_id)
+		const loaded = await loadObjectEmail(
+			db,
+			c.get('storageProvider'),
+			workspaceId,
+			input.object_id,
+			mayUnapproved,
+		)
 		if ('failure' in loaded) return c.json(loaded.failure.body, loaded.failure.status)
 		email = loaded.email
 		objectDraft = {
@@ -616,11 +638,15 @@ app.openapi(sendRoute, async (c) => {
 			hash: loaded.contentHash,
 			approvalEventId: loaded.approvalEventId,
 		}
-		if (!loaded.approvalEventId) {
+		if (loaded.approvalEventId) {
+			mode = 'approved_draft'
+		} else if (mayUnapproved) {
+			mode = 'direct'
+		} else {
 			const f = fail(
 				403,
 				'FORBIDDEN',
-				'Not sent. A person has to approve this email first. The draft shows an Approve button in For You and in chat. End your turn; when they have approved it, call this tool again with the same object_id.',
+				'Not sent. This agent is set to ask first, so a person has to approve this email. The draft shows an Approve button in For You and in chat; they can edit the text there first, or just say yes in the chat (then call approve_draft_from_chat). End your turn; when they have approved it, call this tool again with the same object_id.',
 			)
 			return c.json(f.body, f.status)
 		}
@@ -634,18 +660,67 @@ app.openapi(sendRoute, async (c) => {
 		)
 		if ('failure' in loaded) return c.json(loaded.failure.body, loaded.failure.status)
 		email = loaded.email
+		mode = 'approved_draft'
+	} else if (mayUnapproved) {
+		try {
+			email = {
+				to: parseRecipients(input.to as string, 'to'),
+				cc: input.cc ? parseRecipients(input.cc, 'cc') : [],
+				subject: input.subject as string,
+				body: input.body as string,
+			}
+		} catch (err) {
+			if (!(err instanceof GmailSendError)) throw err
+			const f = sendFailureFor(err)
+			return c.json(f.body, f.status)
+		}
+		mode = 'direct'
 	} else {
-		// A new email passed straight to the tool: there is nothing a person has approved yet.
+		// A new email passed straight to the tool by an agent that is set to ask first: nothing a
+		// person has approved yet.
 		const f = fail(
 			403,
 			'FORBIDDEN',
-			'Not sent. A person has to approve every email before it is sent.',
+			'Not sent. This agent is set to ask first, so a person has to approve this email before it is sent.',
 			SEND_APPROVAL_HOWTO,
 		)
 		return c.json(f.body, f.status)
 	}
 
 	const hash = contentHash(email.to, email.cc ?? [], email.subject, email.body)
+	if (mode === 'direct') {
+		// A draft that already went is not sent again, and neither is the same text within a day:
+		// an agent that retries after a timeout must not send the same email twice.
+		if (objectDraft && (await hasDelivered(db, workspaceId, objectDraft.id))) {
+			const f = fail(
+				409,
+				'CONFLICT',
+				'This draft was already sent. Do not send it again. Create a new task for a new email.',
+			)
+			return c.json(f.body, f.status)
+		}
+		const since = new Date(Date.now() - DUPLICATE_WINDOW_MS)
+		const [dup] = await db
+			.select({ id: events.id })
+			.from(events)
+			.where(
+				and(
+					eq(events.workspaceId, workspaceId),
+					eq(events.entityId, integrationId),
+					gt(events.createdAt, since),
+					sql`${events.data}->>'content_hash' = ${hash}`,
+				),
+			)
+			.limit(1)
+		if (dup) {
+			const f = fail(
+				409,
+				'CONFLICT',
+				'This exact email was already sent in the last 24 hours. Do not send it again.',
+			)
+			return c.json(f.body, f.status)
+		}
+	}
 
 	// 3. One send per approval: claim it before calling Gmail, so two calls cannot both send.
 	const approvalId = input.approval_comment_id ?? objectDraft?.approvalEventId ?? null

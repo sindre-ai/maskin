@@ -1,6 +1,6 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, integrations, objects, workspaceMembers } from '@maskin/db/schema'
+import { events, integrations, objects, sendPermissions, workspaceMembers } from '@maskin/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encrypt } from '../../lib/crypto'
@@ -10,6 +10,7 @@ import {
 	insertAgentGrant,
 	insertObject,
 	insertRelationship,
+	insertSendMode,
 	insertWorkspace,
 } from '../factories'
 import { db, getTestActorId } from './global-setup'
@@ -75,14 +76,29 @@ function post(actorId: string, workspaceId: string, body: Record<string, unknown
 
 const DIRECT = { to: 'ada@example.com', subject: 'Intro', body: 'Hi Ada' }
 
-/** A workspace with Gmail connected, a person, and an agent that has (or lacks) write access. */
-async function setup(opts: { agentAccess?: 'read' | 'read_write' | null } = {}) {
+/**
+ * A workspace with Gmail connected, a person, and an agent that has (or lacks) write access.
+ * The agent's send setting for emails is ask first unless a test says otherwise, since most of
+ * these tests are about the approval path.
+ */
+async function setup(
+	opts: {
+		agentAccess?: 'read' | 'read_write' | null
+		sendMode?: 'always_allow' | 'ask_first' | 'deny'
+	} = {},
+) {
 	const human = getTestActorId()
 	const workspace = await insertWorkspace(db, human)
 	const agent = await insertActor(db, { type: 'agent' })
 	await db
 		.insert(workspaceMembers)
 		.values({ workspaceId: workspace.id, actorId: agent.id, role: 'member' })
+	await insertSendMode(db, {
+		workspaceId: workspace.id,
+		agentId: agent.id,
+		kind: 'email',
+		mode: opts.sendMode ?? 'ask_first',
+	})
 	const [gmail] = await db
 		.insert(integrations)
 		.values({
@@ -296,7 +312,7 @@ describe('gmail_send_email: who may send', () => {
 	})
 })
 
-describe('gmail_send_email: Read & write still needs a person', () => {
+describe('gmail_send_email: Ask first still needs a person', () => {
 	it('refuses a direct send, whoever the recipient is, and says how to get it approved', async () => {
 		const s = await setup({ agentAccess: 'read_write' })
 
@@ -320,6 +336,22 @@ describe('gmail_send_email: Read & write still needs a person', () => {
 		expect(fetchMock).not.toHaveBeenCalled()
 	})
 
+	it('refuses a draft nobody approved, and says how to get it approved', async () => {
+		const s = await setup()
+		const object = await insertObject(db, s.workspace.id, s.human, {
+			type: 'task',
+			status: 'todo',
+			content: 'Hi Ada',
+			metadata: { kind: 'email', to: 'ada@example.com', subject: 'Intro' },
+		})
+
+		const res = await post(s.agent.id, s.workspace.id, { object_id: object.id })
+
+		expect(res.status).toBe(403)
+		expect(JSON.stringify(await res.json())).toContain('approve_draft_from_chat')
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
 	it('"Read" cannot send at all, not even an approved email', async () => {
 		const s = await setup({ agentAccess: 'read' })
 		const { card } = await insertApprovalCard(s)
@@ -340,6 +372,82 @@ describe('gmail_send_email: Read & write still needs a person', () => {
 		expect((await post(s.agent.id, s.workspace.id, { approval_comment_id: card.id })).status).toBe(
 			200,
 		)
+	})
+})
+
+describe('gmail_send_email: the send setting', () => {
+	it('sends an email given as to, subject and body when the agent is set to always allow', async () => {
+		const s = await setup({ sendMode: 'always_allow' })
+		fetchMock.mockResolvedValueOnce(gmailOk())
+
+		const res = await post(s.agent.id, s.workspace.id, DIRECT)
+
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({ mode: 'direct' })
+		expect(fetchMock).toHaveBeenCalledTimes(1)
+		const rows = (await sendEvents(s.workspace.id, s.gmail.id)).filter(
+			(e) => (e.data as { gmail_action?: string }).gmail_action === 'sent',
+		)
+		expect(rows).toHaveLength(1)
+		expect(rows[0]?.data).toMatchObject({ gmail_action: 'sent', mode: 'direct' })
+	})
+
+	it('does not send the same direct email twice', async () => {
+		const s = await setup({ sendMode: 'always_allow' })
+		fetchMock.mockResolvedValueOnce(gmailOk())
+
+		expect((await post(s.agent.id, s.workspace.id, DIRECT)).status).toBe(200)
+		const again = await post(s.agent.id, s.workspace.id, DIRECT)
+
+		expect(again.status).toBe(409)
+		expect(fetchMock).toHaveBeenCalledTimes(1)
+	})
+
+	it('sends a draft nobody approved when the agent is set to always allow, once', async () => {
+		const s = await setup({ sendMode: 'always_allow' })
+		const object = await insertObject(db, s.workspace.id, s.human, {
+			type: 'task',
+			status: 'todo',
+			content: 'Hi Ada',
+			metadata: { kind: 'email', to: 'ada@example.com', subject: 'Intro' },
+		})
+		fetchMock.mockResolvedValueOnce(gmailOk())
+
+		const res = await post(s.agent.id, s.workspace.id, { object_id: object.id })
+
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({ mode: 'direct' })
+		const again = await post(s.agent.id, s.workspace.id, { object_id: object.id })
+		expect(again.status).toBe(409)
+		expect(fetchMock).toHaveBeenCalledTimes(1)
+	})
+
+	it('sends directly when no setting was ever saved, because a workspace starts by sending', async () => {
+		const s = await setup()
+		await db.delete(sendPermissions).where(eq(sendPermissions.workspaceId, s.workspace.id))
+		fetchMock.mockResolvedValueOnce(gmailOk())
+
+		expect((await post(s.agent.id, s.workspace.id, DIRECT)).status).toBe(200)
+	})
+
+	it('refuses everything when the agent is set to deny, even an approved card', async () => {
+		const s = await setup({ sendMode: 'deny' })
+		const { card } = await insertApprovalCard(s)
+
+		const direct = await post(s.agent.id, s.workspace.id, DIRECT)
+		const approved = await post(s.agent.id, s.workspace.id, { approval_comment_id: card.id })
+
+		expect(direct.status).toBe(403)
+		expect(approved.status).toBe(403)
+		expect(JSON.stringify(await approved.json())).toContain('turned off')
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('still cannot send for an agent with only Read access, whatever the setting', async () => {
+		const s = await setup({ agentAccess: 'read', sendMode: 'always_allow' })
+
+		expect((await post(s.agent.id, s.workspace.id, DIRECT)).status).toBe(403)
+		expect(fetchMock).not.toHaveBeenCalled()
 	})
 })
 
