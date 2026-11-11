@@ -46,7 +46,6 @@ import {
 	trackSindreMessageReceived,
 	trackSindreMessageSent,
 	trackSpecialistSummonedManually,
-	trackTriggerCreated,
 	trackTriggerUpdated,
 	trackUpgradeClicked,
 } from '@/lib/analytics'
@@ -490,21 +489,14 @@ describe('v1 taxonomy helpers', () => {
 		)
 	})
 
-	it('agent_created and trigger_created fire under their fixed entity types', () => {
+	it('agent_created fires under its fixed entity type', () => {
 		const capture = captureSpy()
 
 		trackAgentCreated({ entity_id: 'agent-5', entity_type: 'agent' })
-		trackTriggerCreated({ entity_id: 'trg-2', entity_type: 'trigger' })
 
-		expect(capture).toHaveBeenNthCalledWith(
-			1,
+		expect(capture).toHaveBeenCalledWith(
 			'agent_created',
 			expect.objectContaining({ entity_id: 'agent-5', entity_type: 'agent' }),
-		)
-		expect(capture).toHaveBeenNthCalledWith(
-			2,
-			'trigger_created',
-			expect.objectContaining({ entity_id: 'trg-2', entity_type: 'trigger', source: 'web' }),
 		)
 	})
 
