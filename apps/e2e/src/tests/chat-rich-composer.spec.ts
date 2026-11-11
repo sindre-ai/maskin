@@ -213,6 +213,179 @@ test.describe('Chat message box with formatting', () => {
 			.toContain('second')
 	})
 
+	test('markdown as you type: stars, a dash and a number format live', async ({
+		page,
+		account,
+	}) => {
+		const { conversation } = await setUpConversation(account.api, account.workspaceId)
+		await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+		const box = page.getByLabel('Message this conversation')
+		await box.click()
+		await page.keyboard.type('**word** and *soft* ')
+		await expect(box.locator('strong')).toHaveText('word')
+		await expect(box.locator('em')).toHaveText('soft')
+		await page.keyboard.press('Shift+Enter')
+		await page.keyboard.press('Shift+Enter')
+		await page.keyboard.type('- bullet')
+		await expect(box.locator('ul > li')).toHaveCount(1)
+		await page.keyboard.press('Enter')
+		await page.keyboard.press('Enter')
+		await page.keyboard.type('1. first')
+		await expect(box.locator('ol > li')).toHaveCount(1)
+		await page.screenshot({ path: 'test-results/rich-composer-typing.png' })
+		await page.keyboard.press('ControlOrMeta+Enter')
+		await expect
+			.poll(
+				async () => (await lastSent(account.api, conversation.id, account.workspaceId))?.content,
+			)
+			.toContain('**word**')
+		const sent = await lastSent(account.api, conversation.id, account.workspaceId)
+		expect(sent?.content).toContain('*soft*')
+		expect(sent?.content).toMatch(/^- bullet/m)
+		expect(sent?.content).toMatch(/^1\. first/m)
+	})
+
+	test('pasting a link over selected text makes the text the link', async ({ page, account }) => {
+		const { conversation } = await setUpConversation(account.api, account.workspaceId)
+		await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+		const box = page.getByLabel('Message this conversation')
+		await box.click()
+		await page.keyboard.type('this is a Link')
+		await page.keyboard.press('Shift+ControlOrMeta+ArrowLeft')
+		await box.evaluate((el) => {
+			const data = new DataTransfer()
+			data.setData('text/plain', 'https://example.com/docs')
+			el.dispatchEvent(
+				new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }),
+			)
+		})
+		await expect(box.locator('a')).toHaveText('Link')
+		await expect(box.locator('a')).toHaveAttribute('href', 'https://example.com/docs')
+		await page.screenshot({ path: 'test-results/rich-composer-paste-link.png' })
+		await page.keyboard.press('ControlOrMeta+Enter')
+		await expect
+			.poll(
+				async () => (await lastSent(account.api, conversation.id, account.workspaceId))?.content,
+			)
+			.toBe('this is a [Link](https://example.com/docs)')
+	})
+
+	test('pasting a link with nothing selected stays as it is', async ({ page, account }) => {
+		const { conversation } = await setUpConversation(account.api, account.workspaceId)
+		await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+		const box = page.getByLabel('Message this conversation')
+		await box.click()
+		await page.keyboard.type('see ')
+		await box.evaluate((el) => {
+			const data = new DataTransfer()
+			data.setData('text/plain', 'https://example.com/docs')
+			el.dispatchEvent(
+				new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }),
+			)
+		})
+		await expect(box).toContainText('https://example.com/docs')
+	})
+
+	test('Show formatting opens a row of buttons that act on the selection', async ({
+		page,
+		account,
+	}) => {
+		const { conversation } = await setUpConversation(account.api, account.workspaceId)
+		await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+		const box = page.getByLabel('Message this conversation')
+		await box.click()
+		// Hidden until asked for.
+		await expect(page.getByRole('toolbar', { name: 'Formatting' })).toHaveCount(0)
+		await page.getByRole('button', { name: 'Attach file' }).click()
+		await page.getByRole('menuitem', { name: 'Show formatting' }).click()
+		const bar = page.getByRole('toolbar', { name: 'Formatting' })
+		await expect(bar).toBeVisible()
+		for (const name of [
+			'Bold',
+			'Italic',
+			'Strikethrough',
+			'Link',
+			'Bulleted list',
+			'Numbered list',
+			'Quote',
+			'Inline code',
+			'Code block',
+		]) {
+			await expect(bar.getByRole('button', { name })).toBeVisible()
+		}
+
+		await box.click()
+		await page.keyboard.type('make bold')
+		await page.keyboard.press('Shift+ControlOrMeta+ArrowLeft')
+		await bar.getByRole('button', { name: 'Bold' }).click()
+		await expect(box.locator('strong')).toHaveText('bold')
+		await expect(bar.getByRole('button', { name: 'Bold' })).toHaveAttribute('aria-pressed', 'true')
+		await page.screenshot({ path: 'test-results/rich-composer-format-row.png' })
+		await page.keyboard.press('ControlOrMeta+Enter')
+		await expect
+			.poll(
+				async () => (await lastSent(account.api, conversation.id, account.workspaceId))?.content,
+			)
+			.toBe('make **bold**')
+
+		// The choice is remembered for this person: the row is open after a reload.
+		await page.reload()
+		await expect(page.getByRole('toolbar', { name: 'Formatting' })).toBeVisible({
+			timeout: 15_000,
+		})
+		await page.getByRole('button', { name: 'Attach file' }).click()
+		await expect(page.getByRole('menuitem', { name: 'Hide formatting' })).toBeVisible()
+	})
+
+	test('the Link button wraps the selection in the address typed', async ({ page, account }) => {
+		const { conversation } = await setUpConversation(account.api, account.workspaceId)
+		await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+		const box = page.getByLabel('Message this conversation')
+		await box.click()
+		await page.getByRole('button', { name: 'Attach file' }).click()
+		await page.getByRole('menuitem', { name: 'Show formatting' }).click()
+		await box.click()
+		await page.keyboard.type('read the docs')
+		await page.keyboard.press('Shift+ControlOrMeta+ArrowLeft')
+		await page
+			.getByRole('toolbar', { name: 'Formatting' })
+			.getByRole('button', { name: 'Link' })
+			.click()
+		await page.getByLabel('Link address').fill('example.com/docs')
+		await page.getByRole('button', { name: 'Apply' }).click()
+		await expect(box.locator('a')).toHaveAttribute('href', 'https://example.com/docs')
+		await page.keyboard.press('ControlOrMeta+Enter')
+		await expect
+			.poll(
+				async () => (await lastSent(account.api, conversation.id, account.workspaceId))?.content,
+			)
+			.toBe('read the [docs](https://example.com/docs)')
+	})
+
+	test('the format row works at phone width', async ({ page, account }) => {
+		await page.setViewportSize({ width: 375, height: 700 })
+		const { conversation } = await setUpConversation(account.api, account.workspaceId)
+		await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+		const box = page.getByLabel('Message this conversation')
+		await expect(box).toBeVisible({ timeout: 15_000 })
+		await page.getByRole('button', { name: 'Attach file' }).click()
+		await page.getByRole('menuitem', { name: 'Show formatting' }).click()
+		const bar = page.getByRole('toolbar', { name: 'Formatting' })
+		await expect(bar).toBeVisible()
+		await box.click()
+		await page.keyboard.type('tap bold')
+		await page.keyboard.press('Shift+ControlOrMeta+ArrowLeft')
+		await bar.getByRole('button', { name: 'Bold' }).click()
+		await expect(box.locator('strong')).toHaveText('bold')
+		await page.screenshot({ path: 'test-results/rich-composer-format-row-mobile.png' })
+		await page.getByRole('button', { name: 'Send message' }).click()
+		await expect
+			.poll(
+				async () => (await lastSent(account.api, conversation.id, account.workspaceId))?.content,
+			)
+			.toBe('tap **bold**')
+	})
+
 	test('the new-chat page has the same box', async ({ page, account }) => {
 		await setUpConversation(account.api, account.workspaceId)
 		await page.goto(`/${account.workspaceId}/chats/new`)

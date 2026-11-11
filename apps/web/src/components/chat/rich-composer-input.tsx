@@ -1,10 +1,14 @@
 import { detectMentionTrigger } from '@/components/chat/mention-picker'
 import { tagChipClass } from '@/components/chat/tag-chip'
 import { cn } from '@/lib/cn'
-import type { MarkdownComposerHandle, MarkdownComposerProps } from '@maskin/markdown/react/composer'
+import type {
+	ComposerFormat,
+	MarkdownComposerHandle,
+	MarkdownComposerProps,
+} from '@maskin/markdown/react/composer'
 import { Suspense, forwardRef, lazy } from 'react'
 
-export type { MarkdownComposerHandle as RichComposerHandle }
+export type { ComposerFormat, MarkdownComposerHandle as RichComposerHandle }
 
 // Dynamic-imported so Tiptap stays out of the main bundle; the chat box is the only caller.
 const MarkdownComposer = lazy(() =>

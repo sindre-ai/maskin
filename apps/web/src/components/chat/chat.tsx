@@ -1,5 +1,6 @@
 import { AgentCallButton } from '@/components/agents/agent-call-button'
 import type { VoiceCallAgent } from '@/components/agents/voice-call-dialog'
+import { ComposerFormatBar, useShowFormatting } from '@/components/chat/composer-format-bar'
 import {
 	MentionPicker,
 	type MentionPickerActor,
@@ -7,7 +8,11 @@ import {
 	detectMentionTrigger,
 	reduceMentionPickerKey,
 } from '@/components/chat/mention-picker'
-import { type RichComposerHandle, RichComposerInput } from '@/components/chat/rich-composer-input'
+import {
+	type ComposerFormat,
+	type RichComposerHandle,
+	RichComposerInput,
+} from '@/components/chat/rich-composer-input'
 import { SecretCaptureFlow } from '@/components/chat/secret-capture-flow'
 import { SelectionChips } from '@/components/chat/selection-chips'
 import { TagInput, type TagInputHandle } from '@/components/chat/tag-input'
@@ -39,7 +44,7 @@ import { hasHighConfidenceSecret, scanComposerText } from '@/lib/secret-scanner'
 import { type TagValue, isTaggable, splitTextByTags, tagLabel } from '@/lib/tag-input-model'
 import { VIEWER_READ_ONLY_MESSAGE, isViewerRefusal } from '@/lib/workspace-role'
 import { type SecretMatch, withStarterPrompt, withoutSecrets } from '@maskin/shared'
-import { ArrowUp, AtSign, FileText, Image, Info, Mic, Plus, X } from 'lucide-react'
+import { ArrowUp, AtSign, FileText, Image, Info, Mic, Plus, Type, X } from 'lucide-react'
 import {
 	type ChangeEvent,
 	type ClipboardEvent,
@@ -387,6 +392,7 @@ export function Composer({
 	const domTextRef = useRef(value)
 	const tagRef = useRef<TagInputHandle | null>(null)
 	const richRef = useRef<RichComposerHandle | null>(null)
+	const [activeFormats, setActiveFormats] = useState<ComposerFormat[]>([])
 	const tagWrapRef = useRef<HTMLDivElement | null>(null)
 	const tagsKeyRef = useRef(draftKey)
 
@@ -571,6 +577,8 @@ export function Composer({
 	const uploadFile = useUploadFile(workspaceId)
 	const selfActor = getStoredActor()
 	const selfActorId = selfActor?.id ?? null
+	// The format row above the box is the person's own choice, kept per person on this device.
+	const [showFormatting, setShowFormatting] = useShowFormatting(selfActorId)
 
 	const { data: conversationPages } = useConversationsInfinite(workspaceId)
 	const conversationList = useMemo(
@@ -1240,6 +1248,17 @@ export function Composer({
 			    state is untouched when the user comes back to it. */}
 			<ViewerTooltip className="block">
 				<form onSubmit={handleSubmit} hidden={vaultFlow?.blocking === true}>
+					{richText && showFormatting ? (
+						<ComposerFormatBar
+							active={activeFormats}
+							disabled={disabled || secretFlow?.blocking === true}
+							onToggle={(format) => richRef.current?.toggleFormat(format)}
+							onSetLink={(href) => richRef.current?.setLink(href)}
+							onRemoveLink={() => richRef.current?.removeLink()}
+							linkHref={() => richRef.current?.linkHref() ?? null}
+							focusBox={focusInput}
+						/>
+					) : null}
 					<div
 						onDragOver={handleDragOver}
 						onDragLeave={handleDragLeave}
@@ -1281,6 +1300,11 @@ export function Composer({
 								<DropdownMenuItem onSelect={startMention}>
 									<AtSign aria-hidden /> Person or agent
 								</DropdownMenuItem>
+								{richText ? (
+									<DropdownMenuItem onSelect={() => setShowFormatting(!showFormatting)}>
+										<Type aria-hidden /> {showFormatting ? 'Hide formatting' : 'Show formatting'}
+									</DropdownMenuItem>
+								) : null}
 							</DropdownMenuContent>
 						</DropdownMenu>
 						{richText ? (
@@ -1311,6 +1335,7 @@ export function Composer({
 										setMentionTrigger(trigger ? { atPos: 0, query: trigger.query } : null)
 									}
 									onKeyDown={handleRichKeyDown}
+									onActiveFormatsChange={setActiveFormats}
 								/>
 							</div>
 						) : inlineTags ? (

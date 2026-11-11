@@ -26,8 +26,27 @@ export interface ComposerTrigger {
 	query: string
 }
 
+/** The formats the format row offers. Each one is the command its shortcut runs. */
+export type ComposerFormat =
+	| 'bold'
+	| 'italic'
+	| 'strike'
+	| 'link'
+	| 'bulletList'
+	| 'orderedList'
+	| 'blockquote'
+	| 'code'
+	| 'codeBlock'
+
 export interface MarkdownComposerHandle {
 	focus(): void
+	/** Toggles a format at the caret or on the selection, the way its shortcut does. */
+	toggleFormat(format: Exclude<ComposerFormat, 'link'>): void
+	/** Makes the selection a link (or inserts the address as a link when nothing is selected). */
+	setLink(href: string): void
+	removeLink(): void
+	/** The address of the link at the caret, or null. */
+	linkHref(): string | null
 	/** Replaces the document. Each "@label" of a known tag becomes a chip. Reports through onChange. */
 	setMarkdown(markdown: string, tags: ComposerTag[]): void
 	/** Types an "@" at the caret (or the end), which opens the picker. */
@@ -52,6 +71,8 @@ export interface MarkdownComposerProps {
 	/** Finds the "@query" at the end of the text before the caret, or null. */
 	detectTrigger: (text: string, caret: number) => { atPos: number; query: string } | null
 	onChange: (value: ComposerValue) => void
+	/** The formats in force at the caret or selection, for the pressed state of the format row. */
+	onActiveFormatsChange?: (active: ComposerFormat[]) => void
 	onTriggerChange: (trigger: ComposerTrigger | null) => void
 	/**
 	 * Every key goes here first. Return true when it was used (the picker, Enter to send). Enter
@@ -62,6 +83,19 @@ export interface MarkdownComposerProps {
 }
 
 const MENTION_NODE = 'composerMention'
+
+// The format name in the editor, for the pressed state.
+const ACTIVE_NAMES: [ComposerFormat, string][] = [
+	['bold', 'bold'],
+	['italic', 'italic'],
+	['strike', 'strike'],
+	['link', 'link'],
+	['bulletList', 'bulletList'],
+	['orderedList', 'orderedList'],
+	['blockquote', 'blockquote'],
+	['code', 'code'],
+	['codeBlock', 'codeBlock'],
+]
 
 function createMentionNode(chipClass: (id: string) => string) {
 	return Node.create({
@@ -115,6 +149,10 @@ interface ParentNode {
 interface SerializerState {
 	text(text: string, escaped?: boolean): void
 	out: string
+	closed: { type: { name: string }; content: { size: number } } | null
+	flushClose(size?: number): void
+	renderInline(node: unknown): void
+	closeBlock(node: unknown): void
 }
 
 function plainSerializers(editor: Editor) {
@@ -131,7 +169,31 @@ function plainSerializers(editor: Editor) {
 			},
 		}
 	}
-	// Shift+Enter is a plain new line in the message, not a backslash at the end of the line.
+	// Shift+Enter starts a new paragraph (so a list, quote or code block can start on the new
+	// line). Two filled paragraphs in a row are written one line apart, as a textarea would have
+	// sent them, not with a blank line between.
+	const paragraph = find('paragraph')
+	if (paragraph) {
+		paragraph.storage = {
+			...paragraph.storage,
+			markdown: {
+				serialize(state: SerializerState, node: { content: { size: number } }) {
+					const previous = state.closed
+					if (
+						previous?.type.name === 'paragraph' &&
+						previous.content.size > 0 &&
+						node.content.size > 0
+					) {
+						state.flushClose(1)
+					}
+					state.renderInline(node)
+					state.closeBlock(node)
+				},
+			},
+		}
+	}
+	// A new line made another way (pasted HTML with a line break) is a plain new line too, not a
+	// backslash at the end of the line.
 	const hardBreak = find('hardBreak')
 	if (hardBreak) {
 		hardBreak.storage = {
@@ -264,6 +326,16 @@ export function createComposerExtensions(handlers: { current: Handlers }) {
 		triggerOpen = trigger !== null
 		handlers.current.props.onTriggerChange(trigger ? { query: trigger.query } : null)
 	}
+	let lastActive = ''
+	const reportActive = (editor: Editor) => {
+		const active = ACTIVE_NAMES.filter(([, name]) => editor.isActive(name)).map(
+			([format]) => format,
+		)
+		const key = active.join(',')
+		if (key === lastActive) return
+		lastActive = key
+		handlers.current.props.onActiveFormatsChange?.(active)
+	}
 	const extensions = [
 		createMentionNode((id) => handlers.current.props.chipClass(id)),
 		Extension.create({
@@ -279,14 +351,21 @@ export function createComposerExtensions(handlers: { current: Handlers }) {
 			onUpdate() {
 				report(this.editor)
 				reportTrigger(this.editor)
+				reportActive(this.editor)
 			},
 			onSelectionUpdate() {
 				reportTrigger(this.editor)
+				reportActive(this.editor)
 			},
+		}),
+		Extension.create({
+			name: 'composerKeys',
+			// Ahead of the editor's own Shift+Enter, which would make a soft line break.
+			priority: 1000,
 			addProseMirrorPlugins() {
 				return [
 					new Plugin({
-						key: new PluginKey('composerBehaviour'),
+						key: new PluginKey('composerKeys'),
 						props: {
 							attributes: () => {
 								const { ariaDescribedBy } = handlers.current.props
@@ -300,7 +379,12 @@ export function createComposerExtensions(handlers: { current: Handlers }) {
 								const enter = event.key === 'Enter' && !event.shiftKey
 								const withMod = event.metaKey || event.ctrlKey
 								if (enter && !withMod && !triggerOpen && inListOrCode(view.state)) return false
-								return handlers.current.props.onKeyDown(event)
+								if (handlers.current.props.onKeyDown(event)) return true
+								if (event.key === 'Enter' && event.shiftKey && !event.isComposing) {
+									if (inListOrCode(view.state)) return false
+									return handlers.current.editor?.commands.splitBlock() ?? false
+								}
+								return false
 							},
 						},
 					}),
@@ -332,6 +416,43 @@ export const MarkdownComposer = forwardRef<MarkdownComposerHandle, MarkdownCompo
 			ref,
 			() => ({
 				focus: () => handlers.current.editor?.commands.focus(),
+				toggleFormat: (format) => {
+					const editor = handlers.current.editor
+					if (!editor || editor.isDestroyed) return
+					const chain = editor.chain().focus()
+					if (format === 'bold') chain.toggleBold()
+					else if (format === 'italic') chain.toggleItalic()
+					else if (format === 'strike') chain.toggleStrike()
+					else if (format === 'code') chain.toggleCode()
+					else if (format === 'codeBlock') chain.toggleCodeBlock()
+					else if (format === 'blockquote') chain.toggleBlockquote()
+					else if (format === 'bulletList') chain.toggleBulletList()
+					else chain.toggleOrderedList()
+					chain.run()
+				},
+				setLink: (href) => {
+					const editor = handlers.current.editor
+					if (!editor || editor.isDestroyed) return
+					const chain = editor.chain().focus()
+					if (editor.state.selection.empty && !editor.isActive('link')) {
+						chain.insertContent({
+							type: 'text',
+							text: href,
+							marks: [{ type: 'link', attrs: { href } }],
+						})
+					} else {
+						chain.extendMarkRange('link').setLink({ href })
+					}
+					chain.run()
+				},
+				removeLink: () => {
+					handlers.current.editor?.chain().focus().extendMarkRange('link').unsetLink().run()
+				},
+				linkHref: () => {
+					const editor = handlers.current.editor
+					if (!editor || editor.isDestroyed || !editor.isActive('link')) return null
+					return (editor.getAttributes('link').href as string | undefined) ?? null
+				},
 				setMarkdown: (markdown, tags) => {
 					const editor = handlers.current.editor
 					if (!editor || editor.isDestroyed) return

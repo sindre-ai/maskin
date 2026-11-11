@@ -86,6 +86,20 @@ describe('message box markdown', () => {
 		editor.destroy()
 	})
 
+	it('writes two lines typed one under the other one line apart', async () => {
+		const { editor, md } = await open('')
+		const paragraph = (text?: string) => ({
+			type: 'paragraph',
+			content: text ? [{ type: 'text', text }] : [],
+		})
+		editor.commands.setContent({
+			type: 'doc',
+			content: [paragraph('first'), paragraph('second'), paragraph(), paragraph('fourth')],
+		})
+		expect(md()).toBe('first\nsecond\n\nfourth')
+		editor.destroy()
+	})
+
 	it('keeps an angle-bracket placeholder as words', async () => {
 		const { editor, md } = await open('')
 		editor.commands.insertContent({ type: 'text', text: 'ping <owner> now' })
