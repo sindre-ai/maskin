@@ -275,7 +275,45 @@ describe('handleBridgeMessage: list sources', () => {
 		})
 	})
 
-	it('refuses every list when the host does not allow lists (the loop page)', async () => {
+	it('waits for a host that fetches, then posts the rows', async () => {
+		const host = makeListHost({
+			listAnswer: vi.fn().mockResolvedValue({ rows, fetchedAt: 9 }),
+		})
+
+		await handleBridgeMessage(host, { source: frame, data: query('opps', 8) })
+
+		expect(host.post).toHaveBeenCalledWith({
+			type: BRIDGE_RESULT_MESSAGE,
+			id: 8,
+			data: { rows, fetchedAt: 9 },
+		})
+	})
+
+	it('posts the error, and reports it, when the host cannot fetch the rows', async () => {
+		const host = makeListHost({ listAnswer: vi.fn().mockRejectedValue(new Error('boom')) })
+
+		await handleBridgeMessage(host, { source: frame, data: query('opps', 9) })
+
+		expect(host.post).toHaveBeenCalledWith({ type: BRIDGE_RESULT_MESSAGE, id: 9, error: 'boom' })
+		expect(host.onQueryError).toHaveBeenCalledWith('boom')
+	})
+
+	it('posts nothing when the frame navigated away while the rows were coming', async () => {
+		let blocked = false
+		const host = makeListHost({
+			isBlocked: () => blocked,
+			listAnswer: vi.fn().mockImplementation(async () => {
+				blocked = true
+				return { rows, fetchedAt: 9 }
+			}),
+		})
+
+		await handleBridgeMessage(host, { source: frame, data: query('opps', 10) })
+
+		expect(host.post).not.toHaveBeenCalled()
+	})
+
+	it('refuses every list when the host does not allow lists', async () => {
 		const host = makeListHost({ allowLists: false })
 
 		await handleBridgeMessage(host, { source: frame, data: query('opps', 5) })
