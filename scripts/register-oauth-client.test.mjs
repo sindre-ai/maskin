@@ -67,7 +67,16 @@ test('prints the two lines, and refuses an answer without an id or secret', () =
 		'NOTION_CLIENT_ID=abc\nNOTION_CLIENT_SECRET=shh\n',
 	)
 	assert.throws(() => settingsLines('notion', { client_secret: 'shh' }))
-	assert.throws(() => settingsLines('notion', { client_id: 'abc' }))
+})
+
+test('an answer with no secret prints the id line only, even when a secret method was asked for', () => {
+	assert.equal(settingsLines('amplitude', { client_id: 'abc' }), 'AMPLITUDE_CLIENT_ID=abc\n')
+})
+
+test('--auth-method picks the method, and refuses an unknown one', () => {
+	assert.equal(parseArgs(['amplitude', URL_, '--auth-method', 'none']).authMethod, 'none')
+	assert.equal(parseArgs(['amplitude', URL_]).authMethod, undefined)
+	assert.throws(() => parseArgs(['amplitude', URL_, '--auth-method', 'private_key_jwt']))
 })
 
 test('a no-secret vendor prints the id line only', () => {
@@ -141,4 +150,48 @@ test('end to end with Stripe-shaped details: no-secret client, id only on stdout
 	assert.equal(out, 'STRIPE_CLIENT_ID=id-2\n')
 	assert.equal(sent.token_endpoint_auth_method, 'none')
 	assert.deepEqual(sent.redirect_uris, ['https://maskin.io/api/integrations/stripe/callback'])
+})
+
+test('end to end with an Amplitude-shaped vendor: no secret in the answer, id still printed', async () => {
+	let sent
+	const fetch = async (url, init) => {
+		if (String(url) === URL_) return Response.json(META)
+		sent = JSON.parse(init.body)
+		return Response.json({ client_id: 'id-3', token_endpoint_auth_method: 'none' })
+	}
+	let out = ''
+	let err = ''
+	const code = await main(['amplitude', URL_], {
+		fetch,
+		stdout: (s) => {
+			out += s
+		},
+		stderr: (s) => {
+			err += s
+		},
+	})
+	assert.equal(code, 0)
+	assert.equal(out, 'AMPLITUDE_CLIENT_ID=id-3\n')
+	assert.equal(sent.token_endpoint_auth_method, 'client_secret_post')
+	assert.ok(err.includes('public client'))
+})
+
+test('--auth-method none asks the vendor for a no-secret client', async () => {
+	let sent
+	const fetch = async (url, init) => {
+		if (String(url) === URL_) return Response.json(META)
+		sent = JSON.parse(init.body)
+		return Response.json({ client_id: 'id-4' })
+	}
+	let out = ''
+	const code = await main(['amplitude', URL_, '--auth-method', 'none'], {
+		fetch,
+		stdout: (s) => {
+			out += s
+		},
+		stderr: () => {},
+	})
+	assert.equal(code, 0)
+	assert.equal(out, 'AMPLITUDE_CLIENT_ID=id-4\n')
+	assert.equal(sent.token_endpoint_auth_method, 'none')
 })

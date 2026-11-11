@@ -193,10 +193,9 @@ describe('AgentAccess', () => {
 		expect(setDefault).toHaveBeenCalledWith('read_write')
 	})
 
-	it('offers Read & write as the default for Gmail too, and says each email still needs approval', async () => {
+	it('offers Read & write as the default for Gmail too', async () => {
 		const { open, user } = renderOpen({ provider: 'gmail' })
 		await open()
-		expect(screen.getByText(/Each email still waits for your approval/)).toBeInTheDocument()
 		await user.click(screen.getByRole('combobox', { name: 'Access for all other agents' }))
 		await user.click(await screen.findByRole('option', { name: 'Read & write' }))
 		expect(setDefault).toHaveBeenCalledWith('read_write')

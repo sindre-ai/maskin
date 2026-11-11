@@ -1550,10 +1550,16 @@ app.openapi(askSessionRoute, (async (c) => {
 	}
 
 	const isHelper = deliveredTo === 'chat' && !session.conversationId
+	// A thread session asks in its own thread, like its replies do, so the person answering there
+	// sees the card; it stays in the main chat too, as before. Only a chat session has a thread of its own; a helper's or a direct message
+	// question has no thread in the chat it lands in.
+	const threadRootId = routedTo === 'session_chat' ? (session.threadRootId ?? null) : null
 	const created = await insertConversationMessage(db, {
 		conversationId,
 		workspaceId: session.workspaceId,
 		actorId: session.actorId,
+		threadRootId,
+		threadAlsoInChannel: threadRootId !== null,
 		content: formatQuestionsAsMarkdown(questions),
 		metadata: {
 			question: {
@@ -2294,6 +2300,19 @@ app.openapi(keychainAccessCardRoute, (async (c) => {
 	return c.json({ posted: true, already_granted: false, message_id: created.id }, 200)
 }) as RouteHandler<typeof keychainAccessCardRoute, Env>)
 
+/**
+ * The address a connected account is known by, for the card's Account row. Only a provider that
+ * declares its external id to be an email (Gmail, Calendar, Drive, Meet) has one; every other
+ * provider keeps an installation or account id there, which a person must never see.
+ */
+function accountAddressOf(provider: string, externalId: string | null): string | null {
+	if (!externalId) return null
+	const declared = listProviders().find((p) => p.config.name === provider)
+	if (declared?.config.externalIdDisplay !== 'email') return null
+	const address = externalId.trim()
+	return address.length > 0 && address.length <= 320 && address.includes('@') ? address : null
+}
+
 // POST /:id/integration-access-card - Ask the human to let this agent use a connected integration
 //
 // Called by the `request_integration_access` MCP tool. Posts a card with Allow / Not now for
@@ -2371,6 +2390,7 @@ app.openapi(integrationAccessCardRoute, (async (c) => {
 			providerMode: integrations.providerMode,
 			displayName: integrations.displayName,
 			config: integrations.config,
+			externalId: integrations.externalId,
 		})
 		.from(integrations)
 		.where(
@@ -2424,6 +2444,7 @@ app.openapi(integrationAccessCardRoute, (async (c) => {
 	}
 
 	const displayName = integration.displayName ?? providerLabel(integration.provider)
+	const account = accountAddressOf(integration.provider, integration.externalId)
 	const created = await insertConversationMessage(db, {
 		conversationId: target.conversationId,
 		workspaceId: session.workspaceId,
@@ -2435,6 +2456,7 @@ app.openapi(integrationAccessCardRoute, (async (c) => {
 				integration_id: integration.id,
 				provider: integration.provider,
 				display_name: displayName,
+				...(account ? { account } : {}),
 				level,
 				...(reason ? { reason } : {}),
 				...(target.helper ? { reply_to_session: true } : {}),

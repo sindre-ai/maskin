@@ -26,7 +26,7 @@ const TOOL_TOKEN_RE =
 // Snake_case tokens that match the verb-prefix shape but are field / arg /
 // enum names, not tool references. Kept small on purpose — grow it only when
 // a new false positive appears.
-const NON_TOOL_TOKENS = new Set<string>(['create_relationship', 'delete_relationship'])
+const NON_TOOL_TOKENS = new Set<string>(['create_relationship', 'delete_relationship', 'run_at'])
 // Note: delete_relationship IS registered, so it wouldn't fail the check
 // anyway — but listing it here documents that the intent when it appears in
 // prose is often "the relationship-delete concept," not a tool call.
@@ -75,6 +75,8 @@ const READS_OUTSIDE_READ_TOOL_NAMES = [
 	'list_keychain_credentials',
 	'desktop_list_ports',
 	'query_data',
+	'list_file_tags',
+	'get_trigger',
 ]
 
 // get_started is in READ_TOOL_NAMES but its confirm path installs a loop.

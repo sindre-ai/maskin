@@ -27868,6 +27868,299 @@
 				}
 			}
 		},
+		"/api/integrations/deepdots/connect": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"integrations"
+				],
+				"summary": "Connect Deepdots with an email and password",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"email": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 320
+									},
+									"password": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 1024
+									}
+								},
+								"required": [
+									"email",
+									"password"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Signed in and stored",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"integration_id": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"integration_id"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Deepdots refused the email and password. Nothing is stored.",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Deepdots is not switched on for this person",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Signed in, but the connection could not be saved",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"502": {
+						"description": "Deepdots could not be reached. Nothing is stored.",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/integrations/linkedin-unipile/connect": {
 			"post": {
 				"x-viewer-policy": "writer",
@@ -34301,7 +34594,7 @@
 					"integrations"
 				],
 				"summary": "Send an email from the connected Gmail account",
-				"description": "Irreversible and never retried. Needs \"Read & write\" access and an email a person approved: an object draft they approved (object_id) or an approval card they answered (approval_comment_id).",
+				"description": "Irreversible and never retried. Needs \"Read & write\" access. If the agent is set to always allow emails, pass to, subject and body (or object_id) and it sends. If it is set to ask first, the email must be one a person approved: an object draft they approved (object_id) or an approval card they answered (approval_comment_id).",
 				"parameters": [
 					{
 						"schema": {
@@ -34377,7 +34670,8 @@
 										"mode": {
 											"type": "string",
 											"enum": [
-												"approved_draft"
+												"approved_draft",
+												"direct"
 											]
 										}
 									},
@@ -35229,8 +35523,8 @@
 				"tags": [
 					"integrations"
 				],
-				"summary": "Send an approved email draft from the agent mailbox through Resend",
-				"description": "Needs \"Read & write\" access to Resend, a mailbox recorded for the calling agent, and an email draft a person approved (object_id). Sends once per approval.",
+				"summary": "Send an email draft from the agent mailbox through Resend",
+				"description": "Needs \"Read & write\" access to Resend, a mailbox recorded for the calling agent, and an email draft (object_id). An agent set to ask first needs a draft a person approved; one set to always allow sends it at once. Sends once per approval, or once per draft.",
 				"parameters": [
 					{
 						"schema": {
@@ -35279,7 +35573,8 @@
 										"mode": {
 											"type": "string",
 											"enum": [
-												"approved_draft"
+												"approved_draft",
+												"direct"
 											]
 										}
 									},
@@ -42462,6 +42757,464 @@
 				}
 			}
 		},
+		"/api/billing/auto-top-up": {
+			"get": {
+				"tags": [
+					"billing"
+				],
+				"summary": "The auto top-up rule and whether the last automatic charge failed",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "The rule (null until one has been saved)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"auto_top_up": {
+											"type": [
+												"object",
+												"null"
+											],
+											"properties": {
+												"enabled": {
+													"type": "boolean"
+												},
+												"threshold_cents": {
+													"type": "integer"
+												},
+												"amount_cents": {
+													"type": "integer"
+												},
+												"threshold_dkk_approx": {
+													"type": "integer"
+												},
+												"amount_dkk_approx": {
+													"type": "integer"
+												},
+												"status": {
+													"type": "string",
+													"enum": [
+														"ok",
+														"failed"
+													]
+												},
+												"failure_reason": {
+													"type": [
+														"string",
+														"null"
+													],
+													"enum": [
+														"card_declined",
+														"no_payment_method",
+														"authentication_required",
+														"charge_error"
+													]
+												},
+												"failed_at": {
+													"type": [
+														"integer",
+														"null"
+													]
+												},
+												"last_charged_at": {
+													"type": [
+														"integer",
+														"null"
+													]
+												}
+											},
+											"required": [
+												"enabled",
+												"threshold_cents",
+												"amount_cents",
+												"threshold_dkk_approx",
+												"amount_dkk_approx",
+												"status",
+												"failure_reason",
+												"failed_at",
+												"last_charged_at"
+											]
+										}
+									},
+									"required": [
+										"auto_top_up"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Workspace not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"put": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"billing"
+				],
+				"summary": "Save the auto top-up rule (also clears a failed state and retries on the next debit)",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"enabled": {
+										"type": "boolean"
+									},
+									"threshold_cents": {
+										"type": "integer",
+										"minimum": 500
+									},
+									"amount_cents": {
+										"type": "integer",
+										"minimum": 2500,
+										"maximum": 24900
+									}
+								},
+								"required": [
+									"enabled",
+									"threshold_cents",
+									"amount_cents"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Rule saved",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"auto_top_up": {
+											"type": [
+												"object",
+												"null"
+											],
+											"properties": {
+												"enabled": {
+													"type": "boolean"
+												},
+												"threshold_cents": {
+													"type": "integer"
+												},
+												"amount_cents": {
+													"type": "integer"
+												},
+												"threshold_dkk_approx": {
+													"type": "integer"
+												},
+												"amount_dkk_approx": {
+													"type": "integer"
+												},
+												"status": {
+													"type": "string",
+													"enum": [
+														"ok",
+														"failed"
+													]
+												},
+												"failure_reason": {
+													"type": [
+														"string",
+														"null"
+													],
+													"enum": [
+														"card_declined",
+														"no_payment_method",
+														"authentication_required",
+														"charge_error"
+													]
+												},
+												"failed_at": {
+													"type": [
+														"integer",
+														"null"
+													]
+												},
+												"last_charged_at": {
+													"type": [
+														"integer",
+														"null"
+													]
+												}
+											},
+											"required": [
+												"enabled",
+												"threshold_cents",
+												"amount_cents",
+												"threshold_dkk_approx",
+												"amount_dkk_approx",
+												"status",
+												"failure_reason",
+												"failed_at",
+												"last_charged_at"
+											]
+										}
+									},
+									"required": [
+										"auto_top_up"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Workspace cannot be charged automatically yet",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Caller is not a human workspace admin or owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Workspace not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/internal/agent-servers/reconcile": {
 			"post": {
 				"tags": [
@@ -44872,6 +45625,11 @@
 														"minLength": 1,
 														"maxLength": 100
 													},
+													"account": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 320
+													},
 													"level": {
 														"type": "string",
 														"enum": [
@@ -45089,6 +45847,10 @@
 													"outcome"
 												]
 											},
+											"quoted_message_id": {
+												"type": "integer",
+												"exclusiveMinimum": 0
+											},
 											"helper_return": {
 												"type": "string",
 												"format": "uuid"
@@ -45204,6 +45966,12 @@
 												"required": [
 													"intro_message_id",
 													"index"
+												]
+											},
+											"started_from": {
+												"type": "string",
+												"enum": [
+													"share"
 												]
 											},
 											"comment_event_id": {
@@ -46961,23 +47729,36 @@
 									"items": {
 										"type": "object",
 										"properties": {
-											"pinned": {
-												"type": "boolean"
+											"actorId": {
+												"type": "string",
+												"format": "uuid"
 											},
-											"archived": {
-												"type": "boolean"
+											"actorName": {
+												"type": "string"
 											},
-											"last_read_message_id": {
+											"actorType": {
+												"type": "string"
+											},
+											"joinedAt": {
 												"type": [
-													"number",
+													"string",
 													"null"
 												]
+											},
+											"addedBy": {
+												"type": [
+													"string",
+													"null"
+												],
+												"format": "uuid"
 											}
 										},
 										"required": [
-											"pinned",
-											"archived",
-											"last_read_message_id"
+											"actorId",
+											"actorName",
+											"actorType",
+											"joinedAt",
+											"addedBy"
 										]
 									}
 								}
@@ -48291,6 +49072,11 @@
 														"minLength": 1,
 														"maxLength": 100
 													},
+													"account": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 320
+													},
 													"level": {
 														"type": "string",
 														"enum": [
@@ -48508,6 +49294,10 @@
 													"outcome"
 												]
 											},
+											"quoted_message_id": {
+												"type": "integer",
+												"exclusiveMinimum": 0
+											},
 											"helper_return": {
 												"type": "string",
 												"format": "uuid"
@@ -48623,6 +49413,12 @@
 												"required": [
 													"intro_message_id",
 													"index"
+												]
+											},
+											"started_from": {
+												"type": "string",
+												"enum": [
+													"share"
 												]
 											},
 											"comment_event_id": {
@@ -60615,6 +61411,236 @@
 				}
 			}
 		},
+		"/api/for-you/recap": {
+			"get": {
+				"tags": [
+					"For You"
+				],
+				"summary": "What changed since the person last looked: facts the app turns into a sentence",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "date-time",
+							"description": "When the person last looked (ISO 8601). Kept on the device. Anything older than 7 days is cut to 7 days."
+						},
+						"required": true,
+						"description": "When the person last looked (ISO 8601). Kept on the device. Anything older than 7 days is cut to 7 days.",
+						"name": "since",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Counts and a few named items. Zero counts when nothing is new.",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"since": {
+											"type": "string",
+											"description": "The start of the window actually used, after the 7 day cap."
+										},
+										"asks_answered": {
+											"type": "object",
+											"properties": {
+												"count": {
+													"type": "integer",
+													"minimum": 0
+												},
+												"items": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"object_id": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"comment_id": {
+																"type": "number",
+																"description": "The decision card's comment id."
+															},
+															"answered_by": {
+																"type": "string",
+																"format": "uuid"
+															}
+														},
+														"required": [
+															"object_id",
+															"comment_id",
+															"answered_by"
+														]
+													}
+												}
+											},
+											"required": [
+												"count",
+												"items"
+											],
+											"description": "Decision cards addressed to the person that someone else has replied to."
+										},
+										"items_moved": {
+											"type": "object",
+											"properties": {
+												"count": {
+													"type": "integer",
+													"minimum": 0
+												},
+												"items": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"object_id": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"type": {
+																"type": "string"
+															},
+															"title": {
+																"type": "string"
+															},
+															"status": {
+																"type": "string",
+																"description": "Where the item is now."
+															}
+														},
+														"required": [
+															"object_id",
+															"type",
+															"title",
+															"status"
+														]
+													}
+												}
+											},
+											"required": [
+												"count",
+												"items"
+											],
+											"description": "Insights, bets and tasks that changed status, not counting the ones the person moved."
+										},
+										"agents_finished": {
+											"type": "object",
+											"properties": {
+												"count": {
+													"type": "integer",
+													"minimum": 0
+												},
+												"items": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"agent_id": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"name": {
+																"type": "string"
+															},
+															"sessions": {
+																"type": "integer",
+																"exclusiveMinimum": 0
+															}
+														},
+														"required": [
+															"agent_id",
+															"name",
+															"sessions"
+														]
+													}
+												}
+											},
+											"required": [
+												"count",
+												"items"
+											],
+											"description": "Agents with a session that completed. count is the number of agents."
+										}
+									},
+									"required": [
+										"since",
+										"asks_answered",
+										"items_moved",
+										"agents_finished"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Missing workspace ID or a bad since time",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/for-you/dismissals": {
 			"post": {
 				"tags": [
@@ -61720,14 +62746,58 @@
 												},
 												"tips": {
 													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
 												}
 											},
 											"required": [
 												"needs_you",
 												"conversation",
 												"digest",
-												"tips"
+												"tips",
+												"flow_activity"
 											]
+										},
+										"browser_categories": {
+											"type": "object",
+											"properties": {
+												"needs_you": {
+													"type": "boolean"
+												},
+												"conversation": {
+													"type": "boolean"
+												},
+												"digest": {
+													"type": "boolean"
+												},
+												"tips": {
+													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"needs_you",
+												"conversation",
+												"digest",
+												"tips",
+												"flow_activity"
+											]
+										},
+										"browser_not_asked": {
+											"type": "array",
+											"items": {
+												"type": "string",
+												"enum": [
+													"needs_you",
+													"conversation",
+													"digest",
+													"tips",
+													"flow_activity"
+												]
+											}
 										},
 										"briefing_enabled": {
 											"type": "boolean"
@@ -61736,6 +62806,42 @@
 											"type": "integer",
 											"minimum": 0,
 											"maximum": 1439
+										},
+										"email_digest_enabled": {
+											"type": "boolean"
+										},
+										"email_categories": {
+											"type": "object",
+											"properties": {
+												"needs_you": {
+													"type": "boolean"
+												},
+												"conversation": {
+													"type": "boolean"
+												},
+												"tips": {
+													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"needs_you",
+												"conversation",
+												"tips",
+												"flow_activity"
+											]
+										},
+										"marketplace_picks_enabled": {
+											"type": "boolean"
+										},
+										"email_rhythm": {
+											"type": "string",
+											"enum": [
+												"daily",
+												"weekly"
+											]
 										},
 										"muted_workspace_ids": {
 											"type": "array",
@@ -61756,8 +62862,14 @@
 										"quiet_hours_start",
 										"quiet_hours_end",
 										"categories",
+										"browser_categories",
+										"browser_not_asked",
 										"briefing_enabled",
 										"briefing_time",
+										"email_digest_enabled",
+										"email_categories",
+										"marketplace_picks_enabled",
+										"email_rhythm",
 										"muted_workspace_ids",
 										"updated_at"
 									]
@@ -61817,6 +62929,29 @@
 											},
 											"tips": {
 												"type": "boolean"
+											},
+											"flow_activity": {
+												"type": "boolean"
+											}
+										}
+									},
+									"browser_categories": {
+										"type": "object",
+										"properties": {
+											"needs_you": {
+												"type": "boolean"
+											},
+											"conversation": {
+												"type": "boolean"
+											},
+											"digest": {
+												"type": "boolean"
+											},
+											"tips": {
+												"type": "boolean"
+											},
+											"flow_activity": {
+												"type": "boolean"
 											}
 										}
 									},
@@ -61827,6 +62962,36 @@
 										"type": "integer",
 										"minimum": 0,
 										"maximum": 1439
+									},
+									"email_digest_enabled": {
+										"type": "boolean"
+									},
+									"email_categories": {
+										"type": "object",
+										"properties": {
+											"needs_you": {
+												"type": "boolean"
+											},
+											"conversation": {
+												"type": "boolean"
+											},
+											"tips": {
+												"type": "boolean"
+											},
+											"flow_activity": {
+												"type": "boolean"
+											}
+										}
+									},
+									"marketplace_picks_enabled": {
+										"type": "boolean"
+									},
+									"email_rhythm": {
+										"type": "string",
+										"enum": [
+											"daily",
+											"weekly"
+										]
 									},
 									"muted_workspace_ids": {
 										"type": "array",
@@ -61887,14 +63052,58 @@
 												},
 												"tips": {
 													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
 												}
 											},
 											"required": [
 												"needs_you",
 												"conversation",
 												"digest",
-												"tips"
+												"tips",
+												"flow_activity"
 											]
+										},
+										"browser_categories": {
+											"type": "object",
+											"properties": {
+												"needs_you": {
+													"type": "boolean"
+												},
+												"conversation": {
+													"type": "boolean"
+												},
+												"digest": {
+													"type": "boolean"
+												},
+												"tips": {
+													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"needs_you",
+												"conversation",
+												"digest",
+												"tips",
+												"flow_activity"
+											]
+										},
+										"browser_not_asked": {
+											"type": "array",
+											"items": {
+												"type": "string",
+												"enum": [
+													"needs_you",
+													"conversation",
+													"digest",
+													"tips",
+													"flow_activity"
+												]
+											}
 										},
 										"briefing_enabled": {
 											"type": "boolean"
@@ -61903,6 +63112,42 @@
 											"type": "integer",
 											"minimum": 0,
 											"maximum": 1439
+										},
+										"email_digest_enabled": {
+											"type": "boolean"
+										},
+										"email_categories": {
+											"type": "object",
+											"properties": {
+												"needs_you": {
+													"type": "boolean"
+												},
+												"conversation": {
+													"type": "boolean"
+												},
+												"tips": {
+													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"needs_you",
+												"conversation",
+												"tips",
+												"flow_activity"
+											]
+										},
+										"marketplace_picks_enabled": {
+											"type": "boolean"
+										},
+										"email_rhythm": {
+											"type": "string",
+											"enum": [
+												"daily",
+												"weekly"
+											]
 										},
 										"muted_workspace_ids": {
 											"type": "array",
@@ -61923,8 +63168,14 @@
 										"quiet_hours_start",
 										"quiet_hours_end",
 										"categories",
+										"browser_categories",
+										"browser_not_asked",
 										"briefing_enabled",
 										"briefing_time",
+										"email_digest_enabled",
+										"email_categories",
+										"marketplace_picks_enabled",
+										"email_rhythm",
 										"muted_workspace_ids",
 										"updated_at"
 									]
@@ -68334,6 +69585,15 @@
 											"briefing"
 										]
 									},
+									"tags": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 60
+										},
+										"maxItems": 20
+									},
 									"mime_type": {
 										"type": "string",
 										"minLength": 3,
@@ -68394,6 +69654,12 @@
 											"enum": [
 												"briefing"
 											]
+										},
+										"tags": {
+											"type": "array",
+											"items": {
+												"type": "string"
+											}
 										},
 										"mimeType": {
 											"type": "string"
@@ -68519,6 +69785,7 @@
 										"name",
 										"description",
 										"kind",
+										"tags",
 										"mimeType",
 										"sizeBytes",
 										"storageKey",
@@ -68686,6 +69953,26 @@
 					},
 					{
 						"schema": {
+							"type": "string"
+						},
+						"required": false,
+						"name": "tags",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"enum": [
+								"all",
+								"any"
+							]
+						},
+						"required": false,
+						"name": "tags_match",
+						"in": "query"
+					},
+					{
+						"schema": {
 							"type": "integer",
 							"exclusiveMinimum": 0,
 							"maximum": 200
@@ -68791,6 +70078,12 @@
 													"briefing"
 												]
 											},
+											"tags": {
+												"type": "array",
+												"items": {
+													"type": "string"
+												}
+											},
 											"mimeType": {
 												"type": "string"
 											},
@@ -68818,6 +70111,7 @@
 											"name",
 											"description",
 											"kind",
+											"tags",
 											"mimeType",
 											"sizeBytes",
 											"storageKey",
@@ -68832,6 +70126,543 @@
 					},
 					"400": {
 						"description": "Invalid request",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/files/tags": {
+			"get": {
+				"tags": [
+					"Files"
+				],
+				"summary": "List the tags in use in the workspace and how many files carry each",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Tags, most-used first (ties in alphabetical order)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "array",
+									"items": {
+										"type": "object",
+										"properties": {
+											"tag": {
+												"type": "string"
+											},
+											"count": {
+												"type": "integer",
+												"exclusiveMinimum": 0
+											}
+										},
+										"required": [
+											"tag",
+											"count"
+										]
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/files/tags/rename": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Files"
+				],
+				"summary": "Rename a tag on every file in the workspace",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"from": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 60
+									},
+									"to": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 60
+									}
+								},
+								"required": [
+									"from",
+									"to"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Every file that carried the tag now carries the new one",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"from": {
+											"type": "string"
+										},
+										"to": {
+											"type": "string"
+										},
+										"files_changed": {
+											"type": "integer",
+											"minimum": 0
+										}
+									},
+									"required": [
+										"from",
+										"to",
+										"files_changed"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid tag, or the old and new tag are the same",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "No file in the workspace carries the tag; nothing was written",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Rename only: the new name is already a tag; merge into it instead",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/files/tags/merge": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Files"
+				],
+				"summary": "Merge a tag into another on every file in the workspace",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"from": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 60
+									},
+									"into": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 60
+									}
+								},
+								"required": [
+									"from",
+									"into"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Every file that carried the tag now carries the new one",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"from": {
+											"type": "string"
+										},
+										"to": {
+											"type": "string"
+										},
+										"files_changed": {
+											"type": "integer",
+											"minimum": 0
+										}
+									},
+									"required": [
+										"from",
+										"to",
+										"files_changed"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid tag, or the old and new tag are the same",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "No file in the workspace carries the tag; nothing was written",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Rename only: the new name is already a tag; merge into it instead",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -68953,6 +70784,12 @@
 											"enum": [
 												"briefing"
 											]
+										},
+										"tags": {
+											"type": "array",
+											"items": {
+												"type": "string"
+											}
 										},
 										"mimeType": {
 											"type": "string"
@@ -69078,6 +70915,7 @@
 										"name",
 										"description",
 										"kind",
+										"tags",
 										"mimeType",
 										"sizeBytes",
 										"storageKey",
@@ -69252,6 +71090,15 @@
 											"briefing"
 										]
 									},
+									"tags": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 60
+										},
+										"maxItems": 20
+									},
 									"mime_type": {
 										"type": "string",
 										"minLength": 3,
@@ -69409,6 +71256,12 @@
 												"briefing"
 											]
 										},
+										"tags": {
+											"type": "array",
+											"items": {
+												"type": "string"
+											}
+										},
 										"mimeType": {
 											"type": "string"
 										},
@@ -69533,6 +71386,7 @@
 										"name",
 										"description",
 										"kind",
+										"tags",
 										"mimeType",
 										"sizeBytes",
 										"storageKey",
@@ -69922,6 +71776,15 @@
 											"briefing"
 										]
 									},
+									"tags": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 60
+										},
+										"maxItems": 20
+									},
 									"mime_type": {
 										"type": "string",
 										"minLength": 3,
@@ -70205,6 +72068,12 @@
 												"briefing"
 											]
 										},
+										"tags": {
+											"type": "array",
+											"items": {
+												"type": "string"
+											}
+										},
 										"mimeType": {
 											"type": "string"
 										},
@@ -70329,6 +72198,7 @@
 										"name",
 										"description",
 										"kind",
+										"tags",
 										"mimeType",
 										"sizeBytes",
 										"storageKey",

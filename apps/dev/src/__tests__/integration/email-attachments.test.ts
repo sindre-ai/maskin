@@ -8,7 +8,13 @@ import { encrypt } from '../../lib/crypto'
 import { EMAIL_ATTACHMENT_MAX_BYTES } from '../../lib/email-attachments'
 import { recordObjectApproval, withDeliveryState } from '../../lib/object-delivery'
 import { buildObjectPreview } from '../../lib/object-preview'
-import { insertActor, insertAgentGrant, insertObject, insertWorkspace } from '../factories'
+import {
+	insertActor,
+	insertAgentGrant,
+	insertObject,
+	insertSendMode,
+	insertWorkspace,
+} from '../factories'
 import { db, getTestActorId } from './global-setup'
 
 const { default: gmailRoutes } = await import('../../routes/integrations-gmail')
@@ -76,6 +82,13 @@ async function setup(provider: 'gmail' | 'resend') {
 	await db
 		.insert(workspaceMembers)
 		.values({ workspaceId: workspace.id, actorId: agent.id, role: 'member' })
+	// These tests are about an approved email, so the agent is set to ask first.
+	await insertSendMode(db, {
+		workspaceId: workspace.id,
+		agentId: agent.id,
+		kind: 'email',
+		mode: 'ask_first',
+	})
 	const [integration] = await db
 		.insert(integrations)
 		.values({

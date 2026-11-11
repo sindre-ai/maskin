@@ -410,7 +410,7 @@ public final class LinkedItemStore {
 		let reference = FileReference(
 			id: summary.id, name: summary.name, mimeType: summary.mimeType, sizeBytes: summary.sizeBytes)
 		switch summary.kind {
-		case .markdown, .text, .html, .image, .audio: return .file(reference)
+		case .markdown, .text, .html, .image, .audio, .video: return .file(reference)
 		case .pdf, .source, .other:
 			return .plain(
 				LinkedReference(

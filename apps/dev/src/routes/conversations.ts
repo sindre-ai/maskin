@@ -28,7 +28,21 @@ import {
 	updateConversationParticipantStateSchema,
 	updateConversationSchema,
 } from '@maskin/shared'
-import { and, desc, eq, gt, inArray, isNull, lt, ne, sql } from 'drizzle-orm'
+import {
+	type SQL,
+	and,
+	desc,
+	eq,
+	gt,
+	inArray,
+	isNotNull,
+	isNull,
+	lt,
+	ne,
+	not,
+	or,
+	sql,
+} from 'drizzle-orm'
 import {
 	resolveChatTagClient,
 	trackMessageEditedWithTags,
@@ -42,6 +56,7 @@ import { logger } from '../lib/logger'
 import {
 	conversationDetailResponseSchema,
 	conversationListItemResponseSchema,
+	conversationParticipantResponseSchema,
 	conversationParticipantStateResponseSchema,
 	errorSchema,
 	idParamSchema,
@@ -836,19 +851,24 @@ app.openapi(listConversationsRoute, (async (c) => {
 			)`,
 		)
 	}
-	if (query.unread_only) {
-		// Table names (not Drizzle column refs) inside the correlated subquery —
-		// interpolating column objects here renders unqualified and silently
-		// binds to the inner `messages` alias for names both tables share (see
-		// known-pitfalls.md's correlated-subquery entry).
-		conditions.push(
-			sql`EXISTS (
-				SELECT 1 FROM messages m
-				WHERE m.conversation_id = conversations.id
-					AND m.actor_id != ${callerId}
-					AND m.id > COALESCE(conversation_participants.last_read_message_id, 0)
-			)`,
-		)
+	// Table names (not Drizzle column refs) inside the correlated subquery —
+	// interpolating column objects here renders unqualified and silently
+	// binds to the inner `messages` alias for names both tables share (see
+	// known-pitfalls.md's correlated-subquery entry).
+	const hasUnread = sql`EXISTS (
+		SELECT 1 FROM messages m
+		WHERE m.conversation_id = conversations.id
+			AND m.actor_id != ${callerId}
+			AND m.id > COALESCE(conversation_participants.last_read_message_id, 0)
+	)`
+	if (query.unread_only) conditions.push(hasUnread)
+	if (query.scope) {
+		const isPriority = or(
+			isNotNull(conversations.directPairKey),
+			eq(conversationParticipants.pinned, true),
+			hasUnread,
+		) as SQL
+		conditions.push(query.scope === 'priority' ? isPriority : not(isPriority))
 	}
 
 	const rows = await db
@@ -1185,7 +1205,7 @@ const addParticipantsRoute = createRoute({
 	responses: {
 		200: {
 			content: {
-				'application/json': { schema: z.array(conversationParticipantStateResponseSchema) },
+				'application/json': { schema: z.array(conversationParticipantResponseSchema) },
 			},
 			description: 'Updated participant list (state omitted — see GET /:id)',
 		},
@@ -1499,6 +1519,24 @@ app.openapi(postMessageRoute, (async (c) => {
 		sessionThreadRootId = placed.sessionThreadRootId
 		if (body.thread_root_id === undefined && body.top_level !== true) {
 			turnThreadRootId = placed.threadRootId
+			// A turn started by a top-level message: interim notes hang under that message as a
+			// thread, so a long run does not fill the main timeline. Only the end-of-turn reply
+			// (interactive-turn-finalizer) lands in the main timeline. Best-effort, like
+			// resolveThreadRootId: a message that is not a top-level message of this chat is skipped.
+			if (turnThreadRootId === null && turnMessageId !== null) {
+				const [origin] = await db
+					.select({ id: messages.id })
+					.from(messages)
+					.where(
+						and(
+							eq(messages.id, turnMessageId),
+							eq(messages.conversationId, id),
+							isNull(messages.threadRootId),
+						),
+					)
+					.limit(1)
+				if (origin) turnThreadRootId = origin.id
+			}
 		}
 	}
 
@@ -2004,7 +2042,7 @@ const removeReactionRoute = createRoute({
 	},
 })
 
-/** The message must be a real (non-system) message of a conversation the caller is in. */
+/** The message must be a real (non-system), not deleted message of a conversation the caller is in. */
 async function findReactableMessage(
 	db: Database,
 	args: { conversationId: string; messageId: number; callerId: string; workspaceId: string },
@@ -2019,6 +2057,7 @@ async function findReactableMessage(
 				eq(messages.id, args.messageId),
 				eq(messages.conversationId, args.conversationId),
 				eq(messages.kind, 'message'),
+				isNull(messages.deletedAt),
 			),
 		)
 		.limit(1)

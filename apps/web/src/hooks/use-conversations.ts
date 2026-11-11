@@ -15,11 +15,18 @@ import { api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
 const CONVERSATIONS_PAGE_SIZE = 30
+// The chat rail's "Earlier" section opens with this many chats, newest message first.
+const RECENT_PAGE_SIZE = 20
+// Direct messages, pinned and unread chats are all loaded; this is the page size they stream in at
+// (the API's maximum), not a cap.
+const PRIORITY_PAGE_SIZE = 100
 
 export interface ConversationListFilters {
 	pinned?: boolean
 	archived?: boolean
 	unread_only?: boolean
+	/** `priority`: direct messages, pinned and unread chats. `recent`: all other chats. */
+	scope?: 'priority' | 'recent'
 }
 
 export function useConversationsInfinite(
@@ -27,12 +34,22 @@ export function useConversationsInfinite(
 	filters?: ConversationListFilters,
 	options?: { enabled?: boolean },
 ) {
+	const pageSize =
+		filters?.scope === 'priority'
+			? PRIORITY_PAGE_SIZE
+			: filters?.scope === 'recent'
+				? RECENT_PAGE_SIZE
+				: CONVERSATIONS_PAGE_SIZE
 	return useInfiniteQuery({
 		queryKey: queryKeys.conversations.listInfinite(workspaceId, filters as Record<string, unknown>),
 		queryFn: ({ pageParam }) => {
 			const params: Record<string, string> = {
-				limit: String(CONVERSATIONS_PAGE_SIZE),
+				limit: String(pageSize),
 				offset: String(pageParam),
+			}
+			if (filters?.scope) {
+				params.scope = filters.scope
+				params.sort = 'activity'
 			}
 			// zod's `z.coerce.boolean()` on the backend runs `Boolean(str)`, so any
 			// non-empty string — including the literal "false" — coerces to
@@ -46,7 +63,7 @@ export function useConversationsInfinite(
 		},
 		initialPageParam: 0,
 		getNextPageParam: (lastPage, allPages) =>
-			lastPage.has_more ? allPages.length * CONVERSATIONS_PAGE_SIZE : undefined,
+			lastPage.has_more ? allPages.length * pageSize : undefined,
 		enabled: !!workspaceId && (options?.enabled ?? true),
 	})
 }

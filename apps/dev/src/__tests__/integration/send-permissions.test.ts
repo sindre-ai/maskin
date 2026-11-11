@@ -201,11 +201,12 @@ describe('resolveSendMode', () => {
 		const app = buildApp()
 		const mode = async () =>
 			(await resolveSendMode(db, { workspaceId: ws.id, agentId: agent.id, kind: 'email' })).mode
+		await app.request(put(ws.id, { agent_id: agent.id, kind: 'email', mode: 'ask_first' }))
 		expect(await mode()).toBe('ask_first')
 		await app.request(put(ws.id, { agent_id: agent.id, kind: 'email', mode: 'deny' }))
 		expect(await mode()).toBe('deny')
 		await app.request(put(ws.id, { agent_id: agent.id, kind: 'email', mode: null }))
-		expect(await mode()).toBe('ask_first')
+		expect(await mode()).toBe(STARTING_SEND_MODES.email)
 	})
 })
 

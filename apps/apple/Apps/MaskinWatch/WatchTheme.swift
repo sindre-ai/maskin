@@ -55,12 +55,15 @@ struct WatchTile: View {
 
 	private var initials: String {
 		if name == "Chief of Staff" { return "Co" }
+		if name.count == 3, name.allSatisfy({ $0.isLetter && $0.isUppercase }) { return name }
 		return String(name.split(separator: " ").prefix(2).compactMap(\.first)).uppercased()
 	}
 
 	var body: some View {
 		Text(initials)
 			.font(MaskinTypeface.sans(MaskinFontSize.t11, weight: .bold, relativeTo: .caption2))
+			.lineLimit(1)
+			.minimumScaleFactor(0.7)
 			.foregroundStyle(MaskinColor.avFg)
 			.frame(width: WatchMetrics.tile, height: WatchMetrics.tile)
 			.background(MaskinGradient.avatar, in: RoundedRectangle(cornerRadius: MaskinRadius.key, style: .continuous))

@@ -117,6 +117,55 @@ export function trackAgentSessionStarted(p: BaseProps & { entity_type: 'session'
 	trackEvent('agent_session_started', fillBase(p))
 }
 
+// A person who arrived through the button in a summary email (the link carries
+// `?surface=email`; the `surface` property itself stays `web` on every web event).
+// `email_return` is the success event of the summary email bet: it fires once per
+// browser session, on the first app_active or For You event of that arrival. The tag
+// is noted at module load because the router may rewrite the URL before the first
+// event. Never carries the address, the text or a title.
+const EMAIL_ARRIVAL_KEY = 'maskin-email-arrival'
+// Which part of the mail the button sat in (`&block=` on the link): the summary, a flow, or the
+// Marketplace pick. Anything else is dropped.
+const EMAIL_BLOCK_KEY = 'maskin-email-arrival-block'
+const EMAIL_BLOCKS = ['summary', 'flow', 'pick'] as const
+export type EmailReturnVia =
+	| 'app_active'
+	| 'foryou_card_shown'
+	| 'foryou_card_action'
+	| 'foryou_card_marked_read'
+
+function noteEmailArrival(search: string): void {
+	try {
+		const params = new URLSearchParams(search)
+		if (params.get('surface') !== 'email') return
+		if (sessionStorage.getItem(EMAIL_ARRIVAL_KEY) === null) {
+			sessionStorage.setItem(EMAIL_ARRIVAL_KEY, 'pending')
+			const block = params.get('block')
+			if (EMAIL_BLOCKS.some((b) => b === block))
+				sessionStorage.setItem(EMAIL_BLOCK_KEY, block as string)
+		}
+	} catch {
+		// No storage: no arrival is recorded, which only means no email_return.
+	}
+}
+
+if (typeof window !== 'undefined') noteEmailArrival(window.location.search)
+
+// Returns true when it sent the event.
+export function trackEmailReturn(via: EmailReturnVia, search?: string): boolean {
+	let block: string | null = null
+	try {
+		if (search !== undefined) noteEmailArrival(search)
+		if (sessionStorage.getItem(EMAIL_ARRIVAL_KEY) !== 'pending') return false
+		sessionStorage.setItem(EMAIL_ARRIVAL_KEY, 'sent')
+		block = sessionStorage.getItem(EMAIL_BLOCK_KEY)
+	} catch {
+		return false
+	}
+	trackEvent('email_return', block ? { via, block } : { via })
+	return true
+}
+
 // The browser does not send agent_session_completed or trigger_fired: the
 // backend already reports completions (with trigger provenance), and the
 // browser copies were about half of all PostHog events, outside the backend
@@ -133,6 +182,7 @@ let appActiveDaySent = ''
 // this browser. `utc_day` is the same day format as the backend's
 // loop_active_day. Call it after identify so the event lands on the person.
 export function trackAppActive(now: Date = new Date()): boolean {
+	trackEmailReturn('app_active')
 	const utcDay = now.toISOString().slice(0, 10)
 	if (appActiveDaySent === utcDay) return false
 	appActiveDaySent = utcDay
@@ -304,6 +354,21 @@ export function trackObjectAttachedFile(
 
 export function trackMiniAppFileViewed(p: BaseProps & { entity_type: 'file' }): void {
 	trackEvent('mini_app_file_viewed', fillBase(p))
+}
+
+// A person clicked Refresh on a view in the file viewer (bet Customizable app). It
+// counts clicks and scores nothing. `entity_id` is the file id; `list_names` are the
+// app's own list names (a fixed allow-list, never text from the file) joined with a
+// comma; ids, counts and booleans only.
+export function trackViewRefreshed(
+	p: BaseProps & { entity_type: 'file'; list_names: string; row_count: number; ok: boolean },
+): void {
+	trackEvent('view_refreshed', {
+		...fillBase(p),
+		list_names: p.list_names,
+		row_count: p.row_count,
+		ok: p.ok,
+	})
 }
 
 // Usage questions the weekly data pack could not answer. Each fires once per
@@ -635,6 +700,7 @@ export function deriveSidebarViewport(width: number): SidebarViewport {
 // weight never drift.
 
 export function trackForyouCardShown(p: { card_kind: CardKind; card_id: string }): void {
+	trackEmailReturn('foryou_card_shown')
 	trackEvent('foryou_card_shown', {
 		card_kind: p.card_kind,
 		card_id: p.card_id,
@@ -646,6 +712,7 @@ export function trackForyouCardAction(p: {
 	card_id: string
 	action_id: string
 }): void {
+	trackEmailReturn('foryou_card_action')
 	trackEvent('foryou_card_action', {
 		card_kind: p.card_kind,
 		card_id: p.card_id,
@@ -659,6 +726,7 @@ export function trackForyouCardAction(p: {
 // the intent signal, and once per invocation (the server drops the card once
 // read, so there is no natural dedup boundary here — the surface itself is).
 export function trackForyouCardMarkedRead(p: { card_kind: CardKind; card_id: string }): void {
+	trackEmailReturn('foryou_card_marked_read')
 	trackEvent('foryou_card_marked_read', {
 		card_kind: p.card_kind,
 		card_id: p.card_id,

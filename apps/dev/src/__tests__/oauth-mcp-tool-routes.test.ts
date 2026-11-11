@@ -36,6 +36,8 @@ const UNAVAILABLE_UNDER_OAUTH = [
 	'POST /api/actors', // create_actor: returns a new API key
 	'POST /api/conversations', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/conversations/x/participants', // newer MCP tool, route not yet checked for the token's workspace pin
+	'POST /api/files/tags/merge', // merge_file_tags: newer MCP tool, route not yet checked for the token's workspace pin
+	'POST /api/files/tags/rename', // rename_file_tag: newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/files/x/proposals', // propose_file_changes: newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/for-you/withdrawals', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/integrations/gmail/save-attachment', // newer MCP tool, route not yet checked for the token's workspace pin
@@ -59,8 +61,8 @@ const UNAVAILABLE_UNDER_OAUTH = [
 	'PUT /api/integrations/x/default-access', // newer MCP tool, route not yet checked for the token's workspace pin
 ]
 
-// Pre-existing: the MCP server calls a route the API does not register. Not part of this change.
-const CALLS_TO_UNREGISTERED_ROUTES = ['GET /api/triggers/x']
+// The MCP server calls a route the API does not register. Empty since GET /api/triggers/:id exists.
+const CALLS_TO_UNREGISTERED_ROUTES: string[] = []
 
 function registeredApiRoutes(): string[] {
 	const deps: AppDeps = {

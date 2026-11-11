@@ -4,11 +4,10 @@ import MaskinUI
 import SwiftUI
 
 /// Spec 7 §5 long-press actions, built on the system context menu (blur, haptic, a preview of the
-/// bubble clamped to six lines, 44pt rows). All messages: Reply · Copy · Select text · Pin/Unpin. Your newest:
+/// bubble clamped to six lines, 44pt rows). All messages: Copy · Select text · Pin/Unpin. Your newest:
 /// Edit. Agent messages: Try again · Make it shorter · Good answer · Not right. No reaction strip:
 /// the API carries no reactions. A top-level message also offers Reply in thread.
 struct MessageMenuActions {
-	var onReply: (() -> Void)?
 	/// Opens (or starts) the thread under this message.
 	var onThread: (() -> Void)?
 	/// Add or take back one of the quick emoji; `reacted` are the ones you already used.
@@ -38,7 +37,6 @@ struct MessageMenuActions {
 	/// name happens to read like an action ("Copy") cannot be mistaken for that action.
 	var entries: [(item: MessageMenuItem, title: String)] {
 		var out: [(MessageMenuItem, String)] = []
-		if onReply != nil { out.append((.reply, "Reply")) }
 		if onThread != nil { out.append((.thread, "Reply in thread")) }
 		if onCopy != nil { out.append((.copy, "Copy")) }
 		if onSelectText != nil { out.append((.selectText, "Select text")) }
@@ -61,7 +59,6 @@ struct MessageMenuActions {
 	/// Runs the action behind a row.
 	func run(_ item: MessageMenuItem) {
 		switch item {
-		case .reply: onReply?()
 		case .thread: onThread?()
 		case .copy: onCopy?()
 		case .selectText: onSelectText?()
@@ -81,7 +78,7 @@ struct MessageMenuActions {
 
 /// What a long-press menu row does, independent of the words on it.
 enum MessageMenuItem: Hashable {
-	case reply, thread, copy, selectText, openAgent, pin, edit, tryAgain, shorter, goodAnswer, notRight, retrySend,
+	case thread, copy, selectText, openAgent, pin, edit, tryAgain, shorter, goodAnswer, notRight, retrySend,
 		discard, readAloud
 }
 
@@ -89,9 +86,6 @@ struct MessageMenuItems: View {
 	let actions: MessageMenuActions
 
 	var body: some View {
-		if let onReply = actions.onReply {
-			Button(action: onReply) { Label("Reply", systemImage: "arrowshape.turn.up.left") }
-		}
 		if let onReact = actions.onReact {
 			Menu {
 				ForEach(MessageReaction.quick, id: \.self) { emoji in

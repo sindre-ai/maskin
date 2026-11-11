@@ -6,6 +6,7 @@ import {
 	useConversationMessages,
 	useSendMessage,
 } from '@/hooks/use-conversation'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
 import type { ConversationParticipantResponse, MessageMetadata } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
@@ -32,12 +33,14 @@ interface ThreadComposerProps {
 	/**
 	 * Makes this a reply under a top-level message: sends carry `thread_root_id` and
 	 * `also_in_channel`, the recipient (when there is one) is seeded as a mention, and
-	 * the draft is kept per thread. `onSent` runs after a send succeeds.
+	 * the draft is kept per thread. `participantIds` are the actors who wrote in the thread; they
+	 * lead the mention list in place of the whole chat. `onSent` runs after a send succeeds.
 	 */
 	reply?: {
 		rootId: number
 		recipient: { id: string; name: string } | null
 		alsoInChannel: boolean
+		participantIds?: string[]
 		onSent?: () => void
 	}
 }
@@ -65,6 +68,7 @@ export function ThreadComposer({
 	const { data: conversation } = useConversation(conversationId, workspaceId)
 	const messagesQuery = useConversationMessages(conversationId, workspaceId)
 	const { data: workspaceActors } = useActors(workspaceId)
+	const richText = useFeatureFlag('chat-formatting')
 
 	const self = getStoredActor()
 	// Where a pasted provider secret gets vaulted: the running session of this chat and
@@ -91,10 +95,11 @@ export function ThreadComposer({
 	const vaultModeBlocked =
 		!sessions?.some((s) => s.status === 'running') ||
 		sessions.some((s) => s.status === 'pending' || s.status === 'starting' || s.status === 'queued')
-	const participantIds = useMemo(
+	const chatParticipantIds = useMemo(
 		() => conversation?.participants.map((p) => p.actorId) ?? [],
 		[conversation?.participants],
 	)
+	const participantIds = reply?.participantIds ?? chatParticipantIds
 
 	// The recipient arrives with async data, so it is seeded by an effect; the reducer
 	// dedupes, so a re-run is a no-op.
@@ -261,6 +266,7 @@ export function ThreadComposer({
 			draftKey={reply ? `${conversationId}:reply:${reply.rootId}` : conversationId}
 			fillRequest={fillRequest}
 			inlineTags
+			richText={richText}
 			secretCapture={secretCapture}
 			secretRestarting={secretRestarting}
 			vaultModeBlocked={vaultModeBlocked}

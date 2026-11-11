@@ -310,11 +310,34 @@ describe('buildAccessPreamble', () => {
 		expect(MISSING_TOOL_BLOCK.endsWith('\n\n')).toBe(true)
 	})
 
-	it('tells the agent that Gmail still needs a person to approve each email', () => {
+	it('does not tell a Read & write agent that its emails wait for a person', () => {
 		const text = buildAccessPreamble([row('gmail', 'read_write')])
-		expect(text).toMatch(
-			/- gmail: Read & write \(all tools, but a person has to approve each email before you send it\)/i,
-		)
+		expect(text).toMatch(/- gmail: Read & write \(all tools\)/i)
+		expect(text).not.toContain('has to approve')
+		expect(text).not.toContain('## Sending')
+	})
+
+	it('names the kinds that ask first or are off, and nothing else, in a Sending note', () => {
+		const text = buildAccessPreamble([row('gmail', 'read_write')], {
+			sendModes: {
+				email: 'ask_first',
+				linkedin_message: 'ask_first',
+				slack_message: 'always_allow',
+				linkedin_post: 'deny',
+			},
+		})
+		expect(text).toContain('## Sending')
+		expect(text).toContain('set to ask first for you: Email, LinkedIn message')
+		expect(text).toContain('Turned off for you: LinkedIn post')
+		expect(text).toContain('approve_draft_from_chat')
+		expect(text).not.toContain('Slack message')
+	})
+
+	it('adds no Sending note when every kind sends directly', () => {
+		const text = buildAccessPreamble([row('gmail', 'read_write')], {
+			sendModes: { email: 'always_allow', slack_message: 'always_allow' },
+		})
+		expect(text).not.toContain('## Sending')
 	})
 
 	it('tells a Gmail writer to say drafted for a draft and sent only with a message id', () => {

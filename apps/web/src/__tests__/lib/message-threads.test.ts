@@ -2,6 +2,7 @@ import {
 	defaultReplyRecipient,
 	isTimelineMessage,
 	replyPillLabel,
+	threadParticipantIds,
 	threadRootOfQueryKey,
 } from '@/lib/message-threads'
 import { queryKeys } from '@/lib/query-keys'
@@ -70,6 +71,28 @@ describe('defaultReplyRecipient', () => {
 	it('returns null when no agent is involved', () => {
 		const root = { actorId: 'human-1', actorName: 'Ada', actorType: 'human' as const }
 		expect(defaultReplyRecipient(root, [human], 'me')).toBeNull()
+	})
+})
+
+describe('threadParticipantIds', () => {
+	it('lists the root author and each replier once, not the whole chat', () => {
+		const root = { actorId: 'ada' }
+		const replies = [{ actorId: 'forge' }, { actorId: 'scout' }, { actorId: 'forge' }]
+		expect(threadParticipantIds(root, replies)).toEqual(['ada', 'forge', 'scout'])
+	})
+
+	it('lists only the root author for a thread with no replies', () => {
+		expect(threadParticipantIds({ actorId: 'ada' }, [])).toEqual(['ada'])
+	})
+
+	it('folds in the summary stack for repliers on pages not loaded yet', () => {
+		expect(
+			threadParticipantIds(
+				{ actorId: 'ada' },
+				[{ actorId: 'forge' }],
+				[{ actorId: 'ada' }, { actorId: 'scout' }],
+			),
+		).toEqual(['ada', 'forge', 'scout'])
 	})
 })
 

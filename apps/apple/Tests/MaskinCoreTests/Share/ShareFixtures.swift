@@ -93,6 +93,7 @@ final class FakeShareRemote: ShareRemote, @unchecked Sendable {
 		case upload(name: String, mime: String, key: String)
 		case attach(file: String, object: String, objectType: String, key: String)
 		case chat(conversation: String, content: String, files: [String], key: String)
+		case createChat(agent: String, title: String, content: String, files: [String], key: String)
 	}
 
 	private let lock = NSLock()
@@ -105,6 +106,11 @@ final class FakeShareRemote: ShareRemote, @unchecked Sendable {
 		ShareWorkspace(id: "ws-2", name: "Side Project", schema: .fallback),
 	]
 	var conversationsResult: [ShareConversation] = [ShareConversation(id: "c-1", title: "Launch plan")]
+	var agentsResult: Result<[ShareAgent], ShareError> = .success([
+		ShareAgent(id: "agent-chief", name: "Chief of Staff", role: "Runs the workspace", isChiefOfStaff: true),
+		ShareAgent(id: "agent-researcher", name: "Researcher", role: "Finds things out"),
+		ShareAgent(id: "agent-cpo", name: "CPO", role: "Product"),
+	])
 	/// Errors thrown by the next N calls of each kind.
 	private var failures: [String: [ShareError]] = [:]
 	private var counter = 0
@@ -138,6 +144,16 @@ final class FakeShareRemote: ShareRemote, @unchecked Sendable {
 
 	func workspaces() async throws -> [ShareWorkspace] { workspacesResult }
 	func conversations() async throws -> [ShareConversation] { conversationsResult }
+	func agents() async throws -> [ShareAgent] { try agentsResult.get() }
+	func createChat(
+		agentID: String, title: String, content: String, attachments: [ChatAttachmentRef], idempotencyKey: String
+	) async throws -> String {
+		try record(
+			.createChat(
+				agent: agentID, title: title, content: content, files: attachments.map(\.fileID), key: idempotencyKey),
+			op: "createChat")
+		return nextID("chat")
+	}
 	func sendChatMessage(
 		conversationID: String, content: String, attachments: [ChatAttachmentRef], idempotencyKey: String
 	) async throws {

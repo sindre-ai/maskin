@@ -224,25 +224,57 @@ export interface IdentifiedPerson {
 	signupSource?: string | null
 }
 
-// The channel a sign-up came from: the utm_source on the page, else the site that
-// sent the person, else direct. Lower case, short, and only letters, digits and
-// . _ - so a crafted link cannot put free text on a person.
-export function signupSourceFrom(search: string, referrer: string, ownHost: string): string {
-	const clean = (value: string) =>
-		value
+// What posthog-js stored in the browser on the person's first visit: the campaign tag and the site
+// that sent them. The marketing site and the app share a host and a project key, so a visit that began
+// on the home page is still here when the person reaches the sign-up page.
+export interface FirstTouch {
+	utmSource?: unknown
+	referringDomain?: unknown
+}
+
+export function firstTouchFromPosthog(): FirstTouch {
+	try {
+		const initial = posthog.persistence?.get_initial_props() ?? {}
+		return {
+			utmSource: initial.$initial_utm_source,
+			referringDomain: initial.$initial_referring_domain,
+		}
+	} catch {
+		return {}
+	}
+}
+
+// The channel a sign-up came from: the utm_source on the page, else the one from the first visit, else
+// the site that sent the person (this page's referrer, then the first visit's), else direct. Lower case,
+// short, and only letters, digits and . _ - so a crafted link cannot put free text on a person.
+export function signupSourceFrom(
+	search: string,
+	referrer: string,
+	ownHost: string,
+	firstTouch: FirstTouch = {},
+): string {
+	const clean = (value: unknown) =>
+		(typeof value === 'string' ? value : '')
 			.trim()
 			.toLowerCase()
 			.replace(/[^a-z0-9._-]/g, '')
 			.slice(0, 60)
-	const utm = clean(new URLSearchParams(search).get('utm_source') ?? '')
+	const own = clean(ownHost.replace(/^www\./, ''))
+	const outside = (host: unknown) => {
+		const value = clean(typeof host === 'string' ? host.replace(/^www\./, '') : '')
+		return value && value !== own ? value : ''
+	}
+	const utm =
+		clean(new URLSearchParams(search).get('utm_source') ?? '') || clean(firstTouch.utmSource)
 	if (utm) return utm
+	let pageHost = ''
 	try {
-		const host = clean(new URL(referrer).hostname.replace(/^www\./, ''))
-		if (host && host !== clean(ownHost.replace(/^www\./, ''))) return host
+		pageHost = new URL(referrer).hostname
 	} catch {
 		// No referrer, or one that is not a URL.
 	}
-	return 'direct'
+	// PostHog writes $direct when the first visit had no referrer: that is not a site.
+	return outside(pageHost) || outside(firstTouch.referringDomain) || 'direct'
 }
 
 // Identify the actor for analytics, applying the workspace's anonymise pref.

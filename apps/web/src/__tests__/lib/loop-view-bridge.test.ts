@@ -163,3 +163,108 @@ describe('handleBridgeMessage', () => {
 		expect(onDocOverflow).toHaveBeenCalledWith(1400)
 	})
 })
+
+describe('handleBridgeMessage: list sources', () => {
+	const opps = {
+		list: 'opportunities' as const,
+		statuses: ['opportunity'],
+		maxRows: 200,
+		updatedWithinDays: null,
+	}
+	const rows = [{ id: 'bet-1', title: 'One' }]
+
+	function makeListHost(overrides: Partial<BridgeHost> = {}) {
+		return makeHost({
+			allowLists: true,
+			listSources: () =>
+				new Map([
+					['opps', opps],
+					['bad', null],
+				]),
+			listAnswer: vi.fn().mockReturnValue({ rows, fetchedAt: 5 }),
+			...overrides,
+		})
+	}
+
+	it('answers a declared list from what the host holds, and never runs a query', async () => {
+		const host = makeListHost()
+
+		await handleBridgeMessage(host, { source: frame, data: query('opps', 3) })
+
+		expect(host.listAnswer).toHaveBeenCalledWith('opps', opps)
+		expect(host.run).not.toHaveBeenCalled()
+		expect(host.post).toHaveBeenCalledWith({
+			type: BRIDGE_RESULT_MESSAGE,
+			id: 3,
+			data: { rows, fetchedAt: 5 },
+		})
+	})
+
+	it('passes on "not refreshed" before the first click, with no rows', async () => {
+		const host = makeListHost({
+			listAnswer: vi.fn().mockReturnValue({ rows: null, notRefreshed: true }),
+		})
+
+		await handleBridgeMessage(host, { source: frame, data: query('opps', 4) })
+
+		expect(host.post).toHaveBeenCalledWith({
+			type: BRIDGE_RESULT_MESSAGE,
+			id: 4,
+			data: { rows: null, notRefreshed: true },
+		})
+	})
+
+	it('refuses every list when the host does not allow lists (the loop page)', async () => {
+		const host = makeListHost({ allowLists: false })
+
+		await handleBridgeMessage(host, { source: frame, data: query('opps', 5) })
+
+		expect(host.listAnswer).not.toHaveBeenCalled()
+		expect(host.run).not.toHaveBeenCalled()
+		expect(host.post).toHaveBeenCalledWith({
+			type: BRIDGE_RESULT_MESSAGE,
+			id: 5,
+			error: "This view asks for data the app doesn't offer",
+		})
+	})
+
+	it('refuses a list the app does not offer', async () => {
+		const host = makeListHost()
+
+		await handleBridgeMessage(host, { source: frame, data: query('bad', 6) })
+
+		expect(host.listAnswer).not.toHaveBeenCalled()
+		expect(host.post).toHaveBeenCalledWith({
+			type: BRIDGE_RESULT_MESSAGE,
+			id: 6,
+			error: "This view asks for data the app doesn't offer",
+		})
+	})
+
+	it('still answers a count source the usual way next to lists', async () => {
+		const host = makeListHost()
+
+		await handleBridgeMessage(host, { source: frame, data: query('by_status', 7) })
+
+		expect(host.run).toHaveBeenCalledWith(byStatus)
+		expect(host.listAnswer).not.toHaveBeenCalled()
+	})
+
+	it('ignores a list ask from any window other than the view iframe', async () => {
+		const host = makeListHost()
+
+		await handleBridgeMessage(host, { source: otherWindow, data: query('opps') })
+
+		expect(host.listAnswer).not.toHaveBeenCalled()
+		expect(host.post).not.toHaveBeenCalled()
+	})
+
+	it('answers nothing once the frame is blocked', async () => {
+		const host = makeListHost({ isBlocked: () => true })
+
+		await handleBridgeMessage(host, { source: frame, data: query('opps') })
+
+		expect(host.listAnswer).not.toHaveBeenCalled()
+		expect(host.post).not.toHaveBeenCalled()
+	})
+})
