@@ -197,7 +197,10 @@ struct ChatThreadView: View {
 				.backChevronOnly()
 				.task { await runtime?.mentionRoster()?.load() }
 				.task { runtime?.chatOpened(store.conversationID) }
-				.onAppear { liveCalls?.visibleConversationID = store.conversationID }
+				.onAppear {
+					liveCalls?.visibleConversationID = store.conversationID
+					composer.splitsLongMessages = true
+				}
 				.task {
 					// Drafts are per conversation: restored here, saved on every keystroke.
 					if composer.boundConversationID == nil { composer.bind(conversationID: store.conversationID) }
@@ -577,7 +580,7 @@ struct ChatThreadView: View {
 			}
 		}
 		ThreadTranscript(
-			store: store, lazy: lazy, onEdit: beginEdit(_:), onReply: reply(to:), onFillStep: { composer.fill($0) },
+			store: store, lazy: lazy, onEdit: beginEdit(_:), onFillStep: { composer.fill($0) },
 			onJumpToMessage: { scroll(to: $0, proxy: proxy) },
 			onOpenThread: { message in
 				if let route = ThreadRoute.opening(message) { threadRoute = route }
@@ -856,17 +859,25 @@ struct ChatThreadView: View {
 			Task { await store.edit(edit.messageID, to: edit.text) }
 			return
 		}
+		// Over the cap: the full text uploads as a file first, then the short message goes.
+		if composer.isOverLength {
+			Task {
+				guard let (text, metadata) = await composer.takeLong() else { return }
+				deliver(text, metadata: metadata)
+			}
+			return
+		}
 		guard let (text, metadata) = composer.take() else { return }
+		deliver(text, metadata: metadata)
+	}
+
+	private func deliver(_ text: String, metadata: ChatSendMetadata?) {
 		if store.send(text, metadata: metadata) == nil {
 			// Nothing was queued: give the words back rather than lose them.
 			composer.text = text
 		} else {
 			MaskinHaptics.play(.light)
 		}
-	}
-
-	private func reply(to message: ChatMessage) {
-		composer.reply(to: message.actorName, text: message.content, serverID: message.serverID)
 	}
 
 	/// Edit loads the text into the composer under the "Editing message" quote; sending replaces it.
@@ -1047,7 +1058,6 @@ struct ThreadTranscript: View {
 	var lazy = true
 	var now = Date()
 	var onEdit: (ChatMessage) -> Void = { _ in }
-	var onReply: (ChatMessage) -> Void = { _ in }
 	/// An intro's fill step: put its prompt in the composer.
 	var onFillStep: (String) -> Void = { _ in }
 	/// A tap on a reply's quote: scroll to the message with this id.
@@ -1202,7 +1212,6 @@ struct ThreadTranscript: View {
 		var actions = MessageMenuActions()
 		let hasText = !message.content.isEmpty
 		if hasText {
-			actions.onReply = { onReply(message) }
 			actions.onCopy = {
 				Clipboard.copy(message.content)
 				MaskinHaptics.play(.selection)
@@ -1213,7 +1222,7 @@ struct ThreadTranscript: View {
 			actions.reacted = Set(message.reactions.filter(\.reactedByMe).map(\.emoji))
 			actions.onReact = { emoji in Task { await store.toggleReaction(emoji, on: message) } }
 		}
-		if message.serverID != nil, message.kind == "message", !message.isThreadReply, !message.isFailed {
+		if canOpenThread(message) {
 			actions.onThread = { onOpenThread(message) }
 		}
 		if message.serverID != nil {
@@ -1233,7 +1242,7 @@ struct ThreadTranscript: View {
 			actions.onGoodAnswer = { store.setFeedback(feedback == .good ? nil : .good, on: message.id) }
 			actions.onNotRight = {
 				store.setFeedback(.notRight, on: message.id)
-				onReply(message)
+				if canOpenThread(message) { onOpenThread(message) }
 			}
 		}
 		if message.isFailed {
@@ -1248,6 +1257,11 @@ struct ThreadTranscript: View {
 			}
 		}
 		return actions
+	}
+
+	/// Whether the thread under this message can be opened: the one way to reply (the menu row and the swipe).
+	private func canOpenThread(_ message: ChatMessage) -> Bool {
+		message.serverID != nil && message.kind == "message" && !message.isThreadReply && !message.isFailed
 	}
 
 	/// The message a reply's quote points at, when it is in the loaded chat.
@@ -1301,7 +1315,7 @@ struct ThreadTranscript: View {
 				working: message.author == .agent && store.presence(of: message.actorID) != nil,
 				actions: actions(for: message, isOwn: isOwn, isLatestOwn: isLatestOwn),
 				onRetrySend: { store.retrySend(message.id) },
-				onReply: message.content.isEmpty ? nil : { onReply(message) },
+				onReply: canOpenThread(message) ? { onOpenThread(message) } : nil,
 				onQuoteTap: message.quotedReply == nil
 					? nil : { if let target = quoteTarget(of: message) { onJumpToMessage(target.id) } },
 				threadSummary: store.threadSummary(for: message),

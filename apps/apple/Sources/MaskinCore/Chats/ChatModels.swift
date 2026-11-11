@@ -285,7 +285,12 @@ public struct MessagePage: Sendable, Equatable {
 
 public struct ChatsError: Error, Equatable, Sendable {
 	public var message: String
-	public init(_ message: String) { self.message = message }
+	/// The HTTP status of a refused write, when there was one.
+	public var status: Int?
+	public init(_ message: String, status: Int? = nil) {
+		self.message = message
+		self.status = status
+	}
 }
 
 enum ChatDates {

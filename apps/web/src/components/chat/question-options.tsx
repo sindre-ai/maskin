@@ -17,6 +17,8 @@ interface QuestionOptionsProps {
 	question: MessageQuestion
 	/** A later message in the thread already answered this one. */
 	answered: boolean
+	/** The thread the question sits in. The answer goes there too, and shows in the main chat as the question does. */
+	threadRootId?: number | null
 	/** Sits at the right end of the action row, beside "Send answer". */
 	trailingAction?: React.ReactNode
 }
@@ -40,6 +42,7 @@ export function QuestionOptions({
 	questionMessageId,
 	question,
 	answered,
+	threadRootId,
 	trailingAction,
 }: QuestionOptionsProps) {
 	// question index -> chosen labels. Deliberately NOT keyed by header: nothing
@@ -91,7 +94,11 @@ export function QuestionOptions({
 			})
 			return
 		}
-		sendMessage.mutate({ content, metadata: { question_answer: questionAnswer } })
+		sendMessage.mutate({
+			content,
+			metadata: { question_answer: questionAnswer },
+			...(threadRootId ? { thread_root_id: threadRootId, also_in_channel: true } : {}),
+		})
 	}
 
 	const submitTyped = () => {
@@ -130,6 +137,7 @@ export function QuestionOptions({
 		sendMessage.mutate({
 			content,
 			metadata: { hidden_from_chat: true, question_answer: questionAnswer },
+			...(threadRootId ? { thread_root_id: threadRootId, also_in_channel: true } : {}),
 		})
 	}
 

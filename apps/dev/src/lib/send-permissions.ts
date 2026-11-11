@@ -62,6 +62,36 @@ export async function resolveSendMode(
 	return { mode: startingSendMode(params.kind), source: 'starting', settingId: null }
 }
 
+/**
+ * The mode in force for one agent, per kind, resolved the way the send gate resolves it. One
+ * query; used to tell the agent up front which of its sends ask first.
+ */
+export async function resolveAgentSendModes(
+	db: Database,
+	params: { workspaceId: string; agentId: string },
+): Promise<Record<SendPermissionKind, SendPermissionMode>> {
+	const rows = await db
+		.select({
+			agentId: sendPermissions.agentId,
+			kind: sendPermissions.kind,
+			mode: sendPermissions.mode,
+		})
+		.from(sendPermissions)
+		.where(
+			and(
+				eq(sendPermissions.workspaceId, params.workspaceId),
+				or(eq(sendPermissions.agentId, params.agentId), isNull(sendPermissions.agentId)),
+			),
+		)
+	const modes = {} as Record<SendPermissionKind, SendPermissionMode>
+	for (const kind of SEND_PERMISSION_KINDS) {
+		const own = rows.find((r) => r.kind === kind && r.agentId === params.agentId)
+		const workspaceDefault = rows.find((r) => r.kind === kind && r.agentId === null)
+		modes[kind] = own?.mode ?? workspaceDefault?.mode ?? startingSendMode(kind)
+	}
+	return modes
+}
+
 export interface EffectiveSendSetting {
 	mode: SendPermissionMode
 	source: SendModeSource

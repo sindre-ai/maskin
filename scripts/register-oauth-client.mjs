@@ -3,7 +3,7 @@
  * One-time registration of Maskin as an OAuth client with a vendor's hosted MCP server
  * (RFC 7591 dynamic client registration), for the connect-a-tool bet.
  *
- *   node scripts/register-oauth-client.mjs <vendor> <metadata-url> [--origin https://maskin.io]...
+ *   node scripts/register-oauth-client.mjs <vendor> <metadata-url> [--origin https://maskin.io]... [--auth-method none]
  *
  *   node scripts/register-oauth-client.mjs notion https://mcp.notion.com/.well-known/oauth-authorization-server
  *   node scripts/register-oauth-client.mjs stripe https://access.stripe.com/.well-known/oauth-authorization-server/mcp
@@ -11,10 +11,12 @@
  * <vendor> is the provider name in the registry (notion). <metadata-url> is the vendor's published
  * sign-in details (RFC 8414). Each --origin is a public origin Maskin runs on; the callback
  * `{origin}/api/integrations/{vendor}/callback` is registered for every one, in one registration.
- * With no --origin, https://maskin.io.
+ * With no --origin, https://maskin.io. --auth-method (client_secret_post, client_secret_basic or none)
+ * asks for that method instead of the one picked from the vendor's list.
  *
  * Output: the settings lines, NAME_CLIENT_ID=... and NAME_CLIENT_SECRET=... (only the id line for a
- * vendor that offers just no-secret clients, like Stripe), on stdout. Run it in a
+ * vendor that offers just no-secret clients, like Stripe, or that answers with no secret, like
+ * Amplitude), on stdout. Run it in a
  * terminal and set the values on the server by hand. Never put the output in a log, comment, task or
  * file. Everything else it says goes to stderr and holds no secret.
  *
@@ -41,18 +43,27 @@ function ownDomain(host) {
 	return host.split('.').slice(-2).join('.')
 }
 
+const AUTH_METHODS = ['client_secret_post', 'client_secret_basic', 'none']
+
 export function parseArgs(argv) {
 	const origins = []
 	const rest = []
+	let authMethod
 	for (let i = 0; i < argv.length; i++) {
 		if (argv[i] === '--origin') origins.push(argv[++i])
+		else if (argv[i] === '--auth-method') authMethod = argv[++i]
 		else rest.push(argv[i])
 	}
 	if (rest.length !== 2)
-		throw new Error('usage: register-oauth-client.mjs <vendor> <metadata-url> [--origin <url>]...')
+		throw new Error(
+			'usage: register-oauth-client.mjs <vendor> <metadata-url> [--origin <url>]... [--auth-method <method>]',
+		)
+	if (authMethod !== undefined && !AUTH_METHODS.includes(authMethod)) {
+		throw new Error(`--auth-method must be one of ${AUTH_METHODS.join(', ')}`)
+	}
 	const [vendor, metadataUrl] = rest
 	envPrefix(vendor)
-	return { vendor, metadataUrl, origins: origins.length ? origins : [DEFAULT_ORIGIN] }
+	return { vendor, metadataUrl, origins: origins.length ? origins : [DEFAULT_ORIGIN], authMethod }
 }
 
 export function callbackUrls(vendor, origins) {
@@ -114,13 +125,16 @@ export function settingsLines(vendor, registration, authMethod = 'client_secret_
 	if (typeof registration?.client_id !== 'string' || !registration.client_id) {
 		throw new Error('the registration answered without a client id')
 	}
-	if (authMethod === 'none') return `${envPrefix(vendor)}_CLIENT_ID=${registration.client_id}\n`
-	if (typeof registration.client_secret !== 'string' || !registration.client_secret) {
-		throw new Error(
-			'the registration answered without a client secret; the sign-in handler needs one',
-		)
-	}
 	const prefix = envPrefix(vendor)
+	// A vendor can answer with a public client (no secret) even when a secret method was asked for
+	// (Amplitude), so no secret is not an error: print the id and say so on stderr in main.
+	if (
+		authMethod === 'none' ||
+		typeof registration.client_secret !== 'string' ||
+		!registration.client_secret
+	) {
+		return `${prefix}_CLIENT_ID=${registration.client_id}\n`
+	}
 	return `${prefix}_CLIENT_ID=${registration.client_id}\n${prefix}_CLIENT_SECRET=${registration.client_secret}\n`
 }
 
@@ -142,11 +156,11 @@ export async function main(argv, io = {}) {
 	const err = io.stderr ?? ((s) => process.stderr.write(s))
 	const fetchImpl = io.fetch ?? fetch
 	try {
-		const { vendor, metadataUrl, origins } = parseArgs(argv)
+		const { vendor, metadataUrl, origins, authMethod: requested } = parseArgs(argv)
 		const redirectUris = callbackUrls(vendor, origins)
 		const metadata = await getJson(metadataUrl, {}, 'the sign-in details address', fetchImpl)
 		const registrationUrl = checkMetadata(metadataUrl, metadata)
-		const authMethod = chooseAuthMethod(metadata)
+		const authMethod = requested ?? chooseAuthMethod(metadata)
 		err(`Registering Maskin for ${vendor} at ${new URL(registrationUrl).host} (${authMethod})\n`)
 		for (const uri of redirectUris) err(`  callback ${uri}\n`)
 		const registration = await getJson(
@@ -159,10 +173,17 @@ export async function main(argv, io = {}) {
 			'the registration address',
 			fetchImpl,
 		)
-		out(settingsLines(vendor, registration, authMethod))
+		const lines = settingsLines(vendor, registration, authMethod)
+		out(lines)
+		const values = lines.split('\n').filter(Boolean).length === 1 ? 'value' : 'two values'
 		err(
-			`Registered. Set the ${authMethod === 'none' ? 'value' : 'two values'} on the server; do not paste ${authMethod === 'none' ? 'it' : 'them'} anywhere else.\n`,
+			`Registered. Set the ${values} on the server; do not paste ${values === 'value' ? 'it' : 'them'} anywhere else.\n`,
 		)
+		if (authMethod !== 'none' && values === 'value') {
+			err(
+				`The vendor answered with no client secret although ${authMethod} was asked for: it issued a public client. Set tokenAuthMethod to 'none' in the vendor file.\n`,
+			)
+		}
 		return 0
 	} catch (e) {
 		err(`register-oauth-client failed: ${e instanceof Error ? e.message : e}\n`)

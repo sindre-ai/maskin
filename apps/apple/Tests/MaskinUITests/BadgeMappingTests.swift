@@ -69,6 +69,21 @@ import Testing
 		#expect(ActorIdentity.initials(for: "x") == "X")
 	}
 
+	@Test("a short all-caps role and a three-word name show three letters, everything else stays at two")
+	func threeLetterAcronyms() {
+		#expect(ActorIdentity.initials(for: "CTO") == "CTO")
+		#expect(ActorIdentity.initials(for: "PMM") == "PMM")
+		#expect(ActorIdentity.initials(for: "(CPO)") == "CPO")
+		#expect(ActorIdentity.initials(for: "QA") == "QA")
+		#expect(ActorIdentity.initials(for: "Cto") == "CT")
+		#expect(ActorIdentity.initials(for: "NASA") == "NA")
+		#expect(ActorIdentity.initials(for: "Chief of Staff") == "COS")
+		#expect(ActorIdentity.initials(for: "Head of Customer Success") == "HOC")
+		#expect(ActorIdentity.initials(for: "Linker (Sigrid) Lead") == "LSL")
+		#expect(ActorIdentity.initials(for: "Sebastian Krumhausen") == "SK")
+		#expect(ActorIdentity.initials(for: "CTO Agent") == "CA")
+	}
+
 	@Test("the plate hue follows the mockup's (h * 31 + c) % 360 and is stable")
 	func plateHue() {
 		#expect(ActorIdentity.hue(seed: "a") == (0 * 31 + 97) % 360)

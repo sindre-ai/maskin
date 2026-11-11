@@ -155,6 +155,34 @@ describe('POST /sessions/:id/integration-access-card (Integration)', () => {
 		expect(await grantsOf(slack.id)).toEqual([])
 	})
 
+	it('shows the mailbox address on a Gmail card and never a provider id on any other card', async () => {
+		const s = await setup()
+		const accountOf = async (messageId: number) => {
+			const [row] = await db.select().from(messages).where(eq(messages.id, messageId))
+			return (row?.metadata as { integration_access_request?: { account?: string } })
+				.integration_access_request?.account
+		}
+		const post = async (integrationId: string) =>
+			(
+				(await (await card(s, { integration_id: integrationId, level: 'read' })).json()) as {
+					message_id: number
+				}
+			).message_id
+
+		const gmail = await s.integration({ provider: 'gmail', externalId: 'sebastian@example.com' })
+		expect(await accountOf(await post(gmail.id))).toBe('sebastian@example.com')
+
+		// A provider whose external id is an installation or workspace id has no address to show.
+		const slack = await s.integration({ provider: 'slack', externalId: 'T0123ABCD' })
+		expect(await accountOf(await post(slack.id))).toBeUndefined()
+
+		// A Gmail row whose id never resolved to an address leaves the row out.
+		const unresolved = await s.integration({ provider: 'gmail', externalId: null })
+		expect(await accountOf(await post(unresolved.id))).toBeUndefined()
+		const notAnAddress = await s.integration({ provider: 'gmail', externalId: '12345' })
+		expect(await accountOf(await post(notAnAddress.id))).toBeUndefined()
+	})
+
 	it('posts nothing when the agent already has that much, by default or by its own grant', async () => {
 		const s = await setup()
 		const byDefault = await s.integration({ defaultAgentAccess: 'read' })

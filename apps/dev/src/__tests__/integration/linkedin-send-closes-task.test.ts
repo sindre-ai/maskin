@@ -13,7 +13,7 @@ import { __setLinkedInClientForTests } from '../../lib/integrations/providers/li
 import type { LinkedInClient } from '../../lib/integrations/providers/linkedin-unipile/unipile-client'
 import { recordObjectApproval } from '../../lib/object-delivery'
 import { buildObjectPreview } from '../../lib/object-preview'
-import { insertObject, insertWorkspace } from '../factories'
+import { insertLinkedinSendModes, insertObject, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
 /**
@@ -107,6 +107,8 @@ function stubClient() {
 async function connect() {
 	const actorId = getTestActorId()
 	const ws = await insertWorkspace(db, actorId)
+	// These tests are about the approval path: the agent is set to ask first for LinkedIn sends.
+	await insertLinkedinSendModes(db, { workspaceId: ws.id, agentId: actorId, mode: 'ask_first' })
 	const [integration] = await db
 		.insert(integrations)
 		.values({
@@ -288,7 +290,7 @@ describe('LinkedIn send tools with object_id', () => {
 			arguments: { object_id: '00000000-0000-4000-8000-000000000000' },
 		})
 
-		expect(textOf(direct)).toContain('held for a person')
+		expect(textOf(direct)).toContain('waits for a person')
 		expect(textOf(wrongKind)).toContain('not a LinkedIn connection request')
 		expect(textOf(missing)).toContain('does not exist')
 		for (const result of [direct, wrongKind, missing]) expect(result.isError).toBe(true)
@@ -375,7 +377,7 @@ describe('LinkedIn send tools with object_id', () => {
 		const withText = await call({ object_id: task.id, text: 'Something else' })
 		const wrongKind = await call({ object_id: message.id })
 
-		expect(textOf(direct)).toContain('held for a person')
+		expect(textOf(direct)).toContain('waits for a person')
 		expect(textOf(withText)).toContain('Do not pass text')
 		expect(textOf(wrongKind)).toContain('not a LinkedIn post')
 		for (const result of [direct, withText, wrongKind]) expect(result.isError).toBe(true)
@@ -500,7 +502,7 @@ describe('LinkedIn send tools with object_id', () => {
 		for (const result of [direct, directReply]) {
 			expect(result.isError).toBe(true)
 			expect(textOf(result)).toContain('INVALID_INPUT')
-			expect(textOf(result)).toContain('held for a person')
+			expect(textOf(result)).toContain('waits for a person')
 		}
 		expect(sendMessage).not.toHaveBeenCalled()
 		expect(reply).not.toHaveBeenCalled()
@@ -518,7 +520,7 @@ describe('LinkedIn comment, comment reply and post edit tools with object_id', (
 			tool: 'comment_on_post',
 			kind: 'linkedin_comment',
 			notIt: 'not a LinkedIn comment',
-			held: 'A comment is held for a person',
+			held: 'A comment from this agent waits for a person',
 			metadata: { to: 'Liz Benison', post_id: 'urn:li:activity:111' },
 			stub: (c: ReturnType<typeof stubClient>) => c.commentOnPost,
 			sentWith: { post_id: 'urn:li:activity:111', text: 'Well said, Liz' },
@@ -528,7 +530,7 @@ describe('LinkedIn comment, comment reply and post edit tools with object_id', (
 			tool: 'reply_to_comment',
 			kind: 'linkedin_comment_reply',
 			notIt: 'not a LinkedIn comment reply',
-			held: 'A comment reply is held for a person',
+			held: 'A comment reply from this agent waits for a person',
 			metadata: {
 				to: 'Liz Benison',
 				post_id: 'urn:li:activity:222',
@@ -543,7 +545,7 @@ describe('LinkedIn comment, comment reply and post edit tools with object_id', (
 			tool: 'edit_post',
 			kind: 'linkedin_post_edit',
 			notIt: 'not a LinkedIn post edit',
-			held: 'A post edit is held for a person',
+			held: 'A post edit from this agent waits for a person',
 			metadata: { post_id: 'urn:li:share:444' },
 			stub: (c: ReturnType<typeof stubClient>) => c.editPost,
 			sentWith: { post_id: 'urn:li:share:444', text: 'Well said, Liz' },

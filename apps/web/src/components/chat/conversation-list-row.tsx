@@ -10,10 +10,11 @@ import { useUpdateConversationMe } from '@/hooks/use-conversations'
 import type { ConversationListItemResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
-import { snippetAuthorLabel } from '@/lib/conversation-snippet'
+import { shortActorName, snippetAuthorLabel } from '@/lib/conversation-snippet'
 import { plainPreview } from '@/lib/linked-objects'
 import { Link } from '@tanstack/react-router'
 import { MoreHorizontal } from 'lucide-react'
+import { ConversationAvatarStack } from './conversation-avatar-stack'
 
 interface ConversationListRowProps {
 	workspaceId: string
@@ -72,7 +73,10 @@ export function ConversationListRow({
 				activeProps={{ className: 'bg-accent' }}
 				className="flex items-start gap-3 rounded-lg px-2 py-[11px] text-left hover:bg-accent"
 			>
-				{lead ? (
+				{others.length > 1 ? (
+					// Several actors: the cluster the iPhone list draws, so nobody is hidden behind one icon.
+					<ConversationAvatarStack participants={others} className="mt-1 w-[46px]" />
+				) : lead ? (
 					// The row's title and snippet already name who is talking; agents get their pictogram.
 					<ActorAvatar
 						name={lead.actorName}
@@ -113,7 +117,12 @@ export function ConversationListRow({
 								<span className="font-medium">{workingLabel}</span>
 							) : conversation.snippet ? (
 								<>
-									{snippetAuthor ? <span className="font-medium">{snippetAuthor}: </span> : null}
+									{snippetAuthor ? (
+										<span className="font-medium" title={snippetAuthor}>
+											{/* The list has no room for "Chief of Staff": it reads "CoS". */}
+											{shortActorName(snippetAuthor)}:{' '}
+										</span>
+									) : null}
 									{plainPreview(conversation.snippet).map((part, index) =>
 										part.muted ? (
 											// biome-ignore lint/suspicious/noArrayIndexKey: parts are rebuilt from the text on every render and never reorder

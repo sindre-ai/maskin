@@ -21,6 +21,7 @@ function buildImageDetail(overrides: Partial<FileDetail> = {}): FileDetail {
 		workspaceId: 'ws-1',
 		name: 'cat.png',
 		description: null,
+		tags: [],
 		mimeType: 'image/png',
 		sizeBytes: 1234,
 		storageKey: 'workspaces/ws-1/files/file-img-1',

@@ -26,6 +26,7 @@ vi.mock('@/lib/analytics', () => ({
 vi.mock('@/lib/posthog', () => ({
 	identifyForWorkspace: vi.fn().mockResolvedValue(undefined),
 	signupSourceFrom: vi.fn().mockReturnValue('direct'),
+	firstTouchFromPosthog: vi.fn().mockReturnValue({}),
 }))
 
 vi.mock('@tanstack/react-router', async () => {

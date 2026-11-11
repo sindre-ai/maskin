@@ -96,6 +96,18 @@ vi.mock('../../lib/integrations/agent-access', async (importOriginal) => ({
 	listAgentAccess: vi.fn(async () => []),
 }))
 
+// The launch also reads the agent's send settings with a query of its own, which would take a
+// queued select result below. Stubbed to always allow; covered in send-permissions tests.
+vi.mock('../../lib/send-permissions', async (importOriginal) => {
+	const { SEND_PERMISSION_KINDS } = await import('@maskin/shared')
+	return {
+		...(await importOriginal<typeof import('../../lib/send-permissions')>()),
+		resolveAgentSendModes: vi.fn(async () =>
+			Object.fromEntries(SEND_PERMISSION_KINDS.map((kind) => [kind, 'always_allow'])),
+		),
+	}
+})
+
 vi.mock('../../lib/integrations/registry', () => ({
 	getProvider: vi.fn().mockReturnValue(null),
 }))

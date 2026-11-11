@@ -167,6 +167,7 @@ export interface WebPushSenderOptions {
 }
 
 export class WebPushSender implements PushChannel {
+	readonly channelKind = 'browser' as const
 	private config: WebPushConfig | null
 	private transport: WebPushTransport
 	private warnedDisabled = false

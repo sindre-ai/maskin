@@ -22,7 +22,7 @@ import { useIsDesktopViewport } from '@/hooks/use-mobile'
 import { ApiError } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
-import { defaultReplyRecipient } from '@/lib/message-threads'
+import { defaultReplyRecipient, threadParticipantIds } from '@/lib/message-threads'
 import { answeredQuestionIds } from '@/lib/question-answers'
 import { X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -116,9 +116,21 @@ export function MessageThreadPane({
 		[root, summary?.participants, conversation?.participants, self?.id],
 	)
 
+	// Only the people in this thread, not the whole chat, lead the composer's mention list.
+	const participantIds = useMemo(
+		() => (root ? threadParticipantIds(root, replyMessages, summary?.participants) : []),
+		[root, replyMessages, summary?.participants],
+	)
+
 	const reply = useMemo(
-		() => ({ rootId, recipient, alsoInChannel, onSent: () => setAlsoInChannel(false) }),
-		[rootId, recipient, alsoInChannel],
+		() => ({
+			rootId,
+			recipient,
+			alsoInChannel,
+			participantIds,
+			onSent: () => setAlsoInChannel(false),
+		}),
+		[rootId, recipient, alsoInChannel, participantIds],
 	)
 
 	const paneRef = useRef<HTMLDivElement | null>(null)

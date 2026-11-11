@@ -9,12 +9,14 @@ import { type AgentAccess, resolveAgentAccess } from '../lib/integrations/agent-
 import {
 	GATEWAY_BODY_LIMIT_BYTES,
 	GATEWAY_PROVIDERS,
+	RESEND_SEND_TOOLS,
 	annotateToolsList,
 	buildUpstreamHeaders,
 	decideToolCall,
 	denialResult,
 	parseJsonRpc,
 	parseSseData,
+	resendSendRefusal,
 	toSse,
 	toolsCallName,
 } from '../lib/integrations/mcp-gateway'
@@ -22,6 +24,7 @@ import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { getProvider } from '../lib/integrations/registry'
 import type { ToolAnnotationsLike } from '../lib/integrations/tool-kinds'
 import { logger } from '../lib/logger'
+import { decideSend } from '../lib/send-gate'
 import type { IntegrationConfig } from '../lib/types'
 import { isWorkspaceWriter } from '../lib/workspace-auth'
 
@@ -221,7 +224,7 @@ export async function proxyMcp(
 	let allowed = false
 
 	if (toolName) {
-		const decision = decideToolCall({
+		let decision = decideToolCall({
 			provider,
 			providerLabel: label,
 			toolName,
@@ -229,6 +232,14 @@ export async function proxyMcp(
 			access,
 			annotations: annotationCache.get(cacheKey)?.get(toolName),
 		})
+		// Read & write lets an agent use Resend's send tools, unless its send setting for emails holds
+		// or turns off its sends: then they are refused and it is pointed at resend_send_email.
+		if (decision.allowed && provider === 'resend' && RESEND_SEND_TOOLS.has(toolName)) {
+			const send = await decideSend(db, { workspaceId, agentId: actorId, kind: 'email' })
+			if (send !== 'send_now') {
+				decision = { ...decision, allowed: false, message: resendSendRefusal(toolName, send) }
+			}
+		}
 		if (!decision.allowed) {
 			try {
 				await recordEvent(db, {

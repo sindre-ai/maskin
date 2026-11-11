@@ -10,15 +10,21 @@ import {
 	fileKindSchema,
 	fileListItemSchema,
 	fileReadFormatSchema,
+	fileTagChangeResultSchema,
+	fileTagCountSchema,
+	fileTagMatchSchema,
 	type fileTextDetailSchema,
 	fileUploadSessionSchema,
 	isTextMimeType,
+	mergeFileTagsSchema,
+	parseFileTagFilter,
 	planFileUploadParts,
+	renameFileTagSchema,
 	startFileUploadSchema,
 	updateFileSchema,
 } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { and, asc, desc, eq, ilike, inArray, or } from 'drizzle-orm'
+import { and, asc, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
 import { trackFileSaved } from '../lib/analytics/file-events'
 import {
 	buildCreatedAtCursorConditions,
@@ -35,6 +41,7 @@ import {
 	saveFile,
 	sha256Hex,
 } from '../lib/file-save'
+import { FileTagExistsError, FileTagNotFoundError, changeFileTag } from '../lib/file-tag-change'
 import { abortStoredUpload, classifyCompleteFailure, deleteStoredObject } from '../lib/file-uploads'
 import { fileStorageKey, fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
 import {
@@ -174,6 +181,9 @@ const listQuerySchema = z.object({
 	q: z.string().trim().min(1).max(255).optional(),
 	ids: z.string().optional(),
 	kind: fileKindSchema.optional(),
+	// Comma-separated; trimmed and lowercased like tags on write.
+	tags: z.string().optional(),
+	tags_match: fileTagMatchSchema.optional(),
 	limit: z.coerce.number().int().positive().max(200).optional(),
 	offset: z.coerce.number().int().nonnegative().optional(),
 	order: z.enum(['asc', 'desc']).optional(),
@@ -248,6 +258,7 @@ app.openapi(createFileRoute, (async (c) => {
 			name: body.name,
 			description: body.description ?? null,
 			kind: body.kind ?? null,
+			tags: body.tags ?? [],
 			mimeType: body.mime_type,
 			sizeBytes,
 			storageKey,
@@ -361,6 +372,18 @@ app.openapi(listFilesRoute, (async (c) => {
 	if (query.q) conditions.push(ilike(files.name, `%${query.q}%`))
 	if (ids?.length) conditions.push(inArray(files.id, ids))
 	if (query.kind) conditions.push(eq(files.kind, query.kind))
+	const filterTags = parseFileTagFilter(query.tags)
+	if (filterTags.length > 0) {
+		const wanted = sql`ARRAY[${sql.join(
+			filterTags.map((t) => sql`${t}`),
+			sql`, `,
+		)}]::text[]`
+		conditions.push(
+			query.tags_match === 'any'
+				? sql`${files.tags} && ${wanted}`
+				: sql`${files.tags} @> ${wanted}`,
+		)
+	}
 	conditions.push(
 		...buildCreatedAtCursorConditions({ createdAt: files.createdAt, id: files.id }, query),
 	)
@@ -383,6 +406,7 @@ app.openapi(listFilesRoute, (async (c) => {
 			name: files.name,
 			description: files.description,
 			kind: files.kind,
+			tags: files.tags,
 			mimeType: files.mimeType,
 			sizeBytes: files.sizeBytes,
 			storageKey: files.storageKey,
@@ -398,6 +422,158 @@ app.openapi(listFilesRoute, (async (c) => {
 
 	return c.json(serializeArray(rows) as z.infer<typeof fileListItemSchema>[], 200)
 }) as RouteHandler<typeof listFilesRoute, Env>)
+
+// -- GET /tags — Tags in use, with file counts ----------------------------------
+
+// Plenty for a workspace's vocabulary; a longer tail than this is a sign tags are being
+// used as free text.
+const MAX_TAG_COUNT_ROWS = 500
+
+const listTagsRoute = createRoute({
+	method: 'get',
+	path: '/tags',
+	tags: ['Files'],
+	summary: 'List the tags in use in the workspace and how many files carry each',
+	request: { headers: workspaceIdHeader },
+	responses: {
+		200: {
+			content: { 'application/json': { schema: z.array(fileTagCountSchema) } },
+			description: 'Tags, most-used first (ties in alphabetical order)',
+		},
+	},
+})
+
+app.openapi(listTagsRoute, (async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const rows = (await db.execute(sql`
+		SELECT t.tag AS tag, count(*)::int AS count
+		FROM files f
+		CROSS JOIN LATERAL unnest(f.tags) AS t(tag)
+		WHERE f.workspace_id = ${workspaceId}
+		GROUP BY t.tag
+		ORDER BY count(*) DESC, t.tag ASC
+		LIMIT ${MAX_TAG_COUNT_ROWS}
+	`)) as unknown as Array<{ tag: string; count: number }>
+
+	return c.json(
+		Array.from(rows, (row) => ({ tag: row.tag, count: row.count })) as z.infer<
+			typeof fileTagCountSchema
+		>[],
+		200,
+	)
+}) as RouteHandler<typeof listTagsRoute, Env>)
+
+// -- POST /tags/rename and /tags/merge — Change a tag on every file ---------------
+
+const fileTagChangeResponses = {
+	200: {
+		content: { 'application/json': { schema: fileTagChangeResultSchema } },
+		description: 'Every file that carried the tag now carries the new one',
+	},
+	400: {
+		content: { 'application/json': { schema: errorSchema } },
+		description: 'Invalid tag, or the old and new tag are the same',
+	},
+	404: {
+		content: { 'application/json': { schema: errorSchema } },
+		description: 'No file in the workspace carries the tag; nothing was written',
+	},
+	409: {
+		content: { 'application/json': { schema: errorSchema } },
+		description: 'Rename only: the new name is already a tag; merge into it instead',
+	},
+}
+
+const renameFileTagRoute = createRoute({
+	method: 'post',
+	path: '/tags/rename',
+	'x-viewer-policy': 'writer',
+	tags: ['Files'],
+	summary: 'Rename a tag on every file in the workspace',
+	request: {
+		headers: workspaceIdHeader,
+		body: { content: { 'application/json': { schema: renameFileTagSchema } } },
+	},
+	responses: fileTagChangeResponses,
+})
+
+const mergeFileTagsRoute = createRoute({
+	method: 'post',
+	path: '/tags/merge',
+	'x-viewer-policy': 'writer',
+	tags: ['Files'],
+	summary: 'Merge a tag into another on every file in the workspace',
+	request: {
+		headers: workspaceIdHeader,
+		body: { content: { 'application/json': { schema: mergeFileTagsSchema } } },
+	},
+	responses: fileTagChangeResponses,
+})
+
+type FileTagChangeOutcome =
+	| { status: 200; body: { from: string; to: string; files_changed: number } }
+	| { status: 400 | 404 | 409; body: ReturnType<typeof createApiError> }
+
+async function runFileTagChange(
+	db: Database,
+	params: {
+		workspaceId: string
+		actorId: string
+		kind: 'rename' | 'merge'
+		from: string
+		to: string
+	},
+): Promise<FileTagChangeOutcome> {
+	const { from, to } = params
+	if (from === to) {
+		return {
+			status: 400,
+			body: createApiError('VALIDATION_ERROR', 'The old and new tag are the same'),
+		}
+	}
+	try {
+		const filesChanged = await changeFileTag(db, params)
+		return { status: 200, body: { from, to, files_changed: filesChanged } }
+	} catch (err) {
+		if (err instanceof FileTagNotFoundError) {
+			return { status: 404, body: createApiError('NOT_FOUND', err.message) }
+		}
+		if (err instanceof FileTagExistsError) {
+			return { status: 409, body: createApiError('CONFLICT', err.message) }
+		}
+		throw err
+	}
+}
+
+app.openapi(renameFileTagRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { from, to } = c.req.valid('json')
+	const out = await runFileTagChange(c.get('db'), {
+		workspaceId,
+		actorId: c.get('actorId'),
+		kind: 'rename',
+		from,
+		to,
+	})
+	return c.json(out.body, out.status)
+}) as RouteHandler<typeof renameFileTagRoute, Env>)
+
+app.openapi(mergeFileTagsRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { from, into } = c.req.valid('json')
+	const out = await runFileTagChange(c.get('db'), {
+		workspaceId,
+		actorId: c.get('actorId'),
+		kind: 'merge',
+		from,
+		to: into,
+	})
+	return c.json(out.body, out.status)
+}) as RouteHandler<typeof mergeFileTagsRoute, Env>)
 
 // -- GET /:id — Get file detail -----------------------------------------------
 
@@ -659,6 +835,7 @@ app.openapi(updateFileRoute, (async (c) => {
 				name: body.name,
 				description: body.description,
 				kind: body.kind,
+				tags: body.tags,
 				mimeType: body.mime_type,
 				annotations: body.annotations,
 			},
@@ -941,6 +1118,7 @@ app.openapi(startUploadRoute, (async (c) => {
 				name: body.name,
 				description: body.description ?? null,
 				kind: body.kind ?? null,
+				tags: body.tags ?? [],
 				mimeType: body.mime_type,
 				sizeBytes: body.size_bytes,
 				storageKey,
@@ -1209,6 +1387,7 @@ app.openapi(completeUploadRoute, (async (c) => {
 				name: upload.name,
 				description: upload.description,
 				kind: upload.kind,
+				tags: upload.tags,
 				mimeType: upload.mimeType,
 				sizeBytes: stored.size,
 				storageKey: upload.storageKey,

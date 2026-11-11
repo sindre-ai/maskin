@@ -13,6 +13,15 @@ struct MessageMenuTitlesTests {
 		#expect(actions.titles == ["Copy", "Select text", "Pin"])
 	}
 
+	@Test("Reply in thread is the only reply row, first in the menu")
+	func threadIsTheOnlyReply() {
+		var actions = MessageMenuActions()
+		actions.onThread = {}
+		actions.onCopy = {}
+		#expect(actions.titles == ["Reply in thread", "Copy"])
+		#expect(!actions.titles.contains("Reply"))
+	}
+
 	@Test("an agent's plain words offer Open <agent>, after Select text")
 	func openAgent() {
 		var actions = MessageMenuActions()

@@ -2,6 +2,7 @@ import {
 	askAboutSlideDraft,
 	briefingChatAttachments,
 	briefingHeadline,
+	briefingTile,
 	isBriefingSeen,
 	markBriefingSeen,
 	orderBriefingRow,
@@ -36,6 +37,35 @@ describe('briefingHeadline', () => {
 			'Briefing 2026 10 21',
 		)
 		expect(briefingHeadline(undefined, 'Weekly-review.html')).toBe('Weekly review')
+	})
+})
+
+describe('briefingTile', () => {
+	const page = (tags: string) => `<html><head><title>Deck</title>${tags}</head><body></body></html>`
+
+	it('reads the value and label from the meta tags, collapsing whitespace', () => {
+		const html = page(
+			'<meta name="maskin:tile-value" content="  0 of\n 10 "><meta name="maskin:tile-label" content="paying   customers">',
+		)
+		expect(briefingTile(html)).toEqual({ value: '0 of 10', label: 'paying customers' })
+	})
+
+	it('returns the value alone when there is no label', () => {
+		expect(briefingTile(page('<meta name="maskin:tile-value" content="DKK 0">'))).toEqual({
+			value: 'DKK 0',
+		})
+	})
+
+	it('ignores a label without a value', () => {
+		expect(briefingTile(page('<meta name="maskin:tile-label" content="secured">'))).toBeNull()
+		expect(briefingTile(page('<meta name="maskin:tile-value" content="  ">'))).toBeNull()
+	})
+
+	it('decodes entities and returns null for pages without the tags', () => {
+		const html = page('<meta name="maskin:tile-value" content="DKK 992&#44;880 &amp; up">')
+		expect(briefingTile(html)).toEqual({ value: 'DKK 992,880 & up' })
+		expect(briefingTile(page(''))).toBeNull()
+		expect(briefingTile(undefined)).toBeNull()
 	})
 })
 

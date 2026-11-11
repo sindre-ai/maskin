@@ -29,6 +29,7 @@ function listItem(overrides: Partial<FileListItem> = {}): FileListItem {
 		workspaceId: WS,
 		name: 'launch-page.html',
 		description: null,
+		tags: [],
 		mimeType: 'text/html',
 		sizeBytes: 2048,
 		storageKey: `workspaces/${WS}/files/${ID}`,

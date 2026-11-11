@@ -152,9 +152,11 @@ describe('Integrations Routes', () => {
 					.sort(),
 			).toEqual([
 				'airtable',
+				'amplitude',
 				'atlassian',
 				'attio',
 				'canva',
+				'clickup',
 				'github',
 				'gmail',
 				'google-calendar',
@@ -164,6 +166,7 @@ describe('Integrations Routes', () => {
 				'linear',
 				'linkedin-unipile',
 				'miro',
+				'mixpanel',
 				'notion',
 				'posthog',
 				'resend',
@@ -171,6 +174,9 @@ describe('Integrations Routes', () => {
 				'slack',
 				'stripe',
 				'ubersuggest',
+				'vercel',
+				'webflow',
+				'zapier',
 			])
 
 			// Two multi-identity exemptions omit a single `server` spec:

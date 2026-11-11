@@ -17,8 +17,16 @@
 // the one silent, code-free navigation channel a static document can use. Agent
 // CSP metas that slip through the strip can only add restrictions, never relax
 // ours — browsers enforce every CSP meta in the document.
+//
+// Live data: the file viewer is now a second host of the data bridge (see the bridge
+// section below). Behind the living-view-refresh flag it puts live rows, projected to a
+// fixed set of fields, in the frame after the user clicks Refresh. The frame's navigation
+// reset is a tripwire, not protection: the request has already left by the time a second
+// load is seen, and no CSP directive covers it. The controls that matter are what the
+// host answers (only after a click, only contract fields) and who has the flag.
 
 import { type DataQuerySpec, dataQuerySpecSchema } from '@maskin/shared'
+import { type ListSourceEntry, isListDeclaration, parseListSource } from './view-lists'
 
 export const MINI_APP_CSP = [
 	"default-src 'none'",
@@ -319,13 +327,28 @@ const BRIDGE_SCRIPT = `<script>(function(){var n=0,p={};window.maskin={query:fun
 // so an inline view can size its iframe to fit as data arrives.
 const VIEW_SIZE_REPORTER = `<script>(function(){function s(){try{var d=document.documentElement;parent.parent.postMessage({type:'${VIEWER_DOC_SIZE_MESSAGE}',w:d.scrollWidth,cw:d.clientWidth,h:Math.ceil(Math.max(d.getBoundingClientRect().height,d.scrollHeight>window.innerHeight?d.scrollHeight:0))},'*')}catch(e){}}if(document.readyState==='complete')s();else window.addEventListener('load',s);window.addEventListener('resize',s);if(window.ResizeObserver)new ResizeObserver(s).observe(document.documentElement)})();</script>`
 
+// The file viewer's stage zooms and pans from wheel events, and a sandboxed frame swallows
+// its own (see VIEWER_WHEEL_MESSAGE). The viewer's old reporter forwarded them; the bridged
+// one posts size only, so a view hosted in the viewer adds this. It posts the same message
+// the stage already handles, one frame further up, and always prevents the default action
+// for the same reason as VIEWER_REPORTER. The loop page does not add it: an inline view must
+// let the page scroll.
+const VIEW_WHEEL_FORWARDER = `<script>(function(){window.addEventListener('wheel',function(e){try{parent.parent.postMessage({type:'${VIEWER_WHEEL_MESSAGE}',deltaX:e.deltaX,deltaY:e.deltaY,ctrlKey:e.ctrlKey,docX:e.clientX,docY:e.clientY},'*');e.preventDefault()}catch(err){}},{passive:false})})();</script>`
+
 // Inline-view variant of `prepareMiniAppHtml`: same CSP + data-slot bootstrap,
 // plus the size reporter and the bridge. One `injectIntoHtml` call, as above.
-export function prepareBridgedViewHtml(html: string): string {
+// `forwardWheel` is for the file viewer's stage, which zooms and pans from wheel events.
+export function prepareBridgedViewHtml(html: string, options?: { forwardWheel?: boolean }): string {
 	const scrubbed = stripDnsPrefetchControl(stripMetaRefresh(stripAgentCsp(html)))
+	const wheel = options?.forwardWheel ? VIEW_WHEEL_FORWARDER : ''
 	return injectIntoHtml(
 		scrubbed,
-		DNS_PREFETCH_OFF_META + CSP_META + DATA_SLOT_BOOTSTRAP + VIEW_SIZE_REPORTER + BRIDGE_SCRIPT,
+		DNS_PREFETCH_OFF_META +
+			CSP_META +
+			DATA_SLOT_BOOTSTRAP +
+			VIEW_SIZE_REPORTER +
+			BRIDGE_SCRIPT +
+			wheel,
 	)
 }
 
@@ -357,13 +380,22 @@ export const ISOLATION_FRAME_CSP = "frame-src 'none'"
 const escapeAttr = (s: string) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
 
 /** The document the host puts in its iframe: it holds the view (from `prepareBridgedViewHtml`) in a frame of its own. */
-export function prepareIsolatedViewHtml(html: string): string {
+export function prepareIsolatedViewHtml(
+	html: string,
+	options?: { forwardWheel?: boolean },
+): string {
 	// The load relay is an attribute, not a script, so it is bound before the first load can fire.
-	return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${ISOLATION_FRAME_CSP}"><style>html,body{margin:0;height:100%;overflow:hidden}iframe{display:block;border:0;width:100%;height:100%}</style></head><body><iframe scrolling="no" sandbox="allow-scripts" onload="parent.postMessage({type:'${ISOLATION_LOAD_MESSAGE}'},'*')" srcdoc="${escapeAttr(prepareBridgedViewHtml(html))}"></iframe></body></html>`
+	return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${ISOLATION_FRAME_CSP}"><style>html,body{margin:0;height:100%;overflow:hidden}iframe{display:block;border:0;width:100%;height:100%}</style></head><body><iframe scrolling="no" sandbox="allow-scripts" onload="parent.postMessage({type:'${ISOLATION_LOAD_MESSAGE}'},'*')" srcdoc="${escapeAttr(prepareBridgedViewHtml(html, options))}"></iframe></body></html>`
 }
 
 export type ViewSourcesResult =
-	| { ok: true; sources: Map<string, DataQuerySpec> }
+	| {
+			ok: true
+			/** Count sources: a query_data input, answered with grouped numbers. */
+			sources: Map<string, DataQuerySpec>
+			/** List sources: a name from the app's list allow-list, answered with projected rows. */
+			lists: Map<string, ListSourceEntry>
+	  }
 	| { ok: false; error: string }
 
 // Reads the declared sources out of a view document. DOMParser builds an inert
@@ -372,7 +404,7 @@ export type ViewSourcesResult =
 // error the host shows as a fallback to the default page.
 export function readViewSources(html: string): ViewSourcesResult {
 	const slot = new DOMParser().parseFromString(html, 'text/html').getElementById(SOURCES_SLOT_ID)
-	if (!slot) return { ok: true, sources: new Map() }
+	if (!slot) return { ok: true, sources: new Map(), lists: new Map() }
 	let raw: unknown
 	try {
 		raw = JSON.parse(slot.textContent ?? '')
@@ -383,7 +415,14 @@ export function readViewSources(html: string): ViewSourcesResult {
 		return { ok: false, error: `The ${SOURCES_SLOT_ID} block must be a JSON object.` }
 	}
 	const sources = new Map<string, DataQuerySpec>()
+	const lists = new Map<string, ListSourceEntry>()
 	for (const [name, value] of Object.entries(raw)) {
+		// A list the app does not offer is refused when the view asks for it, not here: the
+		// rest of the view still works.
+		if (isListDeclaration(value)) {
+			lists.set(name, parseListSource(value))
+			continue
+		}
 		const parsed = dataQuerySpecSchema.safeParse(value)
 		if (!parsed.success) {
 			const issue = parsed.error.issues[0]
@@ -395,5 +434,5 @@ export function readViewSources(html: string): ViewSourcesResult {
 		}
 		sources.set(name, parsed.data)
 	}
-	return { ok: true, sources }
+	return { ok: true, sources, lists }
 }
