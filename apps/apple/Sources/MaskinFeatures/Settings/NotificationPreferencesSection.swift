@@ -62,6 +62,12 @@ struct NotificationPreferencesSection: View {
 					subtitle: "Summaries of what your agents got done",
 					accessory: .toggle(
 						isOn: store.preferences.emailDigestEnabled, set: { store.setEmailDigest(enabled: $0) })),
+				PageRowModel(
+					id: "marketplace_picks", title: "Marketplace picks",
+					subtitle: "One suggested flow under your summary email, at most once a week",
+					accessory: .toggle(
+						isOn: store.preferences.marketplacePicksEnabled,
+						set: { store.setMarketplacePicks(enabled: $0) })),
 				toggleRow(.tips, "Tips and updates", "What\u{2019}s new in Maskin"),
 			])
 			PageFootnote(

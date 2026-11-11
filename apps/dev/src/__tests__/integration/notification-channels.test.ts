@@ -140,6 +140,34 @@ describe('browser switch per kind (Integration)', () => {
 		expect(body.email_digest_enabled).toBe(true)
 	})
 
+	it('has the Marketplace picks switch off for everyone, saves it on its own, and keeps dismissals', async () => {
+		const signedUp = (await insertActor(db))?.id as string
+		await db.insert(notificationPreferences).values({ actorId: signedUp })
+		const noRow = (await insertActor(db))?.id as string
+		expect((await get(prefsApp(signedUp))).marketplace_picks_enabled).toBe(false)
+		expect((await get(prefsApp(noRow))).marketplace_picks_enabled).toBe(false)
+
+		const app = prefsApp(signedUp)
+		const loop = '7a7a7a7a-1111-4222-8333-444455556666'
+		await db
+			.update(notificationPreferences)
+			.set({ marketplaceDismissedLoopIds: [loop] })
+			.where(eq(notificationPreferences.actorId, signedUp))
+		expect((await put(app, { marketplace_picks_enabled: true })).marketplace_picks_enabled).toBe(
+			true,
+		)
+		// An unrelated save keeps the switch and the dismissal list.
+		expect((await put(app, { briefing_enabled: false })).marketplace_picks_enabled).toBe(true)
+		const [row] = await db
+			.select()
+			.from(notificationPreferences)
+			.where(eq(notificationPreferences.actorId, signedUp))
+		expect(row?.marketplaceDismissedLoopIds).toEqual([loop])
+		expect((await put(app, { marketplace_picks_enabled: false })).marketplace_picks_enabled).toBe(
+			false,
+		)
+	})
+
 	it('keeps everything on for a person with no saved row', async () => {
 		const actor = (await insertActor(db))?.id as string
 		const body = await get(prefsApp(actor))

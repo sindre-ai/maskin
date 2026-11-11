@@ -124,6 +124,10 @@ export function trackAgentSessionStarted(p: BaseProps & { entity_type: 'session'
 // is noted at module load because the router may rewrite the URL before the first
 // event. Never carries the address, the text or a title.
 const EMAIL_ARRIVAL_KEY = 'maskin-email-arrival'
+// Which part of the mail the button sat in (`&block=` on the link): the summary, a flow, or the
+// Marketplace pick. Anything else is dropped.
+const EMAIL_BLOCK_KEY = 'maskin-email-arrival-block'
+const EMAIL_BLOCKS = ['summary', 'flow', 'pick'] as const
 export type EmailReturnVia =
 	| 'app_active'
 	| 'foryou_card_shown'
@@ -132,9 +136,14 @@ export type EmailReturnVia =
 
 function noteEmailArrival(search: string): void {
 	try {
-		if (new URLSearchParams(search).get('surface') !== 'email') return
-		if (sessionStorage.getItem(EMAIL_ARRIVAL_KEY) === null)
+		const params = new URLSearchParams(search)
+		if (params.get('surface') !== 'email') return
+		if (sessionStorage.getItem(EMAIL_ARRIVAL_KEY) === null) {
 			sessionStorage.setItem(EMAIL_ARRIVAL_KEY, 'pending')
+			const block = params.get('block')
+			if (EMAIL_BLOCKS.some((b) => b === block))
+				sessionStorage.setItem(EMAIL_BLOCK_KEY, block as string)
+		}
 	} catch {
 		// No storage: no arrival is recorded, which only means no email_return.
 	}
@@ -144,14 +153,16 @@ if (typeof window !== 'undefined') noteEmailArrival(window.location.search)
 
 // Returns true when it sent the event.
 export function trackEmailReturn(via: EmailReturnVia, search?: string): boolean {
+	let block: string | null = null
 	try {
 		if (search !== undefined) noteEmailArrival(search)
 		if (sessionStorage.getItem(EMAIL_ARRIVAL_KEY) !== 'pending') return false
 		sessionStorage.setItem(EMAIL_ARRIVAL_KEY, 'sent')
+		block = sessionStorage.getItem(EMAIL_BLOCK_KEY)
 	} catch {
 		return false
 	}
-	trackEvent('email_return', { via })
+	trackEvent('email_return', block ? { via, block } : { via })
 	return true
 }
 

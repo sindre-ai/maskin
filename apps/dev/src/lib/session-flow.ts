@@ -13,7 +13,7 @@ export type SessionFlowKeys = {
 
 export type FlowLookup = {
 	/** Flow id to flow title, for every flow in the workspace. */
-	titles: Map<string, string>
+	titles: Map<string, string | null>
 	/** The flow a session belongs to, or null when it ties to none. */
 	flowIdOf: (session: SessionFlowKeys) => string | null
 }

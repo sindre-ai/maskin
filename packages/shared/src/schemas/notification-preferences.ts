@@ -87,6 +87,8 @@ export const notificationPreferencesResponseSchema = z.object({
 	 * the last 30 days, otherwise off).
 	 */
 	email_digest_enabled: z.boolean(),
+	/** The Marketplace picks switch for the summary email. Off until the person turns it on. */
+	marketplace_picks_enabled: z.boolean(),
 	muted_workspace_ids: z.array(z.string().uuid()),
 	/** Null when the actor has never saved preferences (defaults are returned). */
 	updated_at: z.string().nullable(),
@@ -107,6 +109,7 @@ export const updateNotificationPreferencesSchema = z
 		briefing_enabled: z.boolean(),
 		briefing_time: minuteOfDay,
 		email_digest_enabled: z.boolean(),
+		marketplace_picks_enabled: z.boolean(),
 		muted_workspace_ids: z.array(z.string().uuid()).max(200),
 	})
 	.partial()

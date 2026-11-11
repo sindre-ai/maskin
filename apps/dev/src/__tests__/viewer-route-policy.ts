@@ -37,6 +37,11 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	],
 	[
 		'POST',
+		'/api/email/pick-dismiss',
+		'the Not useful link under a Marketplace pick, opened signed out and authenticated by its signed token',
+	],
+	[
+		'POST',
 		'/api/voice-sessions/:id/hangup',
 		'ends the caller’s own call; a member demoted to viewer mid-call must still be able to hang up, or the call keeps running and billing',
 	],

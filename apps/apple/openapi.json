@@ -58970,6 +58970,9 @@
 										"email_digest_enabled": {
 											"type": "boolean"
 										},
+										"marketplace_picks_enabled": {
+											"type": "boolean"
+										},
 										"muted_workspace_ids": {
 											"type": "array",
 											"items": {
@@ -58994,6 +58997,7 @@
 										"briefing_enabled",
 										"briefing_time",
 										"email_digest_enabled",
+										"marketplace_picks_enabled",
 										"muted_workspace_ids",
 										"updated_at"
 									]
@@ -59082,6 +59086,9 @@
 										"maximum": 1439
 									},
 									"email_digest_enabled": {
+										"type": "boolean"
+									},
+									"marketplace_picks_enabled": {
 										"type": "boolean"
 									},
 									"muted_workspace_ids": {
@@ -59198,6 +59205,9 @@
 										"email_digest_enabled": {
 											"type": "boolean"
 										},
+										"marketplace_picks_enabled": {
+											"type": "boolean"
+										},
 										"muted_workspace_ids": {
 											"type": "array",
 											"items": {
@@ -59222,6 +59232,7 @@
 										"briefing_enabled",
 										"briefing_time",
 										"email_digest_enabled",
+										"marketplace_picks_enabled",
 										"muted_workspace_ids",
 										"updated_at"
 									]

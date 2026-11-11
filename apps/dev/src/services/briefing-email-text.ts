@@ -64,6 +64,18 @@ export function pickNextStep(facts: NextStepFacts): string | null {
 	return null
 }
 
+/** The opt-in Marketplace pick block, placed below the summary. Plain help, no price talk. */
+export interface PickBlock {
+	name: string
+	description: string
+	/** The "Why you see this" sentence, without the prefix. */
+	why: string
+	/** The flow's Marketplace page, already tagged with surface=email. */
+	url: string
+	/** Signed "Not useful" link. */
+	dismissUrl: string
+}
+
 export interface SummaryEmailInput {
 	summary: BriefingText
 	step: EmailStep
@@ -73,6 +85,8 @@ export interface SummaryEmailInput {
 	stopUrl: string
 	/** From pickNextStep; null leaves the part out. */
 	nextStep: string | null
+	/** Only for someone who switched picks on, never in steps 1 to 3. Absent leaves the block out. */
+	pick?: PickBlock | null
 }
 
 export interface SummaryEmail {
@@ -152,10 +166,11 @@ export function summarySections(summary: BriefingText, nextStep: string | null):
 }
 
 export function buildSummaryEmail(input: SummaryEmailInput): SummaryEmail {
-	const { summary, step, buttonUrl, stopUrl, nextStep } = input
+	const { summary, step, buttonUrl, stopUrl, nextStep, pick } = input
 	const lesson = step === 'daily' ? null : STEP_LESSON[step]
 	const label = buttonLabel(summary)
 	const sections = summarySections(summary, nextStep)
+	const pickDescription = pick ? clip(pick.description, 140) : ''
 
 	const text = [
 		summary.title,
@@ -163,6 +178,17 @@ export function buildSummaryEmail(input: SummaryEmailInput): SummaryEmail {
 		...(lesson ? ['', lesson] : []),
 		'',
 		`${label}: ${buttonUrl}`,
+		...(pick
+			? [
+					'',
+					'Marketplace pick',
+					`- ${pick.name}: ${pickDescription}`,
+					`- Why you see this: ${pick.why}`,
+					'- Setup and cost are on its Marketplace page.',
+					`See the flow: ${pick.url}`,
+					`Not useful: ${pick.dismissUrl}`,
+				]
+			: []),
 		'',
 		`Stop these emails: ${stopUrl}`,
 	].join('\n')
@@ -178,6 +204,12 @@ export function buildSummaryEmail(input: SummaryEmailInput): SummaryEmail {
 		),
 		...(lesson ? [`<p style="color: #444; margin: 16px 0;">${escapeHtml(lesson)}</p>`] : []),
 		`<p><a href="${escapeHtml(buttonUrl)}" style="display: inline-block; background: #111; color: #fff; padding: 12px 20px; border-radius: 6px; text-decoration: none;">${escapeHtml(label)}</a></p>`,
+		...(pick
+			? [
+					`<p style="margin: 24px 0 4px; font-weight: 600;">Marketplace pick</p><ul style="margin: 0; padding-left: 20px;"><li>${escapeHtml(pick.name)}: ${escapeHtml(pickDescription)}</li><li>Why you see this: ${escapeHtml(pick.why)}</li><li>Setup and cost are on its Marketplace page.</li></ul>`,
+					`<p><a href="${escapeHtml(pick.url)}" style="color: #111;">See the flow</a> &nbsp;·&nbsp; <a href="${escapeHtml(pick.dismissUrl)}" style="color: #666;">Not useful</a></p>`,
+				]
+			: []),
 		`<p style="color: #666; font-size: 13px;"><a href="${escapeHtml(stopUrl)}" style="color: #666;">Stop these emails</a></p>`,
 		'</body>',
 		'</html>',
