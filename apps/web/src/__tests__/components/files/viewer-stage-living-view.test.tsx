@@ -34,6 +34,7 @@ function htmlFile(content: string, overrides: Partial<FileDetail> = {}): FileDet
 		workspaceId: 'ws-1',
 		name: 'opportunities.html',
 		description: null,
+		tags: [],
 		mimeType: 'text/html',
 		sizeBytes: 100,
 		storageKey: 'k',

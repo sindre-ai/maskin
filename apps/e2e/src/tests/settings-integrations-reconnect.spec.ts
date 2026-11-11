@@ -1,4 +1,5 @@
 import { expect, test } from '../fixtures/auth.fixture'
+import { openIntegrationCard } from '../helpers/integrations.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 /**
@@ -73,6 +74,7 @@ test.describe('Settings — Integrations scope-drift reconnect prompt', () => {
 			// /api/events, so networkidle never fires. Brief settle after `load`.
 			await page.waitForLoadState('load')
 			await page.waitForTimeout(300)
+			await openIntegrationCard(page, /Slack/)
 
 			// This stub is missing history scopes, so the Slack-specific copy wins
 			// over the generic count — it names what the reconnect actually unlocks.
@@ -112,6 +114,7 @@ test.describe('Settings — Integrations scope-drift reconnect prompt', () => {
 			await page.goto(`/${account.workspaceId}/settings/integrations`)
 			await page.waitForLoadState('load')
 			await page.waitForTimeout(300)
+			await openIntegrationCard(page, /Slack/)
 
 			const label = page.getByText(
 				'Reconnect required — Slack agents need history access to read channel backlog.',
@@ -151,6 +154,7 @@ test.describe('Settings — Integrations scope-drift reconnect prompt', () => {
 		await page.goto(`/${account.workspaceId}/settings/integrations`)
 		await page.waitForLoadState('load')
 		await page.waitForTimeout(300)
+		await openIntegrationCard(page, /Slack/)
 
 		await expect(page.getByText(/Update needed/)).toHaveCount(0)
 		await expect(page.getByText(/Slack agents need history access/)).toHaveCount(0)
@@ -170,6 +174,7 @@ test.describe('Settings — Integrations scope-drift reconnect prompt', () => {
 		await page.goto(`/${account.workspaceId}/settings/integrations`)
 		await page.waitForLoadState('load')
 		await page.waitForTimeout(300)
+		await openIntegrationCard(page, /Slack/)
 
 		await expect(
 			page.getByText('Update needed — reconnect to grant 2 new permissions'),
@@ -182,6 +187,7 @@ test.describe('Settings — Integrations scope-drift reconnect prompt', () => {
 		await page.goto(`/${account.workspaceId}/settings/integrations`)
 		await page.waitForLoadState('load')
 		await page.waitForTimeout(300)
+		await openIntegrationCard(page, /Slack/)
 
 		await expect(
 			page.getByText('Update needed — reconnect to grant 1 new permission'),

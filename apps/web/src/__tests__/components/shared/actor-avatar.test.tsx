@@ -53,6 +53,37 @@ describe('getActorInitials', () => {
 	it('returns ? when the name is punctuation only', () => {
 		expect(getActorInitials('---')).toBe('?')
 	})
+
+	it('keeps all three letters of a 3-letter all-caps word', () => {
+		expect(getActorInitials('CTO')).toBe('CTO')
+		expect(getActorInitials('PMM')).toBe('PMM')
+		expect(getActorInitials('CPO')).toBe('CPO')
+	})
+
+	it('keeps a 2-letter all-caps word at 2 letters', () => {
+		expect(getActorInitials('QA')).toBe('QA')
+	})
+
+	it('cuts a mixed-case one-word name to 2 letters', () => {
+		expect(getActorInitials('Cto')).toBe('CT')
+		expect(getActorInitials('cto')).toBe('CT')
+		expect(getActorInitials('Forge')).toBe('FO')
+	})
+
+	it('cuts an all-caps word longer than 3 letters to 2 letters', () => {
+		expect(getActorInitials('NASA')).toBe('NA')
+	})
+
+	it('strips punctuation before the acronym check', () => {
+		expect(getActorInitials('(CTO)')).toBe('CTO')
+		expect(getActorInitials('C.T.O.')).toBe('CTO')
+	})
+
+	it('keeps multi-word names at 2 letters', () => {
+		expect(getActorInitials('Chief of Staff')).toBe('CO')
+		expect(getActorInitials('Sebastian Krumhausen')).toBe('SK')
+		expect(getActorInitials('CTO Agent')).toBe('CA')
+	})
 })
 
 describe('getActorAvatarPaletteClass', () => {
@@ -79,6 +110,29 @@ describe('ActorAvatar', () => {
 	it('renders 2-letter initials for multi-word names', () => {
 		render(<ActorAvatar name="Product Marketer" type="human" />)
 		expect(screen.getByText('PM')).toBeInTheDocument()
+	})
+
+	it('renders all three letters of a short all-caps role name', () => {
+		render(<ActorAvatar name="CTO" type="human" />)
+		expect(screen.getByText('CTO')).toBeInTheDocument()
+	})
+
+	it('shrinks the glyph for three letters at every size and on the tile', () => {
+		const { rerender } = render(<ActorAvatar name="PMM" type="human" size="sm" />)
+		expect(screen.getByText('PMM').parentElement?.className).toContain('text-[7px]')
+		rerender(<ActorAvatar name="PMM" type="human" size="md" />)
+		expect(screen.getByText('PMM').parentElement?.className).toContain('text-[9px]')
+		rerender(<ActorAvatar name="PMM" type="human" size="lg" />)
+		expect(screen.getByText('PMM').parentElement?.className).toContain('text-xs')
+		rerender(<ActorAvatar name="PMM" type="human" size="xl" />)
+		expect(screen.getByText('PMM').parentElement?.className).toContain('text-[15px]')
+		rerender(<ActorAvatar name="PMM" type="human" tile />)
+		expect(screen.getByText('PMM').parentElement?.className).toContain('text-[8px]')
+	})
+
+	it('keeps the normal glyph size for two letters', () => {
+		render(<ActorAvatar name="Sebastian Krumhausen" type="human" size="sm" />)
+		expect(screen.getByText('SK').parentElement?.className).toContain('text-[10px]')
 	})
 
 	it('draws an agent as a pictogram tile and keeps its name', () => {

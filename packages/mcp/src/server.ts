@@ -6054,6 +6054,7 @@ export function createMcpServer(config: McpConfig) {
 					name: args.name,
 					description: args.description,
 					...(args.kind !== undefined ? { kind: args.kind } : {}),
+					...(args.tags !== undefined ? { tags: args.tags } : {}),
 					mime_type: args.mime_type,
 					content: args.content,
 					...(args.encoding !== undefined ? { encoding: args.encoding } : {}),
@@ -6081,6 +6082,8 @@ export function createMcpServer(config: McpConfig) {
 			const params = new URLSearchParams()
 			if (args.q) params.set('q', args.q)
 			if (args.kind) params.set('kind', args.kind)
+			if (args.tags?.length) params.set('tags', args.tags.join(','))
+			if (args.tags_match) params.set('tags_match', args.tags_match)
 			params.set('limit', String(pagination.limit + 1))
 			params.set('snapshot_at', pagination.snapshotAt)
 			params.set('order', pagination.order)
@@ -6117,6 +6120,75 @@ export function createMcpServer(config: McpConfig) {
 					},
 					...(nextCursor ? { next_cursor: nextCursor } : {}),
 				},
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'list_file_tags',
+		{
+			description: tools.list_file_tags.description,
+			inputSchema: tools.list_file_tags.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const tags = (await apiCall(config, 'GET', '/api/files/tags', undefined, {
+				workspaceId: wsId,
+			})) as Array<{ tag: string; count: number }>
+			return {
+				_meta: meta('list_file_tags', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(tags) }],
+				structuredContent: { tags },
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'rename_file_tag',
+		{
+			description: tools.rename_file_tag.description,
+			inputSchema: tools.rename_file_tag.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const result = await apiCall(
+				config,
+				'POST',
+				'/api/files/tags/rename',
+				{ from: args.from, to: args.to },
+				{ workspaceId: wsId },
+			)
+			return {
+				_meta: meta('rename_file_tag', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'merge_file_tags',
+		{
+			description: tools.merge_file_tags.description,
+			inputSchema: tools.merge_file_tags.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const result = await apiCall(
+				config,
+				'POST',
+				'/api/files/tags/merge',
+				{ from: args.from, into: args.into },
+				{ workspaceId: wsId },
+			)
+			return {
+				_meta: meta('merge_file_tags', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},
 	)
@@ -6175,6 +6247,7 @@ export function createMcpServer(config: McpConfig) {
 			if (args.name !== undefined) body.name = args.name
 			if (args.description !== undefined) body.description = args.description
 			if (args.kind !== undefined) body.kind = args.kind
+			if (args.tags !== undefined) body.tags = args.tags
 			if (args.mime_type !== undefined) body.mime_type = args.mime_type
 			if (args.content !== undefined) body.content = args.content
 			if (args.encoding !== undefined) body.encoding = args.encoding

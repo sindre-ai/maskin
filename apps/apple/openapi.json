@@ -68582,6 +68582,15 @@
 											"briefing"
 										]
 									},
+									"tags": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 60
+										},
+										"maxItems": 20
+									},
 									"mime_type": {
 										"type": "string",
 										"minLength": 3,
@@ -68642,6 +68651,12 @@
 											"enum": [
 												"briefing"
 											]
+										},
+										"tags": {
+											"type": "array",
+											"items": {
+												"type": "string"
+											}
 										},
 										"mimeType": {
 											"type": "string"
@@ -68767,6 +68782,7 @@
 										"name",
 										"description",
 										"kind",
+										"tags",
 										"mimeType",
 										"sizeBytes",
 										"storageKey",
@@ -68934,6 +68950,26 @@
 					},
 					{
 						"schema": {
+							"type": "string"
+						},
+						"required": false,
+						"name": "tags",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"enum": [
+								"all",
+								"any"
+							]
+						},
+						"required": false,
+						"name": "tags_match",
+						"in": "query"
+					},
+					{
+						"schema": {
 							"type": "integer",
 							"exclusiveMinimum": 0,
 							"maximum": 200
@@ -69039,6 +69075,12 @@
 													"briefing"
 												]
 											},
+											"tags": {
+												"type": "array",
+												"items": {
+													"type": "string"
+												}
+											},
 											"mimeType": {
 												"type": "string"
 											},
@@ -69066,6 +69108,7 @@
 											"name",
 											"description",
 											"kind",
+											"tags",
 											"mimeType",
 											"sizeBytes",
 											"storageKey",
@@ -69080,6 +69123,543 @@
 					},
 					"400": {
 						"description": "Invalid request",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/files/tags": {
+			"get": {
+				"tags": [
+					"Files"
+				],
+				"summary": "List the tags in use in the workspace and how many files carry each",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Tags, most-used first (ties in alphabetical order)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "array",
+									"items": {
+										"type": "object",
+										"properties": {
+											"tag": {
+												"type": "string"
+											},
+											"count": {
+												"type": "integer",
+												"exclusiveMinimum": 0
+											}
+										},
+										"required": [
+											"tag",
+											"count"
+										]
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/files/tags/rename": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Files"
+				],
+				"summary": "Rename a tag on every file in the workspace",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"from": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 60
+									},
+									"to": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 60
+									}
+								},
+								"required": [
+									"from",
+									"to"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Every file that carried the tag now carries the new one",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"from": {
+											"type": "string"
+										},
+										"to": {
+											"type": "string"
+										},
+										"files_changed": {
+											"type": "integer",
+											"minimum": 0
+										}
+									},
+									"required": [
+										"from",
+										"to",
+										"files_changed"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid tag, or the old and new tag are the same",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "No file in the workspace carries the tag; nothing was written",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Rename only: the new name is already a tag; merge into it instead",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/files/tags/merge": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Files"
+				],
+				"summary": "Merge a tag into another on every file in the workspace",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"from": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 60
+									},
+									"into": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 60
+									}
+								},
+								"required": [
+									"from",
+									"into"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Every file that carried the tag now carries the new one",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"from": {
+											"type": "string"
+										},
+										"to": {
+											"type": "string"
+										},
+										"files_changed": {
+											"type": "integer",
+											"minimum": 0
+										}
+									},
+									"required": [
+										"from",
+										"to",
+										"files_changed"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid tag, or the old and new tag are the same",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "No file in the workspace carries the tag; nothing was written",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Rename only: the new name is already a tag; merge into it instead",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -69201,6 +69781,12 @@
 											"enum": [
 												"briefing"
 											]
+										},
+										"tags": {
+											"type": "array",
+											"items": {
+												"type": "string"
+											}
 										},
 										"mimeType": {
 											"type": "string"
@@ -69326,6 +69912,7 @@
 										"name",
 										"description",
 										"kind",
+										"tags",
 										"mimeType",
 										"sizeBytes",
 										"storageKey",
@@ -69500,6 +70087,15 @@
 											"briefing"
 										]
 									},
+									"tags": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 60
+										},
+										"maxItems": 20
+									},
 									"mime_type": {
 										"type": "string",
 										"minLength": 3,
@@ -69657,6 +70253,12 @@
 												"briefing"
 											]
 										},
+										"tags": {
+											"type": "array",
+											"items": {
+												"type": "string"
+											}
+										},
 										"mimeType": {
 											"type": "string"
 										},
@@ -69781,6 +70383,7 @@
 										"name",
 										"description",
 										"kind",
+										"tags",
 										"mimeType",
 										"sizeBytes",
 										"storageKey",
@@ -70170,6 +70773,15 @@
 											"briefing"
 										]
 									},
+									"tags": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 60
+										},
+										"maxItems": 20
+									},
 									"mime_type": {
 										"type": "string",
 										"minLength": 3,
@@ -70453,6 +71065,12 @@
 												"briefing"
 											]
 										},
+										"tags": {
+											"type": "array",
+											"items": {
+												"type": "string"
+											}
+										},
 										"mimeType": {
 											"type": "string"
 										},
@@ -70577,6 +71195,7 @@
 										"name",
 										"description",
 										"kind",
+										"tags",
 										"mimeType",
 										"sizeBytes",
 										"storageKey",

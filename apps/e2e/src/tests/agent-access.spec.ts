@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
+import { openIntegrationCard } from '../helpers/integrations.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 /**
@@ -87,6 +88,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 		await stubIntegrations(page, account.workspaceId, account.actorId, state)
 
 		await page.goto(`/${account.workspaceId}/settings/integrations`)
+		await openIntegrationCard(page, /Linear/)
 		const toggle = page.getByRole('button', { name: /Agent access/ })
 		await expect(toggle).toBeVisible({ timeout: 15_000 })
 		// Collapsed: one line, no list.
@@ -152,6 +154,7 @@ test('the access section reads in light and dark', async ({ page, account }) => 
 	const state: State = { defaultAgentAccess: 'read', agentGrants: [] }
 	await stubIntegrations(page, account.workspaceId, account.actorId, state)
 	await page.goto(`/${account.workspaceId}/settings/integrations`)
+	await openIntegrationCard(page, /Linear/)
 	await page.getByRole('button', { name: /Agent access/ }).click()
 
 	for (const scheme of ['light', 'dark'] as const) {
@@ -175,6 +178,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 		await stubIntegrations(page, account.workspaceId, account.actorId, state, GMAIL)
 
 		await page.goto(`/${account.workspaceId}/settings/integrations`)
+		await openIntegrationCard(page, /Gmail/)
 		await page.getByRole('button', { name: /Agent access/ }).click()
 
 		// Read & write on Gmail lets an agent draft; each email still waits for a person.
