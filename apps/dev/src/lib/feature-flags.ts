@@ -105,6 +105,14 @@ export const FLAGS = {
 	 * box formatting reads the same id. Retire once it is on for everyone.
 	 */
 	CHAT_FORMATTING: 'chat-formatting',
+	/**
+	 * Gates the item card beside a loop view (bet [Act on items inside loop views](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/d9bdf0fe-d570-4c0f-93d9-744e18def585)):
+	 * when a view asks to open an item, the loop page shows its card in a side panel, where the
+	 * person can change its status or approve it, instead of going to the object's page. Frontend
+	 * only: read once, in `LoopViewTab`. Off means Open goes to the object's page as before. Retire
+	 * once it is on for everyone.
+	 */
+	LOOP_VIEW_ITEM_PANEL: 'loop-view-item-panel',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

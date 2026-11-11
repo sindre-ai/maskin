@@ -39,9 +39,16 @@ interface LoopCustomViewProps {
 	fileId: string
 	/** Called when the view cannot be shown (file missing, bad sources, escaped frame). The loop page then shows its default content. A failed query is not one: the view stays and says so. */
 	onFailure: (reason: string) => void
+	/** What a view's window.maskin.open(id) does. Without it the viewer goes to that object's page. */
+	onOpenItem?: (objectId: string) => void
 }
 
-export function LoopCustomView({ workspaceId, fileId, onFailure }: LoopCustomViewProps) {
+export function LoopCustomView({
+	workspaceId,
+	fileId,
+	onFailure,
+	onOpenItem,
+}: LoopCustomViewProps) {
 	const { data: file, isLoading, isError } = useFile(workspaceId, fileId)
 	const html = file?.mimeType.toLowerCase().startsWith('text/html') ? file.content : null
 	const sources = useMemo(() => (html === null ? null : readViewSources(html)), [html])
@@ -66,6 +73,7 @@ export function LoopCustomView({ workspaceId, fileId, onFailure }: LoopCustomVie
 			lists={sources.lists}
 			workspaceId={workspaceId}
 			onFailure={onFailure}
+			onOpenItem={onOpenItem}
 		/>
 	)
 }
@@ -76,12 +84,14 @@ function ViewFrame({
 	lists,
 	workspaceId,
 	onFailure,
+	onOpenItem,
 }: {
 	html: string
 	sources: ReadonlyMap<string, DataQuerySpec>
 	lists: ReadonlyMap<string, ListSourceEntry>
 	workspaceId: string
 	onFailure: (reason: string) => void
+	onOpenItem?: (objectId: string) => void
 }) {
 	const iframeRef = useRef<HTMLIFrameElement>(null)
 	const navigate = useNavigate()
@@ -127,6 +137,8 @@ function ViewFrame({
 	listsRef.current = lists
 	const onFailureRef = useRef(onFailure)
 	onFailureRef.current = onFailure
+	const onOpenItemRef = useRef(onOpenItem)
+	onOpenItemRef.current = onOpenItem
 
 	// The view draws from the last saved answers when it has them, then the host asks the
 	// server again behind it. `updatedAt` is the age of the oldest answer on screen; `refreshing`
@@ -225,7 +237,12 @@ function ViewFrame({
 					allowLists: false,
 					listSources: () => listsRef.current,
 					onOpen: (objectId) =>
-						navigate({ to: '/$workspaceId/objects/$objectId', params: { workspaceId, objectId } }),
+						onOpenItemRef.current
+							? onOpenItemRef.current(objectId)
+							: navigate({
+									to: '/$workspaceId/objects/$objectId',
+									params: { workspaceId, objectId },
+								}),
 					run: async (spec) => {
 						const key = JSON.stringify(spec)
 						const given = (result: DataQueryResult) => {
