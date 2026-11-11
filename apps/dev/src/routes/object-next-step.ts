@@ -1,4 +1,4 @@
-import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
+import { OpenAPIHono, createRoute } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { objects } from '@maskin/db/schema'
 import { nextStepResponseSchema, setNextStepSchema, updateNextStepSchema } from '@maskin/shared'
@@ -35,12 +35,6 @@ const stepErrorResponses = {
 		content: { 'application/json': { schema: errorSchema } },
 	},
 } as const
-
-function stepErrorStatus(err: NextStepError) {
-	if (err.code === 'NOT_FOUND') return 404 as const
-	if (err.code === 'CONFLICT') return 409 as const
-	return 400 as const
-}
 
 /** The object's workspace, once the caller is allowed to write in it. Null reads as 404. */
 async function writableObject(db: Database, actorId: string, objectId: string) {
@@ -94,7 +88,10 @@ app.openapi(setRoute, async (c) => {
 		return c.json(serializeNextStep(row), 201)
 	} catch (err) {
 		if (err instanceof NextStepError) {
-			return c.json(createApiError(err.code, err.message), stepErrorStatus(err))
+			const error = createApiError(err.code, err.message)
+			if (err.code === 'NOT_FOUND') return c.json(error, 404)
+			if (err.code === 'CONFLICT') return c.json(error, 409)
+			return c.json(error, 400)
 		}
 		throw err
 	}
@@ -137,7 +134,10 @@ app.openapi(updateRoute, async (c) => {
 		return c.json(serializeNextStep(row), 200)
 	} catch (err) {
 		if (err instanceof NextStepError) {
-			return c.json(createApiError(err.code, err.message), stepErrorStatus(err))
+			const error = createApiError(err.code, err.message)
+			// Updating never raises a conflict: the one-live-step rule is only checked on set.
+			if (err.code === 'NOT_FOUND') return c.json(error, 404)
+			return c.json(error, 400)
 		}
 		throw err
 	}
