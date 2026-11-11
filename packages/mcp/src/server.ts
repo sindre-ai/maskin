@@ -100,6 +100,7 @@ import {
 } from './tool-aliases.js'
 import { legacyListTools, parseListActorsInclude, tools } from './tools.js'
 import { compactTrigger } from './trigger-rows.js'
+import { type OtherTrigger, type WarningChecks, detectTriggerWarnings } from './trigger-warnings.js'
 
 export interface McpConfig {
 	apiBaseUrl: string
@@ -3016,6 +3017,45 @@ function triggerAgent(
 ): { id: string | null; name: string | null } {
 	const id = trigger.targetActorId ?? trigger.target_actor_id ?? null
 	return { id, name: id ? (actors.get(id)?.name ?? null) : null }
+}
+
+/**
+ * The body create_trigger and update_trigger return: the saved trigger in
+ * compact form, plus warnings that never block the save. The agent's other
+ * enabled triggers are read after the save; if that read fails the similar
+ * check is skipped and the rest still ships.
+ */
+async function triggerWriteResult(
+	config: McpConfig,
+	workspaceId: string | undefined,
+	saved: RawTrigger,
+	checks: WarningChecks,
+): Promise<Record<string, unknown>> {
+	const agentId = saved.targetActorId ?? saved.target_actor_id ?? null
+	const actors = await resolveActors(config, agentId ? [agentId] : [], workspaceId)
+	let others: OtherTrigger[] = []
+	if (checks.similar && agentId) {
+		try {
+			const params = new URLSearchParams({
+				target_actor_id: agentId,
+				enabled: 'true',
+				limit: '100',
+			})
+			const list = await apiCall(config, 'GET', `/api/triggers?${params}`, undefined, {
+				workspaceId,
+			})
+			others = Array.isArray(list) ? (list as OtherTrigger[]) : []
+		} catch (err) {
+			console.error("[MCP] Could not read the agent's other triggers for warnings:", err)
+		}
+	}
+	const warnings = detectTriggerWarnings({ id: saved.id, trigger: saved, others, checks })
+	const wsId = saved.workspaceId ?? workspaceId ?? config.defaultWorkspaceId
+	const row: Record<string, unknown> = { ...compactTrigger(saved, triggerAgent(saved, actors)) }
+	return {
+		trigger: wsId ? addUrl(row, config, wsId, { kind: 'trigger', id: saved.id }) : row,
+		warnings,
+	}
 }
 
 function formatRelativeFuture(targetMs: number, nowMs: number): string {
@@ -7028,24 +7068,17 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const { workspace_id, ...body } = args
-			const result = await apiCall(config, 'POST', '/api/triggers', body, {
+			const saved = (await apiCall(config, 'POST', '/api/triggers', body, {
 				workspaceId: workspace_id,
+			})) as RawTrigger
+			const result = await triggerWriteResult(config, workspace_id, saved, {
+				prompt: true,
+				config: true,
+				similar: saved.enabled,
 			})
-			const wsId =
-				(result as { workspaceId?: string }).workspaceId ??
-				workspace_id ??
-				config.defaultWorkspaceId
-			const triggerId = (result as { id?: string }).id
-			const withUrl =
-				wsId && triggerId
-					? addUrl(result as Record<string, unknown>, config, wsId, {
-							kind: 'trigger',
-							id: triggerId,
-						})
-					: result
 			return {
 				_meta: meta('create_trigger', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(withUrl) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},
 	)
@@ -7268,19 +7301,24 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const { id, workspace_id, ...body } = args
-			const result = await apiCall(config, 'PATCH', `/api/triggers/${id}`, body, {
+			const saved = (await apiCall(config, 'PATCH', `/api/triggers/${id}`, body, {
 				workspaceId: workspace_id,
+			})) as RawTrigger
+			// Only warn about what this update touched, so a plain enable or rename of an old
+			// trigger does not repeat every old note.
+			const result = await triggerWriteResult(config, workspace_id, saved, {
+				prompt: body.action_prompt !== undefined,
+				config: body.config !== undefined,
+				similar:
+					saved.enabled &&
+					(body.name !== undefined ||
+						body.config !== undefined ||
+						body.target_actor_id !== undefined ||
+						body.enabled === true),
 			})
-			const wsId =
-				(result as { workspaceId?: string }).workspaceId ??
-				workspace_id ??
-				config.defaultWorkspaceId
-			const withUrl = wsId
-				? addUrl(result as Record<string, unknown>, config, wsId, { kind: 'trigger', id })
-				: result
 			return {
 				_meta: meta('update_trigger', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(withUrl) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},
 	)

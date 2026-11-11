@@ -8347,8 +8347,12 @@ describe('url field injection', () => {
 				target_actor_id: testUuid,
 			})) as { content: Array<{ text: string }> }
 
-			const parsed = JSON.parse(result.content[0].text) as { id: string; url: string }
-			expect(parsed.url).toBe('https://maskin.example.com/ws-default-123/triggers/trig-1')
+			const parsed = JSON.parse(result.content[0].text) as {
+				trigger: { id: string; url: string }
+				warnings: unknown[]
+			}
+			expect(parsed.trigger.url).toBe('https://maskin.example.com/ws-default-123/triggers/trig-1')
+			expect(Array.isArray(parsed.warnings)).toBe(true)
 		})
 
 		it('list_triggers — url added to each trigger in content', async () => {

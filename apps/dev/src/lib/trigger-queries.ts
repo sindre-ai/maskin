@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { events, actors, objects, triggers } from '@maskin/db/schema'
+import { triggers } from '@maskin/db/schema'
 import { type SQL, and, inArray, or, sql } from 'drizzle-orm'
 
 /** Escape LIKE wildcards (percent, underscore) and the escape character itself. */
@@ -24,10 +24,12 @@ export function triggerSearchCondition(q: string): SQL | undefined {
 	const perWord = words.map((word) => {
 		const pattern = `%${escapeLike(word)}%`
 		const haystack = sql`concat_ws(' ', ${triggers.name}, ${triggers.targetActorId}::text, ${kindLabel}, ${statusLabel}, ${scheduleLabel})`
+		// Columns inside the subqueries are written out with their table: drizzle leaves the
+		// table off a column in a single-table select, and the names clash with `triggers`.
 		return or(
 			sql`${haystack} ILIKE ${pattern} ESCAPE '\\'`,
-			sql`EXISTS (SELECT 1 FROM ${actors} WHERE ${actors.id} = ${triggers.targetActorId} AND ${actors.name} ILIKE ${pattern} ESCAPE '\\')`,
-			sql`EXISTS (SELECT 1 FROM ${objects} WHERE ${objects.workspaceId} = ${triggers.workspaceId} AND ${objects.type} = 'loop' AND ${objects.metadata} -> 'trigger_ids' ? (${triggers.id})::text AND ${objects.title} ILIKE ${pattern} ESCAPE '\\')`,
+			sql`EXISTS (SELECT 1 FROM actors WHERE actors.id = triggers.target_actor_id AND actors.name ILIKE ${pattern} ESCAPE '\\')`,
+			sql`EXISTS (SELECT 1 FROM objects WHERE objects.workspace_id = triggers.workspace_id AND objects.type = 'loop' AND objects.metadata -> 'trigger_ids' ? (triggers.id)::text AND objects.title ILIKE ${pattern} ESCAPE '\\')`,
 		)
 	})
 	return perWord.length ? and(...perWord) : undefined
@@ -49,11 +51,11 @@ export async function fetchLastRunAt(
 		.select({
 			id: triggers.id,
 			lastRunAt: sql<Date | string | null>`(
-				SELECT ${events.createdAt} FROM ${events}
-				WHERE ${events.workspaceId} = ${workspaceId}
-					AND ${events.entityId} = ${triggers.id}
-					AND ${events.action} = 'trigger_fired'
-				ORDER BY ${events.id} DESC LIMIT 1
+				SELECT events.created_at FROM events
+				WHERE events.workspace_id = ${workspaceId}
+					AND events.entity_id = triggers.id
+					AND events.action = 'trigger_fired'
+				ORDER BY events.id DESC LIMIT 1
 			)`,
 		})
 		.from(triggers)
