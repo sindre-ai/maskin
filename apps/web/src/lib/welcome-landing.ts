@@ -1,4 +1,4 @@
-import { api } from '@/lib/api'
+import { type WorkspaceResponse, api } from '@/lib/api'
 
 /**
  * Where a new person lands: the chat the Chief of Staff opened with its welcome. If that chat
@@ -13,4 +13,13 @@ export async function welcomeLandingPath(workspaceId: string): Promise<string> {
 		console.error('[maskin] failed to find the welcome chat', err)
 	}
 	return landing
+}
+
+/**
+ * A workspace the server made while the card step is on waits for a card before anything runs, so
+ * the card step opens instead of the workspace. The server decides, we only read the answer.
+ */
+export function workspaceAwaitsCard(workspace: WorkspaceResponse): boolean {
+	const billing = workspace.settings?.billing as { trial_state?: string } | undefined
+	return billing?.trial_state === 'awaiting_card'
 }

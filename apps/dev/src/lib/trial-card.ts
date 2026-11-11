@@ -5,7 +5,10 @@ import { eq } from 'drizzle-orm'
 import type Stripe from 'stripe'
 import { capturePosthogEvent } from './analytics/posthog'
 import { evictBillingUsage } from './billing-usage-cache'
+import { isEnterpriseActor } from './enterprise'
+import { FLAGS, isSignupFlagEnabled } from './feature-flags'
 import { logger } from './logger'
+import { ownedWorkspacePlans } from './workspace-capacity'
 
 // The card step at sign-up (bet "A card to start a 7-day trial", task T2). A workspace that signed
 // up through the card step waits (`billing.trial_state = 'awaiting_card'`, and no session starts)
@@ -35,6 +38,23 @@ export class TrialCardAlreadyUsedError extends Error {
 		super('This card has already started a free trial.')
 		this.name = 'TrialCardAlreadyUsedError'
 	}
+}
+
+/**
+ * Whether a workspace made through POST /api/workspaces must wait for a card, like one made at
+ * sign-up. Without this, a person who skipped the card step (or deleted that workspace) could make
+ * another workspace and get a trial with no card. A person who already owns a paid workspace has a
+ * card with Stripe, so they are let through; so are agents and enterprise owners.
+ */
+export async function newWorkspaceNeedsCard(
+	db: Database,
+	actorId: string,
+	actorType: string,
+): Promise<boolean> {
+	if (actorType !== 'human' || !isSignupFlagEnabled(FLAGS.TRIAL_CARD_PERCENT)) return false
+	if (isEnterpriseActor(actorId)) return false
+	const plans = await ownedWorkspacePlans(db, actorId)
+	return plans.every((plan) => plan === 'trial')
 }
 
 /** How the card was entered: a wallet type, or none for plain entry. */
