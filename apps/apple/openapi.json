@@ -17370,6 +17370,12 @@
 											},
 											"isTeam": {
 												"type": "boolean"
+											},
+											"internal": {
+												"type": "boolean"
+											},
+											"paying": {
+												"type": "boolean"
 											}
 										},
 										"required": [
@@ -17386,7 +17392,9 @@
 											"role",
 											"memberCount",
 											"isDefault",
-											"isTeam"
+											"isTeam",
+											"internal",
+											"paying"
 										]
 									}
 								}

@@ -39,6 +39,8 @@ describe('posthog helper', () => {
 			actor_id: 'a1',
 			actor_type: 'human',
 			is_team: false,
+			internal: false,
+			paying: false,
 		})
 
 		// posthog-js is safe to call before init (it buffers), and the module-local
@@ -58,6 +60,8 @@ describe('posthog helper', () => {
 			actor_id: 'a1',
 			actor_type: 'agent',
 			is_team: false,
+			internal: false,
+			paying: false,
 		})
 
 		expect(regSpy).toHaveBeenCalledTimes(1)
@@ -66,6 +70,8 @@ describe('posthog helper', () => {
 			actor_id: 'a1',
 			actor_type: 'agent',
 			is_team: false,
+			internal: false,
+			paying: false,
 		})
 	})
 
@@ -411,11 +417,19 @@ describe('firstTouchFromPosthog', () => {
 })
 
 describe('withSharedProperties', () => {
-	it('adds surface web and defaults actor_type to human', () => {
+	it('adds surface web and defaults actor_type to human, internal and paying to false', () => {
 		expect(withSharedProperties({ event: 'x', properties: { a: 1 } })).toEqual({
 			event: 'x',
-			properties: { a: 1, actor_type: 'human', surface: 'web' },
+			properties: { a: 1, actor_type: 'human', internal: false, paying: false, surface: 'web' },
 		})
+	})
+
+	it('keeps the internal and paying values the workspace mount registered', () => {
+		const out = withSharedProperties({
+			event: 'x',
+			properties: { internal: true, paying: true },
+		})
+		expect(out?.properties).toMatchObject({ internal: true, paying: true })
 	})
 
 	it('adds feature_area for an event that belongs to a product area', () => {
