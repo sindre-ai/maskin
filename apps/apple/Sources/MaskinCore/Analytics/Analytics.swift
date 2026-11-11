@@ -253,6 +253,18 @@ public final class Analytics {
 			])
 	}
 
+	/// An existing object was changed and the server confirmed it. Same names as the web's
+	/// `object_updated` (`mutation_type` is `field` for a title, description or property edit).
+	/// Ids and counts only, never the text that changed.
+	public func objectUpdated(id: String, mutationType: String) {
+		track(
+			"object_updated",
+			[
+				"object_id": .string(id), "mutation_type": .string(mutationType), "via": "single",
+				"bulk_batch_size": 1,
+			])
+	}
+
 	/// Sends one event if the person has agreed and is signed in.
 	public func track(_ event: String, _ properties: AnalyticsProperties = [:]) {
 		guard isActive, let sink, let actorId else { return }
