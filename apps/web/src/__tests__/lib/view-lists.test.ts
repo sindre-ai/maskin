@@ -303,7 +303,7 @@ describe('projectObjectRow', () => {
 			cluster: 'events',
 			scheduled_date: '2026-11-18',
 			size_is_guess: true,
-			priority: { nested: 'object' },
+			priority: { nested: ['object'] },
 			angle: 'secret angle',
 			editor_verdict: 'secret verdict',
 		},
