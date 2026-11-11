@@ -673,6 +673,9 @@ export const conversationListQuerySchema = z.object({
 	// 'pinned' (default) keeps pinned chats on top, as the chat list shows them;
 	// 'activity' orders purely by last message, newest first.
 	sort: z.enum(['pinned', 'activity']).default('pinned'),
+	// 'priority' keeps only what the chat rail always lists in full: direct messages, pinned
+	// chats and chats with unread messages. 'recent' is everything else. Omitted = both.
+	scope: z.enum(['priority', 'recent']).optional(),
 	limit: z.coerce.number().int().min(1).max(100).default(30),
 	offset: z.coerce.number().int().min(0).default(0),
 })

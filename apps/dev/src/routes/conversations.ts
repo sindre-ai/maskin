@@ -28,7 +28,21 @@ import {
 	updateConversationParticipantStateSchema,
 	updateConversationSchema,
 } from '@maskin/shared'
-import { and, desc, eq, gt, inArray, isNull, lt, ne, sql } from 'drizzle-orm'
+import {
+	type SQL,
+	and,
+	desc,
+	eq,
+	gt,
+	inArray,
+	isNotNull,
+	isNull,
+	lt,
+	ne,
+	not,
+	or,
+	sql,
+} from 'drizzle-orm'
 import {
 	resolveChatTagClient,
 	trackMessageEditedWithTags,
@@ -836,19 +850,24 @@ app.openapi(listConversationsRoute, (async (c) => {
 			)`,
 		)
 	}
-	if (query.unread_only) {
-		// Table names (not Drizzle column refs) inside the correlated subquery —
-		// interpolating column objects here renders unqualified and silently
-		// binds to the inner `messages` alias for names both tables share (see
-		// known-pitfalls.md's correlated-subquery entry).
-		conditions.push(
-			sql`EXISTS (
-				SELECT 1 FROM messages m
-				WHERE m.conversation_id = conversations.id
-					AND m.actor_id != ${callerId}
-					AND m.id > COALESCE(conversation_participants.last_read_message_id, 0)
-			)`,
-		)
+	// Table names (not Drizzle column refs) inside the correlated subquery —
+	// interpolating column objects here renders unqualified and silently
+	// binds to the inner `messages` alias for names both tables share (see
+	// known-pitfalls.md's correlated-subquery entry).
+	const hasUnread = sql`EXISTS (
+		SELECT 1 FROM messages m
+		WHERE m.conversation_id = conversations.id
+			AND m.actor_id != ${callerId}
+			AND m.id > COALESCE(conversation_participants.last_read_message_id, 0)
+	)`
+	if (query.unread_only) conditions.push(hasUnread)
+	if (query.scope) {
+		const isPriority = or(
+			isNotNull(conversations.directPairKey),
+			eq(conversationParticipants.pinned, true),
+			hasUnread,
+		) as SQL
+		conditions.push(query.scope === 'priority' ? isPriority : not(isPriority))
 	}
 
 	const rows = await db

@@ -746,6 +746,66 @@ describe('Conversations Integration', () => {
 			expect(unfilteredBody.conversations.filter((c) => c.directPairKey === null)).toHaveLength(2)
 		})
 
+		it('scope splits the list into priority (direct, pinned, unread) and recent, with no overlap', async () => {
+			const other = await insertActor(db, { type: 'human' })
+			await addMember(workspaceId, other.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const create = async (title: string) => {
+				const res = await ownerApp.request(
+					jsonRequest(
+						'POST',
+						'/api/conversations',
+						{ title, participant_actor_ids: [other.id] },
+						{ 'x-workspace-id': workspaceId },
+					),
+				)
+				return ((await res.json()) as { id: string }).id
+			}
+			const unreadId = await create('Unread')
+			const pinnedId = await create('Pinned')
+			const quietId = await create('Quiet')
+			await ownerApp.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${unreadId}/messages`,
+					{ content: 'ping' },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+
+			const { app: otherApp } = createConversationsApp(other.id)
+			await otherApp.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${pinnedId}/me`,
+					{ pinned: true },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+
+			type Row = { id: string; directPairKey: string | null }
+			const list = async (scope: string) => {
+				const res = await otherApp.request(
+					jsonGet(`/api/conversations?scope=${scope}&sort=activity`, {
+						'x-workspace-id': workspaceId,
+					}),
+				)
+				expect(res.status).toBe(200)
+				return ((await res.json()) as { conversations: Row[] }).conversations
+			}
+			const priority = await list('priority')
+			const recent = await list('recent')
+
+			const priorityIds = priority.map((c) => c.id)
+			expect(priorityIds).toContain(unreadId)
+			expect(priorityIds).toContain(pinnedId)
+			expect(priorityIds).not.toContain(quietId)
+			// Every direct message is priority, however quiet.
+			expect(priority.filter((c) => c.directPairKey !== null).length).toBeGreaterThan(0)
+			expect(recent.map((c) => c.id)).toEqual([quietId])
+			expect(recent.some((c) => c.directPairKey !== null)).toBe(false)
+		})
+
 		it('logs an events row when updating pin/archive/read state via PATCH /:id/me', async () => {
 			const { app: ownerApp } = createConversationsApp(ownerId)
 			const created = await ownerApp.request(
