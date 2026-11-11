@@ -172,6 +172,7 @@
 			"config",
 			"enabled",
 			"name",
+			"run_at",
 			"target_actor_id",
 			"type",
 			"workspace_id"

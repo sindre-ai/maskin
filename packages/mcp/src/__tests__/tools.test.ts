@@ -994,6 +994,27 @@ describe('create_trigger schema', () => {
 		expect(result.type).toBe('event')
 	})
 
+	it('accepts run_at in place of type and config, with or without an offset', () => {
+		for (const run_at of ['2030-11-12T09:00:00Z', '2030-11-12T09:00:00+01:00']) {
+			const result = schema.parse({
+				name: 'Call Hans',
+				run_at,
+				action_prompt: 'Call him',
+				target_actor_id: uuid,
+			})
+			expect(result.run_at).toBe(run_at)
+			expect(result.type).toBeUndefined()
+		}
+	})
+
+	it('rejects a run_at that is not a date and time', () => {
+		for (const run_at of ['tomorrow', '2030-11-12', '']) {
+			expect(() =>
+				schema.parse({ name: 'X', run_at, action_prompt: 'Y', target_actor_id: uuid }),
+			).toThrow()
+		}
+	})
+
 	it('rejects invalid trigger type', () => {
 		expect(() =>
 			schema.parse({

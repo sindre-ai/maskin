@@ -122,7 +122,7 @@ export function detectTriggerWarnings(input: {
 		if (expression !== null && isFixedDateCron(expression)) {
 			warnings.push({
 				code: 'fixed_date_repeats_yearly',
-				message: `"${expression}" is a fixed day and month, so it fires again every year and stays enabled. If it should run once, disable it after it has run (update_trigger with enabled false) or delete it.`,
+				message: `"${expression}" is a fixed day and month, so it fires again every year and stays enabled. If it should run once, create it with run_at instead, which runs once and disables itself.`,
 			})
 		}
 		if (trigger.type === 'event') {

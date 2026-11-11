@@ -113,3 +113,74 @@ describe('create_trigger and update_trigger warnings over the real MCP transport
 		expect((JSON.parse(disabled.text) as { warnings: unknown[] }).warnings).toEqual([])
 	})
 })
+
+describe('create_trigger run_at over the real MCP transport', () => {
+	let harness: AliasHarness
+	const RUN_AT = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+
+	beforeAll(async () => {
+		harness = await startAliasHarness({
+			respond: ({ method, path }) => {
+				if (path.startsWith('/api/actors')) return [{ id: AGENT, name: 'Rune Værk' }]
+				if (method === 'GET') return []
+				return {
+					...base,
+					type: 'reminder',
+					config: { scheduled_at: RUN_AT },
+				}
+			},
+		})
+	})
+
+	afterAll(async () => {
+		await harness.close()
+	})
+
+	const args = {
+		name: 'Call Hans',
+		action_prompt: 'Call Hans. Stop when he has picked up.',
+		target_actor_id: AGENT,
+	}
+
+	it('saves a one-time trigger as a reminder at that time and shows it as one-time', async () => {
+		const offset = RUN_AT.replace('Z', '+00:00')
+		const outcome = await harness.call('create_trigger', { ...args, run_at: offset })
+		expect(outcome.isError).toBe(false)
+		const post = outcome.requests.find((r) => r.method === 'POST')
+		expect(post?.body).toMatchObject({
+			type: 'reminder',
+			config: { scheduled_at: RUN_AT },
+			name: 'Call Hans',
+		})
+		expect(post?.body).not.toHaveProperty('run_at')
+		const result = JSON.parse(outcome.text) as { trigger: Record<string, unknown> }
+		expect(result.trigger).toMatchObject({
+			kind: 'one-time',
+			next_run: RUN_AT,
+			schedule: `once at ${RUN_AT}`,
+		})
+	})
+
+	it('refuses run_at together with type or config, a run_at in the past, and neither', async () => {
+		const both = await harness.call('create_trigger', {
+			...args,
+			run_at: RUN_AT,
+			type: 'cron',
+			config: { expression: '0 * * * *' },
+		})
+		expect(both.isError).toBe(true)
+		expect(both.text).toContain('not both')
+
+		const past = await harness.call('create_trigger', { ...args, run_at: '2020-01-01T00:00:00Z' })
+		expect(past.isError).toBe(true)
+		expect(past.text).toContain('not in the future')
+
+		const neither = await harness.call('create_trigger', args)
+		expect(neither.isError).toBe(true)
+		expect(neither.text).toContain('run_at')
+
+		for (const outcome of [both, past, neither]) {
+			expect(outcome.requests.some((r) => r.method === 'POST')).toBe(false)
+		}
+	})
+})

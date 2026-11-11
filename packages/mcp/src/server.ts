@@ -3020,6 +3020,35 @@ function triggerAgent(
 }
 
 /**
+ * The body POST /api/triggers takes. `run_at` becomes a one-time trigger (a
+ * "reminder" row: it fires once, then the runner disables it); otherwise the
+ * caller must give a type and config.
+ */
+function oneTimeOrScheduledBody<T extends { type?: string; config?: Record<string, unknown> }>(
+	fields: T,
+	runAt: string | undefined,
+): T {
+	if (runAt === undefined) {
+		if (!fields.type || !fields.config) {
+			throw new Error(
+				'Give type and config for a recurring or event trigger, or run_at for a trigger that runs once.',
+			)
+		}
+		return fields
+	}
+	if (fields.type !== undefined || fields.config !== undefined) {
+		throw new Error('Give run_at, or type and config, not both.')
+	}
+	const at = new Date(runAt)
+	if (at.getTime() <= Date.now()) {
+		throw new Error(
+			`run_at ${runAt} is not in the future. Pick a later time, or use run_agent to start the agent now.`,
+		)
+	}
+	return { ...fields, type: 'reminder', config: { scheduled_at: at.toISOString() } }
+}
+
+/**
  * The body create_trigger and update_trigger return: the saved trigger in
  * compact form, plus warnings that never block the save. The agent's other
  * enabled triggers are read after the save; if that read fails the similar
@@ -7067,7 +7096,8 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.triggers, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id, ...body } = args
+			const { workspace_id, run_at, ...fields } = args
+			const body = oneTimeOrScheduledBody(fields, run_at)
 			const saved = (await apiCall(config, 'POST', '/api/triggers', body, {
 				workspaceId: workspace_id,
 			})) as RawTrigger
