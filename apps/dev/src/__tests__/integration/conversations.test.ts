@@ -191,6 +191,75 @@ describe('Conversations Integration', () => {
 			])
 		})
 
+		it('stores the share mark on the initial message and leaves other chats unmarked', async () => {
+			const other = await insertActor(db, { type: 'human' })
+			await addMember(workspaceId, other.id)
+			const { app } = createConversationsApp(ownerId)
+			const headers = { 'x-workspace-id': workspaceId }
+
+			const shared = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{
+						title: 'From a share',
+						participant_actor_ids: [other.id],
+						initial_message: 'https://example.com/article',
+						initial_message_metadata: { started_from: 'share' },
+					},
+					headers,
+				),
+			)
+			expect(shared.status).toBe(201)
+			const { id: sharedId } = (await shared.json()) as { id: string }
+			const [sharedFirst] = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.conversationId, sharedId))
+			expect(sharedFirst?.metadata?.started_from).toBe('share')
+
+			const plain = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Typed', participant_actor_ids: [other.id], initial_message: 'hello' },
+					headers,
+				),
+			)
+			expect(plain.status).toBe(201)
+			const { id: plainId } = (await plain.json()) as { id: string }
+			const [plainFirst] = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.conversationId, plainId))
+			expect(plainFirst?.metadata?.started_from).toBeUndefined()
+		})
+
+		it('ignores a metadata field it does not know and still starts the chat', async () => {
+			const other = await insertActor(db, { type: 'human' })
+			await addMember(workspaceId, other.id)
+			const { app } = createConversationsApp(ownerId)
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{
+						title: 'Newer app',
+						participant_actor_ids: [other.id],
+						initial_message: 'hi',
+						initial_message_metadata: { field_from_a_newer_app: 'x' },
+					},
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(201)
+			const { id } = (await res.json()) as { id: string }
+			const [first] = await db.select().from(messages).where(eq(messages.conversationId, id))
+			expect(first?.content).toBe('hi')
+			expect(first?.metadata ?? {}).not.toHaveProperty('field_from_a_newer_app')
+		})
+
 		it('accepts an empty message when it carries an attachment, and refuses it without one', async () => {
 			const other = await insertActor(db, { type: 'human' })
 			await addMember(workspaceId, other.id)

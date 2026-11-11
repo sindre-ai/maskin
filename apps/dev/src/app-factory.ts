@@ -50,6 +50,8 @@ import dataQueryRoutes from './routes/data-query'
 import desktopRoutes from './routes/desktop'
 import deviceAuthRoutes from './routes/device-auth'
 import devicesRoutes from './routes/devices'
+import emailPickRoutes from './routes/email-pick'
+import emailStopRoutes from './routes/email-stop'
 import eventsRoutes from './routes/events'
 import extensionsRoutes from './routes/extensions'
 import featureFlagsRoutes from './routes/feature-flags'
@@ -395,6 +397,10 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	//   - POST /api/devices/unregister: a signed-out phone dropping its own push registration. It has
 	//     no API key after sign-out, so the device secret it registered with is the credential
 	//     (checked and rate limited per IP inside the handler; routes/devices.ts).
+	//   - GET and POST /api/email/stop: the stop link in a summary email. Opened signed out; the
+	//     signed token in the URL is the credential, checked in the handler.
+	//   - GET and POST /api/email/pick-dismiss: the "Not useful" link under a Marketplace pick.
+	//     Same: opened signed out, the signed token is the credential.
 	//   - /api/webhooks/*: authenticated via provider HMAC, not our API key
 	//   - /api/integrations/{provider}/callback: OAuth redirect can't carry our header
 	//   - GET /api/integrations/{provider}/native-launch: same, for native connect
@@ -427,6 +433,11 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 			return next()
 		}
 		if (path === '/api/devices/unregister' && method === 'POST') return next()
+		// The stop link in a summary email, opened with nobody signed in. The signed token in the
+		// URL is the credential, checked in the handler (routes/email-stop.ts).
+		if (path === '/api/email/stop' && (method === 'GET' || method === 'POST')) return next()
+		// The "Not useful" link under a Marketplace pick, same: signed token (routes/email-pick.ts).
+		if (path === '/api/email/pick-dismiss' && (method === 'GET' || method === 'POST')) return next()
 		if (path.startsWith('/api/webhooks/')) return next()
 		if (path.startsWith('/api/internal/agent-servers/')) return next()
 		if (path === '/api/internal/mcp-guard/report' && method === 'POST') return next()
@@ -592,6 +603,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/for-you', forYouRoutes)
 	app.route('/api/devices', devicesRoutes)
 	app.route('/api/notification-preferences', notificationPreferencesRoutes)
+	app.route('/api/email/stop', emailStopRoutes)
+	app.route('/api/email/pick-dismiss', emailPickRoutes)
 	app.route('/api/live-activities', liveActivitiesRoutes)
 	app.route('/api/web-push', webPushRoutes)
 	app.route('/api/subscriptions', subscriptionsRoutes)

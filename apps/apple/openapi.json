@@ -45215,6 +45215,12 @@
 													"index"
 												]
 											},
+											"started_from": {
+												"type": "string",
+												"enum": [
+													"share"
+												]
+											},
 											"comment_event_id": {
 												"type": "integer"
 											}
@@ -48641,6 +48647,12 @@
 												"required": [
 													"intro_message_id",
 													"index"
+												]
+											},
+											"started_from": {
+												"type": "string",
+												"enum": [
+													"share"
 												]
 											},
 											"comment_event_id": {
@@ -61968,14 +61980,58 @@
 												},
 												"tips": {
 													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
 												}
 											},
 											"required": [
 												"needs_you",
 												"conversation",
 												"digest",
-												"tips"
+												"tips",
+												"flow_activity"
 											]
+										},
+										"browser_categories": {
+											"type": "object",
+											"properties": {
+												"needs_you": {
+													"type": "boolean"
+												},
+												"conversation": {
+													"type": "boolean"
+												},
+												"digest": {
+													"type": "boolean"
+												},
+												"tips": {
+													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"needs_you",
+												"conversation",
+												"digest",
+												"tips",
+												"flow_activity"
+											]
+										},
+										"browser_not_asked": {
+											"type": "array",
+											"items": {
+												"type": "string",
+												"enum": [
+													"needs_you",
+													"conversation",
+													"digest",
+													"tips",
+													"flow_activity"
+												]
+											}
 										},
 										"briefing_enabled": {
 											"type": "boolean"
@@ -61984,6 +62040,42 @@
 											"type": "integer",
 											"minimum": 0,
 											"maximum": 1439
+										},
+										"email_digest_enabled": {
+											"type": "boolean"
+										},
+										"email_categories": {
+											"type": "object",
+											"properties": {
+												"needs_you": {
+													"type": "boolean"
+												},
+												"conversation": {
+													"type": "boolean"
+												},
+												"tips": {
+													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"needs_you",
+												"conversation",
+												"tips",
+												"flow_activity"
+											]
+										},
+										"marketplace_picks_enabled": {
+											"type": "boolean"
+										},
+										"email_rhythm": {
+											"type": "string",
+											"enum": [
+												"daily",
+												"weekly"
+											]
 										},
 										"muted_workspace_ids": {
 											"type": "array",
@@ -62004,8 +62096,14 @@
 										"quiet_hours_start",
 										"quiet_hours_end",
 										"categories",
+										"browser_categories",
+										"browser_not_asked",
 										"briefing_enabled",
 										"briefing_time",
+										"email_digest_enabled",
+										"email_categories",
+										"marketplace_picks_enabled",
+										"email_rhythm",
 										"muted_workspace_ids",
 										"updated_at"
 									]
@@ -62065,6 +62163,29 @@
 											},
 											"tips": {
 												"type": "boolean"
+											},
+											"flow_activity": {
+												"type": "boolean"
+											}
+										}
+									},
+									"browser_categories": {
+										"type": "object",
+										"properties": {
+											"needs_you": {
+												"type": "boolean"
+											},
+											"conversation": {
+												"type": "boolean"
+											},
+											"digest": {
+												"type": "boolean"
+											},
+											"tips": {
+												"type": "boolean"
+											},
+											"flow_activity": {
+												"type": "boolean"
 											}
 										}
 									},
@@ -62075,6 +62196,36 @@
 										"type": "integer",
 										"minimum": 0,
 										"maximum": 1439
+									},
+									"email_digest_enabled": {
+										"type": "boolean"
+									},
+									"email_categories": {
+										"type": "object",
+										"properties": {
+											"needs_you": {
+												"type": "boolean"
+											},
+											"conversation": {
+												"type": "boolean"
+											},
+											"tips": {
+												"type": "boolean"
+											},
+											"flow_activity": {
+												"type": "boolean"
+											}
+										}
+									},
+									"marketplace_picks_enabled": {
+										"type": "boolean"
+									},
+									"email_rhythm": {
+										"type": "string",
+										"enum": [
+											"daily",
+											"weekly"
+										]
 									},
 									"muted_workspace_ids": {
 										"type": "array",
@@ -62135,14 +62286,58 @@
 												},
 												"tips": {
 													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
 												}
 											},
 											"required": [
 												"needs_you",
 												"conversation",
 												"digest",
-												"tips"
+												"tips",
+												"flow_activity"
 											]
+										},
+										"browser_categories": {
+											"type": "object",
+											"properties": {
+												"needs_you": {
+													"type": "boolean"
+												},
+												"conversation": {
+													"type": "boolean"
+												},
+												"digest": {
+													"type": "boolean"
+												},
+												"tips": {
+													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"needs_you",
+												"conversation",
+												"digest",
+												"tips",
+												"flow_activity"
+											]
+										},
+										"browser_not_asked": {
+											"type": "array",
+											"items": {
+												"type": "string",
+												"enum": [
+													"needs_you",
+													"conversation",
+													"digest",
+													"tips",
+													"flow_activity"
+												]
+											}
 										},
 										"briefing_enabled": {
 											"type": "boolean"
@@ -62151,6 +62346,42 @@
 											"type": "integer",
 											"minimum": 0,
 											"maximum": 1439
+										},
+										"email_digest_enabled": {
+											"type": "boolean"
+										},
+										"email_categories": {
+											"type": "object",
+											"properties": {
+												"needs_you": {
+													"type": "boolean"
+												},
+												"conversation": {
+													"type": "boolean"
+												},
+												"tips": {
+													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"needs_you",
+												"conversation",
+												"tips",
+												"flow_activity"
+											]
+										},
+										"marketplace_picks_enabled": {
+											"type": "boolean"
+										},
+										"email_rhythm": {
+											"type": "string",
+											"enum": [
+												"daily",
+												"weekly"
+											]
 										},
 										"muted_workspace_ids": {
 											"type": "array",
@@ -62171,8 +62402,14 @@
 										"quiet_hours_start",
 										"quiet_hours_end",
 										"categories",
+										"browser_categories",
+										"browser_not_asked",
 										"briefing_enabled",
 										"briefing_time",
+										"email_digest_enabled",
+										"email_categories",
+										"marketplace_picks_enabled",
+										"email_rhythm",
 										"muted_workspace_ids",
 										"updated_at"
 									]

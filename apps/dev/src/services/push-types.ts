@@ -56,6 +56,11 @@ export interface PushClear {
 }
 
 export interface PushChannel {
+	/**
+	 * Which Settings switch gates this channel: 'push' (the phone apps) or 'browser'. A channel
+	 * without one is always sent to.
+	 */
+	readonly channelKind?: 'push' | 'browser'
 	/** False when the channel is not configured; callers skip all work for it. */
 	isEnabled(): boolean
 	/** Push to every registered destination of an actor. Must never throw. */

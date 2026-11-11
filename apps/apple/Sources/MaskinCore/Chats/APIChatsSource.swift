@@ -112,8 +112,10 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 				participants: row.participants.map {
 					ChatParticipant(id: $0.actorId, name: $0.actorName, actorType: $0.actorType)
 				}, lastReadMessageID: row.last_read_message_id.map(Int.init))
-		default:
-			throw ChatsError("Couldn't start the conversation.")
+		case .badRequest:
+			throw ChatsError("Couldn't start the conversation.", status: 400)
+		case .undocumented(let status, _):
+			throw ChatsError("Couldn't start the conversation.", status: status)
 		}
 	}
 

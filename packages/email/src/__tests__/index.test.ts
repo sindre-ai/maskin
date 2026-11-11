@@ -6,7 +6,13 @@ vi.mock('resend', () => ({
 	Resend: vi.fn().mockImplementation(() => ({ emails: { send } })),
 }))
 
-import { InviteEmailSendError, sendInviteEmail } from '../index'
+import {
+	EmailSendError,
+	InviteEmailSendError,
+	isEmailConfigured,
+	sendEmail,
+	sendInviteEmail,
+} from '../index'
 
 const params = {
 	to: 'invitee@example.com',
@@ -57,5 +63,50 @@ describe('sendInviteEmail', () => {
 		await expect(sendInviteEmail(params)).resolves.toBeUndefined()
 		expect(send).not.toHaveBeenCalled()
 		log.mockRestore()
+	})
+})
+
+describe('sendEmail', () => {
+	const mail = {
+		to: 'person@example.com',
+		subject: '1 thing needs you',
+		text: 'plain',
+		html: '<p>html</p>',
+		headers: { 'List-Unsubscribe': '<https://maskin.io/stop>' },
+	}
+
+	beforeEach(() => {
+		send.mockReset()
+	})
+
+	afterEach(() => {
+		vi.unstubAllEnvs()
+	})
+
+	it('sends text, html and headers and reports true', async () => {
+		vi.stubEnv('RESEND_API_KEY', 're_test_key')
+		send.mockResolvedValue({ data: { id: 'email-1' }, error: null })
+		await expect(sendEmail(mail)).resolves.toBe(true)
+		expect(send).toHaveBeenCalledWith(
+			expect.objectContaining({
+				to: 'person@example.com',
+				text: 'plain',
+				html: '<p>html</p>',
+				headers: mail.headers,
+			}),
+		)
+	})
+
+	it('throws EmailSendError when Resend resolves with an error', async () => {
+		vi.stubEnv('RESEND_API_KEY', 're_test_key')
+		send.mockResolvedValue({ data: null, error: { name: 'validation_error', message: 'nope' } })
+		await expect(sendEmail(mail)).rejects.toBeInstanceOf(EmailSendError)
+	})
+
+	it('does not send and reports false with no key', async () => {
+		vi.stubEnv('RESEND_API_KEY', '')
+		await expect(sendEmail(mail)).resolves.toBe(false)
+		expect(send).not.toHaveBeenCalled()
+		expect(isEmailConfigured()).toBe(false)
 	})
 })

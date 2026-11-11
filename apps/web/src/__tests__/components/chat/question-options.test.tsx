@@ -32,7 +32,11 @@ const QUESTION: MessageQuestion = {
 	],
 }
 
-function renderOptions(question: MessageQuestion = QUESTION, answered = false) {
+function renderOptions(
+	question: MessageQuestion = QUESTION,
+	answered = false,
+	threadRootId?: number,
+) {
 	return render(
 		<QuestionOptions
 			conversationId="conv-1"
@@ -40,6 +44,7 @@ function renderOptions(question: MessageQuestion = QUESTION, answered = false) {
 			questionMessageId={7}
 			question={question}
 			answered={answered}
+			threadRootId={threadRootId}
 		/>,
 		{ wrapper: TestWrapper },
 	)
@@ -73,6 +78,19 @@ describe('QuestionOptions', () => {
 		// question — a bare "API token" is ambiguous across a multi-question set.
 		expect(payload.content).toContain('How should I reach Spotify?')
 		expect(payload.content).toContain('API token')
+	})
+
+	it('sends the pick into the thread the question sits in', async () => {
+		sendMutate.mockClear()
+		const user = userEvent.setup()
+		renderOptions(QUESTION, false, 4)
+
+		await user.click(screen.getByRole('button', { name: 'API token' }))
+		await user.click(screen.getByRole('button', { name: 'Send answer' }))
+
+		const payload = sendMutate.mock.calls[0]?.[0]
+		expect(payload.thread_root_id).toBe(4)
+		expect(payload.also_in_channel).toBe(true)
 	})
 
 	it('dismisses with a hidden answer, so the card goes away on every device', async () => {

@@ -1550,10 +1550,16 @@ app.openapi(askSessionRoute, (async (c) => {
 	}
 
 	const isHelper = deliveredTo === 'chat' && !session.conversationId
+	// A thread session asks in its own thread, like its replies do, so the person answering there
+	// sees the card; it stays in the main chat too, as before. Only a chat session has a thread of its own; a helper's or a direct message
+	// question has no thread in the chat it lands in.
+	const threadRootId = routedTo === 'session_chat' ? (session.threadRootId ?? null) : null
 	const created = await insertConversationMessage(db, {
 		conversationId,
 		workspaceId: session.workspaceId,
 		actorId: session.actorId,
+		threadRootId,
+		threadAlsoInChannel: threadRootId !== null,
 		content: formatQuestionsAsMarkdown(questions),
 		metadata: {
 			question: {

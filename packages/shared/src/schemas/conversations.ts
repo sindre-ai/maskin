@@ -242,6 +242,9 @@ export const fromSuggestedStepSchema = z.object({
 	index: z.number().int().min(0).max(3),
 })
 
+/** Where a chat was started from, when the client says so. Today only the iPhone share sheet. */
+export const startedFromSchema = z.enum(['share'])
+
 /** What an agent can ask the human to put into the Keychain from a chat card. */
 export const KEYCHAIN_REQUEST_KINDS = ['api_key', 'login'] as const
 export type KeychainRequestKind = (typeof KEYCHAIN_REQUEST_KINDS)[number]
@@ -552,6 +555,12 @@ export const messageMetadataSchema = z.object({
 	plain_tail: z.number().int().min(0).max(10).optional(),
 	/** Client-supplied: the intro step a message was sent from. */
 	from_suggested_step: fromSuggestedStepSchema.optional(),
+	/**
+	 * Client-supplied: where the person started the chat from, a category only (no text). Set on
+	 * the first message of a chat started from the iPhone share sheet. It carries no authority and
+	 * only lets share-started chats be counted from saved messages.
+	 */
+	started_from: startedFromSchema.optional(),
 	/** Backend-owned: the `commented` event this message was copied from (object chats). */
 	comment_event_id: z.number().int().optional(),
 })

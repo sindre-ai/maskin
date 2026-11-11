@@ -37,6 +37,13 @@ private final class GatedRemote: ShareRemote, @unchecked Sendable {
 		}
 		return try await inner.workspace()
 	}
+	func agents() async throws -> [ShareAgent] { try await inner.agents() }
+	func createChat(
+		agentID: String, title: String, content: String, attachments: [ChatAttachmentRef], idempotencyKey: String
+	) async throws -> String {
+		try await inner.createChat(
+			agentID: agentID, title: title, content: content, attachments: attachments, idempotencyKey: idempotencyKey)
+	}
 	func createObject(type: String, title: String, content: String, status: String, idempotencyKey: String)
 		async throws -> String
 	{ try await inner.createObject(type: type, title: title, content: content, status: status, idempotencyKey: idempotencyKey) }
@@ -149,6 +156,7 @@ struct ShareHardeningTests {
 			secretStore: session(), loadContent: { ShareContent(link: URL(string: "https://e.com")!, attachments: [attachment]) },
 			makeRemote: { _ in remote })
 		await model.start()
+		model.destination = .object(type: "insight")
 		await model.post()
 		#expect(model.phase == .failed(.rejected))
 		#expect(model.createdObjectBeforeFailure)
