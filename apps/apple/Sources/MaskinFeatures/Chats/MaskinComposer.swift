@@ -161,6 +161,11 @@ struct MaskinComposer: View {
 					.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, MaskinSpace.s5)
 					.onTapGesture { model.notice = nil }
 			}
+			// Over the cap: say why Send is on (the text goes as a file) or off, never a bare grey arrow.
+			if let lengthNotice = model.lengthNotice {
+				Text(lengthNotice).maskinText(.caption).foregroundStyle(MaskinColor.ink2)
+					.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, MaskinSpace.s5)
+			}
 			#if os(iOS)
 			// Which engine is dictating, and why it is the phone when it is: stays after Done.
 			if let note = dictation.engineNote {

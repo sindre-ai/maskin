@@ -61,8 +61,8 @@ const UNAVAILABLE_UNDER_OAUTH = [
 	'PUT /api/integrations/x/default-access', // newer MCP tool, route not yet checked for the token's workspace pin
 ]
 
-// Pre-existing: the MCP server calls a route the API does not register. Not part of this change.
-const CALLS_TO_UNREGISTERED_ROUTES = ['GET /api/triggers/x']
+// The MCP server calls a route the API does not register. Empty since GET /api/triggers/:id exists.
+const CALLS_TO_UNREGISTERED_ROUTES: string[] = []
 
 function registeredApiRoutes(): string[] {
 	const deps: AppDeps = {

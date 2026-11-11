@@ -32,6 +32,16 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	['POST', '/api/auth/login', 'pre-auth credential exchange'],
 	[
 		'POST',
+		'/api/email/stop',
+		'the stop link in an email, opened signed out and authenticated by its signed token',
+	],
+	[
+		'POST',
+		'/api/email/pick-dismiss',
+		'the Not useful link under a Marketplace pick, opened signed out and authenticated by its signed token',
+	],
+	[
+		'POST',
 		'/api/voice-sessions/:id/hangup',
 		'ends the caller’s own call; a member demoted to viewer mid-call must still be able to hang up, or the call keeps running and billing',
 	],
@@ -225,11 +235,6 @@ export const HAND_GATED_ROUTES: OpenRoute[] = [
 		'MCP endpoint, tools read as the workspace',
 	],
 	['POST', '/api/integrations/slack/mcp', 'MCP endpoint, tools post as the workspace bot'],
-	[
-		'PUT',
-		'/api/integrations/slack/direct-post-channels',
-		'human admin or owner only, checked in the handler (a viewer gets 403)',
-	],
 	[
 		'PUT',
 		'/api/send-permissions',

@@ -7,13 +7,17 @@ import {
 	CREDIT_TOPUP_MAX_USD,
 	CREDIT_TOPUP_MIN_USD,
 	PAID_PLANS,
+	autoTopUpResponseSchema,
+	autoTopUpRuleSchema,
 	dailyBudgetResponseSchema,
 	setDailyBudgetSchema,
 	storedDailyBudgetSchema,
 	toPercentBudget,
+	usdCentsToApproxDkk,
 	workspaceSettingsSchema,
 } from '@maskin/shared'
 import { eq, sql } from 'drizzle-orm'
+import { AUTO_TOP_UP_EVENT } from '../lib/auto-top-up'
 import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from '../lib/billing-defaults'
 import { USAGE_BREAKDOWN_MAX_ROWS, readUsageBreakdown } from '../lib/billing-usage-breakdown'
 import { cachedBillingUsage, evictBillingUsage } from '../lib/billing-usage-cache'
@@ -1121,6 +1125,175 @@ app.openapi(setDailyBudgetRoute, async (c) => {
 	})
 
 	return c.json(dailyBudgetResponse({ dailyBudget: next, capCents: before.capCents }), 200)
+})
+
+// ── Auto top-up ─────────────────────────────────────────────────────────────
+// One rule per workspace at settings.auto_top_up: when the credit balance falls
+// under `threshold_cents`, charge the saved card `amount_cents` (USD cents).
+// The charge itself lives in lib/auto-top-up.ts and runs after a debit commits.
+// Kroner are always approximate: a fixed $50 = 349 DKK reference, no live rate.
+
+const getAutoTopUpRoute = createRoute({
+	method: 'get',
+	path: '/auto-top-up',
+	tags: ['billing'],
+	summary: 'The auto top-up rule and whether the last automatic charge failed',
+	request: { headers: workspaceIdHeader },
+	responses: {
+		200: {
+			description: 'The rule (null until one has been saved)',
+			content: { 'application/json': { schema: autoTopUpResponseSchema } },
+		},
+		404: {
+			description: 'Workspace not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+const setAutoTopUpRoute = createRoute({
+	method: 'put',
+	path: '/auto-top-up',
+	'x-viewer-policy': 'writer',
+	tags: ['billing'],
+	summary: 'Save the auto top-up rule (also clears a failed state and retries on the next debit)',
+	request: {
+		headers: workspaceIdHeader,
+		body: { content: { 'application/json': { schema: autoTopUpRuleSchema } }, required: true },
+	},
+	responses: {
+		200: {
+			description: 'Rule saved',
+			content: { 'application/json': { schema: autoTopUpResponseSchema } },
+		},
+		400: {
+			description: 'Workspace cannot be charged automatically yet',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Caller is not a human workspace admin or owner',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Workspace not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+type StoredAutoTopUp = {
+	enabled?: boolean
+	threshold_cents?: number
+	amount_cents?: number
+	status?: 'ok' | 'failed'
+	failure_reason?: string | null
+	failed_at?: number | null
+	last_charged_at?: number | null
+}
+
+function autoTopUpView(settings: unknown) {
+	const raw = (settings as { auto_top_up?: StoredAutoTopUp } | null)?.auto_top_up
+	if (!raw || typeof raw.threshold_cents !== 'number' || typeof raw.amount_cents !== 'number') {
+		return { auto_top_up: null }
+	}
+	const parsed = autoTopUpResponseSchema.shape.auto_top_up.safeParse({
+		enabled: raw.enabled === true,
+		threshold_cents: raw.threshold_cents,
+		amount_cents: raw.amount_cents,
+		threshold_dkk_approx: usdCentsToApproxDkk(raw.threshold_cents),
+		amount_dkk_approx: usdCentsToApproxDkk(raw.amount_cents),
+		status: raw.status === 'failed' ? 'failed' : 'ok',
+		failure_reason: raw.failure_reason ?? null,
+		failed_at: raw.failed_at ?? null,
+		last_charged_at: raw.last_charged_at ?? null,
+	})
+	return { auto_top_up: parsed.success ? parsed.data : null }
+}
+
+app.openapi(getAutoTopUpRoute, async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const [workspace] = await db
+		.select({ settings: workspaces.settings })
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+	if (!workspace) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	return c.json(autoTopUpView(workspace.settings), 200)
+})
+
+app.openapi(setAutoTopUpRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const rule = c.req.valid('json')
+
+	const [workspace] = await db
+		.select({ settings: workspaces.settings })
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+	if (!workspace) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+
+	// It spends the workspace's card with nobody present: same human admin/owner
+	// gate as buying credits and the daily budget.
+	if (!(await isWorkspaceHumanAdminOrOwner(db, actorId, workspaceId))) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only workspace owners/admins can manage auto top-up'),
+			403,
+		)
+	}
+
+	// Turning it on needs a Stripe customer (a card from a subscription or a first
+	// top-up) and a workspace that can be billed. Turning it off is always allowed.
+	const billing = (
+		workspace.settings as { billing?: { stripe_customer_id?: string; status?: string } } | null
+	)?.billing
+	if (rule.enabled) {
+		const blocked = billing?.status === 'past_due' || billing?.status === 'canceled'
+		if (!billing?.stripe_customer_id || blocked || (await isEnterpriseWorkspace(db, workspaceId))) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					'Auto top-up needs a saved card: subscribe or buy credits once first',
+				),
+				400,
+			)
+		}
+	}
+
+	// Atomic key write on settings.auto_top_up (the same way the daily budget is
+	// written): a whole-settings save could undo a concurrent debit or webhook.
+	// Merged over the stored value so a charge that is in flight keeps its claim;
+	// saving the rule clears a failed state.
+	const next = JSON.stringify({
+		...rule,
+		status: 'ok',
+		failure_reason: null,
+		failed_at: null,
+	})
+	const [updated] = await db
+		.update(workspaces)
+		.set({
+			settings: sql`jsonb_set(coalesce(${workspaces.settings}, '{}'::jsonb), '{auto_top_up}', coalesce(${workspaces.settings}->'auto_top_up', '{}'::jsonb) || ${next}::jsonb, true)`,
+			updatedAt: new Date(),
+		})
+		.where(eq(workspaces.id, workspaceId))
+		.returning({ settings: workspaces.settings })
+
+	await recordEvent(db, {
+		workspaceId,
+		actorId,
+		action: AUTO_TOP_UP_EVENT.updated,
+		entityType: 'workspace',
+		entityId: workspaceId,
+		data: {
+			before: autoTopUpView(workspace.settings).auto_top_up,
+			after: autoTopUpView(updated?.settings).auto_top_up,
+		},
+	})
+
+	return c.json(autoTopUpView(updated?.settings), 200)
 })
 
 export default app

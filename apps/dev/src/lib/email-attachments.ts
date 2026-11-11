@@ -51,7 +51,16 @@ const MIME_TYPE = /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/i
 
 export async function loadEmailAttachments(
 	deps: { db: Database; storage: StorageProvider | undefined },
-	input: { workspaceId: string; ids: string[]; approvedAt: Date | null },
+	input: {
+		workspaceId: string
+		ids: string[]
+		approvedAt: Date | null
+		/**
+		 * True when no person approved the email (an agent set to always allow sends it): the files
+		 * are read as they are now, with the same count, size and type checks.
+		 */
+		unapproved?: boolean
+	},
 ): Promise<EmailAttachment[]> {
 	if (input.ids.length === 0) return []
 	if (input.ids.length > EMAIL_ATTACHMENT_MAX_FILES) {
@@ -81,7 +90,10 @@ export async function loadEmailAttachments(
 	})
 	for (const file of ordered) {
 		// An approval with no time cannot show the file is unchanged, so it does not pass.
-		if (!input.approvedAt || file.updatedAt.getTime() > input.approvedAt.getTime()) {
+		if (
+			!input.unapproved &&
+			(!input.approvedAt || file.updatedAt.getTime() > input.approvedAt.getTime())
+		) {
 			throw new EmailAttachmentError(
 				`The attachment "${file.name}" changed after it was approved. Ask a person to approve the email again. Nothing was sent.`,
 			)

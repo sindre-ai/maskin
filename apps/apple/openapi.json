@@ -25361,6 +25361,12 @@
 												"string",
 												"null"
 											]
+										},
+										"lastRunAt": {
+											"type": [
+												"string",
+												"null"
+											]
 										}
 									},
 									"required": [
@@ -25597,6 +25603,18 @@
 					{
 						"schema": {
 							"type": "string",
+							"enum": [
+								"true",
+								"false"
+							]
+						},
+						"required": false,
+						"name": "include_last_run",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
 							"format": "uuid"
 						},
 						"required": true,
@@ -25673,6 +25691,12 @@
 												]
 											},
 											"updatedAt": {
+												"type": [
+													"string",
+													"null"
+												]
+											},
+											"lastRunAt": {
 												"type": [
 													"string",
 													"null"
@@ -25758,6 +25782,176 @@
 			}
 		},
 		"/api/triggers/{id}": {
+			"get": {
+				"tags": [
+					"triggers"
+				],
+				"summary": "Get a trigger",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "The trigger, with when it last fired",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"workspaceId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"name": {
+											"type": "string"
+										},
+										"type": {
+											"type": "string"
+										},
+										"config": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"actionPrompt": {
+											"type": "string"
+										},
+										"targetActorId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"enabled": {
+											"type": "boolean"
+										},
+										"metadata": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"createdBy": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"createdAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"updatedAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"lastRunAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										}
+									},
+									"required": [
+										"id",
+										"workspaceId",
+										"name",
+										"type",
+										"config",
+										"actionPrompt",
+										"targetActorId",
+										"enabled",
+										"createdBy",
+										"createdAt",
+										"updatedAt"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Trigger not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
 			"patch": {
 				"x-viewer-policy": "writer",
 				"tags": [
@@ -26002,6 +26196,12 @@
 											]
 										},
 										"updatedAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"lastRunAt": {
 											"type": [
 												"string",
 												"null"
@@ -34446,7 +34646,7 @@
 					"integrations"
 				],
 				"summary": "Send an email from the connected Gmail account",
-				"description": "Irreversible and never retried. Needs \"Read & write\" access and an email a person approved: an object draft they approved (object_id) or an approval card they answered (approval_comment_id).",
+				"description": "Irreversible and never retried. Needs \"Read & write\" access. If the agent is set to always allow emails, pass to, subject and body (or object_id) and it sends. If it is set to ask first, the email must be one a person approved: an object draft they approved (object_id) or an approval card they answered (approval_comment_id).",
 				"parameters": [
 					{
 						"schema": {
@@ -34522,7 +34722,8 @@
 										"mode": {
 											"type": "string",
 											"enum": [
-												"approved_draft"
+												"approved_draft",
+												"direct"
 											]
 										}
 									},
@@ -35374,8 +35575,8 @@
 				"tags": [
 					"integrations"
 				],
-				"summary": "Send an approved email draft from the agent mailbox through Resend",
-				"description": "Needs \"Read & write\" access to Resend, a mailbox recorded for the calling agent, and an email draft a person approved (object_id). Sends once per approval.",
+				"summary": "Send an email draft from the agent mailbox through Resend",
+				"description": "Needs \"Read & write\" access to Resend, a mailbox recorded for the calling agent, and an email draft (object_id). An agent set to ask first needs a draft a person approved; one set to always allow sends it at once. Sends once per approval, or once per draft.",
 				"parameters": [
 					{
 						"schema": {
@@ -35424,7 +35625,8 @@
 										"mode": {
 											"type": "string",
 											"enum": [
-												"approved_draft"
+												"approved_draft",
+												"direct"
 											]
 										}
 									},
@@ -40294,6 +40496,12 @@
 														"string",
 														"null"
 													]
+												},
+												"lastRunAt": {
+													"type": [
+														"string",
+														"null"
+													]
 												}
 											},
 											"required": [
@@ -43211,6 +43419,464 @@
 				}
 			}
 		},
+		"/api/billing/auto-top-up": {
+			"get": {
+				"tags": [
+					"billing"
+				],
+				"summary": "The auto top-up rule and whether the last automatic charge failed",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "The rule (null until one has been saved)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"auto_top_up": {
+											"type": [
+												"object",
+												"null"
+											],
+											"properties": {
+												"enabled": {
+													"type": "boolean"
+												},
+												"threshold_cents": {
+													"type": "integer"
+												},
+												"amount_cents": {
+													"type": "integer"
+												},
+												"threshold_dkk_approx": {
+													"type": "integer"
+												},
+												"amount_dkk_approx": {
+													"type": "integer"
+												},
+												"status": {
+													"type": "string",
+													"enum": [
+														"ok",
+														"failed"
+													]
+												},
+												"failure_reason": {
+													"type": [
+														"string",
+														"null"
+													],
+													"enum": [
+														"card_declined",
+														"no_payment_method",
+														"authentication_required",
+														"charge_error"
+													]
+												},
+												"failed_at": {
+													"type": [
+														"integer",
+														"null"
+													]
+												},
+												"last_charged_at": {
+													"type": [
+														"integer",
+														"null"
+													]
+												}
+											},
+											"required": [
+												"enabled",
+												"threshold_cents",
+												"amount_cents",
+												"threshold_dkk_approx",
+												"amount_dkk_approx",
+												"status",
+												"failure_reason",
+												"failed_at",
+												"last_charged_at"
+											]
+										}
+									},
+									"required": [
+										"auto_top_up"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Workspace not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"put": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"billing"
+				],
+				"summary": "Save the auto top-up rule (also clears a failed state and retries on the next debit)",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"enabled": {
+										"type": "boolean"
+									},
+									"threshold_cents": {
+										"type": "integer",
+										"minimum": 500
+									},
+									"amount_cents": {
+										"type": "integer",
+										"minimum": 2500,
+										"maximum": 24900
+									}
+								},
+								"required": [
+									"enabled",
+									"threshold_cents",
+									"amount_cents"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Rule saved",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"auto_top_up": {
+											"type": [
+												"object",
+												"null"
+											],
+											"properties": {
+												"enabled": {
+													"type": "boolean"
+												},
+												"threshold_cents": {
+													"type": "integer"
+												},
+												"amount_cents": {
+													"type": "integer"
+												},
+												"threshold_dkk_approx": {
+													"type": "integer"
+												},
+												"amount_dkk_approx": {
+													"type": "integer"
+												},
+												"status": {
+													"type": "string",
+													"enum": [
+														"ok",
+														"failed"
+													]
+												},
+												"failure_reason": {
+													"type": [
+														"string",
+														"null"
+													],
+													"enum": [
+														"card_declined",
+														"no_payment_method",
+														"authentication_required",
+														"charge_error"
+													]
+												},
+												"failed_at": {
+													"type": [
+														"integer",
+														"null"
+													]
+												},
+												"last_charged_at": {
+													"type": [
+														"integer",
+														"null"
+													]
+												}
+											},
+											"required": [
+												"enabled",
+												"threshold_cents",
+												"amount_cents",
+												"threshold_dkk_approx",
+												"amount_dkk_approx",
+												"status",
+												"failure_reason",
+												"failed_at",
+												"last_charged_at"
+											]
+										}
+									},
+									"required": [
+										"auto_top_up"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Workspace cannot be charged automatically yet",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Caller is not a human workspace admin or owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Workspace not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/internal/agent-servers/reconcile": {
 			"post": {
 				"tags": [
@@ -45964,6 +46630,12 @@
 													"index"
 												]
 											},
+											"started_from": {
+												"type": "string",
+												"enum": [
+													"share"
+												]
+											},
 											"comment_event_id": {
 												"type": "integer"
 											}
@@ -46394,6 +47066,18 @@
 						},
 						"required": false,
 						"name": "sort",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"enum": [
+								"priority",
+								"recent"
+							]
+						},
+						"required": false,
+						"name": "scope",
 						"in": "query"
 					},
 					{
@@ -49390,6 +50074,12 @@
 												"required": [
 													"intro_message_id",
 													"index"
+												]
+											},
+											"started_from": {
+												"type": "string",
+												"enum": [
+													"share"
 												]
 											},
 											"comment_event_id": {
@@ -62717,14 +63407,58 @@
 												},
 												"tips": {
 													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
 												}
 											},
 											"required": [
 												"needs_you",
 												"conversation",
 												"digest",
-												"tips"
+												"tips",
+												"flow_activity"
 											]
+										},
+										"browser_categories": {
+											"type": "object",
+											"properties": {
+												"needs_you": {
+													"type": "boolean"
+												},
+												"conversation": {
+													"type": "boolean"
+												},
+												"digest": {
+													"type": "boolean"
+												},
+												"tips": {
+													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"needs_you",
+												"conversation",
+												"digest",
+												"tips",
+												"flow_activity"
+											]
+										},
+										"browser_not_asked": {
+											"type": "array",
+											"items": {
+												"type": "string",
+												"enum": [
+													"needs_you",
+													"conversation",
+													"digest",
+													"tips",
+													"flow_activity"
+												]
+											}
 										},
 										"briefing_enabled": {
 											"type": "boolean"
@@ -62733,6 +63467,42 @@
 											"type": "integer",
 											"minimum": 0,
 											"maximum": 1439
+										},
+										"email_digest_enabled": {
+											"type": "boolean"
+										},
+										"email_categories": {
+											"type": "object",
+											"properties": {
+												"needs_you": {
+													"type": "boolean"
+												},
+												"conversation": {
+													"type": "boolean"
+												},
+												"tips": {
+													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"needs_you",
+												"conversation",
+												"tips",
+												"flow_activity"
+											]
+										},
+										"marketplace_picks_enabled": {
+											"type": "boolean"
+										},
+										"email_rhythm": {
+											"type": "string",
+											"enum": [
+												"daily",
+												"weekly"
+											]
 										},
 										"muted_workspace_ids": {
 											"type": "array",
@@ -62753,8 +63523,14 @@
 										"quiet_hours_start",
 										"quiet_hours_end",
 										"categories",
+										"browser_categories",
+										"browser_not_asked",
 										"briefing_enabled",
 										"briefing_time",
+										"email_digest_enabled",
+										"email_categories",
+										"marketplace_picks_enabled",
+										"email_rhythm",
 										"muted_workspace_ids",
 										"updated_at"
 									]
@@ -62814,6 +63590,29 @@
 											},
 											"tips": {
 												"type": "boolean"
+											},
+											"flow_activity": {
+												"type": "boolean"
+											}
+										}
+									},
+									"browser_categories": {
+										"type": "object",
+										"properties": {
+											"needs_you": {
+												"type": "boolean"
+											},
+											"conversation": {
+												"type": "boolean"
+											},
+											"digest": {
+												"type": "boolean"
+											},
+											"tips": {
+												"type": "boolean"
+											},
+											"flow_activity": {
+												"type": "boolean"
 											}
 										}
 									},
@@ -62824,6 +63623,36 @@
 										"type": "integer",
 										"minimum": 0,
 										"maximum": 1439
+									},
+									"email_digest_enabled": {
+										"type": "boolean"
+									},
+									"email_categories": {
+										"type": "object",
+										"properties": {
+											"needs_you": {
+												"type": "boolean"
+											},
+											"conversation": {
+												"type": "boolean"
+											},
+											"tips": {
+												"type": "boolean"
+											},
+											"flow_activity": {
+												"type": "boolean"
+											}
+										}
+									},
+									"marketplace_picks_enabled": {
+										"type": "boolean"
+									},
+									"email_rhythm": {
+										"type": "string",
+										"enum": [
+											"daily",
+											"weekly"
+										]
 									},
 									"muted_workspace_ids": {
 										"type": "array",
@@ -62884,14 +63713,58 @@
 												},
 												"tips": {
 													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
 												}
 											},
 											"required": [
 												"needs_you",
 												"conversation",
 												"digest",
-												"tips"
+												"tips",
+												"flow_activity"
 											]
+										},
+										"browser_categories": {
+											"type": "object",
+											"properties": {
+												"needs_you": {
+													"type": "boolean"
+												},
+												"conversation": {
+													"type": "boolean"
+												},
+												"digest": {
+													"type": "boolean"
+												},
+												"tips": {
+													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"needs_you",
+												"conversation",
+												"digest",
+												"tips",
+												"flow_activity"
+											]
+										},
+										"browser_not_asked": {
+											"type": "array",
+											"items": {
+												"type": "string",
+												"enum": [
+													"needs_you",
+													"conversation",
+													"digest",
+													"tips",
+													"flow_activity"
+												]
+											}
 										},
 										"briefing_enabled": {
 											"type": "boolean"
@@ -62900,6 +63773,42 @@
 											"type": "integer",
 											"minimum": 0,
 											"maximum": 1439
+										},
+										"email_digest_enabled": {
+											"type": "boolean"
+										},
+										"email_categories": {
+											"type": "object",
+											"properties": {
+												"needs_you": {
+													"type": "boolean"
+												},
+												"conversation": {
+													"type": "boolean"
+												},
+												"tips": {
+													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"needs_you",
+												"conversation",
+												"tips",
+												"flow_activity"
+											]
+										},
+										"marketplace_picks_enabled": {
+											"type": "boolean"
+										},
+										"email_rhythm": {
+											"type": "string",
+											"enum": [
+												"daily",
+												"weekly"
+											]
 										},
 										"muted_workspace_ids": {
 											"type": "array",
@@ -62920,8 +63829,14 @@
 										"quiet_hours_start",
 										"quiet_hours_end",
 										"categories",
+										"browser_categories",
+										"browser_not_asked",
 										"briefing_enabled",
 										"briefing_time",
+										"email_digest_enabled",
+										"email_categories",
+										"marketplace_picks_enabled",
+										"email_rhythm",
 										"muted_workspace_ids",
 										"updated_at"
 									]

@@ -1,10 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { capturePosthogEventMock } = vi.hoisted(() => ({
+const { capturePosthogEventMock, decideSendMock } = vi.hoisted(() => ({
 	capturePosthogEventMock: vi.fn().mockResolvedValue(undefined),
+	// The agent's send setting for Slack messages: send_now (always allow), needs_approval
+	// (ask first) or denied.
+	decideSendMock: vi.fn().mockResolvedValue('send_now'),
 }))
 vi.mock('../../../../lib/analytics/posthog', () => ({
 	capturePosthogEvent: capturePosthogEventMock,
+}))
+vi.mock('../../../../lib/send-gate', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../lib/send-gate')>()),
+	decideSend: decideSendMock,
 }))
 
 import { _resetSlackCaches } from '../../../../lib/integrations/providers/slack/client'
@@ -12,10 +19,6 @@ import {
 	createSlackMcpServer,
 	isSlackBotToken,
 } from '../../../../lib/integrations/providers/slack/mcp-server'
-import {
-	directPostChannelsFromConfig,
-	isDirectPostChannel,
-} from '../../../../lib/integrations/providers/slack/send-object'
 
 describe('isSlackBotToken', () => {
 	it('accepts xoxb- prefixed tokens', () => {
@@ -34,7 +37,7 @@ describe('isSlackBotToken', () => {
 	})
 })
 
-describe('createSlackMcpServer — slack_send_message (internal channel, direct)', () => {
+describe('createSlackMcpServer — slack_send_message (direct)', () => {
 	const ctx = {
 		botToken: 'xoxb-test-token',
 		integrationId: 'int-1',
@@ -43,7 +46,6 @@ describe('createSlackMcpServer — slack_send_message (internal channel, direct)
 		workspaceId: 'ws-1',
 		actorId: 'actor-1',
 		slackTeamId: 'T123ABC',
-		directPostChannels: ['C06LC37JJCS'],
 	}
 
 	let fetchMock: ReturnType<typeof vi.fn>
@@ -55,6 +57,7 @@ describe('createSlackMcpServer — slack_send_message (internal channel, direct)
 		} as Response)
 		vi.stubGlobal('fetch', fetchMock)
 		capturePosthogEventMock.mockClear()
+		decideSendMock.mockResolvedValue('send_now')
 	})
 
 	afterEach(() => {
@@ -95,15 +98,44 @@ describe('createSlackMcpServer — slack_send_message (internal channel, direct)
 		])
 	})
 
-	it('refuses a direct post to any other channel and calls Slack not at all', async () => {
+	it('posts to any channel, not only a listed one', async () => {
 		const result = (await callSendMessage({ channel: 'C0123456789', text: 'hello' })) as {
+			isError?: boolean
+		}
+		expect(result.isError).toBeUndefined()
+		expect(fetchMock).toHaveBeenCalledOnce()
+	})
+
+	it('posts to a direct message channel too', async () => {
+		const result = (await callSendMessage({ channel: 'D0123456789', text: 'hello' })) as {
+			isError?: boolean
+		}
+		expect(result.isError).toBeUndefined()
+		expect(fetchMock).toHaveBeenCalledOnce()
+	})
+
+	it('asks for a draft when the agent is set to ask first, and calls Slack not at all', async () => {
+		decideSendMock.mockResolvedValue('needs_approval')
+		const result = (await callSendMessage({ channel: 'C06LC37JJCS', text: 'hello' })) as {
 			isError?: boolean
 			content: Array<{ text: string }>
 		}
 		expect(result.isError).toBe(true)
 		expect(result.content[0].text).toMatch(/object_id/)
+		expect(result.content[0].text).toMatch(/approve_draft_from_chat/)
 		expect(fetchMock).not.toHaveBeenCalled()
 		expect(capturePosthogEventMock).not.toHaveBeenCalled()
+	})
+
+	it('refuses when sending Slack messages is turned off for the agent', async () => {
+		decideSendMock.mockResolvedValue('denied')
+		const result = (await callSendMessage({ channel: 'C06LC37JJCS', text: 'hello' })) as {
+			isError?: boolean
+			content: Array<{ text: string }>
+		}
+		expect(result.isError).toBe(true)
+		expect(result.content[0].text).toMatch(/turned off/)
+		expect(fetchMock).not.toHaveBeenCalled()
 	})
 
 	it('forwards thread_ts when provided', async () => {
@@ -255,7 +287,6 @@ describe('createSlackMcpServer — discovery and membership tools', () => {
 		workspaceId: 'ws-1',
 		actorId: 'actor-1',
 		slackTeamId: 'T123ABC',
-		directPostChannels: ['C06LC37JJCS'],
 	}
 
 	let fetchMock: ReturnType<typeof vi.fn>
@@ -277,6 +308,7 @@ describe('createSlackMcpServer — discovery and membership tools', () => {
 		_resetSlackCaches()
 		fetchMock = vi.fn()
 		vi.stubGlobal('fetch', fetchMock)
+		decideSendMock.mockResolvedValue('send_now')
 	})
 
 	afterEach(() => {
@@ -694,7 +726,7 @@ describe('createSlackMcpServer — discovery and membership tools', () => {
 		})
 	})
 
-	describe('slack_update_message (internal channel, direct)', () => {
+	describe('slack_update_message (direct)', () => {
 		it('calls chat.update with channel + ts + text and returns { channel, ts, updated }', async () => {
 			queueSlackResponses({ ok: true, channel: 'C06LC37JJCS', ts: '1717000003.000100' })
 			const out = await callTool('slack_update_message', {
@@ -734,13 +766,25 @@ describe('createSlackMcpServer — discovery and membership tools', () => {
 			).rejects.toThrow(/Reconnect Slack/)
 		})
 
-		it('refuses a direct edit in any other channel and calls Slack not at all', async () => {
+		it('asks for a draft when the agent is set to ask first, and calls Slack not at all', async () => {
+			decideSendMock.mockResolvedValue('needs_approval')
 			const out = (await tool('slack_update_message').handler(
 				{ channel: 'C0123456789', ts: '1717000003.000100', text: 'edited' },
 				{},
 			)) as { isError?: boolean; content: Array<{ text: string }> }
 			expect(out.isError).toBe(true)
 			expect(out.content[0].text).toMatch(/object_id/)
+			expect(fetchMock).not.toHaveBeenCalled()
+		})
+
+		it('refuses an edit when sending Slack messages is turned off for the agent', async () => {
+			decideSendMock.mockResolvedValue('denied')
+			const out = (await tool('slack_update_message').handler(
+				{ channel: 'C0123456789', ts: '1717000003.000100', text: 'edited' },
+				{},
+			)) as { isError?: boolean; content: Array<{ text: string }> }
+			expect(out.isError).toBe(true)
+			expect(out.content[0].text).toMatch(/turned off/)
 			expect(fetchMock).not.toHaveBeenCalled()
 		})
 	})
@@ -886,101 +930,5 @@ describe('createSlackMcpServer — discovery and membership tools', () => {
 				/channel_not_found/,
 			)
 		})
-	})
-})
-
-describe('direct post allowlist', () => {
-	it('holds every channel when no list was saved', () => {
-		expect(isDirectPostChannel('C06LC37JJCS')).toBe(false)
-		expect(isDirectPostChannel('C06LC37JJCS', ['C0AAAAAAAAA'])).toBe(false)
-		expect(isDirectPostChannel('C0AAAAAAAAA', ['C0AAAAAAAAA'])).toBe(true)
-		expect(isDirectPostChannel('C06LC37JJCS', [])).toBe(false)
-	})
-
-	it('reads the saved list from integration config and drops anything that is not a channel id', () => {
-		expect(directPostChannelsFromConfig({})).toBeUndefined()
-		expect(directPostChannelsFromConfig(null)).toBeUndefined()
-		expect(
-			directPostChannelsFromConfig({ slack_direct_post_channels: 'C0AAAAAAAAA' }),
-		).toBeUndefined()
-		expect(directPostChannelsFromConfig({ slack_direct_post_channels: [] })).toEqual([])
-		expect(
-			directPostChannelsFromConfig({
-				slack_direct_post_channels: ['C0AAAAAAAAA', 'D0AAAAAAAAA', '#general', 7, 'G0BBBBBBBBB'],
-			}),
-		).toEqual(['C0AAAAAAAAA', 'G0BBBBBBBBB'])
-	})
-})
-
-describe('createSlackMcpServer — slack_send_message with a saved allowlist', () => {
-	const base = {
-		botToken: 'xoxb-test-token',
-		integrationId: 'int-1',
-		agentLabel: 'Agent · in ws',
-		workspaceId: 'ws-1',
-		actorId: 'actor-1',
-	}
-	let fetchMock: ReturnType<typeof vi.fn>
-
-	beforeEach(() => {
-		fetchMock = vi.fn().mockResolvedValue({
-			ok: true,
-			json: async () => ({ ok: true, ts: '1717000000.000100', channel: 'C0AAAAAAAAA' }),
-		} as Response)
-		vi.stubGlobal('fetch', fetchMock)
-		capturePosthogEventMock.mockClear()
-	})
-
-	afterEach(() => {
-		vi.unstubAllGlobals()
-	})
-
-	async function send(directPostChannels: string[] | undefined, channel: string) {
-		const server = createSlackMcpServer({ ...base, directPostChannels })
-		const tool = (
-			server as unknown as {
-				_registeredTools: Record<
-					string,
-					{ handler: (args: unknown, extra: unknown) => Promise<unknown> }
-				>
-			}
-		)._registeredTools.slack_send_message
-		return (await tool.handler({ channel, text: 'status' }, {})) as { isError?: boolean }
-	}
-
-	it('posts directly to a channel on the saved list', async () => {
-		const result = await send(['C0AAAAAAAAA'], 'C0AAAAAAAAA')
-		expect(result.isError).toBeUndefined()
-		expect(fetchMock).toHaveBeenCalledOnce()
-	})
-
-	it('holds a channel that is not on the saved list, and calls Slack not at all', async () => {
-		const result = await send(['C0AAAAAAAAA'], 'C0BBBBBBBBB')
-		expect(result.isError).toBe(true)
-		expect(fetchMock).not.toHaveBeenCalled()
-	})
-
-	it('holds a channel once a saved list leaves it out', async () => {
-		const result = await send(['C0AAAAAAAAA'], 'C06LC37JJCS')
-		expect(result.isError).toBe(true)
-		expect(fetchMock).not.toHaveBeenCalled()
-	})
-
-	it('holds everything when no list was saved', async () => {
-		const result = await send(undefined, 'C06LC37JJCS')
-		expect(result.isError).toBe(true)
-		expect(fetchMock).not.toHaveBeenCalled()
-	})
-
-	it('holds everything when the saved list is empty', async () => {
-		const result = await send([], 'C06LC37JJCS')
-		expect(result.isError).toBe(true)
-		expect(fetchMock).not.toHaveBeenCalled()
-	})
-
-	it('holds a DM even if its id is on the list', async () => {
-		const result = await send(['D0AAAAAAAAA'], 'D0AAAAAAAAA')
-		expect(result.isError).toBe(true)
-		expect(fetchMock).not.toHaveBeenCalled()
 	})
 })

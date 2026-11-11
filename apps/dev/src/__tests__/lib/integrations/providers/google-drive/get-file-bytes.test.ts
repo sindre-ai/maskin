@@ -49,8 +49,40 @@ function drainingStorage() {
 	return { storage: { put } as never, put, seen }
 }
 
+/**
+ * Drizzle double for the files table: select().from().where().limit() reads rows, insert().values()
+ * .returning() adds one, update().set().where() changes the first. Rows are matched by storage key
+ * only, which is all the tool looks up.
+ */
+function fakeFilesDb(rows: Array<Record<string, unknown>> = []) {
+	let nextId = 1
+	const inserted: Array<Record<string, unknown>> = []
+	const updated: Array<Record<string, unknown>> = []
+	const db = {
+		select: () => ({ from: () => ({ where: () => ({ limit: async () => rows.slice(0, 1) }) }) }),
+		insert: () => ({
+			values: (v: Record<string, unknown>) => ({
+				returning: async () => {
+					const row = { ...v, id: `file-${nextId++}` }
+					inserted.push(row)
+					rows.push(row)
+					return [{ id: row.id }]
+				},
+			}),
+		}),
+		update: () => ({
+			set: (v: Record<string, unknown>) => ({
+				where: async () => {
+					updated.push(v)
+				},
+			}),
+		}),
+	}
+	return { db: db as never, inserted, updated }
+}
+
 const MB = 1024 * 1024
-const ctxBase = { db: {} as never, workspaceId: 'ws-1', actorId: 'actor-1' }
+const ctxBase = { db: fakeFilesDb().db, workspaceId: 'ws-1', actorId: 'actor-1' }
 const sha = (b: Buffer) => createHash('sha256').update(b).digest('hex')
 
 function streamOf(totalBytes: number, chunkBytes = MB): ReadableStream<Uint8Array> {
@@ -77,7 +109,8 @@ describe('getFileBytes (cassette)', () => {
 		const fetchSpy = replayDownloadCassette(downloadCassette)
 		const { storage, put, seen } = drainingStorage()
 
-		const out = await getFileBytes({ ...ctxBase, storage }, { fileId: '1PdF' })
+		const { db } = fakeFilesDb()
+		const out = await getFileBytes({ ...ctxBase, db, storage }, { fileId: '1PdF' })
 
 		const expected = Buffer.from('JVBERi0xLjQKJSVFT0YK', 'base64')
 		expect(out).toEqual({
@@ -87,6 +120,7 @@ describe('getFileBytes (cassette)', () => {
 			sizeBytes: expected.length,
 			storageUrl: 'workspaces/ws-1/integrations/google-drive/downloads/1PdF',
 			sha256: sha(expected),
+			workspaceFileId: 'file-1',
 		})
 		expect(put).toHaveBeenCalledTimes(1)
 		expect(seen.key).toBe(downloadStorageKey('ws-1', '1PdF'))
@@ -284,6 +318,88 @@ describe('getFileBytes (rules)', () => {
 	})
 })
 
+describe('getFileBytes (workspace file)', () => {
+	const client = (body: ReadableStream<Uint8Array>) => ({
+		getFileMetadata: vi.fn(async () => ({ id: 'vid', name: 'clip.mp4', mimeType: 'video/mp4' })),
+		openContent: vi.fn(async () => body),
+	})
+
+	it('registers a 25 MB video as a workspace file under the caller workspace and returns its id', async () => {
+		const { db, inserted } = fakeFilesDb()
+		const { storage, seen } = drainingStorage()
+
+		const out = await getFileBytes(
+			{ ...ctxBase, db, storage, downloadClient: client(streamOf(25 * MB)) },
+			{ fileId: 'vid' },
+		)
+
+		expect(out.workspaceFileId).toBe('file-1')
+		expect(out.workspaceFileNote).toBeUndefined()
+		expect(inserted).toHaveLength(1)
+		expect(inserted[0]).toMatchObject({
+			workspaceId: 'ws-1',
+			name: 'clip.mp4',
+			mimeType: 'video/mp4',
+			sizeBytes: 25 * MB,
+			storageKey: downloadStorageKey('ws-1', 'vid'),
+			contentHash: seen.sha256,
+			createdBy: 'actor-1',
+		})
+		expect(String(inserted[0]?.storageKey).startsWith('workspaces/ws-1/')).toBe(true)
+	})
+
+	it('registers a file of exactly 50 MB', async () => {
+		const { db } = fakeFilesDb()
+		const { storage } = drainingStorage()
+		const out = await getFileBytes(
+			{ ...ctxBase, db, storage, downloadClient: client(streamOf(50 * MB)) },
+			{ fileId: 'vid' },
+		)
+		expect(out.workspaceFileId).toBe('file-1')
+	})
+
+	it('downloads a file over 50 MB but registers nothing and says why', async () => {
+		const { db, inserted } = fakeFilesDb()
+		const { storage } = drainingStorage()
+		const out = await getFileBytes(
+			{ ...ctxBase, db, storage, downloadClient: client(streamOf(50 * MB + 1)) },
+			{ fileId: 'vid' },
+		)
+		expect(out.sizeBytes).toBe(50 * MB + 1)
+		expect(out.storageUrl).toBe(downloadStorageKey('ws-1', 'vid'))
+		expect(out.workspaceFileId).toBeUndefined()
+		expect(out.workspaceFileNote).toContain('50 MB')
+		expect(inserted).toHaveLength(0)
+	})
+
+	it('updates the same workspace file when the Drive file is downloaded again', async () => {
+		const { db, inserted, updated } = fakeFilesDb([{ id: 'file-existing' }])
+		const { storage } = drainingStorage()
+		const out = await getFileBytes(
+			{ ...ctxBase, db, storage, downloadClient: client(streamOf(MB)) },
+			{ fileId: 'vid' },
+		)
+		expect(out.workspaceFileId).toBe('file-existing')
+		expect(inserted).toHaveLength(0)
+		expect(updated).toHaveLength(1)
+		expect(updated[0]).toMatchObject({ sizeBytes: MB, name: 'clip.mp4' })
+	})
+
+	it('registers nothing when the download fails', async () => {
+		const { db, inserted } = fakeFilesDb()
+		const dying = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.error(new Error('socket hang up'))
+			},
+		})
+		const { storage } = drainingStorage()
+		await expect(
+			getFileBytes({ ...ctxBase, db, storage, downloadClient: client(dying) }, { fileId: 'vid' }),
+		).rejects.toMatchObject({ code: 'UPLOAD_FAILED' })
+		expect(inserted).toHaveLength(0)
+	})
+})
+
 describe('getFileBytes (S14 memory bound, synthetic 2 GB source)', () => {
 	it('moves 2 GB through the tool with RSS growth under 200 MB', async () => {
 		const TOTAL = 2 * 1024 * MB
@@ -316,7 +432,7 @@ describe('getFileBytes (S14 memory bound, synthetic 2 GB source)', () => {
 describe('google_drive__get_file_bytes over MCP', () => {
 	async function connect(storage?: unknown) {
 		const server = createGoogleDriveMcpServer({
-			db: {} as never,
+			db: fakeFilesDb().db,
 			workspaceId: 'ws-1',
 			actorId: 'actor-1',
 			sessionId: 'sess-1',
@@ -372,6 +488,7 @@ describe('google_drive__get_file_bytes over MCP', () => {
 			'sha256',
 			'sizeBytes',
 			'storageUrl',
+			'workspaceFileId',
 		])
 		expect(captureTrace).toHaveBeenCalledTimes(1)
 		const trace = (captureTrace.mock.calls[0] as unknown[])[1] as Record<string, unknown>

@@ -2877,6 +2877,9 @@ export const notificationPreferences = pgTable(
 			.$type<Record<string, boolean>>()
 			.notNull()
 			.default(sql`'{"needs_you":true,"conversation":true,"digest":true,"tips":true}'::jsonb`),
+		// Browser switch per kind, e.g. { conversation: false }. null or a missing kind means never
+		// asked: it follows that kind's push switch. Empty on every existing row. Migration 0139.
+		browserCategories: jsonb('browser_categories').$type<Record<string, boolean>>(),
 		briefingEnabled: boolean('briefing_enabled').notNull().default(true),
 		briefingTime: smallint('briefing_time').notNull().default(510),
 		mutedWorkspaceIds: uuid('muted_workspace_ids').array().notNull().default(sql`'{}'::uuid[]`),
@@ -2889,6 +2892,31 @@ export const notificationPreferences = pgTable(
 			.$type<Record<string, string>>()
 			.notNull()
 			.default(sql`'{}'::jsonb`),
+		// Email switch per kind other than the summary, e.g. { flow_activity: true }. null or a
+		// missing kind means off. Empty on every existing row. Migration 0147.
+		emailCategories: jsonb('email_categories').$type<Record<string, boolean>>(),
+		// { <flow id>: ISO time } of the last Flow activity email per flow; the hourly claim. Migration 0147.
+		flowEmailSent: jsonb('flow_email_sent').$type<Record<string, string>>(),
+		// The summary email choice. null means no choice yet (every row that existed before
+		// migration 0138); true/false is a saved choice and always wins. Migration 0138.
+		emailDigestEnabled: boolean('email_digest_enabled'),
+		// Summary email series: 0 = none sent, 1 to 3 = onboarding mails sent. Migration 0138.
+		emailOnboardingStep: smallint('email_onboarding_step').notNull().default(0),
+		// Date of the last summary email, set by the email sender. Migration 0138.
+		emailLastSentOn: date('email_last_sent_on', { mode: 'string' }),
+		// The "Marketplace picks" switch for the summary email. Off for everyone until the person
+		// turns it on. Migration 0146.
+		marketplacePicksEnabled: boolean('marketplace_picks_enabled').notNull().default(false),
+		// Marketplace flows the person marked "Not useful"; never picked for them again. Migration 0146.
+		marketplaceDismissedLoopIds: uuid('marketplace_dismissed_loop_ids')
+			.array()
+			.notNull()
+			.default(sql`'{}'::uuid[]`),
+		// Date of the last summary email that carried a pick; at most one a week. Migration 0146.
+		marketplacePickLastSentOn: date('marketplace_pick_last_sent_on', { mode: 'string' }),
+		// How often the summary email comes: 'daily' or 'weekly'. null means no choice, which is
+		// daily. Off is email_digest_enabled = false, not a value here. Migration 0145.
+		emailRhythm: text('email_rhythm'),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	},
@@ -2904,6 +2932,14 @@ export const notificationPreferences = pgTable(
 		check(
 			'notification_preferences_briefing_time_chk',
 			sql`${t.briefingTime} >= 0 AND ${t.briefingTime} <= 1439`,
+		),
+		check(
+			'notification_preferences_email_step_chk',
+			sql`${t.emailOnboardingStep} >= 0 AND ${t.emailOnboardingStep} <= 3`,
+		),
+		check(
+			'notification_preferences_email_rhythm_chk',
+			sql`${t.emailRhythm} IS NULL OR ${t.emailRhythm} IN ('daily', 'weekly')`,
 		),
 	],
 )
