@@ -8584,6 +8584,8 @@ public enum Operations {
                         public var avatar_url: Swift.String?
                         /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/tags`.
                         public var tags: [Swift.String]?
+                        /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/starter_prompts`.
+                        public var starter_prompts: [Swift.String]?
                         /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/workspacesPayload`.
                         public struct workspacesPayloadPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/workspacesPayload/id`.
@@ -8634,6 +8636,7 @@ public enum Operations {
                         ///   - voice_enabled:
                         ///   - avatar_url:
                         ///   - tags:
+                        ///   - starter_prompts:
                         ///   - workspaces:
                         ///   - skills:
                         public init(
@@ -8649,6 +8652,7 @@ public enum Operations {
                             voice_enabled: Swift.Bool? = nil,
                             avatar_url: Swift.String? = nil,
                             tags: [Swift.String]? = nil,
+                            starter_prompts: [Swift.String]? = nil,
                             workspaces: Operations.get_sol_api_sol_actors.Output.Ok.Body.jsonPayloadPayload.workspacesPayload? = nil,
                             skills: [Swift.String]? = nil
                         ) {
@@ -8664,6 +8668,7 @@ public enum Operations {
                             self.voice_enabled = voice_enabled
                             self.avatar_url = avatar_url
                             self.tags = tags
+                            self.starter_prompts = starter_prompts
                             self.workspaces = workspaces
                             self.skills = skills
                         }
@@ -8680,6 +8685,7 @@ public enum Operations {
                             case voice_enabled
                             case avatar_url
                             case tags
+                            case starter_prompts
                             case workspaces
                             case skills
                         }
@@ -11231,6 +11237,8 @@ public enum Operations {
                     public var default_workspace_id: Swift.String?
                     /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/json/tags`.
                     public var tags: [Swift.String]?
+                    /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/json/starter_prompts`.
+                    public var starter_prompts: [Swift.String]?
                     /// Creates a new `jsonPayload`.
                     ///
                     /// - Parameters:
@@ -11245,6 +11253,7 @@ public enum Operations {
                     ///   - mailbox:
                     ///   - default_workspace_id:
                     ///   - tags:
+                    ///   - starter_prompts:
                     public init(
                         name: Swift.String? = nil,
                         email: Swift.String? = nil,
@@ -11256,7 +11265,8 @@ public enum Operations {
                         llm_config: Operations.patch_sol_api_sol_actors_sol__lcub_id_rcub_.Input.Body.jsonPayload.llm_configPayload? = nil,
                         mailbox: Swift.String? = nil,
                         default_workspace_id: Swift.String? = nil,
-                        tags: [Swift.String]? = nil
+                        tags: [Swift.String]? = nil,
+                        starter_prompts: [Swift.String]? = nil
                     ) {
                         self.name = name
                         self.email = email
@@ -11269,6 +11279,7 @@ public enum Operations {
                         self.mailbox = mailbox
                         self.default_workspace_id = default_workspace_id
                         self.tags = tags
+                        self.starter_prompts = starter_prompts
                     }
                     public enum CodingKeys: String, CodingKey {
                         case name
@@ -11282,6 +11293,7 @@ public enum Operations {
                         case mailbox
                         case default_workspace_id
                         case tags
+                        case starter_prompts
                     }
                 }
                 /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/content/application\/json`.
@@ -12246,7 +12258,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// Cannot delete human actors
+            /// Cannot delete human actors or system agents, and an agent caller needs a person’s approval (a delete_agent option tapped on a decision card)
             ///
             /// - Remark: Generated from `#/paths//api/actors/{id}/delete/responses/403`.
             ///
@@ -47206,6 +47218,29 @@ public enum Operations {
                             ///
                             /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/optionsPayload/set_status`.
                             public var set_status: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.optionsPayloadPayload.set_statusPayload?
+                            /// Use on the option that approves deleting another agent ("Delete Scout"), and mark it destructive. A person tapping it records their approval and nothing is deleted yet: the reply wakes you, and you then call delete_agent with the same id. The approval is for you only, for that one agent, and lapses after 24 hours. Without a tap, delete_agent is refused. All delete_agent options on one card must name the same agent. You cannot ask to delete yourself or a system agent.
+                            ///
+                            /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/optionsPayload/delete_agent`.
+                            public struct delete_agentPayload: Codable, Hashable, Sendable {
+                                /// The agent to delete: its id from list_actors.
+                                ///
+                                /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/optionsPayload/delete_agent/actor_id`.
+                                public var actor_id: Swift.String
+                                /// Creates a new `delete_agentPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - actor_id: The agent to delete: its id from list_actors.
+                                public init(actor_id: Swift.String) {
+                                    self.actor_id = actor_id
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case actor_id
+                                }
+                            }
+                            /// Use on the option that approves deleting another agent ("Delete Scout"), and mark it destructive. A person tapping it records their approval and nothing is deleted yet: the reply wakes you, and you then call delete_agent with the same id. The approval is for you only, for that one agent, and lapses after 24 hours. Without a tap, delete_agent is refused. All delete_agent options on one card must name the same agent. You cannot ask to delete yourself or a system agent.
+                            ///
+                            /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/optionsPayload/delete_agent`.
+                            public var delete_agent: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.optionsPayloadPayload.delete_agentPayload?
                             /// Creates a new `optionsPayloadPayload`.
                             ///
                             /// - Parameters:
@@ -47214,18 +47249,21 @@ public enum Operations {
                             ///   - recommended: Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing.
                             ///   - destructive: Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices.
                             ///   - set_status: Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
+                            ///   - delete_agent: Use on the option that approves deleting another agent ("Delete Scout"), and mark it destructive. A person tapping it records their approval and nothing is deleted yet: the reply wakes you, and you then call delete_agent with the same id. The approval is for you only, for that one agent, and lapses after 24 hours. Without a tap, delete_agent is refused. All delete_agent options on one card must name the same agent. You cannot ask to delete yourself or a system agent.
                             public init(
                                 label: Swift.String,
                                 consequences: [Swift.String],
                                 recommended: Swift.Bool? = nil,
                                 destructive: Swift.Bool? = nil,
-                                set_status: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.optionsPayloadPayload.set_statusPayload? = nil
+                                set_status: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.optionsPayloadPayload.set_statusPayload? = nil,
+                                delete_agent: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.optionsPayloadPayload.delete_agentPayload? = nil
                             ) {
                                 self.label = label
                                 self.consequences = consequences
                                 self.recommended = recommended
                                 self.destructive = destructive
                                 self.set_status = set_status
+                                self.delete_agent = delete_agent
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case label
@@ -47233,6 +47271,7 @@ public enum Operations {
                                 case recommended
                                 case destructive
                                 case set_status
+                                case delete_agent
                             }
                         }
                         /// 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
@@ -48998,6 +49037,8 @@ public enum Operations {
                             public var provider: Swift.String
                             /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/integration_access_request/display_name`.
                             public var display_name: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/integration_access_request/account`.
+                            public var account: Swift.String?
                             /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/integration_access_request/level`.
                             @frozen public enum levelPayload: String, Codable, Hashable, Sendable, CaseIterable {
                                 case read = "read"
@@ -49015,6 +49056,7 @@ public enum Operations {
                             ///   - integration_id:
                             ///   - provider:
                             ///   - display_name:
+                            ///   - account:
                             ///   - level:
                             ///   - reason:
                             public init(
@@ -49023,6 +49065,7 @@ public enum Operations {
                                 integration_id: Swift.String,
                                 provider: Swift.String,
                                 display_name: Swift.String,
+                                account: Swift.String? = nil,
                                 level: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.integration_access_requestPayload.levelPayload,
                                 reason: Swift.String? = nil
                             ) {
@@ -49031,6 +49074,7 @@ public enum Operations {
                                 self.integration_id = integration_id
                                 self.provider = provider
                                 self.display_name = display_name
+                                self.account = account
                                 self.level = level
                                 self.reason = reason
                             }
@@ -49040,6 +49084,7 @@ public enum Operations {
                                 case integration_id
                                 case provider
                                 case display_name
+                                case account
                                 case level
                                 case reason
                             }
@@ -49341,6 +49386,8 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/card_answer`.
                         public var card_answer: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.card_answerPayload?
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/quoted_message_id`.
+                        public var quoted_message_id: Swift.Int?
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/helper_return`.
                         public var helper_return: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/hidden_from_chat`.
@@ -49502,6 +49549,7 @@ public enum Operations {
                         ///   - plan: Steps you plan, shown as a plan card. Also write the steps in the message text. Set version to 1.
                         ///   - proposed_edit: A change you propose to one field of one object, shown with Apply and Dismiss. Also describe it in the message text. Set version to 1.
                         ///   - card_answer:
+                        ///   - quoted_message_id:
                         ///   - helper_return:
                         ///   - hidden_from_chat:
                         ///   - delivery:
@@ -49530,6 +49578,7 @@ public enum Operations {
                             plan: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.planPayload? = nil,
                             proposed_edit: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.proposed_editPayload? = nil,
                             card_answer: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.card_answerPayload? = nil,
+                            quoted_message_id: Swift.Int? = nil,
                             helper_return: Swift.String? = nil,
                             hidden_from_chat: Swift.Bool? = nil,
                             delivery: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.deliveryPayload? = nil,
@@ -49558,6 +49607,7 @@ public enum Operations {
                             self.plan = plan
                             self.proposed_edit = proposed_edit
                             self.card_answer = card_answer
+                            self.quoted_message_id = quoted_message_id
                             self.helper_return = helper_return
                             self.hidden_from_chat = hidden_from_chat
                             self.delivery = delivery
@@ -49587,6 +49637,7 @@ public enum Operations {
                             case plan
                             case proposed_edit
                             case card_answer
+                            case quoted_message_id
                             case helper_return
                             case hidden_from_chat
                             case delivery
@@ -54469,6 +54520,8 @@ public enum Operations {
                             public var provider: Swift.String
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/integration_access_request/display_name`.
                             public var display_name: Swift.String
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/integration_access_request/account`.
+                            public var account: Swift.String?
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/integration_access_request/level`.
                             @frozen public enum levelPayload: String, Codable, Hashable, Sendable, CaseIterable {
                                 case read = "read"
@@ -54486,6 +54539,7 @@ public enum Operations {
                             ///   - integration_id:
                             ///   - provider:
                             ///   - display_name:
+                            ///   - account:
                             ///   - level:
                             ///   - reason:
                             public init(
@@ -54494,6 +54548,7 @@ public enum Operations {
                                 integration_id: Swift.String,
                                 provider: Swift.String,
                                 display_name: Swift.String,
+                                account: Swift.String? = nil,
                                 level: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.integration_access_requestPayload.levelPayload,
                                 reason: Swift.String? = nil
                             ) {
@@ -54502,6 +54557,7 @@ public enum Operations {
                                 self.integration_id = integration_id
                                 self.provider = provider
                                 self.display_name = display_name
+                                self.account = account
                                 self.level = level
                                 self.reason = reason
                             }
@@ -54511,6 +54567,7 @@ public enum Operations {
                                 case integration_id
                                 case provider
                                 case display_name
+                                case account
                                 case level
                                 case reason
                             }
@@ -54812,6 +54869,8 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/card_answer`.
                         public var card_answer: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.card_answerPayload?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/quoted_message_id`.
+                        public var quoted_message_id: Swift.Int?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/helper_return`.
                         public var helper_return: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/hidden_from_chat`.
@@ -54973,6 +55032,7 @@ public enum Operations {
                         ///   - plan: Steps you plan, shown as a plan card. Also write the steps in the message text. Set version to 1.
                         ///   - proposed_edit: A change you propose to one field of one object, shown with Apply and Dismiss. Also describe it in the message text. Set version to 1.
                         ///   - card_answer:
+                        ///   - quoted_message_id:
                         ///   - helper_return:
                         ///   - hidden_from_chat:
                         ///   - delivery:
@@ -55001,6 +55061,7 @@ public enum Operations {
                             plan: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.planPayload? = nil,
                             proposed_edit: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.proposed_editPayload? = nil,
                             card_answer: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.card_answerPayload? = nil,
+                            quoted_message_id: Swift.Int? = nil,
                             helper_return: Swift.String? = nil,
                             hidden_from_chat: Swift.Bool? = nil,
                             delivery: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.deliveryPayload? = nil,
@@ -55029,6 +55090,7 @@ public enum Operations {
                             self.plan = plan
                             self.proposed_edit = proposed_edit
                             self.card_answer = card_answer
+                            self.quoted_message_id = quoted_message_id
                             self.helper_return = helper_return
                             self.hidden_from_chat = hidden_from_chat
                             self.delivery = delivery
@@ -55058,6 +55120,7 @@ public enum Operations {
                             case plan
                             case proposed_edit
                             case card_answer
+                            case quoted_message_id
                             case helper_return
                             case hidden_from_chat
                             case delivery
@@ -70008,6 +70071,29 @@ public enum Operations {
                                         ///
                                         /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/set_status`.
                                         public var set_status: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.set_statusPayload?
+                                        /// Use on the option that approves deleting another agent ("Delete Scout"), and mark it destructive. A person tapping it records their approval and nothing is deleted yet: the reply wakes you, and you then call delete_agent with the same id. The approval is for you only, for that one agent, and lapses after 24 hours. Without a tap, delete_agent is refused. All delete_agent options on one card must name the same agent. You cannot ask to delete yourself or a system agent.
+                                        ///
+                                        /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/delete_agent`.
+                                        public struct delete_agentPayload: Codable, Hashable, Sendable {
+                                            /// The agent to delete: its id from list_actors.
+                                            ///
+                                            /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/delete_agent/actor_id`.
+                                            public var actor_id: Swift.String
+                                            /// Creates a new `delete_agentPayload`.
+                                            ///
+                                            /// - Parameters:
+                                            ///   - actor_id: The agent to delete: its id from list_actors.
+                                            public init(actor_id: Swift.String) {
+                                                self.actor_id = actor_id
+                                            }
+                                            public enum CodingKeys: String, CodingKey {
+                                                case actor_id
+                                            }
+                                        }
+                                        /// Use on the option that approves deleting another agent ("Delete Scout"), and mark it destructive. A person tapping it records their approval and nothing is deleted yet: the reply wakes you, and you then call delete_agent with the same id. The approval is for you only, for that one agent, and lapses after 24 hours. Without a tap, delete_agent is refused. All delete_agent options on one card must name the same agent. You cannot ask to delete yourself or a system agent.
+                                        ///
+                                        /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/delete_agent`.
+                                        public var delete_agent: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.delete_agentPayload?
                                         /// Creates a new `optionsPayloadPayload`.
                                         ///
                                         /// - Parameters:
@@ -70016,18 +70102,21 @@ public enum Operations {
                                         ///   - recommended: Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing.
                                         ///   - destructive: Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices.
                                         ///   - set_status: Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
+                                        ///   - delete_agent: Use on the option that approves deleting another agent ("Delete Scout"), and mark it destructive. A person tapping it records their approval and nothing is deleted yet: the reply wakes you, and you then call delete_agent with the same id. The approval is for you only, for that one agent, and lapses after 24 hours. Without a tap, delete_agent is refused. All delete_agent options on one card must name the same agent. You cannot ask to delete yourself or a system agent.
                                         public init(
                                             label: Swift.String,
                                             consequences: [Swift.String],
                                             recommended: Swift.Bool? = nil,
                                             destructive: Swift.Bool? = nil,
-                                            set_status: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.set_statusPayload? = nil
+                                            set_status: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.set_statusPayload? = nil,
+                                            delete_agent: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.delete_agentPayload? = nil
                                         ) {
                                             self.label = label
                                             self.consequences = consequences
                                             self.recommended = recommended
                                             self.destructive = destructive
                                             self.set_status = set_status
+                                            self.delete_agent = delete_agent
                                         }
                                         public enum CodingKeys: String, CodingKey {
                                             case label
@@ -70035,6 +70124,7 @@ public enum Operations {
                                             case recommended
                                             case destructive
                                             case set_status
+                                            case delete_agent
                                         }
                                     }
                                     /// 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
@@ -73668,6 +73758,29 @@ public enum Operations {
                                         ///
                                         /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/set_status`.
                                         public var set_status: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.set_statusPayload?
+                                        /// Use on the option that approves deleting another agent ("Delete Scout"), and mark it destructive. A person tapping it records their approval and nothing is deleted yet: the reply wakes you, and you then call delete_agent with the same id. The approval is for you only, for that one agent, and lapses after 24 hours. Without a tap, delete_agent is refused. All delete_agent options on one card must name the same agent. You cannot ask to delete yourself or a system agent.
+                                        ///
+                                        /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/delete_agent`.
+                                        public struct delete_agentPayload: Codable, Hashable, Sendable {
+                                            /// The agent to delete: its id from list_actors.
+                                            ///
+                                            /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/delete_agent/actor_id`.
+                                            public var actor_id: Swift.String
+                                            /// Creates a new `delete_agentPayload`.
+                                            ///
+                                            /// - Parameters:
+                                            ///   - actor_id: The agent to delete: its id from list_actors.
+                                            public init(actor_id: Swift.String) {
+                                                self.actor_id = actor_id
+                                            }
+                                            public enum CodingKeys: String, CodingKey {
+                                                case actor_id
+                                            }
+                                        }
+                                        /// Use on the option that approves deleting another agent ("Delete Scout"), and mark it destructive. A person tapping it records their approval and nothing is deleted yet: the reply wakes you, and you then call delete_agent with the same id. The approval is for you only, for that one agent, and lapses after 24 hours. Without a tap, delete_agent is refused. All delete_agent options on one card must name the same agent. You cannot ask to delete yourself or a system agent.
+                                        ///
+                                        /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/delete_agent`.
+                                        public var delete_agent: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.delete_agentPayload?
                                         /// Creates a new `optionsPayloadPayload`.
                                         ///
                                         /// - Parameters:
@@ -73676,18 +73789,21 @@ public enum Operations {
                                         ///   - recommended: Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing.
                                         ///   - destructive: Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices.
                                         ///   - set_status: Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
+                                        ///   - delete_agent: Use on the option that approves deleting another agent ("Delete Scout"), and mark it destructive. A person tapping it records their approval and nothing is deleted yet: the reply wakes you, and you then call delete_agent with the same id. The approval is for you only, for that one agent, and lapses after 24 hours. Without a tap, delete_agent is refused. All delete_agent options on one card must name the same agent. You cannot ask to delete yourself or a system agent.
                                         public init(
                                             label: Swift.String,
                                             consequences: [Swift.String],
                                             recommended: Swift.Bool? = nil,
                                             destructive: Swift.Bool? = nil,
-                                            set_status: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.set_statusPayload? = nil
+                                            set_status: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.set_statusPayload? = nil,
+                                            delete_agent: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.delete_agentPayload? = nil
                                         ) {
                                             self.label = label
                                             self.consequences = consequences
                                             self.recommended = recommended
                                             self.destructive = destructive
                                             self.set_status = set_status
+                                            self.delete_agent = delete_agent
                                         }
                                         public enum CodingKeys: String, CodingKey {
                                             case label
@@ -73695,6 +73811,7 @@ public enum Operations {
                                             case recommended
                                             case destructive
                                             case set_status
+                                            case delete_agent
                                         }
                                     }
                                     /// 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
@@ -78076,6 +78193,15 @@ public enum Operations {
                 }
                 /// - Remark: Generated from `#/paths/api/files/GET/query/kind`.
                 public var kind: Operations.get_sol_api_sol_files.Input.Query.kindPayload?
+                /// - Remark: Generated from `#/paths/api/files/GET/query/tags`.
+                public var tags: Swift.String?
+                /// - Remark: Generated from `#/paths/api/files/GET/query/tags_match`.
+                @frozen public enum tags_matchPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                    case all = "all"
+                    case any = "any"
+                }
+                /// - Remark: Generated from `#/paths/api/files/GET/query/tags_match`.
+                public var tags_match: Operations.get_sol_api_sol_files.Input.Query.tags_matchPayload?
                 /// - Remark: Generated from `#/paths/api/files/GET/query/limit`.
                 public var limit: Swift.Int?
                 /// - Remark: Generated from `#/paths/api/files/GET/query/offset`.
@@ -78099,6 +78225,8 @@ public enum Operations {
                 ///   - q:
                 ///   - ids:
                 ///   - kind:
+                ///   - tags:
+                ///   - tags_match:
                 ///   - limit:
                 ///   - offset:
                 ///   - order:
@@ -78109,6 +78237,8 @@ public enum Operations {
                     q: Swift.String? = nil,
                     ids: Swift.String? = nil,
                     kind: Operations.get_sol_api_sol_files.Input.Query.kindPayload? = nil,
+                    tags: Swift.String? = nil,
+                    tags_match: Operations.get_sol_api_sol_files.Input.Query.tags_matchPayload? = nil,
                     limit: Swift.Int? = nil,
                     offset: Swift.Int? = nil,
                     order: Operations.get_sol_api_sol_files.Input.Query.orderPayload? = nil,
@@ -78119,6 +78249,8 @@ public enum Operations {
                     self.q = q
                     self.ids = ids
                     self.kind = kind
+                    self.tags = tags
+                    self.tags_match = tags_match
                     self.limit = limit
                     self.offset = offset
                     self.order = order
@@ -78180,6 +78312,8 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/files/GET/responses/200/content/jsonPayload/kind`.
                         public var kind: Operations.get_sol_api_sol_files.Output.Ok.Body.jsonPayloadPayload.kindPayload?
+                        /// - Remark: Generated from `#/paths/api/files/GET/responses/200/content/jsonPayload/tags`.
+                        public var tags: [Swift.String]
                         /// - Remark: Generated from `#/paths/api/files/GET/responses/200/content/jsonPayload/mimeType`.
                         public var mimeType: Swift.String
                         /// - Remark: Generated from `#/paths/api/files/GET/responses/200/content/jsonPayload/sizeBytes`.
@@ -78200,6 +78334,7 @@ public enum Operations {
                         ///   - name:
                         ///   - description:
                         ///   - kind:
+                        ///   - tags:
                         ///   - mimeType:
                         ///   - sizeBytes:
                         ///   - storageKey:
@@ -78212,6 +78347,7 @@ public enum Operations {
                             name: Swift.String,
                             description: Swift.String? = nil,
                             kind: Operations.get_sol_api_sol_files.Output.Ok.Body.jsonPayloadPayload.kindPayload? = nil,
+                            tags: [Swift.String],
                             mimeType: Swift.String,
                             sizeBytes: Swift.Int,
                             storageKey: Swift.String,
@@ -78224,6 +78360,7 @@ public enum Operations {
                             self.name = name
                             self.description = description
                             self.kind = kind
+                            self.tags = tags
                             self.mimeType = mimeType
                             self.sizeBytes = sizeBytes
                             self.storageKey = storageKey
@@ -78237,6 +78374,7 @@ public enum Operations {
                             case name
                             case description
                             case kind
+                            case tags
                             case mimeType
                             case sizeBytes
                             case storageKey
@@ -78504,6 +78642,8 @@ public enum Operations {
                     }
                     /// - Remark: Generated from `#/paths/api/files/POST/requestBody/json/kind`.
                     public var kind: Operations.post_sol_api_sol_files.Input.Body.jsonPayload.kindPayload?
+                    /// - Remark: Generated from `#/paths/api/files/POST/requestBody/json/tags`.
+                    public var tags: [Swift.String]?
                     /// - Remark: Generated from `#/paths/api/files/POST/requestBody/json/mime_type`.
                     public var mime_type: Swift.String
                     /// - Remark: Generated from `#/paths/api/files/POST/requestBody/json/content`.
@@ -78521,6 +78661,7 @@ public enum Operations {
                     ///   - name:
                     ///   - description:
                     ///   - kind:
+                    ///   - tags:
                     ///   - mime_type:
                     ///   - content:
                     ///   - encoding:
@@ -78528,6 +78669,7 @@ public enum Operations {
                         name: Swift.String,
                         description: Swift.String? = nil,
                         kind: Operations.post_sol_api_sol_files.Input.Body.jsonPayload.kindPayload? = nil,
+                        tags: [Swift.String]? = nil,
                         mime_type: Swift.String,
                         content: Swift.String,
                         encoding: Operations.post_sol_api_sol_files.Input.Body.jsonPayload.encodingPayload? = nil
@@ -78535,6 +78677,7 @@ public enum Operations {
                         self.name = name
                         self.description = description
                         self.kind = kind
+                        self.tags = tags
                         self.mime_type = mime_type
                         self.content = content
                         self.encoding = encoding
@@ -78543,6 +78686,7 @@ public enum Operations {
                         case name
                         case description
                         case kind
+                        case tags
                         case mime_type
                         case content
                         case encoding
@@ -78585,6 +78729,8 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/files/POST/responses/201/content/json/kind`.
                         public var kind: Operations.post_sol_api_sol_files.Output.Created.Body.jsonPayload.kindPayload?
+                        /// - Remark: Generated from `#/paths/api/files/POST/responses/201/content/json/tags`.
+                        public var tags: [Swift.String]
                         /// - Remark: Generated from `#/paths/api/files/POST/responses/201/content/json/mimeType`.
                         public var mimeType: Swift.String
                         /// - Remark: Generated from `#/paths/api/files/POST/responses/201/content/json/sizeBytes`.
@@ -78731,6 +78877,7 @@ public enum Operations {
                         ///   - name:
                         ///   - description:
                         ///   - kind:
+                        ///   - tags:
                         ///   - mimeType:
                         ///   - sizeBytes:
                         ///   - storageKey:
@@ -78750,6 +78897,7 @@ public enum Operations {
                             name: Swift.String,
                             description: Swift.String? = nil,
                             kind: Operations.post_sol_api_sol_files.Output.Created.Body.jsonPayload.kindPayload? = nil,
+                            tags: [Swift.String],
                             mimeType: Swift.String,
                             sizeBytes: Swift.Int,
                             storageKey: Swift.String,
@@ -78769,6 +78917,7 @@ public enum Operations {
                             self.name = name
                             self.description = description
                             self.kind = kind
+                            self.tags = tags
                             self.mimeType = mimeType
                             self.sizeBytes = sizeBytes
                             self.storageKey = storageKey
@@ -78789,6 +78938,7 @@ public enum Operations {
                             case name
                             case description
                             case kind
+                            case tags
                             case mimeType
                             case sizeBytes
                             case storageKey
@@ -79247,6 +79397,8 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/200/content/json/kind`.
                         public var kind: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.kindPayload?
+                        /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/200/content/json/tags`.
+                        public var tags: [Swift.String]
                         /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/200/content/json/mimeType`.
                         public var mimeType: Swift.String
                         /// - Remark: Generated from `#/paths/api/files/{id}/GET/responses/200/content/json/sizeBytes`.
@@ -79393,6 +79545,7 @@ public enum Operations {
                         ///   - name:
                         ///   - description:
                         ///   - kind:
+                        ///   - tags:
                         ///   - mimeType:
                         ///   - sizeBytes:
                         ///   - storageKey:
@@ -79412,6 +79565,7 @@ public enum Operations {
                             name: Swift.String,
                             description: Swift.String? = nil,
                             kind: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.kindPayload? = nil,
+                            tags: [Swift.String],
                             mimeType: Swift.String,
                             sizeBytes: Swift.Int,
                             storageKey: Swift.String,
@@ -79431,6 +79585,7 @@ public enum Operations {
                             self.name = name
                             self.description = description
                             self.kind = kind
+                            self.tags = tags
                             self.mimeType = mimeType
                             self.sizeBytes = sizeBytes
                             self.storageKey = storageKey
@@ -79451,6 +79606,7 @@ public enum Operations {
                             case name
                             case description
                             case kind
+                            case tags
                             case mimeType
                             case sizeBytes
                             case storageKey
@@ -79867,6 +80023,8 @@ public enum Operations {
                     }
                     /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/requestBody/json/kind`.
                     public var kind: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Input.Body.jsonPayload.kindPayload?
+                    /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/requestBody/json/tags`.
+                    public var tags: [Swift.String]?
                     /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/requestBody/json/mime_type`.
                     public var mime_type: Swift.String?
                     /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/requestBody/json/content`.
@@ -80034,6 +80192,7 @@ public enum Operations {
                     ///   - name:
                     ///   - description:
                     ///   - kind:
+                    ///   - tags:
                     ///   - mime_type:
                     ///   - content:
                     ///   - encoding:
@@ -80044,6 +80203,7 @@ public enum Operations {
                         name: Swift.String? = nil,
                         description: Swift.String? = nil,
                         kind: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Input.Body.jsonPayload.kindPayload? = nil,
+                        tags: [Swift.String]? = nil,
                         mime_type: Swift.String? = nil,
                         content: Swift.String? = nil,
                         encoding: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Input.Body.jsonPayload.encodingPayload? = nil,
@@ -80054,6 +80214,7 @@ public enum Operations {
                         self.name = name
                         self.description = description
                         self.kind = kind
+                        self.tags = tags
                         self.mime_type = mime_type
                         self.content = content
                         self.encoding = encoding
@@ -80065,6 +80226,7 @@ public enum Operations {
                         case name
                         case description
                         case kind
+                        case tags
                         case mime_type
                         case content
                         case encoding
@@ -80113,6 +80275,8 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/200/content/json/kind`.
                         public var kind: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.kindPayload?
+                        /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/200/content/json/tags`.
+                        public var tags: [Swift.String]
                         /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/200/content/json/mimeType`.
                         public var mimeType: Swift.String
                         /// - Remark: Generated from `#/paths/api/files/{id}/PATCH/responses/200/content/json/sizeBytes`.
@@ -80259,6 +80423,7 @@ public enum Operations {
                         ///   - name:
                         ///   - description:
                         ///   - kind:
+                        ///   - tags:
                         ///   - mimeType:
                         ///   - sizeBytes:
                         ///   - storageKey:
@@ -80278,6 +80443,7 @@ public enum Operations {
                             name: Swift.String,
                             description: Swift.String? = nil,
                             kind: Operations.patch_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.kindPayload? = nil,
+                            tags: [Swift.String],
                             mimeType: Swift.String,
                             sizeBytes: Swift.Int,
                             storageKey: Swift.String,
@@ -80297,6 +80463,7 @@ public enum Operations {
                             self.name = name
                             self.description = description
                             self.kind = kind
+                            self.tags = tags
                             self.mimeType = mimeType
                             self.sizeBytes = sizeBytes
                             self.storageKey = storageKey
@@ -80317,6 +80484,7 @@ public enum Operations {
                             case name
                             case description
                             case kind
+                            case tags
                             case mimeType
                             case sizeBytes
                             case storageKey

@@ -30,11 +30,14 @@ public protocol LoopsAPI: Sendable {
 	/// The newest runs (sessions) launched from these triggers, a bounded page per trigger. Best
 	/// effort: the stuck check and the health rows work without it.
 	func runs(triggerIDs: [String]) async throws -> [LoopRun]
+	/// The loop's custom views in tab order (`metadata.views`, or the one legacy `view_file_id`).
+	func views(loopID: String) async throws -> [LoopView]
 }
 
 extension LoopsAPI {
 	/// Nothing, for a source with no session access.
 	public func runs(triggerIDs: [String]) async throws -> [LoopRun] { [] }
+	public func views(loopID: String) async throws -> [LoopView] { [] }
 	public func overview(loopID: String) async throws -> LoopOverview { .empty }
 	public func latestPost(loopID: String) async throws -> LoopPost? { nil }
 	public func posts(loopID: String) async throws -> [LoopPost] {

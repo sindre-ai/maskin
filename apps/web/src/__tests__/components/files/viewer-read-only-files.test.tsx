@@ -45,6 +45,7 @@ function buildFile(overrides: Partial<FileDetail> = {}): FileDetail {
 		workspaceId: 'ws-1',
 		name: 'spec.md',
 		description: null,
+		tags: [],
 		mimeType: 'text/markdown',
 		sizeBytes: 12,
 		storageKey: 'workspaces/ws-1/files/file-1',

@@ -85,6 +85,23 @@ describe('groupConversations', () => {
 		expect(groups[3].items.map((c) => c.title)).toEqual(['Relay'])
 	})
 
+	it('puts a direct message between two people in the direct group, named after the other person', () => {
+		const person = { actorId: 'me', actorName: 'Ada', actorType: 'human' }
+		const other = { actorId: 'bo', actorName: 'Bo', actorType: 'human' }
+		const groups = groupConversations(
+			[
+				buildConversation({
+					title: 'Bo',
+					directPairKey: 'bo:me',
+					participants: [person, other] as ConversationListItemResponse['participants'],
+				}),
+			],
+			{ now: NOW },
+		)
+		expect(groups.map((g) => g.key)).toEqual(['direct'])
+		expect(groups[0].items.map((c) => c.title)).toEqual(['Bo'])
+	})
+
 	it('keeps a pinned direct message in the direct group only', () => {
 		const groups = groupConversations(
 			[buildConversation({ title: 'Forge', pinned: true, directPairKey: 'a:b' })],

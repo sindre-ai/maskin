@@ -34,6 +34,23 @@ const CLAIMED_STATUSES = [
 const FAILABLE_STATUS_SET: ReadonlySet<string> = new Set(FAILABLE_STATUSES)
 
 /**
+ * How long a remote pause may sit in `snapshotting` with its sandbox gone before
+ * the reconciler settles it itself. Longer than the pause's own wait, so a slow
+ * upload that the report is still about to settle is left alone.
+ */
+const STALLED_PAUSE_MS = 10 * 60 * 1000
+
+/**
+ * How long a remote `snapshotting` row may sit before the periodic sweep settles
+ * it, whatever the agent-server's sandbox list says. The boot-time pass above only
+ * runs when an agent-server (re)starts and skips a pause younger than
+ * STALLED_PAUSE_MS, so a server that crashed mid-pause and came straight back
+ * would leave the row there for good. Longer than STALLED_PAUSE_MS because the
+ * sweep has no sandbox list to show the upload is over.
+ */
+export const STALLED_PAUSE_SWEEP_MS = 30 * 60 * 1000
+
+/**
  * The five terminal statuses settleSession writes, paired with the
  * `events.action` string §8.2 says each row must emit. The self-heal check
  * (§9.4) uses this to find terminal-status sessions that never got their
@@ -126,6 +143,12 @@ export class SessionReconciler {
 	constructor(
 		private db: Database,
 		private appendSystemLog?: (sessionId: string, content: string) => Promise<void>,
+		/**
+		 * Settles a pause whose completion report never arrived (paused if the
+		 * workspace archive is in storage, failed if not). Without it a
+		 * `snapshotting` row whose agent-server lost its monitor would stay there.
+		 */
+		private recoverStalledPause?: (sessionId: string) => Promise<boolean>,
 	) {
 		// Reconciler-owned sessions never have a live sandbox by definition (their
 		// agent-server restarted and lost them); stop is always a no-op. Push is
@@ -136,6 +159,44 @@ export class SessionReconciler {
 			stopSandbox: async () => 'skipped-none-live',
 			pushAgentFiles: async () => 'skipped-no-workspace',
 		}
+	}
+
+	/**
+	 * Settle remote pauses that have sat in `snapshotting` longer than
+	 * STALLED_PAUSE_SWEEP_MS (paused if the archive is in storage, failed if not).
+	 * Needs no agent-server call, so it still recovers a row whose server restarted
+	 * quickly or is gone. Returns how many rows it settled.
+	 */
+	async recoverStalledPauses(now: number = Date.now()): Promise<number> {
+		if (!this.recoverStalledPause) return 0
+		const stalled = await this.db
+			.select({ id: sessions.id })
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.status, 'snapshotting'),
+					isNotNull(sessions.agentServerId),
+					lt(sessions.updatedAt, new Date(now - STALLED_PAUSE_SWEEP_MS)),
+				),
+			)
+			.limit(50)
+		let recovered = 0
+		for (const row of stalled) {
+			try {
+				if (await this.recoverStalledPause(row.id)) {
+					recovered++
+					logger.warn('Settled a remote pause stuck in snapshotting', { sessionId: row.id })
+				} else {
+					logger.warn('Could not settle a stalled remote pause, will retry', { sessionId: row.id })
+				}
+			} catch (err) {
+				logger.error('Failed to recover a stalled remote pause', {
+					sessionId: row.id,
+					error: err instanceof Error ? err.message : String(err),
+				})
+			}
+		}
+		return recovered
 	}
 
 	async reconcile(input: ReconcileInput): Promise<ReconcileResult> {
@@ -152,6 +213,7 @@ export class SessionReconciler {
 				actorId: sessions.actorId,
 				containerId: sessions.containerId,
 				status: sessions.status,
+				updatedAt: sessions.updatedAt,
 			})
 			.from(sessions)
 			.where(
@@ -164,11 +226,21 @@ export class SessionReconciler {
 
 		const dbContainerIds = new Set<string>()
 		const lost: typeof candidates = []
+		const stalledPauses: typeof candidates = []
 		for (const row of candidates) {
 			if (row.containerId === null) continue
 			// Every claimed row's container counts toward "the DB knows this sandbox",
 			// so it's never force-removed as an orphan.
 			dbContainerIds.add(row.containerId)
+			// A pause whose sandbox is gone but whose report never settled the row.
+			if (
+				row.status === 'snapshotting' &&
+				!sandboxSet.has(row.containerId) &&
+				row.updatedAt !== null &&
+				Date.now() - row.updatedAt.getTime() > STALLED_PAUSE_MS
+			) {
+				stalledPauses.push(row)
+			}
 			// Only failable rows whose sandbox vanished get marked failed.
 			if (FAILABLE_STATUS_SET.has(row.status) && !sandboxSet.has(row.containerId)) lost.push(row)
 		}
@@ -185,6 +257,19 @@ export class SessionReconciler {
 					sessionId: row.id,
 					error: err instanceof Error ? err.message : String(err),
 				})
+			}
+		}
+
+		if (this.recoverStalledPause) {
+			for (const row of stalledPauses) {
+				try {
+					await this.recoverStalledPause(row.id)
+				} catch (err) {
+					logger.error('Failed to recover a stalled remote pause', {
+						sessionId: row.id,
+						error: err instanceof Error ? err.message : String(err),
+					})
+				}
 			}
 		}
 

@@ -9,12 +9,13 @@ import {
 	DialogTitle,
 } from '@/components/ui/dialog'
 import { useBillingCancel, useBillingUsage, useStripeCheckout } from '@/hooks/use-billing'
+import { useHeightVar } from '@/hooks/use-height-var'
 import { trackCreditLowShown, trackUpgradeClicked } from '@/lib/analytics'
 import type { BillingPlan } from '@/lib/api'
 import { PAID_PLANS, type PaidPlan } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
 import { AlertTriangle } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 const EXPIRED_PLANS = new Set<BillingPlan>(['trial', ...PAID_PLANS])
 
@@ -70,7 +71,7 @@ export function TrialExpiredBanner({ workspaceId }: { workspaceId: string }) {
 
 	return (
 		<>
-			<div className="relative z-20 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-warning/30 bg-warning/10 px-4 py-2.5">
+			<ExpiredBar>
 				<div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-warning">
 					<AlertTriangle size={14} className="shrink-0" />
 					<span>{bannerText(expiredPlan)}</span>
@@ -83,7 +84,7 @@ export function TrialExpiredBanner({ workspaceId }: { workspaceId: string }) {
 				>
 					Check billing
 				</Button>
-			</div>
+			</ExpiredBar>
 			<PlanExpiredDialog
 				workspaceId={workspaceId}
 				plan={expiredPlan}
@@ -91,6 +92,23 @@ export function TrialExpiredBanner({ workspaceId }: { workspaceId: string }) {
 				onOpenChange={setDialogOpen}
 			/>
 		</>
+	)
+}
+
+/**
+ * The notice row. It reports its height (`--app-banner-h` on the shell) so the floating top bar,
+ * which lays over the page, starts below it instead of on top of it.
+ */
+function ExpiredBar({ children }: { children: React.ReactNode }) {
+	const ref = useRef<HTMLDivElement>(null)
+	useHeightVar(ref, '--app-banner-h')
+	return (
+		<div
+			ref={ref}
+			className="relative z-20 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-warning/30 bg-warning/10 px-4 py-2.5"
+		>
+			{children}
+		</div>
 	)
 }
 

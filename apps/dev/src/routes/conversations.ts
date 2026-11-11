@@ -60,7 +60,11 @@ import { shareReplyDigest } from '../services/chat-session-context'
 import { insertConversationMessage, mirrorAsObjectComment } from '../services/conversation-messages'
 import { evaluateAndRespond } from '../services/conversation-responder'
 import { maybeGenerateConversationTitle } from '../services/conversation-titler'
-import { findOrCreateDirectChat } from '../services/direct-chat'
+import {
+	directChatTitleForViewer,
+	ensureHumanDirectChats,
+	findOrCreateDirectChat,
+} from '../services/direct-chat'
 import { LIVE_STATUSES, openInteractiveTurnsByLog } from '../services/live-activity-push'
 import { loadReactionsByMessage } from '../services/message-reactions'
 import { listCallerThreadRootIds, loadThreadSummaries } from '../services/message-threads'
@@ -492,14 +496,17 @@ async function conversationDetailForCaller(
 				eq(conversationParticipants.actorId, callerId),
 			),
 		)
-	const participants = await loadParticipantsByConversation(db, [conversation.id])
+	const participants = (await loadParticipantsByConversation(db, [conversation.id])).get(
+		conversation.id,
+	)
 	return {
 		...serialize(conversation),
+		title: directChatTitleForViewer(conversation, participants ?? [], callerId),
 		pinned: mine?.pinned ?? false,
 		archived: mine?.archived ?? false,
 		unread_count: 0,
 		last_read_message_id: mine?.lastReadMessageId ?? null,
-		participants: participants.get(conversation.id) ?? [],
+		participants: participants ?? [],
 	} as z.infer<typeof conversationDetailResponseSchema>
 }
 
@@ -755,14 +762,16 @@ app.openapi(createConversationRoute, (async (c) => {
 	if (reused) return c.json(await conversationDetailForCaller(db, conversation, callerId), 200)
 
 	const participantsByConversation = await loadParticipantsByConversation(db, [conversation.id])
+	const createdParticipants = participantsByConversation.get(conversation.id) ?? []
 	return c.json(
 		{
 			...serialize(conversation),
+			title: directChatTitleForViewer(conversation, createdParticipants, callerId),
 			pinned: false,
 			archived: false,
 			unread_count: 0,
 			last_read_message_id: null,
-			participants: participantsByConversation.get(conversation.id) ?? [],
+			participants: createdParticipants,
 		} as z.infer<typeof conversationDetailResponseSchema>,
 		201,
 	)
@@ -795,6 +804,13 @@ app.openapi(listConversationsRoute, (async (c) => {
 	const callerId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const query = c.req.valid('query')
+
+	// Every pair of people has a direct message, like an agent has with each person.
+	// They are made here, on the plain first page of the list, so they appear for
+	// both people without a hook on every way a member can join a workspace.
+	if (query.offset === 0 && !query.archived && !query.subject_type && !query.subject_id) {
+		await ensureHumanDirectChats(db, { workspaceId, actorId: callerId })
+	}
 
 	const conditions = [
 		eq(conversations.workspaceId, workspaceId),
@@ -890,6 +906,11 @@ app.openapi(listConversationsRoute, (async (c) => {
 	return c.json({
 		conversations: page.map((r) => ({
 			...serialize(r.conversation),
+			title: directChatTitleForViewer(
+				r.conversation,
+				participantsByConversation.get(r.conversation.id) ?? [],
+				callerId,
+			),
 			pinned: r.participant.pinned,
 			archived: r.participant.archived,
 			unread_count: unreadByConversation.get(r.conversation.id) ?? 0,
@@ -1061,6 +1082,11 @@ app.openapi(getConversationRoute, (async (c) => {
 	])
 	return c.json({
 		...serialize(row.conversation),
+		title: directChatTitleForViewer(
+			row.conversation,
+			participantsByConversation.get(id) ?? [],
+			callerId,
+		),
 		pinned: row.participant.pinned,
 		archived: row.participant.archived,
 		unread_count: unreadByConversation.get(id) ?? 0,
@@ -1978,7 +2004,7 @@ const removeReactionRoute = createRoute({
 	},
 })
 
-/** The message must be a real (non-system) message of a conversation the caller is in. */
+/** The message must be a real (non-system), not deleted message of a conversation the caller is in. */
 async function findReactableMessage(
 	db: Database,
 	args: { conversationId: string; messageId: number; callerId: string; workspaceId: string },
@@ -1993,6 +2019,7 @@ async function findReactableMessage(
 				eq(messages.id, args.messageId),
 				eq(messages.conversationId, args.conversationId),
 				eq(messages.kind, 'message'),
+				isNull(messages.deletedAt),
 			),
 		)
 		.limit(1)

@@ -43,6 +43,7 @@ import {
 	sessionUsageResponseSchema,
 } from '@maskin/shared'
 import { and, asc, desc, eq, gt, inArray, lt, sql } from 'drizzle-orm'
+import type { Context } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { maskArgs } from '../lib/actor-tools-redaction'
 import { createApiError, validationFailureHook } from '../lib/errors'
@@ -78,6 +79,7 @@ import {
 import { loadSessionActivity } from '../lib/session-activity-query'
 import { redactSessionConfig } from '../lib/session-config-redaction'
 import { sessionFailureReason, shortFailureReason } from '../lib/session-failure-reason'
+import { createTtlCache } from '../lib/ttl-cache'
 import { assertWorkspaceWriterRole, isWorkspaceWriter } from '../lib/workspace-auth'
 import { assertInWorkspace } from '../lib/workspace-scope'
 import { wakeAgentFromCard } from '../services/chat-card-wake'
@@ -616,10 +618,34 @@ const sessionStatsRoute = createRoute({
 	},
 })
 
+// The Agents page and the sidebar ask for this together and again every 30 s, and it reads every
+// session in the workspace. Kept 20 s per workspace and viewer (the read rule differs by viewer),
+// and callers that arrive while it is being computed share that one query.
+const SESSION_STATS_CACHE_TTL_MS = 20_000
+const sessionStatsCache = createTtlCache<SessionStatsRow[]>({ ttlMs: SESSION_STATS_CACHE_TTL_MS })
+
+type SessionStatsRow = {
+	actor_id: string
+	total: number
+	active: number
+	total_cost_usd: number
+	last_30d_cost_usd: number
+	latest_status: string
+	latest_session_at: string | null
+}
+
 app.openapi(sessionStatsRoute, (async (c) => {
 	const db = c.get('db')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const cacheKey = `${workspaceId}:${c.get('actorId')}:${c.get('workspaceRole') ?? ''}`
+	return c.json(await sessionStatsCache.get(cacheKey, () => loadSessionStats(c, db, workspaceId)))
+}) as RouteHandler<typeof sessionStatsRoute, Env>)
 
+async function loadSessionStats(
+	c: Context<Env>,
+	db: Database,
+	workspaceId: string,
+): Promise<SessionStatsRow[]> {
 	const conditions = [eq(sessions.workspaceId, workspaceId)]
 	// Same read rule as the list, so a count never includes a session the caller cannot open.
 	const visibility = await sessionListVisibility(
@@ -648,18 +674,16 @@ app.openapi(sessionStatsRoute, (async (c) => {
 		.where(and(...conditions))
 		.groupBy(sessions.actorId)
 
-	return c.json(
-		rows.map((r) => ({
-			actor_id: r.actorId,
-			total: Number(r.total),
-			active: Number(r.active),
-			total_cost_usd: Number(r.totalCostUsd),
-			last_30d_cost_usd: Number(r.last30dCostUsd),
-			latest_status: r.latestStatus,
-			latest_session_at: r.latestSessionAt ? new Date(r.latestSessionAt).toISOString() : null,
-		})),
-	)
-}) as RouteHandler<typeof sessionStatsRoute, Env>)
+	return rows.map((r) => ({
+		actor_id: r.actorId,
+		total: Number(r.total),
+		active: Number(r.active),
+		total_cost_usd: Number(r.totalCostUsd),
+		last_30d_cost_usd: Number(r.last30dCostUsd),
+		latest_status: r.latestStatus,
+		latest_session_at: r.latestSessionAt ? new Date(r.latestSessionAt).toISOString() : null,
+	}))
+}
 
 // GET /:id - Get session detail
 const getSessionResponseSchema = sessionResponseSchema.extend({
@@ -2270,6 +2294,19 @@ app.openapi(keychainAccessCardRoute, (async (c) => {
 	return c.json({ posted: true, already_granted: false, message_id: created.id }, 200)
 }) as RouteHandler<typeof keychainAccessCardRoute, Env>)
 
+/**
+ * The address a connected account is known by, for the card's Account row. Only a provider that
+ * declares its external id to be an email (Gmail, Calendar, Drive, Meet) has one; every other
+ * provider keeps an installation or account id there, which a person must never see.
+ */
+function accountAddressOf(provider: string, externalId: string | null): string | null {
+	if (!externalId) return null
+	const declared = listProviders().find((p) => p.config.name === provider)
+	if (declared?.config.externalIdDisplay !== 'email') return null
+	const address = externalId.trim()
+	return address.length > 0 && address.length <= 320 && address.includes('@') ? address : null
+}
+
 // POST /:id/integration-access-card - Ask the human to let this agent use a connected integration
 //
 // Called by the `request_integration_access` MCP tool. Posts a card with Allow / Not now for
@@ -2347,6 +2384,7 @@ app.openapi(integrationAccessCardRoute, (async (c) => {
 			providerMode: integrations.providerMode,
 			displayName: integrations.displayName,
 			config: integrations.config,
+			externalId: integrations.externalId,
 		})
 		.from(integrations)
 		.where(
@@ -2400,6 +2438,7 @@ app.openapi(integrationAccessCardRoute, (async (c) => {
 	}
 
 	const displayName = integration.displayName ?? providerLabel(integration.provider)
+	const account = accountAddressOf(integration.provider, integration.externalId)
 	const created = await insertConversationMessage(db, {
 		conversationId: target.conversationId,
 		workspaceId: session.workspaceId,
@@ -2411,6 +2450,7 @@ app.openapi(integrationAccessCardRoute, (async (c) => {
 				integration_id: integration.id,
 				provider: integration.provider,
 				display_name: displayName,
+				...(account ? { account } : {}),
 				level,
 				...(reason ? { reason } : {}),
 				...(target.helper ? { reply_to_session: true } : {}),

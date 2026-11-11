@@ -298,29 +298,35 @@ describe('Conversations Integration', () => {
 			const list = (await listRes.json()) as {
 				conversations: Array<{
 					id: string
+					directPairKey: string | null
 					unread_count: number
 					snippet: string | null
 					snippet_actor_id: string | null
 					snippet_actor_name: string | null
 				}>
 			}
-			expect(list.conversations).toHaveLength(1)
-			expect(list.conversations[0]?.id).toBe(conversation.id)
-			expect(list.conversations[0]?.unread_count).toBe(1)
-			expect(list.conversations[0]?.snippet).toBe('first message')
+			// People in a workspace also have a direct message with each other, so only
+			// the topical chats are compared here.
+			const topical = list.conversations.filter((c) => c.directPairKey === null)
+			expect(topical).toHaveLength(1)
+			expect(topical[0]?.id).toBe(conversation.id)
+			expect(topical[0]?.unread_count).toBe(1)
+			expect(topical[0]?.snippet).toBe('first message')
 			// The preview carries its author across the actors join, so the list
 			// row can say "Owner: first message" rather than attributing every
 			// preview to whoever is reading it.
-			expect(list.conversations[0]?.snippet_actor_id).toBe(ownerId)
-			expect(list.conversations[0]?.snippet_actor_name).toBeTruthy()
+			expect(topical[0]?.snippet_actor_id).toBe(ownerId)
+			expect(topical[0]?.snippet_actor_name).toBeTruthy()
 
 			// Stranger (workspace member, not a conversation participant) sees nothing.
 			const { app: strangerApp } = createConversationsApp(stranger.id)
 			const strangerList = await strangerApp.request(
 				jsonGet('/api/conversations', { 'x-workspace-id': workspaceId }),
 			)
-			const strangerBody = (await strangerList.json()) as { conversations: unknown[] }
-			expect(strangerBody.conversations).toHaveLength(0)
+			const strangerBody = (await strangerList.json()) as {
+				conversations: Array<{ directPairKey: string | null }>
+			}
+			expect(strangerBody.conversations.filter((c) => c.directPairKey === null)).toHaveLength(0)
 
 			// And a 404 on direct detail access.
 			const strangerDetail = await strangerApp.request(
@@ -664,8 +670,11 @@ describe('Conversations Integration', () => {
 			const unfiltered = await otherApp.request(
 				jsonGet('/api/conversations', { 'x-workspace-id': workspaceId }),
 			)
-			const unfilteredBody = (await unfiltered.json()) as { conversations: Array<{ id: string }> }
-			expect(unfilteredBody.conversations).toHaveLength(2)
+			const unfilteredBody = (await unfiltered.json()) as {
+				conversations: Array<{ id: string; directPairKey: string | null }>
+			}
+			// The direct messages between people are not part of what this test made.
+			expect(unfilteredBody.conversations.filter((c) => c.directPairKey === null)).toHaveLength(2)
 		})
 
 		it('logs an events row when updating pin/archive/read state via PATCH /:id/me', async () => {
@@ -1199,6 +1208,49 @@ describe('Conversations Integration', () => {
 					),
 				)
 			expect(countAfterSecond.length).toBe(1)
+		})
+	})
+
+	describe('quoted message id', () => {
+		it('stores the quoted message id as sent and returns it on the stored message', async () => {
+			const { app } = createConversationsApp(ownerId)
+			const created = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Quote', participant_actor_ids: [] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const send = (metadata: unknown) =>
+				app.request(
+					jsonRequest(
+						'POST',
+						`/api/conversations/${conversation.id}/messages`,
+						{ content: 'replying to that', metadata },
+						{ 'x-workspace-id': workspaceId },
+					),
+				)
+
+			const res = await send({ quoted_message_id: 42 })
+			expect(res.status).toBe(201)
+			const stored = (await res.json()) as { metadata: { quoted_message_id?: number } | null }
+			expect(stored.metadata?.quoted_message_id).toBe(42)
+
+			const list = await app.request(
+				jsonGet(`/api/conversations/${conversation.id}/messages`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			const body = (await list.json()) as {
+				messages: Array<{ metadata: { quoted_message_id?: number } | null }>
+			}
+			expect(body.messages.at(-1)?.metadata?.quoted_message_id).toBe(42)
+
+			// Not a message id: refused rather than stored.
+			expect((await send({ quoted_message_id: 0 })).status).toBe(400)
+			expect((await send({ quoted_message_id: 'abc' })).status).toBe(400)
 		})
 	})
 

@@ -229,6 +229,14 @@ public final class ChatComposerModel {
 		focusRequest += 1
 	}
 
+	/// A tapped starter prompt: an empty box takes it, a box with text keeps that and gets the prompt
+	/// after it, and the field takes focus. A tap never erases what the person typed (unlike `fill`,
+	/// which an intro's fill step uses to replace the box).
+	public func addStarter(_ prompt: String) {
+		text = StarterPrompts.inserting(prompt, into: text)
+		focusRequest += 1
+	}
+
 	/// Asks the field to take focus, so the keyboard stays up after something else was picked.
 	public func requestFocus() { focusRequest += 1 }
 

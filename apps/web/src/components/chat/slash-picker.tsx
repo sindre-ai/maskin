@@ -8,6 +8,7 @@ import type {
 } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { queryKeys } from '@/lib/query-keys'
+import { sortByName } from '@/lib/sort'
 import { type QueryClient, useQueryClient } from '@tanstack/react-query'
 import { Command } from 'cmdk'
 import { Bell, Bot, Box, Check, Sparkles } from 'lucide-react'
@@ -118,7 +119,7 @@ const agentKind: SlashKindDef<ActorListItem> = {
 			queryFn: () => api.actors.list(workspaceId),
 		})
 		if (signal.aborted) return []
-		const agents = actors.filter((a) => a.type === 'agent')
+		const agents = sortByName(actors.filter((a) => a.type === 'agent'))
 		const needle = query.trim().toLowerCase()
 		const filtered = needle
 			? agents.filter((a) => (a.name ?? '').toLowerCase().includes(needle))

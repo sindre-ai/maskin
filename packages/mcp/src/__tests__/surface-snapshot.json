@@ -86,6 +86,7 @@
 			"kind",
 			"mime_type",
 			"name",
+			"tags",
 			"workspace_id"
 		],
 		"create_loop": [
@@ -179,6 +180,7 @@
 		"create_workspace_field": ["field_type", "name", "required", "type", "values", "workspace_id"],
 		"create_workspace_skill": ["content", "name", "workspace_id"],
 		"delete_extension": ["id", "workspace_id"],
+		"delete_agent": ["id", "workspace_id"],
 		"delete_file": ["id", "workspace_id"],
 		"delete_loop": ["id", "workspace_id"],
 		"delete_object": ["id", "workspace_id"],
@@ -238,7 +240,8 @@
 			"workspace_id"
 		],
 		"list_extensions": ["cursor", "limit", "workspace_id"],
-		"list_files": ["cursor", "kind", "limit", "q", "workspace_id"],
+		"list_file_tags": ["workspace_id"],
+		"list_files": ["cursor", "kind", "limit", "q", "tags", "tags_match", "workspace_id"],
 		"list_integration_providers": [],
 		"list_integrations": ["cursor", "limit", "workspace_id"],
 		"list_keychain_credentials": ["workspace_id"],
@@ -285,6 +288,7 @@
 		"list_workspace_skills": ["cursor", "limit", "workspace_id"],
 		"list_workspaces": ["cursor", "limit"],
 		"mark_read": ["entity_id", "entity_type", "last_event_id", "workspace_id"],
+		"merge_file_tags": ["from", "into", "workspace_id"],
 		"pause_session": ["id", "workspace_id"],
 		"post_conversation_message": [
 			"content",
@@ -377,6 +381,7 @@
 			"metadata.voice_session_id",
 			"workspace_id"
 		],
+		"rename_file_tag": ["from", "to", "workspace_id"],
 		"request_keychain_access": ["credential_name", "hint", "workspace_id"],
 		"request_keychain_credential": [
 			"hint",
@@ -447,6 +452,7 @@
 			"kind",
 			"mime_type",
 			"name",
+			"tags",
 			"workspace_id"
 		],
 		"update_integration_access": [

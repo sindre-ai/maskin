@@ -48,11 +48,13 @@ export type {
 	UpdateFileCommentInput,
 	WorkspaceDeletionPreview,
 }
-import { parseRelativeBound } from '@maskin/shared'
+import { DATA_QUERY_MAX_PAGE_SIZE, parseRelativeBound } from '@maskin/shared'
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
+import { readEveryPage } from './data-query-pages'
 import { reportApiFailure } from './faro'
 import { limitConcurrency } from './limit-concurrency'
+import { reportServerFailure, reportServerOk } from './server-reachability'
 
 import type {
 	DailyBudget,
@@ -175,6 +177,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		// the user still experienced a broken screen, so it belongs in Faro.
 		reportApiFailure({ method, path, status: 0, code: 'NETWORK_ERROR' })
 		if (err instanceof TypeError) {
+			reportServerFailure()
 			const unavailable = new ApiError(0, SERVICE_UNAVAILABLE_MESSAGE)
 			unavailable.code = 'NETWORK_ERROR'
 			throw unavailable
@@ -254,9 +257,14 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		// Method, path (query stripped), status and the structured error code
 		// only — never the response body or the message, which are free text.
 		reportApiFailure({ method, path, status: res.status, code })
+		// A gateway answering for a down backend carries no code of ours; our own
+		// API's 5xx does, and proves the server is up.
+		if (SERVICE_UNAVAILABLE_STATUSES.has(res.status) && code === undefined) reportServerFailure()
+		else reportServerOk()
 		throw err
 	}
 
+	reportServerOk()
 	return res.json()
 }
 
@@ -473,13 +481,28 @@ export type ExtensionSampleResult =
  */
 const DATA_REQUESTS_AT_ONCE = 4
 
+/**
+ * Every group of a query. The server sends them a page at a time; this follows the cursors, so a
+ * caller gets one complete answer. A page is cheap (after the first it is cut from a snapshot the
+ * server holds), and the whole read holds one request slot, so a big answer never crowds out the
+ * view's other sources. The timeout is per page: it bounds a stuck request, not the size of the data.
+ */
 const limitedDataQuery = limitConcurrency(
 	DATA_REQUESTS_AT_ONCE,
-	(workspaceId: string, spec: DataQuerySpec, opts?: { timeoutMs?: number }) =>
-		request<DataQueryResult>(`/data/query?spec=${encodeURIComponent(JSON.stringify(spec))}`, {
-			workspaceId,
-			signal: opts?.timeoutMs === undefined ? undefined : AbortSignal.timeout(opts.timeoutMs),
-		}),
+	(workspaceId: string, spec: DataQuerySpec, opts?: { timeoutMs?: number }) => {
+		const specParam = encodeURIComponent(JSON.stringify(spec))
+		return readEveryPage((cursor) =>
+			request<DataQueryResult>(
+				`/data/query?spec=${specParam}&limit=${DATA_QUERY_MAX_PAGE_SIZE}${
+					cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''
+				}`,
+				{
+					workspaceId,
+					signal: opts?.timeoutMs === undefined ? undefined : AbortSignal.timeout(opts.timeoutMs),
+				},
+			),
+		)
+	},
 )
 
 /** Only a moving date (a relative bound or a time bucket) changes an answer with no write. */
@@ -1023,6 +1046,12 @@ export const api = {
 		},
 		slackUsers: (id: string, workspaceId: string) =>
 			request<SlackUser[]>(`/integrations/${id}/slack/users`, { workspaceId }),
+		/** Replaces the Slack channels agents may post to without approval. Human admins and owners only. */
+		setSlackDirectPostChannels: (workspaceId: string, channels: string[]) =>
+			request<{ integration_id: string; channels: string[] }>(
+				'/integrations/slack/direct-post-channels',
+				{ method: 'PUT', body: { channels }, workspaceId },
+			),
 		linkedinIdentities: (workspaceId: string) =>
 			request<LinkedInIdentitySummary[]>('/integrations/linkedin-unipile/identities', {
 				workspaceId,
@@ -1775,10 +1804,19 @@ export const api = {
 	files: {
 		list: (
 			workspaceId: string,
-			params?: { q?: string; ids?: string[]; kind?: 'briefing'; limit?: number; offset?: number },
+			params?: {
+				q?: string
+				ids?: string[]
+				kind?: 'briefing'
+				/** Narrow to files carrying these tags; `tags_match` picks all (default) or any. */
+				tags?: string[]
+				tags_match?: FileTagMatch
+				limit?: number
+				offset?: number
+			},
 		) => {
 			if (!params) return request<FileListItem[]>('/files', { workspaceId })
-			const { ids, ...rest } = params
+			const { ids, tags, ...rest } = params
 			const searchParams = new URLSearchParams(
 				Object.entries(rest).reduce<Record<string, string>>((acc, [k, v]) => {
 					if (v !== undefined && v !== '') acc[k] = String(v)
@@ -1786,9 +1824,26 @@ export const api = {
 				}, {}),
 			)
 			if (ids?.length) searchParams.set('ids', ids.join(','))
+			if (tags?.length) searchParams.set('tags', tags.join(','))
 			const qs = searchParams.size > 0 ? `?${searchParams}` : ''
 			return request<FileListItem[]>(`/files${qs}`, { workspaceId })
 		},
+		/** Every tag in use in the workspace with how many files carry it, most-used first. */
+		tags: (workspaceId: string) => request<FileTagCount[]>('/files/tags', { workspaceId }),
+		/** Renames a tag on every file in the workspace. Fails if the new name is already a tag. */
+		renameTag: (workspaceId: string, data: { from: string; to: string }) =>
+			request<FileTagChangeResult>('/files/tags/rename', {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+		/** Folds one tag into another on every file in the workspace. */
+		mergeTags: (workspaceId: string, data: { from: string; into: string }) =>
+			request<FileTagChangeResult>('/files/tags/merge', {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
 		get: (workspaceId: string, id: string) => request<FileDetail>(`/files/${id}`, { workspaceId }),
 		create: (workspaceId: string, data: CreateFileInput) =>
 			request<FileDetail>('/files', { method: 'POST', body: data, workspaceId }),
@@ -2774,12 +2829,27 @@ export interface FileListItem {
 	description: string | null
 	/** What the file is for. `briefing` puts an HTML page in the For you row. */
 	kind?: 'briefing' | null
+	/** Lowercase labels; empty for a file with none. */
+	tags: string[]
 	mimeType: string
 	sizeBytes: number
 	storageKey: string
 	createdBy: string
 	createdAt: string
 	updatedAt: string
+}
+
+export type FileTagMatch = 'all' | 'any'
+
+export interface FileTagCount {
+	tag: string
+	count: number
+}
+
+export interface FileTagChangeResult {
+	from: string
+	to: string
+	files_changed: number
 }
 
 export interface FileAnnotation {
@@ -2815,6 +2885,8 @@ export interface CreateFileInput {
 export interface UpdateFileInput {
 	name?: string
 	description?: string | null
+	/** Replaces the whole tag list; [] clears it. */
+	tags?: string[]
 	mime_type?: string
 	content?: string
 	encoding?: 'base64' | 'utf8'

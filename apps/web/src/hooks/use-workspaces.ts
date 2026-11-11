@@ -1,6 +1,7 @@
 import { type QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { type UpdateWorkspaceInput, api } from '../lib/api'
+import { type MemberResponse, type UpdateWorkspaceInput, api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
+import { sortByName } from '../lib/sort'
 
 export function useWorkspaces() {
 	return useQuery({
@@ -29,10 +30,14 @@ export function useUpdateWorkspace(workspaceId: string) {
 	})
 }
 
+const sortMembers = (members: MemberResponse[]) => sortByName(members, (m) => m.actorId)
+
 export function useWorkspaceMembers(workspaceId: string) {
 	return useQuery({
 		queryKey: queryKeys.workspaces.members(workspaceId),
 		queryFn: () => api.workspaces.members.list(workspaceId),
+		// Pickers (driver, etc.) read members A→Z by name, not in server order.
+		select: sortMembers,
 	})
 }
 

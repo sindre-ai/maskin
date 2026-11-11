@@ -37,7 +37,7 @@ import type { RouteTimingSink } from './route-timing-store'
 const FLUSH_INTERVAL_MS = 60_000
 const SLOW_REQUEST_MS = 1_000
 const SLOW_DB_MS = 500
-const SKIPPED_PATHS = new Set(['/api/health'])
+const SKIPPED_PATHS = new Set(['/api/health', '/api/health/db'])
 
 /** Who sent a request, as kept in the counts. `none` is a request with no `X-Client-Source`. */
 export type ClientSourceLabel = 'ui' | 'ios' | 'mcp' | 'other' | 'none'

@@ -13,7 +13,7 @@ vi.mock('../../lib/analytics/posthog', () => ({
 
 /**
  * slack_send_message posts only a draft a person approved, or goes direct to a channel on the
- * built-in internal list. The approval and the once-only rule live in events (bound to a
+ * workspace's saved allowlist. The approval and the once-only rule live in events (bound to a
  * content hash), so they can only be proven against real Postgres. Slack itself is a stubbed
  * fetch here, which says nothing about what Slack does with the call.
  */
@@ -35,7 +35,10 @@ afterEach(() => {
 	vi.unstubAllGlobals()
 })
 
-async function setup(overrides: Record<string, unknown> = {}) {
+async function setup(
+	overrides: Record<string, unknown> = {},
+	directPostChannels: string[] = [INTERNAL_CHANNEL_ID],
+) {
 	const actorId = getTestActorId()
 	const ws = await insertWorkspace(db, actorId)
 	const object = await insertObject(db, ws.id, actorId, {
@@ -51,6 +54,7 @@ async function setup(overrides: Record<string, unknown> = {}) {
 		workspaceId: ws.id,
 		actorId,
 		db,
+		directPostChannels,
 	})
 	const tool = (
 		server as unknown as {
@@ -98,7 +102,7 @@ describe('slack_send_message approval hold', () => {
 		expect(fetchMock).not.toHaveBeenCalled()
 	})
 
-	it('posts directly to the internal channel on the built-in list', async () => {
+	it('posts directly to a channel on the saved list', async () => {
 		const { send } = await setup()
 		const result = await send({ channel: INTERNAL_CHANNEL_ID, text: 'main is red' })
 		expect(result.isError).toBeUndefined()
@@ -106,6 +110,32 @@ describe('slack_send_message approval hold', () => {
 		const body = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string)
 		expect(body.channel).toBe(INTERNAL_CHANNEL_ID)
 		expect(body.text).toBe('main is red')
+	})
+
+	it('refuses a direct call to every channel when no list was saved', async () => {
+		const actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+		const server = createSlackMcpServer({
+			botToken: 'xoxb-test-token',
+			integrationId: 'int-1',
+			agentLabel: 'Test agent · in test-workspace',
+			workspaceId: ws.id,
+			actorId,
+			db,
+		})
+		const tool = (
+			server as unknown as {
+				_registeredTools: Record<
+					string,
+					{ handler: (args: unknown, extra: unknown) => Promise<unknown> }
+				>
+			}
+		)._registeredTools.slack_send_message
+		const result = (await tool.handler({ channel: INTERNAL_CHANNEL_ID, text: 'hello' }, {})) as {
+			isError?: boolean
+		}
+		expect(result.isError).toBe(true)
+		expect(fetchMock).not.toHaveBeenCalled()
 	})
 
 	it('refuses a draft nobody approved, and posts nothing', async () => {
@@ -205,6 +235,7 @@ describe('slack_update_message approval hold', () => {
 			workspaceId: base.ws.id,
 			actorId: base.actorId,
 			db,
+			directPostChannels: [INTERNAL_CHANNEL_ID],
 		})
 		const tool = (
 			server as unknown as {
@@ -238,7 +269,7 @@ describe('slack_update_message approval hold', () => {
 		expect(fetchMock).not.toHaveBeenCalled()
 	})
 
-	it('edits directly in the internal channel on the built-in list', async () => {
+	it('edits directly in a channel on the saved list', async () => {
 		const { update } = await setupUpdate()
 		const result = await update({ channel: INTERNAL_CHANNEL_ID, ts: TS, text: 'main is green' })
 		expect(result.isError).toBeUndefined()

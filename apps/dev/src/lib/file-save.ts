@@ -163,6 +163,8 @@ export interface SaveFileInput {
 	name?: string
 	description?: string | null
 	kind?: string | null
+	/** Replaces the whole tag list. Omitted = tags unchanged. */
+	tags?: string[]
 	mimeType?: string
 	annotations?: FileAnnotation[]
 }
@@ -264,6 +266,7 @@ export async function saveFile(
 					name: input.name ?? locked.name,
 					description: input.description !== undefined ? input.description : locked.description,
 					kind: input.kind !== undefined ? input.kind : locked.kind,
+					tags: input.tags ?? locked.tags,
 					mimeType: input.mimeType ?? locked.mimeType,
 					annotations: input.annotations ?? locked.annotations,
 					sizeBytes,

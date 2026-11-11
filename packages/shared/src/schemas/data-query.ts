@@ -8,11 +8,14 @@ import { SAFE_METADATA_FIELD_NAME_RE } from './objects'
  * caller only ever gets grouped numbers back, never object rows.
  */
 
-/** Most object rows one query scans. Past it the result is flagged `rows_truncated`. */
-export const DATA_QUERY_MAX_ROWS = 10_000
+/**
+ * Groups in one response when the caller does not say. A query can have any number of groups;
+ * the rest come back through `next_cursor`, one page at a time.
+ */
+export const DATA_QUERY_PAGE_SIZE = 50
 
-/** Most groups one query returns. Past it the result is flagged `groups_truncated`. */
-export const DATA_QUERY_MAX_GROUPS = 50
+/** Most groups a caller may ask for in one page. */
+export const DATA_QUERY_MAX_PAGE_SIZE = 1000
 
 /** Most metadata equality filters one query may carry. */
 export const DATA_QUERY_MAX_METADATA_FILTERS = 10
@@ -156,7 +159,11 @@ export const dataQueryResultSchema = z.object({
 		}),
 	),
 	total: z.object({ count: z.number(), value: z.number().nullable() }),
+	/** Pass back as `cursor` for the next page of groups; null on the last page. */
+	next_cursor: z.string().nullable(),
+	/** Always false: the row scan is no longer capped. Kept so older callers keep parsing. */
 	rows_truncated: z.boolean(),
+	/** True while `next_cursor` is set, i.e. this page is not the whole answer. */
 	groups_truncated: z.boolean(),
 })
 

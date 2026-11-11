@@ -147,11 +147,14 @@ export class OAuth2Handler {
 		headers.set('Content-Type', 'application/x-www-form-urlencoded')
 		headers.set('Accept', 'application/json')
 
-		// Add client credentials to body if using client_secret_post
+		// Add client credentials to body if using client_secret_post; a public client ('none')
+		// sends its id only, and PKCE proves the exchange.
 		const method = this.config.tokenAuthMethod ?? 'client_secret_post'
 		if (method === 'client_secret_post') {
 			body.set('client_id', getEnvOrThrow(this.config.clientIdEnv))
-			body.set('client_secret', getEnvOrThrow(this.config.clientSecretEnv))
+			body.set('client_secret', this.clientSecret())
+		} else if (method === 'none') {
+			body.set('client_id', getEnvOrThrow(this.config.clientIdEnv))
 		}
 
 		const tokenUrl = urlOverride ?? this.config.tokenUrl
@@ -177,13 +180,22 @@ export class OAuth2Handler {
 		return parsed
 	}
 
+	private clientSecret(): string {
+		if (!this.config.clientSecretEnv) {
+			throw new Error(
+				'OAuth config has no clientSecretEnv, but its token auth method needs a secret',
+			)
+		}
+		return getEnvOrThrow(this.config.clientSecretEnv)
+	}
+
 	private buildAuthHeaders(): Headers {
 		const headers = new Headers()
 		const method = this.config.tokenAuthMethod ?? 'client_secret_post'
 
 		if (method === 'client_secret_basic') {
 			const clientId = getEnvOrThrow(this.config.clientIdEnv)
-			const clientSecret = getEnvOrThrow(this.config.clientSecretEnv)
+			const clientSecret = this.clientSecret()
 			const encoded = Buffer.from(`${clientId}:${clientSecret}`).toString('base64')
 			headers.set('Authorization', `Basic ${encoded}`)
 		}

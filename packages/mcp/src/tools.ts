@@ -1,5 +1,7 @@
 import {
 	CONVERSATION_TITLE_MAX_LENGTH,
+	DATA_QUERY_MAX_PAGE_SIZE,
+	DATA_QUERY_PAGE_SIZE,
 	FOR_YOU_TOOL_DEFAULT_LIMIT,
 	FOR_YOU_TOOL_MAX_LIMIT,
 	HUMAN_MESSAGE_STYLE_SHORT,
@@ -10,6 +12,7 @@ import {
 	dataQuerySpecSchema,
 	firstStepSchema,
 	loopTargetSchema,
+	loopViewRowSchema,
 	messageMetadataSchema,
 	notificationActionSchema,
 	notificationOptionSchema,
@@ -966,6 +969,14 @@ export const tools = {
 				),
 		}),
 	},
+	delete_agent: {
+		description:
+			'Delete another agent: its sessions, triggers, files and memory go with it, and it cannot be undone. A person must approve first. Post `create_comment` on a relevant object with a `decision` card, mention the person, and put `delete_agent: { actor_id }` on the destructive option that approves it. When they choose it you are woken by their reply; then call this tool with the same `id`. Without that approval, or after 24 hours, or for a different agent than the one the card named, the call is refused with 403. You cannot delete yourself, a person or a system agent.',
+		inputSchema: z.object({
+			id: z.string().uuid().describe('The agent to delete: its id from list_actors.'),
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
 	create_workspace: {
 		description: 'Create a new workspace. The authenticated actor becomes the owner.',
 		inputSchema: z.object({
@@ -1196,6 +1207,13 @@ export const tools = {
 				.describe(
 					'What the file is for. Set `"briefing"` on an HTML page written to be read in the For you tab (the Chief of Staff\'s daily briefing, a loop\'s briefing). Only files with kind "briefing" appear there — every other file a loop produces stays out of it. Omit for ordinary files.',
 				),
+			tags: z
+				.array(z.string())
+				.max(20)
+				.optional()
+				.describe(
+					'Labels for finding this file later, such as "b-roll" or "clip_type:b_roll" (a colon marks a structured tag). Trimmed and lowercased on save, so "B-roll" and "b-roll" are one tag. Up to 20 per file, 60 characters each, no commas. Call list_file_tags first and reuse a tag that already exists instead of inventing a near copy. Keep longer notes in `description`.',
+				),
 			mime_type: z
 				.string()
 				.describe(
@@ -1216,11 +1234,24 @@ export const tools = {
 	},
 	list_files: {
 		description:
-			'List files in the workspace, newest first. Pass `q` to filter by name substring, or `kind: "briefing"` to list only the briefings shown in For you. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List files in the workspace, newest first. Pass `q` to filter by name substring, `kind: "briefing"` to list only the briefings shown in For you, or `tags` to find files by tag (`tags_match: "all"`, the default, keeps files that carry every listed tag; "any" keeps files that carry at least one). Each file in the result shows its `tags`. Call list_file_tags to see which tags exist. Any file in the workspace is listed, including ones attached to a chat message; when a name search finds nothing, narrow by tag or page on with `next_cursor` rather than asking for a re-upload. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			q: z.string().optional().describe('Case-insensitive substring match on file name.'),
 			kind: z.enum(['briefing']).optional().describe('Only files of this kind.'),
+			tags: z
+				.array(z.string())
+				.max(20)
+				.optional()
+				.describe(
+					'Only files carrying these tags (see tags_match). Trimmed and lowercased like tags on save.',
+				),
+			tags_match: z
+				.enum(['all', 'any'])
+				.optional()
+				.describe(
+					'"all" (default): the file has every tag in `tags`. "any": the file has at least one of them.',
+				),
 			limit: z
 				.number()
 				.int()
@@ -1234,6 +1265,31 @@ export const tools = {
 				.describe(
 					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
 				),
+		}),
+	},
+	list_file_tags: {
+		description:
+			'List the tags in use on files in the workspace and how many files carry each, most-used first. Call this before tagging a file or searching by tag, so you pick a tag that already exists instead of inventing a near copy (for example "b-roll" and "broll"). Returns `[{ tag, count }]`. Use a tag with list_files `tags` to find the files, and with create_file or update_file `tags` to put it on one.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
+	rename_file_tag: {
+		description:
+			'Rename a tag on every file in the workspace at once. All or nothing: either every file that carries `from` now carries `to`, or nothing changes. Fails if `to` is already a tag (use merge_file_tags to fold one tag into an existing one) or if no file carries `from`. Names are trimmed and lowercased. Returns `{ from, to, files_changed }`. The workspace tag guide says only the Knowledge Curator renames tags: if you are not the curator, ask it instead of calling this.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			from: z.string().describe('The tag to rename. Must be on at least one file.'),
+			to: z.string().describe('The new name. Up to 60 characters, no commas.'),
+		}),
+	},
+	merge_file_tags: {
+		description:
+			'Merge one tag into another on every file in the workspace at once. Every file with `from` gets `into` (a file that already has both keeps one copy), and `from` disappears from list_file_tags. All or nothing. `into` does not have to exist yet. Fails if no file carries `from`. Returns `{ from, to, files_changed }`. The workspace tag guide says only the Knowledge Curator merges tags: if you are not the curator, ask it instead of calling this.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			from: z.string().describe('The tag to fold away. Must be on at least one file.'),
+			into: z.string().describe('The tag every file with `from` should carry instead.'),
 		}),
 	},
 	get_file: {
@@ -1265,6 +1321,13 @@ export const tools = {
 				.describe(
 					'What the file is for. Set `"briefing"` on an HTML page written to be read in the For you tab (the Chief of Staff\'s daily briefing, a loop\'s briefing). Only files with kind "briefing" appear there — every other file a loop produces stays out of it. Omit for ordinary files.' +
 						' Pass null to clear.',
+				),
+			tags: z
+				.array(z.string())
+				.max(20)
+				.optional()
+				.describe(
+					'Replaces the whole tag list: send every tag the file should have, or [] to clear them. Omit to leave the tags as they are. Trimmed and lowercased on save. Up to 20 per file, 60 characters each, no commas. Call list_file_tags first and reuse an existing tag.',
 				),
 			mime_type: z.string().optional(),
 			content: z
@@ -1868,9 +1931,9 @@ export const tools = {
 
 	set_loop_view: {
 		description: [
-			'Pin an HTML file as a custom view tab on a loop (it can have several), or clear it with file_id null. `name` (1 to 30 characters) picks the tab: same name replaces, new name adds, file_id null removes. Omit it for the "Custom view" tab. Fails if not a loop or the file is not text/html.',
+			'Pin an HTML file as a named custom view tab on a loop (it can have several). `name` (required, 1 to 30 characters, e.g. "Results") picks the tab: same name replaces, new name adds, file_id null removes. Fails if not a loop or the file is not text/html.',
 			'A view answers one question: are we reaching the outcome? Open with the outcome in one plain sentence and the headline number vs its target, then the three to five metrics that matter most (name, value with unit, comparison, source), then what needs a person now.',
-			'Build: one self-contained HTML file (create_file, mime_type text/html), no network calls, an empty and an error state for every number (show the error message), readable in light and dark. If rows_truncated or groups_truncated is true the result is partial: narrow the query.',
+			'Build: one self-contained HTML file (create_file, mime_type text/html), no network calls, an empty and an error state for every number (show the error message), readable in light and dark. A source returns every group, however many, so draw a long table in a scrolling or paged list.',
 			'Data: declare sources in <script id="maskin-sources" type="application/json">{ "<name>": <query_data input without workspace_id> }</script> and read them with window.maskin.query("<name>") (a promise). The page reloads itself when its numbers change, so query once and never poll. Use moving date bounds ("now-7d", "today-30d"), never fixed dates.',
 			'Example:',
 			'<script id="maskin-sources" type="application/json">{"done":{"scope":"<loop id>","type":"task","filters":{"status":"done"}}}</script>',
@@ -1884,20 +1947,29 @@ export const tools = {
 				.uuid()
 				.nullable()
 				.describe('Id of a text/html file to render as the loop view, or null to clear it.'),
-			name: z
-				.string()
-				.optional()
-				.describe(
-					'Tab name, 1 to 30 characters. Same name replaces that tab, a new name adds one, file_id null removes it. Omit for the single "Custom view" tab.',
-				),
+			name: loopViewRowSchema.shape.name.describe(
+				'Tab name, required, 1 to 30 characters: a short label for what the view shows. Same name replaces that tab, a new name adds one, file_id null removes it.',
+			),
 		}),
 	},
 	query_data: {
 		description:
-			'Read-only totals over objects, computed in the database: count, or sum/avg of one numeric metadata field, for one object type, optionally filtered and grouped by status, type, a metadata field, or a time bucket (`created_at.day`, also updated_at and hour/week/month; keys like "2026-10-30", oldest first, only buckets that have rows). `scope` is "workspace" (default) or a loop id to look only at that loop\'s members (in_loop). Date filters (created_after/before, updated_after/before) take a fixed ISO datetime or a moving bound that is re-evaluated every run: "now-7d", "now-24h", "now-4w", "now-3mo" (rolling) or "today", "today-7d" (from midnight today). Use the moving form for anything that should stay current, e.g. { filters: { created_after: "now-14d" }, group_by: "created_at.day" } is one query for "new per day, last 14 days". `timezone` (IANA, default UTC) sets where days start. Returns `{ groups: [{ key, count, value }], total: { count, value }, rows_truncated, groups_truncated }`; with no `group_by`, read `total`. At most 10000 rows are scanned and 50 groups returned; a flag says when a cap was hit. Use it to test a query before declaring it as a source in a loop view (set_loop_view). It never returns object rows; use list_objects for those.',
+			'Read-only totals over objects, computed in the database: count, or sum/avg of one numeric metadata field, for one object type, optionally filtered and grouped by status, type, a metadata field, or a time bucket (`created_at.day`, also updated_at and hour/week/month; keys like "2026-10-30", oldest first, only buckets that have rows). `scope` is "workspace" (default) or a loop id to look only at that loop\'s members (in_loop). Date filters (created_after/before, updated_after/before) take a fixed ISO datetime or a moving bound that is re-evaluated every run: "now-7d", "now-24h", "now-4w", "now-3mo" (rolling) or "today", "today-7d" (from midnight today). Use the moving form for anything that should stay current, e.g. { filters: { created_after: "now-14d" }, group_by: "created_at.day" } is one query for "new per day, last 14 days". `timezone` (IANA, default UTC) sets where days start. Returns `{ groups: [{ key, count, value }], total: { count, value }, next_cursor }`; with no `group_by`, read `total`. Every matching object is counted and a query has no group limit, but groups come back a page at a time (`limit`, default 50, at most 1000): while `next_cursor` is set, call again with the same query and `cursor: <next_cursor>` for the next page. `total` always covers every group. In a loop view, window.maskin.query returns every group. Use it to test a query before declaring it as a source in a loop view (set_loop_view). It never returns object rows; use list_objects for those.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			...dataQuerySpecSchema.shape,
+			cursor: z
+				.string()
+				.max(80)
+				.optional()
+				.describe("The previous page's `next_cursor`, to read the next page of groups."),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(DATA_QUERY_MAX_PAGE_SIZE)
+				.optional()
+				.describe(`Groups per page (default ${DATA_QUERY_PAGE_SIZE}).`),
 		}),
 	},
 

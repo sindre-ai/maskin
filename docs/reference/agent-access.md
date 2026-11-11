@@ -23,6 +23,8 @@ Access lives in `agent_grants` plus `integrations.default_agent_access`, resolve
 | `list_keychain_credentials` | `describeAgentAccess` | `request_keychain_access` (a person allows) |
 | Launch prompt and attached servers | `listAgentAccess` / `attachesServer` | (never written: read at launch) |
 
+`GET /api/guardrails` is a read-only roll-up for the Autonomy and guardrails page: per agent its send mode per kind (from `send_permissions`, resolved by `loadSendSettings`) and how many integrations it has at each level (from `describeAgentAccess`), plus the workspace's daily target. It stores nothing. `daily_budget_enforced` is false until a session start path checks the target; do not show a limit as in force before that.
+
 Rules that keep it that way:
 
 - Add a new place that shows or changes access by reading `describeAgentAccess` / the grants routes, not by recomputing it. "Is the MCP server attached" is `attachesServer()`, used by launch and by every report of it.

@@ -1,5 +1,11 @@
 import type { ResolvedProvider } from './types'
 
+import { config as airtableConfig } from './providers/airtable/config'
+import { config as amplitudeConfig } from './providers/amplitude/config'
+import { config as atlassianConfig } from './providers/atlassian/config'
+import { config as attioConfig } from './providers/attio/config'
+import { config as canvaConfig } from './providers/canva/config'
+import { config as clickupConfig } from './providers/clickup/config'
 import { config as customMcpConfig } from './providers/custom-mcp/config'
 import { githubAuth } from './providers/github/auth'
 // Import provider configs
@@ -35,9 +41,11 @@ import { linearEventNormalizer } from './providers/linear/webhooks'
 import { config as linkedinConfig } from './providers/linkedin-unipile/config'
 import { deleteUnipileAccountOnDisconnect } from './providers/linkedin-unipile/disconnect'
 import { config as miroConfig } from './providers/miro/config'
+import { config as mixpanelConfig } from './providers/mixpanel/config'
 import { config as notionConfig } from './providers/notion/config'
 import { config as posthogConfig } from './providers/posthog/config'
 import { config as resendConfig } from './providers/resend/config'
+import { config as sentryConfig } from './providers/sentry/config'
 import { config as skjaldConfig } from './providers/skjald/config'
 import { reapSlackUserLinks } from './providers/slack/account-link'
 import {
@@ -54,8 +62,12 @@ import {
 import { slackWebhookFanOut } from './providers/slack/fan-out'
 import { probeSlackTierOnInstall } from './providers/slack/tier-cache'
 import { slackEventNormalizer } from './providers/slack/webhooks'
+import { config as stripeConfig } from './providers/stripe/config'
 import { ubersuggestAuth } from './providers/ubersuggest/auth'
 import { config as ubersuggestConfig } from './providers/ubersuggest/config'
+import { config as vercelConfig } from './providers/vercel/config'
+import { config as webflowConfig } from './providers/webflow/config'
+import { config as zapierConfig } from './providers/zapier/config'
 
 const providers = new Map<string, ResolvedProvider>()
 
@@ -170,8 +182,56 @@ providers.set('miro', {
 	config: miroConfig,
 })
 
+providers.set('mixpanel', {
+	config: mixpanelConfig,
+})
+
+providers.set('vercel', {
+	config: vercelConfig,
+})
+
+providers.set('canva', {
+	config: canvaConfig,
+})
+
+providers.set('webflow', {
+	config: webflowConfig,
+})
+
 providers.set('notion', {
 	config: notionConfig,
+})
+
+providers.set('airtable', {
+	config: airtableConfig,
+})
+
+providers.set('atlassian', {
+	config: atlassianConfig,
+})
+
+providers.set('amplitude', {
+	config: amplitudeConfig,
+})
+
+providers.set('attio', {
+	config: attioConfig,
+})
+
+providers.set('clickup', {
+	config: clickupConfig,
+})
+
+providers.set('sentry', {
+	config: sentryConfig,
+})
+
+providers.set('zapier', {
+	config: zapierConfig,
+})
+
+providers.set('stripe', {
+	config: stripeConfig,
 })
 
 // resend — bring-your-own integration for customer-domain email send+receive

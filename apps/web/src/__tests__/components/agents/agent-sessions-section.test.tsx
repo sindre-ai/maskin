@@ -362,7 +362,7 @@ describe('AgentSessionsSection', () => {
 		expect(pauseSessionMutate).toHaveBeenCalledWith('s-live', expect.anything())
 	})
 
-	it('hides Pause on a session that runs on an agent server', () => {
+	it('offers Pause on a session that runs on an agent server', async () => {
 		const agent = buildActorResponse({ id: 'agent-p', type: 'agent' })
 		sessionsData.mockReturnValue([
 			buildSessionResponse({
@@ -375,8 +375,8 @@ describe('AgentSessionsSection', () => {
 		])
 		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
 
-		expect(screen.queryByRole('button', { name: /^pause$/i })).not.toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /restart/i })).toBeInTheDocument()
+		await userEvent.click(screen.getAllByRole('button', { name: /^pause$/i })[0])
+		expect(pauseSessionMutate).toHaveBeenCalledWith('s-remote', expect.anything())
 	})
 
 	it('shows the reason the server gave when pausing fails', async () => {

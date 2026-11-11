@@ -1,6 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { type CreateFileInput, type FileDetail, type UpdateFileInput, api } from '../lib/api'
+import {
+	type CreateFileInput,
+	type FileDetail,
+	type FileListItem,
+	type FileTagMatch,
+	type UpdateFileInput,
+	api,
+} from '../lib/api'
 import { type LargeFileUpload, uploadLargeFile } from '../lib/large-file-upload'
+import { fetchAllPages } from '../lib/pagination'
 import { queryKeys } from '../lib/query-keys'
 
 export function useFile(workspaceId: string, fileId: string | null) {
@@ -20,6 +28,64 @@ export function useFiles(workspaceId: string, params?: { q?: string; ids?: strin
 		// attachments yet, and we don't want to fetch all workspace files in that case.
 		// Equivalent to: params?.ids === undefined || params.ids.length > 0
 		enabled: !!workspaceId && !(params?.ids !== undefined && params.ids.length === 0),
+	})
+}
+
+/**
+ * Every file in the workspace, A→Z by name (the app's list default), optionally narrowed by a
+ * name search. Pages through the endpoint so the sort is over the whole set, not one page.
+ */
+export function useAllFiles(
+	workspaceId: string,
+	q?: string,
+	tagFilter?: { tags: string[]; match: FileTagMatch },
+) {
+	const tags = tagFilter?.tags ?? []
+	const match = tagFilter?.match ?? 'all'
+	return useQuery({
+		queryKey: [...queryKeys.files.all(workspaceId), 'all', q ?? '', tags.join(','), match],
+		queryFn: async () => {
+			const rows = await fetchAllPages<FileListItem>(({ limit, offset }) =>
+				api.files.list(workspaceId, {
+					q,
+					limit,
+					offset,
+					...(tags.length > 0 ? { tags, tags_match: match } : {}),
+				}),
+			)
+			return rows.sort(
+				(a, b) =>
+					a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }) ||
+					a.id.localeCompare(b.id),
+			)
+		},
+		enabled: !!workspaceId,
+	})
+}
+
+/** The tags in use in the workspace with file counts, from the same endpoint the agent tool reads. */
+export function useFileTags(workspaceId: string) {
+	return useQuery({
+		queryKey: queryKeys.files.tags(workspaceId),
+		queryFn: () => api.files.tags(workspaceId),
+		enabled: !!workspaceId,
+	})
+}
+
+/** Renames a tag, or folds it into another, on every file in the workspace. */
+export function useChangeFileTag(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (
+			change:
+				| { kind: 'rename'; from: string; to: string }
+				| { kind: 'merge'; from: string; into: string },
+		) =>
+			change.kind === 'rename'
+				? api.files.renameTag(workspaceId, { from: change.from, to: change.to })
+				: api.files.mergeTags(workspaceId, { from: change.from, into: change.into }),
+		// Every file list and file page may show the old tag, and the tag list changed too.
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.files.all(workspaceId) }),
 	})
 }
 

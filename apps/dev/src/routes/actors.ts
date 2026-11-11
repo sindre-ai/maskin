@@ -29,6 +29,7 @@ import {
 	PLATFORM_MCP_PRESET,
 	WORKSPACE_COACH_DEFAULT,
 	createActorSchema,
+	normalizeStarterPrompts,
 	normalizeTags,
 	updateActorSchema,
 } from '@maskin/shared'
@@ -36,6 +37,8 @@ import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'driz
 import { maskLlmConfigSecrets, restoreMaskedLlmConfig } from '../lib/actor-llm-config-redaction'
 import { toActorWithKeyResponse } from '../lib/actor-response'
 import { redactActorToolsForCaller, restoreMaskedToolValues } from '../lib/actor-tools-redaction'
+import { hasAgentDeletionApproval } from '../lib/agent-deletion-approval'
+import { checkAgentModelForWorkspace } from '../lib/agent-model-check'
 import { withHumanPauseMarker, withoutHumanPauseMarker } from '../lib/agent-pause'
 import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
@@ -128,6 +131,27 @@ const actorAvatarUrlSql = sql<
 const actorTagsSql = sql<
 	string[]
 >`CASE WHEN jsonb_typeof(${actors.metadata}->'tags') = 'array' THEN ${actors.metadata}->'tags' ELSE '[]'::jsonb END`
+
+/**
+ * The agent's starter prompts off its metadata, cleaned on the way out. Writes go through PATCH,
+ * which stores a clean list, but the column is free-form JSON: a hand-edited value ([1, null, {}],
+ * repeats, a line break, a string instead of a list) must never reach a client, where one bad
+ * entry could fail the decode of the whole actors list. The decoder keeps the strings the write
+ * rules would accept, drops repeats and caps the list, so the API only ever returns a clean one.
+ */
+const actorStarterPromptsSql = sql<
+	string[]
+>`CASE WHEN jsonb_typeof(${actors.metadata}->'starter_prompts') = 'array' THEN ${actors.metadata}->'starter_prompts' ELSE '[]'::jsonb END`.mapWith(
+	(value: unknown) => normalizeStarterPrompts(typeof value === 'string' ? parseJson(value) : value),
+)
+
+function parseJson(text: string): unknown {
+	try {
+		return JSON.parse(text)
+	} catch {
+		return null
+	}
+}
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
@@ -319,6 +343,21 @@ app.openapi(createActorRoute, async (c) => {
 						'Only workspace admins can set tools or llm_config on a new agent',
 					),
 					403,
+				)
+			}
+			// A model the workspace cannot run is refused now, not ignored at launch.
+			const modelRefusal = await checkAgentModelForWorkspace(db, {
+				workspaceId: body.workspace_id,
+				model: body.llm_config?.model,
+				storedModel: undefined,
+				hasAgentKey: Boolean(body.llm_config?.api_key),
+			})
+			if (modelRefusal) {
+				return c.json(
+					createApiError('BAD_REQUEST', modelRefusal, [
+						{ field: 'llm_config.model', message: modelRefusal },
+					]),
+					400,
 				)
 			}
 			memberWorkspaceId = body.workspace_id
@@ -783,6 +822,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 					avatar_url: actorAvatarUrlSql,
 					tags: actorTagsSql,
+					starter_prompts: actorStarterPromptsSql,
 				})
 				.from(workspaceMembers)
 				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
@@ -839,6 +879,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 					avatar_url: actorAvatarUrlSql,
 					tags: actorTagsSql,
+					starter_prompts: actorStarterPromptsSql,
 				})
 				.from(workspaceMembers)
 				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
@@ -1071,6 +1112,7 @@ app.openapi(getActorRoute, (async (c) => {
 				voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 				avatar_url: actorAvatarUrlSql,
 				tags: actorTagsSql,
+				starter_prompts: actorStarterPromptsSql,
 			})
 			.from(actors)
 			.where(eq(actors.id, id))
@@ -1381,6 +1423,22 @@ app.openapi(updateActorRoute, (async (c) => {
 		)
 	}
 
+	// Starter prompts land in a person's message box, so changing another actor's needs owner/admin,
+	// the same floor as its tools. An agent may still set its own.
+	if (
+		body.starter_prompts !== undefined &&
+		id !== actorId &&
+		!(await isAdminOfSharedWorkspace(db, actorId, id, workspaceId))
+	) {
+		return c.json(
+			createApiError(
+				'FORBIDDEN',
+				"Only workspace admins can change another actor's starter prompts",
+			),
+			403,
+		)
+	}
+
 	// envFrom names which API-service variables get copied into the agent's
 	// sessions, so only a human admin or owner may change it, even on the actor's
 	// own record. Sending the stored list back unchanged stays open.
@@ -1473,6 +1531,18 @@ app.openapi(updateActorRoute, (async (c) => {
 		tags = normalizeTags(body.tags)
 	}
 
+	// Starter prompts are one-tap openers an agent offers in a new chat. Only agents carry them.
+	// Same home as the tags (the actor's metadata), and the whole list is replaced.
+	let starterPrompts: string[] | undefined
+	if (body.starter_prompts !== undefined) {
+		if (existing.type !== 'agent') {
+			return c.json(createApiError('BAD_REQUEST', 'Only an agent carries starter prompts'), 400)
+		}
+		// No workspace header is fine: the write is the agent's own metadata, like the mailbox. Only
+		// the audit event below is per workspace, so it is recorded when the header is there.
+		starterPrompts = normalizeStarterPrompts(body.starter_prompts)
+	}
+
 	// A config read back masked must not overwrite the stored secrets with the mask.
 	let tools = body.tools
 	if (tools !== undefined) {
@@ -1519,6 +1589,23 @@ app.openapi(updateActorRoute, (async (c) => {
 		llmConfig = restored.llmConfig as typeof llmConfig
 	}
 
+	// A model the agent's workspace cannot run is refused here rather than saved
+	// and then ignored when a session starts. Only a changed model is checked.
+	if (llmConfig !== undefined) {
+		const refusal = await checkAgentModelForWorkspace(db, {
+			workspaceId,
+			model: llmConfig?.model,
+			storedModel: (existing.llmConfig as { model?: unknown } | null)?.model,
+			hasAgentKey: Boolean(llmConfig?.api_key),
+		})
+		if (refusal) {
+			return c.json(
+				createApiError('BAD_REQUEST', refusal, [{ field: 'llm_config.model', message: refusal }]),
+				400,
+			)
+		}
+	}
+
 	const [updated] = await db
 		.update(actors)
 		.set({
@@ -1533,12 +1620,13 @@ app.openapi(updateActorRoute, (async (c) => {
 			...(body.default_workspace_id !== undefined && {
 				defaultWorkspaceId: body.default_workspace_id,
 			}),
-			...((mailbox !== undefined || tags !== undefined) && {
-				// One metadata write for both keys, so sending a mailbox and tags together keeps both.
+			...((mailbox !== undefined || tags !== undefined || starterPrompts !== undefined) && {
+				// One metadata write for every key, so sending a mailbox, tags and starters together keeps all.
 				metadata: sql`${mailbox === null ? sql`coalesce(${actors.metadata}, '{}'::jsonb) - 'mailbox'` : sql`coalesce(${actors.metadata}, '{}'::jsonb)`} || ${JSON.stringify(
 					{
 						...(mailbox ? { mailbox } : {}),
 						...(tags !== undefined ? { tags } : {}),
+						...(starterPrompts !== undefined ? { starter_prompts: starterPrompts } : {}),
 					},
 				)}::jsonb`,
 			}),
@@ -1564,6 +1652,7 @@ app.openapi(updateActorRoute, (async (c) => {
 			voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 			avatar_url: actorAvatarUrlSql,
 			tags: actorTagsSql,
+			starter_prompts: actorStarterPromptsSql,
 			default_workspace_id: actors.defaultWorkspaceId,
 		})
 
@@ -1579,6 +1668,17 @@ app.openapi(updateActorRoute, (async (c) => {
 			entityType: 'actor',
 			entityId: id,
 			data: { ...actorEventData(updated), tags },
+		})
+	}
+
+	if (starterPrompts !== undefined && workspaceId) {
+		await recordEvent(db, {
+			workspaceId,
+			actorId,
+			action: 'actor_starter_prompts_updated',
+			entityType: 'actor',
+			entityId: id,
+			data: { ...actorEventData(updated), starter_prompts: starterPrompts },
 		})
 	}
 
@@ -1704,6 +1804,12 @@ app.openapi(resetActorRoute, (async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Only system actors can be reset to defaults'), 403)
 	}
 
+	// Whether the reset is about to clear starters someone could see, so it can be audited like the
+	// PATCH that set them. Read before the update, from the row as it was.
+	const hadStarters =
+		normalizeStarterPrompts((existing.metadata as Record<string, unknown> | null)?.starter_prompts)
+			.length > 0
+
 	const [updated] = await db
 		.update(actors)
 		.set({
@@ -1714,6 +1820,10 @@ app.openapi(resetActorRoute, (async (c) => {
 			llmConfig: WORKSPACE_COACH_DEFAULT.llmConfig,
 			tools: WORKSPACE_COACH_DEFAULT.tools,
 			memory: null,
+			// Starter prompts are part of how the agent presents itself, like its description, so
+			// "factory defaults" has none. Tags are grouping labels the workspace put on it, not
+			// behaviour, so they stay. Every other metadata key (picture, voice, mailbox) stays too.
+			metadata: sql`coalesce(${actors.metadata}, '{}'::jsonb) - 'starter_prompts'`,
 			updatedAt: new Date(),
 		})
 		.where(eq(actors.id, id))
@@ -1736,6 +1846,7 @@ app.openapi(resetActorRoute, (async (c) => {
 			voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 			avatar_url: actorAvatarUrlSql,
 			tags: actorTagsSql,
+			starter_prompts: actorStarterPromptsSql,
 		})
 
 	if (!updated) {
@@ -1750,6 +1861,19 @@ app.openapi(resetActorRoute, (async (c) => {
 		entityId: id,
 		data: actorEventData(updated),
 	})
+
+	// Only when the reset actually cleared starters; a reset of an agent with none changed nothing
+	// here. The workspace is always known on this route (the header is required).
+	if (hadStarters) {
+		await recordEvent(db, {
+			workspaceId,
+			actorId,
+			action: 'actor_starter_prompts_updated',
+			entityType: 'actor',
+			entityId: id,
+			data: { ...actorEventData(updated), starter_prompts: [] },
+		})
+	}
 
 	updated.llm_config = maskLlmConfigSecrets(updated.llm_config)
 	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)
@@ -1773,7 +1897,8 @@ const deleteActorRoute = createRoute({
 		},
 		403: {
 			content: { 'application/json': { schema: errorSchema } },
-			description: 'Cannot delete human actors',
+			description:
+				'Cannot delete human actors or system agents, and an agent caller needs a person’s approval (a delete_agent option tapped on a decision card)',
 		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
@@ -1813,6 +1938,30 @@ app.openapi(deleteActorRoute, (async (c) => {
 
 	if (existing.type !== 'agent') {
 		return c.json(createApiError('FORBIDDEN', 'Only agent actors can be deleted'), 403)
+	}
+
+	// An agent may delete another agent only after a person said yes on a decision card
+	// (a `delete_agent` option), for this agent and this target. People need no approval.
+	if (c.get('actorType') === 'agent') {
+		if (id === actorId) {
+			return c.json(createApiError('FORBIDDEN', 'An agent cannot delete itself'), 403)
+		}
+		const approved = await hasAgentDeletionApproval(db, {
+			workspaceId,
+			agentId: id,
+			requestedBy: actorId,
+		})
+		if (!approved) {
+			return c.json(
+				createApiError(
+					'FORBIDDEN',
+					'A person has not approved deleting this agent.',
+					undefined,
+					'Post a create_comment decision whose option carries delete_agent: { actor_id }, mention a person, and call delete_agent again after they choose it.',
+				),
+				403,
+			)
+		}
 	}
 
 	// Stop before delete. The cascade below removes this actor's session rows,

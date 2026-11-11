@@ -32,8 +32,9 @@ export class SessionSelfHealJob {
 	constructor(
 		db: Database,
 		private tickMs: number = TICK_MS,
+		recoverStalledPause?: (sessionId: string) => Promise<boolean>,
 	) {
-		this.reconciler = new SessionReconciler(db)
+		this.reconciler = new SessionReconciler(db, undefined, recoverStalledPause)
 	}
 
 	start(): void {
@@ -68,6 +69,13 @@ export class SessionSelfHealJob {
 			if (fullSweep && result.staleConsidered < SELF_HEAL_DEFAULT_LIMIT) this.lastFullSweepAt = now
 		} catch (err) {
 			logger.error('Session self-heal tick failed', {
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
+		try {
+			await this.reconciler.recoverStalledPauses()
+		} catch (err) {
+			logger.error('Stalled remote pause sweep failed', {
 				error: err instanceof Error ? err.message : String(err),
 			})
 		} finally {

@@ -1,5 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
+import { reportServerFailure, reportServerOk } from '../lib/server-reachability'
 import { type SSEEvent, SSEFatalError, type SSEStatus, connectSSE } from '../lib/sse'
 import { invalidateFromSSE, notifySSEGap } from '../lib/sse-invalidation'
 
@@ -51,7 +52,11 @@ export function useSSE(workspaceId: string): SSEStatus {
 			onEvent: (event: SSEEvent) => {
 				invalidateFromSSE(queryClient, workspaceId, event)
 			},
-			onStatusChange: setStatus,
+			onStatusChange: (next) => {
+				setStatus(next)
+				// An open stream is the server answering; see lib/server-reachability.
+				if (next === 'connected') reportServerOk()
+			},
 			// Without this every SSE error was discarded — a revoked key and a
 			// flaky network were both just a "disconnected" chip. A fatal one
 			// ends the subscription, so it's the last thing the user will hear
@@ -59,6 +64,8 @@ export function useSSE(workspaceId: string): SSEStatus {
 			onError: (err) => {
 				if (err instanceof SSEFatalError) {
 					console.error('[sse] subscription ended', err.status, err.message)
+				} else {
+					reportServerFailure()
 				}
 			},
 			// A reconnect means we were disconnected for some interval. The

@@ -11,7 +11,7 @@ export const NOISY_MESSAGES: ReadonlySet<string> = new Set([
 	'Failed to build agent-base image — sessions will fail until image is available',
 	'Claude session died on a 401',
 	// Logged by onQueryTimeout 45 s after any query gets no answer. During a database stall
-	// the /api/health probe alone adds about 6 a minute, because its 3 s race answers 503
+	// the old /api/health database probe alone added about 6 a minute, because its 3 s race answers 503
 	// but leaves the query queued on the pool.
 	'DB query got no response',
 ])

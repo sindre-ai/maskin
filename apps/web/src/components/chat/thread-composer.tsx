@@ -24,24 +24,29 @@ const BOOTING_STATUSES = new Set(['pending', 'starting', 'queued'])
 interface ThreadComposerProps {
 	workspaceId: string
 	conversationId: string
-	/** A step was tapped: replace the draft with this text (when given) and focus the box. */
-	fillRequest?: { text?: string; nonce: number } | null
+	/**
+	 * A step or starter was tapped: replace the draft with this text (or, with `append`, add it
+	 * after the draft) when given, and focus the box.
+	 */
+	fillRequest?: { text?: string; append?: boolean; nonce: number } | null
 	/**
 	 * Makes this a reply under a top-level message: sends carry `thread_root_id` and
 	 * `also_in_channel`, the recipient (when there is one) is seeded as a mention, and
-	 * the draft is kept per thread. `onSent` runs after a send succeeds.
+	 * the draft is kept per thread. `participantIds` are the actors who wrote in the thread; they
+	 * lead the mention list in place of the whole chat. `onSent` runs after a send succeeds.
 	 */
 	reply?: {
 		rootId: number
 		recipient: { id: string; name: string } | null
 		alsoInChannel: boolean
+		participantIds?: string[]
 		onSent?: () => void
 	}
 }
 
 /**
- * Adapts the existing `<Composer>` (attach/upload/slash-picker/send) to the
- * conversation send path. Objects/notifications picked via the slash picker
+ * Adapts the existing `<Composer>` (attach/upload/send) to the
+ * conversation send path. Objects/notifications in the selection
  * are sent as structured `metadata.context_objects` / `context_notifications`
  * (rendered as chips by `MessageBubble`) rather than inlined into the message
  * text — the backend rebuilds the equivalent context block for the agent's
@@ -88,10 +93,11 @@ export function ThreadComposer({
 	const vaultModeBlocked =
 		!sessions?.some((s) => s.status === 'running') ||
 		sessions.some((s) => s.status === 'pending' || s.status === 'starting' || s.status === 'queued')
-	const participantIds = useMemo(
+	const chatParticipantIds = useMemo(
 		() => conversation?.participants.map((p) => p.actorId) ?? [],
 		[conversation?.participants],
 	)
+	const participantIds = reply?.participantIds ?? chatParticipantIds
 
 	// The recipient arrives with async data, so it is seeded by an effect; the reducer
 	// dedupes, so a re-run is a no-op.
@@ -189,7 +195,7 @@ export function ThreadComposer({
 			: 'Reply…'
 		: counterpart
 			? `Reply to ${counterpart}…`
-			: 'Message… / reference or create · @ mention'
+			: 'Message… @ mention'
 
 	// Group-chat cue (3 or more active participants). While a needed answer is still
 	// loading it is the neutral placeholder with no hint; the box itself is never disabled.

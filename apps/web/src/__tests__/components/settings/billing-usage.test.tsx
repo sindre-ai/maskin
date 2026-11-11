@@ -304,9 +304,10 @@ describe('useWorkspaceModelUsage', () => {
 		expect(result.current.rows).toHaveLength(1)
 		expect(result.current.rows[0]?.name).toBe('Research Agent')
 		// Humans never carry session cost — they are not queried at all.
+		// Agents arrive A to Z by name from the shared actors hook (Idle before Research).
 		expect(vi.mocked(api.sessions.usage).mock.calls.map((c) => c[1].actor_id)).toEqual([
-			'a-1',
 			'a-2',
+			'a-1',
 		])
 	})
 })

@@ -8,6 +8,7 @@ interface MockSession {
 	status: string
 	actionPrompt: string
 	snapshotPath?: string | null
+	agentServerId?: string | null
 }
 
 /**
@@ -28,6 +29,7 @@ async function mockSessions(page: Page, actorId: string, sessions: MockSession[]
 					triggerId: null,
 					status: s.status,
 					containerId: 'c-1',
+					agentServerId: s.agentServerId ?? null,
 					actionPrompt: s.actionPrompt,
 					config: null,
 					result: null,
@@ -137,6 +139,59 @@ test.describe('Agent detail — Sessions section', () => {
 			await expect(resume).toBeVisible()
 			const resumed = page.waitForRequest(
 				(r) => r.url().includes('/sessions/sess-hold/resume') && r.method() === 'POST',
+			)
+			await resume.click()
+			await resumed
+		})
+
+		// A session whose sandbox lives on an agent server pauses and resumes too.
+		test(`offers Pause and Resume on agent-server sessions @ ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+
+			const agent = await account.api.createAgentActor('Rae Remote')
+			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+
+			await mockSessions(page, agent.id, [
+				{
+					id: 'sess-remote-live',
+					status: 'running',
+					actionPrompt: 'Run on the box',
+					agentServerId: 'agent-server-1',
+				},
+				{
+					id: 'sess-remote-hold',
+					status: 'paused',
+					actionPrompt: 'Parked on the box',
+					snapshotPath: 'session-workspaces/sess-remote-hold.tar.gz',
+					agentServerId: 'agent-server-1',
+				},
+			])
+
+			await page.goto(`/${account.workspaceId}/agents/${agent.id}?tab=sessions`)
+			const section = page.getByRole('region', { name: 'Sessions', exact: true })
+			await expect(section).toBeVisible({ timeout: 10_000 })
+
+			const pause = section.getByRole('button', { name: 'Pause', exact: true }).first()
+			const resume = section.getByRole('button', { name: 'Resume', exact: true }).first()
+
+			for (const scheme of ['light', 'dark'] as const) {
+				await page.emulateMedia({ colorScheme: scheme })
+				await expect(pause).toBeVisible()
+				await expect(resume).toBeVisible()
+			}
+			await page.emulateMedia({ colorScheme: 'light' })
+
+			const paused = page.waitForRequest(
+				(r) => r.url().includes('/sessions/sess-remote-live/pause') && r.method() === 'POST',
+			)
+			await pause.click()
+			await paused
+
+			const resumed = page.waitForRequest(
+				(r) => r.url().includes('/sessions/sess-remote-hold/resume') && r.method() === 'POST',
 			)
 			await resume.click()
 			await resumed
