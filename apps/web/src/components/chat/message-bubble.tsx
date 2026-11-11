@@ -18,6 +18,7 @@ import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { useActors } from '@/hooks/use-actors'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useConversation, useEditMessage, useRetryMessage } from '@/hooks/use-conversation'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useFiles } from '@/hooks/use-files'
 import { useFitTextWidth } from '@/hooks/use-fit-text-width'
 import { useLinkedChat } from '@/hooks/use-linked-chat'
@@ -41,6 +42,7 @@ import {
 	settingsChipText,
 	splitOwnLinks,
 } from '@/lib/linked-objects'
+import { hasMarkdownSyntax } from '@/lib/markdown-syntax'
 import { type TagSegment, isTaggable, splitTextByTags, tagLabel } from '@/lib/tag-input-model'
 import { useIsEnterpriseWorkspace } from '@/lib/workspace-context'
 import { formatQuestionsAsMarkdown } from '@maskin/shared'
@@ -138,6 +140,7 @@ export function MessageBubble({
 	const actor = getStoredActor()
 	const enterprise = useIsEnterpriseWorkspace()
 	const isOwn = message.actorId === actor?.id
+	const chatFormatting = useFeatureFlag('chat-formatting')
 	// Present only under the chat route, which owns the Threads pane. Without
 	// it the handoff falls back to the strip, whose rows link out instead.
 	const threadsPane = useThreadsPane()
@@ -255,10 +258,15 @@ export function MessageBubble({
 		}
 	}, [placedParts, mentions, tagLabelOf])
 
+	// Formatting you typed (bold, a list, a table) is drawn by the same renderer as everyone else's
+	// messages, so it is a block of its own and not a line of words to fit the bubble to.
+	const formatted =
+		chatFormatting && isOwn && !editing && !cardOnly && hasMarkdownSyntax(shownContent)
 	// Your own words with a bubble: its column shrinks to the widest line of text, and lifted
 	// attachments take the same width. Editing, a message with no text and a message with a card
 	// (which has its own width) keep the full layout.
-	const fitText = isOwn && !editing && message.content.length > 0 && !cardOnly && !holdsCard
+	const fitText =
+		isOwn && !editing && message.content.length > 0 && !cardOnly && !holdsCard && !formatted
 	const { columnRef, plateRef, textRef } = useFitTextWidth({
 		enabled: fitText,
 		minWidth: attachments.length > 0 ? MIN_FIT_WIDTH : 0,
@@ -394,6 +402,28 @@ export function MessageBubble({
 											onSave={saveEdit}
 											onCancel={() => setEditing(false)}
 										/>
+									) : formatted ? (
+										<div className="min-w-0 break-words [&_li]:text-foreground [&_p]:text-[15px] [&_p]:leading-[1.4] [&_p]:text-foreground [&_.maskin-prose>:first-child]:mt-0 [&_.maskin-prose>:last-child]:mb-0 [&_table]:mb-0">
+											<MarkdownContent
+												content={shownContent}
+												size="sm"
+												mentionActors={tagActors}
+												taggedActorIds={mentions}
+												selfActorId={actor?.id ?? null}
+												linkedCards={{
+													workspaceId,
+													enterprise,
+													conversationId: message.conversationId,
+													agentId: message.actorId,
+													skipIds: shownLinkedObjectIds,
+													updatedIds: updatedLinkedObjectIds,
+													renderCard: renderLinkedCard,
+													renderChip: renderLinkedChip,
+													renderGithubChip: renderLinkedGithubChip,
+													renderSettingsChip: renderLinkedSettingsChip,
+												}}
+											/>
+										</div>
 									) : message.content.length > 0 ? (
 										// `break-words` is load-bearing next to the column's `min-w-0`:
 										// `min-w-0` bounds the box, this bounds the ink. Without it an
