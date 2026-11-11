@@ -29,7 +29,7 @@ import { useCanWrite } from '@/hooks/use-can-write'
 import { useCreateConversation } from '@/hooks/use-conversations'
 import { useCreateObject } from '@/hooks/use-objects'
 import { useCreateTrigger } from '@/hooks/use-triggers'
-import { trackAgentCreated, trackObjectCreated, trackTriggerCreated } from '@/lib/analytics'
+import { trackAgentCreated, trackObjectCreated } from '@/lib/analytics'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { TYPE_LABELS, getTypeColor } from '@/lib/constants'
@@ -421,7 +421,6 @@ export function CreatePicker({
 				target_actor_id: currentActorId,
 				enabled: false,
 			})
-			trackTriggerCreated({ entity_id: created.id, entity_type: 'trigger' })
 			onOpenChange(false)
 			navigate({
 				to: '/$workspaceId/triggers/$triggerId',
