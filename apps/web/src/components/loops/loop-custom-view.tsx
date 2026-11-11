@@ -11,7 +11,12 @@ import {
 } from '@/lib/loop-view-cache'
 import { ISOLATION_LOAD_MESSAGE, prepareIsolatedViewHtml, readViewSources } from '@/lib/mini-app'
 import { subscribeToSSE } from '@/lib/sse-invalidation'
-import type { ListSourceEntry } from '@/lib/view-lists'
+import {
+	type ListAnswer,
+	type ListSource,
+	type ListSourceEntry,
+	fetchListRows,
+} from '@/lib/view-lists'
 import type { DataQueryResult, DataQuerySpec } from '@maskin/shared'
 import { RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -120,9 +125,14 @@ function ViewFrame({
 	// and failure callback through refs so a re-render never drops a message.
 	const sourcesRef = useRef(sources)
 	sourcesRef.current = sources
-	// List sources are only ever refused here: rows are for the file viewer (allowLists below).
 	const listsRef = useRef(lists)
 	listsRef.current = lists
+	// Rows of each declared list, by name, kept with the declaration they were fetched for. A
+	// list is fetched when the frame first asks (like a count) and again after Refresh; a frame
+	// swap that asks again is answered from here, so it costs no call.
+	const listRowsRef = useRef(
+		new Map<string, { declaration: string; answer: Promise<ListAnswer> }>(),
+	)
 	const onFailureRef = useRef(onFailure)
 	onFailureRef.current = onFailure
 
@@ -164,9 +174,42 @@ function ViewFrame({
 		[workspaceId, syncUpdatedAt],
 	)
 
+	/** Answers a list source with the viewer's own rows, fetching them on the first ask. */
+	const answerList = useCallback(
+		(name: string, source: ListSource): Promise<ListAnswer> => {
+			const declaration = JSON.stringify(source)
+			const held = listRowsRef.current.get(name)
+			if (held && held.declaration === declaration) return held.answer
+			setRefreshing(true)
+			pendingRef.current += 1
+			const answer = fetchListRows(workspaceId, source)
+				.then((rows) => {
+					const fetchedAt = Date.now()
+					answeredAtRef.current.set(`list:${name}`, fetchedAt)
+					syncUpdatedAt()
+					return { rows, fetchedAt }
+				})
+				.catch((err) => {
+					// A failed fetch is not kept, so the next ask (or Refresh) tries again.
+					if (listRowsRef.current.get(name)?.answer === answer) listRowsRef.current.delete(name)
+					throw err
+				})
+				.finally(() => {
+					pendingRef.current -= 1
+					if (pendingRef.current === 0) setRefreshing(false)
+				})
+			listRowsRef.current.set(name, { declaration, answer })
+			return answer
+		},
+		[workspaceId, syncUpdatedAt],
+	)
+
 	/** The Refresh button: asks the server for every source again and redraws if anything differs from what the view has. */
 	const refreshAll = useCallback(async () => {
 		setRefreshFailed(false)
+		// Rows have no cheap "did it change" check, so a held list is dropped and the new frame fetches it again.
+		const hadLists = listRowsRef.current.size > 0
+		if (hadLists) listRowsRef.current.clear()
 		const specs = [...sourcesRef.current.values()]
 		const settled = await Promise.allSettled(specs.map((spec) => queryAndStore(spec)))
 		let changed = false
@@ -181,7 +224,7 @@ function ViewFrame({
 				changed = true
 			}
 		})
-		if (changed) setFrameKey((k) => k + 1)
+		if (changed || hadLists) setFrameKey((k) => k + 1)
 	}, [queryAndStore])
 
 	useEffect(() => {
@@ -220,8 +263,9 @@ function ViewFrame({
 					frameWindow: viewWindow,
 					isBlocked: () => blockedRef.current,
 					sources: () => sourcesRef.current,
-					allowLists: false,
+					allowLists: true,
 					listSources: () => listsRef.current,
+					listAnswer: answerList,
 					run: async (spec) => {
 						const key = JSON.stringify(spec)
 						const given = (result: DataQueryResult) => {
@@ -279,7 +323,7 @@ function ViewFrame({
 		}
 		window.addEventListener('message', onMessage)
 		return () => window.removeEventListener('message', onMessage)
-	}, [workspaceId, queryAndStore, syncUpdatedAt])
+	}, [workspaceId, queryAndStore, syncUpdatedAt, answerList])
 
 	// Keeps the view live without it having to cooperate, and only while it is open (this
 	// component is mounted). A page cannot be told to re-render from outside, so when an

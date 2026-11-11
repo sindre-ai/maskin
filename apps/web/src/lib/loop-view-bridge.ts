@@ -3,8 +3,8 @@ import { BRIDGE_QUERY_MESSAGE, BRIDGE_RESULT_MESSAGE, VIEWER_DOC_SIZE_MESSAGE } 
 import {
 	LIST_REFUSED_MESSAGE,
 	type ListAnswer,
+	type ListSource,
 	type ListSourceEntry,
-	type OpportunitiesListSource,
 } from './view-lists'
 
 // Host side of the loop-view data bridge (see the bridge section in mini-app.ts
@@ -17,7 +17,8 @@ import {
 //     (`run`), and the frame only ever gets the result back;
 //   - a named list (rows) is answered only when the host opts in with `allowLists`, and
 //     only from what the host chose to give (`listAnswer`), never by running anything
-//     on the frame's request. The loop page does not opt in.
+//     the frame wrote. The file viewer gives only rows its Refresh click fetched; the loop
+//     page fetches a declared list for the viewer when the frame asks, like a count.
 
 export interface BridgeHost {
 	/** The iframe's current window; compared against event.source. */
@@ -28,12 +29,15 @@ export interface BridgeHost {
 	sources: () => ReadonlyMap<string, DataQuerySpec>
 	/** Runs a declared query as the viewer. */
 	run: (spec: DataQuerySpec) => Promise<unknown>
-	/** Whether this host may answer list sources. The file viewer says yes; the loop page leaves it off and every list is refused. */
+	/** Whether this host may answer list sources. A host that leaves it off refuses every list. */
 	allowLists?: boolean
 	/** The list sources the view declared, by name. A `null` entry asked for something the app does not offer. */
 	listSources?: () => ReadonlyMap<string, ListSourceEntry>
-	/** What a list source is answered with right now. Must not fetch: rows exist only after the user's Refresh click. */
-	listAnswer?: (name: string, source: OpportunitiesListSource) => ListAnswer
+	/**
+	 * What a list source is answered with. The file viewer's must not fetch: rows exist only
+	 * after the user's Refresh click. The loop page's may, and returns a promise.
+	 */
+	listAnswer?: (name: string, source: ListSource) => ListAnswer | Promise<ListAnswer>
 	post: (message: Record<string, unknown>) => void
 	onDocHeight: (height: number) => void
 	/** The view's content is wider than its frame: the width it needs. Optional; hosts that never scroll sideways skip it. */
@@ -97,7 +101,16 @@ export async function handleBridgeMessage(
 				host.post({ type: BRIDGE_RESULT_MESSAGE, id, error: LIST_REFUSED_MESSAGE })
 				return
 			}
-			host.post({ type: BRIDGE_RESULT_MESSAGE, id, data: host.listAnswer(name, list) })
+			try {
+				const answer = await host.listAnswer(name, list)
+				if (host.isBlocked()) return
+				host.post({ type: BRIDGE_RESULT_MESSAGE, id, data: answer })
+			} catch (err) {
+				const message = err instanceof Error ? err.message : 'The list failed to load.'
+				if (host.isBlocked()) return
+				host.post({ type: BRIDGE_RESULT_MESSAGE, id, error: message })
+				host.onQueryError(message)
+			}
 			return
 		}
 		host.post({

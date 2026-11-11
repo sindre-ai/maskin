@@ -5,6 +5,7 @@ import {
 	fetchListRows,
 	isListDeclaration,
 	parseListSource,
+	projectObjectRow,
 	projectOpportunity,
 } from '@/lib/view-lists'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -202,6 +203,208 @@ describe('fetchListRows', () => {
 
 		expect(vi.mocked(api.objects.list).mock.calls[0]?.[1]).toMatchObject({
 			updated_after: '2026-11-02T08:00:00.000Z',
+		})
+	})
+})
+
+describe('parseListSource: objects', () => {
+	it('reads a bare objects list with the defaults', () => {
+		expect(parseListSource({ list: 'objects', params: { type: 'content' } })).toEqual({
+			list: 'objects',
+			type: 'content',
+			statuses: [],
+			where: {},
+			sort: 'updatedAt',
+			order: 'desc',
+			fields: [],
+			maxRows: 100,
+		})
+	})
+
+	it('reads every allowed param', () => {
+		expect(
+			parseListSource({
+				list: 'objects',
+				params: {
+					type: 'content',
+					status: ['proposed', 'in_review', 'proposed'],
+					where: { platform: 'instagram', cluster: 'events' },
+					sort: 'scheduled_date',
+					order: 'asc',
+					fields: ['platform', 'updatedAt', 'platform'],
+					max_rows: 17,
+				},
+			}),
+		).toEqual({
+			list: 'objects',
+			type: 'content',
+			statuses: ['proposed', 'in_review'],
+			where: { platform: 'instagram', cluster: 'events' },
+			sort: 'scheduled_date',
+			order: 'asc',
+			fields: ['platform', 'updatedAt'],
+			maxRows: 17,
+		})
+	})
+
+	it.each([
+		['no type', { list: 'objects', params: {} }],
+		['no params', { list: 'objects' }],
+		['a type that is not a plain name', { list: 'objects', params: { type: 'content; drop' } }],
+		['an unknown param', { list: 'objects', params: { type: 'task', q: 'x' } }],
+		[
+			'a field outside the allow-list',
+			{ list: 'objects', params: { type: 'task', fields: ['content'] } },
+		],
+		[
+			'a metadata key outside the allow-list in fields',
+			{ list: 'objects', params: { type: 'task', fields: ['editor_verdict'] } },
+		],
+		[
+			'a filter on a key outside the allow-list',
+			{ list: 'objects', params: { type: 'task', where: { branch: 'x' } } },
+		],
+		[
+			'a filter value that is not text',
+			{ list: 'objects', params: { type: 'task', where: { platform: 1 } } },
+		],
+		[
+			'an empty filter value',
+			{ list: 'objects', params: { type: 'task', where: { platform: '' } } },
+		],
+		[
+			'a sort outside the allow-list',
+			{ list: 'objects', params: { type: 'task', sort: 'content' } },
+		],
+		[
+			'an order that is not asc or desc',
+			{ list: 'objects', params: { type: 'task', order: 'up' } },
+		],
+		['an empty status list', { list: 'objects', params: { type: 'task', status: [] } }],
+		[
+			'a status that is not a plain name',
+			{ list: 'objects', params: { type: 'task', status: ['a,b'] } },
+		],
+		['more than 100 rows', { list: 'objects', params: { type: 'task', max_rows: 101 } }],
+		['zero rows', { list: 'objects', params: { type: 'task', max_rows: 0 } }],
+		['an unknown key on the source', { list: 'objects', rows: true, params: { type: 'task' } }],
+	])('refuses %s', (_label, value) => {
+		expect(parseListSource(value)).toBeNull()
+	})
+})
+
+describe('projectObjectRow', () => {
+	const post = bet(1, {
+		type: 'content',
+		title: 'A post',
+		status: 'proposed',
+		metadata: {
+			platform: 'linkedin',
+			cluster: 'events',
+			scheduled_date: '2026-11-18',
+			size_is_guess: true,
+			priority: { nested: 'object' },
+			angle: 'secret angle',
+			editor_verdict: 'secret verdict',
+		},
+	})
+
+	it('returns id, title, status and the link, and nothing else when no field is named', () => {
+		expect(projectObjectRow(post, [])).toEqual({
+			id: 'bet-1',
+			title: 'A post',
+			status: 'proposed',
+			url: '/ws-1/objects/bet-1',
+		})
+	})
+
+	it('adds exactly the fields named, and never the body or unnamed metadata', () => {
+		const row = projectObjectRow(post, ['platform', 'scheduled_date', 'driver', 'updatedAt'])
+		expect(row).toEqual({
+			id: 'bet-1',
+			title: 'A post',
+			status: 'proposed',
+			url: '/ws-1/objects/bet-1',
+			platform: 'linkedin',
+			scheduled_date: '2026-11-18',
+			driver: 'actor-1',
+			updatedAt: '2026-11-01T00:00:00.000Z',
+		})
+		const sent = JSON.stringify(row)
+		expect(sent).not.toContain('A very long body')
+		expect(sent).not.toContain('secret')
+		expect(sent).not.toContain('cluster')
+	})
+
+	it('turns a missing key or a non-scalar value into null', () => {
+		const row = projectObjectRow(post, ['priority', 'audience'])
+		expect(row.priority).toBeNull()
+		expect(row.audience).toBeNull()
+		expect(projectObjectRow(bet(2, { metadata: null }), ['platform']).platform).toBeNull()
+	})
+
+	it('keeps a boolean and ignores a name that is not on the allow-list', () => {
+		const row = projectObjectRow(post, ['size_is_guess', 'angle'])
+		expect(row.size_is_guess).toBe(true)
+		expect('angle' in row).toBe(false)
+	})
+})
+
+describe('fetchListRows: objects', () => {
+	beforeEach(() => {
+		vi.mocked(api.objects.list).mockReset()
+	})
+
+	it('makes one call as the viewer with the type, filters, sort and cap, and projects the rows', async () => {
+		vi.mocked(api.objects.list).mockResolvedValueOnce(
+			Array.from({ length: 17 }, (_, i) => bet(i, { type: 'content' })),
+		)
+
+		const rows = await fetchListRows('ws-1', {
+			list: 'objects',
+			type: 'content',
+			statuses: ['proposed', 'in_review'],
+			where: { platform: 'linkedin' },
+			sort: 'scheduled_date',
+			order: 'asc',
+			fields: ['priority'],
+			maxRows: 100,
+		})
+
+		expect(rows).toHaveLength(17)
+		expect(api.objects.list).toHaveBeenCalledTimes(1)
+		expect(api.objects.list).toHaveBeenCalledWith('ws-1', {
+			type: 'content',
+			status: 'proposed,in_review',
+			'metadata.platform': 'linkedin',
+			sort: 'metadata.scheduled_date',
+			order: 'asc',
+			limit: '100',
+			offset: '0',
+		})
+		expect(JSON.stringify(rows)).not.toContain('A very long body')
+	})
+
+	it('sorts by a plain column as itself and leaves the status off when none is named', async () => {
+		vi.mocked(api.objects.list).mockResolvedValueOnce([])
+
+		await fetchListRows('ws-1', {
+			list: 'objects',
+			type: 'task',
+			statuses: [],
+			where: {},
+			sort: 'title',
+			order: 'desc',
+			fields: [],
+			maxRows: 20,
+		})
+
+		expect(api.objects.list).toHaveBeenCalledWith('ws-1', {
+			type: 'task',
+			sort: 'title',
+			order: 'desc',
+			limit: '20',
+			offset: '0',
 		})
 	})
 })
