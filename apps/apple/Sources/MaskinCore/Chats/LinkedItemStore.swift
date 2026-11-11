@@ -96,6 +96,8 @@ public final class LinkedItemStore {
 	/// Saves an edited draft and approves it: the path the For you card takes too.
 	@ObservationIgnored private let saver: DraftSaveAndApprove
 	@ObservationIgnored private let files: any FilesRemote
+	/// What was read about draft media files, by lowercase id, so a card redrawn does not ask again.
+	@ObservationIgnored private var mediaSummaries: [String: FileSummary] = [:]
 	@ObservationIgnored private let places: (any LinkedPlacesRemote)?
 	@ObservationIgnored private let loadActors: (@Sendable () async throws -> [ActorRef])?
 	@ObservationIgnored private var actorsTask: Task<Void, Never>?
@@ -447,6 +449,18 @@ public final class LinkedItemStore {
 		} catch {
 			remember(.error, for: file.id)
 		}
+	}
+
+	// MARK: Draft media
+
+	/// The files that go out with a draft, for the card to draw: in the order of `ids`, one metadata
+	/// request for the ones not seen yet, anything unreadable left out (see `PreviewMedia`).
+	public func previewMedia(ids: [String]) async -> [PreviewMediaItem] {
+		let missing = ids.filter { mediaSummaries[$0.lowercased()] == nil }
+		if !missing.isEmpty, let found = try? await files.summaries(ids: missing) {
+			for summary in found { mediaSummaries[summary.id.lowercased()] = summary }
+		}
+		return PreviewMedia.items(ids: ids, summaries: Array(mediaSummaries.values))
 	}
 
 	/// The whole file, for a card that plays it (audio) rather than reading its text.

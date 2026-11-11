@@ -132,6 +132,10 @@ export function buildObjectPreview(object: {
 	if (deliverable.bodyBlock) body = readBodyBlock(body, deliverable.bodyBlock)
 	const recipients: PreviewRecipient[] = []
 	const details: PreviewDetail[] = []
+	// A media field's lines, hashed exactly as the detail lines they were, so an approval given
+	// before files were drawn stays valid. They are not shown as lines: the files are.
+	const hashed: PreviewDetail[] = []
+	const mediaFileIds: string[] = []
 	let subject: string | null = null
 	let context: string | null = null
 	const missing: string[] = []
@@ -169,8 +173,15 @@ export function buildObjectPreview(object: {
 			subject = value
 		} else if (field.slot === 'context') {
 			context = value
+		} else if (field.slot === 'media') {
+			hashed.push({ label: field.label, value })
+			for (const id of value.split(',')) {
+				const fileId = id.trim()
+				if (fileId && !mediaFileIds.includes(fileId)) mediaFileIds.push(fileId)
+			}
 		} else if (field.slot !== 'hidden') {
 			details.push({ label: field.label, value })
+			hashed.push({ label: field.label, value })
 		}
 	}
 
@@ -188,6 +199,7 @@ export function buildObjectPreview(object: {
 		subject,
 		details,
 		context,
+		media_file_ids: mediaFileIds,
 		body,
 		maxLength,
 		missing,
@@ -196,7 +208,7 @@ export function buildObjectPreview(object: {
 			kind: deliverable.kind,
 			recipients,
 			subject,
-			details,
+			details: hashed,
 			body,
 		}),
 	}

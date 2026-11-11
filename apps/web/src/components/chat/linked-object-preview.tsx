@@ -20,6 +20,7 @@ import { DraftTextEditor } from '@/components/shared/draft-text-editor'
 import { FilePreview, isPreviewableFile } from '@/components/shared/file-preview'
 import { type LinkedCardsOptions, MarkdownContent } from '@/components/shared/markdown-content'
 import { ObjectPreviewMeta } from '@/components/shared/object-preview-meta'
+import { DraftMedia } from '@/components/shared/preview-media'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { Button } from '@/components/ui/button'
 import { CopyButton } from '@/components/ui/copy-button'
@@ -360,6 +361,10 @@ export function LinkedObjectCard({
 								{gated ? 'Show all' : 'Show less'}
 							</Button>
 						</div>
+					) : null}
+					{/* The files that go out with the text, after it and before Approve. */}
+					{preview ? (
+						<DraftMedia preview={preview} workspaceId={workspaceId} className="px-3 pt-2" />
 					) : null}
 					{preview ? (
 						<div

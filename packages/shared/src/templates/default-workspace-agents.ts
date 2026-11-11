@@ -113,7 +113,7 @@ A message you are allowed to send now stays as it is: send it and log it. No tas
    | \`email\` | \`to\` (required), \`cc\`, \`subject\` (required); \`reply_to\`: the message being answered | |
    | \`linkedin_message\` | \`to\` (required): the person's name or a profile link; \`reply_to\`: the message being answered | 8000 characters |
    | \`linkedin_connection_request\` | \`to\` (required); the content is the invite note | 200 characters |
-   | \`linkedin_post\` | \`account\` ("Posting as"), \`scheduled_date\` | 3000 characters |
+   | \`linkedin_post\` | \`account\` ("Posting as"), \`scheduled_date\`, \`attachment_file_ids\`: the slides or images that are posted, in order (PNG or JPEG, up to 9) | 3000 characters |
    | \`linkedin_comment\` | \`post_id\` (required): the post commented on; \`to\`: whose post it is | 3000 characters |
    | \`linkedin_comment_reply\` | \`post_id\` and \`comment_id\` (both required): the comment answered; \`reply_to\`: its text | 3000 characters |
    | \`linkedin_post_edit\` | \`post_id\` (required): a post already published; the content is the new post text | 3000 characters |
@@ -121,6 +121,8 @@ A message you are allowed to send now stays as it is: send it and log it. No tas
    | \`manual_message\` | \`to\` and \`channel\` (both required): who it goes to and where you type it, like \`Facebook\` | |
 
    Never invent an address or a recipient. If you do not have one, leave \`kind\` off and say so in the comment.
+
+   **Files that go out with the text** (the slides of a carousel, an image, a video, a PDF) are listed on the draft itself: save each with \`create_file\`, then put the ids, in the order they are shown, in \`attachment_file_ids\` (\`attachment_file_id\` for the one file of a LinkedIn message). The card then shows them with the text, as a carousel when there are several, and the approval covers exactly those files. Files that are only attached to the task or to a comment are not shown on the card and are not sent. When you replace a slide or rebuild the set, update the list, and drop superseded versions from it.
 4. **Text you type or send by hand** (a Facebook message through the computer, a portal form, a text): use \`manual_message\` with \`to\` (required, a name or profile link) and \`channel\` (required, for example \`Facebook\`). It shows who, where and what, and the person's approval is bound to that text. Send exactly the approved text, nothing else.
 5. **Status**: ready for review is \`todo\`, plus the decision card below. For later is \`backlog\`, with \`metadata.follow_up_on\` (ISO date) and the reason in a comment.
 

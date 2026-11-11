@@ -52,6 +52,9 @@ public struct ObjectPreview: Sendable, Equatable, Hashable, Codable {
 	public var recipients: [Recipient]
 	public var subject: String?
 	public var details: [Detail]
+	/// The workspace files that go out with the text, in order: a post's images, a video, a
+	/// document. Ids only; `PreviewMedia` turns them into what is drawn.
+	public var mediaFileIDs: [String]
 	/// The exact text that would go out.
 	public var body: String
 	/// Required fields that are empty. While any is missing the draft cannot be approved.
@@ -65,19 +68,40 @@ public struct ObjectPreview: Sendable, Equatable, Hashable, Codable {
 
 	public init(
 		kind: String, label: String, recipients: [Recipient] = [], subject: String? = nil,
-		details: [Detail] = [], body: String, missing: [String] = [], warnings: [String] = [],
-		contentHash: String, delivery: Delivery? = nil
+		details: [Detail] = [], mediaFileIDs: [String] = [], body: String, missing: [String] = [],
+		warnings: [String] = [], contentHash: String, delivery: Delivery? = nil
 	) {
 		self.kind = kind
 		self.label = label
 		self.recipients = recipients
 		self.subject = subject
 		self.details = details
+		self.mediaFileIDs = mediaFileIDs
 		self.body = body
 		self.missing = missing
 		self.warnings = warnings
 		self.contentHash = contentHash
 		self.delivery = delivery
+	}
+
+	// A copy stored before files were drawn has no `mediaFileIDs`; it reads as no media.
+	private enum CodingKeys: String, CodingKey {
+		case kind, label, recipients, subject, details, mediaFileIDs, body, missing, warnings, contentHash, delivery
+	}
+
+	public init(from decoder: Decoder) throws {
+		let c = try decoder.container(keyedBy: CodingKeys.self)
+		kind = try c.decode(String.self, forKey: .kind)
+		label = try c.decode(String.self, forKey: .label)
+		recipients = try c.decode([Recipient].self, forKey: .recipients)
+		subject = try c.decodeIfPresent(String.self, forKey: .subject)
+		details = try c.decode([Detail].self, forKey: .details)
+		mediaFileIDs = try c.decodeIfPresent([String].self, forKey: .mediaFileIDs) ?? []
+		body = try c.decode(String.self, forKey: .body)
+		missing = try c.decode([String].self, forKey: .missing)
+		warnings = try c.decode([String].self, forKey: .warnings)
+		contentHash = try c.decode(String.self, forKey: .contentHash)
+		delivery = try c.decodeIfPresent(Delivery.self, forKey: .delivery)
 	}
 
 	/// A draft with nothing missing can be approved.
