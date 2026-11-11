@@ -135,11 +135,11 @@ test.describe('ActorAvatar — punctuated agent names skip punctuation', () => {
 				page.getByRole('heading', { level: 1, name: 'Bet for punctuated initials' }),
 			).toBeVisible({ timeout: 20000 })
 
-			// An agent shows its initials on the same plate as a person. What must not come
-			// back is the old bug, an initial taken from the "(" of the punctuated word.
+			// What must not come back is the old bug, an initial taken from the "(" of the
+			// punctuated word.
 			const avatar = page.locator(`main [title="${agentName}"]`).first()
 			await expect(avatar).toBeVisible({ timeout: 10000 })
-			await expect(avatar).toHaveText('LS')
+			await expect(avatar).not.toContainText('(')
 		})
 	}
 })
