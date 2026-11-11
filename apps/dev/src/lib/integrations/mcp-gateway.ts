@@ -34,19 +34,25 @@ import {
  */
 export const GATEWAY_PROVIDERS: ReadonlySet<string> = new Set([
 	'airtable',
+	'amplitude',
 	'atlassian',
 	'attio',
 	'canva',
+	'clickup',
 	'gmail',
 	'google-calendar',
 	'linear',
 	'miro',
+	'mixpanel',
 	'notion',
 	'posthog',
 	'resend',
 	'sentry',
 	'stripe',
 	'ubersuggest',
+	'vercel',
+	'webflow',
+	'zapier',
 ])
 
 export const GATEWAY_BODY_LIMIT_BYTES = 1_000_000
