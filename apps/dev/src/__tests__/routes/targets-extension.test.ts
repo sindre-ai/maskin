@@ -237,6 +237,121 @@ describe('Targets extension', () => {
 		})
 	})
 
+	describe('PATCH /api/objects/:id by an agent', () => {
+		// existing object, workspace membership, then the in-transaction re-read
+		// (no status in the body, so no workspace settings read).
+		function patchAs(actorType: string, existing: ReturnType<typeof buildObject>, body: object) {
+			const { app, mockResults, calls } = createTestApp(
+				objectsRoutes,
+				'/api/objects',
+				'test-actor-id',
+				actorType,
+			)
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [existing]]
+			mockResults.update = [{ ...existing, ...body }]
+			mockResults.insert = [{}]
+			return {
+				calls,
+				res: app.request(jsonRequest('PATCH', `/api/objects/${existing.id}`, body)),
+			}
+		}
+
+		const target = () =>
+			buildObject({
+				workspaceId: wsId,
+				type: TARGET_TYPE,
+				status: 'open',
+				title: '10 paying customers',
+				metadata: targetMetadata,
+			})
+
+		it.each([
+			['actual', { actual: 10 }],
+			['target', { target: 20 }],
+			['deadline', { deadline: '2027-01-31' }],
+			['source', { source: 'metric:other' }],
+		])(
+			'refuses an agent changing the %s of a target, and says to use a decision card',
+			async (field, change) => {
+				const existing = target()
+				const { res, calls } = patchAs('agent', existing, {
+					metadata: { ...targetMetadata, ...change },
+				})
+
+				const response = await res
+				expect(response.status).toBe(403)
+				const body = await response.json()
+				expect(body.error.message).toContain(field)
+				expect(body.error.message).toContain('decision card')
+				expect(calls.updates).toHaveLength(0)
+				expect(calls.inserts).toHaveLength(0)
+			},
+		)
+
+		it('refuses an agent changing the label of a target', async () => {
+			const { res } = patchAs('agent', target(), { title: '20 paying customers' })
+
+			expect((await res).status).toBe(403)
+		})
+
+		it('lets an agent write a target field back unchanged', async () => {
+			const { res } = patchAs('agent', target(), { metadata: { actual: 3 } })
+
+			expect((await res).status).toBe(200)
+		})
+
+		it('lets a person change the fields of a target', async () => {
+			const { res } = patchAs('human', target(), { metadata: { ...targetMetadata, actual: 10 } })
+
+			expect((await res).status).toBe(200)
+		})
+
+		it('refuses an agent changing the targets or the close condition of a flow', async () => {
+			for (const metadata of [
+				{ targets: [{ label: 'Signups', actual: 1, target: 5 }] },
+				{ close_condition: 'Never closes' },
+			]) {
+				const flow = buildObject({
+					workspaceId: wsId,
+					type: 'loop',
+					status: 'live',
+					metadata: { targets: [], close_condition: 'Shipped' },
+				})
+				const { res } = patchAs('agent', flow, { metadata })
+
+				const response = await res
+				expect(response.status).toBe(403)
+				expect((await response.json()).error.message).toContain('decision card')
+			}
+		})
+
+		it('lets an agent change other flow fields and pause a flow', async () => {
+			const flow = buildObject({
+				workspaceId: wsId,
+				type: 'loop',
+				status: 'live',
+				metadata: { targets: [], close_condition: 'Shipped', note: 'a' },
+			})
+			const { res } = patchAs('agent', flow, { metadata: { note: 'b', targets: [] } })
+
+			expect((await res).status).toBe(200)
+		})
+
+		it('lets a person change the targets of a flow', async () => {
+			const flow = buildObject({
+				workspaceId: wsId,
+				type: 'loop',
+				status: 'live',
+				metadata: { targets: [] },
+			})
+			const { res } = patchAs('human', flow, {
+				metadata: { targets: [{ label: 'Signups', actual: 1, target: 5 }] },
+			})
+
+			expect((await res).status).toBe(200)
+		})
+	})
+
 	describe('POST /api/graph (the create_objects tool)', () => {
 		it('creates a company target and a flow target linked with breaks_into', async () => {
 			const company = buildObject({ workspaceId: wsId, type: TARGET_TYPE, status: 'open' })
