@@ -15,6 +15,8 @@ public enum FileContentKind: Sendable, Equatable {
 	case pdf
 	/// Sound files, played with the system player.
 	case audio
+	/// Movies, played inline with the system controls.
+	case video
 	case other
 
 	static let unsafeInline: Set<String> = [
@@ -33,6 +35,7 @@ public enum FileContentKind: Sendable, Equatable {
 		if mime == "application/pdf" { return .pdf }
 		if mime.hasPrefix("image/") { return .image }
 		if mime.hasPrefix("audio/") { return .audio }
+		if mime.hasPrefix("video/") { return .video }
 		if mime.hasPrefix("text/") || textExact.contains(mime) { return .text }
 		// Generic types fall back to the extension (uploads often arrive as octet-stream).
 		if mime == "application/octet-stream" || mime.isEmpty {
@@ -43,6 +46,7 @@ public enum FileContentKind: Sendable, Equatable {
 			case "pdf": return .pdf
 			case "png", "jpg", "jpeg", "gif", "webp", "heic": return .image
 			case "mp3", "m4a", "wav", "aac", "flac": return .audio
+			case "mp4", "m4v", "mov": return .video
 			default: break
 			}
 		}
@@ -59,6 +63,7 @@ public enum FileContentKind: Sendable, Equatable {
 		case .image: "Image"
 		case .pdf: "PDF"
 		case .audio: "Audio"
+		case .video: "Video"
 		case .other: "File"
 		}
 	}
