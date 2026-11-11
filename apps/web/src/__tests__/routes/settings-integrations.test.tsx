@@ -107,7 +107,12 @@ vi.mock('@/hooks/use-actors', () => ({
 }))
 
 vi.mock('@/components/shared/empty-state', () => ({
-	EmptyState: ({ title }: { title: string }) => <div>{title}</div>,
+	EmptyState: ({ title, description }: { title: string; description?: string }) => (
+		<div>
+			<div>{title}</div>
+			{description && <div>{description}</div>}
+		</div>
+	),
 }))
 
 vi.mock('@/components/shared/loading-skeleton', () => ({

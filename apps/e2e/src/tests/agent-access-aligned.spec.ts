@@ -150,6 +150,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 		expect(state.grants).toEqual([{ actorId: reviewer.id, access: 'none' }])
 
 		await page.goto(`/${account.workspaceId}/settings/integrations`)
+		await openIntegrationCard(page, /Linear/)
 		await expect(page.getByRole('button', { name: /Agent access/ })).toContainText(
 			'All agents can read · 1 has no access',
 			{ timeout: 15_000 },
