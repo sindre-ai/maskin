@@ -13,9 +13,14 @@ import {
 	createComposerExtensions,
 	shapeTablesForMarkdown,
 } from '../react/composer'
+import type { SlashMenuState, SlashMenuView } from '../react/slash-command'
 
 // Tiptap announces a new editor on the next tick, which is when the box sets its chips.
-async function open(markdown: string, tags: ComposerTag[] = []) {
+async function open(
+	markdown: string,
+	tags: ComposerTag[] = [],
+	extra: Partial<MarkdownComposerProps> = {},
+) {
 	const changes: ComposerValue[] = []
 	const triggers: (string | null)[] = []
 	const props: MarkdownComposerProps = {
@@ -31,6 +36,7 @@ async function open(markdown: string, tags: ComposerTag[] = []) {
 		onChange: (value) => changes.push(value),
 		onTriggerChange: (t) => triggers.push(t ? t.query : null),
 		onKeyDown: vi.fn(() => false),
+		...extra,
 	}
 	const handlers: { current: Handlers } = { current: { props, editor: null } }
 	const { extensions } = createComposerExtensions(handlers)
@@ -167,5 +173,76 @@ describe('pasted tables', () => {
 
 	it('leaves HTML without a table alone', () => {
 		expect(shapeTablesForMarkdown('<p>hi</p>')).toBe('<p>hi</p>')
+	})
+})
+
+describe('slash menu', () => {
+	const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+	async function openWithMenu() {
+		const states: SlashMenuState[] = []
+		const attachFile = vi.fn()
+		const box = await open('', [], {
+			slashMenu: {
+				attachFile,
+				createView: (state): SlashMenuView => {
+					states.push(state)
+					return { update: (next) => states.push(next), onKeyDown: () => false, destroy: vi.fn() }
+				},
+			},
+		})
+		return { ...box, states, attachFile }
+	}
+
+	it('opens on a slash with the five rows', async () => {
+		const { editor, states } = await openWithMenu()
+		editor.commands.insertContent('/')
+		await settle()
+		expect(states.at(-1)?.items.map((i) => i.id)).toEqual([
+			'code-block',
+			'quote',
+			'bulleted-list',
+			'numbered-list',
+			'attach-file',
+		])
+		editor.destroy()
+	})
+
+	it('Code block turns the line into a code block and removes the typed text', async () => {
+		const { editor, md, states } = await openWithMenu()
+		editor.commands.insertContent('/co')
+		await settle()
+		const state = states.at(-1)
+		const code = state?.items.find((i) => i.id === 'code-block')
+		expect(code).toBeDefined()
+		if (code) state?.select(code)
+		expect(editor.getJSON().content?.[0]?.type).toBe('codeBlock')
+		expect(md()).not.toContain('/co')
+		editor.destroy()
+	})
+
+	it('Attach a file calls the file picker', async () => {
+		const { editor, states, attachFile } = await openWithMenu()
+		editor.commands.insertContent('/file')
+		await settle()
+		const state = states.at(-1)
+		const attach = state?.items.find((i) => i.id === 'attach-file')
+		if (attach) state?.select(attach)
+		expect(attachFile).toHaveBeenCalledOnce()
+		editor.destroy()
+	})
+
+	it('stays closed mid-word and without the option', async () => {
+		const withMenu = await openWithMenu()
+		withMenu.editor.commands.insertContent('and/or')
+		await settle()
+		expect(withMenu.states).toHaveLength(0)
+		withMenu.editor.destroy()
+
+		const plain = await open('')
+		plain.editor.commands.insertContent('/')
+		await settle()
+		expect(plain.editor.storage.suggestion).toBeUndefined()
+		plain.editor.destroy()
 	})
 })

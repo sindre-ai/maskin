@@ -9,6 +9,12 @@ import type { EditorState } from '@tiptap/pm/state'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'react'
 import { MarkdownEditor } from './editor'
+import {
+	SlashCommand,
+	type SlashMenuState,
+	type SlashMenuView,
+	buildChatSlashItems,
+} from './slash-command'
 
 export interface ComposerTag {
 	id: string
@@ -55,6 +61,14 @@ export interface MarkdownComposerHandle {
 	insertMention(tag: ComposerTag): void
 }
 
+export interface ComposerSlashMenu {
+	/** Paints the menu. apps/web supplies it, so this package keeps no UI dependency. */
+	createView: (state: SlashMenuState) => SlashMenuView
+	/** Opens the file picker, for the menu's "Attach a file" row. */
+	attachFile: () => void
+	onCommandUsed?: (commandId: string) => void
+}
+
 export interface MarkdownComposerProps {
 	/** The markdown the box opens with. Read once: later changes go through the handle. */
 	value: string
@@ -66,6 +80,8 @@ export interface MarkdownComposerProps {
 	readOnly?: boolean
 	autoFocus?: boolean
 	className?: string
+	/** Typing "/" opens a short menu (code block, quote, lists, attach a file). Read once. */
+	slashMenu?: ComposerSlashMenu
 	/** The class a chip is drawn with. */
 	chipClass: (id: string) => string
 	/** Finds the "@query" at the end of the text before the caret, or null. */
@@ -336,7 +352,20 @@ export function createComposerExtensions(handlers: { current: Handlers }) {
 		lastActive = key
 		handlers.current.props.onActiveFormatsChange?.(active)
 	}
+	const slashMenu = handlers.current.props.slashMenu
 	const extensions = [
+		// Tiptap runs the plugins of later extensions first, so the menu is lifted above the box's
+		// own key handler: a key the menu uses never reaches the send rule. A key it does not use
+		// (Enter with no row to pick) still does.
+		...(slashMenu
+			? [
+					SlashCommand.extend({ priority: 200 }).configure({
+						createView: slashMenu.createView,
+						items: buildChatSlashItems(() => handlers.current.props.slashMenu?.attachFile()),
+						onCommandUsed: (id) => handlers.current.props.slashMenu?.onCommandUsed?.(id),
+					}),
+				]
+			: []),
 		createMentionNode((id) => handlers.current.props.chipClass(id)),
 		Extension.create({
 			name: 'composerBehaviour',

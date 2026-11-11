@@ -1,25 +1,13 @@
 import { createSlashMenuView } from '@/components/shared/slash-menu'
 import { editorTelemetry } from '@/lib/editor-events'
-import { SlashCommand, buildChatSlashItems } from '@maskin/markdown/react/slash-command'
+import type { ComposerSlashMenu } from '@maskin/markdown/react/composer'
 
-// The slash menu for the chat message box (items live in @maskin/markdown).
-
-/** Add it to the message box editor through its `extensions` prop. */
-export function chatSlashCommand({
-	attachFile,
-	surface,
-	objectId,
-}: {
-	attachFile: () => void
-	surface?: string
-	objectId?: string
-}) {
-	return SlashCommand.configure({
-		createView: createSlashMenuView,
-		items: buildChatSlashItems(attachFile),
-		onCommandUsed: (commandId) =>
-			editorTelemetry({ variant: 'notification', surface, objectId }).emitSlashCommand({
-				commandId,
-			}),
-	})
+// The look and the usage event of the chat message box's slash menu. The items live in
+// @maskin/markdown (buildChatSlashItems). Loaded next to the box, so cmdk stays out of the main chunk.
+export const chatSlashMenu: Pick<ComposerSlashMenu, 'createView' | 'onCommandUsed'> = {
+	createView: createSlashMenuView,
+	onCommandUsed: (commandId) =>
+		editorTelemetry({ variant: 'notification', surface: 'chat-composer' }).emitSlashCommand({
+			commandId,
+		}),
 }
