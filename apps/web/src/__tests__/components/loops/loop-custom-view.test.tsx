@@ -623,4 +623,41 @@ describe('LoopCustomView', () => {
 			expect(vi.mocked(api.data.nextChange)).toHaveBeenCalledTimes(2)
 		})
 	})
+
+	describe('list sources', () => {
+		const LIST_VIEW = `<html><head></head><body>
+<script id="maskin-sources" type="application/json">{"opps":{"list":"opportunities"},"by_status":{"type":"task","group_by":"status"}}</script>
+<h1>Pipeline</h1></body></html>`
+
+		it('refuses a list on the loop page: no rows, no query, and the rest of the view still works', async () => {
+			useFileMock.mockReturnValue({
+				data: file({ content: LIST_VIEW }),
+				isLoading: false,
+				isError: false,
+			})
+			vi.mocked(api.data.query).mockResolvedValue({ total: { count: 1, value: 1 } } as never)
+			const { container, onFailure } = renderView()
+			const { view } = viewWindowOf(container)
+
+			await act(async () => {
+				window.dispatchEvent(
+					new MessageEvent('message', {
+						data: { type: BRIDGE_QUERY_MESSAGE, id: 1, name: 'opps' },
+						source: view as unknown as Window,
+					}),
+				)
+			})
+
+			expect(onFailure).not.toHaveBeenCalled()
+			expect(api.data.query).not.toHaveBeenCalled()
+			expect(view.postMessage).toHaveBeenCalledWith(
+				{
+					type: 'maskin:bridge:result',
+					id: 1,
+					error: "This view asks for data the app doesn't offer",
+				},
+				'*',
+			)
+		})
+	})
 })

@@ -2,6 +2,7 @@ import {
 	TAG_ID_ATTR,
 	TAG_LABEL_ATTR,
 	editSegments,
+	isTaggable,
 	readTagDom,
 	splitTextByTags,
 	tagLabel,
@@ -12,6 +13,17 @@ const CTO = { id: 'a-cto', name: 'CTO' }
 const DEV = { id: 'a-dev', name: 'Developer' }
 const labels: Record<string, string> = { 'a-cto': 'CTO', 'a-dev': 'Developer' }
 const labelOf = (id: string) => labels[id] ?? null
+
+describe('isTaggable', () => {
+	it('lets people and agents be tagged, built-in agents like the Chief of Staff included', () => {
+		expect(isTaggable({ type: 'human' })).toBe(true)
+		expect(isTaggable({ type: 'agent' })).toBe(true)
+	})
+
+	it('keeps integration actors out', () => {
+		expect(isTaggable({ type: 'system' })).toBe(false)
+	})
+})
 
 describe('tagLabel', () => {
 	it('is the plain name when nobody else shares it', () => {

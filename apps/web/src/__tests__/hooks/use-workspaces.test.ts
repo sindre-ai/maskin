@@ -148,6 +148,23 @@ describe('useWorkspaceMembers', () => {
 	})
 })
 
+describe('useWorkspaceMembers ordering', () => {
+	it('returns members A to Z by name, with a stable order for equal names', async () => {
+		vi.mocked(api.workspaces.members.list).mockResolvedValue([
+			buildMember({ actorId: 'a-3', name: 'Workspace Coach' }),
+			buildMember({ actorId: 'a-2', name: 'Sebastian Krumhausen' }),
+			buildMember({ actorId: 'a-5', name: 'chief of staff' }),
+			buildMember({ actorId: 'a-1', name: 'Bookkeeper' }),
+			buildMember({ actorId: 'a-4', name: 'Bookkeeper' }),
+		])
+
+		const { result } = renderHook(() => useWorkspaceMembers(workspaceId), { wrapper: TestWrapper })
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(result.current.data?.map((m) => m.actorId)).toEqual(['a-1', 'a-4', 'a-5', 'a-2', 'a-3'])
+	})
+})
+
 describe('useAddWorkspaceMember', () => {
 	it('exposes error when add fails', async () => {
 		vi.mocked(api.workspaces.members.add).mockRejectedValue(new Error('Conflict'))

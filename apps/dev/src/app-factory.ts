@@ -88,6 +88,7 @@ import miniAppRegenRoutes from './routes/mini-app-regen'
 import notificationPreferencesRoutes from './routes/notification-preferences'
 import notificationsRoutes from './routes/notifications'
 import oauthRoutes from './routes/oauth'
+import oauthClientMetadataRoutes from './routes/oauth-client-metadata'
 import oauthDiscoveryRoutes from './routes/oauth-discovery'
 import oauthTokenRoutes from './routes/oauth-token'
 import objectApprovalsRoutes from './routes/object-approvals'
@@ -639,6 +640,10 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// Claude sign-in discovery documents. Mounted before the SPA fallthrough below, which would
 	// otherwise answer these paths with index.html.
 	app.route('/', oauthDiscoveryRoutes)
+
+	// Client ID Metadata Document for Vercel's MCP sign-in. Public, and before the SPA fallthrough for
+	// the same reason as the discovery documents above.
+	app.route('/', oauthClientMetadataRoutes)
 
 	// The consent page is a web route (apps/web/src/routes/oauth.authorize.tsx), served by the SPA
 	// fallthrough below. A page with an Allow button is a clickjacking target, so it refuses to be

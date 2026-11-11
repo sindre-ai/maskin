@@ -7,6 +7,7 @@ import { findChiefOfStaffId } from '../lib/chief-of-staff'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { buildForYouItems, forYouItemSchema } from '../lib/for-you-items'
+import { buildForYouRecap, forYouRecapSchema } from '../lib/for-you-recap'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { isWorkspaceMember } from '../lib/workspace-auth'
 
@@ -78,6 +79,41 @@ app.openapi(listForYouRoute, async (c) => {
 	}
 
 	return c.json({ items: await buildForYouItems(db, workspaceId, actorId) }, 200)
+})
+
+const recapRoute = createRoute({
+	method: 'get',
+	path: '/recap',
+	tags: ['For You'],
+	summary: 'What changed since the person last looked: facts the app turns into a sentence',
+	request: {
+		headers: workspaceIdHeader,
+		query: z.object({
+			since: z
+				.string()
+				.datetime({ offset: true })
+				.describe(
+					'When the person last looked (ISO 8601). Kept on the device. Anything older than 7 days is cut to 7 days.',
+				),
+		}),
+	},
+	responses: {
+		200: {
+			description: 'Counts and a few named items. Zero counts when nothing is new.',
+			content: { 'application/json': { schema: forYouRecapSchema } },
+		},
+		400: {
+			description: 'Missing workspace ID or a bad since time',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(recapRoute, async (c) => {
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { since } = c.req.valid('query')
+	const recap = await buildForYouRecap(c.get('db'), workspaceId, c.get('actorId'), new Date(since))
+	return c.json(recap, 200)
 })
 
 const dismissBodySchema = z

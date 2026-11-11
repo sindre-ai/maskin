@@ -111,7 +111,7 @@ describe('KeychainRequestCard', () => {
 		expect(screen.getByText(/To read invoices\./)).toBeInTheDocument()
 		expect(screen.getByLabelText('Password')).toHaveAttribute('type', 'password')
 		// Shared with is one summary row until Change opens the list.
-		expect(screen.getByText('Bookkeeper, Analyst')).toBeInTheDocument()
+		expect(screen.getByText('Analyst, Bookkeeper')).toBeInTheDocument()
 		expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
 		await openSharing(user)
 		expect(screen.getByRole('checkbox', { name: 'Bookkeeper' })).toBeChecked()

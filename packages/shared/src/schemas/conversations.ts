@@ -306,6 +306,12 @@ export const messageIntegrationAccessRequestSchema = z.object({
 	provider: z.string().min(1).max(100),
 	/** The name the person knows it by, e.g. "Slack". */
 	display_name: z.string().min(1).max(100),
+	/**
+	 * Which account is being connected, as a person knows it (the mailbox address for Gmail).
+	 * Only set when the provider stores such an address; a card without it shows no account row.
+	 * Never a provider id.
+	 */
+	account: z.string().min(1).max(320).optional(),
 	level: z.enum(INTEGRATION_ACCESS_REQUEST_LEVELS),
 	/** One line on what the agent needs it for. */
 	reason: z.string().min(1).max(300).optional(),
@@ -523,6 +529,12 @@ export const messageMetadataSchema = z.object({
 	 * card reads as answered whenever the chat is opened again.
 	 */
 	card_answer: messageCardAnswerSchema.optional(),
+	/**
+	 * Client-supplied: the message this one quotes (a message id). Stored and returned as sent, so
+	 * an app can jump to the exact original instead of matching on text and author. The id is
+	 * only echoed, never looked up, so it cannot reach into another conversation.
+	 */
+	quoted_message_id: z.number().int().positive().optional(),
 	/** Backend-owned: the helper session whose result this message hands to its sender. */
 	helper_return: z.string().uuid().optional(),
 	/**

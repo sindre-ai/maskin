@@ -465,6 +465,14 @@ describe('prepareBridgedViewHtml', () => {
 		expect(prepared).not.toContain(VIEWER_WHEEL_MESSAGE)
 	})
 
+	it('forwards wheel events to the host when the file viewer asks for it, and only then', () => {
+		const forwarded = prepareBridgedViewHtml(html, { forwardWheel: true })
+		expect(forwarded).toContain(VIEWER_WHEEL_MESSAGE)
+		expect(forwarded).toContain(`parent.parent.postMessage({type:'${VIEWER_WHEEL_MESSAGE}'`)
+		expect(prepareIsolatedViewHtml(html, { forwardWheel: true })).toContain(VIEWER_WHEEL_MESSAGE)
+		expect(prepareIsolatedViewHtml(html)).not.toContain(VIEWER_WHEEL_MESSAGE)
+	})
+
 	it('only trusts results that come from the host, one frame above its parent', () => {
 		const prepared = prepareBridgedViewHtml(html)
 		expect(prepared).toContain('e.source!==parent.parent')
@@ -525,7 +533,30 @@ describe('readViewSources', () => {
 
 	it('treats a document with no sources block as a view with no data', () => {
 		const result = readViewSources('<html><body>static</body></html>')
-		expect(result).toEqual({ ok: true, sources: new Map() })
+		expect(result).toEqual({ ok: true, sources: new Map(), lists: new Map() })
+	})
+
+	it('keeps list sources apart from count sources, so the refresh tick never sees them', () => {
+		const result = readViewSources(
+			doc(
+				'{"by_status":{"type":"task","group_by":"status"},"opps":{"list":"opportunities","params":{"status":["opportunity"]}}}',
+			),
+		)
+		expect(result.ok).toBe(true)
+		if (!result.ok) return
+		expect([...result.sources.keys()]).toEqual(['by_status'])
+		expect([...result.lists.keys()]).toEqual(['opps'])
+		expect(result.lists.get('opps')).toMatchObject({ list: 'opportunities' })
+	})
+
+	it('marks a list the app does not offer as refused instead of failing the whole view', () => {
+		const result = readViewSources(
+			doc('{"people":{"list":"people"},"by_status":{"type":"task","group_by":"status"}}'),
+		)
+		expect(result.ok).toBe(true)
+		if (!result.ok) return
+		expect(result.lists.get('people')).toBeNull()
+		expect(result.sources.has('by_status')).toBe(true)
 	})
 
 	it('does not run scripts while reading', () => {
