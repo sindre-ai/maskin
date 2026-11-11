@@ -68582,6 +68582,15 @@
 											"briefing"
 										]
 									},
+									"tags": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 60
+										},
+										"maxItems": 20
+									},
 									"mime_type": {
 										"type": "string",
 										"minLength": 3,
@@ -68642,6 +68651,12 @@
 											"enum": [
 												"briefing"
 											]
+										},
+										"tags": {
+											"type": "array",
+											"items": {
+												"type": "string"
+											}
 										},
 										"mimeType": {
 											"type": "string"
@@ -68767,6 +68782,7 @@
 										"name",
 										"description",
 										"kind",
+										"tags",
 										"mimeType",
 										"sizeBytes",
 										"storageKey",
@@ -68934,6 +68950,26 @@
 					},
 					{
 						"schema": {
+							"type": "string"
+						},
+						"required": false,
+						"name": "tags",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"enum": [
+								"all",
+								"any"
+							]
+						},
+						"required": false,
+						"name": "tags_match",
+						"in": "query"
+					},
+					{
+						"schema": {
 							"type": "integer",
 							"exclusiveMinimum": 0,
 							"maximum": 200
@@ -69039,6 +69075,12 @@
 													"briefing"
 												]
 											},
+											"tags": {
+												"type": "array",
+												"items": {
+													"type": "string"
+												}
+											},
 											"mimeType": {
 												"type": "string"
 											},
@@ -69066,6 +69108,7 @@
 											"name",
 											"description",
 											"kind",
+											"tags",
 											"mimeType",
 											"sizeBytes",
 											"storageKey",
@@ -69138,6 +69181,53 @@
 				}
 			}
 		},
+		"/api/files/tags": {
+			"get": {
+				"tags": [
+					"Files"
+				],
+				"summary": "List the tags in use in the workspace and how many files carry each",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Tags, most-used first (ties in alphabetical order)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "array",
+									"items": {
+										"type": "object",
+										"properties": {
+											"tag": {
+												"type": "string"
+											},
+											"count": {
+												"type": "integer",
+												"exclusiveMinimum": 0
+											}
+										},
+										"required": [
+											"tag",
+											"count"
+										]
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/files/{id}": {
 			"get": {
 				"tags": [
@@ -69201,6 +69291,12 @@
 											"enum": [
 												"briefing"
 											]
+										},
+										"tags": {
+											"type": "array",
+											"items": {
+												"type": "string"
+											}
 										},
 										"mimeType": {
 											"type": "string"
@@ -69326,6 +69422,7 @@
 										"name",
 										"description",
 										"kind",
+										"tags",
 										"mimeType",
 										"sizeBytes",
 										"storageKey",
@@ -69500,6 +69597,15 @@
 											"briefing"
 										]
 									},
+									"tags": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 60
+										},
+										"maxItems": 20
+									},
 									"mime_type": {
 										"type": "string",
 										"minLength": 3,
@@ -69657,6 +69763,12 @@
 												"briefing"
 											]
 										},
+										"tags": {
+											"type": "array",
+											"items": {
+												"type": "string"
+											}
+										},
 										"mimeType": {
 											"type": "string"
 										},
@@ -69781,6 +69893,7 @@
 										"name",
 										"description",
 										"kind",
+										"tags",
 										"mimeType",
 										"sizeBytes",
 										"storageKey",
@@ -70170,6 +70283,15 @@
 											"briefing"
 										]
 									},
+									"tags": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 60
+										},
+										"maxItems": 20
+									},
 									"mime_type": {
 										"type": "string",
 										"minLength": 3,
@@ -70453,6 +70575,12 @@
 												"briefing"
 											]
 										},
+										"tags": {
+											"type": "array",
+											"items": {
+												"type": "string"
+											}
+										},
 										"mimeType": {
 											"type": "string"
 										},
@@ -70577,6 +70705,7 @@
 										"name",
 										"description",
 										"kind",
+										"tags",
 										"mimeType",
 										"sizeBytes",
 										"storageKey",

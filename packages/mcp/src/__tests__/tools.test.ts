@@ -52,6 +52,7 @@ const ALL_TOOL_NAMES = [
 	'delete_workspace_skill',
 	'create_file',
 	'list_files',
+	'list_file_tags',
 	'get_file',
 	'update_file',
 	'propose_file_changes',
