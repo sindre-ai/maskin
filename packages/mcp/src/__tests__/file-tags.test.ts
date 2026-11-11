@@ -121,6 +121,36 @@ describe('file tags in the MCP file tools', () => {
 		expect(result.structuredContent).toEqual({ tags: counts })
 	})
 
+	it('renames a tag through the rename route', async () => {
+		const result = { from: 'broll', to: 'b-roll', files_changed: 4 }
+		fetchMock.mockImplementation(async () => new Response(JSON.stringify(result)))
+
+		const out = await (handlers.get('rename_file_tag') as Handler)({
+			workspace_id: wsId,
+			from: 'broll',
+			to: 'b-roll',
+		})
+
+		const { url, init, body } = lastCall()
+		expect(url.pathname).toBe('/api/files/tags/rename')
+		expect(init.method).toBe('POST')
+		expect(body).toEqual({ from: 'broll', to: 'b-roll' })
+		expect(JSON.parse(out.content[0]?.text ?? '{}')).toEqual(result)
+	})
+
+	it('merges a tag into another through the merge route', async () => {
+		await (handlers.get('merge_file_tags') as Handler)({
+			workspace_id: wsId,
+			from: 'broll',
+			into: 'b-roll',
+		})
+
+		const { url, init, body } = lastCall()
+		expect(url.pathname).toBe('/api/files/tags/merge')
+		expect(init.method).toBe('POST')
+		expect(body).toEqual({ from: 'broll', into: 'b-roll' })
+	})
+
 	it('accepts a tag list and a match setting on the list_files input', () => {
 		const input = tools.list_files.inputSchema
 		expect(input.safeParse({ tags: ['raw'], tags_match: 'any' }).success).toBe(true)

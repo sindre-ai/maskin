@@ -72,6 +72,23 @@ export function useFileTags(workspaceId: string) {
 	})
 }
 
+/** Renames a tag, or folds it into another, on every file in the workspace. */
+export function useChangeFileTag(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (
+			change:
+				| { kind: 'rename'; from: string; to: string }
+				| { kind: 'merge'; from: string; into: string },
+		) =>
+			change.kind === 'rename'
+				? api.files.renameTag(workspaceId, { from: change.from, to: change.to })
+				: api.files.mergeTags(workspaceId, { from: change.from, into: change.into }),
+		// Every file list and file page may show the old tag, and the tag list changed too.
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.files.all(workspaceId) }),
+	})
+}
+
 function primeFileCaches(queryClient: ReturnType<typeof useQueryClient>, file: FileDetail) {
 	queryClient.setQueryData(queryKeys.files.detail(file.workspaceId, file.id), file)
 	queryClient.invalidateQueries({ queryKey: queryKeys.files.all(file.workspaceId) })

@@ -73,6 +73,27 @@ public struct APIFilesRemote: FilesRemote {
 		return try Self.decode(TagsPatchDTO.self, from: data).tags
 	}
 
+	public func renameTag(from: String, to: String) async throws -> FileTagChange {
+		try await changeTag(path: "api/files/tags/rename", body: ["from": from, "to": to])
+	}
+
+	public func mergeTag(from: String, into: String) async throws -> FileTagChange {
+		try await changeTag(path: "api/files/tags/merge", body: ["from": from, "into": into])
+	}
+
+	private func changeTag(path: String, body: [String: String]) async throws -> FileTagChange {
+		let data = try await send(
+			method: "POST", path: path, body: try JSONEncoder().encode(body),
+			statusMessages: [
+				400: "That isn't a valid tag name.",
+				403: "You don't have permission to change tags.",
+				404: "No file carries this tag any more.",
+				409: "That name is already a tag. Merge into it instead.",
+			])
+		let result = try Self.decode(TagChangeDTO.self, from: data)
+		return FileTagChange(from: result.from, to: result.to, filesChanged: result.files_changed)
+	}
+
 	/// One hand-built request. Built apart from sending so a test can read the path, headers and body.
 	func makeRequest(
 		method: String, path: String, query: [URLQueryItem], body: Data?, idempotencyKey: String?,
@@ -102,7 +123,7 @@ public struct APIFilesRemote: FilesRemote {
 
 	private func send(
 		method: String, path: String, query: [URLQueryItem] = [], body: Data? = nil,
-		idempotencyKey: String? = nil
+		idempotencyKey: String? = nil, statusMessages: [Int: String] = [:]
 	) async throws -> Data {
 		guard let raw else { throw FileError("Tags aren't available here.") }
 		let request = await makeRequest(
@@ -119,6 +140,8 @@ public struct APIFilesRemote: FilesRemote {
 		let status = (response as? HTTPURLResponse)?.statusCode ?? 0
 		switch status {
 		case 200..<300: return data
+		case _ where statusMessages[status] != nil:
+			throw FileError(statusMessages[status] ?? "", isNotFound: status == 404)
 		case 404: throw FileError("This file doesn't exist or you don't have access.", isNotFound: true)
 		default: throw FileError("The server couldn't update tags.")
 		}
@@ -284,6 +307,12 @@ private struct SummaryDTO: Decodable {
 private struct TagCountDTO: Decodable {
 	var tag: String
 	var count: Int
+}
+
+private struct TagChangeDTO: Decodable {
+	var from: String
+	var to: String
+	var files_changed: Int
 }
 
 /// The body of a tag save, and the part of the file the server answers with.

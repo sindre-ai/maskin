@@ -1,3 +1,4 @@
+import { FileTagEditDialog } from '@/components/files/file-tag-edit-dialog'
 import { FilterChip } from '@/components/shared/filter-chip'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -8,11 +9,12 @@ import {
 	ResponsivePopoverContent,
 	ResponsivePopoverTrigger,
 } from '@/components/ui/responsive-popover'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useFileTags } from '@/hooks/use-files'
 import type { FileTagMatch } from '@/lib/api'
 import { sortTagsAlphabetically } from '@/lib/file-tags'
-import { Tag } from 'lucide-react'
-import { useMemo } from 'react'
+import { Pencil, Tag } from 'lucide-react'
+import { useMemo, useState } from 'react'
 
 const MATCH_OPTIONS: Array<{ value: FileTagMatch; label: string }> = [
 	{ value: 'all', label: 'Has all of these' },
@@ -37,7 +39,10 @@ export function FileTagFilter({
 	onTagsChange: (tags: string[]) => void
 	onMatchChange: (match: FileTagMatch) => void
 }) {
+	const canWrite = useCanWrite()
 	const { data: counts } = useFileTags(workspaceId)
+	const [pickerOpen, setPickerOpen] = useState(false)
+	const [editing, setEditing] = useState<string | null>(null)
 	const options = useMemo(() => {
 		const known = new Map((counts ?? []).map((c) => [c.tag, c.count]))
 		// A picked tag no file carries any more stays listed, so it can still be unpicked.
@@ -50,9 +55,15 @@ export function FileTagFilter({
 	const toggle = (tag: string) =>
 		onTagsChange(tags.includes(tag) ? tags.filter((t) => t !== tag) : [...tags, tag])
 
+	// A picked tag that was renamed or merged follows its new name, so the filter keeps matching.
+	const followTag = (from: string, to: string) => {
+		if (!tags.includes(from)) return
+		onTagsChange([...new Set(tags.map((t) => (t === from ? to : t)))])
+	}
+
 	return (
 		<div className="flex flex-wrap items-center gap-2 pb-3" data-testid="file-tag-filter">
-			<ResponsivePopover>
+			<ResponsivePopover open={pickerOpen} onOpenChange={setPickerOpen}>
 				<ResponsivePopoverTrigger asChild>
 					<Button variant="outline" size="sm" className="max-md:h-11" aria-label="Filter by tag">
 						<Tag size={14} />
@@ -100,6 +111,21 @@ export function FileTagFilter({
 									<span className="min-w-0 flex-1 truncate">{tag}</span>
 									<span className="text-xs text-muted-foreground tabular-nums">{count}</span>
 								</Label>
+								{canWrite && count > 0 && (
+									<button
+										type="button"
+										aria-label={`Edit tag ${tag}`}
+										title={`Edit tag ${tag}`}
+										onClick={() => {
+											// The edit dialog replaces the picker rather than stacking on it.
+											setPickerOpen(false)
+											setEditing(tag)
+										}}
+										className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground max-md:p-4"
+									>
+										<Pencil size={12} />
+									</button>
+								)}
 							</li>
 						))}
 					</ul>
@@ -108,6 +134,13 @@ export function FileTagFilter({
 			{tags.map((tag) => (
 				<FilterChip key={tag} label="Tag" value={tag} preserveCase onRemove={() => toggle(tag)} />
 			))}
+			<FileTagEditDialog
+				workspaceId={workspaceId}
+				tag={editing}
+				otherTags={options.filter((o) => o.tag !== editing && o.count > 0).map((o) => o.tag)}
+				onClose={() => setEditing(null)}
+				onChanged={followTag}
+			/>
 		</div>
 	)
 }

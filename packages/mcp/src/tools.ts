@@ -1274,6 +1274,24 @@ export const tools = {
 			workspace_id: optionalWorkspaceId,
 		}),
 	},
+	rename_file_tag: {
+		description:
+			'Rename a tag on every file in the workspace at once. All or nothing: either every file that carries `from` now carries `to`, or nothing changes. Fails if `to` is already a tag (use merge_file_tags to fold one tag into an existing one) or if no file carries `from`. Names are trimmed and lowercased. Returns `{ from, to, files_changed }`. The workspace tag guide says only the Knowledge Curator renames tags: if you are not the curator, ask it instead of calling this.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			from: z.string().describe('The tag to rename. Must be on at least one file.'),
+			to: z.string().describe('The new name. Up to 60 characters, no commas.'),
+		}),
+	},
+	merge_file_tags: {
+		description:
+			'Merge one tag into another on every file in the workspace at once. Every file with `from` gets `into` (a file that already has both keeps one copy), and `from` disappears from list_file_tags. All or nothing. `into` does not have to exist yet. Fails if no file carries `from`. Returns `{ from, to, files_changed }`. The workspace tag guide says only the Knowledge Curator merges tags: if you are not the curator, ask it instead of calling this.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			from: z.string().describe('The tag to fold away. Must be on at least one file.'),
+			into: z.string().describe('The tag every file with `from` should carry instead.'),
+		}),
+	},
 	get_file: {
 		description:
 			'Get a file with its content and a viewer URL. Over 50 MB: `content` is empty, `contentOmitted: true`, and a short-lived `downloadUrl` is given. `encoding` is "utf8" for text types (`content` is the raw string) or "base64" for binary. `annotations` are pinned review comments humans left on the rendered file (CSS `selector`, `bounds`, `comment`); read them to see what a reviewer flagged. `contentHash` goes in `if_match` on update_file so your write is refused if someone saved in between. Any HTML page (deck, website, dashboard, custom view) can be mostly embedded fonts and inline CSS or script, so raw `content` is huge and unreadable: pass `format: "text"` for `content_text`, the page\'s words as markdown (headings, bullets, tables, links, button and field labels, slide blocks with notes for a deck), plus `title`, `meta_description`, `json_ld`, `source_object_id`, `contentHash`, `extracted: true`. A `note` means the page is drawn by script: read the raw file. A large raw HTML read that is mostly embedded data opens with `readable_with`. Other text files are unchanged by format "text"; binary ignores it. To change a file use update_file with `edits` or `content`. There is no offset or limit; use format "text" rather than paging raw bytes.',

@@ -350,6 +350,8 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'POST /api/files/:id/proposals/:pid/changes/:cid/reject',
 	'POST /api/files/:id/proposals/:pid/changes/accept',
 	'POST /api/files/:id/proposals/:pid/changes/reject',
+	'POST /api/files/tags/merge',
+	'POST /api/files/tags/rename',
 	'POST /api/files/uploads',
 	'POST /api/files/uploads/:id/complete',
 	'POST /api/for-you/dismissals',

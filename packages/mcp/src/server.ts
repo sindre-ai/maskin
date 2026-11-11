@@ -6147,6 +6147,54 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'rename_file_tag',
+		{
+			description: tools.rename_file_tag.description,
+			inputSchema: tools.rename_file_tag.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const result = await apiCall(
+				config,
+				'POST',
+				'/api/files/tags/rename',
+				{ from: args.from, to: args.to },
+				{ workspaceId: wsId },
+			)
+			return {
+				_meta: meta('rename_file_tag', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'merge_file_tags',
+		{
+			description: tools.merge_file_tags.description,
+			inputSchema: tools.merge_file_tags.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const result = await apiCall(
+				config,
+				'POST',
+				'/api/files/tags/merge',
+				{ from: args.from, into: args.into },
+				{ workspaceId: wsId },
+			)
+			return {
+				_meta: meta('merge_file_tags', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'get_file',
 		{
 			description: tools.get_file.description,

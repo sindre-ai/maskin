@@ -308,6 +308,26 @@ export const fileTagCountSchema = z.object({
 
 export type FileTagCount = z.infer<typeof fileTagCountSchema>
 
+// POST /files/tags/rename and /files/tags/merge. Both change a tag on every file in the
+// workspace at once. The names are trimmed and lowercased like tags on write.
+export const renameFileTagSchema = z.object({
+	from: fileTagSchema,
+	to: fileTagSchema,
+})
+
+export const mergeFileTagsSchema = z.object({
+	from: fileTagSchema,
+	into: fileTagSchema,
+})
+
+export const fileTagChangeResultSchema = z.object({
+	from: z.string(),
+	to: z.string(),
+	files_changed: z.number().int().nonnegative(),
+})
+
+export type FileTagChangeResult = z.infer<typeof fileTagChangeResultSchema>
+
 // GET /files/:id?format=text. `raw` (default) returns the stored bytes.
 export const fileReadFormatSchema = z.enum(['raw', 'text'])
 export type FileReadFormat = z.infer<typeof fileReadFormatSchema>

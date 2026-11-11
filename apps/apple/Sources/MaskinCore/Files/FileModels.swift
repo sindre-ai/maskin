@@ -223,6 +223,19 @@ public struct FileTagCount: Identifiable, Sendable, Equatable {
 	}
 }
 
+/// What a rename or merge did: the tag it removed, the tag it left, and how many files changed.
+public struct FileTagChange: Sendable, Equatable {
+	public var from: String
+	public var to: String
+	public var filesChanged: Int
+
+	public init(from: String, to: String, filesChanged: Int) {
+		self.from = from
+		self.to = to
+		self.filesChanged = filesChanged
+	}
+}
+
 public protocol FilesRemote: Sendable {
 	/// `GET /api/files/{id}`: metadata and bytes (inline, utf8 or base64) in one response.
 	func file(id: String) async throws -> FileDetail
@@ -242,6 +255,11 @@ public protocol FilesRemote: Sendable {
 	func tags(ofFile id: String) async throws -> [String]
 	/// `PATCH /api/files/{id}` with the complete tag list. The server replaces it. Returns what it stored.
 	func saveTags(fileId: String, tags: [String], idempotencyKey: String) async throws -> [String]
+	/// `POST /api/files/tags/rename`: every file with `from` carries `to` instead. Fails if `to` is
+	/// already a tag.
+	func renameTag(from: String, to: String) async throws -> FileTagChange
+	/// `POST /api/files/tags/merge`: every file with `from` gets `into`, and `from` is gone.
+	func mergeTag(from: String, into: String) async throws -> FileTagChange
 	/// `PATCH /api/files/{id}` with the complete annotation list. The server replaces the list, so
 	/// callers always send everything. Returns what the server stored.
 	func saveAnnotations(
@@ -270,6 +288,14 @@ extension FilesRemote {
 	}
 
 	public func saveTags(fileId: String, tags: [String], idempotencyKey: String) async throws -> [String] {
+		throw FileError("Tags aren't available here.")
+	}
+
+	public func renameTag(from: String, to: String) async throws -> FileTagChange {
+		throw FileError("Tags aren't available here.")
+	}
+
+	public func mergeTag(from: String, into: String) async throws -> FileTagChange {
 		throw FileError("Tags aren't available here.")
 	}
 
