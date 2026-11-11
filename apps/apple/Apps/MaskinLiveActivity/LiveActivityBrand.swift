@@ -47,8 +47,10 @@ struct LiveActivityAgentTile: View {
 				LiveActivityMarkTile(size: size)
 			} else {
 				let shape = RoundedRectangle(cornerRadius: size * 0.3, style: .continuous)
-				Text(Self.initials(name))
-					.font(MaskinTypeface.sans(size * 0.4, weight: .bold, relativeTo: .caption))
+				let initials = Self.initials(name)
+				Text(initials)
+					.font(MaskinTypeface.sans(size * (initials.count > 2 ? 0.3 : 0.4), weight: .bold, relativeTo: .caption))
+					.lineLimit(1)
 					.foregroundStyle(MaskinColor.avFg)
 					.frame(width: size, height: size)
 					.background(MaskinGradient.avatar, in: shape)
@@ -58,10 +60,12 @@ struct LiveActivityAgentTile: View {
 	}
 
 	/// First two letters of the first word ("Chief of Staff" gives "Ch" in the mockup's "Co" style).
+	/// An all-caps three-letter word (CTO, PMM) keeps its three letters as written.
 	static func initials(_ name: String) -> String {
 		let word = name.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? "?"
 		let letters = word.filter { $0.isLetter || $0.isNumber }
 		guard let first = letters.first else { return "?" }
+		if letters.count == 3, letters.allSatisfy({ $0.isLetter && $0.isUppercase }) { return letters }
 		return String(first).uppercased() + letters.dropFirst().prefix(1).lowercased()
 	}
 }
