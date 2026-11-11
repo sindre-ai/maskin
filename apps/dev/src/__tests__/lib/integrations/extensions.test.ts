@@ -369,9 +369,8 @@ describe('verifyExtensionSignature (digestEncoding)', () => {
 			digestEncoding: 'base64',
 			eventMap,
 		})
-		const digest = createHmac('sha256', secret).update(body)
-		const base64 = digest.copy().digest('base64')
-		const hex = digest.digest('hex')
+		const base64 = createHmac('sha256', secret).update(body).digest('base64')
+		const hex = createHmac('sha256', secret).update(body).digest('hex')
 		const check = (sig: string) =>
 			verifyExtensionSignature(handler, cfg, body, { 'x-shopify-hmac-sha256': sig }, secret)
 		expect(check(base64)).toBe(true)
