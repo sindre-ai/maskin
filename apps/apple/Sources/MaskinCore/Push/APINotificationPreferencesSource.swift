@@ -45,6 +45,7 @@ public struct APINotificationPreferencesSource: NotificationPreferencesAPI {
 			emailDigestEnabled: body.email_digest_enabled,
 			emailFlowActivity: body.email_categories.flow_activity,
 			marketplacePicksEnabled: body.marketplace_picks_enabled,
+			emailRhythm: NotificationPreferences.EmailRhythm(rawValue: body.email_rhythm.rawValue) ?? .daily,
 			mutedWorkspaceIds: body.muted_workspace_ids)
 	}
 
@@ -113,6 +114,8 @@ public struct APINotificationPreferencesSource: NotificationPreferencesAPI {
 		var email_categories: EmailCategories?
 		/// Absent from a server that predates Marketplace picks.
 		var marketplace_picks_enabled: Bool?
+		/// Absent from a server that predates the rhythm; that means daily.
+		var email_rhythm: String?
 		var muted_workspace_ids: [String]
 
 		var model: NotificationPreferences {
@@ -127,6 +130,7 @@ public struct APINotificationPreferencesSource: NotificationPreferencesAPI {
 				emailDigestEnabled: email_digest_enabled ?? false,
 				emailFlowActivity: email_categories?.flow_activity ?? false,
 				marketplacePicksEnabled: marketplace_picks_enabled ?? false,
+				emailRhythm: email_rhythm.flatMap(NotificationPreferences.EmailRhythm.init(rawValue:)) ?? .daily,
 				mutedWorkspaceIds: muted_workspace_ids)
 		}
 	}

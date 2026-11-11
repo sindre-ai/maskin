@@ -412,3 +412,104 @@ describe('summary email: claim and skips', () => {
 		expect(sendEmail).not.toHaveBeenCalled()
 	})
 })
+
+describe('summary email: weekly rhythm', () => {
+	const weeklyRow = (
+		actorId: string,
+		over: Partial<typeof notificationPreferences.$inferInsert> = {},
+	) =>
+		db.insert(notificationPreferences).values({
+			actorId,
+			emailDigestEnabled: true,
+			emailRhythm: 'weekly',
+			emailOnboardingStep: 3,
+			...over,
+		})
+
+	it('sends one mail when the last send is 6 days back, not at 5, and then not again that week', async () => {
+		const p = await person({ daysOld: 40 })
+		await weeklyRow(p.actorId, { emailLastSentOn: '2026-03-05' }) // 5 days before NOW
+
+		await new BriefingEmailScheduler(db, ENV).tick(NOW)
+		expect(sentTo(p.email)).toHaveLength(0)
+
+		await new BriefingEmailScheduler(db, ENV).tick(new Date(NOW.getTime() + DAY)) // 6 days
+		expect(sentTo(p.email)).toHaveLength(1)
+		expect(await prefsRow(p.actorId)).toMatchObject({ emailLastSentOn: '2026-03-11' })
+
+		for (let d = 2; d <= 6; d++) {
+			await new BriefingEmailScheduler(db, ENV).tick(new Date(NOW.getTime() + d * DAY))
+		}
+		expect(sentTo(p.email)).toHaveLength(1)
+		await new BriefingEmailScheduler(db, ENV).tick(new Date(NOW.getTime() + 7 * DAY))
+		expect(sentTo(p.email)).toHaveLength(2)
+	})
+
+	it('an empty week sends nothing and does not use up the week', async () => {
+		const p = await person({ daysOld: 40, card: false })
+		await weeklyRow(p.actorId, { emailLastSentOn: '2026-03-03' }) // 7 days back, nothing to say
+
+		await new BriefingEmailScheduler(db, ENV).tick(NOW)
+		expect(sentTo(p.email)).toHaveLength(0)
+		expect(await prefsRow(p.actorId)).toMatchObject({ emailLastSentOn: '2026-03-03' })
+
+		// Something now waits: the very next tick sends, no further wait.
+		const agent = await insertActor(db, { type: 'agent', name: 'Researcher' })
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: p.workspaceId, actorId: agent.id as string, role: 'member' })
+		await insertNotification(db, p.workspaceId, agent.id as string, {
+			targetActorId: p.actorId,
+			type: 'needs_input',
+			status: 'pending',
+			metadata: { kind: FOR_YOU_KIND, rank: 1, headline: 'Approve the launch email' },
+		})
+		await new BriefingEmailScheduler(db, ENV).tick(new Date(NOW.getTime() + DAY))
+		expect(sentTo(p.email)).toHaveLength(1)
+	})
+
+	it('an empty rhythm means daily', async () => {
+		const p = await person({ daysOld: 40 })
+		await db.insert(notificationPreferences).values({
+			actorId: p.actorId,
+			emailDigestEnabled: true,
+			emailOnboardingStep: 3,
+			emailLastSentOn: '2026-03-09', // yesterday
+		})
+		await new BriefingEmailScheduler(db, ENV).tick(NOW)
+		expect(sentTo(p.email)).toHaveLength(1)
+	})
+
+	it('a weekly mail looks back over the week and the first three mails keep their teaching blocks in order', async () => {
+		const p = await person({ daysOld: 20 })
+		await db.insert(notificationPreferences).values({
+			actorId: p.actorId,
+			emailDigestEnabled: true,
+			emailRhythm: 'weekly',
+		})
+		const agent = await insertActor(db, { type: 'agent', name: 'Researcher' })
+		const o = await insertObject(db, p.workspaceId, p.actorId, { title: 'Report from 5 days ago' })
+		await insertSession(db, p.workspaceId, agent.id as string, p.actorId, {
+			status: 'completed',
+			interactive: false,
+			initiatedFromObjectId: o?.id,
+			completedAt: new Date(NOW.getTime() - 5 * DAY),
+		})
+
+		const days = [0, 6, 12]
+		for (const d of days) {
+			await new BriefingEmailScheduler(db, ENV).tick(new Date(NOW.getTime() + d * DAY))
+		}
+		// Not one a day: 5 days after the first, nothing.
+		await new BriefingEmailScheduler(db, ENV).tick(new Date(NOW.getTime() + 15 * DAY))
+
+		const texts = sentTo(p.email).map(([m]) => m.text as string)
+		expect(texts).toHaveLength(3)
+		expect(texts[0]).toContain(STEP_LESSON[1])
+		expect(texts[1]).toContain(STEP_LESSON[2])
+		expect(texts[2]).toContain(STEP_LESSON[3])
+		// The first weekly mail reaches back 7 days, past the daily 24 hours.
+		expect(texts[0]).toContain("Researcher finished 'Report from 5 days ago'")
+		expect(await prefsRow(p.actorId)).toMatchObject({ emailOnboardingStep: 3 })
+	})
+})

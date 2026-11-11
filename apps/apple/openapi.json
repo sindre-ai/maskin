@@ -58993,6 +58993,13 @@
 										"marketplace_picks_enabled": {
 											"type": "boolean"
 										},
+										"email_rhythm": {
+											"type": "string",
+											"enum": [
+												"daily",
+												"weekly"
+											]
+										},
 										"muted_workspace_ids": {
 											"type": "array",
 											"items": {
@@ -59019,6 +59026,7 @@
 										"email_digest_enabled",
 										"email_categories",
 										"marketplace_picks_enabled",
+										"email_rhythm",
 										"muted_workspace_ids",
 										"updated_at"
 									]
@@ -59125,6 +59133,13 @@
 									},
 									"marketplace_picks_enabled": {
 										"type": "boolean"
+									},
+									"email_rhythm": {
+										"type": "string",
+										"enum": [
+											"daily",
+											"weekly"
+										]
 									},
 									"muted_workspace_ids": {
 										"type": "array",
@@ -59263,6 +59278,13 @@
 										"marketplace_picks_enabled": {
 											"type": "boolean"
 										},
+										"email_rhythm": {
+											"type": "string",
+											"enum": [
+												"daily",
+												"weekly"
+											]
+										},
 										"muted_workspace_ids": {
 											"type": "array",
 											"items": {
@@ -59289,6 +59311,7 @@
 										"email_digest_enabled",
 										"email_categories",
 										"marketplace_picks_enabled",
+										"email_rhythm",
 										"muted_workspace_ids",
 										"updated_at"
 									]
