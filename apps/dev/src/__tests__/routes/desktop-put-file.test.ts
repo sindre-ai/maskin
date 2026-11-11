@@ -67,7 +67,7 @@ const landed = (over: Partial<{ stdout: string; exit_code: number; stderr: strin
 	status: 200,
 	body: {
 		exit_code: 0,
-		stdout: `/home/user/Downloads/my photo _1_.png\n${HASH}\n2048\n`,
+		stdout: `/home/user/Downloads/my photo _1_.png\n${HASH}\n2048\n5000000000\n`,
 		stderr: '',
 		timed_out: false,
 		...over,
@@ -88,6 +88,7 @@ describe('POST /api/desktop/put-file', () => {
 			size_bytes: 2048,
 			sha256: HASH,
 			hash_verified: true,
+			free_space_bytes: 5000000000,
 		})
 		expect(presignDownload).toHaveBeenCalledWith('ws/key', {
 			expiresInSeconds: 600,
@@ -104,6 +105,8 @@ describe('POST /api/desktop/put-file', () => {
 		expect(body.command).toContain(`d="$HOME"/'Downloads'`)
 		expect(body.command).toContain(`'my photo _1_.png'`)
 		expect(body.command).toContain(`'${URL_WITH_SIGNATURE}'`)
+		// Room needed is the file plus 1 GB.
+		expect(body.command).toContain(`need=${2048 + 1024 ** 3}`)
 		// The event names the file and path, never the download URL.
 		expect(inserts[0]).toMatchObject({
 			data: { agent_id: AGENT, control: 'put_file', file_id: FILE_ID },
@@ -148,7 +151,7 @@ describe('POST /api/desktop/put-file', () => {
 	it('refuses a file whose hash differs from the stored one', async () => {
 		const { app, inserts } = build({
 			control: vi.fn(async () =>
-				landed({ stdout: `/home/user/Downloads/x.png\n${'b'.repeat(64)}\n2048\n` }),
+				landed({ stdout: `/home/user/Downloads/x.png\n${'b'.repeat(64)}\n2048\n1\n` }),
 			),
 		})
 
@@ -160,7 +163,9 @@ describe('POST /api/desktop/put-file', () => {
 
 	it('refuses a file whose size differs from the stored one', async () => {
 		const { app } = build({
-			control: vi.fn(async () => landed({ stdout: `/home/user/Downloads/x.png\n${HASH}\n10\n` })),
+			control: vi.fn(async () =>
+				landed({ stdout: `/home/user/Downloads/x.png\n${HASH}\n10\n1\n` }),
+			),
 		})
 
 		expect((await put(app, { file_id: FILE_ID })).status).toBe(502)
@@ -170,7 +175,7 @@ describe('POST /api/desktop/put-file', () => {
 		const { app } = build({
 			fileRows: [{ ...file, contentHash: null }],
 			control: vi.fn(async () =>
-				landed({ stdout: `/home/user/Downloads/x.png\n${'c'.repeat(64)}\n2048\n` }),
+				landed({ stdout: `/home/user/Downloads/x.png\n${'c'.repeat(64)}\n2048\n1\n` }),
 			),
 		})
 
@@ -197,5 +202,42 @@ describe('POST /api/desktop/put-file', () => {
 		expect(res.status).toBe(502)
 		expect(text).not.toContain('Signature')
 		expect(text).toContain('<url>')
+	})
+
+	it('refuses with a plain message, and downloads nothing, when there is no room after cleanup', async () => {
+		const { app, inserts } = build({
+			control: vi.fn(async () => landed({ exit_code: 42, stdout: 'NOROOM 300000000\n' })),
+		})
+
+		const res = await put(app, { file_id: FILE_ID })
+		const text = await res.text()
+
+		expect(res.status).toBe(409)
+		// Needs 2 KB plus 1 GB, and 286 MB is free.
+		expect(text).toContain('needs 1.0 GB free')
+		expect(text).toContain('286 MB is free')
+		expect(text).toContain('Nothing was downloaded')
+		expect(text).not.toContain('Signature')
+		expect(inserts).toHaveLength(0)
+	})
+
+	it('gives a plain message, not the raw error, when the disk fills during the download', async () => {
+		const { app } = build({
+			control: vi.fn(async () =>
+				landed({
+					exit_code: 3,
+					stdout: '',
+					stderr: `wget: write error (No space left on device) ${URL_WITH_SIGNATURE}`,
+				}),
+			),
+		})
+
+		const res = await put(app, { file_id: FILE_ID })
+		const text = await res.text()
+
+		expect(res.status).toBe(502)
+		expect(text).toContain('ran out of disk space')
+		expect(text).not.toContain('wget')
+		expect(text).not.toContain('Signature')
 	})
 })
