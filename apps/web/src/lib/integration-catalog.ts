@@ -20,6 +20,7 @@ interface CatalogEntry {
 }
 
 const CATALOG: Record<string, CatalogEntry> = {
+	attio: { category: 'Sales & payments', domain: 'attio.com' },
 	github: { category: 'Code', domain: 'github.com' },
 	gmail: { category: 'Email & calendar', domain: 'gmail.com' },
 	'google-calendar': { category: 'Email & calendar', domain: 'calendar.google.com' },
@@ -34,6 +35,7 @@ const CATALOG: Record<string, CatalogEntry> = {
 	resend: { category: 'Email & calendar', domain: 'resend.com' },
 	skjald: { category: 'Docs & data' },
 	slack: { category: 'Chat & social', domain: 'slack.com' },
+	stripe: { category: 'Sales & payments', domain: 'stripe.com' },
 	ubersuggest: { category: 'Analytics', domain: 'neilpatel.com' },
 }
 

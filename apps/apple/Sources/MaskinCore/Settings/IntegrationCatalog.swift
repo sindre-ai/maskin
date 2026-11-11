@@ -17,6 +17,7 @@ public enum IntegrationCategory: String, CaseIterable, Identifiable, Sendable {
 	public var label: String { rawValue }
 
 	private static let byProvider: [String: IntegrationCategory] = [
+		"attio": .salesAndPayments,
 		"github": .code,
 		"gmail": .emailAndCalendar,
 		"google-calendar": .emailAndCalendar,
@@ -31,6 +32,7 @@ public enum IntegrationCategory: String, CaseIterable, Identifiable, Sendable {
 		"resend": .emailAndCalendar,
 		"skjald": .docsAndData,
 		"slack": .chatAndSocial,
+		"stripe": .salesAndPayments,
 		"ubersuggest": .analytics,
 	]
 

@@ -8,6 +8,8 @@ describe('categoryFor', () => {
 		expect(categoryFor('github')).toBe('Code')
 		expect(categoryFor('custom-mcp')).toBe('Custom')
 		expect(categoryFor('notion')).toBe('Docs & data')
+		expect(categoryFor('stripe')).toBe('Sales & payments')
+		expect(categoryFor('attio')).toBe('Sales & payments')
 	})
 
 	it('lists a provider the catalog does not know under Docs & data', () => {
@@ -19,6 +21,7 @@ describe('logoDomainFor', () => {
 	it('returns the site whose icon draws the logo, or nothing', () => {
 		expect(logoDomainFor('slack')).toBe('slack.com')
 		expect(logoDomainFor('notion')).toBe('notion.so')
+		expect(logoDomainFor('stripe')).toBe('stripe.com')
 		expect(logoDomainFor('skjald')).toBeUndefined()
 	})
 })
