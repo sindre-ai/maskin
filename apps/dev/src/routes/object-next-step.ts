@@ -25,17 +25,6 @@ type Env = {
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
-const stepErrorResponses = {
-	400: {
-		description: 'Invalid step: a rule was broken (see the message)',
-		content: { 'application/json': { schema: errorSchema } },
-	},
-	404: {
-		description: 'Object not found, or it has no open or blocked step to change',
-		content: { 'application/json': { schema: errorSchema } },
-	},
-} as const
-
 /** The object's workspace, once the caller is allowed to write in it. Null reads as 404. */
 async function writableObject(db: Database, actorId: string, objectId: string) {
 	const [object] = await db
@@ -64,7 +53,14 @@ const setRoute = createRoute({
 			description: 'The new step',
 			content: { 'application/json': { schema: nextStepResponseSchema } },
 		},
-		...stepErrorResponses,
+		400: {
+			description: 'Invalid step: a rule was broken (see the message)',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Object not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		409: {
 			description: 'The object already has an open or blocked step',
 			content: { 'application/json': { schema: errorSchema } },
@@ -114,7 +110,14 @@ const updateRoute = createRoute({
 			description: 'The step as it is now (a closed step comes back with its closed_at)',
 			content: { 'application/json': { schema: nextStepResponseSchema } },
 		},
-		...stepErrorResponses,
+		400: {
+			description: 'Invalid step: a rule was broken (see the message)',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Object not found, or it has no open or blocked step to change',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
