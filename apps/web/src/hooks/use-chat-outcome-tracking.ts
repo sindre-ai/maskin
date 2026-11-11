@@ -11,8 +11,11 @@ interface Visit {
 	mine: number
 	agent: number
 	firstReplySent: boolean
-	/** Messages already reported as sent again, so a re-render does not report one twice. */
-	resentIds: Set<number>
+	/**
+	 * How many of their messages were already checked for a re-send. Counted by position, not
+	 * id: a sent message first shows as a row with a temporary id, then as the server's row.
+	 */
+	resentChecked: number
 }
 
 /** A second message inside this window, with no answer in between, counts as sent again. */
@@ -23,7 +26,7 @@ function countMessages(messages: MessageResponse[], myActorId: string | null) {
 	let agent = 0
 	let lastMineAt: number | null = null
 	let firstAgentSessionId: string | null = null
-	const mineSent: Array<{ id: number; at: number }> = []
+	const mineSent: number[] = []
 	const agentAt: number[] = []
 	for (const m of messages) {
 		if (m.kind !== 'message') continue
@@ -35,7 +38,7 @@ function countMessages(messages: MessageResponse[], myActorId: string | null) {
 		} else if (myActorId && m.actorId === myActorId) {
 			mine += 1
 			if (!Number.isNaN(at)) {
-				mineSent.push({ id: m.id, at })
+				mineSent.push(at)
 				if (lastMineAt === null || at > lastMineAt) lastMineAt = at
 			}
 		}
@@ -76,7 +79,7 @@ export function useChatOutcomeTracking(
 				mine,
 				agent,
 				firstReplySent: false,
-				resentIds: new Set(),
+				resentChecked: 0,
 			}
 			return
 		}
@@ -92,19 +95,19 @@ export function useChatOutcomeTracking(
 		}
 		// Only messages written after the chat was opened count, and only a message that
 		// follows another of theirs with no agent message in between.
-		for (let i = Math.max(1, visit.baselineMine); i < mineSent.length; i++) {
+		for (let i = Math.max(1, visit.baselineMine, visit.resentChecked); i < mineSent.length; i++) {
 			const previous = mineSent[i - 1]
 			const current = mineSent[i]
-			if (!previous || !current || visit.resentIds.has(current.id)) continue
-			const gapMs = current.at - previous.at
+			if (!previous || !current) continue
+			const gapMs = current - previous
 			if (gapMs < 0 || gapMs > RESEND_WINDOW_MS) continue
-			if (agentAt.some((at) => at >= previous.at && at <= current.at)) continue
-			visit.resentIds.add(current.id)
+			if (agentAt.some((at) => at >= previous && at <= current)) continue
 			trackChatMessageResent({
 				entity_id: conversationId,
 				seconds_since_previous: Math.round(gapMs / 1000),
 			})
 		}
+		visit.resentChecked = mineSent.length
 	}, [conversationId, messages, loaded])
 
 	useEffect(

@@ -166,6 +166,18 @@ describe('useChatOutcomeTracking', () => {
 		})
 	})
 
+	it('sends chat_message_resent once when the sent message swaps its temporary id for the server one', () => {
+		const first = at(mine(), 0)
+		const optimistic = { ...at(mine(), 20), id: -1 }
+		const saved = { ...at(mine(), 20), id: 500 }
+		const hook = mount([])
+		hook.rerender({ messages: [first], isLoaded: true, id: 'c-1' })
+		hook.rerender({ messages: [first, optimistic], isLoaded: true, id: 'c-1' })
+		hook.rerender({ messages: [first, saved], isLoaded: true, id: 'c-1' })
+
+		expect(trackChatMessageResent).toHaveBeenCalledOnce()
+	})
+
 	it('does not call it a re-send when 60 seconds had passed or an agent answered in between', () => {
 		const first = at(mine(), 0)
 		const late = at(mine(), 90)
