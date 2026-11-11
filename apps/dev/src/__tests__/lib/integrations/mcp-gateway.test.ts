@@ -26,6 +26,7 @@ describe('GATEWAY_PROVIDERS', () => {
 			'atlassian',
 			'attio',
 			'canva',
+			'clickup',
 			'gmail',
 			'google-calendar',
 			'linear',

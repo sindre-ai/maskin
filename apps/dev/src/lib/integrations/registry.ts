@@ -5,6 +5,7 @@ import { config as amplitudeConfig } from './providers/amplitude/config'
 import { config as atlassianConfig } from './providers/atlassian/config'
 import { config as attioConfig } from './providers/attio/config'
 import { config as canvaConfig } from './providers/canva/config'
+import { config as clickupConfig } from './providers/clickup/config'
 import { config as customMcpConfig } from './providers/custom-mcp/config'
 import { githubAuth } from './providers/github/auth'
 // Import provider configs
@@ -209,6 +210,10 @@ providers.set('amplitude', {
 
 providers.set('attio', {
 	config: attioConfig,
+})
+
+providers.set('clickup', {
+	config: clickupConfig,
 })
 
 providers.set('sentry', {
