@@ -2,6 +2,7 @@ import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import {
 	events,
+	agentChatGrants,
 	agentGrants,
 	conversations,
 	integrations,
@@ -429,5 +430,181 @@ describe('POST /integrations/:id/allow-access (Integration)', () => {
 		const slack = await s.integration()
 		expect((await allow(s, slack.id, { sessionId: s.session.id, level: 'admin' })).status).toBe(400)
 		expect(await grantsOf(slack.id)).toEqual([])
+	})
+})
+
+describe('POST /integrations/:id/decline-from-chat (Integration)', () => {
+	const decline = (
+		s: Setup,
+		integrationId: string,
+		body: unknown = { sessionId: s.session.id },
+		as: { id: string; type: 'human' | 'agent' } = { id: s.human, type: 'human' },
+	) =>
+		appFor(as.id, as.type).request(
+			jsonRequest('POST', `/api/integrations/${integrationId}/decline-from-chat`, body, H(s.ws.id)),
+		)
+
+	const cardRows = (integrationId: string) =>
+		db
+			.select()
+			.from(events)
+			.where(and(eq(events.entityId, integrationId), eq(events.action, 'updated')))
+			.then((rows) =>
+				rows.filter((e) => (e.data as { change?: string }).change === 'chat_access_card'),
+			)
+
+	it('writes one declined row with the session, agent and conversation, and grants nothing', async () => {
+		const s = await setup()
+		const slack = await s.integration()
+		stopSession.mockClear()
+
+		const res = await decline(s, slack.id)
+
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({ actorId: s.agent.id })
+		const rows = await cardRows(slack.id)
+		expect(rows).toHaveLength(1)
+		expect(rows[0]?.data).toMatchObject({
+			change: 'chat_access_card',
+			outcome: 'declined',
+			provider: 'slack',
+			session_id: s.session.id,
+			agent_id: s.agent.id,
+			conversation_id: s.conversation.id,
+		})
+		expect(await grantsOf(slack.id)).toEqual([])
+		expect(stopSession).not.toHaveBeenCalled()
+	})
+
+	it('writes a second row on a repeated press', async () => {
+		const s = await setup()
+		const slack = await s.integration()
+		await decline(s, slack.id)
+		await decline(s, slack.id)
+		expect(await cardRows(slack.id)).toHaveLength(2)
+	})
+
+	it('is refused for a plain member and for an agent, and writes no row', async () => {
+		const s = await setup()
+		const slack = await s.integration()
+		const stranger = await insertActor(db, { type: 'human' })
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: s.ws.id, actorId: stranger.id, role: 'member' })
+		expect((await decline(s, slack.id, undefined, { id: stranger.id, type: 'human' })).status).toBe(
+			403,
+		)
+		expect((await decline(s, slack.id, undefined, { id: s.agent.id, type: 'agent' })).status).toBe(
+			403,
+		)
+		expect(await cardRows(slack.id)).toEqual([])
+	})
+
+	it('404s a session from another workspace and writes no row', async () => {
+		const s = await setup()
+		const slack = await s.integration()
+		const elsewhere = await setup()
+		expect((await decline(s, slack.id, { sessionId: elsewhere.session.id })).status).toBe(404)
+		expect(await cardRows(slack.id)).toEqual([])
+	})
+})
+
+describe('DELETE /integrations/:id/chat-grants/:grantId (Integration)', () => {
+	const remove = (
+		s: Setup,
+		integrationId: string,
+		grantId: string,
+		as: { id: string; type: 'human' | 'agent' } = { id: s.human, type: 'human' },
+	) =>
+		appFor(as.id, as.type).request(
+			jsonRequest(
+				'DELETE',
+				`/api/integrations/${integrationId}/chat-grants/${grantId}`,
+				undefined,
+				H(s.ws.id),
+			),
+		)
+
+	const chatGrantsOf = (integrationId: string) =>
+		db.select().from(agentChatGrants).where(eq(agentChatGrants.integrationId, integrationId))
+
+	const grantFor = async (s: Setup, integrationId: string) =>
+		(
+			await db
+				.insert(agentChatGrants)
+				.values({
+					workspaceId: s.ws.id,
+					integrationId,
+					actorId: s.agent.id,
+					conversationId: s.conversation.id,
+					createdBy: s.human,
+				})
+				.returning()
+		)[0]
+
+	it('deletes that one grant, leaves the others, and writes an audit row', async () => {
+		const s = await setup()
+		const slack = await s.integration()
+		const [other] = await db
+			.insert(conversations)
+			.values({ workspaceId: s.ws.id, title: 'Other chat', createdBy: s.human })
+			.returning()
+		const keep = (
+			await db
+				.insert(agentChatGrants)
+				.values({
+					workspaceId: s.ws.id,
+					integrationId: slack.id,
+					actorId: s.agent.id,
+					conversationId: other.id,
+					createdBy: s.human,
+				})
+				.returning()
+		)[0]
+		const gone = await grantFor(s, slack.id)
+
+		const res = await remove(s, slack.id, gone.id)
+
+		expect(res.status).toBe(200)
+		expect((await chatGrantsOf(slack.id)).map((g) => g.id)).toEqual([keep.id])
+		const ev = await db
+			.select()
+			.from(events)
+			.where(and(eq(events.entityId, slack.id), eq(events.action, 'updated')))
+		expect(ev.map((e) => e.data)).toContainEqual(
+			expect.objectContaining({
+				change: 'agent_grant',
+				agent_id: s.agent.id,
+				via: 'settings',
+				scope: 'chat',
+				conversation_id: s.conversation.id,
+			}),
+		)
+	})
+
+	it('is refused for a plain member and an agent, and removes nothing', async () => {
+		const s = await setup()
+		const slack = await s.integration()
+		const grant = await grantFor(s, slack.id)
+		const stranger = await insertActor(db, { type: 'human' })
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: s.ws.id, actorId: stranger.id, role: 'member' })
+		expect((await remove(s, slack.id, grant.id, { id: stranger.id, type: 'human' })).status).toBe(
+			403,
+		)
+		expect((await remove(s, slack.id, grant.id, { id: s.agent.id, type: 'agent' })).status).toBe(
+			403,
+		)
+		expect(await chatGrantsOf(slack.id)).toHaveLength(1)
+	})
+
+	it('404s a grant that belongs to another integration', async () => {
+		const s = await setup()
+		const slack = await s.integration()
+		const linear = await s.integration({ provider: 'linear' })
+		const grant = await grantFor(s, slack.id)
+		expect((await remove(s, linear.id, grant.id)).status).toBe(404)
+		expect(await chatGrantsOf(slack.id)).toHaveLength(1)
 	})
 })

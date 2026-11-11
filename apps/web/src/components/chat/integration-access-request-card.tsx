@@ -158,8 +158,16 @@ export function IntegrationAccessRequestCard({
 		}
 	}
 
-	const decline = () => {
+	const decline = async () => {
 		setDeclinedNow(true)
+		// Counted for the Allow rate. Never blocks the decline: the message below is what the
+		// agent and a reload read, so it posts whether or not this call worked.
+		await Promise.race([
+			api.integrations
+				.declineFromChat(request.integration_id, workspaceId, request.session_id)
+				.catch(() => undefined),
+			new Promise((resolve) => setTimeout(resolve, 3000)),
+		])
 		const content = `Not now: please don't use ${request.display_name} yet. Carry on without it, or tell me what you need instead.`
 		if (helper) {
 			sendInput.mutate({
@@ -319,7 +327,7 @@ export function IntegrationAccessRequestCard({
 					variant="ghost"
 					className={REQUEST_CARD_DECLINE}
 					disabled={busy}
-					onClick={decline}
+					onClick={() => void decline()}
 				>
 					Not now
 				</Button>

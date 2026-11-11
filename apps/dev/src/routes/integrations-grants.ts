@@ -483,6 +483,94 @@ app.openapi(deleteGrantRoute, (async (c) => {
 	return c.json({ actorId }, 200)
 }) as RouteHandler<typeof deleteGrantRoute, Env>)
 
+// ── DELETE /api/integrations/:id/chat-grants/:grantId ────────────────────
+
+const deleteChatGrantRoute = createRoute({
+	method: 'delete',
+	path: '/{id}/chat-grants/{grantId}',
+	'x-viewer-policy': 'writer',
+	tags: ['integrations'],
+	summary: 'Remove one chat-only grant (humans only). The next call from that chat is refused',
+	request: {
+		headers: workspaceIdHeader,
+		params: z.object({ id: z.string().uuid(), grantId: z.string().uuid() }),
+	},
+	responses: {
+		200: {
+			description: 'Removed',
+			content: { 'application/json': { schema: z.object({ grantId: z.string().uuid() }) } },
+		},
+		...errorResponses,
+	},
+})
+
+app.openapi(deleteChatGrantRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	const { id, grantId } = c.req.valid('param')
+
+	if (c.get('actorType') !== 'human') {
+		return c.json(createApiError('FORBIDDEN', 'Only a person can change agent access'), 403)
+	}
+
+	const outcome = await db.transaction(async (tx) => {
+		const target = await loadEditable(db, tx, { id, workspaceId, callerId })
+		if (!target.ok) return target.reason
+		const [removed] = await tx
+			.delete(agentChatGrants)
+			.where(
+				and(
+					eq(agentChatGrants.id, grantId),
+					eq(agentChatGrants.integrationId, id),
+					eq(agentChatGrants.workspaceId, workspaceId),
+				),
+			)
+			.returning({
+				actorId: agentChatGrants.actorId,
+				conversationId: agentChatGrants.conversationId,
+			})
+		if (!removed) return 'grant_not_found' as const
+		if (isKeychainMode(target.providerMode as never)) {
+			await insertCredentialAccessLog(tx, {
+				workspaceId,
+				integrationId: id,
+				actorId: callerId,
+				action: 'scope_changed',
+				source: 'admin_ui',
+				requestId: `grant-change:${id}:${randomUUID()}`,
+			})
+		}
+		await recordEvent(tx, {
+			workspaceId,
+			actorId: callerId,
+			action: 'updated',
+			entityType: 'integration',
+			entityId: id,
+			data: {
+				change: 'agent_grant',
+				provider: target.provider,
+				agent_id: removed.actorId,
+				access_after: null,
+				via: 'settings',
+				scope: 'chat',
+				conversation_id: removed.conversationId,
+			},
+		})
+		return 'saved' as const
+	})
+
+	if (outcome === 'grant_not_found') {
+		return c.json(createApiError('NOT_FOUND', 'Chat grant not found'), 404)
+	}
+	if (outcome !== 'saved') {
+		const f = failure(outcome)
+		return c.json(f.error, f.status)
+	}
+	return c.json({ grantId }, 200)
+}) as RouteHandler<typeof deleteChatGrantRoute, Env>)
+
 // ── PUT /api/integrations/:id/default-access ─────────────────────────────
 
 const putDefaultRoute = createRoute({
@@ -737,6 +825,83 @@ app.openapi(allowFromChatRoute, (async (c) => {
 	})
 	return c.json({ actorId: session.actorId, relaunch }, 200)
 }) as RouteHandler<typeof allowFromChatRoute, Env>)
+
+// ── POST /api/integrations/:id/decline-from-chat ─────────────────────────
+
+const declineFromChatRoute = createRoute({
+	method: 'post',
+	path: '/{id}/decline-from-chat',
+	'x-viewer-policy': 'writer',
+	tags: ['integrations'],
+	summary: 'Record that a person pressed Not now on an access card (humans only)',
+	request: {
+		headers: workspaceIdHeader,
+		params: idParams,
+		body: {
+			content: {
+				'application/json': {
+					schema: z.object({ sessionId: z.string().uuid() }).strict(),
+				},
+			},
+			required: true,
+		},
+	},
+	responses: {
+		200: {
+			description: 'Recorded. Nothing is granted and no session is restarted',
+			content: { 'application/json': { schema: z.object({ actorId: z.string().uuid() }) } },
+		},
+		...errorResponses,
+	},
+})
+
+app.openapi(declineFromChatRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	const { id } = c.req.valid('param')
+	const { sessionId } = c.req.valid('json')
+
+	if (c.get('actorType') !== 'human') {
+		return c.json(createApiError('FORBIDDEN', 'Only a person can change agent access'), 403)
+	}
+
+	const [session] = await db
+		.select({ actorId: sessions.actorId, conversationId: sessions.conversationId })
+		.from(sessions)
+		.where(and(eq(sessions.id, sessionId), eq(sessions.workspaceId, workspaceId)))
+		.limit(1)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+
+	// Same who-may-click rule as Allow. Only a row in the event table: no grant, no relaunch.
+	const outcome = await db.transaction(async (tx) => {
+		const target = await loadEditable(db, tx, { id, workspaceId, callerId })
+		if (!target.ok) return target.reason
+		await recordEvent(tx, {
+			workspaceId,
+			actorId: callerId,
+			action: 'updated',
+			entityType: 'integration',
+			entityId: id,
+			data: {
+				change: 'chat_access_card',
+				outcome: 'declined',
+				provider: target.provider,
+				session_id: sessionId,
+				agent_id: session.actorId,
+				conversation_id: session.conversationId,
+			},
+		})
+		return 'saved' as const
+	})
+
+	if (outcome !== 'saved') {
+		const f = failure(outcome)
+		return c.json(f.error, f.status)
+	}
+	return c.json({ actorId: session.actorId }, 200)
+}) as RouteHandler<typeof declineFromChatRoute, Env>)
 
 // ── POST /api/integrations/:id/allow-access ──────────────────────────────
 
