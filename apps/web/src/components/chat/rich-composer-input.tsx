@@ -43,7 +43,7 @@ export const RichComposerInput = forwardRef<MarkdownComposerHandle, RichComposer
 					chipClass={(id) => tagChipClass('card', id === selfActorId)}
 					detectTrigger={detectMentionTrigger}
 					className={cn(
-						'overflow-y-auto text-base [&_.ProseMirror]:min-h-[inherit] [&_.ProseMirror]:outline-none [&_p]:my-0 [&_p]:text-foreground [&_li]:text-foreground',
+						'overflow-y-auto text-base [&>[contenteditable]]:min-h-[inherit] [&>[contenteditable]]:outline-none [&_p]:my-0 [&_p]:text-foreground [&_li]:text-foreground',
 						className,
 					)}
 				/>
