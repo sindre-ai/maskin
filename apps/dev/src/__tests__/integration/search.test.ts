@@ -336,6 +336,50 @@ describe('GET /api/search against real Postgres', () => {
 			expect(res.results.map((r) => r.id)).toEqual([titled.id, mentioned.id])
 		})
 
+		it('ranks a chat found by a participant name above chats that only hold the letters', async () => {
+			const cpo = await insertActor(db, { name: 'CPO', type: 'agent' })
+			await ensureWorkspaceMember(db, workspaceId, cpo.id)
+			const direct = await seedChat('', [actorId, cpo.id])
+			await say(direct.id, actorId, 'morning')
+			const inWord = await seedChat('Scopes review', [actorId, otherUserId])
+			await say(inWord.id, otherUserId, 'nothing here')
+			await tick()
+			// The word-only chat is the newest one.
+			await say(inWord.id, otherUserId, 'still nothing')
+
+			const res = await search({ q: 'cpo', types: ['chat'] })
+
+			expect(res.results.map((r) => r.id)).toEqual([direct.id, inWord.id])
+		})
+
+		it('puts an unread chat before a read one of equal score', async () => {
+			const cpo = await insertActor(db, { name: 'CPO', type: 'agent' })
+			await ensureWorkspaceMember(db, workspaceId, cpo.id)
+			const unread = await seedChat('', [actorId, cpo.id])
+			await say(unread.id, cpo.id, 'a note for you')
+			const read = await seedChat('', [actorId, cpo.id])
+			await say(read.id, actorId, 'my own message')
+			await tick()
+			// The read chat is the newest one, so only the unread rule can put the other first.
+			await say(read.id, actorId, 'one more of mine')
+
+			const res = await search({ q: 'cpo', types: ['chat'] })
+
+			expect(res.results.map((r) => r.id)).toEqual([unread.id, read.id])
+		})
+
+		it('shares the rows across groups with per_group, and fills the room when a group is short', async () => {
+			const cpo = await insertActor(db, { name: 'CPO', type: 'agent' })
+			await ensureWorkspaceMember(db, workspaceId, cpo.id)
+			for (let i = 0; i < 4; i++) await seedChat(`Chat ${i}`, [actorId, cpo.id])
+
+			const shared = await search({ q: 'cpo', limit: 4, per_group: 3 })
+			expect(shared.results.map((r) => r.group)).toEqual(['chats', 'chats', 'chats', 'agents'])
+
+			const filled = await search({ q: 'cpo', types: ['chat'], limit: 4, per_group: 3 })
+			expect(filled.results).toHaveLength(4)
+		})
+
 		it('reads LIKE wildcards in a word as plain characters inside messages', async () => {
 			const chat = await seedChat('Numbers', [actorId])
 			await say(chat.id, actorId, 'we are 100% sure')
