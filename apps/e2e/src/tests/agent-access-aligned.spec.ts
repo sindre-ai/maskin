@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 import { openAgentTab } from '../helpers/agent-tab.helper'
+import { openIntegrationCard } from '../helpers/integrations.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 /**
@@ -107,6 +108,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 
 		// Integrations page: give the agent write access.
 		await page.goto(`/${account.workspaceId}/settings/integrations`)
+		await openIntegrationCard(page, /Linear/)
 		const toggle = page.getByRole('button', { name: /Agent access/ })
 		await expect(toggle).toContainText('All agents can read', { timeout: 15_000 })
 		await toggle.click()
@@ -127,6 +129,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 		expect(state.grants).toEqual([{ actorId: reviewer.id, access: 'read' }])
 
 		await page.goto(`/${account.workspaceId}/settings/integrations`)
+		await openIntegrationCard(page, /Linear/)
 		const again = page.getByRole('button', { name: /Agent access/ })
 		await expect(again).toContainText('All agents can read', { timeout: 15_000 })
 		await expect(again).not.toContainText('can also write')
@@ -147,6 +150,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 		expect(state.grants).toEqual([{ actorId: reviewer.id, access: 'none' }])
 
 		await page.goto(`/${account.workspaceId}/settings/integrations`)
+		await openIntegrationCard(page, /Linear/)
 		await expect(page.getByRole('button', { name: /Agent access/ })).toContainText(
 			'All agents can read · 1 has no access',
 			{ timeout: 15_000 },

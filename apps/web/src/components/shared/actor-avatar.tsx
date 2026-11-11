@@ -41,7 +41,9 @@ const AVATAR_PALETTE_STRONG = [
 export type ActorAvatarTone = 'subtle' | 'strong'
 
 /** Strip everything that is not a letter or digit so a bracketed qualifier
- *  ("Linker (Sigrid)") or a title suffix never lands in the glyph. */
+ *  ("Linker (Sigrid)") or a title suffix never lands in the glyph. A single
+ *  all-caps word of 3 letters (CTO, CPO, PMM) keeps all three; every other
+ *  name stays at two. */
 export function getActorInitials(name: string): string {
 	const trimmed = (name ?? '').trim()
 	if (!trimmed) return '?'
@@ -57,6 +59,7 @@ export function getActorInitials(name: string): string {
 		return combined || '?'
 	}
 	const word = words[0] ?? ''
+	if (/^\p{Lu}{3}$/u.test(word)) return word
 	if (word.length >= 2) return word.slice(0, 2).toUpperCase()
 	return word.toUpperCase() || '?'
 }
@@ -167,13 +170,15 @@ function ActorAvatarView({
 	const [failedUrl, setFailedUrl] = useState<string | null>(null)
 	const imageFailed = imageUrl != null && failedUrl === imageUrl
 
-	const sizeClasses = {
-		sm: 'h-5 w-5 text-[10px]',
-		md: 'h-7 w-7 text-xs',
-		lg: 'h-[38px] w-[38px] text-sm',
-		xl: 'h-[52px] w-[52px] text-lg',
-	}[size]
 	const initials = getActorInitials(name)
+	// Three letters (CTO, PMM) get a smaller glyph so the widest ones still sit inside the plate.
+	const threeLetters = initials.length === 3
+	const sizeClasses = {
+		sm: cn('h-5 w-5', threeLetters ? 'text-[7px]' : 'text-[10px]'),
+		md: cn('h-7 w-7', threeLetters ? 'text-[9px]' : 'text-xs'),
+		lg: cn('h-[38px] w-[38px]', threeLetters ? 'text-xs' : 'text-sm'),
+		xl: cn('h-[52px] w-[52px]', threeLetters ? 'text-[15px]' : 'text-lg'),
+	}[size]
 	const paletteClass = getActorAvatarPaletteClass(id ?? name, tone)
 	const showImage = Boolean(imageUrl) && !imageFailed
 
@@ -186,7 +191,11 @@ function ActorAvatarView({
 		pictogram ? (size === 'sm' ? 'rounded-md' : 'rounded-lg') : 'rounded-full',
 		paletteClass,
 		sizeClasses,
-		tile && 'size-[26px] rounded-lg bg-muted text-[10.5px] font-bold text-foreground',
+		tile &&
+			cn(
+				'size-[26px] rounded-lg bg-muted font-bold text-foreground',
+				threeLetters ? 'text-[8px]' : 'text-[10.5px]',
+			),
 		className,
 		// Last, so the team tint wins over a caller's plain or status fill.
 		pictogram?.tintClass,

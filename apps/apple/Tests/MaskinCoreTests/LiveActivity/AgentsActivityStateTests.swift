@@ -34,6 +34,9 @@ struct WorkingAgentTests {
 		#expect(WorkingAgent.initials(for: "Forge") == "FO")
 		#expect(WorkingAgent.initials(for: "") == "?")
 		#expect(WorkingAgent.initials(for: "(Writer)") == "WR")
+		#expect(WorkingAgent.initials(for: "CTO") == "CTO")
+		#expect(WorkingAgent.initials(for: "Cto") == "CT")
+		#expect(WorkingAgent.initials(for: "CTO Agent") == "CA")
 	}
 
 	@Test func sentenceLowersACapitalisedStepButKeepsNames() {
