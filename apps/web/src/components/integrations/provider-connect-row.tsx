@@ -10,6 +10,7 @@ import {
 } from '@/components/integrations/provider-dialogs'
 import { ProviderLogo } from '@/components/integrations/provider-logo'
 import { ResendConnectDialog } from '@/components/integrations/resend/resend-connect-dialog'
+import { SlackDirectPostChannels } from '@/components/integrations/slack-direct-post-channels'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -332,7 +333,12 @@ export function ProviderRow({
 			footer={
 				// Who can use it is managed in Settings, not from the chat card.
 				isConnected && variant === 'settings' ? (
-					<AgentAccess integration={integration} workspaceId={workspaceId} />
+					<>
+						{provider.name === 'slack' && (
+							<SlackDirectPostChannels integration={integration} workspaceId={workspaceId} />
+						)}
+						<AgentAccess integration={integration} workspaceId={workspaceId} />
+					</>
 				) : undefined
 			}
 		/>
