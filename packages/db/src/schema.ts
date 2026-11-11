@@ -2089,6 +2089,37 @@ export const workspaceCreditLedger = pgTable(
 	],
 )
 
+// ── Workspace AI Usage ──────────────────────────────────────────────────────
+// Plan spend on the Maskin-funded OpenRouter account that does not belong to a
+// session, such as `transcribe_file`. Plan usage is otherwise summed from
+// `sessions` rows (`getWorkspacePlanUsdCentsUsage`); that function adds this
+// table's `cost_usd` on top, so the cap check, the usage page and the prepaid
+// credit overage all count these calls without a fake session row.
+//
+// `cost_usd` is what OpenRouter reported for the request (`usage.cost`), never
+// an estimate. `actor_id` and `file_id` are `set null` so deleting an agent or a
+// file never deletes the spend it caused.
+export const workspaceAiUsage = pgTable(
+	'workspace_ai_usage',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id').references(() => actors.id, { onDelete: 'set null' }),
+		// 'transcription'
+		kind: text('kind').notNull(),
+		// The provider model that served the call, for the usage breakdown.
+		model: text('model').notNull(),
+		costUsd: numeric('cost_usd', { precision: 12, scale: 6 }).notNull(),
+		// Seconds of audio sent for transcription.
+		audioSeconds: numeric('audio_seconds', { precision: 10, scale: 2 }),
+		fileId: uuid('file_id').references(() => files.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index('workspace_ai_usage_workspace_created_idx').on(t.workspaceId, t.createdAt)],
+)
+
 // ── Idempotency Records ─────────────────────────────────────────────────────
 // Outbound-side idempotency ledger for the API's `Idempotency-Key` header.
 // Replaces the previous in-memory cache so that a session snapshot + replay

@@ -1,14 +1,29 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
+import type { Database } from '@maskin/db'
+import { files, workspaces } from '@maskin/db/schema'
+import type { StorageProvider } from '@maskin/storage'
+import { and, eq } from 'drizzle-orm'
 import { bodyLimit } from 'hono/body-limit'
+import { isEnterprise } from '../lib/enterprise'
 import { createApiError, validationFailureHook } from '../lib/errors'
-import { errorSchema } from '../lib/openapi-schemas'
+import { checkPlanCap } from '../lib/llm-routing'
+import { errorSchema, idParamSchema, workspaceIdHeader } from '../lib/openapi-schemas'
+import type { WorkspaceSettings } from '../lib/types'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
+import {
+	FileTranscriptionError,
+	type FileTranscriptionFailure,
+	MAX_TRANSCRIBE_AUDIO_SECONDS,
+	transcribeStoredFile,
+} from '../services/file-transcription'
 import { transcribeAudio } from '../services/transcription'
 
 type Env = {
 	Variables: {
+		db: Database
 		actorId: string
 		workspaceRole?: string
+		storageProvider: StorageProvider
 	}
 }
 
@@ -123,6 +138,208 @@ app.openapi(postTranscriptionRoute, async (c) => {
 		createApiError('INTERNAL_ERROR', 'Transcription failed (speech provider error)'),
 		502,
 	)
+})
+
+// -- POST /files/:id — transcribe an uploaded audio or video file -----------------
+
+const FILE_FAILURE_STATUS: Record<FileTranscriptionFailure, 400 | 429 | 500 | 502 | 503 | 504> = {
+	not_transcribable: 400,
+	too_long: 400,
+	tooling_unavailable: 503,
+	not_configured: 500,
+	busy: 429,
+	provider_refused: 503,
+	provider_error: 502,
+	timeout: 504,
+	storage_error: 500,
+}
+
+/** What a stored file may be before we spend a download on it; ffprobe decides the rest. */
+const MEDIA_MIME_PREFIXES = ['audio/', 'video/']
+const MEDIA_MIME_EXACT = new Set([
+	'application/ogg',
+	'application/mp4',
+	'application/x-matroska',
+	'application/octet-stream',
+])
+
+function isTranscribableMime(mimeType: string): boolean {
+	const mime = mimeType.toLowerCase()
+	return MEDIA_MIME_PREFIXES.some((p) => mime.startsWith(p)) || MEDIA_MIME_EXACT.has(mime)
+}
+
+const transcribeFileBody = z
+	.object({
+		language: z
+			.string()
+			.regex(/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$/)
+			.optional()
+			.openapi({ description: 'Optional language hint, e.g. "en" or "nb-NO".' }),
+	})
+	.openapi('TranscribeFileBody')
+
+const transcribeFileResponse = z
+	.object({
+		file_id: z.string().uuid(),
+		name: z.string(),
+		text: z.string(),
+		audio_seconds: z.number(),
+		chunks: z.number().int(),
+		model: z.string(),
+	})
+	.openapi('TranscribeFileResponse')
+
+const postFileTranscriptionRoute = createRoute({
+	method: 'post',
+	path: '/files/{id}',
+	'x-viewer-policy': 'writer',
+	tags: ['Transcriptions'],
+	summary: 'Transcribe an uploaded audio or video file',
+	description: `Reads a stored file, extracts its audio with ffmpeg, transcribes it in chunks on OpenRouter and returns the full text. Up to ${MAX_TRANSCRIBE_AUDIO_SECONDS / 60} minutes of audio. The cost OpenRouter reports is recorded against the workspace's plan usage, so the call is refused with 402 once the plan cap is reached and no prepaid credit remains, and with 403 for an enterprise workspace (it has no Maskin-funded plan to charge). Requires X-Workspace-Id and a writer role.`,
+	request: {
+		headers: workspaceIdHeader,
+		params: idParamSchema,
+		body: { content: { 'application/json': { schema: transcribeFileBody } }, required: true },
+	},
+	responses: {
+		200: {
+			description: 'Transcript; empty text when no speech was detected',
+			content: { 'application/json': { schema: transcribeFileResponse } },
+		},
+		400: {
+			description: 'Not audio or video, no audio track, or longer than the limit',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		402: {
+			description: 'The workspace is over its plan cap',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'The workspace has no Maskin-funded plan to charge',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'File not found in this workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		429: {
+			description: 'The speech provider is rate limiting us',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		500: {
+			description: 'Transcription is not configured, or the file could not be read from storage',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		502: {
+			description: 'The speech provider answered with an error other than 401, 402 or 429',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		503: {
+			description: 'The speech provider refused our key, or ffmpeg is not installed on this server',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		504: {
+			description: 'The request to the speech provider timed out',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(postFileTranscriptionRoute, async (c) => {
+	const role = c.get('workspaceRole')
+	const workspaceId = c.req.header('X-Workspace-Id')
+	if (role === undefined || !workspaceId) {
+		return c.json(createApiError('BAD_REQUEST', 'X-Workspace-Id header is required'), 400)
+	}
+	assertWorkspaceWriterRole(role)
+
+	const db = c.get('db')
+	const { id } = c.req.valid('param')
+	const { language } = c.req.valid('json')
+
+	// The workspace comes from the header, which authMiddleware proved the caller
+	// belongs to, and the file must be in it: another workspace's file is a 404.
+	const [file] = await db
+		.select({
+			id: files.id,
+			name: files.name,
+			mimeType: files.mimeType,
+			storageKey: files.storageKey,
+		})
+		.from(files)
+		.where(and(eq(files.id, id), eq(files.workspaceId, workspaceId)))
+		.limit(1)
+	if (!file) return c.json(createApiError('NOT_FOUND', 'File not found'), 404)
+	if (!isTranscribableMime(file.mimeType)) {
+		return c.json(
+			createApiError(
+				'VALIDATION_ERROR',
+				`This file is ${file.mimeType}, not audio or video, so it cannot be transcribed.`,
+			),
+			400,
+		)
+	}
+
+	const [workspace] = await db
+		.select({
+			settings: workspaces.settings,
+			enterpriseGranted: workspaces.enterpriseGranted,
+			billingOwnerId: workspaces.billingOwnerId,
+		})
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+	if (!workspace) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+
+	// Transcription runs on Maskin's OpenRouter account. An enterprise workspace
+	// brings its own credentials and has no plan to charge, so it must not reach it.
+	const enterprise = isEnterprise(workspace)
+	if (enterprise) {
+		return c.json(
+			createApiError(
+				'FORBIDDEN',
+				'Transcription is billed to a Maskin plan and is not available to workspaces that bring their own LLM credentials.',
+			),
+			403,
+		)
+	}
+	// Throws PlanCapExceededError, which the app's error handler turns into a 402.
+	await checkPlanCap({
+		db,
+		workspaceId,
+		wsSettings: (workspace.settings ?? {}) as WorkspaceSettings,
+		enterprise,
+	})
+
+	try {
+		const result = await transcribeStoredFile({
+			db,
+			storage: c.get('storageProvider'),
+			workspaceId,
+			actorId: c.get('actorId'),
+			file: { id: file.id, storageKey: file.storageKey },
+			language,
+		})
+		return c.json(
+			{
+				file_id: file.id,
+				name: file.name,
+				text: result.text,
+				audio_seconds: Math.round(result.audioSeconds * 100) / 100,
+				chunks: result.chunks,
+				model: result.model,
+			},
+			200,
+		)
+	} catch (err) {
+		if (err instanceof FileTranscriptionError) {
+			const status = FILE_FAILURE_STATUS[err.code]
+			const code =
+				status === 400 ? 'VALIDATION_ERROR' : status === 429 ? 'RATE_LIMITED' : 'INTERNAL_ERROR'
+			return c.json(createApiError(code, err.message), status)
+		}
+		throw err
+	}
 })
 
 export default app

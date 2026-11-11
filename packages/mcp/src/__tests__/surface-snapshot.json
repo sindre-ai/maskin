@@ -406,6 +406,7 @@
 		],
 		"show_computer": ["task", "workspace_id"],
 		"stop_session": ["id", "workspace_id"],
+		"transcribe_file": ["id", "language", "workspace_id"],
 		"traverse_graph": [
 			"direction",
 			"edge_type_allow_list",

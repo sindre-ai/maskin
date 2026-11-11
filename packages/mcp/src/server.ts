@@ -6235,6 +6235,30 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'transcribe_file',
+		{
+			description: tools.transcribe_file.description,
+			inputSchema: tools.transcribe_file.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const result = await apiCall(
+				config,
+				'POST',
+				`/api/transcriptions/files/${args.id}`,
+				args.language !== undefined ? { language: args.language } : {},
+				{ workspaceId: wsId },
+			)
+			return {
+				_meta: meta('transcribe_file', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'update_file',
 		{
 			description: tools.update_file.description,

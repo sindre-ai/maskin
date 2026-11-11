@@ -1306,6 +1306,19 @@ export const tools = {
 				),
 		}),
 	},
+	transcribe_file: {
+		description:
+			'Transcribe an uploaded audio or video file to text; use it when someone has uploaded a recording (a meeting, voice memo, interview, video) and you need the words. Pass the file `id` (from list_files or create_file). Audio (mp3, m4a, wav, ogg, flac, webm) and video (mp4, mov, mkv, webm) both work: the audio track is extracted for you, so do not download or convert the file first. Up to 60 minutes of audio per call; for a longer recording, cut it into parts and transcribe each. Returns `{ file_id, name, text, audio_seconds, chunks, model }`: `text` is the plain transcript with no timestamps or speaker labels, and is empty when no speech was found. Pass `language` (for example "en" or "nb-NO") when you know it, otherwise it is detected. The call runs on the workspace plan and counts toward its usage, and a long file can take a minute or more. Fails with 402 when the plan cap is reached, 403 for a workspace that brings its own LLM credentials, and 400 for a file that is not audio or video, has no audio track, or is over the limit.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z.string().uuid().describe('File ID of the uploaded audio or video file.'),
+			language: z
+				.string()
+				.regex(/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$/, 'Use a language code such as "en" or "nb-NO"')
+				.optional()
+				.describe('Language hint, e.g. "en" or "nb-NO". Omit to detect it.'),
+		}),
+	},
 	update_file: {
 		description:
 			'Update a file. Pass any subset of name, description, kind, mime_type, content. Updating content re-uploads the bytes; other fields update metadata only. For text content pass `content` as a raw string (encoding defaults to "utf8"); for binary content set `encoding` to "base64". At least one field must be provided. To avoid overwriting a save made since you read the file, pass the `contentHash` from get_file as `if_match`: a stale hash fails with a 409 conflict, writes nothing, and the error carries the current hash. Re-read the file with get_file, merge, and retry with the new hash. Without `if_match` the last write wins. To change part of a text file (a typo, one slide, one number) pass `edits` instead of `content`: a list of `{old, new, replace_all?}`, applied in order on the server against the stored text, so you do not re-send the whole file. `old` must match exactly once (include enough surrounding text to be unique) unless `replace_all` is true; an edit that matches nothing or matches more than once fails with a 400 and nothing is written. `edits` and `content` cannot be combined, and `edits` work on text files only (HTML, markdown, JSON, code). It works with `if_match`. Read the text to copy `old` from with get_file (raw), since `old` must match the stored bytes, not the `format: "text"` extract.',

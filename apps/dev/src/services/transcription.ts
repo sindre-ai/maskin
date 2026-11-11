@@ -11,8 +11,21 @@ export const DEFAULT_TRANSCRIPTION_MODEL = 'mistralai/voxtral-small-transcribe-3
 const TIMEOUT_MS = 60_000
 
 export type TranscribeResult =
-	| { ok: true; text: string; model: string }
+	| {
+			ok: true
+			text: string
+			model: string
+			/** What OpenRouter charged for this request (`usage.cost`); null when it did not say. */
+			costUsd: number | null
+			/** Seconds of audio OpenRouter measured (`usage.seconds`); null when it did not say. */
+			audioSeconds: number | null
+	  }
 	| { ok: false; reason: 'not_configured' | 'upstream_error' | 'exception'; status?: number }
+
+/** A finite, non-negative number, else null: `usage` is the provider's, so it is checked. */
+function readUsageNumber(value: unknown): number | null {
+	return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
+}
 
 export function readTranscriptionModel(env: NodeJS.ProcessEnv = process.env): string {
 	return env.MASKIN_TRANSCRIPTION_MODEL?.trim() || DEFAULT_TRANSCRIPTION_MODEL
@@ -69,9 +82,18 @@ export async function transcribeAudio(input: {
 			})
 			return { ok: false, reason: 'upstream_error', status: response.status }
 		}
-		const data = (await response.json()) as { text?: unknown }
+		const data = (await response.json()) as {
+			text?: unknown
+			usage?: { cost?: unknown; seconds?: unknown } | null
+		}
 		const text = typeof data.text === 'string' ? data.text.trim() : ''
-		return { ok: true, text, model }
+		return {
+			ok: true,
+			text,
+			model,
+			costUsd: readUsageNumber(data.usage?.cost),
+			audioSeconds: readUsageNumber(data.usage?.seconds),
+		}
 	} catch (err) {
 		logger.error('transcription: request failed', {
 			err: err instanceof Error ? err.message : String(err),

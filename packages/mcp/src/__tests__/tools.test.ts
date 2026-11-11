@@ -56,6 +56,7 @@ const ALL_TOOL_NAMES = [
 	'rename_file_tag',
 	'merge_file_tags',
 	'get_file',
+	'transcribe_file',
 	'update_file',
 	'propose_file_changes',
 	'delete_file',

@@ -131,6 +131,9 @@ const ROWS: Record<string, Row> = {
 	rename_file_tag: row('Rename file tag'),
 	merge_file_tags: row('Merge file tags'),
 	get_file: row('Get file'),
+	// Not openWorld: that set is pinned (surface-pin.test.ts) to tools that start an agent, reach an
+	// integration or send mail. This one spends plan usage on Maskin's own speech provider.
+	transcribe_file: row('Transcribe file'),
 	update_file: row('Update file', { idempotent: true }),
 	propose_file_changes: row('Propose file changes'),
 	delete_file: row('Delete file', { destructive: true, idempotent: true }),

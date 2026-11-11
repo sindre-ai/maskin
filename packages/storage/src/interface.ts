@@ -22,6 +22,11 @@ export interface PresignDownloadOptions {
 export interface StorageProvider {
 	put(key: string, data: Buffer | Uint8Array | Readable, options?: PutOptions): Promise<void>
 	get(key: string): Promise<Buffer>
+	/**
+	 * The object as a stream, for bytes too large to hold in memory (video sent
+	 * through ffmpeg). The caller must consume or destroy it.
+	 */
+	getStream(key: string): Promise<Readable>
 	list(prefix: string): Promise<string[]>
 	listWithMetadata(prefix: string): Promise<{ key: string; size: number }[]>
 	delete(key: string): Promise<void>

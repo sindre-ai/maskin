@@ -2,7 +2,7 @@
 title: MCP tools
 slug: mcp-tools
 description: The MCP tool surface — which tools exist, what they return, and when to reach for each.
-last_updated: 2026-11-09
+last_updated: 2026-11-11
 ---
 
 # MCP tools
@@ -61,6 +61,45 @@ applied in order on the server, under the same row lock as a whole-file save:
 - `old` must match the stored bytes, so copy it from a raw `get_file` read, not from
   the `format: "text"` extract (which drops markup).
 - The save logs an `updated` event for the file, with `editCount`.
+
+### Transcribing a recording: `transcribe_file`
+
+`transcribe_file` turns an uploaded audio or video file into text. The agent passes the
+file `id` and, optionally, a `language` hint; it never downloads or converts anything.
+
+- Returns `{ file_id, name, text, audio_seconds, chunks, model }`. `text` is plain: no
+  timestamps, no speaker labels. It is empty when no speech was found.
+- Audio and video both work. The server decodes the first audio track to 16 kHz mono WAV with
+  ffmpeg, so the API image must have ffmpeg and ffprobe (`apps/dev/Dockerfile`); a local
+  `pnpm dev` needs them on `PATH`. Without them the call fails with a 503 that says so.
+- Up to 60 minutes of audio per call. The audio is cut into 3 minute chunks (the speech
+  provider times out after about a minute per request), three are sent at a time, and the
+  texts are joined in order. A longer file is a 400 that asks for it to be cut up.
+- The file is streamed from storage to a temp directory, never held in memory, so the 1 GiB
+  upload ceiling applies. Only `audio/*`, `video/*` and a few container types are tried; any
+  other MIME type is a 400 before anything is downloaded.
+- Route: `POST /api/transcriptions/files/:id`, writer role, file must be in the
+  `X-Workspace-Id` workspace (another workspace's file is a 404). It sits under
+  `ALL /api/transcriptions` in `packages/auth/src/oauth-route-allowlist.ts`, so a Claude
+  connector token is refused (403 `insufficient_scope`); agents and API keys are fine.
+
+**Billing.** The call runs on Maskin's OpenRouter account, so it is charged to the workspace's
+plan. OpenRouter reports `usage.cost` for each request; that figure, not an estimate, is
+written to `workspace_ai_usage` (one row per call, with the model, the audio seconds, the
+actor and the file). Plan usage is `sessions` cost plus these rows, in one place:
+`getWorkspacePlanUsdCentsUsage` in `apps/dev/src/lib/llm-routing.ts`. That makes the plan cap,
+the usage page (and its model, agent and flow split) and the prepaid credit overage all see it.
+
+- Before any work, `checkPlanCap` runs: over the cap with no credit balance is a 402
+  `PLAN_CAP_EXCEEDED`, the same as starting a session.
+- An enterprise workspace brings its own credentials and has no plan to charge, so it gets a
+  403 instead of spending Maskin's key.
+- Spend of chunks that succeeded is recorded even if a later chunk fails: it was charged.
+- Credit overage is settled the next time a session ends (the debit takes the period's whole
+  overage minus what was already accounted), not at the moment of transcription.
+- If OpenRouter omits `usage.cost`, the call is counted at `FALLBACK_USD_PER_AUDIO_SECOND`
+  (above the dearest listed model) and a warning is logged.
+- Chat dictation (`POST /api/transcriptions`) is unchanged and still not counted.
 
 ## Workspace skills: id or name
 
