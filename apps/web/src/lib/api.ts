@@ -2577,7 +2577,12 @@ export interface IntegrationResponse {
 	/** Explicit per-agent grants. For a Keychain credential these are the only agents with access. */
 	agentGrants?: AgentGrant[]
 	/** Saved credentials shared with an agent for one chat only. */
-	chatGrants?: Array<{ id: string; actorId: string; conversationId: string }>
+	chatGrants?: Array<{
+		id: string
+		actorId: string
+		conversationId: string
+		expiresAt: string | null
+	}>
 }
 
 /** 'none' is an explicit no that beats a read default. A saved credential only uses read_write. */

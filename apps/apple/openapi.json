@@ -35098,6 +35098,14 @@
 											"read",
 											"read_write"
 										]
+									},
+									"scope": {
+										"type": "string",
+										"enum": [
+											"chat",
+											"always"
+										],
+										"default": "always"
 									}
 								},
 								"required": [
@@ -36882,12 +36890,19 @@
 														"conversationId": {
 															"type": "string",
 															"format": "uuid"
+														},
+														"expiresAt": {
+															"type": [
+																"string",
+																"null"
+															]
 														}
 													},
 													"required": [
 														"id",
 														"actorId",
-														"conversationId"
+														"conversationId",
+														"expiresAt"
 													]
 												}
 											}
@@ -37301,12 +37316,19 @@
 													"conversationId": {
 														"type": "string",
 														"format": "uuid"
+													},
+													"expiresAt": {
+														"type": [
+															"string",
+															"null"
+														]
 													}
 												},
 												"required": [
 													"id",
 													"actorId",
-													"conversationId"
+													"conversationId",
+													"expiresAt"
 												]
 											}
 										}
@@ -37758,12 +37780,19 @@
 													"conversationId": {
 														"type": "string",
 														"format": "uuid"
+													},
+													"expiresAt": {
+														"type": [
+															"string",
+															"null"
+														]
 													}
 												},
 												"required": [
 													"id",
 													"actorId",
-													"conversationId"
+													"conversationId",
+													"expiresAt"
 												]
 											}
 										}
@@ -38584,12 +38613,19 @@
 													"conversationId": {
 														"type": "string",
 														"format": "uuid"
+													},
+													"expiresAt": {
+														"type": [
+															"string",
+															"null"
+														]
 													}
 												},
 												"required": [
 													"id",
 													"actorId",
-													"conversationId"
+													"conversationId",
+													"expiresAt"
 												]
 											}
 										}
@@ -46452,6 +46488,29 @@
 														"type": "string",
 														"minLength": 1,
 														"maxLength": 300
+													},
+													"chat_lift": {
+														"type": "object",
+														"properties": {
+															"hours": {
+																"type": "integer",
+																"exclusiveMinimum": 0
+															},
+															"text": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 500
+															},
+															"tool": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 80
+															}
+														},
+														"required": [
+															"hours",
+															"text"
+														]
 													}
 												},
 												"required": [
@@ -49911,6 +49970,29 @@
 														"type": "string",
 														"minLength": 1,
 														"maxLength": 300
+													},
+													"chat_lift": {
+														"type": "object",
+														"properties": {
+															"hours": {
+																"type": "integer",
+																"exclusiveMinimum": 0
+															},
+															"text": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 500
+															},
+															"tool": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 80
+															}
+														},
+														"required": [
+															"hours",
+															"text"
+														]
 													}
 												},
 												"required": [

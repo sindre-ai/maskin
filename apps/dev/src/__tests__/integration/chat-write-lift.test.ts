@@ -417,3 +417,33 @@ describe('resolveCallerChat', () => {
 		expect(await resolveCallerChat(db, autonomous.id, caller)).toBeNull()
 	})
 })
+
+describe('the three audit rows of one card', () => {
+	it('shown, allowed and declined carry the same session and conversation, and decline grants nothing', async () => {
+		const s = await setup()
+		const calendar = await s.integration('google-calendar')
+		await card(s, { integration_id: calendar.id, level: 'read_write' })
+		await allow(s, calendar.id)
+		const grantsBefore = await chatGrants(calendar.id)
+
+		const res = await appFor(s.human, 'human').request(
+			jsonRequest(
+				'POST',
+				`/api/integrations/${calendar.id}/decline-from-chat`,
+				{ sessionId: s.session.id },
+				H(s.ws.id),
+			),
+		)
+
+		expect(res.status).toBe(200)
+		const rows = (await eventsOf(calendar.id)).filter((e) => dataOf(e).outcome !== undefined)
+		expect(rows.map((e) => dataOf(e).outcome).sort()).toEqual(['allowed', 'declined', 'shown'])
+		for (const e of rows) {
+			expect(dataOf(e)).toMatchObject({
+				session_id: s.session.id,
+				conversation_id: s.conversation.id,
+			})
+		}
+		expect(await chatGrants(calendar.id)).toEqual(grantsBefore)
+	})
+})

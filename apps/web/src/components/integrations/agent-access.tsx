@@ -290,7 +290,18 @@ export function AgentAccess({
 											<p className="truncate text-[15px] font-semibold text-foreground">
 												{agent?.name ?? 'An agent'}
 											</p>
-											<p className="text-[13px] text-muted-foreground">Only in one chat</p>
+											<p className="text-[13px] text-muted-foreground">
+												{grant.expiresAt
+													? `Only in one chat · expires ${new Date(grant.expiresAt).toLocaleString(
+															undefined,
+															{
+																weekday: 'short',
+																hour: '2-digit',
+																minute: '2-digit',
+															},
+														)}`
+													: 'Only in one chat'}
+											</p>
 										</div>
 										<ViewerTooltip className="flex">
 											<button
