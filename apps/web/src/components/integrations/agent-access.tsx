@@ -183,6 +183,12 @@ export function AgentAccess({
 				</span>
 			</button>
 
+			{!isKey && integration.provider === 'slack' && (
+				<p className="pb-1 pl-5 text-xs text-muted-foreground">
+					Agent posts to channels not on the Direct posting list wait for a person to approve.
+				</p>
+			)}
+
 			{open && (
 				<div className="mt-2 space-y-2">
 					<div className="divide-y divide-border-subtle overflow-hidden rounded-xl border border-border bg-card">

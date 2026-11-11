@@ -202,6 +202,18 @@ describe('AgentAccess', () => {
 		expect(setDefault).toHaveBeenCalledWith('read_write')
 	})
 
+	it('says on a Slack card, without opening it, that posts outside the Direct posting list wait', () => {
+		renderOpen({ provider: 'slack', defaultAgentAccess: 'read_write' })
+		expect(
+			screen.getByText(/not on the Direct posting list wait for a person to approve/),
+		).toBeInTheDocument()
+	})
+
+	it('does not say it on other integrations', () => {
+		renderOpen({ provider: 'github', defaultAgentAccess: 'read_write' })
+		expect(screen.queryByText(/Direct posting list/)).not.toBeInTheDocument()
+	})
+
 	it('adds an agent that has no override, starting at read & write when the default is read', async () => {
 		const { open, user } = renderOpen({
 			agentGrants: [{ actorId: 'agent-1', access: 'read_write' }],
