@@ -262,6 +262,15 @@ describe('MessageBubble', () => {
 	describe('formatting in your own message', () => {
 		const own = (content: string, extra: Partial<MessageResponse> = {}) =>
 			buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human', content, ...extra })
+		beforeEach(() => localStorage.setItem('ff:chat-formatting', 'on'))
+		afterEach(() => localStorage.removeItem('ff:chat-formatting'))
+
+		it('draws your message as before while the chat-formatting flag is off', () => {
+			localStorage.setItem('ff:chat-formatting', 'off')
+			const { container } = renderBubble(own('**Bold** and a list\n- one'))
+			expect(container.querySelector('strong, ul')).toBeNull()
+			expect(container.textContent).toContain('**Bold**')
+		})
 
 		it('draws bold, italic, strikethrough and inline code as formatted text', () => {
 			const { container } = renderBubble(own('**Bold** and *italic* and ~~gone~~ and `code`'))

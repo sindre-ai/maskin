@@ -18,6 +18,7 @@ import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { useActors } from '@/hooks/use-actors'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useConversation, useEditMessage, useRetryMessage } from '@/hooks/use-conversation'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useFiles } from '@/hooks/use-files'
 import { useFitTextWidth } from '@/hooks/use-fit-text-width'
 import { useLinkedChat } from '@/hooks/use-linked-chat'
@@ -139,6 +140,7 @@ export function MessageBubble({
 	const actor = getStoredActor()
 	const enterprise = useIsEnterpriseWorkspace()
 	const isOwn = message.actorId === actor?.id
+	const chatFormatting = useFeatureFlag('chat-formatting')
 	// Present only under the chat route, which owns the Threads pane. Without
 	// it the handoff falls back to the strip, whose rows link out instead.
 	const threadsPane = useThreadsPane()
@@ -256,12 +258,13 @@ export function MessageBubble({
 		}
 	}, [placedParts, mentions, tagLabelOf])
 
+	// Formatting you typed (bold, a list, a table) is drawn by the same renderer as everyone else's
+	// messages, so it is a block of its own and not a line of words to fit the bubble to.
+	const formatted =
+		chatFormatting && isOwn && !editing && !cardOnly && hasMarkdownSyntax(shownContent)
 	// Your own words with a bubble: its column shrinks to the widest line of text, and lifted
 	// attachments take the same width. Editing, a message with no text and a message with a card
 	// (which has its own width) keep the full layout.
-	// Formatting you typed (bold, a list, a table) is drawn by the same renderer as everyone else's
-	// messages, so it is a block of its own and not a line of words to fit the bubble to.
-	const formatted = isOwn && !editing && !cardOnly && hasMarkdownSyntax(shownContent)
 	const fitText =
 		isOwn && !editing && message.content.length > 0 && !cardOnly && !holdsCard && !formatted
 	const { columnRef, plateRef, textRef } = useFitTextWidth({
