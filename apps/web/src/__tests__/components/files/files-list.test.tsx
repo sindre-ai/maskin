@@ -1,6 +1,7 @@
 import { FilesList } from '@/components/files/files-list'
 import { api } from '@/lib/api'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { createWorkspaceWrapper } from '../../setup'
 
 vi.mock('@/lib/api', async () => {
@@ -8,7 +9,7 @@ vi.mock('@/lib/api', async () => {
 	return {
 		...actual,
 		api: {
-			files: { list: vi.fn() },
+			files: { list: vi.fn(), tags: vi.fn().mockResolvedValue([]) },
 			actors: { list: vi.fn().mockResolvedValue([]) },
 		},
 	}
@@ -27,6 +28,7 @@ function fileRow(id: string, name: string) {
 		workspaceId: WORKSPACE_ID,
 		name,
 		description: null,
+		tags: [] as string[],
 		mimeType: 'text/markdown',
 		sizeBytes: 2048,
 		storageKey: `workspaces/${WORKSPACE_ID}/files/${id}`,
@@ -71,5 +73,58 @@ describe('FilesList', () => {
 		})
 
 		expect(await screen.findByText('No files match “plan”.')).toBeInTheDocument()
+	})
+
+	describe('tag filter', () => {
+		beforeEach(() => {
+			vi.mocked(api.files.list).mockResolvedValue([fileRow('f-1', 'clip.mov')])
+			vi.mocked(api.files.tags).mockResolvedValue([
+				{ tag: 'interview', count: 2 },
+				{ tag: 'b-roll', count: 5 },
+			])
+		})
+
+		it('shows no tag filter while no file carries a tag', async () => {
+			vi.mocked(api.files.tags).mockResolvedValue([])
+			render(<FilesList workspaceId={WORKSPACE_ID} />, { wrapper: createWorkspaceWrapper() })
+			await screen.findByText('clip.mov')
+			expect(screen.queryByTestId('file-tag-filter')).toBeNull()
+		})
+
+		it('offers existing tags A to Z with counts and asks the server for the picked ones', async () => {
+			const user = userEvent.setup()
+			render(<FilesList workspaceId={WORKSPACE_ID} />, { wrapper: createWorkspaceWrapper() })
+
+			await user.click(await screen.findByRole('button', { name: 'Filter by tag' }))
+			const boxes = await screen.findAllByRole('checkbox')
+			expect(boxes).toHaveLength(2)
+			const rows = boxes.map((box) => box.closest('li')?.textContent)
+			expect(rows).toEqual(['b-roll5', 'interview2'])
+
+			await user.click(boxes[0])
+			await waitFor(() =>
+				expect(api.files.list).toHaveBeenLastCalledWith(
+					WORKSPACE_ID,
+					expect.objectContaining({ tags: ['b-roll'], tags_match: 'all' }),
+				),
+			)
+
+			await user.click(screen.getByRole('radio', { name: 'Has any of these' }))
+			await waitFor(() =>
+				expect(api.files.list).toHaveBeenLastCalledWith(
+					WORKSPACE_ID,
+					expect.objectContaining({ tags: ['b-roll'], tags_match: 'any' }),
+				),
+			)
+		})
+
+		it('says so when no file has the picked tags', async () => {
+			const user = userEvent.setup()
+			render(<FilesList workspaceId={WORKSPACE_ID} />, { wrapper: createWorkspaceWrapper() })
+			vi.mocked(api.files.list).mockResolvedValue([])
+			await user.click(await screen.findByRole('button', { name: 'Filter by tag' }))
+			await user.click((await screen.findAllByRole('checkbox'))[0])
+			expect(await screen.findByText('No files have these tags')).toBeTruthy()
+		})
 	})
 })

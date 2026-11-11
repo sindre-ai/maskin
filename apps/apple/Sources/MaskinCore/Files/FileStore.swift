@@ -32,11 +32,22 @@ public final class FileStore {
 	public private(set) var saveError: String?
 	public private(set) var isSaving = false
 
+	/// The file's tags, A to Z. Read separately from the bytes, so they arrive just after the file.
+	public private(set) var tags: [String] = []
+	/// Every tag in use in the workspace with its count, A to Z, for picking an existing one.
+	public private(set) var tagCounts: [FileTagCount] = []
+	/// The last failed tag save, cleared by the next successful one.
+	public private(set) var tagError: String?
+
 	@ObservationIgnored private let remote: any FilesRemote
 	@ObservationIgnored private var generation = 0
 	/// The pin list the server last acknowledged; what a failed save rolls back to.
 	@ObservationIgnored private var confirmed: [FileAnnotation] = []
 	@ObservationIgnored private var needsSave = false
+	/// The tag list the server last acknowledged; what a failed tag save rolls back to.
+	@ObservationIgnored private var confirmedTags: [String] = []
+	@ObservationIgnored private var needsTagSave = false
+	@ObservationIgnored private var isSavingTags = false
 
 	public init(fileId: String, remote: any FilesRemote, preload: FileDetail? = nil) {
 		self.fileId = fileId
@@ -63,6 +74,7 @@ public final class FileStore {
 			isOffline = false
 			isNotFound = false
 			phase = .loaded
+			await loadTags(generation: mine)
 		} catch {
 			guard mine == generation else { return }
 			let e = error as? FileError
@@ -94,6 +106,69 @@ public final class FileStore {
 		case .markdown, .text, .source, .html: file.text
 		default: nil
 		}
+	}
+
+	// MARK: Tags
+
+	/// Whether another tag fits on this file.
+	public var canAddTag: Bool { tags.count < FileTagRules.maxPerFile }
+
+	/// The workspace's tags not already on this file, for the picker.
+	public var suggestedTags: [FileTagCount] { tagCounts.filter { !tags.contains($0.tag) } }
+
+	private func loadTags(generation mine: Int) async {
+		if let loaded = try? await remote.tags(ofFile: fileId), mine == generation, !isSavingTags {
+			tags = FileTagRules.sorted(loaded)
+			confirmedTags = tags
+		}
+	}
+
+	/// The tags in use across the workspace. A failure keeps what was last loaded.
+	public func loadTagCounts() async {
+		guard let counts = try? await remote.tagCounts() else { return }
+		tagCounts = FileTagRules.sorted(counts)
+	}
+
+	/// Adds a tag, spelled the way the server stores it. Anything the server would refuse, or a tag
+	/// the file already has, is ignored.
+	public func addTag(_ raw: String) async {
+		guard let tag = FileTagRules.normalized(raw), !tags.contains(tag), canAddTag else { return }
+		tags = FileTagRules.sorted(tags + [tag])
+		await persistTags()
+	}
+
+	public func removeTag(_ tag: String) async {
+		guard tags.contains(tag) else { return }
+		tags.removeAll { $0 == tag }
+		await persistTags()
+	}
+
+	public func clearTagError() { tagError = nil }
+
+	/// Sends the current tag list, optimistically. Overlapping calls coalesce like pin saves: while
+	/// one request is in flight, later edits just mark the list dirty and the newest state goes next.
+	private func persistTags() async {
+		needsTagSave = true
+		guard !isSavingTags else { return }
+		isSavingTags = true
+		defer { isSavingTags = false }
+		while needsTagSave {
+			needsTagSave = false
+			let sending = tags
+			do {
+				let saved = try await remote.saveTags(
+					fileId: fileId, tags: sending, idempotencyKey: UUID().uuidString)
+				confirmedTags = FileTagRules.sorted(saved)
+				tagError = nil
+				if !needsTagSave { tags = confirmedTags }
+			} catch {
+				needsTagSave = false
+				tags = confirmedTags
+				tagError = (error as? FileError)?.message ?? "Couldn't save the tags. Try again."
+			}
+		}
+		// A new tag may now be in use; refresh the picker's counts.
+		await loadTagCounts()
 	}
 
 	// MARK: Pins
