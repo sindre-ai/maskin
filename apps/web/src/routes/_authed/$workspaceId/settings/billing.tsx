@@ -43,7 +43,7 @@ function BillingPage() {
 				subtitle={usage.isLoading ? undefined : billingPeriodLabel(usage)}
 			/>
 			<div className="-mt-1 px-2">
-				<BillingUsageSummary usage={usage} />
+				<BillingUsageSummary usage={usage} workspaceId={workspaceId} />
 			</div>
 			<BillingSection
 				workspaceId={workspaceId}
@@ -54,7 +54,7 @@ function BillingPage() {
 					) : undefined
 				}
 			/>
-			<BillingUsageDetails usage={usage} />
+			<BillingUsageDetails usage={usage} workspaceId={workspaceId} />
 		</div>
 	)
 }

@@ -1,10 +1,19 @@
 import { sessions } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
+import type { MockInstance } from 'vitest'
+import { resetPlanLimitEventsForTest } from '../../lib/analytics/plan-limit-events'
+import * as posthog from '../../lib/analytics/posthog'
+import { PlanCapExceededError, checkPlanCap } from '../../lib/llm-routing'
+import type { WorkspaceSettings } from '../../lib/types'
 import { SessionManager } from '../../services/session-manager'
 import { SESSION_RESUMED_LOG } from '../../services/usage-parser'
 import { insertSession, insertSessionLog, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
+
+// global-setup already imports llm-routing, so the real PostHog module is cached before a
+// vi.mock in this file registers. A spy on the export is seen by every caller regardless.
+let capturePosthogEventMock: MockInstance<typeof posthog.capturePosthogEvent>
 
 function stubStorage(): StorageProvider {
 	return {
@@ -42,11 +51,17 @@ describe('SessionManager.enforceRunningSessionBudget — live usage (Integration
 	let actorId: string
 
 	beforeEach(async () => {
+		capturePosthogEventMock = vi.spyOn(posthog, 'capturePosthogEvent').mockResolvedValue(undefined)
+		resetPlanLimitEventsForTest()
 		actorId = getTestActorId()
 		const ws = await insertWorkspace(db, actorId, {
 			settings: { billing: { plan: 'pro', hard_cap_usd_cents: 500 } },
 		})
 		workspaceId = ws.id
+	})
+
+	afterEach(() => {
+		capturePosthogEventMock.mockRestore()
 	})
 
 	async function runningSession(overrides: Record<string, unknown> = {}) {
@@ -95,5 +110,72 @@ describe('SessionManager.enforceRunningSessionBudget — live usage (Integration
 
 		// 200 saved + 400 over two turns of the live segment = 600 cents, over the cap.
 		expect(await check(row)).toHaveBeenCalledWith(row.id)
+	})
+
+	// The mid-run stop used to cover only Pro and Team. Every plan the Maskin-funded route
+	// serves has the same 100% rule as the start check.
+	it.each(['trial', 'starter', 'ultra'])(
+		'stops a %s workspace that goes over its cap',
+		async (plan) => {
+			const ws = await insertWorkspace(db, actorId, {
+				settings: { billing: { plan, hard_cap_usd_cents: 300 } },
+			})
+			workspaceId = ws.id
+			const row = await runningSession()
+			// Two turns of 200 cents each: 400, over the 300 cent cap.
+			await insertSessionLog(db, row.id, { content: turn(2) })
+			await insertSessionLog(db, row.id, { content: turn(4) })
+
+			expect(await check(row)).toHaveBeenCalledWith(row.id)
+		},
+	)
+
+	it('stops a workspace with no billing block (a trial) at the trial cap', async () => {
+		const ws = await insertWorkspace(db, actorId, { settings: {} })
+		workspaceId = ws.id
+		const row = await runningSession()
+		// 40M tokens are 200 cents on the legacy rate, 3 turns are 600: over the 286 cent trial cap.
+		await insertSessionLog(db, row.id, { content: turn(2) })
+		await insertSessionLog(db, row.id, { content: turn(4) })
+		await insertSessionLog(db, row.id, { content: turn(6) })
+
+		expect(await check(row)).toHaveBeenCalledWith(row.id)
+	})
+
+	it('keeps a session running while a credit balance covers the overage', async () => {
+		const ws = await insertWorkspace(db, actorId, {
+			settings: { billing: { plan: 'trial', hard_cap_usd_cents: 300, credit_balance_cents: 5000 } },
+		})
+		workspaceId = ws.id
+		const row = await runningSession()
+		// Two turns of 200 cents each: 400, over the 300 cent cap.
+		await insertSessionLog(db, row.id, { content: turn(2) })
+		await insertSessionLog(db, row.id, { content: turn(4) })
+
+		expect(await check(row)).not.toHaveBeenCalled()
+	})
+
+	// A refused start and a mid-run stop in the same period are one event, also when the
+	// workspace has a period start but no period end (both derive the same end).
+	it('sends plan_limit_reached once for a refused start and a stop in one period', async () => {
+		const settings: WorkspaceSettings = {
+			billing: {
+				plan: 'starter',
+				hard_cap_usd_cents: 300,
+				period_start: Math.floor(Date.now() / 1000) - 3600,
+			},
+		}
+		const ws = await insertWorkspace(db, actorId, { settings })
+		workspaceId = ws.id
+		// The start check reads only what is saved on session rows, so the 400 cents sit on
+		// the row (over the 300 cent cap). The mid-run stop counts the same saved usage.
+		const row = await runningSession({ inputTokens: TURN_TOKENS * 2, totalCostUsd: '4' })
+
+		expect(await check(row)).toHaveBeenCalledWith(row.id)
+		await expect(
+			checkPlanCap({ db, workspaceId, wsSettings: settings, enterprise: false }),
+		).rejects.toBeInstanceOf(PlanCapExceededError)
+
+		expect(capturePosthogEventMock).toHaveBeenCalledTimes(1)
 	})
 })

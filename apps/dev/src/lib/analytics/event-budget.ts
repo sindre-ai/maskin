@@ -14,6 +14,7 @@ const DEFAULT_DAILY_CAP = 2_500
 // Events the product questions depend on. Never sampled, never capped.
 const TIER1_EXACT = new Set([
 	'agent_session_started',
+	'plan_limit_reached',
 	'chat_session_started',
 	'integration_connect_started',
 	'integration_tool_called',

@@ -1,5 +1,7 @@
 import { LiveCallSurface } from '@/components/agents/live-call-surface'
 import { VoiceCallHost } from '@/components/agents/voice-call-host'
+import { PlanLimitBanner } from '@/components/billing/plan-limit-banner'
+import { PlanPercentProvider } from '@/components/billing/plan-percent-context'
 import { TrialExpiredBanner } from '@/components/billing/trial-expired-banner'
 import { Header, ScrollingPageTitle } from '@/components/layout/header'
 import { MobileNav } from '@/components/layout/mobile-nav'
@@ -9,6 +11,7 @@ import { RouteError } from '@/components/shared/route-error'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { useDefaultChatAgent } from '@/hooks/use-actors'
 import { useCreateConversation } from '@/hooks/use-conversations'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useMediaQuery } from '@/hooks/use-media-query'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { usePersistedSidebarOpen } from '@/hooks/use-persisted-sidebar-open'
@@ -76,6 +79,9 @@ function WorkspaceLayout() {
 	const onCall = useVoiceCallLive()
 	const narrowForCall = useMediaQuery('(max-width: 1099px)')
 	const railForCall = onCall && narrowForCall
+	// The percent display and the 100% screens. Read once here and passed down, so the
+	// sidebar card, the billing page, the usage views and the chat route share one boundary.
+	const planPercent = useFeatureFlag('trial-card-percent')
 
 	// Pin the Synthesizer's join keys on every analytics event from this workspace,
 	// and apply the workspace's Privacy & data settings — both the share-usage
@@ -122,39 +128,42 @@ function WorkspaceLayout() {
 
 	return (
 		<WorkspaceContext.Provider value={{ workspace, workspaceId, sseStatus }}>
-			<NewConversationProvider>
-				<CommandPaletteProvider>
-					<PendingPromptBootstrap />
-					<GuestDraftClaimBootstrap workspaceId={workspaceId} />
-					<PendingCommentsProvider workspaceId={workspaceId}>
-						<PageHeaderProvider>
-							<ContentPushShell>
-								<SidebarProvider
-									open={open && !railForCall}
-									onOpenChange={(next) => {
-										if (!railForCall) setOpen(next)
-									}}
-									className="h-dvh !min-h-0"
-									data-shell="v2"
-								>
-									<AppSidebar />
-									<SidebarInset className="min-w-0">
-										<Header />
-										<TrialExpiredBanner workspaceId={workspaceId} />
-										<MainScrollArea>
-											<Outlet />
-										</MainScrollArea>
-										<MobileNav />
-									</SidebarInset>
-									<LiveCallSurface />
-								</SidebarProvider>
-							</ContentPushShell>
-						</PageHeaderProvider>
-						<CommandPaletteV2 />
-						<VoiceCallHost />
-					</PendingCommentsProvider>
-				</CommandPaletteProvider>
-			</NewConversationProvider>
+			<PlanPercentProvider value={planPercent}>
+				<NewConversationProvider>
+					<CommandPaletteProvider>
+						<PendingPromptBootstrap />
+						<GuestDraftClaimBootstrap workspaceId={workspaceId} />
+						<PendingCommentsProvider workspaceId={workspaceId}>
+							<PageHeaderProvider>
+								<ContentPushShell>
+									<SidebarProvider
+										open={open && !railForCall}
+										onOpenChange={(next) => {
+											if (!railForCall) setOpen(next)
+										}}
+										className="h-dvh !min-h-0"
+										data-shell="v2"
+									>
+										<AppSidebar />
+										<SidebarInset className="min-w-0">
+											<Header />
+											<TrialExpiredBanner workspaceId={workspaceId} />
+											{planPercent && <PlanLimitBanner workspaceId={workspaceId} />}
+											<MainScrollArea>
+												<Outlet />
+											</MainScrollArea>
+											<MobileNav />
+										</SidebarInset>
+										<LiveCallSurface />
+									</SidebarProvider>
+								</ContentPushShell>
+							</PageHeaderProvider>
+							<CommandPaletteV2 />
+							<VoiceCallHost />
+						</PendingCommentsProvider>
+					</CommandPaletteProvider>
+				</NewConversationProvider>
+			</PlanPercentProvider>
 		</WorkspaceContext.Provider>
 	)
 }

@@ -80,6 +80,16 @@ export const FLAGS = {
 	 * `EditableMarkdownStage`. Retire once the review is on for everyone.
 	 */
 	AGENT_CHANGE_REVIEW: 'agent-change-review',
+	/**
+	 * Gates the trial card bet (bet
+	 * [A card to start a 7-day trial, usage shown as a percent of the plan, and five DKK prices where a fifth of the price is tokens](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/c7069a63-518c-415b-83df-ef350c65c5db)):
+	 * the card step at sign-up (T2) and the percent display with the 100% screens (T3).
+	 * Frontend only for the percent display: the layout reads it once and passes it down
+	 * through PlanPercentContext. Off means usage reads as it does today. The 100% stop
+	 * itself is backend, ungated, and safe for everyone. Retire once the trial card is on
+	 * for everyone.
+	 */
+	TRIAL_CARD_PERCENT: 'trial-card-percent',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

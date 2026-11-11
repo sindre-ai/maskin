@@ -1,3 +1,4 @@
+import { usePlanPercentEnabled } from '@/components/billing/plan-percent-context'
 import { BuyCreditsDialog } from '@/components/settings/buy-credits-dialog'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
@@ -18,10 +19,10 @@ import type {
 	LinkedInIdentityAddonLine,
 } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { planUsageState } from '@/lib/plan-usage'
 import { queryKeys } from '@/lib/query-keys'
 import { trialCardState } from '@/lib/trial'
 import {
-	INCLUDED_USAGE_DKK,
 	OWNERSHIP_CAPS,
 	PLAN_PRICE_DKK,
 	type PaidPlan,
@@ -98,8 +99,8 @@ interface PlanCardConfig {
 	features: string[]
 }
 
-// Prices and included usage come from @maskin/shared (plan-pricing.ts), the same
-// file the backend caps are derived from; scripts/verify-billing-cap-literals.mjs
+// Prices come from @maskin/shared (plan-pricing.ts), the same file the backend caps
+// are derived from; plan cards show no usage amount; scripts/verify-billing-cap-literals.mjs
 // fails CI when this file stops reading from it.
 function paidPlanCard(plan: PaidPlan, eyebrow: string, tagline: string): PlanCardConfig {
 	return {
@@ -109,7 +110,7 @@ function paidPlanCard(plan: PaidPlan, eyebrow: string, tagline: string): PlanCar
 		priceSuffix: '/mo',
 		tagline,
 		features: [
-			`${formatKroner(INCLUDED_USAGE_DKK[plan])} of usage included each month`,
+			'Usage included each month',
 			formatOwnershipCap(OWNERSHIP_CAPS[plan]),
 			formatSeatCap(SEAT_CAPS[plan]),
 			'Hosted by Maskin — no API key needed',
@@ -123,9 +124,9 @@ const PLAN_CONFIG: PlanCardConfig[] = [
 		eyebrow: 'TRIAL',
 		price: 'Free',
 		priceSuffix: '/14 days',
-		tagline: `Full product, no card. ${formatKroner(INCLUDED_USAGE_DKK.trial)} of usage on the house.`,
+		tagline: 'Full product, no card. Usage included.',
 		features: [
-			`${formatKroner(INCLUDED_USAGE_DKK.trial)} of usage included`,
+			'Usage included for the trial',
 			formatOwnershipCap(OWNERSHIP_CAPS.trial),
 			formatSeatCap(SEAT_CAPS.trial),
 			'Hosted by Maskin — no API key needed',
@@ -142,7 +143,7 @@ const PLAN_CONFIG: PlanCardConfig[] = [
 		priceSuffix: '',
 		tagline: 'Bring your own LLM. Pay by invoice. Full control.',
 		features: [
-			'No Maskin-hosted token cap',
+			'No Maskin-hosted usage cap',
 			formatOwnershipCap(OWNERSHIP_CAPS.enterprise),
 			formatSeatCap(SEAT_CAPS.enterprise),
 			'Use your own Claude Pro/Max, Anthropic API key, or custom endpoint',
@@ -483,9 +484,27 @@ function UsageBanner({
 	// reserved for the workspace actually being blocked (no balance left) or
 	// the subscription itself being unhealthy (past_due/canceled).
 	const hasCredits = isPaid && usage.credit_balance_cents > 0
-	const hardBlocked = pct >= 100 && !hasCredits
+	// With the percent display on, the number, the colours and the 80% line come from the
+	// same stored cap the server stops on, and no dollar figure is shown.
+	const percentOn = usePlanPercentEnabled()
+	const percentState = percentOn ? planUsageState(usage) : null
+	const shownPct = percentState ? percentState.percent : pct
+	const hardBlocked = percentState ? percentState.paused : pct >= 100 && !hasCredits
 	const needsAttention =
-		usage.status === 'past_due' || usage.status === 'canceled' || (pct >= 85 && !hasCredits)
+		usage.status === 'past_due' ||
+		usage.status === 'canceled' ||
+		(percentState ? percentState.warn && !hasCredits : pct >= 85 && !hasCredits)
+	const barTone = percentState
+		? percentState.tone === 'error'
+			? 'bg-error'
+			: percentState.tone === 'warning'
+				? 'bg-warning'
+				: 'bg-primary'
+		: hardBlocked
+			? 'bg-error'
+			: pct >= 85
+				? 'bg-warning'
+				: 'bg-primary'
 
 	return (
 		<div
@@ -518,7 +537,9 @@ function UsageBanner({
 				<div>
 					<div className="flex items-baseline justify-between text-xs text-muted-foreground">
 						<span>
-							{formatCredits(usage.usd_cents_used)} / {formatCredits(cap)} used
+							{percentOn
+								? `${shownPct}% of plan used`
+								: `${formatCredits(usage.usd_cents_used)} / ${formatCredits(cap)} used`}
 						</span>
 						{periodMs !== null && periodMs > 0 && periodMs < DAY_MS ? (
 							<PeriodCountdown ms={periodMs} label={isTrial ? 'expires' : 'resets'} />
@@ -528,22 +549,30 @@ function UsageBanner({
 					</div>
 					<div className="mt-1 h-1.5 rounded-full bg-muted overflow-hidden">
 						<div
-							className={`h-full transition-all ${hardBlocked ? 'bg-error' : pct >= 85 ? 'bg-warning' : 'bg-primary'}`}
-							style={{ width: `${pct}%` }}
+							className={`h-full transition-all ${barTone}`}
+							style={{ width: `${shownPct}%` }}
 							role="progressbar"
-							aria-valuenow={pct}
+							aria-label="Plan usage"
+							aria-valuenow={shownPct}
 							aria-valuemin={0}
 							aria-valuemax={100}
 							tabIndex={-1}
 						/>
 					</div>
+					{percentState?.warn && (
+						<p className="mt-1.5 text-xs text-muted-foreground">
+							Work will wait at 100%. Choose a plan to keep going.
+						</p>
+					)}
 				</div>
 			)}
 
 			{isPaid && (usage.credit_topup_available || usage.credit_balance_cents > 0) && (
 				<div className="flex items-center justify-between gap-2">
 					<span className="text-xs text-muted-foreground">
-						{formatCredits(usage.credit_balance_cents)} usage credits
+						{percentOn
+							? 'Usage credits from earlier top-ups left'
+							: `${formatCredits(usage.credit_balance_cents)} usage credits`}
 					</span>
 					{usage.credit_topup_available && (
 						<Button size="sm" variant="outline" onClick={onBuyCredits}>
@@ -568,11 +597,13 @@ function UsageBanner({
 }
 
 // Renders the LinkedIn Identity SKU under the plan surface. The buyer-framing
-// paragraph is verbatim from the bet §Pricing so pricing copy stays inside
-// the pricing memo's control — do NOT paraphrase it. Displayed only when the
+// paragraph is verbatim from the pricing memo so pricing copy stays inside
+// its control — do NOT paraphrase it. With the percent display on, the memo's
+// approved usage wording replaces the dollar and token wording. Displayed only when the
 // backend returns a non-null `linkedin_identity_addon` (see
 // apps/dev/src/lib/linkedin-addon.ts).
 function LinkedInIdentityAddonLineRow({ line }: { line: LinkedInIdentityAddonLine }) {
+	const percentOn = usePlanPercentEnabled()
 	const unit = formatDollars(line.unit_price_usd_cents)
 	const total = formatDollars(line.monthly_total_usd_cents, { withCents: true })
 	return (
@@ -584,8 +615,9 @@ function LinkedInIdentityAddonLineRow({ line }: { line: LinkedInIdentityAddonLin
 				</span>
 			</div>
 			<p className="text-xs text-muted-foreground">
-				$49/month covers connectivity to LinkedIn; your token bucket continues to cover only what
-				the model reasons through.
+				{percentOn
+					? 'The add-on covers the LinkedIn connection. Your plan usage continues to cover only what the model reasons through.'
+					: '$49/month covers connectivity to LinkedIn; your token bucket continues to cover only what the model reasons through.'}
 			</p>
 		</div>
 	)
@@ -649,6 +681,7 @@ function DowngradeDialog({
 	enterprise: boolean
 }) {
 	const cancel = useBillingCancel(workspaceId)
+	const percentOn = usePlanPercentEnabled()
 
 	const handleConfirm = () => {
 		cancel.mutate(undefined, { onSuccess: () => onOpenChange(false) })
@@ -661,7 +694,7 @@ function DowngradeDialog({
 					<DialogTitle>{enterprise ? 'Downgrade to Free?' : 'Cancel subscription?'}</DialogTitle>
 					<DialogDescription>
 						{enterprise
-							? "You'll lose access to Maskin's hosted LLM and your remaining token credits for this period. You won't be charged again."
+							? `You'll lose access to Maskin's hosted LLM and your remaining ${percentOn ? 'usage' : 'token credits'} for this period. You won't be charged again.`
 							: "You'll go back to the free trial plan with Maskin's hosted LLM, on the trial's lower usage cap. You won't be charged again."}
 					</DialogDescription>
 				</DialogHeader>

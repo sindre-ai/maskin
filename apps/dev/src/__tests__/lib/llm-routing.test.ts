@@ -2,7 +2,7 @@ import type { Database } from '@maskin/db'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../lib/logger', () => ({
-	logger: { info: vi.fn(), warn: vi.fn() },
+	logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
 }))
 
 // crypto = identity so encrypted claude_oauth blobs round-trip as their
