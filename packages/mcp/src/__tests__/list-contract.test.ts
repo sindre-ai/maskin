@@ -526,7 +526,7 @@ describe('list tools put the same payload on both channels', () => {
 				tool: 'list_triggers',
 				rows: 'triggers',
 				filter: { agent_id: agentId },
-				keep: (row) => row.targetActorId === agentId,
+				keep: (row) => (row.agent as { id: string | null }).id === agentId,
 				stub: () => stubTriggersApi(triggerRows),
 			},
 			{

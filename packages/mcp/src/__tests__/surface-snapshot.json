@@ -219,6 +219,7 @@
 			"workspace_id"
 		],
 		"get_started": ["confirm", "loop_id", "workspace_id", "workspace_name"],
+		"get_trigger": ["id", "workspace_id"],
 		"get_workspace_schema": ["type", "workspace_id"],
 		"get_workspace_skill": ["name", "workspace_id"],
 		"gmail_send_email": [

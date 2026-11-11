@@ -1700,7 +1700,7 @@ export const tools = {
 	},
 	list_triggers: {
 		description:
-			'List triggers in the workspace, newest first. Filter by `agent_id` (the agent a trigger runs), `status` (enabled or disabled) and `q` (words in the trigger name); filters combine with AND and carry through the cursor. Set `compact` for short rows without the action prompt. Default 25, max 100. Every response carries `page` ({ limit, returned, has_more, total }, where total counts the rows matching your filters) and `next_cursor` while `has_more` is true; pass `next_cursor` back as `cursor` to fetch the next page. Any parameter not listed here is rejected with an error.',
+			'List triggers in the workspace, newest first. Call this before creating a trigger, to see what already runs. Each row is short: id, name, status, kind (recurring, one-time or event), schedule, next_run, last_run, agent (id and name), purpose (first line of the prompt) and url. The full prompt and config are left out; read one trigger in full with get_trigger, or set `compact` to false. Filter by `agent_id` (the agent a trigger runs), `status` (enabled or disabled) and `q`; `q` matches the trigger name, agent name or id, kind, status, schedule and the name of a loop it belongs to (never the prompt), each word of `q` has to match, and filters combine with AND and carry through the cursor. Default 25, max 100. Every response carries `page` ({ limit, returned, has_more, total }, where total counts the rows matching your filters) and `next_cursor` while `has_more` is true; pass `next_cursor` back as `cursor` to fetch the next page. If a page is too long for one response it is cut, `truncated` is true and `hint` says how to get the rest. Any parameter not listed here is rejected with an error.',
 		// Strict: an unknown parameter is an error, never a silently ignored filter.
 		inputSchema: z
 			.object({
@@ -1735,15 +1735,25 @@ export const tools = {
 					.min(1)
 					.max(200)
 					.optional()
-					.describe('Only triggers whose name contains this text (case-insensitive).'),
+					.describe(
+						'Words to find triggers by (case-insensitive, each word must match): name, agent name or id, kind (recurring, one-time, event), status, schedule, or loop name. Not the prompt.',
+					),
 				compact: z
 					.boolean()
 					.optional()
 					.describe(
-						'Return short rows without the action prompt. Use it to scan or audit many triggers; read one trigger in full by leaving it off and filtering with `q`.',
+						'Defaults to true: short rows without the action prompt or config. Set false to get the full rows. To read one trigger in full, use get_trigger instead.',
 					),
 			})
 			.strict(),
+	},
+	get_trigger: {
+		description:
+			'Read one trigger in full by id: name, status, kind (recurring, one-time or event), schedule, next_run, last_run, the agent it runs, the full action prompt and config. Find ids with list_triggers.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z.string().uuid().describe('The trigger id, from list_triggers.'),
+		}),
 	},
 	// ─── Loops ───────────────────────────────────────────────
 	// A Loop is a persistent multi-agent process: a goal wrapped around

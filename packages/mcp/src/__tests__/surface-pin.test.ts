@@ -76,6 +76,7 @@ const READS_OUTSIDE_READ_TOOL_NAMES = [
 	'desktop_list_ports',
 	'query_data',
 	'list_file_tags',
+	'get_trigger',
 ]
 
 // get_started is in READ_TOOL_NAMES but its confirm path installs a loop.

@@ -6627,7 +6627,7 @@ describe('tool handlers', () => {
 			for (const key of ['target_actor_id', 'enabled', 'q']) expect(params.has(key)).toBe(false)
 		})
 
-		it('list_triggers compact leaves the action prompt out of the rows and the card', async () => {
+		it('list_triggers leaves the action prompt out of the rows and the card unless compact is false', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				if ((url as string).includes('/api/triggers')) {
 					return {
@@ -6653,11 +6653,12 @@ describe('tool handlers', () => {
 				content: Array<{ text: string }>
 				structuredContent: { heroCard: { objects: Array<Record<string, unknown>> } }
 			}
-			const full = (await handler({ workspace_id: 'ws-1' })) as Result
+			const full = (await handler({ workspace_id: 'ws-1', compact: false })) as Result
 			expect(full.content[0].text).toContain('A very long prompt')
 			expect(full.structuredContent.heroCard.objects[0].actionPrompt).toBe('A very long prompt')
 
-			const compact = (await handler({ workspace_id: 'ws-1', compact: true })) as Result
+			// Compact is the default: no argument, no prompt.
+			const compact = (await handler({ workspace_id: 'ws-1' })) as Result
 			expect(compact.content[0].text).not.toContain('A very long prompt')
 			expect(compact.content[0].text).toContain('t-1')
 			for (const object of compact.structuredContent.heroCard.objects) {

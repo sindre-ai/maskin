@@ -46,6 +46,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
 	'get_events',
 	'get_comments',
 	'list_triggers',
+	'get_trigger',
 	'list_loops',
 	'get_loop',
 	'query_data',
@@ -150,6 +151,7 @@ const ROWS: Record<string, Row> = {
 	// Triggers
 	create_trigger: row('Create trigger'),
 	list_triggers: row('List triggers'),
+	get_trigger: row('Get trigger'),
 	update_trigger: row('Update trigger', { idempotent: true }),
 	delete_trigger: row('Delete trigger', { destructive: true, idempotent: true }),
 	// Loops

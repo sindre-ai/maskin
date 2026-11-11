@@ -70,6 +70,7 @@ const ALL_TOOL_NAMES = [
 	'update_trigger',
 	'delete_trigger',
 	'list_triggers',
+	'get_trigger',
 	'create_loop',
 	'update_loop',
 	'list_loops',
