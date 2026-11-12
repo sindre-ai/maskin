@@ -77,9 +77,14 @@ export function Skills({ actorId, readOnly = false, attachedFirst = false }: Ski
 		setAddingSkill(false)
 		setEditingSkill(null)
 		requestAnimationFrame(() => {
-			rootRef.current
-				?.querySelector<HTMLElement>(`[data-skill-trigger="${CSS.escape(trigger)}"]`)
-				?.focus()
+			// Match by value rather than a selector string: jsdom has no CSS.escape.
+			const triggers = rootRef.current?.querySelectorAll<HTMLElement>('[data-skill-trigger]')
+			for (const el of triggers ?? []) {
+				if (el.dataset.skillTrigger === trigger) {
+					el.focus()
+					break
+				}
+			}
 		})
 	}, [])
 
