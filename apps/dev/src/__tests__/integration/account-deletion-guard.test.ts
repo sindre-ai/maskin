@@ -53,6 +53,8 @@ const KEPT: Record<string, string> = {
 	saved_views:
 		'created_by on a shared workspace view (ON DELETE SET NULL); the view stays when its author leaves',
 	workspace_skills: 'created_by on workspace content',
+	workspace_ai_usage:
+		'plan-spend ledger of a kept workspace (actor_id is ON DELETE SET NULL); the cost stays billed',
 	workspaces: 'created_by / billing_owner_id; deletion is blocked until billing is handed over',
 	triggers: 'created_by / target agent on workspace automation',
 	sessions: 'agent run history; actor is the agent or the person who started it',

@@ -403,6 +403,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'POST /api/sessions/:id/keychain-card',
 	'POST /api/sessions/:id/mcp-server-card',
 	'POST /api/transcriptions',
+	'POST /api/transcriptions/files/:id',
 	'POST /api/voice-sessions',
 	'POST /api/voice-sessions/:id/hangup',
 	'POST /api/voice-sessions/:id/offer',
