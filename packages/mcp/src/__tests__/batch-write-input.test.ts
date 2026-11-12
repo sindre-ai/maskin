@@ -122,7 +122,6 @@ describe('batch write tools reject bad input instead of returning an empty succe
 		it('throws when the list has the wrong argument name, and writes nothing', async () => {
 			const call = callUpdateObjects({ objects: [{ id: OBJ_ID, status: 'done' }] })
 			await expect(call).rejects.toThrow(/Expected updates as an array/)
-			await expect(call).rejects.toThrow(/name the list updates \(not objects\)/)
 			expect(apiCalls()).toHaveLength(0)
 		})
 
@@ -228,6 +227,16 @@ describe('batch write tools reject bad input instead of returning an empty succe
 			const out = await callRegisteredUpdateObjects({ updates: JSON.stringify(validUpdates) })
 			expect(out.isError).toBeFalsy()
 			expect(writeCallsWith('PATCH')).toHaveLength(1)
+		})
+
+		it('names edges nested in an update entry, and writes nothing', async () => {
+			const out = await callRegisteredUpdateObjects({
+				updates: [{ id: OBJ_ID, edges: validEdges }],
+			})
+			expect(out.isError).toBe(true)
+			expect(out.text).toContain('(edges)')
+			expect(out.text).toContain('beside updates')
+			expect(apiCalls()).toHaveLength(0)
 		})
 
 		it('errors on valid updates plus a misnamed edges list, and writes nothing', async () => {

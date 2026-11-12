@@ -45,6 +45,7 @@ import {
 	paginateClientSide,
 	toSnapshotAt,
 } from './cursor.js'
+import { explainIgnoredUpdateKeys } from './explain-ignored-keys.js'
 import {
 	type IntegrationRow,
 	integrationSortKey,
@@ -3606,7 +3607,10 @@ export function createMcpServer(config: McpConfig) {
 								}
 								return normalised.args
 							},
-							{ rejectUnknownKeys: REJECT_UNKNOWN_KEYS_TOOLS.has(name) },
+							{
+								rejectUnknownKeys: REJECT_UNKNOWN_KEYS_TOOLS.has(name),
+								explain: name === 'update_objects' ? explainIgnoredUpdateKeys : undefined,
+							},
 						),
 					}
 				: baseDefinition
@@ -4127,7 +4131,7 @@ export function createMcpServer(config: McpConfig) {
 						idleIds.length > 0
 							? `no entry in updates (${idleIds.join(', ')}) has a field to change`
 							: 'it received no updates and no edges'
-					}. Expected updates as an array of {id, ...fields to change} (allowed fields: ${UPDATE_ENTRY_FIELDS}; empty attach_file_ids and detach_file_ids lists count as nothing) and/or edges as an array of {source_id, target_id, type}. Send real arrays, not JSON strings, and name the list updates (not objects). Nothing was written.`,
+					}. Expected updates as an array of {id, ...fields to change} (allowed fields: ${UPDATE_ENTRY_FIELDS}; empty attach_file_ids and detach_file_ids lists count as nothing) and/or edges as an array of {source_id, target_id, type}. Send real arrays, not JSON strings. Nothing was written.`,
 				)
 			}
 
