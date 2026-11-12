@@ -10,15 +10,19 @@ import { logger } from '../lib/logger'
 export const COMPANY_TARGET_TITLE = '10 paying customers'
 
 /**
- * Deadline on the company target: "10 orgs by 31 Jan 2027" on the November plan page
- * (Commercial plan v19). The owner has not confirmed it, so it is only a default; pass
- * another date to override it.
+ * Deadline on the company target: 31 Jan 2027, set by Sebastian on 5 Nov 2026 and in the
+ * November plan page (Commercial plan v19). It is the default; pass another date to override it.
  */
 export const COMPANY_TARGET_DEADLINE = '2027-01-31'
 
-/** Flow rows that count as "10 paying customers" (also written "10 paying orgs"). */
-export function isCompanyTargetLabel(label: string): boolean {
-	return /\b10\b.*\bpaying\b/i.test(label)
+/**
+ * Flow rows that count as "10 paying customers". The real rows read "Paying customers by
+ * 31 Jan 2027 (...)" with no 10 in the label, so match paying + customers/orgs and a target of 10.
+ */
+export function isCompanyTargetRow(row: Pick<LoopTarget, 'label' | 'target'>): boolean {
+	return (
+		row.target === 10 && /\bpaying\b.*\b(customers?|orgs?|organi[sz]ations?)\b/i.test(row.label)
+	)
 }
 
 /** Keeps two concurrent runs from each creating the same objects. */
@@ -202,7 +206,7 @@ export async function moveTargetsToObjects(
 		for (const { loop, rows } of withRows) {
 			for (const row of rows) {
 				const exists = existingByKey.has(keyOf(loop.id, row.label))
-				const serves = isCompanyTargetLabel(row.label)
+				const serves = isCompanyTargetRow(row)
 				if (exists) result.flowTargetsExisting++
 				else {
 					result.flowTargetsToCreate.push({

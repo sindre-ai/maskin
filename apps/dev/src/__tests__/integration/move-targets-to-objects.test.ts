@@ -142,6 +142,25 @@ describe('Move flow target rows into target objects', () => {
 		expect(await targetObjects(workspaceId)).toHaveLength(all.length)
 	})
 
+	it('links the real "Paying customers by 31 Jan 2027" rows up to one company target', async () => {
+		const label =
+			'Paying customers by 31 Jan 2027 (date set by Sebastian 5 Nov, follows the CCO plan)'
+		await makeLoop('Founder-led sales', [
+			{ label, source: 'Stripe', actual: 0, target: 10 },
+			{ label: 'Paying customers per week', source: 'Stripe', actual: 0, target: 3 },
+		])
+		await makeLoop('State of the Business', [{ label, source: 'Stripe', actual: 0, target: 10 }])
+
+		const result = await moveTargetsToObjects(db, { workspaceId })
+		expect(result).toMatchObject({ companyTargetsToCreate: 1, companyLinksToCreate: 2 })
+		const company = (await targetObjects(workspaceId)).filter(
+			(o) => o.title === COMPANY_TARGET_TITLE,
+		)
+		expect(company).toHaveLength(1)
+		const down = (await edges('breaks_into')).filter((e) => e.sourceId === company[0]?.id)
+		expect(down).toHaveLength(2)
+	})
+
 	it('uses the deadline it is given', async () => {
 		await makeLoop('Sales', [{ label: '10 paying customers', source: 's', actual: 0, target: 10 }])
 		await moveTargetsToObjects(db, { workspaceId, companyDeadline: '2027-02-28' })

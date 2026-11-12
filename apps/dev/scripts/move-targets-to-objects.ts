@@ -8,8 +8,8 @@
 //     [--workspace=<workspace id>] [--deadline=YYYY-MM-DD] [--dry-run]
 //
 // --dry-run prints the list and writes nothing; run it first. --workspace limits the run to
-// one workspace. --deadline sets the deadline of the company target (default: the date on
-// the November plan page). Only workspaces with the targets extension enabled are touched.
+// one workspace. --deadline sets the deadline of the company target (default: 31 Jan 2027,
+// set by Sebastian on 5 Nov). Only workspaces with the targets extension enabled are touched.
 
 import { pathToFileURL } from 'node:url'
 import { createDb } from '@maskin/db'
