@@ -364,7 +364,7 @@ function ConversationThreadPage() {
 					<div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
 						{/* The header and the composer float over the transcript, which fills the whole
 						    column and pads itself by their measured heights (see FLOATING_EDGE). */}
-						<div ref={headerBarRef} className={cn(FLOATING_EDGE, 'top-0 pb-3')}>
+						<div ref={headerBarRef} className={cn(FLOATING_EDGE, 'top-0 bg-background pb-3')}>
 							<ThreadHeader
 								workspaceId={workspaceId}
 								conversationId={conversationId}
