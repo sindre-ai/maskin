@@ -36,7 +36,12 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Cron } from 'croner'
 import type { z } from 'zod'
 import { needsNormalise, normaliseArgs, wrapInputSchema } from './alias-layer.js'
-import { READ_ONLY_TOOLS, TOOL_ANNOTATIONS } from './annotations.js'
+import {
+	ALWAYS_LOADED_TOOLS,
+	ALWAYS_LOAD_META_KEY,
+	READ_ONLY_TOOLS,
+	TOOL_ANNOTATIONS,
+} from './annotations.js'
 import {
 	CURSOR_MAX_OFFSET,
 	type CursorState,
@@ -3739,6 +3744,10 @@ export function createMcpServer(config: McpConfig) {
 		// tool gets them here and nowhere else. Extension tools have no row and
 		// pass through unannotated.
 		const annotation = TOOL_ANNOTATIONS[name]
+		// The daily tools also carry Claude Code's always-load mark, so their
+		// schema is in the agent's context from the first turn (see
+		// ALWAYS_LOADED_TOOLS). Other clients ignore the key.
+		const definitionMeta = (definition as { _meta?: Record<string, unknown> })._meta
 		const annotatedDefinition = annotation
 			? {
 					...definition,
@@ -3749,6 +3758,9 @@ export function createMcpServer(config: McpConfig) {
 						idempotentHint: annotation.idempotentHint,
 						openWorldHint: annotation.openWorldHint,
 					},
+					...(ALWAYS_LOADED_TOOLS.has(name)
+						? { _meta: { ...definitionMeta, [ALWAYS_LOAD_META_KEY]: true } }
+						: {}),
 				}
 			: definition
 

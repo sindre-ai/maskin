@@ -109,6 +109,8 @@ describe('MCP surface pin', () => {
 	let READ_TOOL_NAMES: typeof import('../read-error').READ_TOOL_NAMES
 	let TOOL_ANNOTATIONS: typeof import('../annotations').TOOL_ANNOTATIONS
 	let READ_ONLY_TOOLS: typeof import('../annotations').READ_ONLY_TOOLS
+	let ALWAYS_LOADED_TOOLS: typeof import('../annotations').ALWAYS_LOADED_TOOLS
+	let ALWAYS_LOAD_META_KEY: typeof import('../annotations').ALWAYS_LOAD_META_KEY
 
 	beforeEach(async () => {
 		vi.clearAllMocks()
@@ -139,7 +141,8 @@ describe('MCP surface pin', () => {
 		tools = (await import('../tools')).tools
 		MUTATION_TOOL_KINDS = (await import('../telemetry')).MUTATION_TOOL_KINDS
 		READ_TOOL_NAMES = (await import('../read-error')).READ_TOOL_NAMES
-		;({ TOOL_ANNOTATIONS, READ_ONLY_TOOLS } = await import('../annotations'))
+		;({ TOOL_ANNOTATIONS, READ_ONLY_TOOLS, ALWAYS_LOADED_TOOLS, ALWAYS_LOAD_META_KEY } =
+			await import('../annotations'))
 	})
 
 	afterEach(() => {
@@ -291,6 +294,30 @@ describe('MCP surface pin', () => {
 				if (!entry.title.trim()) violations.push(`${name}: empty title`)
 			}
 			expect(violations, violations.join('\n')).toEqual([])
+		})
+
+		it('marks exactly the always-loaded tools, and keeps their UI metadata', () => {
+			const marked = [...registeredDefinitions]
+				.filter(
+					([, def]) => (def._meta as Record<string, unknown> | undefined)?.[ALWAYS_LOAD_META_KEY],
+				)
+				.map(([name]) => name)
+				.sort()
+			expect(marked).toEqual([...ALWAYS_LOADED_TOOLS].sort())
+			for (const name of marked) {
+				const meta = registeredDefinitions.get(name)?._meta as Record<string, unknown>
+				expect(meta[ALWAYS_LOAD_META_KEY]).toBe(true)
+			}
+			// get_objects renders a card; the mark must sit beside its UI metadata, not replace it.
+			const getObjectsMeta = registeredDefinitions.get('get_objects')?._meta as Record<
+				string,
+				unknown
+			>
+			expect(getObjectsMeta.ui).toBeDefined()
+		})
+
+		it('keeps the always-loaded list small: every entry costs context in every session', () => {
+			expect(ALWAYS_LOADED_TOOLS.size).toBeLessThanOrEqual(12)
 		})
 
 		it('READ_TOOL_NAMES is exactly the list it was before the annotations PR', () => {

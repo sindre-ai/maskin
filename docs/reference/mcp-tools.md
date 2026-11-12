@@ -132,6 +132,14 @@ FROM mcp_telemetry;
 
 Safe to remove when **alias_uses_since_clock** is 0, **tool_calls_since_clock** is above 0 and **test_call_rows** is 1. No workspace filter: read every workspace.
 
+## Always-loaded tools
+
+Claude Code defers MCP tools by default: an agent session starts with tool names only and loads a tool's schema when it searches for it. Agents often skip that search and call a tool by name with guessed arguments, which produces schema errors. Ten tools are therefore marked to load up front, with **_meta["anthropic/alwaysLoad"]: true** in tools/list: get_objects, list_objects, create_objects, update_objects, get_comments, create_comment, list_relationships, update_notification, list_sessions and list_actors.
+
+- The list is **ALWAYS_LOADED_TOOLS** in **packages/mcp/src/annotations.ts**; the wrapper in server.ts adds the mark. Every other tool stays reachable through tool search.
+- Each entry costs context in every agent session (the ten together are about 12,000 tokens), so **surface-pin.test.ts** caps the list at 12. Pick entries from per-tool call counts in **mcp_telemetry**, not by feel.
+- The mark is a Claude Code feature (2.1.285 and later). Other clients ignore it. An operator can override it per server with **alwaysLoad** in the MCP config.
+
 ## Tool description length
 
 No registered tool description is over 1,500 characters; **packages/mcp/src/__tests__/description-length.test.ts** fails if one is. The first sentence of each description says what the tool does and when to use it, because tool search matches on it. Keep the rules that stop a wrong call in the description; put walkthroughs here or on the parameter descriptions.
