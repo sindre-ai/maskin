@@ -47,4 +47,9 @@ export interface StorageProvider {
 	/** Size of the stored object, or null when it does not exist. */
 	headObject(key: string): Promise<{ size: number } | null>
 	presignDownload(key: string, options: PresignDownloadOptions): Promise<string>
+	/**
+	 * URL a machine PUTs a whole object to in one request (no multipart). Signs the key only:
+	 * the PUT may carry any content type, so the caller checks the stored size afterwards.
+	 */
+	presignUpload(key: string, expiresInSeconds: number): Promise<string>
 }

@@ -247,6 +247,16 @@ export class S3StorageProvider implements StorageProvider {
 		)
 	}
 
+	presignUpload(key: string, expiresInSeconds: number): Promise<string> {
+		return getSignedUrl(
+			this.presignClient,
+			new PutObjectCommand({ Bucket: this.bucket, Key: key }),
+			{
+				expiresIn: expiresInSeconds,
+			},
+		)
+	}
+
 	async exists(key: string): Promise<boolean> {
 		try {
 			await this.client.send(

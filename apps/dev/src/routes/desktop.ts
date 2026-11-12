@@ -1,13 +1,15 @@
+import { randomUUID } from 'node:crypto'
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { files, sessions } from '@maskin/db/schema'
+import { events, files, sessions } from '@maskin/db/schema'
 import {
 	desktopExecBodySchema,
 	desktopExecResultSchema,
 	desktopInputActionSchema,
 } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, gt, sql } from 'drizzle-orm'
+import { trackDesktopFileMoved } from '../lib/analytics/file-events'
 import { resolveDesktopAgent } from '../lib/desktop-access'
 import {
 	FETCH_FREE_HEADROOM_BYTES,
@@ -15,12 +17,24 @@ import {
 	buildPutFileCommand,
 	formatBytes,
 } from '../lib/desktop-put-file-command'
+import {
+	EMPTY_EXIT_CODE,
+	NOT_ALLOWED_EXIT_CODE,
+	NOT_FOUND_EXIT_CODE,
+	SAVE_FILE_MAX_BYTES,
+	SAVE_FILE_MAX_PER_HOUR,
+	TOO_BIG_EXIT_CODE,
+	buildSaveFileCommand,
+	mimeTypeForFileName,
+} from '../lib/desktop-save-file-command'
 import { signDesktopTicket } from '../lib/desktop-ticket'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { fileStorageKey, fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
 import { resolveKeychainTyping } from '../lib/integrations/keychain-typing'
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
+import { insertStoredFile, recordFileCreated } from '../lib/stored-file'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import { DESKTOP_STREAM_PATH } from '../services/desktop-relay'
 import {
@@ -43,6 +57,8 @@ type Env = {
 		actorType?: string
 		workspaceRole?: string
 		storageProvider: StorageProvider
+		/** Set by app-factory from X-Maskin-Session-Id; ties a saved file to the session that saved it. */
+		maskinSessionId?: string
 		// Test seam: unit tests inject a fake instead of hitting agent-servers.
 		desktopService?: WorkspaceDesktopService
 	}
@@ -154,7 +170,14 @@ function serviceFor(c: { get: (k: 'desktopService' | 'db') => unknown }): Worksp
 
 type Ctx = {
 	get: (
-		k: 'actorId' | 'actorType' | 'db' | 'desktopService' | 'workspaceRole' | 'storageProvider',
+		k:
+			| 'actorId'
+			| 'actorType'
+			| 'db'
+			| 'desktopService'
+			| 'maskinSessionId'
+			| 'workspaceRole'
+			| 'storageProvider',
 	) => unknown
 	header: (name: string, value: string) => void
 	req: { header: (name: string) => string | undefined; query: (name: string) => string | undefined }
@@ -546,6 +569,22 @@ function safeFileName(name: string): string {
 	)
 }
 
+/** Reports a finished or failed file move to analytics. Never throws and never waits. */
+function reportFileMoved(
+	gated: Gate,
+	direction: 'to_computer' | 'to_maskin',
+	outcome: string,
+	sizeBytes: number | null,
+) {
+	void trackDesktopFileMoved({
+		workspaceId: gated.workspaceId,
+		actorId: gated.actorId,
+		direction,
+		outcome,
+		sizeBytes,
+	}).catch((err) => logger.warn('desktop file moved event failed', { error: String(err) }))
+}
+
 async function putFile(c: Ctx, input: { fileId: string; folder: string }) {
 	const gated = await gate(c)
 	if (isResponse(gated)) return gated
@@ -574,6 +613,7 @@ async function putFile(c: Ctx, input: { fileId: string; folder: string }) {
 		})
 	} catch (err) {
 		logger.error('Failed to presign file for desktop', { fileId: file.id, error: String(err) })
+		reportFileMoved(gated, 'to_computer', 'presign_failed', file.sizeBytes)
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create download URL'), 500)
 	}
 
@@ -594,6 +634,7 @@ async function putFile(c: Ctx, input: { fileId: string; folder: string }) {
 		})
 	} catch (err) {
 		logger.error('desktop put-file failed', { workspaceId, agentId, error: String(err) })
+		reportFileMoved(gated, 'to_computer', 'unreachable', file.sizeBytes)
 		return c.json(createApiError('INTERNAL_ERROR', 'Desktop could not be reached'), 502)
 	}
 	if (!result) return c.json(createApiError('NOT_FOUND', 'No desktop could be started'), 404)
@@ -606,6 +647,7 @@ async function putFile(c: Ctx, input: { fileId: string; folder: string }) {
 	if (!exec.data.timed_out && exec.data.exit_code === NO_ROOM_EXIT_CODE) {
 		const free = Number(exec.data.stdout.trim().split(' ')[1])
 		logger.warn('desktop put-file refused: no room', { workspaceId, agentId, fileId: file.id })
+		reportFileMoved(gated, 'to_computer', 'no_room', file.sizeBytes)
 		return c.json(
 			createApiError(
 				'CONFLICT',
@@ -618,6 +660,12 @@ async function putFile(c: Ctx, input: { fileId: string; folder: string }) {
 		// The download tool may quote the signed URL back; it must never reach the caller.
 		const detail = exec.data.stderr.split(url).join('<url>').trim().slice(0, 500)
 		const diskFull = /no space left on device/i.test(exec.data.stderr)
+		reportFileMoved(
+			gated,
+			'to_computer',
+			exec.data.timed_out ? 'timeout' : diskFull ? 'disk_full' : 'download_failed',
+			file.sizeBytes,
+		)
 		logger.warn('desktop put-file download failed', {
 			workspaceId,
 			agentId,
@@ -649,6 +697,7 @@ async function putFile(c: Ctx, input: { fileId: string; folder: string }) {
 		sizeBytes !== file.sizeBytes ||
 		(file.contentHash != null && !hashVerified)
 	) {
+		reportFileMoved(gated, 'to_computer', 'mismatch', file.sizeBytes)
 		logger.error('desktop put-file arrived different from the stored file', {
 			workspaceId,
 			agentId,
@@ -674,6 +723,7 @@ async function putFile(c: Ctx, input: { fileId: string; folder: string }) {
 		// The path, not the download URL: the URL is a credential.
 		data: { agent_id: agentId, control: 'put_file', file_id: file.id, path },
 	}).catch((err) => logger.warn('desktop put-file event failed', { error: String(err) }))
+	reportFileMoved(gated, 'to_computer', 'ok', sizeBytes)
 	c.header('Cache-Control', 'no-store')
 	return c.json(
 		{
@@ -693,6 +743,339 @@ app.openapi(
 		putFile(c as unknown as Ctx, {
 			fileId: c.req.valid('json').file_id,
 			folder: c.req.valid('json').folder,
+		}) as never,
+)
+
+// Saving a file from the agent's computer into the workspace: the mirror of put-file. The
+// computer sends the bytes straight to one short-lived storage URL the server signed for a
+// key the server chose, so the bytes (and the agent's API key) never pass through the caller.
+
+const saveFileBodySchema = z.object({
+	path: z
+		.string()
+		.min(1)
+		.max(1024)
+		.regex(/^(\/|~\/)[^\0\r\n]*$/, 'Use an absolute path or one starting with ~/')
+		.openapi({ description: 'Path of a file under your home folder on the computer.' }),
+	name: z
+		.string()
+		.min(1)
+		.max(200)
+		.optional()
+		.openapi({ description: 'Name for the new workspace file. Defaults to the file name.' }),
+})
+
+const saveFileResultSchema = z.object({
+	file_id: z.string().uuid(),
+	name: z.string(),
+	size_bytes: z.number().int(),
+	sha256: z.string(),
+	url: z.string().openapi({ description: 'Where a person opens the file in the app.' }),
+})
+
+const saveFileRoute = createRoute({
+	method: 'post',
+	path: '/save-file',
+	'x-viewer-policy': 'writer',
+	tags: ['Desktop'],
+	summary: "Save a file from an agent's computer into the workspace",
+	description: `The computer sends the file straight to storage, so its bytes never pass through the caller. Always makes a new file; never overwrites one. Only a regular file under the computer's home folder, outside hidden folders, up to ${SAVE_FILE_MAX_BYTES / (1024 * 1024)} MB, and at most ${SAVE_FILE_MAX_PER_HOUR} saves per computer per hour. On any failure the stored copy is deleted and no file is made.`,
+	request: {
+		headers: workspaceIdHeader,
+		query: agentQuery,
+		body: { content: { 'application/json': { schema: saveFileBodySchema } } },
+	},
+	responses: {
+		201: {
+			description: 'The file is saved',
+			content: { 'application/json': { schema: saveFileResultSchema } },
+		},
+		...controlResponses,
+		400: {
+			description: 'The path is not allowed, the file is empty, or it is over the size cap',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'No regular file at the path',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		429: {
+			description: 'Too many saves from this computer in the last hour',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+/** Saves from this computer in the last hour, counted from the audit trail every save writes. */
+async function savesInLastHour(db: Database, workspaceId: string, agentId: string) {
+	const [row] = await db
+		.select({ n: sql<number>`count(*)::int` })
+		.from(events)
+		.where(
+			and(
+				eq(events.workspaceId, workspaceId),
+				eq(events.entityType, 'workspace_desktop'),
+				eq(events.entityId, workspaceId),
+				sql`${events.data}->>'control' = 'save_file'`,
+				sql`${events.data}->>'agent_id' = ${agentId}`,
+				gt(events.createdAt, sql`now() - interval '1 hour'`),
+			),
+		)
+	return row?.n ?? 0
+}
+
+async function saveFile(c: Ctx, input: { path: string; name?: string }) {
+	const gated = await gate(c)
+	if (isResponse(gated)) return gated
+	const { workspaceId, actorId, agentId } = gated
+	const db = c.get('db') as Database
+	const storage = c.get('storageProvider') as StorageProvider
+
+	// Before any side effect: a missing FRONTEND_URL would otherwise fail after the upload.
+	let frontendUrl: string
+	try {
+		frontendUrl = frontendBaseUrl()
+	} catch (err) {
+		logger.error('Cannot mint file URL', { error: String(err) })
+		return c.json(createApiError('INTERNAL_ERROR', 'File URL not configured'), 500)
+	}
+
+	if ((await savesInLastHour(db, workspaceId, agentId)) >= SAVE_FILE_MAX_PER_HOUR) {
+		reportFileMoved(gated, 'to_maskin', 'rate_limited', null)
+		return c.json(
+			createApiError(
+				'RATE_LIMITED',
+				`This computer has already saved ${SAVE_FILE_MAX_PER_HOUR} files in the last hour. Save fewer, larger files (zip several together), or try again later.`,
+			),
+			429,
+		)
+	}
+
+	// The server makes the key, under the caller's workspace. The caller never names one.
+	const fileId = randomUUID()
+	const storageKey = fileStorageKey(workspaceId, fileId)
+	let url: string
+	try {
+		url = await storage.presignUpload(storageKey, PUT_FILE_URL_TTL_SECONDS)
+	} catch (err) {
+		logger.error('Failed to presign an upload for desktop', { fileId, error: String(err) })
+		reportFileMoved(gated, 'to_maskin', 'presign_failed', null)
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create upload URL'), 500)
+	}
+
+	// Anything below that goes wrong may have left bytes behind: remove them before answering.
+	const discard = () =>
+		storage.delete(storageKey).catch((err) =>
+			logger.error('Failed to delete the object of a failed desktop save (orphan left)', {
+				storageKey,
+				error: String(err),
+			}),
+		)
+	const failed = async (
+		outcome: string,
+		size: number | null,
+		status: 500 | 502,
+		message: string,
+	) => {
+		await discard()
+		reportFileMoved(gated, 'to_maskin', outcome, size)
+		return c.json(createApiError('INTERNAL_ERROR', message), status)
+	}
+
+	const command = buildSaveFileCommand({ path: input.path, url, maxBytes: SAVE_FILE_MAX_BYTES })
+	let result: Awaited<ReturnType<WorkspaceDesktopService['control']>>
+	try {
+		result = await serviceFor(c as never).control(workspaceId, agentId, 'exec', {
+			command,
+			timeout_s: 120,
+		})
+	} catch (err) {
+		logger.error('desktop save-file failed', { workspaceId, agentId, error: String(err) })
+		return failed('unreachable', null, 502, 'Desktop could not be reached')
+	}
+	if (!result) {
+		reportFileMoved(gated, 'to_maskin', 'unreachable', null)
+		return c.json(createApiError('NOT_FOUND', 'No desktop could be started'), 404)
+	}
+	if (result.status !== 200) {
+		await discard()
+		reportFileMoved(gated, 'to_maskin', 'unreachable', null)
+		return c.json(result.body, result.status)
+	}
+
+	const exec = desktopExecResultSchema.safeParse(result.body)
+	if (!exec.success) {
+		return failed('bad_answer', null, 502, 'Desktop gave an unexpected answer')
+	}
+	if (!exec.data.timed_out && exec.data.exit_code !== 0) {
+		await discard()
+		const code = exec.data.exit_code
+		if (code === TOO_BIG_EXIT_CODE) {
+			const size = Number(exec.data.stdout.trim().split(' ')[1])
+			reportFileMoved(gated, 'to_maskin', 'over_cap', Number.isFinite(size) ? size : null)
+			return c.json(
+				createApiError(
+					'VALIDATION_ERROR',
+					`That file is ${Number.isFinite(size) ? formatBytes(size) : 'too big'}, over the ${formatBytes(SAVE_FILE_MAX_BYTES)} limit for saving. Nothing was uploaded. The file stays on the computer; if it came from Drive or another source you can fetch it again from there. Cut it down or split it, then save the parts.`,
+				),
+				400,
+			)
+		}
+		if (code === NOT_FOUND_EXIT_CODE) {
+			reportFileMoved(gated, 'to_maskin', 'not_found', null)
+			return c.json(
+				createApiError('NOT_FOUND', 'There is no file at that path on the computer'),
+				404,
+			)
+		}
+		if (code === NOT_ALLOWED_EXIT_CODE) {
+			reportFileMoved(gated, 'to_maskin', 'not_allowed', null)
+			return c.json(
+				createApiError(
+					'VALIDATION_ERROR',
+					'Only files under your home folder can be saved, and not inside hidden folders (names starting with a dot). Copy the file to a normal folder such as ~/Downloads first.',
+				),
+				400,
+			)
+		}
+		if (code === EMPTY_EXIT_CODE) {
+			reportFileMoved(gated, 'to_maskin', 'empty', 0)
+			return c.json(
+				createApiError('VALIDATION_ERROR', 'That file is empty, so nothing was saved'),
+				400,
+			)
+		}
+	}
+	if (exec.data.timed_out || exec.data.exit_code !== 0) {
+		// The upload tool may quote the signed URL back; it must never reach the caller.
+		const detail = exec.data.stderr.split(url).join('<url>').trim().slice(0, 500)
+		logger.warn('desktop save-file upload failed', {
+			workspaceId,
+			agentId,
+			exitCode: exec.data.exit_code,
+			timedOut: exec.data.timed_out,
+		})
+		return failed(
+			exec.data.timed_out ? 'timeout' : 'upload_failed',
+			null,
+			502,
+			exec.data.timed_out
+				? 'The upload took longer than two minutes and was stopped. Nothing was saved.'
+				: `The computer could not upload the file: ${detail || 'no error text'}. Nothing was saved.`,
+		)
+	}
+
+	const [path, size, sha256, sizeAfter] = exec.data.stdout.trim().split('\n')
+	const sizeBytes = Number(size)
+	if (
+		!path ||
+		!Number.isInteger(sizeBytes) ||
+		sizeBytes <= 0 ||
+		sizeBytes > SAVE_FILE_MAX_BYTES ||
+		!sha256 ||
+		!/^[0-9a-f]{64}$/.test(sha256) ||
+		Number(sizeAfter) !== sizeBytes
+	) {
+		logger.error('desktop save-file gave an unusable report', {
+			workspaceId,
+			agentId,
+			size,
+			sizeAfter,
+		})
+		return failed(
+			'bad_answer',
+			Number.isFinite(sizeBytes) ? sizeBytes : null,
+			502,
+			'The file changed while it was being uploaded, or the computer gave an unexpected answer. Nothing was saved. Finish writing the file, then save it again.',
+		)
+	}
+
+	// Trust the stored object, not the computer's word for it.
+	let stored: { size: number } | null
+	try {
+		stored = await storage.headObject(storageKey)
+	} catch (err) {
+		logger.error('Failed to read the object of a desktop save', { storageKey, error: String(err) })
+		return failed(
+			'verify_failed',
+			sizeBytes,
+			500,
+			'Failed to verify the upload. Nothing was saved.',
+		)
+	}
+	if (!stored || stored.size !== sizeBytes) {
+		logger.error('desktop save-file stored a different size than the computer reported', {
+			workspaceId,
+			agentId,
+			reported: sizeBytes,
+			stored: stored?.size ?? null,
+		})
+		return failed(
+			'mismatch',
+			sizeBytes,
+			502,
+			'The stored file does not match the size the computer reported. Nothing was saved.',
+		)
+	}
+
+	const name = safeFileName(input.name ?? path)
+	let created: typeof files.$inferSelect
+	try {
+		created = await insertStoredFile(db, {
+			id: fileId,
+			workspaceId,
+			name,
+			description: null,
+			kind: null,
+			tags: [],
+			mimeType: mimeTypeForFileName(name),
+			sizeBytes: stored.size,
+			storageKey,
+			// The hash the computer reported; the server did not read the bytes back.
+			contentHash: sha256,
+			createdBy: actorId,
+		})
+	} catch (err) {
+		logger.error('Failed to create the file row for a desktop save', { fileId, error: String(err) })
+		return failed('record_failed', sizeBytes, 500, 'Failed to create the file. Nothing was saved.')
+	}
+
+	await recordFileCreated(db, {
+		file: created,
+		actorId,
+		sessionId: c.get('maskinSessionId') as string | undefined,
+	}).catch((err) =>
+		logger.error('Failed to record file created audit event', { fileId, error: String(err) }),
+	)
+	// Also what the hourly limit counts. The path, never the upload URL: the URL is a credential.
+	await recordEvent(db, {
+		workspaceId,
+		actorId,
+		action: 'updated',
+		entityType: 'workspace_desktop',
+		entityId: workspaceId,
+		data: { agent_id: agentId, control: 'save_file', file_id: created.id, path },
+	}).catch((err) => logger.warn('desktop save-file event failed', { error: String(err) }))
+	reportFileMoved(gated, 'to_maskin', 'ok', sizeBytes)
+	c.header('Cache-Control', 'no-store')
+	return c.json(
+		{
+			file_id: created.id,
+			name: created.name,
+			size_bytes: created.sizeBytes,
+			sha256,
+			url: fileViewerUrl(frontendUrl, workspaceId, created.id),
+		},
+		201,
+	)
+}
+
+app.openapi(
+	saveFileRoute,
+	(c) =>
+		saveFile(c as unknown as Ctx, {
+			path: c.req.valid('json').path,
+			name: c.req.valid('json').name,
 		}) as never,
 )
 

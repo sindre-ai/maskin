@@ -261,6 +261,7 @@ export function createMockStorageProvider(overrides?: Record<string, unknown>) {
 		abortMultipartUpload: vi.fn().mockResolvedValue(undefined),
 		headObject: vi.fn().mockResolvedValue(null),
 		presignDownload: vi.fn().mockResolvedValue('https://storage.test/download/file'),
+		presignUpload: vi.fn().mockResolvedValue('https://storage.test/upload/file'),
 		...overrides,
 	} as unknown as StorageProvider
 }

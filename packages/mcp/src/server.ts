@@ -10600,6 +10600,30 @@ ${claudeCredsBlock}`,
 
 	registerAppTool(
 		server,
+		'desktop_save_file',
+		{
+			description: tools.desktop_save_file.description,
+			inputSchema: tools.desktop_save_file.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, agent_id, ...body } = args
+			const result = await apiCall(
+				config,
+				'POST',
+				desktopPath('/api/desktop/save-file', agent_id),
+				body,
+				{ workspaceId: workspace_id },
+			)
+			return {
+				_meta: meta('desktop_save_file', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'desktop_expose_port',
 		{
 			description: tools.desktop_expose_port.description,

@@ -2987,7 +2987,7 @@ export const tools = {
 	},
 	desktop_put_file: {
 		description:
-			"Put a workspace file on YOUR computer (the desktop VM) by its file id, so a browser there can pick it in a file field. Your computer is a separate machine, so a file in your session or in the workspace is not on it until you call this. The computer downloads the file directly: its content never passes through you, so photos and videos are fine. Returns the path, size and sha256 of the file as it landed (the same size and hash as the stored file; a mismatch is an error) and free_space_bytes, the room left on the computer. Default folder is ~/Downloads; an existing file of the same name is overwritten, and the name is made safe (letters, digits, dot, dash, underscore, space). Takes up to two minutes, so a very large file can time out. Files an earlier desktop_put_file left on the computer are cleaned up first: those over 24 hours old always, and, if the disk lacks room for this file plus 1 GB, those over 1 hour old, oldest first. Files you made and files Chromium downloaded are never removed. If there is still no room the call is refused with how much is needed and how much is free, and nothing is downloaded. To upload it in Chromium: click the page's file field, press ctrl+L in the chooser, type the full path that this call returned, then click Open (or press alt+O). Do not press Enter and do not double click: both close the chooser without choosing the file. The chooser opens centred on screen with Open in view. Only your own computer is reachable.",
+			"Put a workspace file on YOUR computer (the desktop VM) by its file id, so a browser there can pick it in a file field. Your computer is a separate machine, so a file in your session or in the workspace is not on it until you call this. The computer downloads the file directly: its content never passes through you, so photos and videos are fine. Returns the path, size and sha256 of the file as it landed (the same size and hash as the stored file; a mismatch is an error) and free_space_bytes, the room left on the computer. Default folder is ~/Downloads; an existing file of the same name is overwritten, and the name is made safe (letters, digits, dot, dash, underscore, space). Takes up to two minutes, so a very large file can time out. Files an earlier desktop_put_file left on the computer are cleaned up first: those over 24 hours old always, and, if the disk lacks room for this file plus 1 GB, those over 1 hour old, oldest first. Files you made and files Chromium downloaded are never removed. If there is still no room the call is refused with how much is needed and how much is free, and nothing is downloaded. To upload it in Chromium: click the page's file field, press ctrl+L in the chooser, type the full path that this call returned, then click Open (or press alt+O). Do not press Enter and do not double click: both close the chooser without choosing the file. The chooser opens centred on screen with Open in view. Use this to bring a file back after your computer was reset: save your work with desktop_save_file as soon as it exists, then fetch it again here. A file over 50 MB read with get_file comes back as a download link, not inline, so use this call to get such a file onto your computer. Only your own computer is reachable.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,
@@ -3002,6 +3002,27 @@ export const tools = {
 				.describe(
 					'Folder on your computer, absolute or starting with ~/. Created if missing. Defaults to ~/Downloads.',
 				),
+		}),
+	},
+	desktop_save_file: {
+		description:
+			'Save a file from YOUR computer (the desktop VM) into the workspace as a new file, and get its file id back. Do this the moment a finished render, cut list or working package exists: your computer can be reset at any time and everything on it is lost, but a saved file is safe in the workspace. After a reset, bring a saved file back with desktop_put_file. The computer uploads the file straight to storage: its content never passes through you, so videos and large files are fine. Returns file_id, name, size_bytes, sha256 and a url a person can open. Every call makes a new file, it never overwrites an earlier one. Limits: only a regular file under your home folder (for example ~/Downloads or ~/renders), not inside a hidden folder (a name starting with a dot, where the browser keeps its logins); up to 100 MB (a bigger file is refused and nothing is uploaded, so cut it down or split it; raw footage over the limit stays re-fetchable from where it came from, such as Drive); an empty file is refused; at most 20 saves per hour from your computer, so zip several small files into one. If the call fails nothing is saved, and you can call it again. A file over 50 MB is not returned inline by get_file: you get a download link, which is expected. Only your own computer is reachable.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+			path: z
+				.string()
+				.min(1)
+				.max(1024)
+				.describe(
+					'Path of the file on your computer, absolute or starting with ~/. Must be under your home folder.',
+				),
+			name: z
+				.string()
+				.min(1)
+				.max(200)
+				.optional()
+				.describe('Name for the new workspace file. Defaults to the name of the file on disk.'),
 		}),
 	},
 	desktop_expose_port: {

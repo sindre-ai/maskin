@@ -54,6 +54,7 @@ import { htmlViewerWarning } from '../lib/html-viewer-warning'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
+import { insertStoredFile, recordFileCreated } from '../lib/stored-file'
 import {
 	assertWorkspaceWriterRole,
 	isWorkspaceMember,
@@ -1379,25 +1380,21 @@ app.openapi(completeUploadRoute, (async (c) => {
 
 	let created: typeof files.$inferSelect | undefined
 	try {
-		;[created] = await db
-			.insert(files)
-			.values({
-				id: upload.fileId,
-				workspaceId: upload.workspaceId,
-				name: upload.name,
-				description: upload.description,
-				kind: upload.kind,
-				tags: upload.tags,
-				mimeType: upload.mimeType,
-				sizeBytes: stored.size,
-				storageKey: upload.storageKey,
-				// Not hashed: that would mean reading the whole object back. Large files
-				// cannot be edited, so nothing compares against a hash.
-				contentHash: null,
-				createdBy: actorId,
-			})
-			.returning()
-		if (!created) throw new Error('Insert returned no row')
+		created = await insertStoredFile(db, {
+			id: upload.fileId,
+			workspaceId: upload.workspaceId,
+			name: upload.name,
+			description: upload.description,
+			kind: upload.kind,
+			tags: upload.tags,
+			mimeType: upload.mimeType,
+			sizeBytes: stored.size,
+			storageKey: upload.storageKey,
+			// Not hashed: that would mean reading the whole object back. Large files
+			// cannot be edited, so nothing compares against a hash.
+			contentHash: null,
+			createdBy: actorId,
+		})
 	} catch (err) {
 		logger.error('Failed to create file row for finished upload', {
 			uploadId: upload.id,
@@ -1434,20 +1431,7 @@ app.openapi(completeUploadRoute, (async (c) => {
 	}
 
 	try {
-		await recordEvent(db, {
-			workspaceId: created.workspaceId,
-			actorId,
-			action: 'created',
-			entityType: 'file',
-			entityId: created.id,
-			data: {
-				id: created.id,
-				name: created.name,
-				mimeType: created.mimeType,
-				sizeBytes: created.sizeBytes,
-			},
-			provenance: { sessionId: c.get('maskinSessionId'), entityKind: 'file' },
-		})
+		await recordFileCreated(db, { file: created, actorId, sessionId: c.get('maskinSessionId') })
 	} catch (err) {
 		logger.error('Failed to record file created audit event', {
 			workspaceId: created.workspaceId,
