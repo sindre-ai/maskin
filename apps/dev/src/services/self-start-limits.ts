@@ -55,7 +55,7 @@ export const MAX_PENDING_TRIGGERS_FROM_SELF_STARTED_RUNS = 3
 export const NO_CHANGE_RUNS_BEFORE_DECISION = 3
 /** Written on the object when a person is asked to extend, reassign or close; marks the extend reply. */
 export const BACKOFF_ASK_ACTION = 'self_start_backoff_ask'
-const GATE_BOOKKEEPING_ACTIONS = ['self_start_cap_note', BACKOFF_ASK_ACTION]
+export const GATE_BOOKKEEPING_ACTIONS = ['self_start_cap_note', BACKOFF_ASK_ACTION]
 /** Share of the daily budget at which the warning goes out. */
 export const BUDGET_WARN_SHARE = 0.8
 /** Newer than this many sessions on one object and agent are read when judging a streak. */

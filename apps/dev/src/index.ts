@@ -57,6 +57,7 @@ import { DailyBudgetCardScheduler } from './services/daily-budget-card-scheduler
 import { DailyBudgetSummaryScheduler } from './services/daily-budget-events'
 import { handleDesktopStreamUpgrade, isDesktopStreamRequest } from './services/desktop-relay'
 import { DriveWatchRenewer } from './services/drive-watch-renewer'
+import { DriverWaker } from './services/driver-wake'
 import { FlowActivityNotifier } from './services/flow-activity'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { GscSyncScheduler } from './services/gsc-sync-scheduler'
@@ -297,6 +298,11 @@ triggerRunner
 
 const commentDispatcher = new CommentDispatcher(db, notifyBridge, sessionManager)
 commentDispatcher.start()
+
+// Wakes the driver when its child tasks close, a blocker clears, its object is moved by someone
+// else or a decision card expires. Does nothing unless the workspace has the driver-wake flag.
+const driverWaker = new DriverWaker(db, notifyBridge)
+driverWaker.start()
 
 const apnsSender = new ApnsSender(db)
 const webPushSender = new WebPushSender(db)
@@ -608,6 +614,7 @@ const shutdown = async (signal: string) => {
 	shuttingDown = true
 	logger.info(`Received ${signal}, shutting down`)
 	sessionDispatchQueue.stop()
+	driverWaker.stop()
 	stopMcpRateLimit()
 	purgeIdempotencyJob.stop()
 	oauthSweeper.stop()
