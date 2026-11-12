@@ -428,6 +428,14 @@ describe('traverse_graph schema', () => {
 		expect(result.edge_type_allow_list).toEqual(['supersedes', 'contradicts'])
 	})
 
+	it('accepts the edge types the platform writes itself', () => {
+		const result = schema.parse({
+			object_id: uuid,
+			edge_type_allow_list: ['attached', 'in_loop', 'produced_by', 'spawned'],
+		})
+		expect(result.edge_type_allow_list).toEqual(['attached', 'in_loop', 'produced_by', 'spawned'])
+	})
+
 	it('rejects an unknown edge type', () => {
 		expect(() => schema.parse({ object_id: uuid, edge_type_allow_list: ['not_a_type'] })).toThrow()
 	})
