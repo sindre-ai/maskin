@@ -567,7 +567,7 @@ function ActorAutocomplete({
 						)}
 					>
 						{selected ? (
-							<span className="flex min-w-0 items-center gap-1.5">
+							<span className="mr-6 flex min-w-0 items-center gap-1.5">
 								<ActorAvatar
 									id={selected.id}
 									name={selected.name}
@@ -580,7 +580,7 @@ function ActorAutocomplete({
 						)}
 						<ChevronDown
 							size={14}
-							className={cn('flex-shrink-0 text-muted-foreground', selected && 'mr-6')}
+							className="flex-shrink-0 text-muted-foreground"
 							aria-hidden="true"
 						/>
 					</button>
