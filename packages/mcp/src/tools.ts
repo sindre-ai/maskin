@@ -713,7 +713,7 @@ export const tools = {
 	},
 	traverse_graph: {
 		description:
-			"Bounded multi-hop breadth-first traversal from a single object across the workspace `relationships` table. Returns a flat `{ nodes: [{id, type, title}], edges: [{source, target, type}] }` subgraph plus a `truncated` flag. Use this to resolve supersedes/contradicts chains, walk breaks_into hierarchies, or gather an object's multi-hop context in a single call — instead of chaining `get_objects` + `list_relationships` yourself. Bounded by `max_depth` (default 3), `max_nodes` (default 200), and their product (server ceiling: 5000). Cycles terminate via a visited set keyed on object id. Only object endpoints inside the caller's workspace are followed; file endpoints and cross-workspace ids are skipped. Prefer `get_objects` when you already know the ids you need — this tool is for discovering the surrounding graph.",
+			"Bounded multi-hop breadth-first traversal from a single object across the workspace `relationships` table. Returns a flat `{ nodes: [{id, type, title}], edges: [{source, target, type}] }` subgraph plus a `truncated` flag. Use this to resolve supersedes/contradicts chains, walk breaks_into hierarchies, or gather an object's multi-hop context in a single call — instead of chaining `get_objects` + `list_relationships` yourself. Bounded by `max_depth` (default 3), `max_nodes` (default 200), and their product (server ceiling: 5000). Cycles terminate via a visited set keyed on node id. Nodes can be objects, files, chats (`conversation`) and sessions inside the caller's workspace; cross-workspace ids are skipped. The start node must be an object — a chat or file id returns 404. A default call follows every edge type, so on a loop item the sibling items fill the result and cut it off at `max_nodes`: pass `edge_type_allow_list` (for example `attached` to find an object's files, `produced_by` for what a session made, `spawned` for the sessions a chat started, `in_loop` for loop membership) or a smaller `max_depth`. Prefer `get_objects` when you already know the ids you need — this tool is for discovering the surrounding graph.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			object_id: z
@@ -751,11 +751,15 @@ export const tools = {
 						'about',
 						'competes_with',
 						'derived_from',
+						'attached',
+						'in_loop',
+						'produced_by',
+						'spawned',
 					]),
 				)
 				.optional()
 				.describe(
-					'Only follow relationships whose `type` is in this list. Omit to follow every workspace edge type.',
+					'Only follow relationships whose `type` is in this list. Omit to follow every workspace edge type. `attached` links an object to a file, `in_loop` a loop to its items, `produced_by` a session to what it created, `spawned` a chat to a session it started.',
 				),
 			direction: z
 				.enum(['outbound', 'inbound', 'both'])
@@ -1513,7 +1517,7 @@ export const tools = {
 	},
 	list_conversation_messages: {
 		description:
-			"List messages in a conversation, most-recent first. Use before_id (fetch older) or after_id (fetch newer) with the id of a message you already have to page through history. The main list holds top-level messages (a message that has replies carries a `thread` summary with its reply count). To read one thread, pass the root message id as `thread_root_id`: you get only that thread's replies, newest first. This tool is read-only — to answer inside a thread, use post_conversation_message with the same `thread_root_id`.",
+			"List messages in a conversation, most-recent first. Use before_id (fetch older) or after_id (fetch newer) with the id of a message you already have to page through history. The main list holds top-level messages (a message that has replies carries a `thread` summary with its reply count). To read one thread, pass the root message id as `thread_root_id`: you get only that thread's replies, newest first. Each message row carries its `metadata`; files people uploaded with a message are in `metadata.attachments`, an array of `{file_id, name, mime_type, size_bytes}`. Fetch one with get_file using that id. An upload is on the message it was sent with, so page back with before_id to find an older one. This tool is read-only — to answer inside a thread, use post_conversation_message with the same `thread_root_id`.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			conversation_id: z.string().uuid(),
