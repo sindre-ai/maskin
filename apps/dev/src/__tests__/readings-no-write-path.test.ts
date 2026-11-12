@@ -40,14 +40,17 @@ describe('readings have no agent write path', () => {
 		}
 		const app = createApp(deps, { includeExtensions: true })
 		const routes = app.routes
-			.filter((r) => /reading/i.test(r.path))
+			.filter((r) => /\breadings?\b/i.test(r.path))
 			.map((r) => `${r.method} ${r.path}`)
 		expect(routes).toEqual([])
 	})
 
 	it('has no MCP tool that touches readings', () => {
+		// The table name, the writer and the helper module. The plain word "reading" is not
+		// searched for: it already appears in MCP comments and tool descriptions.
+		const touchesReadings = /\breadings\b|\brecordReading\b|lib\/readings/
 		const hits = sourceFiles(mcpSrc, (p) => p.includes('__tests__'))
-			.filter((f) => /\breadings?\b/i.test(readFileSync(f, 'utf8')))
+			.filter((f) => touchesReadings.test(readFileSync(f, 'utf8')))
 			.map((f) => relative(mcpSrc, f))
 		expect(hits).toEqual([])
 	})
