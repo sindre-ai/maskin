@@ -242,6 +242,9 @@ export const fromSuggestedStepSchema = z.object({
 	index: z.number().int().min(0).max(3),
 })
 
+/** Where a chat was started from, when the client says so. Today only the iPhone share sheet. */
+export const startedFromSchema = z.enum(['share'])
+
 /** What an agent can ask the human to put into the Keychain from a chat card. */
 export const KEYCHAIN_REQUEST_KINDS = ['api_key', 'login'] as const
 export type KeychainRequestKind = (typeof KEYCHAIN_REQUEST_KINDS)[number]
@@ -306,6 +309,12 @@ export const messageIntegrationAccessRequestSchema = z.object({
 	provider: z.string().min(1).max(100),
 	/** The name the person knows it by, e.g. "Slack". */
 	display_name: z.string().min(1).max(100),
+	/**
+	 * Which account is being connected, as a person knows it (the mailbox address for Gmail).
+	 * Only set when the provider stores such an address; a card without it shows no account row.
+	 * Never a provider id.
+	 */
+	account: z.string().min(1).max(320).optional(),
 	level: z.enum(INTEGRATION_ACCESS_REQUEST_LEVELS),
 	/** One line on what the agent needs it for. */
 	reason: z.string().min(1).max(300).optional(),
@@ -523,6 +532,12 @@ export const messageMetadataSchema = z.object({
 	 * card reads as answered whenever the chat is opened again.
 	 */
 	card_answer: messageCardAnswerSchema.optional(),
+	/**
+	 * Client-supplied: the message this one quotes (a message id). Stored and returned as sent, so
+	 * an app can jump to the exact original instead of matching on text and author. The id is
+	 * only echoed, never looked up, so it cannot reach into another conversation.
+	 */
+	quoted_message_id: z.number().int().positive().optional(),
 	/** Backend-owned: the helper session whose result this message hands to its sender. */
 	helper_return: z.string().uuid().optional(),
 	/**
@@ -540,6 +555,12 @@ export const messageMetadataSchema = z.object({
 	plain_tail: z.number().int().min(0).max(10).optional(),
 	/** Client-supplied: the intro step a message was sent from. */
 	from_suggested_step: fromSuggestedStepSchema.optional(),
+	/**
+	 * Client-supplied: where the person started the chat from, a category only (no text). Set on
+	 * the first message of a chat started from the iPhone share sheet. It carries no authority and
+	 * only lets share-started chats be counted from saved messages.
+	 */
+	started_from: startedFromSchema.optional(),
 	/** Backend-owned: the `commented` event this message was copied from (object chats). */
 	comment_event_id: z.number().int().optional(),
 })
@@ -652,6 +673,9 @@ export const conversationListQuerySchema = z.object({
 	// 'pinned' (default) keeps pinned chats on top, as the chat list shows them;
 	// 'activity' orders purely by last message, newest first.
 	sort: z.enum(['pinned', 'activity']).default('pinned'),
+	// 'priority' keeps only what the chat rail always lists in full: direct messages, pinned
+	// chats and chats with unread messages. 'recent' is everything else. Omitted = both.
+	scope: z.enum(['priority', 'recent']).optional(),
 	limit: z.coerce.number().int().min(1).max(100).default(30),
 	offset: z.coerce.number().int().min(0).default(0),
 })
@@ -672,9 +696,11 @@ export const postMessageSchema = z
 		thread_root_id: z.number().int().positive().optional(),
 		// With thread_root_id: also show the reply in the main timeline.
 		also_in_channel: z.boolean().optional(),
-		// An agent posting mid-turn lands in the thread of the message that started the turn when
-		// no thread_root_id is given. true opts out and posts to the main timeline. Ignored when
-		// thread_root_id is given, and for anyone but an agent in its own session for this chat.
+		// An agent posting mid-turn continues the thread the turn's message was written in when
+		// no thread_root_id is given; a turn started by a top-level message posts to the main
+		// timeline, since people start threads and agents do not. true opts out of the thread.
+		// Ignored when thread_root_id is given, and for anyone but an agent in its own session
+		// for this chat.
 		top_level: z.boolean().optional(),
 	})
 	.refine((v) => v.content.length > 0 || hasAttachments(v.metadata), {

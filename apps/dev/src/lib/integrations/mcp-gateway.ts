@@ -33,14 +33,26 @@ import {
  *  - github: a stdio server in the container that also needs the token for git itself.
  */
 export const GATEWAY_PROVIDERS: ReadonlySet<string> = new Set([
+	'airtable',
+	'amplitude',
+	'atlassian',
+	'attio',
+	'canva',
+	'clickup',
 	'gmail',
 	'google-calendar',
 	'linear',
 	'miro',
+	'mixpanel',
 	'notion',
 	'posthog',
 	'resend',
+	'sentry',
+	'stripe',
 	'ubersuggest',
+	'vercel',
+	'webflow',
+	'zapier',
 ])
 
 export const GATEWAY_BODY_LIMIT_BYTES = 1_000_000
@@ -139,6 +151,27 @@ export interface GatewayDecision {
 	/** For PostHog exec: the inner tool of a call, so a refusal and its event can name it. */
 	innerTool?: string
 	message?: string
+}
+
+/** Resend's own tools that send an email to someone. */
+export const RESEND_SEND_TOOLS: ReadonlySet<string> = new Set([
+	'send-email',
+	'send-batch-emails',
+	'send-broadcast',
+	'send-inbox-draft',
+	'send-new-inbox-email',
+	'reply-to-inbox-thread-email',
+	'forward-inbox-thread-email',
+])
+
+/**
+ * The refusal for one of those tools when the agent's send setting for emails is not "always
+ * allow". Read & write alone lets an agent send; the setting is what can hold or turn it off.
+ */
+export function resendSendRefusal(toolName: string, send: 'needs_approval' | 'denied'): string {
+	return send === 'denied'
+		? `${toolName} is turned off for this agent: sending emails is set to deny in the workspace's send settings. Nothing was sent. Do not retry or look for another way to send it.`
+		: `${toolName} is not available to this agent because its emails ask first. Nothing was sent. Save the email as a task or object with metadata.kind email (to, subject; the text as its content), show it to a person (link it in the chat or put it on a decision card), and once they approved it (from the card, or by saying yes in the chat, then call approve_draft_from_chat), call resend_send_email with only object_id.`
 }
 
 const COMMAND_GATED_HINT =

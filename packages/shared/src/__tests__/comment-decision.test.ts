@@ -83,7 +83,7 @@ describe('commentDecisionSchema', () => {
 })
 
 describe('validateDecisionProse', () => {
-	it('rejects a title outside 3-7 words, naming the count', () => {
+	it('rejects a title outside 2-9 words, naming the count', () => {
 		const [violation] = validateDecisionProse(buildDecision({ title: 'Onboarding' }))
 		expect(violation?.path).toBe('title')
 		expect(violation?.message).toContain('got 1')
@@ -91,7 +91,9 @@ describe('validateDecisionProse', () => {
 
 		expect(
 			violate(
-				buildDecision({ title: 'Should we consider whether the onboarding bet is worth it' }),
+				buildDecision({
+					title: 'Should we consider whether the onboarding bet is really worth running now?',
+				}),
 			),
 		).toContain('title')
 	})
@@ -104,7 +106,7 @@ describe('validateDecisionProse', () => {
 	})
 
 	it('allows a short -ing word that is not a status verb', () => {
-		expect(violate(buildDecision({ title: 'Ring the vendor today' }))).not.toContain('title')
+		expect(violate(buildDecision({ title: 'Ring the vendor today?' }))).not.toContain('title')
 	})
 
 	it('rejects a summary longer than 2 sentences', () => {
@@ -115,15 +117,33 @@ describe('validateDecisionProse', () => {
 		expect(violations.some((v) => v.path === 'summary' && v.message.includes('got 3'))).toBe(true)
 	})
 
-	it('rejects a summary with no concrete number', () => {
+	it('accepts a summary with no number', () => {
 		const decision = buildDecision({
-			summary: 'Most signups stall on step two. I have drafted the replacement copy.',
+			summary: 'Most signups stall on step two. The replacement copy is drafted; shipping is open.',
+		})
+		expect(violate(decision)).not.toContain('summary')
+	})
+
+	it('rejects a summary that carries a source path', () => {
+		const decision = buildDecision({
+			summary: 'The change in apps/web/src/feed-card.tsx is done. Shipping is open.',
 		})
 		expect(
 			validateDecisionProse(decision).some(
-				(v) => v.path === 'summary' && v.message.includes('no digits'),
+				(v) => v.path === 'summary' && v.message.includes('source path'),
 			),
 		).toBe(true)
+	})
+
+	it('rejects a title that is not a question', () => {
+		expect(violate(buildDecision({ title: 'Onboarding bet go or no go' }))).toContain('title')
+	})
+
+	it('accepts a decision with no ask, and still checks an ask that is there', () => {
+		const { ask: _ask, ...withoutAsk } = buildDecision()
+		expect(commentDecisionSchema.safeParse(withoutAsk).success).toBe(true)
+		expect(validateDecisionProse(withoutAsk as CommentDecision)).toEqual([])
+		expect(violate(buildDecision({ ask: 'Ship it. Now.' }))).toContain('ask')
 	})
 
 	it('rejects a summary that restates the title', () => {
@@ -231,9 +251,9 @@ describe('create_comment agent-facing docs', () => {
 		expect(decision.description).toContain('mentions')
 
 		const shape = commentDecisionSchema.shape
-		expect(shape.title.description).toContain('3-7 words')
+		expect(shape.title.description).toContain('9 words or fewer')
 		expect(shape.summary.description).toContain('Never restate the title')
-		expect(shape.ask.description).toContain('First person')
+		expect(shape.ask.description).toContain('first person')
 		expect(shape.options.description).toContain('exactly one marked recommended')
 	})
 })

@@ -1,5 +1,6 @@
 import { ImportMcpDialog } from '@/components/integrations/import-mcp-dialog'
 import { ProviderCard } from '@/components/integrations/provider-card'
+import { ProviderLogo } from '@/components/integrations/provider-logo'
 import { ToolServerAccess } from '@/components/integrations/tool-server-access'
 import { ToolServerForm } from '@/components/integrations/tool-server-form'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
@@ -33,12 +34,40 @@ function describeServer(row: IntegrationResponse): string {
 	return `${summary.transport === 'http' ? 'HTTP' : 'stdio'} · ${summary.target ?? ''}`
 }
 
+/** Active custom MCP servers whose name matches the page search (all of them when it is empty). */
+export function matchingToolServers(
+	integrations: IntegrationResponse[] | undefined,
+	needle: string,
+): IntegrationResponse[] {
+	return (integrations ?? []).filter(
+		(i) =>
+			i.provider === 'custom-mcp' &&
+			i.status === 'active' &&
+			(!needle || (i.displayName ?? 'Tool server').toLowerCase().includes(needle)),
+	)
+}
+
+/** Whether the Maskin row shows for this page search. */
+export function maskinRowMatches(needle: string): boolean {
+	return !needle || 'maskin'.includes(needle)
+}
+
 /**
  * Custom tools: every MCP server the workspace's agents can use that is not a connected integration.
  * Maskin itself is always on, for every agent, and cannot be changed. The rest are added here
  * once and shared with chosen agents (or all of them), instead of being set up agent by agent.
  */
-export function ToolsSection({ workspaceId }: { workspaceId: string }) {
+export function ToolsSection({
+	workspaceId,
+	query = '',
+	showServers = true,
+}: {
+	workspaceId: string
+	/** The page search: servers whose name does not match are hidden, and the add card goes while searching. */
+	query?: string
+	/** False when a category chip other than All or Custom is picked. */
+	showServers?: boolean
+}) {
 	const { workspace } = useWorkspace()
 	const canWrite = useCanWrite()
 	const { data: integrations } = useIntegrations(workspaceId)
@@ -48,9 +77,8 @@ export function ToolsSection({ workspaceId }: { workspaceId: string }) {
 	const [importOpen, setImportOpen] = useState(false)
 	const [importError, setImportError] = useState<string | null>(null)
 
-	const servers = (integrations ?? []).filter(
-		(i) => i.provider === 'custom-mcp' && i.status === 'active',
-	)
+	const needle = query.trim().toLowerCase()
+	const servers = matchingToolServers(integrations, needle)
 	const me = getStoredActor()
 	const isHuman = me?.type === 'human'
 
@@ -74,23 +102,23 @@ export function ToolsSection({ workspaceId }: { workspaceId: string }) {
 		else setImportError(failed.join('\n'))
 	}
 
+	if (!showServers) return null
+
 	return (
-		<section aria-labelledby="tools-heading" className="mt-8 space-y-2">
-			<h2 id="tools-heading" className="settings-label">
-				Tool servers
-			</h2>
-
-			<ProviderCard
-				name="Maskin"
-				tone="connected"
-				actions={
-					<span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-						<Lock className="h-3.5 w-3.5" aria-hidden="true" />
-						{AGENT_ACCESS_LABELS.read_write} · always on
-					</span>
-				}
-			/>
-
+		<section aria-label="Tool servers" className="space-y-3">
+			{maskinRowMatches(needle) && (
+				<ProviderCard
+					logo={<ProviderLogo name="Maskin" />}
+					name="Maskin"
+					tone="available"
+					actions={
+						<span className="ml-auto flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+							<Lock className="h-3.5 w-3.5" aria-hidden="true" />
+							{AGENT_ACCESS_LABELS.read_write} · always on
+						</span>
+					}
+				/>
+			)}
 			{servers.map((server) =>
 				editingId === server.id ? (
 					<EditServer
@@ -121,19 +149,27 @@ export function ToolsSection({ workspaceId }: { workspaceId: string }) {
 				/>
 			)}
 
-			{isHuman && !adding && (
-				<div className="flex flex-wrap items-center gap-2 pt-1">
-					<ViewerTooltip>
-						<Button
-							size="sm"
-							variant="outline"
-							className={PILL_BUTTON}
+			{isHuman && !adding && !needle && (
+				<div className="flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-card p-[18px]">
+					<ViewerTooltip className="min-w-0 flex-1 basis-60">
+						<button
+							type="button"
 							disabled={!canWrite}
 							onClick={() => setAdding(true)}
+							className="flex min-h-11 w-full items-center gap-3.5 text-left disabled:opacity-60"
 						>
-							<Plus className="mr-1 h-3.5 w-3.5" />
-							Add tool server
-						</Button>
+							<span className="flex size-[38px] shrink-0 items-center justify-center rounded-[10px] bg-muted">
+								<Plus className="size-4" aria-hidden="true" />
+							</span>
+							<span className="min-w-0">
+								<span className="block text-base font-semibold text-foreground">
+									Add your own MCP server
+								</span>
+								<span className="block text-[13px] text-muted-foreground">
+									Paste a server URL and choose what your agents can use.
+								</span>
+							</span>
+						</button>
 					</ViewerTooltip>
 					<ViewerTooltip>
 						<Button
@@ -185,6 +221,7 @@ function ServerRow({
 
 	return (
 		<ProviderCard
+			logo={<ProviderLogo name={name} />}
 			name={name}
 			subtitle={describeServer(row)}
 			tone="connected"

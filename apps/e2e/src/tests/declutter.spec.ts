@@ -163,9 +163,9 @@ test.describe('Declutter — New chat', () => {
 		test(`has no note about direct versus group chats @ ${vp.label}`, async ({ page, account }) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 			await page.goto(`/${account.workspaceId}/chats/new`)
-			await expect(
-				page.getByRole('button', { name: /start chat|send|create/i }).first(),
-			).toBeVisible()
+			// The page is a To field plus the shared composer; there is no Start chat button.
+			await expect(page.getByRole('region', { name: 'To' })).toBeVisible({ timeout: 15_000 })
+			await expect(page.getByLabel('First message')).toBeVisible()
 			await expect(page.getByText(/This starts a group chat/)).toHaveCount(0)
 			await expect(page.getByText(/Pick one agent for a direct chat/)).toHaveCount(0)
 			await noHorizontalOverflow(page, vp.label)

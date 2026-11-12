@@ -12,6 +12,15 @@ import { createWorkspaceWrapper } from '../../setup'
 const actors = vi.hoisted(() => [
 	{ id: 'me', name: 'Me', type: 'human', isSystem: false, description: null, email: null },
 	{ id: 'a-cto', name: 'CTO', type: 'agent', isSystem: false, description: null, email: null },
+	{
+		id: 'a-cos',
+		name: 'Chief of Staff',
+		type: 'agent',
+		isSystem: true,
+		description: null,
+		email: null,
+	},
+	{ id: 'a-gh', name: 'GitHub', type: 'system', isSystem: true, description: null, email: null },
 ])
 
 vi.mock('@/hooks/use-actors', async (importOriginal) => ({
@@ -28,7 +37,6 @@ vi.mock('@/lib/analytics', () => ({
 	deriveEntryAgentRole: () => 'coach',
 	trackSpecialistSummonedManually: () => {},
 	trackChatMentionInserted: () => {},
-	trackChatObjectReferenceCreated: () => {},
 }))
 
 type Sent = { content: string; mentions: string[] }
@@ -42,7 +50,7 @@ function Harness({
 }: {
 	sent: Sent[]
 	draftKey?: string
-	fillRequest?: { text?: string; nonce: number } | null
+	fillRequest?: { text?: string; append?: boolean; nonce: number } | null
 }) {
 	const [selection, dispatch] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
 	const latest = (s: ChatSelection) => s.agents
@@ -121,6 +129,20 @@ describe('Composer with inline tags', () => {
 		send()
 		await waitFor(() => expect(sent).toHaveLength(1))
 		expect(sent[0]).toEqual({ content: 'ask @CTO to start', mentions: ['a-cto'] })
+	})
+
+	it('offers the Chief of Staff, which is a built-in agent, but not an integration actor', async () => {
+		const sent: Sent[] = []
+		render(<Harness sent={sent} />, { wrapper })
+		typeAtEnd('@')
+		await screen.findByRole('option', { name: /Chief of Staff/ })
+		expect(screen.queryByRole('option', { name: /GitHub/ })).not.toBeInTheDocument()
+		typeAtEnd('chief')
+		await screen.findByRole('option', { name: /Chief of Staff/ })
+		fireEvent.keyDown(box(), { key: 'Enter' })
+		send()
+		await waitFor(() => expect(sent).toHaveLength(1))
+		expect(sent[0]?.mentions).toEqual(['a-cos'])
 	})
 
 	it('draws no pill row for the tag, before or after sending', async () => {
@@ -210,5 +232,45 @@ describe('Composer with inline tags', () => {
 		typeAtEnd('half')
 		rerender(<Harness sent={[]} fillRequest={{ text: 'Here is a task: ', nonce: 1 }} />)
 		await waitFor(() => expect(box().textContent).toBe('Here is a task: '))
+	})
+
+	// The thread route uses this composer (thread-composer passes inlineTags), so a starter prompt
+	// has to reach the visible draft here too, after the text and any chip already in it.
+	it('puts a starter after the typed text on an append request', async () => {
+		const { rerender } = render(<Harness sent={[]} fillRequest={null} />, { wrapper })
+		typeAtEnd('Quick one:')
+		rerender(
+			<Harness sent={[]} fillRequest={{ text: 'What needs me today?', append: true, nonce: 1 }} />,
+		)
+		await waitFor(() => expect(box().textContent).toBe('Quick one: What needs me today?'))
+	})
+
+	it('puts a starter in an empty box on an append request', async () => {
+		const { rerender } = render(<Harness sent={[]} fillRequest={null} />, { wrapper })
+		rerender(
+			<Harness sent={[]} fillRequest={{ text: 'What needs me today?', append: true, nonce: 1 }} />,
+		)
+		await waitFor(() => expect(box().textContent).toBe('What needs me today?'))
+	})
+
+	it('keeps a tag chip that is already in the draft when a starter is appended', async () => {
+		sessionStorage.setItem('composer-draft:conv-starter', 'hi @CTO ')
+		sessionStorage.setItem(
+			'composer-draft:conv-starter:tags',
+			JSON.stringify([{ id: 'a-cto', label: 'CTO' }]),
+		)
+		const { rerender } = render(<Harness sent={[]} draftKey="conv-starter" fillRequest={null} />, {
+			wrapper,
+		})
+		expect(chips()).toHaveLength(1)
+		rerender(
+			<Harness
+				sent={[]}
+				draftKey="conv-starter"
+				fillRequest={{ text: 'What needs me today?', append: true, nonce: 1 }}
+			/>,
+		)
+		await waitFor(() => expect(box().textContent).toBe('hi @CTO What needs me today?'))
+		expect(chips()).toHaveLength(1)
 	})
 })

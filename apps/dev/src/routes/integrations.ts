@@ -35,6 +35,7 @@ import { markSlackMention } from '../lib/analytics/slack-attribution'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
 import { requireCredentials } from '../lib/integrations/credential-column'
 import { CUSTOM_MCP_PROVIDER } from '../lib/integrations/custom-mcp'
 import { disconnectIntegrationRow } from '../lib/integrations/disconnect'
@@ -78,6 +79,7 @@ import {
 } from '../lib/integrations/providers/google-drive/watch'
 import { processDriveWebhook } from '../lib/integrations/providers/google-drive/webhook-handler'
 import { resolveMeetPeopleId } from '../lib/integrations/providers/google-meet/resolve-id'
+import { MICROSOFT_PROVIDER } from '../lib/integrations/providers/microsoft/config'
 import { fetchResendBodyWithRetry } from '../lib/integrations/providers/resend/body-fetch'
 import {
 	isSubdomainName,
@@ -279,8 +281,12 @@ const listProvidersRoute = createRoute({
 })
 
 app.openapi(listProvidersRoute, (async (c) => {
+	const actorId = c.get('actorId')
 	const providers = listProviders()
 		.filter((p) => p.config.name !== CUSTOM_MCP_PROVIDER)
+		.filter(
+			(p) => p.config.name !== MICROSOFT_PROVIDER || isFlagEnabled(actorId, FLAGS.MICROSOFT_TEAMS),
+		)
 		.map((p) => ({
 			name: p.config.name,
 			displayName: p.config.displayName,
@@ -929,6 +935,10 @@ app.openapi(connectRoute, (async (c) => {
 			createApiError('BAD_REQUEST', 'Custom tool servers are added from the Tools section'),
 			400,
 		)
+	}
+
+	if (providerName === MICROSOFT_PROVIDER && !isFlagEnabled(actorId, FLAGS.MICROSOFT_TEAMS)) {
+		return c.json(createApiError('NOT_FOUND', 'Microsoft is not available yet'), 404)
 	}
 
 	let resolved: ResolvedProvider
@@ -1788,6 +1798,22 @@ app.openapi(callbackRoute, (async (c) => {
 			provider: providerName,
 			origin: stateData.origin,
 		})
+	}
+
+	// Microsoft stops at an approval screen when the company has not let people approve apps
+	// themselves and calls back with an error and no code. Say so in plain words instead of
+	// the bare 400 below. Native sessions keep the generic `denied` ending above.
+	if (
+		!native &&
+		providerName === MICROSOFT_PROVIDER &&
+		!query.code &&
+		/AADSTS(90094|65001|90095)|administrator/i.test(`${query.error_description ?? ''}`)
+	) {
+		clearOAuthNonceCookie(c, providerName)
+		const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
+		return c.redirect(
+			`${frontendUrl}/${stateData.workspaceId}/settings/integrations?error=admin_approval_needed`,
+		)
 	}
 
 	// Handle provider-specific callback

@@ -87,6 +87,17 @@ describe('ConversationListRow', () => {
 		expect(screen.queryByText(/in threads/)).not.toBeInTheDocument()
 	})
 
+	it('names a direct message after who is on the other end, not its stored title', () => {
+		renderRow(buildConversation({ title: 'Some old topic', directPairKey: 'a:me' }))
+		expect(screen.getByText('Billing Agent')).toBeInTheDocument()
+		expect(screen.queryByText('Some old topic')).not.toBeInTheDocument()
+	})
+
+	it('keeps the title of a topical chat with the same two people', () => {
+		renderRow(buildConversation({ title: 'Billing retries', directPairKey: null }))
+		expect(screen.getByText('Billing retries')).toBeInTheDocument()
+	})
+
 	it('plates who the conversation is with, never the viewer', () => {
 		renderRow(buildConversation())
 		// Two participants, one of them the viewer — only the counterpart plates.
@@ -94,7 +105,7 @@ describe('ConversationListRow', () => {
 		expect(screen.queryByTitle('Me')).not.toBeInTheDocument()
 	})
 
-	it('plates the first counterpart only', () => {
+	it('stacks the first two counterparts and folds the rest into a +N chip', () => {
 		renderRow(
 			buildConversation({
 				participants: [
@@ -113,7 +124,33 @@ describe('ConversationListRow', () => {
 			}),
 		)
 		expect(screen.getByTitle('Billing Agent')).toBeInTheDocument()
-		expect(screen.queryByTitle('Relay')).not.toBeInTheDocument()
+		expect(screen.getByTitle('Relay')).toBeInTheDocument()
+		expect(screen.queryByTitle('Quill')).not.toBeInTheDocument()
+		expect(screen.getByText('+2')).toBeInTheDocument()
+		expect(screen.queryByTitle('Me')).not.toBeInTheDocument()
+	})
+
+	it('draws one plate and no stack for a chat with one counterpart', () => {
+		const { container } = renderRow(buildConversation())
+		expect(container.querySelector('[data-avatar-stack]')).toBeNull()
+	})
+
+	it('stacks two counterparts without a chip', () => {
+		const { container } = renderRow(buildConversation({ participants: GROUP_PARTICIPANTS }))
+		expect(container.querySelector('[data-avatar-stack]')).not.toBeNull()
+		expect(container.querySelector('[data-avatar-stack-more]')).toBeNull()
+	})
+
+	it('shortens a long author name to its initials, keeping the full name on hover', () => {
+		renderRow(
+			buildConversation({
+				snippet_actor_id: 'agent-1',
+				snippet_actor_name: 'Chief of Staff',
+				participants: GROUP_PARTICIPANTS,
+			}),
+		)
+		expect(screen.getByText('CoS:')).toBeInTheDocument()
+		expect(screen.getByTitle('Chief of Staff')).toBeInTheDocument()
 	})
 
 	it('plates the only participant in a thread the viewer is alone in', () => {

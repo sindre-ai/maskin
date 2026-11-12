@@ -1,6 +1,7 @@
 import type { StatusPillTone } from '@/components/integrations/drive/status-pill'
 import { cn } from '@/lib/cn'
-import type { ReactNode } from 'react'
+import { ChevronDown } from 'lucide-react'
+import { type ReactNode, useState } from 'react'
 
 export type ProviderCardTone = 'available' | 'connected' | 'warning'
 
@@ -25,6 +26,10 @@ interface ProviderCardProps {
 	chat?: boolean
 	/** Full-width section under the row, e.g. which agents may use the integration. */
 	footer?: ReactNode
+	/** The logo tile. Passing it draws the v3 integration card: logo, dot, name, a short
+	 *  access `chip`, and a chevron that opens the actions and footer. */
+	logo?: ReactNode
+	chip?: string
 }
 
 /**
@@ -44,7 +49,79 @@ export function ProviderCard({
 	compact = false,
 	chat = false,
 	footer,
+	logo,
+	chip,
 }: ProviderCardProps) {
+	const [open, setOpen] = useState(false)
+	if (logo) {
+		const expandable = tone !== 'available'
+		const dot = tone === 'warning' ? 'bg-warning' : tone === 'connected' ? 'bg-success' : undefined
+		const header = (
+			<>
+				{logo}
+				{dot && <span aria-hidden="true" className={cn('size-2 shrink-0 rounded-full', dot)} />}
+				<div className="min-w-0 flex-1">
+					<div className="flex items-center gap-2">
+						<p className="truncate text-base font-semibold text-foreground">{name}</p>
+						{badge}
+					</div>
+					{subtitle && !expandable && (
+						<p className="truncate text-[13px] text-muted-foreground">{subtitle}</p>
+					)}
+					{!expandable && notes}
+				</div>
+				{chip && (
+					<span className="shrink-0 rounded-full bg-muted px-3 py-1 text-[13px] font-semibold text-muted-foreground max-sm:hidden">
+						{chip}
+					</span>
+				)}
+			</>
+		)
+		return (
+			<div className="rounded-2xl border border-border bg-card">
+				{expandable ? (
+					<button
+						type="button"
+						onClick={() => setOpen((v) => !v)}
+						aria-expanded={open}
+						className="flex w-full items-center gap-3 rounded-2xl p-[18px] text-left transition-colors hover:bg-bg-hover"
+					>
+						{header}
+						<ChevronDown
+							aria-hidden="true"
+							className={cn(
+								'size-4 shrink-0 text-muted-foreground transition-transform',
+								open && 'rotate-180',
+							)}
+						/>
+					</button>
+				) : (
+					<div className="flex flex-wrap items-center gap-3 p-[18px]">
+						{header}
+						{actions}
+					</div>
+				)}
+				{expandable && open && (
+					<div className="space-y-3 border-t border-border-subtle px-[18px] pt-3 pb-4">
+						{subtitle && (
+							<p
+								className={cn(
+									'text-[13px]',
+									tone === 'warning' ? 'text-warning' : 'text-muted-foreground',
+								)}
+								title={subtitleTitle}
+							>
+								{subtitle}
+							</p>
+						)}
+						{notes}
+						<div className="flex flex-wrap items-center gap-2">{actions}</div>
+						{footer}
+					</div>
+				)}
+			</div>
+		)
+	}
 	// The Settings row is the v3 grouped card: no status dot, the state is a pill.
 	// The chat card and the agent intro's quiet row keep the dot.
 	const settingsRow = !chat && !compact

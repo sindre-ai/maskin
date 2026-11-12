@@ -367,7 +367,7 @@ test.describe('Chats — full-screen multi-party chat', () => {
 			await page
 				.getByLabel('First message')
 				.fill('The deploy pipeline keeps failing on the migrate step')
-			await page.getByRole('button', { name: 'Start chat' }).click()
+			await page.getByRole('button', { name: 'Send message' }).click()
 
 			await page.waitForURL(/\/chats\/[0-9a-f-]{36}/, { timeout: 15_000 })
 			const heading = page.getByRole('heading').first()

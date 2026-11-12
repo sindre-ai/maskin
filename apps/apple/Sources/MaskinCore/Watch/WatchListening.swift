@@ -23,6 +23,8 @@ public final class WatchListeningStore {
 		case microphone
 		/// The server could not be reached or did not answer.
 		case weakSignal
+		/// The microphone was open for a few seconds and no speech came in.
+		case noSpeech
 	}
 
 	public private(set) var phase: Phase = .idle
@@ -35,6 +37,7 @@ public final class WatchListeningStore {
 	@ObservationIgnored private let settle: Duration
 	@ObservationIgnored private let maxDuration: Duration
 	@ObservationIgnored private let drainTimeout: Duration
+	@ObservationIgnored private let noSpeechTimeout: Duration
 	/// Gets the finished question; the caller asks the Chief of Staff with it.
 	@ObservationIgnored public var deliver: @MainActor (String) -> Void
 	@ObservationIgnored private var microphone: (any PhraseMicrophone)?
@@ -42,17 +45,22 @@ public final class WatchListeningStore {
 	@ObservationIgnored private var consumer: Task<Void, Never>?
 	@ObservationIgnored private var settleTimer: Task<Void, Never>?
 	@ObservationIgnored private var limitTimer: Task<Void, Never>?
+	@ObservationIgnored private var noSpeechTimer: Task<Void, Never>?
+	/// A phrase has closed since the microphone opened, so something was said.
+	@ObservationIgnored private var phraseSeen = false
 	@ObservationIgnored private var run = 0
 
 	/// - Parameters:
 	///   - settle: how long a pause after the last heard words must last before the question is sent.
 	///   - maxDuration: the longest one listening goes on (the server takes about three minutes; a
 	///     wrist question is short).
+	///   - noSpeechTimeout: how long the open microphone may hear nothing before it hands over to tap
+	///     to talk, so the wearer is never left looking at a screen that does nothing.
 	///   - deliver: gets the finished question; the caller asks the Chief of Staff with it.
 	public init(
 		transcriber: (any SpeechTranscribing)?, language: String? = nil,
 		settle: Duration = .milliseconds(1400), maxDuration: Duration = .seconds(60),
-		drainTimeout: Duration = .seconds(8),
+		drainTimeout: Duration = .seconds(8), noSpeechTimeout: Duration = .seconds(6),
 		makeMicrophone: @escaping @MainActor () -> any PhraseMicrophone,
 		deliver: @escaping @MainActor (String) -> Void = { _ in }
 	) {
@@ -61,6 +69,7 @@ public final class WatchListeningStore {
 		self.settle = settle
 		self.maxDuration = maxDuration
 		self.drainTimeout = drainTimeout
+		self.noSpeechTimeout = noSpeechTimeout
 		self.makeMicrophone = makeMicrophone
 		self.deliver = deliver
 	}
@@ -79,7 +88,20 @@ public final class WatchListeningStore {
 		run += 1
 		let current = run
 		text = ""
+		phase = .listening
 		let mic = makeMicrophone()
+		Task { await open(mic, transcriber: transcriber, run: current) }
+	}
+
+	/// Asks for access, then opens the microphone. Cancel or Done while the prompt is up leaves it
+	/// closed.
+	private func open(_ mic: any PhraseMicrophone, transcriber: any SpeechTranscribing, run current: Int) async {
+		let allowed = await mic.requestAccess()
+		guard current == run, phase == .listening else { return }
+		guard allowed else {
+			phase = .tapToTalk(.microphone)
+			return
+		}
 		let phrases: AsyncStream<Data>
 		do {
 			phrases = try mic.start()
@@ -93,13 +115,23 @@ public final class WatchListeningStore {
 			onText: { [weak self] heard in self?.heard(heard, run: current) },
 			onFailure: { [weak self] _ in self?.failed(run: current) })
 		self.queue = queue
-		consumer = Task { for await wav in phrases { queue.submit(wav: wav) } }
+		phraseSeen = false
+		consumer = Task {
+			for await wav in phrases {
+				phraseSeen = true
+				queue.submit(wav: wav)
+			}
+		}
+		noSpeechTimer = Task { [weak self, noSpeechTimeout] in
+			try? await Task.sleep(for: noSpeechTimeout)
+			guard !Task.isCancelled else { return }
+			self?.noSpeech(run: current)
+		}
 		limitTimer = Task { [weak self, maxDuration] in
 			try? await Task.sleep(for: maxDuration)
 			guard !Task.isCancelled else { return }
 			await self?.finish(run: current)
 		}
-		phase = .listening
 	}
 
 	/// Done: stops listening and sends what was heard.
@@ -128,6 +160,12 @@ public final class WatchListeningStore {
 			guard !Task.isCancelled else { return }
 			await self?.finish(run: current)
 		}
+	}
+
+	private func noSpeech(run current: Int) {
+		guard current == run, phase == .listening, !phraseSeen, text.isEmpty else { return }
+		teardown()
+		phase = .tapToTalk(.noSpeech)
 	}
 
 	private func failed(run current: Int) {
@@ -167,11 +205,13 @@ public final class WatchListeningStore {
 	private func teardown() {
 		settleTimer?.cancel()
 		limitTimer?.cancel()
+		noSpeechTimer?.cancel()
 		consumer?.cancel()
 		queue?.cancel()
 		microphone?.stop()
 		settleTimer = nil
 		limitTimer = nil
+		noSpeechTimer = nil
 		consumer = nil
 		queue = nil
 		microphone = nil

@@ -88,21 +88,21 @@ describe('POST /api/telemetry/mcp — alias_use', () => {
 		expect(JSON.stringify(inserts[0])).not.toContain('spoofed-actor')
 	})
 
-	it('records the tool-name alias and the dropped key names for run_agent', async () => {
+	it('records the tool-name alias and the dropped key names for search_objects', async () => {
 		const { inserts } = await post(
 			aliasBody({
-				tool_name: 'run_agent',
+				tool_name: 'search_objects',
 				renames: [],
-				tool_alias: { old: 'run_agent', new: 'create_session' },
+				tool_alias: { old: 'search_objects', new: 'list_objects' },
 				dropped_keys: ['config', 'timeout_seconds'],
 			}),
 		)
 
 		expect(inserts[0]).toMatchObject({
-			toolName: 'run_agent',
+			toolName: 'search_objects',
 			data: {
 				renames: [],
-				tool_alias: { old: 'run_agent', new: 'create_session' },
+				tool_alias: { old: 'search_objects', new: 'list_objects' },
 				dropped_keys: ['config', 'timeout_seconds'],
 			},
 		})

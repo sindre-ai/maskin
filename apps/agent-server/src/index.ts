@@ -127,6 +127,10 @@ const EXPOSE_PORT_REQUEST_SCHEMA = z.object({
 	guest_port: z.number().int().min(1).max(65535),
 })
 
+// How long POST /sessions waits for the previous run of the same session id to finish
+// removing its folder and sandbox. Deleting a large workspace can take a while.
+const PREVIOUS_RUN_WAIT_MS = 60_000
+
 // POST /sessions/:id/stop body — the settle-side reason/source pair so the
 // stop handler can log a legible provenance next to the FORCED_STOP_EXIT_CODE
 // seed. Mirrors `StopSessionRequest` in @maskin/shared; kept as a Zod schema
@@ -176,6 +180,12 @@ export type AppDeps = {
 	sessionExitCodes?: Map<string, number>
 	/** Same sharing rationale as `sessionExitCodes` — see its doc comment. */
 	sessionLogRouters?: Map<string, (line: string) => void>
+	/**
+	 * How long POST /sessions waits for the previous run of the same session id to
+	 * finish its cleanup before answering 409. Defaults to PREVIOUS_RUN_WAIT_MS;
+	 * tests shorten it to reach the timeout.
+	 */
+	previousRunWaitMs?: number
 	/**
 	 * Mutable flag flipped by `main()`'s SIGTERM handler. `POST /sessions`
 	 * rejects new work with 503 while `draining` is true, so a session request
@@ -708,6 +718,12 @@ export function buildApp(deps: AppDeps): Hono {
 	// Receives exit codes from the /sessions/:id/complete and /sessions/:id/stop
 	// endpoints for monitorSession. Injectable via deps (see AppDeps.sessionExitCodes).
 	const sessionExitCodes = deps.sessionExitCodes ?? new Map<string, number>()
+	// The run of each session this process is monitoring, until monitorSession has
+	// finished its cleanup (workspace saved, completion reported, session folder and
+	// sandbox removed). A paused session is started again under the same id, and its
+	// folder and sandbox name are the old run's: POST /sessions waits on this so the
+	// new run never restores into a folder that is being deleted.
+	const sessionRuns = new Map<string, Promise<void>>()
 
 	// The microVM can reach us at host.microsandbox.internal (written into the
 	// VM's /etc/hosts by microsandbox) on our own PORT — used both to bake
@@ -1170,6 +1186,24 @@ export function buildApp(deps: AppDeps): Hono {
 
 		const sessionDir = join(deps.env.AGENT_SESSION_ROOT, body.sessionId)
 
+		// A resume starts the session again under its own id while the run before it
+		// may still be removing its folder and sandbox. 409 is retried by the caller.
+		const previousRun = sessionRuns.get(body.sessionId)
+		if (previousRun) {
+			const ended = await Promise.race([
+				previousRun.then(() => true),
+				new Promise<boolean>((resolve) =>
+					setTimeout(() => resolve(false), deps.previousRunWaitMs ?? PREVIOUS_RUN_WAIT_MS),
+				),
+			])
+			if (!ended) {
+				logger.warn('session start refused: the previous run is still ending', {
+					sessionId: body.sessionId,
+				})
+				return c.json({ error: 'previous_run_still_ending' }, 409)
+			}
+		}
+
 		if (deps.storage) {
 			try {
 				const { restored, archiveBytes } = await pullSessionWorkspace(
@@ -1295,7 +1329,7 @@ export function buildApp(deps: AppDeps): Hono {
 			// apps/dev's session-manager and arrives in body.env.
 			stallTracker.trackSession(body.sessionId, { interactive: sessionEnv.INTERACTIVE === '1' })
 
-			void monitorSession(
+			const run: Promise<void> = monitorSession(
 				body.sessionId,
 				sessionDir,
 				deps.storage,
@@ -1317,7 +1351,10 @@ export function buildApp(deps: AppDeps): Hono {
 					sessionLogSeqs.delete(body.sessionId)
 					// The sandbox is gone; so is anything an agent's computer tunnelled into.
 					desktops?.closeSessionRelays(body.sessionId)
+					// Only this run's entry: a newer run may already have replaced it.
+					if (sessionRuns.get(body.sessionId) === run) sessionRuns.delete(body.sessionId)
 				})
+			sessionRuns.set(body.sessionId, run)
 
 			// Launch msb exec in the background. entrypoint.sh finds the trigger and
 			// runs agent-run.sh under the exec TCP proxy (the proxy is only active

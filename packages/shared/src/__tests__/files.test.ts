@@ -2,9 +2,14 @@ import { describe, expect, it } from 'vitest'
 import {
 	MAX_ANNOTATIONS_PER_FILE,
 	MAX_ANNOTATION_COMMENT_LENGTH,
+	MAX_TAGS_PER_FILE,
+	MAX_TAG_LENGTH,
 	createFileSchema,
 	fileAnnotationSchema,
 	fileAnnotationsSchema,
+	fileTagsSchema,
+	parseFileTagFilter,
+	startFileUploadSchema,
 	updateFileSchema,
 } from '../schemas/files'
 
@@ -130,5 +135,53 @@ describe('updateFileSchema if_match', () => {
 		})
 		expect(parsed).not.toHaveProperty('source')
 		expect(parsed).not.toHaveProperty('actor_type')
+	})
+})
+
+describe('fileTagsSchema', () => {
+	it('trims and lowercases, so B-roll and b-roll are one tag', () => {
+		expect(fileTagsSchema.parse(['  B-Roll ', 'b-roll', 'Clip_Type:B_Roll'])).toEqual([
+			'b-roll',
+			'clip_type:b_roll',
+		])
+	})
+
+	it('accepts an empty list', () => {
+		expect(fileTagsSchema.parse([])).toEqual([])
+	})
+
+	it('rejects a blank tag, a tag with a comma, and a tag over the length cap', () => {
+		expect(fileTagsSchema.safeParse(['  ']).success).toBe(false)
+		expect(fileTagsSchema.safeParse(['a,b']).success).toBe(false)
+		expect(fileTagsSchema.safeParse(['x'.repeat(MAX_TAG_LENGTH)]).success).toBe(true)
+		expect(fileTagsSchema.safeParse(['x'.repeat(MAX_TAG_LENGTH + 1)]).success).toBe(false)
+	})
+
+	it('allows up to the per-file cap and no more', () => {
+		const tags = (n: number) => Array.from({ length: n }, (_, i) => `tag-${i}`)
+		expect(fileTagsSchema.safeParse(tags(MAX_TAGS_PER_FILE)).success).toBe(true)
+		expect(fileTagsSchema.safeParse(tags(MAX_TAGS_PER_FILE + 1)).success).toBe(false)
+	})
+
+	it('is accepted on create, update and the start of a large upload', () => {
+		const file = { name: 'a.mov', mime_type: 'video/quicktime' }
+		expect(createFileSchema.parse({ ...file, content: '', tags: [' B-roll '] }).tags).toEqual([
+			'b-roll',
+		])
+		expect(updateFileSchema.parse({ tags: [] }).tags).toEqual([])
+		expect(startFileUploadSchema.parse({ ...file, size_bytes: 10, tags: ['Raw'] }).tags).toEqual([
+			'raw',
+		])
+	})
+})
+
+describe('parseFileTagFilter', () => {
+	it('splits on commas and normalises like a write', () => {
+		expect(parseFileTagFilter(' B-roll, raw ,B-ROLL,,')).toEqual(['b-roll', 'raw'])
+	})
+
+	it('returns nothing for an absent or blank filter', () => {
+		expect(parseFileTagFilter(undefined)).toEqual([])
+		expect(parseFileTagFilter(' , ')).toEqual([])
 	})
 })

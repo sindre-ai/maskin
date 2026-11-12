@@ -43,6 +43,10 @@ class InMemoryStorage implements StorageProvider {
 		return value
 	}
 
+	async getStream(key: string): Promise<Readable> {
+		return Readable.from(await this.get(key))
+	}
+
 	async list(prefix: string): Promise<string[]> {
 		return Array.from(this.objects.keys()).filter((k) => k.startsWith(prefix))
 	}

@@ -91,24 +91,38 @@ export function LinkedObjectCard({
 	const [revealedHash, setRevealedHash] = useState<string | null>(null)
 	const textRef = useRef<HTMLDivElement>(null)
 	const revealedAt = useRef(0)
-	const [overflowing, setOverflowing] = useState(false)
 	// What the person has seen in full: the draft's hash, or for a task with no preview its text.
 	const draftHash = object?.preview?.content_hash ?? object?.content ?? undefined
 	const clamped = Boolean(draftHash) && draftHash !== revealedHash
+	// Whether the text is taller than the clamp, and for which text. Measured, not counted,
+	// because a wrapped paragraph is as many lines as it looks. Only the read only text is ever
+	// measured: the text box is taller than the same words read, so measuring it would flip the
+	// answer that decides whether it is drawn, every frame. The box therefore opens only once
+	// the text has been measured, and keeps that answer while it is open.
+	const [verdict, setVerdict] = useState<{ hash: string | undefined; overflowing: boolean } | null>(
+		null,
+	)
+	const measured = verdict !== null && verdict.hash === draftHash
+	const overflowing = measured && verdict.overflowing
+	const canEditText =
+		Boolean(conversationId && agentId) &&
+		object?.preview?.delivery?.state !== 'sent' &&
+		measured &&
+		!(clamped && overflowing)
+	const editorOpen = Boolean(object?.preview) && canEditText
 
-	// Whether the text is taller than the clamp. Measured, not counted, because a wrapped
-	// paragraph is as many lines as it looks. Only meaningful while the clamp is on.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: re-measure when the text or the open state changes
 	useLayoutEffect(() => {
 		const el = textRef.current
-		if (!el || !clamped) return
-		const measure = () => setOverflowing(el.scrollHeight > el.clientHeight + 1)
+		if (!el || !clamped || editorOpen) return
+		const measure = () =>
+			setVerdict({ hash: draftHash, overflowing: el.scrollHeight > el.clientHeight + 1 })
 		measure()
 		if (typeof ResizeObserver === 'undefined') return
 		const observer = new ResizeObserver(measure)
 		observer.observe(el)
 		return () => observer.disconnect()
-	}, [clamped, expanded, object?.content])
+	}, [clamped, editorOpen, expanded, object?.content, draftHash])
 
 	// Nothing for an object that is missing, in another workspace, or has no
 	// text: the link in the message is still there, so the preview only ever adds.
@@ -303,7 +317,10 @@ export function LinkedObjectCard({
 					    A long draft is cut at about 12 lines with Show all, never a scroll box. */}
 					<div
 						ref={textRef}
-						className={cn('px-3 pt-2 text-[13.5px]', clamped && 'max-h-76 overflow-hidden')}
+						className={cn(
+							'px-3 pt-2 text-[13.5px]',
+							clamped && !editorOpen && 'max-h-76 overflow-hidden',
+						)}
 					>
 						{preview ? (
 							<DraftTextEditor
@@ -311,7 +328,7 @@ export function LinkedObjectCard({
 								objectId={object.id}
 								fallback={shown}
 								// A clamped draft is read first (the gate below), so it is edited once opened in full.
-								canEdit={canAct && delivery !== 'sent' && !gated}
+								canEdit={canEditText}
 								readOnly={(text) => <MarkdownContent content={edit ?? text} size="sm" />}
 							/>
 						) : (

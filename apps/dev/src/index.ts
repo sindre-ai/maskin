@@ -15,19 +15,25 @@ import {
 import { actors, sessions } from '@maskin/db/schema'
 import { PgNotifyBridge } from '@maskin/realtime'
 import { S3StorageProvider } from '@maskin/storage'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { createApp } from './app-factory'
 import { FileUploadReaperJob } from './jobs/file-upload-reaper'
 import { ChainSnapshotJob } from './jobs/keychain-chain-snapshot'
 import { KeychainUndoSweeperJob } from './jobs/keychain-undo-sweeper'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
 import { RotateDeksJob } from './jobs/rotate-deks'
+import { TelnyxRecordingSyncJob } from './jobs/telnyx-recording-sync'
 import { UpgradeLegacyCredentialsJob } from './jobs/upgrade-legacy-credentials'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
 import { configurePosthogPrivacy, warnIfPosthogKeyUnset } from './lib/analytics/posthog'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
 import { STALLED_QUERY_AFTER_MS, resolveDbPoolConfig } from './lib/db-pool-config'
+import {
+	isDbWatchdogEnabled,
+	resolveDbWatchdogFailAfterMs,
+	startDbWatchdog,
+} from './lib/db-watchdog'
 import { runDefaultHeartbeatBackfillOnBoot } from './lib/default-heartbeat-boot'
 import { canAccessDesktop } from './lib/desktop-access'
 import {
@@ -49,12 +55,14 @@ import { AgentStorageManager } from './services/agent-storage'
 import { ApnsSender } from './services/apns'
 import { BlockedToolCallsCleaner } from './services/blocked-tool-calls-cleaner'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
+import { BriefingEmailScheduler } from './services/briefing-email-scheduler'
 import { BriefingPushScheduler } from './services/briefing-push-scheduler'
 import { CapabilityScanner } from './services/capability-scanner'
 import { DailyBudgetCardScheduler } from './services/daily-budget-card-scheduler'
 import { DailyBudgetSummaryScheduler } from './services/daily-budget-events'
 import { handleDesktopStreamUpgrade, isDesktopStreamRequest } from './services/desktop-relay'
 import { DriveWatchRenewer } from './services/drive-watch-renewer'
+import { FlowActivityNotifier } from './services/flow-activity'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { GscSyncScheduler } from './services/gsc-sync-scheduler'
 import { LifecyclePushScheduler } from './services/lifecycle-push-scheduler'
@@ -62,6 +70,8 @@ import { LiveActivityFanout } from './services/live-activity-push'
 import { LoopVersionPusher } from './services/loop-version-pusher'
 import { MeetTranscriptReconciler } from './services/meet-transcript-reconciler'
 import { MeetWatchRenewer } from './services/meet-watch-renewer'
+import { MicrosoftSyncScheduler } from './services/microsoft-sync-scheduler'
+import { NotificationEmailFanout } from './services/notification-email'
 import { NotificationPushFanout } from './services/notification-push'
 import { OAuthSweeper } from './services/oauth-sweeper'
 import { OrphanThreadDetector } from './services/orphan-thread-detector'
@@ -104,6 +114,12 @@ const db = createDb(databaseUrl, {
 	poolSize: dbPoolSize,
 	inFlight: dbLoad,
 	onQuery: recordDbTime,
+	onPoolRecycled: ({ runningQueries, sql }) => {
+		logger.warn('DB pool replaced: a query got no answer and the database was not busy', {
+			runningQueries,
+			sql,
+		})
+	},
 	onQueryTimeout: ({ timeoutMs, inFlight, sql }) => {
 		logger.error('DB query got no response', {
 			timeoutMs,
@@ -293,6 +309,12 @@ const webPushSender = new WebPushSender(db)
 const notificationPush = new NotificationPushFanout(db, notifyBridge, [apnsSender, webPushSender])
 notificationPush.start()
 
+const flowActivity = new FlowActivityNotifier(db, notifyBridge)
+flowActivity.start()
+
+const notificationEmail = new NotificationEmailFanout(db, notifyBridge)
+notificationEmail.start()
+
 const liveActivityPush = new LiveActivityFanout(db, notifyBridge, apnsSender, {
 	turns: sessionManager,
 })
@@ -305,6 +327,10 @@ logger.info('Gmail watch renewer started')
 const gscSyncScheduler = new GscSyncScheduler(db)
 gscSyncScheduler.start()
 logger.info('GSC sync scheduler started')
+
+const microsoftSyncScheduler = new MicrosoftSyncScheduler(db)
+microsoftSyncScheduler.start()
+logger.info('Microsoft sync scheduler started')
 
 const meetWatchRenewer = new MeetWatchRenewer(db)
 meetWatchRenewer.start()
@@ -360,6 +386,10 @@ const briefingPushScheduler = new BriefingPushScheduler(db)
 briefingPushScheduler.start()
 const lifecyclePushScheduler = new LifecyclePushScheduler(db)
 lifecyclePushScheduler.start()
+// Summary email (one grouped mail a day). Own query, own claim; killswitch
+// FEATURE_BRIEFING_EMAIL=0 stops the emails and leaves the push alone.
+const briefingEmailScheduler = new BriefingEmailScheduler(db)
+briefingEmailScheduler.start()
 // Daily budget 1a: one summary event per workspace per day, no model call.
 const dailyBudgetSummaryScheduler = new DailyBudgetSummaryScheduler(db)
 dailyBudgetSummaryScheduler.start()
@@ -369,8 +399,11 @@ const dailyBudgetCardScheduler = new DailyBudgetCardScheduler(db)
 dailyBudgetCardScheduler.start()
 
 // §9.4 — self-heal: back-fills the session_* events row for terminal sessions
-// that never got one. Ticks every 60s; idempotent, so safe on every restart.
-const sessionSelfHealJob = new SessionSelfHealJob(db)
+// that never got one, and settles remote pauses stuck in `snapshotting`. Ticks
+// every 60s; idempotent, so safe on every restart.
+const sessionSelfHealJob = new SessionSelfHealJob(db, undefined, (sessionId) =>
+	sessionManager.recoverStalledRemotePause(sessionId),
+)
 sessionSelfHealJob.start()
 logger.info('Session self-heal job started')
 
@@ -393,6 +426,26 @@ logger.info('File upload reaper started')
 const keychainUndoSweeperJob = new KeychainUndoSweeperJob(db)
 keychainUndoSweeperJob.start()
 logger.info('Keychain undo sweeper started')
+
+// Telnyx call recordings: downloads every recording Telnyx holds and saves it as a Maskin
+// file linked to the person and the outbound loop. No model in the path. Off unless
+// TELNYX_RECORDING_SYNC_WORKSPACE_ID, _ACTOR_ID (the agent granted the Telnyx key) and
+// _LOOP_ID are set. Optional: _KEY_NAME (Keychain name, default Telnyx), _FROM (earliest
+// recording to save, default 2026-11-09).
+const telnyxSyncWorkspaceId = process.env.TELNYX_RECORDING_SYNC_WORKSPACE_ID
+const telnyxSyncActorId = process.env.TELNYX_RECORDING_SYNC_ACTOR_ID
+const telnyxSyncLoopId = process.env.TELNYX_RECORDING_SYNC_LOOP_ID
+if (telnyxSyncWorkspaceId && telnyxSyncActorId && telnyxSyncLoopId) {
+	const telnyxRecordingSyncJob = new TelnyxRecordingSyncJob(db, storageProvider, {
+		workspaceId: telnyxSyncWorkspaceId,
+		actorId: telnyxSyncActorId,
+		loopId: telnyxSyncLoopId,
+		keyName: process.env.TELNYX_RECORDING_SYNC_KEY_NAME || 'Telnyx',
+		backfillFrom: new Date(process.env.TELNYX_RECORDING_SYNC_FROM || '2026-11-09T00:00:00Z'),
+	})
+	telnyxRecordingSyncJob.start()
+	logger.info('Telnyx recording sync started')
+}
 
 // Keychain: nightly legacy-to-envelope upgrade. Built but OFF: it does nothing
 // unless KEYCHAIN_LEGACY_UPGRADE_ENABLED=true, which waits on the dual-read follow-on.
@@ -553,7 +606,7 @@ logger.info('Session dispatch queue started')
 initMcpRateLimit()
 
 let shuttingDown = false
-const shutdown = async (signal: string) => {
+const shutdown = async (signal: string, exitCode = 0) => {
 	// A second signal while the first is still settling is an operator asking
 	// harder, not asking twice. The first gets the graceful path; the second
 	// exits now — otherwise a replay wedged on a hung write leaves SIGKILL as
@@ -574,7 +627,10 @@ const shutdown = async (signal: string) => {
 	rotateDeksJob.stop()
 	chainSnapshotJob.stop()
 	notificationPush.stop()
+	flowActivity.stop()
+	notificationEmail.stop()
 	briefingPushScheduler.stop()
+	briefingEmailScheduler.stop()
 	lifecyclePushScheduler.stop()
 	dailyBudgetSummaryScheduler.stop()
 	dailyBudgetCardScheduler.stop()
@@ -599,10 +655,24 @@ const shutdown = async (signal: string) => {
 			`Failed to settle in-flight turn replays: ${err instanceof Error ? err.message : String(err)}`,
 		)
 	}
-	process.exit(0)
+	process.exit(exitCode)
 }
 process.on('SIGTERM', () => void shutdown('SIGTERM'))
 process.on('SIGINT', () => void shutdown('SIGINT'))
+
+// Safety net: if the database stays unreachable, exit so the supervisor restarts the process with
+// a fresh pool. See lib/db-watchdog.ts and docs/runbooks/db-watchdog.md.
+if (isDbWatchdogEnabled(process.env)) {
+	startDbWatchdog({
+		probe: () => db.execute(sql`SELECT 1`),
+		shutdown: () => void shutdown('db-watchdog', 1),
+		forceExit: (code) => process.exit(code),
+		logError: (message, fields) => logger.error(message, fields),
+		inFlightCount: () => dbLoad.count,
+		failAfterMs: resolveDbWatchdogFailAfterMs(process.env),
+	})
+	logger.info('DB watchdog started')
+}
 
 logger.info(`Starting server on port ${port}`)
 

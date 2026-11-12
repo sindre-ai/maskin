@@ -1,14 +1,17 @@
 import { randomUUID } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { DATA_QUERY_MAX_GROUPS, DATA_QUERY_MAX_ROWS, dataQuerySpecSchema } from '@maskin/shared'
+import { DATA_QUERY_PAGE_SIZE, type DataQueryResult, dataQuerySpecSchema } from '@maskin/shared'
 import { PgDialect } from 'drizzle-orm/pg-core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { clearSnapshots } from '../../lib/data-query-snapshots'
 import {
 	type DataQueryRow,
 	buildDataQuerySql,
 	buildNextChangeSql,
 	default as dataQueryRoutes,
+	pageOfResult,
+	parseCursor,
 	shapeDataQueryResult,
 } from '../../routes/data-query'
 import { jsonGet } from '../helpers'
@@ -31,8 +34,6 @@ function row(overrides: Partial<DataQueryRow> = {}): DataQueryRow {
 		total_n: '5',
 		total_s: null,
 		total_nv: '0',
-		group_count: '2',
-		rows_truncated: false,
 		...overrides,
 	}
 }
@@ -40,8 +41,16 @@ function row(overrides: Partial<DataQueryRow> = {}): DataQueryRow {
 function setup(executeRows: unknown[] = []) {
 	const { db, mockResults } = createTestContext()
 	const execute = vi.fn().mockResolvedValue(executeRows)
-	const dbWithExecute = new Proxy(db, {
-		get: (target, prop) => (prop === 'execute' ? execute : Reflect.get(target, prop)),
+	// The aggregation runs inside a transaction (for its statement timeout), so the
+	// transaction callback must see the same `execute` spy.
+	const dbWithExecute: Database = new Proxy(db, {
+		get: (target, prop) => {
+			if (prop === 'execute') return execute
+			if (prop === 'transaction') {
+				return async (fn: (tx: Database) => Promise<unknown>) => fn(dbWithExecute)
+			}
+			return Reflect.get(target, prop)
+		},
 	}) as Database
 	const app = new OpenAPIHono()
 	withTestEnv(app as never, dbWithExecute)
@@ -87,11 +96,13 @@ describe('buildDataQuerySql', () => {
 		expect(loop.params).toEqual(expect.arrayContaining(['in_loop', LOOP_ID]))
 	})
 
-	it('caps the rows scanned and the groups returned', () => {
-		const { params } = dialect.sqlToQuery(buildDataQuerySql(WORKSPACE_ID, specOf({ type: 'task' })))
-		expect(params).toContain(DATA_QUERY_MAX_ROWS + 1)
-		expect(params).toContain(DATA_QUERY_MAX_ROWS)
-		expect(params).toContain(DATA_QUERY_MAX_GROUPS)
+	it('caps neither the rows scanned nor the groups returned', () => {
+		const { sql, params } = dialect.sqlToQuery(
+			buildDataQuerySql(WORKSPACE_ID, specOf({ type: 'task', group_by: 'status' })),
+		)
+		expect(sql).not.toContain('LIMIT')
+		expect(sql).not.toContain('OFFSET')
+		expect(params.filter((p) => typeof p === 'number')).toEqual([])
 	})
 
 	it('only sums real numbers so a text value cannot fail the cast', () => {
@@ -143,7 +154,7 @@ describe('buildDataQuerySql moving dates and time buckets', () => {
 		expect(params).toContain(iso)
 	})
 
-	it('groups by a day bucket in the timezone and orders newest first for the cap', () => {
+	it('groups by a day bucket in the timezone and orders oldest first', () => {
 		const { sql, params } = dialect.sqlToQuery(
 			buildDataQuerySql(
 				WORKSPACE_ID,
@@ -151,7 +162,7 @@ describe('buildDataQuerySql moving dates and time buckets', () => {
 			),
 		)
 		expect(sql).toContain('date_trunc($')
-		expect(sql).toContain('ORDER BY g.k DESC')
+		expect(sql).toContain('ORDER BY g.k ASC')
 		expect(params).toEqual(expect.arrayContaining(['day', 'Europe/Oslo', 'YYYY-MM-DD']))
 	})
 
@@ -196,9 +207,9 @@ describe('buildNextChangeSql', () => {
 })
 
 describe('shapeDataQueryResult', () => {
-	it('returns time buckets oldest first', () => {
+	it('keeps the rows in the order the query returned them (time buckets come oldest first)', () => {
 		const result = shapeDataQueryResult(
-			[row({ key: '2026-10-30' }), row({ key: '2026-10-29' })],
+			[row({ key: '2026-10-29' }), row({ key: '2026-10-30' })],
 			specOf({ type: 'insight', group_by: 'created_at.day' }),
 		)
 		expect(result.groups.map((g) => g.key)).toEqual(['2026-10-29', '2026-10-30'])
@@ -208,6 +219,7 @@ describe('shapeDataQueryResult', () => {
 		expect(shapeDataQueryResult([], specOf({ type: 'task' }))).toEqual({
 			groups: [],
 			total: { count: 0, value: 0 },
+			next_cursor: null,
 			rows_truncated: false,
 			groups_truncated: false,
 		})
@@ -255,13 +267,67 @@ describe('shapeDataQueryResult', () => {
 		expect(result.total.count).toBe(4)
 	})
 
-	it('flags both caps', () => {
-		const result = shapeDataQueryResult(
-			[row({ rows_truncated: true, group_count: String(DATA_QUERY_MAX_GROUPS + 1) })],
-			specOf({ type: 'task', group_by: 'status' }),
+	it('keeps every group and never flags a cap', () => {
+		const rows = Array.from({ length: DATA_QUERY_PAGE_SIZE * 3 }, (_, i) =>
+			row({ key: `g${i}`, n: '1', total_n: String(DATA_QUERY_PAGE_SIZE * 3) }),
 		)
-		expect(result.rows_truncated).toBe(true)
-		expect(result.groups_truncated).toBe(true)
+		const result = shapeDataQueryResult(rows, specOf({ type: 'task', group_by: 'metadata.team' }))
+		expect(result.groups).toHaveLength(DATA_QUERY_PAGE_SIZE * 3)
+		expect(result.next_cursor).toBeNull()
+		expect(result.rows_truncated).toBe(false)
+		expect(result.groups_truncated).toBe(false)
+	})
+})
+
+describe('parseCursor', () => {
+	const id = randomUUID()
+
+	it('reads the snapshot id and the offset', () => {
+		expect(parseCursor(`${id}.250`)).toEqual({ snapshotId: id, offset: 250 })
+	})
+
+	it.each(['', 'abc', `${id}`, `${id}.`, `${id}.-1`, `${id}.1.2`, `${id}.9999999999`, 'x.5'])(
+		'rejects %j',
+		(bad) => {
+			expect(parseCursor(bad)).toBeNull()
+		},
+	)
+})
+
+describe('pageOfResult', () => {
+	const full = (n: number): DataQueryResult => ({
+		groups: Array.from({ length: n }, (_, i) => ({ key: `g${i}`, count: 1, value: 1 })),
+		total: { count: n, value: n },
+		next_cursor: null,
+		rows_truncated: false,
+		groups_truncated: false,
+	})
+
+	it('cuts a page, points at the next one, and keeps the totals for every group', () => {
+		const page = pageOfResult(full(5), 0, 2, 'snap')
+		expect(page.groups.map((g) => g.key)).toEqual(['g0', 'g1'])
+		expect(page.next_cursor).toBe('snap.2')
+		expect(page.groups_truncated).toBe(true)
+		expect(page.total.count).toBe(5)
+	})
+
+	it('has no cursor on the last page', () => {
+		const page = pageOfResult(full(5), 4, 2, 'snap')
+		expect(page.groups.map((g) => g.key)).toEqual(['g4'])
+		expect(page.next_cursor).toBeNull()
+		expect(page.groups_truncated).toBe(false)
+	})
+
+	it('has no cursor when the whole answer fits, even without a snapshot', () => {
+		const page = pageOfResult(full(2), 0, 5, null)
+		expect(page.groups).toHaveLength(2)
+		expect(page.next_cursor).toBeNull()
+	})
+
+	it('returns an empty page past the end', () => {
+		const page = pageOfResult(full(2), 10, 5, 'snap')
+		expect(page.groups).toEqual([])
+		expect(page.next_cursor).toBeNull()
 	})
 })
 
@@ -269,7 +335,87 @@ describe('GET /api/data/query', () => {
 	let ctx: ReturnType<typeof setup>
 
 	beforeEach(() => {
+		clearSnapshots()
 		ctx = setup([row()])
+	})
+
+	describe('paging', () => {
+		const groupRows = (n: number) =>
+			Array.from({ length: n }, (_, i) => row({ key: `g${i}`, n: '1', total_n: String(n) }))
+		const page = (spec: unknown, params: string, headers?: Record<string, string>) => {
+			const raw = encodeURIComponent(JSON.stringify(spec))
+			return jsonGet(`/api/data/query?spec=${raw}&${params}`, {
+				'X-Workspace-Id': WORKSPACE_ID,
+				...headers,
+			})
+		}
+		const spec = { type: 'task', group_by: 'metadata.person' }
+
+		it('reads every page from the one query the first page ran', async () => {
+			ctx = setup(groupRows(5))
+			const first = await (await ctx.app.request(page(spec, 'limit=2'))).json()
+			expect(first.groups.map((g: { key: string }) => g.key)).toEqual(['g0', 'g1'])
+			expect(first.groups_truncated).toBe(true)
+
+			const second = await (
+				await ctx.app.request(page(spec, `limit=2&cursor=${first.next_cursor}`))
+			).json()
+			expect(second.groups.map((g: { key: string }) => g.key)).toEqual(['g2', 'g3'])
+
+			const last = await (
+				await ctx.app.request(page(spec, `limit=2&cursor=${second.next_cursor}`))
+			).json()
+			expect(last.groups.map((g: { key: string }) => g.key)).toEqual(['g4'])
+			expect(last.next_cursor).toBeNull()
+			expect(last.total.count).toBe(5)
+			// The two later pages came out of the snapshot: one aggregation for all three.
+			expect(ctx.execute).toHaveBeenCalledTimes(2) // SET LOCAL statement_timeout + the query
+		})
+
+		it('runs the first page fresh every time, so a changed number is never served stale', async () => {
+			ctx = setup(groupRows(5))
+			await ctx.app.request(page(spec, 'limit=2'))
+			await ctx.app.request(page(spec, 'limit=2'))
+			expect(ctx.execute).toHaveBeenCalledTimes(4)
+		})
+
+		it('does not keep a snapshot when everything fits on one page', async () => {
+			ctx = setup(groupRows(3))
+			const body = await (await ctx.app.request(page(spec, 'limit=10'))).json()
+			expect(body.groups).toHaveLength(3)
+			expect(body.next_cursor).toBeNull()
+			expect(body.groups_truncated).toBe(false)
+		})
+
+		it('recomputes, from the cursor onward, when the snapshot is gone', async () => {
+			ctx = setup(groupRows(5))
+			const stale = `${randomUUID()}.2`
+			const body = await (await ctx.app.request(page(spec, `limit=2&cursor=${stale}`))).json()
+			expect(body.groups.map((g: { key: string }) => g.key)).toEqual(['g2', 'g3'])
+			expect(body.next_cursor).toMatch(/\.4$/)
+			expect(ctx.execute).toHaveBeenCalledTimes(2)
+		})
+
+		it('never serves a snapshot to another query', async () => {
+			ctx = setup(groupRows(5))
+			const first = await (await ctx.app.request(page(spec, 'limit=2'))).json()
+			await ctx.app.request(
+				page({ ...spec, group_by: 'metadata.channel' }, `limit=2&cursor=${first.next_cursor}`),
+			)
+			expect(ctx.execute).toHaveBeenCalledTimes(4)
+		})
+
+		it.each([['not-a-cursor'], [`${randomUUID()}.-3`]])('rejects the cursor %s', async (cursor) => {
+			const res = await ctx.app.request(page(spec, `cursor=${cursor}`))
+			expect(res.status).toBe(400)
+			expect(ctx.execute).not.toHaveBeenCalled()
+		})
+
+		it.each([['0'], ['-1'], ['abc'], ['1.5'], ['1001']])('rejects limit=%s', async (limit) => {
+			const res = await ctx.app.request(page(spec, `limit=${limit}`))
+			expect(res.status).toBe(400)
+			expect(ctx.execute).not.toHaveBeenCalled()
+		})
 	})
 
 	it('returns grouped totals', async () => {
@@ -278,7 +424,8 @@ describe('GET /api/data/query', () => {
 		const body = await res.json()
 		expect(body.groups).toEqual([{ key: 'done', count: 3, value: 3 }])
 		expect(body.total.count).toBe(5)
-		expect(ctx.execute).toHaveBeenCalledOnce()
+		expect(body.next_cursor).toBeNull()
+		expect(ctx.execute).toHaveBeenCalledTimes(2) // SET LOCAL statement_timeout + the query
 	})
 
 	it('requires the workspace header', async () => {
@@ -324,6 +471,6 @@ describe('GET /api/data/query', () => {
 		ctx.mockResults.select = [{ id: LOOP_ID }]
 		const res = await ctx.app.request(get({ type: 'task', scope: LOOP_ID }))
 		expect(res.status).toBe(200)
-		expect(ctx.execute).toHaveBeenCalledOnce()
+		expect(ctx.execute).toHaveBeenCalledTimes(2)
 	})
 })

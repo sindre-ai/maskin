@@ -3,8 +3,10 @@ import SwiftUI
 
 /// Pure identity logic for avatars, kept apart from the view so it can be tested.
 public enum ActorIdentity {
-	/// Up to two letters: first letters of the first two words, or the first two of a single
-	/// word. Punctuation and bracketed qualifiers never reach the glyph. "?" when empty.
+	/// Up to three letters: first letters of the first three words (Chief of Staff is COS),
+	/// first letters of a two-word name, or the first two of a single word. A single all-caps
+	/// word of three letters (CTO, CPO, PMM) keeps all three.
+	/// Punctuation and bracketed qualifiers never reach the glyph. "?" when empty.
 	public static func initials(for name: String) -> String {
 		let words = name.split(whereSeparator: \.isWhitespace).map {
 			String($0.filter { $0.isLetter || $0.isNumber })
@@ -13,9 +15,10 @@ public enum ActorIdentity {
 		case 0: return "?"
 		case 1:
 			let word = words[0]
+			if word.count == 3, word.allSatisfy({ $0.isLetter && $0.isUppercase }) { return word }
 			return String(word.prefix(2)).uppercased()
 		default:
-			return (String(words[0].prefix(1)) + String(words[1].prefix(1))).uppercased()
+			return words.prefix(3).map { String($0.prefix(1)) }.joined().uppercased()
 		}
 	}
 
@@ -186,8 +189,10 @@ public struct ActorAvatar: View {
 		if isPlatform {
 			MaskinLogoTile(size: size)
 		} else {
-			Text(ActorIdentity.initials(for: name))
-				.font(MaskinTypeface.sans(size * 0.36, weight: .bold, relativeTo: .caption))
+			let initials = ActorIdentity.initials(for: name)
+			Text(initials)
+				.font(MaskinTypeface.sans(size * (initials.count > 2 ? 0.28 : 0.36), weight: .bold, relativeTo: .caption))
+				.lineLimit(1)
 				.minimumScaleFactor(0.6)
 				.foregroundStyle(MaskinBrand.mark)
 				.frame(width: size, height: size)

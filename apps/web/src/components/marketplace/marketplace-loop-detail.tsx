@@ -1,5 +1,5 @@
 import { MarketplaceBreadcrumb } from '@/components/marketplace/marketplace-breadcrumb'
-import { getActorAvatarPaletteClass, getActorInitials } from '@/components/shared/actor-avatar'
+import { getActorInitials, getActorPlateStyle } from '@/components/shared/actor-avatar'
 import { describeTrigger } from '@/components/triggers/trigger-row'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -365,6 +365,7 @@ function LoopBringsRow({
 	const sub = description
 		? `${ITEM_TYPE_LABEL[item.item_type]} · ${description}`
 		: ITEM_TYPE_LABEL[item.item_type]
+	const initials = getActorInitials(name)
 
 	return (
 		<Link
@@ -374,14 +375,14 @@ function LoopBringsRow({
 		>
 			<span
 				aria-hidden="true"
+				style={item.item_type === 'actor' ? getActorPlateStyle(name) : undefined}
 				className={cn(
-					'grid size-7 shrink-0 place-items-center rounded-lg text-[11px] font-bold',
-					item.item_type === 'actor'
-						? getActorAvatarPaletteClass(name)
-						: 'bg-muted text-muted-foreground',
+					'grid size-7 shrink-0 place-items-center font-bold',
+					initials.length === 3 ? 'text-[8.5px]' : 'text-[11px]',
+					item.item_type !== 'actor' && 'rounded-lg bg-muted text-muted-foreground',
 				)}
 			>
-				{getActorInitials(name)}
+				{initials}
 			</span>
 			<span className="min-w-0 flex-1 leading-tight">
 				<span className="block truncate text-[12.5px] font-semibold text-foreground">{name}</span>

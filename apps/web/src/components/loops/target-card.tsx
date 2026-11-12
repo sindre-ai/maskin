@@ -1,5 +1,6 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { cn } from '@/lib/cn'
+import { formatFigure } from '@/lib/format-number'
 import type { ActorListItem, LoopSummary } from '@maskin/shared'
 
 /**
@@ -38,7 +39,7 @@ export function paceVerdict(target: LoopTarget): PaceVerdict {
 	const { actual, target: goal, pace_policy } = target
 	const isMissed = goal > 0 && actual <= 0
 	const ratio = goal !== 0 ? actual / goal : actual > 0 ? 1 : 0
-	const numbers = `${actual} of ${goal}`
+	const numbers = `${formatFigure(actual)} of ${formatFigure(goal)}`
 
 	if (isMissed) {
 		return {
@@ -112,8 +113,8 @@ export function TargetCard({ target, owner }: TargetCardProps) {
 					</span>
 				</span>
 			</div>
-			<p className="text-[26px] font-bold leading-[1.05] tracking-tight tabular-nums text-foreground">
-				{target.actual} of {target.target}
+			<p className="text-[26px] font-bold leading-[1.05] tracking-tight text-foreground">
+				{formatFigure(target.actual)} of {formatFigure(target.target)}
 			</p>
 			<div aria-hidden="true" className="h-2 overflow-hidden rounded-full bg-border">
 				<div

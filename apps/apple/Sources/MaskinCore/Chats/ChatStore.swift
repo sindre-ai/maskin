@@ -209,6 +209,11 @@ public final class ChatStore {
 	}
 
 	public var participants: [ChatParticipant] { detail?.participants ?? [] }
+	/// The one agent's own openers in a chat with just it, for an empty thread. Nothing for a group.
+	public var starterPrompts: [String] {
+		StarterPrompts.forChat(
+			others: participants.filter { $0.id != currentActorID }, actors: workspaceActors)
+	}
 	public var title: String { detail?.title ?? "Chat" }
 	public var lastServerID: Int? { confirmed.last?.serverID }
 
@@ -1005,14 +1010,26 @@ public final class ChatStore {
 
 	// MARK: - Participants, title, sessions
 
-	public func addParticipants(_ ids: [String]) async {
-		guard !ids.isEmpty else { return }
+	/// True when the people are in the chat. A caller that shows the failure itself passes
+	/// `reportsFailure: false`, so the thread behind it does not raise a second alert.
+	@discardableResult
+	public func addParticipants(_ ids: [String], reportsFailure: Bool = true) async -> Bool {
+		guard !ids.isEmpty else { return false }
+		var failure: Error?
 		do {
 			try await api.addParticipants(conversationID: conversationID, actorIDs: ids)
-			if let detail = try? await api.detail(conversationID: conversationID) { self.detail = detail }
 		} catch {
-			notice = Self.message(error)
+			failure = error
 		}
+		// The server may have added them even when the reply could not be read, so look at the
+		// chat itself and only report a failure if they are really not in it.
+		let refreshed = try? await api.detail(conversationID: conversationID)
+		if let refreshed { detail = refreshed }
+		guard let failure else { return true }
+		let present = Set(refreshed?.participants.map(\.id) ?? [])
+		if ids.allSatisfy(present.contains) { return true }
+		if reportsFailure { notice = Self.message(failure) }
+		return false
 	}
 
 	@discardableResult

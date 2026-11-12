@@ -9,13 +9,12 @@ name: Apple
 #
 # Triggers only on changes under apps/apple (plus this file).
 #
-# Pull requests into feat/** run too: stacked slices are based on a task branch, not
-# main, and without this they were never compiled until the whole stack reached main.
+# Pull requests into feat/** and bet/** run too: stacked slices are based on a task branch,
+# and bet work is based on a bet branch, not main. Without this they were never compiled
+# until the whole stack or bet reached main.
 #
-# The drift checks (design tokens, OpenAPI snapshot, generated Swift client) are NOT here.
-# They need no Mac, so they run on Linux as the apple-drift job in ci.yml, where a stale file
-# goes red in a few minutes instead of after a Mac queue wait. That job runs when the backend,
-# the Apple app or the design tokens change; see scripts/ci/changed-areas.sh.
+# The drift checks (design tokens, OpenAPI snapshot, generated Swift client) are NOT here
+# and are not enforced in CI. Refresh them by hand when the backend spec or tokens change.
 #
 # What each job guards against:
 #   1. swift test      — MaskinKit unit tests (stores, outbox, SSE, tokens).
@@ -51,7 +50,7 @@ on:
       - 'apps/apple/**'
       - '.github/workflows/apple.yml'
   pull_request:
-    branches: [main, 'feat/**']
+    branches: [main, 'feat/**', 'bet/**']
     paths:
       - 'apps/apple/**'
       - '.github/workflows/apple.yml'
@@ -84,7 +83,7 @@ jobs:
 
       # --- Package tests ---
       - name: Cache SwiftPM and the generated-client build
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             apps/apple/.build

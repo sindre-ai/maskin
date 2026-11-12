@@ -52,7 +52,7 @@ struct NewChatSheet: View {
 				NewConversationForm(
 					store: store, currentActorID: currentActorID, initialRecipient: initialRecipient, error: error,
 					draft: $draft, query: $query, highlightedChip: $highlightedChip,
-					toFocused: $toFocused)
+					toFocused: $toFocused, onRecipientPicked: { composer.requestFocus() })
 			}
 			// Dragging the open list must not drop the keyboard: that would blur To and close the list.
 			.scrollDismissesKeyboard(toFocused ? .never : .interactively)
@@ -67,6 +67,7 @@ struct NewChatSheet: View {
 			.overlay { if isCreating { ProgressView() } }
 			.task {
 				if let initialRecipient, !draft.recipientIDs.contains(initialRecipient.id) { draft.toggle(initialRecipient.id) }
+				composer.splitsLongMessages = true
 				await store.loadActors()
 				draft.applyDefault(actors: store.actors, excluding: currentActorID)
 				// The composer keeps the draft itself; text passed in wins over a saved draft.
@@ -74,6 +75,13 @@ struct NewChatSheet: View {
 				if !prefill.isEmpty { composer.text = prefill }
 				composer.bind(conversationID: Self.draftKey)
 				toFocused = draft.recipientIDs.isEmpty
+				// Someone is already in To (Chief of Staff, or a person the sheet was opened for), or a
+				// starter filled the message: the message is next. The request waits for the sheet to
+				// finish appearing, or the system ignores it.
+				if !draft.recipientIDs.isEmpty || !prefill.isEmpty {
+					try? await Task.sleep(for: .milliseconds(450))
+					composer.requestFocus()
+				}
 			}
 		}
 	}
@@ -85,8 +93,12 @@ struct NewChatSheet: View {
 		recipients.count == 1 && recipients[0].kind == .agent && !isCreating ? recipients[0] : nil
 	}
 
+	/// One agent and nobody else: its own openers. Several people, or only people, have none.
+	private var starters: [String] { StarterPrompts.forChat(others: recipients, actors: store.actors) }
+
 	private var bottomBar: some View {
 		VStack(alignment: .trailing, spacing: MaskinSpace.s5) {
+			StarterPromptsView(prompts: starters) { composer.addStarter($0) }
 			if !composer.trimmedText.isEmpty, restoredDraft {
 				Text("Draft saved · ⌘↩ to send")
 					.font(MaskinTypeface.sans(MaskinFontSize.t12, relativeTo: .caption))
@@ -119,13 +131,14 @@ struct NewChatSheet: View {
 		}
 		let people = NewConversationForm.recipients(ids, store: store, initialRecipient: initialRecipient)
 		guard !people.isEmpty else { return }
+		isCreating = true
+		defer { isCreating = false }
 		// Live starts the call with no first message; the typed text stays in the composer.
-		let taken = live ? nil : composer.take()
+		// A long message uploads its file first, which is why the spinner is already up.
+		let taken = live ? nil : await composer.takeForSend()
 		let message = taken?.text
 		guard live || message != nil else { return }
-		isCreating = true
 		error = nil
-		defer { isCreating = false }
 		do {
 			let created = try await store.create(
 				title: ThreadLayout.newChatTitle(for: people.map(\.name), startsLiveCall: live),

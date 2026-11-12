@@ -89,6 +89,35 @@ describe('AgentCreateForm', () => {
 		expect(onUpdate).not.toHaveBeenCalled()
 	})
 
+	it('Esc restores the saved name and does not call onUpdate', async () => {
+		const user = userEvent.setup()
+		const onUpdate = vi.fn()
+		const agent = buildActorResponse({ name: 'Scout', type: 'agent' })
+		render(<AgentCreateForm onAutoCreate={vi.fn()} onUpdate={onUpdate} agent={agent} />)
+
+		const nameInput = screen.getByPlaceholderText('Agent name')
+		await user.type(nameInput, 'Other Name')
+		await user.keyboard('{Escape}')
+
+		expect(nameInput).toHaveValue('Scout')
+		expect(nameInput).not.toHaveFocus()
+		expect(onUpdate).not.toHaveBeenCalled()
+	})
+
+	it('Esc restores the saved description and does not call onUpdate', async () => {
+		const user = userEvent.setup()
+		const onUpdate = vi.fn()
+		const agent = buildActorResponse({ type: 'agent', description: 'Watches alerts' })
+		render(<AgentCreateForm onAutoCreate={vi.fn()} onUpdate={onUpdate} agent={agent} />)
+
+		const input = screen.getByPlaceholderText('Short description shown on the Agents page')
+		await user.type(input, 'Typed text')
+		await user.keyboard('{Escape}')
+
+		expect(input).toHaveValue('Watches alerts')
+		expect(onUpdate).not.toHaveBeenCalled()
+	})
+
 	it('calls onUpdate with system_prompt on blur when agent exists', async () => {
 		const user = userEvent.setup()
 		const onUpdate = vi.fn()

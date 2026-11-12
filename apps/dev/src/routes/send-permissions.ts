@@ -1,18 +1,13 @@
 import type { Database } from '@maskin/db'
 import { actors, sendPermissions, workspaceMembers } from '@maskin/db/schema'
-import {
-	SEND_PERMISSION_KINDS,
-	SEND_PERMISSION_MODES,
-	type SendPermissionKind,
-	type SendPermissionMode,
-} from '@maskin/shared'
+import { SEND_PERMISSION_KINDS, SEND_PERMISSION_MODES } from '@maskin/shared'
 import { and, eq, isNull } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
 import { createApiError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
-import { type SendModeSource, startingSendMode } from '../lib/send-permissions'
+import { loadSendSettings } from '../lib/send-permissions'
 import { isWorkspaceHumanAdminOrOwner } from '../lib/workspace-auth'
 
 type Env = {
@@ -23,11 +18,6 @@ type Env = {
 }
 
 const app = new Hono<Env>()
-
-interface EffectiveSetting {
-	mode: SendPermissionMode
-	source: SendModeSource
-}
 
 /**
  * GET /api/send-permissions
@@ -43,36 +33,17 @@ app.get('/', async (c) => {
 		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)
 	}
 
-	const [rows, agents] = await Promise.all([
-		db.select().from(sendPermissions).where(eq(sendPermissions.workspaceId, workspaceId)),
-		db
-			.select({ id: actors.id, name: actors.name })
-			.from(workspaceMembers)
-			.innerJoin(actors, eq(actors.id, workspaceMembers.actorId))
-			.where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(actors.type, 'agent')))
-			.orderBy(actors.name),
-	])
-
-	const defaults = {} as Record<SendPermissionKind, EffectiveSetting>
-	for (const kind of SEND_PERMISSION_KINDS) {
-		const row = rows.find((r) => r.agentId === null && r.kind === kind)
-		defaults[kind] = row
-			? { mode: row.mode, source: 'workspace' }
-			: { mode: startingSendMode(kind), source: 'starting' }
-	}
+	const { defaults, agents } = await loadSendSettings(db, workspaceId)
 
 	return c.json({
 		kinds: SEND_PERMISSION_KINDS,
 		modes: SEND_PERMISSION_MODES,
 		workspace_default: defaults,
-		agents: agents.map((agent) => {
-			const settings = {} as Record<SendPermissionKind, EffectiveSetting>
-			for (const kind of SEND_PERMISSION_KINDS) {
-				const own = rows.find((r) => r.agentId === agent.id && r.kind === kind)
-				settings[kind] = own ? { mode: own.mode, source: 'agent' } : defaults[kind]
-			}
-			return { agent_id: agent.id, name: agent.name, settings }
-		}),
+		agents: agents.map((agent) => ({
+			agent_id: agent.agentId,
+			name: agent.name,
+			settings: agent.settings,
+		})),
 	})
 })
 

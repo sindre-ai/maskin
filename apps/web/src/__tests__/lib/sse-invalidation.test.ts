@@ -145,6 +145,18 @@ describe('invalidateFromSSE', () => {
 		}
 	})
 
+	it('refreshes an object of a workspace-defined type when it is updated', () => {
+		const qc = createMockQueryClient()
+		invalidateFromSSE(qc as never, workspaceId, {
+			entity_type: 'linkedin_post',
+			entity_id: entityId,
+			action: 'updated',
+		} as never)
+		expect(qc.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: queryKeys.objects.detail(entityId),
+		})
+	})
+
 	it('invalidates relationships for relationship entity', () => {
 		const qc = createMockQueryClient()
 		invalidateFromSSE(qc as never, workspaceId, {

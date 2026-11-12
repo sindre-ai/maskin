@@ -328,7 +328,7 @@ public final class ObjectsStore {
 		var status = statusFilter
 		var search = searchText
 		switch effectiveScope {
-		case .all, .needsYou, .saved:
+		case .all, .needsYou, .saved, .files:
 			break
 		case .favourites:
 			starred = true

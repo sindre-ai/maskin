@@ -87,6 +87,27 @@ describe('BriefingRow', () => {
 		expect(within(tiles[0]).queryByText('Briefing')).toBeNull()
 	})
 
+	it('leads with the big number and label when a deck asks for a tile', () => {
+		mockUseBriefings.mockReturnValue({
+			cards: [{ ...cards[0], tile: { value: '0 of 10', label: 'paying customers' } }, cards[1]],
+			isLoading: false,
+			isError: false,
+		})
+		renderRow()
+		const [withTile, withoutTile] = screen.getAllByTestId('briefing-card')
+		expect(within(withTile).getByTestId('briefing-tile-value')).toHaveTextContent('0 of 10')
+		expect(within(withTile).getByTestId('briefing-tile-label')).toHaveTextContent(
+			'paying customers',
+		)
+		expect(within(withTile).queryByText(cards[0].headline)).toBeNull()
+		expect(withTile).toHaveAccessibleName(
+			`Chief of Staff: 0 of 10, paying customers, ${cards[0].headline}, new`,
+		)
+		// A deck without the tags keeps today's tile.
+		expect(within(withoutTile).getByText(cards[1].headline)).toBeInTheDocument()
+		expect(within(withoutTile).queryByTestId('briefing-tile-value')).toBeNull()
+	})
+
 	it('shows one card per briefing, titled by its page, marked new', () => {
 		renderRow()
 		expect(

@@ -266,6 +266,56 @@ struct ToolServerTests {
 	}
 }
 
+@Suite("Integration tabs, search and categories")
+struct IntegrationFilterTests {
+	@MainActor private func loadedStore() async -> IntegrationsStore {
+		let fake = FakeSettings()
+		fake.providerList = [
+			IntegrationProvider(id: "slack", displayName: "Slack", authKind: .oauth),
+			IntegrationProvider(id: "gmail", displayName: "Gmail", authKind: .oauth),
+			IntegrationProvider(id: "github", displayName: "GitHub", authKind: .oauth),
+		]
+		fake.connectedList = [
+			ConnectedIntegration(id: "1", provider: "slack", state: .connected),
+			ConnectedIntegration(
+				id: "2", provider: IntegrationsStore.toolServerProvider, state: .connected,
+				displayName: "internal-crm"),
+		]
+		let store = IntegrationsStore(api: fake, currentRole: .admin)
+		await store.load()
+		return store
+	}
+
+	@MainActor @Test func tabsCountConnectedAndUnconnected() async {
+		let store = await loadedStore()
+		#expect(store.connectedCount == 2)
+		#expect(store.discoverCount == 2)
+	}
+
+	@MainActor @Test func discoverFiltersBySearchAndCategory() async {
+		let store = await loadedStore()
+		#expect(store.availableProviders(query: "hub", category: nil).map(\.id) == ["github"])
+		#expect(store.availableProviders(query: "", category: .code).map(\.id) == ["github"])
+		#expect(store.availableProviders(query: "", category: .emailAndCalendar).map(\.id) == ["gmail"])
+		#expect(store.availableProviders(query: "zzz", category: nil).isEmpty)
+	}
+
+	@MainActor @Test func toolServersSitUnderAllAndCustomOnly() async {
+		let store = await loadedStore()
+		#expect(store.connectedToolServers(query: "", category: nil).count == 1)
+		#expect(store.connectedToolServers(query: "", category: .custom).count == 1)
+		#expect(store.connectedToolServers(query: "", category: .code).isEmpty)
+		#expect(store.connectedToolServers(query: "crm", category: nil).count == 1)
+		#expect(store.connectedToolServers(query: "nope", category: nil).isEmpty)
+	}
+
+	@Test func unknownProvidersFallUnderDocsAndData() {
+		#expect(IntegrationCategory.category(for: "brand-new") == .docsAndData)
+		#expect(IntegrationCategory.category(for: "slack") == .chatAndSocial)
+		#expect(IntegrationCategory.category(for: IntegrationsStore.toolServerProvider) == .custom)
+	}
+}
+
 private final class FakeAccess: IntegrationAccessAPI, @unchecked Sendable {
 	var current = IntegrationGrants(defaultAccess: .read, byAgent: ["b": .readWrite])
 	var failure: SettingsError?

@@ -26,7 +26,7 @@ const TOOL_TOKEN_RE =
 // Snake_case tokens that match the verb-prefix shape but are field / arg /
 // enum names, not tool references. Kept small on purpose — grow it only when
 // a new false positive appears.
-const NON_TOOL_TOKENS = new Set<string>(['create_relationship', 'delete_relationship'])
+const NON_TOOL_TOKENS = new Set<string>(['create_relationship', 'delete_relationship', 'run_at'])
 // Note: delete_relationship IS registered, so it wouldn't fail the check
 // anyway — but listing it here documents that the intent when it appears in
 // prose is often "the relationship-delete concept," not a tool call.
@@ -75,6 +75,8 @@ const READS_OUTSIDE_READ_TOOL_NAMES = [
 	'list_keychain_credentials',
 	'desktop_list_ports',
 	'query_data',
+	'list_file_tags',
+	'get_trigger',
 ]
 
 // get_started is in READ_TOOL_NAMES but its confirm path installs a loop.
@@ -310,12 +312,12 @@ describe('MCP surface pin', () => {
 			expect([...READ_ONLY_TOOLS].sort()).toEqual(expected)
 		})
 
-		it('no MUTATION_TOOL_KINDS tool is read-only, nor create_session, mark_read or get_started', () => {
+		it('no MUTATION_TOOL_KINDS tool is read-only, nor create_sub_chat, mark_read or get_started', () => {
 			const readOnly = (name: string) => TOOL_ANNOTATIONS[name]?.readOnlyHint
 			for (const name of Object.keys(MUTATION_TOOL_KINDS)) {
 				expect(readOnly(name), `${name} is a mutation but readOnlyHint is true`).toBe(false)
 			}
-			for (const name of ['create_session', 'mark_read', 'get_started']) {
+			for (const name of ['create_sub_chat', 'mark_read', 'get_started']) {
 				expect(readOnly(name), `${name} must not be read-only`).toBe(false)
 			}
 		})
@@ -353,12 +355,10 @@ describe('MCP surface pin', () => {
 			expect(actual).toEqual(expected)
 		})
 
-		it('openWorldHint is true for create_session and its alias run_agent, the integration tools and the tools that send or read mail only', () => {
+		it('openWorldHint is true for create_sub_chat and create_chat, the integration tools and the tools that send or read mail only', () => {
 			const expected = [
-				'create_session',
 				'create_sub_chat',
 				'create_chat',
-				'run_agent',
 				'list_integrations',
 				'list_integration_providers',
 				'connect_integration',

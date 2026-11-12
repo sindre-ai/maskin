@@ -17,6 +17,7 @@ import {
 	type PushPrefs,
 	type PushVerdict,
 	type RecentPush,
+	channelsWanted,
 	collapseKeyOf,
 	delaySecondsOf,
 	dueAtOf,
@@ -344,7 +345,9 @@ export class NotificationPushFanout {
 
 		this.record(n, meta, category, verdict, nowMs)
 		// allSettled: a channel that throws (sendToActor should not) must not starve the others.
-		await Promise.allSettled(channels.map((c) => c.sendToActor(targetActorId, message)))
+		const wanted = channelsWanted(prefs, category)
+		const targets = channels.filter((c) => c.channelKind === undefined || wanted[c.channelKind])
+		await Promise.allSettled(targets.map((c) => c.sendToActor(targetActorId, message)))
 	}
 
 	private record(
@@ -410,48 +413,8 @@ export class NotificationPushFanout {
 	}
 
 	/** True when the actor's read high-water mark already covers `metadata.message_id`. */
-	private async alreadyRead(actorId: string, meta: Record<string, unknown>): Promise<boolean> {
-		const messageId = meta.message_id
-		if (
-			typeof meta.conversation_id !== 'string' ||
-			!UUID_RE.test(meta.conversation_id) ||
-			typeof messageId !== 'number' ||
-			!Number.isFinite(messageId)
-		) {
-			return false
-		}
-		try {
-			// A thread reply is read in the thread, not in the chat: the chat's cursor
-			// moving past it says nothing about whether this person opened the thread.
-			if (typeof meta.thread_root_id === 'number') {
-				const [thread] = await this.db
-					.select({ lastRead: messageThreadReads.lastReadMessageId })
-					.from(messageThreadReads)
-					.where(
-						and(
-							eq(messageThreadReads.actorId, actorId),
-							eq(messageThreadReads.rootMessageId, meta.thread_root_id),
-						),
-					)
-					.limit(1)
-				return thread != null && Number(thread.lastRead) >= messageId
-			}
-			const [row] = await this.db
-				.select({ lastRead: conversationParticipants.lastReadMessageId })
-				.from(conversationParticipants)
-				.where(
-					and(
-						eq(conversationParticipants.conversationId, meta.conversation_id),
-						eq(conversationParticipants.actorId, actorId),
-					),
-				)
-				.limit(1)
-			return row?.lastRead != null && Number(row.lastRead) >= messageId
-		} catch (err) {
-			// Unknown read state: err on the side of delivering the push.
-			logger.warn('Read check for delayed push failed', { actorId, error: String(err) })
-			return false
-		}
+	private alreadyRead(actorId: string, meta: Record<string, unknown>): Promise<boolean> {
+		return hasReadThrough(this.db, actorId, meta)
 	}
 
 	private async loadPrefs(actorId: string): Promise<PushPrefs> {
@@ -467,6 +430,7 @@ export class NotificationPushFanout {
 				quietHoursStart: row.quietHoursStart,
 				quietHoursEnd: row.quietHoursEnd,
 				categories: { ...DEFAULT_PUSH_PREFS.categories, ...row.categories },
+				browserCategories: row.browserCategories ?? undefined,
 				mutedWorkspaceIds: row.mutedWorkspaceIds ?? [],
 			}
 		} catch (err) {
@@ -592,5 +556,54 @@ export class NotificationPushFanout {
 			logger.warn('Decision lookup for push failed', { notificationId: n.id, error: String(err) })
 		}
 		return null
+	}
+}
+
+/** True when the actor's read high-water mark already covers `metadata.message_id`. */
+export async function hasReadThrough(
+	db: Database,
+	actorId: string,
+	meta: Record<string, unknown>,
+): Promise<boolean> {
+	const messageId = meta.message_id
+	if (
+		typeof meta.conversation_id !== 'string' ||
+		!UUID_RE.test(meta.conversation_id) ||
+		typeof messageId !== 'number' ||
+		!Number.isFinite(messageId)
+	) {
+		return false
+	}
+	try {
+		// A thread reply is read in the thread, not in the chat: the chat's cursor
+		// moving past it says nothing about whether this person opened the thread.
+		if (typeof meta.thread_root_id === 'number') {
+			const [thread] = await db
+				.select({ lastRead: messageThreadReads.lastReadMessageId })
+				.from(messageThreadReads)
+				.where(
+					and(
+						eq(messageThreadReads.actorId, actorId),
+						eq(messageThreadReads.rootMessageId, meta.thread_root_id),
+					),
+				)
+				.limit(1)
+			return thread != null && Number(thread.lastRead) >= messageId
+		}
+		const [row] = await db
+			.select({ lastRead: conversationParticipants.lastReadMessageId })
+			.from(conversationParticipants)
+			.where(
+				and(
+					eq(conversationParticipants.conversationId, meta.conversation_id),
+					eq(conversationParticipants.actorId, actorId),
+				),
+			)
+			.limit(1)
+		return row?.lastRead != null && Number(row.lastRead) >= messageId
+	} catch (err) {
+		// Unknown read state: err on the side of delivering the push.
+		logger.warn('Read check for delayed push failed', { actorId, error: String(err) })
+		return false
 	}
 }

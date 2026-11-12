@@ -10,9 +10,9 @@ public enum MiniAppHTML {
 		"img-src data:", "connect-src 'none'", "form-action 'none'", "base-uri 'none'",
 	].joined(separator: "; ")
 
-	private static let cspMeta = "<meta http-equiv=\"Content-Security-Policy\" content=\"\(csp)\">"
-	private static let cspMetaPattern = #"<meta\b[^>]*\bhttp-equiv\s*=\s*["']?content-security-policy["']?[^>]*>"#
-	private static let refreshMetaPattern = #"<meta\b[^>]*\bhttp-equiv\s*=\s*["']?refresh["']?[^>]*>"#
+	static let cspMeta = "<meta http-equiv=\"Content-Security-Policy\" content=\"\(csp)\">"
+	static let cspMetaPattern = #"<meta\b[^>]*\bhttp-equiv\s*=\s*["']?content-security-policy["']?[^>]*>"#
+	static let refreshMetaPattern = #"<meta\b[^>]*\bhttp-equiv\s*=\s*["']?refresh["']?[^>]*>"#
 	private static let headOpenPattern = #"<head(\s[^>]*)?>"#
 	private static let doctypePattern = #"<!doctype[^>]*>"#
 

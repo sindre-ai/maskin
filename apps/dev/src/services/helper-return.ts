@@ -47,7 +47,6 @@ export type HelperReturnSkipReason =
 	| 'mention_reply_is_the_return'
 	| 'return_cap'
 	| 'no_destination'
-	| 'agent_message_cap'
 	| 'relaunching'
 
 export type HelperReturnOutcome =
@@ -83,7 +82,7 @@ export async function returnToSender(
  * knowing the helper ended. Called when the sender itself finishes: every helper of
  * it that completed, failed or timed out under that skip gets its one-shot claim
  * back and is returned now, waking the sender for a follow-up run. Completed
- * helpers are included because create_session promises their result comes back and
+ * helpers are included because create_sub_chat promises their result comes back and
  * the caller can no longer opt in or out (notify_on_complete is not a parameter).
  * A person's own stop is not reported.
  *
@@ -240,7 +239,7 @@ async function doReturn(
 		return skip('relaunching')
 	}
 
-	// create_session wait:true callers still waiting inline already get the result there.
+	// create_sub_chat callers still waiting inline already get the result there.
 	// Accepted loss: a sender that is live now and finishes later without ever
 	// hearing back. That is today's behaviour, not a regression.
 	// A flagged helper may still return to a live chat session: it stays running
@@ -337,17 +336,15 @@ async function doReturn(
 		// Lazy import: conversation-responder pulls in the session lifecycle, which
 		// imports this module.
 		const { evaluateAndRespond } = await import('./conversation-responder')
-		const responded = await evaluateAndRespond({
+		await evaluateAndRespond({
 			db,
 			sessionManager: opts.sessionManager,
 			workspaceId: helper.workspaceId,
 			conversationId: destination.conversationId,
 			messageId: message.id,
-			options: { forceRespond: true, targetAgentId: sender.actorId },
+			// Not subject to the agent-messages-in-a-row cap: a lost result is worse than one more turn.
+			options: { forceRespond: true, targetAgentId: sender.actorId, skipAgentCap: true },
 		})
-		// The responder drops a turn after 5 agent messages in a row. For a flagged
-		// return that is a lost result, so it is recorded instead of passing as a success.
-		if (notify && responded === 'agent_cap') return skip('agent_message_cap')
 	}
 	return { returned: true, destination: 'conversation' }
 }

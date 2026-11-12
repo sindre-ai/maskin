@@ -36,6 +36,10 @@ struct ObjectsListView: View {
 	var askActions = ObjectAskActions()
 	/// Opens an object from a board card or a context menu.
 	var onOpen: (String) -> Void = { _ in }
+	/// The workspace's files, shown instead of objects on the Files tab.
+	var files: FilesListStore?
+	/// Opens a file from the Files tab.
+	var onOpenFile: (String) -> Void = { _ in }
 
 	@Environment(\.horizontalSizeClass) private var sizeClass
 	@State private var undoOffer: UndoOffer?
@@ -44,7 +48,9 @@ struct ObjectsListView: View {
 
 	var body: some View {
 		Group {
-			if store.display.layout == .board {
+			if store.scope == .files, let files {
+				filesContent(files)
+			} else if store.display.layout == .board {
 				board_
 			} else {
 				content
@@ -80,6 +86,29 @@ struct ObjectsListView: View {
 			Button("Cancel", role: .cancel) { viewName = "" }
 		} message: {
 			Text("Keeps the current tab, status, search, grouping and sort under a name.")
+		}
+	}
+
+	// MARK: Files
+
+	/// The Files tab: the title and tabs, then the workspace's files. Object filters do not apply.
+	private func filesContent(_ files: FilesListStore) -> some View {
+		VStack(alignment: .leading, spacing: 0) {
+			Text(store.title)
+				.maskinText(.largeTitle)
+				.foregroundStyle(MaskinColor.ink)
+				.lineLimit(1)
+				.minimumScaleFactor(0.7)
+				.frame(minHeight: MaskinSpace.touchMin)
+				.padding(.horizontal, MaskinSpace.s11)
+				.accessibilityAddTraits(.isHeader)
+			if store.display.showsTypeTabs {
+				ObjectTypeTabs(tabs: ObjectTypeTab.tabs(for: store), selected: store.scope) { scope in
+					Task { await store.setScope(scope) }
+				}
+				.padding(.top, MaskinSpace.s5)
+			}
+			FilesListView(store: files, search: store.searchText, onOpen: onOpenFile)
 		}
 	}
 
@@ -294,7 +323,6 @@ struct ObjectsListView: View {
 				header
 				emptyState.padding(MaskinSpace.s9)
 			}
-			.refreshable { await store.reload() }
 		}
 	}
 
@@ -382,7 +410,6 @@ struct ObjectsListView: View {
 		.compactSections()
 		.scrollContentBackground(.hidden)
 		.environment(\.defaultMinListRowHeight, MaskinSpace.touchMin)
-		.refreshable { await store.reload() }
 	}
 
 	/// One inset card per group with hairline separators; the header folds it.
