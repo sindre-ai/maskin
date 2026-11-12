@@ -470,6 +470,53 @@ export function trackChatLeft(p: { entity_id: string; outcome: ChatLeftOutcome }
 	})
 }
 
+// How the chat list is used, for the Chat list rework bet. Two events, categories only: never a chat
+// title, the search text or a chat id. `source` is `list` for a row opened from the list as it stands
+// and `search` for a row opened from the list search's results (then `section` is `search` too).
+// `section` is the list section the row sat in. The values agent and room are set by the rows that
+// add them; until then direct messages and every dated group read as `recent`.
+export type ChatListSection = 'pinned' | 'unread' | 'agent' | 'recent' | 'room' | 'search'
+export type ChatListOpenSource = 'list' | 'search'
+
+/** 1-based place of a row among the rows on screen, as a bucket so no chat can be told apart. */
+export function chatListPositionBucket(position: number): string {
+	if (position <= 1) return '1'
+	if (position <= 3) return '2_3'
+	if (position <= 10) return '4_10'
+	if (position <= 25) return '11_25'
+	return '26_plus'
+}
+
+export function chatListResultCountBucket(count: number): string {
+	if (count <= 0) return '0'
+	if (count === 1) return '1'
+	if (count <= 5) return '2_5'
+	if (count <= 20) return '6_20'
+	return '21_plus'
+}
+
+export function trackChatOpenedFromList(p: {
+	source: ChatListOpenSource
+	section: ChatListSection
+	position: number
+}): void {
+	trackEvent('chat_opened_from_list', {
+		source: p.source,
+		section: p.section,
+		position_bucket: chatListPositionBucket(p.position),
+		feature_area: 'chats',
+	})
+}
+
+// A search typed into the chat list's own box and left alone long enough to settle. Not the global
+// search, which has its own events.
+export function trackChatListSearchUsed(p: { result_count: number }): void {
+	trackEvent('chat_list_search_used', {
+		result_count_bucket: chatListResultCountBucket(p.result_count),
+		feature_area: 'chats',
+	})
+}
+
 const creditLowShown = new Set<string>()
 
 // The no-credits notice was put in front of the person. `placement` says which
