@@ -55,14 +55,16 @@ describe('GET /api/conversations hide_quiet', () => {
 	let workspaceId: string
 	let humanId: string
 	let agentId: string
+	let otherAgentId: string
 	let retiredId: string
 
 	beforeEach(async () => {
 		humanId = getTestActorId()
 		workspaceId = (await insertWorkspace(db, humanId)).id
 		agentId = (await insertActor(db, { type: 'agent', description: 'Builds things' })).id
+		otherAgentId = (await insertActor(db, { type: 'agent', description: 'Reviews things' })).id
 		retiredId = (await insertActor(db, { type: 'agent', description: 'RETIRED, merged away' })).id
-		for (const actorId of [agentId, retiredId]) {
+		for (const actorId of [agentId, otherAgentId, retiredId]) {
 			await db.insert(workspaceMembers).values({ workspaceId, actorId, role: 'member' })
 		}
 	})
@@ -113,7 +115,7 @@ describe('GET /api/conversations hide_quiet', () => {
 
 	it('leaves out an empty DM with an agent, and shows it once it has a message', async () => {
 		const empty = await seedChat('empty dm', [agentId], { direct: true })
-		await seedChat('written dm', [agentId], { direct: true, messageFrom: humanId })
+		await seedChat('written dm', [otherAgentId], { direct: true, messageFrom: humanId })
 		expect(await titles('hide_quiet=true')).not.toContain('empty dm')
 		expect(await titles('hide_quiet=true')).toContain('written dm')
 
@@ -145,7 +147,7 @@ describe('GET /api/conversations hide_quiet', () => {
 	})
 
 	it('never leaves out pinned, unread, group, subject or people-only chats', async () => {
-		const otherHuman = (await insertActor(db, { type: 'human' })).id
+		const otherHuman = (await insertActor(db, { type: 'human', name: 'people empty dm' })).id
 		await seedChat('pinned quiet', [agentId], { messageFrom: humanId, daysAgo: 30, pinned: true })
 		await seedChat('pinned retired', [retiredId], { messageFrom: humanId, pinned: true })
 		await seedChat('unread quiet', [agentId], { messageFrom: agentId, daysAgo: 30 })
