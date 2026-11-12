@@ -201,7 +201,7 @@ function readLoopTargets(meta: Record<string, unknown>): LoopTarget[] | null {
 const HIDDEN_TARGET_STATUSES = ['dropped', 'archived']
 
 type TargetObjectRow = {
-	title: string
+	title: string | null
 	driver: string | null
 	metadata: unknown
 }
@@ -223,7 +223,7 @@ function targetsFromObjects(
 		const meta = (row.metadata as Record<string, unknown> | null) ?? {}
 		const old = legacy?.find((l) => l.label === row.title)
 		const parsed = loopTargetSchema.safeParse({
-			label: row.title,
+			label: row.title ?? undefined,
 			source: meta.source,
 			actual: typeof meta.actual === 'number' ? meta.actual : old?.actual,
 			target: meta.target,
