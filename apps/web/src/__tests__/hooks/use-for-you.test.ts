@@ -110,8 +110,14 @@ describe('forYouItemToFeedItem', () => {
 			headline: 'Graduate 5 wiki pages',
 			rationale: 'Only you can approve voice.',
 			notification_id: 'n-1',
+			session_id: null,
 		})
 		expect(item?.latest_event_id).toBe(321)
+	})
+
+	it('carries the session id of the run that curated the card', () => {
+		const item = forYouItemToFeedItem(buildForYouItem({ session_id: 'run-1' }))
+		expect(item?.curated?.session_id).toBe('run-1')
 	})
 })
 

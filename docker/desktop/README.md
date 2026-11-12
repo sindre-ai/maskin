@@ -15,6 +15,26 @@ it was created from until it is deleted (`DELETE /desktops/:id`) and re-opened.
 `DESKTOP_IMAGE` in the agent-server environment overrides the image (default
 `magnusnoeddegaard/maskin-desktop:latest`).
 
+## ffmpeg and whisper
+
+The image carries ffmpeg 8 and ffprobe in `/usr/local/bin`, built with the whisper
+filter (speech to text) in a first Dockerfile stage, because Debian's ffmpeg 5.1 has no
+such filter and no prebuilt static ffmpeg 8 enables it. The English base model is at
+`/usr/local/share/whisper/ggml-base.en.bin` (also in `$WHISPER_MODEL`), about 150 MB.
+whisper.cpp, ffmpeg and the model are pinned in `ARG`s at the top of the Dockerfile
+with their sha256; change a version and its checksum together. A build fails if
+`ffmpeg -filters` does not list `whisper`. Pull requests that touch `docker/desktop/`
+build the image without pushing (`desktop-docker-check.yml`); expect 15 to 30 minutes
+on a cold cache.
+
+    ffmpeg -i in.mp4 -vn -af "whisper=model=$WHISPER_MODEL:language=en:destination=out.srt:format=srt" -f null -
+
+whisper runs on the CPU, so a long video takes a while. **`desktop_run` kills any command
+after 120 seconds.** Start renders and transcriptions detached with output to a log file,
+then poll the log:
+
+    nohup ffmpeg ... > /tmp/render.log 2>&1 &
+
 ## Build by hand (from a machine with Docker)
 
     docker build -t <registry>/maskin-desktop:latest docker/desktop
@@ -41,7 +61,8 @@ Open `http://10.0.1.1:16080/vnc.html` from the server (or an SSH tunnel:
 - A web page's file chooser fits the 1920x1080 screen with its Open button visible. GTK
   restores the chooser size from `dock/keyfile` (`org/gtk/settings/file-chooser`,
   `window-size` and `window-position`, both needed); unset it opens 1124x822, taller than
-  the screen. Select the file, then click Open: double click and Enter do not submit it.
+  the screen. Press ctrl+L, type the file's full path, then click Open or press alt+O. Enter and
+  double click close the chooser without choosing the file (tried on the 5 Nov image).
 - Chromium opens a page at 67 percent zoom (a page's `innerWidth` is 2866 on the 1920
   pixel screen). The default comes from `chromium/preferences.json`, installed as the
   profile's `Preferences`; change `partition.default_zoom_level.x` (log(zoom)/log(1.2):

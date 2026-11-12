@@ -8,6 +8,7 @@ import { useCanWrite } from '@/hooks/use-can-write'
 import type { MessageTurnActivity } from '@/hooks/use-conversation-activity'
 import { useDuration } from '@/hooks/use-duration'
 import { useSession, useStopSession } from '@/hooks/use-sessions'
+import { secondsSince, trackChatStopClicked } from '@/lib/analytics'
 import { cn } from '@/lib/cn'
 import { AlertTriangle, ChevronDown } from 'lucide-react'
 import { useEffect, useState } from 'react'
@@ -94,7 +95,13 @@ export function MessageActivity({ workspaceId, turn, layout = 'block' }: Message
 								variant="ghost"
 								size="sm"
 								className="h-6 px-0 text-[10.5px] font-bold text-muted-foreground hover:bg-transparent hover:text-foreground"
-								onClick={() => stopSession.mutate(turn.sessionId)}
+								onClick={() => {
+									trackChatStopClicked({
+										session_id: turn.sessionId,
+										seconds_running: secondsSince(session?.startedAt),
+									})
+									stopSession.mutate(turn.sessionId)
+								}}
 								disabled={stopSession.isPending || !canWrite}
 							>
 								Stop
