@@ -394,7 +394,13 @@ export interface ExtensionAttempted {
 	agents: { agentId: string; tools: string[]; lastAttemptedAt: string }[]
 }
 
-export type ExtensionSignatureScheme = 'hmac-sha256' | 'hmac-sha1' | 'timestamp' | 'ed25519'
+export type ExtensionSignatureScheme =
+	| 'hmac-sha256'
+	| 'hmac-sha1'
+	| 'timestamp'
+	| 'ed25519'
+	| 'standard-webhooks'
+	| 'stripe'
 
 export type LiteralOrPath = { literal: string } | { path: string }
 
@@ -423,6 +429,10 @@ export interface ExtensionWebhookConfig {
 	signaturePrefix?: string
 	timestampHeader?: string
 	timestampBodyTemplate?: string
+	/** How the HMAC digest is written (hex when left out). Set through the API, not the form. */
+	digestEncoding?: 'hex' | 'base64'
+	/** Header carrying the delivery id (standard-webhooks). Set through the API, not the form. */
+	idHeader?: string
 	maxAgeSeconds?: number
 	secretSource?: 'env' | 'credential'
 	eventMap: {
@@ -2118,7 +2128,12 @@ export interface UnreadItem {
 	// shows when there is no source comment to lead with.
 	// notification_id is what Dismiss names for it; absent for a decision card, which is dismissed
 	// by its comment instead.
-	curated?: { headline: string; rationale: string | null; notification_id?: string | null }
+	curated?: {
+		headline: string
+		rationale: string | null
+		notification_id?: string | null
+		session_id?: string | null
+	}
 }
 
 export interface LatestMentionDecisionOption {
@@ -2166,6 +2181,8 @@ export interface LatestMention {
 	created_at: string
 	// The whole comment body, not a preview.
 	content: string
+	// The run that wrote the comment; null when a person wrote it. Analytics only.
+	session_id?: string | null
 	attention: number | null
 	// Present only when the agent asked for a structured decision. The card
 	// renders its options as the buttons the reader taps.

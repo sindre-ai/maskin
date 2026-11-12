@@ -321,6 +321,11 @@ export const objects = pgTable(
 		// built CONCURRENTLY.
 		index('objects_ws_title_trgm_idx').using('gin', t.workspaceId, t.title.op('gin_trgm_ops')),
 		index('objects_ws_content_trgm_idx').using('gin', t.workspaceId, t.content.op('gin_trgm_ops')),
+		// Plain trigram indexes (migrations 0146 and 0147, CONCURRENTLY) for the object list/search
+		// `q` filter in routes/objects.ts. The workspace-keyed pair above is not picked by the planner
+		// for that query; these are. See 0146 for the EXPLAIN evidence.
+		index('objects_title_trgm_idx').using('gin', t.title.op('gin_trgm_ops')),
+		index('objects_content_trgm_idx').using('gin', t.content.op('gin_trgm_ops')),
 	],
 )
 
@@ -819,7 +824,7 @@ export const sessions = pgTable(
 		result: jsonb('result').$type<SessionResult>(),
 		snapshotPath: text('snapshot_path'),
 		sourceSessionId: uuid('source_session_id'),
-		// The session whose create_session / @mention call started this
+		// The session whose create_sub_chat / @mention call started this
 		// one: the sender a finished helper reports back to. Only ever set after the
 		// claimed session was checked to belong to the authenticated caller. NULL =
 		// no known sender. NOT source_session_id, which means "restore that session's
@@ -832,7 +837,7 @@ export const sessions = pgTable(
 		// Handed-off strip anchors: the assistant message that triggered this
 		// sub-agent spawn, and the sessions this one is blocked behind. Both
 		// nullable — pre-migration rows read NULL ("no strip"). Written from the
-		// create_session path when the caller supplies a message id / blockers.
+		// create_sub_chat path when the caller supplies a message id / blockers.
 		// ON DELETE SET NULL: the anchor is a pointer, not ownership — a deleted
 		// message must not delete the session, it just stops rendering a strip.
 		spawnedByMessageId: bigint('spawned_by_message_id', { mode: 'number' }).references(

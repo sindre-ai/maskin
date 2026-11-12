@@ -109,6 +109,12 @@ interface MessageBubbleProps {
 	onRetried?: (message: MessageResponse) => void
 	/** Opens the reply thread under this message. Without it the bubble has no Reply action. */
 	onReplyInThread?: () => void
+	/**
+	 * Opens the edit card, as if the pencil was tapped (the up arrow in the empty message box).
+	 * A request that was already there when the bubble mounted does nothing, so an old one
+	 * cannot pop the card open when the message scrolls back into view.
+	 */
+	editRequestNonce?: number
 }
 
 // With attachments, the fitted own bubble stays this wide so 'ok' does not make a tiny thumbnail.
@@ -136,6 +142,7 @@ export function MessageBubble({
 	updatedLinkedObjectIds,
 	onRetried,
 	onReplyInThread,
+	editRequestNonce,
 }: MessageBubbleProps) {
 	const actor = getStoredActor()
 	const enterprise = useIsEnterpriseWorkspace()
@@ -165,6 +172,14 @@ export function MessageBubble({
 		() => (conversation?.participants ?? []).map((p) => p.actorId),
 		[conversation],
 	)
+	const handledEditNonceRef = useRef(editRequestNonce)
+	useEffect(() => {
+		if (editRequestNonce === undefined || editRequestNonce === handledEditNonceRef.current) return
+		handledEditNonceRef.current = editRequestNonce
+		if (!canAct || !canWrite) return
+		editMessage.reset()
+		setEditing(true)
+	}, [editRequestNonce, canAct, canWrite, editMessage.reset])
 	// Focus goes back to the pencil once the edit card closes, whether it saved or not.
 	const pencilRef = useRef<HTMLButtonElement | null>(null)
 	const wasEditing = useRef(false)
@@ -542,7 +557,7 @@ export function MessageBubble({
 				type={message.actorType ?? 'agent'}
 				id={message.actorId}
 				size="md"
-				className="mt-0.5 size-[30px] shrink-0 rounded-[9px] bg-secondary text-[11px] font-bold text-foreground"
+				className="mt-0.5 size-[30px] shrink-0"
 			/>
 			<div className={cn('relative min-w-0 flex-1', spawnInfo && 'pr-2')}>
 				{spawnInfo ? (

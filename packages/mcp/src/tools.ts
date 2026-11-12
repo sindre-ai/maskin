@@ -277,7 +277,7 @@ export function parseListActorsInclude(include: string | undefined): string[] {
 		.filter(Boolean)
 }
 
-// Shared by create_session and create_sub_chat: the same call under two names.
+// Input of create_sub_chat. There is no `wait` or `notify_on_complete`: the call returns at once and the result always comes back.
 const startAgentInputSchema = z.object({
 	workspace_id: z.string().uuid().describe('The workspace you are working in. '),
 	actor_id: z.string().uuid().describe('The agent that should do the work'),
@@ -303,12 +303,6 @@ const startAgentInputSchema = z.object({
 		.optional()
 		.describe(
 			'Normally leave this out: when you start the session from a chat, it is attached to your reply automatically. Only set it to attach the work to a specific earlier message of yours in a chat you are in; an id from a chat you are not in is ignored.',
-		),
-	wait: z
-		.boolean()
-		.optional()
-		.describe(
-			'Wait for the agent to finish, however long that takes, and return the session together with the first 500 lines of its output, instead of returning straight away. The wait also ends early if the agent is waiting for input, is paused or was stopped; settled false means the agent is not finished.',
 		),
 })
 
@@ -606,7 +600,9 @@ export const tools = {
 			q: z
 				.string()
 				.min(1)
-				.describe('Search query — matches against title and content (case-insensitive)'),
+				.describe(
+					'Search query — matches against title and content (case-insensitive). Only the first 6 distinct words of 3 or more letters are used; further words are ignored, not an error.',
+				),
 			type: z
 				.string()
 				.describe(
@@ -780,7 +776,7 @@ export const tools = {
 				.boolean()
 				.optional()
 				.describe(
-					'When true (the default for humans), a brand-new empty workspace is created and the actor is automatically added to it as owner — no separate add-to-workspace call needed. When false or omitted for agents, no workspace is created; pass workspace_id instead to add the actor to an existing one.',
+					'When true (the default for humans), a brand-new empty workspace is created and the actor is automatically added to it as owner — no separate add-to-workspace call needed. Agent callers cannot send true (400); only people create workspaces. When false or omitted for agents, no workspace is created; pass workspace_id instead to add the actor to an existing one.',
 				),
 			workspace_id: z
 				.string()
@@ -790,10 +786,10 @@ export const tools = {
 					'Add the new actor to this existing workspace. Required when type is "agent" unless auto_create_workspace is explicitly true — the call fails otherwise rather than creating an agent with no workspace.',
 				),
 			role: z
-				.enum(['owner', 'admin', 'member'])
+				.enum(['admin', 'member'])
 				.default('member')
 				.describe(
-					'Role of the invitation sent to a human when workspace_id is given: only member (read/write) is offered here; admin and owner are refused (the invitation route itself takes member or viewer). Ignored for agents, which are always added as member.',
+					'Role of the invitation sent to a human when workspace_id is given: member (read/write) or admin; owner is never offered (the invitation route itself takes member or viewer). Ignored for agents, which are always added as member.',
 				),
 			description: z
 				.string()
@@ -889,10 +885,10 @@ export const tools = {
 					'Add this actor to the given workspace as part of the update. This is the tool for adding an existing actor to a workspace. Omit to leave workspace membership unchanged.',
 				),
 			role: z
-				.enum(['owner', 'admin', 'member'])
+				.enum(['admin', 'member'])
 				.default('member')
 				.describe(
-					'Role to assign when adding to a workspace via workspace_id: owner (full control), admin (manage members), member (read/write). Only applied when workspace_id is set.',
+					'Role to assign when adding to a workspace via workspace_id: admin (manage members) or member (read/write). Owner is never offered. Only applied when workspace_id is set.',
 				),
 		}),
 	},
@@ -978,7 +974,8 @@ export const tools = {
 		}),
 	},
 	create_workspace: {
-		description: 'Create a new workspace. The authenticated actor becomes the owner.',
+		description:
+			'Create a new workspace. The authenticated actor becomes the owner. Only people can create workspaces: an agent key gets a 403 and nothing is created.',
 		inputSchema: z.object({
 			name: z.string().min(1),
 			settings: z.record(z.unknown()).optional(),
@@ -1975,7 +1972,7 @@ export const tools = {
 	},
 	query_data: {
 		description:
-			'Read-only totals over objects, computed in the database: count, or sum/avg of one numeric metadata field, for one object type, optionally filtered and grouped by status, type, a metadata field, or a time bucket (`created_at.day`, also updated_at and hour/week/month; keys like "2026-10-30", oldest first, only buckets that have rows). `scope` is "workspace" (default) or a loop id to look only at that loop\'s members (in_loop). Date filters (created_after/before, updated_after/before) take a fixed ISO datetime or a moving bound that is re-evaluated every run: "now-7d", "now-24h", "now-4w", "now-3mo" (rolling) or "today", "today-7d" (from midnight today). Use the moving form for anything that should stay current, e.g. { filters: { created_after: "now-14d" }, group_by: "created_at.day" } is one query for "new per day, last 14 days". `timezone` (IANA, default UTC) sets where days start. Returns `{ groups: [{ key, count, value }], total: { count, value }, next_cursor }`; with no `group_by`, read `total`. Every matching object is counted and a query has no group limit, but groups come back a page at a time (`limit`, default 50, at most 1000): while `next_cursor` is set, call again with the same query and `cursor: <next_cursor>` for the next page. `total` always covers every group. In a loop view, window.maskin.query returns every group. Use it to test a query before declaring it as a source in a loop view (set_loop_view). It never returns object rows; use list_objects for those.',
+			'Read-only totals over objects (not SQL: no `sql` or `query` argument), computed in the database: count, or sum/avg of one numeric metadata field, for one object type, optionally filtered and grouped by status, type, a metadata field, or a time bucket (`created_at.day`, also updated_at and hour/week/month; keys like "2026-10-30", oldest first, only buckets that have rows). `scope` is "workspace" (default) or a loop id to look only at that loop\'s members (in_loop). Date filters (created_after/before, updated_after/before) take a fixed ISO datetime or a moving bound that is re-evaluated every run: "now-7d", "now-24h", "now-4w", "now-3mo" (rolling) or "today", "today-7d" (from midnight today). Use the moving form for anything that should stay current, e.g. { filters: { created_after: "now-14d" }, group_by: "created_at.day" } is one query for "new per day, last 14 days". `timezone` (IANA, default UTC) sets where days start. Returns `{ groups: [{ key, count, value }], total: { count, value }, next_cursor }`; with no `group_by`, read `total`. Every matching object is counted and a query has no group limit, but groups come back a page at a time (`limit`, default 50, at most 1000): while `next_cursor` is set, call again with the same query and `cursor: <next_cursor>` for the next page. In a loop view, window.maskin.query returns every group. Use it to test a query before declaring it as a source in a loop view (set_loop_view). It returns no object rows; use list_objects.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			...dataQuerySpecSchema.shape,
@@ -1995,32 +1992,10 @@ export const tools = {
 	},
 
 	// ─── Sessions ────────────────────────────────────────────
-	create_session: {
-		description:
-			"Start another agent on a task (older name of create_sub_chat, which does the same; prefer create_sub_chat). It works separately from you. By default it returns straight away with the new session's details; check on it later with get_session (add `include_logs: true` to see what it did). If you cannot continue without its answer, set `wait: true`: the call holds until the agent finishes, then returns the session and its output. The wait also ends early if the agent is waiting for input, paused or stopped; `settled: false` means it is not finished, so check later with get_session. Waiting holds you up, so only do it when you need the result. Otherwise let it run: when it finishes, its final message comes back to you as a new turn in your chat (or as a comment on the object you were started from), so do not poll; this cannot be switched off. To talk to the agent while it works use send_session_message; to carry on after it ended, failed or paused use resume_session. Do not @mention it in a chat for this: a mention reaches a different session of that agent. You can also @mention the agent in a comment on the object. Started from a chat, the person sees a handoff card with live status, so give `action_prompt` a clear first line: it becomes the card's title.",
-		inputSchema: startAgentInputSchema,
-	},
 	create_sub_chat: {
 		description:
-			"Hand a task to another agent from inside the chat you are in. It works in a thread under your reply, not in a new chat: the person sees it as a handoff card with live status, can open it, carry on the conversation with that agent there, and break it out into its own chat. Use this when the work belongs to the conversation you are in; to open a separate top-level chat instead, use create_chat. Returns straight away with the sub-chat's details (its `id` is the `session_id` other chat tools take); set `wait: true` to hold until the agent has finished and get its output. When it finishes, its final message comes back to you as a new turn in your own chat, so you do not need to poll. Check on it with get_chat_activity, stop it with stop_chat_agent, talk to it with send_session_message. Give `action_prompt` a clear first line: it becomes the card's title. Same as create_session, which still works.",
+			"Hand a task to another agent from inside the chat you are in. The agent works in a thread under your reply, not in a new chat: the person sees it as a handoff card with live status, can open it, carry on the conversation with that agent there, and break it out into its own chat. Use this when the work belongs to the conversation you are in; to open a separate top-level chat instead, use create_chat. The call returns straight away with the sub-chat's details (its `id` is the `session_id` other chat tools take), so you can carry on with the conversation. When the agent finishes, its final message comes back to you as a new turn in your own chat: do not poll, and this cannot be switched off. Check on it with get_chat_activity or get_session, stop it with stop_chat_agent, talk to it with send_session_message, carry on after it ended, failed or paused with resume_session. Do not @mention the agent in a chat for this: a mention reaches a different session of that agent. Give `action_prompt` a clear first line: it becomes the card's title.",
 		inputSchema: startAgentInputSchema,
-	},
-	// Deprecated alias of create_session with wait on, restored after PR 1986 because
-	// stored prompts in other workspaces still tell agents to call it. Registered
-	// like any tool; the handler maps the arguments (see TOOL_NAME_ALIASES).
-	// Minimal on purpose, as every listed alias costs tokens in every tool list.
-	// The keys the old tool took and create_session has no equivalent for (config,
-	// poll_interval_seconds, timeout_seconds, depends_on_session_ids) are stripped
-	// by this schema; their names are read before that, in the registration's
-	// preprocess step in server.ts.
-	run_agent: {
-		description: 'Deprecated, use create_session with wait true.',
-		inputSchema: z.object({
-			workspace_id: z.string().uuid().optional(),
-			actor_id: z.string().uuid(),
-			action_prompt: z.string().min(1),
-			spawned_by_message_id: z.number().int().positive().optional(),
-		}),
 	},
 	list_sessions: {
 		description:
@@ -2236,7 +2211,7 @@ export const tools = {
 	},
 	send_session_message: {
 		description:
-			"Send a message to a sub-chat you started with create_sub_chat while it is running, as if you typed it into its thread. You can also reach it by posting with post_conversation_message and its `sub_chat_session_id`, which works whether or not it is still running. In an ordinary chat do not use this: post with post_conversation_message and @mention the agent instead. Use it to answer a question the agent asked, give it more direction, or change course while it works. It only works while the session is running: if it has ended, failed or been paused, use resume_session instead, which also takes a message. Do not @mention the agent in a chat for this; a mention reaches a different session of that agent. The call returns as soon as the message is delivered; read the agent's reply with get_session_activity, or set `wait: true` to hold until the session has finished and get its output. `wait` only works for sessions that end after replying, such as an agent you started with create_session from a chat; for a session that stays open the message is still delivered but nothing is waited for.",
+			"Send a message to a sub-chat you started with create_sub_chat while it is running, as if you typed it into its thread. You can also reach it by posting with post_conversation_message and its `sub_chat_session_id`, which works whether or not it is still running. In an ordinary chat do not use this: post with post_conversation_message and @mention the agent instead. Use it to answer a question the agent asked, give it more direction, or change course while it works. It only works while the session is running: if it has ended, failed or been paused, use resume_session instead, which also takes a message. Do not @mention the agent in a chat for this; a mention reaches a different session of that agent. The call returns as soon as the message is delivered; read the agent's reply with get_session_activity, or set `wait: true` to hold until the session has finished and get its output. `wait` only works for sessions that end after replying, such as an agent you started with create_sub_chat from a chat; for a session that stays open the message is still delivered but nothing is waited for.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('The running session to talk to'),
@@ -3011,7 +2986,7 @@ export const tools = {
 	},
 	desktop_put_file: {
 		description:
-			"Put a workspace file on YOUR computer (the desktop VM) by its file id, so a browser there can pick it in a file field. Your computer is a separate machine, so a file in your session or in the workspace is not on it until you call this. The computer downloads the file directly: its content never passes through you, so photos and videos are fine. Returns the path, size and sha256 of the file as it landed (the same size and hash as the stored file; a mismatch is an error). Default folder is ~/Downloads; an existing file of the same name is overwritten, and the name is made safe (letters, digits, dot, dash, underscore, space). Takes up to two minutes, so a very large file can time out. To upload it in Chromium: click the page's file field, then in the chooser select the file and click Open (double click and Enter do not submit it). If Open is off the bottom of the screen, run `xdotool getactivewindow windowmove 0 0 windowsize 1000 600` with desktop_run, then click Open. Only your own computer is reachable.",
+			"Put a workspace file on YOUR computer (the desktop VM) by its file id, so a browser there can pick it in a file field. Your computer is a separate machine, so a file in your session or in the workspace is not on it until you call this. The computer downloads the file directly: its content never passes through you, so photos and videos are fine. Returns the path, size and sha256 of the file as it landed (the same size and hash as the stored file; a mismatch is an error). Default folder is ~/Downloads; an existing file of the same name is overwritten, and the name is made safe (letters, digits, dot, dash, underscore, space). Takes up to two minutes, so a very large file can time out. To upload it in Chromium: click the page's file field, press ctrl+L in the chooser, type the full path that this call returned, then click Open (or press alt+O). Do not press Enter and do not double click: both close the chooser without choosing the file. The chooser opens centred on screen with Open in view. Only your own computer is reachable.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,
@@ -3130,7 +3105,9 @@ export const legacyListTools = {
 			q: z
 				.string()
 				.min(1)
-				.describe('Search query — matches against title and content (case-insensitive)'),
+				.describe(
+					'Search query — matches against title and content (case-insensitive). Only the first 6 distinct words of 3 or more letters are used; further words are ignored, not an error.',
+				),
 			type: z
 				.string()
 				.describe(

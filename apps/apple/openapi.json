@@ -771,8 +771,8 @@
 				"tags": [
 					"Objects"
 				],
-				"summary": "Count a person's chat message as the approval of a drafted email",
-				"description": "Agents only. Names the chat message where a person said yes. The server records the approval only if a person wrote that message in a chat the agent is in, after the draft's last edit and after the draft was shown in that chat. Email drafts only.",
+				"summary": "Count a person's chat message as the approval of a draft",
+				"description": "Agents only. Names the chat message where a person said yes. The server records the approval only if a person wrote that message in a chat the agent is in, after the draft's last edit and after the draft was shown in that chat. Works for any draft kind that has a send tool (email, LinkedIn kinds, Slack message).",
 				"parameters": [
 					{
 						"schema": {
@@ -3156,6 +3156,7 @@
 					"Objects"
 				],
 				"summary": "Search objects by text",
+				"description": "Matches objects whose title or content contains any of the words in `q`, ranked by how many words hit (title hits first). Words shorter than 3 characters and common stopwords are ignored, and only the first 6 distinct words are used; any further words are ignored, not an error.",
 				"parameters": [
 					{
 						"schema": {
