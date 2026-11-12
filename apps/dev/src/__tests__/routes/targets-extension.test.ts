@@ -238,8 +238,8 @@ describe('Targets extension', () => {
 	})
 
 	describe('PATCH /api/objects/:id by an agent', () => {
-		// existing object, workspace membership, then the in-transaction re-read
-		// (no status in the body, so no workspace settings read).
+		// existing object, workspace membership, workspace settings (only when the body
+		// carries a status, to check it), then the in-transaction re-read.
 		function patchAs(actorType: string, existing: ReturnType<typeof buildObject>, body: object) {
 			const { app, mockResults, calls } = createTestApp(
 				objectsRoutes,
@@ -247,7 +247,10 @@ describe('Targets extension', () => {
 				'test-actor-id',
 				actorType,
 			)
-			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [existing]]
+			mockResults.selectQueue =
+				'status' in body
+					? [[existing], [buildWorkspaceMember()], [workspaceWithTargets()], [existing]]
+					: [[existing], [buildWorkspaceMember()], [existing]]
 			mockResults.update = [{ ...existing, ...body }]
 			mockResults.insert = [{}]
 			return {
@@ -290,9 +293,12 @@ describe('Targets extension', () => {
 					action: 'agent_write_refused',
 					entityType: 'object',
 					entityId: existing.id,
-					data: { object_type: TARGET_TYPE, field_count: 1 },
 				})
-				expect(JSON.stringify(calls.inserts[0])).not.toContain(field)
+				expect(calls.inserts[0]).toHaveProperty('data', {
+					object_type: TARGET_TYPE,
+					field_count: 1,
+					session_id: null,
+				})
 			},
 		)
 
@@ -340,7 +346,7 @@ describe('Targets extension', () => {
 
 		it('refuses an agent changing what defines done on a flow', async () => {
 			for (const metadata of [
-				{ targets: [{ label: 'Signups', actual: 1, target: 5 }] },
+				{ targets: [{ label: 'Signups', source: 'manual', actual: 1, target: 5 }] },
 				{ close_condition: 'Never closes' },
 				{ entry_condition: 'Everything enters' },
 				{ closed_statuses: { task: ['todo'] } },
@@ -400,7 +406,7 @@ describe('Targets extension', () => {
 				metadata: { targets: [] },
 			})
 			const { res } = patchAs('human', flow, {
-				metadata: { targets: [{ label: 'Signups', actual: 1, target: 5 }] },
+				metadata: { targets: [{ label: 'Signups', source: 'manual', actual: 1, target: 5 }] },
 			})
 
 			expect((await res).status).toBe(200)
