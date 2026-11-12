@@ -5846,8 +5846,12 @@ describe('SessionManager', () => {
 					'status' in (u as Record<string, unknown>) &&
 					'result' in (u as Record<string, unknown>),
 			)
-			expect(sessionUpdate).toMatchObject({ status: 'failed', result: { exit_code: 1 } })
-			expect(sessionUpdate?.result).not.toHaveProperty('failure_reason')
+			// Nothing recognised the exit, so it is saved with the explicit unclassified reason
+			// (never bare), not with a budget or credit reason.
+			expect(sessionUpdate).toMatchObject({
+				status: 'failed',
+				result: { exit_code: 1, failure_reason: { reason_code: 'unclassified' } },
+			})
 		})
 	})
 
