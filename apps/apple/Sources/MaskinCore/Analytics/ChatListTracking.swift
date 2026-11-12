@@ -4,9 +4,9 @@ import Foundation
 /// and property values (`chat_opened_from_list`, `chat_list_search_used`), categories only: never a
 /// chat title, the search text or a chat id.
 ///
-/// `section` is the list section the opened row sat in. `agent` and `room` are set by the rows that
-/// add them; until then direct messages and every dated or person group read as `recent`, like the
-/// web list.
+/// `section` is the list section the opened row sat in. `agent` is set by the rows that add it;
+/// until then direct messages and every dated or person group read as `recent`, like the web list.
+/// A row in the Rooms section reads as `room`, even when it is pinned.
 public enum ChatListTracking {
 	public enum Section: String, Sendable {
 		case pinned, unread, agent, recent, room, search
@@ -69,13 +69,18 @@ extension TeamLayout {
 			if case .conversation(let c) = tile.kind, c.id == conversationID { return place(.pinned, position) }
 		}
 		for section in sections {
-			let area: ChatListTracking.Section = section.kind == .unread ? .unread : .recent
+			let area: ChatListTracking.Section =
+				switch section.kind {
+				case .rooms: .room
+				case .unread: .unread
+				default: .recent
+				}
 			for row in section.rows {
 				position += 1
 				switch row.kind {
 				case .conversation(let c) where c.id == conversationID:
 					// The Pinned chip lists pinned chats as ordinary rows.
-					return place(c.pinned ? .pinned : area, position)
+					return place(c.pinned && area != .room ? .pinned : area, position)
 				case .person(let p) where p.conversations.contains(where: { $0.id == conversationID }):
 					return place(area, position)
 				default: break

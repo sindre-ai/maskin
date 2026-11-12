@@ -479,6 +479,21 @@ describe('ConversationList collapse', () => {
 			})
 		})
 
+		it('reports a row opened from the Rooms group as section room', async () => {
+			mockScopedList({
+				priority: [
+					buildConversation({ id: 'w', title: 'Weekly planning', roomKind: 'free' }),
+					buildConversation({ id: 'u', title: 'Unread one', unread_count: 2 }),
+				],
+				recent: [],
+			})
+			render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+			await userEvent.click(await screen.findByText('Weekly planning'))
+
+			expect(trackOpened).toHaveBeenCalledWith({ source: 'list', section: 'room', position: 1 })
+		})
+
 		it('reports a row opened from search results as a search open', async () => {
 			mockScopedList({
 				recent: [

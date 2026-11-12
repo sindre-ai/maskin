@@ -50,6 +50,22 @@ struct ChatListTrackingTests {
 		#expect(list.chatListPlace(of: "missing", searching: false) == nil)
 	}
 
+	@Test("a row in the Rooms section reads as room, ahead of the rows below it")
+	func rooms() {
+		var free = chatConvo("free", last: ago(hours: 30))
+		free.roomKind = .free
+		var flowRoom = chatConvo("flow", last: ago(hours: 2), unread: 1)
+		flowRoom.roomKind = .flow
+		flowRoom.flowID = "flow-1"
+		let list = layout([flowRoom, free, chatConvo("plain", last: ago(hours: 3))])
+		#expect(
+			list.chatListPlace(of: "flow", searching: false) == ChatListTracking.Place(source: .list, section: .room, position: 1))
+		#expect(
+			list.chatListPlace(of: "free", searching: false) == ChatListTracking.Place(source: .list, section: .room, position: 2))
+		#expect(list.chatListPlace(of: "plain", searching: false)?.section == .recent)
+		#expect(list.chatListPlace(of: "plain", searching: false)?.position == 3)
+	}
+
 	@Test("while a search is on, any row opened is a search open")
 	func searching() {
 		let list = layout([chatConvo("a", last: ago(hours: 1)), chatConvo("b", last: ago(hours: 2))], query: "chat")
