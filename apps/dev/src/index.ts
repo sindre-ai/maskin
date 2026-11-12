@@ -70,6 +70,7 @@ import { LiveActivityFanout } from './services/live-activity-push'
 import { LoopVersionPusher } from './services/loop-version-pusher'
 import { MeetTranscriptReconciler } from './services/meet-transcript-reconciler'
 import { MeetWatchRenewer } from './services/meet-watch-renewer'
+import { MicrosoftSyncScheduler } from './services/microsoft-sync-scheduler'
 import { NotificationEmailFanout } from './services/notification-email'
 import { NotificationPushFanout } from './services/notification-push'
 import { OAuthSweeper } from './services/oauth-sweeper'
@@ -326,6 +327,10 @@ logger.info('Gmail watch renewer started')
 const gscSyncScheduler = new GscSyncScheduler(db)
 gscSyncScheduler.start()
 logger.info('GSC sync scheduler started')
+
+const microsoftSyncScheduler = new MicrosoftSyncScheduler(db)
+microsoftSyncScheduler.start()
+logger.info('Microsoft sync scheduler started')
 
 const meetWatchRenewer = new MeetWatchRenewer(db)
 meetWatchRenewer.start()

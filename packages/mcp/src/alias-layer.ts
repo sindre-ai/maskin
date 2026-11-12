@@ -130,7 +130,12 @@ export function needsNormalise(tool: string): boolean {
 export function wrapInputSchema(
 	input: z.ZodRawShape | z.ZodObject<z.ZodRawShape>,
 	normalise: (raw: unknown) => unknown,
-	opts: { rejectUnknownKeys?: boolean } = {},
+	opts: {
+		rejectUnknownKeys?: boolean
+		/** Closes the unknown-key refusal. Defaults to the write tools' "Nothing was written." */
+		unknownKeysSuffix?: string
+		explain?: (args: unknown) => string | null
+	} = {},
 ): z.ZodTypeAny {
 	const schema = input instanceof z.ZodType ? input : z.object(input)
 	const shape = input instanceof z.ZodType ? input.shape : input
@@ -142,10 +147,12 @@ export function wrapInputSchema(
 			if (unknown.length > 0) {
 				ctx.addIssue({
 					code: z.ZodIssueCode.custom,
-					message: `Unrecognised argument name${unknown.length > 1 ? 's' : ''}: ${unknown.join(', ')}. Accepted names: ${accepted.join(', ')}. Nothing was written.`,
+					message: `Unrecognised argument name${unknown.length > 1 ? 's' : ''}: ${unknown.join(', ')}. Accepted names: ${accepted.join(', ')}. ${opts.unknownKeysSuffix ?? 'Nothing was written.'}`,
 				})
 			}
 		}
+		const explained = opts.explain?.(args)
+		if (explained) ctx.addIssue({ code: z.ZodIssueCode.custom, message: explained })
 		return args
 	}, schema)
 	return Object.assign(wrapped, { shape })

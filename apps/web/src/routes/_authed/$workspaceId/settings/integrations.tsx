@@ -71,6 +71,8 @@ const CONNECT_ERROR_COPY: Record<string, string> = {
 		"We couldn't read your account details from Google, so nothing was connected. Try again.",
 	post_install_failed:
 		'The sign-in worked, but setting up the connection failed. Try connecting again.',
+	admin_approval_needed:
+		"Your company's IT admin has to approve this app before you can connect. Ask them to approve it, then try again.",
 }
 const GENERIC_CONNECT_ERROR = "Connecting didn't work. Try again."
 

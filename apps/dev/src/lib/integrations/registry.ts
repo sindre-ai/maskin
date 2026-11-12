@@ -42,6 +42,12 @@ import {
 import { linearEventNormalizer } from './providers/linear/webhooks'
 import { config as linkedinConfig } from './providers/linkedin-unipile/config'
 import { deleteUnipileAccountOnDisconnect } from './providers/linkedin-unipile/disconnect'
+import {
+	config as microsoftConfig,
+	parseTokenResponse as microsoftParseTokenResponse,
+} from './providers/microsoft/config'
+import { resolveExternalId as microsoftResolveExternalId } from './providers/microsoft/resolve-id'
+import { setupMicrosoftInstall } from './providers/microsoft/sync'
 import { config as miroConfig } from './providers/miro/config'
 import { config as mixpanelConfig } from './providers/mixpanel/config'
 import { config as notionConfig } from './providers/notion/config'
@@ -174,6 +180,16 @@ providers.set('google-meet', {
 providers.set('google-search-console', {
 	config: googleSearchConsoleConfig,
 	postInstall: startGscBackfill,
+})
+
+// microsoft — Teams transcripts. Workspace-scoped like Google Meet. No webhook: the poll job in
+// services/microsoft-sync-scheduler.ts lands the transcripts. `postInstall` puts the standing
+// help line on the Settings tile.
+providers.set('microsoft', {
+	config: microsoftConfig,
+	parseTokenResponse: microsoftParseTokenResponse,
+	resolveExternalId: microsoftResolveExternalId,
+	postInstall: setupMicrosoftInstall,
 })
 
 providers.set('posthog', {

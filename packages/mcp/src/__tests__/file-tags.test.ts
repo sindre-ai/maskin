@@ -97,7 +97,7 @@ describe('file tags in the MCP file tools', () => {
 		expect(url.pathname).toBe('/api/files')
 		expect(url.searchParams.get('tags')).toBe('raw,b-roll')
 		expect(url.searchParams.get('tags_match')).toBe('any')
-		expect(JSON.parse(result.content[0]?.text ?? '[]')[0].tags).toEqual(['raw', 'b-roll'])
+		expect(JSON.parse(result.content[0]?.text ?? '{}').files[0].tags).toEqual(['raw', 'b-roll'])
 	})
 
 	it('sends no tag filter when none is asked for', async () => {

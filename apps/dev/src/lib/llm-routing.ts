@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { sessions } from '@maskin/db/schema'
+import { sessions, workspaceAiUsage } from '@maskin/db/schema'
 import type { SessionResultFailureReason } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
 import {
@@ -307,6 +307,26 @@ export function planUsageConds(workspaceId: string, periodStartMs?: number) {
 	return and(...conds)
 }
 
+/**
+ * The rows of `workspace_ai_usage` that count toward plan usage: spend on the
+ * Maskin-funded account that is not part of a session (transcribe_file). Same
+ * period rule as `planUsageConds`. Every row there is plan spend by definition,
+ * so no route filter is needed.
+ */
+export function aiUsageConds(workspaceId: string, periodStartMs?: number) {
+	const conds = [eq(workspaceAiUsage.workspaceId, workspaceId)]
+	if (periodStartMs !== undefined) {
+		conds.push(gte(workspaceAiUsage.createdAt, new Date(periodStartMs)))
+	}
+	return and(...conds)
+}
+
+/** `numeric` comes back from postgres.js as a string; a bad read must never become NaN cents. */
+export function usdToCents(usd: string | number | null | undefined): number {
+	const cents = Number(usd ?? 0) * 100
+	return Number.isFinite(cents) && cents > 0 ? cents : 0
+}
+
 /** One session's cost in (fractional) USD cents: its reported cost, else the token-rate estimate. */
 export function sessionUsageCents(row: {
 	totalCostUsd: string | null
@@ -352,6 +372,15 @@ export async function getWorkspacePlanUsdCentsUsage(
 
 	let totalCents = 0
 	for (const row of rows) totalCents += sessionUsageCents(row)
+
+	// Spend that has no session (transcribe_file) is summed in the database: a
+	// long-lived workspace can hold many small rows and only the total is needed.
+	const [aiUsage] = await db
+		.select({ total: sql<string>`COALESCE(SUM(${workspaceAiUsage.costUsd}), 0)` })
+		.from(workspaceAiUsage)
+		.where(aiUsageConds(workspaceId, periodStartMs))
+	totalCents += usdToCents(aiUsage?.total)
+
 	// Round once on the aggregate, not per-row, so small per-session fractions
 	// of a cent don't compound into meaningfully over-counted usage.
 	return ceilCents(totalCents)

@@ -10,7 +10,8 @@
  * Called from SessionRetryScheduler's 30 second tick (no extra cron). For each candidate:
  *   - the session completed at least RESTART_DELAY_MS ago, so the agent's last status change
  *     (which can land after the end event) has been read, not raced;
- *   - it was run by the Developer agent (found by name, like the CTO), for a task whose driver is
+ *   - it was started by a trigger (a chat session has none) and run by the Developer agent
+ *     (found by name, like the CTO), for a task whose driver is
  *     that same agent, and the task is still `in_progress` with no live session on it. Any task
  *     counts, with or without a bet. Sessions by other agents are left alone;
  *   - a restart is one fresh session on the same task, marked in its config so the cap
@@ -20,7 +21,16 @@
  * Killswitch env FEATURE_TASK_SESSION_RESTART=0. Default ON.
  */
 
-import { type AnyColumn, type SQL, and, sql as drizzleSql, eq, gte, lte } from 'drizzle-orm'
+import {
+	type AnyColumn,
+	type SQL,
+	and,
+	sql as drizzleSql,
+	eq,
+	gte,
+	isNotNull,
+	lte,
+} from 'drizzle-orm'
 
 import type { Database } from '@maskin/db'
 import { events, actors, objects, sessions, workspaceMembers } from '@maskin/db/schema'
@@ -87,7 +97,9 @@ export class TaskSessionRestarter {
 					eq(actors.name, DEVELOPER_NAME),
 					eq(actors.type, 'agent'),
 					eq(sessions.status, 'completed'),
-					eq(sessions.interactive, false),
+					// Started by a trigger. The platform marks every trigger session interactive, so that flag
+					// cannot tell it apart; a chat session has no trigger.
+					isNotNull(sessions.triggerId),
 					gte(sessions.completedAt, new Date(now.getTime() - RESTART_WINDOW_MS)),
 					lte(sessions.completedAt, new Date(now.getTime() - RESTART_DELAY_MS)),
 					eq(objects.type, 'task'),

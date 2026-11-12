@@ -2387,6 +2387,10 @@ export interface WorkspaceWithRole extends WorkspaceResponse {
 	isDefault: boolean
 	/** Whether the caller is on our own team. Only used to mark analytics events. */
 	isTeam: boolean
+	/** Whether this workspace is one of ours. Only used to mark analytics events. */
+	internal: boolean
+	/** Whether this workspace has an active paid plan. Only used to mark analytics events. */
+	paying: boolean
 }
 
 export interface UpdateWorkspaceInput {

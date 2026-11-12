@@ -1303,6 +1303,19 @@ export const tools = {
 				),
 		}),
 	},
+	transcribe_file: {
+		description:
+			'Transcribe an uploaded audio or video file to text; use it when someone has uploaded a recording (a meeting, voice memo, interview, video) and you need the words. Pass the file `id` (from list_files or create_file). Audio (mp3, m4a, wav, ogg, flac, webm) and video (mp4, mov, mkv, webm) both work: the audio track is extracted for you, so do not download or convert the file first. Up to 60 minutes of audio per call; for a longer recording, cut it into parts and transcribe each. Returns `{ file_id, name, transcript_file_id, transcript_file_url, text, next_step, timed, audio_seconds, chunks, model }`. The transcript is saved as a .txt workspace file, one line per speaker turn in the form `[mm:ss] Speaker 1: text` (`timed` is true), or plain text when the speech model returned no timing (`timed` is false). It is not in the response: call get_file with `transcript_file_id` to read it, and share `transcript_file_url`. `text` is null unless saving failed (then it holds the transcript) or no speech was found (then no file is saved). Pass `language` (for example "en" or "nb-NO") when you know it, otherwise it is detected. The call runs on the workspace plan and counts toward its usage, and a long file can take a minute or more. Fails with 402 when the plan cap is reached (enterprise workspaces have no cap), and 400 for a file that is not audio or video, has no audio track, or is over the limit.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z.string().uuid().describe('File ID of the uploaded audio or video file.'),
+			language: z
+				.string()
+				.regex(/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$/, 'Use a language code such as "en" or "nb-NO"')
+				.optional()
+				.describe('Language hint, e.g. "en" or "nb-NO". Omit to detect it.'),
+		}),
+	},
 	update_file: {
 		description:
 			'Update a file. Pass any subset of name, description, kind, mime_type, content. Updating content re-uploads the bytes; other fields update metadata only. For text content pass `content` as a raw string (encoding defaults to "utf8"); for binary content set `encoding` to "base64". At least one field must be provided. To avoid overwriting a save made since you read the file, pass the `contentHash` from get_file as `if_match`: a stale hash fails with a 409 conflict, writes nothing, and the error carries the current hash. Re-read the file with get_file, merge, and retry with the new hash. Without `if_match` the last write wins. To change part of a text file (a typo, one slide, one number) pass `edits` instead of `content`: a list of `{old, new, replace_all?}`, applied in order on the server against the stored text, so you do not re-send the whole file. `old` must match exactly once (include enough surrounding text to be unique) unless `replace_all` is true; an edit that matches nothing or matches more than once fails with a 400 and nothing is written. `edits` and `content` cannot be combined, and `edits` work on text files only (HTML, markdown, JSON, code). It works with `if_match`. Read the text to copy `old` from with get_file (raw), since `old` must match the stored bytes, not the `format: "text"` extract.',
@@ -1554,7 +1567,7 @@ export const tools = {
 				.boolean()
 				.optional()
 				.describe(
-					'Post in the main timeline even though the message that started your turn was written in a thread. Without it, a post made during such a turn goes into that thread. Ignored when thread_root_id or sub_chat_session_id is given.',
+					'Post in the main timeline even though the message that started your turn was written in a thread. Without it, a post made during such a turn goes into that thread; a turn started by a top-level message always posts to the main timeline. People start threads, you continue them. Ignored when thread_root_id or sub_chat_session_id is given.',
 				),
 			wait: z
 				.boolean()
@@ -2143,7 +2156,8 @@ export const tools = {
 		}),
 	},
 	stop_session: {
-		description: 'Stop a running session',
+		description:
+			'Stop a running session. Only the actor that started the session can stop it; anyone else gets 403 (session started by a different actor). To end work another agent started, comment on its task instead.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
@@ -2211,7 +2225,7 @@ export const tools = {
 	},
 	send_session_message: {
 		description:
-			"Send a message to a sub-chat you started with create_sub_chat while it is running, as if you typed it into its thread. You can also reach it by posting with post_conversation_message and its `sub_chat_session_id`, which works whether or not it is still running. In an ordinary chat do not use this: post with post_conversation_message and @mention the agent instead. Use it to answer a question the agent asked, give it more direction, or change course while it works. It only works while the session is running: if it has ended, failed or been paused, use resume_session instead, which also takes a message. Do not @mention the agent in a chat for this; a mention reaches a different session of that agent. The call returns as soon as the message is delivered; read the agent's reply with get_session_activity, or set `wait: true` to hold until the session has finished and get its output. `wait` only works for sessions that end after replying, such as an agent you started with create_sub_chat from a chat; for a session that stays open the message is still delivered but nothing is waited for.",
+			"Send a message to a sub-chat you started with create_sub_chat while it is running, as if you typed it into its thread. You can also reach it by posting with post_conversation_message and its `sub_chat_session_id`, which works whether or not it is still running. In an ordinary chat do not use this: post with post_conversation_message and @mention the agent instead. Use it to answer a question the agent asked, give it more direction, or change course while it works. It only works while the session is running: if it has ended, failed or been paused, use resume_session instead, which also takes a message. Do not @mention the agent in a chat for this; a mention reaches a different session of that agent. The call returns as soon as the message is delivered; read the agent's reply with get_session_activity, or set `wait: true` to hold until the session has finished and get its output. `wait` only works for sessions that end after replying, such as an agent you started with create_sub_chat from a chat; for a session that stays open the message is still delivered but nothing is waited for. Only the actor that started the session can message it; anyone else gets 403 (session started by a different actor): comment on the task or start your own with create_sub_chat instead.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('The running session to talk to'),
@@ -2986,7 +3000,7 @@ export const tools = {
 	},
 	desktop_put_file: {
 		description:
-			"Put a workspace file on YOUR computer (the desktop VM) by its file id, so a browser there can pick it in a file field. Your computer is a separate machine, so a file in your session or in the workspace is not on it until you call this. The computer downloads the file directly: its content never passes through you, so photos and videos are fine. Returns the path, size and sha256 of the file as it landed (the same size and hash as the stored file; a mismatch is an error). Default folder is ~/Downloads; an existing file of the same name is overwritten, and the name is made safe (letters, digits, dot, dash, underscore, space). Takes up to two minutes, so a very large file can time out. To upload it in Chromium: click the page's file field, press ctrl+L in the chooser, type the full path that this call returned, then click Open (or press alt+O). Do not press Enter and do not double click: both close the chooser without choosing the file. The chooser opens centred on screen with Open in view. Only your own computer is reachable.",
+			"Put a workspace file on YOUR computer (the desktop VM) by its file id, so a browser there can pick it in a file field. Your computer is a separate machine, so a file in your session or in the workspace is not on it until you call this. The computer downloads the file directly: its content never passes through you, so photos and videos are fine. Returns the path, size and sha256 of the file as it landed (the same size and hash as the stored file; a mismatch is an error) and free_space_bytes, the room left on the computer. Default folder is ~/Downloads; an existing file of the same name is overwritten, and the name is made safe (letters, digits, dot, dash, underscore, space). Takes up to two minutes, so a very large file can time out. Files an earlier desktop_put_file left on the computer are cleaned up first: those over 24 hours old always, and, if the disk lacks room for this file plus 1 GB, those over 1 hour old, oldest first. Files you made and files Chromium downloaded are never removed. If there is still no room the call is refused with how much is needed and how much is free, and nothing is downloaded. To upload it in Chromium: click the page's file field, press ctrl+L in the chooser, type the full path that this call returned, then click Open (or press alt+O). Do not press Enter and do not double click: both close the chooser without choosing the file. The chooser opens centred on screen with Open in view. Only your own computer is reachable.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,
