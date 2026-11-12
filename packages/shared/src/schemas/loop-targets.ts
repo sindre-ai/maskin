@@ -50,3 +50,22 @@ export const loopTargetSchema = z.object({
 	pace_policy: z.enum(['strict', 'window']).optional(),
 })
 export type LoopTarget = z.infer<typeof loopTargetSchema>
+
+/**
+ * The newest checked reading behind a `metric:` target, on the read shape only. When it is
+ * present `actual` is the reading's value, and an agent could not have written it (see
+ * `readings` in the db schema). `expected` is where the number should be today as a straight
+ * line from the target's start to its deadline, `null` when there is no deadline.
+ */
+export const loopTargetReadingSchema = z.object({
+	readAt: z.string(),
+	source: z.string(),
+	expected: z.number().nullable(),
+})
+export type LoopTargetReading = z.infer<typeof loopTargetReadingSchema>
+
+/** A target as the flows list returns it: the stored row plus its reading, if any. Not a write shape. */
+export const loopTargetViewSchema = loopTargetSchema.extend({
+	reading: loopTargetReadingSchema.optional(),
+})
+export type LoopTargetView = z.infer<typeof loopTargetViewSchema>
