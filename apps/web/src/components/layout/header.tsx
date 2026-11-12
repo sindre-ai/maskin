@@ -127,7 +127,7 @@ const OBJECT_DETAIL_ROUTE_ID = '/_authed/$workspaceId/objects/$objectId'
  * The bar floats over the page instead of sitting above it: it has no background at all, and
  * clicks pass through it except on its own controls.
  */
-const FLOATING_BAR = `pointer-events-none absolute inset-x-0 top-[var(--app-banner-h,0px)] z-20 ${FLOATING_CONTROLS}`
+const FLOATING_BAR = `pointer-events-none absolute inset-x-0 top-[var(--app-banner-h,0px)] z-20 bg-background ${FLOATING_CONTROLS}`
 
 /**
  * The shared top nav — mockup lines 155–279.
