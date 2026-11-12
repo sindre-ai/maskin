@@ -48,7 +48,6 @@ export const ALIASES: readonly AliasRow[] = [
 	// accepts the other one.
 	{ tool: 'create_trigger', oldPath: 'actor_id', newPath: 'target_actor_id', kind: 'rename' },
 	{ tool: 'update_trigger', oldPath: 'actor_id', newPath: 'target_actor_id', kind: 'rename' },
-	{ tool: 'create_session', oldPath: 'target_actor_id', newPath: 'actor_id', kind: 'rename' },
 	{ tool: 'list_sessions', oldPath: 'target_actor_id', newPath: 'actor_id', kind: 'rename' },
 
 	// The key names agents send most often to the four read tools behind most

@@ -189,9 +189,9 @@ const listLinks: TaskDef = {
 
 const startSession: TaskDef = {
 	id: 'T5-start-session',
-	title: 'Start a named agent on a task without waiting for it',
+	title: 'Start a named agent on a task',
 	heldOut: true,
-	drift: 'create_session arguments (actor, object link, prompt)',
+	drift: 'create_sub_chat arguments (actor, object link, prompt)',
 	async setup(ctx) {
 		const helper = await ctx.seeder.ensureHelperAgent(HELPER_AGENT_NAME)
 		const task = await ctx.seeder.createObject({
@@ -202,7 +202,7 @@ const startSession: TaskDef = {
 		return { helperId: helper.id, taskId: task.id }
 	},
 	prompt(ctx) {
-		return `Start the agent named "${HELPER_AGENT_NAME}" on the task titled "Eval handoff ${ctx.short}". Tell it: "eval-handoff-${ctx.short}, please look at this task." Do not wait for it to finish.`
+		return `Start the agent named "${HELPER_AGENT_NAME}" on the task titled "Eval handoff ${ctx.short}". Tell it: "eval-handoff-${ctx.short}, please look at this task."`
 	},
 	async check(ctx, seed) {
 		const sessions = await ctx.state.sessionsInitiatedFrom(seed.taskId as string)

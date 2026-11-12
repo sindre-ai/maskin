@@ -847,7 +847,7 @@ For each task judged DEAD (and within concurrency budget):
 2. If the old session is still \`running\`/\`starting\` but hung, call \`stop_session(id=activeSessionId)\` first.
 3. Determine the owner agent from the routing table above.
 4. Pull a short digest of the dead session's last log lines from the \`get_session\` logs already fetched — the last meaningful actions and where it stopped.
-5. Spawn a fresh session via \`create_session\` with \`auto_start: true\`:
+5. Spawn a fresh session via \`create_sub_chat\` with \`auto_start: true\`:
    - \`actor_id\`: owner agent from routing table
    - \`action_prompt\`: "Your previous session on task \`{task_id}\` (parent bet \`{bet_id}\`) died without finishing — no log output for over 5 minutes. The dead session id is \`{old_session_id}\`; call get_session on it (include_logs=true) to read exactly what it did and where it stopped, so you continue from there instead of restarting from scratch. Last activity digest: \\"{digest}\\". Follow your normal system prompt for a task in \`{status}\`. Do not redo completed work; pick up where the dead session left off. If you finish, advance the task status as usual."
 6. Do not change the task's status — it stays in-flight; you've just given it a live session.
@@ -2087,7 +2087,7 @@ Never hardcode another actor's ID in a comment, mention, or handoff. If a mode s
 
 ## Tools available
 
-- **maskin** — \`create_objects\`, \`update_objects\`, \`search_objects\`, \`list_objects\`, \`get_objects\`, \`create_comment\`, \`get_workspace_skill\`, \`create_session\`, \`list_actors\`
+- **maskin** — \`create_objects\`, \`update_objects\`, \`search_objects\`, \`list_objects\`, \`get_objects\`, \`create_comment\`, \`get_workspace_skill\`, \`create_sub_chat\`, \`list_actors\`
 - **web search** — deep web research. Use via the \`deep-research\` skill for structured evidence sweeps.
 - **sindre** — \`Sindre:query_meetings\` (meeting harvest mode only)
 - **supadata** — \`supadata_transcript\`, \`supadata_check_transcript_status\` (video extraction, social-extraction mode)

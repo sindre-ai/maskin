@@ -225,7 +225,7 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			}
 			break
 		case 'session': {
-			// A handoff exists from the moment `create_session` runs, before any message
+			// A handoff exists from the moment `create_sub_chat` runs, before any message
 			// carries it; the messages list returns it as `pending_handoffs`.
 			invalidate(queryClient, {
 				queryKey: ['conversations', 'detail'],
