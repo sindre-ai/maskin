@@ -1,4 +1,6 @@
 import {
+	chatListPositionBucket,
+	chatListResultCountBucket,
 	commentShape,
 	deriveEntryAgentRole,
 	deriveSidebarViewport,
@@ -15,7 +17,9 @@ import {
 	trackChatFirstReplyReceived,
 	trackChatImageUpload,
 	trackChatLeft,
+	trackChatListSearchUsed,
 	trackChatMessageResent,
+	trackChatOpenedFromList,
 	trackChatSessionStarted,
 	trackChatStopClicked,
 	trackCommentPosted,
@@ -1168,5 +1172,53 @@ describe('email_return', () => {
 		expect(trackEmailReturn('app_active', '?surface=web')).toBe(false)
 		expect(trackEmailReturn('app_active', '')).toBe(false)
 		expect(capture).not.toHaveBeenCalled()
+	})
+})
+
+describe('chat list use', () => {
+	it('chat_opened_from_list carries the source, section and a position bucket, nothing else', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+
+		trackChatOpenedFromList({ source: 'list', section: 'unread', position: 7 })
+
+		expect(capture).toHaveBeenCalledWith('chat_opened_from_list', {
+			source: 'list',
+			section: 'unread',
+			position_bucket: '4_10',
+			feature_area: 'chats',
+		})
+	})
+
+	it('chat_list_search_used carries a result count bucket and no text', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+
+		trackChatListSearchUsed({ result_count: 0 })
+
+		expect(capture).toHaveBeenCalledWith('chat_list_search_used', {
+			result_count_bucket: '0',
+			feature_area: 'chats',
+		})
+	})
+
+	it('buckets positions and result counts at their edges', () => {
+		expect([1, 2, 3, 4, 10, 11, 25, 26].map(chatListPositionBucket)).toEqual([
+			'1',
+			'2_3',
+			'2_3',
+			'4_10',
+			'4_10',
+			'11_25',
+			'11_25',
+			'26_plus',
+		])
+		expect([0, 1, 2, 5, 6, 20, 21].map(chatListResultCountBucket)).toEqual([
+			'0',
+			'1',
+			'2_5',
+			'2_5',
+			'6_20',
+			'6_20',
+			'21_plus',
+		])
 	})
 })

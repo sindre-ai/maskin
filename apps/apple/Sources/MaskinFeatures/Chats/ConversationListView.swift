@@ -58,6 +58,7 @@ struct ConversationListView: View {
 					if let id, !id.hasPrefix(TeamLayout.flowPinKey("")) { picking.toggle(id) }
 				} else {
 					selection = id
+					trackOpened(id, layout: layout)
 				}
 			})
 		List(selection: rowSelection) {
@@ -89,6 +90,15 @@ struct ConversationListView: View {
 		// A search looks through every archived chat, so the pages past the first are fetched.
 		.task(id: !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
 			if !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { await store.loadMoreArchived() }
+		}
+		// One event per search that has settled, with how many chats it found.
+		.task(id: search.trimmingCharacters(in: .whitespacesAndNewlines)) {
+			let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+			guard !query.isEmpty, (try? await Task.sleep(for: .seconds(1))) != nil else { return }
+			// Read again after the wait, so pages that arrived meanwhile are counted.
+			let settled = store.layout(
+				query: query, currentActorID: currentActorID, expandedSectionIDs: expandedSections, now: Date())
+			Analytics.shared.chatListSearchUsed(resultCount: settled.shownChatCount)
 		}
 		.task(id: store.showsArchivedList) {
 			if store.showsArchivedList {
@@ -181,6 +191,14 @@ struct ConversationListView: View {
 			// Selecting a flow row shows the flow in the detail column (`flow:<id>`).
 			base.tag(f.pinKey)
 		}
+	}
+
+	/// A person's tap opened a chat from the list. Flow rows are not chats and send nothing.
+	private func trackOpened(_ id: String?, layout: TeamLayout) {
+		guard let id, !id.hasPrefix(TeamLayout.flowPinKey("")) else { return }
+		let searching = !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+		guard let place = layout.chatListPlace(of: id, searching: searching) else { return }
+		Analytics.shared.chatOpenedFromList(place)
 	}
 
 	private func selectionID(of row: TeamLayout.Row) -> String? {
@@ -416,7 +434,14 @@ struct ConversationListView: View {
 							}
 						}
 					},
-					onOpen: { item in selection = item.id })
+					onOpen: { item in
+						selection = item.id
+						// The archive is a flat list, so a row's place is its place in that list.
+						if let index = store.archivedConversations.firstIndex(where: { $0.id == item.id }) {
+							Analytics.shared.chatOpenedFromList(
+								.init(source: .list, section: .recent, position: index + 1))
+						}
+					})
 				.plainRow(insets: EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: 0, trailing: MaskinSpace.s9))
 			}
 		} header: {
