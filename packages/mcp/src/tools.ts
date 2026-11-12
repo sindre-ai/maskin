@@ -762,11 +762,12 @@ export const tools = {
 						'in_loop',
 						'produced_by',
 						'spawned',
+						'has_file',
 					]),
 				)
 				.optional()
 				.describe(
-					'Only follow relationships whose `type` is in this list. Omit to follow every workspace edge type. `attached` links an object to a file, `in_loop` a loop to its items, `produced_by` a session to what it created, `spawned` a chat to a session it started.',
+					'Only follow relationships whose `type` is in this list. Omit to follow every workspace edge type. `attached` links an object to a file, `in_loop` a loop to its items, `produced_by` a session to what it created, `spawned` a chat to a session it started, `has_file` a chat to a file uploaded in it.',
 				),
 			direction: z
 				.enum(['outbound', 'inbound', 'both'])
