@@ -95,6 +95,7 @@ describe('POST /api/transcriptions/files/:id', () => {
 			transcript_file_url: `http://localhost:5173/${workspaceId}/files/${transcriptFileId}`,
 			text: null,
 			next_step: `The transcript is saved as a file. Read it with get_file on id ${transcriptFileId}.`,
+			timed: false,
 			audio_seconds: 12.5,
 			chunks: 1,
 			model: 'mistralai/voxtral-small-transcribe-3-0',

@@ -56,6 +56,7 @@ const UNAVAILABLE_UNDER_OAUTH = [
 	'POST /api/sessions/x/keychain-access-card', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/sessions/x/keychain-card', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/sessions/x/mcp-server-card', // newer MCP tool, route not yet checked for the token's workspace pin
+	'POST /api/transcriptions/files/x', // transcribe_file: spends plan usage, route not yet checked for the token's workspace pin
 	'POST /api/workspaces', // create_workspace
 	'POST /api/workspaces/x/members', // add_member: changes who is in a workspace
 	'PUT /api/integrations/x/default-access', // newer MCP tool, route not yet checked for the token's workspace pin
