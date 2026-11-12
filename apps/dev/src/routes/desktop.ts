@@ -535,8 +535,6 @@ const putFileRoute = createRoute({
 	},
 })
 
-const shellQuote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`
-
 /** The file's name as a plain, safe file name: no folders, no shell or dot-file surprises. */
 function safeFileName(name: string): string {
 	const base = name.split(/[\\/]/).pop() ?? ''
