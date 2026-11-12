@@ -2,11 +2,13 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { useChatListSearch } from '@/hooks/use-chat-list-search'
 import { useReplyThreads } from '@/hooks/use-conversation'
 import { useConversationsInfinite, useUpdateConversationMe } from '@/hooks/use-conversations'
 import { type ConversationListItemResponse, api } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { groupConversations } from '@/lib/conversation-groups'
+import { type LoadedList, activityTime } from '@/lib/conversation-search'
 import { focusField, usePageSearchShortcut } from '@/lib/page-search-shortcut'
 import { Link } from '@tanstack/react-router'
 import { ChevronDown, MessageCircle, MessageCircleWarning, Plus, Search } from 'lucide-react'
@@ -14,6 +16,7 @@ import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState }
 import { toast } from 'sonner'
 import { type ChatsFilter, ChatsFilterMenu } from './chats-filter-menu'
 import { ConversationListRow } from './conversation-list-row'
+import { ConversationSearchResults } from './conversation-search-results'
 import { ReplyThreadList } from './replies/reply-thread-list'
 
 /**
@@ -126,7 +129,7 @@ export function ConversationListHeader({
 interface ConversationListProps {
 	workspaceId: string
 	filter?: ChatsFilter
-	/** Narrows the loaded chats by title, preview or participant name. */
+	/** Searches every chat by title, person or message text, archived ones included. */
 	query?: string
 	className?: string
 	/** True when the list owns the whole content width (no thread open) — the
@@ -294,16 +297,23 @@ function ChatConversationList({
 			(threadUnreadByChat.get(t.conversationId) ?? 0) + t.thread.unreadCount,
 		)
 	}
-	const needle = (query ?? '').trim().toLowerCase()
-	const shown = needle
-		? conversations.filter((c) =>
-				[c.title, c.snippet ?? '', ...c.participants.map((p) => p.actorName)]
-					.join(' ')
-					.toLowerCase()
-					.includes(needle),
-			)
-		: conversations
-	const groups = groupConversations(shown, {
+	// Words in the search box leave the grouped list and ask the server for every chat the person
+	// is in, so an old or archived chat is found even when this list never loaded it.
+	const needle = (query ?? '').trim()
+	const search = useChatListSearch(workspaceId, needle)
+	const known = useMemo(() => new Map(fetched.map((c) => [c.id, c])), [fetched])
+	// What the default list holds, to tell which hits it leaves out. A filtered list is not that
+	// list, so only the person's own archive marks a hit there.
+	const loaded = useMemo<LoadedList | null>(() => {
+		if (!scoped) return null
+		const rows = (recentData?.pages ?? []).flatMap((page) => page.conversations)
+		return {
+			ids: new Set(fetched.map((c) => c.id)),
+			hasMore: !!hasNextPage || priorityHasMore || isLoading,
+			oldestActivityAt: rows.length > 0 ? Math.min(...rows.map(activityTime)) : null,
+		}
+	}, [scoped, recentData, fetched, hasNextPage, priorityHasMore, isLoading])
+	const groups = groupConversations(conversations, {
 		mode: filter === 'archived' ? 'archived' : 'unread',
 	})
 	const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
@@ -362,7 +372,15 @@ function ChatConversationList({
 		<div data-testid="conversation-list" className={cn('flex min-h-0 flex-1 flex-col', className)}>
 			<div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3 lg:pr-4 lg:pl-10">
 				<div className={cn('w-full', expanded && 'mx-auto max-w-[900px]')}>
-					{isLoading ? (
+					{needle ? (
+						<ConversationSearchResults
+							workspaceId={workspaceId}
+							query={needle}
+							search={search}
+							known={known}
+							loaded={loaded}
+						/>
+					) : isLoading ? (
 						<ListSkeleton rows={8} />
 					) : isError ? (
 						// A failed fetch must not borrow the empty state: "No conversations

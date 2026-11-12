@@ -15,6 +15,7 @@ vi.mock('@/lib/auth', () => ({ getStoredActor: () => ({ id: 'me', name: 'Me', ty
 vi.mock('@/lib/api', () => ({
 	api: {
 		conversations: { list: vi.fn(), replyThreads: vi.fn(), messages: vi.fn(), updateMe: vi.fn() },
+		search: { query: vi.fn() },
 	},
 }))
 
@@ -437,5 +438,74 @@ describe('ConversationList collapse', () => {
 		await userEvent.click(header)
 		expect(screen.queryAllByRole('link')).toHaveLength(0)
 		vi.unstubAllGlobals()
+	})
+})
+
+describe('ConversationList search', () => {
+	beforeEach(() => {
+		vi.mocked(api.conversations.list).mockReset()
+		vi.mocked(api.conversations.replyThreads).mockReset()
+		vi.mocked(api.conversations.replyThreads).mockResolvedValue({ threads: [] } as never)
+		vi.mocked(api.search.query).mockReset()
+	})
+
+	function searchRow(overrides: Record<string, unknown> = {}) {
+		return {
+			id: 'old-1',
+			group: 'chats',
+			type: 'chat',
+			title: 'Invoice export',
+			sub: 'Developer, Me',
+			snippet: 'the csv export times out',
+			status: 'archived',
+			statusGroup: 'archived',
+			updatedAt: '2026-09-01T10:00:00.000Z',
+			...overrides,
+		}
+	}
+
+	function answer(results: unknown[]) {
+		vi.mocked(api.search.query).mockResolvedValue({
+			results,
+			total: results.length,
+			capped: false,
+			facets: { types: {}, statuses: {} },
+			relaxed: { withoutFilters: 0, withoutStatuses: 0 },
+			partial: [],
+		} as never)
+	}
+
+	it('asks the server for chats and shows an archived hit that the list never loaded', async () => {
+		mockScopedList({ recent: [buildConversation({ id: 'a', title: 'Billing retries' })] })
+		answer([searchRow()])
+		render(<ConversationList workspaceId="ws-1" query="csv" />, { wrapper: TestWrapper })
+
+		expect(await screen.findByText('Invoice export')).toBeInTheDocument()
+		expect(api.search.query).toHaveBeenCalledWith(
+			'ws-1',
+			expect.objectContaining({ q: 'csv', types: 'chat' }),
+			expect.anything(),
+		)
+		expect(screen.getByText('Archived')).toBeInTheDocument()
+		expect(screen.getByText('csv', { selector: 'mark' })).toBeInTheDocument()
+		// The grouped list steps aside while words are typed.
+		expect(screen.queryByText('Billing retries')).not.toBeInTheDocument()
+	})
+
+	it('leaves the chip off a chat that is not archived and is in the list', async () => {
+		mockScopedList({ recent: [buildConversation({ id: 'old-1', title: 'Invoice export' })] })
+		answer([searchRow({ status: 'read', statusGroup: 'done' })])
+		render(<ConversationList workspaceId="ws-1" query="csv" />, { wrapper: TestWrapper })
+
+		expect(await screen.findByText('Invoice export')).toBeInTheDocument()
+		expect(screen.queryByText('Archived')).not.toBeInTheDocument()
+	})
+
+	it('says so when no chat matches', async () => {
+		mockScopedList({ recent: [] })
+		answer([])
+		render(<ConversationList workspaceId="ws-1" query="zzz" />, { wrapper: TestWrapper })
+
+		expect(await screen.findByText('No chats found')).toBeInTheDocument()
 	})
 })

@@ -27,6 +27,8 @@ struct ConversationListView: View {
 	var onSuggestion: (String) -> Void = { _ in }
 	/// Opens the Threads screen; nil hides its chip (previews and snapshots).
 	var onThreads: (() -> Void)?
+	/// The list search's server side. Nil keeps the on-screen filter (previews and snapshots).
+	var chatSearch: ChatListSearchModel?
 	/// Where the filter chips sit; the bottom placements draw them outside this list.
 	var pillPlacement: TeamPillPlacement = .top
 	/// The shell's bottom pill, told how many are unread and when row selection is running.
@@ -64,7 +66,9 @@ struct ConversationListView: View {
 			if !isLive {
 				OfflineBanner(message: "Live updates paused. Reconnecting…").plainRow()
 			}
-			if store.showsArchivedList {
+			if let chatSearch, chatSearch.isAvailable, isSearching {
+				searchResults(chatSearch)
+			} else if store.showsArchivedList {
 				archivedSection
 			} else {
 				activeContent(layout: layout, now: now)
@@ -90,6 +94,9 @@ struct ConversationListView: View {
 		.task(id: !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
 			if !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { await store.loadMoreArchived() }
 		}
+		// Words in the search go to the server, which looks through every chat: titles, people and
+		// message text, archived ones included. The answer replaces the list while words are typed.
+		.task(id: search) { await chatSearch?.update(search) }
 		.task(id: store.showsArchivedList) {
 			if store.showsArchivedList {
 				await store.refreshArchived()
@@ -122,6 +129,43 @@ struct ConversationListView: View {
 			}
 		} message: { _ in
 			Text("It disappears from your chats. This can't be undone.")
+		}
+	}
+
+	// MARK: Search
+
+	private var isSearching: Bool { !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+	/// The server's hits for the typed words. A hit the default list leaves out (archived, or quiet
+	/// for a long while) is marked Archived; tapping any hit opens it, loaded or not.
+	@ViewBuilder
+	private func searchResults(_ model: ChatListSearchModel) -> some View {
+		let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+		let loaded = Dictionary(store.conversations.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+		let oldest = store.conversations.compactMap { $0.lastMessageAt ?? $0.createdAt }.min()
+		let hasMore = store.hasMore || store.phase != .loaded
+		if model.phase == .failed, model.hits.isEmpty {
+			Text("Couldn't search chats. Check your connection and try again.")
+				.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+				.plainRow(insets: EdgeInsets(top: MaskinSpace.s9, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
+		} else if model.phase == .loaded, model.hits.isEmpty {
+			EmptyState(
+				symbol: "magnifyingglass", title: "No chats found",
+				message: "No chat has that in its title, its people or its messages.")
+				.plainRow()
+		} else {
+			Section {
+				ForEach(model.hits) { hit in
+					ChatSearchRow(
+						hit: hit, query: query,
+						participants: loaded[hit.id].map { $0.others(excluding: currentActorID) } ?? [],
+						isArchived: ChatSearchRules.isArchived(
+							hit, loadedIDs: Set(loaded.keys), hasMore: hasMore, oldestActivity: oldest))
+						.tag(hit.id)
+						.rowChrome()
+				}
+			}
+			.opacity(model.phase == .loading ? 0.6 : 1)
 		}
 	}
 
