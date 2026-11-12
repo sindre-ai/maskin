@@ -1,7 +1,23 @@
 import type { Transaction } from '@maskin/db'
 import type { Database } from '@maskin/db'
-import { events, actors, nextSteps, objects, sessions, workspaceMembers } from '@maskin/db/schema'
-import type { NextStepResponse, SetNextStepInput, UpdateNextStepInput } from '@maskin/shared'
+import {
+	events,
+	actors,
+	nextSteps,
+	objects,
+	relationships,
+	sessions,
+	triggers,
+	workspaceMembers,
+} from '@maskin/db/schema'
+import { MIN_WAKE_LEAD_MINUTES } from '@maskin/shared'
+import type {
+	NextStepResponse,
+	ScheduleNextStepInput,
+	ScheduleNextStepResponse,
+	SetNextStepInput,
+	UpdateNextStepInput,
+} from '@maskin/shared'
 import { and, eq, inArray, isNull, lt, or } from 'drizzle-orm'
 import { recordEvent } from './events/record-event'
 
@@ -192,6 +208,51 @@ interface WriteContext {
 }
 
 /**
+ * Delete the wake-up pinned to a step, so a closed or replaced step is never woken for. The
+ * delete event is what tells the trigger runner to drop its timer. A reminder that already fired
+ * is deleted too: it has nothing left to do.
+ */
+async function cancelWake(tx: Transaction, ctx: WriteContext, step: NextStepRow) {
+	if (!step.wakeTriggerId) return
+	const [gone] = await tx
+		.delete(triggers)
+		.where(eq(triggers.id, step.wakeTriggerId))
+		.returning({ id: triggers.id, name: triggers.name, workspaceId: triggers.workspaceId })
+	if (!gone) return
+	await recordEvent(tx, {
+		workspaceId: gone.workspaceId,
+		actorId: ctx.actorId,
+		action: 'deleted',
+		entityType: 'trigger',
+		entityId: gone.id,
+		data: { trigger_name: gone.name, type: 'reminder', cascade: 'next_step_closed' },
+	})
+}
+
+/** Move the step's wake-up to a new time and switch it back on if it had already gone off. */
+async function rescheduleWake(tx: Transaction, ctx: WriteContext, step: NextStepRow, dueAt: Date) {
+	if (!step.wakeTriggerId) return
+	const [trigger] = await tx.select().from(triggers).where(eq(triggers.id, step.wakeTriggerId))
+	if (!trigger || trigger.type !== 'reminder') return
+	await tx
+		.update(triggers)
+		.set({
+			config: { ...(trigger.config as Record<string, unknown>), scheduled_at: dueAt.toISOString() },
+			enabled: true,
+			updatedAt: new Date(),
+		})
+		.where(eq(triggers.id, trigger.id))
+	await recordEvent(tx, {
+		workspaceId: trigger.workspaceId,
+		actorId: ctx.actorId,
+		action: 'updated',
+		entityType: 'trigger',
+		entityId: trigger.id,
+		data: { trigger_name: trigger.name, type: trigger.type },
+	})
+}
+
+/**
  * Give an object its next step. Refused while it already has an open or blocked one, unless
  * `replace` is set: the old step is then closed as skipped and the new one takes its place. One
  * transaction with the audit event on the driven object (caller's `tx`).
@@ -216,6 +277,7 @@ export async function setNextStep(
 				`This object already has ${live.status === 'open' ? 'an open' : 'a blocked'} next step ("${live.action}", due ${live.dueAt.toISOString()}). Update or close it with update_next_step, or pass replace: true.`,
 			)
 		}
+		await cancelWake(tx, ctx, live)
 		await tx
 			.update(nextSteps)
 			.set({
@@ -340,6 +402,14 @@ export async function updateNextStep(
 		.returning()
 	if (!row) throw new Error('next step update returned no row')
 
+	// The wake-up follows the step: closing cancels it, a new time or coming back from blocked
+	// moves it.
+	if (closing) {
+		await cancelWake(tx, ctx, live)
+	} else if (status === 'open' && (input.due_at || live.status === 'blocked')) {
+		await rescheduleWake(tx, ctx, live, row.dueAt)
+	}
+
 	await recordEvent(tx, {
 		workspaceId: object.workspaceId,
 		actorId: ctx.actorId,
@@ -357,6 +427,179 @@ export async function updateNextStep(
 		},
 	})
 	return row
+}
+
+const WAKE_PROMPT_LATE_LINE =
+	'If this session starts more than 1 hour after the time above, do nothing: the step stays open and the sweep handles it.'
+
+const CHILD_TASK_TITLE_MAX_CHARS = 80
+
+export interface ScheduleContext extends WriteContext {
+	/** From assertScheduledWorkWithinCap: set when the calling run started on its own. */
+	createdFromStartReason: string | null
+}
+
+/** A task title is a short label; the action can be a full sentence. */
+function childTaskTitle(action: string) {
+	const oneLine = action.replace(/\s+/g, ' ').trim()
+	return oneLine.length <= CHILD_TASK_TITLE_MAX_CHARS
+		? oneLine
+		: `${oneLine.slice(0, CHILD_TASK_TITLE_MAX_CHARS - 1).trimEnd()}…`
+}
+
+/**
+ * Set the next step and make sure someone comes back for it, in one transaction. Who is woken
+ * depends on the owner:
+ *  - the caller (an agent): a one-off reminder for them, pinned to this object and step;
+ *  - another agent: a task with that agent as driver, and the step waits on that task. The wake is
+ *    the child task closing, not a timer;
+ *  - a person: the step is stored and nobody is woken.
+ * The pending-wake cap is checked by the caller before this runs (it needs the HTTP context).
+ */
+export async function scheduleNextStep(
+	tx: Transaction,
+	ctx: ScheduleContext,
+	input: ScheduleNextStepInput,
+): Promise<{ step: NextStepRow; wakeUp: ScheduleNextStepResponse['wake_up'] }> {
+	const object = await lockObject(tx, ctx.objectId)
+	const ownerId = input.owner_id ?? ctx.actorId
+	await assertWorkspaceActor(tx, object.workspaceId, ownerId, 'owner_id')
+	const [owner] = await tx
+		.select({ id: actors.id, type: actors.type, name: actors.name })
+		.from(actors)
+		.where(eq(actors.id, ownerId))
+	if (!owner) throw new NextStepError('BAD_REQUEST', 'owner_id is not an agent or person')
+
+	const base = { action: input.action, due_at: input.due_at, replace: input.replace }
+	const now = new Date()
+	const dueAt = new Date(input.due_at)
+
+	if (owner.type !== 'agent') {
+		const step = await setNextStep(tx, ctx, { ...base, owner_id: ownerId })
+		return {
+			step,
+			wakeUp: {
+				kind: 'none',
+				reason: 'The owner is a person, so nobody is woken. They see the step on the object.',
+			},
+		}
+	}
+
+	if (ownerId !== ctx.actorId) {
+		// Hand the step to another agent: they get a task, and this object waits on it.
+		const [parent] = await tx
+			.select({ title: objects.title })
+			.from(objects)
+			.where(eq(objects.id, object.id))
+		const [task] = await tx
+			.insert(objects)
+			.values({
+				workspaceId: object.workspaceId,
+				type: 'task',
+				title: childTaskTitle(input.action),
+				content: `${input.action}\n\nThis is the next step on "${parent?.title ?? 'an object'}" (${object.id}), due ${dueAt.toISOString()}. When it is done, close the task with the result.`,
+				status: 'backlog',
+				driver: ownerId,
+				createdBy: ctx.actorId,
+			})
+			.returning()
+		if (!task) throw new Error('child task insert returned no row')
+		await recordEvent(tx, {
+			workspaceId: object.workspaceId,
+			actorId: ctx.actorId,
+			action: 'created',
+			entityType: 'task',
+			entityId: task.id,
+			data: task,
+			provenance: { sessionId: ctx.sessionId ?? undefined, entityKind: 'object' },
+		})
+		const [edge] = await tx
+			.insert(relationships)
+			.values({
+				sourceType: 'object',
+				sourceId: object.id,
+				targetType: 'object',
+				targetId: task.id,
+				type: 'breaks_into',
+				createdBy: ctx.actorId,
+			})
+			.returning()
+		if (edge) {
+			await recordEvent(tx, {
+				workspaceId: object.workspaceId,
+				actorId: ctx.actorId,
+				action: 'created',
+				entityType: 'relationship',
+				entityId: edge.id,
+				data: edge,
+			})
+		}
+		// The move to todo is a real status change, which is what wakes the task's driver.
+		await tx.update(objects).set({ status: 'todo', updatedAt: now }).where(eq(objects.id, task.id))
+		await recordEvent(tx, {
+			workspaceId: object.workspaceId,
+			actorId: ctx.actorId,
+			action: 'status_changed',
+			entityType: 'task',
+			entityId: task.id,
+			data: { changes: [{ field: 'status', old: 'backlog', new: 'todo' }] },
+			provenance: { sessionId: ctx.sessionId ?? undefined, entityKind: 'object' },
+		})
+		const step = await setNextStep(tx, ctx, {
+			...base,
+			owner_id: ownerId,
+			blocked_on_object_id: task.id,
+			blocked_reason: `Waiting for ${owner.name ?? 'the agent'} to finish the task`,
+		})
+		return { step, wakeUp: { kind: 'task', task_id: task.id } }
+	}
+
+	// The caller is the owner: wake them at the due time, on this object.
+	const leadMs = MIN_WAKE_LEAD_MINUTES * 60_000
+	if (dueAt.getTime() - now.getTime() < leadMs) {
+		throw new NextStepError(
+			'BAD_REQUEST',
+			`due_at is less than ${MIN_WAKE_LEAD_MINUTES} minutes away. Pick a later time, or do the step now.`,
+		)
+	}
+	const step = await setNextStep(tx, ctx, { ...base, owner_id: ownerId })
+	const [trigger] = await tx
+		.insert(triggers)
+		.values({
+			workspaceId: object.workspaceId,
+			name: `Next step: ${childTaskTitle(input.action)}`,
+			type: 'reminder',
+			config: { scheduled_at: dueAt.toISOString(), object_id: object.id, step_id: step.id },
+			actionPrompt: `Your next step is due: ${input.action}\n\nDo it, then close the step with update_next_step (done, with the result as evidence) and set the following one with schedule_next_step. If it cannot be done, say why and close it as skipped. ${WAKE_PROMPT_LATE_LINE}`,
+			targetActorId: ownerId,
+			enabled: true,
+			createdBy: ctx.actorId,
+		})
+		.returning()
+	if (!trigger) throw new Error('wake-up trigger insert returned no row')
+	await recordEvent(tx, {
+		workspaceId: object.workspaceId,
+		actorId: ctx.actorId,
+		action: 'created',
+		entityType: 'trigger',
+		entityId: trigger.id,
+		data: {
+			trigger_name: trigger.name,
+			type: trigger.type,
+			...(ctx.createdFromStartReason
+				? { created_from_start_reason: ctx.createdFromStartReason }
+				: {}),
+		},
+	})
+	const [linked] = await tx
+		.update(nextSteps)
+		.set({ wakeTriggerId: trigger.id })
+		.where(eq(nextSteps.id, step.id))
+		.returning()
+	return {
+		step: linked ?? step,
+		wakeUp: { kind: 'reminder', trigger_id: trigger.id, at: dueAt.toISOString() },
+	}
 }
 
 /**

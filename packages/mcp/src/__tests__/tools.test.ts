@@ -28,6 +28,7 @@ const ALL_TOOL_NAMES = [
 	'update_objects',
 	'delete_object',
 	'set_next_step',
+	'schedule_next_step',
 	'update_next_step',
 	'list_objects',
 	'search_objects',

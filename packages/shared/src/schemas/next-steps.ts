@@ -68,6 +68,31 @@ export const setNextStepSchema = z.object({
 		),
 })
 
+/**
+ * The shortest wait a self-set wake-up may have. Anything sooner is better done by carrying on in
+ * the current turn, and a very short timer is how a run ends up waking itself in a loop.
+ */
+export const MIN_WAKE_LEAD_MINUTES = 5
+
+/** Set the next step and make sure someone comes back for it, in one call. */
+export const scheduleNextStepSchema = z.object({
+	action: actionField,
+	due_at: dueAtField.describe(
+		`When to come back, an ISO 8601 time with a timezone, e.g. 2026-11-14T09:00:00Z. At least ${MIN_WAKE_LEAD_MINUTES} minutes from now when you are the owner.`,
+	),
+	owner_id: ownerField
+		.optional()
+		.describe(
+			'Who does it. Defaults to you: you are woken at due_at on this object. Another agent: a task is created for them and the step waits on it. A person: the step is stored and nobody is woken.',
+		),
+	replace: z
+		.boolean()
+		.default(false)
+		.describe(
+			'Set true to replace the current open or blocked step: it is closed as skipped and its wake-up is cancelled.',
+		),
+})
+
 /** Change or close the object's current (open or blocked) step. Every field is optional. */
 export const updateNextStepSchema = z.object({
 	action: actionField.optional(),
@@ -108,6 +133,18 @@ export const nextStepResponseSchema = z.object({
 	closed_at: z.string().nullable(),
 })
 
+/** What backs the step: a timer for the owner, a task for another agent, or nothing for a person. */
+export const scheduleNextStepResponseSchema = z.object({
+	next_step: nextStepResponseSchema,
+	wake_up: z.discriminatedUnion('kind', [
+		z.object({ kind: z.literal('reminder'), trigger_id: z.string().uuid(), at: z.string() }),
+		z.object({ kind: z.literal('task'), task_id: z.string().uuid() }),
+		z.object({ kind: z.literal('none'), reason: z.string() }),
+	]),
+})
+
+export type ScheduleNextStepInput = z.infer<typeof scheduleNextStepSchema>
 export type SetNextStepInput = z.infer<typeof setNextStepSchema>
 export type UpdateNextStepInput = z.infer<typeof updateNextStepSchema>
+export type ScheduleNextStepResponse = z.infer<typeof scheduleNextStepResponseSchema>
 export type NextStepResponse = z.infer<typeof nextStepResponseSchema>

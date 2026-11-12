@@ -2,6 +2,7 @@ import type { Database } from '@maskin/db'
 import {
 	events,
 	actors,
+	nextSteps,
 	notifications,
 	objects,
 	sessions,
@@ -258,6 +259,9 @@ const MAX_TIMEOUT_MS = 2_147_483_647
 
 /** A reminder pinned to a step does nothing when it fires more than this long after its time. */
 const REMINDER_MAX_LATE_MS = 60 * 60 * 1000
+/** A reminder whose time is still this far off when it fires is left for the timer armed at its new time. */
+const REMINDER_EARLY_FIRE_TOLERANCE_MS = 5_000
+
 /** When a reminder's session fails to start it is tried again after this long, up to the attempt limit. */
 const REMINDER_START_RETRY_MS = 60 * 1000
 const REMINDER_START_MAX_ATTEMPTS = 5
@@ -1663,6 +1667,23 @@ export class TriggerRunner {
 			return 'skipped'
 		}
 
+		// A rescheduled reminder keeps its row, but a timer armed from the old copy can still fire
+		// first. The update event arms the right timer, so this one does nothing and stays enabled.
+		if (scheduledAt.getTime() - Date.now() > REMINDER_EARLY_FIRE_TOLERANCE_MS) return 'skipped'
+
+		// A reminder pinned to a step only means something while the step is open. Closed,
+		// replaced or blocked since, there is nobody to wake.
+		if (config.step_id) {
+			const [step] = await this.db
+				.select({ status: nextSteps.status })
+				.from(nextSteps)
+				.where(eq(nextSteps.id, config.step_id))
+			if (!step || step.status !== 'open') {
+				await this.skipReminder(trigger, 'step_closed')
+				return 'skipped'
+			}
+		}
+
 		let objectLine = ''
 		if (config.object_id) {
 			const [object] = await this.db
@@ -1738,6 +1759,12 @@ export class TriggerRunner {
 		}
 
 		await this.disableReminder(trigger.id)
+		if (config.step_id) {
+			await this.db
+				.update(nextSteps)
+				.set({ wakeCount: sql`${nextSteps.wakeCount} + 1`, lastWokenAt: new Date() })
+				.where(eq(nextSteps.id, config.step_id))
+		}
 		return 'fired'
 	}
 

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { events, triggerDispatches, triggers } from '@maskin/db/schema'
+import { events, nextSteps, triggerDispatches, triggers } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import { and, eq } from 'drizzle-orm'
 import { describe, expect, it, vi } from 'vitest'
@@ -48,6 +48,27 @@ async function seed(config: Record<string, unknown>, objectOverrides?: Record<st
 		config: { scheduled_at: minutesFromNow(-1), object_id: object.id, ...config },
 	})
 	return { ws, agent, object, trigger }
+}
+
+async function seedStep(
+	s: { ws: { id: string }; object: { id: string }; agent: { id: string } },
+	id: string,
+	status: 'open' | 'done' | 'skipped' | 'blocked',
+) {
+	await db.insert(nextSteps).values({
+		id,
+		workspaceId: s.ws.id,
+		objectId: s.object.id,
+		action: 'Check the plan',
+		ownerActorId: s.agent.id,
+		dueAt: new Date(),
+		status,
+		// A blocked step has to name what it waits on; a closed one has to name nothing.
+		...(status === 'blocked' ? { blockedOnActorId: s.agent.id, blockedReason: 'Waiting' } : {}),
+		...(status === 'done' || status === 'skipped'
+			? { evidence: 'Closed', closedAt: new Date() }
+			: {}),
+	})
 }
 
 const readTrigger = async (id: string) =>
@@ -139,10 +160,63 @@ describe('reminder fire (integration)', () => {
 
 	it('a step-pinned reminder under an hour late still fires', async () => {
 		const createSession = vi.fn().mockResolvedValue({ id: randomUUID() })
-		const s = await seed({ scheduled_at: minutesFromNow(-59), step_id: randomUUID() })
+		const stepId = randomUUID()
+		const s = await seed({ scheduled_at: minutesFromNow(-59), step_id: stepId })
+		await seedStep(s, stepId, 'open')
 
 		expect(await newRunner(createSession).fireReminder(s.trigger.id)).toBe('fired')
 		expect(createSession).toHaveBeenCalledOnce()
+	})
+
+	it('counts the wake on the step it woke for', async () => {
+		const createSession = vi.fn().mockResolvedValue({ id: randomUUID() })
+		const stepId = randomUUID()
+		const s = await seed({ step_id: stepId })
+		await seedStep(s, stepId, 'open')
+
+		expect(await newRunner(createSession).fireReminder(s.trigger.id)).toBe('fired')
+
+		const [step] = await db.select().from(nextSteps).where(eq(nextSteps.id, stepId))
+		expect(step.wakeCount).toBe(1)
+		expect(step.lastWokenAt).not.toBeNull()
+	})
+
+	it.each(['done', 'skipped', 'blocked'] as const)(
+		'a reminder whose step is %s by now starts nothing and disables itself',
+		async (status) => {
+			const createSession = vi.fn().mockResolvedValue({ id: randomUUID() })
+			const stepId = randomUUID()
+			const s = await seed({ step_id: stepId })
+			await seedStep(s, stepId, status)
+
+			expect(await newRunner(createSession).fireReminder(s.trigger.id)).toBe('skipped')
+
+			expect(createSession).not.toHaveBeenCalled()
+			expect((await readTrigger(s.trigger.id)).enabled).toBe(false)
+			const skipped = await db
+				.select()
+				.from(events)
+				.where(and(eq(events.entityId, s.trigger.id), eq(events.action, 'trigger_skipped')))
+			expect(skipped[0].data).toMatchObject({ reason: 'step_closed' })
+		},
+	)
+
+	it('a reminder whose step row is gone starts nothing', async () => {
+		const createSession = vi.fn().mockResolvedValue({ id: randomUUID() })
+		const s = await seed({ step_id: randomUUID() })
+
+		expect(await newRunner(createSession).fireReminder(s.trigger.id)).toBe('skipped')
+		expect(createSession).not.toHaveBeenCalled()
+	})
+
+	it('a timer armed from an old copy does nothing when the reminder was moved later', async () => {
+		const createSession = vi.fn().mockResolvedValue({ id: randomUUID() })
+		const s = await seed({ scheduled_at: minutesFromNow(30) })
+
+		expect(await newRunner(createSession).fireReminder(s.trigger.id)).toBe('skipped')
+
+		expect(createSession).not.toHaveBeenCalled()
+		expect((await readTrigger(s.trigger.id)).enabled).toBe(true)
 	})
 
 	it('a reminder with no step still fires when it is hours late', async () => {

@@ -100,6 +100,7 @@ const ROWS: Record<string, Row> = {
 	update_objects: row('Update objects', { idempotent: true }),
 	delete_object: row('Delete object', { destructive: true, idempotent: true }),
 	set_next_step: row('Set next step'),
+	schedule_next_step: row('Schedule next step'),
 	update_next_step: row('Update next step', { idempotent: true }),
 	list_objects: row('List objects'),
 	search_objects: row('Search objects'),
