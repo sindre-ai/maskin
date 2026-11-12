@@ -111,6 +111,10 @@ describe('AgentCreateForm', () => {
 		render(<AgentCreateForm onAutoCreate={vi.fn()} onUpdate={onUpdate} agent={agent} />)
 
 		const input = screen.getByPlaceholderText('Short description shown on the Agents page')
+		// The name field has autofocus and starts empty, so moving focus to the description
+		// blurs it and saves the name. That is not what this test is about.
+		await user.click(input)
+		onUpdate.mockClear()
 		await user.type(input, 'Typed text')
 		await user.keyboard('{Escape}')
 
