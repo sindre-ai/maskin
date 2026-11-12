@@ -13,7 +13,7 @@ import { cn } from '@/lib/cn'
 import { shortActorName, snippetAuthorLabel } from '@/lib/conversation-snippet'
 import { plainPreview } from '@/lib/linked-objects'
 import { Link } from '@tanstack/react-router'
-import { MoreHorizontal } from 'lucide-react'
+import { Hash, MoreHorizontal, Repeat } from 'lucide-react'
 import { ConversationAvatarStack } from './conversation-avatar-stack'
 
 interface ConversationListRowProps {
@@ -73,7 +73,20 @@ export function ConversationListRow({
 				activeProps={{ className: 'bg-accent' }}
 				className="flex items-start gap-3 rounded-lg px-2 py-[11px] text-left hover:bg-accent"
 			>
-				{others.length > 1 ? (
+				{conversation.roomKind ? (
+					// A room is a square tile, not people: arrows for a flow's room, # for one a person made.
+					<span
+						role="img"
+						aria-label={conversation.roomKind === 'flow' ? 'Flow room' : 'Room'}
+						className="mt-px grid size-8 shrink-0 place-items-center rounded-[10px] bg-secondary text-foreground"
+					>
+						{conversation.roomKind === 'flow' ? (
+							<Repeat size={15} aria-hidden />
+						) : (
+							<Hash size={15} aria-hidden />
+						)}
+					</span>
+				) : others.length > 1 ? (
 					// Several actors: the cluster the iPhone list draws, so nobody is hidden behind one icon.
 					<ConversationAvatarStack participants={others} className="mt-1 w-[46px]" />
 				) : lead ? (

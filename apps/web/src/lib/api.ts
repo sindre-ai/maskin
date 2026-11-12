@@ -2908,6 +2908,8 @@ export interface ConversationListItemResponse {
 	createdBy: string
 	/** Set on the direct message (DM) of a pair, null on every topical chat. The list tells the two apart by this alone. */
 	directPairKey?: string | null
+	/** 'free' for a room a person made, 'flow' for the chat about a flow, null for every other chat. The Rooms group is every chat with a value. */
+	roomKind?: 'free' | 'flow' | null
 	lastMessageAt: string | null
 	createdAt: string | null
 	updatedAt: string | null
@@ -2933,6 +2935,13 @@ export interface ConversationDetailResponse {
 	workspaceId: string
 	title: string
 	createdBy: string
+	/** Set on the direct message (DM) of a pair, null on every topical chat. */
+	directPairKey?: string | null
+	/** See ConversationListItemResponse.roomKind. */
+	roomKind?: 'free' | 'flow' | null
+	/** The flow or object this chat is about, null on an ordinary chat. */
+	subjectType?: 'object' | 'loop' | null
+	subjectId?: string | null
 	lastMessageAt: string | null
 	createdAt: string | null
 	updatedAt: string | null
@@ -3324,12 +3333,18 @@ export interface CreateConversationInput {
 	participant_actor_ids: string[]
 	/** Open the pair's one direct message instead of a new topical chat. */
 	direct?: boolean
+	/** Make the new chat a room: a named, long-lived chat in the list's Rooms group. */
+	room?: boolean
 	initial_message?: string
 	initial_message_metadata?: MessageMetadata
 }
 
 export interface UpdateConversationInput {
-	title: string
+	title?: string
+	/** Make this chat a room, or turn a room back into a plain chat. */
+	room?: boolean
+	/** Make the chat about a flow that already exists. Only a chat with no subject yet. */
+	subject?: { type: 'object' | 'loop'; id: string }
 }
 
 export interface UpdateConversationParticipantStateInput {

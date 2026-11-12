@@ -93,6 +93,22 @@ describe('ConversationListRow', () => {
 		expect(screen.queryByText('Some old topic')).not.toBeInTheDocument()
 	})
 
+	it('marks a free-form room with a square tile instead of people', () => {
+		renderRow(buildConversation({ title: 'W46', roomKind: 'free' }))
+		expect(screen.getByRole('img', { name: 'Room' })).toBeInTheDocument()
+		expect(screen.getByText('W46')).toBeInTheDocument()
+	})
+
+	it('marks the chat about a flow as a flow room', () => {
+		renderRow(buildConversation({ title: 'Weekly review', roomKind: 'flow' }))
+		expect(screen.getByRole('img', { name: 'Flow room' })).toBeInTheDocument()
+	})
+
+	it('shows no room tile on an ordinary chat', () => {
+		renderRow(buildConversation())
+		expect(screen.queryByRole('img', { name: /room/i })).not.toBeInTheDocument()
+	})
+
 	it('keeps the title of a topical chat with the same two people', () => {
 		renderRow(buildConversation({ title: 'Billing retries', directPairKey: null }))
 		expect(screen.getByText('Billing retries')).toBeInTheDocument()

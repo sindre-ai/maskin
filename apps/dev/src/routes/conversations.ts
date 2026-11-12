@@ -464,6 +464,36 @@ async function findSubjectConversation(
 	return row
 }
 
+// Whether each chat is a room, for the chat list's Rooms group: 'free' when a person made it a
+// room, 'flow' when it is the chat about a flow (an object of type loop), whatever the room flag
+// says. Chats that are neither are left out of the map.
+async function loadRoomKinds(
+	db: Database,
+	rows: Array<
+		Pick<typeof conversations.$inferSelect, 'id' | 'isRoom' | 'subjectType' | 'subjectId'>
+	>,
+): Promise<Map<string, 'free' | 'flow'>> {
+	const flowIds = Array.from(
+		new Set(rows.flatMap((r) => (r.subjectType === 'object' && r.subjectId ? [r.subjectId] : []))),
+	)
+	const flows = new Set(
+		flowIds.length === 0
+			? []
+			: (
+					await db
+						.select({ id: objects.id })
+						.from(objects)
+						.where(and(inArray(objects.id, flowIds), eq(objects.type, 'loop')))
+				).map((o) => o.id),
+	)
+	const kinds = new Map<string, 'free' | 'flow'>()
+	for (const r of rows) {
+		if (r.subjectType === 'object' && r.subjectId && flows.has(r.subjectId)) kinds.set(r.id, 'flow')
+		else if (r.isRoom) kinds.set(r.id, 'free')
+	}
+	return kinds
+}
+
 // Asking for a subject's chat again puts the asker (and anyone they named) in
 // it: new people are added, people who left come back.
 async function joinSubjectConversation(
@@ -514,8 +544,10 @@ async function conversationDetailForCaller(
 	const participants = (await loadParticipantsByConversation(db, [conversation.id])).get(
 		conversation.id,
 	)
+	const roomKinds = await loadRoomKinds(db, [conversation])
 	return {
 		...serialize(conversation),
+		roomKind: roomKinds.get(conversation.id) ?? null,
 		title: directChatTitleForViewer(conversation, participants ?? [], callerId),
 		pinned: mine?.pinned ?? false,
 		archived: mine?.archived ?? false,
@@ -609,6 +641,17 @@ app.openapi(createConversationRoute, (async (c) => {
 		)
 	}
 
+	if (body.room && (body.direct || body.subject)) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				'A room is a new chat of its own: not a direct message, and not about a subject',
+				[{ field: 'room', message: 'Leave out direct and subject, or leave out room' }],
+			),
+			400,
+		)
+	}
+
 	if (body.subject) {
 		const { type, id } = body.subject
 		const [target] =
@@ -689,6 +732,7 @@ app.openapi(createConversationRoute, (async (c) => {
 						createdBy: callerId,
 						subjectType: body.subject?.type ?? null,
 						subjectId: body.subject?.id ?? null,
+						isRoom: body.room ?? false,
 					})
 					.returning()
 			}
@@ -781,6 +825,7 @@ app.openapi(createConversationRoute, (async (c) => {
 	return c.json(
 		{
 			...serialize(conversation),
+			roomKind: (await loadRoomKinds(db, [conversation])).get(conversation.id) ?? null,
 			title: directChatTitleForViewer(conversation, createdParticipants, callerId),
 			pinned: false,
 			archived: false,
@@ -863,10 +908,19 @@ app.openapi(listConversationsRoute, (async (c) => {
 	)`
 	if (query.unread_only) conditions.push(hasUnread)
 	if (query.scope) {
+		// Rooms are always listed in full too: a room never leaves the list for being quiet.
+		const isRoom = sql`(
+			conversations.is_room
+			OR (conversations.subject_type = 'object' AND EXISTS (
+				SELECT 1 FROM objects o
+				WHERE o.id = conversations.subject_id AND o.type = 'loop'
+			))
+		)`
 		const isPriority = or(
 			isNotNull(conversations.directPairKey),
 			eq(conversationParticipants.pinned, true),
 			hasUnread,
+			isRoom,
 		) as SQL
 		conditions.push(query.scope === 'priority' ? isPriority : not(isPriority))
 	}
@@ -891,41 +945,51 @@ app.openapi(listConversationsRoute, (async (c) => {
 	const page = rows.slice(0, query.limit)
 	const conversationIds = page.map((r) => r.conversation.id)
 
-	const [participantsByConversation, unreadRows, snippetByConversation, workingByConversation] =
-		await Promise.all([
-			loadParticipantsByConversation(db, conversationIds),
-			conversationIds.length === 0
-				? Promise.resolve([])
-				: db
-						.select({
-							conversationId: messages.conversationId,
-							unreadCount: sql<number>`count(*)::int`,
-						})
-						.from(messages)
-						.innerJoin(
-							conversationParticipants,
-							and(
-								eq(conversationParticipants.conversationId, messages.conversationId),
-								eq(conversationParticipants.actorId, callerId),
-							),
-						)
-						.where(
-							and(
-								inArray(messages.conversationId, conversationIds),
-								ne(messages.actorId, callerId),
-								sql`${messages.id} > COALESCE(${conversationParticipants.lastReadMessageId}, 0)`,
-							),
-						)
-						.groupBy(messages.conversationId),
-			loadLatestSnippets(db, conversationIds),
-			loadWorkingActorsByConversation(db, conversationIds),
-		])
+	const [
+		participantsByConversation,
+		unreadRows,
+		snippetByConversation,
+		workingByConversation,
+		roomKinds,
+	] = await Promise.all([
+		loadParticipantsByConversation(db, conversationIds),
+		conversationIds.length === 0
+			? Promise.resolve([])
+			: db
+					.select({
+						conversationId: messages.conversationId,
+						unreadCount: sql<number>`count(*)::int`,
+					})
+					.from(messages)
+					.innerJoin(
+						conversationParticipants,
+						and(
+							eq(conversationParticipants.conversationId, messages.conversationId),
+							eq(conversationParticipants.actorId, callerId),
+						),
+					)
+					.where(
+						and(
+							inArray(messages.conversationId, conversationIds),
+							ne(messages.actorId, callerId),
+							sql`${messages.id} > COALESCE(${conversationParticipants.lastReadMessageId}, 0)`,
+						),
+					)
+					.groupBy(messages.conversationId),
+		loadLatestSnippets(db, conversationIds),
+		loadWorkingActorsByConversation(db, conversationIds),
+		loadRoomKinds(
+			db,
+			page.map((r) => r.conversation),
+		),
+	])
 
 	const unreadByConversation = new Map(unreadRows.map((r) => [r.conversationId, r.unreadCount]))
 
 	return c.json({
 		conversations: page.map((r) => ({
 			...serialize(r.conversation),
+			roomKind: roomKinds.get(r.conversation.id) ?? null,
 			title: directChatTitleForViewer(
 				r.conversation,
 				participantsByConversation.get(r.conversation.id) ?? [],
@@ -1096,12 +1160,14 @@ app.openapi(getConversationRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
 	}
 
-	const [participantsByConversation, unreadByConversation] = await Promise.all([
+	const [participantsByConversation, unreadByConversation, roomKinds] = await Promise.all([
 		loadParticipantsByConversation(db, [id]),
 		loadUnreadCounts(db, callerId, [id]),
+		loadRoomKinds(db, [row.conversation]),
 	])
 	return c.json({
 		...serialize(row.conversation),
+		roomKind: roomKinds.get(id) ?? null,
 		title: directChatTitleForViewer(
 			row.conversation,
 			participantsByConversation.get(id) ?? [],
@@ -1121,7 +1187,7 @@ const updateConversationRoute = createRoute({
 	path: '/{id}',
 	'x-viewer-policy': 'writer',
 	tags: ['Conversations'],
-	summary: 'Rename a conversation or change its tags',
+	summary: 'Rename a conversation, change its tags, make it a room, or make it about a flow',
 	request: {
 		headers: workspaceIdHeader,
 		params: idParamSchema,
@@ -1150,6 +1216,62 @@ app.openapi(updateConversationRoute, (async (c) => {
 	}
 
 	const tags = body.tags === undefined ? undefined : normalizeTags(body.tags)
+
+	// A direct message is the pair's one chat: it is never a room and never about a subject.
+	if (row.conversation.directPairKey && (body.room === true || body.subject)) {
+		return c.json(
+			createApiError('BAD_REQUEST', 'A direct message cannot be a room or be about a subject', [
+				{
+					field: body.room === true ? 'room' : 'subject',
+					message: 'Not allowed on a direct message',
+				},
+			]),
+			400,
+		)
+	}
+
+	if (body.subject) {
+		const { type, id: subjectId } = body.subject
+		if (row.conversation.subjectId) {
+			return c.json(
+				createApiError('BAD_REQUEST', 'This chat is already about something', [
+					{ field: 'subject', message: 'A chat has one subject, and it is already set' },
+				]),
+				400,
+			)
+		}
+		const [target] =
+			type === 'object'
+				? await db
+						.select({ id: objects.id })
+						.from(objects)
+						.where(and(eq(objects.id, subjectId), eq(objects.workspaceId, workspaceId)))
+						.limit(1)
+				: await db
+						.select({ id: installedLoops.id })
+						.from(installedLoops)
+						.where(
+							and(eq(installedLoops.id, subjectId), eq(installedLoops.workspaceId, workspaceId)),
+						)
+						.limit(1)
+		if (!target) {
+			return c.json(
+				createApiError('BAD_REQUEST', 'The subject was not found in this workspace', [
+					{ field: 'subject', message: `No ${type} with id ${subjectId}` },
+				]),
+				400,
+			)
+		}
+		if (await findSubjectConversation(db, workspaceId, body.subject)) {
+			return c.json(
+				createApiError('CONFLICT', 'Another chat is already about this subject', [
+					{ field: 'subject', message: `No second chat for ${type} ${subjectId}` },
+				]),
+				409,
+			)
+		}
+	}
+
 	const [updated] = await db
 		.update(conversations)
 		.set({
@@ -1158,6 +1280,8 @@ app.openapi(updateConversationRoute, (async (c) => {
 			// overwrite whatever they just typed. A tags-only change leaves the title alone.
 			...(body.title !== undefined && { title: body.title, titleAutoState: 'manual' }),
 			...(tags !== undefined && { tags }),
+			...(body.room !== undefined && { isRoom: body.room }),
+			...(body.subject && { subjectType: body.subject.type, subjectId: body.subject.id }),
 			updatedAt: new Date(),
 		})
 		.where(eq(conversations.id, id))
@@ -1173,15 +1297,19 @@ app.openapi(updateConversationRoute, (async (c) => {
 		data: {
 			...(body.title !== undefined && { title: body.title }),
 			...(tags !== undefined && { tags }),
+			...(body.room !== undefined && { room: body.room }),
+			...(body.subject && { subject: body.subject }),
 		},
 	})
 
-	const [participantsByConversation, unreadByConversation] = await Promise.all([
+	const [participantsByConversation, unreadByConversation, roomKinds] = await Promise.all([
 		loadParticipantsByConversation(db, [id]),
 		loadUnreadCounts(db, callerId, [id]),
+		loadRoomKinds(db, [updated]),
 	])
 	return c.json({
 		...serialize(updated),
+		roomKind: roomKinds.get(id) ?? null,
 		pinned: row.participant.pinned,
 		archived: row.participant.archived,
 		unread_count: unreadByConversation.get(id) ?? 0,

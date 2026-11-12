@@ -48,6 +48,8 @@ interface NewChatSearch {
 	notificationTitle?: string
 	/** Text that fills the message box. Nothing is sent until the viewer sends it. */
 	text?: string
+	/** Start a room: a named chat that stays in the list's Rooms group. */
+	room?: boolean
 }
 
 export const Route = createFileRoute('/_authed/$workspaceId/chats/new')({
@@ -63,6 +65,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/chats/new')({
 		notificationTitle:
 			typeof search.notificationTitle === 'string' ? search.notificationTitle : undefined,
 		text: typeof search.text === 'string' ? search.text : undefined,
+		room: search.room === true || search.room === 'true' ? true : undefined,
 	}),
 })
 
@@ -75,8 +78,9 @@ interface Recipient {
 const MAX_SUGGESTIONS = 6
 
 function NewChatRoute() {
-	useDocumentTitle('New chat')
 	const search = Route.useSearch()
+	const isRoom = search.room === true
+	useDocumentTitle(isRoom ? 'New room' : 'New chat')
 	const { workspaceId } = useWorkspace()
 	const richText = useFeatureFlag('chat-formatting')
 	const navigate = useNavigate()
@@ -86,6 +90,7 @@ function NewChatRoute() {
 	const defaultAgent = useDefaultChatAgent()
 	const currentActor = getStoredActor()
 
+	const [roomName, setRoomName] = useState('')
 	const [pickedIds, setPickedIds] = useState<string[]>([])
 	const [selection, dispatchSelection] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
 	const [error, setError] = useState<string | null>(null)
@@ -300,6 +305,11 @@ function NewChatRoute() {
 			setError(message)
 			throw new Error(message)
 		}
+		if (isRoom && roomName.trim() === '') {
+			const message = 'Name the room'
+			setError(message)
+			throw new Error(message)
+		}
 		setError(null)
 
 		const metadata: MessageMetadata = {}
@@ -328,8 +338,11 @@ function NewChatRoute() {
 
 		try {
 			const conversation = await createConversation.mutateAsync({
-				title: deriveConversationTitle(content, picked[0]?.name ?? 'New chat'),
+				title: isRoom
+					? roomName.trim()
+					: deriveConversationTitle(content, picked[0]?.name ?? 'New chat'),
 				participant_actor_ids: picked.map((r) => r.id),
+				...(isRoom ? { room: true } : {}),
 				// An attachments-only send has empty text; the API accepts that when attachments ride along.
 				...(content || metadata.attachments ? { initial_message: content } : {}),
 				...((content || metadata.attachments) && Object.keys(metadata).length > 0
@@ -367,9 +380,30 @@ function NewChatRoute() {
 					Chats
 				</Link>
 			</div>
-			<h1 className="page-title mt-2 max-md:sr-only">New chat</h1>
+			<h1 className="page-title mt-2 max-md:sr-only">{isRoom ? 'New room' : 'New chat'}</h1>
 
-			<section aria-label="To" className="relative mt-8 flex flex-col">
+			{isRoom ? (
+				<section
+					aria-label="Name"
+					className="mt-8 flex items-center gap-1.5 border-b border-border"
+				>
+					<span className="pr-1 text-sm text-muted-foreground">Name:</span>
+					<Input
+						value={roomName}
+						onChange={(e) => {
+							setRoomName(e.target.value)
+							setError(null)
+						}}
+						maxLength={200}
+						aria-label="Room name"
+						placeholder="What the room is for"
+						autoComplete="off"
+						className="h-12 flex-1 border-0 bg-transparent px-0 text-[15px] shadow-none focus-visible:ring-0"
+					/>
+				</section>
+			) : null}
+
+			<section aria-label="To" className={cn('relative flex flex-col', isRoom ? 'mt-0' : 'mt-8')}>
 				{/* biome-ignore lint/a11y/useKeyWithClickEvents: a click anywhere in the field focuses its input; the input itself is the keyboard path */}
 				<div
 					onClick={() => toInputRef.current?.focus()}

@@ -1169,6 +1169,11 @@ export const conversations = pgTable(
 		// written only through PATCH /api/conversations/:id (strict) and read through
 		// normalizeTags. Same shape as a flow's metadata.tags and an agent's metadata.tags.
 		tags: jsonb('tags').notNull().default(sql`'[]'::jsonb`),
+		// A named, long-lived chat a person set up on purpose, shown in the chat list's Rooms group
+		// and never dropped from it for being quiet. False for every chat until someone says
+		// otherwise ("New room", "Make this a room"); no back-fill. A chat whose subject is a flow
+		// is a room too, without this being set (see roomKind in routes/conversations.ts).
+		isRoom: boolean('is_room').notNull().default(false),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	},
