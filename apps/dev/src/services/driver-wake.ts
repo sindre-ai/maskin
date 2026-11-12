@@ -49,7 +49,7 @@ import {
 	type DriverWakeReason,
 	trackDriverWoken,
 } from '../lib/analytics/driver-woken-events'
-import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
+import { FLAGS, getFeatureFlagConfig, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { logger } from '../lib/logger'
 import { getLiveNextStep } from '../lib/next-steps'
 import { GATE_BOOKKEEPING_ACTIONS, SessionNotAdmittedError } from './self-start-limits'
@@ -257,6 +257,15 @@ export class DriverWaker {
 		return isFlagEnabledForWorkspace(workspaceId, FLAGS.DRIVER_WAKE)
 	}
 
+	/** Whether any workspace has the flag. The flag list comes from the environment, so it holds until a restart. */
+	private anyWorkspaceEnabled(): boolean {
+		const suffix = `:${FLAGS.DRIVER_WAKE}`
+		for (const entry of getFeatureFlagConfig().workspaceFeatures) {
+			if (entry.endsWith(suffix)) return true
+		}
+		return false
+	}
+
 	// ── Finding what to wake ────────────────────────────────────────────────
 
 	async onStatusChanged(event: PgEvent): Promise<void> {
@@ -358,6 +367,7 @@ export class DriverWaker {
 
 	/** Cards the driver posted that ran out with no answer since the last look. */
 	async scanExpiredDecisions(): Promise<void> {
+		if (!this.anyWorkspaceEnabled()) return
 		const now = this.now()
 		const from = this.lastDecisionScan
 		this.lastDecisionScan = now

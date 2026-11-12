@@ -485,6 +485,16 @@ describe('DriverWaker', () => {
 			expect(startSessionMock).not.toHaveBeenCalled()
 		})
 
+		it('does not read any events when no workspace has the flag', async () => {
+			setFlag(false)
+			const select = vi.spyOn(db, 'select')
+
+			await waker.scanExpiredDecisions()
+
+			expect(select).not.toHaveBeenCalled()
+			select.mockRestore()
+		})
+
 		it('does not wake for a card that has not expired', async () => {
 			const bet = await makeObject('bet', 'active')
 			await card(bet.id, new Date(Date.now() + 3 * 60 * MINUTE))
