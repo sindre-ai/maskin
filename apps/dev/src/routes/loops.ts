@@ -201,7 +201,7 @@ function readLoopTargets(meta: Record<string, unknown>): LoopTarget[] | null {
 const HIDDEN_TARGET_STATUSES = ['dropped', 'archived']
 
 type TargetObjectRow = {
-	title: string
+	title: string | null
 	driver: string | null
 	metadata: unknown
 }
