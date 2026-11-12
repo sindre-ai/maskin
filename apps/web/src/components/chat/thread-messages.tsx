@@ -84,6 +84,8 @@ interface ThreadMessagesProps {
 	sendingStep?: boolean
 	/** Opens the reply thread rooted at this message id. Without it bubbles have no Reply action. */
 	onOpenReplies?: (rootId: number) => void
+	/** Opens the edit card on this message, as if its pencil was tapped. One request per nonce. */
+	editRequest?: { messageId: number; nonce: number } | null
 }
 
 export function ThreadMessages({
@@ -95,6 +97,7 @@ export function ThreadMessages({
 	onSendStep,
 	sendingStep = false,
 	onOpenReplies,
+	editRequest,
 }: ThreadMessagesProps) {
 	const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
 		useConversationMessages(conversationId, workspaceId)
@@ -591,6 +594,9 @@ export function ThreadMessages({
 										questionAnswered={answeredQuestionIds.has(message.id)}
 										spawnInfo={spawnByMessageId.get(message.id)}
 										onRetried={handleRetried}
+										editRequestNonce={
+											editRequest?.messageId === message.id ? editRequest.nonce : undefined
+										}
 										onReplyInThread={
 											onOpenReplies
 												? () => onOpenReplies(message.threadRootId ?? message.id)
