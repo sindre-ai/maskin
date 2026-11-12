@@ -78,6 +78,8 @@ describe('capturePosthogEvent', () => {
 			surface: 'backend',
 			actor_type: 'system',
 			is_team: false,
+			internal: false,
+			paying: false,
 			feature_area: 'integrations',
 			$process_person_profile: false,
 		})
