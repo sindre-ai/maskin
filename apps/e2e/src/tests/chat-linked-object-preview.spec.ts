@@ -99,21 +99,22 @@ test.describe('Chat — a message that links to a draft shows what the draft say
 			}
 		})
 
-		test(`an event linked inside a sentence gets a card under the message at ${vp.label}`, async ({
+		test(`an insight linked inside a sentence gets a card under the message at ${vp.label}`, async ({
 			page,
 			account,
 		}) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 
-			const event = await account.api.createObject(account.workspaceId, {
-				type: 'event',
+			// A fresh workspace has no event type (createObject answers 400), so the insight stands in.
+			const insight = await account.api.createObject(account.workspaceId, {
+				type: 'insight',
 				title: 'Webinar on product discovery',
-				status: 'planned',
+				status: 'new',
 				content: 'Public title: Product discovery with AI agents.',
 			})
 			const conversation = await chatWithAgentMessage(
 				account,
-				(ws) => `Filed: [the webinar](/${ws}/objects/${event.id}), Wed 18 Nov, as planned.`,
+				(ws) => `Filed: [the webinar](/${ws}/objects/${insight.id}), Wed 18 Nov, as planned.`,
 			)
 
 			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
@@ -124,7 +125,7 @@ test.describe('Chat — a message that links to a draft shows what the draft say
 			await expect(card).toBeVisible({ timeout: 10_000 })
 			await expect(card).toContainText('Webinar on product discovery')
 			await expect(thread.getByText('Product discovery with AI agents.')).toHaveCount(0)
-			// Opening it shows the text, which can be edited in place; an event has nothing to approve.
+			// Opening it shows the text, which can be edited in place; an insight has nothing to approve.
 			await card.getByText('Webinar on product discovery').click()
 			await expect(thread.getByText('Product discovery with AI agents.')).toBeVisible()
 			await expect(thread.getByRole('button', { name: /Approve/ })).toHaveCount(0)
@@ -175,9 +176,9 @@ test.describe('Chat — a message that links to a draft shows what the draft say
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 
 			const contact = await account.api.createObject(account.workspaceId, {
-				type: 'insight',
+				type: 'contact',
 				title: 'Catja Nielsen',
-				status: 'new',
+				status: 'new_lead',
 				content: 'Head of operations at the merged company.',
 			})
 			const conversation = await chatWithAgentMessage(
