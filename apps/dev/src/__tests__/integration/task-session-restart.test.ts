@@ -28,6 +28,7 @@ const { startSessionMock } = vi.hoisted(() => ({
 			config?: Record<string, unknown>
 			initiatedFromObjectId: string | null
 			parentSessionId?: string
+			triggerId?: string
 		}) => ({ sessionId: '', state: 'queued', createdAt: new Date() }),
 	),
 }))
@@ -62,11 +63,13 @@ describe('TaskSessionRestarter', () => {
 		ctoId = cto.id
 		triggerId = (await insertTrigger(db, workspaceId, actorId, developerId)).id
 		now = new Date()
-		// Stand-in for the real startSession: inserts the live row the new session would have.
+		// Stand-in for the real startSession: inserts the live row the new session would have,
+		// including the trigger id the real one stores, so a restart is itself a trigger session.
 		startSessionMock.mockImplementation(async (input) => {
 			const started = await insertSession(db, workspaceId, developerId, actorId, {
 				status: 'running',
 				config: input.config ?? {},
+				triggerId: input.triggerId ?? null,
 				initiatedFromObjectId: input.initiatedFromObjectId,
 			})
 			return { sessionId: started.id, state: 'queued', createdAt: new Date() }
