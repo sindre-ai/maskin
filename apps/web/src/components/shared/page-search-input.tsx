@@ -19,7 +19,8 @@ import { useEffect, useRef, useState } from 'react'
  *
  * `debounceMs` holds typing back from `onChange` for pages whose search is a
  * server filter (Items), while the field itself stays responsive. A change of
- * `value` from outside (a removed filter pill) replaces the text.
+ * `value` from outside (a removed filter pill) replaces the text. Esc clears the text and
+ * leaves the field, so the list is not left filtered.
  */
 export function PageSearchInput({
 	value,
@@ -101,7 +102,10 @@ export function PageSearchInput({
 				value={text}
 				onChange={(e) => handleChange(e.target.value)}
 				onKeyDown={(e) => {
-					if (e.key === 'Escape') setOpen(false)
+					if (e.key === 'Escape') {
+						handleChange('')
+						setOpen(false)
+					}
 				}}
 				placeholder={label}
 				aria-label={label}
@@ -134,7 +138,10 @@ export function PageSearchInput({
 					onFocus={() => setWideOpen(true)}
 					onBlur={() => setWideOpen(false)}
 					onKeyDown={(e) => {
-						if (e.key === 'Escape') e.currentTarget.blur()
+						if (e.key === 'Escape') {
+							handleChange('')
+							e.currentTarget.blur()
+						}
 					}}
 					placeholder={label}
 					aria-label={label}
