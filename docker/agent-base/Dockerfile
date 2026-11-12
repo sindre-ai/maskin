@@ -44,7 +44,7 @@ RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 # Claude Code releases — the interactive chat session parses these lines
 # verbatim, so a silent CLI bump can break parsing. Bump this deliberately
 # after re-validating the stream-json fixtures.
-RUN npm install -g @anthropic-ai/claude-code@2.1.285
+RUN npm install -g @anthropic-ai/claude-code@2.1.322
 
 # Pre-install GitHub MCP server (static Go binary from the github-mcp stage).
 # Baked in because sessions are microVMs with no Docker daemon. The --version

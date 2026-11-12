@@ -92,7 +92,7 @@ export async function readSessionStdoutChunks(db: Database, sessionId: string): 
  * An interactive session emits one `result` per turn, and the CLI reports the
  * token counts and `duration_ms` for that turn alone while `total_cost_usd`
  * runs cumulatively across the process (checked against Claude Code 2.1.285
- * with two turns in one process). So tokens and duration are added up and the
+ * and again against 2.1.322, with two turns in one process). So tokens and duration are added up and the
  * cost is the last figure seen. Reading only the last envelope, as
  * `parseUsageFromLogChunks` does, keeps one turn's tokens for a whole chat.
  * Returns null when no envelope is found.
