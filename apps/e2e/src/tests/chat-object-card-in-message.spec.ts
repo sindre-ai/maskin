@@ -75,7 +75,7 @@ test.describe('Chat — a link to an object is a card or a chip with type and st
 
 			// A contact keeps the reference card: type, text and owner, from the object itself.
 			const contactCard = cards.filter({ hasText: 'Catja Nielsen' })
-			await expect(contactCard).toContainText('Contact')
+			await expect(contactCard).toContainText('Person')
 			await expect(contactCard).toContainText('explains what this contact is about')
 			await expect(contactCard).toContainText('Card QA Agent')
 
