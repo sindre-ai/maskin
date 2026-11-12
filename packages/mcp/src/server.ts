@@ -4454,6 +4454,46 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'set_next_step',
+		{
+			description: tools.set_next_step.description,
+			inputSchema: tools.set_next_step.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, object_id, ...body } = args
+			const result = await apiCall(config, 'POST', `/api/objects/${object_id}/next-step`, body, {
+				workspaceId: workspace_id,
+			})
+			return {
+				_meta: meta('set_next_step', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'update_next_step',
+		{
+			description: tools.update_next_step.description,
+			inputSchema: tools.update_next_step.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, object_id, ...body } = args
+			const result = await apiCall(config, 'PATCH', `/api/objects/${object_id}/next-step`, body, {
+				workspaceId: workspace_id,
+			})
+			return {
+				_meta: meta('update_next_step', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'delete_object',
 		{
 			description: tools.delete_object.description,
