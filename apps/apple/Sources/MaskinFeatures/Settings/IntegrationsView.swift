@@ -212,8 +212,12 @@ struct IntegrationsView: View {
 		store.connectedAccounts(query: query, category: category).map { integration in
 			PageRowModel(
 				id: integration.id, title: store.displayName(for: integration),
-				subtitle: WorkspacePageState.integrationSubtitle(
-					integration.state, account: store.accountLabel(for: integration)),
+				subtitle: integration.state == .connected
+					? integration.note
+						?? WorkspacePageState.integrationSubtitle(
+							integration.state, account: store.accountLabel(for: integration))
+					: WorkspacePageState.integrationSubtitle(
+						integration.state, account: store.accountLabel(for: integration)),
 				accessory: .state(
 					isConnecting(integration.provider)
 						? WorkspacePageState.integrationConnecting
