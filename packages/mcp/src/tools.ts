@@ -1235,11 +1235,31 @@ export const tools = {
 	},
 	list_files: {
 		description:
-			'List files in the workspace, newest first. Pass `q` to filter by name substring, `kind: "briefing"` to list only the briefings shown in For you, or `tags` to find files by tag (`tags_match: "all"`, the default, keeps files that carry every listed tag; "any" keeps files that carry at least one). Each file in the result shows its `tags`. Call list_file_tags to see which tags exist. Any file in the workspace is listed, including ones attached to a chat message; when a name search finds nothing, narrow by tag or page on with `next_cursor` rather than asking for a re-upload. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List files in the workspace, newest first. Pass `q` to filter by name substring, `kind: "briefing"` to list only the briefings shown in For you, or `tags` to find files by tag (`tags_match: "all"`, the default, keeps files that carry every listed tag; "any" keeps files that carry at least one). Each file in the result shows its `tags`. Call list_file_tags to see which tags exist. Any file in the workspace is listed, including ones attached to a chat message; when a name search finds nothing, narrow by tag or page on with `next_cursor` rather than asking for a re-upload. To see which files belong to one chat, pass `conversation_id` (a chat you are in): it returns the 50 newest files attached to messages in that chat, each with name, mime type, size, who attached it and when, plus `total` and `omitted` for the rest, however old the chat is. Narrow it with `type` (a mime type or prefix, e.g. "video") and `uploaded_by` (an actor id). With `conversation_id` the other filters and paging do not apply. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			q: z.string().optional().describe('Case-insensitive substring match on file name.'),
 			kind: z.enum(['briefing']).optional().describe('Only files of this kind.'),
+			conversation_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'List the files attached to messages in this chat instead of the whole workspace. Only chats you are in.',
+				),
+			type: z
+				.string()
+				.optional()
+				.describe(
+					'With conversation_id: only files whose mime type starts with this, e.g. "video" or "application/pdf".',
+				),
+			uploaded_by: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'With conversation_id: only files attached by this actor (see get_conversation).',
+				),
 			tags: z
 				.array(z.string())
 				.max(20)
