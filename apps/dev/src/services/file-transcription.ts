@@ -9,7 +9,12 @@ import { workspaceAiUsage } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { evictBillingUsage } from '../lib/billing-usage-cache'
 import { logger } from '../lib/logger'
-import { type TranscribeResult, readTranscriptionModel, transcribeAudio } from './transcription'
+import {
+	type TranscribeResult,
+	type TranscriptSegment,
+	readTranscriptionModel,
+	transcribeAudio,
+} from './transcription'
 
 // Transcribes an uploaded audio or video file for the `transcribe_file` MCP tool.
 //
@@ -63,7 +68,13 @@ export class FileTranscriptionError extends Error {
 }
 
 export interface FileTranscriptionResult {
+	/**
+	 * The transcript. With timed segments it is one line per speaker turn,
+	 * `[mm:ss] Speaker: text`; without them it is the plain text joined in order.
+	 */
 	text: string
+	/** True when `text` carries timestamps and speaker labels. */
+	timed: boolean
 	/** Seconds of audio transcribed. */
 	audioSeconds: number
 	chunks: number
@@ -253,6 +264,47 @@ function isRetryable(result: Extract<TranscribeResult, { ok: false }>): boolean 
 	)
 }
 
+function formatClock(totalSeconds: number): string {
+	const s = Math.floor(totalSeconds)
+	const h = Math.floor(s / 3600)
+	const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0')
+	const ss = String(s % 60).padStart(2, '0')
+	return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`
+}
+
+/** `speaker_0` -> `Speaker 1`; labels the provider already made readable are kept. */
+function speakerName(label: string): string {
+	const match = /^speaker[_ -]?(\d+)$/i.exec(label)
+	return match ? `Speaker ${Number(match[1]) + 1}` : label
+}
+
+/**
+ * One line per speaker turn: consecutive segments by the same speaker are merged.
+ * `chunkOffsets` are each chunk's start in the whole recording, because every
+ * chunk's own times begin at zero.
+ */
+export function formatTimedTranscript(
+	chunks: { offsetSeconds: number; segments: TranscriptSegment[] }[],
+): string {
+	const lines: { start: number; speaker: string | null; text: string }[] = []
+	for (const chunk of chunks) {
+		for (const seg of chunk.segments) {
+			const last = lines[lines.length - 1]
+			// Only a named speaker's consecutive segments are one turn; without labels every
+			// segment keeps its own timestamp.
+			if (last && seg.speaker !== null && last.speaker === seg.speaker) last.text += ` ${seg.text}`
+			else
+				lines.push({ start: chunk.offsetSeconds + seg.start, speaker: seg.speaker, text: seg.text })
+		}
+	}
+	return lines
+		.map((l) => {
+			const who = l.speaker === null ? '' : `${speakerName(l.speaker)}: `
+			return `[${formatClock(l.start)}] ${who}${l.text}`
+		})
+		.join('\n')
+}
+
 /** Seconds of audio in one of our own chunks, from its size. */
 function wavSeconds(sizeBytes: number): number {
 	return Math.max(0, sizeBytes - WAV_HEADER_BYTES) / WAV_BYTES_PER_SECOND
@@ -336,11 +388,33 @@ export async function transcribeStoredFile(
 		}
 		if (chunks.length > MAX_CHUNKS) throw tooLong(durationSeconds)
 
-		const texts = await mapPool(chunks, CHUNK_CONCURRENCY, async (chunkPath) => {
+		// Speakers and timestamps are requested first. A model that refuses (a 400) is
+		// stepped down to timestamps only, then to plain text, rather than failing the file.
+		let detail: 'speakers' | 'timestamps' | undefined = 'speakers'
+		const parts = await mapPool(chunks, CHUNK_CONCURRENCY, async (chunkPath, index) => {
 			const bytes = await readFile(chunkPath)
 			const audioBase64 = bytes.toString('base64')
 			for (let attempt = 1; ; attempt++) {
-				const result = await transcribeAudio({ audioBase64, language: input.language })
+				// Chunks run concurrently, so what THIS request asked for decides the step
+				// down: another chunk may already have lowered the shared level.
+				const asked = detail
+				const result = await transcribeAudio({
+					audioBase64,
+					language: input.language,
+					detail: asked,
+				})
+				if (!result.ok && asked && result.reason === 'upstream_error' && result.status === 400) {
+					const next = asked === 'speakers' ? 'timestamps' : undefined
+					logger.warn('file-transcription: the model refused the request, stepping down', {
+						fileId: input.file.id,
+						model,
+						from: asked,
+						to: next ?? 'plain text',
+					})
+					if (detail === asked) detail = next
+					attempt--
+					continue
+				}
 				if (result.ok) {
 					const seconds = result.audioSeconds ?? wavSeconds(bytes.byteLength)
 					if (result.costUsd === null) {
@@ -351,15 +425,33 @@ export async function transcribeStoredFile(
 					}
 					costUsd += result.costUsd ?? seconds * FALLBACK_USD_PER_AUDIO_SECOND
 					audioSeconds += seconds
-					return result.text
+					return {
+						text: result.text,
+						segments: result.segments ?? [],
+						offsetSeconds: index * TRANSCRIBE_CHUNK_SECONDS,
+					}
 				}
 				if (attempt >= 2 || !isRetryable(result)) throw failureFor(result)
 				await sleep(RETRY_DELAY_MS)
 			}
 		})
 
+		const timed = parts.some((p) => p.segments.length > 0)
+		const plain = parts
+			.map((p) => p.text)
+			.filter((t) => t.length > 0)
+			.join(' ')
+		let text = plain
+		if (timed) {
+			text = formatTimedTranscript(parts)
+			if (chunks.length > 1 && parts.some((p) => p.segments.some((s) => s.speaker !== null))) {
+				text = `Note: speaker numbers were assigned separately for each ${TRANSCRIBE_CHUNK_SECONDS / 60}-minute section, so "Speaker 1" in one section may not be the same person in another.\n\n${text}`
+			}
+		}
+
 		return {
-			text: texts.filter((t) => t.length > 0).join(' '),
+			text,
+			timed,
 			audioSeconds,
 			chunks: chunks.length,
 			model,

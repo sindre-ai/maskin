@@ -194,6 +194,10 @@ const transcribeFileResponse = z
 				'Null when the transcript was saved: read the file. Set only when saving failed (the whole transcript) or no speech was found (empty).',
 		}),
 		next_step: z.string().openapi({ description: 'What to do with this result.' }),
+		timed: z.boolean().openapi({
+			description:
+				'True when the transcript has timestamps and speaker labels; false when the model returned plain text only.',
+		}),
 		audio_seconds: z.number(),
 		chunks: z.number().int(),
 		model: z.string(),
@@ -349,6 +353,7 @@ app.openapi(postFileTranscriptionRoute, async (c) => {
 					: result.text === ''
 						? 'No speech was found in this recording, so no transcript file was saved.'
 						: 'The transcript could not be saved as a file, so the whole text is in `text`.',
+				timed: result.timed,
 				audio_seconds: Math.round(result.audioSeconds * 100) / 100,
 				chunks: result.chunks,
 				model: result.model,

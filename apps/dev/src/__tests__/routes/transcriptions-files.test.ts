@@ -79,6 +79,7 @@ describe('POST /api/transcriptions/files/:id', () => {
 		mockResults.selectQueue = [[file], [planWorkspace()]]
 		vi.mocked(transcribeStoredFile).mockResolvedValue({
 			text: 'Good morning everyone.',
+			timed: false,
 			audioSeconds: 12.504,
 			chunks: 1,
 			model: 'mistralai/voxtral-small-transcribe-3-0',
@@ -115,6 +116,7 @@ describe('POST /api/transcriptions/files/:id', () => {
 		const longText = `${'word '.repeat(5000)}end`
 		vi.mocked(transcribeStoredFile).mockResolvedValue({
 			text: longText,
+			timed: false,
 			audioSeconds: 3000,
 			chunks: 17,
 			model: 'mistralai/voxtral-small-transcribe-3-0',
@@ -137,6 +139,7 @@ describe('POST /api/transcriptions/files/:id', () => {
 		mockResults.selectQueue = [[file], [planWorkspace()]]
 		vi.mocked(transcribeStoredFile).mockResolvedValue({
 			text: 'Hi.',
+			timed: false,
 			audioSeconds: 1,
 			chunks: 1,
 			model: 'mistralai/voxtral-small-transcribe-3-0',
@@ -155,6 +158,7 @@ describe('POST /api/transcriptions/files/:id', () => {
 		const longText = `${'word '.repeat(5000)}end`
 		vi.mocked(transcribeStoredFile).mockResolvedValue({
 			text: longText,
+			timed: false,
 			audioSeconds: 3000,
 			chunks: 17,
 			model: 'mistralai/voxtral-small-transcribe-3-0',
@@ -177,6 +181,7 @@ describe('POST /api/transcriptions/files/:id', () => {
 		mockResults.selectQueue = [[file], [planWorkspace()]]
 		vi.mocked(transcribeStoredFile).mockResolvedValue({
 			text: '',
+			timed: false,
 			audioSeconds: 5,
 			chunks: 1,
 			model: 'mistralai/voxtral-small-transcribe-3-0',
@@ -211,6 +216,7 @@ describe('POST /api/transcriptions/files/:id', () => {
 		mockResults.selectQueue = [[file], [planWorkspace({ enterpriseGranted: true })]]
 		vi.mocked(transcribeStoredFile).mockResolvedValue({
 			text: 'Hello.',
+			timed: false,
 			audioSeconds: 3,
 			chunks: 1,
 			model: 'mistralai/voxtral-small-transcribe-3-0',

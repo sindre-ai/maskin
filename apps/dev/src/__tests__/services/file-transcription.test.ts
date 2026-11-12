@@ -12,6 +12,7 @@ import {
 	FileTranscriptionError,
 	MAX_TRANSCRIBE_AUDIO_SECONDS,
 	TRANSCRIBE_CHUNK_SECONDS,
+	formatTimedTranscript,
 	transcribeStoredFile,
 } from '../../services/file-transcription'
 import { transcribeAudio } from '../../services/transcription'
@@ -116,6 +117,60 @@ describe('transcribeStoredFile', () => {
 			audioSeconds: '540.00',
 			fileId: 'file-1',
 		})
+	})
+
+	it('asks for diarized output and writes speaker turns with timestamps offset per chunk', async () => {
+		ffmpegWithChunks(2)
+		vi.mocked(transcribeAudio).mockImplementation(async ({ audioBase64 }) => {
+			const first = chunkOf(audioBase64) === 'chunk-0'
+			return {
+				...ok(first ? 'Hi. Hello.' : 'Bye.'),
+				segments: first
+					? [
+							{ start: 0, end: 2, text: 'Hi.', speaker: 'speaker_0' },
+							{ start: 2, end: 4, text: 'Hello.', speaker: 'speaker_1' },
+						]
+					: [{ start: 5, end: 6, text: 'Bye.', speaker: 'speaker_0' }],
+			}
+		})
+
+		const result = await transcribeStoredFile(input)
+
+		expect(vi.mocked(transcribeAudio).mock.calls[0]?.[0]).toMatchObject({ detail: 'speakers' })
+		expect(result.timed).toBe(true)
+		expect(result.text).toContain(
+			'[00:00] Speaker 1: Hi.\n[00:02] Speaker 2: Hello.\n[03:05] Speaker 1: Bye.',
+		)
+		expect(result.text).toContain('assigned separately')
+	})
+
+	it('keeps timestamps, without speakers, when the model refuses only speaker labels', async () => {
+		ffmpegWithChunks(2)
+		vi.mocked(transcribeAudio).mockImplementation(async ({ detail }) =>
+			detail === 'speakers'
+				? { ok: false as const, reason: 'upstream_error' as const, status: 400 }
+				: {
+						...ok('Hi.'),
+						segments: [{ start: 2, end: 3, text: 'Hi.', speaker: null }],
+					},
+		)
+
+		const result = await transcribeStoredFile(input)
+
+		expect(result.timed).toBe(true)
+		expect(result.text).toBe('[00:02] Hi.\n[03:02] Hi.')
+	})
+
+	it('falls back to plain text when the model refuses timestamps too', async () => {
+		ffmpegWithChunks(3)
+		vi.mocked(transcribeAudio).mockImplementation(async ({ detail }) =>
+			detail ? { ok: false as const, reason: 'upstream_error' as const, status: 400 } : ok('plain'),
+		)
+
+		const result = await transcribeStoredFile(input)
+
+		expect(result.text).toBe('plain plain plain')
+		expect(result.timed).toBe(false)
 	})
 
 	it('drops chunks with no speech instead of leaving gaps in the text', async () => {
@@ -280,5 +335,35 @@ describe('transcribeStoredFile', () => {
 			expect(call[2]).not.toHaveProperty('shell')
 			expect(JSON.stringify(call[1])).not.toContain('rm -rf')
 		}
+	})
+})
+
+describe('formatTimedTranscript', () => {
+	it('merges consecutive segments by one speaker and uses h:mm:ss past an hour', () => {
+		const text = formatTimedTranscript([
+			{
+				offsetSeconds: 3600,
+				segments: [
+					{ start: 1, end: 2, text: 'One.', speaker: 'speaker_0' },
+					{ start: 2, end: 3, text: 'Two.', speaker: 'speaker_0' },
+				],
+			},
+		])
+
+		expect(text).toBe('[1:00:01] Speaker 1: One. Two.')
+	})
+
+	it('gives every segment its own timestamp when the model labelled no speakers', () => {
+		expect(
+			formatTimedTranscript([
+				{
+					offsetSeconds: 0,
+					segments: [
+						{ start: 65, end: 66, text: 'Hi.', speaker: null },
+						{ start: 70, end: 72, text: 'Hello.', speaker: null },
+					],
+				},
+			]),
+		).toBe('[01:05] Hi.\n[01:10] Hello.')
 	})
 })

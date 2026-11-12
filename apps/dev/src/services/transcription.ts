@@ -10,10 +10,20 @@ export const DEFAULT_TRANSCRIPTION_MODEL = 'mistralai/voxtral-small-transcribe-3
 
 const TIMEOUT_MS = 60_000
 
+/** One timed stretch of speech from `verbose_json`. `speaker` is null when the model did not label it. */
+export interface TranscriptSegment {
+	start: number
+	end: number
+	text: string
+	speaker: string | null
+}
+
 export type TranscribeResult =
 	| {
 			ok: true
 			text: string
+			/** Present only when timed segments were requested and the provider returned them. */
+			segments?: TranscriptSegment[]
 			model: string
 			/** What OpenRouter charged for this request (`usage.cost`); null when it did not say. */
 			costUsd: number | null
@@ -21,6 +31,28 @@ export type TranscribeResult =
 			audioSeconds: number | null
 	  }
 	| { ok: false; reason: 'not_configured' | 'upstream_error' | 'exception'; status?: number }
+
+function readSegments(value: unknown): TranscriptSegment[] {
+	if (!Array.isArray(value)) return []
+	const segments: TranscriptSegment[] = []
+	for (const raw of value) {
+		if (typeof raw !== 'object' || raw === null) continue
+		const seg = raw as Record<string, unknown>
+		const text = typeof seg.text === 'string' ? seg.text.trim() : ''
+		const start = readUsageNumber(seg.start)
+		const end = readUsageNumber(seg.end)
+		if (text === '' || start === null || end === null) continue
+		const label = seg.speaker_label ?? seg.speaker_id ?? seg.speaker
+		const speaker =
+			typeof label === 'string' && label !== ''
+				? label
+				: typeof label === 'number'
+					? `speaker_${label}`
+					: null
+		segments.push({ start, end, text, speaker })
+	}
+	return segments
+}
 
 /** A finite, non-negative number, else null: `usage` is the provider's, so it is checked. */
 function readUsageNumber(value: unknown): number | null {
@@ -49,6 +81,11 @@ export async function transcribeAudio(input: {
 	audioBase64: string
 	/** BCP-47 / ISO-639-1 hint; omitted lets the model detect the language. */
 	language?: string
+	/**
+	 * `timestamps` asks for timed segments (`verbose_json`); `speakers` also asks for speaker
+	 * labels (`diarize`), which not every model accepts. Omitted returns plain text.
+	 */
+	detail?: 'timestamps' | 'speakers'
 }): Promise<TranscribeResult> {
 	const fallback = readFallbackConfig()
 	if (!fallback.apiKey) {
@@ -63,6 +100,11 @@ export async function transcribeAudio(input: {
 		input_audio: { data: input.audioBase64, format: 'wav' },
 	}
 	if (input.language) body.language = input.language
+	if (input.detail) {
+		body.response_format = 'verbose_json'
+		body.timestamp_granularities = ['segment']
+		if (input.detail === 'speakers') body.diarize = true
+	}
 
 	try {
 		const response = await fetch(`${baseUrl}/v1/audio/transcriptions`, {
@@ -84,12 +126,15 @@ export async function transcribeAudio(input: {
 		}
 		const data = (await response.json()) as {
 			text?: unknown
+			segments?: unknown
 			usage?: { cost?: unknown; seconds?: unknown } | null
 		}
 		const text = typeof data.text === 'string' ? data.text.trim() : ''
+		const segments = input.detail ? readSegments(data.segments) : []
 		return {
 			ok: true,
 			text,
+			...(segments.length > 0 ? { segments } : {}),
 			model,
 			costUsd: readUsageNumber(data.usage?.cost),
 			audioSeconds: readUsageNumber(data.usage?.seconds),
