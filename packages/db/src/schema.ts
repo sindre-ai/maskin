@@ -1103,6 +1103,62 @@ export const forYouWithdrawals = pgTable('for_you_withdrawals', {
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
+// ── Next Steps ─────────────────────────────────────────────────────────────
+
+// The next step on a driven object: action, owner, due time. At most one open or blocked step
+// per object (partial unique index); done and skipped rows stay as history. A blocked step
+// names exactly one thing it waits on (check constraint). See 0149_next_steps.sql.
+export const nextSteps = pgTable(
+	'next_steps',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		objectId: uuid('object_id')
+			.references(() => objects.id, { onDelete: 'cascade' })
+			.notNull(),
+		action: text('action').notNull(),
+		ownerActorId: uuid('owner_actor_id').references(() => actors.id, { onDelete: 'set null' }),
+		dueAt: timestamp('due_at', { withTimezone: true }).notNull(),
+		status: text('status').notNull().default('open'),
+		blockedOnObjectId: uuid('blocked_on_object_id').references(() => objects.id, {
+			onDelete: 'cascade',
+		}),
+		blockedOnActorId: uuid('blocked_on_actor_id').references(() => actors.id, {
+			onDelete: 'cascade',
+		}),
+		blockedOnDecisionCommentId: bigint('blocked_on_decision_comment_id', {
+			mode: 'number',
+		}).references(() => events.id, { onDelete: 'cascade' }),
+		blockedReason: text('blocked_reason'),
+		evidence: text('evidence'),
+		wakeTriggerId: uuid('wake_trigger_id').references(() => triggers.id, {
+			onDelete: 'set null',
+		}),
+		wakeCount: integer('wake_count').notNull().default(0),
+		lastWokenAt: timestamp('last_woken_at', { withTimezone: true }),
+		createdBy: uuid('created_by').references(() => actors.id, { onDelete: 'set null' }),
+		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+		closedAt: timestamp('closed_at', { withTimezone: true }),
+	},
+	(t) => [
+		uniqueIndex('next_steps_one_live_per_object_idx')
+			.on(t.objectId)
+			.where(sql`${t.status} in ('open', 'blocked')`),
+		index('next_steps_open_due_idx').on(t.dueAt).where(sql`${t.status} = 'open'`),
+		check('next_steps_status_check', sql`${t.status} in ('open', 'blocked', 'done', 'skipped')`),
+		check(
+			'next_steps_blocked_on_check',
+			sql`case when ${t.status} = 'blocked'
+				then num_nonnulls(${t.blockedOnObjectId}, ${t.blockedOnActorId}, ${t.blockedOnDecisionCommentId}) = 1
+				else num_nonnulls(${t.blockedOnObjectId}, ${t.blockedOnActorId}, ${t.blockedOnDecisionCommentId}) = 0 end`,
+		),
+	],
+)
+
 // ── Session Logs ───────────────────────────────────────────────────────────
 
 export const sessionLogs = pgTable(

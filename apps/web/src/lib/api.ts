@@ -2039,6 +2039,22 @@ export interface BillingUsageResponse {
 }
 
 // Types derived from backend response schemas
+/** The open or blocked next step on an object, as the single-object read returns it. */
+export interface NextStep {
+	id: string
+	object_id: string
+	action: string
+	owner_id: string | null
+	due_at: string
+	status: 'open' | 'blocked'
+	blocked_on_object_id: string | null
+	blocked_on_actor_id: string | null
+	blocked_on_decision_comment_id: number | null
+	blocked_reason: string | null
+	created_at: string
+	updated_at: string
+}
+
 export interface ObjectResponse {
 	id: string
 	workspaceId: string
@@ -2072,6 +2088,8 @@ export interface ObjectResponse {
 	// Detail endpoint only: present when `metadata.kind` is something an integration
 	// delivers (an email, a LinkedIn message). Computed on read, never stored.
 	preview?: ObjectPreview | null
+	// Detail endpoint only: the open or blocked next step, null when there is none.
+	next_step?: NextStep | null
 }
 
 export interface StarToggleResponse {
