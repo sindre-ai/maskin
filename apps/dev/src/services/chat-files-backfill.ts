@@ -77,8 +77,9 @@ export async function backfillChatAttachedFiles(
 					gt(messages.id, lastId),
 					eq(messages.kind, 'message'),
 					sql`${messages.deletedAt} IS NULL`,
-					sql`jsonb_typeof(${messages.metadata} -> 'attachments') = 'array'`,
-					sql`jsonb_array_length(${messages.metadata} -> 'attachments') > 0`,
+					// One CASE, not two ANDed conditions: Postgres may evaluate the length call before the
+					// type check and fail the whole statement on a row whose attachments is not a list.
+					sql`CASE WHEN jsonb_typeof(${messages.metadata} -> 'attachments') = 'array' THEN jsonb_array_length(${messages.metadata} -> 'attachments') > 0 ELSE false END`,
 					...(opts.workspaceId ? [eq(conversations.workspaceId, opts.workspaceId)] : []),
 				),
 			)
