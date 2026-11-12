@@ -47,6 +47,7 @@ import { isActorHumanPaused } from '../lib/agent-pause'
 import {
 	type DriverWakeDropReason,
 	type DriverWakeReason,
+	type DriverWakeSource,
 	trackDriverWoken,
 } from '../lib/analytics/driver-woken-events'
 import { FLAGS, getFeatureFlagConfig, isFlagEnabledForWorkspace } from '../lib/feature-flags'
@@ -68,6 +69,16 @@ const DECISION_CARD_MAX_AGE_MS = 14 * 24 * 60 * 60_000
 const MAX_CHANGED_OBJECTS_IN_PROMPT = 5
 
 export const DRIVER_WOKEN_ACTION = 'driver_woken'
+/** What a heartbeat run writes when it moves something: a comment, a new or changed object, a next step. */
+const HEARTBEAT_WORK_ACTIONS = [
+	'commented',
+	'created',
+	'updated',
+	'status_changed',
+	'next_step_set',
+	'next_step_updated',
+	'next_step_closed',
+]
 const SESSION_END_ACTIONS = new Set([
 	'session_completed',
 	'session_failed',
@@ -677,14 +688,18 @@ export class DriverWaker {
 			.limit(1)
 		if (!session) return
 
-		const wake = (session.config as { driver_wake?: { reasons?: unknown } } | null)?.driver_wake
-		if (wake && session.objectId && Array.isArray(wake.reasons) && !this.reported.has(session.id)) {
+		// Runs the sweep and the heartbeat pre-check started carry the same marker, with their source.
+		const wake = (
+			session.config as { driver_wake?: { reasons?: unknown; source?: unknown } } | null
+		)?.driver_wake
+		if (wake && Array.isArray(wake.reasons) && !this.reported.has(session.id)) {
 			this.reported.add(session.id)
 			if (this.reported.size > 500)
 				this.reported.delete(this.reported.values().next().value as string)
 			await this.reportOutcome(
-				{ ...session, objectId: session.objectId },
+				session,
 				wake.reasons as DriverWakeReason[],
+				wake.source === 'sweep' || wake.source === 'heartbeat' ? wake.source : 'state_change',
 			)
 		}
 
@@ -695,17 +710,21 @@ export class DriverWaker {
 		}
 	}
 
-	/** Did the run act on the object? Any event the agent wrote on it during the run says yes. */
+	/**
+	 * Did the run act? Any event the agent wrote on the object during the run says yes. A run with
+	 * no object (a heartbeat) counts the agent's own writes anywhere in the workspace.
+	 */
 	private async reportOutcome(
 		session: {
 			id: string
 			workspaceId: string
 			actorId: string
-			objectId: string
+			objectId: string | null
 			createdAt: Date | null
 			startedAt: Date | null
 		},
 		reasons: DriverWakeReason[],
+		source: DriverWakeSource,
 	): Promise<void> {
 		const from = session.startedAt ?? session.createdAt ?? new Date(0)
 		const [changed] = await this.db
@@ -714,10 +733,14 @@ export class DriverWaker {
 			.where(
 				and(
 					eq(events.workspaceId, session.workspaceId),
-					eq(events.entityId, session.objectId),
 					eq(events.actorId, session.actorId),
-					notInArray(events.action, GATE_BOOKKEEPING_ACTIONS),
 					gte(events.createdAt, from),
+					session.objectId
+						? and(
+								eq(events.entityId, session.objectId),
+								notInArray(events.action, GATE_BOOKKEEPING_ACTIONS),
+							)
+						: inArray(events.action, HEARTBEAT_WORK_ACTIONS),
 				),
 			)
 			.limit(1)
@@ -725,7 +748,7 @@ export class DriverWaker {
 			await trackDriverWoken({
 				workspaceId: session.workspaceId,
 				agentId: session.actorId,
-				source: 'state_change',
+				source,
 				reason,
 				outcome: changed ? 'changed_something' : 'changed_nothing',
 			})
