@@ -199,8 +199,18 @@ function ChatConversationList({
 		},
 		{ enabled: !scoped },
 	)
-	const priority = useConversationsInfinite(workspaceId, { scope: 'priority' }, { enabled: scoped })
-	const recent = useConversationsInfinite(workspaceId, { scope: 'recent' }, { enabled: scoped })
+	// Both default-list fetches leave out empty agent DMs, retired agents and quiet topic chats
+	// (still found by search and shown again by a new message).
+	const priority = useConversationsInfinite(
+		workspaceId,
+		{ scope: 'priority', hide_quiet: true },
+		{ enabled: scoped },
+	)
+	const recent = useConversationsInfinite(
+		workspaceId,
+		{ scope: 'recent', hide_quiet: true },
+		{ enabled: scoped },
+	)
 	const { fetchNextPage, hasNextPage, isFetchingNextPage, isFetchNextPageError } = scoped
 		? recent
 		: single
