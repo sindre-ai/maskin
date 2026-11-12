@@ -6173,6 +6173,8 @@ export function createMcpServer(config: McpConfig) {
 					mime_type: args.mime_type,
 					content: args.content,
 					...(args.encoding !== undefined ? { encoding: args.encoding } : {}),
+					...(args.conversation_id !== undefined ? { conversation_id: args.conversation_id } : {}),
+					...(args.object_id !== undefined ? { object_id: args.object_id } : {}),
 				},
 				{ workspaceId: wsId },
 			)

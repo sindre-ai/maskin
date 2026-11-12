@@ -128,6 +128,8 @@ export type Env = {
 		sessionManager: SessionManager
 		agentStorage: AgentStorageManager
 		storageProvider: StorageProvider
+		/** The session a session key was minted for; null for any other key. Set by auth. */
+		apiKeySessionId?: string | null
 		/**
 		 * The originating session's id, when the request carried a well-formed
 		 * `X-Maskin-Session-Id` header (S2 writer hook). Undefined for human
