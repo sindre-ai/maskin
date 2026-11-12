@@ -118,7 +118,9 @@ test.describe('Loop detail page', () => {
 			expect(composerFollowsActivity).toBe(true)
 
 			// A step row is the only route into a loop-owned trigger now that
-			// /triggers redirects.
+			// /triggers redirects. The steps live on Setup, and the checks above
+			// left the page on Overview.
+			await page.getByRole('tab', { name: 'Setup' }).click()
 			await page.getByRole('link', { name: /Triage feedback/ }).click()
 			await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/triggers/${trigger.id}`), {
 				timeout: 10000,
