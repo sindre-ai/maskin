@@ -113,7 +113,7 @@ function ItemComposer({
 					'Comment'
 				)}
 			</span>
-			<ChevronsUpDown aria-hidden className="size-3 shrink-0 text-muted-foreground max-sm:hidden" />
+			<ChevronsUpDown aria-hidden className="size-3 shrink-0 text-muted-foreground" />
 		</Button>
 	) : undefined
 

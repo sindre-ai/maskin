@@ -563,8 +563,10 @@ function CommentInputForm({
 								}
 								className={cn(
 									'min-h-7 max-h-[50vh] px-2 py-1 text-base',
-									// The placeholder stays on one line and ends in an ellipsis when the bar is narrow.
-									isBar && 'min-w-0 flex-1 [&>span]:truncate',
+									// The placeholder stays on one line, ends in an ellipsis when the bar is narrow and
+									// centres on the bar's middle line, level with the chip.
+									isBar &&
+										'min-w-0 flex-1 [&>span]:top-1/2 [&>span]:bottom-auto [&>span]:-translate-y-1/2 [&>span]:truncate',
 									overLimit && 'text-error',
 								)}
 								invalid={overLimit}
