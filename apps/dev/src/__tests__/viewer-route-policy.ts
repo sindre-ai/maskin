@@ -103,42 +103,42 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	['DELETE', '/api/integrations/slack/mcp', 'always answers 405, no handler'],
 	// Per-actor push registration: it writes the caller's own device row and touches no
 	// workspace data, and a read-only viewer still wants their own notifications.
-	['POST', '/api/devices', 'registers the caller’s own device, no workspace data'],
-	['DELETE', '/api/devices/:id_or_token', 'removes only the caller’s own device'],
+	['POST', '/api/devices', 'registers the caller\\u2019s own device, no workspace data'],
+	['DELETE', '/api/devices/:id_or_token', 'removes only the caller\\u2019s own device'],
 	[
 		'POST',
 		'/api/devices/unregister',
 		'public, removes only the device that proves it holds its own secret, no workspace data',
 	],
-	['PUT', '/api/notification-preferences', 'saves only the caller’s own push preferences'],
+	['PUT', '/api/notification-preferences', 'saves only the caller\\u2019s own push preferences'],
 	[
 		'POST',
 		'/api/live-activities/tokens',
-		'registers a Live Activity token for the caller’s own device',
+		'registers a Live Activity token for the caller\\u2019s own device',
 	],
 	[
 		'POST',
 		'/api/live-activities/follows',
-		'registers the caller’s own Live Activity follow for their own device',
+		'registers the caller\\u2019s own Live Activity follow for their own device',
 	],
 	[
 		'DELETE',
 		'/api/live-activities/follows/:session_id',
-		'removes only the caller’s own follow',
+		'removes only the caller\\u2019s own follow',
 	],
-	['DELETE', '/api/live-activities/tokens/:id', 'removes only the caller’s own token'],
+	['DELETE', '/api/live-activities/tokens/:id', 'removes only the caller\\u2019s own token'],
 	// Device sign-in (Apple TV): start/token are public and write only the device's own code row;
 	// approve/deny act on a code, not on workspace data, so a read-only viewer can still sign in a TV.
-	['POST', '/api/device-auth/start', 'public, creates only the device’s own sign-in code'],
-	['POST', '/api/device-auth/token', 'public, polls the device’s own sign-in code'],
-	['POST', '/api/device-auth/approve', 'approves a sign-in code for the caller’s own account'],
+	['POST', '/api/device-auth/start', 'public, creates only the device\\u2019s own sign-in code'],
+	['POST', '/api/device-auth/token', 'public, polls the device\\u2019s own sign-in code'],
+	['POST', '/api/device-auth/approve', 'approves a sign-in code for the caller\\u2019s own account'],
 	['POST', '/api/device-auth/deny', 'refuses a sign-in code, no workspace data'],
 	[
 		'POST',
 		'/api/web-push/subscriptions',
-		'registers the caller’s own browser, no workspace data',
+		'registers the caller\\u2019s own browser, no workspace data',
 	],
-	['DELETE', '/api/web-push/subscriptions/:id', 'removes only the caller’s own subscription'],
+	['DELETE', '/api/web-push/subscriptions/:id', 'removes only the caller\\u2019s own subscription'],
 	['DELETE', '/api/integrations/linkedin-unipile/mcp', 'always answers 405, no handler'],
 	[
 		'DELETE',
