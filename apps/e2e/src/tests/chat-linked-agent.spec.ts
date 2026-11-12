@@ -155,7 +155,8 @@ test.describe('Chat — agent names open the agent page, the title renames', () 
 
 			// The agent's page opens from its row in the participants list.
 			await page.getByRole('button', { name: /participants — manage/ }).click()
-			const row = page.getByRole('link', { name: new RegExp(agentName) })
+			// Scoped to the popover: the author link in the thread carries the same name.
+			const row = page.getByRole('dialog').getByRole('link', { name: new RegExp(agentName) })
 			await expect(row).toHaveAttribute('href', `/${ws}/agents/${agent.id}`)
 			await row.click()
 			await expect(page).toHaveURL(new RegExp(`/agents/${agent.id}`))
