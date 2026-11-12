@@ -177,6 +177,15 @@ interface WakeRequest {
 	changedObjectId: string
 }
 
+/** What the wake transaction came to: dropped with a reason, or a session started for `fresh` reasons. */
+type WakeAttempt =
+	| { dropped: DriverWakeDropReason }
+	| {
+			dropped?: undefined
+			started: Awaited<ReturnType<typeof startSession>>
+			fresh: DriverWakeReason[]
+	  }
+
 interface Held {
 	workspaceId: string
 	driverId: string
@@ -562,18 +571,18 @@ export class DriverWaker {
 			.where(inArray(objects.id, changedIds))
 		const nextStep = await getLiveNextStep(this.db, held.objectId)
 
-		const handle = await this.db
-			.transaction(async (tx) => {
+		const handle: WakeAttempt = await this.db
+			.transaction(async (tx): Promise<WakeAttempt> => {
 				const [lock] = (await tx.execute(
 					sql`SELECT pg_try_advisory_xact_lock(hashtext(${`driver-wake:${held.driverId}:${held.objectId}`})) AS locked`,
 				)) as unknown as Array<{ locked: boolean } | undefined>
-				if (!lock?.locked) return { dropped: 'rate_limited' as const }
+				if (!lock?.locked) return { dropped: 'rate_limited' }
 
 				const fresh: DriverWakeReason[] = []
 				for (const reason of reasons) {
 					if (!(await this.wokeRecently(tx, held, reason))) fresh.push(reason)
 				}
-				if (fresh.length === 0) return { dropped: 'rate_limited' as const }
+				if (fresh.length === 0) return { dropped: 'rate_limited' }
 
 				const started = await startSession({
 					workspaceId: held.workspaceId,
@@ -612,12 +621,12 @@ export class DriverWaker {
 				}
 				return { started, fresh }
 			})
-			.catch((err) => {
-				if (err instanceof SessionNotAdmittedError) return { dropped: 'not_admitted' as const }
+			.catch((err): WakeAttempt => {
+				if (err instanceof SessionNotAdmittedError) return { dropped: 'not_admitted' }
 				throw err
 			})
 
-		if ('dropped' in handle) return this.drop(held, reasons, handle.dropped)
+		if (handle.dropped) return this.drop(held, reasons, handle.dropped)
 
 		// The session is the object's live one, as the task restarter links it.
 		await this.db
