@@ -520,7 +520,7 @@ export const tools = {
 	},
 	list_objects: {
 		description:
-			'List or search objects in the workspace, in one call. Filter by type, status (one value or a list), driver, last-updated window, or custom metadata fields. Without `q`, rows come ordered by creation date, newest first, unless `sort` says otherwise. With `q`, it is a text search on title and content, ranked by match quality: the ranking decides the order, and `sort` is accepted but does not reorder ranked results. Rows with `status = "archived"` are hidden by default — pass `include_archived: true` to see them. Default 25, max 100. Paginated via a snapshot-consistent cursor — pass `next_cursor` from the previous response as `cursor` to fetch the next page; keep the same filters and `q`. The response page block carries `has_more` and `total` (`total` is null when `q` is set). `detail: "concise"` returns id, type, title, status, driver, updatedAt and url per row, with no content.',
+			'List or search objects in the workspace, in one call. Filter by type, status (one value or a list), driver, last-updated window, or custom metadata fields. Without `q`, rows come ordered by creation date, newest first, unless `sort` says otherwise. With `q`, it is a text search on title and content, ranked by match quality: the ranking decides the order, and `sort` is accepted but does not reorder ranked results. Rows with `status = "archived"` are hidden by default — pass `include_archived: true` to see them. Default 25, max 100. Paginated via a snapshot-consistent cursor — pass `next_cursor` from the previous response as `cursor` to fetch the next page; keep the same filters and `q`. The response page block carries `has_more` and `total` (`total` is null when `q` is set). Rows are full by default, content included, so a page is large (often 25 KB or more). To scan or find an object, pass `detail: "concise"` (id, type, title, status, driver, updatedAt and url, no content), then read only the ones you need with get_objects.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			q: z
@@ -569,7 +569,7 @@ export const tools = {
 				.enum(['concise', 'full'])
 				.optional()
 				.describe(
-					'`full` (default) returns every field of each row. `concise` returns id, type, title, status, driver, updatedAt and url only, no content.',
+					'`full` (default) returns every field of each row, content included, and is large. `concise` returns id, type, title, status, driver, updatedAt and url only, no content: use it to scan, then get_objects for the rows you need.',
 				),
 			limit: z
 				.number()
@@ -639,6 +639,12 @@ export const tools = {
 				.string()
 				.optional()
 				.describe('`next_cursor` from the previous response, to fetch the next page.'),
+			detail: z
+				.enum(['concise', 'full'])
+				.optional()
+				.describe(
+					'`full` (default) returns every field of each row, content included, and is large. `concise` returns id, type, title, status, driver, updatedAt and url only, no content: use it to scan, then get_objects for the rows you need.',
+				),
 			metadata_eq: metadataEqSchema,
 			include_archived: z
 				.boolean()
