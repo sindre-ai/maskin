@@ -23,7 +23,14 @@ import { useState } from 'react'
  * One saved credential, drawn like a connected integration: dot, name, what it is, Remove,
  * and the same collapsible Agent access underneath. Overview-only; there is no detail page.
  */
-export function CredentialCard({ credential }: { credential: IntegrationResponse }) {
+export function CredentialCard({
+	credential,
+	onRemoved,
+}: {
+	credential: IntegrationResponse
+	/** Runs once the secret is gone, so the list can put keyboard focus somewhere sensible. */
+	onRemoved?: (id: string) => void
+}) {
 	const { workspace, workspaceId } = useWorkspace()
 	const canWrite = useCanWrite()
 	const remove = useRemoveCredential(workspaceId)
@@ -138,7 +145,12 @@ export function CredentialCard({ credential }: { credential: IntegrationResponse
 								variant="destructive"
 								disabled={remove.isPending}
 								onClick={() =>
-									remove.mutate(credential.id, { onSuccess: () => setConfirming(false) })
+									remove.mutate(credential.id, {
+										onSuccess: () => {
+											setConfirming(false)
+											onRemoved?.(credential.id)
+										},
+									})
 								}
 							>
 								{remove.isPending ? 'Removing…' : 'Remove'}
