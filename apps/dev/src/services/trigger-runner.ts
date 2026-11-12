@@ -42,6 +42,7 @@ import { insertNotificationsWithEvents } from '../lib/notifications'
 import { returnsToChatByDefault } from './chat-origin-routing'
 import { resolveSpawnLink } from './helper-link'
 import { evaluateAgentMentionGuards, verifyHelperReturn } from './mention-guards'
+import { SessionNotAdmittedError } from './self-start-limits'
 import { startSession } from './session-lifecycle'
 import type { SessionManager } from './session-manager'
 import {
@@ -549,6 +550,10 @@ export class TriggerRunner {
 		triggerName?: string,
 	): Promise<void> {
 		const now = new Date()
+
+		// A refused self-started run (cap, back-off, daily budget) is a decision, not a failure.
+		// The refusal is already logged and written as a session_admission event.
+		if (err instanceof SessionNotAdmittedError) return
 
 		if (err instanceof PlanCapExceededError) {
 			// `periodEnd` is Unix MILLISECONDS. Stripe writes `current_period_end`
