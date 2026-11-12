@@ -18,6 +18,7 @@ import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { useActors } from '@/hooks/use-actors'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useConversation, useEditMessage, useRetryMessage } from '@/hooks/use-conversation'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useFiles } from '@/hooks/use-files'
 import { useFitTextWidth } from '@/hooks/use-fit-text-width'
 import { useLinkedChat } from '@/hooks/use-linked-chat'
@@ -41,7 +42,8 @@ import {
 	settingsChipText,
 	splitOwnLinks,
 } from '@/lib/linked-objects'
-import { type TagSegment, splitTextByTags, tagLabel } from '@/lib/tag-input-model'
+import { hasMarkdownSyntax } from '@/lib/markdown-syntax'
+import { type TagSegment, isTaggable, splitTextByTags, tagLabel } from '@/lib/tag-input-model'
 import { useIsEnterpriseWorkspace } from '@/lib/workspace-context'
 import { formatQuestionsAsMarkdown } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
@@ -107,6 +109,12 @@ interface MessageBubbleProps {
 	onRetried?: (message: MessageResponse) => void
 	/** Opens the reply thread under this message. Without it the bubble has no Reply action. */
 	onReplyInThread?: () => void
+	/**
+	 * Opens the edit card, as if the pencil was tapped (the up arrow in the empty message box).
+	 * A request that was already there when the bubble mounted does nothing, so an old one
+	 * cannot pop the card open when the message scrolls back into view.
+	 */
+	editRequestNonce?: number
 }
 
 // With attachments, the fitted own bubble stays this wide so 'ok' does not make a tiny thumbnail.
@@ -134,10 +142,12 @@ export function MessageBubble({
 	updatedLinkedObjectIds,
 	onRetried,
 	onReplyInThread,
+	editRequestNonce,
 }: MessageBubbleProps) {
 	const actor = getStoredActor()
 	const enterprise = useIsEnterpriseWorkspace()
 	const isOwn = message.actorId === actor?.id
+	const chatFormatting = useFeatureFlag('chat-formatting')
 	// Present only under the chat route, which owns the Threads pane. Without
 	// it the handoff falls back to the strip, whose rows link out instead.
 	const threadsPane = useThreadsPane()
@@ -162,6 +172,14 @@ export function MessageBubble({
 		() => (conversation?.participants ?? []).map((p) => p.actorId),
 		[conversation],
 	)
+	const handledEditNonceRef = useRef(editRequestNonce)
+	useEffect(() => {
+		if (editRequestNonce === undefined || editRequestNonce === handledEditNonceRef.current) return
+		handledEditNonceRef.current = editRequestNonce
+		if (!canAct || !canWrite) return
+		editMessage.reset()
+		setEditing(true)
+	}, [editRequestNonce, canAct, canWrite, editMessage.reset])
 	// Focus goes back to the pencil once the edit card closes, whether it saved or not.
 	const pencilRef = useRef<HTMLButtonElement | null>(null)
 	const wasEditing = useRef(false)
@@ -233,10 +251,7 @@ export function MessageBubble({
 	// text, and keeps the "You mentioned" row. Once any tag sits in the text the row is gone, so an
 	// id left over (a thread reply's default recipient) is not shown as a mention above words that
 	// tag someone else.
-	const tagActors = useMemo(
-		() => (workspaceActors ?? []).filter((a) => !a.isSystem),
-		[workspaceActors],
-	)
+	const tagActors = useMemo(() => (workspaceActors ?? []).filter(isTaggable), [workspaceActors])
 	const tagLabelOf = useMemo(() => {
 		const byId = new Map(tagActors.map((a) => [a.id, a]))
 		return (id: string) => {
@@ -258,10 +273,15 @@ export function MessageBubble({
 		}
 	}, [placedParts, mentions, tagLabelOf])
 
+	// Formatting you typed (bold, a list, a table) is drawn by the same renderer as everyone else's
+	// messages, so it is a block of its own and not a line of words to fit the bubble to.
+	const formatted =
+		chatFormatting && isOwn && !editing && !cardOnly && hasMarkdownSyntax(shownContent)
 	// Your own words with a bubble: its column shrinks to the widest line of text, and lifted
 	// attachments take the same width. Editing, a message with no text and a message with a card
 	// (which has its own width) keep the full layout.
-	const fitText = isOwn && !editing && message.content.length > 0 && !cardOnly && !holdsCard
+	const fitText =
+		isOwn && !editing && message.content.length > 0 && !cardOnly && !holdsCard && !formatted
 	const { columnRef, plateRef, textRef } = useFitTextWidth({
 		enabled: fitText,
 		minWidth: attachments.length > 0 ? MIN_FIT_WIDTH : 0,
@@ -392,6 +412,28 @@ export function MessageBubble({
 											onSave={saveEdit}
 											onCancel={() => setEditing(false)}
 										/>
+									) : formatted ? (
+										<div className="min-w-0 break-words [&_li]:text-foreground [&_p]:text-[15px] [&_p]:leading-[1.4] [&_p]:text-foreground [&_.maskin-prose>:first-child]:mt-0 [&_.maskin-prose>:last-child]:mb-0 [&_table]:mb-0">
+											<MarkdownContent
+												content={shownContent}
+												size="sm"
+												mentionActors={tagActors}
+												taggedActorIds={mentions}
+												selfActorId={actor?.id ?? null}
+												linkedCards={{
+													workspaceId,
+													enterprise,
+													conversationId: message.conversationId,
+													agentId: message.actorId,
+													skipIds: shownLinkedObjectIds,
+													updatedIds: updatedLinkedObjectIds,
+													renderCard: renderLinkedCard,
+													renderChip: renderLinkedChip,
+													renderGithubChip: renderLinkedGithubChip,
+													renderSettingsChip: renderLinkedSettingsChip,
+												}}
+											/>
+										</div>
 									) : message.content.length > 0 ? (
 										// `break-words` is load-bearing next to the column's `min-w-0`:
 										// `min-w-0` bounds the box, this bounds the ink. Without it an
@@ -510,7 +552,7 @@ export function MessageBubble({
 				type={message.actorType ?? 'agent'}
 				id={message.actorId}
 				size="md"
-				className="mt-0.5 size-[30px] shrink-0 rounded-[9px] bg-secondary text-[11px] font-bold text-foreground"
+				className="mt-0.5 size-[30px] shrink-0"
 			/>
 			<div className={'relative min-w-0 flex-1'}>
 				<div className="flex items-baseline gap-1.5">
@@ -575,6 +617,7 @@ export function MessageBubble({
 						questionMessageId={message.id}
 						question={message.metadata.question}
 						answered={questionAnswered}
+						threadRootId={message.threadRootId}
 					/>
 				) : null}
 				{/* An agent's connect_integration call, surfaced as a Connect card. Like

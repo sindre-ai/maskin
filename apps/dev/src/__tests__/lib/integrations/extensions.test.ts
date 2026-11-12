@@ -11,6 +11,8 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import {
 	buildCalcomDelivery,
 	buildFirefliesDelivery,
+	buildStandardWebhooksDelivery,
+	buildStripeDelivery,
 	buildTelnyxDelivery,
 	generateTelnyxKeys,
 } from '../../../../tests/integrations/fixtures/signed-deliveries'
@@ -351,6 +353,201 @@ describe('verifyExtensionSignature (ed25519, Telnyx)', () => {
 	it('requires the timestamp header and signed text in the config', () => {
 		const { timestampHeader: _h, timestampBodyTemplate: _t, ...rest } = cfg
 		expect(webhookConfigSchema.safeParse(rest).success).toBe(false)
+	})
+})
+
+describe('verifyExtensionSignature (digestEncoding)', () => {
+	const handler = new WebhookHandler()
+	const secret = 'shpss_shared_secret'
+	const eventMap = fireflies?.webhookConfig?.eventMap
+	const body = '{"topic":"orders/create"}'
+
+	it('accepts a base64 digest on hmac-sha256 and rejects the hex form of the same digest', () => {
+		const cfg = webhookConfigSchema.parse({
+			signatureScheme: 'hmac-sha256',
+			signatureHeader: 'X-Shopify-Hmac-Sha256',
+			digestEncoding: 'base64',
+			eventMap,
+		})
+		const base64 = createHmac('sha256', secret).update(body).digest('base64')
+		const hex = createHmac('sha256', secret).update(body).digest('hex')
+		const check = (sig: string) =>
+			verifyExtensionSignature(handler, cfg, body, { 'x-shopify-hmac-sha256': sig }, secret)
+		expect(check(base64)).toBe(true)
+		expect(check(hex)).toBe(false)
+		expect(check(base64.replace(/.$/, 'A'))).toBe(false)
+	})
+
+	it('accepts a base64 digest on hmac-sha1', () => {
+		const cfg = webhookConfigSchema.parse({
+			signatureScheme: 'hmac-sha1',
+			signatureHeader: 'X-Sig',
+			digestEncoding: 'base64',
+			eventMap,
+		})
+		const sig = createHmac('sha1', secret).update(body).digest('base64')
+		expect(verifyExtensionSignature(handler, cfg, body, { 'x-sig': sig }, secret)).toBe(true)
+	})
+
+	it('accepts a base64 digest on the timestamp scheme', () => {
+		const cfg = webhookConfigSchema.parse({
+			signatureScheme: 'timestamp',
+			signatureHeader: 'X-Sig',
+			timestampHeader: 'X-Ts',
+			timestampBodyTemplate: '{ts}.{body}',
+			digestEncoding: 'base64',
+			eventMap,
+		})
+		const ts = String(Math.floor(Date.now() / 1000))
+		const sig = createHmac('sha256', secret).update(`${ts}.${body}`).digest('base64')
+		expect(verifyExtensionSignature(handler, cfg, body, { 'x-ts': ts, 'x-sig': sig }, secret)).toBe(
+			true,
+		)
+	})
+
+	it('keeps hex as the default', () => {
+		const cfg = webhookConfigSchema.parse({
+			signatureScheme: 'hmac-sha256',
+			signatureHeader: 'X-Sig',
+			eventMap,
+		})
+		const sig = createHmac('sha256', secret).update(body).digest('hex')
+		expect(verifyExtensionSignature(handler, cfg, body, { 'x-sig': sig }, secret)).toBe(true)
+	})
+
+	it('refuses a digest encoding on a preset that fixes its own', () => {
+		for (const signatureScheme of ['stripe', 'standard-webhooks', 'ed25519']) {
+			const parsed = webhookConfigSchema.safeParse({
+				signatureScheme,
+				signatureHeader: 'X-Sig',
+				idHeader: 'webhook-id',
+				timestampHeader: 'X-Ts',
+				timestampBodyTemplate: '{timestamp}|{body}',
+				digestEncoding: 'base64',
+				eventMap,
+			})
+			expect(parsed.success).toBe(false)
+		}
+	})
+})
+
+describe('verifyExtensionSignature (standard-webhooks)', () => {
+	const handler = new WebhookHandler()
+	const secret = `whsec_${Buffer.from('a-sixteen-byte-or-longer-key').toString('base64')}`
+	const cfg = webhookConfigSchema.parse({
+		signatureScheme: 'standard-webhooks',
+		signatureHeader: 'webhook-signature',
+		idHeader: 'webhook-id',
+		timestampHeader: 'webhook-timestamp',
+		eventMap: {
+			externalIdPath: '$.data.email_id',
+			entityType: { literal: 'resend.email' },
+			action: { path: '$.type' },
+		},
+	})
+	const check = (d: { body: string; headers: Record<string, string> }, key = secret) =>
+		verifyExtensionSignature(handler, cfg, d.body, d.headers, key)
+
+	it('accepts a correctly signed delivery, with or without the whsec_ prefix', () => {
+		const d = buildStandardWebhooksDelivery({ secret })
+		expect(check(d)).toBe(true)
+		expect(check(d, secret.replace('whsec_', ''))).toBe(true)
+	})
+
+	it('accepts when any one of several signatures matches (secret rotation)', () => {
+		const old = buildStandardWebhooksDelivery({
+			secret: `whsec_${Buffer.from('old-key-old-key-old').toString('base64')}`,
+		})
+		const oldSignature = old.headers['webhook-signature'] ?? ''
+		expect(check(buildStandardWebhooksDelivery({ secret, extraSignatures: [oldSignature] }))).toBe(
+			true,
+		)
+	})
+
+	it('rejects another secret, a tampered body and a different message id', () => {
+		const d = buildStandardWebhooksDelivery({ secret })
+		expect(check(d, `whsec_${Buffer.from('some-other-key-entirely').toString('base64')}`)).toBe(
+			false,
+		)
+		expect(check({ ...d, body: d.body.replace('delivered', 'bounced') })).toBe(false)
+		expect(check({ ...d, headers: { ...d.headers, 'webhook-id': 'msg_other' } })).toBe(false)
+	})
+
+	it('rejects a timestamp older than maxAgeSeconds even when the signature is valid', () => {
+		const now = Math.floor(Date.now() / 1000)
+		expect(check(buildStandardWebhooksDelivery({ secret, timestamp: now - 301 }))).toBe(false)
+		expect(check(buildStandardWebhooksDelivery({ secret, timestamp: now - 200 }))).toBe(true)
+	})
+
+	it('rejects a missing id, timestamp or signature header', () => {
+		const d = buildStandardWebhooksDelivery({ secret })
+		for (const name of ['webhook-id', 'webhook-timestamp', 'webhook-signature']) {
+			const { [name]: _gone, ...rest } = d.headers
+			expect(check({ ...d, headers: rest })).toBe(false)
+		}
+	})
+
+	it('rejects a malformed signature list without throwing', () => {
+		const d = buildStandardWebhooksDelivery({ secret })
+		for (const bad of ['', 'v1,', 'v2,abcd', 'not-a-signature', 'v1,!!!']) {
+			expect(check({ ...d, headers: { ...d.headers, 'webhook-signature': bad } })).toBe(false)
+		}
+	})
+
+	it('needs the id and timestamp headers named in the config', () => {
+		const { idHeader: _i, ...noId } = cfg
+		expect(webhookConfigSchema.safeParse(noId).success).toBe(false)
+		const { timestampHeader: _t, ...noTs } = cfg
+		expect(webhookConfigSchema.safeParse(noTs).success).toBe(false)
+	})
+})
+
+describe('verifyExtensionSignature (stripe)', () => {
+	const handler = new WebhookHandler()
+	const secret = 'whsec_test_secret_1234567890'
+	const cfg = webhookConfigSchema.parse({
+		signatureScheme: 'stripe',
+		signatureHeader: 'Stripe-Signature',
+		eventMap: {
+			externalIdPath: '$.id',
+			entityType: { literal: 'stripe.event' },
+			action: { path: '$.type' },
+		},
+	})
+	const check = (d: { body: string; headers: Record<string, string> }, key = secret) =>
+		verifyExtensionSignature(handler, cfg, d.body, d.headers, key)
+
+	it('accepts a correctly signed delivery and ignores other keys in the header', () => {
+		expect(check(buildStripeDelivery({ secret }))).toBe(true)
+	})
+
+	it('accepts when any one of several v1 signatures matches', () => {
+		const d = buildStripeDelivery({ secret })
+		const header = d.headers['stripe-signature'] ?? ''
+		const withRolled = header.replace('v1=', `v1=${'0'.repeat(64)},v1=`)
+		expect(check({ ...d, headers: { ...d.headers, 'stripe-signature': withRolled } })).toBe(true)
+	})
+
+	it('rejects another secret and a tampered body', () => {
+		const d = buildStripeDelivery({ secret })
+		expect(check(d, 'whsec_another_secret_0987654')).toBe(false)
+		expect(check({ ...d, body: d.body.replace('invoice.paid', 'invoice.voided') })).toBe(false)
+	})
+
+	it('rejects a timestamp older than maxAgeSeconds even when the signature is valid', () => {
+		const now = Math.floor(Date.now() / 1000)
+		expect(check(buildStripeDelivery({ secret, timestamp: now - 301 }))).toBe(false)
+		expect(check(buildStripeDelivery({ secret, timestamp: now - 200 }))).toBe(true)
+	})
+
+	it('rejects a missing header, a missing t= or v1= part, and garbage', () => {
+		const d = buildStripeDelivery({ secret })
+		const header = d.headers['stripe-signature'] ?? ''
+		const [t = '', v1 = ''] = header.split(',')
+		expect(check({ ...d, headers: {} })).toBe(false)
+		for (const bad of [t, v1, `${t},v0=abc`, '', 'garbage', 't=,v1=']) {
+			expect(check({ ...d, headers: { 'stripe-signature': bad } })).toBe(false)
+		}
 	})
 })
 

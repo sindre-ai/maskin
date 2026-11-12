@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
+import { openDiscover } from '../helpers/integrations.helper'
 
 /**
  * The Google Drive detail page (/settings/integrations/google-drive).
@@ -112,6 +113,7 @@ test.describe('Settings — Google Drive detail page', () => {
 		await stubIntegrations(page, [])
 		await page.goto(`/${account.workspaceId}/settings/integrations`)
 		await page.waitForLoadState('load')
+		await openDiscover(page)
 
 		await expect(page.getByText('Google Drive')).toBeVisible()
 		await expect(page.getByLabel('New', { exact: true })).toBeVisible()

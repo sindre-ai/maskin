@@ -1,6 +1,11 @@
 import { useActors } from '@/hooks/use-actors'
 import { api } from '@/lib/api'
-import { briefingHeadline, pickBriefingPages } from '@/lib/briefing-stories'
+import {
+	type BriefingTileText,
+	briefingHeadline,
+	briefingTile,
+	pickBriefingPages,
+} from '@/lib/briefing-stories'
 import { decodeBase64Utf8 } from '@/lib/file-utils'
 import { queryKeys } from '@/lib/query-keys'
 import { useQueries, useQuery } from '@tanstack/react-query'
@@ -10,6 +15,8 @@ export interface BriefingCard {
 	id: string
 	name: string
 	headline: string
+	/** The big number and label the deck asks its tile to lead with; absent on older decks. */
+	tile?: BriefingTileText
 	/** Who wrote the page: the Chief of Staff for the daily briefing, else the loop's agent. */
 	author: { id: string | null; name: string; type: string }
 	updatedAt: string
@@ -54,6 +61,7 @@ export function useBriefings(workspaceId: string) {
 				id: file.id,
 				name: file.name,
 				headline: briefingHeadline(html, file.name),
+				tile: briefingTile(html) ?? undefined,
 				author: {
 					id: author?.id ?? null,
 					name: author?.name ?? 'Chief of Staff',

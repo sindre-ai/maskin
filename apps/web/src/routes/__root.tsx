@@ -1,5 +1,6 @@
 import { OfflineBanner } from '@/components/shared/offline-banner'
 import { RouteError } from '@/components/shared/route-error'
+import { useRecoverWhenServerReturns } from '@/hooks/use-server-reachability'
 import { useTheme } from '@/lib/theme'
 import type { QueryClient } from '@tanstack/react-query'
 import { HeadContent, Outlet, createRootRouteWithContext } from '@tanstack/react-router'
@@ -11,6 +12,7 @@ interface RouterContext {
 
 function RootComponent() {
 	const { resolvedTheme } = useTheme()
+	useRecoverWhenServerReturns()
 
 	return (
 		// `min-h-dvh`, not `min-h-screen` (100vh): on iOS Safari 100vh is the

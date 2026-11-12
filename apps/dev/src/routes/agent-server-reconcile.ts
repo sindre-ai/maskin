@@ -89,8 +89,10 @@ app.openapi(reconcileRoute, async (c) => {
 	const body = c.req.valid('json')
 	const db = c.get('db')
 	const sessionManager = c.get('sessionManager')
-	const reconciler = new SessionReconciler(db, (sessionId, content) =>
-		sessionManager.insertSystemLog(sessionId, content),
+	const reconciler = new SessionReconciler(
+		db,
+		(sessionId, content) => sessionManager.insertSystemLog(sessionId, content),
+		(sessionId) => sessionManager.recoverStalledRemotePause(sessionId),
 	)
 
 	const { markedFailed, orphanSandboxes } = await reconciler.reconcile({

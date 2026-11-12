@@ -159,9 +159,7 @@ export function ThreadHeader({
 	}
 
 	if (!conversation) {
-		return (
-			<div className="flex h-12 shrink-0 items-center border-b border-border px-[var(--chat-gut)]" />
-		)
+		return <div className="flex h-12 shrink-0 items-center px-[var(--chat-gut)]" />
 	}
 
 	const participants = conversation.participants
@@ -194,7 +192,7 @@ export function ThreadHeader({
 		'size-8 shrink-0 rounded-full bg-secondary text-foreground hover:bg-secondary/70'
 
 	return (
-		<div className="flex min-h-[69px] shrink-0 flex-wrap items-center gap-x-3 gap-y-1 lg:flex-nowrap border-b border-border py-2 pr-4 pl-[var(--chat-gut)] md:pr-6">
+		<div className="flex min-h-[69px] shrink-0 flex-wrap items-center gap-x-3 gap-y-1 lg:flex-nowrap py-2 pr-4 pl-[var(--chat-gut)] md:pr-6">
 			{/* Below lg the thread replaces the list, so the way back is always there. */}
 			<Button
 				type="button"
@@ -213,7 +211,7 @@ export function ThreadHeader({
 						type="agent"
 						id={singleAgent.actorId}
 						size="md"
-						className="size-[34px] rounded-[10px] text-xs font-bold"
+						className="size-[34px]"
 					/>
 				) : (
 					<span

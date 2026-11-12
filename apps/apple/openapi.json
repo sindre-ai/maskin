@@ -771,8 +771,8 @@
 				"tags": [
 					"Objects"
 				],
-				"summary": "Count a person's chat message as the approval of a drafted email",
-				"description": "Agents only. Names the chat message where a person said yes. The server records the approval only if a person wrote that message in a chat the agent is in, after the draft's last edit and after the draft was shown in that chat. Email drafts only.",
+				"summary": "Count a person's chat message as the approval of a draft",
+				"description": "Agents only. Names the chat message where a person said yes. The server records the approval only if a person wrote that message in a chat the agent is in, after the draft's last edit and after the draft was shown in that chat. Works for any draft kind that has a send tool (email, LinkedIn kinds, Slack message).",
 				"parameters": [
 					{
 						"schema": {
@@ -3156,6 +3156,7 @@
 					"Objects"
 				],
 				"summary": "Search objects by text",
+				"description": "Matches objects whose title or content contains any of the words in `q`, ranked by how many words hit (title hits first). Words shorter than 3 characters and common stopwords are ignored, and only the first 6 distinct words are used; any further words are ignored, not an error.",
 				"parameters": [
 					{
 						"schema": {
@@ -8903,6 +8904,12 @@
 													"type": "string"
 												}
 											},
+											"starter_prompts": {
+												"type": "array",
+												"items": {
+													"type": "string"
+												}
+											},
 											"workspaces": {
 												"type": "array",
 												"items": {
@@ -9408,6 +9415,15 @@
 											"maxLength": 40
 										},
 										"maxItems": 10
+									},
+									"starter_prompts": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 60
+										},
+										"maxItems": 4
 									}
 								}
 							}
@@ -9783,7 +9799,7 @@
 						}
 					},
 					"403": {
-						"description": "Cannot delete human actors",
+						"description": "Cannot delete human actors or system agents, and an agent caller needs a person’s approval (a delete_agent option tapped on a decision card)",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -13535,6 +13551,564 @@
 					},
 					"409": {
 						"description": "Blocked: transfer ownership or cancel the plan first",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/account/api-keys": {
+			"get": {
+				"tags": [
+					"Account"
+				],
+				"summary": "My API keys",
+				"description": "The signed-in person’s live keys, newest first: name, last four characters, created, last used and what holds the key. Never the key itself.",
+				"responses": {
+					"200": {
+						"description": "The keys",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"keys": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"kind": {
+														"type": "string",
+														"enum": [
+															"primary",
+															"login",
+															"login_ios",
+															"session",
+															"personal"
+														]
+													},
+													"name": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"hint": {
+														"type": "string"
+													},
+													"created_at": {
+														"type": "string",
+														"format": "date-time"
+													},
+													"last_used_at": {
+														"type": [
+															"string",
+															"null"
+														],
+														"format": "date-time"
+													},
+													"expires_at": {
+														"type": [
+															"string",
+															"null"
+														],
+														"format": "date-time"
+													},
+													"used_by": {
+														"type": [
+															"object",
+															"null"
+														],
+														"properties": {
+															"type": {
+																"type": "string",
+																"enum": [
+																	"connection"
+																]
+															},
+															"name": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"type",
+															"name"
+														]
+													}
+												},
+												"required": [
+													"id",
+													"kind",
+													"name",
+													"hint",
+													"created_at",
+													"last_used_at",
+													"expires_at",
+													"used_by"
+												]
+											}
+										}
+									},
+									"required": [
+										"keys"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not a person",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"post": {
+				"tags": [
+					"Account"
+				],
+				"summary": "Make a named API key",
+				"description": "Makes a personal key with the given name. The secret is in this response and nowhere else: only its hash is stored, so it cannot be shown again. A person may hold 20 personal keys at once. Refused from an MCP client and from a personal key, because there a model holds the person’s key and could otherwise make itself more.",
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"name": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 60
+									}
+								},
+								"required": [
+									"name"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "The new key, with its secret shown once",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"key": {
+											"type": "object",
+											"properties": {
+												"id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"kind": {
+													"type": "string",
+													"enum": [
+														"primary",
+														"login",
+														"login_ios",
+														"session",
+														"personal"
+													]
+												},
+												"name": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"hint": {
+													"type": "string"
+												},
+												"created_at": {
+													"type": "string",
+													"format": "date-time"
+												},
+												"last_used_at": {
+													"type": [
+														"string",
+														"null"
+													],
+													"format": "date-time"
+												},
+												"expires_at": {
+													"type": [
+														"string",
+														"null"
+													],
+													"format": "date-time"
+												},
+												"used_by": {
+													"type": [
+														"object",
+														"null"
+													],
+													"properties": {
+														"type": {
+															"type": "string",
+															"enum": [
+																"connection"
+															]
+														},
+														"name": {
+															"type": "string"
+														}
+													},
+													"required": [
+														"type",
+														"name"
+													]
+												}
+											},
+											"required": [
+												"id",
+												"kind",
+												"name",
+												"hint",
+												"created_at",
+												"last_used_at",
+												"expires_at",
+												"used_by"
+											]
+										},
+										"secret": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"key",
+										"secret"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not a person, called from an MCP client, or called with a personal key",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Already at the limit of personal keys",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/account/api-keys/{id}": {
+			"delete": {
+				"tags": [
+					"Account"
+				],
+				"summary": "Revoke one of my API keys",
+				"description": "Revokes a live key of the signed-in person. It stops working on the next request. Another person’s key id, or one already revoked, is a 404.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Revoked",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"revoked": {
+											"type": "boolean",
+											"enum": [
+												true
+											]
+										}
+									},
+									"required": [
+										"revoked"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not a person",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "No such key",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -26182,13 +26756,344 @@
 				}
 			}
 		},
+		"/api/loops/{id}/next-steps": {
+			"get": {
+				"tags": [
+					"loops"
+				],
+				"summary": "Next steps for one loop: asks waiting first, then open members",
+				"description": "Returns `asks` (steps with sessions waiting on a person, most waiting first) and `items` (the newest open members of the loop, capped at 10). Both are empty for a loop with nothing to do, no steps, or an unknown id (a foreign loop returns empty without leaking existence).",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Next steps (may be empty)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"asks": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"triggerId": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"triggerName": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"agent": {
+														"type": [
+															"object",
+															"null"
+														],
+														"properties": {
+															"id": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"name": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"description": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															}
+														},
+														"required": [
+															"id"
+														]
+													},
+													"pendingCount": {
+														"type": "integer",
+														"exclusiveMinimum": 0
+													}
+												},
+												"required": [
+													"triggerId",
+													"triggerName",
+													"agent",
+													"pendingCount"
+												]
+											}
+										},
+										"items": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"type": {
+														"type": "string"
+													},
+													"title": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"status": {
+														"type": "string"
+													}
+												},
+												"required": [
+													"id",
+													"type",
+													"title",
+													"status"
+												]
+											}
+										}
+									},
+									"required": [
+										"asks",
+										"items"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Missing workspace ID or malformed loop id",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/loops/{id}/briefings": {
+			"get": {
+				"tags": [
+					"loops"
+				],
+				"summary": "Briefing pages attached to one loop or its members",
+				"description": "Returns the loop's briefing pages (files of kind \"briefing\" attached to the loop or to one of its members), newest first, each page once, capped at 24. Empty for a loop with none or an unknown id (a foreign loop returns empty without leaking existence).",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Briefing pages (may be empty)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"briefings": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"name": {
+														"type": "string"
+													},
+													"mimeType": {
+														"type": "string"
+													},
+													"updatedAt": {
+														"type": "string"
+													},
+													"sourceId": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"sourceTitle": {
+														"type": [
+															"string",
+															"null"
+														]
+													}
+												},
+												"required": [
+													"id",
+													"name",
+													"mimeType",
+													"updatedAt",
+													"sourceId",
+													"sourceTitle"
+												]
+											}
+										}
+									},
+									"required": [
+										"briefings"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Missing workspace ID or malformed loop id",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/data/query": {
 			"get": {
 				"tags": [
 					"data"
 				],
 				"summary": "Read-only grouped aggregation over objects",
-				"description": "Counts, sums or averages objects of one type, optionally grouped by status, type or a metadata field and scoped to the workspace or one loop. Aggregation runs in the database; scanned rows and returned groups are capped and flagged when the cap is hit.",
+				"description": "Counts, sums or averages objects of one type, optionally grouped by status, type or a metadata field and scoped to the workspace or one loop. Aggregation runs in the database over every matching object. Groups come back a page at a time: while `next_cursor` is set, pass it back as `cursor` to read the next page. Totals always cover every group.",
 				"parameters": [
 					{
 						"schema": {
@@ -26199,6 +27104,27 @@
 						},
 						"required": true,
 						"name": "spec",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"maxLength": 80,
+							"description": "The previous page's `next_cursor`, to read the next page of groups."
+						},
+						"required": false,
+						"name": "cursor",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"minimum": 1,
+							"maximum": 1000,
+							"description": "Groups per page (default 50, at most 1000)."
+						},
+						"required": false,
+						"name": "limit",
 						"in": "query"
 					},
 					{
@@ -26265,6 +27191,12 @@
 												"value"
 											]
 										},
+										"next_cursor": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
 										"rows_truncated": {
 											"type": "boolean"
 										},
@@ -26275,6 +27207,7 @@
 									"required": [
 										"groups",
 										"total",
+										"next_cursor",
 										"rows_truncated",
 										"groups_truncated"
 									]
@@ -26878,6 +27811,299 @@
 					},
 					"429": {
 						"description": "Too many tries",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/integrations/deepdots/connect": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"integrations"
+				],
+				"summary": "Connect Deepdots with an email and password",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"email": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 320
+									},
+									"password": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 1024
+									}
+								},
+								"required": [
+									"email",
+									"password"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Signed in and stored",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"integration_id": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"integration_id"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Deepdots refused the email and password. Nothing is stored.",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Deepdots is not switched on for this person",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Signed in, but the connection could not be saved",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"502": {
+						"description": "Deepdots could not be reached. Nothing is stored.",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -33369,7 +34595,7 @@
 					"integrations"
 				],
 				"summary": "Send an email from the connected Gmail account",
-				"description": "Irreversible and never retried. Needs \"Read & write\" access and an email a person approved: an object draft they approved (object_id) or an approval card they answered (approval_comment_id).",
+				"description": "Irreversible and never retried. Needs \"Read & write\" access. If the agent is set to always allow emails, pass to, subject and body (or object_id) and it sends. If it is set to ask first, the email must be one a person approved: an object draft they approved (object_id) or an approval card they answered (approval_comment_id).",
 				"parameters": [
 					{
 						"schema": {
@@ -33445,7 +34671,8 @@
 										"mode": {
 											"type": "string",
 											"enum": [
-												"approved_draft"
+												"approved_draft",
+												"direct"
 											]
 										}
 									},
@@ -34297,8 +35524,8 @@
 				"tags": [
 					"integrations"
 				],
-				"summary": "Send an approved email draft from the agent mailbox through Resend",
-				"description": "Needs \"Read & write\" access to Resend, a mailbox recorded for the calling agent, and an email draft a person approved (object_id). Sends once per approval.",
+				"summary": "Send an email draft from the agent mailbox through Resend",
+				"description": "Needs \"Read & write\" access to Resend, a mailbox recorded for the calling agent, and an email draft (object_id). An agent set to ask first needs a draft a person approved; one set to always allow sends it at once. Sends once per approval, or once per draft.",
 				"parameters": [
 					{
 						"schema": {
@@ -34347,7 +35574,8 @@
 										"mode": {
 											"type": "string",
 											"enum": [
-												"approved_draft"
+												"approved_draft",
+												"direct"
 											]
 										}
 									},
@@ -37597,6 +38825,256 @@
 					},
 					"404": {
 						"description": "Integration not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/guardrails": {
+			"get": {
+				"tags": [
+					"Agents"
+				],
+				"summary": "What each agent may do without asking",
+				"description": "The workspace’s send defaults and daily target, and for each agent its send mode per kind of draft and how many integrations it has at each access level. Any member can read it. Read only: change a send mode with PUT /api/send-permissions and access on the Integrations page.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "The limits in force",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"workspace": {
+											"type": "object",
+											"properties": {
+												"daily_budget": {
+													"type": [
+														"object",
+														"null"
+													],
+													"properties": {
+														"unit": {
+															"type": "string",
+															"enum": [
+																"tokens",
+																"dollars"
+															]
+														},
+														"amount": {
+															"type": "number"
+														},
+														"stop_share": {
+															"type": "integer"
+														},
+														"timezone": {
+															"type": "string"
+														}
+													},
+													"required": [
+														"unit",
+														"amount",
+														"stop_share",
+														"timezone"
+													]
+												},
+												"daily_budget_enforced": {
+													"type": "boolean"
+												},
+												"send_defaults": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"kind": {
+																"type": "string"
+															},
+															"mode": {
+																"type": "string",
+																"enum": [
+																	"always_allow",
+																	"ask_first",
+																	"deny"
+																]
+															},
+															"source": {
+																"type": "string",
+																"enum": [
+																	"agent",
+																	"workspace",
+																	"starting"
+																]
+															}
+														},
+														"required": [
+															"kind",
+															"mode",
+															"source"
+														]
+													}
+												}
+											},
+											"required": [
+												"daily_budget",
+												"daily_budget_enforced",
+												"send_defaults"
+											]
+										},
+										"agents": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"agent_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"name": {
+														"type": "string"
+													},
+													"send": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"kind": {
+																	"type": "string"
+																},
+																"mode": {
+																	"type": "string",
+																	"enum": [
+																		"always_allow",
+																		"ask_first",
+																		"deny"
+																	]
+																},
+																"source": {
+																	"type": "string",
+																	"enum": [
+																		"agent",
+																		"workspace",
+																		"starting"
+																	]
+																}
+															},
+															"required": [
+																"kind",
+																"mode",
+																"source"
+															]
+														}
+													},
+													"access": {
+														"type": "object",
+														"properties": {
+															"read_write": {
+																"type": "integer",
+																"minimum": 0
+															},
+															"read": {
+																"type": "integer",
+																"minimum": 0
+															},
+															"none": {
+																"type": "integer",
+																"minimum": 0
+															},
+															"credentials": {
+																"type": "integer",
+																"minimum": 0
+															}
+														},
+														"required": [
+															"read_write",
+															"read",
+															"none",
+															"credentials"
+														]
+													}
+												},
+												"required": [
+													"agent_id",
+													"name",
+													"send",
+													"access"
+												]
+											}
+										}
+									},
+									"required": [
+										"workspace",
+										"agents"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "No workspace",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -41280,6 +42758,464 @@
 				}
 			}
 		},
+		"/api/billing/auto-top-up": {
+			"get": {
+				"tags": [
+					"billing"
+				],
+				"summary": "The auto top-up rule and whether the last automatic charge failed",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "The rule (null until one has been saved)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"auto_top_up": {
+											"type": [
+												"object",
+												"null"
+											],
+											"properties": {
+												"enabled": {
+													"type": "boolean"
+												},
+												"threshold_cents": {
+													"type": "integer"
+												},
+												"amount_cents": {
+													"type": "integer"
+												},
+												"threshold_dkk_approx": {
+													"type": "integer"
+												},
+												"amount_dkk_approx": {
+													"type": "integer"
+												},
+												"status": {
+													"type": "string",
+													"enum": [
+														"ok",
+														"failed"
+													]
+												},
+												"failure_reason": {
+													"type": [
+														"string",
+														"null"
+													],
+													"enum": [
+														"card_declined",
+														"no_payment_method",
+														"authentication_required",
+														"charge_error"
+													]
+												},
+												"failed_at": {
+													"type": [
+														"integer",
+														"null"
+													]
+												},
+												"last_charged_at": {
+													"type": [
+														"integer",
+														"null"
+													]
+												}
+											},
+											"required": [
+												"enabled",
+												"threshold_cents",
+												"amount_cents",
+												"threshold_dkk_approx",
+												"amount_dkk_approx",
+												"status",
+												"failure_reason",
+												"failed_at",
+												"last_charged_at"
+											]
+										}
+									},
+									"required": [
+										"auto_top_up"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Workspace not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"put": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"billing"
+				],
+				"summary": "Save the auto top-up rule (also clears a failed state and retries on the next debit)",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"enabled": {
+										"type": "boolean"
+									},
+									"threshold_cents": {
+										"type": "integer",
+										"minimum": 500
+									},
+									"amount_cents": {
+										"type": "integer",
+										"minimum": 2500,
+										"maximum": 24900
+									}
+								},
+								"required": [
+									"enabled",
+									"threshold_cents",
+									"amount_cents"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Rule saved",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"auto_top_up": {
+											"type": [
+												"object",
+												"null"
+											],
+											"properties": {
+												"enabled": {
+													"type": "boolean"
+												},
+												"threshold_cents": {
+													"type": "integer"
+												},
+												"amount_cents": {
+													"type": "integer"
+												},
+												"threshold_dkk_approx": {
+													"type": "integer"
+												},
+												"amount_dkk_approx": {
+													"type": "integer"
+												},
+												"status": {
+													"type": "string",
+													"enum": [
+														"ok",
+														"failed"
+													]
+												},
+												"failure_reason": {
+													"type": [
+														"string",
+														"null"
+													],
+													"enum": [
+														"card_declined",
+														"no_payment_method",
+														"authentication_required",
+														"charge_error"
+													]
+												},
+												"failed_at": {
+													"type": [
+														"integer",
+														"null"
+													]
+												},
+												"last_charged_at": {
+													"type": [
+														"integer",
+														"null"
+													]
+												}
+											},
+											"required": [
+												"enabled",
+												"threshold_cents",
+												"amount_cents",
+												"threshold_dkk_approx",
+												"amount_dkk_approx",
+												"status",
+												"failure_reason",
+												"failed_at",
+												"last_charged_at"
+											]
+										}
+									},
+									"required": [
+										"auto_top_up"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Workspace cannot be charged automatically yet",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Caller is not a human workspace admin or owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Workspace not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/internal/agent-servers/reconcile": {
 			"post": {
 				"tags": [
@@ -42833,6 +44769,20 @@
 																"status"
 															],
 															"description": "Use on the option that moves an object to a new status (\"Go\" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted."
+														},
+														"delete_agent": {
+															"type": "object",
+															"properties": {
+																"actor_id": {
+																	"type": "string",
+																	"format": "uuid",
+																	"description": "The agent to delete: its id from list_actors."
+																}
+															},
+															"required": [
+																"actor_id"
+															],
+															"description": "Use on the option that approves deleting another agent (\"Delete Scout\"), and mark it destructive. A person tapping it records their approval and nothing is deleted yet: the reply wakes you, and you then call delete_agent with the same id. The approval is for you only, for that one agent, and lapses after 24 hours. Without a tap, delete_agent is refused. All delete_agent options on one card must name the same agent. You cannot ask to delete yourself or a system agent."
 														}
 													},
 													"required": [
@@ -43676,6 +45626,11 @@
 														"minLength": 1,
 														"maxLength": 100
 													},
+													"account": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 320
+													},
 													"level": {
 														"type": "string",
 														"enum": [
@@ -43893,6 +45848,10 @@
 													"outcome"
 												]
 											},
+											"quoted_message_id": {
+												"type": "integer",
+												"exclusiveMinimum": 0
+											},
 											"helper_return": {
 												"type": "string",
 												"format": "uuid"
@@ -44008,6 +45967,12 @@
 												"required": [
 													"intro_message_id",
 													"index"
+												]
+											},
+											"started_from": {
+												"type": "string",
+												"enum": [
+													"share"
 												]
 											},
 											"comment_event_id": {
@@ -45765,23 +47730,36 @@
 									"items": {
 										"type": "object",
 										"properties": {
-											"pinned": {
-												"type": "boolean"
+											"actorId": {
+												"type": "string",
+												"format": "uuid"
 											},
-											"archived": {
-												"type": "boolean"
+											"actorName": {
+												"type": "string"
 											},
-											"last_read_message_id": {
+											"actorType": {
+												"type": "string"
+											},
+											"joinedAt": {
 												"type": [
-													"number",
+													"string",
 													"null"
 												]
+											},
+											"addedBy": {
+												"type": [
+													"string",
+													"null"
+												],
+												"format": "uuid"
 											}
 										},
 										"required": [
-											"pinned",
-											"archived",
-											"last_read_message_id"
+											"actorId",
+											"actorName",
+											"actorType",
+											"joinedAt",
+											"addedBy"
 										]
 									}
 								}
@@ -47095,6 +49073,11 @@
 														"minLength": 1,
 														"maxLength": 100
 													},
+													"account": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 320
+													},
 													"level": {
 														"type": "string",
 														"enum": [
@@ -47312,6 +49295,10 @@
 													"outcome"
 												]
 											},
+											"quoted_message_id": {
+												"type": "integer",
+												"exclusiveMinimum": 0
+											},
 											"helper_return": {
 												"type": "string",
 												"format": "uuid"
@@ -47427,6 +49414,12 @@
 												"required": [
 													"intro_message_id",
 													"index"
+												]
+											},
+											"started_from": {
+												"type": "string",
+												"enum": [
+													"share"
 												]
 											},
 											"comment_event_id": {
@@ -58761,6 +60754,20 @@
 																						"status"
 																					],
 																					"description": "Use on the option that moves an object to a new status (\"Go\" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted."
+																				},
+																				"delete_agent": {
+																					"type": "object",
+																					"properties": {
+																						"actor_id": {
+																							"type": "string",
+																							"format": "uuid",
+																							"description": "The agent to delete: its id from list_actors."
+																						}
+																					},
+																					"required": [
+																						"actor_id"
+																					],
+																					"description": "Use on the option that approves deleting another agent (\"Delete Scout\"), and mark it destructive. A person tapping it records their approval and nothing is deleted yet: the reply wakes you, and you then call delete_agent with the same id. The approval is for you only, for that one agent, and lapses after 24 hours. Without a tap, delete_agent is refused. All delete_agent options on one card must name the same agent. You cannot ask to delete yourself or a system agent."
 																				}
 																			},
 																			"required": [
@@ -59347,6 +61354,236 @@
 					},
 					"404": {
 						"description": "for_actor_id is not a member of the workspace",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/for-you/recap": {
+			"get": {
+				"tags": [
+					"For You"
+				],
+				"summary": "What changed since the person last looked: facts the app turns into a sentence",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "date-time",
+							"description": "When the person last looked (ISO 8601). Kept on the device. Anything older than 7 days is cut to 7 days."
+						},
+						"required": true,
+						"description": "When the person last looked (ISO 8601). Kept on the device. Anything older than 7 days is cut to 7 days.",
+						"name": "since",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Counts and a few named items. Zero counts when nothing is new.",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"since": {
+											"type": "string",
+											"description": "The start of the window actually used, after the 7 day cap."
+										},
+										"asks_answered": {
+											"type": "object",
+											"properties": {
+												"count": {
+													"type": "integer",
+													"minimum": 0
+												},
+												"items": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"object_id": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"comment_id": {
+																"type": "number",
+																"description": "The decision card's comment id."
+															},
+															"answered_by": {
+																"type": "string",
+																"format": "uuid"
+															}
+														},
+														"required": [
+															"object_id",
+															"comment_id",
+															"answered_by"
+														]
+													}
+												}
+											},
+											"required": [
+												"count",
+												"items"
+											],
+											"description": "Decision cards addressed to the person that someone else has replied to."
+										},
+										"items_moved": {
+											"type": "object",
+											"properties": {
+												"count": {
+													"type": "integer",
+													"minimum": 0
+												},
+												"items": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"object_id": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"type": {
+																"type": "string"
+															},
+															"title": {
+																"type": "string"
+															},
+															"status": {
+																"type": "string",
+																"description": "Where the item is now."
+															}
+														},
+														"required": [
+															"object_id",
+															"type",
+															"title",
+															"status"
+														]
+													}
+												}
+											},
+											"required": [
+												"count",
+												"items"
+											],
+											"description": "Insights, bets and tasks that changed status, not counting the ones the person moved."
+										},
+										"agents_finished": {
+											"type": "object",
+											"properties": {
+												"count": {
+													"type": "integer",
+													"minimum": 0
+												},
+												"items": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"agent_id": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"name": {
+																"type": "string"
+															},
+															"sessions": {
+																"type": "integer",
+																"exclusiveMinimum": 0
+															}
+														},
+														"required": [
+															"agent_id",
+															"name",
+															"sessions"
+														]
+													}
+												}
+											},
+											"required": [
+												"count",
+												"items"
+											],
+											"description": "Agents with a session that completed. count is the number of agents."
+										}
+									},
+									"required": [
+										"since",
+										"asks_answered",
+										"items_moved",
+										"agents_finished"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Missing workspace ID or a bad since time",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -60510,14 +62747,58 @@
 												},
 												"tips": {
 													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
 												}
 											},
 											"required": [
 												"needs_you",
 												"conversation",
 												"digest",
-												"tips"
+												"tips",
+												"flow_activity"
 											]
+										},
+										"browser_categories": {
+											"type": "object",
+											"properties": {
+												"needs_you": {
+													"type": "boolean"
+												},
+												"conversation": {
+													"type": "boolean"
+												},
+												"digest": {
+													"type": "boolean"
+												},
+												"tips": {
+													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"needs_you",
+												"conversation",
+												"digest",
+												"tips",
+												"flow_activity"
+											]
+										},
+										"browser_not_asked": {
+											"type": "array",
+											"items": {
+												"type": "string",
+												"enum": [
+													"needs_you",
+													"conversation",
+													"digest",
+													"tips",
+													"flow_activity"
+												]
+											}
 										},
 										"briefing_enabled": {
 											"type": "boolean"
@@ -60526,6 +62807,42 @@
 											"type": "integer",
 											"minimum": 0,
 											"maximum": 1439
+										},
+										"email_digest_enabled": {
+											"type": "boolean"
+										},
+										"email_categories": {
+											"type": "object",
+											"properties": {
+												"needs_you": {
+													"type": "boolean"
+												},
+												"conversation": {
+													"type": "boolean"
+												},
+												"tips": {
+													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"needs_you",
+												"conversation",
+												"tips",
+												"flow_activity"
+											]
+										},
+										"marketplace_picks_enabled": {
+											"type": "boolean"
+										},
+										"email_rhythm": {
+											"type": "string",
+											"enum": [
+												"daily",
+												"weekly"
+											]
 										},
 										"muted_workspace_ids": {
 											"type": "array",
@@ -60546,8 +62863,14 @@
 										"quiet_hours_start",
 										"quiet_hours_end",
 										"categories",
+										"browser_categories",
+										"browser_not_asked",
 										"briefing_enabled",
 										"briefing_time",
+										"email_digest_enabled",
+										"email_categories",
+										"marketplace_picks_enabled",
+										"email_rhythm",
 										"muted_workspace_ids",
 										"updated_at"
 									]
@@ -60607,6 +62930,29 @@
 											},
 											"tips": {
 												"type": "boolean"
+											},
+											"flow_activity": {
+												"type": "boolean"
+											}
+										}
+									},
+									"browser_categories": {
+										"type": "object",
+										"properties": {
+											"needs_you": {
+												"type": "boolean"
+											},
+											"conversation": {
+												"type": "boolean"
+											},
+											"digest": {
+												"type": "boolean"
+											},
+											"tips": {
+												"type": "boolean"
+											},
+											"flow_activity": {
+												"type": "boolean"
 											}
 										}
 									},
@@ -60617,6 +62963,36 @@
 										"type": "integer",
 										"minimum": 0,
 										"maximum": 1439
+									},
+									"email_digest_enabled": {
+										"type": "boolean"
+									},
+									"email_categories": {
+										"type": "object",
+										"properties": {
+											"needs_you": {
+												"type": "boolean"
+											},
+											"conversation": {
+												"type": "boolean"
+											},
+											"tips": {
+												"type": "boolean"
+											},
+											"flow_activity": {
+												"type": "boolean"
+											}
+										}
+									},
+									"marketplace_picks_enabled": {
+										"type": "boolean"
+									},
+									"email_rhythm": {
+										"type": "string",
+										"enum": [
+											"daily",
+											"weekly"
+										]
 									},
 									"muted_workspace_ids": {
 										"type": "array",
@@ -60677,14 +63053,58 @@
 												},
 												"tips": {
 													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
 												}
 											},
 											"required": [
 												"needs_you",
 												"conversation",
 												"digest",
-												"tips"
+												"tips",
+												"flow_activity"
 											]
+										},
+										"browser_categories": {
+											"type": "object",
+											"properties": {
+												"needs_you": {
+													"type": "boolean"
+												},
+												"conversation": {
+													"type": "boolean"
+												},
+												"digest": {
+													"type": "boolean"
+												},
+												"tips": {
+													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"needs_you",
+												"conversation",
+												"digest",
+												"tips",
+												"flow_activity"
+											]
+										},
+										"browser_not_asked": {
+											"type": "array",
+											"items": {
+												"type": "string",
+												"enum": [
+													"needs_you",
+													"conversation",
+													"digest",
+													"tips",
+													"flow_activity"
+												]
+											}
 										},
 										"briefing_enabled": {
 											"type": "boolean"
@@ -60693,6 +63113,42 @@
 											"type": "integer",
 											"minimum": 0,
 											"maximum": 1439
+										},
+										"email_digest_enabled": {
+											"type": "boolean"
+										},
+										"email_categories": {
+											"type": "object",
+											"properties": {
+												"needs_you": {
+													"type": "boolean"
+												},
+												"conversation": {
+													"type": "boolean"
+												},
+												"tips": {
+													"type": "boolean"
+												},
+												"flow_activity": {
+													"type": "boolean"
+												}
+											},
+											"required": [
+												"needs_you",
+												"conversation",
+												"tips",
+												"flow_activity"
+											]
+										},
+										"marketplace_picks_enabled": {
+											"type": "boolean"
+										},
+										"email_rhythm": {
+											"type": "string",
+											"enum": [
+												"daily",
+												"weekly"
+											]
 										},
 										"muted_workspace_ids": {
 											"type": "array",
@@ -60713,8 +63169,14 @@
 										"quiet_hours_start",
 										"quiet_hours_end",
 										"categories",
+										"browser_categories",
+										"browser_not_asked",
 										"briefing_enabled",
 										"briefing_time",
+										"email_digest_enabled",
+										"email_categories",
+										"marketplace_picks_enabled",
+										"email_rhythm",
 										"muted_workspace_ids",
 										"updated_at"
 									]
@@ -62664,6 +65126,20 @@
 																						"status"
 																					],
 																					"description": "Use on the option that moves an object to a new status (\"Go\" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted."
+																				},
+																				"delete_agent": {
+																					"type": "object",
+																					"properties": {
+																						"actor_id": {
+																							"type": "string",
+																							"format": "uuid",
+																							"description": "The agent to delete: its id from list_actors."
+																						}
+																					},
+																					"required": [
+																						"actor_id"
+																					],
+																					"description": "Use on the option that approves deleting another agent (\"Delete Scout\"), and mark it destructive. A person tapping it records their approval and nothing is deleted yet: the reply wakes you, and you then call delete_agent with the same id. The approval is for you only, for that one agent, and lapses after 24 hours. Without a tap, delete_agent is refused. All delete_agent options on one card must name the same agent. You cannot ask to delete yourself or a system agent."
 																				}
 																			},
 																			"required": [
@@ -67110,6 +69586,15 @@
 											"briefing"
 										]
 									},
+									"tags": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 60
+										},
+										"maxItems": 20
+									},
 									"mime_type": {
 										"type": "string",
 										"minLength": 3,
@@ -67170,6 +69655,12 @@
 											"enum": [
 												"briefing"
 											]
+										},
+										"tags": {
+											"type": "array",
+											"items": {
+												"type": "string"
+											}
 										},
 										"mimeType": {
 											"type": "string"
@@ -67295,6 +69786,7 @@
 										"name",
 										"description",
 										"kind",
+										"tags",
 										"mimeType",
 										"sizeBytes",
 										"storageKey",
@@ -67462,6 +69954,26 @@
 					},
 					{
 						"schema": {
+							"type": "string"
+						},
+						"required": false,
+						"name": "tags",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"enum": [
+								"all",
+								"any"
+							]
+						},
+						"required": false,
+						"name": "tags_match",
+						"in": "query"
+					},
+					{
+						"schema": {
 							"type": "integer",
 							"exclusiveMinimum": 0,
 							"maximum": 200
@@ -67567,6 +70079,12 @@
 													"briefing"
 												]
 											},
+											"tags": {
+												"type": "array",
+												"items": {
+													"type": "string"
+												}
+											},
 											"mimeType": {
 												"type": "string"
 											},
@@ -67594,6 +70112,7 @@
 											"name",
 											"description",
 											"kind",
+											"tags",
 											"mimeType",
 											"sizeBytes",
 											"storageKey",
@@ -67608,6 +70127,543 @@
 					},
 					"400": {
 						"description": "Invalid request",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/files/tags": {
+			"get": {
+				"tags": [
+					"Files"
+				],
+				"summary": "List the tags in use in the workspace and how many files carry each",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Tags, most-used first (ties in alphabetical order)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "array",
+									"items": {
+										"type": "object",
+										"properties": {
+											"tag": {
+												"type": "string"
+											},
+											"count": {
+												"type": "integer",
+												"exclusiveMinimum": 0
+											}
+										},
+										"required": [
+											"tag",
+											"count"
+										]
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/files/tags/rename": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Files"
+				],
+				"summary": "Rename a tag on every file in the workspace",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"from": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 60
+									},
+									"to": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 60
+									}
+								},
+								"required": [
+									"from",
+									"to"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Every file that carried the tag now carries the new one",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"from": {
+											"type": "string"
+										},
+										"to": {
+											"type": "string"
+										},
+										"files_changed": {
+											"type": "integer",
+											"minimum": 0
+										}
+									},
+									"required": [
+										"from",
+										"to",
+										"files_changed"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid tag, or the old and new tag are the same",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "No file in the workspace carries the tag; nothing was written",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Rename only: the new name is already a tag; merge into it instead",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/files/tags/merge": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Files"
+				],
+				"summary": "Merge a tag into another on every file in the workspace",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"from": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 60
+									},
+									"into": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 60
+									}
+								},
+								"required": [
+									"from",
+									"into"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Every file that carried the tag now carries the new one",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"from": {
+											"type": "string"
+										},
+										"to": {
+											"type": "string"
+										},
+										"files_changed": {
+											"type": "integer",
+											"minimum": 0
+										}
+									},
+									"required": [
+										"from",
+										"to",
+										"files_changed"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid tag, or the old and new tag are the same",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "No file in the workspace carries the tag; nothing was written",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Rename only: the new name is already a tag; merge into it instead",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -67729,6 +70785,12 @@
 											"enum": [
 												"briefing"
 											]
+										},
+										"tags": {
+											"type": "array",
+											"items": {
+												"type": "string"
+											}
 										},
 										"mimeType": {
 											"type": "string"
@@ -67854,6 +70916,7 @@
 										"name",
 										"description",
 										"kind",
+										"tags",
 										"mimeType",
 										"sizeBytes",
 										"storageKey",
@@ -68028,6 +71091,15 @@
 											"briefing"
 										]
 									},
+									"tags": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 60
+										},
+										"maxItems": 20
+									},
 									"mime_type": {
 										"type": "string",
 										"minLength": 3,
@@ -68185,6 +71257,12 @@
 												"briefing"
 											]
 										},
+										"tags": {
+											"type": "array",
+											"items": {
+												"type": "string"
+											}
+										},
 										"mimeType": {
 											"type": "string"
 										},
@@ -68309,6 +71387,7 @@
 										"name",
 										"description",
 										"kind",
+										"tags",
 										"mimeType",
 										"sizeBytes",
 										"storageKey",
@@ -68698,6 +71777,15 @@
 											"briefing"
 										]
 									},
+									"tags": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 60
+										},
+										"maxItems": 20
+									},
 									"mime_type": {
 										"type": "string",
 										"minLength": 3,
@@ -68981,6 +72069,12 @@
 												"briefing"
 											]
 										},
+										"tags": {
+											"type": "array",
+											"items": {
+												"type": "string"
+											}
+										},
 										"mimeType": {
 											"type": "string"
 										},
@@ -69105,6 +72199,7 @@
 										"name",
 										"description",
 										"kind",
+										"tags",
 										"mimeType",
 										"sizeBytes",
 										"storageKey",

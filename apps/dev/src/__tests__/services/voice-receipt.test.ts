@@ -301,14 +301,14 @@ describe('receipt numbers', () => {
 		const rows = [
 			row({ held: true, tool: 'gmail_send_email', yesCount: 1, readBackMatches: true }),
 			row({ held: true, tool: 'gmail_send_email', yesCount: 2, readBackMatches: true }),
-			row({ held: true, tool: 'create_session', outcome: 'not_done', yesCount: 0 }),
+			row({ held: true, tool: 'create_sub_chat', outcome: 'not_done', yesCount: 0 }),
 			row({ held: false, tool: 'update_objects' }),
 		]
 		const n = buildReceiptNumbers(rows, undefined, 'network_error')
 		expect(n.sends).toEqual([
 			{ tool: 'gmail_send_email', outcome: 'ran', read_back_matches: true, yes_count: 1 },
 			{ tool: 'gmail_send_email', outcome: 'ran', read_back_matches: true, yes_count: 2 },
-			{ tool: 'create_session', outcome: 'not_done', read_back_matches: null, yes_count: 0 },
+			{ tool: 'create_sub_chat', outcome: 'not_done', read_back_matches: null, yes_count: 0 },
 		])
 		const words = numbersInWords(n)
 		expect(words).toContain('Send 1: read-back matched, 1 yes.')

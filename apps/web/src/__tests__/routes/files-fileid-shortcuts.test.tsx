@@ -29,6 +29,7 @@ vi.mock('@/hooks/use-files', () => ({
 		data: {
 			id: 'file-1',
 			name: 'deck.html',
+			tags: [],
 			mimeType: 'text/html',
 			encoding: 'utf8',
 			content: '<html></html>',

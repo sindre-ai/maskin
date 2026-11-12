@@ -27,6 +27,7 @@ export function MarketplaceRow({
 	status?: ReactNode
 	action: ReactNode
 }) {
+	const initials = getActorInitials(name)
 	return (
 		<article
 			className={cn(
@@ -37,9 +38,12 @@ export function MarketplaceRow({
 			{overlay}
 			<span
 				aria-hidden="true"
-				className="grid size-8 shrink-0 place-items-center rounded-[9px] bg-muted text-[11px] font-bold text-foreground"
+				className={cn(
+					'grid size-8 shrink-0 place-items-center rounded-[9px] bg-muted font-bold text-foreground',
+					initials.length === 3 ? 'text-[9px]' : 'text-[11px]',
+				)}
 			>
-				{getActorInitials(name)}
+				{initials}
 			</span>
 			<div className="min-w-0 flex-1 basis-40">
 				<h3 className="truncate text-[15px] font-semibold text-foreground">{name}</h3>

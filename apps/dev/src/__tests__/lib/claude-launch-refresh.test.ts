@@ -378,6 +378,7 @@ describe('resolveLlmRoute env for the container', () => {
 				CLAUDE_OAUTH_SCOPES: '["read"]',
 				CLAUDE_OAUTH_SUBSCRIPTION_TYPE: 'pro',
 				ANTHROPIC_MODEL: expect.any(String),
+				ANTHROPIC_SMALL_FAST_MODEL: 'claude-haiku-4-5-20251001',
 				MASKIN_CLAUDE_EFFORT: expect.any(String),
 			})
 			expect(Object.keys(result?.envVars ?? {}).slice(0, 3)).toEqual([

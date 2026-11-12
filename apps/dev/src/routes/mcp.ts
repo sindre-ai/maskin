@@ -219,7 +219,7 @@ app.post('/', async (c) => {
 		triggeringEventId,
 		telemetryEra: era?.era,
 		telemetryProtocolVersion: era?.version,
-		// Forward the caller's session id so create_session can link
+		// Forward the caller's session id so create_sub_chat can link
 		// the helper to its sender. Only a uuid-shaped header counts, and it is
 		// still just a claim: POST /api/sessions checks it belongs to the caller.
 		maskinSessionId: session.source === 'maskin-session' ? session.id : undefined,

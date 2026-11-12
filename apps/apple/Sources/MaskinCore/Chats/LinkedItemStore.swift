@@ -113,6 +113,9 @@ public final class LinkedItemStore {
 		var value: Value
 		var readAt: Date
 	}
+	/// Keeps a card in step with its object: an agent's edit re-reads the card instead of leaving the
+	/// text the card first drew.
+	@ObservationIgnored private var listener: Task<Void, Never>?
 	@ObservationIgnored private let workspaceID: @MainActor () -> String?
 	@ObservationIgnored private let memberWorkspaceName: @MainActor (String) -> String?
 	@ObservationIgnored private let now: @MainActor () -> Date
@@ -144,7 +147,8 @@ public final class LinkedItemStore {
 		objects: any ObjectDraftsRemote, files: any FilesRemote,
 		actors: (@Sendable () async throws -> [ActorRef])? = nil, places: (any LinkedPlacesRemote)? = nil,
 		loops: (@Sendable () async throws -> [LoopSummary])? = nil,
-		triggers: (@Sendable () async throws -> TriggerListing)? = nil, workspaceID: @escaping @MainActor () -> String?,
+		triggers: (@Sendable () async throws -> TriggerListing)? = nil, events: EventHub? = nil,
+		workspaceID: @escaping @MainActor () -> String?,
 		workspaceName: @escaping @MainActor (String) -> String? = { _ in nil },
 		retryAfter: TimeInterval = 30, now: @escaping @MainActor () -> Date = { Date() }
 	) {
@@ -159,6 +163,45 @@ public final class LinkedItemStore {
 		self.memberWorkspaceName = workspaceName
 		self.retryAfter = retryAfter
 		self.now = now
+		if let events { listen(to: events) }
+	}
+
+	// MARK: Live updates
+
+	private func listen(to hub: EventHub) {
+		let stream = hub.subscribe()
+		listener = Task { [weak self] in
+			for await signal in stream {
+				guard let self else { return }
+				await self.handle(signal)
+			}
+		}
+	}
+
+	/// An event that names an object this store holds re-reads it, whatever the object's type (types
+	/// are the workspace's own, so none is special). After a reconnect, events in the gap may be lost,
+	/// so every held object is re-read.
+	func handle(_ signal: HubSignal) async {
+		switch signal {
+		case .event(let event):
+			guard let id = event.entityId?.lowercased() else { return }
+			let target = LinkedTarget(kind: .object, uuid: id)
+			guard isHeldObject(target) else { return }
+			await refresh(target)
+		case .reconnected:
+			for key in entries.keys where key.hasPrefix("object:") {
+				let target = LinkedTarget(kind: .object, uuid: String(key.dropFirst("object:".count)))
+				if isHeldObject(target) { await refresh(target) }
+			}
+		}
+	}
+
+	/// A card that was drawn from an object (a draft or any other object), not one still loading or gone.
+	private func isHeldObject(_ target: LinkedTarget) -> Bool {
+		switch entries[target.key]?.state {
+		case .ready(.draft)?, .ready(.object)?: true
+		default: false
+		}
 	}
 
 	// MARK: Reading
@@ -410,7 +453,7 @@ public final class LinkedItemStore {
 		let reference = FileReference(
 			id: summary.id, name: summary.name, mimeType: summary.mimeType, sizeBytes: summary.sizeBytes)
 		switch summary.kind {
-		case .markdown, .text, .html, .image, .audio: return .file(reference)
+		case .markdown, .text, .html, .image, .audio, .video: return .file(reference)
 		case .pdf, .source, .other:
 			return .plain(
 				LinkedReference(

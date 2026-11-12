@@ -22,6 +22,8 @@ public enum ShareError: Error, Equatable, Sendable {
 	case queueFull
 	/// The offline queue can't be written (no App Group, disk full).
 	case queueUnavailable
+	/// The workspace has no agent to start a chat with.
+	case noAgents
 	case unknown
 
 	public var message: String {
@@ -37,6 +39,7 @@ public enum ShareError: Error, Equatable, Sendable {
 		case .server: "Maskin had a problem on its side. Try again in a moment."
 		case .queueFull: "Too many shares are waiting to send. Open Maskin while online, then share again."
 		case .queueUnavailable: "You're offline and this share couldn't be saved for later."
+		case .noAgents: "There are no agents in this workspace yet. Add one in Maskin, then share again."
 		case .unknown: "Something went wrong. Try again."
 		}
 	}
@@ -47,7 +50,7 @@ public enum ShareError: Error, Equatable, Sendable {
 		case .offline, .server, .unknown, .rejected, .fileRejected, .sessionUnreadable,
 			.queueUnavailable:
 			true
-		case .signedOut, .noWorkspace, .sessionExpired, .nothingToShare, .queueFull: false
+		case .signedOut, .noWorkspace, .sessionExpired, .nothingToShare, .queueFull, .noAgents: false
 		}
 	}
 
@@ -63,7 +66,7 @@ public enum ShareError: Error, Equatable, Sendable {
 	/// Whether the fix is in the main app (the sheet offers "Open Maskin").
 	public var needsApp: Bool {
 		switch self {
-		case .signedOut, .noWorkspace, .sessionExpired: true
+		case .signedOut, .noWorkspace, .sessionExpired, .noAgents: true
 		default: false
 		}
 	}

@@ -638,6 +638,29 @@ app.openapi(uninstallItemRoute, (async (c) => {
 		await stopSessionsForActors(db, c.get('sessionManager'), [entityId], c.get('actorId'))
 	}
 
+	// Remove the agent's S3 folder before the DB rows, same as DELETE /actors/:id:
+	// a storage failure returns an error while the actor still exists, so the
+	// uninstall can be retried. After the actor row is gone a retry would 404
+	// and strand the objects for a later agent created with the same id.
+	if (type === 'actor' && !keepProvisionedItems) {
+		try {
+			await agentStorage.deleteAllAgentFiles(entityId, workspaceId)
+		} catch (err) {
+			logger.error('Marketplace uninstall aborted: could not remove agent files from storage', {
+				actorId: entityId,
+				workspaceId,
+				error: String(err),
+			})
+			return c.json(
+				createApiError(
+					'INTERNAL_ERROR',
+					'Could not delete agent files from storage; agent not uninstalled',
+				),
+				500,
+			)
+		}
+	}
+
 	await db.transaction(async (tx) => {
 		if (keepProvisionedItems) {
 			// Strip marketplace tracking keys so the entity becomes a plain workspace resource.

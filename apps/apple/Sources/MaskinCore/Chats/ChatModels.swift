@@ -28,17 +28,25 @@ public struct ChatActor: Identifiable, Hashable, Sendable {
 	public var agentState: AgentState
 	public var summary: String?
 	public var isSystem: Bool
+	/// An integration account (GitHub, Gmail, Google Calendar ...): actor type "system". The API does
+	/// not flag these `isSystem`, and they are never someone to add to a chat.
+	public var isIntegration: Bool
+	/// The agent's own one-tap openers, already normalised (`StarterPrompts.normalize`). Empty for
+	/// people and for an agent that set none.
+	public var starterPrompts: [String]
 
 	public var id: String { participant.id }
 
 	public init(
 		participant: ChatParticipant, agentState: AgentState = .idle, summary: String? = nil,
-		isSystem: Bool = false
+		isSystem: Bool = false, isIntegration: Bool = false, starterPrompts: [String] = []
 	) {
 		self.participant = participant
 		self.agentState = agentState
 		self.summary = summary
 		self.isSystem = isSystem
+		self.isIntegration = isIntegration
+		self.starterPrompts = starterPrompts
 	}
 }
 
@@ -281,7 +289,12 @@ public struct MessagePage: Sendable, Equatable {
 
 public struct ChatsError: Error, Equatable, Sendable {
 	public var message: String
-	public init(_ message: String) { self.message = message }
+	/// The HTTP status of a refused write, when there was one.
+	public var status: Int?
+	public init(_ message: String, status: Int? = nil) {
+		self.message = message
+		self.status = status
+	}
 }
 
 enum ChatDates {

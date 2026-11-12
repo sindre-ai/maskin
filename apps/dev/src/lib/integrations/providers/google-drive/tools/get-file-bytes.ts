@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto'
 import { Readable, Transform, pipeline } from 'node:stream'
+import { files } from '@maskin/db/schema'
+import { MAX_VIDEO_FILE_SIZE_BYTES } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
+import { and, eq } from 'drizzle-orm'
 import { capturePosthogEvent } from '../../../../analytics/posthog'
 import { type DriveDownloadClient, createDefaultDriveDownloadClient } from '../download-client'
 import { DriveError, isDriveError } from '../errors'
@@ -42,6 +45,12 @@ export interface GetFileBytesOutput {
 	/** The storage key of the downloaded object, inside the caller's workspace prefix. */
 	storageUrl: string
 	sha256: string
+	/**
+	 * The workspace file that points at the downloaded object, for desktop_put_file, get_file and
+	 * attachments. Absent when the file is over the workspace file limit (see workspaceFileNote).
+	 */
+	workspaceFileId?: string
+	workspaceFileNote?: string
 	/** Informational, not an error: set for files streamed at or above the large-file threshold. */
 	tag?: 'LARGE_FILE_STREAMED_TO_STORAGE'
 }
@@ -53,7 +62,7 @@ export interface GetFileBytesContext extends DriveToolContext {
 }
 
 export const GET_FILE_BYTES_DESCRIPTION =
-	'Download a Drive file into Maskin storage and return a handle, never the bytes. Returns {fileId, name, mimeType, sizeBytes, storageUrl, sha256}; storageUrl is a storage key inside this workspace (register it as a workspace file with create_file, or pass it to google_drive__write_file). Binary files stream straight to storage, so recordings and videos of several GB are fine; files of 100 MB or more also carry tag LARGE_FILE_STREAMED_TO_STORAGE, which is informational. Google Docs and Slides export to application/pdf and Sheets to text/csv unless exportMimeType says otherwise; other Google-native types (Drawings, Forms) need an exportMimeType or fail with EXPORT_FORMAT_UNSUPPORTED. exportMimeType is ignored for binary files. Downloading the same fileId again overwrites the stored object.'
+	'Download a Drive file into Maskin storage and return a handle, never the bytes. Returns {fileId, name, mimeType, sizeBytes, storageUrl, sha256}; storageUrl is a storage key inside this workspace (pass it to google_drive__write_file). Files up to 50 MB are also registered as a workspace file: workspaceFileId is its id, ready for desktop_put_file, with no bytes passing through you. Larger files get workspaceFileNote instead and no workspaceFileId. Downloading the same fileId again updates the same workspace file. Binary files stream straight to storage, so recordings and videos of several GB are fine; files of 100 MB or more also carry tag LARGE_FILE_STREAMED_TO_STORAGE, which is informational. Google Docs and Slides export to application/pdf and Sheets to text/csv unless exportMimeType says otherwise; other Google-native types (Drawings, Forms) need an exportMimeType or fail with EXPORT_FORMAT_UNSUPPORTED. exportMimeType is ignored for binary files. Downloading the same fileId again overwrites the stored object.'
 
 export function downloadStorageKey(workspaceId: string, fileId: string): string {
 	return `workspaces/${workspaceId}/integrations/google-drive/downloads/${fileId}`
@@ -141,6 +150,11 @@ export async function getFileBytes(
 		storageUrl,
 		sha256: tap.digest(),
 	}
+	if (tap.bytes > MAX_VIDEO_FILE_SIZE_BYTES) {
+		out.workspaceFileNote = `This file is over the ${MAX_VIDEO_FILE_SIZE_BYTES / 1024 / 1024} MB workspace file limit, so it was downloaded but not registered as a workspace file.`
+	} else {
+		out.workspaceFileId = await registerWorkspaceFile(ctx, out)
+	}
 	const large = tap.bytes >= LARGE_FILE_THRESHOLD_BYTES
 	if (large) out.tag = 'LARGE_FILE_STREAMED_TO_STORAGE'
 
@@ -155,6 +169,46 @@ export async function getFileBytes(
 		large_file: large,
 	})
 	return out
+}
+
+/**
+ * Registers the downloaded object as a workspace file. The row points at the object get_file_bytes
+ * just wrote, so no bytes are copied. The key is built here from the caller's own workspace id and
+ * never comes from the caller. A second download of the same Drive file updates the same row.
+ */
+async function registerWorkspaceFile(
+	ctx: GetFileBytesContext,
+	out: GetFileBytesOutput,
+): Promise<string> {
+	const fields = {
+		name: out.name,
+		mimeType: out.mimeType,
+		sizeBytes: out.sizeBytes,
+		contentHash: out.sha256,
+	}
+	const [existing] = await ctx.db
+		.select({ id: files.id })
+		.from(files)
+		.where(and(eq(files.workspaceId, ctx.workspaceId), eq(files.storageKey, out.storageUrl)))
+		.limit(1)
+	if (existing) {
+		await ctx.db
+			.update(files)
+			.set({ ...fields, updatedAt: new Date() })
+			.where(eq(files.id, existing.id))
+		return existing.id
+	}
+	const [row] = await ctx.db
+		.insert(files)
+		.values({
+			...fields,
+			workspaceId: ctx.workspaceId,
+			storageKey: out.storageUrl,
+			createdBy: ctx.actorId,
+		})
+		.returning({ id: files.id })
+	if (!row) throw new Error('Failed to insert files row')
+	return row.id
 }
 
 /** The export type to request, or undefined for a binary file (plain alt=media download). */

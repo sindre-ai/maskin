@@ -104,3 +104,29 @@ export async function readCreditsAfter(ctx: LinkedInOperationContext): Promise<n
 		return null
 	}
 }
+
+/**
+ * Sends an InMail the caller wrote, for an agent that sends without a person's approval. Same
+ * rules as a draft: refused with nothing sent when the person is a 1st-degree connection or the
+ * credits are at the floor, and the credits are read once more after the send. The caller's
+ * idempotency key is required, so a retry after a dropped answer cannot spend a second credit.
+ */
+export async function sendInmailDirect(
+	ctx: LinkedInOperationContext,
+	input: { recipient_provider_id: string; body: string; idempotency_key: string },
+	onCredits: (credits: { credits_before: number; credits_after: number | null }) => void,
+) {
+	const creditsBefore = await assertInmailSendable(ctx, input.recipient_provider_id)
+	const sent = await startInmailChat(
+		ctx,
+		{
+			recipient_urn: input.recipient_provider_id,
+			body: input.body,
+			idempotency_key: `inmail-direct-${input.idempotency_key}`,
+		},
+		{ attachments: undefined },
+	)
+	const creditsAfter = await readCreditsAfter(ctx)
+	onCredits({ credits_before: creditsBefore, credits_after: creditsAfter })
+	return { ...sent, credits_before: creditsBefore, credits_after: creditsAfter }
+}

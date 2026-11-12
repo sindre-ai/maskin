@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
+import { openDiscover } from '../helpers/integrations.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 // "Add existing" — the path for adding a GitHub org to a second workspace.
@@ -33,6 +34,8 @@ async function gotoIntegrations(page: Page, workspaceId: string) {
 	// /api/events, so networkidle never fires. Brief settle after `load`.
 	await page.waitForLoadState('load')
 	await page.waitForTimeout(300)
+	// GitHub is not connected on a fresh account, so its card sits under Discover.
+	await openDiscover(page)
 }
 
 test.describe('Settings — Integrations — add an existing GitHub org', () => {
@@ -112,7 +115,7 @@ test.describe('Settings — Integrations — add an existing GitHub org', () => 
 		})
 		await gotoIntegrations(page, account.workspaceId)
 
-		await expect(page.getByRole('button', { name: 'Connect' }).first()).toBeVisible()
+		await expect(page.getByRole('button', { name: 'Connect', exact: true }).first()).toBeVisible()
 		await expect(page.getByRole('button', { name: 'Add existing' })).toHaveCount(0)
 	})
 })

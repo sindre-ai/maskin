@@ -819,7 +819,7 @@ function ForYouFeed() {
 			)}
 
 			<div className="-ml-1 min-h-0 w-[calc(100%+0.25rem)] flex-1 overflow-y-auto px-1 pb-14">
-				<div className="flex w-full max-w-280 flex-col">
+				<div className="flex w-full flex-col">
 					{isMobile ? <h1 className="page-title pb-2">{greeting}</h1> : null}
 					<p
 						className="max-w-[520px] pb-6 text-[17px] leading-[1.5] text-muted-foreground"
@@ -828,6 +828,7 @@ function ForYouFeed() {
 						{lead}
 					</p>
 
+					{/* Outside the width-capped column below, so the cards run to the page edge instead of clipping at the column. */}
 					<BriefingRow workspaceId={workspaceId} />
 
 					{onboardingItems.length > 0 && (

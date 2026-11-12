@@ -259,6 +259,68 @@ describe('MessageBubble', () => {
 		expect(screen.queryByText('Me')).not.toBeInTheDocument()
 	})
 
+	describe('formatting in your own message', () => {
+		const own = (content: string, extra: Partial<MessageResponse> = {}) =>
+			buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human', content, ...extra })
+		beforeEach(() => localStorage.setItem('ff:chat-formatting', 'on'))
+		afterEach(() => localStorage.removeItem('ff:chat-formatting'))
+
+		it('draws your message as before while the chat-formatting flag is off', () => {
+			localStorage.setItem('ff:chat-formatting', 'off')
+			const { container } = renderBubble(own('**Bold** and a list\n- one'))
+			expect(container.querySelector('strong, ul')).toBeNull()
+			expect(container.textContent).toContain('**Bold**')
+		})
+
+		it('draws bold, italic, strikethrough and inline code as formatted text', () => {
+			const { container } = renderBubble(own('**Bold** and *italic* and ~~gone~~ and `code`'))
+			expect(container.querySelector('strong')?.textContent).toBe('Bold')
+			expect(container.querySelector('em')?.textContent).toBe('italic')
+			expect(container.querySelector('del')?.textContent).toBe('gone')
+			expect(container.querySelector('code')?.textContent).toBe('code')
+			expect(container.textContent).not.toContain('**')
+		})
+
+		it('draws lists, a quote and a code block', () => {
+			const { container } = renderBubble(
+				own('- one\n- two\n\n1. first\n2. second\n\n> quoted\n\n```\nlet a = 1\n```'),
+			)
+			expect(container.querySelectorAll('ul > li')).toHaveLength(2)
+			expect(container.querySelectorAll('ol > li')).toHaveLength(2)
+			expect(container.querySelector('blockquote')?.textContent).toContain('quoted')
+			expect(container.querySelector('pre')?.textContent).toContain('let a = 1')
+		})
+
+		it('draws a markdown table as a table', () => {
+			const { container } = renderBubble(own('| Plan | Price |\n| --- | --- |\n| Pro | 20 |'))
+			expect(container.querySelectorAll('table th')).toHaveLength(2)
+			expect(screen.getByText('Pro').tagName).toBe('TD')
+		})
+
+		it('keeps a tag in formatted text as a chip', () => {
+			actorsState.list = [
+				{
+					id: 'a-cto',
+					name: 'CTO',
+					type: 'agent',
+					isSystem: false,
+					description: null,
+					email: null,
+				},
+			]
+			renderBubble(own('**Please** look at this, @CTO', { metadata: { mentions: ['a-cto'] } }))
+			expect(screen.getByText('@CTO').className).toContain('bg-brand/10')
+			expect(screen.queryByText('You mentioned')).not.toBeInTheDocument()
+			actorsState.list = []
+		})
+
+		it('leaves a message with no markdown as plain text in the fitted plate', () => {
+			const { container } = renderBubble(own('2 * 3 * 4 is 24'))
+			expect(container.querySelector('strong, em, ul, ol, table')).toBeNull()
+			expect(screen.getByText('2 * 3 * 4 is 24').className).toContain('whitespace-pre-wrap')
+		})
+	})
+
 	describe('tags in your own message', () => {
 		const agent = (id: string, name: string) => ({
 			id,
@@ -742,6 +804,35 @@ describe('MessageBubble — Reply in thread', () => {
 		renderWithReply(buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human' }))
 		fireEvent.click(screen.getByRole('button', { name: 'Edit message' }))
 		expect(screen.queryByRole('button', { name: 'Reply in thread' })).not.toBeInTheDocument()
+	})
+})
+
+describe('MessageBubble — edit request', () => {
+	const own = () => buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human' })
+	const renderWithRequest = (message: MessageResponse, nonce?: number) =>
+		render(<MessageBubble workspaceId="ws-1" message={message} editRequestNonce={nonce} />, {
+			wrapper: TestWrapper,
+		})
+
+	it('opens the edit card when a new request arrives', () => {
+		const message = own()
+		const { rerender } = renderWithRequest(message)
+		expect(screen.getByRole('button', { name: 'Edit message' })).toBeInTheDocument()
+		rerender(<MessageBubble workspaceId="ws-1" message={message} editRequestNonce={1} />)
+		expect(screen.queryByRole('button', { name: 'Edit message' })).not.toBeInTheDocument()
+	})
+
+	it('ignores a request that was already there when the bubble mounted', () => {
+		renderWithRequest(own(), 1)
+		expect(screen.getByRole('button', { name: 'Edit message' })).toBeInTheDocument()
+	})
+
+	it('does not edit a message that is not yours', () => {
+		const message = buildMessage()
+		const { rerender } = renderWithRequest(message)
+		rerender(<MessageBubble workspaceId="ws-1" message={message} editRequestNonce={1} />)
+		expect(screen.queryByRole('button', { name: 'Edit message' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
 	})
 })
 

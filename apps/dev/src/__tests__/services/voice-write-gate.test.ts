@@ -702,9 +702,11 @@ describe('every tool of the real toolkit has a write-gate decision', () => {
 		'desktop_scroll',
 		'get_started',
 		'gmail_save_attachment',
+		'merge_file_tags',
 		'pause_session',
 		'propose_file_changes',
 		'remove_chat_participant',
+		'rename_file_tag',
 		'set_loop_view',
 		'show_computer',
 		'stop_chat_agent',
@@ -750,9 +752,7 @@ describe('every tool of the real toolkit has a write-gate decision', () => {
 		}
 	})
 
-	it('holds an alias exactly as it holds the tool it points to', () => {
-		expect(isRiskyTool('run_agent')).toBe(isRiskyTool('create_session'))
-		expect(isRiskyTool('run_agent')).toBe(true)
+	it('holds the tools that send a message out', () => {
 		expect(isRiskyTool('resend_send_email')).toBe(true)
 	})
 

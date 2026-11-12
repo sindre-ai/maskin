@@ -43,6 +43,8 @@ export interface SearchQueryInput {
 	sort: SearchSort
 	/** Cap on the rows sent back. The launcher asks for a few; the page takes the default. */
 	limit?: number
+	/** Most rows from one group (chats, agents, people...) before the rest fill any room left. */
+	perGroup?: number
 }
 
 /** True when there is anything to ask: words or at least one filter. Sort alone is not enough. */
@@ -69,6 +71,7 @@ export function buildSearchParams(input: SearchQueryInput, now: number = Date.no
 	}
 	if (input.sort !== 'rel') params.sort = input.sort
 	if (input.limit) params.limit = String(input.limit)
+	if (input.perGroup) params.per_group = String(input.perGroup)
 	return params
 }
 
@@ -94,6 +97,7 @@ export function useSearchQuery(
 			updated: input.updated,
 			sort: input.sort,
 			limit: input.limit,
+			perGroup: input.perGroup,
 		}),
 		queryFn: ({ signal }) => api.search.query(workspaceId, buildSearchParams(input), { signal }),
 		enabled,

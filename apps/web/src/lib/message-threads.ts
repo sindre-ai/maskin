@@ -40,6 +40,25 @@ export function defaultReplyRecipient(
 	return agent ? { id: agent.actorId, name: agent.actorName } : null
 }
 
+/**
+ * The actors who are in one reply thread: the root's author, then everyone who has replied, once
+ * each, in the order they appear. The summary's stack is folded in because it covers repliers on
+ * pages that are not loaded yet.
+ */
+export function threadParticipantIds(
+	root: Pick<MessageResponse, 'actorId'>,
+	replies: readonly Pick<MessageResponse, 'actorId'>[],
+	summaryParticipants: readonly Pick<ReplyThreadParticipant, 'actorId'>[] = [],
+): string[] {
+	return [
+		...new Set([
+			root.actorId,
+			...replies.map((r) => r.actorId),
+			...summaryParticipants.map((p) => p.actorId),
+		]),
+	]
+}
+
 /** "3 replies", or "2 new replies" when some are unread. */
 export function replyPillLabel(
 	summary: Pick<ReplyThreadSummary, 'replyCount' | 'unreadCount'>,
