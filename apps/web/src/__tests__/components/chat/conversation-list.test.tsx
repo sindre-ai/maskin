@@ -593,7 +593,8 @@ describe('ConversationList search', () => {
 			vi.useFakeTimers({ shouldAdvanceTime: true })
 			try {
 				render(<ConversationList workspaceId="ws-1" query="invoice" />, { wrapper: TestWrapper })
-				await screen.findByText('Invoice notes')
+				// The typed word is highlighted, which splits each title, so wait on the rows themselves.
+				await waitFor(() => expect(screen.getAllByRole('link')).toHaveLength(3))
 				expect(trackSearch).not.toHaveBeenCalled()
 
 				await act(async () => {
