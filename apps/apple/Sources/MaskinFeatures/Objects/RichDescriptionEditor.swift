@@ -4,10 +4,19 @@ import SwiftUI
 /// What the Edit sheet asks the description field for when Save is tapped. The rich editor lives in
 /// a web view, so its text is read from the page; the plain box keeps it in the sheet's own state.
 @MainActor
+@Observable
 final class DescriptionEditorHandle {
 	/// Set while the rich editor is on screen, cleared when the plain box takes over.
-	var readMarkdown: (() async -> String?)?
+	@ObservationIgnored var readMarkdown: (() async -> String?)?
 	var isRich: Bool { readMarkdown != nil }
+	/// True until the rich editor has opened (or the plain box has taken over), so Save cannot be
+	/// tapped before the page holds the description. On iPhone it starts true; elsewhere there is
+	/// no page to wait for.
+	#if os(iOS)
+		var isOpening = true
+	#else
+		var isOpening = false
+	#endif
 }
 
 /// The description field of the Edit sheet. On iPhone it is the same editor the web app uses
@@ -55,7 +64,9 @@ private struct RichDescriptionEditor: View {
 				handle: handle,
 				onEvent: { event in
 					switch event {
-					case .opened: phase = .ready
+					case .opened:
+						phase = .ready
+						handle.isOpening = false
 					case .readOnly: usePlainBox()
 					}
 				}
@@ -72,6 +83,7 @@ private struct RichDescriptionEditor: View {
 	/// The text was never changed by the page, so the plain box starts from exactly what was loaded.
 	private func usePlainBox() {
 		handle.readMarkdown = nil
+		handle.isOpening = false
 		phase = .plain
 	}
 }

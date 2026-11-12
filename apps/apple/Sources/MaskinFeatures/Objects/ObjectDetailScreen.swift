@@ -545,7 +545,7 @@ struct EditObjectSheet: View {
 				ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
 				ToolbarItem(placement: .confirmationAction) {
 					Button("Save") { Task { await commit() } }
-						.disabled(saving || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+						.disabled(saving || descriptionField.isOpening || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 				}
 			}
 		}
