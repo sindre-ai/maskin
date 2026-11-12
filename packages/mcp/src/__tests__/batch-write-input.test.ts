@@ -122,6 +122,7 @@ describe('batch write tools reject bad input instead of returning an empty succe
 		it('throws when the list has the wrong argument name, and writes nothing', async () => {
 			const call = callUpdateObjects({ objects: [{ id: OBJ_ID, status: 'done' }] })
 			await expect(call).rejects.toThrow(/Expected updates as an array/)
+			await expect(call).rejects.toThrow(/Nothing was written/)
 			expect(apiCalls()).toHaveLength(0)
 		})
 
